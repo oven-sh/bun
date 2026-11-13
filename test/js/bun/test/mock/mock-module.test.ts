@@ -5421,6 +5421,581 @@ test.concurrent.each(["vi.mock", "vi.doMock", "mock.module"])(
   },
 );
 
+// Without --isolate, the test files of a run share their modules: what one file has loaded, the next one gets as it is.
+// When a file mocks a module that an earlier file loaded, the modules that import it are evaluated again at their next
+// import, so that they load with the mock in place, as they do when the file runs alone. The modules that the file has
+// got by then stay: alone, it has loaded them itself before the mock, and none of them runs twice.
+// Each test file below has a folder with the modules that it names, so one run of `bun test` holds a whole table.
+describe.concurrent("a test file keeps the modules it has got when it mocks what they import", () => {
+  type TestFile = [title: string, source: string, name?: string];
+
+  const fake = `() => ({ query: () => null })`;
+  const mocksDb = `mock.module("./db", ${fake})`;
+
+  const modules: Record<string, string> = {
+    "db.ts": `export const query = (id: number) => (id ? { id } : null);`,
+    "service.ts": `
+      import { query } from "./db";
+      const loads = (globalThis.loads ??= {});
+      loads[import.meta.dir] = (loads[import.meta.dir] ?? 0) + 1;
+      export class NotFound extends Error {}
+      export const firstRow = query(1) ?? "no row";
+      export const find = (id: number) => query(id) ?? "no row";
+    `,
+    "routes.ts": `export * from "./service";`,
+    "index.ts": `export * from "./routes";`,
+    "summary.ts": `import { find } from "./service"; export const firstRow = find(1);`,
+    "report.ts": `import { query } from "./db"; export const firstRow = query(1) ?? "no row";`,
+    "lazy.ts": `export const load = () => import("./service");`,
+    "lazy-require.ts": `export const load = () => require("./routes");`,
+    "cached.ts": `let lazy; export const load = async () => (await (lazy ??= import("./lazy"))).load();`,
+    "unrelated.ts": `export const value = 1;`,
+    "uses-unrelated.ts": `export { value } from "./unrelated";`,
+    "mocks.ts": `import { mock } from "bun:test"; export const mockDb = () => mock.module("./db", ${fake});`,
+    "events.ts": `
+      const listeners = {};
+      export const on = (name, listener) => void (listeners[name] ??= []).push(listener);
+      export const emit = name => listeners[name]?.forEach(listener => listener());
+    `,
+    "bus.ts": `
+      import "./db";
+      const handlers = [];
+      export const on = handler => void handlers.push(handler);
+      export const emit = () => handlers.map(handler => handler());
+    `,
+    "listener.ts": `import { on } from "./bus"; import { query } from "./db"; on(() => query(1) ?? "no row");`,
+    "uses-os.ts": `import { platform } from "node:os"; export const read = () => platform();`,
+    "uses-pkg.ts": `import { name } from "pkg"; export const read = () => name;`,
+    "node_modules/pkg/package.json": `{ "name": "pkg", "version": "1.0.0", "main": "index.js" }`,
+    "node_modules/pkg/index.js": `exports.name = "real";`,
+    // No earlier file loads these two.
+    "own.ts": `export * from "./routes";`,
+    "setup-mocks.ts": `import { mockDb } from "./mocks"; mockDb();`,
+
+    "db.cjs": `exports.query = id => (id ? { id } : null);`,
+    "service.cjs": `
+      const { query } = require("./db.cjs");
+      const loads = (globalThis.loads ??= {});
+      loads[__dirname] = (loads[__dirname] ?? 0) + 1;
+      exports.firstRow = query(1) ?? "no row";
+    `,
+    "routes.cjs": `exports.service = require("./service.cjs");`,
+    "routes-that-reads-its-children.cjs": `exports.service = require("./service.cjs"); void module.children.length;`,
+    "lazy.cjs": `exports.load = () => require("./service.cjs");`,
+    "twice.cjs": `require("./db.cjs"); require("./db.cjs"); exports.load = () => require("./service.cjs");`,
+    "unrelated.cjs": `exports.value = 1;`,
+    "shim.cjs": `exports.service = require("./service.ts");`,
+  };
+
+  // `get` gives the file `held` before the mock. After it, nothing has evaluated service.ts again, and import() and require() give the module that the file has.
+  const holds = (
+    title: string,
+    get: string,
+    { mocks = mocksDb, from = "bun:test", where = "test", getsInTest = false } = {},
+  ): TestFile => [
+    title,
+    `
+      import { beforeAll, expect, jest, mock, test, vi } from "${from}";
+      ${getsInTest ? "" : `${get}\nconst loads = globalThis.loads[import.meta.dir];`}
+      ${where === "file" ? `${mocks};` : where === "beforeAll" ? `beforeAll(() => void ${mocks});` : ""}
+      test(${JSON.stringify(title)}, async () => {
+        ${getsInTest ? `${get}\nconst loads = globalThis.loads[import.meta.dir];` : ""}
+        ${where === "test" ? `${mocks};` : ""}
+        expect([await import("./service"), require("./service")].map(service => service.NotFound === held.NotFound)).toEqual([true, true]);
+        expect(globalThis.loads[import.meta.dir]).toBe(loads);
+      });
+    `,
+  ];
+
+  const got: TestFile[] = [
+    holds("an import statement", `import * as held from "./service";`),
+    holds("an import statement of a module that imports it", `import * as held from "./routes";`),
+    holds(
+      "an import statement that a hoisted vi.mock() turns into import()",
+      `vi.mock("./unrelated", () => ({}));\nimport * as held from "./service";`,
+    ),
+    holds("an import statement of a module that only this file loads", `import * as held from "./own";`),
+    holds("import()", `const held = await import("./service");`),
+    holds("import() in a test", `const held = await import("./service");`, { getsInTest: true }),
+    holds("import() in a module that the file has", `import { load } from "./lazy";\nconst held = await load();`),
+    holds(
+      "import() in a module that the file has under a query",
+      `import { load } from "./lazy?query";\nconst held = await load();`,
+    ),
+    holds("require()", `const held = require("./service");`),
+    holds("require() of a module that imports it", `const held = require("./routes");`),
+    holds("require() in a module that the file has", `import { load } from "./lazy-require";\nconst held = load();`),
+    holds("import.meta.require()", `const held = import.meta.require("./service");`),
+    holds(
+      "createRequire()",
+      `import { createRequire } from "node:module";\nconst held = createRequire(import.meta.url)("./service");`,
+    ),
+    holds("vi.importActual()", `const held = await vi.importActual("./service");`),
+    holds("jest.requireActual()", `const held = jest.requireActual("./service");`),
+  ];
+
+  const imports = `import * as held from "./service";`;
+  const mocked: TestFile[] = [
+    holds("jest.mock() in a test", imports, { mocks: `jest.mock("./db", ${fake})`, from: "@jest/globals" }),
+    holds("jest.mock() without a factory", imports, { mocks: `jest.mock("./db")` }),
+    holds("jest.doMock()", imports, { mocks: `jest.doMock("./db", ${fake})` }),
+    holds("vi.mock() in a test", imports, { mocks: `vi.mock("./db", ${fake})` }),
+    holds("vi.mock() in a test of a Vitest file", imports, { mocks: `vi.mock("./db", ${fake})`, from: "vitest" }),
+    holds("vi.doMock()", imports, { mocks: `vi.doMock("./db", ${fake})` }),
+    holds("vi.doMock() in a Vitest file", imports, { mocks: `vi.doMock("./db", ${fake})`, from: "vitest" }),
+    holds("mock.module() at the top of the file", imports, { where: "file" }),
+    holds("mock.module() at the top of a file that got it by import()", `const held = await import("./service");`, {
+      where: "file",
+    }),
+    holds("mock.module() in beforeAll()", imports, { where: "beforeAll" }),
+    holds("a module that the file imports behind it", `${imports}\nimport "./setup-mocks";`, { where: "module" }),
+    holds("a function of another module", `${imports}\nimport { mockDb } from "./mocks";`, { mocks: `mockDb()` }),
+    holds("mock.module() behind the end of a mock of another module", `${imports}\nimport "./uses-unrelated";`, {
+      mocks: `jest.mock("./unrelated", () => ({ value: 2 })); jest.unmock("./unrelated"); ${mocksDb}`,
+    }),
+    holds("mock.module() behind a vi.doMock() of another module", imports, {
+      mocks: `vi.doMock("./unrelated", () => ({ value: 2 })); ${mocksDb}`,
+    }),
+    [
+      "vi.doMock(), which leaves the mocked module loaded",
+      `
+        import { expect, test, vi } from "bun:test";
+        import * as db from "./db";
+        import * as held from "./service";
+        test("vi.doMock(), which leaves the mocked module loaded", async () => {
+          vi.doMock("./db", ${fake});
+          expect(await vi.importActual("./db")).toBe(db);
+          expect(await import("./service")).toBe(held);
+          expect((await import("./db")).query(1)).toBe(null);
+        });
+      `,
+    ],
+  ];
+
+  // The file has not got service.ts when it mocks, so the next import evaluates it behind the mock, as in a run alone.
+  const reads = (
+    title: string,
+    file: string,
+    inTest: string,
+    read = `(await import("./service")).firstRow`,
+  ): TestFile => [
+    title,
+    `
+      import { expect, jest, mock, test, vi } from "bun:test";
+      ${file}
+      test(${JSON.stringify(title)}, async () => {
+        ${inTest}
+        expect(${read}).toBe("no row");
+      });
+    `,
+  ];
+
+  const emitsLoad = `events.emit("load");\nawait globalThis.loaded;`;
+  const notGot: TestFile[] = [
+    reads("what it has not imported", "", `${mocksDb};`),
+    reads(
+      "a module beside one that it has",
+      `import "./service";`,
+      `${mocksDb};`,
+      `(await import("./report")).firstRow`,
+    ),
+    reads(
+      "a module that imports one that it has",
+      `import "./service";`,
+      `${mocksDb};`,
+      `(await import("./summary")).firstRow`,
+    ),
+    reads("what its import statements have yet to come to", `import "./setup-mocks";\nimport "./routes";`, ""),
+    reads(
+      "what an import defer statement has linked",
+      `import defer * as later from "./service";\nvoid later;`,
+      `${mocksDb};`,
+    ),
+    reads(
+      "what it has under another type",
+      `import text from "./service.ts" with { type: "text" };`,
+      `expect(text).toContain("firstRow");\n${mocksDb};`,
+    ),
+    reads(
+      "what an import() has yet to give",
+      "",
+      `const pending = import("./service");\n${mocksDb};`,
+      `(await pending).firstRow`,
+    ),
+    reads("what an import() gives that nothing waits for", "", `void import("./service");\n${mocksDb};`),
+    reads("what a module of the file has yet to get", `import { load } from "./lazy";`, `void load();\n${mocksDb};`),
+    reads(
+      "what a listener of an earlier file got through a module that the file has as text",
+      `import * as events from "./events";\nimport text from "./lazy.ts" with { type: "text" };`,
+      `expect(text).toContain("load");\n${emitsLoad}\n${mocksDb};`,
+    ),
+    reads(
+      "what a listener of an earlier file got through a module that an import() gave the file as text",
+      `import * as events from "./events";`,
+      `expect((await import("./lazy.ts", { with: { type: "text" } })).default).toContain("load");\n${emitsLoad}\n${mocksDb};`,
+    ),
+    reads(
+      "what a listener of an earlier file imports",
+      `import * as events from "./events";`,
+      `events.emit("import");\nawait globalThis.imported;\n${mocksDb};`,
+    ),
+    reads(
+      "what a module of a Bun.ModuleGraph imports",
+      "",
+      `using graph = new Bun.ModuleGraph();\nawait (await graph.import(require.resolve("./lazy"))).load();\n${mocksDb};`,
+    ),
+    reads(
+      "what the factory of another mock gets from jest.requireActual()",
+      "",
+      `mock.module("./unrelated", () => jest.requireActual("./index"));\n${mocksDb};`,
+    ),
+    reads(
+      "what the factory of another mock requires",
+      "",
+      `mock.module("./unrelated", () => require("./index"));\n${mocksDb};`,
+    ),
+    reads(
+      "what the factory of another mock requires, where an earlier file has required it",
+      `import "./lazy-require";`,
+      `mock.module("./unrelated", () => require("./routes"));\n${mocksDb};`,
+    ),
+    reads(
+      "what the factory of another mock gets from vi.importActual()",
+      `vi.mock("./unrelated", async () => ({ ...(await vi.importActual("./index")) }));\nvi.mock("./db", ${fake});`,
+      "",
+    ),
+    reads(
+      "what the factory of another mock imports behind an await",
+      "",
+      `await mock.module("./index", async () => ({ ...(await import("./unrelated")), ...(await import("./routes")) }));\n${mocksDb};`,
+    ),
+    reads(
+      "what a mocked module imports, where the file got the mock",
+      `import * as routes from "./routes";\nvi.mock("./routes", () => ({ firstRow: "mock" }));`,
+      `expect(routes.firstRow).toBe("mock");\n${mocksDb};`,
+    ),
+    reads(
+      "what it got as a mock, behind the end of that mock",
+      "",
+      `vi.doMock("./service", () => ({ firstRow: "mock" }));\nexpect((await import("./service")).firstRow).toBe("mock");\nvi.doUnmock("./service");\n${mocksDb};`,
+    ),
+    reads(
+      "what a module of the file got behind a mock of it",
+      "",
+      `vi.doMock("./routes", () => ({ firstRow: "mock" }));\nexpect((await import("./own")).firstRow).toBe("mock");\n${mocksDb};`,
+    ),
+  ];
+
+  const esFile = `import { expect, jest, mock, test } from "bun:test";\nconst dir = import.meta.dir;`;
+  const commonJSFile = `const { expect, jest, mock, test } = require("bun:test");\nconst dir = __dirname;`;
+  const mocksCommonJSDb = `mock.module("./db.cjs", ${fake})`;
+  const holdsCommonJS = (
+    title: string,
+    file: string,
+    get: string,
+    { atTop = true, mocks = mocksCommonJSDb, mocksAtTop = false, routes = "./routes.cjs" } = {},
+  ): TestFile => [
+    title,
+    `
+      ${file}
+      ${atTop ? `${get}\nconst loads = globalThis.loads[dir];` : ""}
+      ${mocksAtTop ? `${mocks};` : ""}
+      test(${JSON.stringify(title)}, () => {
+        ${atTop ? "" : `${get}\nconst loads = globalThis.loads[dir];`}
+        ${mocksAtTop ? "" : `${mocks};`}
+        expect([require("${routes}").service, require("./service.cjs")].map(service => service === held.service)).toEqual([true, true]);
+        expect(globalThis.loads[dir]).toBe(loads);
+      });
+    `,
+    file === commonJSFile ? "file.test.cjs" : undefined,
+  ];
+
+  const requires = `const held = require("./routes.cjs");`;
+  const gotCommonJS: TestFile[] = [
+    holdsCommonJS("an ES module required", esFile, requires),
+    holdsCommonJS("an import statement of an ES module got", esFile, `import held from "./routes.cjs";`),
+    holdsCommonJS("a CommonJS module required", commonJSFile, requires),
+    holdsCommonJS("a CommonJS module required in a test", commonJSFile, requires, { atTop: false }),
+    holdsCommonJS("a CommonJS module required, and mocks at its top", commonJSFile, requires, { mocksAtTop: true }),
+    holdsCommonJS(
+      "a function of a module that the file has required",
+      esFile,
+      `const held = { service: require("./lazy.cjs").load() };`,
+    ),
+    holdsCommonJS("a CommonJS module required, and jest.mock() mocks", commonJSFile, requires, {
+      mocks: `jest.mock("./db.cjs", ${fake})`,
+    }),
+    holdsCommonJS(
+      "a module that has read its children required",
+      commonJSFile,
+      `void module.children.length;\n${requires}`,
+    ),
+    holdsCommonJS(
+      "a module required whose body has read its children",
+      commonJSFile,
+      `const held = require("./routes-that-reads-its-children.cjs");`,
+      { routes: "./routes-that-reads-its-children.cjs" },
+    ),
+    holdsCommonJS(
+      "a module required whose children the file has read",
+      commonJSFile,
+      `${requires}\nvoid require.cache[require.resolve("./routes.cjs")].children.length;`,
+    ),
+    [
+      "a module required that has yet to require what the mock evaluates again",
+      `
+        ${commonJSFile}
+        const held = require("./lazy.cjs");
+        test("a module required that has yet to require what the mock evaluates again", () => {
+          ${mocksCommonJSDb};
+          expect(require("./lazy.cjs")).toBe(held);
+          expect(held.load().firstRow).toBe("no row");
+        });
+      `,
+      "file.test.cjs",
+    ],
+  ];
+
+  const readsCommonJS = (
+    title: string,
+    file: string,
+    inTest: string,
+    { read = `require("./service.cjs").firstRow`, from = "bun:test" } = {},
+  ): TestFile => [
+    title,
+    `
+      const { expect, jest, mock, test } = require("${from}");
+      ${file}
+      test(${JSON.stringify(title)}, async () => {
+        ${inTest}
+        expect(${read}).toBe("no row");
+      });
+    `,
+    "file.test.cjs",
+  ];
+  // A mock of lazy.cjs whose factory loads routes.cjs. Behind a file that has loaded lazy.cjs, the mock patches it, so the factory runs at the call.
+  const usesRoutes = (requires: string, before = "") =>
+    `{\n${before}\nconst routes = ${requires}("./routes.cjs");\nreturn { load: () => routes.service };\n}`;
+  const notGotCommonJS: TestFile[] = [
+    readsCommonJS("that it has not required", "", `${mocksCommonJSDb};`),
+    readsCommonJS(
+      "that the factory of another mock gets from jest.requireActual()",
+      `jest.mock("./lazy.cjs", () => ${usesRoutes("jest.requireActual")});`,
+      `jest.mock("./db.cjs", ${fake});`,
+      { from: "@jest/globals" },
+    ),
+    readsCommonJS(
+      "that the factory of another mock gets from jest.requireActual() behind an await",
+      "",
+      `await mock.module("./lazy.cjs", async () => ${usesRoutes("jest.requireActual", "await 1;")});\n${mocksCommonJSDb};`,
+    ),
+    readsCommonJS(
+      "that the factory of another mock requires, where the body of the file calls the factory",
+      `jest.mock("./lazy.cjs", () => ${usesRoutes("require")});`,
+      `${mocksCommonJSDb};`,
+    ),
+    readsCommonJS(
+      "that the factory of another mock requires, where a test calls the factory",
+      `require("./unrelated.cjs");`,
+      `mock.module("./lazy.cjs", () => ${usesRoutes("require")});\n${mocksCommonJSDb};`,
+    ),
+    readsCommonJS(
+      "that the factory of another mock requires behind an await",
+      `require("./unrelated.cjs");`,
+      `await mock.module("./lazy.cjs", async () => ${usesRoutes("require", "await 1;")});\n${mocksCommonJSDb};`,
+    ),
+    readsCommonJS(
+      "that the factory of another mock requires, where the file has read its children since",
+      `require("./db.cjs");\nrequire("./db.cjs");\njest.mock("./lazy.cjs", () => ${usesRoutes("require")});\nvoid module.children.length;`,
+      `${mocksCommonJSDb};`,
+    ),
+    readsCommonJS(
+      "that a function of a module required, where the file has read the children of the module",
+      `const { load } = require("./twice.cjs");\nvoid require.cache[require.resolve("./twice.cjs")].children.length;`,
+      `${mocksCommonJSDb};`,
+      { read: `load().firstRow` },
+    ),
+  ];
+
+  // mock.module() patches the package, which the importer then sees. vi.mock() and vi.doMock() leave a package as it is, and the next import gets the mock.
+  const importerOfPackage = (mockIt: string, seen: string): TestFile => [
+    `a package that ${mockIt}() mocks`,
+    `
+      import { expect, mock, test, vi } from "bun:test";
+      import * as held from "./uses-pkg";
+      test("a package that ${mockIt}() mocks", async () => {
+        ${mockIt}("pkg", () => ({ name: "mock" }));
+        expect(await import("./uses-pkg")).toBe(held);
+        expect([held.read(), (await import("pkg")).name]).toEqual(["${seen}", "mock"]);
+      });
+    `,
+  ];
+  const importers: TestFile[] = [
+    importerOfPackage("mock.module", "mock"),
+    importerOfPackage("vi.mock", "real"),
+    importerOfPackage("vi.doMock", "real"),
+    [
+      "a builtin module",
+      `
+        import { expect, mock, test } from "bun:test";
+        import * as held from "./uses-os";
+        test("a builtin module", async () => {
+          mock.module("node:os", () => ({ platform: () => "mock" }));
+          expect(await import("./uses-os")).toBe(held);
+          expect([held.read(), (await import("node:os")).platform()]).toEqual(["mock", "mock"]);
+        });
+      `,
+    ],
+  ];
+
+  // What the run behind an earlier file does not have in common with the run alone.
+  const leftovers = (behind: boolean): TestFile[] => [
+    // The earlier file left cached.ts with the lazy.ts that it got, and nothing tells that this file has it from there.
+    [
+      "a module that another one kept in a variable in an earlier file is evaluated again",
+      `
+        import { expect, mock, test } from "bun:test";
+        import { load } from "./cached";
+        const held = await load();
+        test("a module that another one kept in a variable in an earlier file is evaluated again", async () => {
+          ${mocksDb};
+          expect((await load()) === held).toBe(${!behind});
+        });
+      `,
+    ],
+    // Alone, nothing listens, and the file gets service.ts behind the mock.
+    [
+      "what a listener of an earlier file got through a module of the file stays",
+      `
+        import { expect, mock, test } from "bun:test";
+        import * as events from "./events";
+        import "./lazy";
+        test("what a listener of an earlier file got through a module of the file stays", async () => {
+          ${emitsLoad}
+          ${mocksDb};
+          expect((await import("./service")).firstRow).toEqual(${behind ? `{ id: 1 }` : `"no row"`});
+        });
+      `,
+    ],
+    // bus.ts stays, and listener.ts is evaluated again and adds its handler to it a second time.
+    [
+      "a module that stays gets what an importer does when it is evaluated again",
+      `
+        import { expect, mock, test } from "bun:test";
+        import { emit } from "./bus";
+        test("a module that stays gets what an importer does when it is evaluated again", async () => {
+          ${mocksDb};
+          await import("./listener");
+          expect(emit()).toEqual(${behind ? `["no row", "no row"]` : `["no row"]`});
+        });
+      `,
+    ],
+  ];
+
+  // With `behind`, 0.test.ts loads every module of every folder first, but for the two that only the mocking file loads.
+  function project(files: TestFile[], behind: boolean) {
+    const tree: Record<string, string> = {};
+    const statements = [`import { test } from "bun:test";`];
+    const body: string[] = [];
+    files.forEach(([, source, name = "file.test.ts"], index) => {
+      const dir = `file-${index}`;
+      const named = new Set<string>();
+      (function add(text: string) {
+        for (const [, found] of text.matchAll(/"\.\/([\w.-]+)/g)) {
+          const file = found in modules ? found : `${found}.ts`;
+          if (!(file in modules) || named.has(file)) continue;
+          named.add(file);
+          add(modules[file]);
+        }
+      })(source);
+      tree[`${dir}/${name}`] = source;
+      for (const file of named) {
+        tree[`${dir}/${file}`] = modules[file];
+        if (modules[file].includes(`"pkg"`)) {
+          for (const ofPackage of ["package.json", "index.js"])
+            tree[`${dir}/node_modules/pkg/${ofPackage}`] = modules[`node_modules/pkg/${ofPackage}`];
+        }
+        if (file === "own.ts" || file === "setup-mocks.ts") continue;
+        const path = `./${dir}/${file.replace(/\.ts$/, "")}`;
+        const load = /\bload = /.test(modules[file]) ? `load${index}_${file.replace(/\W/g, "_")}` : undefined;
+        if (file.endsWith(".cjs")) body.push(`require("${path}")${load ? ".load()" : ""};`);
+        else if (load) {
+          statements.push(`import { load as ${load} } from "${path}";`);
+          body.push(`await ${load}();`);
+        } else if (file === "events.ts") {
+          statements.push(`import * as events${index} from "${path}";`);
+          body.push(`events${index}.on("import", () => void (globalThis.imported = import("./${dir}/service")));`);
+          if (named.has("lazy.ts"))
+            body.push(`events${index}.on("load", () => void (globalThis.loaded = load${index}_lazy_ts()));`);
+        } else statements.push(`import "${path}";`);
+      }
+    });
+    if (behind) tree["0.test.ts"] = [...statements, ...body, `test("loads every module", () => {});`].join("\n");
+    return tree;
+  }
+
+  async function run(files: TestFile[], { behind = false, reruns = false } = {}) {
+    using dir = tempDir("mock-module-held", project(files, behind));
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "test",
+        "--timeout=30000",
+        ...(reruns ? ["--rerun-each=2"] : []),
+        ...(behind ? ["./0.test.ts"] : []),
+        ...files.map(([, , name = "file.test.ts"], index) => `./file-${index}/${name}`),
+      ],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(` ${(files.length + (behind ? 1 : 0)) * (reruns ? 2 : 1)} pass\n 0 fail\n`);
+    expect(exitCode).toBe(0);
+  }
+
+  // In its second run, a file comes behind its first one, which has loaded every module.
+  function table(title: string, files: TestFile[], { reruns = false } = {}) {
+    describe(title, () => {
+      for (let first = 0; first < files.length; first += 8) {
+        const part = files.slice(first, first + 8);
+        const name = files.length > 8 ? ` (${first / 8 + 1})` : "";
+        test(`alone${name}`, () => run(part));
+        test(`behind a file that has loaded every module${name}`, () => run(part, { behind: true }));
+        if (reruns) test(`in the second run of the file${name}`, () => run(part, { reruns: true }));
+      }
+    });
+  }
+
+  table("what it got by", got);
+  table("what it has when it mocks by", mocked, { reruns: true });
+  table("CommonJS modules that", gotCommonJS);
+  table("an importer of", importers, { reruns: true });
+  table("not", notGot);
+  table("not CommonJS modules", notGotCommonJS);
+
+  describe("with these differences from its run alone", () => {
+    test("alone", () => run(leftovers(false)));
+    test("behind a file that has loaded every module", () => run(leftovers(true), { behind: true }));
+  });
+
+  // require() of an ES module doesn't add it to the children of the module that calls it. In a later test file nothing tells that shim.cjs has service.ts.
+  test.todo(
+    "an ES module that the body of a CommonJS module required, behind a file that has loaded every module",
+    () =>
+      run(
+        [
+          holds(
+            "an ES module that the body of a CommonJS module required",
+            `import { service as held } from "./shim.cjs";`,
+          ),
+        ],
+        { behind: true },
+      ),
+  );
+});
+
 test.concurrent(
   "the next --rerun-each run gets the original after a factory resets modules while patching a loaded one",
   async () => {

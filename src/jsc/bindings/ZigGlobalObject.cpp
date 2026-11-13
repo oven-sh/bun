@@ -1240,6 +1240,18 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryEvaluatedKeys, (JSC::JSGlobalObject 
     return JSValue::encode(array);
 }
 
+// require() of an ES module adds no child to the requirer, so a mock of a test file would not know that the requirer has got the module.
+static ALWAYS_INLINE void didRequireESModule(Zig::GlobalObject* globalObject, JSC::JSModuleLoader* loader, Bun::JSCommonJSModule* requirer, const JSC::Identifier& key, JSC::JSCell* moduleNamespace)
+{
+    auto& plugins = globalObject->onLoadPlugins;
+    if (plugins.testFile == 1 || !requirer || loader != globalObject->moduleLoader() || !requirer->filename().isString()) [[likely]]
+        return;
+    auto& vm = globalObject->vm();
+    String filename = asString(requirer->filename())->tryGetValue().data;
+    if (!filename.isNull())
+        Bun::didGiveModuleInLaterTestFile(globalObject, JSC::Identifier::fromString(vm, filename), key, moduleNamespace);
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
@@ -1268,6 +1280,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
                 RELEASE_AND_RETURN(scope, JSValue::encode(entry->record()->moduleNamespaceObject(globalObject)));
             auto* ns = entry->record()->getModuleNamespace(globalObject, false);
             RETURN_IF_EXCEPTION(scope, {});
+            didRequireESModule(globalObject, loader, requirer, key, ns);
             return JSValue::encode(ns);
         }
         // Any other Evaluating record (one with top-level await) must not
@@ -1352,6 +1365,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     RETURN_IF_EXCEPTION(scope, {});
     Bun::evictModulesThatHaveLoaded(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+    didRequireESModule(globalObject, loader, requirer, key, ns);
     return JSValue::encode(ns);
 }
 
@@ -4400,6 +4414,8 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
             return imported;
     }
 
+    // Not a module of another type, and not a module of a Bun.ModuleGraph, which has its own and no mock of a test file evicts them.
+    bool givesModuleOfTestFiles = !parameters && loader == globalObject->moduleLoader();
     auto result = loader->requestImportModuleForKey(globalObject, key, referrer, WTF::move(parameters), nullptr, /* deferred */ false, referrerAsyncOrder);
     if (scope.exception()) [[unlikely]] {
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
@@ -4409,6 +4425,8 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     if (globalObject->m_lazyTestModuleObject.isInitialized()) [[unlikely]] {
         Bun::didStartDynamicImport(globalObject, result, std::exchange(globalObject->onLoadPlugins.keyOfImportCall, {}));
         RETURN_IF_EXCEPTION(scope, nullptr);
+        if (givesModuleOfTestFiles && globalObject->onLoadPlugins.testFile != 1)
+            Bun::didGiveModuleInLaterTestFile(globalObject, referrer, key, result);
     }
     return result;
 }

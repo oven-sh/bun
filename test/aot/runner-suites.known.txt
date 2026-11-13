@@ -104,6 +104,18 @@ test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > w
 test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > with import() and require()
 test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is still loading > and fails to load
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > a Vitest test file with no mock call of its own still runs its imports one at a time > the transpiler cache doesn't mix up a file run as a test with the same file imported
+# These: a test file mocks a module that an earlier test file loaded. `bun test` keeps the modules that the file has got by then. A compiled run runs them again at their next import, so the file has two instances of them.
+test/js/bun/test/mock/mock-module.test.ts: a test file keeps the modules it has got when it mocks what they import > CommonJS modules that > behind a file that has loaded every module (1)
+test/js/bun/test/mock/mock-module.test.ts: a test file keeps the modules it has got when it mocks what they import > CommonJS modules that > behind a file that has loaded every module (2)
+test/js/bun/test/mock/mock-module.test.ts: a test file keeps the modules it has got when it mocks what they import > an importer of > behind a file that has loaded every module
+test/js/bun/test/mock/mock-module.test.ts: a test file keeps the modules it has got when it mocks what they import > an importer of > in the second run of the file
+test/js/bun/test/mock/mock-module.test.ts: a test file keeps the modules it has got when it mocks what they import > what it got by > behind a file that has loaded every module (1)
+test/js/bun/test/mock/mock-module.test.ts: a test file keeps the modules it has got when it mocks what they import > what it got by > behind a file that has loaded every module (2)
+test/js/bun/test/mock/mock-module.test.ts: a test file keeps the modules it has got when it mocks what they import > what it has when it mocks by > behind a file that has loaded every module (1)
+test/js/bun/test/mock/mock-module.test.ts: a test file keeps the modules it has got when it mocks what they import > what it has when it mocks by > behind a file that has loaded every module (2)
+test/js/bun/test/mock/mock-module.test.ts: a test file keeps the modules it has got when it mocks what they import > what it has when it mocks by > in the second run of the file (1)
+test/js/bun/test/mock/mock-module.test.ts: a test file keeps the modules it has got when it mocks what they import > what it has when it mocks by > in the second run of the file (2)
+test/js/bun/test/mock/mock-module.test.ts: a test file keeps the modules it has got when it mocks what they import > with these differences from its run alone > behind a file that has loaded every module
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > doesn't leak the modules that imported a mock after it ends
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > also when the file fails to load, or has already removed the mock itself
 test/js/bun/test/mock/mock-module.test.ts: requiring the original of a module in a cycle before its async factory runs throws, and the mock still loads

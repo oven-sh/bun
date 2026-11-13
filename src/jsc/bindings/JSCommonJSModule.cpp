@@ -222,6 +222,15 @@ static bool hasLoadedCompiledCommonJSModule([[maybe_unused]] Zig::GlobalObject* 
 #endif
 }
 
+uint32_t JSCommonJSModule::numberOfChildren() const
+{
+    if (JSValue children = m_childrenValue.get()) {
+        auto* array = dynamicDowncast<JSArray>(children);
+        return array ? array->length() : 0;
+    }
+    return m_children.size();
+}
+
 static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -403,6 +412,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     //
     JSC::profiledCall(globalObject, ProfilingReason::API, fn, callData, moduleObject, args);
     RETURN_IF_EXCEPTION(scope, false);
+    moduleObject->childrenOfBody = moduleObject->numberOfChildren();
 
     if (auto* wrapper = graph && !sharedWrapper ? dynamicDowncast<JSFunction>(fn) : nullptr; wrapper && !wrapper->isHostFunction() && wrapper->scope() == graph->overlay()) {
         if (CodeBlock* linked = wrapper->jsExecutable()->codeBlockForCall()) {
@@ -464,6 +474,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule, (JSGlobalObject * lex
     // See requireCompiledModule().
     bool isListedByHost = moduleObject->compiledModule == JSCommonJSModule::noCompiledModule || moduleObject->compiledModuleLoadedInto != JSCommonJSModule::noCompiledModule;
     if (referrer && isListedByHost && !std::exchange(moduleObject->isListedAsChild, false) && referrer->listsAsChild(moduleObject)) [[likely]] {
+        if (referrer->testFileOfRequires != globalObject->onLoadPlugins.testFileOfRequires) [[unlikely]]
+            Bun::didRequireInLaterTestFile(globalObject, referrer, referrer->numberOfChildren());
         if (referrer->m_childrenValue) [[unlikely]] {
             // It's too hard to append from native code:
             // referrer.children.indexOf(moduleObject) === -1 && referrer.children.push(moduleObject)
@@ -797,6 +809,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterChildren,
         WTF::Locker locker { thisObject->cellLock() };
         thisObject->m_children.clear();
     }
+    thisObject->childrenOfBody = 0;
     thisObject->forgetCompiledModulesAmongChildren();
     thisObject->m_childrenValue.set(globalObject->vm(), thisObject, JSValue::decode(value));
     return true;
@@ -824,7 +837,11 @@ JSC_DEFINE_CUSTOM_GETTER(getterChildren, (JSC::JSGlobalObject * globalObject, JS
         // Deduplicate children while preserving insertion order.
         JSCommonJSModule* last = nullptr;
         int n = -1;
+        // The first childrenOfBody of them are the body's. The array has each child once, so it has fewer of them.
+        uint32_t ofBody = 0, index = 0;
         for (WriteBarrier<Unknown> childBarrier : mod->m_children) {
+            if (index++ == mod->childrenOfBody)
+                ofBody = children.size();
             JSCommonJSModule* child = uncheckedDowncast<JSCommonJSModule>(childBarrier.get());
             // Check the last module since duplicate imports, if any, will
             // probably be adjacent. Then just do a linear scan.
@@ -848,6 +865,7 @@ JSC_DEFINE_CUSTOM_GETTER(getterChildren, (JSC::JSGlobalObject * globalObject, JS
         JSArray* array = JSC::constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), children);
         RETURN_IF_EXCEPTION(throwScope, {});
         mod->m_childrenValue.set(globalObject->vm(), mod, array);
+        mod->childrenOfBody = index <= mod->childrenOfBody ? children.size() : ofBody;
 
         {
             WTF::Locker locker { mod->cellLock() };

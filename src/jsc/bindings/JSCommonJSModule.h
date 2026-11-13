@@ -95,7 +95,8 @@ public:
     // wrapper closes over are the graph's. Null: the global object's.
     JSC::WriteBarrier<JSModuleGraph> m_moduleGraph;
 
-    bool ignoreESModuleAnnotation { false };
+    // How many children the module had when its body ended: what the body required, not what a function of it required later.
+    uint32_t childrenOfBody { 0 };
     // Of the module object of a file of an ahead-of-time executable: the number of the file in the executable. Its `exports`, `parent` and `children` are the engine's to answer.
     static constexpr uint32_t noCompiledModule = UINT32_MAX;
     uint32_t compiledModule { noCompiledModule };
@@ -182,6 +183,11 @@ public:
     }
 
     bool hasEvaluated = false;
+    bool ignoreESModuleAnnotation { false };
+    // The number of the test file in which it last called require(), as BunPlugin::OnLoad::testFileOfRequires counts. See Bun::didRequireInLaterTestFile().
+    uint32_t testFileOfRequires { 1 };
+    // In m_children, or in the array that a read of `module.children` has moved them into.
+    uint32_t numberOfChildren() const;
 
     JSCommonJSModule(JSC::VM& vm, JSC::Structure* structure, JSC::JSString* id, JSC::JSValue filename, JSC::JSString* dirname)
         : Base(vm, structure)

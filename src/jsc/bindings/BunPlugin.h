@@ -7,6 +7,7 @@
 #include <JavaScriptCore/Strong.h>
 #include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/WeakInlines.h>
+#include <JavaScriptCore/ModuleMap.h>
 #include <wtf/ListHashSet.h>
 #include "helpers.h"
 
@@ -154,6 +155,28 @@ public:
         WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSCell>> evictedPreloadCommonJSModules = {};
         // Starts at 1 so that a missing testFileOfModule entry (0) means a preload fetched the module.
         unsigned testFile = 1;
+        // The key of the test file that runs. See modulesOfRunningTestFile().
+        String runningTestFile;
+        // What import() and the first require() of an ES module have given since that file started: the module that asked, and the loader's promise or the namespace.
+        // The loader keeps no edge for either.
+        struct ModuleGivenByCall {
+            RefPtr<WTF::UniquedStringImpl> referrer;
+            RefPtr<WTF::UniquedStringImpl> specifier;
+            JSC::Strong<JSC::JSCell> promiseOrNamespace;
+        };
+        JSC::ResolutionMap<ModuleGivenByCall> modulesGivenByCalls = {};
+        // The module objects that have called require() since then, each with the number of children it had before.
+        struct Requirer {
+            JSC::Strong<JSC::JSCell> module;
+            unsigned childrenBefore { 0 };
+        };
+        Vector<Requirer> requirersOfRunningTestFile = {};
+        // The children that a factory got through the require() of a module object, each by the number of children that the object had before: alone, the factory runs when something imports the mock.
+        Vector<Requirer> childrenGivenToFactories = {};
+        // What JSCommonJSModule::testFileOfRequires is compared with: testFile, or 0 once the test file has called a factory. From then on every require() asks whether a factory makes it.
+        unsigned testFileOfRequires = 1;
+        // Modules that the running test file mocked in place before it had them: what it imports under their keys from then on is the mock.
+        WTF::UncheckedKeyHashSet<String> mockedBeforeHeld = {};
         // The modules that have called mock.module(), vi.mock() and the like since the running test file started.
         WTF::UncheckedKeyHashSet<String> mockingModules = {};
         WTF::UncheckedKeyHashMap<String, unsigned> testFileOfModule = {};
@@ -183,6 +206,15 @@ public:
 
         bool hasVirtualModules() const { return virtualModules != nullptr; }
 
+        void forgetModulesOfRunningTestFile()
+        {
+            runningTestFile = String();
+            modulesGivenByCalls.clear();
+            requirersOfRunningTestFile.clear();
+            childrenGivenToFactories.clear();
+            mockedBeforeHeld.clear();
+        }
+
         void addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mock);
 
         std::optional<String> resolveVirtualModule(const String& path, const String& from);
@@ -205,6 +237,7 @@ public:
             loadedByImportActual.clear();
             filesWithEarlierOriginal.clear();
             filesWithRestoredOriginal.clear();
+            forgetModulesOfRunningTestFile();
 #if ENABLE(AOT)
             pendingCompiledMocks.clear();
             compiledMockFactories.clear();
@@ -340,7 +373,12 @@ class JSSourceCode;
 }
 
 namespace Bun {
+class JSCommonJSModule;
 JSC::JSValue runVirtualModule(Zig::GlobalObject*, BunString* specifier, bool& wasModuleMock, Zig::BunPlugin::OnLoad::Matches& onLoad);
+// For a require() through `requirer` whose testFileOfRequires is not the one of the running test file. `childrenBefore`: how many children it has without the one that the call adds.
+void didRequireInLaterTestFile(Zig::GlobalObject*, JSCommonJSModule* requirer, unsigned childrenBefore);
+// For a call that gives `referrer` a module and leaves the loader no edge, where onLoadPlugins.testFile is not 1. A mock evicts the importers that earlier test files left, and keeps what the running file has got.
+void didGiveModuleInLaterTestFile(Zig::GlobalObject*, const JSC::Identifier& referrer, const JSC::Identifier& specifier, JSC::JSCell* promiseOrNamespace);
 JSC::JSValue findModuleMock(Zig::GlobalObject*, const BunString* specifier);
 // Returns null if the factory has settled or the generated ES module will call it (never when `synchronous`), else a promise for that.
 JSC::JSPromise* runModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock, const String& key, bool synchronous);

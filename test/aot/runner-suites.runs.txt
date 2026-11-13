@@ -11,6 +11,20 @@ test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone
 test/js/bun/test/mock/mock-module.test.ts: a factory that loads a module which imports another mock > a mock that waits for the factory is a mock for what the factory loads too
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > a factory that fails
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > require() of a module that imports the mock
+# These: a test file mocks a module that an earlier test file loaded. Plain keeps the modules that the file has got by then. Compiled runs them again at their next import.
+# In all but the last a test of the fixture fails for it: the file has two instances of them.
+test/js/bun/test/mock/mock-module.test.ts: a test file keeps the modules it has got when it mocks what they import > CommonJS modules that > behind a file that has loaded every module (1)
+test/js/bun/test/mock/mock-module.test.ts: a test file keeps the modules it has got when it mocks what they import > CommonJS modules that > behind a file that has loaded every module (2)
+test/js/bun/test/mock/mock-module.test.ts: a test file keeps the modules it has got when it mocks what they import > an importer of > behind a file that has loaded every module
+test/js/bun/test/mock/mock-module.test.ts: a test file keeps the modules it has got when it mocks what they import > an importer of > in the second run of the file
+test/js/bun/test/mock/mock-module.test.ts: a test file keeps the modules it has got when it mocks what they import > what it got by > behind a file that has loaded every module (1)
+test/js/bun/test/mock/mock-module.test.ts: a test file keeps the modules it has got when it mocks what they import > what it got by > behind a file that has loaded every module (2)
+test/js/bun/test/mock/mock-module.test.ts: a test file keeps the modules it has got when it mocks what they import > what it has when it mocks by > behind a file that has loaded every module (1)
+test/js/bun/test/mock/mock-module.test.ts: a test file keeps the modules it has got when it mocks what they import > what it has when it mocks by > behind a file that has loaded every module (2)
+test/js/bun/test/mock/mock-module.test.ts: a test file keeps the modules it has got when it mocks what they import > what it has when it mocks by > in the second run of the file (1)
+test/js/bun/test/mock/mock-module.test.ts: a test file keeps the modules it has got when it mocks what they import > what it has when it mocks by > in the second run of the file (2)
+test/js/bun/test/mock/mock-module.test.ts: a test file keeps the modules it has got when it mocks what they import > with these differences from its run alone > behind a file that has loaded every module
+test/js/bun/test/mock/mock-module.test.ts: a test file keeps the modules it has got when it mocks what they import > not > behind a file that has loaded every module (1)
 # The next one: a require() gives up on a mock whose factory has not settled, an import() of the same file is in flight, and the modules are reset. Every test of the fixture passes. Compiled, one body runs
 # behind the last line of the test and races the end of the process: some lists hold it and some do not. With a wait as the last line of the test every list holds it. The list of plain is the same in every run.
 ~ test/js/bun/test/mock/mock-module.test.ts: an automock is built from the copy of its original module that a running factory was given

@@ -16,7 +16,7 @@ pub(crate) struct Normalized {
     pub text: Vec<u8>,
     /// Every source-map point in printed order (JS only; empty when the printer gave none).
     pub map: Vec<MapPoint>,
-    /// `import`/`require` specifiers, in source order, internal/unused ones dropped.
+    /// `import`/`require` specifiers (internal/unused ones dropped) or CSS `@import`/`url()` targets, in source order.
     pub imports: Vec<Vec<u8>>,
     /// The original had so few newlines relative to its size that original line numbers are meaningless.
     pub was_minified: bool,
@@ -935,10 +935,22 @@ fn normalize_css(path: &[u8], bytes: &[u8]) -> Option<Normalized> {
             &symbols,
         )
         .ok()?;
-    let imports = import_records
-        .iter()
-        .map(|r| r.path.text.to_vec())
-        .collect();
+    // `url(#clip)` and `?v=2` name the document itself and a `data:` `url()` holds its own bytes: none loads a file.
+    let loads_a_file = |r: &&bun_ast::ImportRecord| {
+        let target = r.path.text;
+        let inline = target.starts_with(b"#")
+            || bun_core::strings::has_prefix_case_insensitive(target, b"data:");
+        !(target.is_empty()
+            || target.starts_with(b"?")
+            || (r.kind == bun_ast::ImportKind::Url && inline))
+    };
+    let mut imports = Vec::with_capacity(import_records.len());
+    imports.extend(
+        import_records
+            .iter()
+            .filter(loads_a_file)
+            .map(|r| r.path.text.to_vec()),
+    );
     Some(Normalized {
         text: result.code,
         map: Vec::new(),

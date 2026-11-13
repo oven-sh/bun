@@ -4,6 +4,9 @@
 // were translated against the crate's public surface and refer to it by name.
 extern crate self as bun_css;
 
+#[cfg(test)]
+use bun_sema_standalone as _;
+
 /// Case-insensitive ASCII byte-slice dispatch — equivalent to
 /// rust-cssparser's `match_ignore_ascii_case!`.
 ///

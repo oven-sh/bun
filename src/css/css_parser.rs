@@ -315,14 +315,14 @@ fn parse_at_rule<P: AtRuleParser>(
     let next = match input.next() {
         Ok(v) => *v,
         Err(_) => {
-            return match P::rule_without_block(parser, prelude, start) {
+            return match P::rule_without_block(parser, prelude, start, input) {
                 Ok(v) => Ok(v),
                 Err(()) => Err(input.new_unexpected_token_error(Token::Semicolon)),
             };
         }
     };
     match next {
-        Token::Semicolon => match P::rule_without_block(parser, prelude, start) {
+        Token::Semicolon => match P::rule_without_block(parser, prelude, start, input) {
             Ok(v) => Ok(v),
             Err(()) => Err(input.new_unexpected_token_error(Token::Semicolon)),
         },
@@ -634,7 +634,7 @@ pub trait QualifiedRuleParser {
 pub struct DefaultAtRule;
 
 /// Same as `AtRuleParser` but modified to provide parser options.
-/// Also added: `on_import_rule` to handle `@import` rules.
+/// Also added: `on_import_rule`, called for each `@import` rule.
 pub trait CustomAtRuleParser {
     type Prelude;
     type AtRule;
@@ -663,7 +663,7 @@ pub trait CustomAtRuleParser {
         is_nested: bool,
     ) -> CssResult<Self::AtRule>;
 
-    fn on_import_rule(this: &mut Self, import_rule: &mut ImportRule, start: u32, end: u32);
+    fn on_import_rule(this: &mut Self);
     fn on_layer_rule(this: &mut Self, layers: &SmallList<LayerName, 1>);
     fn enclosing_layer_length(this: &mut Self) -> u32;
     fn push_to_enclosing_layer(this: &mut Self, name: LayerName);
@@ -701,6 +701,7 @@ pub trait AtRuleParser {
         _this: &mut Self,
         _prelude: Self::Prelude,
         _start: &ParserState,
+        _input: &mut Parser,
     ) -> Maybe<Self::AtRule, ()> {
         Err(())
     }
@@ -716,18 +717,12 @@ pub trait AtRuleParser {
 
 pub type BundlerAtRule = DefaultAtRule;
 
-/// The at-rule hooks for both `StyleSheet::parse` (`track_layers_and_imports`
+/// The at-rule hooks for both `StyleSheet::parse` (`track_layers`
 /// off: every hook is a no-op) and `parse_bundler`, so the rule parsers are
 /// instantiated once.
 pub struct BundlerAtRuleParser<'a> {
     pub(crate) arena: &'a Bump,
-    pub(crate) track_layers_and_imports: bool,
-    /// Raw pointer aliasing the same `Vec` that `Parser.import_records`
-    /// points to. Both views are raw pointers sharing a single
-    /// SharedRW provenance (see `parse_bundler`); each materialises a
-    /// short-lived `&mut` only at the point of use, so accesses interleave
-    /// soundly under Stacked Borrows.
-    pub(crate) import_records: *mut Vec<ImportRecord<'static>>,
+    pub(crate) track_layers: bool,
     pub(crate) layer_names: Vec<LayerName>,
     /// `layer_names` as it was at the first `@import`. `None` until then.
     pub(crate) layers_pre_import: Option<Vec<LayerName>>,
@@ -771,50 +766,14 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
         Err(())
     }
 
-    fn on_import_rule(
-        this: &mut Self,
-        import_rule: &mut ImportRule,
-        start_position: u32,
-        end_position: u32,
-    ) {
-        if !this.track_layers_and_imports {
-            return;
-        }
-        if this.layers_pre_import.is_none() {
+    fn on_import_rule(this: &mut Self) {
+        if this.track_layers && this.layers_pre_import.is_none() {
             this.layers_pre_import = Some(core::mem::take(&mut this.layer_names));
         }
-        // SAFETY: `import_records` shares raw-pointer provenance with
-        // `Parser.import_records` (see field doc / `parse_bundler`). This hook
-        // runs synchronously between parser accesses, so the fresh `&mut`
-        // created here is the only live reference for its scope.
-        let import_records = unsafe { &mut *this.import_records };
-        let import_record_index = u32::try_from(import_records.len()).unwrap();
-        import_rule.import_record_idx = import_record_index;
-        import_records.push(ImportRecord {
-            path: ast::fs::path_init(import_rule.url),
-            kind: if import_rule.conditions.supports.is_some() {
-                ImportKind::AtConditional
-            } else {
-                ImportKind::At
-            },
-            range: bun_ast::Range {
-                loc: bun_ast::Loc {
-                    start: i32::try_from(start_position).expect("int cast"),
-                },
-                len: i32::try_from(end_position - start_position).expect("int cast"),
-            },
-            // NOTE: `ImportRecord` deliberately has no `Default` (range/path/kind
-            // are required); spell out the remaining defaults explicitly.
-            tag: Default::default(),
-            loader: None,
-            source_index: Default::default(),
-            original_path: b"",
-            flags: Default::default(),
-        });
     }
 
     fn on_layer_rule(this: &mut Self, layers: &SmallList<LayerName, 1>) {
-        if !this.track_layers_and_imports || this.anon_layer_count > 0 {
+        if !this.track_layers || this.anon_layer_count > 0 {
             return;
         }
         this.layer_names
@@ -841,7 +800,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
     }
 
     fn push_to_enclosing_layer(this: &mut Self, name: LayerName) {
-        if !this.track_layers_and_imports {
+        if !this.track_layers {
             return;
         }
         this.enclosing_layer.v.append_slice(name.v.slice());
@@ -860,7 +819,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
     }
 
     fn bump_anon_layer_count(this: &mut Self, amount: i32) {
-        if !this.track_layers_and_imports {
+        if !this.track_layers {
             return;
         }
         if amount > 0 {
@@ -1302,6 +1261,7 @@ mod rule_parsers {
             this: &mut Self,
             prelude: Self::Prelude,
             start: &ParserState,
+            input: &mut Parser,
         ) -> Maybe<(), ()> {
             let loc_ = start.source_location();
             let loc = Location {
@@ -1328,12 +1288,17 @@ mod rule_parsers {
                         loc,
                         ..Default::default()
                     };
-                    AtRuleParserT::on_import_rule(
-                        this.at_rule_parser,
-                        &mut import_rule,
-                        u32::try_from(start.position).expect("int cast"),
-                        u32::try_from(start.position + 1).expect("int cast"),
-                    );
+                    AtRuleParserT::on_import_rule(this.at_rule_parser);
+                    let kind = if import_rule.conditions.supports.is_some() {
+                        ImportKind::AtConditional
+                    } else {
+                        ImportKind::At
+                    };
+                    if let Some(index) =
+                        input.push_import_record(url, start.position, start.position + 1, kind)
+                    {
+                        import_rule.import_record_idx = index;
+                    }
                     this.rules.v.push(CssRule::Import(import_rule));
                     Ok(())
                 }
@@ -1366,6 +1331,7 @@ mod rule_parsers {
                         &mut nested_parser,
                         layer,
                         start,
+                        input,
                     )
                 }
                 AtRulePrelude::Charset => Ok(()),
@@ -1388,6 +1354,7 @@ mod rule_parsers {
                         &mut nested_parser,
                         custom,
                         start,
+                        input,
                     )
                 }
                 _ => Err(()),
@@ -1949,6 +1916,7 @@ mod rule_parsers {
             this: &mut Self,
             prelude: Self::Prelude,
             start: &ParserState,
+            _input: &mut Parser,
         ) -> Maybe<(), ()> {
             let loc = this.get_loc(start);
             match prelude {
@@ -2597,8 +2565,7 @@ mod stylesheet_impl {
             // need a custom at-rule call `parse_with` directly.
             let mut at_rule_parser = BundlerAtRuleParser {
                 arena,
-                track_layers_and_imports: false,
-                import_records: core::ptr::null_mut(),
+                track_layers: false,
                 layer_names: Vec::new(),
                 layers_pre_import: None,
                 anon_layer_count: 0,
@@ -2609,7 +2576,7 @@ mod stylesheet_impl {
                 code,
                 options,
                 &mut at_rule_parser,
-                import_records.map(core::ptr::NonNull::from),
+                import_records,
                 source_index,
             )
         }
@@ -2620,7 +2587,7 @@ mod stylesheet_impl {
             code: &[u8],
             options: ParserOptions<'_>,
             at_rule_parser: &mut P,
-            import_records: Option<core::ptr::NonNull<Vec<ImportRecord<'static>>>>,
+            import_records: Option<&mut Vec<ImportRecord<'static>>>,
             source_index: SrcIndex,
         ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>> {
             // TODO: 'bump lifetime threading — every arena-backed slice the
@@ -2747,7 +2714,7 @@ mod stylesheet_impl {
             let mut input = ParserInput::new(code, arena);
             let mut parser = Parser::new(
                 &mut input,
-                Some(core::ptr::NonNull::from(import_records)),
+                Some(import_records),
                 if options.css_modules.is_some() {
                     ParserOpts::CSS_MODULES
                 } else {
@@ -2805,18 +2772,9 @@ mod stylesheet_impl {
             import_records: &mut Vec<ImportRecord<'static>>,
             source_index: SrcIndex,
         ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>> {
-            // `import_records` is shared by both `BundlerAtRuleParser` and the
-            // inner `Parser`: derive a single raw `NonNull` from the unique
-            // borrow; both the at-rule parser and `Parser::new` store copies of
-            // that raw pointer. Neither holds a
-            // long-lived `&mut`, so interleaved writes from `on_import_rule` and
-            // `add_import_record`/`state`/`reset` each create a fresh short-lived
-            // `&mut` from the shared SharedRW provenance — sound under SB.
-            let import_records_ptr = core::ptr::NonNull::from(import_records);
             let mut at_rule_parser = BundlerAtRuleParser {
                 arena,
-                track_layers_and_imports: true,
-                import_records: import_records_ptr.as_ptr(),
+                track_layers: true,
                 layer_names: Vec::new(),
                 layers_pre_import: None,
                 anon_layer_count: 0,
@@ -2827,7 +2785,7 @@ mod stylesheet_impl {
                 code,
                 options,
                 &mut at_rule_parser,
-                Some(import_records_ptr),
+                Some(import_records),
                 source_index,
             )
         }
@@ -3108,12 +3066,8 @@ pub struct Parser<'a> {
     pub(crate) at_start_of: Option<BlockType>,
     pub(crate) stop_before: Delimiters,
     pub(crate) flags: ParserOpts,
-    /// Stored as a raw `NonNull` because `BundlerAtRuleParser` holds an aliasing
-    /// raw pointer to the same list. Keeping a long-lived `&'a mut` here would
-    /// be invalidated under Stacked Borrows the moment `on_import_rule`
-    /// derives its own `&mut` from the sibling raw pointer. Each access site
-    /// materialises a fresh short-lived `&mut` instead.
-    pub(crate) import_records: Option<core::ptr::NonNull<Vec<ImportRecord<'static>>>>,
+    /// The caller's list. `push_import_record` is the only code that adds to it.
+    pub(crate) import_records: Option<&'a mut Vec<ImportRecord<'static>>>,
     pub(crate) extra: Option<&'a mut ParserExtra>,
 }
 
@@ -3174,30 +3128,38 @@ impl<'a> Parser<'a> {
         end_position: usize,
         kind: ImportKind,
     ) -> CssResult<u32> {
-        if let Some(ptr) = self.import_records {
-            // SAFETY: see `Parser.import_records` field doc — sole live `&mut`
-            // for this scope; provenance shared only with raw-pointer aliases.
-            let import_records = unsafe { &mut *ptr.as_ptr() };
-            let idx = u32::try_from(import_records.len()).unwrap();
-            import_records.push(ImportRecord {
-                path: ast::fs::path_init(url),
-                kind,
-                range: bun_ast::Range {
-                    loc: bun_ast::Loc {
-                        start: i32::try_from(start_position).expect("int cast"),
-                    },
-                    len: i32::try_from(end_position - start_position).expect("int cast"),
-                },
-                tag: Default::default(),
-                loader: None,
-                source_index: Default::default(),
-                original_path: b"",
-                flags: Default::default(),
-            });
-            Ok(idx)
-        } else {
-            Err(self.new_basic_unexpected_token_error(Token::UnquotedUrl(url)))
+        match self.push_import_record(url, start_position, end_position, kind) {
+            Some(index) => Ok(index),
+            None => Err(self.new_basic_unexpected_token_error(Token::UnquotedUrl(url))),
         }
+    }
+
+    /// Returns `None`, and records nothing, when the caller passed no list.
+    pub(crate) fn push_import_record(
+        &mut self,
+        url: &'static [u8],
+        start_position: usize,
+        end_position: usize,
+        kind: ImportKind,
+    ) -> Option<u32> {
+        let import_records = self.import_records.as_deref_mut()?;
+        let index = u32::try_from(import_records.len()).unwrap();
+        import_records.push(ImportRecord {
+            path: ast::fs::path_init(url),
+            kind,
+            range: bun_ast::Range {
+                loc: bun_ast::Loc {
+                    start: i32::try_from(start_position).expect("int cast"),
+                },
+                len: i32::try_from(end_position - start_position).expect("int cast"),
+            },
+            tag: Default::default(),
+            loader: None,
+            source_index: Default::default(),
+            original_path: b"",
+            flags: Default::default(),
+        });
+        Some(index)
     }
 
     #[inline]
@@ -3212,7 +3174,7 @@ impl<'a> Parser<'a> {
     /// error.
     pub fn new(
         input: &'a mut ParserInput<'a>,
-        import_records: Option<core::ptr::NonNull<Vec<ImportRecord<'static>>>>,
+        import_records: Option<&'a mut Vec<ImportRecord<'static>>>,
         flags: ParserOpts,
         extra: Option<&'a mut ParserExtra>,
     ) -> Parser<'a> {
@@ -3762,11 +3724,9 @@ impl<'a> Parser<'a> {
     pub(crate) fn reset(&mut self, state_: &ParserState) {
         self.input.tokenizer.reset(state_);
         self.at_start_of = state_.at_start_of;
-        if let Some(ptr) = self.import_records {
+        if let Some(import_records) = self.import_records.as_deref_mut() {
             // Roll back any speculatively-added @import/url() records.
-            // SAFETY: see `Parser.import_records` field doc.
-            unsafe { &mut *ptr.as_ptr() }
-                .shrink_retaining_capacity(state_.import_record_count as usize);
+            import_records.shrink_retaining_capacity(state_.import_record_count as usize);
         }
     }
 
@@ -3776,11 +3736,10 @@ impl<'a> Parser<'a> {
             current_line_start_position: self.input.tokenizer.current_line_start_position,
             current_line_number: self.input.tokenizer.current_line_number,
             at_start_of: self.at_start_of,
-            // SAFETY: see `Parser.import_records` field doc.
             import_record_count: self
                 .import_records
-                .map(|ptr| unsafe { (*ptr.as_ptr()).len() } as u32)
-                .unwrap_or(0),
+                .as_deref()
+                .map_or(0, |import_records| import_records.len() as u32),
         }
     }
 
@@ -6069,7 +6028,7 @@ pub mod parse_utility {
         let mut i = ParserInput::new(input, arena);
         let mut parser = Parser::new(
             &mut i,
-            Some(core::ptr::NonNull::from(&mut import_records)),
+            Some(&mut import_records),
             ParserOpts::default(),
             None,
         );
@@ -6352,4 +6311,83 @@ pub fn f32_length_with_5_digits(n_input: f32) -> usize {
     }
 
     count
+}
+
+#[cfg(test)]
+mod tests {
+    use bstr::BStr;
+
+    use super::{
+        Bump, BundlerStyleSheet, CssRule, DefaultAtRule, ImportKind, ImportRecord, ParserOptions,
+        SrcIndex, StyleSheet,
+    };
+
+    const SHEET: &[u8] = b"@import \"a.css\";\n@import url(b.css) supports(display: grid);\n.c { background: url(d.png) }\n";
+
+    fn kinds_and_paths(records: &[ImportRecord<'static>]) -> Vec<(ImportKind, &'static BStr)> {
+        records
+            .iter()
+            .map(|record| (record.kind, BStr::new(record.path.text)))
+            .collect()
+    }
+
+    fn record_of_each_import_rule(sheet: &StyleSheet<DefaultAtRule>) -> Vec<u32> {
+        sheet
+            .rules
+            .v
+            .iter()
+            .filter_map(|rule| match rule {
+                CssRule::Import(import) => Some(import.import_record_idx),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn parser_records_each_import_in_the_list_it_is_given() {
+        let arena: &'static Bump = Box::leak(Box::new(Bump::new()));
+        let options = || ParserOptions::default(None);
+        let expected = [
+            (ImportKind::At, BStr::new("a.css")),
+            (ImportKind::AtConditional, BStr::new("b.css")),
+            (ImportKind::Url, BStr::new("d.png")),
+        ];
+
+        let mut records = Vec::new();
+        let Ok((sheet, _)) = StyleSheet::<DefaultAtRule>::parse(
+            arena,
+            SHEET,
+            options(),
+            Some(&mut records),
+            SrcIndex::INVALID,
+        ) else {
+            panic!("`StyleSheet::parse` rejects the sheet");
+        };
+        assert_eq!(kinds_and_paths(&records), expected);
+        assert_eq!(record_of_each_import_rule(&sheet), [0, 1]);
+
+        let mut records = Vec::new();
+        let Ok((sheet, _)) = BundlerStyleSheet::parse_bundler(
+            arena,
+            SHEET,
+            options(),
+            &mut records,
+            SrcIndex::INVALID,
+        ) else {
+            panic!("`parse_bundler` rejects the sheet");
+        };
+        assert_eq!(kinds_and_paths(&records), expected);
+        assert_eq!(record_of_each_import_rule(&sheet), [0, 1]);
+
+        let Ok((sheet, _)) = StyleSheet::<DefaultAtRule>::parse(
+            arena,
+            b"@import \"a.css\";\n",
+            options(),
+            None,
+            SrcIndex::INVALID,
+        ) else {
+            panic!("`StyleSheet::parse` with no list rejects an `@import` rule");
+        };
+        assert_eq!(record_of_each_import_rule(&sheet), [u32::MAX]);
+    }
 }

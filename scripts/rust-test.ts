@@ -37,6 +37,7 @@ const crates = [
   "bun_bundler",
   "bun_collections",
   "bun_crash_handler",
+  "bun_css",
   "bun_dispatch",
   "bun_errno",
   "bun_exe_format",

@@ -49,7 +49,6 @@ use crate::network_task::ForTarballError;
 use crate::package_manager::Options::LogLevel;
 use crate::package_manager::{self, PackageManager, WorkspaceFilter, run_tasks};
 use crate::package_manager_real::ProgressStrings;
-use crate::package_manager_task as Task;
 use crate::prune::{LinkedNodeModules, OldModules};
 use crate::{
     self as install, DependencyID, PackageID, PackageInstall, PackageNameHash, Resolution,
@@ -137,37 +136,6 @@ impl<'a> std::io::Write for WyhashWriter<'a> {
     }
 }
 
-/// `RunTasksCallbacks` impl for the isolated-install loop, with
-/// `Ctx == store::Installer`.
-pub(crate) struct StoreRunTasksCallbacks<'a>(core::marker::PhantomData<&'a mut ()>);
-
-impl<'a> run_tasks::RunTasksCallbacks for StoreRunTasksCallbacks<'a> {
-    type Ctx = store::Installer<'a>;
-
-    const HAS_ON_EXTRACT: bool = true;
-    const HAS_ON_PACKAGE_DOWNLOAD_ERROR: bool = true;
-    const IS_STORE_INSTALLER: bool = true;
-
-    fn on_extract_store_installer(
-        ctx: &mut Self::Ctx,
-        task_id: Task::Id,
-        data: &install::ExtractData,
-    ) {
-        ctx.on_package_extracted(task_id, data);
-    }
-
-    fn on_package_download_error_store(
-        ctx: &mut Self::Ctx,
-        id: Task::Id,
-        name: &[u8],
-        resolution: &Resolution,
-        err: crate::Error,
-        url: &[u8],
-    ) {
-        ctx.on_package_download_error(id, name, resolution, err, url);
-    }
-}
-
 struct Wait<'a, 'b> {
     installer: &'a mut store::Installer<'b>,
     err: Option<crate::Error>,
@@ -182,9 +150,9 @@ impl<'a, 'b> Wait<'a, 'b> {
         let log_level = pkg_manager.options.log_level;
         // `run_tasks` must not call `installer.manager_mut()` — `pkg_manager`
         // is the live `&mut PackageManager` for this call.
-        if let Err(err) = run_tasks::run_tasks::<StoreRunTasksCallbacks>(
+        if let Err(err) = run_tasks::run_tasks(
             pkg_manager,
-            self.installer,
+            run_tasks::Caller::IsolatedLinker(self.installer),
             true,
             log_level,
         ) {

@@ -2100,7 +2100,7 @@ describe("import.meta.env in a browser bundle", () => {
     });
   });
 
-  test("development: false, env = \"inline\"", async () => {
+  test('development: false, env = "inline"', async () => {
     const out = await collect("false", "inline");
     expect(out.jsContainsImportMetaEnv).toBe(false);
     expect(out.evalError).toBeNull();

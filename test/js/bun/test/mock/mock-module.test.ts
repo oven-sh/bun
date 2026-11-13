@@ -2740,6 +2740,351 @@ describe.concurrent("a name that import and require() resolve to two files", () 
       ["--isolate"],
     );
   });
+
+  describe("several mocks of one path", () => {
+    // both() is what require() and an import of the name get. withActual() adds jest.requireActual(), which loads what require() loads.
+    const head = `
+      import { expect, jest, mock, test, vi } from "bun:test";
+      const both = async name => [require(name).which, (await import(name)).which];
+      const withActual = async name => [...(await both(name)), jest.requireActual(name).which];
+      const real = ["real cjs", "real esm", "real cjs"];
+    `;
+
+    test.each(isolationFlags)(
+      "a mock of the name and a mock of the path that require() resolves it to leave the files that ran before them %j",
+      async args => {
+        const pair = `
+          ${head}
+          const names = ["dual", "dual/sub", "#dep", "./lib"];
+          const byName = name => mock.module(name, () => ({ which: "by name" }));
+          const byPath = name => mock.module(require.resolve(name), () => ({ which: "by path" }));
+        `;
+        await expectFixturesToPass(
+          {
+            ...files,
+            "1.test.js": `
+              ${pair}
+              test.each(names)("an earlier test file runs both files of %s", async name => expect(await withActual(name)).toEqual(real));
+            `,
+            "2.test.js": `
+              ${pair}
+              test("jest.unmock() of the name ends both", async () => {
+                const ran = require("dual");
+                byName("dual");
+                byPath("dual");
+                jest.unmock("dual");
+                expect(await withActual("dual")).toEqual(real);
+                jest.unmock(require.resolve("dual"));
+                expect(await withActual("dual")).toEqual(real);
+                expect(require("dual")).toBe(ran);
+              });
+              test("each answers for its own path, and the mock of the path ends first", async () => {
+                const ran = require("dual");
+                byName("dual");
+                expect(await both("dual")).toEqual(["by name", "by name"]);
+                byPath("dual");
+                expect(await both("dual")).toEqual(["by path", "by name"]);
+                expect(jest.requireActual("dual")).toBe(ran);
+                jest.unmock(require.resolve("dual"));
+                expect(await both("dual")).toEqual(["real cjs", "by name"]);
+                expect(require("dual")).toBe(ran);
+                jest.unmock("dual");
+                expect(await withActual("dual")).toEqual(real);
+              });
+              test("the mock of the name ends first", async () => {
+                const ran = require("dual");
+                byName("dual");
+                byPath("dual");
+                vi.unmock("dual");
+                expect(await both("dual")).toEqual(["by path", "real esm"]);
+                expect(jest.requireActual("dual")).toBe(ran);
+                jest.unmock(require.resolve("dual"));
+                expect(await withActual("dual")).toEqual(real);
+                expect(require("dual")).toBe(ran);
+              });
+              test("the mock of the name that comes second takes the path", async () => {
+                const ran = require("dual");
+                byPath("dual");
+                expect(await both("dual")).toEqual(["by path", "real esm"]);
+                byName("dual");
+                expect(await both("dual")).toEqual(["by name", "by name"]);
+                expect(jest.requireActual("dual")).toBe(ran);
+                jest.unmock("dual");
+                expect(await withActual("dual")).toEqual(real);
+                expect(require("dual")).toBe(ran);
+              });
+              test("a second mock of the name takes each path from the mock that has it", async () => {
+                const ran = require("dual");
+                byName("dual");
+                byPath("dual");
+                mock.module("dual", () => ({ which: "by name again" }));
+                expect(await both("dual")).toEqual(["by name again", "by name again"]);
+                expect(jest.requireActual("dual")).toBe(ran);
+                jest.unmock(require.resolve("dual"));
+                expect(await withActual("dual")).toEqual(real);
+                expect(require("dual")).toBe(ran);
+              });
+              test("both mocks are left to the end of the test file", async () => {
+                require("dual");
+                byName("dual");
+                byPath("dual");
+                expect(await both("dual")).toEqual(["by path", "by name"]);
+              });
+              test("so is the mock of the path, where the mock of the name has ended", async () => {
+                require("dual/sub");
+                byName("dual/sub");
+                byPath("dual/sub");
+                vi.unmock("dual/sub");
+                expect(await both("dual/sub")).toEqual(["by path", "real esm"]);
+              });
+              test("so is the mock of the name that took the path", async () => {
+                require("#dep");
+                byPath("#dep");
+                byName("#dep");
+                expect(await both("#dep")).toEqual(["by name", "by name"]);
+              });
+              test("and neither, where jest.unmock() of the name has ended both", async () => {
+                require("./lib");
+                byName("./lib");
+                byPath("./lib");
+                jest.unmock("./lib");
+                expect(await both("./lib")).toEqual(["real cjs", "real esm"]);
+              });
+            `,
+            "3.test.js": `
+              ${pair}
+              test.each(names)("the next test file gets the files of %s", async name => expect(await withActual(name)).toEqual(real));
+            `,
+          },
+          17,
+          args,
+        );
+      },
+    );
+
+    test.each(isolationFlags)("two names that share the file that require() loads %j", async args => {
+      await expectFixturesToPass(
+        {
+          ...files,
+          "node_modules/shared/package.json": JSON.stringify({
+            name: "shared",
+            exports: {
+              "./a": { import: "./a.mjs", require: "./bundle.cjs" },
+              "./b": { import: "./b.mjs", require: "./bundle.cjs" },
+            },
+          }),
+          "node_modules/shared/a.mjs": esm("shared/a"),
+          "node_modules/shared/b.mjs": esm("shared/b"),
+          "node_modules/shared/bundle.cjs": cjs("shared"),
+          "1.test.js": `
+            ${head}
+            const mocked = name => mock.module("shared/" + name, () => ({ which: "mock " + name }));
+            const all = async () => [...(await both("shared/a")), ...(await both("shared/b"))];
+            test("the later mock has the file, and each has its own ES module", async () => {
+              const ran = require("shared/a");
+              mocked("a");
+              expect(await all()).toEqual(["mock a", "mock a", "mock a", "real esm"]);
+              mocked("b");
+              expect(await all()).toEqual(["mock b", "mock a", "mock b", "mock b"]);
+              expect([jest.requireActual("shared/a") === ran, jest.requireActual("shared/b") === ran]).toEqual([true, true]);
+              vi.unmock("shared/a");
+              expect(await all()).toEqual(["mock b", "real esm", "mock b", "mock b"]);
+              jest.unmock("shared/b");
+              expect(await all()).toEqual(["real cjs", "real esm", "real cjs", "real esm"]);
+              expect(require("shared/b")).toBe(ran);
+            });
+            test("the later mock ends first, and require() of both names gets the file again", async () => {
+              const ran = require("shared/a");
+              mocked("a");
+              mocked("b");
+              jest.unmock("shared/b");
+              expect(await all()).toEqual(["real cjs", "mock a", "real cjs", "real esm"]);
+              expect(require("shared/a")).toBe(ran);
+              jest.unmock("shared/a");
+              expect(await all()).toEqual(["real cjs", "real esm", "real cjs", "real esm"]);
+            });
+            test("both are left to the end of the test file", async () => {
+              mocked("a");
+              mocked("b");
+              expect(await all()).toEqual(["mock b", "mock a", "mock b", "mock b"]);
+            });
+          `,
+          "2.test.js": `
+            ${head}
+            test("the next test file gets the files", async () => {
+              expect([await withActual("shared/a"), await withActual("shared/b")]).toEqual([real, real]);
+            });
+          `,
+        },
+        4,
+        args,
+      );
+    });
+
+    test.each(isolationFlags)(
+      "a mock of the path that an import resolves the name to, over a mock of the name %j",
+      async args => {
+        await expectFixturesToPass(
+          {
+            ...files,
+            "1.test.js": `
+              ${head}
+              const importPath = Bun.resolveSync("dual", import.meta.dir);
+              const byName = () => mock.module("dual", () => ({ which: "by name" }));
+              const byImportPath = () => mock.module(importPath, () => ({ which: "by import path" }));
+              test("takes that path alone from a mock that require() has loaded", async () => {
+                byName();
+                expect(require("dual").which).toBe("by name");
+                byImportPath();
+                expect(await both("dual")).toEqual(["by name", "by import path"]);
+                jest.unmock(importPath);
+                expect(await both("dual")).toEqual(["by name", "real esm"]);
+                jest.unmock("dual");
+                expect(await withActual("dual")).toEqual(real);
+              });
+              test("and both leave the files that ran before them", async () => {
+                const ran = require("dual");
+                byName();
+                expect(await both("dual")).toEqual(["by name", "by name"]);
+                byImportPath();
+                expect(await both("dual")).toEqual(["by name", "by import path"]);
+                expect(jest.requireActual("dual")).toBe(ran);
+                jest.unmock(importPath);
+                expect(await both("dual")).toEqual(["by name", "real esm"]);
+                jest.unmock("dual");
+                expect(await withActual("dual")).toEqual(real);
+                expect(require("dual")).toBe(ran);
+              });
+              test("vi.doMock() of the name is such a mock", async () => {
+                byName();
+                vi.doMock("dual", () => ({ which: "vi" }));
+                expect(await both("dual")).toEqual(["by name", "vi"]);
+                vi.doUnmock("dual");
+                expect(await both("dual")).toEqual(["by name", "real esm"]);
+                jest.unmock("dual");
+                expect(await withActual("dual")).toEqual(real);
+              });
+              test("both are left to the end of the test file", async () => {
+                byName();
+                expect(require("dual").which).toBe("by name");
+                byImportPath();
+                expect(await both("dual")).toEqual(["by name", "by import path"]);
+              });
+            `,
+            "2.test.js": `
+              ${head}
+              test("the next test file gets the files", async () => expect(await withActual("dual")).toEqual(real));
+            `,
+          },
+          5,
+          args,
+        );
+      },
+    );
+
+    test.each(isolationFlags)(
+      "the mocks that a preload made of the name and of its path come back after the mocks of a test file %j",
+      async args => {
+        const preloaded = `
+          ${head}
+          const pairs = ["dual", "#dep"];
+          test.each(pairs)("the mock of %s and the mock of its path each have their path", async name => {
+            expect(await both(name)).toEqual(["preload by path", "preload by name"]);
+          });
+          test("the one mock of ./lib has both paths", async () => expect(await both("./lib")).toEqual(["preload", "preload"]));
+        `;
+        await expectFixturesToPass(
+          {
+            ...files,
+            // The CommonJS files of "#dep" and of "./lib" have run before their mocks. No file of "dual" has.
+            "preload.js": `
+              import { mock } from "bun:test";
+              require("#dep");
+              require("./lib");
+              for (const name of ["dual", "#dep"]) {
+                mock.module(name, () => ({ which: "preload by name" }));
+                mock.module(require.resolve(name), () => ({ which: "preload by path" }));
+              }
+              mock.module("./lib", () => ({ which: "preload" }));
+            `,
+            "1.test.js": `
+              ${preloaded}
+              test.each(pairs)("a mock of %s takes both paths", async name => {
+                mock.module(name, () => ({ which: "by name" }));
+                expect(await both(name)).toEqual(["by name", "by name"]);
+              });
+              test("a mock of the path of ./lib takes that path alone", async () => {
+                mock.module(require.resolve("./lib"), () => ({ which: "by path" }));
+                expect(await both("./lib")).toEqual(["by path", "preload"]);
+              });
+            `,
+            "2.test.js": `
+              ${preloaded}
+              test.each(pairs)("a mock of the path of %s, then a mock of the name", async name => {
+                mock.module(require.resolve(name), () => ({ which: "by path" }));
+                expect(await both(name)).toEqual(["by path", "preload by name"]);
+                mock.module(name, () => ({ which: "by name" }));
+                expect(await both(name)).toEqual(["by name", "by name"]);
+              });
+              test("a mock of the path of ./lib that ends leaves the file until the test file ends", async () => {
+                mock.module(require.resolve("./lib"), () => ({ which: "by path" }));
+                jest.unmock(require.resolve("./lib"));
+                expect(await both("./lib")).toEqual(["real cjs", "preload"]);
+              });
+            `,
+            "3.test.js": `
+              ${preloaded}
+              test.each([...pairs, "./lib"])("jest.unmock() of %s ends what the preload made of it", async name => {
+                jest.unmock(name);
+                expect(await withActual(name)).toEqual(real);
+              });
+            `,
+            "4.test.js": preloaded,
+          },
+          21,
+          ["--preload", "./preload.js", ...args],
+        );
+      },
+    );
+
+    test("the later of build.module() and a mock has the path, and a mock that ends brings nothing back", async () => {
+      await expectFixturesToPass(
+        {
+          ...files,
+          "later.test.js": `
+            ${head}
+            const virtual = path =>
+              Bun.plugin({ name: "virtual", setup: build => void build.module(path, () => ({ exports: { which: "build.module()" }, loader: "object" })) });
+            test("build.module() of the path that require() resolves the name to, after a mock of the name", async () => {
+              require("dual");
+              mock.module("dual", () => ({ which: "mock" }));
+              expect(await both("dual")).toEqual(["mock", "mock"]);
+              virtual(require.resolve("dual"));
+              expect(await both("dual")).toEqual(["build.module()", "mock"]);
+              jest.unmock("dual");
+              expect(await both("dual")).toEqual(["build.module()", "real esm"]);
+            });
+            test("a mock of the name after build.module() of that path", async () => {
+              virtual(require.resolve("dual/sub"));
+              mock.module("dual/sub", () => ({ which: "mock" }));
+              expect(await both("dual/sub")).toEqual(["mock", "mock"]);
+              jest.unmock("dual/sub");
+              expect(await both("dual/sub")).toEqual(["real cjs", "real esm"]);
+            });
+            test("a second vi.doMock() of the name that ends with its block", async () => {
+              vi.doMock("#dep", () => ({ which: "first" }));
+              {
+                using second = vi.doMock("#dep", () => ({ which: "second" }));
+                expect(await both("#dep")).toEqual(["real cjs", "second"]);
+              }
+              expect(await both("#dep")).toEqual(["real cjs", "real esm"]);
+            });
+          `,
+        },
+        3,
+      );
+    });
+  });
 });
 
 describe.concurrent("unmock", () => {

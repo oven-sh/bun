@@ -421,9 +421,8 @@ impl<'a> Format<'a> for MemberChain<'a, '_> {
             if has_empty_line_before_tail || last_group_breaks {
                 write!(f, expand_parent());
             }
-            // If an object in the last group breaks because it doesn't fit, it stays broken, and so do the groups
-            // around it. The next run then prints the chain on one line before it, if that fits. That's printed right
-            // away.
+            // An object in the last group that breaks stays broken, so the next run prints the chain on one line
+            // before it, if that fits. That's printed right away.
             let last_group_decides = !calls.function_breaks_last
                 && last.is_some_and(|it| it.stays_expanded(f))
                 && self.last_group_prints_the_same_once_broken(f);

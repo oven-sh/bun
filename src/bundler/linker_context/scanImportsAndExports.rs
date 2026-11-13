@@ -387,8 +387,7 @@ pub(crate) fn scan_imports_and_exports(
                             }
                         } else if other_flags.contains(AstFlags::FORCE_CJS_TO_ESM) {
                             if other_file == id {
-                                // Whether an `import()` of the file itself loads the file's
-                                // chunk depends on a wrapper that the file can still get.
+                                // Decided after step 2: the file can still get a wrapper.
                                 self_imports_of_lifted_files
                                     .push((id as IndexInt, import_record_index as u32));
                             } else if this.is_external_dynamic_import(record, id as u32)
@@ -1442,8 +1441,7 @@ pub(crate) fn scan_imports_and_exports(
     Ok(())
 }
 
-/// Does an `import()` that loads the chunk of a lifted CommonJS file read `default`,
-/// where `default` is `module.exports`? The chunk then needs that export.
+/// An `import()` of a lifted CommonJS chunk reads `default` as `module.exports`.
 fn import_reads_module_exports_as_default(
     exports: &NamedExports,
     target_flags: AstFlags,

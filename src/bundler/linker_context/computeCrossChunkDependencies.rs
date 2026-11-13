@@ -38,9 +38,7 @@ pub(crate) fn compute_cross_chunk_dependencies<'a>(
         // Derive `ctx_ptr` from the `&mut` (not `from_ref`) so the raw carries `c`'s own
         // Unique provenance: under Stacked Borrows the subsequent `split_mut` reborrows
         // are children of that tag, so `&*ctx_ptr` in `walk()` (which reads
-        // `c.graph.files.{ptrs,len}` via `is_external_dynamic_import`, and the
-        // `flags` column of `c.graph.meta` for an `import()` of the importing file;
-        // `walk()` only reads that column, through `deps.flags`) stays valid.
+        // `c.graph.files.{ptrs,len}` via `is_external_dynamic_import`) stays valid.
         // `from_ref(c)` would push a SharedRO tag that the `&mut c.graph.X` reborrows
         // pop, leaving the raw dangling under SB.
         //
@@ -168,9 +166,13 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                 // Rewrite external dynamic imports to point to the chunk for that entry point
                 for &import_record_id in part.import_record_indices.slice() {
                     let import_record = &mut import_records[import_record_id as usize];
-                    if import_record.source_index.is_valid()
-                        && ctx.is_external_dynamic_import(import_record, source_index)
-                    {
+                    let loads_chunk = import_record.source_index.is_valid()
+                        && if import_record.source_index.get() == source_index {
+                            ctx.import_of_itself_loads_chunk(import_record, wrap)
+                        } else {
+                            ctx.is_external_dynamic_import(import_record, source_index)
+                        };
+                    if loads_chunk {
                         let other_chunk_index =
                             entry_point_chunk_indices[import_record.source_index.get() as usize];
                         // Slice copy (fat pointer):

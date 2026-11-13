@@ -360,11 +360,6 @@ impl<'a> LinkerContext<'a> {
     /// An `import()` — or a split `require()` — whose target is a
     /// chunk entry point: the record is resolved at runtime against the
     /// target's chunk instead of binding to a wrapper.
-    ///
-    /// An `import()` of the importing file binds to the wrapper of that file when
-    /// the file has one. A file without a wrapper has nothing to bind to: the call
-    /// loads the file's own chunk. Scan step 2 sets the last wrappers, so that answer
-    /// is final only after it.
     pub(crate) fn is_external_dynamic_import(
         &self,
         record: &ImportRecord,
@@ -374,11 +369,9 @@ impl<'a> LinkerContext<'a> {
         if !self.graph.code_splitting {
             return false;
         }
-        if record.source_index.get() == source_index
-            && (record.kind != ImportKind::Dynamic
-                || self.graph.meta.items_flags()[source_index as usize].wrap != WrapKind::None)
-        {
-            return false;
+        if record.source_index.get() == source_index {
+            let wrap = self.graph.meta.items_flags()[source_index as usize].wrap;
+            return self.import_of_itself_loads_chunk(record, wrap);
         }
         let crosses_chunk = match record.kind {
             ImportKind::Dynamic => true,
@@ -388,6 +381,21 @@ impl<'a> LinkerContext<'a> {
             _ => false,
         };
         crosses_chunk
+            && self.graph.files.items_entry_point_kind()[record.source_index.get() as usize]
+                .is_entry_point()
+    }
+
+    /// An `import()` of the importing file loads the chunk of that file when the file
+    /// has no wrapper to bind to. `wrap` is final after scan step 2.
+    pub(crate) fn import_of_itself_loads_chunk(
+        &self,
+        record: &ImportRecord,
+        wrap: WrapKind,
+    ) -> bool {
+        use crate::linker_graph::FileColumns as _;
+        self.graph.code_splitting
+            && record.kind == ImportKind::Dynamic
+            && wrap == WrapKind::None
             && self.graph.files.items_entry_point_kind()[record.source_index.get() as usize]
                 .is_entry_point()
     }

@@ -264,9 +264,15 @@ export function checkSha256(file: string, expected: string): void {
  * @param stripComponents How many top-level dirs to strip. 1 for github
  *   archives. 0 for tarballs that are already flat (e.g. prebuilt WebKit
  *   has `bun-webkit/` that the caller wants to keep for a rename step).
+ * @param exclude Directories to leave in the archive.
  */
-export async function extractTarGz(tarball: string, dest: string, stripComponents = 1): Promise<void> {
-  const args = ["-xzmf", tarball, "-C", dest];
+export async function extractTarGz(
+  tarball: string,
+  dest: string,
+  stripComponents = 1,
+  exclude: string[] = [],
+): Promise<void> {
+  const args = ["-xzmf", tarball, "-C", dest, ...exclude.map(directory => `--exclude=${directory}`)];
   if (stripComponents > 0) args.push(`--strip-components=${stripComponents}`);
 
   const result = spawnSync(tarExe, args, {

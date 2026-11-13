@@ -71,7 +71,7 @@ const ruleVars = {
   dep_check_defined: ["name", "symbols"],
   dep_check_undefined: ["name", "nm", "symbols"],
   dep_codegen: ["name", "cwd", "tool", "args"],
-  dep_fetch: ["name", "repo", "commit", "dest", "cache", "patches"],
+  dep_fetch: ["name", "repo", "commit", "dest", "cache", "exclude", "patches"],
   dep_fetch_prebuilt: ["name", "url", "dest", "identity", "rm_paths"],
   dep_gen: ["name", "desc", "opts", "cmd"],
   dep_host_cc: ["flags"],

@@ -1,0 +1,15 @@
+A literal refers to its class in CoreFoundation, which bun loads at run time.
+See src/dawn_sys/MetalSoftLink.h.
+
+--- a/src/dawn/native/metal/MultiDrawEncoder.mm
++++ b/src/dawn/native/metal/MultiDrawEncoder.mm
+@@ -242,7 +242,8 @@
+     bool isValidationEnabled = device->IsValidationEnabled();
+     [funcConstants setConstantValue:&isValidationEnabled type:MTLDataTypeBool atIndex:0];
+ 
+-    id<MTLFunction> convertFunc = [lib newFunctionWithName:@"convertMultiDrawIndirect"
++    NSString* convertFuncName = [NSString stringWithUTF8String:"convertMultiDrawIndirect"];
++    id<MTLFunction> convertFunc = [lib newFunctionWithName:convertFuncName
+                                             constantValues:funcConstants
+                                                      error:&error];
+     if (error != nullptr) {

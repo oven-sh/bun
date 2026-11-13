@@ -466,6 +466,8 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "vi_utils.bind.ts": null,
   "vi_wait.bind.ts": null,
   "virtual_machine_exports.bind.ts": null,
+  "webgpu.bind.ts":
+    "{ [K in keyof typeof globalThis]: (typeof globalThis)[K] extends { new (): never; prototype: infer T } ? Class<T> : (typeof globalThis)[K] }",
 };
 
 /** `jest` and `vi` each have their own function for these: `jestUseFakeTimers` and `viUseFakeTimers`. */
@@ -698,6 +700,9 @@ describe("@types/bun integration test", () => {
       "valkey.bind.ts: new RedisClient().pubsub is not published",
       "valkey.bind.ts: new RedisClient().punsubscribe is not published",
       "valkey.bind.ts: new RedisClient().select is not published",
+      // What a listener gets for this type of event.
+      'webgpu.bind.ts: new GPUDevice().addEventListener(type: "uncapturederror", listener: (this: GPUDevice, event: GPUUncapturedErrorEvent) => any, options?: boolean | AddEventListenerOptions | undefined): void: listener takes EventListener | EventListenerObject, not (this: GPUDevice, event: GPUUncapturedErrorEvent) => any',
+      'webgpu.bind.ts: new GPUDevice().removeEventListener(type: "uncapturederror", listener: (this: GPUDevice, event: GPUUncapturedErrorEvent) => any, options?: boolean | EventListenerOptions | undefined): void: listener takes EventListener | EventListenerObject, not (this: GPUDevice, event: GPUUncapturedErrorEvent) => any',
     ]);
   });
 
@@ -1643,7 +1648,7 @@ describe("@types/bun integration test", () => {
   });
 });
 
-const expectedEmptyInterfacesWhenNoDOM = new Set(["ThisType"]);
+const expectedEmptyInterfacesWhenNoDOM = new Set(["ThisType", "GPUExternalTextureBindingLayout"]);
 
 const expectedEmptyInterfacesThatReactDeclareWhenNoDOM = new Set([
   ...expectedEmptyInterfacesWhenNoDOM,

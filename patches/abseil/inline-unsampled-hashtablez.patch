@@ -1,0 +1,17 @@
+Sampling of hash tables cannot be turned on in the open source release, and
+this is the one function of hashtablez_sampler.cc that the tables call. Out of
+line it brings absl::Mutex, the symbolizer and the time zone library along.
+
+--- a/absl/container/internal/hashtablez_sampler.h
++++ b/absl/container/internal/hashtablez_sampler.h
+@@ -240,7 +240,9 @@
+ // Must be called only if HashSetShouldBeSampled() returned true.
+ // Returned handle still can be unsampled if sampling is not possible or if
+ // `info.is_hashtablez_enabled` is false.
+-HashtablezInfoHandle ForcedTrySample(const HashtableTypeInfo& info);
++inline HashtablezInfoHandle ForcedTrySample(const HashtableTypeInfo&) {
++  return HashtablezInfoHandle(nullptr);
++}
+ 
+ // In case sampling needs to be disabled and re-enabled in tests, this function
+ // can be used to reset the sampling state for the current thread.

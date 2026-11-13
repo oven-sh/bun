@@ -952,6 +952,12 @@ export default b.declarations(
     userAgent: describesMachine(b.string),
     platform: describesMachine(b.string),
     hardwareConcurrency: describesMachine(b.f64),
+    // An executable that lacks the feature answers an ordinary object below GPU.prototype.
+    gpu: b.property(b.instance("GPU"), {
+      mutability: "ConstantUnlessWritten",
+      resultIsDeclaredOnly: true,
+      createdOnFirstRead: { capability: "heap", throws: true },
+    }),
     "@@toStringTag": b.property(b.string),
   }),
   b.inherits("navigator", "Object.prototype"),

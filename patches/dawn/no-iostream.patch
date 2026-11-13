@@ -1,0 +1,32 @@
+See src/banned-includes/iostream.
+
+--- a/src/tint/utils/ice/ice.cc
++++ b/src/tint/utils/ice/ice.cc
+@@ -27,7 +27,7 @@
+ 
+ #include "src/tint/utils/ice/ice.h"
+ 
+-#include <iostream>
++#include <cstdio>
+ #include <sstream>
+ #include <string>
+ 
+@@ -60,7 +60,7 @@
+     if (callback_info_ && callback_info_->callback) {
+         callback_info_->callback(err.str(), callback_info_->userdata);
+     } else {
+-        std::cerr << err.str();
++        fputs(err.str().c_str(), stderr);
+     }
+ 
+     debugger::Break();
+--- a/src/dawn/native/vulkan/TextureVk.cpp
++++ b/src/dawn/native/vulkan/TextureVk.cpp
+@@ -27,7 +27,6 @@
+ 
+ #include "src/dawn/native/vulkan/TextureVk.h"
+ 
+-#include <iostream>
+ #include <utility>
+ 
+ #include "dawn/native/VulkanBackend.h"

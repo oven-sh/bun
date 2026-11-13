@@ -48,11 +48,13 @@ async function main(): Promise<void> {
 
   switch (kind) {
     case "dep": {
-      // fetch-cli.ts dep <name> <repo> <commit> <dest> <cache> [...patches]
-      const [name, repo, commit, dest, cache, ...patches] = args;
+      // fetch-cli.ts dep <name> <repo> <commit> <dest> <cache> [...--exclude=<directory>] [...patches]
+      const [name, repo, commit, dest, cache, ...rest] = args;
       assert(name !== undefined && repo !== undefined && commit !== undefined, "dep: missing name/repo/commit");
       assert(dest !== undefined && cache !== undefined, "dep: missing dest/cache");
-      return fetchDep(name, repo, commit, dest, cache, patches);
+      const option = "--exclude=";
+      const exclude = rest.filter(arg => arg.startsWith(option)).map(arg => arg.slice(option.length));
+      return fetchDep(name, repo, commit, dest, cache, exclude, rest.slice(exclude.length));
     }
 
     case "subst": {
@@ -139,7 +141,7 @@ const USAGE = `\
 Usage: bun fetch-cli.ts <kind> <args...>
 
 Kinds:
-  dep             <name> <repo> <commit> <dest> <cache> [...patches]
+  dep             <name> <repo> <commit> <dest> <cache> [...--exclude=<directory>] [...patches]
   prebuilt        <name> <url> <dest> <identity> [...rm_paths]
   subst           <in> <out> [<from> <to>]...
   check-undefined <name> <nm> <rspfile> <stamp> <symbol,...>
@@ -272,6 +274,7 @@ async function fetchDep(
   commit: string,
   dest: string,
   cache: string,
+  exclude: string[],
   patches: string[],
 ): Promise<void> {
   const refPath = join(dest, ".ref");
@@ -290,7 +293,7 @@ async function fetchDep(
     }
   }
 
-  const identity = computeSourceIdentity(commit, patchContents);
+  const identity = computeSourceIdentity(commit, patchContents, exclude);
 
   // Short-circuit: already fetched at this identity?
   if (existsSync(refPath)) {
@@ -325,7 +328,7 @@ async function fetchDep(
   await mkdir(dest, { recursive: true });
 
   // Github archives have a top-level directory <repo>-<commit>/. Strip it.
-  await extractTarGz(tarballPath, dest);
+  await extractTarGz(tarballPath, dest, 1, exclude);
 
   // ─── Apply patches / overlays ───
   for (let i = 0; i < patches.length; i++) {
@@ -349,7 +352,7 @@ async function fetchDep(
 }
 
 /**
- * Source identity: sha256(commit + patch_contents)[:16]. This is what goes
+ * Source identity: sha256(commit + patch_contents + exclude)[:16]. This is what goes
  * in the .ref stamp. Hashing patch CONTENTS (not paths) means editing a
  * patch invalidates the source without a commit bump.
  *
@@ -364,13 +367,14 @@ async function fetchDep(
  * Exported so source.ts can compute the same identity at configure time
  * (for the preemptive-delete-on-mismatch check).
  */
-export function computeSourceIdentity(commit: string, patchContents: string[]): string {
+export function computeSourceIdentity(commit: string, patchContents: string[], exclude: string[]): string {
   const h = createHash("sha256");
   h.update(commit);
   for (const content of patchContents) {
     h.update("\0"); // Separator so patch concatenation can't produce collisions.
     h.update(normalizeLf(content));
   }
+  for (const directory of exclude) h.update(`\0--exclude=${directory}`);
   return h.digest("hex").slice(0, 16);
 }
 

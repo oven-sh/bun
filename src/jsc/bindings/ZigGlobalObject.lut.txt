@@ -43,6 +43,47 @@
   Response                        Bun::Bindgen::Generated::Response::getResponseConstructor PropertyCallback
   TextDecoder                     Bun::Bindgen::Generated::TextDecoder::getTextDecoderConstructor PropertyCallback
 
+  GPU                             Bun::Bindgen::Generated::Webgpu::getGPUConstructor DontEnum|PropertyCallback
+  GPUAdapter                      Bun::Bindgen::Generated::Webgpu::getGPUAdapterConstructor DontEnum|PropertyCallback
+  GPUAdapterInfo                  Bun::Bindgen::Generated::Webgpu::getGPUAdapterInfoConstructor DontEnum|PropertyCallback
+  GPUBindGroup                    Bun::Bindgen::Generated::Webgpu::getGPUBindGroupConstructor DontEnum|PropertyCallback
+  GPUBindGroupLayout              Bun::Bindgen::Generated::Webgpu::getGPUBindGroupLayoutConstructor DontEnum|PropertyCallback
+  GPUBuffer                       Bun::Bindgen::Generated::Webgpu::getGPUBufferConstructor DontEnum|PropertyCallback
+  GPUBufferUsage                  Bun::Bindgen::Generated::Webgpu::createGPUBufferUsage DontEnum|PropertyCallback
+  GPUColorWrite                   Bun::Bindgen::Generated::Webgpu::createGPUColorWrite DontEnum|PropertyCallback
+  GPUCommandBuffer                Bun::Bindgen::Generated::Webgpu::getGPUCommandBufferConstructor DontEnum|PropertyCallback
+  GPUCommandEncoder               Bun::Bindgen::Generated::Webgpu::getGPUCommandEncoderConstructor DontEnum|PropertyCallback
+  GPUCompilationInfo              Bun::Bindgen::Generated::Webgpu::getGPUCompilationInfoConstructor DontEnum|PropertyCallback
+  GPUCompilationMessage           Bun::Bindgen::Generated::Webgpu::getGPUCompilationMessageConstructor DontEnum|PropertyCallback
+  GPUComputePassEncoder           Bun::Bindgen::Generated::Webgpu::getGPUComputePassEncoderConstructor DontEnum|PropertyCallback
+  GPUComputePipeline              Bun::Bindgen::Generated::Webgpu::getGPUComputePipelineConstructor DontEnum|PropertyCallback
+  GPUDevice                       Bun::Bindgen::Generated::Webgpu::getGPUDeviceConstructor DontEnum|PropertyCallback
+  GPUDeviceLostInfo               Bun::Bindgen::Generated::Webgpu::getGPUDeviceLostInfoConstructor DontEnum|PropertyCallback
+  GPUError                        Bun::Bindgen::Generated::Webgpu::getGPUErrorConstructor DontEnum|PropertyCallback
+  GPUExternalTexture              Bun::Bindgen::Generated::Webgpu::getGPUExternalTextureConstructor DontEnum|PropertyCallback
+  GPUInternalError                Bun::Bindgen::Generated::Webgpu::getGPUInternalErrorConstructor DontEnum|PropertyCallback
+  GPUMapMode                      Bun::Bindgen::Generated::Webgpu::createGPUMapMode DontEnum|PropertyCallback
+  GPUOutOfMemoryError             Bun::Bindgen::Generated::Webgpu::getGPUOutOfMemoryErrorConstructor DontEnum|PropertyCallback
+  GPUPipelineError                Bun::Bindgen::Generated::Webgpu::getGPUPipelineErrorConstructor DontEnum|PropertyCallback
+  GPUPipelineLayout               Bun::Bindgen::Generated::Webgpu::getGPUPipelineLayoutConstructor DontEnum|PropertyCallback
+  GPUQuerySet                     Bun::Bindgen::Generated::Webgpu::getGPUQuerySetConstructor DontEnum|PropertyCallback
+  GPUQueue                        Bun::Bindgen::Generated::Webgpu::getGPUQueueConstructor DontEnum|PropertyCallback
+  GPURenderBundle                 Bun::Bindgen::Generated::Webgpu::getGPURenderBundleConstructor DontEnum|PropertyCallback
+  GPURenderBundleEncoder          Bun::Bindgen::Generated::Webgpu::getGPURenderBundleEncoderConstructor DontEnum|PropertyCallback
+  GPURenderPassEncoder            Bun::Bindgen::Generated::Webgpu::getGPURenderPassEncoderConstructor DontEnum|PropertyCallback
+  GPURenderPipeline               Bun::Bindgen::Generated::Webgpu::getGPURenderPipelineConstructor DontEnum|PropertyCallback
+  GPUSampler                      Bun::Bindgen::Generated::Webgpu::getGPUSamplerConstructor DontEnum|PropertyCallback
+  GPUShaderModule                 Bun::Bindgen::Generated::Webgpu::getGPUShaderModuleConstructor DontEnum|PropertyCallback
+  GPUShaderStage                  Bun::Bindgen::Generated::Webgpu::createGPUShaderStage DontEnum|PropertyCallback
+  GPUSupportedFeatures            Bun::Bindgen::Generated::Webgpu::getGPUSupportedFeaturesConstructor DontEnum|PropertyCallback
+  GPUSupportedLimits              Bun::Bindgen::Generated::Webgpu::getGPUSupportedLimitsConstructor DontEnum|PropertyCallback
+  GPUTexture                      Bun::Bindgen::Generated::Webgpu::getGPUTextureConstructor DontEnum|PropertyCallback
+  GPUTextureUsage                 Bun::Bindgen::Generated::Webgpu::createGPUTextureUsage DontEnum|PropertyCallback
+  GPUTextureView                  Bun::Bindgen::Generated::Webgpu::getGPUTextureViewConstructor DontEnum|PropertyCallback
+  GPUUncapturedErrorEvent         Bun::Bindgen::Generated::Webgpu::getGPUUncapturedErrorEventConstructor DontEnum|PropertyCallback
+  GPUValidationError              Bun::Bindgen::Generated::Webgpu::getGPUValidationErrorConstructor DontEnum|PropertyCallback
+  WGSLLanguageFeatures            Bun::Bindgen::Generated::Webgpu::getWGSLLanguageFeaturesConstructor DontEnum|PropertyCallback
+
   AbortController                 AbortControllerConstructorCallback                   PropertyCallback
   AbortSignal                     AbortSignalConstructorCallback                       PropertyCallback
   BroadcastChannel                BroadcastChannelConstructorCallback                  PropertyCallback

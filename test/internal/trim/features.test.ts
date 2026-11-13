@@ -50,7 +50,7 @@ function mockToolchain(): Toolchain {
 test("the feature files load", () => {
   expect(featureNamed(model, "JIT").index).toBe(0);
   expect(featureNamed(model, "Tools").index).toBe(128);
-  expect(model.trimFeatures.length).toBe(73);
+  expect(model.trimFeatures.length).toBe(74);
   expect(model.trimFeatures.slice(0, 2).map(trimFeature => trimFeature.name)).toEqual(["cli", "lint"]);
   const classes = new Set<string>(icuItemClasses);
   expect(model.icuData.map(line => line.itemClass).filter(itemClass => !classes.has(itemClass))).toEqual([]);

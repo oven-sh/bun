@@ -80,6 +80,7 @@
 #include "GeneratedResolveMessage.h"
 #include "GeneratedResponse.h"
 #include "GeneratedTextDecoder.h"
+#include "GeneratedWebgpu.h"
 #include "BunPlugin.h"
 #include "BunProcess.h"
 #include "BunSecureContextCache.h"
@@ -2259,6 +2260,24 @@ JSC_DEFINE_CUSTOM_SETTER(setterSubtleCrypto,
     return true;
 }
 
+extern "C" JSC::EncodedJSValue Bun__createNavigatorGPU(JSGlobalObject*);
+
+JSC_DEFINE_CUSTOM_GETTER(getNavigatorGPU, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName name))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue gpu = JSValue::decode(Bun__createNavigatorGPU(globalObject));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // Object.freeze() may have changed them.
+    unsigned attributes = 0;
+    JSObject* navigator = asObject(JSValue::decode(thisValue));
+    navigator->getDirectOffset(vm, name, attributes);
+    AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+    navigator->putDirect(vm, name, gpu, attributes & ~PropertyAttribute::CustomValue);
+    return JSValue::encode(gpu);
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetUserAgent, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -3074,11 +3093,12 @@ void GlobalObject::finishCreation(VM& vm)
              JSC::JSGlobalObject* globalObject = init.owner;
              unsigned accessorAttributes = PropertyAttribute::Accessor | 0;
 
-             JSC::JSObject* obj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
+             JSC::JSObject* obj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 5);
 
              obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "userAgent"_s), functionNavigatorGetUserAgent, JSC::NoIntrinsic, accessorAttributes);
              obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "platform"_s), functionNavigatorGetPlatform, JSC::NoIntrinsic, accessorAttributes);
              obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "hardwareConcurrency"_s), functionNavigatorGetHardwareConcurrency, JSC::NoIntrinsic, accessorAttributes);
+             obj->putDirectCustomAccessor(init.vm, JSC::Identifier::fromString(init.vm, "gpu"_s), CustomGetterSetter::create(init.vm, getNavigatorGPU, nullptr), PropertyAttribute::CustomValue | 0);
 
              obj->putDirect(init.vm, init.vm.propertyNames->toStringTagSymbol,
                  jsNontrivialString(init.vm, "Navigator"_s), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);

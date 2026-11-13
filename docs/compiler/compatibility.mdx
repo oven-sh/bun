@@ -370,6 +370,7 @@ Check `error.name` or use `instanceof`, not `error.message`.
 | `--sql-preconnect` in `BUN_OPTIONS`                                    | Build with `--compile-exec-argv=--sql-preconnect`                                        |
 | Breakpoints and `debugger`                                             | `bun --inspect-brk ./app.ts`                                                             |
 | `cc()` from `bun:ffi`, on Linux 6.7 and later                          | Compile the C file first, then `dlopen()`                                                |
+| A WebGPU driver that runs on the CPU, on Linux 6.7 and later           | `requestAdapter()` skips it. Pass `--no-aot`                                             |
 | Over 256 open `JSCallback`s, if the executable can't read its own file | Make the file readable, or `close()` some                                                |
 | Over 32 GB of objects in a thread                                      | `--aot-huge-heap`                                                                        |
 | A stack under 512 KB (`ulimit -s`)                                     | Give it more. `bun run` needs less                                                       |

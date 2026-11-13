@@ -1,5 +1,6 @@
 import * as b from "bun-builtins-table";
 import { pathOfNativeBinding } from "../paths.ts";
+import { classesOfWebGPU } from "./classes-of-webgpu.ts";
 import { methodsOfSubtleCrypto } from "./methods-of-subtle-crypto.ts";
 
 const extendAll = (uses: readonly b.FeatureUseSpec[], ...paths: readonly b.BuiltinPath[]) =>
@@ -92,6 +93,7 @@ export default b.declarations(
     "SubtleCrypto",
     ...methodsOfSubtleCrypto.map(name => `SubtleCrypto.prototype.${name}`),
   ),
+  extendAll(["WebGpu", "Events"], "navigator.gpu", ...classesOfWebGPU),
   extendAll(["CryptoObject", "CryptoGlobal"], "Crypto"),
   extendAll(["CryptoGlobal", "CryptoObject"], "crypto"),
 

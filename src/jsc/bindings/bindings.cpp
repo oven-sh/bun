@@ -176,6 +176,7 @@
 #include "JavaScriptCore/RegExpObject.h"
 #include "JavaScriptCore/PropertyNameArray.h"
 #include "webcore/JSAbortSignal.h"
+#include "webcore/SerializedScriptValue.h"
 #include "JSAbortAlgorithm.h"
 
 #include "DOMFormData.h"
@@ -7939,6 +7940,24 @@ extern "C" uint64_t Bun__JSArray__nextPresentIndex(
 
 extern "C" void JSC__ArrayBuffer__ref(JSC::ArrayBuffer* self) { self->ref(); }
 extern "C" void JSC__ArrayBuffer__deref(JSC::ArrayBuffer* self) { self->deref(); }
+static_assert(MAX_ARRAY_BUFFER_SIZE == 1ull << 32, "ArrayBuffer::MAX_BYTE_LENGTH in array_buffer.rs");
+extern "C" JSC::ArrayBuffer* JSC__ArrayBuffer__setDetachKey(JSC::VM* vm, JSC::EncodedJSValue arrayBuffer, JSC::EncodedJSValue holder)
+{
+    auto* wrapper = uncheckedDowncast<JSC::JSArrayBuffer>(JSC::JSValue::decode(arrayBuffer));
+    WebCore::setHolderOfDetachKey(*vm, *wrapper, JSC::asObject(JSC::JSValue::decode(holder)));
+    wrapper->impl()->pin();
+    wrapper->impl()->ref();
+    return wrapper->impl();
+}
+extern "C" void JSC__ArrayBuffer__detachWithKey(JSC::ArrayBuffer* self, JSC::VM* vm)
+{
+    self->unpin();
+    if (self->isDetachable())
+        self->detach(*vm);
+    if (auto* wrapper = self->m_wrapper.get())
+        WebCore::setHolderOfDetachKey(*vm, *wrapper, nullptr);
+}
+extern "C" void JSC__ArrayBuffer__unpin(JSC::ArrayBuffer* self) { self->unpin(); }
 extern "C" void JSC__ArrayBuffer__asBunArrayBuffer(JSC::ArrayBuffer* self, Bun__ArrayBuffer* out)
 {
     const std::size_t byteLength = self->byteLength();

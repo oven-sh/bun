@@ -417,6 +417,12 @@ pub(crate) fn run_task(
                 Ok(())
             }
         )?,
+        task_tag::WebGpuProcessEvents => {
+            feature_arm!([WebGpu], |host: crate::webgpu::Host| -> JsResult<()> {
+                // SAFETY: the pointer that was queued, which the arm consumes.
+                unsafe { crate::webgpu::Host::run(host) }
+            })?
+        }
         task_tag::DnsErrorDeferred => feature_arm!(
             [Dns],
             |error: crate::dns_jsc::cares_jsc::ErrorDeferredTask| -> JsResult<()> {
@@ -883,7 +889,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 86,
+    task_tag::COUNT == 87,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1737,6 +1743,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::ValkeyDeferredFailure => {
             release_in!([Valkey], crate::valkey_jsc::valkey::DeferredFailure)
         }
+        task_tag::WebGpuProcessEvents => release_in!([WebGpu], crate::webgpu::Host),
         task_tag::DnsErrorDeferred => {
             release_in!([Dns], crate::dns_jsc::cares_jsc::ErrorDeferredTask)
         }

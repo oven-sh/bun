@@ -1561,6 +1561,16 @@ interface Navigator {
   readonly userAgent: string;
   readonly platform: "MacIntel" | "Win32" | "Linux x86_64";
   readonly hardwareConcurrency: number;
+  /**
+   * The entry point of [WebGPU](https://bun.com/docs/runtime/webgpu): compute shaders and rendering to textures
+   *
+   * @example
+   * ```ts
+   * const adapter = await navigator.gpu.requestAdapter();
+   * const device = await adapter?.requestDevice();
+   * ```
+   */
+  readonly gpu: GPU;
 }
 
 declare var navigator: Navigator;

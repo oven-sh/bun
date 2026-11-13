@@ -1,11 +1,12 @@
 // Projects for mock-laid-over*.test.ts: a mock laid over a module whose body has run. A project is the module's kind x the call x the factory x the realm. Inside it every
 // kind of export is read by every kind of reader at six moments, and each reading is a line `KEY <moment> | <reader> | <export> = <value>`.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "../supported";
-import { afterAll } from "./default-timeout";
+import { slot } from "./commands";
+import { afterAll, givenToABunWithAssertions } from "./default-timeout";
 import { run } from "./run";
 import { runsWholeGrids } from "./ways";
 
@@ -362,10 +363,18 @@ function lastWordsOf(stderr: string) {
   return (lines.length > 12 ? [...lines.slice(0, 6), "...", ...lines.slice(-6)] : lines).map(line => line.slice(0, 200));
 }
 
+// A run that hangs is ended half a minute before its test is, and the test then says which run it was and what it wrote. `bun test` ends the children of a test that
+// timed out only where the tests run one by one: here a run would outlast its test. With assertions a test has at least what default-timeout.ts gives it.
+const limitOfARun = (ofItsTest: number) => Math.max(ofItsTest, isASAN || isDebug ? givenToABunWithAssertions : 0) - 30_000;
+
 async function readingsOf(dir: string, flags: string[], limit: number) {
-  // A test of the project has the five seconds of bun:test otherwise. A busy machine takes longer than that to load a module, and the test then fails in one run alone.
-  const cmd = [bunExe(), "test", `--timeout=${limit}`, ...flags];
-  const { stdout, stderr, exitCode } = await run(cmd, dir, { ...bunEnv, NO_COLOR: "1" });
+  // A test of the run has a third of the limit of the run: one that hangs is failed and named by the run itself, which then comes to its summary. The five seconds of
+  // bun:test are too few: a busy machine takes longer than that to load a module, and the test then fails in one run alone.
+  const cmd = [bunExe(), "test", `--timeout=${Math.round(limit / 3)}`, ...flags];
+  const started = performance.now();
+  const { stdout, stderr, exitCode } = await run(cmd, dir, { ...bunEnv, NO_COLOR: "1" }, limit);
+  // `run()` ends it with SIGKILL.
+  const wasEnded = exitCode === 137 && performance.now() - started >= limit;
   const keys = new Map<string, string>();
   for (const line of stdout.split("\n")) {
     const at = line.indexOf(" = ");
@@ -378,7 +387,7 @@ async function readingsOf(dir: string, flags: string[], limit: number) {
   const ran = /^Ran (\d+ tests? across (\d+) files?)\. /m.exec(stderr);
   return {
     keys,
-    ends: [...counted, ran?.[1] ?? "no summary", `exit code ${exitCode}`].join(", "),
+    ends: [...counted, ran?.[1] ?? "no summary", wasEnded ? `ended at its limit of ${limit / 1000} s` : `exit code ${exitCode}`].join(", "),
     // `bun test` says what it counted, and exits with 0 or with 1.
     hasEnded: !!ran && exitCode <= 1,
     // It counted every test file that the command names, and it exits with 1 where it counts a failure or an error, else with 0.
@@ -392,17 +401,18 @@ async function readingsOf(dir: string, flags: string[], limit: number) {
 async function judge(name: string, { files, flags }: Project, fewestKeys: number, limit: number) {
   using plainDir = tempDir("aot-mock-laid-over", files);
   using compiledDir = tempDir("aot-mock-laid-over", files);
-  const [plain, compiled] = await Promise.all([
-    readingsOf(String(plainDir), flags, limit),
-    readingsOf(String(compiledDir), ["--aot", ...flags], limit),
-  ]);
-  // A run in which plain printed little would pass for the wrong reason. So would one that stopped on its way: a compiled run that stops there says the same.
-  expect(plain.keys.size).toBeGreaterThan(fewestKeys);
+  // No more projects run at once than the machine has processors, whatever `--max-concurrency` says: a build keeps one of them busy, and `run()` ends every run where
+  // they hold too much together.
+  const [plain, compiled] = await slot(() =>
+    Promise.all([readingsOf(String(plainDir), flags, limit), readingsOf(String(compiledDir), ["--aot", ...flags], limit)]),
+  );
+  // A run of plain that stopped on its way would pass for the wrong reason: a compiled run that stops there says the same. So would one that printed little.
   expect({ isWhole: plain.isWhole, ends: plain.ends, lastWords: plain.isWhole ? [] : plain.lastWords }).toEqual({
     isWhole: true,
     ends: plain.ends,
     lastWords: [],
   });
+  expect(plain.keys.size).toBeGreaterThan(fewestKeys);
   // The list holds what a compiled run says otherwise, never that it came to no end.
   expect({ hasEnded: compiled.hasEnded, ends: compiled.ends, lastWords: compiled.hasEnded ? [] : compiled.lastWords }).toEqual({
     hasEnded: true,
@@ -484,15 +494,17 @@ const packedRuns = ["packed", "packed beside preloads that mock"];
  * cured, one that changes and a new one all fail. A key that one run alone prints differs from nothing. BUN_AOT_REWRITE_MOCK_LAID_OVER=1 writes the lines of what ran anew.
  * One file took five minutes, and CI's runner tries a file that fails four times. So `parts` files share the projects, and the packed runs go with the first. A file has
  * every `parts`th column of the sorted names, in both realms: a stretch of the names is the projects of one or two modules, and a build takes three times as long where
- * the module is a large part of Bun's library. The projects of a file run beside one another on every lane, as many as `--max-concurrency` says: each waits for one build.
+ * the module is a large part of Bun's library. The projects of a file run beside one another on every lane, as many as `--max-concurrency` says and the machine has
+ * processors: each waits for one build.
  */
 export function mockLaidOver(part: number, parts: number) {
   const all = new Map([...modules(), ...builtinModules()]);
   const namesAProject = (line: string) => all.has(line.split(" | ")[0]) || packedRuns.includes(line.split(" | ")[0]);
   if (part === 1) {
     const withoutMockingPreload = witnesses.filter(column => !column.includes(".laid-by-preload."));
-    test.concurrent("the columns of real programs and a witness for each fault", () => judge(packedRuns[0], packed(all, withoutMockingPreload), 5000, 300_000), 300_000);
-    test.concurrent("the same beside preloads that lay mocks", () => judge(packedRuns[1], packed(all, witnesses), 5000, 300_000), 300_000);
+    const limit = limitOfARun(300_000);
+    test.concurrent("the columns of real programs and a witness for each fault", () => judge(packedRuns[0], packed(all, withoutMockingPreload), 5000, limit), 300_000);
+    test.concurrent("the same beside preloads that lay mocks", () => judge(packedRuns[1], packed(all, witnesses), 5000, limit), 300_000);
     // A project holds the lines that begin with its name, so a line that begins otherwise is held by nothing. Where the list is written anew, such a line goes out.
     if (!rewrite)
       test("every line of the list names a project", () => {
@@ -502,7 +514,7 @@ export function mockLaidOver(part: number, parts: number) {
   // The two realms of a column stand side by side.
   const names = [...all.keys()].sort();
   const mine = names.filter((_, index) => Math.floor(index / 2) % parts === part - 1);
-  if (runsWholeGrids) for (const name of mine) test.concurrent(name, () => judge(name, all.get(name)!, 10, 180_000), 180_000);
+  if (runsWholeGrids) for (const name of mine) test.concurrent(name, () => judge(name, all.get(name)!, 10, limitOfARun(180_000)), 180_000);
   afterAll(() => {
     if (!rewrite) return;
     const now = readFileSync(list, "utf8").split("\n");

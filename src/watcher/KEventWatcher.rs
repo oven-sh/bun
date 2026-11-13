@@ -33,6 +33,9 @@ fn watch_event_from_kevent(kevent: &libc::kevent) -> WatchEvent {
     if (kevent.fflags & libc::NOTE_DELETE) > 0 {
         op |= Op::DELETE;
     }
+    if (kevent.fflags & (libc::NOTE_DELETE | libc::NOTE_RENAME)) > 0 {
+        op |= Op::WATCH_INVALIDATED;
+    }
     if (kevent.fflags & libc::NOTE_ATTRIB) > 0 {
         op |= Op::METADATA;
     }
@@ -40,7 +43,7 @@ fn watch_event_from_kevent(kevent: &libc::kevent) -> WatchEvent {
         op |= Op::RENAME;
     }
     if (kevent.fflags & libc::NOTE_WRITE) > 0 {
-        op |= Op::WRITE;
+        op |= Op::WRITE | Op::DIRECTORY_ENTRIES_CHANGED;
     }
     WatchEvent {
         op,

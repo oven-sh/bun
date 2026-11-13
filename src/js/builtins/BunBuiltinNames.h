@@ -149,6 +149,7 @@ using namespace JSC;
     macro(onClose) \
     macro(onDrain) \
     macro(onEndCallbacks) \
+    macro(onStartCallbacks) \
     macro(originalColumn) \
     macro(originalLine) \
     macro(overridableRequire) \

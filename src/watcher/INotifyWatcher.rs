@@ -158,6 +158,7 @@ impl INotifyWatcher {
             | IN::CREATE
             | IN::MOVE_SELF
             | IN::ONLYDIR
+            | IN::MOVED_FROM
             | IN::MOVED_TO
             | IN::MODIFY;
         let rc = bun_sys::linux::inotify_add_watch(self.fd.native(), pathname, watch_dir_mask);
@@ -501,6 +502,12 @@ fn watch_event_from_inotify_event(event: &Event, index: WatchItemIndex) -> Watch
     let mut op = Op::empty();
     if (event.mask & IN::DELETE_SELF) > 0 || (event.mask & IN::DELETE) > 0 {
         op |= Op::DELETE;
+    }
+    if (event.mask & (IN::DELETE_SELF | IN::MOVE_SELF)) > 0 {
+        op |= Op::WATCH_INVALIDATED;
+    }
+    if (event.mask & (IN::CREATE | IN::DELETE | IN::MOVED_FROM | IN::MOVED_TO)) > 0 {
+        op |= Op::DIRECTORY_ENTRIES_CHANGED;
     }
     if (event.mask & IN::MOVE_SELF) > 0 {
         op |= Op::RENAME;

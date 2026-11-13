@@ -6693,6 +6693,10 @@ declare module "bun" {
   }
 
   interface OnLoadResultSourceCode {
+    /** Absolute file paths whose changes invalidate this module in the development server. */
+    watchFiles?: string[] | undefined;
+    /** Absolute directories whose immediate entry changes invalidate this module. Not recursive. */
+    watchDirs?: string[] | undefined;
     /**
      * The source code of the module
      */
@@ -6704,6 +6708,10 @@ declare module "bun" {
   }
 
   interface OnLoadResultObject {
+    /** Absolute file paths whose changes invalidate this module in the development server. */
+    watchFiles?: string[] | undefined;
+    /** Absolute directories whose immediate entry changes invalidate this module. Not recursive. */
+    watchDirs?: string[] | undefined;
     /**
      * The object to use as the module
      * @example

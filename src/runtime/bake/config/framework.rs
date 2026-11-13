@@ -264,6 +264,7 @@ impl Framework {
         opts: JSValue,
         global: &JSGlobalObject,
         bundler_options: &mut SplitBundlerOptions,
+        is_dev_server: bool,
     ) -> JsResult<Framework> {
         if opts.is_string() {
             let str = opts.to_bun_string(global)?;
@@ -632,7 +633,7 @@ impl Framework {
         };
 
         if let Some(plugin_array) = opts.get_optional::<JSValue>(global, "plugins")? {
-            bundler_options.parse_plugin_array(plugin_array, global)?;
+            bundler_options.parse_plugin_array(plugin_array, global, is_dev_server)?;
         }
 
         Ok(framework)

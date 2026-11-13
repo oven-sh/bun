@@ -18,7 +18,7 @@ type FSStream = Omit<import("node:fs").ReadStream & import("node:fs").WriteStrea
   path: string | null | undefined;
   _write: import("node:fs").WriteStream["_write"] | null;
   _writev: import("node:fs").WriteStream["_writev"] | null;
-  _writableState?: { ending: boolean; destroyed: boolean };
+  _writableState?: { ending: boolean; destroyed: boolean; finished: boolean };
   flags: string;
   mode: number;
   start: number;
@@ -33,6 +33,7 @@ type FSStream = Omit<import("node:fs").ReadStream & import("node:fs").WriteStrea
    * sink = FileSink
    */
   [kWriteStreamFastPath]?: undefined | true | FileSink;
+  [kSinkWrite]?: (err?: any) => void;
 };
 type FD = number;
 
@@ -46,6 +47,8 @@ const kIoDone = Symbol("kIoDone");
 // Bun supports a fast path for `createWriteStream("path.txt")` where instead of
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
+// The callback of the _write of a child's stdin that its sink has not answered yet.
+const kSinkWrite = Symbol("kSinkWrite");
 const kFs = Symbol("kFs");
 
 const {
@@ -411,7 +414,8 @@ function WriteStream(this: FSStream, path: string | null | undefined, options?: 
 
   let fastPath = options?.$fastPath;
 
-  options = copyObject(getStreamOptions(options));
+  // The stream of a FileSink that comes later (writableForFileSink) takes no options, inherited ones included.
+  options = fastPath === "sink" ? { __proto__: null } : copyObject(getStreamOptions(options));
 
   // Only buffers are supported.
   options.decodeStrings = true;
@@ -423,9 +427,9 @@ function WriteStream(this: FSStream, path: string | null | undefined, options?: 
   } else if (fd == null) {
     this[kFs] = customFs || fs;
     this.fd = null;
-    // Internal $fastPath callers (writableFromFileSink) discard .path; do not
-    // resolve it - path.resolve("") needs process.cwd(), which throws when
-    // the cwd has been deleted (Node still spawns children in that state).
+    // Internal $fastPath callers have no path to resolve, and path.resolve()
+    // needs process.cwd(), which throws when the cwd has been deleted (Node
+    // still spawns children in that state).
     this.path = fastPath ? path : getValidatedPath(path);
     const { flags, mode } = options;
     this.flags = flags === undefined ? "w" : flags;
@@ -518,6 +522,13 @@ function WriteStream(this: FSStream, path: string | null | undefined, options?: 
       // stream is born constructed, like node's stdio streams (net.Socket /
       // tty.WriteStream), which never allocate construct TickObjects.
       this._construct = undefined;
+    } else if (fastPath === "sink") {
+      // A child's stdin. Nothing to construct, and end() sends inside the call, as node's Socket does:
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L146-L165
+      this._construct = undefined;
+      this._write = underscoreWriteToSink;
+      this._final = finalToSink;
+      this._destroy = destroySink;
     }
   }
 
@@ -756,6 +767,75 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
   }
 }
 
+// _write of a child's stdin. It reports inside the call, so that end(chunk) reaches _final, which sends, before it returns.
+function underscoreWriteToSink(this: FSStream, data: any, encoding: any, cb: any) {
+  try {
+    const pending = (this[kWriteStreamFastPath] as FileSink).write(data);
+    if ($isPromise(pending)) {
+      // destroySink answers in the place of the sink if it comes first.
+      this[kSinkWrite] = cb;
+      const answer = (err?: any) => {
+        if (this[kSinkWrite] !== cb) return;
+        this[kSinkWrite] = undefined;
+        cb(err);
+      };
+      pending.then(() => answer(null), answer);
+      return;
+    }
+  } catch (err) {
+    cb(err);
+    return;
+  }
+  cb(null);
+}
+
+// Calls back behind the ticks and the promise jobs that the turn queues: a tick, then a promise job, then a tick.
+// A listener that is added there still hears the event. Under node it does, because the socket completes a turn
+// of the event loop later.
+function afterQueuedJobs(cb: (err?: any) => void, err: any) {
+  process.nextTick(queueMicrotask, () => process.nextTick(cb, err));
+}
+
+// _final of a child's stdin. It sends inside end(), and completes later, as the shutdown of node's Socket does:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L536-L558
+function finalToSink(this: FSStream, cb: (err?: any) => void) {
+  try {
+    const pending = (this[kWriteStreamFastPath] as FileSink).flush();
+    if ($isPromise(pending)) {
+      pending.then(() => cb(null), cb);
+      return;
+    }
+  } catch (err) {
+    process.nextTick(cb, err);
+    return;
+  }
+  afterQueuedJobs(cb, null);
+}
+
+// _destroy of a child's stdin. Before 'finish', node closes the pipe at once and reports no error of the writes that it drops:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L867-L908
+function destroySink(this: FSStream, err: Error | null, cb: (err?: Error | null) => void) {
+  if (this._writableState!.finished) {
+    writeStreamPrototype._destroy.$call(this, err, cb);
+    return;
+  }
+  const sink = this[kWriteStreamFastPath] as FileSink;
+  // The sink sends what it holds for as long as the process runs, and no longer keeps it running for that.
+  sink.unref();
+  try {
+    const end = sink.end(err as Error);
+    if ($isPromise(end)) end.then(streamNoop, streamNoop);
+  } catch {}
+  // A _write that the sink has not answered is answered ahead of 'close', without an error, as node answers the write of a destroyed socket:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L95-L99
+  const write = this[kSinkWrite];
+  if (write !== undefined) {
+    this[kSinkWrite] = undefined;
+    process.nextTick(write, null);
+  }
+  afterQueuedJobs(cb, err);
+}
+
 writeStreamPrototype._writev = function (data, cb) {
   const len = data.length;
   const chunks = new Array(len);
@@ -855,7 +935,10 @@ Object.defineProperty(writeStreamPrototype, "autoClose", {
 
 Object.defineProperty(writeStreamPrototype, "pending", {
   get() {
-    return this.fd === null;
+    if (this.fd !== null) return false;
+    // A child's stdin has nothing to open: pending only once destroyed, as https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L726-L733
+    const sink = this[kWriteStreamFastPath];
+    return !sink || sink === true || this.destroyed;
   },
   configurable: true,
 });
@@ -869,14 +952,20 @@ function thenIfPromise<T>(maybePromise: Promise<T> | T, cb: any) {
   }
 }
 
-function writableFromFileSink(fileSink: any) {
+// A child's stdin, in two steps: child_process makes the stream before the child starts, and stores the child's FileSink after.
+function writableForFileSink() {
+  const w = new WriteStream(undefined, { $fastPath: "sink" });
+  $assert(w[kWriteStreamFastPath] === true, "fast path not enabled");
+  w.readable = false;
+  return w;
+}
+
+function attachFileSink(w: FSStream, fileSink: any) {
   $assert(typeof fileSink === "object", "fileSink is not an object");
   $assert(typeof fileSink.write === "function", "fileSink.write is not a function");
   $assert(typeof fileSink.end === "function", "fileSink.end is not a function");
-  const w = new WriteStream("", { $fastPath: true });
-  $assert(w[kWriteStreamFastPath] === true, "fast path not enabled");
+  $assert(w[kWriteStreamFastPath] === true, "the stream has a sink already");
   w[kWriteStreamFastPath] = fileSink;
-  w.path = undefined;
   return w;
 }
 
@@ -884,5 +973,6 @@ export default {
   ReadStream,
   WriteStream,
   kWriteStreamFastPath,
-  writableFromFileSink,
+  writableForFileSink,
+  attachFileSink,
 };

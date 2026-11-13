@@ -1761,12 +1761,7 @@ impl<'a> LinkerContext<'_, 'a> {
             js_printer::BufferWriter::init(),
         ));
 
-        // Note: shallow bitwise copy via `ptr::read` + `ManuallyDrop` — the
-        // resulting `Ast` aliases `ast`'s storage; dropping it would
-        // double-free.
-        // SAFETY: `ast` is a valid `&BundledAst` for the duration of this call;
-        // the read is a bitwise copy whose result is never dropped.
-        let printer_ast = core::mem::ManuallyDrop::new(unsafe { core::ptr::read(ast) }.to_ast());
+        let printer_ast = ast.for_printer();
 
         let enable_source_maps =
             self.options.source_maps != SourceMapOption::None && !source_index.is_runtime();

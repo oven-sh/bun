@@ -648,17 +648,23 @@ console.log(usePair(), usePair(1), usePair(1, 2));
       }),
       "package.json": JSON.stringify({ name: "hooks", compilerOptions: { strict: true, jsx: "react-jsx" } }),
       "src/state.ts": state,
-      "src/hooks.tsx": `import { useState } from "./state";\n${useBeside}`,
+      "src/hooks.tsx": `import { useState } from "./state";
+${useBeside}export function useOther(first: number = 1): number {
+  const [value] = useState(first);
+  return value;
+}
+`,
       "src/a.tsx": `import { useBeside } from "./hooks";
 export function useA(first: number = 1): number {
   return useBeside(first);
 }
 console.log(useA(), useBeside());
 `,
-      "src/b.tsx": `import { useBeside } from "./hooks";
+      "src/b.tsx": `import { useBeside, useOther } from "./hooks";
 export function useB(start: number = 0, end: number): number {
   return useBeside(start, end);
 }
+export const hooks = [useOther];
 console.log(useB(undefined, 1), useBeside());
 `,
     });
@@ -679,7 +685,8 @@ console.log(useB(undefined, 1), useBeside());
     expect(typed.map(parametersIn).sort((a, b) => Object.keys(a)[0].localeCompare(Object.keys(b)[0]))).toEqual([
       { useA: "t0?: number" },
       { useB: "t0: number | undefined, end: number" },
-      { useState: "initial: T", useBeside: "t0?: number, t1?: number" },
+      // Another file of the build has `useOther` as a value.
+      { useState: "initial: T", useBeside: "t0?: number, t1?: number", useOther: "t0: number" },
     ]);
   });
 });

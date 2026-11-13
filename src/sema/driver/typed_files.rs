@@ -3149,7 +3149,7 @@ fn add_types(
         hoisted: Vec::new(),
         optional_parameter_properties,
     };
-    transfer.copy_slots(&source_slots);
+    transfer.copy_slots(&source_slots, &written);
     transfer.annotate_generated_code();
     transfer.copy_casts();
     transfer.type_enum_and_namespace_objects();
@@ -3184,7 +3184,11 @@ impl<'a> Transfer<'_, 'a, '_> {
         anchored
     }
 
-    fn copy_slots(&mut self, source_slots: &FxHashMap<(Place, u32, u32), Slot>) {
+    fn copy_slots(
+        &mut self,
+        source_slots: &FxHashMap<(Place, u32, u32), Slot>,
+        every_module: &[Option<Written<'_, '_>>],
+    ) {
         let (output, mappings, written, linked) =
             (self.output, self.mappings, self.modules, self.linked);
         let (output_file, insertions) = (output.file, &mut self.insertions);
@@ -3228,8 +3232,8 @@ impl<'a> Transfer<'_, 'a, '_> {
                 };
                 let parameters = has_default.then(|| {
                     defaults_of.entry(source).or_insert_with(|| {
-                        let used =
-                            used_as_values.get_or_insert_with(|| names_used_as_values(written));
+                        let used = used_as_values
+                            .get_or_insert_with(|| names_used_as_values(every_module));
                         defaulted_parameters(&module.syntax, used)
                     })
                 });

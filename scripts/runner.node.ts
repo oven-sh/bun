@@ -3594,11 +3594,14 @@ async function getExecPathFromBuildkite(target: string, buildId?: string): Promi
       );
     }
 
-    zipPath = readdirSync(archives, { recursive: true, encoding: "utf-8" })
-      .filter(filename => /^bun.*\.zip$/i.test(filename))
-      .map(filename => join(archives, filename))
-      .sort((a, b) => Number(b.includes("profile")) - Number(a.includes("profile")))
-      .at(0);
+    // A download that failed can have left some of the archives.
+    if (!error) {
+      zipPath = readdirSync(archives, { recursive: true, encoding: "utf-8" })
+        .filter(filename => /^bun.*\.zip$/i.test(filename))
+        .map(filename => join(archives, filename))
+        .sort((a, b) => Number(b.includes("profile")) - Number(a.includes("profile")))
+        .at(0);
+    }
 
     if (zipPath) {
       break downloadLoop;

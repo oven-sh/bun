@@ -4302,6 +4302,16 @@ if (isBun) {
           expect(Reflect.defineProperty(fresh(), "prototype", { enumerable: true })).toBe(false);
         });
 
+        // The global of a context answers for the properties of the mock. The native setter refuses what is not the mock.
+        test("a store with the global of a node:vm context of the mock as the receiver", () => {
+          const assigned = {};
+          const mocked = fresh();
+          const contextGlobal = vm.runInContext("globalThis", vm.createContext(mocked));
+          expect(Reflect.set({}, "prototype", assigned, contextGlobal)).toBe(true);
+          expect(Object.getOwnPropertyDescriptor(mocked, "prototype")).toEqual({ value: assigned, ...attributes });
+          expect(Object.getPrototypeOf(new mocked())).toBe(assigned);
+        });
+
         test("delete", () => {
           const mocked = fresh();
           expect(Reflect.deleteProperty(mocked, "prototype")).toBe(false);

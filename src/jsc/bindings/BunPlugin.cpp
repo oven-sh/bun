@@ -4074,6 +4074,25 @@ __attribute__((minsize)) static void endSidesThatModuleMockLeaves(Zig::GlobalObj
     RELEASE_AND_RETURN(scope, evictModulesAndTheirImporters(globalObject, WTF::move(evict)));
 }
 
+// The mock that has its own module object in require.cache under `path`: a mock of that path, or of a name that require() resolves to it.
+// What it saved of a module object is the original of `path`. A mock that answers for `path` as its import path, with require() led elsewhere, has saved nothing of it.
+static JSModuleMock* moduleMockWithModuleObjectUnder(Zig::GlobalObject* globalObject, const String& path)
+{
+    auto* mock = moduleMockAnsweringFor(globalObject, path);
+    return mock && mock->keyForRequire()->tryGetValue().data == path ? mock : nullptr;
+}
+
+// A mock that patches nothing takes a path and takes over nothing. Of the mock that loses the path, the module object under it ends here as unmockModule() ends it.
+static void endModuleObjectOfModuleMock(Zig::GlobalObject* globalObject, JSModuleMock* mock)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    ModulesToEvict evict;
+    appendMockedModule(evict, mock, PathsHeldByModuleMock { false, true }, false, !!mock->originalCommonJSExports);
+    restoreModuleObjectOfModuleMock(globalObject, mock);
+    RETURN_IF_EXCEPTION(scope, );
+    RELEASE_AND_RETURN(scope, evictModulesAndTheirImporters(globalObject, WTF::move(evict)));
+}
+
 #if ENABLE(AOT)
 static bool endsPreloadPackagePatch(JSModuleMock* mock, const String& specifier)
 {
@@ -5976,6 +5995,14 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         loaded = findLoadedModule(globalObject, mock);
         RETURN_IF_EXCEPTION(scope, {});
     }
+    // The same for the mock of another path whose module object lies under the path of this one's. It keeps its other path, so only that side of it ends.
+    auto* mockOfOtherPath = leavesLoadedModuleAlone ? moduleMockWithModuleObjectUnder(globalObject, mock->keyForRequire()->tryGetValue().data) : nullptr;
+    if (mockOfOtherPath && mockOfOtherPath != previous && !mockOfOtherPath->isFromPreload && (loaded.commonJSModule || loaded.staleCommonJSEntry || mockOfOtherPath->originalCommonJSExports)) {
+        endModuleObjectOfModuleMock(globalObject, mockOfOtherPath);
+        RETURN_IF_EXCEPTION(scope, {});
+        loaded = findLoadedModule(globalObject, mock);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     bool isLoadInFlight = loaded.staleESMEntry;
     if (leavesLoadedModuleAlone && staysTheOriginal && (loaded.esmNamespace || loaded.commonJSModule)) {
         // Before the move, while its importers are found under this key.
@@ -6057,8 +6084,6 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         mock->patchedNamespace.setMayBeNull(vm, mock, previous->patchedNamespace.get());
         mock->originalExportsOfEvictedModule.setMayBeNull(vm, mock, previous->originalExportsOfEvictedModule.get());
         mock->patchOrder = previous->patchOrder;
-        if (JSValue exports = previous->originalCommonJSExports.get())
-            mock->originalCommonJSExports.set(vm, mock, exports);
 #if ENABLE(AOT)
         mock->unevaluatedCompiledModule = previous->unevaluatedCompiledModule;
         mock->lostCommonJSExportsToReset = previous->lostCommonJSExportsToReset;
@@ -6071,11 +6096,6 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     } else {
         if (loaded.esmNamespace)
             mock->originalExports.set(vm, mock, JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure()));
-        if (loaded.commonJSModule) {
-            JSValue exports = loaded.commonJSModule->exportsObject();
-            RETURN_IF_EXCEPTION(scope, {});
-            mock->originalCommonJSExports.set(vm, mock, exports);
-        }
 #if ENABLE(AOT)
         // A compiled require() of a built-in module keeps its entry of require.cache with the program.
         if (vm.hasCompiledCode() && !loaded.commonJSModule && isBuiltinModuleKey(specifier)) {
@@ -6089,6 +6109,23 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         }
 #endif
     }
+    // The same for the module object in require.cache, by the path that it lies under. With two paths another mock than `previous` may have had its own there.
+    // Under a mock that answers for that path and has saved nothing of it, what is loaded there is no original either.
+    String requireCachePath = mock->keyForRequire()->tryGetValue().data;
+    JSModuleMock* previousOfRequire = moduleMockWithModuleObjectUnder(globalObject, requireCachePath);
+    if (previousOfRequire && !leavesLoadedModuleAlone) {
+        if (JSValue exports = previousOfRequire->originalCommonJSExports.get())
+            mock->originalCommonJSExports.set(vm, mock, exports);
+    } else if (loaded.commonJSModule && !moduleMockAnsweringFor(globalObject, requireCachePath)) {
+        JSValue exports = loaded.commonJSModule->exportsObject();
+        RETURN_IF_EXCEPTION(scope, {});
+        mock->originalCommonJSExports.set(vm, mock, exports);
+    }
+    // Exactly one mock holds the saved original of a path. Where the two sides came from two mocks, each gives up what this mock took once this mock is registered.
+    // One mock that gave both is out of the table with that, as it was before a mock could have two paths.
+    bool inheritsFromTwoMocks = previous != previousOfRequire && !leavesLoadedModuleAlone;
+    JSModuleMock* gaveESExports = inheritsFromTwoMocks ? previous : nullptr;
+    JSModuleMock* gaveCommonJSExports = inheritsFromTwoMocks ? previousOfRequire : nullptr;
 
 #if ENABLE(AOT)
     // Where a load will come to the module, the mock waits for it, as under `bun test`. So it does where the end of the earlier mock has brought a preload's back.
@@ -6297,6 +6334,14 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
                 RETURN_IF_EXCEPTION(scope, {});
                 previous = nullptr;
             }
+            // It patches nothing after all, so the earlier mocks keep what they saved, and the one of another path ends under this one's as it does for a mock that leaves the loaded module alone.
+            // Asked anew: the factory may have ended it.
+            if (gaveCommonJSExports && !gaveCommonJSExports->isFromPreload && moduleMockWithModuleObjectUnder(globalObject, requireCachePath) == gaveCommonJSExports) {
+                endModuleObjectOfModuleMock(globalObject, gaveCommonJSExports);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
+            gaveESExports = nullptr;
+            gaveCommonJSExports = nullptr;
             loaded = findLoadedModule(globalObject, mock);
             RETURN_IF_EXCEPTION(scope, {});
             loaded.staleESMEntry |= !!std::exchange(loaded.esmNamespace, nullptr);
@@ -6357,6 +6402,16 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
 
     auto& plugins = globalObject->onLoadPlugins;
     if (isCurrent) {
+        // Not before: until here the table names the earlier mocks for these paths, and a factory that ends one of them ends it with what it saved.
+        if (gaveESExports) {
+            gaveESExports->originalExports.clear();
+            gaveESExports->originalNamespace.clear();
+            gaveESExports->patchedNamespace.clear();
+            gaveESExports->originalExportsOfEvictedModule.clear();
+            gaveESExports->patchOrder = 0;
+        }
+        if (gaveCommonJSExports)
+            gaveCommonJSExports->originalCommonJSExports.clear();
         // Asked here, not where the mock was made: the factory may have ended a mock that answered then.
         auto losers = moduleMocksThatLosePathsTo(globalObject, mock);
         registerModuleMock(globalObject, mock);

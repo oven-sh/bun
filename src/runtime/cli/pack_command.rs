@@ -1936,17 +1936,16 @@ pub(crate) fn pack(
 
     {
         let mut progress = Progress::Progress::default();
-        let mut node: Option<&mut Progress::Node> = None;
-        if log_level.show_progress() {
+        let show_progress = log_level.show_progress();
+        if show_progress {
             progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-            let started = progress.start(b"", ctx.stats.total_files);
-            started.unit = Progress::Unit::Files;
-            node = Some(started);
+            progress.start(b"", ctx.stats.total_files);
+            progress.root().unit.set(Progress::Unit::Files);
         }
 
         archive_package_json(&mut ctx, &mut writer, &root_dir, &edited_package_json);
-        if let Some(node) = node.as_mut() {
-            node.complete_one();
+        if show_progress {
+            progress.complete_one(Progress::NodeId::Root);
         }
 
         while let Some(item) = pack_queue.remove_or_null() {
@@ -1985,8 +1984,8 @@ pub(crate) fn pack(
                 None,
             );
 
-            if let Some(node) = node.as_mut() {
-                node.complete_one();
+            if show_progress {
+                progress.complete_one(Progress::NodeId::Root);
             }
         }
 
@@ -2009,13 +2008,13 @@ pub(crate) fn pack(
                 item.edited.as_deref(),
             );
 
-            if let Some(node) = node.as_mut() {
-                node.complete_one();
+            if show_progress {
+                progress.complete_one(Progress::NodeId::Root);
             }
         }
 
-        if let Some(node) = node {
-            node.end();
+        if show_progress {
+            progress.end();
         }
     }
 

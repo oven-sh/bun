@@ -3450,8 +3450,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // The REPL wraps each input in a function, which would own the `var` of a top-level block.
             || (self.options.repl_mode && self.fn_or_arrow_data_visit.is_outside_fn_or_arrow)
             || self.sloppy_mode_block_fn_without_var.contains_key(&name)
-            // The ahead-of-time compiler leaves the arguments object for this name (`find_annex_b_var`).
-            // JavaScriptCore also loses it in a generator to the declaration (oven-sh/WebKit#782).
+            // The ahead-of-time compiler leaves the arguments object for this name, and JavaScriptCore loses it in a generator (oven-sh/WebKit#782).
             || self.load_name_from_ref(name) == b"arguments"
     }
 

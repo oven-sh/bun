@@ -3123,6 +3123,15 @@ declare module "bun:test" {
       /** Colors text like a received value. The text isn't quoted. */
       RECEIVED_COLOR(...text: unknown[]): string;
       /**
+       * Swaps the text color and the background color, to mark the part of a value that differs.
+       * It can wrap another color: `INVERTED_COLOR(EXPECTED_COLOR(text))`.
+       */
+      INVERTED_COLOR(...text: unknown[]): string;
+      /** Dims text, like the punctuation in the result of `matcherHint()`. */
+      DIM_COLOR(...text: unknown[]): string;
+      /** Makes text bold. */
+      BOLD_WEIGHT(...text: unknown[]): string;
+      /**
        * Returns the first line of a failure message, such as `expect(received).toBeFoo(expected)`.
        *
        * @param received the text inside `expect()`'s parentheses

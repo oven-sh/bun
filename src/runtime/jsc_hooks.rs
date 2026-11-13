@@ -764,6 +764,21 @@ fn generate_entry_point(_vm: &VirtualMachine, entry_path: &[u8]) -> bool {
     ServerEntryPoint::generate(unsafe { &mut (*state).entry_point }, entry_path).is_ok()
 }
 
+/// BunCompiledEntryPoint.cpp. The text of the `bun:main` that `generate_entry_point` made last on
+/// this thread, empty before the first one. Borrowed until the next one.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__entryPointWrapperSource(
+    _vm: &VirtualMachine,
+) -> bun_core::StringView<'_> {
+    let state = runtime_state();
+    if state.is_null() {
+        return bun_core::StringView::static_(b"");
+    }
+    // SAFETY: `state` is the live per-thread `RuntimeState`; `generate_entry_point` is the only
+    // writer of `entry_point` and is not running.
+    bun_core::StringView::borrow_utf8(unsafe { &(*state).entry_point.contents })
+}
+
 /// `loadPreloads()` — runs `--preload` scripts. Returns the first rejected
 /// preload promise if any, else null.
 ///

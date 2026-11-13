@@ -3807,9 +3807,10 @@ impl VirtualMachine {
         self.has_loaded = self.main_entry_point == MainEntryPoint::Compiled
             && crate::compiled_program::runs_in_place();
         self.server_look = match self.main_entry_point {
-            _ if self.transpiler.options.disable_transpilation => ServerLook::None,
             MainEntryPoint::File => ServerLook::BehindBunMain,
-            MainEntryPoint::Compiled => ServerLook::BehindCompiledEntry,
+            MainEntryPoint::Compiled if !self.transpiler.options.disable_transpilation => {
+                ServerLook::BehindCompiledEntry
+            }
             _ => ServerLook::None,
         };
 

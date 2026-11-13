@@ -89,8 +89,9 @@ const isSlowBuild = isDebug || isASAN;
 const reloadTestTimeout = isSlowBuild ? 60_000 : 30_000;
 // How long a --hot or --watch child can print nothing before its entry is saved again.
 const resaveAfter = isSlowBuild ? 10_000 : 3_000;
-// Every test of this file starts a process, and twenty tests run at once. A debug build then needs more than the default 5 s for one.
-if (isSlowBuild) setDefaultTimeout(reloadTestTimeout);
+// Every test of this file starts a process, and twenty tests run at once. A debug build then needs more than the default 5 s for
+// one. No lane of CI runs a debug build, and CI passes a limit of its own.
+if (isDebug) setDefaultTimeout(reloadTestTimeout);
 
 /**
  * Runs `dir/filename` under `--hot` or `--watch`. A test drives it from the
@@ -300,13 +301,13 @@ test.concurrent(
 describe("the look for a server in the default export of the entry point", () => {
   type Files = Record<string, string>;
 
-  async function run(files: Files, args: string[], stdin?: string) {
+  async function run(files: Files, args: string[], options: { stdin?: string; env?: Record<string, string> } = {}) {
     using dir = tempDir("bun-main-look", files);
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...args],
-      env: bunEnv,
+      env: { ...bunEnv, ...options.env },
       cwd: String(dir),
-      stdin: stdin === undefined ? "ignore" : new Blob([stdin]),
+      stdin: options.stdin === undefined ? "ignore" : new Blob([options.stdin]),
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -336,11 +337,37 @@ describe("the look for a server in the default export of the entry point", () =>
     return { stdout: printed.stdout, stderr: stripAsanWarning(printed.stderr) };
   }
 
+  // Builds `entry.cjs` into an executable and runs that.
+  async function runCompiled(source: string, flags: string[]) {
+    using dir = tempDir("bun-main-look-compile", { "entry.cjs": source });
+    const executable = join(String(dir), isWindows ? "entry.exe" : "entry");
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", ...flags, "./entry.cjs", "--outfile", executable],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [buildErrors, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+    expect({ errors: stripAsanWarning(buildErrors), exitCode: buildExitCode }).toEqual({ errors: [], exitCode: 0 });
+    await using proc = Bun.spawn({
+      cmd: [executable],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr: stripAsanWarning(stderr), exitCode };
+  }
+
   // Stands in the place of Bun.serve() and listens to nothing. The line that the host prints then shows that it called it.
   const stub = `Bun.serve = options => (console.log("Bun.serve of", options.name), { development: false, protocol: "http", hostname: "stub", port: 1 });\n`;
   const servedBy = (name: string) => `Bun.serve of ${name}\nStarted server: http://stub:1\n`;
   const server = (name: string) => `{ name: ${JSON.stringify(name)}, fetch() {} }`;
   const serves = (name: string) => ({ stdout: servedBy(name), stderr: [], exitCode: 0 });
+  // The timer shows that the program goes on behind the look.
+  const goesOn = `\nsetTimeout(() => console.log("tick"), 1);\n`;
 
   // How a Worker of each kind says that its entry point failed, and that it ended.
   const workers = {
@@ -358,17 +385,26 @@ describe("the look for a server in the default export of the entry point", () =>
   };
 
   describe("every way to start a program starts the server once", () => {
+    // Each row: the title, the arguments, the files, and what the program prints in front of and behind the lines of the server.
     test.concurrent.each([
-      ["an ES module", ["entry.mjs"], { "entry.mjs": stub + `export default ${server("an ES module")};` }],
-      ["a CommonJS module", ["entry.cjs"], { "entry.cjs": stub + `module.exports = ${server("a CommonJS module")};` }],
-      ["-e", ["-e", stub + `export default ${server("-e")};`], {}],
+      ["an ES module", ["entry.mjs"], { "entry.mjs": stub + `export default ${server("an ES module")};` }, "", ""],
+      [
+        "a CommonJS module",
+        ["entry.cjs"],
+        { "entry.cjs": stub + `module.exports = ${server("a CommonJS module")};` },
+        "",
+        "",
+      ],
+      ["-e", ["-e", stub + `export default ${server("-e")};`], {}, "", ""],
       [
         "a preload that imports bun:main",
         ["--preload", "./preload.mjs", "entry.mjs"],
         {
           "entry.mjs": stub + `export default ${server("a preload that imports bun:main")};`,
-          "preload.mjs": `await import("bun:main");`,
+          "preload.mjs": `await import("bun:main");\nconsole.log("preloaded");`,
         },
+        "",
+        "preloaded\n",
       ],
       [
         "a Module.runMain that a preload replaced",
@@ -378,9 +414,11 @@ describe("the look for a server in the default export of the entry point", () =>
           "preload.cjs": `
             const Module = require("node:module");
             const runMain = Module.runMain;
-            Module.runMain = function (...args) { return runMain.apply(this, args); };
+            Module.runMain = function (...args) { console.log("runMain is called"); return runMain.apply(this, args); };
           `,
         },
+        "runMain is called\n",
+        "",
       ],
       [
         "an entry point that awaits",
@@ -389,6 +427,8 @@ describe("the look for a server in the default export of the entry point", () =>
           "entry.mjs":
             stub + `await new Promise(setImmediate);\nexport default ${server("an entry point that awaits")};`,
         },
+        "",
+        "",
       ],
       [
         "an entry point whose import awaits",
@@ -397,13 +437,76 @@ describe("the look for a server in the default export of the entry point", () =>
           "entry.mjs": stub + `import "./awaits.mjs";\nexport default ${server("an entry point whose import awaits")};`,
           "awaits.mjs": `await new Promise(setImmediate);`,
         },
+        "",
+        "",
       ],
-    ] as [string, string[], Files][])("%s", async (name, args, files) => {
-      expect(await run(files, args)).toEqual(serves(name));
+      // The loader lets go of `bun:main` while the entry point evaluates. The module that it let go of still evaluates.
+      [
+        "an entry point that empties the module registry",
+        ["entry.mjs"],
+        {
+          "entry.mjs":
+            `import { jest } from "bun:test";\n` +
+            stub +
+            `jest.resetModules();\nexport default ${server("an entry point that empties the module registry")};`,
+        },
+        "",
+        "",
+      ],
+      [
+        "a CommonJS entry point that empties the module registry",
+        ["entry.cjs"],
+        {
+          "entry.cjs":
+            stub +
+            `require("bun:test").vi.resetModules();\nmodule.exports = ${server("a CommonJS entry point that empties the module registry")};`,
+        },
+        "",
+        "",
+      ],
+      [
+        "an entry point whose import empties the module registry",
+        ["entry.mjs"],
+        {
+          "entry.mjs":
+            stub +
+            `import "./empties.mjs";\nexport default ${server("an entry point whose import empties the module registry")};`,
+          "empties.mjs": `import { jest } from "bun:test";\njest.resetModules();`,
+        },
+        "",
+        "",
+      ],
+    ] as [string, string[], Files, string, string][])("%s", async (name, args, files, inFront, behind) => {
+      expect(await run(files, args)).toEqual({ stdout: inFront + servedBy(name) + behind, stderr: [], exitCode: 0 });
+    });
+
+    // require() refuses a module that awaits, and the loader lets go of the `bun:main` that it began. That one still evaluates.
+    test.concurrent("a Module.runMain that requires an entry point that awaits", async () => {
+      const files = {
+        "entry.mjs": stub + `await new Promise(setImmediate);\nexport default ${server("the entry point")};`,
+        "preload.cjs": `
+          require("node:module").runMain = main => {
+            try { require(main); } catch { console.log("require() refused"); }
+          };
+        `,
+      };
+      expect(await run(files, ["--preload", "./preload.cjs", "entry.mjs"])).toEqual({
+        stdout: "require() refused\n" + servedBy("the entry point"),
+        stderr: [],
+        exitCode: 0,
+      });
+    });
+
+    // Without the transpiler nothing loads `bun:main` above the entry point.
+    test.concurrent("an entry point that imports bun:main where Bun transpiles nothing", async () => {
+      const source = stub + `import("bun:main");\nexport default ${server("the entry point")};`;
+      expect(await run({ "entry.mjs": source }, ["entry.mjs"], { env: { BUN_DISABLE_TRANSPILER: "1" } })).toEqual(
+        serves("the entry point"),
+      );
     });
 
     test.concurrent("stdin", async () => {
-      expect(await run({}, ["-"], stub + `export default ${server("stdin")};`)).toEqual(serves("stdin"));
+      expect(await run({}, ["-"], { stdin: stub + `export default ${server("stdin")};` })).toEqual(serves("stdin"));
     });
 
     test.concurrent.each([
@@ -417,12 +520,13 @@ describe("the look for a server in the default export of the entry point", () =>
       });
     });
 
+    // A second start would come at once, in front of the timer.
     test.concurrent.each(["--hot", "--watch"])("%s", async flag => {
-      const isDone = (stdout: string, stderr: string) => stdout.includes("Started ") || stderr.includes("error:");
+      const isDone = (stdout: string, stderr: string) => stdout.includes("tick\n") || stderr.includes("error:");
       expect(
-        await runUntil({ "entry.mjs": stub + `export default ${server(flag)};` }, [flag, "entry.mjs"], isDone),
+        await runUntil({ "entry.mjs": stub + `export default ${server(flag)};` + goesOn }, [flag, "entry.mjs"], isDone),
       ).toEqual({
-        stdout: servedBy(flag),
+        stdout: servedBy(flag) + "tick\n",
         stderr: [],
       });
     });
@@ -444,51 +548,15 @@ describe("the look for a server in the default export of the entry point", () =>
       ["bun build --compile", []],
       ["bun build --compile --bytecode", ["--bytecode"]],
     ])("%s", async (name, flags) => {
-      using dir = tempDir("bun-main-look-compile", { "entry.cjs": stub + `module.exports = ${server(name)};` });
-      const executable = join(String(dir), isWindows ? "entry.exe" : "entry");
-      await using build = Bun.spawn({
-        cmd: [bunExe(), "build", "--compile", ...flags, "./entry.cjs", "--outfile", executable],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "ignore",
-        stderr: "pipe",
-      });
-      const [buildErrors, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
-      expect({ errors: stripAsanWarning(buildErrors), exitCode: buildExitCode }).toEqual({ errors: [], exitCode: 0 });
-      await using proc = Bun.spawn({
-        cmd: [executable],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, stderr: stripAsanWarning(stderr), exitCode }).toEqual(serves(name));
+      expect(await runCompiled(stub + `module.exports = ${server(name)};`, flags)).toEqual(serves(name));
     });
   });
 
   describe("what the look reads and calls", () => {
-    // The program wrote neither the reads of the look nor its call of Bun.serve(): the error says what Bun did.
-    async function errorOf(source: string, error: string) {
-      using dir = tempDir("bun-main-look", { "entry.mjs": source + `\nconsole.log("ran");\n` });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "entry.mjs"],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      const lines = stripAsanWarning(stderr);
-      const at = lines.indexOf(error);
-      // The note names the entry point by its whole path.
-      const named = lines.slice(at, at + 2).map(line => line.replace(/"[^"]*entry\.mjs"$/, '"entry.mjs"'));
-      return { stdout, error: named, exitCode };
-    }
-
+    // The program wrote none of the reads and calls of the look. An error of one says what Bun did.
     test.concurrent.each([
       [
-        "Bun.serve()",
+        "the call of Bun.serve()",
         `export default { port: 99999999, fetch() {} };`,
         'RangeError: The value of "options.port" is out of range. It must be >= 0 and <= 65535. Received 99999999',
         "called Bun.serve() with",
@@ -497,29 +565,99 @@ describe("the look for a server in the default export of the entry point", () =>
         "a read of the default export",
         `export default { get fetch() { throw new Error("read of fetch"); } };`,
         "error: read of fetch",
-        'read "fetch" to look for a server in',
+        "looked for a server in",
       ],
       [
         "a read of what an exported then hands over",
         `export function then(resolve) { resolve({ get default() { throw new Error("read of default"); } }); }`,
         "error: read of default",
-        'read "default" to look for a server in',
+        "looked for a server in",
+      ],
+      [
+        "an exported then",
+        `export function then() { throw new Error("thrown by then"); }`,
+        "error: thrown by then",
+        "looked for a server in",
+      ],
+      [
+        "a read of what Bun.serve() returns",
+        `Bun.serve = () => undefined;\nexport default { fetch() {} };`,
+        "TypeError: undefined is not an object",
+        "looked for a server in",
       ],
     ])("an error of %s says what Bun did", async (_, source, error, whatBunDid) => {
-      expect(await errorOf(source, error)).toEqual({
+      const { stdout, stderr, exitCode } = await run({ "entry.mjs": source + `\nconsole.log("ran");` }, ["entry.mjs"]);
+      const at = stderr.indexOf(error);
+      // The note names the entry point by its whole path.
+      const printed = stderr.slice(at, at + 2).map(line => line.replace(/"[^"]*entry\.mjs"$/, '"entry.mjs"'));
+      expect({ stdout, error: printed, exitCode }).toEqual({
         stdout: "ran\n",
         error: [error, `note: Bun ${whatBunDid} the default export of "entry.mjs"`],
         exitCode: 1,
       });
     });
 
-    test.concurrent("an error that the program froze keeps its message", async () => {
-      const source = `export default { get fetch() { throw Object.freeze(new Error("read of fetch")); } };`;
-      const printed = await errorOf(source, "error: read of fetch");
-      expect({ ...printed, error: printed.error.map(line => line.trimStart().split(" ")[0]) }).toEqual({
-        stdout: "ran\n",
-        error: ["error:", "at"],
-        exitCode: 1,
+    // What a listener of the program sees of what a getter of `fetch` throws. The note is the last line of a `message` that is
+    // an own, writable string. Nothing else of the error changes.
+    const note = 'note: Bun looked for a server in the default export of "entry.mjs"';
+    test.concurrent.each([
+      ["an Error", `new Error("boom")`, ["boom", note], false],
+      ["an Error that is sealed", `Object.seal(new Error("boom"))`, ["boom", note], true],
+      ["an Error that is frozen", `Object.freeze(new Error("boom"))`, ["boom"], true],
+      [
+        "an Error whose class declares message",
+        `new (class extends Error { message = "boom"; })()`,
+        ["boom", note],
+        false,
+      ],
+      ["an Error without a message", `new Error()`, [""], false],
+      ["an Error whose message is a number", `Object.assign(new Error("boom"), { message: 5 })`, 5, false],
+      [
+        "an Error whose message is a getter",
+        `Object.defineProperty(new Error("boom"), "message", { get: () => "boom" })`,
+        ["boom"],
+        false,
+      ],
+      ["a string", `"boom"`, ["boom"], false],
+      ["an object that is no Error", `{ message: "boom" }`, ["boom"], false],
+    ] as [string, string, string[] | number, boolean][])("the note on %s", async (_, thrown, message, sealed) => {
+      const source = `
+        const attributesOf = value =>
+          typeof value === "object" ? JSON.stringify({ ...Object.getOwnPropertyDescriptor(value, "message"), value: undefined }) : "none";
+        const thrown = ${thrown};
+        const attributes = attributesOf(thrown);
+        process.on("uncaughtException", error => {
+          const message = typeof error === "object" ? error.message : error;
+          console.log(JSON.stringify({
+            message: typeof message === "string" ? message.split("\\n").map(line => line.replace(/"[^"]*entry\\.mjs"$/, '"entry.mjs"')) : message,
+            isWhatWasThrown: error === thrown,
+            keepsItsAttributes: attributesOf(error) === attributes,
+            sealed: typeof error === "object" && Object.isSealed(error),
+          }));
+        });
+        export default { get fetch() { throw thrown; } };
+      `;
+      const { stdout, stderr, exitCode } = await run({ "entry.mjs": source }, ["entry.mjs"]);
+      expect({ seen: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+        seen: { message, isWhatWasThrown: true, keepsItsAttributes: true, sealed },
+        stderr: [],
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("an error that leaves the look twice has one note", async () => {
+      const source = `
+        const error = new Error("boom");
+        const handsOver = { get default() { throw error; } };
+        export function then(resolve) {
+          try { resolve(handsOver); } catch {}
+          try { resolve(handsOver); } catch { console.log(error.message.split("\\n").length, "lines"); }
+        }
+      `;
+      expect(await run({ "entry.mjs": source }, ["entry.mjs"])).toEqual({
+        stdout: "2 lines\n",
+        stderr: [],
+        exitCode: 0,
       });
     });
 
@@ -598,19 +736,19 @@ describe("the look for a server in the default export of the entry point", () =>
     });
 
     test.concurrent.each([
-      ["while the entry point evaluates", `await new Bun.ModuleGraph().import("bun:main");`],
+      [
+        "while the entry point evaluates",
+        `await new Bun.ModuleGraph().import("bun:main");`,
+        "evaluated the entry point\nevaluated a copy\n" + servedBy("the entry point"),
+      ],
       [
         "after the look",
         `setImmediate(async () => { await new Bun.ModuleGraph().import("bun:main"); console.log("imported"); });`,
+        "evaluated the entry point\n" + servedBy("the entry point") + "evaluated a copy\nimported\n",
       ],
-    ])("bun:main that the entry point imports in a Bun.ModuleGraph %s", async (when, imports) => {
+    ])("bun:main that the entry point imports in a Bun.ModuleGraph %s", async (_, imports, stdout) => {
       const source = `${entry}\nif (!Bun.ModuleGraph.current) { ${imports} }`;
-      const { stdout, stderr, exitCode } = await run({ "entry.mjs": stub + source }, ["entry.mjs"]);
-      expect({ served: stdout.split("\n").filter(line => line.startsWith("Bun.serve of")), stderr, exitCode }).toEqual({
-        served: ["Bun.serve of the entry point"],
-        stderr: [],
-        exitCode: 0,
-      });
+      expect(await run({ "entry.mjs": stub + source }, ["entry.mjs"])).toEqual({ stdout, stderr: [], exitCode: 0 });
     });
   });
 });

@@ -31,6 +31,8 @@ pub struct ServerEntryPoint {
     /// see `undefined` memory regardless of the `generated` flag's state.
     pub contents: Box<[u8]>,
     pub generated: bool,
+    /// How many times `generate` has run. The text carries it.
+    generation: u32,
 }
 
 // `deinit` only freed `contents` and reset flags; with `Box<[u8]>` this is the
@@ -39,16 +41,19 @@ pub struct ServerEntryPoint {
 impl ServerEntryPoint {
     /// `bun:main` imports the namespace of the entry point and does nothing more. When it has
     /// evaluated, `moduleLoaderEvaluate` looks in that namespace for a server to start
-    /// (`Bun::evaluateEntryPointWrapper` in `BunCompiledEntryPoint.cpp`).
+    /// (`Bun::evaluateEntryPointWrapper` in `BunCompiledEntryPoint.cpp`). It knows the module by
+    /// this text, so the last line makes the text of each load another one: the `bun:main` of a
+    /// load that a `--hot` reload replaced is not the `bun:main` of the new load.
     pub fn generate(entry: &mut ServerEntryPoint, path_to_use: &[u8]) -> crate::Result<()> {
         // Use the global arena so this buffer's lifetime is decoupled
         // from whichever arena the caller's VM happens to be using; the
         // slice is read later from `getHardcodedModule` which outlives any
         // per-transpile arena.
         let mut code: Vec<u8> = Vec::new();
+        entry.generation = entry.generation.wrapping_add(1);
         write!(
             &mut code,
-            "// @bun\nimport * as start from \"{}\";\n",
+            "// @bun\nimport * as start from \"{}\";\n// load {}\n",
             strings::format_escapes(
                 path_to_use,
                 strings::QuoteEscapeFormatFlags {
@@ -56,6 +61,7 @@ impl ServerEntryPoint {
                     ..Default::default()
                 }
             ),
+            entry.generation,
         )
         .map_err(|_| crate::Error::FormatError)?;
 

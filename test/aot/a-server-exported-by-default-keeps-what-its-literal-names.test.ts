@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { describe, test } from "./supported";
 
 type Files = Record<string, string>;
@@ -271,7 +271,7 @@ test.each([
     "a read that the host makes",
     `export default { get fetch(): never { throw new Error("read of fetch"); } };`,
     "error: read of fetch",
-    'note: Bun read "fetch" to look for a server in the default export of "main.ts"',
+    'note: Bun looked for a server in the default export of "main.ts"',
   ],
 ])("an error of %s says what the host did, as in plain Bun", async (_, source, error, note) => {
   using dir = tempDir("aot-a-server-exported-by-default-fails", { "main.ts": source + `\nconsole.log("ran");` });
@@ -299,4 +299,41 @@ test.each([
   const plain = await failed([bunExe(), "main.ts"]);
   expect(plain).toEqual({ stdout: "ran\n", error: [error, note], exitCode: 1 });
   expect(await failed(["./served"])).toEqual(plain);
+});
+
+// The loader of an executable hands a data file of the executable to `bun:main` as a compiled module. The host reads the namespace
+// of that one as the `import * as start` of `bun:main` does. Where Bun has assertions, the compiler aborts in about half of its runs
+// of --compile-inspector (SEGV in WTF::removeIterator, before this test and after), so this one runs where Bun has none.
+test.skipIf(isDebug || isASAN)("a Worker whose entry point is a data file of the executable ends", async () => {
+  using dir = tempDir("aot-a-server-exported-by-default-data", {
+    "main.mjs": `
+      import data from "./data.json" with { type: "json" };
+      const worker = new Worker(new URL("./data.json", import.meta.url).href);
+      worker.addEventListener("error", event => console.log("error:", String(event.message).split("\n")[0]));
+      worker.addEventListener("close", event => console.log("closed:", event.code, data.name));
+    `,
+    "data.json": `{ "name": "data" }`,
+  });
+  const cwd = String(dir);
+  await using build = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "build",
+      "--compile",
+      "--aot",
+      "--compile-inspector",
+      "--loader=.json:text",
+      "./main.mjs",
+      "--outfile",
+      "ends",
+    ],
+    cwd,
+    env,
+    stdout: "ignore",
+    stderr: "inherit",
+  });
+  expect(await build.exited).toBe(0);
+  await using proc = Bun.spawn({ cmd: ["./ends"], cwd, env, stdout: "pipe", stderr: "pipe" });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect({ stdout, exitCode }).toEqual({ stdout: "closed: 0 data\n", exitCode: 0 });
 });

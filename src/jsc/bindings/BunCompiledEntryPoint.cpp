@@ -9,8 +9,7 @@
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/JSModuleLoader.h>
-#include <JavaScriptCore/JSModuleNamespaceObject.h>
-#include <JavaScriptCore/ModuleRegistryEntry.h>
+#include <JavaScriptCore/JSModuleRecord.h>
 #include <array>
 #include <wtf/text/MakeString.h>
 
@@ -22,6 +21,7 @@ extern "C" BunString Bun__VM__entryRootKey(void*);
 #endif
 extern "C" void Bun__VM__didLookForServer(void*);
 extern "C" BunString Bun__VM__entryPath(void*);
+extern "C" BunString Bun__entryPointWrapperSource(void*);
 extern "C" void Bun__noteEntryEvaluation(Zig::GlobalObject*);
 
 namespace Bun {
@@ -30,8 +30,27 @@ using namespace JSC;
 
 static JSC_DECLARE_HOST_FUNCTION(functionStartServerFromNamespace);
 
-// The program wrote neither the reads of the look nor its call of Bun.serve(), so an error of one says what Bun did.
-static void addNoteOfLook(Zig::GlobalObject* globalObject, Exception* exception, const String& whatBunDid)
+static bool isServerConfig(Zig::GlobalObject* globalObject, JSValue config)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!config.toBoolean(globalObject) || config == globalObject->globalThis())
+        return false;
+    JSValue fetch = config.get(globalObject, Identifier::fromString(vm, "fetch"_s));
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!fetch.isCallable()) {
+        JSValue app = config.get(globalObject, Identifier::fromString(vm, "app"_s));
+        RETURN_IF_EXCEPTION(scope, false);
+        if (app.isUndefinedOrNull())
+            return false;
+    }
+    JSValue stop = config.get(globalObject, Identifier::fromString(vm, "stop"_s));
+    RETURN_IF_EXCEPTION(scope, false);
+    return !stop.isCallable();
+}
+
+// The program wrote none of the reads and calls of the look, and no frame of a stack trace names them. The error says what Bun did.
+static void addNoteOfLook(Zig::GlobalObject* globalObject, Exception* exception, ASCIILiteral whatBunDid)
 {
     auto& vm = JSC::getVM(globalObject);
     auto* error = dynamicDowncast<ErrorInstance>(exception->value());
@@ -39,38 +58,14 @@ static void addNoteOfLook(Zig::GlobalObject* globalObject, Exception* exception,
     JSValue message = error ? error->getDirect(vm, vm.propertyNames->message, attributes) : JSValue();
     if (!message || !message.isString() || (attributes & PropertyAttribute::ReadOnly))
         return;
-    String entryPath = Bun__VM__entryPath(globalObject->bunVM()).toWTFString(BunString::ZeroCopy);
-    error->putDirect(vm, vm.propertyNames->message, jsString(vm, makeString(asString(message)->tryGetValue().data, "\nnote: Bun "_s, whatBunDid, " the default export of \""_s, entryPath, '"')), static_cast<unsigned>(PropertyAttribute::DontEnum));
-}
-
-static JSValue getForLook(Zig::GlobalObject* globalObject, JSValue object, const Identifier& name)
-{
-    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
-    JSValue value = object.get(globalObject, name);
-    if (auto* exception = scope.exception()) [[unlikely]] {
-        addNoteOfLook(globalObject, exception, makeString("read \""_s, name.string(), "\" to look for a server in"_s));
-        return {};
-    }
-    return value;
-}
-
-static bool isServerConfig(Zig::GlobalObject* globalObject, JSValue config)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!config.toBoolean(globalObject) || config == globalObject->globalThis())
-        return false;
-    JSValue fetch = getForLook(globalObject, config, Identifier::fromString(vm, "fetch"_s));
-    RETURN_IF_EXCEPTION(scope, false);
-    if (!fetch.isCallable()) {
-        JSValue app = getForLook(globalObject, config, Identifier::fromString(vm, "app"_s));
-        RETURN_IF_EXCEPTION(scope, false);
-        if (app.isUndefinedOrNull())
-            return false;
-    }
-    JSValue stop = getForLook(globalObject, config, Identifier::fromString(vm, "stop"_s));
-    RETURN_IF_EXCEPTION(scope, false);
-    return !stop.isCallable();
+    String text = asString(message)->tryGetValue().data;
+    String tail = makeString(" the default export of \""_s, Bun__VM__entryPath(globalObject->bunVM()).toWTFString(BunString::ZeroCopy), '"');
+    // An error that leaves the look a second time has its note.
+    if (text.isNull() || text.endsWith(tail))
+        return;
+    String noted = tryMakeString(text, "\nnote: Bun "_s, whatBunDid, tail);
+    if (!noted.isNull())
+        error->putDirect(vm, vm.propertyNames->message, jsString(vm, WTF::move(noted)), attributes);
 }
 
 static void startServerFromNamespace(Zig::GlobalObject* globalObject, JSValue entryNamespace)
@@ -79,7 +74,7 @@ static void startServerFromNamespace(Zig::GlobalObject* globalObject, JSValue en
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (entryNamespace.isUndefinedOrNull())
         return;
-    JSValue config = getForLook(globalObject, entryNamespace, vm.propertyNames->defaultKeyword);
+    JSValue config = entryNamespace.get(globalObject, vm.propertyNames->defaultKeyword);
     RETURN_IF_EXCEPTION(scope, void());
     bool isConfig = isServerConfig(globalObject, config);
     RETURN_IF_EXCEPTION(scope, void());
@@ -89,7 +84,7 @@ static void startServerFromNamespace(Zig::GlobalObject* globalObject, JSValue en
     RETURN_IF_EXCEPTION(scope, void());
     JSValue serve = bun.get(globalObject, Identifier::fromString(vm, "serve"_s));
     RETURN_IF_EXCEPTION(scope, void());
-    config = getForLook(globalObject, entryNamespace, vm.propertyNames->defaultKeyword);
+    config = entryNamespace.get(globalObject, vm.propertyNames->defaultKeyword);
     RETURN_IF_EXCEPTION(scope, void());
     MarkedArgumentBuffer serveArguments;
     serveArguments.append(config);
@@ -121,12 +116,18 @@ static void startServerFromNamespace(Zig::GlobalObject* globalObject, JSValue en
 
 JSC_DEFINE_HOST_FUNCTION(functionStartServerFromNamespace, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    startServerFromNamespace(defaultGlobalObject(lexicalGlobalObject), callFrame->argument(0));
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    startServerFromNamespace(globalObject, callFrame->argument(0));
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        addNoteOfLook(globalObject, exception, "looked for a server in"_s);
+        return {};
+    }
     return JSValue::encode(jsUndefined());
 }
 
 // An entry point that exports a function `then` is asked through it, as `await import()` would ask, for what holds the server.
-static void lookForServer(Zig::GlobalObject* globalObject, JSValue entryNamespace)
+static void askEntryPointForServer(Zig::GlobalObject* globalObject, JSValue entryNamespace)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -143,15 +144,24 @@ static void lookForServer(Zig::GlobalObject* globalObject, JSValue entryNamespac
     JSC::call(globalObject, then, entryNamespace, arguments, "then is not a function"_s);
 }
 
-// A ShadowRealm, a Bun.ModuleGraph and node:vm can each evaluate a module with the key `bun:main`. The wrapper is the one that
-// the loader of the program's own global object holds under that key.
-bool isRegisteredEntryPointWrapper(Zig::GlobalObject* globalObject, JSModuleLoader* moduleLoader, JSValue moduleRecordValue)
+static void lookForServer(Zig::GlobalObject* globalObject, JSValue entryNamespace)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    askEntryPointForServer(globalObject, entryNamespace);
+    if (auto* exception = scope.exception()) [[unlikely]]
+        addNoteOfLook(globalObject, exception, "looked for a server in"_s);
+}
+
+// The text of `bun:main` names the entry point and the load that it is for. A module of node:vm with the identifier `bun:main` has
+// another text, and so has the `bun:main` that a `--hot` reload replaced. A ShadowRealm and a Bun.ModuleGraph load the same text with
+// a loader of their own.
+bool isEntryPointWrapperOfThisLoad(Zig::GlobalObject* globalObject, JSModuleLoader* moduleLoader, JSValue moduleRecordValue)
 {
     auto& vm = JSC::getVM(globalObject);
     if (globalObject != defaultGlobalObject(vm) || moduleLoader != globalObject->moduleLoader())
         return false;
-    auto* entry = moduleLoader->registryEntry(Identifier::fromString(vm, "bun:main"_s));
-    return entry && JSValue(entry->record()) == moduleRecordValue;
+    auto* record = dynamicDowncast<JSModuleRecord>(moduleRecordValue);
+    return record && record->sourceCode().view() == StringView(Bun__entryPointWrapperSource(globalObject->bunVM()).toWTFString(BunString::ZeroCopy));
 }
 
 JSValue evaluateEntryPointWrapper(Zig::GlobalObject* globalObject, JSModuleLoader* moduleLoader, JSValue key, JSValue moduleRecordValue, RefPtr<ScriptFetcher>&& scriptFetcher, JSValue sentValue, JSValue resumeMode)
@@ -163,13 +173,13 @@ JSValue evaluateEntryPointWrapper(Zig::GlobalObject* globalObject, JSModuleLoade
     JSValue result = moduleLoader->evaluateNonVirtual(globalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode);
     RETURN_IF_EXCEPTION(scope, {});
     Bun__VM__didLookForServer(globalObject->bunVM());
-    // The entry point is the one import of the wrapper.
+    // The entry point is the one import of the wrapper, which bound its namespace object to `start`.
     auto* wrapper = uncheckedDowncast<AbstractModuleRecord>(moduleRecordValue);
     const auto& imports = wrapper->requestedModules();
     auto* entryPoint = imports.size() == 1 ? wrapper->hostResolveImportedModule(globalObject, imports.first().m_specifier, imports.first().type()) : nullptr;
     if (!entryPoint)
         return result;
-    JSValue entryNamespace = entryPoint->getModuleNamespace(globalObject);
+    JSValue entryNamespace = entryPoint->moduleNamespaceObject(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     lookForServer(globalObject, entryNamespace);
     RETURN_IF_EXCEPTION(scope, {});

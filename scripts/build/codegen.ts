@@ -940,6 +940,23 @@ export function typesOnlyFlag(cfg: CodegenFields, sources: Sources): string {
     .join(",")}`;
 }
 
+/**
+ * `--sources=@<file>` for a generator that reads every .bind.ts: the `<crate>=<schema>` list is written at
+ * configure into the build directory (one entry per line, rewritten only when it changes) instead of on the
+ * command line. Inline, the command grows with each schema and with the depth of the checkout, and the
+ * codegen rules of a Windows host run under `cmd /c`, whose command line stops at 8191 characters.
+ * Returns the argument and the file, an implicit input of the edge.
+ */
+export function sourcesFlag(
+  cfg: Pick<CodegenFields, "buildDir">,
+  name: string,
+  entries: string[],
+): { flag: string; file: string } {
+  const file = resolve(cfg.buildDir, `${name}.sources`);
+  writeIfChanged(file, entries.map(entry => entry + "\n").join(""));
+  return { flag: `--sources=@${file}`, file };
+}
+
 /** Exported for test/internal/build-codegen-declared-outputs.test.ts. */
 export function emitBindgen({ n, cfg, sources, o, dirStamp, engine }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "bindgen.ts");
@@ -963,12 +980,17 @@ export function emitBindgen({ n, cfg, sources, o, dirStamp, engine }: Ctx): void
     resolve(cfg.codegenDir, `generated_bindgen_${crate}.rs`),
   );
   const types = resolve(cfg.typesDir, "Bindgen.d.ts");
+  const list = sourcesFlag(
+    cfg,
+    "bindgen",
+    sources.bindgen.map(src => `${crates.get(src)}=${src}`),
+  );
 
   n.build({
     outputs: [...cpp, ...headers, ...rust, types],
     rule: "codegen",
     inputs: [...sources.bindgen, ...sources.bindgenCodegen],
-    implicitInputs: [...declaredTypeInputs(cfg), ...guardInputs({ cfg, engine })],
+    implicitInputs: [list.file, ...declaredTypeInputs(cfg), ...guardInputs({ cfg, engine })],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
@@ -976,7 +998,7 @@ export function emitBindgen({ n, cfg, sources, o, dirStamp, engine }: Ctx): void
       args: shJoin(cfg, [
         script,
         // Every schema: build/types is shared by every profile, so Bindgen.d.ts describes them all.
-        `--sources=${sources.bindgen.map(src => `${crates.get(src)}=${src}`).join(",")}`,
+        list.flag,
         typesOnlyFlag(cfg, sources),
         `--codegen-path=${cfg.codegenDir}`,
         `--types-path=${cfg.typesDir}`,

@@ -313,6 +313,16 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
+    /// How many bytes the next reads can return right now. Transports the loop does not `recv()` report 0.
+    pub fn queued_input_len(&self) -> u32 {
+        on_socket!(self.socket;
+            connected s => s.queued_input_len(),
+            duplex _d => 0,
+            pipe _p => 0,
+            else => 0,
+        )
+    }
+
     pub fn get_verify_error(&self) -> us_bun_verify_error_t {
         on_socket!(self.socket;
             connected s => s.get_verify_error(),

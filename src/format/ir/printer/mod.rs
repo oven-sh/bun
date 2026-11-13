@@ -510,6 +510,10 @@ impl<'d> Printer<'d> {
                     } else {
                         self.insert_group_mode(*id, PrintMode::Expanded);
                         self.push(FrameKind::Group, PrintMode::Expanded);
+                        if self.is_trying {
+                            // Its end tag pops this. It holds nothing but its line break.
+                            self.buffers.before_try.open_groups.push(u32::MAX);
+                        }
                         self.print_next(REST_OF_INDENTED_LINE_GROUP);
                     }
                 }

@@ -1510,6 +1510,7 @@ describe.concurrent("bun fmt", () => {
       const first = await format({ ...config, ...texts }, args, { reads: names });
       const second = await format({ ...config, ...(first.files as Record<string, string>) }, args, { reads: names });
       const expected = Object.fromEntries(rows.map(([, , printed], index) => [names[index], printed]));
+      expect([first.exitCode, second.exitCode]).toEqual([0, 0]);
       return { first: first.files, second: second.files, expected };
     }
 
@@ -1670,6 +1671,7 @@ describe.concurrent("bun fmt", () => {
       expect(first.files).toEqual(Object.fromEntries(rows.map(([, printed], index) => [names[index], printed])));
       const second = await format(first.files as Record<string, string>, [], { reads: names });
       expect(second.files).toEqual(Object.fromEntries(rows.map(([, , printed], index) => [names[index], printed])));
+      expect([first.exitCode, second.exitCode]).toEqual([0, 0]);
     });
   });
 

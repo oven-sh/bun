@@ -2,12 +2,13 @@
 // or requires: those it brings into the program itself. No other file has a say: beside each neighbor that the package never names, every unit of checks.js is walked and must read as it reads alone, with functions,
 // files and layouts named by where they are written. The functions are kept under a name that only the run knows: the program does not see who calls them.
 // A program is built, started and walked once, for all the tests that ask for it, and as many programs at once as there are processors.
-import { afterAll, expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { expect } from "bun:test";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import { join } from "node:path";
 import { run as runTestaot } from "./engine/testaot";
 import { without } from "./harness/capabilities";
-import { slot } from "./harness/commands";
+import { limitOfARun, limitWithASAN, slot } from "./harness/commands";
+import { afterAll } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
@@ -70,12 +71,15 @@ const folder = () =>
     })),
   );
 
+// bun:test ends the commands of a test whose time is up only where no other test runs beside it. A build or a program that hangs is ended here, and fails its test.
+const limit = isASAN ? limitWithASAN : limitOfARun;
+
 async function walkChecks(cwd: string, entry: string) {
   const [executable, wire] = [join(cwd, `${entry}.exe`), join(cwd, `${entry}.wire`)];
   const build = [bunExe(), "build", "--compile", "--aot", `--aot-out=${wire}`, entry, "--outfile", executable];
-  const built = await run(build, cwd, bunEnv);
+  const built = await run(build, cwd, bunEnv, limit);
   expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-  expect(await run([executable], cwd, bunEnv)).toEqual({ stdout: "true,false 1,4\n", stderr: "", exitCode: 0 });
+  expect(await run([executable], cwd, bunEnv, limit)).toEqual({ stdout: "true,false 1,4\n", stderr: "", exitCode: 0 });
   const printed = await runTestaot("print", wire);
   expect({ stderr: printed.stderr, exitCode: printed.exitCode }).toEqual({ stderr: "", exitCode: 0 });
   const places = new Map<string, string>();
@@ -122,37 +126,29 @@ async function both<One, Other>(one: Promise<One>, other: Promise<Other>): Promi
 
 const declared = without("testaot") ? test.skip : test.concurrent;
 
-declared(
-  "records written in the files that a file imports are expected there",
-  async () => {
-    const alone = await walkOf("alone.ts");
-    // The records off which each unit reads `faults` as a slot.
-    const read: Record<string, string[]> = {};
-    let unit = "";
-    for (const line of alone.code) {
-      unit = /^code (\S+) \{/.exec(line)?.[1] ?? unit;
-      const receivers = / = GetSlot .* key="faults" receivers=\[([^\]]*)\]/.exec(line)?.[1];
-      if (receivers !== undefined && !(read[unit] ??= []).includes(receivers)) read[unit].push(receivers);
-    }
-    const aParcel = `{type=undefined|null|${record} flags=[IsExpected]}`;
-    expect({ program: alone.program, parameters: alone.parameters, read }).toEqual({
-      program: ["alone.ts", "node_modules/parcels/checks.js", "node_modules/parcels/shapes.js"],
-      parameters: { isClean: aParcel, weigh: aParcel },
-      read: { [unitOf("isClean")]: [record], [unitOf("weigh")]: [record] },
-    });
-  },
-  600_000,
-);
+declared("records written in the files that a file imports are expected there", async () => {
+  const alone = await walkOf("alone.ts");
+  // The records off which each unit reads `faults` as a slot.
+  const read: Record<string, string[]> = {};
+  let unit = "";
+  for (const line of alone.code) {
+    unit = /^code (\S+) \{/.exec(line)?.[1] ?? unit;
+    const receivers = / = GetSlot .* key="faults" receivers=\[([^\]]*)\]/.exec(line)?.[1];
+    if (receivers !== undefined && !(read[unit] ??= []).includes(receivers)) read[unit].push(receivers);
+  }
+  const aParcel = `{type=undefined|null|${record} flags=[IsExpected]}`;
+  expect({ program: alone.program, parameters: alone.parameters, read }).toEqual({
+    program: ["alone.ts", "node_modules/parcels/checks.js", "node_modules/parcels/shapes.js"],
+    parameters: { isClean: aParcel, weigh: aParcel },
+    read: { [unitOf("isClean")]: [record], [unitOf("weigh")]: [record] },
+  });
+});
 
-declared.each(Object.keys(neighbors))(
-  "beside %s every unit of checks.js reads as it reads alone",
-  async name => {
-    const [alone, walked] = await both(walkOf("alone.ts"), walkOf(beside(name)));
-    expect(walked).toEqual({
-      program: [...alone.program, beside(name), name].sort(),
-      parameters: alone.parameters,
-      code: alone.code,
-    });
-  },
-  600_000,
-);
+declared.each(Object.keys(neighbors))("beside %s every unit of checks.js reads as it reads alone", async name => {
+  const [alone, walked] = await both(walkOf("alone.ts"), walkOf(beside(name)));
+  expect(walked).toEqual({
+    program: [...alone.program, beside(name), name].sort(),
+    parameters: alone.parameters,
+    code: alone.code,
+  });
+});

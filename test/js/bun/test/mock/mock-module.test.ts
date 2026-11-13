@@ -3407,6 +3407,24 @@ describe.concurrent("a name that import and require() resolve to two files", () 
                 expect(await withActual("dual")).toEqual(real);
                 expect(require("dual")).toBe(ran);
               });
+              test("a factory of the mock of the name that settles after the mock of the path leaves that mock its path", async () => {
+                const ran = require("dual");
+                const { promise, resolve } = Promise.withResolvers();
+                const settled = mock.module("dual", async () => {
+                  await promise;
+                  return { which: "by name" };
+                });
+                byPath("dual");
+                resolve();
+                await settled;
+                expect(await both("dual")).toEqual(["by path", "by name"]);
+                expect(jest.requireActual("dual")).toBe(ran);
+                vi.unmock("dual");
+                expect(await both("dual")).toEqual(["by path", "real esm"]);
+                jest.unmock(require.resolve("dual"));
+                expect(await withActual("dual")).toEqual(real);
+                expect(require("dual")).toBe(ran);
+              });
               test("the mock of the name that comes second takes the path", async () => {
                 const ran = require("dual");
                 byPath("dual");
@@ -3461,7 +3479,7 @@ describe.concurrent("a name that import and require() resolve to two files", () 
               test.each(names)("the next test file gets the files of %s", async name => expect(await withActual(name)).toEqual(real));
             `,
           },
-          17,
+          18,
           args,
         );
       },

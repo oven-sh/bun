@@ -74,10 +74,8 @@ pub struct Chunk<'a> {
     pub intermediate_output: IntermediateOutput,
     pub(crate) isolated_hash: u64,
 
-    // Set before use. The borrowed enum (`Renamer<'a>`)
-    // borrows from the symbol table and so can't live in this owning struct.
-    // `ChunkRenamer` is the owning equivalent (see `crate::bun_renamer`).
-    pub(crate) renamer: bun_renamer::ChunkRenamer,
+    /// The printer reads it through `LinkerContext::renamer_for_chunk`.
+    pub(crate) renamer: bun_renamer::ChunkRenamer<'a>,
     /// The nested scopes still to name after `rename_symbols_in_chunk`
     /// (number renamer only), `(source_index, module-scope child)` grouped by
     /// file; each file becomes a `NestedRenamer` task.
@@ -1489,20 +1487,10 @@ pub mod bun_renamer {
     pub use bun_js_printer::renamer::*;
 
     #[derive(Default)]
-    pub enum ChunkRenamer {
+    pub enum ChunkRenamer<'a> {
         #[default]
         None,
-        Number(Box<bun_js_printer::renamer::NumberRenamer>),
+        Number(Box<bun_js_printer::renamer::NumberRenamer<'a>>),
         Minify(Box<bun_js_printer::renamer::MinifyRenamer>),
-    }
-
-    impl ChunkRenamer {
-        pub(crate) fn as_renamer(&self) -> bun_js_printer::renamer::Renamer<'_> {
-            match self {
-                ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),
-                ChunkRenamer::Number(r) => bun_js_printer::renamer::Renamer::NumberRenamer(r),
-                ChunkRenamer::Minify(r) => bun_js_printer::renamer::Renamer::MinifyRenamer(r),
-            }
-        }
     }
 }

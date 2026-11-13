@@ -16,8 +16,6 @@ import {
   inherited,
   inheritedFixed,
   left,
-  madeInTrap,
-  makesMockInTrap,
   moduleThenRoot,
   rootHook,
   rootThenModule,
@@ -54,7 +52,6 @@ test("leaves mocks on their properties", () => {
   mock.method(inherited, "run", () => "mocked");
   mock.method(inheritedFixed, "run", () => "mocked");
   mock.method(wrappedByNextFile, "run", () => "mocked");
-  mock.method(makesMockInTrap, "run", () => "mocked");
 
   getterAndSetter.value = "not stored";
   setterOnly.value = "not stored";
@@ -72,7 +69,6 @@ test("leaves mocks on their properties", () => {
       inherited: inherited.run(),
       inheritedFixed: [inheritedFixed.run(), Object.getOwnPropertyDescriptor(inheritedFixed, "run").configurable],
       wrappedByNextFile: wrappedByNextFile.run(),
-      madeInTrap: [makesMockInTrap.run(), madeInTrap.run()],
     },
     {
       left: "mocked",
@@ -87,7 +83,6 @@ test("leaves mocks on their properties", () => {
       inherited: "mocked",
       inheritedFixed: ["mocked", false],
       wrappedByNextFile: "mocked",
-      madeInTrap: ["mocked", "real"],
     },
   );
 });
@@ -97,7 +92,6 @@ test("puts another function on a mocked method by hand", () => {
   changedByHand.run = () => "by hand";
 
   assert.strictEqual(stacked.run(), "mocked");
-  madeInTrap.atFileEnd = true;
 });
 
 // The last test of the file: from here to the next file setTimeout is a fake.

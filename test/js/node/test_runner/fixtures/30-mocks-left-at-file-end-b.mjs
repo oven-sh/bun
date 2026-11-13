@@ -5,7 +5,9 @@ import { expected, read, wrappedByNextFile } from "./30-mocks-left-at-file-end-s
 
 // A module that wraps a method when it loads does this. It is before this
 // file's first call of node:test, and that call ends the mocks of the first
-// file. The mock of the first file must not stay inside the wrapper.
+// file. The mock of the first file must not stay inside the wrapper. Today the
+// step writes the real method over the wrapper. If the step ran when the first
+// file ends, the wrapper would stay and call the real method.
 const runAtLoad = wrappedByNextFile.run;
 wrappedByNextFile.run = function (...args) {
   return runAtLoad.apply(this, args);

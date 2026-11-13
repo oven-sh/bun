@@ -1329,27 +1329,25 @@ class MockTracker {
     // runs each file in a new process. This writes what reset() writes, but
     // newest first, so two mocks of one property leave what was there before
     // the first. reset() goes oldest first, as Node's does, and leaves the
-    // first mock. An error does not stop the pass, and the mocks are forgotten
-    // before the first write, so a mock that cannot come off does not fail
-    // every later file.
+    // first mock. An error does not stop the pass.
     endMocksOfFile = function endMocksOfFile(rootTracker: MockTracker | null, moduleTracker: MockTracker) {
       let first: { error: unknown } | undefined;
-      // A Proxy trap can make a mock while this runs. Go again until none is left.
-      for (;;) {
-        const ofRoot = rootTracker !== null ? rootTracker.#mocks : kNoMocks;
-        const ofModule = moduleTracker.#mocks;
-        let i = ofRoot.length - 1;
-        let j = ofModule.length - 1;
-        if (i < 0 && j < 0) break;
-        if (rootTracker !== null) rootTracker.#mocks = [];
-        moduleTracker.#mocks = [];
-        while (i >= 0 || j >= 0) {
-          const { ctx } = j < 0 || (i >= 0 && ofRoot[i].sequence > ofModule[j].sequence) ? ofRoot[i--] : ofModule[j--];
-          try {
-            if (!undoPropertyMock(ctx)) ctx.restore();
-          } catch (error) {
-            first ??= { error };
-          }
+      const ofRoot = rootTracker !== null ? rootTracker.#mocks : kNoMocks;
+      const ofModule = moduleTracker.#mocks;
+      // The trackers forget the mocks before the first write. A mock that
+      // cannot come off then does not fail every later file. A write can run
+      // a Proxy trap, and a mock that the trap makes is a mock of the next
+      // file: a trap that makes one on each write cannot keep the pass going.
+      let i = ofRoot.length - 1;
+      let j = ofModule.length - 1;
+      if (i >= 0) rootTracker!.#mocks = [];
+      if (j >= 0) moduleTracker.#mocks = [];
+      while (i >= 0 || j >= 0) {
+        const { ctx } = j < 0 || (i >= 0 && ofRoot[i].sequence > ofModule[j].sequence) ? ofRoot[i--] : ofModule[j--];
+        try {
+          if (!undoPropertyMock(ctx)) ctx.restore();
+        } catch (error) {
+          first ??= { error };
         }
       }
       try {

@@ -5524,9 +5524,10 @@ describe.concurrent("import cycles through a mocked module", () => {
       for (const [kind, mock] of Object.entries(mocks)) {
         if (only && !only.includes(kind)) continue;
         const hasFactory = kind !== "automock" && kind !== "spy";
-        // With two files per module, jest.mock() mocks `m0.mts` and `m0.ts`, and jest.requireActual() loads `m0.ts`. What
-        // `m0.ts` is the first to load gets `m0.mts` as it is on disk. Where the test file imports the mock first, that is
-        // the rest of the cycle: `m0.mts` runs ahead of it, and the module that imports "./m0" reads `m0.mts`, not the mock.
+        // With two files per module, jest.mock() mocks `m0.mts` and `m0.ts`, and jest.requireActual() loads `m0.ts`.
+        // What `m0.ts` is the first to load gets `m0.mts` as it is on disk. Where the test file imports the mock first,
+        // that is the rest of the cycle: `m0.mts` runs ahead of it, and the module that imports "./m0" reads `m0.mts`,
+        // not the mock.
         const readsTwin = twoFiles && kind === "requireActual" && entry === "m0";
         files[`${kind}-${entry}.test.ts`] = `
           import { expect, jest, test, vi } from "bun:test";

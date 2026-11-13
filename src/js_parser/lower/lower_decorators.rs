@@ -105,7 +105,8 @@ fn initializer_group(prop: &Property) -> Option<usize> {
 }
 
 /// Puts `inserted` in `constructor` right after a top-level `super()`
-/// statement returns, which is after the last instance field.
+/// statement returns, which is after the last instance field. Without
+/// one, `inserted` goes after the directive prologue.
 fn insert_after_super<'a>(
     constructor: &mut Property,
     inserted: &[Stmt],
@@ -119,7 +120,7 @@ fn insert_after_super<'a>(
     let after_super = body
         .iter()
         .position(|stmt| stmt.is_super_call())
-        .map_or(0, |i| i + 1);
+        .map_or_else(|| crate::visit::leading_directive_count(body), |i| i + 1);
     let mut stmts = BumpVec::<'a, Stmt>::with_capacity_in(body.len() + inserted.len(), arena);
     stmts.extend_from_slice(&body[..after_super]);
     stmts.extend_from_slice(inserted);
@@ -567,8 +568,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// Declare receiver-capture temporaries created past `temps_before` at the
-    /// top of the function body they were created in, so each invocation gets
-    /// a fresh binding. A binding hoisted outside the function would be shared
+    /// top of the function body they were created in (after its directive
+    /// prologue), so each invocation gets a fresh binding. A binding hoisted outside the function would be shared
     /// across invocations, and `__privateGet(_obj = recv, _s, getter)` runs the
     /// user getter between the write and the `.call(_obj)` read; re-entering
     /// the same call site through that getter would clobber the shared temp.
@@ -582,9 +583,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return stmts;
         };
         let old_stmts = stmts.slice();
+        let prologue_len = crate::visit::leading_directive_count(old_stmts);
         let mut new_stmts = BumpVec::<Stmt>::with_capacity_in(old_stmts.len() + 1, self.arena);
+        new_stmts.extend_from_slice(&old_stmts[..prologue_len]);
         new_stmts.push(decl_stmt);
-        new_stmts.extend_from_slice(old_stmts);
+        new_stmts.extend_from_slice(&old_stmts[prologue_len..]);
         js_ast::StmtNodeList::from_bump(new_stmts)
     }
 

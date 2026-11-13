@@ -185,6 +185,27 @@ describe("bundler", () => {
       },
     });
   }
+  // --bytecode selects cjs output. A wrapped CommonJS file that starts with "use strict"
+  // keeps the directive in its wrapper, so the embedded bytecode runs it as strict code.
+  itBundled("compile/BytecodeKeepsUseStrictOfWrappedCommonJS", {
+    compile: true,
+    bytecode: true,
+    files: {
+      "/entry.mjs": /* js */ `
+        import strict from "./strict.cjs";
+        import sloppy from "./sloppy.cjs";
+        console.log(strict, sloppy);
+      `,
+      "/strict.cjs": /* js */ `
+        "use strict";
+        module.exports = (function () { return this === undefined; })();
+      `,
+      "/sloppy.cjs": /* js */ `
+        module.exports = (function () { return this === undefined; })();
+      `,
+    },
+    run: { stdout: "true false" },
+  });
   // ESM bytecode test matrix: each scenario × {default, minified} = 2 tests per scenario.
   // With --compile, static imports are inlined into one chunk, but dynamic imports
   // create separate modules in the standalone graph — each with its own bytecode + ModuleInfo.

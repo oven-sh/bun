@@ -501,7 +501,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         p.lexer.expect(T::TOpenBrace)?;
-        let mut opts = ParseStatementOptions::default();
+        let mut opts = ParseStatementOptions {
+            allow_directive_prologue: true,
+            ..Default::default()
+        };
         let stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut opts)?;
         p.lexer.next()?;
 

@@ -290,9 +290,16 @@ pub(crate) fn codegen_function(
         // Fast Refresh hash invalidation block — see `fast_refresh_state` above.
         let _ = fast_refresh_state;
 
-        let mut new_body = preface;
-        new_body.append(&mut compiled.body);
-        compiled.body = new_body;
+        // The body starts with the directives of the function. A directive only counts
+        // while it comes first, so the memo cache is declared after them.
+        let directive_count = compiled
+            .body
+            .iter()
+            .take_while(|stmt| matches!(stmt.data, StmtData::SDirective(_)))
+            .count();
+        compiled
+            .body
+            .splice(directive_count..directive_count, preface);
     }
 
     // Instrument forget: emit instrumentation call at the top of the function body

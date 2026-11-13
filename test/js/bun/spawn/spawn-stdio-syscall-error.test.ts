@@ -383,11 +383,15 @@ process.on("exit", code => {
 });
 `;
 
+// A writer waits for its marker file for about 30 s, so one whose test is gone ends by itself.
+const waitForMarker = (name: string) =>
+  `n=0; while [ ! -e ${name} ] && [ $n -lt 3000 ]; do sleep 0.01; n=$((n+1)); done`;
+
 // At the parent's marker one write of more than a stream's highWaterMark (64 KiB), then the child's own marker.
 const ONE_WRITE_CMD = [
   "sh",
   "-c",
-  "while [ ! -e stopped-go ]; do sleep 0.01; done; dd if=/dev/zero bs=66000 count=1 2>/dev/null; : > stopped-written; read done",
+  `${waitForMarker("stopped-go")}; dd if=/dev/zero bs=66000 count=1 2>/dev/null; : > stopped-written; read done`,
 ];
 
 // node:child_process, the same wakeup for a stream that is paused: the chunk fills its buffer, so it has stopped the
@@ -441,7 +445,7 @@ child.on("close", () => {
 const HANGUP_WRITER_CMD = [
   "sh",
   "-c",
-  "printf x; while [ ! -e hangup-go ]; do sleep 0.01; done; dd if=/dev/zero bs=136000 count=1 2>/dev/null; exec 1>&-; : > hangup-written; read done",
+  `printf x; ${waitForMarker("hangup-go")}; dd if=/dev/zero bs=136000 count=1 2>/dev/null; exec 1>&-; : > hangup-written; read done`,
 ];
 
 // node:child_process, no failed read: a paused stream whose buffer the first chunk of a wakeup fills, with more bytes

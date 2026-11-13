@@ -508,9 +508,6 @@ fn wrap_rules_with_conditions<'a>(
         // Generate "@layer" wrappers. Note that empty "@layer" rules still have
         // a side effect (they set the layer order) so they cannot be removed.
         if let Some(l) = &item.layer {
-            // SAFETY: the copy goes into an `arena_rule_list_one` slab that never
-            // runs `Drop`; the source stylesheet owns the heap.
-            let layer = unsafe { core::ptr::read(&raw const l.v) };
             let mut do_block_rule = true;
             if ast.rules.v.is_empty() {
                 if l.v.is_none() {
@@ -527,6 +524,9 @@ fn wrap_rules_with_conditions<'a>(
                 }
             }
 
+            // SAFETY: the copy goes into an `arena_rule_list_one` slab that never
+            // runs `Drop`; the source stylesheet owns the heap.
+            let layer = unsafe { core::ptr::read(&raw const l.v) };
             ast.rules = arena_rule_list_one(
                 temp_bump,
                 if do_block_rule {

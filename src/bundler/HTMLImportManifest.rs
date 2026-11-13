@@ -339,12 +339,9 @@ pub mod html_import_manifest {
         linker_graph: &LinkerGraph<'_>,
         chunks: &[Chunk],
     ) -> usize {
-        let json = core::fmt::from_fn(move |writer| {
-            let mut adapter = bun_io::FmtAdapter::new(writer);
-            super::write_escaped_json(index, graph, linker_graph, chunks, &mut adapter)
-                .map_err(|_| core::fmt::Error)
-        });
-        bun_core::fmt::count(format_args!("{json}"))
+        let mut counter = bun_io::DiscardingWriter::new();
+        let _ = super::write_escaped_json(index, graph, linker_graph, chunks, &mut counter);
+        counter.count
     }
 
     pub(crate) fn write_escaped_json(

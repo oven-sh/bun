@@ -8669,6 +8669,82 @@ describe("relative color origin alpha", () => {
   minify_test(".a { color: color(from color(srgb 0 0 0 / 50%) srgb r g b) }", ".a{color:color(srgb 0 0 0/.5)}");
 });
 
+describe("relative color whose unresolved alpha names a channel", () => {
+  // An rgb() or hsl() with an unresolved alpha prints its folded channels and no origin.
+  // A channel keyword in that alpha needs the origin: `rgb(51 102 153/calc(alpha*var(--o)))` is not a color.
+  const asWritten: [string, string][] = [
+    // The alpha example of MDN's guide "Using relative colors".
+    [
+      "background-color: rgb(from teal r g b / calc(alpha * var(--alpha-multiplier)))",
+      "background-color:rgb(from teal r g b/calc(alpha*var(--alpha-multiplier)))",
+    ],
+    ["color: rgb(from #336699 r g b / calc(alpha * var(--o)))", "color:rgb(from #369 r g b/calc(alpha*var(--o)))"],
+    [
+      "color: rgb(from #336699 r g b / calc(alpha * var(--o, .5)))",
+      "color:rgb(from #369 r g b/calc(alpha*var(--o,.5)))",
+    ],
+    ["color: rgb(from #336699 r g b / calc(r / 255 * var(--o)))", "color:rgb(from #369 r g b/calc(r/255*var(--o)))"],
+    ["color: rgb(from #336699 r g b / calc(b / 255 * var(--o)))", "color:rgb(from #369 r g b/calc(b/255*var(--o)))"],
+    ["color: hsl(from #336699 h s l / calc(alpha * var(--o)))", "color:hsl(from #369 h s l/calc(alpha*var(--o)))"],
+    ["color: hsl(from #336699 h s l / calc(s / 100 * var(--o)))", "color:hsl(from #369 h s l/calc(s/100*var(--o)))"],
+    ["color: hsl(from #336699 h s l / calc(l / 100 * var(--o)))", "color:hsl(from #369 h s l/calc(l/100*var(--o)))"],
+    // An identifier after the keyword that is not a keyword.
+    [
+      "color: rgb(from #336699 r g b / calc(alpha * var(--o) * e))",
+      "color:rgb(from #369 r g b/calc(alpha*var(--o)*e))",
+    ],
+    ["color: rgb(from #336699 r g b / var(--o, alpha))", "color:rgb(from #369 r g b/var(--o,alpha))"],
+    ["color: rgb(from #336699 r g b / env(--x, alpha))", "color:rgb(from #369 r g b/env(--x,alpha))"],
+    ["color: RGB(FROM #336699 R G B / CALC(ALPHA * VAR(--o)))", "color:RGB(FROM #369 R G B/CALC(ALPHA*VAR(--o)))"],
+    ["--c: rgb(from #336699 r g b / calc(alpha * var(--o)))", "--c:rgb(from #369 r g b/calc(alpha*var(--o)))"],
+    [
+      "--c: rgb(from rgba(255, 255, 255, 0.06) r g b / calc(alpha * var(--m, 1)))",
+      "--c:rgb(from #ffffff0f r g b/calc(alpha*var(--m,1)))",
+    ],
+    [
+      "color: rgb(from light-dark(#336699, #996633) r g b / calc(alpha * var(--o)))",
+      "color:rgb(from light-dark(#369,#963) r g b/calc(alpha*var(--o)))",
+    ],
+    [
+      "background: linear-gradient(rgb(from #336699 r g b / calc(alpha * var(--o))), red)",
+      "background:linear-gradient(rgb(from #369 r g b/calc(alpha*var(--o))),red)",
+    ],
+    [
+      "color: var(--x, rgb(from #336699 r g b / calc(alpha * var(--o))))",
+      "color:var(--x,rgb(from #369 r g b/calc(alpha*var(--o))))",
+    ],
+    // The keyword is found in a block of any kind, and when it is written with an escape.
+    [
+      "color: rgb(from #336699 r g b / calc((1 - alpha) * var(--o)))",
+      "color:rgb(from #369 r g b/calc((1 - alpha)*var(--o)))",
+    ],
+    ["color: rgb(from #336699 r g b / --half({alpha}))", "color:rgb(from #369 r g b/--half({alpha}))"],
+    ["color: rgb(from #336699 r g b / calc(var(--o) * [alpha]))", "color:rgb(from #369 r g b/calc(var(--o)*[alpha]))"],
+    ["color: rgb(from #336699 r g b / calc(\\61lpha * var(--o)))", "color:rgb(from #369 r g b/calc(alpha*var(--o)))"],
+    // A relative color nested in the alpha has channel names of its own (the chain of #31918).
+    [
+      "--c: rgb(from light-dark(red, blue) r g b / rgb(from light-dark(red, blue) r g b / 1))",
+      "--c:rgb(from light-dark(red,#00f) r g b/light-dark(red,#00f))",
+    ],
+  ];
+  for (const [input, expected] of asWritten) {
+    minify_test(`.a { ${input} }`, `.a{${expected}}`);
+  }
+
+  // With no keyword in the alpha the channels fold as before.
+  minify_test(".a { color: rgb(from #336699 r g b / var(--o)) }", ".a{color:rgb(51 102 153/var(--o))}");
+  minify_test(".a { color: rgb(from #336699 r g b / var(--alpha)) }", ".a{color:rgb(51 102 153/var(--alpha))}");
+  minify_test(".a { color: rgb(from #336699 r g b / var(--o, alphaa)) }", ".a{color:rgb(51 102 153/var(--o,alphaa))}");
+  minify_test(".a { color: hsl(from #336699 h s l / var(--o)) }", ".a{color:hsl(210 50% 40%/var(--o))}");
+  // A channel name of the other function is not a keyword.
+  minify_test(".a { color: rgb(from #336699 r g b / var(--o, h)) }", ".a{color:rgb(51 102 153/var(--o,h))}");
+  minify_test(".a { color: hsl(from #336699 h s l / var(--o, b)) }", ".a{color:hsl(210 50% 40%/var(--o,b))}");
+  // An rgb() with no origin has no channel keywords.
+  minify_test(".a { color: rgb(51 102 153 / var(--o, alpha)) }", ".a{color:rgb(51 102 153/var(--o,alpha))}");
+  // An alpha that is known at build time is folded with its origin.
+  minify_test(".a { color: rgb(from #336699 r g b / calc(alpha * .5)) }", ".a{color:#33669980}");
+});
+
 describe("color channels written as a number or a percentage", () => {
   minify_test(".a { color: oklch(0.5 0.1 120) }", ".a{color:oklch(50% .1 120)}");
   minify_test(".a { color: lab(50 40 -50) }", ".a{color:lab(50% 40 -50)}");

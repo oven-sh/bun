@@ -24,18 +24,20 @@ async function outcomeOf(files: Record<string, string>, words: string, oneThread
     .map(name => "./" + name);
   const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags, ...testFiles], String(dir), env);
   const lines = stderr.split("\n").filter(Boolean);
-  // A run that came to its end says how many tests it ran. The exit code alone does not tell: a report of AddressSanitizer ends a run with 1, as a failed test does, unless it is told to abort.
-  const hasDied = exitCode > 1 || !lines.some(line => /^Ran \d+ tests? across \d+ files?\. /.test(line));
-  // A report of a sanitizer ends with the stacks of the threads that started one another, so the lines that name the fault go in front.
+  // A report of a sanitizer ends with the stacks of the threads that started one another, so the lines that name the fault go in front of the last ones.
   const namesFault = (line: string) => /^(==\d+==ERROR|SUMMARY): /.test(line);
+  // A run that came to its end says how many tests it ran. The exit code alone does not tell: a report of AddressSanitizer ends a run with 1, as a failed test does, unless it is told to
+  // abort, and it may come behind that line.
+  const hasDied =
+    exitCode > 1 || lines.some(namesFault) || !lines.some(line => /^Ran \d+ tests? across \d+ files?\. /.test(line));
   return {
     printed: stdout.split("\n").filter(line => line.startsWith("SAID ")),
     tests: lines
       .filter(line => /^\((pass|fail|skip|todo)\) /.test(line))
       .map(line => line.replace(/ \[[\d.]+m?s\]$/, "")),
     exitCode,
-    // A run that dies says why here, and nowhere else.
-    lastWords: hasDied ? [...lines.slice(0, -12).filter(namesFault), ...lines.slice(-12)] : [],
+    // A run that dies says why here, and nowhere else. One that is killed says nothing, so how it ended comes last.
+    lastWords: hasDied ? [...lines.slice(0, -12).filter(namesFault), ...lines.slice(-12), `exit code ${exitCode}`] : [],
     // A compiled run ends with a list of the files that it did not run again where `bun test` does: `  room.cjs, while 2-second.test.mjs ran`.
     didNotRunAgain: (stdout + "\n" + stderr).split("\n").filter(line => /^ {2}\S+, while \S+ ran$/.test(line)).length,
   };

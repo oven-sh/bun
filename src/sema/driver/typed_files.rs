@@ -3417,13 +3417,45 @@ impl<'a> Transfer<'_, 'a, '_> {
                     continue;
                 }
                 let source_position = syntax.file[chain.operand].pos;
+                // A name in the type of a cast can be missing, or stand for a narrower type, in the output.
+                let has_name = |cast: &ExprId| {
+                    let cast = &syntax.file[*cast];
+                    let (start, end) = match cast.kind {
+                        ExprKind::As { ty, .. } | ExprKind::Satisfies { ty, .. } => {
+                            syntax.type_span(ty)
+                        }
+                        ExprKind::AsConst(_) | ExprKind::NonNull(_) => return false,
+                        _ => (cast.pos, cast.end),
+                    };
+                    let is_inside = |at: u32| start <= at && at < end;
+                    let is_import =
+                        |node: &TypeNode| matches!(node.kind, TypeNodeKind::Import { .. });
+                    syntax.file.names.iter().any(|name| is_inside(name.pos()))
+                        || (syntax.file.types.iter())
+                            .any(|node| is_import(node) && is_inside(node.pos))
+                };
+                // `undefined`, `true` or `false` of the source, which --minify-syntax writes as `void 0`, `!0` or `!1`.
+                let is_respelled = |found: ExprId| {
+                    let ExprKind::Unary { op, operand } = output_file[found].kind else {
+                        return false;
+                    };
+                    let source = &syntax.file[chain.operand];
+                    let is_the_constant = match (op, source.kind) {
+                        (UnOp::Void, ExprKind::Ident(_)) => syntax.word(source.pos) == b"undefined",
+                        (UnOp::Not, ExprKind::True | ExprKind::False) => true,
+                        _ => false,
+                    };
+                    is_the_constant
+                        && matches!(output_file[operand].kind, ExprKind::Number(_))
+                        && !chain.casts.iter().any(has_name)
+                };
                 let found = find(chain.operand).or_else(|| find_via_ancestor(&chain));
                 let Some(operand) = found.or_else(|| {
                     [Shape::Leaf, Shape::Prefix].iter().find_map(|&shape| {
                         output_expressions
                             .get(&(shape, index as u32, source_position))
                             .copied()
-                            .filter(|&literal| is_literal(literal))
+                            .filter(|&found| is_literal(found) || is_respelled(found))
                     })
                 }) else {
                     continue;

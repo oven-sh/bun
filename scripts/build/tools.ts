@@ -117,18 +117,23 @@ interface Rejection {
  * using Bun APIs). Must be the actual bun binary — NOT process.execPath,
  * since configure may run under node.
  *
- * Search order: ~/.bun/bin (curl-install location), then PATH, then
- * process.execPath only if it's actually bun. CI agents pin an old system
- * bun but codegen scripts need newer CLI flags, so the user install goes
- * first.
+ * Keep the Bun running configure unless the user installation is newer.
+ * CI can have an old system Bun and a newer user installation, while a
+ * package manager can provide a newer runtime than the curl-install path.
+ * Under node, try the user installation and then PATH.
  */
 export function findBun(os: OS): string {
   const exe = os === "windows" ? "bun.exe" : "bun";
   const userBun = join(homedir(), ".bun", "bin", exe);
+  if (process.versions.bun !== undefined) {
+    const running = parseVersion(process.versions.bun);
+    if (running !== undefined && userBun !== process.execPath && isExecutable(userBun)) {
+      const installed = getToolVersion(userBun, "--version");
+      if ("version" in installed && compareVersions(installed.version, running) > 0) return userBun;
+    }
+    return process.execPath;
+  }
   if (isExecutable(userBun)) return userBun;
-
-  // Running under bun at a non-standard path — use that.
-  if (process.versions.bun !== undefined) return process.execPath;
 
   return findTool({
     names: ["bun"],

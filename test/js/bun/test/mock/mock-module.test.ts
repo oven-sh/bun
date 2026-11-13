@@ -6755,6 +6755,145 @@ describe.concurrent("a module that left require.cache still counts when a mock e
     );
   });
 
+  test("an ES module that imports a module that each test deletes and requires again", async () => {
+    await expectFixturesToPass(
+      {
+        "collector.ts": `
+          import * as editor from "editor";
+          export const collect = () => "collect(" + (editor as any).tag + ")";
+        `,
+        "bridge.ts": `import { collect } from "./collector"; export const bridge = () => "bridge(" + collect() + ")";`,
+        ...Object.fromEntries(
+          ["a", "b"].map(name => [
+            `${name}.test.ts`,
+            `
+              import { afterEach, expect, mock, test } from "bun:test";
+              const collectorPath = require.resolve("./collector");
+              mock.module("editor", () => ({ tag: "editor-${name}" }));
+              afterEach(() => { delete require.cache[collectorPath]; });
+              function load() {
+                delete require.cache[collectorPath];
+                return require(collectorPath);
+              }
+              test("the collector reads the mock of this file", () => {
+                expect(load().collect()).toBe("collect(editor-${name})");
+              });
+              test("the bridge reads the mock of this file", () => {
+                expect(require("./bridge").bridge()).toBe("bridge(collect(editor-${name}))");
+              });
+            `,
+          ]),
+        ),
+      },
+      4,
+      ["./a.test.ts", "./b.test.ts"],
+    );
+  });
+
+  // The next three are still wrong with the walk through the modules that left require.cache.
+  // Now the next file reads "svc(mock-a)": keep.cjs required svc.cjs again, so the first one counts as out of use.
+  test.todo(
+    "a CommonJS module that keeps a deleted requirer of the mock and has required that module again since",
+    async () => {
+      await expectFixturesToPass(
+        {
+          "dep.cjs": `exports.name = "real";`,
+          "svc.cjs": `const { name } = require("./dep.cjs"); exports.describe = () => "svc(" + name + ")";`,
+          "keep.cjs": `
+          const first = require("./svc.cjs");
+          exports.read = () => first.describe();
+          exports.again = () => require("./svc.cjs").describe();
+        `,
+          "a.test.cjs": `
+          const { expect, jest, test } = require("bun:test");
+          test("reads the mock, and the module itself where it requires the module again", () => {
+            jest.doMock("./dep.cjs", () => ({ name: "mock-a" }));
+            const keep = require("./keep.cjs");
+            ${drop("./svc.cjs", "./dep.cjs")}
+            jest.dontMock("./dep.cjs");
+            expect([keep.read(), keep.again()]).toEqual(["svc(mock-a)", "svc(real)"]);
+          });
+        `,
+          "b.test.cjs": `
+          const { expect, test } = require("bun:test");
+          test("reads the module itself", () => {
+            expect(require("./keep.cjs").read()).toBe("svc(real)");
+          });
+        `,
+        },
+        2,
+        ["./a.test.cjs", "./b.test.cjs"],
+      );
+    },
+  );
+
+  // Now p.cjs runs twice: the two lib.cjs that left require.cache count as one file, and only the second one required the mocked helper.cjs.
+  test.todo("a CommonJS module whose deleted import never reached the mocked module is not run again", async () => {
+    await expectFixturesToPass(
+      {
+        "helper.cjs": `exports.v = "real";`,
+        "lib.cjs": `const helper = require("./helper.cjs"); exports.get = () => helper.v;`,
+        "p.cjs": `
+          const lib = require("./lib.cjs");
+          globalThis.pLoads = (globalThis.pLoads ?? 0) + 1;
+          exports.p = () => "p(" + lib.get() + ")";
+        `,
+        "q.cjs": `const lib = require("./lib.cjs"); exports.q = () => "q(" + lib.get() + ")";`,
+        "a.test.cjs": `
+          const { expect, jest, test } = require("bun:test");
+          test("a mock of helper.cjs comes and goes, and p.cjs, which holds the first lib.cjs, stays", () => {
+            const p = require("./p.cjs");
+            ${drop("./lib.cjs", "./helper.cjs")}
+            require("./q.cjs");
+            ${drop("./lib.cjs")}
+            jest.doMock("./helper.cjs", () => ({ v: "mock" }));
+            jest.dontMock("./helper.cjs");
+            expect([require("./p.cjs") === p, globalThis.pLoads]).toEqual([true, 1]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  // Now the next file reads "signup(queued:cy)", and so does main. Bun 1.4.4 reads "signup(sent:cy)". import-fresh and clear-module remove a module this way.
+  test.todo("the requirer of a mock that was taken out of the children of its parent and then deleted", async () => {
+    await expectFixturesToPass(
+      {
+        "mailer.js": `module.exports = { send: to => "sent:" + to };`,
+        "signup.js": `const mailer = require("./mailer.js"); module.exports = { signup: user => "signup(" + mailer.send(user) + ")" };`,
+        "a.test.js": `
+          const { afterEach, beforeEach, expect, mock, test } = require("bun:test");
+          const realMailer = { ...require("./mailer.js") };
+          beforeEach(() => {
+            const key = require.resolve("./mailer.js"), loaded = require.cache[key];
+            const siblings = loaded?.parent?.children ?? [];
+            if (siblings.includes(loaded)) siblings.splice(siblings.indexOf(loaded), 1);
+            delete require.cache[key];
+            mock.module("./mailer.js", () => ({ send: to => "queued:" + to }));
+          });
+          afterEach(() => {
+            mock.module("./mailer.js", () => realMailer);
+          });
+          test("a signup queues a mail", () => {
+            expect(require("./signup.js").signup("ann")).toBe("signup(queued:ann)");
+          });
+          test("the fake mailer queues", () => {
+            expect(require("./mailer.js").send("bob")).toBe("queued:bob");
+          });
+        `,
+        "b.test.js": `
+          const { expect, test } = require("bun:test");
+          test("a signup sends a mail", () => {
+            expect(require("./signup.js").signup("cy")).toBe("signup(sent:cy)");
+          });
+        `,
+      },
+      3,
+      ["./a.test.js", "./b.test.js"],
+    );
+  });
+
   test("mock.module() over a module of an earlier file keeps this file's importer of a deleted module", async () => {
     await expectFixturesToPass(
       {

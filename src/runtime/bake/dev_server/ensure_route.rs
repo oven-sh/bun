@@ -170,7 +170,7 @@ pub(super) fn ensure_route_is_bundled(
                 // then no entry points will be queued up here. That does
                 // not mean the route is ready for presentation.
                 if entry_points.set.is_empty() {
-                    if !dev.bundling_failures.is_empty() {
+                    if !dev.graphs.bundling_failures.is_empty() {
                         dev.route_bundle_ptr(route_bundle_index).server_state =
                             route_bundle::State::PossibleBundlingFailures;
                         state = route_bundle::State::PossibleBundlingFailures;
@@ -211,7 +211,7 @@ pub(super) fn ensure_route_is_bundled(
                 return Ok(());
             }
             route_bundle::State::PossibleBundlingFailures => {
-                if !dev.bundling_failures.is_empty() {
+                if !dev.graphs.bundling_failures.is_empty() {
                     // Trace the graph to see if there are any failures that are
                     // reachable by this route.
                     match check_route_failures(dev, route_bundle_index, ctx.to_dev_response())? {
@@ -384,17 +384,16 @@ pub(super) fn trace_route_failures(
     dev: &mut DevServer,
     route_bundle_index: route_bundle::Index,
 ) -> crate::Result<GraphTraceState> {
-    let mut gts = dev.init_graph_trace_state(0)?;
+    let mut gts = dev.graphs.init_graph_trace_state(0)?;
     let _lock_guard = dev.graph_safety_lock.guard();
     match &dev.route_bundles[route_bundle_index.get() as usize].data {
         route_bundle::Data::Framework(fw) => {
             dev.trace_all_route_imports(fw.route_index, &mut gts, TraceImportGoal::FindErrors)?
         }
-        route_bundle::Data::Html(html) => dev.client_graph.trace_imports(
-            html.bundled_file,
-            &mut gts,
-            TraceImportGoal::FindErrors,
-        )?,
+        route_bundle::Data::Html(html) => {
+            dev.graphs
+                .trace_imports(html.bundled_file, &mut gts, TraceImportGoal::FindErrors)?
+        }
     }
     Ok(gts)
 }
@@ -413,13 +412,13 @@ fn check_route_failures(
             {
                 let mut it = gts.client_bits.iterator::<true, true>();
                 while let Some(file_index) = it.next() {
-                    dev.client_graph.stale_files.set(file_index);
+                    dev.graphs.client.stale_files.set(file_index);
                 }
             }
             {
                 let mut it = gts.server_bits.iterator::<true, true>();
                 while let Some(file_index) = it.next() {
-                    dev.server_graph.stale_files.set(file_index);
+                    dev.graphs.server.stale_files.set(file_index);
                 }
             }
             return Ok(CheckResult::Rebuild);
@@ -487,7 +486,8 @@ impl DevServer {
         if let route_bundle::UnresolvedIndex::Html(html) = route {
             let html_ref = &*html;
             if let Some(existing) = self
-                .client_graph
+                .graphs
+                .client
                 .bundled_files
                 .get(&html_ref.bundle.path)
                 .and_then(|file| file.html_route_bundle_index)
@@ -513,12 +513,13 @@ impl DevServer {
                 }
                 route_bundle::UnresolvedIndex::Html(html) => 'brk: {
                     let html_ref = &*html;
-                    let incremental_graph_index = self.client_graph.insert_stale_extra(
-                        &html_ref.bundle.path,
-                        bake::Graph::Client,
-                        incremental_graph::RouteKind::Route,
-                    )?;
-                    let file = &mut self.client_graph.bundled_files.values_mut()
+                    let incremental_graph_index =
+                        self.graphs.insert_stale_extra::<{ Side::Client }>(
+                            &html_ref.bundle.path,
+                            bake::Graph::Client,
+                            incremental_graph::RouteKind::Route,
+                        )?;
+                    let file = &mut self.graphs.client.bundled_files.values_mut()
                         [incremental_graph_index.get() as usize];
                     file.html_route_bundle_index = Some(bundle_index);
                     break 'brk route_bundle::Data::Html(route_bundle::Html {

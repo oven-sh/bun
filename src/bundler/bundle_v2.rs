@@ -155,7 +155,7 @@ impl<'a> OtherTranspilers<'a> {
 
     fn ensure_client(
         &mut self,
-        main: &&'a mut Transpiler<'a>,
+        main: &Transpiler<'a>,
         arena: &'a bun_alloc::Arena,
     ) -> &mut Transpiler<'a> {
         let client = self.client.get_or_insert_with(|| {
@@ -173,7 +173,7 @@ impl<'a> OtherTranspilers<'a> {
     /// `BundleV2::transpiler_for_target`, for callers that use the rest of the bundle meanwhile.
     fn for_target<'t>(
         &'t mut self,
-        main: &'t mut &'a mut Transpiler<'a>,
+        main: &'t mut Transpiler<'a>,
         arena: &'a bun_alloc::Arena,
         target: options::Target,
     ) -> &'t mut Transpiler<'a> {
@@ -268,7 +268,7 @@ impl<'a> BundleV2<'a> {
 
     pub(crate) fn transpiler_for_target(&mut self, target: options::Target) -> &mut Transpiler<'a> {
         self.other_transpilers
-            .for_target(&mut self.transpiler, self.graph.heap, target)
+            .for_target(self.transpiler, self.graph.heap, target)
     }
 
     // draft `on_parse_task_complete` / `deinit_without_freeing_arena`
@@ -1930,12 +1930,12 @@ pub mod bv2_impl {
 
         fn ensure_client_transpiler(&mut self) {
             self.other_transpilers
-                .ensure_client(&self.transpiler, self.graph.heap);
+                .ensure_client(self.transpiler, self.graph.heap);
         }
 
         #[cold]
         pub(super) fn create_client_transpiler(
-            this_transpiler: &&'a mut Transpiler<'a>,
+            this_transpiler: &Transpiler<'a>,
             arena: &'a bun_alloc::Arena,
         ) -> Result<Box<Transpiler<'a>>, Error> {
             // Builds a fresh owned `Transpiler` via `Transpiler::for_worker`
@@ -1951,9 +1951,7 @@ pub mod bv2_impl {
             let this_compile = this_transpiler.options.compile_mode.is_executable();
             let this_env = this_transpiler.env;
 
-            // SAFETY: `this_transpiler` and the data its `&'a` fields borrow live for `'a`.
-            let mut ct: Transpiler<'a> =
-                unsafe { Transpiler::for_worker(this_transpiler, arena, this_transpiler.log) };
+            let mut ct = Transpiler::for_worker(this_transpiler, arena, this_transpiler.log);
 
             ct.options.target = Target::Browser;
             // Don't inherit SSR mode from the server target: the SSR pass
@@ -2609,7 +2607,7 @@ pub mod bv2_impl {
             let heap = self.graph.heap;
             let transpiler = self
                 .other_transpilers
-                .for_target(&mut self.transpiler, heap, target);
+                .for_target(self.transpiler, heap, target);
             let source_dir =
                 Fs::PathName::init(&import_record.source_file).dir_with_trailing_slash();
 
@@ -4423,7 +4421,7 @@ pub mod bv2_impl {
 
                             let asset_naming = &self
                                 .other_transpilers
-                                .for_target(&mut self.transpiler, self.graph.heap, target)
+                                .for_target(self.transpiler, self.graph.heap, target)
                                 .options
                                 .asset_naming;
                             if !asset_naming.is_empty() {
@@ -6378,7 +6376,7 @@ pub mod bv2_impl {
                         let mut path_primary = file_map_result.path_pair.primary;
                         let transpiler =
                             self.other_transpilers
-                                .for_target(&mut self.transpiler, heap, target);
+                                .for_target(self.transpiler, heap, target);
                         let import_record_loader = import_record.loader.unwrap_or_else(|| {
                             Fs::Path::init(path_primary.text)
                                 .loader(&transpiler.options.loaders)
@@ -6737,9 +6735,9 @@ pub mod bv2_impl {
                     }
                 }
 
-                let transpiler =
-                    self.other_transpilers
-                        .for_target(&mut self.transpiler, heap, target);
+                let transpiler = self
+                    .other_transpilers
+                    .for_target(self.transpiler, heap, target);
                 let import_record_loader = 'brk: {
                     let resolved_loader = import_record.loader.unwrap_or_else(|| {
                         path.loader(&transpiler.options.loaders)

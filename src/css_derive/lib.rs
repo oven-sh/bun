@@ -706,7 +706,7 @@ fn expand_enum_property(input: &DeriveInput) -> syn::Result<TokenStream2> {
             #[inline]
             fn to_css(
                 &self,
-                __dest: &mut ::bun_css::printer::Printer<'_, '_>,
+                __dest: &mut ::bun_css::printer::Printer<'_>,
             ) -> ::core::result::Result<(), ::bun_css::PrintErr> {
                 <Self as ::bun_css::EnumProperty>::to_css(self, __dest)
             }
@@ -747,7 +747,7 @@ fn expand_enum_property(input: &DeriveInput) -> syn::Result<TokenStream2> {
             #[inline]
             pub fn to_css(
                 &self,
-                __dest: &mut ::bun_css::printer::Printer<'_, '_>,
+                __dest: &mut ::bun_css::printer::Printer<'_>,
             ) -> ::core::result::Result<(), ::bun_css::PrintErr> {
                 <Self as ::bun_css::EnumProperty>::to_css(self, __dest)
             }
@@ -986,7 +986,7 @@ fn expand_derive_to_css(input: &DeriveInput) -> syn::Result<TokenStream2> {
             #[allow(unused_variables)]
             fn to_css(
                 &self,
-                __dest: &mut ::bun_css::printer::Printer<'_, '_>,
+                __dest: &mut ::bun_css::printer::Printer<'_>,
             ) -> ::core::result::Result<(), ::bun_css::PrintErr> {
                 #[allow(unused_imports)]
                 use ::bun_css::generics::ToCss as _;
@@ -999,7 +999,7 @@ fn expand_derive_to_css(input: &DeriveInput) -> syn::Result<TokenStream2> {
             #[inline]
             pub fn to_css(
                 &self,
-                __dest: &mut ::bun_css::printer::Printer<'_, '_>,
+                __dest: &mut ::bun_css::printer::Printer<'_>,
             ) -> ::core::result::Result<(), ::bun_css::PrintErr> {
                 <Self as ::bun_css::generics::ToCss>::to_css(self, __dest)
             }

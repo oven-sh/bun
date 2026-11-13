@@ -106,7 +106,7 @@ impl<'a> ImportInfo<'a> {
 ///
 /// `Printer` also includes helper functions that assist with writing output
 /// that respects options such as `minify`, and `css_modules`.
-pub struct Printer<'a, 'bump> {
+pub struct Printer<'a> {
     pub dest: &'a mut dyn Write,
     pub(crate) loc: Location,
     pub(crate) indent_amt: u32,
@@ -129,10 +129,6 @@ pub struct Printer<'a, 'bump> {
     /// A mapping of pseudo classes to replace with class names that can be applied
     /// from JavaScript. Useful for polyfills, for example.
     pub(crate) pseudo_classes: Option<PseudoClasses<'a>>,
-    // INVARIANT: `with_context()` points this at a stack-local `StyleContext` (via an
-    // unsafe variance cast — see the SAFETY note there) and always restores the parent
-    // before that frame returns; never stash `ctx` beyond the `with_context` call.
-    pub(crate) ctx: Option<&'a css::StyleContext<'a, 'bump>>,
     /// Number of parent-selector substitutions performed for `&` while
     /// serializing the current rule prelude with compiled nesting (targets
     /// without CSS nesting support). Reset per prelude (in
@@ -168,7 +164,7 @@ pub struct Printer<'a, 'bump> {
     pub(crate) arena: &'a Bump,
 }
 
-impl<'a, 'bump> Printer<'a, 'bump> {
+impl<'a> Printer<'a> {
     pub(crate) fn lookup_symbol(&self, ref_: bun_ast::Ref) -> &'a [u8] {
         let symbols = self.symbols;
 
@@ -256,7 +252,6 @@ impl<'a, 'bump> Printer<'a, 'bump> {
             pending_semicolon: false,
             in_calc: false,
             css_module: None,
-            ctx: None,
             nesting_expansions: 0,
             in_scope_rule: false,
             prefix_expansion_bytes: 0,
@@ -328,15 +323,11 @@ impl<'a, 'bump> Printer<'a, 'bump> {
         // External URL stays as-is
         Ok((record.path.text, false))
     }
-
-    pub(crate) fn context(&self) -> Option<&css::StyleContext<'a, 'bump>> {
-        self.ctx
-    }
 }
 
 /// `Printer` participates in `serializer::serialize_*<W: bun_io::Write>` so
 /// `Token::to_css` and friends can write through it generically.
-impl bun_io::Write for Printer<'_, '_> {
+impl<'a> bun_io::Write for Printer<'a> {
     #[inline]
     fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
         Printer::write_str(self, buf).map_err(|_| bun_core::Error::WriteFailed)
@@ -347,7 +338,7 @@ impl bun_io::Write for Printer<'_, '_> {
     }
 }
 
-impl<'a, 'bump> Printer<'a, 'bump> {
+impl<'a> Printer<'a> {
     /// Serialize a CSS identifier through this printer.
     ///
     /// Thin wrapper over `css::serializer::serialize_identifier`. The
@@ -697,53 +688,6 @@ impl<'a, 'bump> Printer<'a, 'bump> {
         F: FnMut(&mut Self, I::Item) -> PrintResult<()>,
     {
         self.write_separated(iter, |d| d.delim(b',', false), f)
-    }
-
-    pub(crate) fn with_context<C, F>(
-        &mut self,
-        selectors: &css::SelectorList<'bump>,
-        closure: C,
-        func: F,
-    ) -> PrintResult<()>
-    where
-        F: FnOnce(C, &mut Self) -> PrintResult<()>,
-    {
-        let parent = if let Some(ctx) = self.ctx {
-            self.ctx = None;
-            Some(ctx)
-        } else {
-            None
-        };
-
-        let ctx = css::StyleContext {
-            selectors,
-            parent,
-            vendor_prefix: self.vendor_prefix,
-        };
-
-        // SAFETY: `ctx` and `selectors` do not live for `'a`, but they outlive the call to `func`,
-        // and `self.ctx` is restored to `parent` before this returns.
-        self.ctx =
-            Some(unsafe { &*core::ptr::from_ref(&ctx).cast::<css::StyleContext<'a, 'bump>>() });
-        let res = func(closure, self);
-        self.ctx = parent;
-
-        res
-    }
-
-    pub(crate) fn with_cleared_context<C, F>(&mut self, closure: C, func: F) -> PrintResult<()>
-    where
-        F: FnOnce(C, &mut Self) -> PrintResult<()>,
-    {
-        let parent = if let Some(ctx) = self.ctx {
-            self.ctx = None;
-            Some(ctx)
-        } else {
-            None
-        };
-        let res = func(closure, self);
-        self.ctx = parent;
-        res
     }
 
     /// Increases the current indent level.

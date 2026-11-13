@@ -35,8 +35,9 @@ pub mod viewport;
 // at-rule = one line here; the enum variant + `to_css` arm + `deep_clone`
 // arm are generated. `Unknown`/`Custom`/`Ignored` stay a fixed tail because
 // their `to_css` arms are special-cased (see the note on `Custom`).
+// `, ctx` marks the rules whose `to_css` takes the enclosing `StyleContext`.
 macro_rules! css_rule_variants {
-    ( $( $(#[$doc:meta])* $Variant:ident($Payload:ty) ),+ $(,)? ) => {
+    ( |$ctx:ident| $( $(#[$doc:meta])* $Variant:ident($Payload:ty $(, $arg:ident)?) ),+ $(,)? ) => {
         /// A single CSS rule (at-rule or style rule).
         pub enum CssRule<'bump, R> {
             $( $(#[$doc])* $Variant($Payload), )+
@@ -49,12 +50,16 @@ macro_rules! css_rule_variants {
         }
 
         impl<'bump, R> CssRule<'bump, R> {
-            pub fn to_css(&self, dest: &mut Printer<'_, 'bump>) -> Result<(), PrintErr> {
+            pub fn to_css(
+                &self,
+                dest: &mut Printer,
+                $ctx: Option<&StyleContext<'_, 'bump>>,
+            ) -> Result<(), PrintErr> {
                 match self {
-                    $( CssRule::$Variant(x) => x.to_css(dest), )+
+                    $( CssRule::$Variant(x) => x.to_css(dest $(, $arg)?), )+
                     CssRule::Unknown(x) => {
                         // `.a { @apply x }`: outside of its style rule it would apply to nothing.
-                        if nesting::enclosing_selectors_to_css(dest)? {
+                        if nesting::enclosing_selectors_to_css(dest, $ctx)? {
                             return dest.block(|d| {
                                 d.newline()?;
                                 x.to_css(d)
@@ -97,12 +102,13 @@ macro_rules! css_rule_variants {
 }
 
 css_rule_variants! {
+    |ctx|
     /// A `@media` rule.
-    Media(media::MediaRule<'bump, R>),
+    Media(media::MediaRule<'bump, R>, ctx),
     /// An `@import` rule.
     Import(import::ImportRule<'bump>),
     /// A style rule.
-    Style(style::StyleRule<'bump, R>),
+    Style(style::StyleRule<'bump, R>, ctx),
     /// A `@keyframes` rule.
     Keyframes(keyframes::KeyframesRule<'bump>),
     /// A `@font-face` rule.
@@ -112,17 +118,17 @@ css_rule_variants! {
     /// A `@page` rule.
     Page(page::PageRule<'bump>),
     /// A `@supports` rule.
-    Supports(supports::SupportsRule<'bump, R>),
+    Supports(supports::SupportsRule<'bump, R>, ctx),
     /// A `@counter-style` rule.
     CounterStyle(counter_style::CounterStyleRule<'bump>),
     /// A `@namespace` rule.
     Namespace(namespace::NamespaceRule<'bump>),
     /// A `@-moz-document` rule.
-    MozDocument(document::MozDocumentRule<'bump, R>),
+    MozDocument(document::MozDocumentRule<'bump, R>, ctx),
     /// A `@nest` rule.
-    Nesting(nesting::NestingRule<'bump, R>),
+    Nesting(nesting::NestingRule<'bump, R>, ctx),
     /// A nested declarations rule.
-    NestedDeclarations(nesting::NestedDeclarationsRule<'bump>),
+    NestedDeclarations(nesting::NestedDeclarationsRule<'bump>, ctx),
     /// A `@viewport` rule.
     Viewport(viewport::ViewportRule<'bump>),
     /// A `@custom-media` rule.
@@ -130,15 +136,15 @@ css_rule_variants! {
     /// A `@layer` statement rule.
     LayerStatement(layer::LayerStatementRule<'bump>),
     /// A `@layer` block rule.
-    LayerBlock(layer::LayerBlockRule<'bump, R>),
+    LayerBlock(layer::LayerBlockRule<'bump, R>, ctx),
     /// A `@property` rule.
     Property(property::PropertyRule<'bump>),
     /// A `@container` rule.
-    Container(container::ContainerRule<'bump, R>),
+    Container(container::ContainerRule<'bump, R>, ctx),
     /// A `@scope` rule.
-    Scope(scope::ScopeRule<'bump, R>),
+    Scope(scope::ScopeRule<'bump, R>, ctx),
     /// A `@starting-style` rule.
-    StartingStyle(starting_style::StartingStyleRule<'bump, R>),
+    StartingStyle(starting_style::StartingStyleRule<'bump, R>, ctx),
 }
 
 // The bundler's worker threads share parsed style sheets.
@@ -340,7 +346,11 @@ impl<R> CssRule<'_, R> {
 // ─── CssRuleList::{to_css,minify,deep_clone} ──────────────────────────────
 
 impl<'bump, R> CssRuleList<'bump, R> {
-    pub fn to_css(&self, dest: &mut Printer<'_, 'bump>) -> Result<(), PrintErr> {
+    pub fn to_css(
+        &self,
+        dest: &mut Printer,
+        ctx: Option<&StyleContext<'_, 'bump>>,
+    ) -> Result<(), PrintErr> {
         let mut first = true;
         let mut last_without_block = false;
 
@@ -376,7 +386,7 @@ impl<'bump, R> CssRuleList<'bump, R> {
             if core::mem::take(&mut dest.pending_semicolon) {
                 dest.write_char(b';')?;
             }
-            rule.to_css(dest)?;
+            rule.to_css(dest, ctx)?;
             last_without_block = matches!(
                 rule,
                 CssRule::Import(_) | CssRule::Namespace(_) | CssRule::LayerStatement(_)
@@ -1163,7 +1173,7 @@ fn merge_style_rules<'bump, R>(
 // `crate::Location` are interchangeable (one nominal type).
 pub use crate::Location;
 
-/// Printer's nesting cursor — linked list of parent selector lists used to
+/// Nesting cursor of the rule printers — linked list of parent selector lists used to
 /// resolve `&` during serialization.
 pub struct StyleContext<'a, 'bump> {
     pub(crate) selectors: &'a crate::selectors::SelectorList<'bump>,

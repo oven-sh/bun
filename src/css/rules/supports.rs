@@ -1,5 +1,5 @@
 use crate as css;
-use crate::css_rules::{CssRuleList, Location, MinifyContext};
+use crate::css_rules::{CssRuleList, Location, MinifyContext, StyleContext};
 use crate::error::MinifyErr;
 use crate::properties::PropertyId;
 use crate::{PrintErr, Printer};
@@ -447,7 +447,7 @@ impl<'bump, R> SupportsRule<'bump, R> {
         // must be minified so compiling nesting away for the targets stays
         // bounded by `MAX_SELECTOR_EXPANSION`. `@supports` preserves the `&`
         // resolution context at print time (`to_css` below recurses into
-        // `self.rules` without clearing `dest.ctx`), so style rules nested
+        // `self.rules` without clearing the style context), so style rules nested
         // behind it multiply against the enclosing nesting levels exactly like
         // plain nested rules — leaving them unvisited here lets the printer
         // expand them exponentially.
@@ -461,7 +461,11 @@ impl<'bump, R> SupportsRule<'bump, R> {
 }
 
 impl<'bump, R> SupportsRule<'bump, R> {
-    pub fn to_css(&self, dest: &mut Printer<'_, 'bump>) -> core::result::Result<(), PrintErr> {
+    pub fn to_css(
+        &self,
+        dest: &mut Printer,
+        ctx: Option<&StyleContext<'_, 'bump>>,
+    ) -> core::result::Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
@@ -469,7 +473,7 @@ impl<'bump, R> SupportsRule<'bump, R> {
         self.condition.to_css(dest)?;
         dest.block(|d| {
             d.newline()?;
-            self.rules.to_css(d)
+            self.rules.to_css(d, ctx)
         })
     }
 }

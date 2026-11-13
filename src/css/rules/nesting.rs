@@ -1,6 +1,6 @@
 use crate::context::{DeclarationContext, PropertyHandlerContext};
 use crate::css_rules::style::StyleRule;
-use crate::css_rules::{CssRule, CssRuleList, Location, MinifyContext};
+use crate::css_rules::{CssRule, CssRuleList, Location, MinifyContext, StyleContext};
 use crate::error::MinifyErr;
 use crate::selectors::selector::serialize::{
     NestingPosition, serialize_nesting, serialize_selector_list,
@@ -18,13 +18,17 @@ pub struct NestingRule<'bump, R> {
 }
 
 impl<'bump, R> NestingRule<'bump, R> {
-    pub(crate) fn to_css(&self, dest: &mut Printer<'_, 'bump>) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(
+        &self,
+        dest: &mut Printer,
+        ctx: Option<&StyleContext<'_, 'bump>>,
+    ) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
-        if dest.context().is_none() {
+        if ctx.is_none() {
             dest.write_str("@nest ")?;
         }
-        self.style.to_css(dest)
+        self.style.to_css(dest, ctx)
     }
 }
 
@@ -48,23 +52,27 @@ pub struct NestedDeclarationsRule<'bump> {
 
 /// Where nesting is compiled away, prints the selectors of the enclosing style rule, for the
 /// block of a rule that has none of its own. False where there is no such style rule.
-pub(super) fn enclosing_selectors_to_css(dest: &mut Printer) -> Result<bool, PrintErr> {
-    // Read the `Copy` field directly: `Printer::context()` ties the borrow to `dest`.
-    let Some(ctx) = dest.ctx else {
+pub(super) fn enclosing_selectors_to_css(
+    dest: &mut Printer,
+    ctx: Option<&StyleContext>,
+) -> Result<bool, PrintErr> {
+    let Some(ctx) = ctx else {
         return Ok(false);
     };
     let vendor_prefix = core::mem::replace(&mut dest.vendor_prefix, ctx.vendor_prefix);
-    dest.ctx = ctx.parent;
     dest.nesting_expansions = 0;
     let result = serialize_selector_list(ctx.selectors.v.slice(), dest, ctx.parent, false);
-    dest.ctx = Some(ctx);
     dest.vendor_prefix = vendor_prefix;
     result.map(|()| true)
 }
 
 impl<'bump> NestedDeclarationsRule<'bump> {
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        if enclosing_selectors_to_css(dest)? {
+    pub(crate) fn to_css(
+        &self,
+        dest: &mut Printer,
+        ctx: Option<&StyleContext>,
+    ) -> Result<(), PrintErr> {
+        if enclosing_selectors_to_css(dest, ctx)? {
             return super::decl_block_to_css(&self.declarations, dest);
         }
         if dest.targets.should_compile_same(Feature::Nesting) {

@@ -1,5 +1,5 @@
 use crate as css;
-use crate::css_rules::{CssRuleList, Location};
+use crate::css_rules::{CssRuleList, Location, StyleContext};
 use crate::css_values::ident::{CustomIdent, CustomIdentFns};
 use crate::media_query::{self, MediaFeatureType, Operator, QueryCondition, QueryFeature, ToCss};
 use crate::properties::Property;
@@ -343,7 +343,8 @@ pub struct ContainerRule<'bump, R> {
 impl<'bump, R> ContainerRule<'bump, R> {
     pub(crate) fn to_css(
         &self,
-        dest: &mut Printer<'_, 'bump>,
+        dest: &mut Printer,
+        ctx: Option<&StyleContext<'_, 'bump>>,
     ) -> core::result::Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
@@ -366,7 +367,7 @@ impl<'bump, R> ContainerRule<'bump, R> {
 
         dest.block(|d| {
             d.newline()?;
-            self.rules.to_css(d)
+            self.rules.to_css(d, ctx)
         })
     }
 }

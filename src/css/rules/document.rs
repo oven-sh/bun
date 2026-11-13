@@ -1,4 +1,4 @@
-use crate::css_rules::{CssRuleList, Location};
+use crate::css_rules::{CssRuleList, Location, StyleContext};
 use crate::{PrintErr, Printer};
 
 /// A [@-moz-document](https://www.w3.org/TR/2012/WD-css3-conditional-20120911/#at-document) rule.
@@ -13,13 +13,17 @@ pub struct MozDocumentRule<'bump, R> {
 }
 
 impl<'bump, R> MozDocumentRule<'bump, R> {
-    pub(crate) fn to_css(&self, dest: &mut Printer<'_, 'bump>) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(
+        &self,
+        dest: &mut Printer,
+        ctx: Option<&StyleContext<'_, 'bump>>,
+    ) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
         dest.write_str("@-moz-document url-prefix()")?;
         dest.block(|d| {
             d.newline()?;
-            self.rules.to_css(d)
+            self.rules.to_css(d, ctx)
         })
     }
 }

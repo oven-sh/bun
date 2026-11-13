@@ -3,7 +3,7 @@ use core::fmt;
 use bun_alloc::Arena;
 
 use crate as css;
-use crate::css_rules::{CssRuleList, Location};
+use crate::css_rules::{CssRuleList, Location, StyleContext};
 use crate::{PrintErr, Printer, SmallList};
 
 /// A CSS cascade layer name. Stored as a list of segments because dot
@@ -128,7 +128,11 @@ impl<'bump, R> LayerBlockRule<'bump, R> {
         }
     }
 
-    pub fn to_css(&self, dest: &mut Printer<'_, 'bump>) -> Result<(), PrintErr> {
+    pub fn to_css(
+        &self,
+        dest: &mut Printer,
+        ctx: Option<&StyleContext<'_, 'bump>>,
+    ) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
@@ -140,7 +144,7 @@ impl<'bump, R> LayerBlockRule<'bump, R> {
 
         dest.block(|d| {
             d.newline()?;
-            self.rules.to_css(d)
+            self.rules.to_css(d, ctx)
         })
     }
 }

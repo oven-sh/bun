@@ -1,5 +1,5 @@
 use crate as css;
-use crate::css_rules::{CssRule, CssRuleList, Location, MinifyContext};
+use crate::css_rules::{CssRule, CssRuleList, Location, MinifyContext, StyleContext};
 use crate::declaration::{DeclarationBlock, DeclarationList};
 use crate::error::MinifyErr;
 use crate::selectors::selector;
@@ -106,9 +106,13 @@ impl<'bump, R> StyleRule<'bump, R> {
 const MAX_PREFIX_EXPANSION_BYTES: usize = 64 << 20;
 
 impl<'bump, R> StyleRule<'bump, R> {
-    pub fn to_css(&self, dest: &mut Printer<'_, 'bump>) -> Result<(), PrintErr> {
+    pub fn to_css(
+        &self,
+        dest: &mut Printer,
+        ctx: Option<&StyleContext<'_, 'bump>>,
+    ) -> Result<(), PrintErr> {
         if self.vendor_prefix.is_empty() {
-            self.to_css_base(dest, true)?;
+            self.to_css_base(dest, ctx, true)?;
         } else {
             let mut first_rule = true;
             let mut emitted_first_pass = false;
@@ -143,7 +147,7 @@ impl<'bump, R> StyleRule<'bump, R> {
                     } else {
                         0
                     };
-                    self.to_css_base(dest, remaining_prefixes.is_empty())?;
+                    self.to_css_base(dest, ctx, remaining_prefixes.is_empty())?;
                     if is_duplicate_pass {
                         let emitted = dest.bytes_written().saturating_sub(bytes_before);
                         dest.prefix_expansion_bytes =
@@ -172,7 +176,8 @@ impl<'bump, R> StyleRule<'bump, R> {
 
     fn to_css_base(
         &self,
-        dest: &mut Printer<'_, 'bump>,
+        dest: &mut Printer,
+        ctx: Option<&StyleContext<'_, 'bump>>,
         is_final_prefix_pass: bool,
     ) -> Result<(), PrintErr> {
         use css::properties::Property;
@@ -189,9 +194,6 @@ impl<'bump, R> StyleRule<'bump, R> {
             //   #[cfg(feature = "sourcemap")]
             //   dest.add_mapping(self.loc);
 
-            // `dest.context()` borrows `dest`; copy the (Copy) raw
-            // ctx field out so it doesn't conflict with the `&mut *dest` below.
-            let ctx = dest.ctx;
             // Each rule prelude gets its own budget for `&` substitutions when
             // compiling nesting (see `serialize::serialize_nesting`).
             dest.nesting_expansions = 0;
@@ -258,7 +260,7 @@ impl<'bump, R> StyleRule<'bump, R> {
         // Write nested rules after the parent.
         if supports_nesting {
             helpers_newline(self, dest, supports_nesting, len)?;
-            self.rules.to_css(dest)?;
+            self.rules.to_css(dest, ctx)?;
             dest.pending_semicolon = false;
             helpers_end(dest, has_declarations)?;
         } else {
@@ -284,10 +286,12 @@ impl<'bump, R> StyleRule<'bump, R> {
                 helpers_newline(self, dest, supports_nesting, len)?;
             }
             dest.skip_prefixed_nested_rules = skip_prefixed_nested;
-            // `with_context` keeps the (closure-data, fn) split so the
-            // `Printer` reborrow lives only inside `func`.
-            let result =
-                dest.with_context(&self.selectors, &self.rules, |rules, d| rules.to_css(d));
+            let nested = StyleContext {
+                selectors: &self.selectors,
+                parent: ctx,
+                vendor_prefix: dest.vendor_prefix,
+            };
+            let result = self.rules.to_css(dest, Some(&nested));
             dest.skip_prefixed_nested_rules = saved_skip;
             result?;
         }

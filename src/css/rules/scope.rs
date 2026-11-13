@@ -1,4 +1,4 @@
-use crate::css_rules::{CssRuleList, Location};
+use crate::css_rules::{CssRuleList, Location, StyleContext};
 use crate::selectors::SelectorList;
 use crate::{PrintErr, Printer};
 
@@ -19,7 +19,11 @@ pub struct ScopeRule<'bump, R> {
 }
 
 impl<'bump, R> ScopeRule<'bump, R> {
-    pub fn to_css(&self, dest: &mut Printer<'_, 'bump>) -> Result<(), PrintErr> {
+    pub fn to_css(
+        &self,
+        dest: &mut Printer,
+        ctx: Option<&StyleContext<'_, 'bump>>,
+    ) -> Result<(), PrintErr> {
         use crate::selectors::selector::serialize::serialize_selector_list;
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
@@ -33,9 +37,6 @@ impl<'bump, R> ScopeRule<'bump, R> {
         if let Some(scope_start) = &self.scope_start {
             dest.write_char(b'(')?;
             // scope_start.to_css(dest)?;
-            // Read `dest.ctx` directly (Copy) — `Printer::context()`
-            // ties the borrow to `&self`, which conflicts with `&mut dest`.
-            let ctx = dest.ctx;
             serialize_selector_list(scope_start.v.slice(), dest, ctx, false)?;
             dest.write_char(b')')?;
             dest.whitespace()?;
@@ -57,7 +58,7 @@ impl<'bump, R> ScopeRule<'bump, R> {
         // Nested style rules within @scope are implicitly relative to the <scope-start>
         // so clear our style context while printing them to avoid replacing & ourselves.
         // https://drafts.csswg.org/css-cascade-6/#scoped-rules
-        dest.with_cleared_context(&self.rules, |rules, d: &mut Printer| rules.to_css(d))?;
+        self.rules.to_css(dest, None)?;
         dest.in_scope_rule = was_in_scope_rule;
         dest.pending_semicolon = false;
         dest.dedent();

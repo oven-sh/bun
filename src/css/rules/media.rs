@@ -1,4 +1,4 @@
-use crate::css_rules::{CssRuleList, Location};
+use crate::css_rules::{CssRuleList, Location, StyleContext};
 use crate::media_query::MediaList;
 use crate::{PrintErr, Printer};
 
@@ -16,9 +16,13 @@ pub struct MediaRule<'bump, R> {
 // `minify` lives in `rules/mod.rs` (hoisted next to `CssRuleList::minify` so
 // the dispatch can call it without re-exporting `MinifyContext` here).
 impl<'bump, R> MediaRule<'bump, R> {
-    pub fn to_css(&self, dest: &mut Printer<'_, 'bump>) -> Result<(), PrintErr> {
+    pub fn to_css(
+        &self,
+        dest: &mut Printer,
+        ctx: Option<&StyleContext<'_, 'bump>>,
+    ) -> Result<(), PrintErr> {
         if dest.minify && self.query.always_matches() {
-            self.rules.to_css(dest)?;
+            self.rules.to_css(dest, ctx)?;
             return Ok(());
         }
         // #[cfg(feature = "sourcemap")]
@@ -28,7 +32,7 @@ impl<'bump, R> MediaRule<'bump, R> {
         self.query.to_css(dest)?;
         dest.block(|d| {
             d.newline()?;
-            self.rules.to_css(d)
+            self.rules.to_css(d, ctx)
         })
     }
 }

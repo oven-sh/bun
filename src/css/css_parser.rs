@@ -2485,7 +2485,7 @@ mod stylesheet_impl {
 
         pub(crate) fn to_css_with_writer_impl<'a>(
             &'a self,
-            printer: &mut Printer<'a, 'bump>,
+            printer: &mut Printer<'a>,
             project_root: Option<&[u8]>,
         ) -> Result<(), PrintErr> {
             // #[cfg(feature = "sourcemap")] if printer.source_map.is_some() { ... }
@@ -2506,7 +2506,7 @@ mod stylesheet_impl {
                 ));
             }
 
-            self.rules.to_css(printer)?;
+            self.rules.to_css(printer, None)?;
             printer.newline()
         }
 

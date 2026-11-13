@@ -97,6 +97,8 @@ test/js/bun/test/mock/mock-hoist.test.ts: modes > a file restored from the trans
 test/js/bun/test/mock/mock-hoist.test.ts: modes > a file restored from the transpiler cache: ["--isolate=modules"]
 test/js/bun/test/mock/mock-hoist.test.ts: modes > a file restored from the transpiler cache: []
 test/js/bun/test/mock/mock-module.test.ts: a factory that require()s a module that is waiting for the mock
+# The next one: a hook that has no JS frame of its caller keys its mock by the path as written. A compiled importer of a file that is there at the build is linked to that file, and finds no such key.
+test/js/bun/test/mock/mock-module.test.ts: a mock that is found by the path joined to its importer > leaves the mocks of later test files found
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > later files mock a package that a library loaded while the first file mocked it
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > what vi.importMock() gives inherits from Object.prototype, the exports of a mocked module from nothing
 # The next one's fixture writes and deletes a name of a mocked namespace 30,000 times in one test, which has the 5 s that a test has by default. With a sanitizer, beside the other jobs of a lane, it took 6.6 s.

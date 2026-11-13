@@ -492,6 +492,8 @@ static void noteMockOutsideRegistry(Zig::GlobalObject* globalObject, const Strin
 }
 #endif
 
+static bool isMockThatNeedsRelativeLookup(JSC::JSObject* virtualModule);
+
 void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mockObject)
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(mockObject->globalObject());
@@ -502,6 +504,8 @@ void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, const String& path, JSC::JSOb
     auto* virtualModules = globalObject->onLoadPlugins.virtualModules;
 
     virtualModules->set(path, JSC::Strong<JSC::JSObject> { vm, mockObject });
+    if (isMockThatNeedsRelativeLookup(mockObject))
+        globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
 #if ENABLE(AOT)
     noteMockOutsideRegistry(globalObject, path);
 #endif
@@ -561,6 +565,8 @@ public:
     bool wasInstalledAtEnd { false };
     bool spy { false };
     bool isFromPreload { false };
+    // What resolveModuleMockSpecifier() returned for it.
+    bool needsRelativeLookup { false };
     // unmockModule() registers that module under its own key again.
     bool didStashLoadedModule { false };
 #if ENABLE(AOT)
@@ -760,6 +766,12 @@ static std::pair<JSModuleMock*, T*> toModuleMockWith(JSC::JSGlobalObject* global
     auto* tuple = dynamicDowncast<JSC::InternalFieldTuple>(context);
     auto* cell = tuple ? dynamicDowncast<T>(tuple->getInternalField(1)) : nullptr;
     return { toModuleMock(globalObject, scope, cell ? tuple->getInternalField(0) : jsUndefined()), cell };
+}
+
+static bool isMockThatNeedsRelativeLookup(JSC::JSObject* virtualModule)
+{
+    auto* mock = dynamicDowncast<JSModuleMock>(virtualModule);
+    return mock && mock->needsRelativeLookup;
 }
 
 static JSModuleMock* registeredModuleMock(Zig::GlobalObject* globalObject, const String& specifier)
@@ -4389,7 +4401,7 @@ __attribute__((minsize)) static bool resolveModuleMockSpecifier(Zig::GlobalObjec
     }
 
     if (!specifier.startsWith("./"_s) && !specifier.startsWith(".."_s))
-        return false;
+        return isAbsolutePath(specifier);
 
     // If module resolution fails, we try to resolve it relative to the current file
     auto relativeURL = URL(url, specifier);
@@ -5910,8 +5922,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     WTF::String written = specifier;
     JSC::JSString* writtenString = specifierString;
     bool exists = false;
-    if (resolveModuleMockSpecifier(globalObject, callframe, specifierString, specifier, exists))
-        globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
+    bool needsRelativeLookup = resolveModuleMockSpecifier(globalObject, callframe, specifierString, specifier, exists);
     RETURN_IF_EXCEPTION(scope, {});
 
 #if ENABLE(AOT)
@@ -5929,6 +5940,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
 
     JSModuleMock* mock = JSModuleMock::create(vm, globalObject->mockModule.mockModuleStructure.getInitializedOnMainThread(globalObject), factory, specifierString, writtenString, function);
     mock->spy = spy;
+    mock->needsRelativeLookup = needsRelativeLookup;
     mock->isFromPreload = JSMock__isInPreload(globalObject);
     if (!mock->isFromPreload)
         globalObject->onLoadPlugins.mockingModules.add(callerPath(vm, callframe));
@@ -7178,6 +7190,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue resetModules(JSC::JSGlobalOb
                 continue;
             auto* again = JSModuleMock::create(vm, mock->structure(), mock->factory.get(), mock->specifier.get(), mock->writtenSpecifier.get(), mock->function);
             again->spy = mock->spy;
+            again->needsRelativeLookup = mock->needsRelativeLookup;
             again->isFromPreload = mock->isFromPreload && JSMock__isInPreload(globalObject);
             if (mock->isFromPreload && !again->isFromPreload)
                 globalObject->onLoadPlugins.displacedPreloadModuleMocks.append(JSC::Strong<JSC::JSObject> { vm, mock });
@@ -8170,16 +8183,14 @@ std::optional<String> BunPlugin::OnLoad::resolveVirtualModule(const String& path
     if (path.isNull()) [[unlikely]]
         return std::nullopt;
 
-    if (this->mustDoExpensiveRelativeLookup) {
-        String joinedPath = path;
-
-        if (path.startsWith("./"_s) || path.startsWith(".."_s)) {
-            auto url = WTF::URL::fileURLWithFileSystemPath(from);
-            ASSERT(url.isValid());
-            joinedPath = relativeSpecifierToFileSystemPath(url, path);
-        }
-
-        return virtualModules->contains(joinedPath) ? std::optional<String> { joinedPath } : std::nullopt;
+    if (mustDoExpensiveRelativeLookup && (path.startsWith("./"_s) || path.startsWith(".."_s))) {
+        auto url = WTF::URL::fileURLWithFileSystemPath(from);
+        ASSERT(url.isValid());
+        String joinedPath = relativeSpecifierToFileSystemPath(url, path);
+        // The join drops a "?query", so it also lands on the key of a mock that importers reach through the resolver. Such a specifier does not name that mock.
+        auto entry = virtualModules->find(joinedPath);
+        if (entry != virtualModules->end() && isMockThatNeedsRelativeLookup(entry->value.get()))
+            return joinedPath;
     }
 
     return virtualModules->contains(path) ? std::optional<String> { path } : std::nullopt;

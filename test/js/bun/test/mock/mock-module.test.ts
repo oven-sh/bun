@@ -4265,6 +4265,246 @@ describe.concurrent("a test file's module mocks are undone when it ends", () => 
   });
 });
 
+// The resolver does not lead to a mock of a path with no file, or to one of a `file:` URL. resolveVirtualModule() finds such a mock under the path of the specifier
+// joined to its importer. That lookup is for such a mock alone: a lookup that does not name one is the same with it and without it.
+describe.concurrent("a mock that is found by the path joined to its importer", () => {
+  const files = {
+    "lazy.ts": `export const where = "real";`,
+    "other.ts": `export const where = "other";`,
+  };
+  // Native code calls the bound function (the runner for a hook, the engine for a promise reaction), so mock.module() has no JS frame to resolve "./written" against,
+  // with tail calls and without. The mock is keyed by the path as written.
+  const keyedAsWritten = `mock.module.bind(mock, "./written", () => ({ where: "written" }))`;
+
+  // The joined path has no query, so it is also the key of a mock of a file that exists. A specifier with a query does not name that mock.
+  test("changes no lookup of a specifier that does not name it", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "a.test.ts": `
+          import { expect, mock, test, vi } from "bun:test";
+          import { join } from "node:path";
+          const resolved = specifier => { try { return require.resolve(specifier); } catch { return "not found"; } };
+          const lookups = async () => [
+            (await import("./lazy.ts")).where,
+            (await import("./lazy.ts?query")).where,
+            resolved("./lazy.ts?query"),
+            resolved("./lazy.ts#hash"),
+          ];
+          test("before, while and after it is registered", async () => {
+            mock.module("./lazy.ts", () => ({ where: "mock" }));
+            const expected = ["mock", "real", join(import.meta.dir, "lazy.ts") + "?query", "not found"];
+            expect(await lookups()).toEqual(expected);
+            vi.doMock("./no-file", () => ({}));
+            expect(await lookups()).toEqual(expected);
+            vi.doUnmock("./no-file");
+            expect(await lookups()).toEqual(expected);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test("leaves the answer of an onResolve plugin as it is", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "a.test.ts": `
+          import { expect, mock, test, vi } from "bun:test";
+          import { join } from "node:path";
+          test("before, while and after it is registered", async () => {
+            let calls = 0;
+            mock.module("./lazy.ts", () => ({ where: "mock" }));
+            Bun.plugin({
+              name: "redirect",
+              setup(build) {
+                build.onResolve({ filter: /lazy\\.ts$/ }, () => (calls++, { path: join(import.meta.dir, "other.ts") }));
+              },
+            });
+            const lookups = async () => [(await import("./lazy.ts")).where, require("./lazy.ts").where, calls];
+            expect(await lookups()).toEqual(["other", "other", 2]);
+            vi.doMock("./no-file", () => ({}));
+            expect(await lookups()).toEqual(["other", "other", 4]);
+            vi.doUnmock("./no-file");
+            expect(await lookups()).toEqual(["other", "other", 6]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test("of a preload leaves the mocks of each test file found", async () => {
+    const file = `
+      import { beforeAll, expect, mock, test } from "bun:test";
+      beforeAll(${keyedAsWritten});
+      test("both mocks", async () => {
+        expect([(await import("./no-file")).where, (await import("./written")).where, require.resolve("./written")]).toEqual(["preload", "written", "./written"]);
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        "preload.ts": `
+          import { mock } from "bun:test";
+          mock.module("./no-file", () => ({ where: "preload" }));
+        `,
+        "1.test.ts": file,
+        "2.test.ts": file,
+      },
+      2,
+      ["--preload", "./preload.ts"],
+    );
+  });
+
+  // The factory runs inside the mock.module() call, before the mock is registered. An import that it makes finds no registry yet.
+  test("lets its factory import while it patches a loaded module", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "a.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          import "./lazy";
+          test("the first mock of the process", async () => {
+            let other;
+            mock.module(import.meta.resolve("./lazy.ts"), () => {
+              other = import("./other");
+              return { where: "mock" };
+            });
+            expect([(await other).where, (await import("./lazy")).where]).toEqual(["other", "mock"]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test.each([
+    [`mock.module("./no-file", () => ({ where: "joined" }))`, "./no-file"],
+    [`mock.module("file:./no-file.ts", () => ({ where: "joined" }))`, "./no-file.ts"],
+    [`mock.module(join(import.meta.dir, "no-file"), () => ({ where: "joined" }))`, "./no-file"],
+  ])("leaves a mock that is keyed as written found: %s", async (call, specifier) => {
+    await expectFixturesToPass(
+      {
+        "importer.ts": `export { where } from "./written";`,
+        "a.test.ts": `
+          import { beforeAll, expect, mock, test } from "bun:test";
+          import { join } from "node:path";
+          beforeAll(${keyedAsWritten});
+          const lookups = async () => [
+            (await import("./written")).where,
+            require("./written").where,
+            require.resolve("./written"),
+            import.meta.resolveSync("./written"),
+          ];
+          test("by every kind of lookup", async () => {
+            expect(await lookups()).toEqual(["written", "written", "./written", "./written"]);
+            ${call};
+            expect((await import(${JSON.stringify(specifier)})).where).toBe("joined");
+            expect(await lookups()).toEqual(["written", "written", "./written", "./written"]);
+            expect((await import("./importer")).where).toBe("written");
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test("leaves a mock that is keyed as written found in a plain run", async () => {
+    using dir = tempDir("mock-module", {
+      "index.ts": `
+        import { mock } from "bun:test";
+        mock.module("./no-file", () => ({ where: "joined" }));
+        await Promise.resolve().then(${keyedAsWritten});
+        console.log(JSON.stringify([(await import("./no-file")).where, (await import("./written")).where, require("./written").where, require.resolve("./written")]));
+      `,
+    });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "index.ts"], env: bunEnv, cwd: String(dir), stderr: "inherit" });
+    expect(await proc.stdout.text()).toBe(`["joined","written","written","./written"]\n`);
+    expect(await proc.exited).toBe(0);
+  });
+
+  // Both mocks answer to "./no-file": the one that is keyed by the path beside the test file, and the one that is keyed as written.
+  test.each([
+    ["first", `mock.module("./no-file", () => ({ where: "joined" })); await registerWritten();`],
+    ["last", `await registerWritten(); mock.module("./no-file", () => ({ where: "joined" }));`],
+  ])("is found before a mock that is keyed as written, registered %s", async (_, register) => {
+    await expectFixturesToPass(
+      {
+        "sub/helper.ts": `
+          import { mock } from "bun:test";
+          export const registerWritten = () => Promise.resolve().then(mock.module.bind(mock, "./no-file", () => ({ where: "written" })));
+          export const fromSub = async () => (await import("./no-file")).where;
+        `,
+        "a.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          import { fromSub, registerWritten } from "./sub/helper";
+          test("each importer gets the mock that names its folder", async () => {
+            ${register}
+            expect([(await import("./no-file")).where, await fromSub()]).toEqual(["joined", "written"]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test("leaves the mocks of later test files found", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "1.test.ts": `
+          import { beforeAll, expect, mock, test } from "bun:test";
+          beforeAll(() => { mock.module("./no-file", () => ({ where: "mock" })); });
+          test("a path with no file", async () => expect((await import("./no-file")).where).toBe("mock"));
+        `,
+        // A hook that is an arrow without a block ends in a tail call of mock.module(), which has no frame of its caller either.
+        "2.test.cjs": `
+          "use strict";
+          const { beforeAll, expect, mock, test } = require("bun:test");
+          beforeAll(() => mock.module("./lazy", () => ({ where: "mock" })));
+          test("require()", () => expect(require("./lazy").where).toBe("mock"));
+        `,
+        "3.test.ts": `
+          import { beforeAll, expect, mock, test } from "bun:test";
+          beforeAll(mock.module.bind(mock, "./lazy", () => ({ where: "mock" })));
+          test("import()", async () => expect([require.resolve("./lazy"), (await import("./lazy")).where]).toEqual(["./lazy", "mock"]));
+        `,
+      },
+      3,
+    );
+  });
+
+  test("stays found when another one is removed or replaced, and after jest.resetModules()", async () => {
+    await expectFixturesToPass(
+      {
+        "a.test.ts": `
+          import { beforeEach, expect, jest, mock, test, vi } from "bun:test";
+          const found = async specifier => [(await import(specifier)).where, require(specifier).where];
+          beforeEach(() => {
+            mock.module("./first", () => ({ where: "first" }));
+            mock.module("./second", () => ({ where: "second" }));
+          });
+          test("vi.doUnmock() of the other", async () => {
+            vi.doUnmock("./first");
+            expect(await found("./second")).toEqual(["second", "second"]);
+          });
+          test("mocked again by the path that require.resolve() gives", async () => {
+            mock.module(require.resolve("./first"), () => ({ where: "again" }));
+            expect([await found("./first"), await found("./second")]).toEqual([["again", "again"], ["second", "second"]]);
+          });
+          test("jest.resetModules() after it has settled", async () => {
+            expect(await found("./second")).toEqual(["second", "second"]);
+            jest.resetModules();
+            expect(await found("./second")).toEqual(["second", "second"]);
+          });
+        `,
+      },
+      3,
+    );
+  });
+});
+
 describe.concurrent("a mocked module that exports then", () => {
   const files = {
     "real.ts": `

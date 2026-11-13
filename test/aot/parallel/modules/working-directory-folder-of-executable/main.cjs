@@ -42,6 +42,8 @@ const refused = prefix => {
 };
 const out = path.relative(".", started) || ".";
 show("mkdtempSync in a folder that is not there", () => refused("data/none/tmp-"));
+show("mkdtempSync of a prefix that ends in a separator", () => refused("data/none/"));
+show("mkdtempSync of a prefix that ends in .. there", () => refused("data/none/.."));
 show("mkdtempSync out of the executable", () => refused(out + "/none/tmp-"));
 show("mkdtempSync of a prefix that ends in ..", () => refused(out + "/none/.."));
 show("require.resolve with paths", () => require.resolve("./data/module.cjs", { paths: [process.cwd()] }) === path.join(__dirname, "data", "module.cjs"));

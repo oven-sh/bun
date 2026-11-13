@@ -6793,11 +6793,12 @@ impl NodeFS {
     }
 
     pub(crate) fn mkdtemp(&mut self, args: &args::MkdirTemp, _: Flavor) -> Maybe<ret::Mkdtemp> {
-        if let Some(error) =
-            creation_in_executable(args.prefix.slice(), sys::Tag::mkdtemp, E::EROFS)
-        {
-            // As an error of the system does, it names the template.
-            return Err(error.with_path(&[args.prefix.slice(), &[b'X'; 6]].concat()));
+        // The executable is asked for the template, which is what the system would make.
+        if graph_before_disk(args.prefix.slice()).is_some() {
+            let template = [args.prefix.slice(), &[b'X'; 6]].concat();
+            if let Some(error) = creation_in_executable(&template, sys::Tag::mkdtemp, E::EROFS) {
+                return Err(error);
+            }
         }
         let prefix_buf = &mut self.sync_error_buf;
         let prefix_slice = args.prefix.slice();

@@ -1,10 +1,7 @@
-import { expect, setDefaultTimeout, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { run as runCommand } from "../aot/harness/run";
-
-// Each test builds an executable. A debug build of Bun copies itself for that, which can take the five seconds of bun:test.
-setDefaultTimeout(60_000);
 
 /** Builds `main.ts` of `dir` into an executable with `bun build --compile` and runs it there. */
 async function buildAndRun(dir: string) {
@@ -151,6 +148,7 @@ test("fs.mkdtemp takes a relative prefix from the embedded root as the start of 
       result[".. from the embedded root"] = await row(() => fs.mkdtempSync(".."));
       result[".. from the embedded root, Buffer"] = await row(() => fs.mkdtempSync(Buffer.from("..")));
       result["in the embedded root"] = await row(() => fs.mkdtempSync("tmp-"));
+      result["in a folder that the embedded root lacks"] = await row(() => fs.mkdtempSync("nothing/"));
       result["empty"] = await row(() => fs.mkdtempSync(""));
       console.log(JSON.stringify(result));
     `,
@@ -186,6 +184,7 @@ test("fs.mkdtemp takes a relative prefix from the embedded root as the start of 
       ".. from the embedded root": readOnly(".."),
       ".. from the embedded root, Buffer": readOnly(".."),
       "in the embedded root": readOnly("tmp-"),
+      "in a folder that the embedded root lacks": failed("ENOENT", "no such file or directory", "nothing/" + suffix),
       "empty": failed("EINVAL", "invalid argument", suffix.slice(1)),
     },
     stderr: "",

@@ -586,3 +586,32 @@ test("what a mock leaves out of a module that has not loaded reads as undefined"
       });`,
   });
 });
+
+// `bun test` lays one mock under both files of such a name. With compiled code a mock has the path of an import alone,
+// as it had before a mock could have two: require() of the name loads its file, whoever resolves the name.
+test("a mock of a name that import and require() resolve to two files reaches the import alone", async () => {
+  using dir = tempDir("mock-module-of-compiled-modules", {
+    "node_modules/dual/package.json": JSON.stringify({
+      name: "dual",
+      exports: { import: "./esm.mjs", require: "./cjs.cjs" },
+    }),
+    "node_modules/dual/esm.mjs": `export const which = "real esm";`,
+    "node_modules/dual/cjs.cjs": `exports.which = "real cjs";`,
+    "one.test.ts": `
+      import { mock, test } from "bun:test";
+      mock.module("dual", () => ({ which: "mock" }));
+      test("a name that the build cannot resolve", async () => {
+        const name = process.env.MOCKED!;
+        console.log("require() gets", require(name).which, "and an import", (await import(name)).which);
+      });`,
+  });
+  const printed = async (...flags: string[]) => {
+    const env = { ...bunEnv, MOCKED: "dual" };
+    const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], String(dir), env);
+    // A crash prints only there.
+    if (exitCode !== 0) console.error(stderr);
+    return { printed: stdout.match(/^require\(\) gets .*$/m)?.[0], exitCode };
+  };
+  expect(await printed()).toEqual({ printed: "require() gets mock and an import mock", exitCode: 0 });
+  expect(await printed("--debug-aot")).toEqual({ printed: "require() gets real cjs and an import mock", exitCode: 0 });
+});

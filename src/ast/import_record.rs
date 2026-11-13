@@ -106,6 +106,9 @@ bitflags::bitflags! {
 
         /// The bundler's onResolve plugins have this record and have not answered. Only their answer gives it a module.
         const AT_ON_RESOLVE_PLUGINS = 1 << 19;
+
+        /// The bundler keyed this record's module by (path, loader), not by path alone.
+        const KEYED_BY_LOADER = 1 << 20;
     }
 }
 

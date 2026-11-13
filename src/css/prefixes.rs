@@ -2102,7 +2102,44 @@ impl Feature {
                     }
                 }
             }
-            PrintColorAdjust | ColorAdjust => {
+            PrintColorAdjust => {
+                if let Some(version) = browsers.chrome {
+                    if version >= 1114112 && version <= 8519680 {
+                        prefixes |= VendorPrefix::WEBKIT;
+                    }
+                }
+                if let Some(version) = browsers.android {
+                    if version >= 263168 && version <= 8323072 {
+                        prefixes |= VendorPrefix::WEBKIT;
+                    }
+                }
+                if let Some(version) = browsers.edge {
+                    if version >= 5177344 && version <= 8323072 {
+                        prefixes |= VendorPrefix::WEBKIT;
+                    }
+                }
+                if let Some(version) = browsers.ios_saf {
+                    if version >= 393216 && version <= 983552 {
+                        prefixes |= VendorPrefix::WEBKIT;
+                    }
+                }
+                if let Some(version) = browsers.opera {
+                    if version >= 983040 {
+                        prefixes |= VendorPrefix::WEBKIT;
+                    }
+                }
+                if let Some(version) = browsers.safari {
+                    if version >= 393216 && version <= 983552 {
+                        prefixes |= VendorPrefix::WEBKIT;
+                    }
+                }
+                if let Some(version) = browsers.samsung {
+                    if version >= 262144 && version <= 1638400 {
+                        prefixes |= VendorPrefix::WEBKIT;
+                    }
+                }
+            }
+            ColorAdjust => {
                 if let Some(version) = browsers.chrome {
                     if version >= 1114112 && version <= 8519680 {
                         prefixes |= VendorPrefix::WEBKIT;

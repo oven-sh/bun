@@ -721,8 +721,18 @@ mod inherent_bridge {
     bridge_clone_partialeq!(PositionProp);
 
     // ── properties/text ──
-    use crate::properties::text::{Direction as TextDirection, TextShadow};
-    bridge_clone_partialeq!(TextDirection);
+    use crate::properties::text::{
+        BoxDecorationBreak, Direction as TextDirection, Hyphens, TextAlignLast,
+        TextDecorationSkipInk, TextShadow, TextSizeAdjust,
+    };
+    bridge_clone_partialeq!(
+        TextDirection,
+        Hyphens,
+        TextAlignLast,
+        TextSizeAdjust,
+        TextDecorationSkipInk,
+        BoxDecorationBreak,
+    );
     // CssHash for TextDirection — via #[derive(CssHash)] on the enum (properties/text.rs).
     bridge_deep_clone!(TextShadow);
     bridge_eql_partialeq!(TextShadow);
@@ -760,9 +770,10 @@ mod inherent_bridge {
     // (properties/masking.rs).
 
     // ── properties/ui ──
-    use crate::properties::ui::ColorScheme;
+    use crate::properties::ui::{ColorScheme, PrintColorAdjust, UserSelect};
     bridge_deep_clone_copy!(ColorScheme);
     bridge_eql_partialeq!(ColorScheme);
+    bridge_clone_partialeq!(UserSelect, PrintColorAdjust);
 
     // ── properties/css_modules ──
     use crate::properties::css_modules::Composes;

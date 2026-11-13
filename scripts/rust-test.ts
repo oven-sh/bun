@@ -39,6 +39,7 @@ const crates = [
   "bun_crash_handler",
   "bun_dispatch",
   "bun_errno",
+  "bun_event_loop",
   "bun_exe_format",
   "bun_hash",
   "bun_http_types",

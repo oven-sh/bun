@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { randomBytes } from "crypto";
-import { bunEnv, bunExe, tempDir, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tls as tlsCert } from "harness";
 import http2 from "node:http2";
 import net from "node:net";
 import { join } from "node:path";
@@ -784,6 +784,120 @@ describe("Bun.serve http2 over a unix socket", () => {
     const res = await request(session, { ":path": "/u" });
     expect(res.body.toString()).toBe("unix:/u");
     await new Promise<void>(r => session.close(() => r()));
+  });
+});
+
+describe("Bun.serve http2 streaming responses on an idle server", () => {
+  // The fixture runs in its own process with no timers (the idle GC timer is
+  // off too), so its event loop sleeps between events. A write that the
+  // deferred pass leaves in a sink's buffer then waits for an unrelated
+  // wakeup that never comes. A client in the same process would wake the loop
+  // and hide that.
+  const idle = { tls: false, idleTimeout: 0, env: { BUN_GC_TIMER_DISABLE: "1" } };
+  const count = 100;
+
+  /** `count` open event streams on `raw`. `delivered` resolves per stream
+   * with the delay from `published()` to its `data: event` frame. */
+  async function openStreams(raw: RawH2) {
+    let published = 0;
+    const delivered: Promise<number>[] = [];
+    for (let i = 0; i < count; i++) {
+      const id = 1 + 2 * i;
+      raw.headers(id, baseHeaders("/events"));
+      delivered.push(
+        raw
+          .waitFor(f => f.type === T.DATA && f.streamId === id && f.payload.includes("data: event"))
+          .then(() => performance.now() - published),
+      );
+    }
+    for (let i = 0; i < count; i++) {
+      await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 + 2 * i && f.payload.includes(": open"));
+    }
+    return {
+      delivered,
+      publish: () => {
+        published = performance.now();
+      },
+      /** Streams that never got the event. */
+      async late() {
+        const deadline = Promise.withResolvers<"never">();
+        const timer = setTimeout(() => deadline.resolve("never"), 2000);
+        try {
+          const delays = await Promise.all(delivered.map(p => Promise.race([p, deadline.promise])));
+          return delays.flatMap((ms, i) => (ms === "never" ? [`stream ${i}: never`] : []));
+        } finally {
+          clearTimeout(timer);
+        }
+      },
+    };
+  }
+
+  let fx: Fixture;
+  beforeAll(async () => {
+    fx = await startFixture(idle);
+  });
+  afterAll(async () => {
+    await fx[Symbol.asyncDispose]();
+    if (fx.proc.exitCode !== 0) console.error(fx.stderr());
+    expect(fx.proc.signalCode).toBeNull();
+    expect(fx.proc.exitCode).toBe(0);
+  });
+
+  test("one enqueue on every open stream reaches each one in one batch", async () => {
+    const raw = await RawH2.connect(fx.port, false);
+    const control = await connectH2(fx.port, false);
+    try {
+      const streams = await openStreams(raw);
+      let reads = 0;
+      raw.socket.on("data", () => reads++);
+      streams.publish();
+      expect((await request(control, { ":path": "/publish" })).body.toString()).toBe(`published to ${count}`);
+      // Every sink flushes in the pass after the handler, and the connection's
+      // drain writes them all at once. A sink the pass skipped waits for a
+      // wakeup that never comes on this idle server.
+      expect(await streams.late()).toEqual([]);
+      expect(reads).toBeLessThanOrEqual(2);
+    } finally {
+      raw.socket.destroy();
+      control.destroy();
+    }
+  });
+
+  test.each(["timer", "immediate"])("an enqueue from a %s reaches every stream without another event", async via => {
+    // The fixture enqueues once the control request is over and the client is
+    // quiet. The pass after the callback flushes the sinks and posts the
+    // drain: the loop has to wake itself for it.
+    const raw = await RawH2.connect(fx.port, false);
+    const control = await connectH2(fx.port, false);
+    try {
+      const streams = await openStreams(raw);
+      streams.publish();
+      expect((await request(control, { ":path": `/publish-later?via=${via}` })).body.toString()).toBe(
+        `publishing to ${count}`,
+      );
+      expect(await streams.late()).toEqual([]);
+    } finally {
+      raw.socket.destroy();
+      control.destroy();
+    }
+  });
+
+  // On Windows a socket write is a libuv request that completes on a later loop
+  // turn, and exit() does not run one, so the last frames are lost there.
+  test.skipIf(isWindows)("process.exit() right after an enqueue still delivers it to every stream", async () => {
+    await using exiting = await startFixture(idle);
+    const raw = await RawH2.connect(exiting.port, false);
+    const control = await connectH2(exiting.port, false);
+    try {
+      const streams = await openStreams(raw);
+      streams.publish();
+      expect((await request(control, { ":path": "/publish-exit" })).body.toString()).toBe(`exiting with ${count}`);
+      expect(await streams.late()).toEqual([]);
+      expect(await exiting.proc.exited).toBe(0);
+    } finally {
+      raw.socket.destroy();
+      control.destroy();
+    }
   });
 });
 

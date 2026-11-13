@@ -22,6 +22,7 @@ const bigFile = args["big-file"]!;
 const big = Buffer.alloc(5 * 1024 * 1024, "abcdefghijklmnop");
 let lateRead: PromiseWithResolvers<void> | undefined;
 const stopCalled = Promise.withResolvers<void>();
+const subscribers = new Set<ReadableStreamDefaultController>();
 
 const makeRoutes = () => ({
   "/api/:id": (req: Bun.BunRequest<"/api/:id">) =>
@@ -280,6 +281,45 @@ async function handler(req: Request, server: Bun.Server<undefined>): Promise<Res
         stopCalled.resolve();
       }, 0);
       return new Response("stopping");
+    // An event stream that stays open. /publish enqueues one event on every open one.
+    case "/events": {
+      let controller: ReadableStreamDefaultController;
+      return new Response(
+        new ReadableStream({
+          start(c) {
+            controller = c;
+            subscribers.add(controller);
+            controller.enqueue(": open\n\n");
+          },
+          cancel() {
+            subscribers.delete(controller);
+          },
+        }),
+        { headers: { "content-type": "text/event-stream" } },
+      );
+    }
+    case "/publish": {
+      for (const controller of subscribers) controller.enqueue("data: event\n\n");
+      return new Response(`published to ${subscribers.size}`);
+    }
+    // Enqueues later, from a timer or from an immediate after it, once the client is quiet: the
+    // deferred pass the sinks' flush posts must run without another event on this server.
+    case "/publish-later": {
+      const publish = () => {
+        for (const controller of subscribers) controller.enqueue("data: event\n\n");
+      };
+      const via = url.searchParams.get("via");
+      setTimeout(() => (via === "immediate" ? setImmediate(publish) : publish()), 200);
+      return new Response(`publishing to ${subscribers.size}`);
+    }
+    // Enqueues, lets the sinks take the chunks, then exits the process.
+    case "/publish-exit":
+      setImmediate(async () => {
+        for (const controller of subscribers) controller.enqueue("data: event\n\n");
+        for (let i = 0; i < 8; i++) await Promise.resolve();
+        process.exit(0);
+      });
+      return new Response(`exiting with ${subscribers.size}`);
     // Starts its body at once and ends it after /stop: a client that has the response has a stream open across the stop.
     case "/open-until-stop":
       return new Response(async function* () {

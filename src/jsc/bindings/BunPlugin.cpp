@@ -7438,6 +7438,13 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
     for (auto& factory : plugins.factoriesOfCompiledMocks)
         uncheckedDowncast<JSModuleMock>(factory.mock.get())->forgetFailureKeptForImports();
 #endif
+    // registryKey() below tells the key that a mock's own module has now. The fetch that waits for the mock began under the key that it had then:
+    // a mock that has left the table since, or lost that path, is kept under that key. See keepModuleMockOfLoadInFlight().
+    for (auto& kept : plugins.moduleMocksBeingLoaded) {
+        auto isKept = [&](const auto& abandoned) { return abandoned.mock.get() == kept.value.get(); };
+        if (plugins.waitingModuleMocks.containsIf(isKept) || plugins.runningModuleMocks.containsIf(isKept))
+            evict.abandonedModules.append(kept.key);
+    }
     for (auto& waiting : std::exchange(plugins.waitingModuleMocks, {}))
         evict.abandonedModules.append(registryKey(globalObject, uncheckedDowncast<JSModuleMock>(waiting.mock.get()))->tryGetValue().data);
     plugins.moduleMocksWithTurn.clear();
@@ -9116,10 +9123,12 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * global
     Zig::listModuleMocks(global, mocks);
     for (size_t i = 0; i < mocks.size(); ++i) {
         auto* mock = uncheckedDowncast<Zig::JSModuleMock>(mocks.at(i));
-        // A mock that has lost its import path to a later one serves no load in flight under it.
-        auto loaded = Zig::findLoadedModule(global, mock);
+        // Under the key of the mock's own module, asked while the table still names the mock: one that has lost its import path to a later mock
+        // serves no load in flight under it, and is loaded under its require path instead.
+        JSC::JSString* key = Zig::registryKey(global, mock);
+        auto loaded = Zig::findLoadedModule(global, key);
         RETURN_IF_EXCEPTION(scope, {});
-        Zig::keepModuleMockOfLoadInFlight(global, mock, mock->importKey->tryGetValue().data, loaded);
+        Zig::keepModuleMockOfLoadInFlight(global, mock, key->tryGetValue().data, loaded);
     }
 #if ENABLE(AOT)
     for (auto& waiting : std::exchange(plugins.compiledMocksToRun, {})) {

@@ -2798,7 +2798,7 @@ struct FirstReport {
 }
 
 impl FirstReport {
-    fn take(vm: &mut VirtualMachine, global: &JSGlobalObject, value: JSValue) {
+    fn take(vm: &mut VirtualMachine, global: &JSGlobalObject, value: JSValue, owner: JSValue) {
         let Some(this) = vm.on_unhandled_rejection_ctx else { return };
         // SAFETY: `get_value_as_to_throw` points the ctx at its local only while this is the handler.
         let this = unsafe { &mut *this.cast::<FirstReport>() };
@@ -2811,7 +2811,7 @@ impl FirstReport {
         }
         let inner = vm.unhandled_rejection_scope();
         this.outer.apply(vm);
-        (vm.on_unhandled_rejection)(vm, global, value);
+        (vm.on_unhandled_rejection)(vm, global, value, owner);
         inner.apply(vm);
     }
 }

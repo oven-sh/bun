@@ -1376,6 +1376,10 @@ impl BunTest {
 
         // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
         unsafe { (*this).update_min_timeout(global_this, timeout) };
+        // SAFETY: the reporter outlives every BunTest; single-threaded, and no other borrow of it is live here.
+        if let Some(reporter) = unsafe { (*this).reporter.map(|reporter| &mut *reporter.as_ptr()) } {
+            reporter.jest.start_rejection_owner(global_this);
+        }
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { cfg_args };
         // SAFETY: `this_strong` keeps the cell alive and in place for the whole call.
         let on_stack = unsafe { OnStack::enter(&raw const (*this).execution.on_stack, &cfg_data) };

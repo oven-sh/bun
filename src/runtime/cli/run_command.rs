@@ -1420,6 +1420,7 @@ impl Run<'_> {
         this: &mut VirtualMachine,
         _global: &JSGlobalObject,
         value: JSValue,
+        _owner: JSValue,
     ) {
         // SAFETY: BORROW_PARAM ptr set by caller, outlives this call.
         let list = this

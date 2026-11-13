@@ -3377,6 +3377,711 @@ describe.concurrent("the next test doesn't start inside the call that ended the 
   });
 });
 
+// `bun test` reports a rejected promise that nothing handled after the callback that rejected it has returned. By then
+// the runner can have started the next hook or test. The queue of rejected promises keeps which callback of the runner
+// had started last when each promise was rejected, and a callback that started later isn't charged: the error is one
+// between tests.
+describe.concurrent("a promise that was rejected before the callback that runs now started", () => {
+  const results = (stderr: string) =>
+    stderr.match(/^\((pass|fail|skip|todo)\) [\w >():,]+/gm)?.map(line => line.trimEnd());
+  const imports = `
+    import {
+      afterAll, afterEach, aroundAll, aroundEach, beforeAll, beforeEach, describe, expect, onTestFinished, test,
+    } from "bun:test";
+    import { stat } from "node:fs/promises";
+  `;
+  // Resumes the caller from a timer that also rejects a promise.
+  const leave = `
+    await new Promise<void>(resolve => {
+      setTimeout(() => {
+        Promise.reject(new Error("left"));
+        resolve();
+      });
+    });
+  `;
+  const leaves = `test("leaves", async () => {${leave}});`;
+  const next = `test("next", () => {});`;
+  // On a build that charges this test, its second attempt passes and hides the error.
+  const nextWithRetry = `test("next", () => {}, { retry: 1 });`;
+  const run = async (file: string, ...args: string[]) => {
+    const { stderr, errors, exitCode } = await runFiles({ "a.test.ts": imports + file }, ...args);
+    return {
+      results: results(stderr),
+      errors,
+      betweenTests: stderr.split("# Unhandled error between tests").length - 1,
+      exitCode,
+    };
+  };
+  const isBetweenTests = { errors: ["error: left"], betweenTests: 1, exitCode: 1 };
+
+  describe("is an error between tests, and the test that started next passes", () => {
+    test.each(
+      Object.entries({
+        "a timer": leaves,
+        "an immediate": `
+          test("leaves", async () => {
+            await new Promise<void>(resolve => {
+              setImmediate(() => {
+                Promise.reject(new Error("left"));
+                resolve();
+              });
+            });
+          });
+        `,
+        "a timer that calls done()": `
+          test("leaves", done => {
+            setTimeout(() => {
+              Promise.reject(new Error("left"));
+              done();
+            });
+          });
+        `,
+        "an immediate, after an earlier immediate of that turn rejected the promise,": `
+          test("leaves", async () => {
+            await new Promise<void>(resolve => {
+              setImmediate(() => void Promise.reject(new Error("left")));
+              setImmediate(resolve);
+            });
+          });
+        `,
+        "the data callback of a socket": `
+          test("leaves", async () => {
+            const { promise, resolve } = Promise.withResolvers<void>();
+            using server = Bun.listen({
+              hostname: "127.0.0.1",
+              port: 0,
+              socket: { open: socket => void socket.write("x"), data() {} },
+            });
+            const client = await Bun.connect({
+              hostname: "127.0.0.1",
+              port: server.port,
+              socket: {
+                data() {
+                  Promise.reject(new Error("left"));
+                  resolve();
+                },
+              },
+            });
+            await promise;
+            client.end();
+          });
+        `,
+        "an fs promise": `
+          test("leaves", async () => {
+            await stat(import.meta.path);
+            Promise.reject(new Error("left"));
+          });
+        `,
+        "fetch()": `
+          test("leaves", async () => {
+            using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+            await (await fetch(server.url)).text();
+            Promise.reject(new Error("left"));
+          });
+        `,
+        "a MessageChannel message": `
+          test("leaves", async () => {
+            const { port1, port2 } = new MessageChannel();
+            await new Promise<void>(resolve => {
+              port2.onmessage = () => {
+                Promise.reject(new Error("left"));
+                resolve();
+              };
+              port1.postMessage(1);
+            });
+            port1.close();
+          });
+        `,
+      }),
+    )("when %s settled the test that rejected it", async (_, leaves) => {
+      expect(await run(leaves + next)).toEqual({ results: ["(pass) leaves", "(pass) next"], ...isBetweenTests });
+    });
+
+    test.each(
+      Object.entries({
+        "beforeAll()": `beforeAll(async () => {${leave}});`,
+        "the beforeEach() hook of that test": `beforeEach(async () => {${leave}});`,
+        "an aroundEach() hook, before it ran that test": `
+          aroundEach(async runTest => {
+            ${leave}
+            await runTest();
+          });
+        `,
+      }),
+    )("when %s rejected it", async (_, hook) => {
+      expect(await run(hook + next)).toEqual({ results: ["(pass) next"], ...isBetweenTests });
+    });
+
+    // Each of these entries ends its test or its describe() block, so the callback that starts next is another test's.
+    test.each(
+      Object.entries({
+        "the afterEach() hook of the test before": `
+          describe("first", () => {
+            afterEach(async () => {${leave}});
+            test("in first", () => {});
+          });
+        `,
+        "an onTestFinished() callback of the test before": `
+          describe("first", () => {
+            test("in first", () => {
+              onTestFinished(async () => {${leave}});
+            });
+          });
+        `,
+        "the afterAll() hook of the describe() before": `
+          describe("first", () => {
+            afterAll(async () => {${leave}});
+            test("in first", () => {});
+          });
+        `,
+        "a fixture of test.extend(), after the test before used it,": `
+          describe("first", () => {
+            const withFixture = test.extend({
+              fixture: async ({}, use) => {
+                await use(1);
+                ${leave}
+              },
+            });
+            withFixture("in first", ({ fixture }) => {});
+          });
+        `,
+        "an aroundAll() hook, after it ran the describe() before,": `
+          describe("first", () => {
+            aroundAll(async runSuite => {
+              await runSuite();
+              ${leave}
+            });
+            test("in first", () => {});
+          });
+        `,
+      }),
+    )("when %s rejected it", async (_, first) => {
+      expect(await run(first + nextWithRetry)).toEqual({
+        results: ["(pass) first > in first", "(pass) next"],
+        ...isBetweenTests,
+      });
+    });
+
+    // A Bun.ModuleGraph can own a rejected promise too, and the queue keeps one owner for each promise.
+    test("when the test that rejected it made a Bun.ModuleGraph", async () => {
+      const file = `
+        test("leaves", async () => {
+          new Bun.ModuleGraph();
+          ${leave}
+        });
+        ${nextWithRetry}
+      `;
+      expect(await run(file)).toEqual({ results: ["(pass) leaves", "(pass) next"], ...isBetweenTests });
+    });
+
+    // toThrow() sets the promises that are already rejected aside for the time of its call.
+    test.each(
+      Object.entries({
+        "toThrow()": `
+          expect(() => {
+            throw new Error("thrown");
+          }).toThrow("thrown");
+        `,
+        "not.toThrow()": `expect(() => {}).not.toThrow();`,
+        "a toThrow() inside another one": `expect(() => expect(() => {}).not.toThrow()).not.toThrow();`,
+      }),
+    )("when the test that started next calls %s", async (_, call) => {
+      const file = `
+        ${leaves}
+        test("next", () => {
+          ${call}
+        }, { retry: 1 });
+      `;
+      expect(await run(file)).toEqual({ results: ["(pass) leaves", "(pass) next"], ...isBetweenTests });
+    });
+
+    test("when a fixture of test.extend() rejected it before its test", async () => {
+      const file = `
+        const withFixture = test.extend({
+          fixture: async ({}, use) => {
+            ${leave}
+            await use(1);
+          },
+        });
+        withFixture("next", ({ fixture }) => {});
+      `;
+      expect(await run(file)).toEqual({ results: ["(pass) next"], ...isBetweenTests });
+    });
+
+    test("when the last test of a concurrent group rejected it", async () => {
+      const file = `
+        test.concurrent("other", () => {});
+        test.concurrent("leaves", async () => {${leave}});
+        ${next}
+      `;
+      expect(await run(file)).toEqual({
+        results: ["(pass) other", "(pass) leaves", "(pass) next"],
+        ...isBetweenTests,
+      });
+    });
+
+    // The callback that starts next is another describe() callback, also when that one is still pending at the report.
+    test("when a describe() callback rejected it, and the describe() blocks after it keep their tests", async () => {
+      const file = `
+        describe("first", async () => {
+          ${leave}
+          test("in first", () => {});
+        });
+        describe("second", async () => {
+          await new Promise(resolve => setTimeout(resolve, 5));
+          test("in second", () => {});
+        });
+        describe("third", () => {
+          test("in third", () => {});
+        });
+      `;
+      expect(await run(file)).toEqual({
+        results: ["(pass) first > in first", "(pass) second > in second", "(pass) third > in third"],
+        ...isBetweenTests,
+      });
+    });
+
+    test("when the last describe() callback of the file rejected it", async () => {
+      const file = `
+        describe("last", async () => {
+          ${leave}
+          test("in last", () => {});
+        });
+      `;
+      expect(await run(file)).toEqual({ results: ["(pass) last > in last"], ...isBetweenTests });
+    });
+
+    test("twice, when one callback rejected two promises", async () => {
+      const file = `
+        test("leaves", async () => {
+          await new Promise<void>(resolve => {
+            setTimeout(() => {
+              Promise.reject(new Error("one"));
+              Promise.reject(new Error("two"));
+              resolve();
+            });
+          });
+        });
+        ${next}
+      `;
+      expect(await run(file)).toEqual({
+        results: ["(pass) leaves", "(pass) next"],
+        errors: ["error: one", "error: two"],
+        betweenTests: 2,
+        exitCode: 1,
+      });
+    });
+
+    test("in a node:test file", async () => {
+      const { stderr, errors, exitCode } = await runFiles({
+        "a.test.ts": `
+          import { test } from "node:test";
+          ${leaves}
+          ${next}
+        `,
+      });
+      expect({ results: results(stderr), errors, exitCode }).toEqual({
+        results: ["(pass) leaves", "(pass) next"],
+        errors: ["error: left"],
+        exitCode: 1,
+      });
+    });
+  });
+
+  describe("fails the run where the test that started next would hide it", () => {
+    test("with { retry }", async () => {
+      expect(await run(leaves + nextWithRetry)).toEqual({
+        results: ["(pass) leaves", "(pass) next"],
+        ...isBetweenTests,
+      });
+    });
+
+    test("with --retry", async () => {
+      expect(await run(leaves + next, "--retry=1")).toEqual({
+        results: ["(pass) leaves", "(pass) next"],
+        ...isBetweenTests,
+      });
+    });
+
+    test("with retry in bunfig.toml", async () => {
+      const { stderr, errors, exitCode } = await runFiles({
+        "bunfig.toml": "[test]\nretry = 1\n",
+        "a.test.ts": imports + leaves + next,
+      });
+      expect({ results: results(stderr), errors, exitCode }).toEqual({
+        results: ["(pass) leaves", "(pass) next"],
+        errors: ["error: left"],
+        exitCode: 1,
+      });
+    });
+
+    // A file has its own realm with --isolate and --parallel, and its own Bun.ModuleGraph with --isolate=modules.
+    test.each([[[]], [["--isolate"]], [["--isolate=modules"]], [["--parallel=1"]]])(
+      "in the second file of a run with %j",
+      async args => {
+        const { stderr, exitCode } = await runFiles(
+          {
+            "a.test.ts": `
+              import { test } from "bun:test";
+              test("in the first file", () => {});
+            `,
+            "b.test.ts": `
+              ${imports}
+              ${leaves}
+              ${nextWithRetry}
+              test("rejects in its own call", () => {
+                Promise.reject(new Error("own"));
+              });
+            `,
+          },
+          ...args,
+        );
+        expect({
+          results: results(stderr)?.sort(),
+          betweenTests: stderr.split("# Unhandled error between tests").length - 1,
+          exitCode,
+        }).toEqual({
+          results: ["(fail) rejects in its own call", "(pass) in the first file", "(pass) leaves", "(pass) next"],
+          betweenTests: 1,
+          exitCode: 1,
+        });
+      },
+    );
+
+    test("as a test.todo() test under --todo", async () => {
+      const file = `
+        ${leaves}
+        test.todo("next", () => {
+          throw new Error("not done yet");
+        });
+      `;
+      expect(await run(file, "--todo")).toEqual({
+        results: ["(pass) leaves", "(todo) next"],
+        errors: ["error: not done yet", "error: left"],
+        betweenTests: 1,
+        exitCode: 1,
+      });
+    });
+
+    // The callback of "ends" that rejects it runs while "next" runs, and it also settles "next".
+    test("with { retry }, two tests later", async () => {
+      const file = `
+        const { promise, resolve } = Promise.withResolvers<void>();
+        test("ends", () => {
+          setTimeout(() => {
+            Promise.reject(new Error("left"));
+            resolve();
+          });
+        });
+        test("next", () => promise);
+        test("third", () => {}, { retry: 1 });
+      `;
+      expect(await run(file)).toEqual({
+        results: ["(pass) ends", "(pass) next", "(pass) third"],
+        ...isBetweenTests,
+      });
+    });
+  });
+
+  // The report ends no entry, so the test that started next runs to its own end.
+  describe("doesn't end the test that started next", () => {
+    test.each(
+      Object.entries({
+        "and later passes": [``, ["(pass) leaves", "(pass) next", "(pass) third"], ["error: left"]],
+        "and later fails": [
+          `throw new Error("own");`,
+          ["(pass) leaves", "(fail) next", "(pass) third"],
+          ["error: left", "error: own"],
+        ],
+      } as Record<string, [string, string[], string[]]>),
+    )("which still runs at the report %s", async (_, [end, results, errors]) => {
+      const file = `
+        let nextRuns = false;
+        ${leaves}
+        test("next", async () => {
+          nextRuns = true;
+          await new Promise(resolve => setTimeout(resolve));
+          nextRuns = false;
+          ${end}
+        });
+        test("third", () => expect(nextRuns).toBe(false));
+      `;
+      expect(await run(file)).toEqual({ results, errors, betweenTests: 1, exitCode: 1 });
+    });
+  });
+
+  // The report of the first promise runs JS, and that JS ends the entry. So the next callback starts before the report
+  // of the second promise.
+  describe("is an error between tests when the report of an earlier promise started the next callback", () => {
+    test.each([[""], [", { retry: 1 }"]])("from the onError() of a Bun.ModuleGraph%s", async options => {
+      const file = `
+        test("leaves", async () => {
+          await new Promise<void>(resolve => {
+            const graph = new Bun.ModuleGraph({ onError: () => resolve() });
+            setTimeout(() => {
+              graph.run(() => void Promise.reject(new Error("taken")));
+              Promise.reject(new Error("left"));
+            });
+          });
+        });
+        test("next", async () => {
+          await new Promise(resolve => setTimeout(resolve));
+        }${options});
+      `;
+      expect(await run(file)).toEqual({ results: ["(pass) leaves", "(pass) next"], ...isBetweenTests });
+    });
+
+    test.each([[""], [", { retry: 1 }"]])("from a listener that resumes a test.extend() fixture%s", async options => {
+      const file = `
+        let isFirst = true;
+        const withFixture = test.extend({
+          fixture: async ({}, use) => {
+            if (isFirst) {
+              isFirst = false;
+              await new Promise(resolve => {
+                process.once("unhandledRejection", resolve);
+                setTimeout(() => {
+                  Promise.reject(new Error("taken"));
+                  Promise.reject(new Error("left"));
+                });
+              });
+            }
+            await use(1);
+          },
+        });
+        withFixture("next", async ({ fixture }) => {
+          await new Promise(resolve => setTimeout(resolve));
+        }${options});
+      `;
+      expect(await run(file)).toEqual({ results: ["(pass) next"], ...isBetweenTests });
+    });
+  });
+
+  describe("isn't charged to the next attempt or run of the test that rejected it", () => {
+    test.each([1, 2])("with { retry: %d }", async retry => {
+      const file = `
+        let attempt = 0;
+        test("flaky", async () => {
+          attempt++;
+          await new Promise<void>((resolve, reject) => {
+            setTimeout(() => {
+              if (attempt > 1) return resolve();
+              Promise.reject(new Error("left"));
+              reject(new Error("fails once"));
+            });
+          });
+        }, { retry: ${retry} });
+      `;
+      expect(await run(file)).toEqual({
+        results: ["(pass) flaky (attempt 2)"],
+        errors: ["error: fails once", "error: left"],
+        betweenTests: 1,
+        exitCode: 1,
+      });
+    });
+
+    test("with { retry }, when the afterEach() hook between two attempts rejected it", async () => {
+      const file = `
+        let attempt = 0;
+        afterEach(async () => {
+          if (attempt > 1) return;
+          ${leave}
+        });
+        test("flaky", () => {
+          if (++attempt === 1) throw new Error("fails once");
+        }, { retry: 1 });
+      `;
+      expect(await run(file)).toEqual({
+        results: ["(pass) flaky (attempt 2)"],
+        errors: ["error: fails once", "error: left"],
+        betweenTests: 1,
+        exitCode: 1,
+      });
+    });
+
+    test("with { repeats }", async () => {
+      const file = `
+        let run = 0;
+        test("repeats", async () => {
+          if (++run > 1) return;
+          ${leave}
+        }, { repeats: 1 });
+      `;
+      expect(await run(file)).toEqual({ results: ["(pass) repeats (run 2)"], ...isBetweenTests });
+    });
+  });
+
+  // What stays as it is: the callback that a promise was rejected under can still handle it or be charged for it.
+  describe("isn't reported when the callback that starts next handles it at once", () => {
+    test.each(
+      Object.entries({
+        "a hook, for its test": `
+          let rejected: Promise<never>;
+          beforeEach(async () => {
+            await new Promise<void>(resolve => {
+              setTimeout(() => {
+                rejected = Promise.reject(new Error("left"));
+                resolve();
+              });
+            });
+          });
+          test("handles", () => expect(rejected).rejects.toThrow("left"));
+        `,
+        "a test, for its afterEach() hook": `
+          let rejected: Promise<never>;
+          afterEach(() => expect(rejected).rejects.toThrow("left"));
+          test("handles", async () => {
+            await new Promise<void>(resolve => {
+              setTimeout(() => {
+                rejected = Promise.reject(new Error("left"));
+                resolve();
+              });
+            });
+          });
+        `,
+        "a test, for the next test": `
+          let rejected: Promise<never>;
+          test("leaves", async () => {
+            await new Promise<void>(resolve => {
+              setTimeout(() => {
+                rejected = Promise.reject(new Error("left"));
+                resolve();
+              });
+            });
+          });
+          test("handles", () => expect(rejected).rejects.toThrow("left"));
+        `,
+        "an afterEach() hook, for the next test": `
+          let rejected: Promise<never> | undefined;
+          afterEach(async () => {
+            if (rejected) return;
+            await new Promise<void>(resolve => {
+              setTimeout(() => {
+                rejected = Promise.reject(new Error("left"));
+                resolve();
+              });
+            });
+          });
+          test("first", () => {});
+          test("handles", () => expect(rejected).rejects.toThrow("left"));
+        `,
+        "a test that an fs promise settled, for the next test": `
+          let rejected: Promise<never>;
+          test("leaves", async () => {
+            await stat(import.meta.path);
+            rejected = Promise.reject(new Error("left"));
+          });
+          test("handles", () => expect(rejected).rejects.toThrow("left"));
+        `,
+      }),
+    )("%s", async (_, file) => {
+      expect(await run(file)).toMatchObject({ errors: [], betweenTests: 0, exitCode: 0 });
+    });
+  });
+
+  describe("still fails the test that it was rejected under", () => {
+    test.each(
+      Object.entries({
+        "in its synchronous part": `
+          test("leaves", () => {
+            Promise.reject(new Error("left"));
+          });
+        `,
+        "in a callback, while that test still runs": `
+          test("leaves", async () => {
+            await new Promise<void>(resolve => {
+              setTimeout(() => {
+                Promise.reject(new Error("left"));
+                setTimeout(resolve);
+              });
+            });
+          });
+        `,
+      }),
+    )("%s", async (_, leaves) => {
+      expect(await run(leaves + next)).toEqual({
+        results: ["(fail) leaves", "(pass) next"],
+        errors: ["error: left"],
+        betweenTests: 0,
+        exitCode: 1,
+      });
+    });
+
+    // A limit, not a rule: the owner is the callback that started last, and not the test that queued the callback
+    // that rejects. So the test that runs is charged for what a callback of an ended test rejects.
+    test.each(
+      Object.entries({
+        "in a later turn": `
+          test("ends", () => {
+            setTimeout(() => {
+              Promise.reject(new Error("left"));
+              setTimeout(resolve);
+            });
+          });
+        `,
+        "in the turn that settled that test": `
+          test("ends", async () => {
+            await new Promise<void>(settle => {
+              setImmediate(settle);
+              setImmediate(() => {
+                Promise.reject(new Error("left"));
+                setImmediate(resolve);
+              });
+            });
+          });
+        `,
+      }),
+    )("in a callback that an earlier test left behind, %s", async (_, ends) => {
+      const file = `
+        const { promise, resolve } = Promise.withResolvers<void>();
+        ${ends}
+        test("next", () => promise);
+      `;
+      expect(await run(file)).toEqual({
+        results: ["(pass) ends", "(fail) next"],
+        errors: ["error: left"],
+        betweenTests: 0,
+        exitCode: 1,
+      });
+    });
+
+    test("or is an error between tests if that test has ended and no callback has started since", async () => {
+      const file = `
+        const { promise, resolve } = Promise.withResolvers<void>();
+        test("ends", () => {
+          setTimeout(() => {
+            Promise.reject(new Error("left"));
+            resolve();
+          });
+        });
+        test("next", () => promise, { retry: 1 });
+      `;
+      expect(await run(file)).toEqual({ results: ["(pass) ends", "(pass) next"], ...isBetweenTests });
+    });
+  });
+
+  // An aroundEach() hook is called like a hook of Vitest. The test that starts next isn't, and it decides.
+  test("doesn't go to a listener of the process in a bun:test file", async () => {
+    const { stdout, stderr, errors, exitCode } = await runFiles({
+      "a.test.ts": `
+        ${imports}
+        process.on("unhandledRejection", () => console.log("heard"));
+        aroundEach(async runTest => {
+          ${leave}
+          await runTest();
+        });
+        ${next}
+      `,
+    });
+    expect({ heard: stdout.includes("heard"), results: results(stderr), errors, exitCode }).toEqual({
+      heard: false,
+      results: ["(pass) next"],
+      errors: ["error: left"],
+      exitCode: 1,
+    });
+  });
+});
+
 describe.concurrent("an error that arrives while a test file loads", () => {
   const results = (stderr: string) => stderr.match(/^\((pass|fail)\) [\w >]+/gm)?.map(line => line.trimEnd());
   // Loading resumes one event-loop turn after the error.

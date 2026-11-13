@@ -2802,6 +2802,7 @@ impl TestCommand {
                 // process-lifetime CLI context and `exec()` never returns.
                 test_options: unsafe { bun_ptr::detach_lifetime_ref(&ctx.test_options) },
                 unhandled_errors_between_tests: 0,
+                rejection_owner: 0,
                 summary: Summary::default(),
                 node_test_used: false,
                 environment_is_left: false,

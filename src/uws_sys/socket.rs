@@ -1,5 +1,5 @@
 //! High-level socket wrapper over `us_socket_t` / `ConnectingSocket` /
-//! `UpgradedDuplex` / `WindowsNamedPipe`.
+//! `UpgradedDuplex` / `PipePayload` (`WindowsNamedPipe` on Windows, `PosixPipe` on unix).
 //!
 //! THIS IS THE ONE CANONICAL IMPLEMENTATION. `bun_uws`
 //! re-exports everything here; do NOT add a parallel `InternalSocket` /

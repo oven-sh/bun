@@ -994,7 +994,7 @@ pub(crate) fn upload_stream(
             }
             // `!had_last`: the stream-pump +1 (rc=2) is released by
             // `NetworkSink::end_from_stream` after the terminal write/fail so the
-            // sink outlives the synchronous `resolve()` re-entry.
+            // sink outlives the `resolve()` that `fail` runs.
             return Ok(end_promise_value);
         }
         // sink already attached: fall through to the JS pump.

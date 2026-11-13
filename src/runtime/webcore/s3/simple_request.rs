@@ -2,7 +2,7 @@ use core::sync::atomic::Ordering;
 
 use bun_core::MutableString;
 use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
-use bun_event_loop::{TaskTag, Taskable, task_tag};
+use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
 use bun_http::async_http::Options as HttpOptions;
 use bun_http::{
     AsyncHTTP, FetchRedirect, HTTPClientResult, HTTPClientResultCallback, Headers, HeadersExt,
@@ -14,7 +14,7 @@ use bun_picohttp as picohttp;
 use bun_ptr::RefPtr;
 use bun_s3_signing::acl::ACL;
 use bun_s3_signing::credentials::{S3Credentials, SignOptions, SignResult};
-use bun_s3_signing::error::{S3Error, get_sign_error_code_and_message};
+use bun_s3_signing::error::{ErrorCodeAndMessage, S3Error, get_sign_error_code_and_message};
 use bun_s3_signing::storage_class::StorageClass;
 use bun_threading::thread_pool;
 use bun_url::URL;
@@ -187,7 +187,65 @@ pub(crate) enum Callback {
     Rollback(RefPtr<MultiPartUpload>),
 }
 
+/// An upload's request that was not sent, on its way to fail from the event loop.
+pub(crate) struct RefusedRequest {
+    callback: Callback,
+    error: S3Error<'static>,
+    context: bun_jsc::ContextId,
+}
+
+impl Taskable for RefusedRequest {
+    const TAG: TaskTag = task_tag::S3RefusedRequest;
+    /// As `S3HttpSimpleTask`.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — boxed in `Callback::refuse`.
+        let _ = unsafe { bun_core::heap::take(this) }.run();
+    }
+    /// As `S3HttpSimpleTask`.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
+}
+
+impl RefusedRequest {
+    pub(crate) fn run(self) -> bun_jsc::JsResult<()> {
+        let _context = VirtualMachine::get().enter_context(self.context);
+        self.callback.fail(self.error.code, self.error.message)
+    }
+}
+
 impl Callback {
+    /// The request is not sent.
+    fn refuse(
+        self,
+        context: &bun_jsc::ScriptExecutionContext,
+        error: S3Error<'static>,
+    ) -> bun_jsc::JsResult<()> {
+        match self {
+            // These start inside the sink's `write` or `end`, and failing the upload can free the sink.
+            Callback::SingleSend(_)
+            | Callback::Start(_)
+            | Callback::Part(..)
+            | Callback::Commit(_) => {
+                let refused = RefusedRequest {
+                    callback: self,
+                    error,
+                    context: context.id(),
+                };
+                let task = ConcurrentTask::create(Task::from_boxed(Box::new(refused)));
+                // Not `enqueue_task`: it wakes no loop, and fails the request on arrival in teardown.
+                VirtualMachine::get().ticket().post(task);
+                Ok(())
+            }
+            Callback::Stat(_)
+            | Callback::Download(_)
+            | Callback::Upload(_)
+            | Callback::Delete(_)
+            | Callback::ListObjects(_)
+            | Callback::Rollback(_) => self.fail(error.code, error.message),
+        }
+    }
+
     fn fail(self, code: &[u8], message: &[u8]) -> bun_jsc::JsResult<()> {
         let err = S3Error { code, message };
         match self {
@@ -608,7 +666,7 @@ pub(crate) fn execute_simple_s3_request(
     // completion is released as for a failure, which is reported to nobody.
     if nothing_new_leaves(context) {
         drop(options.range);
-        return callback.fail(NOTHING_NEW_LEAVES.code, NOTHING_NEW_LEAVES.message);
+        return callback.refuse(context, NOTHING_NEW_LEAVES);
     }
     let result = match this.sign_request::<false>(
         &SignOptions {
@@ -630,8 +688,9 @@ pub(crate) fn execute_simple_s3_request(
         Err(sign_err) => {
             // options.range drops here automatically
             drop(options.range);
-            let error_code_and_message = get_sign_error_code_and_message(sign_err.into());
-            return callback.fail(error_code_and_message.code, error_code_and_message.message);
+            let ErrorCodeAndMessage { code, message } =
+                get_sign_error_code_and_message(sign_err.into());
+            return callback.refuse(context, S3Error { code, message });
         }
     };
 

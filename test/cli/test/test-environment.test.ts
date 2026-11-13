@@ -1048,6 +1048,46 @@ describe.concurrent("test environment", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("--isolate: a task that the last test of a file queued runs while the file still has its window", async () => {
+    using dir = tempDir("test-environment", {
+      ...fakePackages,
+      // As in the real happy-dom, abort() waits on a timer, so the event loop turns while the window closes.
+      "node_modules/happy-dom/index.js": `${fakePackages["node_modules/happy-dom/index.js"]}
+        const { setTimeout } = globalThis;
+        const { Window } = exports;
+        exports.Window = class extends Window {
+          constructor(...args) {
+            super(...args);
+            this.happyDOM.abort = () => new Promise(resolve => setTimeout(resolve, 1));
+          }
+        };`,
+      "1.test.js": `// ${VITEST} happy-dom
+        import { test } from "bun:test";
+        test("queues a task", async () => {
+          const { port1, port2 } = new MessageChannel();
+          port1.onmessage = () => {
+            console.log("task", typeof document);
+            port1.close();
+          };
+          await new Promise(resolve => {
+            setTimeout(() => {
+              port2.postMessage(0);
+              resolve();
+            }, 0);
+          });
+        });`,
+      "2.test.js": logEnvironment,
+    });
+    const { stdout, stderr, exitCode } = await bunTest(String(dir), "--isolate");
+    expect(stdout.filter(line => !line.startsWith("open "))).toEqual([
+      "task object",
+      "close happy-dom#1",
+      "2.test.js node ",
+    ]);
+    expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
+    expect(exitCode).toBe(0);
+  });
+
   test.each([[[]], [["--isolate"]]])("--rerun-each keeps the window %j", async flags => {
     using dir = tempDir("test-environment", {
       ...fakePackages,

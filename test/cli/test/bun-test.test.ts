@@ -3437,6 +3437,289 @@ describe.concurrent("an error that arrives while a test file loads", () => {
   });
 });
 
+describe.concurrent("a task that is queued when the last step of a file ends", () => {
+  // The results and errors that each file printed, by the header of the file. --parallel prints a header again
+  // each time the output goes back to its file.
+  function report(stderr: string) {
+    const files: Record<string, string[]> = {};
+    let file: string[] = [];
+    for (const line of stderr.split(/\r?\n/)) {
+      if (/^\S+\.test\.ts:/.test(line)) file = files[line.trimEnd()] ??= [];
+      else if (/^(\((pass|fail|skip|todo)\) |# Unhandled error between tests$|error: )/.test(line))
+        file.push(line.replace(/ \[[\d.]+ms\]$/, ""));
+    }
+    return files;
+  }
+  const imports = `import { afterAll, afterEach, expect, test } from "bun:test";`;
+  // A task delivers the message. The handler throws, so the report shows whether the task ran.
+  const channel = `
+    const { port1, port2 } = new MessageChannel();
+    port1.onmessage = () => {
+      throw new Error("from the task");
+    };
+  `;
+  // The timer callback queues the task and then ends the test or hook.
+  const inTimer = (end: string) => `
+    setTimeout(() => {
+      port2.postMessage(0);
+      ${end}
+    }, 0);
+  `;
+  const awaitsTimer = `
+    ${channel}
+    await new Promise(resolve => {
+      ${inTimer("resolve();")}
+    });
+  `;
+  const one = `test("one", async () => {${awaitsTimer}});`;
+  const fromTheTask = ["# Unhandled error between tests", "error: from the task"];
+
+  test.each(
+    Object.entries<[tests: string, results: string[]]>({
+      "a timer ends the last test": [one, ["(pass) one"]],
+      "Bun.sleep() ends the last test": [
+        `test("one", async () => {
+          ${channel}
+          await Bun.sleep(1);
+          port2.postMessage(0);
+        });`,
+        ["(pass) one"],
+      ],
+      "an immediate ends the last test": [
+        `test("one", async () => {
+          ${channel}
+          await new Promise(resolve => {
+            setImmediate(() => {
+              port2.postMessage(0);
+              resolve();
+            });
+          });
+        });`,
+        ["(pass) one"],
+      ],
+      "done() ends the last test": [
+        `test("one", done => {
+          ${channel}
+          ${inTimer("done();")}
+        });`,
+        ["(pass) one"],
+      ],
+      "a socket's data callback ends the last test": [
+        `test("one", async () => {
+          ${channel}
+          const opened = Promise.withResolvers();
+          const received = Promise.withResolvers();
+          using server = Bun.listen({
+            hostname: "127.0.0.1",
+            port: 0,
+            socket: { open: opened.resolve, data() {} },
+          });
+          const client = await Bun.connect({
+            hostname: "127.0.0.1",
+            port: server.port,
+            socket: {
+              data() {
+                port2.postMessage(0);
+                received.resolve();
+              },
+            },
+          });
+          (await opened.promise).write("x");
+          await received.promise;
+          client.end();
+        });`,
+        ["(pass) one"],
+      ],
+      "afterEach is the last hook": [
+        `afterEach(async () => {${awaitsTimer}});
+        test("one", () => {});`,
+        ["(pass) one"],
+      ],
+      "afterAll is the last hook": [
+        `afterAll(async () => {${awaitsTimer}});
+        test("one", () => {});`,
+        ["(pass) one"],
+      ],
+      "only tests that don't wait follow": [
+        `${one}
+        test("synchronous", () => {});
+        test.skip("skipped", () => {});
+        test.todo("todo");`,
+        ["(pass) one", "(pass) synchronous", "(skip) skipped", "(todo) todo"],
+      ],
+      // The file stays open for the matcher after its last test.
+      "a matcher that nothing awaits settles last": [
+        `let settle;
+        expect(new Promise(resolve => (settle = resolve))).resolves.toBe(1);
+        test("one", () => {
+          ${channel}
+          ${inTimer("settle(1);")}
+        });`,
+        ["(pass) one"],
+      ],
+    }),
+  )("runs when %s", async (_, [tests, results]) => {
+    const { stderr, exitCode } = await runFiles({ "a.test.ts": `${imports}\n${tests}` });
+    expect({ report: report(stderr), exitCode }).toEqual({
+      report: { "a.test.ts:": [...results, ...fromTheTask] },
+      exitCode: 1,
+    });
+  });
+
+  test.each([[[]], [["--isolate"]], [["--parallel=2"]]])("is reported under its own file %j", async flags => {
+    const { stderr, exitCode } = await runFiles(
+      {
+        "a.test.ts": `${imports}\n${one}`,
+        "b.test.ts": `
+          import { test } from "bun:test";
+          test("last", () => {});
+        `,
+      },
+      ...flags,
+      "./a.test.ts",
+      "./b.test.ts",
+    );
+    const files = report(stderr);
+    // A --parallel worker sends a result and an error through two pipes, so only the file of each line is fixed.
+    for (const lines of Object.values(files)) lines.sort();
+    expect({ report: files, exitCode }).toEqual({
+      report: { "a.test.ts:": ["(pass) one", ...fromTheTask].sort(), "b.test.ts:": ["(pass) last"] },
+      exitCode: 1,
+    });
+  });
+
+  test("is reported in each run of --rerun-each", async () => {
+    const { stderr, exitCode } = await runFiles({ "a.test.ts": `${imports}\n${one}` }, "--rerun-each=2");
+    expect({ report: report(stderr), exitCode }).toEqual({
+      report: {
+        "a.test.ts: (run #1)": ["(pass) one", ...fromTheTask],
+        "a.test.ts: (run #2)": ["(pass) one", ...fromTheTask],
+      },
+      exitCode: 1,
+    });
+  });
+
+  test("runs before the immediates, and the file doesn't wait for a timer that it sets", async () => {
+    const { stdout, exitCode } = await runFiles({
+      "a.test.ts": `
+        import { test } from "bun:test";
+        test("one", async () => {
+          const { port1, port2 } = new MessageChannel();
+          port1.onmessage = () => {
+            console.log("task");
+            setImmediate(() => console.log("immediate of the task"));
+            setTimeout(() => console.log("timer of the task"), 0);
+          };
+          await new Promise(resolve => {
+            setTimeout(() => {
+              port2.postMessage(0);
+              setImmediate(() => console.log("immediate"));
+              resolve();
+            }, 0);
+          });
+        });
+      `,
+    });
+    expect({ stdout: stdout.split(/\r?\n/).filter(line => line && !line.startsWith("bun test ")), exitCode }).toEqual({
+      stdout: ["task", "immediate", "immediate of the task"],
+      exitCode: 0,
+    });
+  });
+
+  const logs = `
+    import { test, vi } from "bun:test";
+    process.on("beforeExit", () => console.log("beforeExit"));
+    test("one", async () => {
+      vi.stubGlobal("stubbed", true);
+      const { port1, port2 } = new MessageChannel();
+      port1.onmessage = () => {
+        console.log("task, stubbed:", globalThis.stubbed);
+        port1.close();
+      };
+      await new Promise(resolve => {
+        setTimeout(() => {
+          port2.postMessage(0);
+          setImmediate(() => console.log("immediate"));
+          resolve();
+        }, 0);
+      });
+    });
+  `;
+  const last = `
+    import { test } from "bun:test";
+    test("last", () => {});
+  `;
+
+  test("runs before the cleanup of its file", async () => {
+    const files = { "a.test.ts": logs, "b.test.ts": last };
+    const { stdout, exitCode } = await runFiles(files, "./a.test.ts", "./b.test.ts");
+    expect({ stdout: stdout.split(/\r?\n/).filter(line => line && !line.startsWith("bun test ")), exitCode }).toEqual({
+      stdout: ["task, stubbed: true", "immediate"],
+      exitCode: 0,
+    });
+  });
+
+  test("runs before the one beforeExit event of BUN_TEST_DRAIN_EVENT_LOOP", async () => {
+    const { stdout, exitCode } = await runFilesWithEnv({ BUN_TEST_DRAIN_EVENT_LOOP: "1" }, { "a.test.ts": logs });
+    expect({ stdout: stdout.split(/\r?\n/).filter(line => line && !line.startsWith("bun test ")), exitCode }).toEqual({
+      stdout: ["task, stubbed: true", "immediate", "beforeExit"],
+      exitCode: 0,
+    });
+  });
+
+  // The callback that queues the task ends the test with an error.
+  test.each(
+    Object.entries<[tests: string, results: string[], flags?: string[]]>({
+      "a test that throws": [
+        `test("one", async () => {
+          ${channel}
+          await new Promise(() => {
+            ${inTimer(`throw new Error("of the test");`)}
+          });
+        });`,
+        ["error: of the test", "(fail) one"],
+      ],
+      "a test that calls done(error)": [
+        `test("one", done => {
+          ${channel}
+          ${inTimer(`done(new Error("of the test"));`)}
+        });`,
+        ["error: of the test", "(fail) one"],
+      ],
+      "a test.failing() test that calls done(error)": [
+        `test.failing("one", done => {
+          ${channel}
+          ${inTimer(`done(new Error("of the test"));`)}
+        });`,
+        ["(pass) one"],
+      ],
+      "a test.todo() test that calls done(error), with --todo": [
+        `test.todo("one", done => {
+          ${channel}
+          ${inTimer(`done(new Error("of the test"));`)}
+        });`,
+        ["error: of the test", "(todo) one"],
+        ["--todo"],
+      ],
+      "a test that calls done(error) and passes on its retry": [
+        `let attempt = 0;
+        test("one", done => {
+          if (++attempt === 2) return done();
+          ${channel}
+          ${inTimer(`done(new Error("of the test"));`)}
+        }, { retry: 1 });`,
+        ["error: of the test", "(pass) one (attempt 2)"],
+      ],
+    }),
+  )("runs behind %s", async (_, [tests, results, flags = []]) => {
+    const { stderr, exitCode } = await runFiles({ "a.test.ts": `${imports}\n${tests}` }, ...flags);
+    expect({ report: report(stderr), exitCode }).toEqual({
+      report: { "a.test.ts:": [...results, ...fromTheTask] },
+      exitCode: 1,
+    });
+  });
+});
+
 describe.concurrent("a test file that fails to load", () => {
   const turn = `await new Promise(resolve => setTimeout(resolve));`;
   const files = {

@@ -1842,7 +1842,7 @@ describe("spawn().unref() with piped stdio", () => {
     });
   `;
 
-  async function run(stdio: string, afterUnref = "") {
+  async function run(stdio: string, afterUnref = "", beforeRequire = "") {
     using dir = tempDir("unref-pipe", {});
     const marker = path.join(String(dir), "marker.json");
     await using proc = Bun.spawn({
@@ -1850,6 +1850,7 @@ describe("spawn().unref() with piped stdio", () => {
         bunExe(),
         "-e",
         `
+          ${beforeRequire}
           const { spawn } = require("node:child_process");
           const c = spawn(${JSON.stringify(bunExe())}, ["-e", ${JSON.stringify(child)}, ${JSON.stringify(marker)}], {
             stdio: ${stdio},
@@ -1991,6 +1992,18 @@ describe("spawn().unref() with piped stdio", () => {
     ["unref(), unref(), ref()", "c.stderr.unref(); c.stdout.unref(); c.stdout.unref(); c.stdout.ref();"],
   ])("stream %s on stdout holds the parent again", async (_, afterUnref) => {
     expect(await run(`undefined`, afterUnref)).toEqual({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+      marker: { input: "go", write: "ok" },
+    });
+  });
+
+  it("keeps the parent alive when a script replaced setImmediate before node:child_process loads", async () => {
+    // unref() queues its reads with the runtime's own setImmediate, which a script cannot replace.
+    expect(
+      await run(`undefined`, "", `globalThis.setImmediate = () => { throw new Error("a script took the read"); };`),
+    ).toEqual({
       stdout: "",
       stderr: "",
       exitCode: 0,

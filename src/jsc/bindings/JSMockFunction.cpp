@@ -321,6 +321,14 @@ private:
     std::optional<JSC::AllowLazyMaterializationOfImmutableProperties> m_allow;
 };
 
+// A direct store goes past what a function records about its `length`, `name` and `prototype`: bind() would go on taking `length` and `name` from the code, and `new` the old `prototype`. The function's defineOwnProperty() records it, also when the descriptor defines nothing. Where the function lacks the key, that defines `undefined`, which the store replaces.
+static ALWAYS_INLINE void willStoreOwnPropertyOfFunction(JSGlobalObject* globalObject, JSObject* object, PropertyName key)
+{
+    auto& names = *JSC::getVM(globalObject).propertyNames;
+    if ((key == names.length || key == names.name || key == names.prototype) && isJSFunctionOrCompiledCallee(object)) [[unlikely]]
+        object->methodTable()->defineOwnProperty(object, globalObject, key, PropertyDescriptor(), false);
+}
+
 static void putOwnPropertyStorage(JSGlobalObject* globalObject, JSObject* object, PropertyName key, JSValue storage, unsigned attributes, bool isOpaque)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -334,7 +342,13 @@ static void putOwnPropertyStorage(JSGlobalObject* globalObject, JSObject* object
             descriptor.setDescriptor(storage, attributes);
         scope.release();
         object->methodTable()->defineOwnProperty(object, globalObject, key, descriptor, true);
-    } else if (attributes & PropertyAttribute::Accessor) {
+        return;
+    }
+
+    willStoreOwnPropertyOfFunction(globalObject, object, key);
+    RETURN_IF_EXCEPTION(scope, );
+
+    if (attributes & PropertyAttribute::Accessor) {
         scope.release();
         object->putDirectAccessor(globalObject, key, uncheckedDowncast<GetterSetter>(storage), attributes);
     } else if (attributes & PropertyAttribute::CustomAccessorOrValue) {
@@ -3248,7 +3262,17 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     if (object->type() == CompiledObjectType)
         answersForItsElements = false;
 #endif
-    if (storage && !isOpaque && (parseIndex(propertyKey) ? answersForItsElements : !object->getDirect(vm, propertyKey))) {
+    bool answersAheadOfItsStorage = storage && !isOpaque && (parseIndex(propertyKey) ? answersForItsElements : !object->getDirect(vm, propertyKey));
+#if ENABLE(AOT)
+    // A compiled function reads its storage first. What it answers for from elsewhere (a static field of its class, its `length`, its `name`), it lays down there once it is asked to.
+    if (answersAheadOfItsStorage && vm.hasCompiledCode() && JSC::AOT::CompiledCallee::isCompiledCallee(object)) {
+        JSC::AOT::PropertyWalk::materializeLazyProperties(vm, object);
+        willStoreOwnPropertyOfFunction(globalObject, object, propertyKey);
+        RETURN_IF_EXCEPTION(scope, {});
+        answersAheadOfItsStorage = !object->getDirect(vm, propertyKey);
+    }
+#endif
+    if (answersAheadOfItsStorage) {
         throwTypeError(globalObject, scope, makeString("Cannot spy on the "_s, access == SpyAccess::Set ? "setter"_s : "getter"_s, " of the `"_s, propertyKeyForMessage(propertyKey), "` property because it cannot be redefined"_s));
         return {};
     }

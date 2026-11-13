@@ -221,8 +221,7 @@ pub struct Minimatch {
     drive: Drive,
 }
 
-/// minimatch's win32 rule for the drive letters of the pattern and the path: they are compared without case, and a
-/// `//?/` in front of one of them only is ignored.
+/// What a win32 pattern or path starts with. minimatch compares the letters without case.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Drive {
     None,
@@ -255,8 +254,7 @@ impl Drive {
     }
 }
 
-/// The path with its drive letter in upper case, without a `//?/` that `pattern_drive` doesn't have. Minimatch slices
-/// the pattern instead when only the pattern has the `//?/`. That isn't done here.
+/// The path with its drive letter in upper case, without a `//?/` that `pattern_drive` doesn't have.
 fn fold_drive(path: Cow<'_, [u8]>, pattern_drive: Drive) -> Cow<'_, [u8]> {
     let drive = Drive::of(&path);
     let Some(letter) = drive.letter_at() else {

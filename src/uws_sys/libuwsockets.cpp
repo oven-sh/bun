@@ -985,12 +985,7 @@ extern "C"
       uwsRes->resetTimeout();
     }
   }
-  /* Completion gate for response-end paths that bypass internalEnd (the
-   * sendfile path, uws_res_end_without_body): closes the socket when the
-   * connection is marked to close (Connection: close, peer FIN,
-   * close-when-idle), the response is complete, and every outgoing byte has
-   * been flushed. It uncorks first, as internalEnd does: the cork() wrapper's
-   * own gate is skipped when another socket's cork() took this response's slot. */
+  /* Completion gate for the ends that bypass internalEnd (sendfile, uws_res_end_without_body). Uncorks first, as internalEnd does: cork() skips its own gate when another socket's cork() took this response's slot. */
   void uws_res_close_if_done_and_marked(int ssl, uws_res_r res)
   {
     /* A callback upstream of this gate may already have closed the socket;
@@ -1065,12 +1060,7 @@ extern "C"
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
       data->markDone(uwsRes);
       uwsRes->resetTimeout();
-      /* No close gate here: a close runs the server's close callbacks, and on
-       * a stopped server those free state that a caller (DevServer::defer_request)
-       * still uses when this returns. onData gates the socket it is parsing,
-       * and cork() gates a response that still holds its cork slot when its
-       * callback returns. Every other caller runs
-       * uws_res_close_if_done_and_marked once it is done with the response. */
+      /* No close gate here: a close runs the server's close callbacks under the caller, and on a stopped dev server they free the DevServer that DevServer::defer_request still uses. A caller that neither onData nor cork() gates runs uws_res_close_if_done_and_marked. */
     }
     else
     {

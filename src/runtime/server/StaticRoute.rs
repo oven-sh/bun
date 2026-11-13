@@ -486,8 +486,7 @@ impl StaticRoute {
                 resp.write_header(b"Allow", b"GET, HEAD");
                 resp.write_header_int(b"Content-Length", 0);
                 resp.end_without_body(resp.should_close_connection());
-                // `end_without_body` only marks the connection. A request that waited for its bundle
-                // is answered outside a uWS handler, where nothing else closes it.
+                // A request that waited for its bundle is answered outside a uWS handler, where nothing else closes the connection.
                 resp.close_if_done_and_marked();
             }
         }

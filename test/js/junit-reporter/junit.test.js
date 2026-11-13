@@ -1,7 +1,8 @@
 import { file, spawn } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isWindows, MAX_PATH_BYTES, tempDir } from "harness";
-import { existsSync, readdirSync, readFileSync, symlinkSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 const xml2js = require("xml2js");
@@ -1321,6 +1322,17 @@ test("runs in another file", () => {});
       });
     });
 
+    // Windows opens "C:junit.xml" as "junit.xml" below a folder.
+    it.skipIf(!isWindows)("with an outfile that has a drive letter and no root", async () => {
+      const outfile = realpathSync(tmpdir()).slice(0, 2) + "junit.xml";
+      expect(await report(["--reporter=junit", "--reporter-outfile=" + outfile])).toEqual({
+        xml: document(3, first + second),
+        elsewhere: ["keep.txt"],
+        titles: bothTitles,
+        exitCode: 1,
+      });
+    });
+
     // Windows refuses to remove the working directory of a process.
     it.skipIf(isWindows).each([
       ["a serial run", []],
@@ -1358,6 +1370,27 @@ afterAll(() => rmSync(scratch, { recursive: true }));
         exitCode: 0,
       });
     });
+  });
+
+  it("names a file by its whole path when its folder's name only starts with the name of the run's folder", async () => {
+    using dir = tempDir("junit-sibling-folder", {
+      "app/package.json": "{}",
+      "app-api/a.test.js": `import { test } from "bun:test";\ntest("passes", () => {});`,
+    });
+    await using proc = spawn(
+      [bunExe(), "test", "--reporter=junit", "--reporter-outfile=junit.xml", "../app-api/a.test.js"],
+      { cwd: join(String(dir), "app"), env: bunEnv, stdout: "ignore", stderr: "pipe" },
+    );
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [suite] = (await file(join(String(dir), "app", "junit.xml")).text()).match(/<testsuite [^>]*>/);
+    const path = join(String(dir), "app-api", "a.test.js");
+
+    expect(stderr).toContain(" 1 pass");
+    expect({ name: suite.match(/ name="([^"]*)"/)[1], file: suite.match(/ file="([^"]*)"/)[1] }).toEqual({
+      name: path,
+      file: path,
+    });
+    expect(exitCode).toBe(0);
   });
 
   // Windows removes `..` from a path before it follows a link.

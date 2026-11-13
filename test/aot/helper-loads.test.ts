@@ -183,6 +183,24 @@ for (const [name, file, text, isProduct] of importers)
     },
   );
 
+test.concurrent(
+  "a helper of the product is named from the folder of the run after the test file changed the working directory",
+  async () => {
+    const files = project("beside the tests", false, {
+      "main.ts": `import { load } from "./support/imports";\nconsole.log(typeof load);`,
+    });
+    // Runs after the imports of the file and before its tests.
+    files["tests/a.test.ts"] = `process.chdir(import.meta.dir);\n${files["tests/a.test.ts"]}`;
+    using directory = lay("helper-loads-moved", files);
+    const said = loaded.said.map(line =>
+      line.startsWith("SAID imports ") ? refused[names.slice().sort().indexOf("imports")] : line,
+    );
+    const why = [`support/imports.ts is part of your program: main.ts imports it, and that's no file of your tests.`];
+    for (const [, words] of waysFor(forms, false))
+      expect(await testRun(String(directory), ["--aot"], words, ["./tests"])).toEqual({ said, why, exitCode: 0 });
+  },
+);
+
 test.concurrent("what package.json names as a way into the project is the product's", async () => {
   const files = project("beside the tests", false);
   files["package.json"] =

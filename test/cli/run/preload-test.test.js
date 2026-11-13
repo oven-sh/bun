@@ -355,12 +355,12 @@ plugin({
       const { proc, stdout, stderr } = spawnHot(dir);
       await using _ = proc;
       expect(await stderr("error: from first.js")).toContain("error: from first.js");
-      writeFileSync(join(String(dir), "first.js.new"), `console.log("first ran");`);
-      renameSync(join(String(dir), "first.js.new"), join(String(dir), "first.js"));
+      // Written in place: on Windows a rename onto first.js fails with EPERM while the other process runs.
+      // A reload can read first.js while it is empty, so wait for the run that prints all three lines.
+      writeFileSync(join(String(dir), "first.js"), `console.log("first ran");`);
       writeFileSync(join(String(dir), "main.js"), `console.log("main ran");`);
-      expect(await Promise.race([stdout("main ran\n"), stderr("preload not found")])).toContain(
-        "first ran\nsecond ran\nmain ran\n",
-      );
+      const reloaded = "first ran\nsecond ran\nmain ran\n";
+      expect(await Promise.race([stdout(reloaded), stderr("preload not found")])).toContain(reloaded);
     });
 
     test("reports a preload that was deleted before a reload, and the next reload still runs", async () => {

@@ -505,7 +505,8 @@ test("a Vitest task names its file from the folder the run started in, after pro
     `,
   });
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "test"],
+    // Named, so that b.test.js runs after the change: a scan finds the files of a folder below the root in no fixed order.
+    cmd: [bunExe(), "test", "./dir/a.test.js", "./dir/b.test.js"],
     env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",

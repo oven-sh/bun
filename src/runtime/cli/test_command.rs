@@ -877,11 +877,21 @@ pub(crate) fn report_path<'a>(
     written: &'a [u8],
     buf: &'a mut bun_paths::PathBuffer,
 ) -> bun_sys::Result<&'a [u8]> {
-    if bun_paths::is_absolute(written)
-        || (cfg!(windows) && resolve_path::windows_volume_name_len(written).0 > 0)
-    {
+    if bun_paths::is_absolute(written) {
         return Ok(written);
     }
+    // On Windows the open drops the drive letter of "C:dir\r.xml" and resolves the rest below its directory.
+    // It takes a name with no separator and no dot, like "C:name", as written.
+    let below_root = match written {
+        [drive, b':', rest @ ..]
+            if cfg!(windows)
+                && resolve_path::is_drive_letter(*drive)
+                && strings::index_of_any(rest, b"\\/.").is_some() =>
+        {
+            rest
+        }
+        _ => written,
+    };
     let root = run_root();
     let separator: &[u8] = match root.last() {
         Some(&last) if bun_paths::is_sep_native(last) => b"",
@@ -889,7 +899,7 @@ pub(crate) fn report_path<'a>(
     };
     // The open adds a NUL.
     let room = buf.len() - 1;
-    match strings::concat_buf_t(&mut buf[..room], &[root, separator, written]) {
+    match strings::concat_buf_t(&mut buf[..room], &[root, separator, below_root]) {
         Ok(joined) => Ok(joined),
         Err(_) => Err(
             bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
@@ -902,10 +912,14 @@ pub(crate) fn report_path<'a>(
 /// root when inside it, else as given.
 pub(crate) fn junit_file_name(path: &[u8]) -> &[u8] {
     let top = run_root();
-    if strings::has_prefix(path, top) {
-        without_leading_path_separator(&path[top.len()..])
-    } else {
-        path
+    match path.strip_prefix(top) {
+        // "/app-api/a.test.ts" is not inside "/app".
+        Some(inside)
+            if top.ends_with(&[bun_paths::SEP]) || inside.starts_with(&[bun_paths::SEP]) =>
+        {
+            without_leading_path_separator(inside)
+        }
+        _ => path,
     }
 }
 
@@ -4036,10 +4050,7 @@ impl TestCommand {
         vm.clear_entry_point()?;
         vm.enter_module_graph_for_test_isolation()?;
 
-        run_compiled::will_run_test_file(resolve_path::relative(
-            FileSystem::get().top_level_dir(),
-            file_path,
-        ));
+        run_compiled::will_run_test_file(run_relative(file_path));
         let file_id = jest::Jest::runner()
             .unwrap()
             .get_or_put_file(file_path)

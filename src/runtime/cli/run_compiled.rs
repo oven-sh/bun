@@ -1539,7 +1539,7 @@ pub(crate) fn write_note_on_refusal(writer: &mut impl bun_io::Write) {
 
 /// `refusals`: "Cannot load '<path>', at <file>:<line>:<column>, while <test file> ran". Each file that asked, once, with the file on disk that makes it the product's.
 pub(crate) fn find_why_askers_are_of_product(refusals: &[Vec<u8>]) -> Vec<(Vec<u8>, Vec<u8>)> {
-    let top = bun_resolver::fs::FileSystem::get().top_level_dir();
+    let top = super::test_command::run_root();
     let top = top.strip_suffix(&[bun_paths::SEP]).unwrap_or(top);
     let mut askers: Vec<&[u8]> = (refusals.iter())
         .filter_map(|refusal| {
@@ -1574,10 +1574,7 @@ pub(crate) fn find_why_askers_are_of_product(refusals: &[Vec<u8>]) -> Vec<(Vec<u
 
 fn path_below_project(path: &bun_core::String) -> Vec<u8> {
     let path = path.to_owned_slice();
-    let shown = bun_paths::resolve_path::relative(
-        bun_resolver::fs::FileSystem::get().top_level_dir(),
-        &path,
-    );
+    let shown = super::test_command::run_relative(&path);
     bun_core::strings::replace_owned(shown, &[bun_paths::SEP], b"/")
 }
 

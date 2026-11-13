@@ -1532,7 +1532,7 @@
     "aot/files-above-the-entry-point-start-workers-from-code.test.ts",
     "aot/a-function-of-node-fs-that-moves-the-bytes-of-a-small-view-has-a-row-that-says-so.test.ts",
     "aot/a-built-in-that-moves-the-bytes-of-a-small-view-has-a-row-that-says-so.test.ts",
-    "aot/function-source-in-compressed-blocks.test.ts",
+    "aot/function-source-in-place.test.ts",
     "aot/quoted-source-in-compressed-blocks.test.ts",
     "aot/a-graph-that-is-left-to-the-loader-costs-the-same-a-module-on-a-larger-graph.test.ts",
     "aot/a-store-between-two-reads-of-one-list-is-seen-by-the-second-read.test.ts",

@@ -217,9 +217,9 @@ function Sign-Artifact {
         throw "Expected directory $extractDir not found after extraction"
     }
 
-    $exes = Get-ChildItem -Path $extractDir -Filter "*.exe"
+    $exes = Get-ChildItem -Path $extractDir -Filter "bun*.exe"
     if ($exes.Count -eq 0) {
-        throw "No .exe files found in $extractDir"
+        throw "No bun*.exe found in $extractDir"
     }
 
     foreach ($exe in $exes) {
@@ -232,7 +232,7 @@ function Sign-Artifact {
     # so the signed archive's entry layout matches the original: forward-slash
     # paths and a directory entry. Compress-Archive writes backslash separators,
     # which violates the ZIP spec and triggers warnings in non-Windows unzip.
-    & cmake -E tar cfv $ZipName --format=zip $extractDir
+    & cmake -E tar cf $ZipName --format=zip $extractDir
     if ($LASTEXITCODE -ne 0) {
         throw "cmake -E tar failed for $ZipName"
     }

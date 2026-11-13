@@ -1889,6 +1889,7 @@ dependencies = [
  "bun_ptr",
  "bun_semver",
  "bun_sys",
+ "bun_threading",
  "bun_zstd",
  "smallvec",
  "thiserror",

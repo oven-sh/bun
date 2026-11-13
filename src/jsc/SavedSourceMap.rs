@@ -1,6 +1,7 @@
 #![warn(unused_must_use)]
 
 use core::ffi::c_void;
+use core::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 
 use bun_collections::{HashMap, IdentityContext, TaggedPtrUnion};
@@ -17,6 +18,123 @@ pub struct SavedSourceMap {
     /// Only accessed between [`Self::lock`] and [`Self::unlock`].
     map: HashTable,
     mutex: Mutex,
+    /// A [`SourceMapsSupport`] as bits, so a reader sees one whole write. `Relaxed`: the JS
+    /// thread of the VM is the only writer and reader.
+    source_maps_support: AtomicU8,
+}
+
+/// What `module.getSourceMapsSupport()` answers. `BunSourceMapsSupport` in headers-handwritten.h mirrors it.
+#[repr(C)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub struct SourceMapsSupport {
+    pub enabled: bool,
+    pub node_modules: bool,
+    pub generated_code: bool,
+}
+
+impl SourceMapsSupport {
+    const ENABLED: u8 = 1 << 0;
+    const NODE_MODULES: u8 = 1 << 1;
+    const GENERATED_CODE: u8 = 1 << 2;
+
+    /// `--enable-source-maps` and `process.setSourceMapsEnabled()` set the three alike, as Node does.
+    pub const fn all(enabled: bool) -> Self {
+        Self {
+            enabled,
+            node_modules: enabled,
+            generated_code: enabled,
+        }
+    }
+
+    const fn to_bits(self) -> u8 {
+        (self.enabled as u8 * Self::ENABLED)
+            | (self.node_modules as u8 * Self::NODE_MODULES)
+            | (self.generated_code as u8 * Self::GENERATED_CODE)
+    }
+
+    const fn from_bits(bits: u8) -> Self {
+        Self {
+            enabled: bits & Self::ENABLED != 0,
+            node_modules: bits & Self::NODE_MODULES != 0,
+            generated_code: bits & Self::GENERATED_CODE != 0,
+        }
+    }
+
+    /// Node leaves out a path under `node_modules` unless `nodeModules` is set.
+    pub fn applies_to(self, path: &[u8]) -> bool {
+        self.enabled
+            && (self.node_modules || !bun_paths::strings::path_contains_node_modules_folder(path))
+    }
+}
+
+/// Not `bun -e`, stdin, or a URL such as `blob:`.
+pub fn is_file_module(path: &[u8]) -> bool {
+    bun_paths::is_absolute(path) && !is_eval_or_stdin(path)
+}
+
+/// Node keeps no map of either, whatever the switch says.
+pub fn is_eval_or_stdin(path: &[u8]) -> bool {
+    let name = bun_paths::basename(path);
+    name == b"[eval]" || name == b"[stdin]"
+}
+
+impl SavedSourceMap {
+    pub fn source_maps_support(&self) -> SourceMapsSupport {
+        SourceMapsSupport::from_bits(self.source_maps_support.load(Ordering::Relaxed))
+    }
+
+    pub fn set_source_maps_support(&self, support: SourceMapsSupport) {
+        self.source_maps_support
+            .store(support.to_bits(), Ordering::Relaxed);
+    }
+
+    /// Keeps the line lengths of the text JSC compiled beside the runtime transpiler's map of it,
+    /// which `get_recorded` then answers with.
+    pub fn record_line_lengths(&mut self, path: &[u8], line_lengths: Box<[u32]>) {
+        let h = hash(path);
+        self.lock();
+        if let Some(slot) = self.map.get_mut(&h)
+            && let Some(map) = Self::shell_locked(slot)
+            && map.is_runtime_transpiled()
+            && !map.text_changed.load(Ordering::Relaxed)
+        {
+            *map.line_lengths.lock() = Some(line_lengths);
+        }
+        self.unlock();
+    }
+
+    /// The map with line lengths of the module at `path`. Reads no external map.
+    pub fn get_recorded(&mut self, path: &[u8]) -> Option<Arc<ParsedSourceMap>> {
+        let h = hash(path);
+        self.lock();
+        let map = self
+            .map
+            .get_mut(&h)
+            .and_then(Self::shell_locked)
+            .filter(|map| map.line_lengths.lock().is_some());
+        self.unlock();
+        map
+    }
+
+    /// The `Arc<ParsedSourceMap>` of a slot, promoting a fresh blob to its shell. `None` for an
+    /// external map. The table holds one strong ref, the caller gets another.
+    fn shell_locked(slot: &mut *mut c_void) -> Option<Arc<ParsedSourceMap>> {
+        let tagged = Value::from(Some(*slot));
+        if tagged.tag() == Value::case::<InternalSourceMap>() {
+            let ism = InternalSourceMap {
+                data: tagged.as_unchecked::<InternalSourceMap>() as *const u8,
+            };
+            let result = Arc::new(ParsedSourceMap::from_internal(ism));
+            *slot = Value::init(Arc::into_raw(Arc::clone(&result))).ptr();
+            return Some(result);
+        }
+        let parsed = tagged.get::<ParsedSourceMap>()?;
+        // SAFETY: pointer was stored by us via `Arc::into_raw` and is live while locked.
+        Some(unsafe {
+            Arc::increment_strong_count(parsed.cast_const());
+            Arc::from_raw(parsed.cast_const())
+        })
+    }
 }
 
 impl SavedSourceMap {
@@ -193,7 +311,12 @@ impl SavedSourceMap {
         };
         if incoming.mapping_count() == 0 {
             self.lock();
-            let contains = self.map.contains_key(&hash(source.path.text));
+            let slot = self.map.get_mut(&hash(source.path.text));
+            let contains = slot.is_some();
+            if let Some(kept) = slot.and_then(Self::shell_locked) {
+                kept.text_changed.store(true, Ordering::Relaxed);
+                *kept.line_lengths.lock() = None;
+            }
             self.unlock();
             if contains {
                 return Ok(());
@@ -256,39 +379,15 @@ impl SavedSourceMap {
             return SourceMap::ParseUrl::default();
         };
 
+        if let Some(result) = Self::shell_locked(mapping) {
+            self.unlock();
+            return SourceMap::ParseUrl {
+                map: Some(result),
+                ..Default::default()
+            };
+        }
         let tagged = Value::from(Some(*mapping));
-        let tag = tagged.tag();
-        if tag == Value::case::<InternalSourceMap>() {
-            // Runtime-transpiled module. Wrap the blob in a refcounted
-            // ParsedSourceMap shell (no VLQ decode, no Mapping.List) so callers
-            // can hold a ref while the table mutates. The shell takes ownership
-            // of the blob.
-            let ism = InternalSourceMap {
-                data: tagged.as_unchecked::<InternalSourceMap>() as *const u8,
-            };
-            // Table holds one strong ref (leaked via `into_raw`); caller gets
-            // the returned `Arc`.
-            let result = Arc::new(ParsedSourceMap::from_internal(ism));
-            *mapping = Value::init(Arc::into_raw(Arc::clone(&result))).ptr();
-            self.unlock();
-            return SourceMap::ParseUrl {
-                map: Some(result),
-                ..Default::default()
-            };
-        } else if tag == Value::case::<ParsedSourceMap>() {
-            let parsed = tagged.as_unchecked::<ParsedSourceMap>();
-            // SAFETY: pointer was stored by us via `Arc::into_raw` and is live
-            // while locked. Bump the strong count for the caller's handle.
-            let result = unsafe {
-                Arc::increment_strong_count(parsed.cast_const());
-                Arc::from_raw(parsed.cast_const())
-            };
-            self.unlock();
-            return SourceMap::ParseUrl {
-                map: Some(result),
-                ..Default::default()
-            };
-        } else if let Some(provider) = tagged.get::<AnySourceProvider>() {
+        if let Some(provider) = tagged.get::<AnySourceProvider>() {
             // Copy the erased pair out while the lock is held: once unlocked,
             // a concurrent put/remove may free the box.
             // SAFETY: the box was stored by `put_source_provider` and is live

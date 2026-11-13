@@ -12,7 +12,13 @@ const whenChannelEvent = b.whenOperandOfCallOn("process", "event", "message", "d
 const channelFeatures = ["ProcessIpc", "Ipc", ...externalValueFeatures];
 
 export default b.declarations(
-  extendAll(["SourceMaps"], "node:module.SourceMap", "node:module.findSourceMap"),
+  extendAll(
+    ["SourceMaps"],
+    "node:module.SourceMap",
+    "node:module.findSourceMap",
+    "node:module.getSourceMapsSupport",
+    "node:module.setSourceMapsSupport",
+  ),
 
   extendAll(
     ["PerformanceTimeline"],
@@ -116,6 +122,7 @@ export default b.declarations(
     "process.revision",
     "process.setSourceMapsEnabled",
     "process.setUncaughtExceptionCaptureCallback",
+    "process.sourceMapsEnabled",
     "process.unref",
     "process.versions",
   ),

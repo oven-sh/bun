@@ -501,6 +501,24 @@ export default b.declarations(
     capability: "heap",
     throws: true,
     uses: { path: b.inspected },
+    reads: externalState,
+    implementation: b.generic,
+  }),
+  // A frozen object of what setSourceMapsSupport(), process.setSourceMapsEnabled() or --enable-source-maps stored.
+  b.fn("node:module.getSourceMapsSupport", {
+    returns: b.plainData.fresh,
+    capability: "heap",
+    reads: externalState,
+    implementation: b.generic,
+  }),
+  b.fn("node:module.setSourceMapsSupport", {
+    args: { enabled: b.any.optional, options: b.any.optional },
+    returns: b.undefined,
+    capability: "js",
+    throws: true,
+    runsOnlyOperandCode: true,
+    uses: { enabled: [b.printedByFormatter("constructor")], options: b.optionBag(["nodeModules", "generatedCode"]) },
+    writes: externalState,
     implementation: b.generic,
   }),
   // The import and require() each get a function of their own.

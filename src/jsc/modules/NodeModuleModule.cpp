@@ -30,6 +30,7 @@
 #include "GeneratedNodeModuleModule.h"
 #include "GeneratedResolverJsc.h"
 #include "GeneratedSourcemap.h"
+#include "NodeValidator.h"
 
 namespace Bun {
 
@@ -912,6 +913,56 @@ extern "C" int32_t Bun__NodeCompileCache__enable(const BunString* dir, int32_t p
 extern "C" BunString Bun__NodeCompileCache__getDir();
 extern "C" void Bun__NodeCompileCache__flush();
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionGetSourceMapsSupport,
+    (JSGlobalObject * globalObject,
+        JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    BunSourceMapsSupport support = Bun__VM__sourceMapsSupport(defaultGlobalObject(globalObject)->bunVM());
+    JSObject* result = JSC::constructEmptyObject(globalObject);
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "enabled"_s), jsBoolean(support.enabled), 0);
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "nodeModules"_s), jsBoolean(support.nodeModules), 0);
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "generatedCode"_s), jsBoolean(support.generatedCode), 0);
+    result->freeze(vm);
+    return JSValue::encode(result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetSourceMapsSupport,
+    (JSGlobalObject * globalObject,
+        JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue enabledValue = callFrame->argument(0);
+    Bun::V::validateBoolean(scope, globalObject, enabledValue, "enabled"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    BunSourceMapsSupport support { enabledValue.asBoolean(), false, false };
+
+    JSValue options = callFrame->argument(1);
+    if (!options.isUndefined()) {
+        Bun::V::validateObject(scope, globalObject, options, "options"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+        JSObject* optionsObject = options.getObject();
+        JSValue nodeModules = optionsObject->get(globalObject, JSC::Identifier::fromString(vm, "nodeModules"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!nodeModules.isUndefined()) {
+            Bun::V::validateBoolean(scope, globalObject, nodeModules, "options.nodeModules"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+            support.nodeModules = nodeModules.asBoolean();
+        }
+        JSValue generatedCode = optionsObject->get(globalObject, JSC::Identifier::fromString(vm, "generatedCode"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!generatedCode.isUndefined()) {
+            Bun::V::validateBoolean(scope, globalObject, generatedCode, "options.generatedCode"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+            support.generatedCode = generatedCode.asBoolean();
+        }
+    }
+
+    Bun__VM__setSourceMapsSupport(defaultGlobalObject(globalObject)->bunVM(), support);
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionEnableCompileCache,
     (JSGlobalObject * globalObject,
         JSC::CallFrame* callFrame))
@@ -1013,11 +1064,13 @@ enableCompileCache      jsFunctionEnableCompileCache      Function 1
 findSourceMap           Bun::Bindgen::Generated::Sourcemap::jsFindSourceMap Function 1
 flushCompileCache       jsFunctionFlushCompileCache       Function 0
 getCompileCacheDir      jsFunctionGetCompileCacheDir      Function 0
+getSourceMapsSupport    jsFunctionGetSourceMapsSupport    Function 0
 globalPaths             getGlobalPathsObject              PropertyCallback
 isBuiltin               jsFunctionIsBuiltinModule         Function 1
 prototype               getModulePrototypeObject          DontEnum|DontDelete|PropertyCallback
 register                jsFunctionRegister                Function 1
 runMain                 moduleRunMain                        CustomAccessor
+setSourceMapsSupport    jsFunctionSetSourceMapsSupport    Function 1
 SourceMap               Bun::Bindgen::Generated::Sourcemap::getSourceMapConstructor PropertyCallback
 syncBuiltinESMExports   jsFunctionSyncBuiltinESMExports   Function 0
 wrap                    jsFunctionWrap                    Function 1

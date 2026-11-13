@@ -1,5 +1,9 @@
 use core::ffi::c_void;
 use core::fmt;
+use core::sync::atomic::AtomicBool;
+use std::sync::OnceLock;
+
+use bun_threading::Guarded;
 
 use crate::Ordinal;
 use crate::internal_source_map::ObjectBrace;
@@ -38,6 +42,15 @@ pub struct ParsedSourceMap {
 
     /// Set for a map of the standalone module graph: what its source code is read from.
     pub standalone_module_graph: Option<&'static crate::SerializedSourceMap::Loaded>,
+
+    /// Of the generated text, in UTF-16 code units, without the line breaks: what
+    /// `module.findSourceMap(url).lineLengths` answers.
+    pub line_lengths: Guarded<Option<Box<[u32]>>>,
+    /// The module was transpiled again to a text with nothing to map, and this map stayed for the
+    /// errors of the earlier text.
+    pub text_changed: AtomicBool,
+    /// The `mappings` text of `module.findSourceMap(url).payload`, written on the first read.
+    vlq_mappings: OnceLock<Box<[u8]>>,
 }
 
 impl Drop for ParsedSourceMap {
@@ -68,6 +81,9 @@ impl Default for ParsedSourceMap {
             external_source_names: Vec::new(),
             underlying_provider: SourceContentPtr::NONE,
             standalone_module_graph: None,
+            line_lengths: Guarded::new(None),
+            text_changed: AtomicBool::new(false),
+            vlq_mappings: OnceLock::new(),
         }
     }
 }
@@ -218,7 +234,24 @@ impl ParsedSourceMap {
             external_source_names: Vec::new(),
             underlying_provider: SourceContentPtr::NONE,
             standalone_module_graph: None,
+            line_lengths: Guarded::new(None),
+            text_changed: AtomicBool::new(false),
+            vlq_mappings: OnceLock::new(),
         }
+    }
+
+    /// Not a map of the standalone module graph, nor one read from a file.
+    pub fn is_runtime_transpiled(&self) -> bool {
+        self.internal.is_some() && self.standalone_module_graph.is_none()
+    }
+
+    /// The mappings as the text of a v3 document, written once.
+    pub fn vlq_mappings(&self) -> &[u8] {
+        self.vlq_mappings.get_or_init(|| {
+            format!("{}", self.format_vlqs())
+                .into_bytes()
+                .into_boxed_slice()
+        })
     }
 
     pub fn is_external(&self) -> bool {
@@ -268,6 +301,7 @@ impl ParsedSourceMap {
         core::mem::size_of::<ParsedSourceMap>()
             + mappings_cost
             + self.external_source_names.len() * core::mem::size_of::<Box<[u8]>>()
+            + self.vlq_mappings.get().map_or(0, |vlq| vlq.len())
     }
 
     pub(crate) fn write_vlqs<W: bun_io::Write + ?Sized>(

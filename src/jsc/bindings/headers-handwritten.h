@@ -416,6 +416,15 @@ extern "C" bool Bun__resolveAndFetchBuiltinModule(
     const BunString* specifier,
     ErrorableResolvedSource* result);
 extern "C" bool Bun__VM__useIsolationSourceProviderCache(void* bunVM);
+// Mirrors `SourceMapsSupport` in bun_jsc: what `module.getSourceMapsSupport()` answers.
+typedef struct BunSourceMapsSupport {
+    bool enabled;
+    bool nodeModules;
+    bool generatedCode;
+} BunSourceMapsSupport;
+extern "C" BunSourceMapsSupport Bun__VM__sourceMapsSupport(void* bunVM);
+extern "C" void Bun__VM__setSourceMapsSupport(void* bunVM, BunSourceMapsSupport);
+extern "C" void Bun__VM__recordSourceLineLengths(void* bunVM, const BunString* path, const BunString* source);
 extern "C" bool Bun__VM__isMainModule(void* bunVM, const BunString* key);
 extern "C" bool Bun__VM__isTestEntryPoint(void* bunVM, const BunString* key);
 

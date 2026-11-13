@@ -457,7 +457,7 @@ const functionsChangingId = ["setegid", "seteuid", "setgid", "setuid"];
 const functionsMeasuringUsageSincePrevious = ["cpuUsage", "threadCpuUsage"];
 const stringsCreatedOnFirstRead = ["argv0", "execPath", "revision", "version"];
 
-const changedByNativeCode = ["channel", "connected", "exitCode", "ppid"];
+const changedByNativeCode = ["channel", "connected", "exitCode", "ppid", "sourceMapsEnabled"];
 
 const computedOnce = [
   "_kill",
@@ -650,6 +650,8 @@ export default b.declarations(
         { args: { enabled: b.bool }, capability: "none", writes: externalState, implementation: b.hostCall },
         refusal(["enabled"]),
       ],
+      // What setSourceMapsEnabled() stored, or --enable-source-maps.
+      sourceMapsEnabled: { getter: b.bool, capability: "none", reads: externalState, implementation: b.generic },
       setUncaughtExceptionCaptureCallback: [
         {
           ...systemCall,

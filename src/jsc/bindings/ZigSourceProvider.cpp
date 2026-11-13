@@ -140,6 +140,13 @@ Ref<SourceProvider> SourceProvider::create(
     if (provider->m_alreadyBundled) {
         BunString str = Bun::toString(provider->sourceURL());
         Bun__addSourceProviderSourceMap(globalObject->bunVM(), provider.ptr(), &str);
+    } else if (!isBuiltin) {
+        if (Bun__VM__sourceMapsSupport(globalObject->bunVM()).enabled) {
+            BunString providerURL = Bun::toString(provider->sourceURL());
+            WTF::String providerSourceString = provider->source().toStringWithoutCopying();
+            BunString providerSource = Bun::toString(providerSourceString);
+            Bun__VM__recordSourceLineLengths(globalObject->bunVM(), &providerURL, &providerSource);
+        }
     }
 
     return provider;

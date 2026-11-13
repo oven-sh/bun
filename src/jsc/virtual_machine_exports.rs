@@ -26,6 +26,62 @@ pub fn script_execution_status(this: &VirtualMachine) -> i32 {
     this.script_execution_status() as i32
 }
 
+// HOST_EXPORT(Bun__VM__sourceMapsSupport, c)
+pub fn source_maps_support(this: &VirtualMachine) -> bun_jsc::saved_source_map::SourceMapsSupport {
+    this.source_mappings.source_maps_support()
+}
+
+// HOST_EXPORT(Bun__VM__setSourceMapsSupport, c)
+pub fn set_source_maps_support(
+    this: &VirtualMachine,
+    support: bun_jsc::saved_source_map::SourceMapsSupport,
+) {
+    this.source_mappings.set_source_maps_support(support);
+}
+
+/// The line lengths of a module's text, for `module.findSourceMap(url).lineLengths`.
+// HOST_EXPORT(Bun__VM__recordSourceLineLengths, c)
+pub fn record_source_line_lengths(this: &mut VirtualMachine, path: &BunString, source: &BunString) {
+    let path = path.to_utf8();
+    let support = this.source_mappings.source_maps_support();
+    if !support.applies_to(path.slice()) {
+        return;
+    }
+    if bun_jsc::saved_source_map::is_eval_or_stdin(path.slice())
+        || (!support.generated_code && !bun_jsc::saved_source_map::is_file_module(path.slice()))
+    {
+        return;
+    }
+    let line_lengths = if source.is_utf16() {
+        line_lengths_of(source.utf16().iter().copied())
+    } else {
+        line_lengths_of(source.latin1().iter().map(|&unit| unit as u16))
+    };
+    this.source_mappings
+        .record_line_lengths(path.slice(), line_lengths);
+}
+
+/// Lines end where the printer ends them in the map, and the `\r` of a `\r\n` is in its line, as in Node.
+fn line_lengths_of(units: impl ExactSizeIterator<Item = u16>) -> Box<[u32]> {
+    let mut lengths = Vec::new();
+    let mut line_start = 0u32;
+    let length = u32::try_from(units.len()).expect("int cast");
+    let mut units = units.enumerate().peekable();
+    while let Some((i, unit)) = units.next() {
+        match unit {
+            0x0D if units.peek().is_some_and(|&(_, next)| next == 0x0A) => {}
+            0x0A | 0x0D | 0x2028 | 0x2029 => {
+                let i = u32::try_from(i).expect("int cast");
+                lengths.push(i - line_start);
+                line_start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    lengths.push(length - line_start);
+    lengths.into_boxed_slice()
+}
+
 // HOST_EXPORT(Bun__getVM, c)
 pub fn get_vm() -> *mut VirtualMachine {
     VirtualMachine::get_mut_ptr()

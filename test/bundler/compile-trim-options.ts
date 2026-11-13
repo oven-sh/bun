@@ -36,8 +36,9 @@ export const obeyed: Record<string, string[]> = {
     "--if-present --no-install --prefer-offline --prefer-latest --experimental-http2-fetch --experimental-http3-fetch",
   ),
   ...themselves(
-    "--insecure-http-parser --experimental-stream-iter --expose-gc --no-deprecation --throw-deprecation --no-warnings",
+    "--insecure-http-parser --experimental-stream-iter --expose-gc --enable-source-maps --no-deprecation --throw-deprecation",
   ),
+  ...themselves("--no-warnings"),
   ...themselves(
     "--trace-warnings --trace-deprecation --pending-deprecation --zero-fill-buffers --use-system-ca --use-openssl-ca --use-bundled-ca",
   ),

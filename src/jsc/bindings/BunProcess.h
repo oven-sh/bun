@@ -56,7 +56,6 @@ public:
     ~Process();
 
     bool m_isExitCodeObservable = false;
-    bool m_sourceMapsEnabled = false;
     // Node's per-Environment EmitProcessEnvWarning one-shot for DEP0104.
     bool m_emitEnvNonstringWarning = true;
     // Re-entry guard for dispatchExitInternal. Per-Process (i.e. per-VM): a

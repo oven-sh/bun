@@ -1955,7 +1955,7 @@ function formatError(err, constructor: string | null, tag: string, ctx: Context,
 
   // JavaScriptCore can make the stack before the name is set, and it does not find every inherited name.
   if (name !== "Error" && name !== "" && StringPrototypeStartsWith.$call(stack, "Error: ")) {
-    stack = `${name}${StringPrototypeSlice.$call(stack, 5)}`;
+    stack = `${name}${StringPrototypeSlice.$call(stack, "Error".length)}`;
   }
 
   removeDuplicateErrorKeys(ctx, keys, err, stack);

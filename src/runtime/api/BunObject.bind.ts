@@ -1,4 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import * as builtins from "../../codegen/builtins/lib.ts";
 
 export default b.module({ rustPath: "crate::api::bun_object" });
 
@@ -151,6 +152,23 @@ export const openInEditor = b.fn({
     options: EditorOptions.nullable.default({}),
   },
   capability: "heap",
+  throws: true,
+});
+
+export const ParseEnvOptions = b.dictionary(
+  {
+    expand: b.bool.loose.default(true),
+    env: b.any,
+  },
+  { allowArray: true, reportedAs: "options" },
+);
+
+/** A new object below Object.prototype with a text under each name of the content. */
+export const parseEnv = b.fn({
+  args: { content: b.string.utf8, options: ParseEnvOptions.nullable.default({}) },
+  expected: { content: ["string"] },
+  returns: b.any.returning(builtins.plainData.fresh.spec),
+  capability: "js",
   throws: true,
 });
 

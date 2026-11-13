@@ -152,6 +152,8 @@ pub struct Loader {
     pub quiet_loaded_files: bool,
 
     pub(crate) did_load_process: bool,
+    /// How many entries at the front of `map` came from `load_process`. `None` until it ran.
+    process_count: Option<usize>,
     pub(crate) reject_unauthorized: Cell<Option<bool>>,
 
     // Local POD mirror of `bun_s3_signing::S3Credentials` — see type doc above.
@@ -550,6 +552,7 @@ impl Loader {
             quiet: false,
             quiet_loaded_files: false,
             did_load_process: false,
+            process_count: None,
             reject_unauthorized: Cell::new(None),
             aws_credentials: None,
         }
@@ -564,6 +567,7 @@ impl Loader {
             quiet: false,
             quiet_loaded_files: false,
             did_load_process: false,
+            process_count: self.process_count,
             reject_unauthorized: Cell::new(None),
             aws_credentials: None,
         })
@@ -579,6 +583,7 @@ impl Loader {
             quiet: self.quiet,
             quiet_loaded_files: self.quiet_loaded_files,
             did_load_process: self.did_load_process,
+            process_count: self.process_count,
             reject_unauthorized: Cell::new(None),
             aws_credentials: None,
         })
@@ -612,7 +617,46 @@ impl Loader {
             }
         }
         self.did_load_process = true;
+        // A worker's loader starts from the parent's map, `.env` entries included, and
+        // keeps the parent's count.
+        if self.process_count.is_none() {
+            self.process_count = Some(self.map.map.count());
+        }
         Ok(())
+    }
+
+    /// Removes `key` and keeps the process entries at the front of the map.
+    pub fn remove(&mut self, key: &[u8]) {
+        if let Some(index) = self.map.remove(key) {
+            if let Some(count) = self.process_count.as_mut() {
+                if index < *count {
+                    *count -= 1;
+                }
+            }
+        }
+    }
+
+    /// A write from `process.env` for a name Bun keeps in the native map. The entry counts as
+    /// process environment from then on, so `process_env` sees it.
+    pub fn put_live(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
+        self.map.put(key, value)?;
+        if let (Some(index), Some(count)) =
+            (self.map.map.get_index(key), self.process_count.as_mut())
+        {
+            if index >= *count {
+                self.map.map.swap_entries(index, *count);
+                *count += 1;
+            }
+        }
+        Ok(())
+    }
+
+    /// The process environment as `load_process` read it, without the `.env` files.
+    pub fn process_env(&self) -> ProcessEnv<'_> {
+        ProcessEnv {
+            map: &self.map,
+            count: self.process_count.unwrap_or(0),
+        }
     }
 
     // mostly for tests
@@ -621,7 +665,31 @@ impl Loader {
         str: &[u8],
     ) -> Result<(), AllocError> {
         let mut value_buffer: Vec<u8> = Vec::new();
-        Parser::parse_bytes::<OVERWRITE, false, EXPAND>(str, &mut self.map, &mut value_buffer)
+        Parser::parse_bytes::<OVERWRITE, false, EXPAND>(
+            str,
+            &mut self.map,
+            &mut value_buffer,
+            &(),
+        )?;
+        Ok(())
+    }
+
+    /// The keys `content` defines, expanded as the startup loader expands a file: `$NAME` reads
+    /// `env` first, then any key of `content`.
+    pub fn parse_expanded<F: EnvFallback>(
+        content: &[u8],
+        env: &F,
+    ) -> Result<Map, ParseExpandedError> {
+        let mut map = Map::init();
+        let mut value_buffer: Vec<u8> = Vec::new();
+        if let Some(key) =
+            Parser::parse_bytes::<false, false, true>(content, &mut map, &mut value_buffer, env)?
+        {
+            return Err(ParseExpandedError::ExpansionLimit {
+                key: Box::from(key),
+            });
+        }
+        Ok(map)
     }
 
     pub fn load<D: DirEntryProbe + ?Sized>(
@@ -837,7 +905,14 @@ impl Loader {
                 }
             }
             ReadEnvFile::Bytes(buf) => {
-                Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut self.map, value_buffer)?;
+                if let Some(key) = Parser::parse_bytes::<OVERRIDE, false, true>(
+                    &buf,
+                    &mut self.map,
+                    value_buffer,
+                    &(),
+                )? {
+                    warn_expansion_limit(base, key);
+                }
             }
         }
 
@@ -881,7 +956,14 @@ impl Loader {
                 }
             }
             ReadEnvFile::Bytes(buf) => {
-                Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut self.map, value_buffer)?;
+                if let Some(key) = Parser::parse_bytes::<OVERRIDE, false, true>(
+                    &buf,
+                    &mut self.map,
+                    value_buffer,
+                    &(),
+                )? {
+                    warn_expansion_limit(file_path, key);
+                }
             }
         }
 
@@ -948,17 +1030,82 @@ fn read_env_file_contents(
     }
 }
 
-struct Parser<'a> {
+#[cold]
+fn warn_expansion_limit(file_path: &[u8], key: &[u8]) {
+    bun_core::warn!(
+        "{} expands to more than {} of variable references, so {} and the values after it were left unexpanded",
+        bun_core::fmt::quote(file_path),
+        bun_core::fmt::bytes(MAX_EXPANSION_BYTES),
+        bun_core::fmt::quote(key),
+    );
+    Output::flush();
+}
+
+/// Total bytes one file's `$NAME` references may substitute in. Without a bound, a few hundred
+/// bytes of `A1=${A0}${A0}...` grow tenfold per line.
+pub const MAX_EXPANSION_BYTES: usize = 4 * 1024 * 1024;
+
+/// A value's references would substitute in more bytes than the file's remaining budget.
+struct ExpansionLimitExceeded;
+
+#[derive(Debug, thiserror::Error)]
+pub enum ParseExpandedError {
+    #[error(transparent)]
+    Alloc(#[from] AllocError),
+    /// `content` substitutes more than [`MAX_EXPANSION_BYTES`]. `key` is where it stopped.
+    #[error("expansion limit exceeded")]
+    ExpansionLimit { key: Box<[u8]> },
+}
+
+/// What `$NAME` reads before the map the parser fills. `()` for the startup loaders, whose
+/// map already holds the process environment.
+pub trait EnvFallback {
+    fn get(&self, key: &[u8]) -> Option<&[u8]>;
+}
+
+/// See [`Loader::process_env`].
+pub struct ProcessEnv<'a> {
+    map: &'a Map,
+    count: usize,
+}
+
+impl EnvFallback for ProcessEnv<'_> {
+    #[inline]
+    fn get(&self, key: &[u8]) -> Option<&[u8]> {
+        let index = self.map.map.get_index(key)?;
+        (index < self.count).then(|| &*self.map.map.values()[index].value)
+    }
+}
+
+impl EnvFallback for () {
+    #[inline(always)]
+    fn get(&self, _key: &[u8]) -> Option<&[u8]> {
+        None
+    }
+}
+
+impl EnvFallback for Map {
+    #[inline]
+    fn get(&self, key: &[u8]) -> Option<&[u8]> {
+        Map::get(self, key)
+    }
+}
+
+struct Parser<'a, F: EnvFallback> {
     pos: usize,
     src: &'a [u8],
     value_buffer: &'a mut Vec<u8>,
+    fallback: &'a F,
+    /// Bytes of referenced values this parse may still substitute in; starts at
+    /// [`MAX_EXPANSION_BYTES`].
+    expansion_budget: usize,
 }
 
 // Input is UTF-8, so this set must be ASCII-only: 0xA0 is a continuation byte
 // there (NBSP is C2 A0), and trimming it byte-wise corrupts multi-byte sequences.
 const WHITESPACE_CHARS: &[u8] = b"\t\x0B\x0C \n\r";
 
-impl<'a> Parser<'a> {
+impl<'a, F: EnvFallback> Parser<'a, F> {
     fn skip_line(&mut self) {
         if let Some(i) = strings::index_of_any(&self.src[self.pos..], b"\n\r") {
             self.pos += i + 1;
@@ -1123,25 +1270,61 @@ impl<'a> Parser<'a> {
         Ok(strings::trim(&self.src[start..end], WHITESPACE_CHARS))
     }
 
-    fn expand_value(&mut self, map: &Map, value: &[u8]) -> Result<Option<&[u8]>, AllocError> {
+    /// `Ok(None)` when `value` contains nothing to expand.
+    fn expand_value(
+        &mut self,
+        map: &Map,
+        value: &[u8],
+    ) -> Result<Option<&[u8]>, ExpansionLimitExceeded> {
         if value.len() < 2 {
             return Ok(None);
         }
         self.value_buffer.clear();
-        if !Self::expand_into(map, value, self.value_buffer, 0) {
+        if !Self::expand_into(
+            self.fallback,
+            map,
+            value,
+            self.value_buffer,
+            &mut self.expansion_budget,
+            0,
+        )? {
             return Ok(None);
         }
         Ok(Some(self.value_buffer.as_slice()))
     }
 
+    #[inline]
+    fn lookup<'m>(fallback: &'m F, map: &'m Map, key: &[u8]) -> Option<&'m [u8]> {
+        fallback.get(key).or_else(|| map.get(key))
+    }
+
     /// Left-to-right expansion of `$NAME` / `${NAME}` / `${NAME:-default}`.
     /// `${...}` locates its matching `}` by depth (`${` opens, `}` closes,
     /// `\x` skipped); malformed forms fall through as literal text. The `:-`
-    /// default clause is expanded recursively.
-    fn expand_into(map: &Map, value: &[u8], out: &mut Vec<u8>, depth: u8) -> bool {
+    /// default clause is expanded recursively. Each substituted value is charged to `budget`.
+    fn expand_into(
+        fallback: &F,
+        map: &Map,
+        value: &[u8],
+        out: &mut Vec<u8>,
+        budget: &mut usize,
+        depth: u8,
+    ) -> Result<bool, ExpansionLimitExceeded> {
         #[inline]
         fn is_ident(b: u8) -> bool {
             matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')
+        }
+
+        fn substitute(
+            out: &mut Vec<u8>,
+            budget: &mut usize,
+            referenced: &[u8],
+        ) -> Result<(), ExpansionLimitExceeded> {
+            *budget = budget
+                .checked_sub(referenced.len())
+                .ok_or(ExpansionLimitExceeded)?;
+            out.extend_from_slice(referenced);
+            Ok(())
         }
 
         let mut pos = 0;
@@ -1200,14 +1383,14 @@ impl<'a> Parser<'a> {
                 let key = &inner[..key_end];
                 let rest = &inner[key_end..];
                 if rest.is_empty() {
-                    if let Some(v) = map.get(key) {
-                        out.extend_from_slice(v);
+                    if let Some(v) = Self::lookup(fallback, map, key) {
+                        substitute(out, budget, v)?;
                     }
                 } else if let Some(default) = rest.strip_prefix(b":-") {
-                    if let Some(v) = map.get(key) {
-                        out.extend_from_slice(v);
+                    if let Some(v) = Self::lookup(fallback, map, key) {
+                        substitute(out, budget, v)?;
                     } else if depth < 200 {
-                        Self::expand_into(map, default, out, depth + 1);
+                        Self::expand_into(fallback, map, default, out, budget, depth + 1)?;
                     } else {
                         out.extend_from_slice(default);
                     }
@@ -1224,8 +1407,8 @@ impl<'a> Parser<'a> {
                 while k < value.len() && is_ident(value[k]) {
                     k += 1;
                 }
-                if let Some(v) = map.get(&value[key_start..k]) {
-                    out.extend_from_slice(v);
+                if let Some(v) = Self::lookup(fallback, map, &value[key_start..k]) {
+                    substitute(out, budget, v)?;
                 }
                 pos = k;
                 continue;
@@ -1233,13 +1416,15 @@ impl<'a> Parser<'a> {
             out.push(b'$');
             pos += 1;
         }
-        changed
+        Ok(changed)
     }
 
-    fn parse<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
+    /// Returns the key at which expansion ran out of [`MAX_EXPANSION_BYTES`], if any; that
+    /// value and every value after it are left as written.
+    fn parse<'m, const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
         &mut self,
-        map: &mut Map,
-    ) -> Result<(), AllocError> {
+        map: &'m mut Map,
+    ) -> Result<Option<&'m [u8]>, AllocError> {
         let mut count = map.map.count();
         while self.pos < self.src.len() {
             let Some(key) = self.parse_key::<true>() else {
@@ -1271,25 +1456,30 @@ impl<'a> Parser<'a> {
             let mut idx = count;
             while idx < total {
                 let current: Box<[u8]> = Box::from(&*map.map.values()[idx].value);
-                if let Some(expanded) = self.expand_value(map, &current)? {
-                    map.map.values_mut()[idx] = HashTableValue {
-                        value: Box::from(expanded),
-                    };
+                match self.expand_value(map, &current) {
+                    Ok(Some(expanded)) => {
+                        map.map.values_mut()[idx] = HashTableValue {
+                            value: Box::from(expanded),
+                        };
+                    }
+                    Ok(None) => {}
+                    Err(ExpansionLimitExceeded) => return Ok(Some(&map.map.keys()[idx])),
                 }
                 idx += 1;
             }
             count = 0;
         }
         let _ = count;
-        Ok(())
+        Ok(None)
     }
 
     /// Builds a [`Parser`] over `src` (minus any UTF-8 BOM) and runs [`Parser::parse`] into `map`.
-    fn parse_bytes<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
+    fn parse_bytes<'m, const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
         src: &[u8],
-        map: &mut Map,
+        map: &'m mut Map,
         value_buffer: &mut Vec<u8>,
-    ) -> Result<(), AllocError> {
+        fallback: &F,
+    ) -> Result<Option<&'m [u8]>, AllocError> {
         // Clear the buffer before each parse to ensure no leftover data
         value_buffer.clear();
         let mut parser = Parser {
@@ -1298,6 +1488,8 @@ impl<'a> Parser<'a> {
             // first key fails `parse_key` and `skip_line` silently drops line 1.
             src: strings::without_utf8_bom(src),
             value_buffer,
+            fallback,
+            expansion_budget: MAX_EXPANSION_BYTES,
         };
         parser.parse::<OVERRIDE, IS_PROCESS, EXPAND>(map)
     }
@@ -1397,7 +1589,7 @@ impl Map {
     }
 
     #[inline]
-    pub(crate) fn init() -> Map {
+    pub fn init() -> Map {
         Map {
             map: HashTable::default(),
         }
@@ -1478,8 +1670,10 @@ impl Map {
         Ok(())
     }
 
-    pub fn remove(&mut self, key: &[u8]) {
-        let _ = self.map.swap_remove(key);
+    /// Removes `key` and keeps the order of the others. A loader's map goes through
+    /// [`Loader::remove`], which also keeps its count of process entries right.
+    pub fn remove(&mut self, key: &[u8]) -> Option<usize> {
+        self.map.ordered_remove(key)
     }
 
     pub fn clone_with_allocator(&self) -> Result<Map, AllocError> {

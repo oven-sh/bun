@@ -851,6 +851,35 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         }
     }
 
+    /// Exchange the entries at `a` and `b`. O(1); changes insertion order.
+    pub fn swap_entries(&mut self, a: usize, b: usize) {
+        if a == b {
+            return;
+        }
+        let (hash_a, hash_b) = (self.hashes[a], self.hashes[b]);
+        self.keys.swap(a, b);
+        self.values.swap(a, b);
+        self.hashes.swap(a, b);
+        // Two slots with one hash are told apart by key, so they need no patch.
+        if hash_a == hash_b {
+            return;
+        }
+        let Some(index) = self.index.as_deref_mut() else {
+            return;
+        };
+        // Park `a`'s slot on a sentinel first: with equal tags the probe for `b`'s slot
+        // could otherwise land on a slot that already says `b`.
+        if let Some(slot) = index.find_mut(spread_hash(hash_a), |&i| i as usize == a) {
+            *slot = u32::MAX;
+        }
+        if let Some(slot) = index.find_mut(spread_hash(hash_b), |&i| i as usize == b) {
+            *slot = a as u32;
+        }
+        if let Some(slot) = index.find_mut(spread_hash(hash_a), |&i| i == u32::MAX) {
+            *slot = b as u32;
+        }
+    }
+
     /// Stable in-place sort of keys/values/hashes by
     /// a caller-supplied index comparator. The closure receives borrows of the
     /// key and value slices so it can compare on either without re-borrowing
@@ -1059,8 +1088,14 @@ impl<K, V, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     /// relative order of remaining entries (unlike `swap_remove`).
     pub fn remove(&mut self, key: &K) -> Option<V> {
         let i = self.get_index(key)?;
-        self.keys.remove(i);
-        self.hashes.remove(i);
+        Some(self.ordered_remove_at(i).1)
+    }
+
+    /// Remove the entry at `index` and shift the entries after it down. O(n); preserves
+    /// insertion order. Returns the removed pair.
+    pub fn ordered_remove_at(&mut self, index: usize) -> (K, V) {
+        let k = self.keys.remove(index);
+        self.hashes.remove(index);
         // Ordered remove shifts every index ≥ i; rebuild rather than patching
         // each slot. Immediate rebuild keeps subsequent lookups O(1) on this
         // rare path.
@@ -1068,7 +1103,7 @@ impl<K, V, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         if self.keys.len() > INDEX_THRESHOLD {
             self.rebuild_index();
         }
-        Some(self.values.remove(i))
+        (k, self.values.remove(index))
     }
 
     /// std-HashMap-compat alias for `get_ptr_mut`.
@@ -1352,6 +1387,18 @@ impl<V, C: ArrayHashContext<[u8]> + Default, A: MapAllocator> StringArrayHashMap
         };
         self.inner.swap_remove_at(i);
         true
+    }
+
+    /// Removes the entry and keeps the order of the others. Returns its index.
+    pub fn ordered_remove(&mut self, key: &[u8]) -> Option<usize> {
+        let i = self.find(key)?;
+        self.inner.ordered_remove_at(i);
+        Some(i)
+    }
+
+    /// Exchange the entries at `a` and `b`.
+    pub fn swap_entries(&mut self, a: usize, b: usize) {
+        self.inner.swap_entries(a, b);
     }
 
     /// Removes the entry (swapping the last element into its slot) and
@@ -2015,6 +2062,37 @@ mod index_tests {
             assert_eq!(m.values()[i as usize], i);
         }
         assert!(matches!(m.entry(1), MapEntry::Vacant(v) if v.index() == 32));
+    }
+
+    #[test]
+    fn swap_entries_keeps_every_key_findable() {
+        let mut m: StringArrayHashMap<usize> = StringArrayHashMap::new();
+        let keys: Vec<String> = (0..500).map(|i| format!("key{i}")).collect();
+        for (i, k) in keys.iter().enumerate() {
+            m.put(k.as_bytes(), i).unwrap();
+        }
+        // Many pairs, including the last entry with a middle one, and a slot swapped twice.
+        let pairs = [
+            (0, 499),
+            (1, 250),
+            (250, 2),
+            (3, 3),
+            (498, 499),
+            (100, 400),
+            (0, 1),
+        ];
+        let mut order: Vec<usize> = (0..500).collect();
+        for &(a, b) in &pairs {
+            m.swap_entries(a, b);
+            order.swap(a, b);
+        }
+        for (index, &value) in order.iter().enumerate() {
+            let key = keys[value].as_bytes();
+            assert_eq!(m.get_index(key), Some(index));
+            assert_eq!(m.get(key), Some(&value));
+            assert_eq!(m.keys()[index].as_ref(), key);
+        }
+        assert_eq!(m.get(b"missing"), None);
     }
 
     #[test]

@@ -84,7 +84,7 @@ use bun_jsc::{StringJsc as _, bun_string_jsc};
 
 use crate::generated_bindgen::bun_object::{
     BracesOptions, Bun__BunObject__inspect, Bun__BunObject__table, EditorOptions, InspectOptions,
-    InspectOptionsOrDepth, MMapOptions, WhichOptions, ZlibCompressionOptions,
+    InspectOptionsOrDepth, MMapOptions, ParseEnvOptions, WhichOptions, ZlibCompressionOptions,
     ZlibDecompressionOptions, ZstdCompressionOptions,
 };
 use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal, JsScope, PinnedBytes};
@@ -326,6 +326,83 @@ pub(crate) fn which<'a>(
     bun_which::which(&mut *path_buf, path, cwd, command)
         .map(|bin_path| heap.create_utf8_string(bin_path))
         .transpose()
+}
+
+/// `Bun.parseEnv(content, options)`
+pub(crate) fn parse_env<'a>(
+    cx: &mut JsScope<'a>,
+    content: &'a [u8],
+    options: &ParseEnvOptions<'a>,
+) -> bindgen::Result<'a, JsLocal<'a>> {
+    use bun_dotenv::env_loader::{Loader, MAX_EXPANSION_BYTES, ParseExpandedError};
+    if !options.expand {
+        return node::node_util_binding::parse_env(&cx.heap, content);
+    }
+    let env = options.env.to_js();
+    let parsed = if env.is_undefined_or_null() {
+        Loader::parse_expanded(content, &VirtualMachine::get().env_loader().process_env())
+    } else {
+        let seed = env_map_from_js(cx.global(), env)?;
+        Loader::parse_expanded(content, &seed)
+    };
+    let map = match parsed {
+        Ok(map) => map,
+        Err(ParseExpandedError::Alloc(err)) => return Err(err.into()),
+        Err(ParseExpandedError::ExpansionLimit { key }) => {
+            return Err(cx.heap.range_error(format_args!(
+                "The content expands to more than {} of variable references at {}",
+                bun_core::fmt::bytes(MAX_EXPANSION_BYTES),
+                bun_core::fmt::quote(&key),
+            )));
+        }
+    };
+    node::node_util_binding::env_map_to_js(&cx.heap, &map)
+}
+
+/// The own properties of `env` as a dotenv map, read as `Bun.spawn` reads its `env`.
+fn env_map_from_js(global: &JSGlobalObject, env: JSValue) -> JsResult<bun_dotenv::Map> {
+    let Some(env_object) = env.get_object() else {
+        let received = JSGlobalObject::determine_specific_type(global, env)?;
+        return Err(global
+            .err(
+                ErrorCode::INVALID_ARG_TYPE,
+                format_args!(
+                    "The \"options.env\" property must be of type object. Received {}",
+                    received
+                ),
+            )
+            .throw());
+    };
+    let iter = jsc::JSPropertyIterator::init(
+        global,
+        env_object,
+        jsc::PropertyIteratorOptions {
+            skip_empty_name: true,
+            include_value: true,
+        },
+    )?;
+    let mut seed = bun_dotenv::Map::init();
+    seed.ensure_unused_capacity(iter.len)?;
+    while let Some((key, value)) = iter.next()? {
+        if value.is_undefined() {
+            continue;
+        }
+        let key = key.to_utf8();
+        let value = value.to_utf8(global)?;
+        if strings::contains_char(&key, 0) || strings::contains_char(&value, 0) {
+            return Err(global
+                .err(
+                    ErrorCode::INVALID_ARG_VALUE,
+                    format_args!(
+                        "The property 'options.env['{}']' must be a string without null bytes",
+                        bstr::BStr::new(&key)
+                    ),
+                )
+                .throw());
+        }
+        seed.put(&key, &value)?;
+    }
+    Ok(seed)
 }
 
 fn apply_inspect_options(
@@ -1602,11 +1679,11 @@ pub(crate) mod environment_variables {
         // bytes stay alive; if not, they're freed now.
         *slot.ptr = None;
 
-        let env_map = &mut vm.transpiler.env_mut().map;
+        let env = vm.transpiler.env_mut();
 
         // `delete process.env.X`
         if value.tag() == bun_core::Tag::Dead {
-            env_map.remove(slot.key);
+            env.remove(slot.key);
             return;
         }
 
@@ -1615,7 +1692,7 @@ pub(crate) mod environment_variables {
             // process.env.X reads back as "" (Node.js semantics) instead
             // of undefined. isNoProxy treats empty strings the same as
             // absent — no bypass.
-            bun_core::handle_oom(env_map.put(slot.key, b""));
+            bun_core::handle_oom(env.put_live(slot.key, b""));
             return;
         }
 
@@ -1626,7 +1703,7 @@ pub(crate) mod environment_variables {
         // NOTE: `Map::put` boxes its own copy — the Arc wrapper now
         // only backs `proxy_env_storage` for worker `cloneFrom`; ordering is
         // kept for spec parity.
-        bun_core::handle_oom(env_map.put(slot.key, &stored.bytes));
+        bun_core::handle_oom(env.put_live(slot.key, &stored.bytes));
     }
 
     fn get_env_value<'a>(

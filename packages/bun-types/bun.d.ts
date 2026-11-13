@@ -836,6 +836,54 @@ declare module "bun" {
    */
   function which(command: string, options?: WhichOptions): string | null;
 
+  interface ParseEnvOptions {
+    /**
+     * Expand `$NAME`, `${NAME}` and `${NAME:-default}` in the values, and turn `\$` into `$`,
+     * as Bun does when it loads `.env` files at startup. With `false`, the values are returned
+     * as written, like `util.parseEnv`.
+     *
+     * @default true
+     */
+    expand?: boolean;
+
+    /**
+     * The environment that `$NAME` reads first. A name that is not in it reads the keys of
+     * `content`, including keys defined later in the text. Values from `env` are used as they
+     * are: a `$` inside them is not expanded.
+     *
+     * Defaults to the process environment Bun started with, without the `.env` files Bun loaded
+     * and without later writes to `process.env`. Pass `process.env` to read what the program
+     * sees.
+     */
+    env?: Record<string, string | undefined>;
+  }
+
+  /**
+   * Parse the text of a `.env` file the way Bun parses `.env` files at startup, including
+   * variable expansion.
+   *
+   * The result holds only the keys that `content` defines, with the values the text gives
+   * them. `process.env` is not changed, and a key that `process.env` already has is not
+   * skipped: apply the precedence you want when you copy the values.
+   *
+   * @throws {RangeError} If the text substitutes in more than 4 MiB of variable references.
+   *
+   * @category Utilities
+   *
+   * @example
+   * ```ts
+   * const values = Bun.parseEnv(await Bun.file(".env").text());
+   * for (const [key, value] of Object.entries(values)) {
+   *   process.env[key] ??= value;
+   * }
+   * ```
+   *
+   * @param content The text of a `.env` file
+   * @param options Expansion options
+   * @returns A plain object with one string property per key in `content`
+   */
+  function parseEnv(content: string, options?: ParseEnvOptions): Record<string, string>;
+
   interface StringWidthOptions {
     /**
      * If `true`, count ANSI escape codes as part of the string width. If `false`, ignore them.

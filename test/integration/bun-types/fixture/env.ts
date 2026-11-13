@@ -57,3 +57,10 @@ function isAllSame<T>(a: T, b: T, c: T, d: T, e: T) {
   isAllSame <string | undefined> (process.env.OTHER, Bun.env.OTHER, import.meta.env.OTHER, node_env.OTHER, bun_env.OTHER);
 
 }
+
+expectType(Bun.parseEnv("A=1")).is<Record<string, string>>();
+expectType(Bun.parseEnv("A=$B", { expand: false })).is<Record<string, string>>();
+expectType(Bun.parseEnv("A=$B", { env: process.env })).is<Record<string, string>>();
+expectType(Bun.parseEnv("A=$B", { env: { B: "2" } })).is<Record<string, string>>();
+// @ts-expect-error content must be a string
+Bun.parseEnv(1);

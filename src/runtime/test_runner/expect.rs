@@ -2742,7 +2742,7 @@ impl ExpectMatcherContext {
         Self::compare(cx.global(), a.to_js(), b.to_js(), custom_testers.to_js(), strict_check, true)
     }
 
-    /// `this.equals()` for the testers of `this.utils`. It is no barrier: an async matcher in a member makes the asking matcher wait.
+    /// `this.equals()` for the testers of `this.utils`. Unlike a call by the user, an async matcher in a member makes the asking matcher wait.
     #[inline(never)]
     pub(crate) fn equals_with(
         global_this: &JSGlobalObject,
@@ -2762,7 +2762,7 @@ impl ExpectMatcherContext {
         b: JSValue,
         custom_testers: JSValue,
         strict_check: bool,
-        is_barrier: bool,
+        is_from_user: bool,
     ) -> JsResult<bool> {
         // Only an array has testers: `null` is an empty list in Jest and Vitest, and Bun used to ignore this argument.
         let custom_testers = if !custom_testers.js_type().is_array() || custom_testers.get_length(global_this)? == 0 {
@@ -2772,7 +2772,7 @@ impl ExpectMatcherContext {
         };
         let _testers = super::expect::add_equality_testers::EqualityTestersScope::enter(global_this, custom_testers)?;
         let pass = Pass::barrier();
-        let _entered = is_barrier.then(|| pass.enter());
+        let _entered = is_from_user.then(|| pass.enter());
         if strict_check {
             a.jest_strict_deep_equals(b, global_this)
         } else {

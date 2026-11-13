@@ -263,6 +263,8 @@ export const ExpectMatcherUtils = b.class({
     "toSatisfy",
     "iterableEqualityWithStack",
     "subsetEqualityWithContext",
+    "askedTester",
+    "registeredTesters",
   ],
 });
 
@@ -312,10 +314,12 @@ export const subsetEquality = b.fn({
 export const iterableEqualityWithStack = b.fn({
   ...utility("iterableEqualityWithStack", "iterable_equality_with_stack"),
   passThis: true,
-  args: { testers: b.any, aStack: b.any, bStack: b.any, a: b.any, b: b.any, inUse: b.any },
+  passCallee: true,
+  args: { testers: b.any, aStack: b.any, bStack: b.any, a: b.any, b: b.any },
 });
 export const subsetEqualityWithContext = b.fn({
   ...utility("subsetEqualityWithContext", "subset_equality_with_context"),
+  passCallee: true,
   args: { testers: b.any, seen: b.any, object: b.any, subset: b.any },
 });
 

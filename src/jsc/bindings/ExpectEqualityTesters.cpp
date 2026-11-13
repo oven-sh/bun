@@ -2,7 +2,6 @@
 
 #include "root.h"
 
-#include "GeneratedExpect.h"
 #include <JavaScriptCore/ArrayConstructor.h>
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/IteratorOperations.h>
@@ -329,47 +328,14 @@ extern "C" bool ExpectEqualityTesters__hasPropertyInObject(JSGlobalObject* globa
     RELEASE_AND_RETURN(scope, hasPropertyInObject(globalObject, JSValue::decode(encodedValue), key));
 }
 
-static bool isSubsetTester(JSValue tester)
+// Whether `function` is `target` bound once or more, which calls `target` with no code of the user in between.
+extern "C" bool ExpectEqualityTesters__isBoundTo(EncodedJSValue encodedFunction, EncodedJSValue encodedTarget)
 {
-    auto* function = dynamicDowncast<JSFunction>(tester);
-    if (auto* bound = dynamicDowncast<JSBoundFunction>(tester))
-        function = dynamicDowncast<JSFunction>(bound->targetFunction());
-    if (!function || !function->isHostFunction())
-        return false;
-    auto hostFunction = function->nativeFunction();
-    return hostFunction == toTagged(Bun__ExpectMatcherUtils__subsetEquality) || hostFunction == toTagged(Bun__ExpectMatcherUtils__subsetEqualityWithContext);
-}
-
-// `list` without subsetEquality() of `this.utils` and what a call of it hands to its properties. Empty, with nothing thrown, if it has neither.
-extern "C" EncodedJSValue ExpectEqualityTesters__withoutSubsetTesters(JSGlobalObject* globalObject, EncodedJSValue encodedList)
-{
-    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
-    auto* list = uncheckedDowncast<JSArray>(JSValue::decode(encodedList));
-    MarkedArgumentBuffer others;
-    unsigned length = list->length();
-    for (unsigned i = 0; i < length; i++) {
-        JSValue tester = list->getIndex(globalObject, i);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!isSubsetTester(tester))
-            others.append(tester);
-    }
-    if (others.size() == length)
-        return {};
-    if (others.hasOverflowed()) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope);
-        return {};
-    }
-    RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), others)));
-}
-
-extern "C" bool ExpectEqualityTesters__hasSubsetTester(JSGlobalObject* globalObject, EncodedJSValue encodedList)
-{
-    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
-    auto* list = uncheckedDowncast<JSArray>(JSValue::decode(encodedList));
-    for (unsigned i = 0; i < list->length(); i++) {
-        JSValue tester = list->getIndex(globalObject, i);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (isSubsetTester(tester))
+    JSValue function = JSValue::decode(encodedFunction);
+    JSValue target = JSValue::decode(encodedTarget);
+    while (auto* bound = dynamicDowncast<JSBoundFunction>(function)) {
+        function = bound->targetFunction();
+        if (function == target)
             return true;
     }
     return false;

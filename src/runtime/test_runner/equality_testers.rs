@@ -9,7 +9,7 @@ use bun_jsc::{self as jsc, JSFunction, JSGlobalObject, JSMap, JSValue, JsResult}
 
 use super::expect_core::expect_deferred::Pass;
 use super::pretty_format::{call_method, item, member, member_by_value};
-use super::{ExpectMatcherContext, ExpectMatcherUtils};
+use super::{Expect, ExpectMatcherContext, ExpectMatcherUtils};
 use crate::generated_bindgen::expect::{self as generated, js_ExpectMatcherUtils as js};
 
 const IMMUTABLE_KEYED: &str = "@@__IMMUTABLE_KEYED__@@";
@@ -28,42 +28,36 @@ impl ExpectMatcherUtils {
         custom_testers: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let (a, b) = (a.to_js(), b.to_js());
+        let (callee, a, b) = (callee.to_js(), a.to_js(), b.to_js());
+        let pass = (!Self::is_asked_by_deep_equality(global, callee)).then(Pass::barrier);
+        let _entered = pass.as_ref().map(Pass::enter);
         if !are_iterables(global, a, b)? {
             return Ok(JSValue::UNDEFINED);
         }
         let stacks = [JSValue::create_empty_array(global, 0)?, JSValue::create_empty_array(global, 0)?];
-        iterable_equality(global, callee.to_js(), a, b, custom_testers.to_js(), stacks)
+        iterable_equality(global, callee, a, b, custom_testers.to_js(), stacks)
     }
 
-    /// Jest's `iterableEqualityWithStack()`. `bind()` holds the three lists and `iterableEquality` as `this`. `in_use` is the list it is asked with.
+    /// Jest's `iterableEqualityWithStack()`. `bind()` holds the three lists, and `iterableEquality` as `this`.
     pub(crate) fn iterable_equality_with_stack(
         cx: &mut JsScope<'_>,
         this_value: JsLocal<'_>,
+        callee: JsLocal<'_>,
         testers: JsLocal<'_>,
         a_stack: JsLocal<'_>,
         b_stack: JsLocal<'_>,
         a: JsLocal<'_>,
         b: JsLocal<'_>,
-        in_use: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         let (a, b) = (a.to_js(), b.to_js());
+        let pass = (!Self::is_asked_by_deep_equality(global, callee.to_js())).then(Pass::barrier);
+        let _entered = pass.as_ref().map(Pass::enter);
         // Most members are no iterables, and need no copy of the three.
         if !are_iterables(global, a, b)? {
             return Ok(JSValue::UNDEFINED);
         }
-        // `testers` is from before an asymmetric matcher took the subset testers out of the list in use, so it loses them here.
-        let (testers, in_use) = (testers.to_js(), in_use.to_js());
-        let without_subset_testers = if in_use.is_array() && !has_subset_tester(global, in_use)? {
-            without_subset_testers(global, testers)?
-        } else {
-            None
-        };
-        let testers = match without_subset_testers {
-            Some(testers) => testers,
-            None => copy(global, testers)?,
-        };
+        let testers = copy(global, testers.to_js())?;
         let stacks = [copy(global, a_stack.to_js())?, copy(global, b_stack.to_js())?];
         iterable_equality(global, this_value.to_js(), a, b, testers, stacks)
     }
@@ -77,7 +71,9 @@ impl ExpectMatcherUtils {
         custom_testers: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let (subset, custom_testers) = (subset.to_js(), custom_testers.to_js());
+        let (callee, subset, custom_testers) = (callee.to_js(), subset.to_js(), custom_testers.to_js());
+        let pass = (!Self::is_asked_by_deep_equality(global, callee)).then(Pass::barrier);
+        let _entered = pass.as_ref().map(Pass::enter);
         // The reference calls `customTesters.filter()` before it looks at `subset`.
         if !custom_testers.is_undefined() && !custom_testers.is_array() {
             return Err(global.throw_invalid_argument_type_value("customTesters", "array", custom_testers));
@@ -88,7 +84,7 @@ impl ExpectMatcherUtils {
         let testers = if custom_testers.is_undefined() {
             JSValue::create_empty_array(global, 0)?
         } else {
-            without(global, custom_testers, callee.to_js())?
+            without(global, custom_testers, callee)?
         };
         subset_equality(global, testers, JSMap::create(global), object.to_js(), subset)
     }
@@ -96,6 +92,7 @@ impl ExpectMatcherUtils {
     /// Jest's `subsetEqualityWithContext(seenReferences)`. `bind()` holds the testers and the `Map` of `subset_equality()`.
     pub(crate) fn subset_equality_with_context(
         cx: &mut JsScope<'_>,
+        callee: JsLocal<'_>,
         testers: JsLocal<'_>,
         seen: JsLocal<'_>,
         object: JsLocal<'_>,
@@ -103,10 +100,26 @@ impl ExpectMatcherUtils {
     ) -> JsResult<JSValue> {
         let global = cx.global();
         let subset = subset.to_js();
+        let pass = (!Self::is_asked_by_deep_equality(global, callee.to_js())).then(Pass::barrier);
+        let _entered = pass.as_ref().map(Pass::enter);
         if !is_object_with_keys(global, subset)? {
             return Ok(JSValue::UNDEFINED);
         }
         subset_equality(global, testers.to_js(), seen.to_js(), object.to_js(), subset)
+    }
+
+    /// Whether deep equality asks this tester now, as `callee` or as a function bound to it. Any other call is by a matcher or a tester of the user, and is a barrier like `this.equals()`.
+    fn is_asked_by_deep_equality(global: &JSGlobalObject, callee: JSValue) -> bool {
+        unsafe extern "C" {
+            safe fn ExpectEqualityTesters__isBoundTo(function: JSValue, target: JSValue) -> bool;
+        }
+        let utils = Self::singleton(global);
+        let is_asked = js::asked_tester_get_cached(utils)
+            .is_some_and(|asked| asked == callee || ExpectEqualityTesters__isBoundTo(asked, callee));
+        if is_asked {
+            js::asked_tester_set_cached(utils, global, JSValue::ZERO);
+        }
+        is_asked
     }
 
     /// Whether the comparison that asked the running tester is `toStrictEqual()`'s.
@@ -294,7 +307,7 @@ fn with_stack_function(global: &JSGlobalObject) -> JSValue {
     let utils = ExpectMatcherUtils::singleton(global);
     js::iterable_equality_with_stack_get_cached(utils).unwrap_or_else(|| {
         let host_function = generated::Bun__ExpectMatcherUtils__iterableEqualityWithStack;
-        let function = JSFunction::create(global, "iterableEqualityWithStack", host_function, 6, Default::default());
+        let function = JSFunction::create(global, "iterableEqualityWithStack", host_function, 5, Default::default());
         js::iterable_equality_with_stack_set_cached(utils, global, function);
         function
     })
@@ -354,22 +367,6 @@ fn copy(global: &JSGlobalObject, list: JSValue) -> JsResult<JSValue> {
 /// `list.filter(item => item !== tester)`
 fn without(global: &JSGlobalObject, list: JSValue, tester: JSValue) -> JsResult<JSValue> {
     jsc::host_fn::from_js_host_call(global, || ExpectEqualityTesters__copy(global, list, tester))
-}
-
-/// `list` without `this.utils.subsetEquality` and what a call of it hands to its properties. `None` if it has neither.
-pub(crate) fn without_subset_testers(global: &JSGlobalObject, list: JSValue) -> JsResult<Option<JSValue>> {
-    unsafe extern "C" {
-        safe fn ExpectEqualityTesters__withoutSubsetTesters(global: &JSGlobalObject, list: JSValue) -> JSValue;
-    }
-    let others = jsc::host_fn::from_js_host_call_generic(global, || ExpectEqualityTesters__withoutSubsetTesters(global, list))?;
-    Ok((!others.is_empty()).then_some(others))
-}
-
-fn has_subset_tester(global: &JSGlobalObject, list: JSValue) -> JsResult<bool> {
-    unsafe extern "C" {
-        safe fn ExpectEqualityTesters__hasSubsetTester(global: &JSGlobalObject, list: JSValue) -> bool;
-    }
-    jsc::host_fn::from_js_host_call_generic(global, || ExpectEqualityTesters__hasSubsetTester(global, list))
 }
 
 /// A function of two parameters that calls `target` with `this` and with `bound` ahead of its arguments.
@@ -450,7 +447,9 @@ fn is_object_with_keys(global: &JSGlobalObject, value: JSValue) -> JsResult<bool
     unsafe extern "C" {
         safe fn ExpectEqualityTesters__isObjectWithKeys(global: &JSGlobalObject, value: JSValue) -> bool;
     }
-    jsc::host_fn::from_js_host_call_generic(global, || ExpectEqualityTesters__isObjectWithKeys(global, value))
+    let is_object = jsc::host_fn::from_js_host_call_generic(global, || ExpectEqualityTesters__isObjectWithKeys(global, value))?;
+    // Jest's matchers are objects with keys. Bun's have none, and `this.equals()` asks them before any tester.
+    Ok(is_object && !Expect::is_asymmetric_matcher(value))
 }
 
 fn has_property_in_object(global: &JSGlobalObject, object: JSValue, key: JSValue) -> JsResult<bool> {

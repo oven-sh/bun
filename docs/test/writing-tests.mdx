@@ -667,7 +667,7 @@ To compare nested values inside a tester, call `this.equals(a, b, customTesters)
 
 ### Testers in custom matchers
 
-In a matcher registered with `expect.extend()`, `this.equals(a, b, customTesters)` only uses the testers it is given. The registered testers are in `this.customTesters`. `this.utils` has the two testers that Jest builds `toEqual()` and `toMatchObject()` from:
+In a matcher registered with `expect.extend()`, `this.equals(a, b, customTesters)` only uses the testers it is given. The registered testers are in `this.customTesters`. Like in Jest, an asymmetric matcher in the compared values, such as `expect.arrayContaining()`, uses the registered testers and not the ones that `this.equals()` was given. `this.utils` has the two testers that Jest builds `toEqual()` and `toMatchObject()` from:
 
 | Tester                        | Compares                                                                                                                      |
 | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |

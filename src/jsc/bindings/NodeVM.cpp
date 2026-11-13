@@ -1361,14 +1361,14 @@ NEVER_INLINE bool NodeVMGlobalObject::putOverContextifiedObject(NodeVMGlobalObje
     bool isDeclaredOnSandbox = index ? sandbox->getPropertySlot(globalObject, *index, getter) : sandbox->getNonIndexPropertySlot(globalObject, propertyName, getter);
     RETURN_IF_EXCEPTION(scope, false);
 
-    // Node asks the global before every store. Here only a name that the contextified object lacks pays for that lookup, so a contextified object that has `NaN` is still written.
-    if (!isDeclaredOnSandbox) {
+    // Node asks the global before every store. Here only a name that the contextified object lacks pays for that lookup, so a contextified object that has `NaN` is still written. A Proxy reports every name, so a store over one pays too.
+    if (!isDeclaredOnSandbox || getter.isTaintedByOpaqueObject()) {
         RealProperty onGlobal = realPropertyOfGlobal(globalObject, thisObject, propertyName, index);
         RETURN_IF_EXCEPTION(scope, false);
         // JSObject::putByIndex() does not ask every object above the global for a read-only index, a String object for one.
         if (onGlobal == RealProperty::ReadOnly && index)
             return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
-        if (onGlobal == RealProperty::ReadOnly || (onGlobal == RealProperty::Absent && propertyName.isSymbol()))
+        if (onGlobal == RealProperty::ReadOnly || (onGlobal == RealProperty::Absent && !isDeclaredOnSandbox && propertyName.isSymbol()))
             RELEASE_AND_RETURN(scope, putOnGlobalOnly(thisObject, globalObject, propertyName, index, value, slot));
     }
 

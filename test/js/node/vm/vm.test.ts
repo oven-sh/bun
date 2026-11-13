@@ -2800,11 +2800,37 @@ describe("a store on the global object of a context", () => {
       lazy.global.nextTick = 1;
       rows.nativeGetter = [Object.keys(sandbox), Object.keys(lazy.sandbox), typeof process.nextTick];
     }
+    {
+      // A Proxy reports every name as its own, and the global object is still asked first.
+      const trapped: PropertyKey[] = [];
+      const target = {};
+      const { sandbox, global } = contextOver(
+        new Proxy(target, {
+          set(target, key, value, receiver) {
+            trapped.push(key);
+            return Reflect.set(target, key, value, receiver);
+          },
+        }),
+      );
+      runInContext(
+        "Object.defineProperty(Object.prototype, 'inherited', { value: 1, configurable: true }); NaN = 1; undefined = 1",
+        sandbox,
+      );
+      rows.overProxy = [
+        outcome(() => (global.Infinity = 1)),
+        Reflect.set(global, "inherited", 2),
+        outcome(() => runInContext("'use strict'; inherited = 2", sandbox)),
+        trapped,
+        Object.keys(target),
+        runInContext("inherited", sandbox),
+      ];
+    }
     expect(rows).toEqual({
       constants: [false, "TypeError", false, "TypeError", "TypeError of the context", [], "undefined,NaN,Infinity"],
       inherited: ["TypeError of the context", "TypeError", false, [], 1],
       behindProxy: ["TypeError", []],
       nativeGetter: [["description"], ["nextTick"], "function"],
+      overProxy: ["TypeError", false, "TypeError of the context", [], [], 1],
     });
   });
 
@@ -2827,11 +2853,16 @@ describe("a store on the global object of a context", () => {
     const holdsTheObject = Symbol("holds the contextified object");
     global[holdsTheObject] = sandbox;
     rows.holdsTheObject = [owns(sandbox, holdsTheObject), global[holdsTheObject] === global];
+    // A Proxy reports every name as its own, so it takes a new symbol.
+    const target = {};
+    contextOver(new Proxy(target, {})).global[fresh] = 1;
+    rows.overProxy = [owns(target, fresh)];
     expect(rows).toEqual({
       fresh: [true, false, 1],
       again: [false, true, 2],
       inherited: [true],
       holdsTheObject: [false, true],
+      overProxy: [true],
     });
   });
 

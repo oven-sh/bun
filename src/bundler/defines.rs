@@ -59,9 +59,7 @@ fn env_string_define(bump: &bun_alloc::Arena, value: &[u8]) -> DefineData {
 }
 
 /// Copies the dotenv loader's entries into `to_string` as `process.env.*` and
-/// `import.meta.env.*` defines, according to `behavior` (all of them, or only
-/// those starting with `prefix`). `import.meta.env` is the documented alias of
-/// `process.env`, so both spellings fold to the same value.
+/// `import.meta.env.*` defines (all of them, or only those starting with `prefix`).
 pub(crate) fn copy_env_for_define(
     env: &bun_dotenv::Loader,
     to_string: &mut UserDefinesArray,
@@ -92,12 +90,9 @@ pub(crate) fn copy_env_for_define(
         if behavior == DotEnvBehavior::Prefix && !bun_core::strings::starts_with(k, prefix) {
             continue;
         }
-        // Both keys share one arena string: the define table only reads it.
         let data = env_string_define(bump, &v.value);
         for namespace in NAMESPACES {
-            // The mode keys belong to the bundle, not to the environment, as
-            // they do on the Bun runtime (`ImportMetaEnv.cpp`). `process.env.DEV`
-            // still folds to the variable.
+            // `import.meta.env.DEV` is the mode, never a variable (as in `ImportMetaEnv.cpp`).
             if namespace == IMPORT_META_ENV && ImportMetaEnvMode::is_mode_key(k) {
                 continue;
             }
@@ -115,8 +110,7 @@ pub(crate) fn copy_env_for_define(
 // `import.meta.env` mode keys
 // ══════════════════════════════════════════════════════════════════════════
 
-/// What one bundle folds the `import.meta.env` mode keys to. The keys are
-/// Vite's (https://vitejs.dev/guide/env-and-mode).
+/// What one bundle folds Vite's `import.meta.env` mode keys to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ImportMetaEnvMode {
     pub production: bool,
@@ -158,15 +152,9 @@ impl ImportMetaEnvMode {
         ]
     }
 
-    /// The define entries as (key, JSON value): `import.meta.env` itself, then
-    /// `import.meta.env.DEV` and the other mode keys.
-    ///
-    /// The whole-object entry exists for a client bundle only. A browser has no
-    /// `import.meta.env`, so without it a key that no per-key define covers
-    /// throws. With it the key reads `undefined`, as it does on the Bun runtime.
-    /// The object holds the mode keys only: the inlined environment stays in
-    /// the per-key defines, so an indirect read cannot dump it into the bundle.
-    ///
+    /// The define entries as (key, JSON value). For a client bundle, where a
+    /// browser has no `import.meta.env`, the first entry defines the object
+    /// itself with the mode keys only, so an unknown key reads `undefined`.
     /// Insert these before the user's defines, so that the user's win.
     pub fn defines(self) -> Vec<(&'static [u8], Vec<u8>)> {
         let values = self.values();

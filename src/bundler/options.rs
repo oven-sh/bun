@@ -991,9 +991,7 @@ pub(crate) fn defines_from_transform_options(
             Box::from(b"\"development\"".as_slice())
         };
 
-        // `import.meta.env` is the alias of `process.env`: each key folds to
-        // the same value under both spellings. A user define of the
-        // `process.env` spelling sets the value of both.
+        // `import.meta.env.NODE_ENV` folds to the same value as `process.env.NODE_ENV`.
         let node_env: Box<[u8]> = user_defines
             .get_or_put_value(b"process.env.NODE_ENV", quoted_node_env.clone())?
             .value_ptr

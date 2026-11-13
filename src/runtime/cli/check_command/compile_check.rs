@@ -147,7 +147,7 @@ fn report_compile_check(
             }
         }
         Layout::Pretty | Layout::Agent => {
-            let stdout = std::ptr::from_mut::<bun_core::io::Writer>(Output::writer());
+            let stdout = Output::writer();
             let _ = log.print(stdout);
         }
     }

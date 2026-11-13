@@ -1814,6 +1814,28 @@ describe("Bun.ModuleGraph — CommonJS surface per graph", () => {
     const second = (await graph.import(join(String(d), "entry.cjs"))).default;
     expect([first.load, second.load, first.isMain(), second.isMain()]).toEqual([1, 2, false, true]);
   });
+  test("require.main is the module that the graph ran under the key before its first import", async () => {
+    using d = tempDir("module-graph-main-ran-before", {
+      "entry.cjs": `
+        exports.atLoad = require.main === module;
+        exports.isMain = () => require.main === module;
+        exports.evict = () => delete require.cache[__filename];
+      `,
+    });
+    const path = join(String(d), "entry.cjs");
+    const graph = new ModuleGraphClass();
+    const required = graph.run(() => createRequire(path)(path));
+    // With the module in the cache, the import loads nothing.
+    const imported = (await graph.import(path)).default;
+    const whileInCache = required.isMain();
+    required.evict();
+    expect([imported === required, required.atLoad, whileInCache, required.isMain()]).toEqual([
+      true,
+      false,
+      true,
+      true,
+    ]);
+  });
   test("require.main is not an own property of a graph's require()", async () => {
     using d = tempDir("module-graph-main-own", {
       "entry.cjs": `module.exports = [Object.keys(require), Object.hasOwn(require, "main"), require.main === module];`,

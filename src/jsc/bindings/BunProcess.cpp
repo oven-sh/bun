@@ -152,7 +152,6 @@ typedef int mode_t;
 
 #include <cstring>
 #include "ErrorStackTrace.h"
-extern "C" bool isBunTest;
 extern "C" bool Bun__Node__ProcessNoDeprecation;
 extern "C" bool Bun__Node__ProcessNoWarnings;
 extern "C" bool Bun__Node__ProcessTraceWarnings;

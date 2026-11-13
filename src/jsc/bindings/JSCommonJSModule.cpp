@@ -230,25 +230,31 @@ JSValue mainModuleOf(Zig::GlobalObject* globalObject, JSModuleGraph* graph)
     return mainModuleOfProcess(globalObject, nullptr);
 }
 
-void nameMainModule(Zig::GlobalObject* globalObject, JSString* key)
+void nameMainModule(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JSString* key)
 {
-    if (loadsTestFiles(globalObject, nullptr))
+    if (loadsTestFiles(globalObject, graph))
         return;
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSMap* requireMap = globalObject->requireMap();
+    JSMap* requireMap = requireMapOf(globalObject, graph);
     JSValue held = requireMap->get(globalObject, key);
     RETURN_IF_EXCEPTION(scope, );
-    JSValue named = key;
-    // A preload has run the entry point: that module is the main module only if its key is the path in `Bun.main`.
+    JSValue named = graph ? jsUndefined() : JSValue(key);
+    // The module ran before this load, which runs none. In the global object's loader it is the main module only under the path in `Bun.main`.
     if (auto* loaded = dynamicDowncast<JSCommonJSModule>(held); loaded && loaded->hasEvaluated) {
-        JSValue path = JSValue::decode(BunObject_getter_main(globalObject));
-        RETURN_IF_EXCEPTION(scope, );
-        bool isAtPathOfEntryPoint = path.isString() && asString(path)->equal(globalObject, key);
-        RETURN_IF_EXCEPTION(scope, );
-        named = isAtPathOfEntryPoint ? JSValue(loaded) : jsUndefined();
+        bool isMainModule = true;
+        if (!graph) {
+            JSValue path = JSValue::decode(BunObject_getter_main(globalObject));
+            RETURN_IF_EXCEPTION(scope, );
+            isMainModule = path.isString() && asString(path)->equal(globalObject, key);
+            RETURN_IF_EXCEPTION(scope, );
+        }
+        named = isMainModule ? JSValue(loaded) : jsUndefined();
     }
-    requireMap->putDirect(vm, mainModuleName(vm), named);
+    if (named.isUndefined())
+        clearMainModule(vm, requireMap);
+    else
+        requireMap->putDirect(vm, mainModuleName(vm), named);
 }
 
 void clearMainModule(VM& vm, JSMap* requireMap)

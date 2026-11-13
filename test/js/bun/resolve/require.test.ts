@@ -1,4 +1,4 @@
-import { bunRun, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, tempDir, tempDirWithFiles } from "harness";
 import fs from "node:fs";
 import path from "node:path";
 const fixture = (...segs: string[]): string => path.join(import.meta.dirname, "fixtures", "require", ...segs);
@@ -137,7 +137,16 @@ describe("require(specifier)", () => {
     // Where node v26.3.0 prints something else for a program below, a comment says what.
     const run = async (files: Record<string, string>, ...args: string[]) => {
       using dir = tempDir("bun-test-require-main", files);
-      return await bunRun(args.map(arg => (arg in files ? path.join(String(dir), arg) : arg)));
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args.map(arg => (arg in files ? path.join(String(dir), arg) : arg))],
+        cwd: String(dir),
+        env: bunEnv,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode, signalCode: proc.signalCode };
     };
     const prints = (stdout: string) => ({ stdout, stderr: "", exitCode: 0, signalCode: null });
     const purge = `for (const key of Object.keys(require.cache)) delete require.cache[key];`;
@@ -348,15 +357,17 @@ describe("require(specifier)", () => {
     });
 
     it.concurrent.each([
-      ["requires it", `require("./entry.cjs");`],
-      ["requires it in a tick", `process.nextTick(() => require("./entry.cjs"));`],
-      ["calls Module.runMain with its path", `require("node:module").runMain(process.argv[1]);`],
-    ])("is the entry point that a preload has loaded already: one that %s", async (_, preload) => {
-      // The load of the entry point finds the module in the cache and does not run it again. Node prints the same for
-      // the last two preloads. For the first it prints "1,false,false 1,false,false": the file is in its cache when it
-      // loads the entry point, so it has no main module. Bun knows the file as the entry point whoever loads it, as before.
+      ["requires it", "preload.cjs", `require("./entry.cjs");`],
+      ["requires it in a tick", "preload.cjs", `process.nextTick(() => require("./entry.cjs"));`],
+      ["calls Module.runMain with its path", "preload.cjs", `require("node:module").runMain(process.argv[1]);`],
+      ["imports it", "preload.mjs", `import "./entry.cjs";`],
+      ["calls import() with its path", "preload.cjs", `import("./entry.cjs");`],
+    ])("is the entry point that a preload has loaded already: one that %s", async (_, preloadFile, preload) => {
+      // The load of the entry point finds the module and does not run it again. Node prints the same for the preloads
+      // with the tick and with Module.runMain. For the others it prints "1,false,false 1,false,false": it has the module
+      // when it loads the entry point, so it has no main module. Bun knows the file as the entry point whoever loads it.
       const files = {
-        "preload.cjs": preload,
+        [preloadFile]: preload,
         "entry.cjs": `
           globalThis.loads = (globalThis.loads ?? 0) + 1;
           const ask = () => [globalThis.loads, require.main === module, process.mainModule === module].join();
@@ -367,7 +378,7 @@ describe("require(specifier)", () => {
           });
         `,
       };
-      expect(await run(files, "-r", "preload.cjs", "entry.cjs")).toEqual(prints("1,true,true 1,true,true"));
+      expect(await run(files, "-r", preloadFile, "entry.cjs")).toEqual(prints("1,true,true 1,true,true"));
     });
 
     it.concurrent(
@@ -493,11 +504,11 @@ describe("require(specifier)", () => {
           postMessage([require.main === module, process.mainModule === module].join());
         `,
         };
-        const { stdout, exitCode } = await run(files, ...command.split(" ").slice(1), "evicted.test.cjs");
+        const { stdout, exitCode, signalCode } = await run(files, ...command.split(" ").slice(1), "evicted.test.cjs");
         expect(stdout.split("\n").filter(line => line.startsWith("test file:"))).toEqual(
           Array(runs).fill("test file: true,true undefined undefined worker: true,true"),
         );
-        expect(exitCode).toBe(0);
+        expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
       },
     );
 

@@ -4168,6 +4168,14 @@ extern "C" bool Bun__standaloneModuleHasModuleInfo(const Latin1Character*, size_
 extern "C" bool Bun__hasStandaloneModuleGraph();
 extern "C" int ModuleLoader__builtinAliasIndex(const Latin1Character*, size_t);
 extern "C" bool Bun__hasPlugins(Zig::GlobalObject*);
+
+// `bun:main` has one import, the entry point. The loader resolves it at every load of `bun:main`, also when it has the module already.
+static constexpr ASCIILiteral importerOfEntryPoint = "bun:main"_s;
+static ALWAYS_INLINE bool isImportOfEntryPoint(JSGlobalObject* globalObject, JSModuleLoader* loader, const String& referrer, bool isImportStatement)
+{
+    return referrer.length() == importerOfEntryPoint.length() && isImportStatement && loader == globalObject->moduleLoader() && referrer == importerOfEntryPoint;
+}
+
 JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,
     JSModuleLoader* loader, JSValue key,
     JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool useImportMap)
@@ -4288,6 +4296,10 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         }
 #endif
     }
+    if (isImportOfEntryPoint(globalObject, loader, referrerString, isImportStatement)) [[unlikely]] {
+        Bun::nameMainModule(globalObject, nullptr, jsString(vm, resolved));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     return resolvedKey;
 }
 
@@ -4309,6 +4321,10 @@ JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* glob
                     Identifier resolved = isCanonical ? Identifier::fromString(globalObject->vm(), string->tryGetValue()) : Identifier::fromString(globalObject->vm(), String({ canonical, canonicalLength }));
                     if (Bun::hasCompiledModules()) [[unlikely]] {
                         Bun::willResolveImport(zigGlobalObject, resolved.string(), referrer);
+                        RETURN_IF_EXCEPTION(scope, {});
+                    }
+                    if (referrer && referrer.isString() && asString(referrer)->length() == importerOfEntryPoint.length() && isImportOfEntryPoint(globalObject, loader, asString(referrer)->tryGetValue().data, !zigGlobalObject->onResolvePlugins.isResolvingImportCall)) [[unlikely]] {
+                        Bun::nameMainModule(zigGlobalObject, nullptr, jsString(globalObject->vm(), resolved.string()));
                         RETURN_IF_EXCEPTION(scope, {});
                     }
                     return resolved;
@@ -4457,13 +4473,6 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (compiled)
             return compiled;
-    }
-
-    // The `bun:main` module imports one module: the entry point. (The main module of a Bun.ModuleGraph is its first import.)
-    static constexpr ASCIILiteral importerOfEntryPoint = "bun:main"_s;
-    if (referrer.length() == importerOfEntryPoint.length() && referrer == importerOfEntryPoint && loader == globalObject->moduleLoader()) [[unlikely]] {
-        Bun::nameMainModule(static_cast<Zig::GlobalObject*>(globalObject), moduleKeyJS);
-        RETURN_IF_EXCEPTION(scope, nullptr);
     }
 
     auto moduleKeyBun = Bun::toString(moduleKey);

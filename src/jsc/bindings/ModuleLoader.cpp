@@ -1102,7 +1102,7 @@ static JSC::JSPromise* loadAndEvaluateEntryPoint(JSC::JSGlobalObject* globalObje
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    Bun::nameMainModule(defaultGlobalObject(globalObject), jsString(vm, key));
+    Bun::nameMainModule(defaultGlobalObject(globalObject), nullptr, jsString(vm, key));
     RETURN_IF_EXCEPTION(scope, nullptr);
     RELEASE_AND_RETURN(scope, JSC::loadAndEvaluateModule(globalObject, key, nullptr, nullptr));
 }

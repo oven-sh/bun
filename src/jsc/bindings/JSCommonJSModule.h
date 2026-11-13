@@ -208,8 +208,8 @@ JSC::JSValue requireCacheOf(Zig::GlobalObject*, JSModuleGraph* graph, JSCommonJS
 JSC::JSValue mainModuleOf(Zig::GlobalObject*, JSModuleGraph* graph);
 // `process.mainModule`. `graph`: the one of the running test file, if it has one.
 JSC::JSValue mainModuleOfProcess(Zig::GlobalObject*, JSModuleGraph* graph);
-// The global object's loader is about to load its entry point, the module under `key`. (A graph has mainPath().)
-void nameMainModule(Zig::GlobalObject*, JSC::JSString* key);
+// `graph`'s loader (null: the global object's) is about to load its entry point, the module under `key`.
+void nameMainModule(Zig::GlobalObject*, JSModuleGraph* graph, JSC::JSString* key);
 // Call before code runs the text of `module`. If the cache holds it under the entry point's key, it is the main module from now on.
 void becomeMainModuleIfEntryPoint(Zig::GlobalObject*, JSCommonJSModule* module);
 void clearMainModule(JSC::VM&, JSC::JSMap* requireMap);

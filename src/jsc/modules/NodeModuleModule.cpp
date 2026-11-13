@@ -830,7 +830,7 @@ static void nameEntryPointAsMainModule(Zig::GlobalObject* globalObject, const St
     String path = asString(main)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, );
     if (!key || *key == path)
-        RELEASE_AND_RETURN(scope, Bun::nameMainModule(globalObject, asString(main)));
+        RELEASE_AND_RETURN(scope, Bun::nameMainModule(globalObject, nullptr, asString(main)));
 }
 
 extern "C" void Bun__VirtualMachine__setOverrideModuleRunMainPromise(void* bunVM, JSPromise* promise);

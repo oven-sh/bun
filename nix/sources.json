@@ -1,0 +1,17 @@
+{
+  "version": "1.4.3",
+  "sources": {
+    "aarch64-darwin": {
+      "asset": "bun-darwin-aarch64",
+      "sha256": "80afd4c069b46a6fa8f3ec520bebc750a7843e4a8d5b9583d29ad436c00a3403"
+    },
+    "aarch64-linux": {
+      "asset": "bun-linux-aarch64",
+      "sha256": "efa9813da5ed72423bf847f916e8d2c47c0d776add972354026a75e10da9aa21"
+    },
+    "x86_64-linux": {
+      "asset": "bun-linux-x64-baseline",
+      "sha256": "1fc2edac843102909e3a1be1d8d9802cc6071cf074e67e88231f4ffe0f8b397b"
+    }
+  }
+}

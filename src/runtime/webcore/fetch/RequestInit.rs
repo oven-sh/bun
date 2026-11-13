@@ -21,6 +21,21 @@ pub(crate) struct InitSources<'a> {
 }
 
 impl<'a> InitSources<'a> {
+    /// The `init` argument as a Web IDL dictionary: an object is read, `undefined` and `null`
+    /// mean "no init", and any other primitive is a TypeError (Fetch spec, matches undici).
+    /// `fetch()` rejects with it (`rejects: true` in the schema); `new Request()` throws.
+    pub(crate) fn init_from_js(global: &JSGlobalObject, init: JSValue) -> JsResult<Option<JSValue>> {
+        if init.is_undefined_or_null() {
+            return Ok(None);
+        }
+        if init.is_object() {
+            return Ok(Some(init));
+        }
+        Err(global.throw_invalid_arguments(format_args!(
+            "The provided value is not of type 'RequestInit'"
+        )))
+    }
+
     /// Reads one member. `from_js` returns `None` for an object that doesn't decide it.
     #[inline]
     pub(crate) fn member<T>(

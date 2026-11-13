@@ -453,13 +453,6 @@ fn fetch_impl(
     // signal/unix_socket_path/url_proxy_buffer/headers/body/range/
     // ssl_config are all owning types whose Drop runs on early return.
 
-    let options_object: Option<JSValue> = 'brk: {
-        if options.is_object() || options.js_type() == jsc::JSType::DOMWrapper {
-            break 'brk Some(options);
-        }
-        break 'brk None;
-    };
-
     let request: Option<&Request> = if first_arg.is_cell() {
         // SAFETY: `first_arg`, which the call frame keeps alive, owns the Request.
         first_arg.as_direct::<Request>().map(|p| unsafe { &*p })
@@ -473,6 +466,9 @@ fn fetch_impl(
     } else {
         None
     };
+
+    // After `input` converts: a throwing `toString` on it surfaces first (WebIDL, left to right).
+    let options_object = InitSources::init_from_js(global_this, options)?;
 
     let request_init_object: Option<JSValue> = 'brk: {
         if request.is_some() {

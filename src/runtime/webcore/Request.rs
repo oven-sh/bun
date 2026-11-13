@@ -988,7 +988,7 @@ impl Request {
                 "Failed to construct 'Request': expected non-empty string or object"
             )));
         };
-        let init = init.is_object().then_some(init);
+        let init = InitSources::init_from_js(global, init)?;
 
         if let (Some(only), None) | (None, Some(only)) = (init, input)
             && let Pristine::Request(request) = Pristine::of(only)

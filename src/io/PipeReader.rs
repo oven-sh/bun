@@ -515,10 +515,7 @@ impl PosixBufferedReader {
         }
     }
 
-    /// A consumer waits for the poll callback: marks it (`CONSUMER_WAITING`) and arms the poll unless it already watches the fd.
-    ///
-    /// # Safety
-    /// Same contract as [`Self::register_poll`].
+    /// A consumer waits for the poll callback: marks it (`CONSUMER_WAITING`) and arms the poll unless it already watches the fd. Same contract as [`Self::register_poll`].
     unsafe fn wait_for_poll(this: *mut Self) -> bool {
         // SAFETY: caller contract; borrows end at each `;`.
         unsafe {
@@ -1019,12 +1016,10 @@ impl PosixBufferedReader {
             && !bun_spawn_sys::waiter_thread_flag::get()
     }
 
-    /// A consumer wants bytes in `dst`: one non-blocking read straight into it, and the poll is armed when nothing is available. EOF and errors are reported through `on_reader_done` / `on_reader_error` like any other read.
-    ///
-    /// After a short read (`SHORT_READ`) a poll-driven source is not read here. The poll is armed, `(0, Progress)` is returned, and the next bytes arrive through `on_read_chunk` in a later turn of the event loop, also when they are in the fd already. libuv has this rule: `uv__read` reads again after a read that filled its buffer and returns to the loop after a shorter one (https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L1147-L1155), and `readStart()` only starts the watcher (https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L1447-L1470). One difference stays: Bun runs `setImmediate` callbacks before it polls and libuv after, so bytes requested from a timer arrive after the immediates that timer queued, and in Node before them.
+    /// One non-blocking read straight into `dst` for a consumer that asks for bytes; arms the poll when nothing is available. After a short read (`SHORT_READ`) a poll-driven source is not read, also when it has bytes: the poll is armed and they arrive through `on_read_chunk` in a later turn, as libuv's `uv__read` goes back to the loop after a short read (https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L1147-L1155). EOF and errors are reported through `on_reader_done` / `on_reader_error` like any other read.
     ///
     /// # Safety
-    /// Same contract as [`Self::read`]: those dispatches, and the one a failed arm makes, may free the parent.
+    /// Same contract as [`Self::read`]: those dispatches may free the parent.
     pub unsafe fn request_read(this: *mut Self, dst: &mut [u8]) -> (usize, ReadState) {
         // SAFETY: caller contract — `this` is live; borrows end at each `;`.
         unsafe { (*this).unpause() };
@@ -1103,10 +1098,7 @@ impl PosixBufferedReader {
         }
     }
 
-    /// A consumer that had stopped the reader wants bytes again and has no destination for them (a resumed stream). A poll-driven source is only unpaused and armed, as in [`Self::request_read`] after a short read: Node's `resume()` reads nothing either. Any other source is read now, through `on_read_chunk`, unless its poll already waits for it.
-    ///
-    /// # Safety
-    /// Same contract as [`Self::read`], and a failed arm dispatches `on_reader_error` too.
+    /// A consumer that had stopped the reader wants bytes again and has no destination for them (a resumed stream). A poll-driven source is only unpaused and armed, as Node's `resume()` only starts the watcher (https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L1447-L1470). Bun runs `setImmediate` callbacks before it polls and libuv after, so from a timer the bytes arrive after that timer's immediates, and in Node before them. Any other source is read now, through `on_read_chunk`, unless its poll already waits for it. Same contract as [`Self::read`].
     pub unsafe fn resume_reading(this: *mut Self) {
         // SAFETY: caller contract — `this` is live; borrows end at each `;`.
         unsafe { (*this).unpause() };
@@ -2085,10 +2077,7 @@ impl WindowsBufferedReader {
         (0, ReadState::Progress)
     }
 
-    /// [`Self::request_read`] for a consumer with no destination; a read in flight is left as it is.
-    ///
-    /// # Safety
-    /// `this` is the live reader.
+    /// [`Self::request_read`] for a consumer with no destination; a read in flight is left as it is. `this` is the live reader.
     pub unsafe fn resume_reading(this: *mut Self) {
         // SAFETY: caller contract; borrows scoped to the calls.
         unsafe {

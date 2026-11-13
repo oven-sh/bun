@@ -44,6 +44,25 @@ for (let backend of ["api", "cli"] as const) {
       files: {
         "/a.js": `
         console.log(process.env.${systemKey});
+      `,
+      },
+      run: {
+        env: {
+          [systemKey]: "the run-time value, which inlining should have replaced",
+        },
+        stdout: systemValue + "\n",
+      },
+    });
+
+    // `import.meta.env.FOO` is the documented alias of `process.env.FOO` and inlines the same way.
+    itBundled("env/inline system import.meta.env", {
+      env: {
+        [systemKey]: systemValue,
+      },
+      backend: backend,
+      dotenv: "inline",
+      files: {
+        "/a.js": `
         console.log(import.meta.env.${systemKey});
       `,
       },
@@ -51,7 +70,7 @@ for (let backend of ["api", "cli"] as const) {
         env: {
           [systemKey]: "the run-time value, which inlining should have replaced",
         },
-        stdout: systemValue + "\n" + systemValue + "\n",
+        stdout: systemValue + "\n",
       },
     });
 

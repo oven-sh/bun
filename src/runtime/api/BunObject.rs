@@ -993,10 +993,10 @@ pub(crate) fn bun_resolve_sync_with_paths(
 /// Resolves `specifier` relative to `source` for a module mock, which stands for the file that an `import`
 /// of the name loads and for the file that `require()` of it loads. Returns the path of the first.
 /// `for_require`, where the caller asks for it, gets the path of the second when that is another file,
-/// and is left as it is otherwise.
-/// A specifier the resolver cannot resolve (the `ResolveMessage` case, e.g. "Cannot find module") yields
-/// `undefined` instead of throwing; everything else — an `onResolve` plugin throwing or returning an
-/// invalid result, a specifier that is not a string — is thrown.
+/// and is left as it is otherwise. A specifier the resolver cannot resolve (the
+/// `ResolveMessage` case, e.g. "Cannot find module") yields `undefined` instead of throwing;
+/// everything else — an `onResolve` plugin throwing or returning an invalid result, a specifier
+/// that is not a string — is thrown.
 // HOST_EXPORT(Bun__resolveForImportAndRequire, c)
 pub(crate) fn bun_resolve_for_import_and_require(
     global: &JSGlobalObject,

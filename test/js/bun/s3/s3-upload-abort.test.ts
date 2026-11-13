@@ -80,6 +80,8 @@ const env = {
   HTTPS_PROXY: undefined,
   http_proxy: undefined,
   https_proxy: undefined,
+  S3_BUCKET: undefined,
+  AWS_BUCKET: undefined,
 };
 
 async function run(opts: Parameters<typeof fixture>[0]) {
@@ -235,6 +237,55 @@ test.concurrent("an upload that rejects because the stream is locked doesn't rea
   `;
   expect(await run({ body, waitFor: `true` })).toEqual({
     stdout: `rejected: ERR_INVALID_STATE hello\n{"create":0,"part":0,"complete":0,"abort":0,"put":0}\n`,
+    stderr: "",
+    exited: 0,
+  });
+});
+
+// Without a bucket no request can be signed. The refusal happens inside the write that fills a part, or inside end().
+// Only ASAN catches the fetch() row freeing its sink inside the write.
+test.concurrent.each([
+  ["a fetch() body", `unsigned.write("key", await fetch(source.url), { ...opts, queueSize: 1 })`],
+  ["writer(), one request", `(w => (w.write("hello"), w.end()))(unsigned.file("key").writer(opts))`],
+  ["writer(), in parts", `(w => (w.write(new Uint8Array(partSize)), w.end()))(unsigned.file("key").writer(opts))`],
+])("an upload that cannot be signed rejects: %s", async (_, upload) => {
+  const body = `
+    const unsigned = new Bun.S3Client({ endpoint: server.url.origin, accessKeyId: "key", secretAccessKey: "secret" });
+    const chunk = new Uint8Array(1024 * 1024);
+    const source = Bun.serve({
+      port: 0,
+      fetch: () => new Response(new ReadableStream({ pull: controller => controller.enqueue(chunk) })),
+    });
+    console.log(await Promise.resolve(${upload}).then(() => "resolved", e => "rejected: " + e.code));
+    source.stop(true);
+  `;
+  expect(await run({ body, waitFor: `true`, retry: 1 })).toEqual({
+    stdout: `rejected: ERR_S3_INVALID_PATH\n{"create":0,"part":0,"complete":0,"abort":0,"put":0}\n`,
+    stderr: "",
+    exited: 0,
+  });
+});
+
+test.concurrent("fetch() releases its promise when the body is cancelled before the upload starts", async () => {
+  const body = `
+    const held = () => require("bun:jsc").heapStats().protectedObjectTypeCounts.Promise ?? 0;
+    let rejections = 0;
+    process.on("unhandledRejection", () => rejections++);
+    const before = held();
+    for (let i = 0; i < 20; i++) {
+      const stream = new ReadableStream();
+      fetch("s3://bucket/key", {
+        method: "PUT",
+        body: stream,
+        get s3() {
+          stream.cancel();
+          return { endpoint: server.url.origin, accessKeyId: "key", secretAccessKey: "secret" };
+        },
+      });
+    }
+  `;
+  expect(await run({ body, waitFor: `rejections === 20`, then: `console.log(held() - before < 5);` })).toEqual({
+    stdout: `true\n{"create":0,"part":0,"complete":0,"abort":0,"put":0}\n`,
     stderr: "",
     exited: 0,
   });

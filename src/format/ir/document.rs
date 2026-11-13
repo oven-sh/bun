@@ -6,7 +6,7 @@
 //! document that was written without a `Formatter`.
 
 use super::element::{
-    Flat, FlatFlags, FormatElement, GroupMode, Interned, LineMode, PrintMode, Tag,
+    BestFitting, Flat, FlatFlags, FormatElement, GroupMode, Interned, LineMode, PrintMode, Tag,
 };
 use super::formatter::Storage;
 
@@ -159,7 +159,7 @@ impl Tracker {
             FormatElement::Skip(_) => self.state.last_unknown = index,
             FormatElement::Interned(interned) => self.interned(interned, index, storage),
             FormatElement::BestFitting(best_fitting) => {
-                self.best_fitting(best_fitting.first, index, storage)
+                self.best_fitting(best_fitting, index, storage)
             }
             FormatElement::Tag(tag) => match tag {
                 Tag::StartGroup(group) => {
@@ -442,18 +442,23 @@ impl Tracker {
         self.content(flat, index);
     }
 
-    /// When flat, a `BestFitting` prints as its flattest variant, which is at `first`.
+    /// When flat, a `BestFitting` prints as its flattest variant. Any variant may be printed, so a
+    /// [`GroupMode::StaysExpanded`] group in any of them counts.
     #[inline(never)]
-    fn best_fitting(&mut self, first: u32, index: u32, storage: &Storage) {
-        let Some(&flattest) = storage.variants.get(first as usize) else {
+    fn best_fitting(&mut self, best_fitting: BestFitting, index: u32, storage: &Storage) {
+        let variants = storage.variants(best_fitting);
+        let Some(&flattest) = variants.first() else {
             return self.state.last_unknown = index;
         };
-        let (flat, will_break, stays_expanded) = storage.summary_and_stays_expanded(flattest);
+        let (flat, will_break) = storage.summary_of(flattest);
         if !self.state.is_in_line_suffix {
             if will_break {
                 self.state.last_will_break = index;
             }
-            if stays_expanded {
+            if variants
+                .iter()
+                .any(|&variant| storage.stays_expanded(variant))
+            {
                 self.state.last_stays_expanded = index;
             }
         }

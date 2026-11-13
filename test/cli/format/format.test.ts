@@ -1528,6 +1528,9 @@ describe.concurrent("bun fmt", () => {
       ["ts", `abc.b().c({ a: 1 }, { ${props} });\n`, `abc.b().c(\n  { a: 1 },\n  ${broken("  ")},\n);\n`],
       ["ts", `abc.b().c({ ${props} } as Foo);\n`, `abc.b().c(${broken()} as Foo);\n`],
       ["ts", `abc.b().c(x.y().z({ ${props} }));\n`, `abc.b().c(\n  x.y().z(${broken("  ")}),\n);\n`],
+      ["ts", `abc.b().c(x.y(1).z({ ${props} }));\n`, `abc.b().c(\n  x.y(1).z(${broken("  ")}),\n);\n`],
+      // An empty line before the tail is dropped, which also counts as the last group breaking. oxfmt keeps it.
+      ["ts", `abc\n\n  .b()\n  .c({ ${props} });\n`, `abc.b().c(${broken()});\n`, "Prettier"],
       ["ts", `abc.b().then((x) => foo({ ${props} }));\n`, `abc.b().then((x) =>\n  foo(${broken("  ")}),\n);\n`],
       [
         "ts",
@@ -1572,6 +1575,12 @@ describe.concurrent("bun fmt", () => {
         `const a = <A b={abc.b().c({ ${props} })} />;\n`,
         `const a = (\n  <A\n    b={abc.b().c(${broken("    ")})}\n  />\n);\n`,
       ],
+      // In the only parameter of a function whose return type has an object type, the other layout that's tried.
+      [
+        "ts",
+        `function f(x = abc.b().c({ aaaa: 1, b: 2, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx: 3 })): Foo<{ a: 1 }> {}\n`,
+        `function f(\n  x = abc.b().c({\n    aaaa: 1,\n    b: 2,\n    xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx: 3,\n  }),\n): Foo<{ a: 1 }> {}\n`,
+      ],
     ];
     test.each(flavors)("stays on one line before the object: %s", async (flavor, config) => {
       const { first, second, expected } = await printedTwice(flavor, config, [], oneLine);
@@ -1591,8 +1600,9 @@ describe.concurrent("bun fmt", () => {
     const expanded: Row[] = [
       // A function argument before the last call: the groups break once the last one does.
       ["ts", `abc.b(() => 1).c({ ${props} });\n`, `abc\n  .b(() => 1)\n  .c(${broken("  ")});\n`],
-      // An object that breaks in an earlier group.
+      // An object that breaks in an earlier group, alone or before one in the last group.
       ["ts", `abc.b({ ${props} }).c();\n`, `abc\n  .b(${broken("  ")})\n  .c();\n`],
+      ["ts", `abc.b({ ${props} }).c({ ${props} });\n`, `abc\n  .b(${broken("  ")})\n  .c(${broken("  ")});\n`],
       // The chain doesn't fit on one line even before the object.
       [
         "ts",
@@ -1616,8 +1626,11 @@ describe.concurrent("bun fmt", () => {
       expect(second).toEqual(expected);
     });
 
-    // An object that breaks beside the argument that's grouped puts every argument on its own line the next time, which
-    // is another layout of the call, not of the chain. That still takes two passes, as with the tools.
+    // An object that breaks beside the argument that's grouped puts every argument on its own line the next time, a
+    // broken return type of the grouped function does the same, and a chain inside the last group whose earlier group
+    // breaks puts every group of that chain on its own line. Those are other layouts of the call or of the inner
+    // chain, not of the chain's head, so they still take two passes, as with the tools. The `{` in `() => {}` counts
+    // as an object that can stay broken.
     test("still takes two passes when the object is beside a grouped argument", async () => {
       const rows: [string, string, string][] = [
         [
@@ -1629,6 +1642,26 @@ describe.concurrent("bun fmt", () => {
           `abc.b().c(foo({ ${props} }, () => {}));\n`,
           `abc\n  .b()\n  .c(\n    foo(\n      ${broken("      ")},\n      () => {},\n    ),\n  );\n`,
           `abc.b().c(\n  foo(\n    ${broken("    ")},\n    () => {},\n  ),\n);\n`,
+        ],
+        [
+          `abc.b().c(() => {}, { ${props} });\n`,
+          `abc\n  .b()\n  .c(() => {}, ${broken("  ")});\n`,
+          `abc.b().c(() => {}, ${broken()});\n`,
+        ],
+        [
+          `abc.b().c(async ({ id, token }: Props): Promise<{ id: number; name: string; email: string; ok: boolean }> => { return x; });\n`,
+          `abc\n  .b()\n  .c(\n    async ({\n      id,\n      token,\n    }: Props): Promise<{\n      id: number;\n      name: string;\n      email: string;\n      ok: boolean;\n    }> => {\n      return x;\n    },\n  );\n`,
+          `abc.b().c(\n  async ({\n    id,\n    token,\n  }: Props): Promise<{\n    id: number;\n    name: string;\n    email: string;\n    ok: boolean;\n  }> => {\n    return x;\n  },\n);\n`,
+        ],
+        [
+          `abc.b().c(x.y().z({ ${props} }).w());\n`,
+          `abc\n  .b()\n  .c(\n    x\n      .y()\n      .z(${broken("      ")})\n      .w(),\n  );\n`,
+          `abc.b().c(\n  x\n    .y()\n    .z(${broken("    ")})\n    .w(),\n);\n`,
+        ],
+        [
+          `abc.b().c(x.y(() => 1).z({ ${props} }));\n`,
+          `abc\n  .b()\n  .c(\n    x\n      .y(() => 1)\n      .z(${broken("      ")}),\n  );\n`,
+          `abc.b().c(\n  x\n    .y(() => 1)\n    .z(${broken("    ")}),\n);\n`,
         ],
       ];
       const names = rows.map((_, index) => `${index}.ts`);

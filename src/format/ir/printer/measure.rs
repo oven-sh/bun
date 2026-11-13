@@ -31,6 +31,8 @@ pub(super) struct Measure<'d> {
     uses_flat: bool,
     /// Content that contains a group with an id has been skipped, so that group's mode hasn't been recorded.
     has_skipped_group_ids: bool,
+    /// The group whose fit is measured hasn't ended yet.
+    is_in_measured_group: bool,
     elements: Elements<'d>,
     /// Number of runs left in the printer's queue. If it's one more than the queue's length, the extra one is the
     /// printer's current run, which comes first.
@@ -57,6 +59,7 @@ impl<'d> Measure<'d> {
             // The measurements don't know that a group is forced to break.
             uses_flat: uses_flat && !printer.has_expanded_group(),
             has_skipped_group_ids: false,
+            is_in_measured_group: false,
             elements: printer.elements.clone(),
             queue_len: printer.buffers.queue.len(),
             frames_len: printer.buffers.frames.len(),
@@ -159,6 +162,7 @@ impl<'d> Printer<'d> {
     fn group_fits_by_elements(&mut self, uses_flat: bool) -> PrintResult<bool> {
         let mut measure = Measure::new(self, uses_flat);
         self.measure_push(&mut measure, FrameKind::Group, PrintMode::Flat);
+        measure.is_in_measured_group = true;
         self.fits(&mut measure, &mut AllPredicate)
     }
 
@@ -282,6 +286,7 @@ impl<'d> Printer<'d> {
             .last()
             .or_else(|| printer_frames.get(measure.frames_len - 1));
         measure.mode = top.map_or(PrintMode::Expanded, |top| top.mode);
+        measure.is_in_measured_group = measure.is_in_measured_group && !own.is_empty();
         Ok(())
     }
 
@@ -391,8 +396,12 @@ impl<'d> Printer<'d> {
             FormatElement::Interned(content) => self.measure_content(measure, *content),
             FormatElement::Tag(tag) => match tag {
                 Tag::StartGroup(group) => {
-                    let is_flat = group.mode().is_flat()
-                        && !self.is_forced(measure.elements.at().saturating_sub(1), group);
+                    let is_forced = self.is_forced(measure.elements.at().saturating_sub(1), group);
+                    // A group that holds a forced group breaks, as it will when the output is formatted again.
+                    if is_forced && measure.is_in_measured_group {
+                        return Ok(Fits::No);
+                    }
+                    let is_flat = group.mode().is_flat() && !is_forced;
                     if measure.must_be_flat && !is_flat {
                         return Ok(Fits::No);
                     }

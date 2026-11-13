@@ -15,6 +15,7 @@ use super::is_long_curried_call;
 use super::typecast::is_cast_target;
 use crate::js::parentheses::expression::expression_needs_parentheses;
 use crate::js::print::call_like_expression::arguments::arguments_grouped_layout;
+use crate::js::print::call_like_expression::is_printed_as_member_chain;
 use crate::prelude::*;
 use crate::{best_fitting, write};
 use bun_core::strings;
@@ -296,49 +297,64 @@ impl<'a, 'b> MemberChain<'a, 'b> {
     }
 
     /// True if the last group is printed the same way the next time, once a group in it breaks because it doesn't fit.
-    /// The arguments of a call aren't, at any depth: if one that isn't the grouped one breaks, every argument goes on
-    /// its own line the next time (`write_grouped_arguments`), so a `{` in such an argument is a reason to say no.
+    /// Two layouts aren't, at any depth. The arguments of a call: if one that isn't the grouped one breaks, every
+    /// argument goes on its own line the next time (`write_grouped_arguments`). A chain: if a group before its last
+    /// one breaks, or its last one does after a function argument, every group goes on its own line the next time
+    /// (`groups_should_break`). A `{` in such a place is a reason to say no.
     fn last_group_prints_the_same_once_broken(&self, f: &Formatter<'a>) -> bool {
         let Some(last) = self.groups().last() else {
             return false;
         };
-        let prints_the_same = |call: Call<'a>| {
-            let args = call.args();
-            let Some(layout) = arguments_grouped_layout(args, f) else {
-                return true;
-            };
-            let grouped = match layout.is_grouped_first() {
-                true => 0,
-                false => args.len().saturating_sub(1),
-            };
-            let can_stay_expanded = |argument: Expr<'a>| {
-                strings::contains_char(f.source_text().text_for(&argument.span()), b'{')
-            };
-            !(args.iter().enumerate())
-                .any(|(index, argument)| index != grouped && can_stay_expanded(argument))
-        };
         // The arguments of the calls of the last group, and everything in them.
         let mut rest = SmallVec::<[Node<'a>; 8]>::new();
-        for member in last {
-            if let ChainMember::CallExpression { expression, .. } = member
-                && let Some(call) = expression.as_call_like()
-            {
-                if !prints_the_same(call) {
-                    return false;
-                }
-                rest.extend(call.args().iter().map(Node::from));
-            }
+        if !push_arguments_if_printed_the_same(last, &mut rest, f) {
+            return false;
         }
         while let Some(node) = rest.pop() {
             if let Node::Expr(e) = node
                 && let Some(call) = e.as_call_like()
-                && !prints_the_same(call)
             {
-                return false;
+                if !arguments_print_the_same_once_broken(call, f) {
+                    return false;
+                }
+                if is_printed_as_member_chain(e, call, f) {
+                    let mut members = Members::new();
+                    let has_inner_call = push_chain_members(e, &mut members, f);
+                    if !has_single_group_after_head(has_inner_call, f) {
+                        members.reverse();
+                        let chain = MemberChain::new(e, &members, f);
+                        if !chain.prints_the_same_once_last_group_broken(f)
+                            || !push_arguments_if_printed_the_same(chain.members, &mut rest, f)
+                        {
+                            return false;
+                        }
+                        continue;
+                    }
+                }
             }
             node.for_each_child(|child| rest.push(child));
         }
         true
+    }
+
+    /// True if this chain, which is inside the last group of another, goes the same way the next time once a group
+    /// in it breaks.
+    fn prints_the_same_once_last_group_broken(&self, f: &Formatter<'a>) -> bool {
+        if self.tail_len() <= 1 {
+            return true;
+        }
+        let calls = self.calls(f);
+        if calls.are_complex {
+            return true;
+        }
+        if calls.function_breaks_last {
+            return false;
+        }
+        let Some(before_last) = self.group(self.group_ends.len().saturating_sub(2)).last() else {
+            return false;
+        };
+        let before_last_group = Span::new(self.root.span().start, before_last.expr().span().end);
+        !strings::contains_char(f.source_text().text_for(&before_last_group), b'{')
     }
 
     /// Prettier's `nodeHasComment`.
@@ -441,6 +457,56 @@ impl<'a> Format<'a> for MemberChain<'a, '_> {
             labelled(LabelId::of(JsLabels::MemberChain), &format_content)
         );
     }
+}
+
+/// Pushes the arguments of the calls of `members`, and the index of each computed member, onto `rest`, unless a
+/// call's arguments aren't printed the same way once one of them breaks.
+fn push_arguments_if_printed_the_same<'a>(
+    members: &[ChainMember<'a>],
+    rest: &mut SmallVec<[Node<'a>; 8]>,
+    f: &Formatter<'a>,
+) -> bool {
+    for member in members {
+        match member {
+            ChainMember::CallExpression { expression, .. } => {
+                if let Some(call) = expression.as_call_like() {
+                    if !arguments_print_the_same_once_broken(call, f) {
+                        return false;
+                    }
+                    rest.extend(call.args().iter().map(Node::from));
+                }
+            }
+            ChainMember::ComputedMember(e) => {
+                if let Some(index) = e.index() {
+                    rest.push(Node::from(index));
+                }
+            }
+            ChainMember::Node(head) => rest.push(Node::from(*head)),
+            ChainMember::StaticMember(_) | ChainMember::TSNonNullExpression(_) => {}
+        }
+    }
+    true
+}
+
+/// True if the arguments of `call` are printed the same way the next time once one of them breaks: none but the
+/// grouped one can stay broken, and neither can the return type of a grouped function, which puts every argument
+/// on its own line too (`write_grouped_arguments`).
+fn arguments_print_the_same_once_broken<'a>(call: Call<'a>, f: &Formatter<'a>) -> bool {
+    let args = call.args();
+    let Some(layout) = arguments_grouped_layout(args, f) else {
+        return true;
+    };
+    let grouped = match layout.is_grouped_first() {
+        true => 0,
+        false => args.len().saturating_sub(1),
+    };
+    let can_stay_expanded =
+        |span: Span| strings::contains_char(f.source_text().text_for(&span), b'{');
+    !(args.iter().enumerate()).any(|(index, argument)| match index == grouped {
+        false => can_stay_expanded(argument.span()),
+        true => (argument.as_fn().and_then(|function| function.return_type()))
+            .is_some_and(|return_type| can_stay_expanded(return_type.span())),
+    })
 }
 
 fn has_leading_comment<'a>(member: &ChainMember<'a>, f: &Formatter<'a>) -> bool {

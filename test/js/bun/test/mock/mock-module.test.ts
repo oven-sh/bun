@@ -2347,13 +2347,16 @@ describe.concurrent("a name that import and require() resolve to two files", () 
       import * as dep from "#dep";
       const sub = require("dual/sub");
       const depRequired = require("#dep");
-      const mocked = name => {
+      // \`atOnce\` is read from the namespace that an import holds, before the first require() of the name.
+      const mocked = (name, held) => {
         let calls = 0;
         ${mock}(name, () => ({ which: "mock", fn: () => "mock", calls: ++calls }));
-        return [require(name), calls];
+        const atOnce = held && [calls, held.which];
+        return [require(name), calls, atOnce];
       };
       test("the ES module: it is patched, and require() gets the mock", async () => {
-        const [required, calls] = mocked("dual");
+        const [required, calls, atOnce] = mocked("dual", dual);
+        expect(atOnce).toEqual([1, "mock"]);
         expect([calls, dual.which, required.which, required.calls]).toEqual([1, "mock", "mock", 1]);
         expect(dual.fn).toBe(required.fn);
         expect(await import("dual")).toBe(dual);
@@ -2366,7 +2369,8 @@ describe.concurrent("a name that import and require() resolve to two files", () 
         expect(imported.fn).toBe(required.fn);
       });
       test("both", async () => {
-        const [required, calls] = mocked("#dep");
+        const [required, calls, atOnce] = mocked("#dep", dep);
+        expect(atOnce).toEqual([1, "mock"]);
         expect([calls, dep.which, depRequired.which, required.which, required.calls]).toEqual([1, "mock", "real cjs", "mock", 1]);
         expect(dep.fn).toBe(required.fn);
       });
@@ -2396,6 +2400,85 @@ describe.concurrent("a name that import and require() resolve to two files", () 
       },
       9,
       ["--isolate"],
+    );
+  });
+
+  test("a mock without a factory over the ES module of the name that has run", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "automock.test.js": `
+          import { expect, jest, test } from "bun:test";
+          import * as dual from "dual";
+          import * as dep from "#dep";
+          import * as lib from "./lib";
+          // The mock is made of the file that require() loads. What the import holds is read before the first require() of the name.
+          const mocked = (name, held) => {
+            expect([jest.isMockFunction(held.fn), held.which]).toEqual([true, "real cjs"]);
+            const required = require(name);
+            expect(required.fn).toBe(held.fn);
+            expect(jest.requireMock(name)).toBe(required);
+            return required;
+          };
+          test("jest.doMock() patches it at the call, and require() gets the same functions", () => {
+            jest.doMock("dual");
+            expect(mocked("dual", dual).fn()).toBeUndefined();
+            expect(dual.fn).toHaveBeenCalledTimes(1);
+          });
+          test("so does jest.mock() in a test", () => {
+            jest.mock("#dep");
+            expect(mocked("#dep", dep).fn()).toBeUndefined();
+            expect(dep.fn).toHaveBeenCalledTimes(1);
+          });
+          test("and so does { spy: true }, which keeps the implementations", () => {
+            jest.doMock("./lib", { spy: true });
+            expect(mocked("./lib", lib).fn()).toBe("real cjs");
+            expect(lib.fn).toHaveBeenCalledTimes(1);
+          });
+          test("each file that require() loads ran once", () => {
+            expect(globalThis.loaded).toEqual(["dual esm", "#dep esm", "./lib esm", "dual cjs", "#dep cjs", "./lib cjs"]);
+          });
+        `,
+      },
+      4,
+    );
+  });
+
+  test("a mock without a factory over the ES module that a preload or an earlier test file has run", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "preload.js": `import "dual";`,
+        "helper.cjs": `module.exports = { dual: require("dual"), dep: require("#dep") };`,
+        "1.test.js": `
+          import { expect, test } from "bun:test";
+          import * as dep from "#dep";
+          test("a test file runs the ES module of one name, and the preload has run that of another", () => {
+            expect(dep.which).toBe("real esm");
+            expect(globalThis.loaded).toEqual(["dual esm", "#dep esm"]);
+          });
+        `,
+        "2.test.js": `
+          import { expect, jest, test } from "bun:test";
+          import * as dual from "dual";
+          import * as dep from "#dep";
+          jest.mock("dual");
+          jest.mock("#dep");
+          // Read before the helper runs, which is the first to call require() of the names.
+          const atOnce = [dual, dep].map(held => [jest.isMockFunction(held.fn), held.which]);
+          const helper = require("./helper.cjs");
+          test("the next test file mocks both, and a CommonJS module that requires them gets the same functions", () => {
+            expect(atOnce).toEqual([[true, "real cjs"], [true, "real cjs"]]);
+            expect(helper.dual.fn).toBe(dual.fn);
+            expect(helper.dep.fn).toBe(dep.fn);
+            dual.fn.mockReturnValue("stubbed");
+            expect([helper.dual.fn(), helper.dep.fn()]).toEqual(["stubbed", undefined]);
+            expect(globalThis.loaded).toEqual(["dual esm", "#dep esm", "dual cjs", "#dep cjs"]);
+          });
+        `,
+      },
+      2,
+      ["--preload", "./preload.js"],
     );
   });
 

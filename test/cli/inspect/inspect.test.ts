@@ -671,3 +671,191 @@ test("LifecycleReporter.getModuleGraph reports an empty argv when process.argv i
   expect(child.exitCode).toBe(null);
   webSocket.close();
 });
+
+// A scope object of a paused call frame answers for the scope behind it, and all the scope objects of a realm have
+// one structure. The engine's caches went by that structure: they kept where the global object has a property as a
+// place in the scope object, what one scope holds as what every scope holds, and that a name is missing after the
+// scope had got it (oven-sh/WebKit#1048).
+describe("a scope object of a paused call frame", () => {
+  // Runs `source` to its `debugger` statement. `call` runs a function with the object of the global scope as `this`.
+  // After `parameters` the function gets the object of another scope of the paused frame.
+  async function pause(source: string) {
+    const child = spawn({
+      cmd: [bunExe(), "--inspect-wait=ws://127.0.0.1:0/", "-e", source],
+      // A function is compiled where it reaches the threshold, and not later on another thread.
+      env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    let stderr = "";
+    let url: string | undefined;
+    const decoder = new TextDecoder();
+    for await (const chunk of child.stderr as ReadableStream) {
+      stderr += decoder.decode(chunk);
+      url = stderr.match(/(ws:\/\/[^\s]+)/)?.[1];
+      if (url) break;
+    }
+    if (!url) throw new Error(`Unable to find the inspector URL in:\n${stderr}`);
+
+    type Reply = { result?: any; error?: { message: string } };
+    const pending = new Map<number, (reply: Reply) => void>();
+    const paused = Promise.withResolvers<{ callFrames: { scopeChain: { type: string; object: any }[] }[] }>();
+    // A crash closes the socket. Resolve instead of rejecting so the failure shows up in the test's assertion.
+    const closed = Promise.withResolvers<Reply>();
+    const opened = Promise.withResolvers<Reply>();
+    const webSocket = new WebSocket(url);
+    webSocket.addEventListener("open", () => opened.resolve({}));
+    webSocket.addEventListener("close", () =>
+      closed.resolve({ error: { message: "the inspector closed the socket" } }),
+    );
+    webSocket.addEventListener("error", () => closed.resolve({ error: { message: "the inspector socket failed" } }));
+    webSocket.addEventListener("message", ({ data }) => {
+      const message = JSON.parse(data.toString());
+      if (message.method === "Debugger.paused") paused.resolve(message.params);
+      pending.get(message.id)?.(message);
+      pending.delete(message.id);
+    });
+
+    let nextId = 1;
+    function send(method: string, params: object = {}): Promise<Reply> {
+      const id = nextId++;
+      const { promise, resolve } = Promise.withResolvers<Reply>();
+      pending.set(id, resolve);
+      webSocket.send(JSON.stringify({ id, method, params }));
+      return Promise.race([promise, closed.promise]);
+    }
+
+    expect(await Promise.race([opened.promise, closed.promise])).toEqual({});
+    await Promise.all([
+      send("Inspector.enable"),
+      send("Debugger.enable"),
+      send("Debugger.setBreakpointsActive", { active: true }),
+      send("Debugger.setPauseOnDebuggerStatements", { enabled: true }),
+    ]);
+    send("Inspector.initialized");
+    const { callFrames } = await Promise.race([paused.promise, closed.promise.then(() => ({ callFrames: [] }))]);
+    const scopes = callFrames[0]?.scopeChain ?? [];
+    const globalScope = scopes.find(scope => scope.type === "global")?.object;
+    const anotherScope = scopes.find(scope => scope.type !== "global")?.object;
+    expect({ globalScope, anotherScope }).toEqual({
+      globalScope: expect.objectContaining({ objectId: expect.any(String) }),
+      anotherScope: expect.objectContaining({ objectId: expect.any(String) }),
+    });
+
+    return {
+      // What the function returned, or what went wrong.
+      async call(functionDeclaration: string, ...parameters: unknown[]) {
+        const reply = await send("Runtime.callFunctionOn", {
+          objectId: globalScope.objectId,
+          functionDeclaration,
+          arguments: [...parameters.map(value => ({ value })), { objectId: anotherScope.objectId }],
+          returnByValue: true,
+        });
+        if (reply.error || reply.result.wasThrown) return reply;
+        return reply.result.result.value;
+      },
+      // Lets the program run to its end.
+      async resume() {
+        await send("Debugger.resume");
+        const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
+        return { stdout, exitCode, signalCode: child.signalCode };
+      },
+      async [Symbol.asyncDispose]() {
+        webSocket.close();
+        child.kill();
+        await child.exited;
+      },
+    };
+  }
+
+  // console.write keeps its writer on `this` and reads it back as an own property.
+  const writesWithTheScopeAsThis = `function (count) {
+    const before = writersMade();
+    for (let i = 0; i < count; i++) console.write.call(this, i % 500 === 499 ? "x" : "");
+    return writersMade() - before;
+  }`;
+
+  test.concurrent.each([
+    ["console.write has not run before", ""],
+    [
+      "console.write is compiled already",
+      `const other = {}; for (let i = 0; i < 3000; i++) console.write.call(other, "");`,
+    ],
+  ])("is the `this` of console.write: %s", async (_, warmUp) => {
+    await using session = await pause(`
+      let writers = 0;
+      const { writer } = Bun.stdout;
+      Bun.stdout.writer = function () {
+        writers++;
+        return writer.apply(this, arguments);
+      };
+      globalThis.writersMade = () => writers;
+      ${warmUp}
+      debugger;
+      process.exit(0);
+    `);
+
+    // Not more than one, and not exactly one: the writer is console.write's to keep where it likes.
+    expect(await session.call(writesWithTheScopeAsThis, 2000)).toBeOneOf([0, 1]);
+    expect(await session.resume()).toEqual({ stdout: "xxxx", exitCode: 0, signalCode: null });
+  });
+
+  // The names are missing while these functions are compiled. Then the global object gets them.
+  const asksForNamesThatComeLater = `function (count, anotherScope) {
+    const hasOwn = Object.prototype.hasOwnProperty;
+    const read = scope => scope.later1;
+    const has = scope => "later2" in scope;
+    const readKey = (scope, key) => scope[key];
+    const hasKey = (scope, key) => key in scope;
+    const remove = scope => delete scope.later5;
+    let missing = 0;
+    for (; missing < count; missing++) {
+      if (read(this) !== undefined || has(this) || readKey(this, "later3") !== undefined || hasKey(this, "later4")) break;
+      if (!remove(this) || hasOwn.call(this, "later6")) break;
+    }
+    Object.assign(globalThis, { later1: 1, later2: 2, later3: 3, later4: 4, later5: 5, later6: 6 });
+    return {
+      missing,
+      read: read(this),
+      has: has(this),
+      readKey: readKey(this, "later3"),
+      hasKey: hasKey(this, "later4"),
+      removed: remove(this) && !("later5" in globalThis),
+      hasOwn: hasOwn.call(this, "later6"),
+      hasOwnOfAnotherScope: hasOwn.call(anotherScope, "later6"),
+    };
+  }`;
+
+  // The scope may hold a "then": a promise that is resolved with the scope object has to ask.
+  const countsReadsOfThen = `function () {
+    let reads = 0;
+    Object.defineProperty(globalThis, "then", { get() { reads++; }, configurable: true });
+    Promise.resolve(this);
+    delete globalThis.then;
+    return reads;
+  }`;
+
+  test.concurrent("answers with what its scope holds at the time", async () => {
+    await using session = await pause(`
+      function pausesHere() {
+        debugger;
+      }
+      pausesHere();
+      process.exit(0);
+    `);
+
+    expect(await session.call(asksForNamesThatComeLater, 2000)).toEqual({
+      missing: 2000,
+      read: 1,
+      has: true,
+      readKey: 3,
+      hasKey: true,
+      removed: true,
+      hasOwn: true,
+      hasOwnOfAnotherScope: false,
+    });
+    expect(await session.call(countsReadsOfThen)).toBe(1);
+    expect(await session.resume()).toEqual({ stdout: "", exitCode: 0, signalCode: null });
+  });
+});

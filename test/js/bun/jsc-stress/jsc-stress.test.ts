@@ -134,6 +134,10 @@ const jsFixtures = [
   "function-prototype-call-not-called-as-a-method.js",
 ];
 
+// These make their functions with $vm.createBuiltin. Only an engine that is built with assertions has $vm.
+const builtinFixturesDir = path.join(fixturesDir, "builtins");
+const builtinFixtures = ["get-by-id-direct-global-proxy.js", "debugger-scope-property-caches.js"];
+
 const wasmFixtures = [
   // BBQ
   "bbq-fusedif-register-alloc.js",
@@ -353,6 +357,46 @@ describe.concurrent("JSC JIT Stress Tests", () => {
         },
         fixtureTimeout,
       );
+    }
+  });
+
+  describe("Builtins ($vm.createBuiltin)", () => {
+    const probe = Bun.spawnSync({
+      cmd: [bunExe(), "-e", 'process.stdout.write(typeof globalThis.$vm?.createBuiltin === "function" ? "1" : "0")'],
+      env: { ...bunEnv, BUN_JSC_useDollarVM: "1" },
+      stdout: "pipe",
+    });
+    const hasCreateBuiltin = probe.stdout.toString() === "1";
+
+    for (const fixture of builtinFixtures) {
+      // Without the JIT every run of the fixture's loops is the interpreter's.
+      for (const [mode, modeEnv] of [
+        ["", {}],
+        [" without the JIT", { BUN_JSC_useJIT: "false" }],
+      ] as const) {
+        test.skipIf(!hasCreateBuiltin)(
+          fixture + mode,
+          async () => {
+            const fixturePath = path.join(builtinFixturesDir, fixture);
+
+            await using proc = Bun.spawn({
+              cmd: [bunExe(), "--preload", preloadPath, fixturePath],
+              env: { ...fixtureEnv, ...parseJSCFlags(fixturePath), ...modeEnv },
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+
+            const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+            if (exitCode !== 0) {
+              console.log("stdout:", stdout);
+              console.log("stderr:", stderr);
+            }
+            expect(exitCode).toBe(0);
+          },
+          fixtureTimeout,
+        );
+      }
     }
   });
 

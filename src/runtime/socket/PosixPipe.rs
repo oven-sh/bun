@@ -2,9 +2,8 @@
 //!
 //! A pipe can't be a `us_socket_t` (uSockets reads it with `recv`), so a `BufferedReader` reads it
 //! and `write(2)` writes it, the way `FdPipe` does for a descriptor that is only written to. The
-//! descriptor is node's `uv_pipe_open` adoption: it is made non-blocking and closed with the
-//! socket, except stdio, whose open file description the rest of the program shares: that stays
-//! as it is, and a blocking one is read one `read(2)` per poll wakeup.
+//! descriptor is node's `uv_pipe_open` adoption: it is made non-blocking (stdio too, and the flag
+//! is never put back) and, unless it is stdio, closed with the socket.
 
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -76,12 +75,10 @@ impl PosixPipe {
     ) -> Result<JsResult<()>, sys::SystemErrno> {
         let status = sys::get_fcntl_flags(fd).map_err(sys::SystemErrno::from)? as i32;
         let writable = (status & libc::O_ACCMODE) != libc::O_RDONLY;
-        // Like `uv_pipe_open`: a blocking FIFO could block the reader's `read(2)` for good. Not
-        // on stdio, whose O_NONBLOCK the program's own reads and writes would then hit.
-        let mut nonblocking = (status & libc::O_NONBLOCK) != 0;
-        if !nonblocking && !fd.is_stdio() {
+        // Like `uv_pipe_open`, stdio included: a blocking FIFO could block the reader's `read(2)`
+        // for good, and the flag stays set afterwards, as in node.
+        if (status & libc::O_NONBLOCK) == 0 {
             sys::update_nonblocking(fd, true).map_err(sys::SystemErrno::from)?;
-            nonblocking = true;
         }
         let this = bun_core::heap::into_raw(Box::new(Self {
             handle: Default::default(),
@@ -113,10 +110,8 @@ impl PosixPipe {
             r.set_parent(this.cast::<c_void>());
             // `close` closes the descriptor itself, before the socket hears of the close.
             r.flags.remove(PosixFlags::CLOSE_HANDLE);
-            // Without it the reader is a `FileType::Pipe`: one poll-guarded `read(2)` per wakeup.
-            if nonblocking {
-                r.flags.insert(PosixFlags::NONBLOCKING);
-            }
+            // Without it the reader is a `FileType::Pipe`, whose `read(2)` on macOS is unguarded.
+            r.flags.insert(PosixFlags::NONBLOCKING);
             // Armed by `resume_stream`; a registration now would only be undone in `on_open`.
             if pause_on_connect {
                 r.flags.insert(PosixFlags::IS_PAUSED);

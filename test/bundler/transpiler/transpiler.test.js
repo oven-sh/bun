@@ -6128,6 +6128,13 @@ describe("block-level function declarations", () => {
     expect(print(code)).toBe(expected);
   });
 
+  // With the declaration, JavaScriptCore reads `undefined` for `arguments` before the block in a generator.
+  it("sloppy code lowers a function named arguments to let", () => {
+    expect(print("function* o() {\n  {\n    function arguments() {}\n  }\n  return arguments;\n}\n")).toBe(
+      "function* o() {\n  {\n    let arguments = function() {};\n  }\n  return arguments;\n}\n",
+    );
+  });
+
   // A strict scope has no `var` to lose, and its "use strict" may not be printed.
   it.each([
     [

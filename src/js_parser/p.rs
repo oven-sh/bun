@@ -3453,6 +3453,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // The REPL wraps each input in a function, which would own the `var` of a top-level block.
             || (self.options.repl_mode && self.fn_or_arrow_data_visit.is_outside_fn_or_arrow)
             || self.sloppy_mode_block_fn_without_var.contains_key(&name)
+            // JavaScriptCore loses the arguments object of a generator or an awaiting async function to a declaration of this name.
+            || self.load_name_from_ref(name) == b"arguments"
     }
 
     fn hoist_symbols(&mut self, mut scope: js_ast::StoreRef<js_ast::Scope>) {

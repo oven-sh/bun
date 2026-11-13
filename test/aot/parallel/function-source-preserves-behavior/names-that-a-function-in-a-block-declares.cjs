@@ -1,5 +1,4 @@
-// Reference: bun build --compile
-// In sloppy code a function that is declared in a block is a variable of the function around it too. `bun <file>` loses that variable with the branch.
+// In sloppy code a function that is declared in a block is a variable of the function around it too, also in a branch that never runs.
 const cases = {
   inABlock: [function () { if (false) { function g() {} } return g === undefined; }],
   inAnElse: [function () { if (true) ; else { function g() {} } return g === undefined; }],

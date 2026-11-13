@@ -275,6 +275,66 @@ module.exports = g;
     expect(await bunRun(path.join(String(dir), "nested.cjs"))).toSpawn("1");
   });
 
+  // The name `arguments` keeps the `let`. With the declaration, JavaScriptCore reads `undefined` for `arguments`
+  // before the block in a generator and in an async function that has an `await`.
+  // test262 annexB/language/function-code/block-decl-func-skip-arguments.js. V8 has the function after the block.
+  test.concurrent("a function named arguments stays in its block", async () => {
+    using dir = tempDir("block-level-function", {
+      "arguments.cjs": `
+const tag = value => Object.prototype.toString.call(value);
+const out = {};
+
+out.plain = (function () {
+  const seen = [tag(arguments)];
+  { seen.push(typeof arguments); function arguments() {} }
+  seen.push(tag(arguments));
+  return seen;
+})();
+
+out.generator = (function* () {
+  const a = arguments;
+  { function arguments() {} }
+  return tag(a);
+})().next().value;
+
+out.generatorMethod = ({
+  *m() { const a = arguments; { function arguments() {} } return tag(a); },
+}).m().next().value;
+
+(async () => {
+  out.asyncGenerator = (await (async function* () {
+    const a = arguments;
+    { function arguments() {} }
+    yield tag(a);
+  })().next()).value;
+
+  out.asyncWithAwait = await (async function () {
+    const a = arguments;
+    await 0;
+    { function arguments() {} }
+    return tag(a);
+  })();
+
+  out.asyncMethodWithAwait = await ({
+    async m() { const a = arguments; await 0; { function arguments() {} } return tag(a); },
+  }).m();
+
+  console.log(JSON.stringify(out));
+})();
+`,
+    });
+    const result = await bunRun(path.join(String(dir), "arguments.cjs"));
+    expect(result).toSpawn();
+    expect(JSON.parse(result.stdout)).toEqual({
+      plain: ["[object Arguments]", "function", "[object Arguments]"],
+      generator: "[object Arguments]",
+      generatorMethod: "[object Arguments]",
+      asyncGenerator: "[object Arguments]",
+      asyncWithAwait: "[object Arguments]",
+      asyncMethodWithAwait: "[object Arguments]",
+    });
+  });
+
   // Code that never runs still gives the name its `var`. The answer does not depend on dead code elimination.
   test.concurrent("dead code keeps the var, with and without dead code elimination", async () => {
     using dir = tempDir("block-level-function", {
@@ -539,7 +599,6 @@ module.exports = (function () {${body}
   // Right on main and in node, wrong here. A row fails when its cause is fixed, and then it moves to the tables above.
   describe("known differences from node", () => {
     const node = {
-      generatorArguments: "[object Arguments]",
       twoOfANameWithEval: "2",
     };
     let rows: Promise<Record<string, string>> | undefined;
@@ -555,15 +614,6 @@ const attempt = fn => {
   }
 };
 const out = {};
-
-// JavaScriptCore: in a generator the block function takes the name before its block runs.
-out.generatorArguments = attempt(function () {
-  return (function* () {
-    const a = arguments;
-    { function arguments() {} }
-    return Object.prototype.toString.call(a);
-  })().next().value;
-});
 
 // The parser drops the first of two functions with one name. The second one never runs here.
 out.twoOfANameWithEval = attempt(function () {
@@ -595,11 +645,16 @@ console.log(JSON.stringify(out));
     }
 
     // A file with no CommonJS marker runs as a module, and the dead declaration is still printed.
-    test.failing("a dead function with sloppy-only text in a file that runs as a module", async () => {
-      using dir = tempDir("block-level-function", {
-        "dead.js": `if (false) { function o() { var static = 1; } }\nconsole.log("loaded");\n`,
+    for (const [what, dead] of [
+      ["sloppy-only text", "function o() { var static = 1; }"],
+      ["a sloppy-only name", "function yield() {}"],
+    ]) {
+      test.failing(`a dead function with ${what} in a file that runs as a module`, async () => {
+        using dir = tempDir("block-level-function", {
+          "dead.js": `if (false) { ${dead} }\nconsole.log("loaded");\n`,
+        });
+        expect(await bunRun(path.join(String(dir), "dead.js"))).toSpawn("loaded");
       });
-      expect(await bunRun(path.join(String(dir), "dead.js"))).toSpawn("loaded");
-    });
+    }
   });
 });

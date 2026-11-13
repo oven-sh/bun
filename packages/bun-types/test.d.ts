@@ -1295,6 +1295,12 @@ declare module "bun:test" {
     concurrent?: true;
     annotations: TestAnnotation[];
     result: {
+      /**
+       * `"run"` while the test runs. A hook that runs after the test reads how the current attempt stands, which a
+       * retry, `test.fails()` or `test.failing()` can still change. Once the test, its hooks and its fixture teardown
+       * have finished, this is the result that `bun test` reports. A test that `bun test` reports as todo reads
+       * `"skip"`.
+       */
       state: "run" | "pass" | "fail" | "skip";
       /** Errors thrown by the test, its hooks and its fixtures. */
       errors?: unknown[];

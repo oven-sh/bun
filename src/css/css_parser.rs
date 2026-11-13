@@ -3648,7 +3648,7 @@ impl<'a> Parser<'a> {
             || match text.first() {
                 Some(b'+') => true,
                 Some(b'.') if before.last().is_some_and(u8::is_ascii_digit) => true,
-                // `-0` and `.0` print as `0`, which reads on from a name or a number before it.
+                // `.0` and `-0` print as `0`, `.5%` as `0.5%`: that digit joins the item before it.
                 Some(b'-' | b'.') => list
                     .and_then(|items| items.last())
                     .is_some_and(|item| item.joins_a_number()),

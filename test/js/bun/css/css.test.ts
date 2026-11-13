@@ -8556,6 +8556,13 @@ describe("a number that touches the token before it", () => {
     "a{--x:..0}",
     "a{--x:+-0}",
     "a{--x:#.0}",
+    // What shipped CSS has: a token path, and the UUID that css-variables-1 says must print as written.
+    "a{--x:colors.green.1000;--y:colors.green.100}",
+    "a{--x:{color.danger.600};--y:{spacing.0-5}}",
+    "a{color:theme(colors.blue.500)}",
+    "a{height:calc(100vh - theme(spacing.10))}",
+    "a{border:1px solid token(colors.red.400)}",
+    "a{--uuid:12345678-12e3-8d9b-a456-426614174000}",
     // Every value that is kept as tokens.
     "a{foo:1-0}",
     "a{z-index:1-0}",
@@ -8587,6 +8594,7 @@ describe("a number that touches the token before it", () => {
   minify_test("a{--x:a\\31 .0}", "a{--x:a1.0}");
   // Only the number that touches keeps its text.
   minify_test("a{--x:1.0-0}", "a{--x:1-0}");
+  minify_test("a{--x:{colors.info.500} / 0.4}", "a{--x:{colors.info.500}/.4}");
   // A kept text that ends inside an escape is closed: the blank that stands for the comment stays
   // a blank, and `}` stays the end of the rule.
   minify_test("a{--x:1234567\\70/**/a}", "a{--x:1234567\\70  a}");
@@ -8601,7 +8609,7 @@ describe("a number that touches the token before it", () => {
       'a{--x:10-5;--y:2.0.0-rc.1;--z:beta-0;--w:1 - 0;--s:"1.0.0-beta.0"}',
       'a{--x:10-5;--y:2.0.0-rc.1;--z:beta-0;--w:1 - 0;--s:"1.0.0-beta.0"}',
     );
-    minify_test("a{--x:-0;--y:a -0.50;--z:(-0.50);--w:a,-0.50}", "a{--x:0;--y:a -.5;--z:(-.5);--w:a,-.5}");
+    minify_test("a{--x:-5.0;--y:a -0.50;--z:(-0.50);--w:a,-0.50}", "a{--x:-5;--y:a -.5;--z:(-.5);--w:a,-.5}");
     minify_test("a{--x:var(--a)-0.50;--y:foo(1).50;--z:5%-0.50}", "a{--x:var(--a)-.5;--y:foo(1).5;--z:5%-.5}");
     // The arguments of a pseudo-class lose their comments: a kept `-5e` would read on into `+1`.
     minify_test("a:unknown(1-5e/**/+1){color:red}", "a:unknown(1-5\\65 +1){color:red}");

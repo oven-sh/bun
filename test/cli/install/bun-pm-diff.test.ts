@@ -2197,6 +2197,27 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("a style sheet: a number that touches the token before it is not folded into that token", async () => {
+    const { text, exitCode } = await pretty({
+      "a/invalid.css": ".a{z-index:5;z-index:1-0}",
+      "b/invalid.css": ".a{z-index:5;z-index:10}",
+      "a/theme.css": ".a{margin:theme(spacing.10)}",
+      "b/theme.css": ".a{margin:theme(spacing.1)}",
+      "a/version.css": ".a{--v:1.0.0-beta.0}",
+      "b/version.css": ".a{--v:1.0.0-beta0}",
+    });
+    // A canonical print of `1-0` as `10`, `.10` as `.1` and `beta.0` as `beta0` made all three "formatting only".
+    expect(changed(text)).toEqual([
+      "-   z-index: 1-0;",
+      "+   z-index: 10;",
+      "-   margin: theme(spacing.10);",
+      "+   margin: theme(spacing.1);",
+      "-   --v: 1.0.0-beta.0;",
+      "+   --v: 1.0.0-beta0;",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   // A debug build byte-scans the 64 MB line slowly (~30 s); release is well under a second.
   test.skipIf(isDebug)(
     "a file over the normalization size limit is diffed as text and says so",

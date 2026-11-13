@@ -23,12 +23,14 @@ describe.if(isPosix)("IOWriter epipe", () => {
 });
 
 // These builtins queue one chunk per operand or directory and wait for each of them to complete or fail.
+// `ls -d` queues one chunk for all of its operands.
 describe.concurrent("a pipeline stage whose reader exits without reading", () => {
   const names = Array.from({ length: 64 }, (_, i) => `entry${i}`);
   const operands = names.join(" ");
   const dirs = Object.fromEntries(names.map(name => [name, {}]));
 
   test.each([
+    ["ls", `ls ${operands} | true`, dirs],
     ["ls -d", `ls -d ${operands} | true`, dirs],
     ["ls -R", `ls -R . | true`, dirs],
     ["rm -rv", `rm -rv ${operands} | true`, dirs],

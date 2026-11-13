@@ -1455,7 +1455,7 @@ pub(crate) unsafe fn __bun_fire_timer(
                     [Sockets],
                     PosixPipe,
                     event_loop_timer,
-                    |container, _now, _vm| { (*container).on_timeout() }
+                    |container, _now, _vm| (*container).on_timeout()
                 )
             }
             #[cfg(not(unix))]

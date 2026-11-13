@@ -1731,9 +1731,7 @@ impl<'a> LinkerContext<'_, 'a> {
                 Format::Cjs => None, // use unbounded global
                 _ => runtime_require_ref,
             },
-            require_or_import_meta_for_source_callback: Some(
-                js_printer::RequireOrImportMetaCallback::init(self),
-            ),
+            require_or_import_meta_source: Some(self),
             line_offset_tables: Some(
                 &self.graph.files.items_line_offset_table()[source_index.get() as usize],
             ),

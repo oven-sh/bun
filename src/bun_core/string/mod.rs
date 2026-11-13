@@ -546,7 +546,7 @@ impl String {
     }
     /// Extract the raw `*mut WTFStringImplStruct`
     /// from a WTF-backed string, transferring ownership of the +1 ref to the caller. Returns
-    /// null for non-WTF tags. Used by SQL data-cell paths that hand the impl pointer to C++.
+    /// null for non-WTF tags.
     #[inline]
     pub fn leak_wtf_impl(self) -> WTFStringImpl {
         let this = core::mem::ManuallyDrop::new(self);
@@ -556,6 +556,12 @@ impl String {
         } else {
             core::ptr::null_mut()
         }
+    }
+    /// The `WTF::StringImpl` of a WTF-backed string, with this string's ref on it.
+    pub fn into_wtf(self) -> Option<crate::WTFString> {
+        let wtf = self.leak_wtf_impl();
+        // SAFETY: non-null, and `leak_wtf_impl` has given up the ref.
+        (!wtf.is_null()).then(|| unsafe { crate::WTFString::adopt(wtf) })
     }
     /// An isolated copy of a WTF-backed impl (+1, `clone()` for other tags),
     /// for handing the value to one other thread; not for sharing one impl

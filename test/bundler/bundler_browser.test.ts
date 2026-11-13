@@ -698,21 +698,32 @@ describe("bundler", () => {
     },
   });
   itBundled("browser/BrowserFieldNodePrefixKeyExternal", {
-    // An exact "external" name wins over the key, as for a bare key.
+    // An "external" name wins over the key. The bare name "crypto" covers the
+    // import of "node:crypto" too, as it does when only the bare key matches.
     files: {
       "/entry.js": /* js */ `
         import crypto from "node:crypto";
-        console.log(typeof crypto.randomBytes);
+        import url from "node:url";
+        console.log(typeof crypto.randomBytes, typeof url.parse);
       `,
       "/package.json": /* json */ `
-        { "browser": { "node:crypto": false } }
+        {
+          "browser": {
+            "crypto": false,
+            "node:crypto": false,
+            "node:url": false
+          }
+        }
       `,
     },
     target: "browser",
-    external: ["node:crypto"],
+    external: ["crypto", "node:url"],
     onAfterBundle(api) {
       const imports = new Bun.Transpiler().scanImports(api.readFile("/out.js"));
-      expect(imports).toEqual([{ kind: "import-statement", path: "node:crypto" }]);
+      expect(imports).toEqual([
+        { kind: "import-statement", path: "node:crypto" },
+        { kind: "import-statement", path: "node:url" },
+      ]);
     },
   });
 

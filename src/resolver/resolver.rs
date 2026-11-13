@@ -2295,6 +2295,8 @@ impl<'a> Resolver<'a> {
         }
 
         if check_package {
+            // `--external x` also covers `node:x` after a "browser" map key matched it as written.
+            let mut bare_external_name = None;
             if self.opts.polyfill_node_globals {
                 let had_node_prefix = import_path.starts_with(b"node:");
                 let import_path_without_node_prefix: &[u8] = if had_node_prefix {
@@ -2315,6 +2317,7 @@ impl<'a> Resolver<'a> {
                             .is_some()
                     };
                     if had_node_prefix && has_key(import_path) {
+                        bare_external_name = Some(import_path_without_node_prefix);
                         Some(import_path)
                     } else if has_key(import_path_without_node_prefix) {
                         Some(import_path_without_node_prefix)
@@ -2406,7 +2409,11 @@ impl<'a> Resolver<'a> {
                     // If the module "foo" has been marked as external, we also want to treat
                     // paths into that module such as "foo/bar" as external too.
                     let Some(slash) = strings::last_index_of_char(query, b'/') else {
-                        break;
+                        let Some(bare_name) = bare_external_name.take() else {
+                            break;
+                        };
+                        query = bare_name;
+                        continue;
                     };
                     query = &query[0..slash];
                 }

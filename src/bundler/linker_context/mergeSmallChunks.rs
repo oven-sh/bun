@@ -3,6 +3,7 @@ use bun_alloc::Arena;
 use bun_ast::{ImportKind, ImportRecordFlags};
 use bun_collections::{ArrayHashMap, AutoBitSet, MapEntry};
 
+use crate::linker_context::find_all_imported_parts_in_js_order::{Edge, for_each_edge};
 use crate::linker_context_mod::debug;
 use crate::options::{Loader, Target};
 use crate::{EntryPoint, Index, LinkerContext, WrapKind};
@@ -704,6 +705,188 @@ fn entries_loaded_mid_evaluation(
     Ok(loads)
 }
 
+/// No chunk may import the chunk of this entry point, so what its `import()` targets share with it is in the parent
+/// chunk, which runs first. Returns the files that only the entry point loads (`is_own`) and that go into the parent chunk
+/// too, so that they still run ahead of the files of the parent (`is_in_parent`) that follow them.
+/// A file moves only when all that ran ahead of it still does, and when it cannot tell which chunk holds it.
+fn entry_files_ahead_of_parent(
+    this: &LinkerContext,
+    entry_id: usize,
+    is_own: impl Fn(u32) -> bool,
+    is_in_parent: impl Fn(u32) -> bool,
+) -> Result<Vec<u32>, bun_alloc::AllocError> {
+    enum Frame {
+        Enter(u32),
+        Leave(u32),
+        /// The file calls `require_x()` or `init_x()` here.
+        Start(u32),
+        /// The file loads an external module here.
+        External(u32),
+    }
+    const NO_FILE: u32 = Index::INVALID.value();
+    let files_len = this.graph.files.len();
+    let flags = this.graph.meta.items_flags();
+    let ast_flags = this.graph.ast.items_flags();
+    let import_records = this.graph.ast.items_import_records();
+    let module_scopes = this.graph.ast.items_module_scope();
+    let entry_bits = this.graph.files.items_entry_bits();
+    let css = this.graph.ast.items_css();
+    // Of a file that holds the path of an asset, which is printed from the directory of its chunk. It runs nothing.
+    let asset_keys = this
+        .parse_graph()
+        .input_files
+        .items_unique_key_for_additional_file();
+    let is_live = |file: u32| this.graph.files_live.is_set(file as usize);
+    let is_wrapped = |file: u32| flags[file as usize].wrap != WrapKind::None;
+    let can_tell_its_chunk = |file: u32| {
+        ast_flags[file as usize].intersects(
+            crate::bundled_ast::Flags::HAS_IMPORT_META
+                | crate::bundled_ast::Flags::HAS_RUNTIME_SPECIFIER,
+        ) || module_scopes[file as usize].contains_direct_eval
+            || import_records[file as usize].iter().any(|record| {
+                // An `import()` that did not resolve is printed as written. A `require()` throws.
+                !record.source_index.is_valid()
+                    && !record.flags.contains(ImportRecordFlags::IS_UNUSED)
+                    && (!record.path.is_disabled || record.kind == ImportKind::Dynamic)
+                    && !bun_paths::is_package_path(record.path.text)
+            })
+    };
+    // `__require` resolves from the chunk of the runtime.
+    let runtime = Index::RUNTIME.value();
+    let runtime_stays = can_tell_its_chunk(runtime)
+        && this
+            .top_level_symbols_to_parts_for_runtime(this.runtime_function(b"__require"))
+            .iter()
+            .any(|&part| this.graph.parts_live[runtime as usize].is_set(part as usize));
+
+    // The files of the entry point's chunk in evaluation order, and where each is in that list. `own[..len]` moves.
+    let mut own: Vec<u32> = Vec::new();
+    let mut position: Vec<usize> = vec![usize::MAX; files_len];
+    // `(at, file)`: `own[at]` moves only if `file` does. In the order of `at`.
+    let mut needs: Vec<(usize, u32)> = Vec::new();
+    // The files of `own` that ran something, in order: `ran[..ahead_of_parent]` ahead of a file of the parent.
+    let mut ran: Vec<u32> = Vec::new();
+    let mut ahead_of_parent = 0;
+    // `own[uses_runtime_at]` is the first that uses the runtime.
+    let mut uses_runtime_at = usize::MAX;
+    // An external `import` loads ahead of its whole chunk. These files have one that follows a file that the parent
+    // chunk runs, or can run: a file of the parent can start the same wrapped file.
+    let mut stays = AutoBitSet::init_empty(files_len)?;
+    let mut parent_can_have_run = false;
+    let mut entered = AutoBitSet::init_empty(files_len)?;
+    let mut stack = vec![Frame::Enter(
+        this.graph.entry_points.items_source_index()[entry_id],
+    )];
+    while let Some(frame) = stack.pop() {
+        let file = match frame {
+            Frame::Enter(file) => {
+                if entered.is_set(file as usize) {
+                    continue;
+                }
+                entered.set(file as usize);
+                stack.push(Frame::Leave(file));
+                let mark = stack.len();
+                for_each_edge(this, file, is_live(file), |_, edge| match edge {
+                    Edge::Import(other) => {
+                        stack.push(Frame::Enter(other));
+                        if is_own(file) && !is_wrapped(file) && is_wrapped(other) {
+                            stack.push(Frame::Start(file));
+                        }
+                    }
+                    Edge::External if is_own(file) => stack.push(Frame::External(file)),
+                    _ => {}
+                });
+                stack[mark..].reverse();
+                continue;
+            }
+            Frame::Start(file) | Frame::External(file) => {
+                needs.push((own.len(), file));
+                ran.push(file);
+                if matches!(frame, Frame::Start(_)) {
+                    parent_can_have_run = true;
+                } else if parent_can_have_run {
+                    stays.set(file as usize);
+                }
+                continue;
+            }
+            Frame::Leave(file) => file,
+        };
+        if file == runtime
+            || !is_live(file)
+            || css[file as usize].is_some()
+            || !asset_keys[file as usize].is_empty()
+        {
+            continue;
+        }
+        if !is_own(file) {
+            // An unwrapped file that tree shaking may drop can still read what another file wrote: `typeof X`.
+            if is_wrapped(file) && this.loading_file_has_no_side_effects(file) {
+                continue;
+            }
+            if is_in_parent(file) {
+                parent_can_have_run = true;
+                ahead_of_parent = ran.len();
+            } else if entry_bits[file as usize].is_set(entry_id) {
+                // A third chunk has one place among the imports of the entry point, which depends on what the parent chunk holds.
+                return Ok(Vec::new());
+            }
+            continue;
+        }
+        if stays.is_set(file as usize) || can_tell_its_chunk(file) {
+            needs.push((own.len(), NO_FILE));
+        }
+        // The parent chunk cannot import the entry point's chunk.
+        this.for_each_file_loaded_by(file, |other| {
+            if !is_own(other) {
+                return;
+            }
+            if other == runtime && !runtime_stays {
+                uses_runtime_at = uses_runtime_at.min(own.len());
+            } else {
+                needs.push((own.len(), other));
+            }
+        });
+        position[file as usize] = own.len();
+        own.push(file);
+        if !is_wrapped(file) && !this.loading_file_has_no_side_effects(file) {
+            ran.push(file);
+        }
+    }
+
+    let position = |file: u32| position.get(file as usize).copied().unwrap_or(usize::MAX);
+    let wanted = ran[..ahead_of_parent]
+        .iter()
+        .map(|&file| position(file) + 1)
+        .max()
+        .unwrap_or(0);
+    // More files move if that lets all of `wanted` move. Otherwise fewer do.
+    let mut len = wanted;
+    for &(at, file) in &needs {
+        if at < len && position(file) >= len {
+            len = position(file).saturating_add(1);
+        }
+    }
+    if len > own.len() {
+        len = wanted;
+        for &(at, file) in needs.iter().rev() {
+            if at < len && position(file) >= len {
+                len = at;
+            }
+        }
+        if !ran[..ahead_of_parent]
+            .iter()
+            .any(|&file| position(file) < len)
+        {
+            len = 0;
+        }
+    }
+    own.truncate(len);
+    if len > uses_runtime_at {
+        own.push(runtime);
+    }
+    Ok(own)
+}
+
 /// Folds code-splitting chunks into other chunks where that is unobservable,
 /// so fewer modules are loaded at runtime.
 ///
@@ -998,13 +1181,17 @@ pub(crate) fn merge_small_chunks(
     let host_names_url = |source_index: usize| {
         !this.options.entry_naming_has_hash && loaders[source_index] != Loader::Html
     };
-    let pin_entry_chunk = |entry_id: usize| {
+    let keeps_its_files = |entry_id: usize| {
         let source_index = entry_source_indices[entry_id] as usize;
-        (!is_dynamic_entry(entry_id)
-            && (this.options.compile_mode.is_executable() || host_names_url(source_index)))
+        (!is_dynamic_entry(entry_id) && this.options.compile_mode.is_executable())
             || flags[source_index].wrap == WrapKind::Cjs
             || flags[source_index].needs_synthetic_default_export
             || !export_aliases[source_index].is_empty()
+    };
+    let pin_entry_chunk = |entry_id: usize| {
+        keeps_its_files(entry_id)
+            || (!is_dynamic_entry(entry_id)
+                && host_names_url(entry_source_indices[entry_id] as usize))
     };
     let group_of_file: &mut [usize] = temp.alloc_slice_fill_copy(files_len, usize::MAX);
     let mut inits: Vec<u32> = Vec::new();
@@ -1170,6 +1357,7 @@ pub(crate) fn merge_small_chunks(
     // A member that can be evaluating when an entry of the class loads stays
     // out (rule 1 in the doc comment above).
     let mut folded_same = 0usize;
+    let mut moved_out_of_entry_chunk: Vec<u32> = Vec::new();
     for (class_key, (class, members)) in classes.keys().iter().zip(classes.values()) {
         let unpinned = || {
             members.iter().copied().filter(|&i| {
@@ -1188,6 +1376,37 @@ pub(crate) fn merge_small_chunks(
         let Some(target_platform) = groups.values()[target_index].target else {
             continue;
         };
+        if let Some(&own) = members.iter().find(|&&i| groups.values()[i].pinned) {
+            let entry_id = groups.values()[own]
+                .bits
+                .find_first_set()
+                .expect("one bit set");
+            if !keeps_its_files(entry_id) && groups.values()[own].target == Some(target_platform) {
+                let mut joins_parent = AutoBitSet::init_empty(groups.count())?;
+                for member in unpinned() {
+                    if groups.values()[member].target == Some(target_platform) {
+                        joins_parent.set(member);
+                    }
+                }
+                let moved = entry_files_ahead_of_parent(
+                    this,
+                    entry_id,
+                    |file| group_of_file[file as usize] == own,
+                    |file| joins_parent.is_set(group_of_file[file as usize]),
+                )?;
+                if !moved.is_empty() {
+                    let deps = groups.values()[own].deps.clone();
+                    let parent = &mut groups.values_mut()[target_index];
+                    parent.pure = false;
+                    merge_sorted(&mut parent.deps, &deps);
+                    parent.deps.retain(|&dep| dep != target_index);
+                }
+                for &file in &moved {
+                    group_of_file[file as usize] = target_index;
+                }
+                moved_out_of_entry_chunk.extend(moved);
+            }
+        }
         for &member in members {
             let group = &groups.values()[member];
             if member == target_index || group.pinned || group.target != Some(target_platform) {
@@ -1205,7 +1424,12 @@ pub(crate) fn merge_small_chunks(
         }
     }
     if !fold_pure {
-        rekey_files(this, group_of_file, groups.values())?;
+        rekey_files(
+            this,
+            group_of_file,
+            groups.values(),
+            &moved_out_of_entry_chunk,
+        )?;
         debug!(
             "mergeSmallChunks: {} chunks folded into chunks with the same load conditions",
             folded_same
@@ -1600,7 +1824,7 @@ pub(crate) fn merge_small_chunks(
         this.inits_already_done = Some(done);
     }
 
-    rekey_files(this, group_of_file, groups)?;
+    rekey_files(this, group_of_file, groups, &moved_out_of_entry_chunk)?;
     debug!(
         "mergeSmallChunks: {} chunks folded into chunks with the same load conditions, {} side-effect-free chunks folded into a superset in {} passes (min size {} bytes)",
         folded_same, folded_pure, passes, min_chunk_size
@@ -1612,7 +1836,12 @@ fn rekey_files(
     this: &mut LinkerContext,
     group_of_file: &[usize],
     groups: &[Group],
+    moved_out_of_entry_chunk: &[u32],
 ) -> crate::Result<()> {
+    let flags = this.graph.meta.items_flags_mut();
+    for &file in moved_out_of_entry_chunk {
+        flags[file as usize].moved_out_of_entry_chunk = true;
+    }
     let file_entry_bits = this.graph.files.items_entry_bits_mut();
     for (source_index, &group_index) in group_of_file.iter().enumerate() {
         if group_index == usize::MAX {

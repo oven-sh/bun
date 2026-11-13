@@ -7,6 +7,116 @@
 # `const dep = require("dep")`), two instances are wanted at one time, or the test counts the runs. What an importer reads late follows the mock.
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > later files mock a package that a library loaded while the first file mocked it
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > also when the file fails to load, or has already removed the mock itself
+# These: a module called import() for a mock, or for a module that imports one. Plain runs it again once the test file of the mock has ended. Compiled keeps the one instance, and what it was given.
+~ASAN test/js/bun/test/mock/mock-module.test.ts: a call of import() for a module that nothing mocks changes nothing > a module that failed stays cached when a mock with nothing loaded under it ends
+test/js/bun/test/mock/mock-module.test.ts: a mock deleted from require.cache by user code doesn't reach the next file through a module that called import() for it
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > Bun.plugin.clearAll() in an earlier file
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > a CommonJS module that is loaded again and calls import() no more stays loaded
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > a CommonJS test file that loads it ahead of bun:test
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > a mock that a helper made
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > a module of an earlier file stays one instance for a file that holds it by an import statement: mock.module()
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > a module of an earlier file stays one instance for a file that holds it by an import statement: vi.doMock()
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > a module of an earlier file stays one instance for a file that holds it by import() in a hook: mock.module()
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > a module of an earlier file stays one instance for a file that holds it by import() in a hook: vi.doMock()
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > a module of an earlier file stays one instance for a file that holds it by import() in its test: mock.module()
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > a module of an earlier file stays one instance for a file that holds it by import() in its test: vi.doMock()
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > a module of an earlier file stays one instance for a file that holds it by require() of a CommonJS module: mock.module()
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > a module of an earlier file stays one instance for a file that holds it by require() of a CommonJS module: vi.doMock()
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > a module that a factory loaded doesn't reach the next file through a helper that keeps each import()
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > a module that a factory loaded doesn't reach the next file through a module that awaits import() of it
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > a module that a replaced factory loaded doesn't reach the next file through a module that called import() for it
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > a module that calls import() for the module that makes the mock
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > a module that keeps import() of a module nothing mocks stays loaded
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > a module that only passes on what import() gave it is evaluated again too
+~ASAN test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > a module that runs when vi.doMock() patches a package that it imports stays one instance
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > a module that waits for a load goes with its callers when a factory stops inside require()
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > a package that calls import() for a module of the project
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > also when an earlier file loaded it and never called import()
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > an earlier file called import() with no mock: jest.mock
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > an earlier file called import() with no mock: mock.module
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > an earlier file called import() with no mock: vi.mock
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > an earlier file loaded it with no mock, and the files after it call vi.doMock(): by a module it imports
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > an earlier file loaded it with no mock, and the files after it call vi.doMock(): itself
+~ASAN test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > another key of its file stays loaded: it called import() under a key with a query
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > another key of its file stays loaded: it called import() under its plain key
+~ASAN test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > another key of its file stays loaded: it called new Function under a key with a query
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > another key of its file stays loaded: it called new Function under its plain key
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > each --rerun-each run calls the spy that its test put on the mock
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > each --rerun-each run gets its own mock ["--isolate"]
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > each --rerun-each run gets its own mock ["--isolate=modules"]
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > each --rerun-each run gets its own mock []
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it caught the failure of an import() that a mock caused: a module that imports the mock threw
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it caught the failure of an import() that a mock caused: its factory threw
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it caught the failure of an import() that threw while require() loaded it
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it is a module that mock.module() patched in place
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it is the original of a partly mocked module
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it kept a builtin that it imported as "node:path"
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it kept a builtin that it imported as "path"
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it kept a module that imports the mock: jest.mock
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it kept a module that imports the mock: mock.module
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it kept a module that imports the mock: vi.mock
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it kept one export: jest.mock
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it kept one export: mock.module
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it kept one export: vi.mock
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it kept the namespace, from its first call: jest.mock
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it kept the namespace, from its first call: mock.module
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it kept the namespace, from its first call: vi.mock
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it kept the namespace, from its own load: jest.mock
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it kept the namespace, from its own load: mock.module
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it kept the namespace, from its own load: vi.mock
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it kept the namespace, in a CommonJS module: jest.mock
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it kept the namespace, in a CommonJS module: mock.module
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it kept the namespace, in a CommonJS module: vi.mock
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it kept the promise of a module that exports the mock again: jest.mock
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it kept the promise of a module that exports the mock again: mock.module
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it kept the promise of a module that exports the mock again: vi.mock
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it kept the promise: jest.mock
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it kept the promise: mock.module
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it kept the promise: vi.mock
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it kept what a lowered import statement gave it: jest.mock
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it kept what a lowered import statement gave it: mock.module
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it kept what a lowered import statement gave it: vi.mock
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it kept what import() gave to code from an indirect eval
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > it kept what import() gave to code from new Function
+~ASAN test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > its key has a query: it called import()
+~ASAN test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > its key has a query: it called new Function
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > the mock ended while the test file ran: a second vi.doMock()
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > the mock ended while the test file ran: a second vi.doMock(), of a module that the file had loaded
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > the mock ended while the test file ran: the block of a disposable vi.doMock()
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > the mock ended while the test file ran: the block of a disposable vi.doMock(), of a module that the file had loaded
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > the mock ended while the test file ran: vi.doUnmock()
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > the mock ended while the test file ran: vi.doUnmock(), of a module that the file had loaded
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > the mock of a package
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > the next file gets its own mock through a module that kept the namespace, from its first call: jest.mock
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > the next file gets its own mock through a module that kept the namespace, from its first call: mock.module
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > the next file gets its own mock through a module that kept the namespace, from its first call: vi.mock
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > the next file gets its own mock through a module that kept the promise: jest.mock
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > the next file gets its own mock through a module that kept the promise: mock.module
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > the next file gets its own mock through a module that kept the promise: vi.mock
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > the next file reads no ended mock through a CommonJS module that called import() after the mock had ended, when a factory stops inside require()
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > the next file reads no ended mock through a CommonJS module that requires a module that called import(), when a factory stops inside require()
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > the next file reads no ended mock through a module that was loading when its test file ended
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > the next file reads no ended mock through a module whose body ran at that stop, and that imports a module that called import(), when a factory stops inside require()
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > the next file reads no ended mock through a module whose importer was loading when its test file ended
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > the package that it got a mock of is mocked a second time in that file
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > the package that it keeps was set aside for a mock
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > two modules that keep import() of two modules
+test/js/bun/test/mock/mock-module.test.ts: a module that got a mock from import() is evaluated again when the mock is gone > vi.doUnmock() of a mock whose factory has yet to settle
+test/js/bun/test/mock/mock-module.test.ts: a module that kept import() of a virtual module of Bun.plugin gets the one that the file before registered
+test/js/bun/test/mock/mock-module.test.ts: a test file stays loaded when a module that it imports called import() for a mock > a CommonJS file that has ended, when a later file mocks what its require() called import() for
+test/js/bun/test/mock/mock-module.test.ts: a test file stays loaded when a module that it imports called import() for a mock > a file that has ended and mocked nothing, when a later file mocks what its import called import() for
+test/js/bun/test/mock/mock-module.test.ts: a test file stays loaded when a module that it imports called import() for a mock > a file that has ended and mocked nothing, when a later file mocks what its import imports
+test/js/bun/test/mock/mock-module.test.ts: a test file stays loaded when a module that it imports called import() for a mock > a file that has ended, when a later file mocks what it imports and reads through it
+test/js/bun/test/mock/mock-module.test.ts: a test file stays loaded when a module that it imports called import() for a mock > a later test file that it imports, and that calls import() for what it mocks, runs in its own turn
+test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > nor when its import statements lead to the mock
+test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, even with loads in flight, for a module that awaits import() > a factory that is still running is not waited for: bun test 
+test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, even with loads in flight, for a module that awaits import() > a factory that is still running is not waited for: bun test --rerun-each=2
+test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, even with loads in flight, for a module that awaits import() > a load that imported a mock and never finishes isn't reused by the next file
+test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, even with loads in flight, for a module that awaits import() > a load that never settles doesn't stop the next file's loads from being evicted
+test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, even with loads in flight, for a module that awaits import() > the factory of a preload's mock that is still running is called again for the next file
+test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, for modules that import one another > the next file gets the originals after a file mocks a loaded module and then one of its imports: jest.doMock, for modules that await import()
+test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, for modules that import one another > the next file gets the originals after a file mocks a loaded module and then one of its imports: mock.module, for modules that await import()
+test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, for modules that import one another > the next file gets the originals after a file mocks a loaded module and then one of its imports: vi.doMock, for modules that await import()
 # In these the one instance is all that differs: every test of the fixture passes, every file runs, and some files run fewer times.
 test/js/bun/test/mock/mock-module.test.ts: a factory that loads a module which imports another mock > a mock that waits for the factory is a mock for what the factory loads too
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > a factory that fails

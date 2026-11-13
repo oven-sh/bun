@@ -1,0 +1,5 @@
+"real1,real1 1" | "am,am undefined": `bun test` runs a module that called import() for a mock again once the test file of that mock has ended. A compiled module keeps the instance that the call gave it
+"real1,real1 2" | "am,am undefined": `bun test` runs a module that called import() for a mock again once the test file of that mock has ended. A compiled module keeps the instance that the call gave it
+"real2,real2 2" | "am,am undefined": `bun test` runs a module that called import() for a mock again once the test file of that mock has ended. A compiled module keeps the instance that the call gave it
+"am,am 1" | "am,am undefined": `bun test` runs a module that called import() for a mock again once the test file of that mock has ended. A compiled module keeps the instance that the call gave it
+"am,am 2" | "am,am undefined": `bun test` runs a module that called import() for a mock again once the test file of that mock has ended. A compiled module keeps the instance that the call gave it

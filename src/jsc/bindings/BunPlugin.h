@@ -21,6 +21,10 @@ BUN_DECLARE_HOST_FUNCTION(jsFunctionSettleReplacedFactory);
 #endif
 BUN_DECLARE_HOST_FUNCTION(jsFunctionMockModuleFactoryReject);
 
+namespace JSC {
+class AbstractModuleRecord;
+}
+
 namespace Zig {
 
 using namespace JSC;
@@ -159,7 +163,22 @@ public:
         WTF::UncheckedKeyHashMap<String, unsigned> testFileOfModule = {};
         // Data files that a reset has evicted under a mock whose end restores their original, with the test file in which their next load does not show it yet.
         WTF::UncheckedKeyHashMap<String, unsigned> dataFilesResetUnderMocks = {};
+        // The key of the test file that is running, and after its end until the next one begins.
+        String testFileKey;
+        // No test file runs: the last one has ended, and the next has yet to begin.
+        bool hasTestFileEnded = false;
+        // The key of each test file that has begun, with the `testFile` of its run. A module under that key with another testFileOfModule is a later copy, and a module like any other.
+        WTF::UncheckedKeyHashMap<String, unsigned> testFiles = {};
+        // Those of them that have ended and imported a module which has gone since: JSMock__replaceModuleOfTestFile() puts their exports in their place.
+        WTF::UncheckedKeyHashSet<String> testFilesToReplace = {};
+        // The modules that have called import() for each key, for evictModulesAndTheirImporters(): the loader keeps no edge for an import(). A collected record may have left its address to another: the Weak tells.
+        using ImportCallers = WTF::UncheckedKeyHashMap<JSC::AbstractModuleRecord*, JSC::Weak<JSC::AbstractModuleRecord>>;
+        WTF::UncheckedKeyHashMap<String, ImportCallers> importCalls = {};
+        // Code that no module record is found for, as that of a CommonJS module: import() names it by its file.
+        WTF::UncheckedKeyHashMap<String, WTF::UncheckedKeyHashSet<String>> importCallsByFile = {};
         WTF::ListHashSet<String> modulesToEvictOnceLoaded = {};
+        // The modules that a mock changed or stood in for while the test file ran, with the importers that went with them, and those of them that wait for a load: what has called import() for one of them goes once the file has ended.
+        WTF::UncheckedKeyHashSet<String> modulesWithCallersToEvict = {};
         // The pending loads those modules are waiting for. Each gets exactly one reaction. Weak, so a load that never settles doesn't keep its global object alive.
         WTF::UncheckedKeyHashMap<JSC::JSPromise*, JSC::Weak<JSC::JSPromise>> loadsOfModulesToEvict = {};
         // The mock a fetch in flight keeps resolving to, even if the mock is replaced or removed meanwhile (keepInFlightModuleMock).
@@ -186,6 +205,17 @@ public:
         void addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mock);
 
         std::optional<String> resolveVirtualModule(const String& path, const String& from);
+
+        // The modules of a module graph that is left are gone with it.
+        void didLeaveModuleGraph()
+        {
+            importCalls.clear();
+            importCallsByFile.clear();
+            modulesWithCallersToEvict.clear();
+            testFileKey = String();
+            testFiles.clear();
+            testFilesToReplace.clear();
+        }
 
         void clear()
         {
@@ -335,6 +365,7 @@ class GlobalObject;
 } // namespace Zig
 
 namespace JSC {
+class JSModuleLoader;
 class JSModuleNamespaceObject;
 class JSSourceCode;
 }
@@ -377,6 +408,8 @@ JSC::JSObject* objectHoldingExportOfModuleMock(JSC::JSGlobalObject*, JSC::JSModu
 // The same for the namespace object of a compiled module. Null for any other object.
 JSC::JSObject* compiledMockExportHolder(JSC::JSGlobalObject*, JSC::JSObject* moduleNamespace, const JSC::Identifier& name);
 #endif
+// For each import() under `bun test`: `importer` is the key that the source of the calling code has as a module, null if that code is of no file. `key` is what the call resolved to.
+void didCallImport(Zig::GlobalObject*, JSC::JSModuleLoader*, const String& importer, const String& key);
 // Flushes modulesToEvictOnceLoaded after a synchronous load. Does nothing inside an outer synchronous load.
 void evictModulesThatHaveLoaded(Zig::GlobalObject*);
 void evictModuleThatNothingFetches(Zig::GlobalObject*, const JSC::Identifier& key);

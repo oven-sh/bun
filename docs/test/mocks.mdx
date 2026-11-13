@@ -463,7 +463,7 @@ vi.mock("dep", () => ({ default: fake })); // a library that requires "dep" stil
 jest.mock("dep", () => fake); // the library gets the fake too
 ```
 
-If the package is already loaded, what imported it keeps the real one, and the next `import()` or `require()` from your own code calls the factory. Modules that an earlier test file loaded are loaded again and get the mock, because in Vitest each file starts with nothing loaded. The real package is never loaded a second time: `vi.importActual()` returns the loaded one, and `vi.doUnmock()` brings it back.
+If the package is already loaded, what imported it keeps the real one, and the next `import()` or `require()` from your own code calls the factory. Modules that an earlier test file loaded are loaded again and get the mock, because in Vitest each file starts with nothing loaded. A module that got the package from `import()` is the exception: it stays loaded until the test file ends. The real package is never loaded a second time: `vi.importActual()` returns the loaded one, and `vi.doUnmock()` brings it back.
 
 The exception is a `vi.mock()` call in a module that is imported with a static import (see "Hoisting & Preloading" below). By the time that module runs, its importer's other imports are already linked to the real package. Bun updates the loaded package in place, so the test file and the modules it imports get the mock. A module inside `node_modules` that imports the package gets the mock too. So it does when a `--preload` script mocks a package that an earlier preload has loaded.
 
@@ -507,7 +507,9 @@ As in Vitest, `vi.resetModules()` leaves packages in `node_modules` loaded, so a
 
 ### Module Mocks Are Removed After Each Test File
 
-Module mocks are removed when the test file ends. The next file gets the real module, and modules that imported the mock are re-evaluated. So is a module that made a mock, so a helper that calls `vi.mock()` mocks for every test file that imports it. Other modules stay cached between files.
+Module mocks are removed when the test file ends. The next file gets the real module, and modules that imported the mock are re-evaluated. So is a module that made a mock, so a helper that calls `vi.mock()` mocks for every test file that imports it. Other modules stay cached between files. A test file that is an ES module is not evaluated again for a mock: a later file that imports it gets it as it ran, with the modules that it imported then.
+
+When the file ends, a module that called `import()` for the mock counts as one that imported it, whether or not it kept the result. So a helper such as `path => import(path)` is re-evaluated too, and the state that it keeps starts over. While the file runs, such a module stays loaded and keeps what `import()` gave it, also when the file mocks a module that an earlier file loaded.
 
 Mocks made in a `--preload` script apply to every test file.
 

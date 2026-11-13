@@ -741,22 +741,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
             UnixOrHost::Fd(f) => {
                 let socket_flags = self.flags.get();
-                // node never closes stdio, so the transport owns a duplicate and the process keeps its own descriptor.
-                #[cfg(unix)]
-                let (f, owns_dup) = if f.is_stdio() {
-                    (sys::dup(*f).map_err(sys::SystemErrno::from)?, true)
-                } else {
-                    (*f, false)
-                };
-                #[cfg(not(unix))]
-                let (f, owns_dup) = (*f, false);
-                let close_dup = |errno: sys::SystemErrno| {
-                    if owns_dup {
-                        use bun_sys::FdExt as _;
-                        f.close();
-                    }
-                    errno
-                };
+                let f = *f;
+                // The pipe transports keep stdio open themselves, so they take the caller's descriptor as is.
                 if !SSL && socket_flags.contains(Flags::WRITE_ONLY_FD) {
                     // SAFETY: `!SSL`, so `Self` is `TCPSocket`.
                     let tcp =
@@ -767,7 +753,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 #[cfg(unix)]
                 if !SSL && !socket_flags.contains(Flags::RAW_SOCKET_FD) {
                     let is_pipe = socket_flags.contains(Flags::READABLE_PIPE_FD) || {
-                        let st = sys::fstat(f).map_err(|e| close_dup(e.into()))?;
+                        let st = sys::fstat(f).map_err(sys::SystemErrno::from)?;
                         (st.st_mode & libc::S_IFMT) == libc::S_IFIFO
                     };
                     if is_pipe {
@@ -775,6 +761,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                         let tcp = unsafe {
                             bun_ptr::ThisPtr::new(self.as_ctx_ptr().cast::<TCPSocket>())
                         };
+                        // On `Err` the fd is still the caller's.
                         return super::posix_pipe::PosixPipe::open(
                             tcp,
                             f,
@@ -783,6 +770,15 @@ impl<const SSL: bool> NewSocket<SSL> {
                         );
                     }
                 }
+                // uSockets closes its descriptor unconditionally; node never closes stdio, so it gets a duplicate.
+                #[cfg(unix)]
+                let (f, owns_dup) = if f.is_stdio() {
+                    (sys::dup(f).map_err(sys::SystemErrno::from)?, true)
+                } else {
+                    (f, false)
+                };
+                #[cfg(not(unix))]
+                let (f, owns_dup) = (f, false);
                 // The fd is connected, so it is registered paused outright; a dial is paused in on_open.
                 let flags = if socket_flags.contains(Flags::PAUSE_ON_CONNECT) {
                     flags | uws::LIBUS_SOCKET_OPEN_PAUSED
@@ -801,7 +797,12 @@ impl<const SSL: bool> NewSocket<SSL> {
                     false,
                 );
                 if s.is_null() {
-                    return Err(close_dup(last_errno()));
+                    let errno = last_errno();
+                    if owns_dup {
+                        use bun_sys::FdExt as _;
+                        f.close();
+                    }
+                    return Err(errno);
                 }
                 *uws::us_socket_t::opaque_mut(s).ext() = Some(this);
                 let sock = SocketHandler::<SSL>::from(s);
@@ -1501,11 +1502,13 @@ impl<const SSL: bool> NewSocket<SSL> {
             uws::InternalSocket::Connected(_) | uws::InternalSocket::Connecting(_) => true,
             uws::InternalSocket::Detached => return self.closing.get().is_detached(),
             uws::InternalSocket::UwsHttp(_) => return false,
-            // A transport that supports it closes without reporting `on_close`.
+            // A transport that supports it closes without reporting `on_close`; the connection's
+            // ref on `self` is released below, not by the transport.
             uws::InternalSocket::Transport(_) => {
                 if !old.detach_transport() {
                     return false;
                 }
+                debug_assert!(old.is_closed());
                 false
             }
         };
@@ -3260,10 +3263,14 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `.uv()` panics for anything but stdio. The sys_jsc helper branches on
         // kind (system→u64, uv→i32, posix→i32).
         use bun_sys_jsc::FdJsc as _;
-        JsLocal::new(
-            heap,
-            self.socket.get().fd().to_js_without_making_lib_uv_owned(),
-        )
+        let socket = self.socket.get();
+        // An adopted stdio fd is reported as given: node:net's `connect({ fd })` matches
+        // `_handle.fd` against it, and the native side may hold a duplicate.
+        let fd = match self.connection.get().as_ref() {
+            Some(super::listener::UnixOrHost::Fd(adopted)) if !socket.is_detached() => *adopted,
+            _ => socket.fd(),
+        };
+        JsLocal::new(heap, fd.to_js_without_making_lib_uv_owned())
     }
 
     pub(crate) fn get_bytes_written(&self) -> f64 {

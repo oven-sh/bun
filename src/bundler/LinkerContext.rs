@@ -385,8 +385,7 @@ impl<'a> LinkerContext<'a> {
                 .is_entry_point()
     }
 
-    /// An `import()` of the importing file loads the chunk of that file when the file
-    /// has no wrapper to bind to. `wrap` is final after scan step 2.
+    /// An `import()` of the importing file loads the file's chunk when the file has no wrapper.
     pub(crate) fn import_of_itself_loads_chunk(
         &self,
         record: &ImportRecord,

@@ -9,6 +9,7 @@
 
 use core::cell::Cell;
 use core::ffi::{c_int, c_void};
+use core::num::NonZeroU32;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use bun_core::{String as BunString, StringView};
@@ -830,13 +831,6 @@ bun_opaque::opaque_ffi! { pub struct TestReporterHandle; }
 // in/out-param the C++ side reads/consumes in-place. Remaining args are
 // by-value scalars.
 unsafe extern "C" {
-    safe fn Bun__TestReporterAgentReportTestFound(
-        agent: &mut TestReporterHandle,
-        test_id: c_int,
-        name: &BunString,
-        item_type: TestType,
-        parent_id: c_int,
-    );
     safe fn Bun__TestReporterAgentReportTestFoundWithLocation(
         agent: &mut TestReporterHandle,
         test_id: c_int,
@@ -856,16 +850,7 @@ unsafe extern "C" {
 }
 
 impl TestReporterHandle {
-    pub(crate) fn report_test_found(
-        &mut self,
-        test_id: i32,
-        name: &BunString,
-        item_type: TestType,
-        parent_id: i32,
-    ) {
-        Bun__TestReporterAgentReportTestFound(self, test_id, name, item_type, parent_id);
-    }
-
+    /// The protocol cannot leave `line` out, so an unknown line is sent as 0.
     pub fn report_test_found_with_location(
         &mut self,
         test_id: i32,
@@ -873,10 +858,16 @@ impl TestReporterHandle {
         item_type: TestType,
         parent_id: i32,
         source_url: &BunString,
-        line: i32,
+        line: Option<NonZeroU32>,
     ) {
         Bun__TestReporterAgentReportTestFoundWithLocation(
-            self, test_id, name, item_type, parent_id, source_url, line,
+            self,
+            test_id,
+            name,
+            item_type,
+            parent_id,
+            source_url,
+            line.map_or(0, |line| line.get() as c_int),
         );
     }
 
@@ -942,20 +933,18 @@ impl TestReporterAgent {
     }
 
     /// Caller must ensure that it is enabled first.
-    ///
-    /// Since we may have to call .deinit on the name string.
-    ///
-    /// The test's location is that of the caller of the host function that is running.
     pub fn report_test_found(
         &self,
         test_id: i32,
         name: &BunString,
         item_type: TestType,
         parent_id: i32,
+        source_url: &BunString,
+        line: Option<NonZeroU32>,
     ) {
         bun_core::scoped_log!(TestReporterAgent, "reportTestFound");
         self.handle_mut()
-            .report_test_found(test_id, name, item_type, parent_id);
+            .report_test_found_with_location(test_id, name, item_type, parent_id, source_url, line);
     }
 
     /// Caller must ensure that it is enabled first.

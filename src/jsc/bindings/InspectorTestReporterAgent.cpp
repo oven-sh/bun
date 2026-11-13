@@ -7,7 +7,6 @@
 #include <JavaScriptCore/ScriptCallStack.h>
 #include <JavaScriptCore/JSGlobalObjectDebuggable.h>
 #include <JavaScriptCore/JSGlobalObjectInspectorController.h>
-#include "ErrorStackTrace.h"
 #include "ZigGlobalObject.h"
 
 #include "ModuleLoader.h"
@@ -30,25 +29,6 @@ enum class BunTestType : uint8_t {
     Test,
     Describe,
 };
-
-void Bun__TestReporterAgentReportTestFound(Inspector::InspectorTestReporterAgent* agent, int testId, const BunString* name, BunTestType item_type, int parentId)
-{
-    auto str = name->toWTFString(BunString::ZeroCopy);
-
-    Protocol::TestReporter::TestType type;
-    switch (item_type) {
-    case BunTestType::Test:
-        type = Protocol::TestReporter::TestType::Test;
-        break;
-    case BunTestType::Describe:
-        type = Protocol::TestReporter::TestType::Describe;
-        break;
-    default:
-        ASSERT_NOT_REACHED();
-    }
-
-    agent->reportTestFound(testId, str, type, parentId);
-}
 
 void Bun__TestReporterAgentReportTestFoundWithLocation(Inspector::InspectorTestReporterAgent* agent, int testId, const BunString* name, BunTestType item_type, int parentId, const BunString* sourceURL, int line)
 {
@@ -159,74 +139,6 @@ Protocol::ErrorStringOr<void> InspectorTestReporterAgent::disable()
     return {};
 }
 
-void InspectorTestReporterAgent::reportTestFound(int testId, const String& name, Protocol::TestReporter::TestType type, int parentId)
-{
-    if (!m_enabled)
-        return;
-
-    JSC::LineColumn lineColumn;
-    JSC::SourceID sourceID = 0;
-    String sourceURL;
-
-    auto* globalObject = &m_globalObject;
-    auto& vm = JSC::getVM(globalObject);
-
-    JSC::StackVisitor::visit(vm.topCallFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
-        if (Zig::isImplementationVisibilityPrivate(visitor))
-            return WTF::IterationStatus::Continue;
-
-        if (visitor->hasLineAndColumnInfo()) {
-            lineColumn = visitor->computeLineAndColumn();
-
-            String sourceURLForFrame = Zig::sourceURL(visitor);
-
-            // Sometimes, the sourceURL is empty.
-            // For example, pages in Next.js.
-            if (auto* codeBlock = sourceURLForFrame.isEmpty() ? visitor->codeBlock() : nullptr) {
-                const auto& source = codeBlock->source();
-
-                // source.isNull() is true when the SourceProvider is a null pointer.
-                if (!source.isNull()) {
-                    auto* provider = source.provider();
-                    sourceID = provider->asID();
-                }
-            }
-
-            sourceURL = sourceURLForFrame;
-
-            return WTF::IterationStatus::Done;
-        }
-
-        return WTF::IterationStatus::Continue;
-    });
-
-    if (!sourceURL.isEmpty() and lineColumn.line > 0) {
-        OrdinalNumber originalLine = OrdinalNumber::fromOneBasedInt(lineColumn.line);
-        OrdinalNumber originalColumn = OrdinalNumber::fromOneBasedInt(lineColumn.column);
-
-        Bun::OwnedZigStackFrames remappedFrames(1);
-        ZigStackFrame& remappedFrame = remappedFrames[0];
-        remappedFrame.position.line_zero_based = originalLine.zeroBasedInt();
-        remappedFrame.position.column_zero_based = originalColumn.zeroBasedInt();
-        remappedFrame.source_url = Bun::toStringRef(sourceURL);
-
-        remappedFrames.remap(Bun::vm(globalObject));
-
-        sourceURL = remappedFrame.source_url.toWTFString();
-        lineColumn.line = OrdinalNumber::fromZeroBasedInt(remappedFrame.position.line_zero_based).oneBasedInt();
-        lineColumn.column = OrdinalNumber::fromZeroBasedInt(remappedFrame.position.column_zero_based).oneBasedInt();
-    }
-
-    m_frontendDispatcher->found(
-        testId,
-        sourceID > 0 ? String::number(sourceID) : String(),
-        sourceURL,
-        lineColumn.line,
-        name,
-        type,
-        parentId > 0 ? parentId : std::optional<int>());
-}
-
 void InspectorTestReporterAgent::reportTestFoundWithLocation(int testId, const String& name, Protocol::TestReporter::TestType type, int parentId, const String& sourceURL, int line)
 {
     if (!m_enabled)
@@ -234,7 +146,7 @@ void InspectorTestReporterAgent::reportTestFoundWithLocation(int testId, const S
 
     m_frontendDispatcher->found(
         testId,
-        String(), // sourceID - not available for retroactively reported tests
+        String(), // scriptId. The url is always sent.
         sourceURL,
         line,
         name,

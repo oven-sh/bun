@@ -1,4 +1,4 @@
-import { Subprocess, spawn, write } from "bun";
+import { Subprocess, listen, spawn, write } from "bun";
 import { afterEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isPosix, tempDir } from "harness";
 import { join } from "node:path";
@@ -453,6 +453,236 @@ afterAll(async () => {
     if (exitCode !== 0) {
       expect(stderr).toBe("");
     }
+    expect(exitCode).toBe(0);
+  });
+});
+
+// Where `TestReporter.found` says a test is. A client can enable the domain before a test is registered or after, and the
+// JUnit reporter writes the same place.
+describe("TestReporter.found location", () => {
+  const files = (name: string) => ({
+    // This file has ended when a client enables TestReporter at a gate of the next one.
+    "first.test.cjs": `const { test } = require("bun:test");
+
+test("in the first file", () => {});
+`,
+    [name]: `import { describe, test } from "bun:test";
+import { test as nodeTest } from "node:test";
+import { defineTest, sharedSuite } from "./helper";
+import "./imported";
+
+const stdin = Bun.stdin.stream().getReader();
+async function gate(marker: string) {
+  console.log(marker);
+  await stdin.read();
+}
+
+test("gate", () => gate("__EXECUTION__"));
+
+describe("suite", () => {
+  const named = "named by a constant";
+
+  test("plain", () => {});
+  test(named, () => {});
+  test( // on several lines
+    "call on several lines",
+    () => {},
+  );
+  test.each([[1], [2]])("row %d", () => {});
+  test.each\`
+    n
+    \${3}
+    \${4}
+  \`("tagged $n", () => {});
+  defineTest("from helper");
+  nodeTest("node:test", () => {});
+  [5].forEach(n => test("forEach " + n, () => {}));
+});
+
+describe("tail call", () => test("in a tail call", () => {}));
+
+describe("shared", sharedSuite);
+
+describe("after the gate", async () => {
+  await gate("__COLLECTION__");
+  test("registered last", () => {});
+});
+`,
+    "helper.ts": `import { test } from "bun:test";
+
+export function defineTest(name: string) {
+  test(name, () => {});
+}
+
+export function sharedSuite() {
+  test("in shared suite", () => {});
+}
+`,
+    "imported.ts": `import { test } from "bun:test";
+
+test("in an imported module", () => {});
+`,
+  });
+  // The line of the test file that has `text`.
+  const lineOf = (text: string) =>
+    files("a.test.ts")
+      ["a.test.ts"].split("\n")
+      .findIndex(line => line.includes(text)) + 1;
+  const locations = [
+    { type: "test", name: "gate", line: lineOf(`test("gate"`) },
+    { type: "describe", name: "suite", line: lineOf(`describe("suite"`) },
+    { type: "test", name: "plain", line: lineOf(`test("plain"`) },
+    { type: "test", name: "named by a constant", line: lineOf(`test(named`) },
+    { type: "test", name: "call on several lines", line: lineOf(`test( // on several lines`) },
+    { type: "test", name: "row 1", line: lineOf(`("row %d"`) },
+    { type: "test", name: "row 2", line: lineOf(`("row %d"`) },
+    // Not a row of the table.
+    { type: "test", name: "tagged 3", line: lineOf(`("tagged $n"`) },
+    { type: "test", name: "tagged 4", line: lineOf(`("tagged $n"`) },
+    // The url is the test file, so the line is that of the call that the test file makes.
+    { type: "test", name: "from helper", line: lineOf(`defineTest("from helper")`) },
+    { type: "test", name: "node:test", line: lineOf(`nodeTest("node:test"`) },
+    { type: "test", name: "forEach 5", line: lineOf(`[5].forEach(`) },
+    // The test file has no frame on the stack when these two are registered. They are in a block that it opened.
+    { type: "describe", name: "tail call", line: lineOf(`describe("tail call"`) },
+    { type: "test", name: "in a tail call", line: lineOf(`describe("tail call"`) },
+    { type: "describe", name: "shared", line: lineOf(`describe("shared"`) },
+    { type: "test", name: "in shared suite", line: lineOf(`describe("shared"`) },
+    { type: "describe", name: "after the gate", line: lineOf(`describe("after the gate"`) },
+    { type: "test", name: "registered last", line: lineOf(`test("registered last"`) },
+    // Nothing in the test file leads to this call, and it is in no block. The line of "imported.ts" is not a line of the url.
+    { type: "test", name: "in an imported module", line: 0 },
+  ];
+  const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name);
+
+  type Enable = "before collection" | "during collection" | "during execution";
+  type Debugger = "--inspect-wait" | "--inspect" | "BUN_INSPECT" | "BUN_INSPECT_CONNECT_TO";
+
+  async function run(enable: Enable, debug: Debugger, { file = "location.test.ts", junit = false } = {}) {
+    using dir = tempDir("test-reporter-location", files(file));
+    const session = new TestReporterSession();
+    const framer = new SocketFramer((message: string) => session.onMessage(message));
+    const connected = Promise.withResolvers<void>();
+    using server = listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          session.socket = socket as any;
+          session.framer = framer;
+          connected.resolve();
+        },
+        data: (socket, data) => framer.onData(socket, data),
+      },
+    });
+    const url = `tcp://127.0.0.1:${server.port}`;
+
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        ...(debug.startsWith("--") ? [`${debug}=${url}`] : []),
+        "test",
+        "--timeout",
+        "30000",
+        ...(junit ? ["--reporter=junit", "--reporter-outfile=junit.xml"] : []),
+        "first.test.cjs",
+        file,
+      ],
+      env: debug.startsWith("--") ? bunEnv : { ...bunEnv, [debug]: url },
+      cwd: String(dir),
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const stderr = proc.stderr.text();
+    let stdout = "";
+    const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
+    async function printed(marker: string) {
+      while (!stdout.includes(marker)) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error(`The tests ended before they printed ${marker}:\n${stdout}\n${await stderr}`);
+        stdout += decoder.decode(value, { stream: true });
+      }
+    }
+
+    const exitedFirst = await Promise.race([connected.promise, proc.exited]);
+    if (exitedFirst !== undefined) {
+      throw new Error(`bun test exited with ${exitedFirst} before it reached the inspector client:\n${await stderr}`);
+    }
+    session.enableInspector();
+    if (enable === "before collection") session.enableTestReporter();
+    session.initialize();
+
+    await printed("__COLLECTION__");
+    if (enable === "during collection") {
+      session.enableTestReporter();
+      // Everything but the test that the gate holds back.
+      await session.waitForFoundTests(locations.length - 1);
+    }
+    proc.stdin.write("collect\n");
+    await proc.stdin.flush();
+
+    await printed("__EXECUTION__");
+    if (enable === "during execution") session.enableTestReporter();
+    const first = { type: "test", name: "in the first file", url: join(String(dir), "first.test.cjs"), line: 3 };
+    const ofFirstFile = enable === "before collection" ? [first] : [];
+    const found = await session.waitForFoundTests(locations.length + ofFirstFile.length);
+    await proc.stdin.end();
+
+    const exitCode = await proc.exited;
+    const elements = junit
+      ? (await Bun.file(join(String(dir), "junit.xml")).text()).matchAll(/<test(?:case|suite) [^>]*>/g)
+      : [];
+    return {
+      found: [...found.values()].map(({ type, name, url, line }) => ({ type, name, url, line })).sort(byName),
+      expected: (line = (location: (typeof locations)[number]) => location.line) =>
+        locations
+          .map(location => ({ ...location, url: join(String(dir), file), line: line(location) }))
+          .concat(ofFirstFile)
+          .sort(byName),
+      // The name of each element that has a line, and the line.
+      junit: Object.fromEntries(
+        Array.from(elements, ([element]) => [element.match(/ name="([^"]*)"/)![1], element.match(/ line="(\d+)"/)?.[1]])
+          .filter(([, line]) => line)
+          .map(([name, line]) => [name, Number(line)]),
+      ),
+      stderr: await stderr,
+      exitCode,
+    };
+  }
+
+  test.concurrent.each([
+    ["before collection", "--inspect-wait"],
+    ["during collection", "BUN_INSPECT"],
+    ["during execution", "--inspect"],
+  ] as const)("is the same when TestReporter.enable arrives %s (%s)", async (enable, debug) => {
+    const { found, expected, stderr, exitCode } = await run(enable, debug);
+    expect(found).toEqual(expected());
+    expect(stderr).toContain(` ${locations.filter(location => location.type === "test").length + 1} pass`);
+    expect(exitCode).toBe(0);
+  });
+
+  // The debugger ends each module with a `//# sourceURL=` comment, which is not the path of this file.
+  test.concurrent("is the same in the JUnit report, in a file with a name that is not ASCII", async () => {
+    const { found, expected, junit, exitCode } = await run("during collection", "--inspect-wait", {
+      file: "位置.test.ts",
+      junit: true,
+    });
+    expect(found).toEqual(expected());
+    expect(junit).toEqual({
+      "in the first file": 3,
+      ...Object.fromEntries(locations.filter(({ line }) => line).map(({ name, line }) => [name, line])),
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // An editor puts BUN_INSPECT_CONNECT_TO in the environment of every process that it starts. That does not say that a
+  // client will enable TestReporter, so `test()` does not look for its line until a client has.
+  test.concurrent("is line 0 for a test from before TestReporter.enable over BUN_INSPECT_CONNECT_TO", async () => {
+    const { found, expected, exitCode } = await run("during collection", "BUN_INSPECT_CONNECT_TO");
+    expect(found).toEqual(expected(location => (location.name === "registered last" ? location.line : 0)));
     expect(exitCode).toBe(0);
   });
 });

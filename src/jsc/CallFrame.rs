@@ -1,5 +1,6 @@
 use alloc::borrow::Cow;
 use core::ffi::c_uint;
+use core::num::NonZeroU32;
 
 use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JSValue};
@@ -46,6 +47,11 @@ impl JSGlobalObject {
         let mut column: c_uint = 0;
         JSC__JSGlobalObject__getCallerSrcLoc(self, &mut str, &mut line, &mut column);
         CallerSrcLoc { str, line, column }
+    }
+
+    /// The line of the innermost call that `file` makes on the stack, if it makes one.
+    pub fn get_caller_line_in_file(&self, file: &bun_core::String) -> Option<NonZeroU32> {
+        NonZeroU32::new(JSC__JSGlobalObject__getCallerLineInFile(self, file))
     }
 }
 
@@ -117,6 +123,10 @@ unsafe extern "C" {
         out_line: &mut c_uint,
         out_column: &mut c_uint,
     );
+    safe fn JSC__JSGlobalObject__getCallerLineInFile(
+        global: &JSGlobalObject,
+        file: &bun_core::String,
+    ) -> c_uint;
     #[cfg(debug_assertions)]
     fn Bun__CallFrame__describeFrame(cf: *const CallFrame) -> *const core::ffi::c_char;
 }

@@ -40,7 +40,7 @@ pub(crate) fn replay_test_records(coord: &mut Coordinator) {
                 status: TestResult::Fail,
                 assertions: 0,
                 elapsed_ns: 0,
-                line_number: 0,
+                line_number: None,
                 failure: Some(TestFailure {
                     message: message.to_vec(),
                     ..Default::default()

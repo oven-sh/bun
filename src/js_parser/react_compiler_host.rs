@@ -200,8 +200,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
         body.children.clear();
         if let Some(mut args) = body.parent {
             debug_assert!(args.kind == js_ast::scope::Kind::FunctionArgs);
-            // A parameter named like the function expression took the scope member of `name`, and `declare_symbol`
-            // linked `name` to it. It went with the old parameter list, so `name` is a symbol of its own again.
+            // `declare_symbol` linked `name` to a parameter of the same name (`function c({ c })`), which is gone now.
             let merged = name
                 .filter(|name| self.symbols[name.inner_index() as usize].has_link())
                 .map(|name| (name, js_ast::symbol::follow_symbols(&self.symbols, name)));

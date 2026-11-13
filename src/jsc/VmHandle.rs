@@ -618,9 +618,9 @@ mod test_gate {
     }
     fn mode(s: &Shared) -> TestGate {
         match s.debug.gate.load(Ordering::Relaxed) {
-            1 => TestGate::Draining,
-            2 => TestGate::WeakDraining,
-            3 => TestGate::WeakClosed,
+            v if v == TestGate::Draining as u8 => TestGate::Draining,
+            v if v == TestGate::WeakDraining as u8 => TestGate::WeakDraining,
+            v if v == TestGate::WeakClosed as u8 => TestGate::WeakClosed,
             _ => TestGate::Off,
         }
     }

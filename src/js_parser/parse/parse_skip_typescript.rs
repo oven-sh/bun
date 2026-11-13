@@ -3,11 +3,12 @@ use crate::Error;
 use crate::lexer::T;
 use crate::p::P;
 use crate::parser::{
-    FnOrArrowDataParse, ParseStatementOptions, Ref, SkipTypeParameterResult, TypeParameterFlag,
+    FnOrArrowDataParse, ParseStatementOptions, SkipTypeParameterResult, TypeParameterFlag,
 };
 use crate::typescript;
 use crate::typescript::SkipTypeOptions;
 use crate::typescript::identifier::{Kind as TsIdentKind, kind_for_identifier};
+use bun_alloc::ArenaVec as BumpVec;
 use bun_ast::op::Level;
 use bun_ast::ts::Metadata;
 
@@ -797,10 +798,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.lexer.next()?;
 
                     if GET_METADATA {
-                        let mut left = (**result
+                        let mut left = **result
                             .as_mut()
-                            .expect("infallible: GET_METADATA implies Some"))
-                        .clone();
+                            .expect("infallible: GET_METADATA implies Some");
                         if let Some(final_) =
                             Metadata::finish_union(&mut left, |r| self.load_name_from_ref(r))
                         {
@@ -842,10 +842,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.lexer.next()?;
 
                     if GET_METADATA {
-                        let mut left = (**result
+                        let mut left = **result
                             .as_mut()
-                            .expect("infallible: GET_METADATA implies Some"))
-                        .clone();
+                            .expect("infallible: GET_METADATA implies Some");
                         if let Some(final_) =
                             Metadata::finish_intersection(&mut left, |r| self.load_name_from_ref(r))
                         {
@@ -892,43 +891,50 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.lexer.next()?;
                 }
                 T::TDot => {
-                    self.lexer.next()?;
-                    if !self.lexer.is_identifier_or_keyword() {
-                        self.lexer.expect(T::TIdentifier)?;
-                    }
-
+                    let mut names = BumpVec::new_in(self.arena);
                     if GET_METADATA {
-                        // `find_symbol` borrows `&mut self`; `result` is a disjoint fn
-                        // parameter so the borrows do not conflict.
-                        let ident = self.lexer.identifier;
-                        let r = result
-                            .as_deref_mut()
-                            .expect("infallible: GET_METADATA implies Some");
-                        match r {
-                            Metadata::MIdentifier(id_ref) => {
-                                let id_ref = *id_ref;
-                                let mut dot: Vec<Ref> = Vec::with_capacity(2);
-                                dot.push(id_ref);
-                                let find_result = self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
-                                dot.push(find_result.r#ref);
-                                *r = Metadata::MDot(dot);
-                            }
-                            Metadata::MDot(dot) => {
-                                if self.lexer.is_identifier_or_keyword() {
-                                    let find_result =
-                                        self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
-                                    dot.push(find_result.r#ref);
-                                }
-                            }
+                        match result.as_deref() {
+                            Some(Metadata::MIdentifier(id_ref)) => names.push(*id_ref),
+                            Some(Metadata::MDot(dot)) => names.extend_from_slice(dot),
                             _ => {}
                         }
                     }
 
-                    self.lexer.next()?;
+                    loop {
+                        self.lexer.next()?;
+                        if !self.lexer.is_identifier_or_keyword() {
+                            self.lexer.expect(T::TIdentifier)?;
+                        }
 
-                    // "{ <A extends B>(): c.d \n <E extends F>(): g.h }" must not become a single type
-                    if !self.lexer.has_newline_before {
-                        let _ = self.skip_type_script_type_arguments::<false, false>()?;
+                        if GET_METADATA && !names.is_empty() {
+                            let ident = self.lexer.identifier;
+                            names.push(self.find_symbol(bun_ast::Loc::EMPTY, ident)?.r#ref);
+                        }
+
+                        self.lexer.next()?;
+
+                        // "{ <A extends B>(): c.d \n <E extends F>(): g.h }" must not become a single type
+                        if !self.lexer.has_newline_before {
+                            let _ = self.skip_type_script_type_arguments::<false, false>()?;
+                        }
+
+                        if !GET_METADATA || names.is_empty() {
+                            break;
+                        }
+
+                        // As in the arm above, so that "a.b!.c" is still one run of names.
+                        while self.lexer.token == T::TExclamation && !self.lexer.has_newline_before
+                        {
+                            self.lexer.next()?;
+                        }
+
+                        if self.lexer.token != T::TDot {
+                            **result
+                                .as_mut()
+                                .expect("infallible: GET_METADATA implies Some") =
+                                Metadata::MDot(names.into());
+                            break;
+                        }
                     }
                 }
                 T::TOpenBracket => {

@@ -183,6 +183,11 @@ export const dawn: Dependency = {
 
     const native = (names: string[]) => names.map(name => `src/dawn/native/${name}.cpp`);
     const withoutPch = (path: string): DirectSource => ({ path, noPch: true });
+    // LTO would take std::stringbuf for the only std::streambuf there is.
+    const stringStreams = {
+      ...withoutPch(ours("StringStreams.cpp")),
+      cflags: ["-fno-lto", "-fno-whole-program-vtables"],
+    };
     const backend: Array<string | DirectSource> = cfg.windows
       ? [...native(NATIVE_D3D12), "src/dawn/common/WindowsUtils.cpp", ours("QueueWatcherD3D12.cpp")]
       : cfg.darwin
@@ -213,8 +218,7 @@ export const dawn: Dependency = {
           ...["assert", "log"].map(name => `src/utils/${name}.cc`),
           ours("Host.cpp"),
           withoutPch(dawnSysChecks(cfg)),
-          // LTO would take it for the only std::streambuf there is.
-          ...(cfg.abi === "musl" ? [{ ...withoutPch(ours("StringStreams.cpp")), cflags: ["-fno-lto"] }] : []),
+          ...(cfg.abi === "musl" ? [stringStreams] : []),
         ],
       },
       { name: "tint", ...tintFlags, pch: join(buildDir, "tint-pch.h"), sources: tintSources(false) },

@@ -1492,9 +1492,13 @@ ${cppSetterPrologue(type)}
 export const isDOMAttribute = (type: ClassType, accessor: Getter | InternalFieldAccessor | EventHandler) =>
   !type.forBind && !(accessor instanceof Getter && (accessor.isStatic || accessor.rejects));
 
-function cppGetter(type: ClassType, getter: Getter): string {
+/** With `guardOfCall` the host function stays, to answer a receiver that is not an instance. */
+function cppGetter(type: ClassType, getter: Getter, guardOfCall: EntryPointGuard): string {
   const get = getterHostFunctionName(type, getter);
   const getSymbol = getterSymbolName(type, getter);
+  const call = guardOfCall
+    ? guardedCall(removableFeatures(), guardOfCall.feature, "Abort", getSymbol, ["globalObject", "thisObject"])
+    : `${getSymbol}(globalObject, thisObject)`;
   const parameters = `(JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName${isDOMAttribute(type, getter) ? "" : " attributeName"})`;
   return `
 extern "C" SYSV_ABI JSC::EncodedJSValue ${getSymbol}(JSC::JSGlobalObject*, JSC::JSCell*);
@@ -1513,11 +1517,11 @@ ${
     JSC::EnsureStillAliveScope ensureThisStillAlive { thisObject };
 ${
   getter.internalField === undefined
-    ? `    RELEASE_AND_RETURN(scope, ${getSymbol}(globalObject, thisObject));`
+    ? `    RELEASE_AND_RETURN(scope, (${call}));`
     : `    auto& cachedValue = thisObject->m_${getter.internalField};
     if (JSC::JSValue cached = cachedValue.get())
         return JSC::JSValue::encode(cached);
-    JSC::JSValue result = JSC::JSValue::decode(${getSymbol}(globalObject, thisObject));
+    JSC::JSValue result = JSC::JSValue::decode(${call});
 ${indent(cppReturnIfFailed("!!result", "{}"), 4)}
     cachedValue.set(vm, thisObject, result);
     return JSC::JSValue::encode(result);`
@@ -1569,10 +1573,11 @@ function cppSourceForClass(type: ClassType, guards: Guards): string {
     const assignable =
       getter instanceof EventHandler || getter.hasSetter || (getter instanceof Getter && getter.writable);
     const isStatic = getter instanceof Getter && getter.isStatic;
+    const get = isStatic ? getterSymbolName(type, getter) : getterHostFunctionName(type, getter);
     return row(
       getter.name,
       `${assignable ? "" : "JSC::PropertyAttribute::ReadOnly | "}JSC::PropertyAttribute::CustomAccessor${isDOMAttribute(type, getter) ? " | JSC::PropertyAttribute::DOMAttribute" : ""}${getter instanceof Getter ? attributes(getter.configurable, getter.enumerable) : attributes()}`,
-      `JSC::HashTableValue::GetterSetterType, ${pointer(isStatic, getter.name, isStatic ? getterSymbolName(type, getter) : getterHostFunctionName(type, getter), true)}, ${assignable ? pointer(isStatic, getter.name, setterHostFunctionName(type, getter), true) : "0"}`,
+      `JSC::HashTableValue::GetterSetterType, ${getter instanceof Getter && getter.rejects ? get : pointer(isStatic, getter.name, get, true)}, ${assignable ? pointer(isStatic, getter.name, setterHostFunctionName(type, getter), true) : "0"}`,
     );
   };
   const builtinCodeGenerator = (builtin: Builtin) =>
@@ -1637,7 +1642,7 @@ ${type.nativeFunctions.map(fn => cppMethod(type, fn)).join("")}${type.methods
     .map(method => cppCalledFromCpp(type, method))
     .join(
       "",
-    )}${type.calledFromRust.map(member => cppCalledFromRust(type, member)).join("")}${type.getters.map(getter => cppGetter(type, getter)).join("")}${type.internalFieldAccessors.map(accessor => cppInternalFieldAccessor(type, accessor)).join("")}${type.eventHandlers.map(handler => cppEventHandler(type, handler)).join("")}${type.staticGetters.map(getter => cppStaticGetter(type, getter)).join("")}
+    )}${type.calledFromRust.map(member => cppCalledFromRust(type, member)).join("")}${type.getters.map(getter => cppGetter(type, getter, getter.rejects ? guardOfMember(false, getter.name) : null)).join("")}${type.internalFieldAccessors.map(accessor => cppInternalFieldAccessor(type, accessor)).join("")}${type.eventHandlers.map(handler => cppEventHandler(type, handler)).join("")}${type.staticGetters.map(getter => cppStaticGetter(type, getter)).join("")}
 ${
   construct && !type.illegalConstructor
     ? `${

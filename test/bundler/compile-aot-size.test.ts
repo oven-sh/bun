@@ -88,7 +88,8 @@ const countMappedBytes = (file: Buffer) => getMappedSegments(file).reduce((sum, 
 // A second exception: the engine of WebKit 8156ba68efab has 417,496 bytes more that an executable keeps, 376,536 of them in a trimmed one, and both bounds
 // went up by that. Before oven-sh/bun#48478 they measured 68,847,648 and 26,351,648 with it, against 68,430,152 and 25,975,112 with the engine before it.
 // Both restated with oven-sh/WebKit#1036: they measured 69,803,456 and 27,164,096.
-const mostMappedBytes: Record<string, number> = { "": 70_150_000, "--trim": 27_340_000 };
+// The first restated with oven-sh/bun#48821, which adds WebGPU: it measured 73,230,787.
+const mostMappedBytes: Record<string, number> = { "": 73_580_000, "--trim": 27_340_000 };
 // The bytes of the feature ImageCompiler in the trim table: about 22.50 MB when this was set, with about the 250 KB of room it had before.
 // Restated once, where the compiler was merged: it measured 23,647,988.
 // And once with oven-sh/bun#47605, from what CI measured there and 1%: 23,755,040.

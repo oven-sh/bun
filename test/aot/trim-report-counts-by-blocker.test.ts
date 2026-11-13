@@ -47,32 +47,32 @@ describe.concurrent("one reason to keep more", () => {
       "import() of a computed path",
       "main.mjs",
       `console.log(typeof (await import(${fromOutside})));`,
-      152,
+      153,
       "dynamic-import eval native-code",
     ],
     [
       "require() of a computed path",
       "main.cjs",
       `console.log(typeof require(${fromOutside}));`,
-      161,
+      162,
       "dynamic-import eval native-code",
     ],
     [
       "createRequire and a constant path",
       "main.mjs",
       `import { createRequire } from "node:module";\nconsole.log(typeof createRequire(import.meta.url)("node:path").join);`,
-      145,
+      146,
       "dynamic-import runtime-code",
     ],
     [
       "node:vm",
       "main.mjs",
       `import vm from "node:vm";\nconsole.log(vm.runInNewContext(${fromOutside}));`,
-      147,
+      148,
       "dynamic-import runtime-code",
     ],
-    ["Bun.plugin", "main.mjs", `Bun.plugin({ name: "made up", setup() {} });`, 215, everyBlocker],
-    ["process.dlopen", "main.mjs", `process.dlopen({ exports: {} }, ${fromOutside});`, 142, "native-code"],
+    ["Bun.plugin", "main.mjs", `Bun.plugin({ name: "made up", setup() {} });`, 216, everyBlocker],
+    ["process.dlopen", "main.mjs", `process.dlopen({ exports: {} }, ${fromOutside});`, 143, "native-code"],
   ]);
 });
 
@@ -131,7 +131,7 @@ describe.concurrent("an alias of the global object that a closure captures", () 
       "is read under a string from outside",
       "main.mjs",
       outer("key => typeof g[key]") + `console.log(outer()(${fromOutside}));`,
-      164,
+      165,
       "dynamic-import eval native-code",
     ],
   ]);
@@ -157,26 +157,26 @@ console.log(new Emitter() === new Emitter());`,
 
 describe.concurrent("a key that may be a string keeps what the object leads to", () => {
   eachRow([
-    ["a string from outside", "main.mjs", `console.log(typeof globalThis[${fromOutside}]);`, 218, everyBlocker],
+    ["a string from outside", "main.mjs", `console.log(typeof globalThis[${fromOutside}]);`, 219, everyBlocker],
     [
       "a symbol or a string",
       "main.mjs",
       `const key = process.argv.length > 9 ? Symbol.for("made.up") : ${fromOutside};\nconsole.log(typeof globalThis[key]);`,
-      218,
+      219,
       everyBlocker,
     ],
     [
       "a variable that is assigned again",
       "main.mjs",
       `let key = Symbol.for("made.up");\nfunction change() {\n  key = ${fromOutside};\n}\nchange();\nconsole.log(typeof globalThis[key]);`,
-      218,
+      219,
       everyBlocker,
     ],
     [
       "a symbol made on every call",
       "main.mjs",
       `function mark() {\n  const key = Symbol("made up");\n  return globalThis[key];\n}\nconsole.log(mark());`,
-      218,
+      219,
       everyBlocker,
     ],
   ]);

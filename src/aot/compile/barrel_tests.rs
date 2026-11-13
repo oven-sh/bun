@@ -3,8 +3,12 @@ use std::num::NonZeroU32;
 use bstr::ByteSlice;
 use bun_options_types::aot_options::AotOptions;
 
-use super::testing::{default_settings, with_loaded_build_and_options};
+use super::LoadedBuild;
+use super::testing::{
+    BUNDLED_LIBS, TestProject, default_settings, run_build, with_loaded_build_and_options,
+};
 use crate::load::ProjectId;
+use crate::load::source_provider::WithoutServices;
 use crate::modules::testing::{file_named, with_graph};
 
 const WITHOUT_SIDE_EFFECTS: (&str, &str) = (
@@ -28,19 +32,23 @@ const SUBMODULES: [(&str, &str); 3] = [
 const BARREL: &str =
     "export { a } from './a.js'; export { b } from './b.js'; export { c } from './c.js';";
 
+fn files_of_package(loaded: &LoadedBuild<'_, '_>) -> Vec<String> {
+    let files = loaded.project(ProjectId::Application).loaded.files();
+    let paths = files
+        .compiled_files()
+        .iter()
+        .map(|&file| files.module(file).file_name());
+    let in_package = paths.filter_map(|path| path.strip_prefix(b"/project/node_modules/lib/"));
+    in_package.map(|path| path.as_bstr().to_string()).collect()
+}
+
 fn load_with_threads(files: &[(&str, &str)], thread_count: u32) -> Vec<String> {
     let options = AotOptions {
         thread_count: NonZeroU32::new(thread_count),
         ..AotOptions::default()
     };
     with_loaded_build_and_options(files, &default_settings(), options, |_, loaded| {
-        let files = loaded.project(ProjectId::Application).loaded.files();
-        let paths = files
-            .compiled_files()
-            .iter()
-            .map(|&file| files.module(file).file_name());
-        let in_package = paths.filter_map(|path| path.strip_prefix(b"/project/node_modules/lib/"));
-        in_package.map(|path| path.as_bstr().to_string()).collect()
+        files_of_package(loaded)
     })
 }
 
@@ -341,6 +349,139 @@ fn entry_point_is_no_barrel() {
     let mut files = vec![("node_modules/lib/index.js", BARREL), WITHOUT_SIDE_EFFECTS];
     files.extend(SUBMODULES);
     assert_eq!(load_with_threads(&files, 1), ALL);
+}
+
+fn load_with_main(
+    main: (&'static str, &'static str),
+    more: &[(&'static str, &'static str)],
+    entry_point_count: usize,
+    runs_tests: bool,
+) -> (bool, Vec<String>) {
+    let mut files = vec![main];
+    files.extend(more);
+    files.extend([WITHOUT_SIDE_EFFECTS, ("node_modules/lib/index.js", BARREL)]);
+    files.extend(SUBMODULES);
+    let mut project =
+        TestProject::with_entry_points(&files, entry_point_count, &default_settings());
+    project.runs_tests = runs_tests;
+    run_build(&project, BUNDLED_LIBS, &WithoutServices, |build| {
+        build.with_loaded_projects(|_, loaded| {
+            let mut files = files_of_package(&loaded);
+            files.sort();
+            Ok((loaded.contents.any_file_may_become_main_module, files))
+        })
+    })
+}
+
+// main.ts binds no name of another file, so its store is known before the barrel is loaded.
+const STORES: (&str, &str) = ("main.ts", "import './app.ts'; Bun.main = '/nowhere.js';");
+const IMPORTS_ONE_NAME: &str = "import { b } from 'lib'; console.log(b);";
+const STARTS_WORKER: (&str, &str) = (
+    "app.ts",
+    "import { b } from 'lib'; console.log(b); new Worker(new URL('./node_modules/lib/index.js', import.meta.url));",
+);
+const HANDS_NAME_ON: (&str, &str) = (
+    "app.ts",
+    "import { b } from 'lib'; import { load } from './loader.ts'; console.log(b); load('./node_modules/lib/index.js');",
+);
+
+#[test]
+fn barrel_that_becomes_an_entry_point_is_loaded_whole() {
+    let guesses = (
+        "app.ts",
+        "import { b } from 'lib'; console.log(b); const table: Record<string, string> = { lib: './node_modules/lib/index.js' }; \
+         (globalThis as any).kept = table; await import(table[['lib'][0]]);",
+    );
+    let imports = (
+        "loader.ts",
+        "export const load = (name: string) => import(name);",
+    );
+    let requires = (
+        "loader.ts",
+        "export const load = (name: string) => require(name);",
+    );
+    let guesses_beside_worker = (
+        "app.ts",
+        "import { b } from 'lib'; console.log(b); const table: Record<string, string> = { lib: './node_modules/lib/index.js' }; \
+         (globalThis as any).kept = table; import(table[['lib'][0]]); new Worker(new URL('./job.ts', import.meta.url));",
+    );
+    let names_for_sure = (
+        "job.ts",
+        "new Worker(new URL('./node_modules/lib/index.js', import.meta.url));",
+    );
+    // At one thread setup.ts is loaded in front of app.ts, so its store is known before the barrel is loaded.
+    let imports_store_first = ("main.ts", "import './setup.ts'; import './app.ts';");
+    let stores_beside = ("setup.ts", "Bun.main = '/nowhere.js';");
+    let test_file = (
+        "a.test.ts",
+        "import './main.ts'; import { test } from 'bun:test'; test('runs', () => {});",
+    );
+    let programs: [(&str, Vec<(&str, &str)>, usize, bool); 8] = [
+        (
+            "a Worker starts from it",
+            vec![STORES, STARTS_WORKER],
+            1,
+            false,
+        ),
+        (
+            "import() of a name that a function is handed",
+            vec![STORES, HANDS_NAME_ON, imports],
+            1,
+            false,
+        ),
+        (
+            "require() of such a name",
+            vec![STORES, HANDS_NAME_ON, requires],
+            1,
+            false,
+        ),
+        ("a guess that is let in", vec![STORES, guesses], 1, false),
+        (
+            "a guess that the file of a Worker then names for sure",
+            vec![STORES, guesses_beside_worker, names_for_sure],
+            1,
+            false,
+        ),
+        (
+            "the store in a file that is loaded beside it",
+            vec![imports_store_first, stores_beside, STARTS_WORKER],
+            1,
+            false,
+        ),
+        (
+            "beside a second written entry point",
+            vec![STORES, ("other.ts", "export {};"), STARTS_WORKER],
+            2,
+            false,
+        ),
+        (
+            "in a test run",
+            vec![test_file, STORES, STARTS_WORKER],
+            1,
+            true,
+        ),
+    ];
+    let whole = ALL.map(str::to_string).to_vec();
+    let mut wrong = Vec::new();
+    for (name, files, entry_point_count, runs_tests) in programs {
+        let loaded = load_with_main(files[0], &files[1..], entry_point_count, runs_tests);
+        if loaded != (true, whole.clone()) {
+            wrong.push((name, loaded));
+        }
+    }
+    assert_eq!(wrong, []);
+    let without_store = ("main.ts", "import './app.ts';");
+    let loaded = load_with_main(without_store, &[STARTS_WORKER], 1, false);
+    assert_eq!(loaded, (false, whole));
+}
+
+#[test]
+fn store_to_the_main_module_leaves_a_barrel_that_is_no_entry_point() {
+    let loaded = load_with_main(STORES, &[("app.ts", IMPORTS_ONE_NAME)], 1, false);
+    assert_eq!(
+        loaded,
+        (true, vec!["b.js".to_string(), "index.js".to_string()])
+    );
 }
 
 #[test]

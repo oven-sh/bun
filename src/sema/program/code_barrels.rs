@@ -96,6 +96,13 @@ impl BarrelRequests {
         &mut self.files[index]
     }
 
+    pub(super) fn is_waiting(&self, file: u32) -> bool {
+        matches!(
+            self.files.get(file as usize),
+            Some(FileRequests::Waiting(_))
+        )
+    }
+
     pub(super) fn forget_parsed_file(&mut self, file: u32) {
         *self.file(file) = FileRequests::Unparsed(Asked::All);
     }

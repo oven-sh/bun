@@ -1918,19 +1918,15 @@ pub(crate) mod js_bundler {
         let mut plugins: Option<*mut Plugin> = None;
         let config = Config::from_js(global_this, config, &mut plugins)?;
 
-        // `BundleV2.generateFromJavaScript` — the completion-task struct lives in
-        // `crate::api::js_bundle_completion_task` (bun_runtime owns it because its
-        // fields name `Config`/`Plugin`/`HTMLBundle::Route`; lower-tier crates
-        // cannot depend on those).
-        let mut completion = crate::api::js_bundle_completion_task::JSBundleCompletionTask::new(
+        let strong = jsc::JSPromiseStrong::init(global_this);
+        let promise = strong.value();
+        crate::api::js_bundle_completion_task::JSBundleCompletionTask::schedule(
             config,
             plugins.and_then(core::ptr::NonNull::new),
             global_this,
             context,
+            crate::api::js_bundle_completion_task::Receiver::Promise(strong),
         );
-        completion.promise = jsc::JSPromiseStrong::init(global_this);
-        let promise = completion.promise.value();
-        completion.schedule();
         Ok(promise)
     }
 
@@ -1979,7 +1975,6 @@ pub(crate) mod js_bundler {
     #[unsafe(no_mangle)]
     extern "C" fn JSBundlerPlugin__onResolveAsync(
         resolve: &mut Resolve,
-        _unused: *mut c_void,
         path_value: JSValue,
         namespace_value: JSValue,
         external_value: JSValue,
@@ -2103,7 +2098,6 @@ pub(crate) mod js_bundler {
     #[unsafe(no_mangle)]
     extern "C" fn JSBundlerPlugin__onLoadAsync(
         this: &mut Load,
-        _unused: *mut c_void,
         source_code_value: JSValue,
         loader_as_int: JSValue,
     ) {
@@ -2177,7 +2171,6 @@ pub(crate) mod js_bundler {
         // sound and discharges the deref obligation at the type level.
         safe fn JSBundlerPlugin__globalObject(plugin: &Plugin) -> &JSGlobalObject;
         safe fn JSBundlerPlugin__appendDeferPromise(plugin: &mut Plugin) -> JSValue;
-        safe fn JSBundlerPlugin__setConfig(plugin: &mut Plugin, config: *mut c_void);
         safe fn JSBundlerPlugin__runSetupFunction(
             plugin: &Plugin,
             object: JSValue,
@@ -2222,7 +2215,6 @@ pub(crate) mod js_bundler {
             is_last: bool,
             is_bake: bool,
         ) -> JsResult<JSValue>;
-        fn set_config(&mut self, config: *mut c_void);
         /// Thin FFI forward; the host-call wrapper / exception check is the
         /// caller's responsibility (`jsc::host_fn::from_js_host_call`).
         fn load_and_resolve_plugins_for_serve(
@@ -2322,11 +2314,6 @@ pub(crate) mod js_bundler {
             })
         }
 
-        fn set_config(&mut self, config: *mut c_void) {
-            jsc::mark_binding();
-            JSBundlerPlugin__setConfig(self, config);
-        }
-
         fn load_and_resolve_plugins_for_serve(
             &self,
             plugins: JSValue,
@@ -2419,8 +2406,6 @@ pub(crate) mod js_bundler {
         }
     }
 }
-
-pub(crate) use js_bundler as JSBundler;
 
 /// `bun:internal-for-testing`: bundler `Worker`s (one per pool thread a build ran on) not yet torn down.
 pub(crate) fn worker_live_count() -> usize {

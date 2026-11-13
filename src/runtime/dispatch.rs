@@ -130,6 +130,7 @@ use crate::api::bun_subprocess::Subprocess;
 #[cfg(not(windows))]
 use crate::api::bun_terminal_body::Poll as TerminalPoll;
 use crate::api::cron::CronJob;
+use crate::api::js_bundle_completion_task::JSBundleCompletionTask;
 use crate::api::native_promise_context::DeferredDerefTask as NativePromiseContextDeferredDerefTask;
 #[cfg(not(windows))]
 use bun_spawn::static_pipe_writer::Poll as StaticPipeWriterPoll;
@@ -302,11 +303,11 @@ pub(crate) fn run_task(
                 Ok(())
             }
         )?,
-        task_tag::JSBundleCompletionTask => {
-            crate::api::js_bundle_completion_task::JSBundleCompletionTask::on_complete_anytask(
-                cast_ptr!(crate::api::js_bundle_completion_task::JSBundleCompletionTask),
-            )?;
-        }
+        task_tag::JSBundleCompletionTask => boxed_arm!(
+            task,
+            [Bundler],
+            |build: JSBundleCompletionTask| -> JsResult<()> { build.on_complete() }
+        )?,
         task_tag::FetchTaskletPromiseSettle => boxed_arm!(
             task,
             [Fetch],
@@ -1663,12 +1664,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::FSWatchTask => release_boxed_in!([NodeFs], FSWatchTask),
         task_tag::HotReloadTask => release_in!([HotReload], hot_reloader::HotReloadTask),
         task_tag::WatchReloadTask => release_in!([HotReload], hot_reloader::WatchReloadTask),
-        task_tag::JSBundleCompletionTask => {
-            release_in!(
-                [Bundler],
-                crate::api::js_bundle_completion_task::JSBundleCompletionTask
-            )
-        }
+        task_tag::JSBundleCompletionTask => release_boxed_in!([Bundler], JSBundleCompletionTask),
         task_tag::JSCDeferredWorkTask => release!(JSCDeferredWorkTask),
         task_tag::BundleV2PluginResolveAnswered => {
             release_in!(

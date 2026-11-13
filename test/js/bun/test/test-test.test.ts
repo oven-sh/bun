@@ -678,8 +678,9 @@ describe.concurrent("hooks of a describe block that does not run", () => {
     });
   `;
 
-  async function run(...args: string[]) {
-    using dir = tempDir("hooks-in-skipped-describe", { "hooks.test.js": fixture });
+  const run = (...args: string[]) => runFixture(fixture, ...args);
+  async function runFixture(source: string, ...args: string[]) {
+    using dir = tempDir("hooks-in-skipped-describe", { "hooks.test.js": source });
     await using proc = spawn({
       cmd: [bunExe(), "test", "hooks.test.js", "--reporter=junit", "--reporter-outfile=junit.xml", ...args],
       cwd: String(dir),
@@ -747,6 +748,105 @@ describe.concurrent("hooks of a describe block that does not run", () => {
       ],
       reported: [...skipped, ...todo, "(pass) runs > outer"],
       junit: [[`tests="13"`, `skipped="12"`], 13],
+      exitCode: 0,
+    });
+  });
+
+  // A "vitest" beforeAll and any aroundAll have a second entry for their teardown. It stays empty if the hook returns none or fails first.
+  it(`the teardown entries of "vitest" hooks are not reported in describe.todo() with --todo`, async () => {
+    const { summary, ...result } = await runFixture(
+      `
+        import { afterAll, aroundAll, beforeAll, describe, test } from "vitest";
+        describe.todo("nothing", () => {
+          beforeAll(() => { console.log("nothing beforeAll"); });
+          beforeAll(async () => {});
+          test("outer", () => { throw new Error("not done yet"); });
+          describe("nested", () => {
+            beforeAll(() => {});
+            test("inner", () => { throw new Error("not done yet"); });
+          });
+        });
+        describe.todo("function", () => {
+          beforeAll(() => () => console.log("function teardown of beforeAll"));
+          test("outer", () => { throw new Error("not done yet"); });
+        });
+        describe.todo("throws", () => {
+          beforeAll(() => () => console.log("throws teardown of the first beforeAll"));
+          beforeAll(() => { throw new Error("in beforeAll"); });
+          beforeAll(() => () => console.log("unreachable teardown of the third beforeAll"));
+          afterAll(() => console.log("throws afterAll"));
+          test("outer", () => console.log("unreachable test after a failed beforeAll"));
+        });
+        describe.todo("aroundAll", () => {
+          aroundAll(() => { throw new Error("before runSuite()"); });
+          test("outer", () => console.log("unreachable test in a failed aroundAll"));
+        });
+        describe("runs", () => { test("outer", () => {}); });
+      `,
+      "--todo",
+    );
+    expect(result).toEqual({
+      hooks: [
+        "nothing beforeAll",
+        "function teardown of beforeAll",
+        "throws afterAll",
+        "throws teardown of the first beforeAll",
+      ],
+      reported: [
+        "(todo) nothing > outer",
+        "(todo) nothing > nested > inner",
+        "(todo) function > outer",
+        "(fail) throws > (unnamed)",
+        "(fail) aroundAll > (unnamed)",
+        "(pass) runs > outer",
+      ],
+      junit: [[`tests="6"`, `skipped="3"`], 6],
+      exitCode: 1,
+    });
+    expect(summary.map(line => line.replace(/ \[.*$/, ""))).toEqual([
+      " 1 pass",
+      " 3 todo",
+      " 2 fail",
+      "Ran 6 tests across 1 file.",
+    ]);
+  });
+
+  it(`an aroundAll from "bun:test" that fails in describe.todo() is reported once with --todo`, async () => {
+    const { summary, ...result } = await runFixture(
+      `
+        import { aroundAll, describe, test } from "bun:test";
+        describe.todo("todo", () => {
+          aroundAll(() => { throw new Error("before runSuite()"); });
+          test("inner", () => console.log("unreachable test in a failed aroundAll"));
+        });
+        describe("runs", () => { test("outer", () => {}); });
+      `,
+      "--todo",
+    );
+    expect(result).toEqual({
+      hooks: [],
+      reported: ["(fail) todo > (unnamed)", "(pass) runs > outer"],
+      junit: [[`tests="2"`, `skipped="0"`], 2],
+      exitCode: 1,
+    });
+  });
+
+  it("do not split the concurrent tests around the block", async () => {
+    const { reported, exitCode } = await runFixture(`
+      import { afterAll, beforeAll, describe, test } from "bun:test";
+      const { promise: secondStarted, resolve } = Promise.withResolvers();
+      describe.concurrent("concurrent", () => {
+        test("first", async () => { await secondStarted; });
+        describe.skip("skip", () => {
+          beforeAll(() => {});
+          afterAll(() => {});
+          test("inner", () => {});
+        });
+        test("second", () => { resolve(); });
+      });
+    `);
+    expect({ reported, exitCode }).toEqual({
+      reported: ["(skip) concurrent > skip > inner", "(pass) concurrent > second", "(pass) concurrent > first"],
       exitCode: 0,
     });
   });

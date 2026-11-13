@@ -804,6 +804,10 @@ impl Execution {
         }
         if let Some(first_entry) = sequence.first_entry {
             if sequence.test_entry.is_some() || sequence.result != Result::Pass {
+                debug_assert!(
+                    sequence.test_entry.is_some() || sequence.result.is_fail(),
+                    "a sequence without a test can only pass or fail"
+                );
                 // SAFETY: deref parent BunTest at point-of-use. `sequence` aliases
                 // `buntest.execution.sequences[i]`; `handle_test_completed`'s signature still takes
                 // both `&mut BunTest` and `&mut ExecutionSequence` (callee could be reshaped to avoid this).
@@ -1370,7 +1374,9 @@ fn step_sequence_one(
             timeout: next_item.timespec,
         }));
     } else {
-        match next_item.base.mode {
+        // A teardown slot has its scope's mode, but only the sequence's test is skipped, todo or filtered out.
+        let mode = if Some(next_item_ptr) == sequence.test_entry { next_item.base.mode } else { ScopeMode::Normal };
+        match mode {
             ScopeMode::Skip => {
                 if sequence.result == Result::Pending {
                     sequence.result = Result::Skip;

@@ -5,8 +5,8 @@ import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "../supported";
-import { slot } from "./commands";
-import { afterAll, givenToABunWithAssertions } from "./default-timeout";
+import { limitWithASAN, slot, slots } from "./commands";
+import { afterAll } from "./default-timeout";
 import { run } from "./run";
 import { runsWholeGrids } from "./ways";
 
@@ -363,9 +363,10 @@ function lastWordsOf(stderr: string) {
   return (lines.length > 12 ? [...lines.slice(0, 6), "...", ...lines.slice(-6)] : lines).map(line => line.slice(0, 200));
 }
 
-// A run that hangs is ended half a minute before its test is, and the test then says which run it was and what it wrote. `bun test` ends the children of a test that
-// timed out only where the tests run one by one: here a run would outlast its test. With assertions a test has at least what default-timeout.ts gives it.
-const limitOfARun = (ofItsTest: number) => Math.max(ofItsTest, isASAN || isDebug ? givenToABunWithAssertions : 0) - 30_000;
+// A run that hangs is ended at its limit, and its project then says which run it was and what it wrote. `bun test` ends the children of a test that timed out only
+// where the tests run one by one: here a run would outlast its test. A debug build of Bun builds a project for a minute or two.
+const limitOfARun = isASAN || isDebug ? limitWithASAN : 150_000;
+const limitOfAPackedRun = 270_000;
 
 async function readingsOf(dir: string, flags: string[], limit: number) {
   // A test of the run has a third of the limit of the run: one that hangs is failed and named by the run itself, which then comes to its summary. The five seconds of
@@ -500,11 +501,15 @@ const packedRuns = ["packed", "packed beside preloads that mock"];
 export function mockLaidOver(part: number, parts: number) {
   const all = new Map([...modules(), ...builtinModules()]);
   const namesAProject = (line: string) => all.has(line.split(" | ")[0]) || packedRuns.includes(line.split(" | ")[0]);
+  // A project waits for its slot inside its test, and `bun test` has up to twenty tests under way unless it is told otherwise. So the limit of a test holds every run
+  // that may take a slot ahead of its own, each for its whole limit, and half a minute more: no test times out while it waits, and a run that hangs is ended before
+  // its test is.
+  const limitOfATest = Math.ceil(20 / slots) * (part === 1 ? limitOfAPackedRun : limitOfARun) + 30_000;
   if (part === 1) {
     const withoutMockingPreload = witnesses.filter(column => !column.includes(".laid-by-preload."));
-    const limit = limitOfARun(300_000);
-    test.concurrent("the columns of real programs and a witness for each fault", () => judge(packedRuns[0], packed(all, withoutMockingPreload), 5000, limit), 300_000);
-    test.concurrent("the same beside preloads that lay mocks", () => judge(packedRuns[1], packed(all, witnesses), 5000, limit), 300_000);
+    const limit = limitOfAPackedRun;
+    test.concurrent("the columns of real programs and a witness for each fault", () => judge(packedRuns[0], packed(all, withoutMockingPreload), 5000, limit), limitOfATest);
+    test.concurrent("the same beside preloads that lay mocks", () => judge(packedRuns[1], packed(all, witnesses), 5000, limit), limitOfATest);
     // A project holds the lines that begin with its name, so a line that begins otherwise is held by nothing. Where the list is written anew, such a line goes out.
     if (!rewrite)
       test("every line of the list names a project", () => {
@@ -514,7 +519,7 @@ export function mockLaidOver(part: number, parts: number) {
   // The two realms of a column stand side by side.
   const names = [...all.keys()].sort();
   const mine = names.filter((_, index) => Math.floor(index / 2) % parts === part - 1);
-  if (runsWholeGrids) for (const name of mine) test.concurrent(name, () => judge(name, all.get(name)!, 10, limitOfARun(180_000)), 180_000);
+  if (runsWholeGrids) for (const name of mine) test.concurrent(name, () => judge(name, all.get(name)!, 10, limitOfARun), limitOfATest);
   afterAll(() => {
     if (!rewrite) return;
     const now = readFileSync(list, "utf8").split("\n");

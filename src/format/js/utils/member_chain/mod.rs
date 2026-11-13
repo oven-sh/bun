@@ -449,14 +449,15 @@ impl<'a> Format<'a> for MemberChain<'a, '_> {
             let last_group_decides = !calls.function_breaks_last
                 && last.is_some_and(|it| it.stays_expanded(f))
                 && self.last_group_prints_the_same_once_broken(f);
-            match last_group_decides {
-                true => write!(
-                    f,
-                    best_fitting!(format_one_line, format_expanded)
-                        .with_fallback(Fallback::MostExpandedIfStable)
-                ),
-                false => write!(f, best_fitting!(format_one_line, format_expanded)),
-            }
+            // Otherwise, once a group in the chain breaks, every group goes on its own line the next run.
+            let fallback = match last_group_decides {
+                true => Fallback::MostExpandedIfStable,
+                false => Fallback::MostExpandedIfForced,
+            };
+            write!(
+                f,
+                best_fitting!(format_one_line, format_expanded).with_fallback(fallback)
+            );
         });
 
         write!(
@@ -521,8 +522,8 @@ fn arguments_print_the_same_once_broken<'a>(call: Call<'a>, f: &Formatter<'a>) -
     })
 }
 
-/// True if `node` has an object, an object type or a mapped type in it: what can stay broken once it's printed
-/// broken, `GroupMode::StaysExpanded`.
+/// True if `node` has an object, an object type, a mapped type or the attributes of an import type in it: what can
+/// stay broken once it's printed broken, `GroupMode::StaysExpanded`.
 fn has_object_like(node: Node<'_>) -> bool {
     let mut rest = SmallVec::<[Node<'_>; 8]>::new();
     rest.push(node);
@@ -530,6 +531,12 @@ fn has_object_like(node: Node<'_>) -> bool {
         match node {
             Node::Expr(e) if matches!(e.kind(), ExprKind::Object(_)) => return true,
             Node::Type(ty) if matches!(ty.kind(), TypeKind::Object(_) | TypeKind::Mapped(_)) => {
+                return true;
+            }
+            Node::Type(ty)
+                if matches!(ty.kind(), TypeKind::Import { .. })
+                    && ty.import_attributes().is_some() =>
+            {
                 return true;
             }
             _ => node.for_each_child(|child| rest.push(child)),

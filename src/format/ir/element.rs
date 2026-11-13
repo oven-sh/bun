@@ -318,6 +318,10 @@ pub(crate) enum Fallback {
     /// them broken. Use it for two variants where the writer picks the first if that content `will_break()`, as long
     /// as it fits, because that's what `will_break()` returns when the output is formatted again.
     MostExpandedIfStable,
+    /// The most expanded variant, and that one without measuring while a group in the flattest variant is forced to
+    /// break by a fallback around it. Use it where the writer picks the most expanded variant outright once a group
+    /// `will_break()`.
+    MostExpandedIfForced,
 }
 
 impl BestFitting {

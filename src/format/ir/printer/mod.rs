@@ -836,6 +836,14 @@ impl<'d> Printer<'d> {
             return Err(PrintError::InvalidDocument);
         };
 
+        if best_fitting.fallback == Fallback::MostExpandedIfForced
+            && self.has_expanded_group()
+            && flatter
+                .first()
+                .is_some_and(|&flattest| self.is_in_interned(flattest, self.expanded_group, false))
+        {
+            return self.print_variant(most_expanded, PrintMode::Expanded);
+        }
         if mode.is_flat() && self.measured_group_fits {
             return self.print_variant(*flatter.first().unwrap_or(&most_expanded), mode);
         }
@@ -930,7 +938,9 @@ impl<'d> Printer<'d> {
             return Ok(());
         }
         // The group that broke, and those around it, break in whichever variant is printed now.
-        if self.is_in_last_interned(flattest, self.expanded_group) && self.variant_fits(flattest)? {
+        if self.is_in_interned(flattest, self.expanded_group, true)
+            && self.variant_fits(flattest)?
+        {
             self.print_variant(flattest, PrintMode::Flat)?;
         } else {
             self.print_variant(most_expanded, PrintMode::Expanded)?;
@@ -942,18 +952,23 @@ impl<'d> Printer<'d> {
         Ok(())
     }
 
-    /// True if `index` is in the last interned content that `variant` is made of.
-    fn is_in_last_interned(&self, variant: Interned, index: u32) -> bool {
+    /// True if `index` is in the interned content that `variant` is made of: in any of it, or only in the last.
+    fn is_in_interned(&self, variant: Interned, index: u32, only_last: bool) -> bool {
         let mut elements = Elements::new(Run::of(variant), self.pool);
-        let mut last = None;
+        let mut is_in_last = false;
         while let Some(element) = elements.next() {
             match element {
                 FormatElement::Skip(skip) => elements.skip(skip.len),
-                FormatElement::Interned(interned) => last = Some(*interned),
+                FormatElement::Interned(it) => {
+                    is_in_last = index >= it.start && index < it.start.saturating_add(it.len);
+                    if is_in_last && !only_last {
+                        return true;
+                    }
+                }
                 _ => {}
             }
         }
-        last.is_some_and(|it| index >= it.start && index < it.start.saturating_add(it.len))
+        is_in_last
     }
 
     /// Prints `variant` expanded. If a [`GroupMode::StaysExpanded`] group breaks in it, this restores the printer's

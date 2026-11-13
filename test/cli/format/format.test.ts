@@ -1534,6 +1534,12 @@ describe.concurrent("bun fmt", () => {
       ["ts", `abc.b().c({ ${props} } as Foo);\n`, `abc.b().c(${broken()} as Foo);\n`],
       ["ts", `abc.b().c(x.y().z({ ${props} }));\n`, `abc.b().c(\n  x.y().z(${broken("  ")}),\n);\n`],
       ["ts", `abc.b().c(x.y(1).z({ ${props} }));\n`, `abc.b().c(\n  x.y(1).z(${broken("  ")}),\n);\n`],
+      // A chain in an earlier group whose last group has the object: its head stays on one line.
+      [
+        "ts",
+        `abc.b(x.y().z({ ${props} })).c({ ${props} });\n`,
+        `abc\n  .b(\n    x.y().z(${broken("    ")}),\n  )\n  .c(${broken("  ")});\n`,
+      ],
       // An empty line before the tail is dropped, which also counts as the last group breaking. oxfmt keeps it.
       ["ts", `abc\n\n  .b()\n  .c({ ${props} });\n`, `abc.b().c(${broken()});\n`, "Prettier"],
       ["ts", `abc.b().then((x) => foo({ ${props} }));\n`, `abc.b().then((x) =>\n  foo(${broken("  ")}),\n);\n`],
@@ -1614,6 +1620,12 @@ describe.concurrent("bun fmt", () => {
       // An object that breaks in an earlier group, alone or before one in the last group.
       ["ts", `abc.b({ ${props} }).c();\n`, `abc\n  .b(${broken("  ")})\n  .c();\n`],
       ["ts", `abc.b({ ${props} }).c({ ${props} });\n`, `abc\n  .b(${broken("  ")})\n  .c(${broken("  ")});\n`],
+      // A chain in an earlier group whose own earlier group has the object breaks too.
+      [
+        "ts",
+        `abc.b(x.y({ ${props} }).z()).c({ ${props} });\n`,
+        `abc\n  .b(\n    x\n      .y(${broken("      ")})\n      .z(),\n  )\n  .c(${broken("  ")});\n`,
+      ],
       // The chain doesn't fit on one line even before the object.
       [
         "ts",
@@ -1653,6 +1665,11 @@ describe.concurrent("bun fmt", () => {
           `abc.b().c(foo({ ${props} }, () => {}));\n`,
           `abc\n  .b()\n  .c(\n    foo(\n      ${broken("      ")},\n      () => {},\n    ),\n  );\n`,
           `abc.b().c(\n  foo(\n    ${broken("    ")},\n    () => {},\n  ),\n);\n`,
+        ],
+        [
+          `abc.b().c(x as import("./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", { with: { type: "json", other: "value" } }), () => {});\n`,
+          `abc\n  .b()\n  .c(\n    x as import("./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", {\n      with: { type: "json", other: "value" },\n    }),\n    () => {},\n  );\n`,
+          `abc.b().c(\n  x as import("./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", {\n    with: { type: "json", other: "value" },\n  }),\n  () => {},\n);\n`,
         ],
         [
           `abc.b().c((options: { firstProperty: number; secondProperty: number; thirdProperty: number }, callback) => { x; });\n`,

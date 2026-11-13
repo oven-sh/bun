@@ -1451,9 +1451,12 @@ pub(crate) unsafe fn __bun_fire_timer(
         EventLoopTimerTag::PosixPipe => {
             #[cfg(unix)]
             {
-                feature_timer_arm!([Sockets], PosixPipe, event_loop_timer, |container, _now, _vm| {
-                    (*container).on_timeout()
-                })
+                feature_timer_arm!(
+                    [Sockets],
+                    PosixPipe,
+                    event_loop_timer,
+                    |container, _now, _vm| { (*container).on_timeout() }
+                )
             }
             #[cfg(not(unix))]
             {

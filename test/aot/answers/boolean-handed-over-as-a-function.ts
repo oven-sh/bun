@@ -2,11 +2,9 @@
 // # Boolean comes out of a list at a place that nobody has seen and is called by value: the stub in front of the host frame answers; String, Number, Object and Symbol go on to their functions
 // # f1 = asked: the callee is one of several here, so the call goes by value. What the stub does with it: native test stubs/boxed-calls-of-language/boolean-called-by-value-takes-no-frame
 // # RUN(FORM): bytes f1:Body mechanisms=all
-// # REQUIRES(FORM): entries-of-bun
 // # FORM: Stub CallValue
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
-// # REQUIRES: entries-of-bun
 // # CHECK: 48 of 48 of 48
 // # CHECK-NEXT: exited with 0
 declare function report(value: unknown): void;

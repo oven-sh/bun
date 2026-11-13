@@ -1,6 +1,6 @@
 // `cache.clear()` at the end of each turn, of a cache that most turns leave empty, where the call is closed: the stub sees that no entry is alive and enters no operation.
-// COUNT: operation:operationAOTMapClearOfAnyMap <= 40
-// COUNT: operation:operationAOTSetClearOfAnySet <= 40
+// COUNT: operation:operationAOTMapClearGeneric <= 40
+// COUNT: operation:operationAOTSetClearGeneric <= 40
 type Caches = { byName: Map<string, number>; seen: Set<string> }
 const all: any[] = []
 for (let i = 0; i < 8; i++) all.push({ byName: new Map<string, number>(), seen: new Set<string>() } satisfies Caches)

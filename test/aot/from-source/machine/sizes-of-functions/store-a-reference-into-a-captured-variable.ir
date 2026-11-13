@@ -1,0 +1,23 @@
+# f2 = keep
+# -- source: store-a-reference-into-a-captured-variable.ts
+# type Entry = { weight: number };
+# function keeper() {
+#   let newest: Entry | null = null;
+#   return {
+#     keep(entry: Entry): void { newest = entry; },
+#     read(): Entry | null { return newest; },
+#   };
+# }
+# declare const input: any;
+# const one = keeper();
+# const other = keeper();
+# one.keep({ weight: +input });
+# other.keep({ weight: 1.5 });
+# (globalThis as any).answer = [one.read(), other.read()];
+# -- end of source
+# The compiler before this one: 4 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 6, patches 0, moves 1, unlikely or rare 2.
+# RUN(X64): steps most:7 f2 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f2:Body
+# X64-NEXT: steps: at most 7

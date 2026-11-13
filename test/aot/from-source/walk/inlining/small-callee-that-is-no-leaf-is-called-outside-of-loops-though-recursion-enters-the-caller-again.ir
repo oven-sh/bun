@@ -9,8 +9,9 @@
 # -- end of source
 # Whether a callee is copied goes by the place of the call in the body that is built, and by the callee. Which functions lead back to the caller is a word on the rest of the program: with it a function would be compiled otherwise in a test than in the program that ships.
 # `weigh`, nine operations of which one calls `log`, so that it is no leaf, is larger than its call. `visit` may be entered again from below itself, `once` may not: both call it. In the loop of `each` it is copied
+# That `visit` calls itself stands in its own text: it is copied into itself once, and `weigh` is called in the copies as in the body.
 # RUN: walk f3 mechanisms=all
-# CHECK-NOT: frame 1
+# CHECK-NOT: callee=f2
 # CHECK: CallDirect {{*}} function=f2
 # RUN(ONCE): walk f4 mechanisms=all
 # ONCE-NOT: frame 1

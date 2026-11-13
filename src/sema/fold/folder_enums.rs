@@ -132,7 +132,7 @@ impl<'s> Folder<'_, 's> {
     fn is_enum_or_holds_one(&self, symbol: SymbolId) -> bool {
         let bound = self.bound;
         let symbol = self.find_enum_behind_parameter_of_block(symbol);
-        let symbol = bound.export_symbol_of_value_symbol_if_exported(symbol);
+        let symbol = bound.exported_value(symbol);
         let flags = bound.symbol(symbol).flags;
         flags.intersects(SymFlags::NAMESPACE | SymFlags::ENUM_MEMBER)
     }
@@ -177,7 +177,7 @@ impl<'s> Folder<'_, 's> {
         let Binding::Symbol(found) = bound.binding(first) else {
             return None;
         };
-        if !self.is_enum_or_holds_one(bound.export_symbol_of_value_symbol_if_exported(found)) {
+        if !self.is_enum_or_holds_one(bound.exported_value(found)) {
             return None;
         }
         let mut names: SmallVec<[Atom; 4]> = SmallVec::new();
@@ -199,7 +199,7 @@ impl<'s> Folder<'_, 's> {
     ) -> Option<EnumMemberId> {
         let (hir, bound) = (self.hir, self.bound);
         let symbol = self.find_enum_behind_parameter_of_block(symbol);
-        let root = bound.export_symbol_of_value_symbol_if_exported(symbol);
+        let root = bound.exported_value(symbol);
         if !self.is_enum_or_holds_one(root) || !self.has_static_lookup(first) {
             return None;
         }
@@ -326,12 +326,14 @@ impl<'s> Folder<'_, 's> {
         name: ExprId,
         initializer: ExprId,
     ) -> bool {
-        if self.enum_members.values.is_empty()
-            || self.folded(initializer).effects != Effects::LeftOutByBunRun
-        {
+        let is_behind_what_is_left_out = matches!(
+            self.folded(initializer).effects,
+            Effects::LeftOutUnderMinifySyntax | Effects::LeftOutByBunRun
+        );
+        if self.enum_members.values.is_empty() || !is_behind_what_is_left_out {
             return false;
         }
-        if self.is_enum_member_written_in_place(initializer) {
+        if self.holds_under_minify_syntax(|it| it.is_enum_member_written_in_place(initializer)) {
             self.enum_members.reads.insert(name.idx());
             return true;
         }

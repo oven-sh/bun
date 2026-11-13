@@ -1,0 +1,15 @@
+# f1 = width
+# -- source: typeof-tells-a-string-from-any-value.js
+# function width(value) {
+#   if (typeof value === "string") return value.length;
+#   return value;
+# }
+# globalThis.answer = width(input ? String(input) : +input);
+# -- end of source
+# The compiler before this one: 17 instructions, 1 of them patches.
+# When the bound was taken: steps: operations 16, patches 1, moves 1, unlikely or rare 2.
+# The result is proven a number, so it is handed back unboxed: five steps here for a test less at every caller.
+# RUN(X64): steps most:17 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 17

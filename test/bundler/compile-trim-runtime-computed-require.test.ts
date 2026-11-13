@@ -51,7 +51,7 @@ describe.skipIf(!canTrim || !!unsupported)("--compile --aot --trim: require() of
 
   test.concurrent("the computed name keeps nothing of the test runner: what is reached", async () => {
     expect((await buildComputed()).removed.length).toBeGreaterThanOrEqual(atLeastOnLinux(92));
-    expect(await asksForTheTestRunner()).toEqual({ stdout: "object\n", stderr: "", exitCode: 0 });
+    expect((await buildComputed()).removed).toContain(featureNamed("Test"));
   });
 
   // A computed name brings the loader's own functions, and with them whatever they can load.
@@ -62,10 +62,10 @@ describe.skipIf(!canTrim || !!unsupported)("--compile --aot --trim: require() of
     },
   );
 
-  test.concurrent.failing("bun:test is not found under the computed name", async () => {
+  test.concurrent("bun:test is not found under the computed name", async () => {
     expect(await asksForTheTestRunner()).toEqual({
       stdout:
-        "MODULE_NOT_FOUND: Cannot load 'bun:test': it isn't in this executable. Import it by name somewhere in your program to keep it.\n",
+        "MODULE_NOT_FOUND: Cannot load 'bun:test': it isn't in this executable. Import it by name somewhere in your program to keep it. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)\n",
       stderr: "",
       exitCode: 0,
     });

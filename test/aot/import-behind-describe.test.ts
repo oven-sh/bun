@@ -12,10 +12,11 @@ import { test } from "./supported";
 
 const route = `console.log("| the route runs");\nexport default 1;\n`;
 const spec = (more = "") => `import { app } from "../src/app";
+const settled = new Promise<void>(resolve => ((globalThis as any).settle = resolve));
 ${more}
 describe("d", () => {
   console.log("| the callback of describe");
-  it("a", async () => { console.log("| the test"); expect(app).toBe(1); await new Promise(resolve => setTimeout(resolve, 20)); console.log("| the end of the test"); });
+  it("a", async () => { console.log("| the test"); expect(app).toBe(1); await settled; console.log("| the end of the test"); });
 });
 console.log("| the end of the test file");
 `;
@@ -23,7 +24,7 @@ console.log("| the end of the test file");
 const projects: Record<string, { files: Record<string, string>; lines: string[] }> = {
   "a literal name": {
     files: {
-      "src/app.ts": `import("./routes/login.ts").then(() => console.log("| import() has settled"));\nexport const app = 1;\n`,
+      "src/app.ts": `import("./routes/login.ts").then(() => { console.log("| import() has settled"); (globalThis as any).settle(); });\nexport const app = 1;\n`,
       "src/routes/login.ts": route,
       "tests/a.spec.ts": spec(),
     },
@@ -66,17 +67,19 @@ test("a route meets the mock that describe lays", async () => {
     "src/app.ts": `export const handlers: Record<string, () => string> = {};
 import("./routes/login.ts").then(route => {
   handlers["login.ts"] = route.default;
+  (globalThis as any).settle();
 });
 `,
     "src/gateways/api.ts": `export class Api {\n  load(): string { return "real"; }\n}\n`,
     "src/gateways/index.ts": `export * from "./api";\n`,
     "src/routes/login.ts": `import { Api } from "../gateways";\nconst api = new Api();\nexport default (): string => api.load();\n`,
     "tests/login.spec.ts": `import { handlers } from "../src/app";
+const settled = new Promise<void>(resolve => ((globalThis as any).settle = resolve));
 describe("d", () => {
   const load = jest.fn();
   jest.mock("../src/gateways/api", () => ({ Api: jest.fn().mockReturnValue({ load }) }));
   it("a", async () => {
-    await new Promise(resolve => setTimeout(resolve, 20));
+    await settled;
     load.mockReturnValueOnce("mocked");
     console.log("| " + handlers["login.ts"]());
   });

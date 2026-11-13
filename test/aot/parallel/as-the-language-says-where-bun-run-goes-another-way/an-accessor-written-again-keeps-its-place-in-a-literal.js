@@ -1,4 +1,4 @@
-// compatibility.mdx, "Smaller differences". `bun run` lists "b,a 2".
+// `bun run` lists "b,a 2".
 const made = {
   get a() {
     return 1;

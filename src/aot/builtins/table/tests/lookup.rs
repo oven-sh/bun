@@ -21,6 +21,8 @@ fn name_run(name: BuiltinName) -> NameRun {
     }
 }
 
+/// A key that is no text, no symbol and no object spells a number, undefined, null, true or false. The engine takes such a key for one that finds no member with code
+/// (AccessInLinkAccesses::readKey()), and the load takes a number by its syntax for no name (is_number_by_syntax()): both lean on this.
 #[test]
 fn no_member_with_code_has_a_name_that_a_key_without_a_text_spells() {
     for id in all_ids() {
@@ -787,7 +789,10 @@ fn entry_point_default_export_is_served() {
         argument: 0,
     };
     assert_eq!(read.read_use, served);
-    assert_eq!(read.names_looked_for, [name("fetch"), name("app")]);
+    assert_eq!(
+        read.names_looked_for,
+        [name("fetch"), name("app"), name("stop")]
+    );
     let mut plugin_reads = host_reads(HostReadContext::Plugin);
     assert!(plugin_reads.all(|read| read.context == HostReadContext::Plugin));
     assert!(host_reads(HostReadContext::Plugin).all(|read| read.read_use != served));

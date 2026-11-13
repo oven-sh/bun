@@ -81,6 +81,9 @@ impl ReferencePass<'_, '_> {
             let Some((_, MemberKey::Name(last))) = hir.member_key(e) else {
                 continue;
             };
+            if hir.is_in_known_evaluation(hir[e].pos) {
+                continue;
+            }
             let ends_alike = |it: &&PathInPlace<'_>| it.path.members.last() == Some(&last);
             for in_place in names_in_place.iter().filter(ends_alike) {
                 let Some(root) = find_root_of_written_path(hir, e, in_place.path.members) else {

@@ -1,0 +1,15 @@
+# -- source: main.cjs
+# function rem(a, b) { return +a % +b; }
+# globalThis.kept = rem; const unseen = globalThis[JSON.parse('"kept"')];
+# const values = [0, -0, 1, -1, 2, 3, 5, 7, 1.5, -1.5, 0.1, 2147483647, 2147483648, -2147483648, -2147483649, 4294967295, 4294967296, 4294967297, 9007199254740991, 9007199254740992, 9007199254740994, 1e16, 1e17, 9223372036854775807, 9223372036854775808, 1.8446744073709552e19, 1e21, 1e300, 5e-324, Infinity, -Infinity, NaN];
+# const out = []; for (const a of values) for (const b of values) { const r = unseen(a, b); out.push(Object.is(r, -0) ? "-0" : String(r)); }
+# let h = 0; for (const s of out) for (let i = 0; i < s.length; i++) h = (Math.imul(h, 31) + s.charCodeAt(i)) | 0;
+# print(out.length, h, out.slice(0, 40).join(), out.slice(500, 560).join());
+# -- end of source
+# 32 numbers by 32: zeros of both signs, fractions, the edges of int32, of uint32, of 2^53 and of 2^63, numbers over them, the least number, the infinities, NaN: 1,024 remainders, held by a sum over their texts and by a hundred of them written out.
+# Both operands are made numbers in the text, so that the remainder is the form for two numbers, made in line, and not the generic stub's.
+# RUN(FORM): walk f1 mechanisms=all
+# FORM: = Mod {{*}} form=Numbers
+# RUN: run-in-shell mechanisms=all
+# CHECK: 1024 943732121 NaN,NaN,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,NaN,NaN,NaN,-0,-0,-0,-0,-0,-0 4294967295,4294967295,4294967295,4294967295,4294967295,4294967295,4294967295,4294967295,0,4294967295,4294967295,NaN,NaN,NaN,0,0,0,1,1,4,1,1,0.0999997615814209,2,0,0,2147483647,1,0,4294967296,4294967296,4294967296,4294967296,4294967296,4294967296,4294967296,4294967296,4294967296,4294967296,4294967296,0,4294967296,4294967296,NaN,NaN,NaN,0,0,1,2,2,5,0.5,0.5,0.09999976158142085,3,1,1,2147483648,2
+# CHECK-NEXT: exited with 0

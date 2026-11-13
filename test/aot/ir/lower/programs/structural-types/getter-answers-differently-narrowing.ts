@@ -133,7 +133,7 @@ attempt("honest again", () => [double({ v: 2 }), fixed({ v: 2 }), lengthOf({ nam
 
 // GENERATED: area alternating Flicker name
 // CHECK-LABEL: function {{*}}name="area"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]]|[[L_2]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]]|[[L_2]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_1]]|[[L_2]]):
 // CHECK-NEXT: v1 = PropGet v0 key="kind"
 // CHECK-NEXT: SwitchString v1 strings=["circle", "square"] -> case b1(| 0), case b2(| 0), otherwise b3()
@@ -157,7 +157,7 @@ attempt("honest again", () => [double({ v: 2 }), fixed({ v: 2 }), lengthOf({ nam
 // CHECK-NEXT: Return v15
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="alternating"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|[[L_3]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|[[L_3]] flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: v0 = NewObject layout=[[L_4]]
 // CHECK-NEXT: v1 = Integer
@@ -171,7 +171,7 @@ attempt("honest again", () => [double({ v: 2 }), fixed({ v: 2 }), lengthOf({ nam
 // CHECK-NEXT: Return v8
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Flicker"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_6]]
 // CHECK-NEXT: v2 = NewObject v1 layout=[[L_6]]
@@ -180,7 +180,7 @@ attempt("honest again", () => [double({ v: 2 }), fixed({ v: 2 }), lengthOf({ nam
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="name"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_6]]} results=[{type=undefined|null|string flags=[OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_6]]} results=[{type=undefined|null|string flags=[OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: [[L_6]]):
 // CHECK-NEXT: v1 = GetModuleVariable variable=[[g_8]]
 // CHECK-NEXT: v2 = PrivateGet v0, v1 layout=[[L_6]] field=1
@@ -205,7 +205,7 @@ attempt("honest again", () => [double({ v: 2 }), fixed({ v: 2 }), lengthOf({ nam
 // CHECK-NEXT: Return v15
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="name"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsUndefined]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Setter flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsUndefined]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|string):
 // CHECK-NEXT: v1 = Undefined
 // CHECK-NEXT: Return v1

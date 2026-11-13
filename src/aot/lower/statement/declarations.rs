@@ -15,7 +15,7 @@ use crate::lower::call::emit_call;
 use crate::lower::expression::{Evaluation, Tail, TailCast};
 use crate::lower::member::PropertyName;
 use crate::lower::{FileLowering, FunctionLowering, control, scope};
-use crate::modules::ShownNames;
+use crate::modules::{CopiedExports, ShownNames};
 
 impl FileLowering<'_, '_, '_, '_> {
     fn find_variable_named_once(&self, declaration: VarDeclId) -> Option<SymbolId> {
@@ -99,6 +99,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let initializer = self.skip_type_syntax(hir[first].init);
         if matches!(hir[initializer].kind, ExprKind::Ident(_))
             || self.is_class_named_by_its_declaration(initializer)
+            || self.stands_as_written(hir[initializer].pos)
         {
             return None;
         }
@@ -194,11 +195,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if self.leaves_function_unmade(decl.pat) {
             return;
         }
-        if let Some(made) = self
-            .file
-            .find_object_created_for_maker(decl.pat, initializer, behind)
+        if let Some((made, names)) =
+            self.file
+                .find_object_created_for_maker(decl.pat, initializer, behind)
         {
             self.object_created_for_maker = Some(made);
+            self.names_that_maker_stores_under = names;
         }
         let dynamic_scope = bound.dynamic_lookup_scope(NodeData::Pat(decl.pat));
         let target = dynamic_scope.map(|_| self.resolve_pattern_target(decl.pat));
@@ -224,7 +226,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 }
             }
             PatKind::Object(_) if self.file.find_destructured_module(initializer).is_some() => {
-                self.lower_expression(initializer)
+                self.lower_destructured_module(decl.pat, initializer)
             }
             PatKind::Missing | PatKind::Object(_) | PatKind::Array(_) => {
                 let value = self.lower_expression(initializer);
@@ -256,7 +258,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let is_only_a_name = self.file.scopes.is_never_named(symbol)
             && !bound.is_visible_to_eval(symbol)
             && bound.symbol(symbol).parent.is_none()
-            && bound.is_stable_binding(symbol);
+            && bound.is_stable_binding(symbol)
+            && !(self.file.inputs.modules.commonjs()).is_exported_binding(self.file.file, symbol);
         if !is_only_a_name {
             return false;
         }
@@ -317,6 +320,17 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             arguments.push(self.lower_expression(argument));
         }
         self.set_position(hir[copy.written].pos);
+        let modules = self.file.inputs.modules;
+        let reads_default_alone = answer_alone.is_some()
+            && modules
+                .names_read_on_answer(holder.file, holder.id)
+                .is_empty();
+        if reads_default_alone {
+            let held = self.lower_default_of_copy(holder, answer, copy);
+            self.set_position(self.file.hir[pattern].pos);
+            self.initialize_converted_symbol(symbol, name, held);
+            return true;
+        }
         let held = self.builder.create_variable(None);
         let (as_written, done) = (self.create_block(), self.create_block());
         self.store_plain_answer(holder, answer, copy.shows, as_written);
@@ -338,6 +352,61 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.set_position(self.file.hir[pattern].pos);
         self.initialize_converted_symbol(symbol, name, held);
         true
+    }
+
+    /// What `import_a.default` finds on the copy, without the copy: nothing else is asked of it.
+    fn lower_default_of_copy(
+        &mut self,
+        holder: Sym,
+        answer: ValueId,
+        copy: CopiedExports,
+    ) -> ValueId {
+        let held = self.builder.create_variable(None);
+        let shown = self.builder.create_variable(None);
+        let (plain, is_shown, done) = (
+            self.create_block(),
+            self.create_block(),
+            self.create_block(),
+        );
+        if copy.passes_over_marker {
+            self.jump(plain);
+        } else {
+            let marked = self.branch_if_nullish(answer, plain);
+            let marker = self.emit_named_read(marked, known::__esModule);
+            self.go_on_if(marker, true, plain);
+            let name = self.file.intern_atom(known::default);
+            let name = self.builder.string(name);
+            let owns_default = self.emit_own_property_test(marked, name);
+            let lacks_default = match copy.reads_own_default {
+                true => plain,
+                false => self.create_block(),
+            };
+            self.go_on_if(owns_default, true, lacks_default);
+            self.builder.write_variable(held, marked);
+            self.jump(done);
+            if lacks_default != plain {
+                // The copy has no default of its own either: what stands above it stands above the value.
+                self.continue_in(lacks_default);
+                let inherited = self.emit_named_read(marked, known::default);
+                self.builder.write_variable(shown, inherited);
+                self.jump(is_shown);
+            }
+        }
+        self.continue_in(plain);
+        self.builder.write_variable(shown, answer);
+        self.jump(is_shown);
+
+        self.continue_in(is_shown);
+        let variable = self
+            .file
+            .ensure_variable(VariableKey::RequiredAnswer(holder));
+        let shown = self.builder.read_variable(shown);
+        self.builder.put_module_variable(variable, shown);
+        self.builder.write_variable(held, answer);
+        self.jump(done);
+
+        self.continue_in(done);
+        self.builder.read_variable(held)
     }
 
     fn store_plain_answer(
@@ -488,8 +557,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let Some(binding) = bound.declared_symbol(declaration).some() else {
             return;
         };
-        let member = bound.export_symbol_of_value_symbol_if_exported(binding);
-        if member == binding || !bound.symbol(member).decls.contains(&declaration) {
+        let member = bound.exported_value(binding);
+        if member == binding || !bound.is_exported_by_container(declaration) {
             return;
         }
         let value = self.get_binding(Binding::Symbol(binding), name);

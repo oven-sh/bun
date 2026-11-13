@@ -5,17 +5,22 @@ use crate::link::ProgramModule;
 use crate::load::module_paths::with_separators_of_host;
 use crate::load::sources::SourceKind;
 use crate::load::{
-    EntryPointKind, PerProject, ProgramFile, ProjectId, Sources, is_host_path, read_file_bytes,
+    EntryPointKind, PerProject, ProgramFile, ProjectId, Sources, file_size, is_host_path,
+    read_file_bytes,
 };
-use crate::modules::{ModuleGraph, ModuleRef};
-use crate::report::{ModuleOrigin, ModuleSource, SourceTexts};
+use crate::modules::{ModuleGraph, ModuleRef, SiteAnswer};
+use crate::report::{FunctionSources, ModuleOrigin, ModuleSource, SourceTexts};
 use crate::statistics::{Stage, StepClock};
 use bun_sema::check::aot::FileOrigin;
 use bun_sema::erasure::PackedTypeRanges;
+use bun_sema::hir::ExprKind;
+use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, ResolvedFrom, is_load_found_late};
 use bun_sema::program::{FileId, Files};
 use bun_sema::util::SharedSort;
 use bun_sema_driver::host::to_native;
 use rustc_hash::FxHashMap;
+use std::ops::Range;
+use std::sync::Arc;
 
 pub(super) fn collect_entry_point_paths(
     project: &LoadedProject<'_, '_>,
@@ -59,7 +64,7 @@ pub(super) fn collect_program_file_paths(
 ) -> Vec<(FileId, EntryPointPaths)> {
     let compiled = files.compiled_files().iter();
     compiled
-        .filter(|&&file| sources.kind(file) == SourceKind::Program)
+        .filter(|&&file| matches!(sources.kind(file), SourceKind::Program | SourceKind::Data))
         .filter(|&&file| !is_host_path(files.module(file).file_name()))
         .map(|&file| {
             let paths = EntryPointPaths {
@@ -74,6 +79,70 @@ pub(super) fn collect_program_file_paths(
         .collect()
 }
 
+fn list_folders(path_of_file: &[u8]) -> Vec<&[u8]> {
+    let mut folders: Vec<&[u8]> = Vec::new();
+    for part in bun_core::strings::split(path_of_file, b"/") {
+        match part {
+            b"" if folders.is_empty() => folders.push(part),
+            b"" | b"." => {}
+            b".." if folders.len() > 1 => {
+                folders.pop();
+            }
+            _ => folders.push(part),
+        }
+    }
+    folders.pop();
+    folders
+}
+
+fn find_public_folder(looked_from: &[u8], found: &[u8], found_public: &[u8]) -> Option<Vec<u8>> {
+    let (from, found) = (list_folders(looked_from), list_folders(found));
+    let mut public = list_folders(found_public);
+    let shared = (from.iter().zip(&found))
+        .take_while(|(a, b)| a == b)
+        .count();
+    for folder in found[shared..].iter().rev() {
+        if public.pop() != Some(*folder) {
+            return None;
+        }
+    }
+    public.extend_from_slice(&from[shared..]);
+    Some(public.join(&b'/'))
+}
+
+fn find_folder_looked_from(
+    files: &Files<'_>,
+    sources: &Sources,
+    file: FileId,
+    site: ImportSiteKind,
+    found: FileId,
+) -> Option<Vec<u8>> {
+    let analysis = files.analysis(file);
+    let index = analysis
+        .import_sites
+        .iter()
+        .position(|it| it.kind == site)?;
+    let own_name = files.module(file).file_name();
+    let looked_from = match analysis.path_to_resolve_from(index) {
+        None => own_name.to_vec(),
+        Some(ResolvedFrom::File(path)) => files.atoms.bytes(path).to_vec(),
+        Some(ResolvedFrom::PathFromOwnFolder(path)) => {
+            let path = files.atoms.bytes(path);
+            let end = bun_core::strings::last_index_of_char(own_name, b'/').unwrap_or(0);
+            match path {
+                b"" => own_name[..end].to_vec(),
+                _ if path.ends_with(b"/") => [&own_name[..end], b"/", path, b"noop.js"].concat(),
+                _ => [&own_name[..end], b"/", path].concat(),
+            }
+        }
+    };
+    let from_file = |known: FileId| {
+        let name = files.module(known).file_name();
+        find_public_folder(&looked_from, name, sources.public_path(known))
+    };
+    from_file(file).or_else(|| from_file(found))
+}
+
 pub(super) fn collect_names_followed(
     files: &Files<'_>,
     sources: &Sources,
@@ -82,20 +151,50 @@ pub(super) fn collect_names_followed(
 ) -> Vec<FollowedName> {
     let mut names = Vec::new();
     for &file in files.compiled_files() {
-        let importer = sources.public_path(file);
-        let folder =
-            &importer[..bun_core::strings::last_index_of_char(importer, b'/').unwrap_or(0)];
-        for (spelled, is_required) in graph.names_left_to_loader(file) {
-            if let ModuleRef::File(target) = spelled.module
-                && left_out.binary_search(&target).is_err()
+        let mut write_down = |site: ImportSiteKind, name: &[u8], target: FileId| {
+            let is_required = !matches!(
+                site,
+                ImportSiteKind::ImportCall(_) | ImportSiteKind::ImportMetaResolve(_)
+            );
+            if left_out.binary_search(&target).is_ok() {
+                return;
+            }
+            let Some(folder) = find_folder_looked_from(files, sources, file, site, target) else {
+                return;
+            };
+            let found = || Some(sources.public_path(target).to_vec());
+            names.push(FollowedName {
+                folder_and_name_as_written: [&folder[..], b"//", name].concat(),
+                public_path_for_require: is_required.then(found).flatten(),
+                public_path_for_import: (!is_required).then(found).flatten(),
+            });
+        };
+        for (spelled, site) in graph.names_left_to_loader(file) {
+            if let ModuleRef::File(target) = spelled.module {
+                write_down(site, files.atoms.bytes(spelled.spelling), target);
+            }
+        }
+        let hir = files.hir(file);
+        let decisions = &files.analysis(file).decisions;
+        for site in files.analysis(file).import_sites {
+            let names_parent = match site.kind {
+                ImportSiteKind::RequireResolve(_) => false,
+                ImportSiteKind::Require(call)
+                    if is_load_found_late(hir, files.bound(file), decisions, call) =>
+                {
+                    false
+                }
+                ImportSiteKind::ImportMetaResolve(call) => {
+                    !matches!(hir[call].kind, ExprKind::Call(call) if hir[call].args.len() == 1)
+                }
+                _ => continue,
+            };
+            if !names_parent
+                && let ImportSpecifier::Constant(written) = site.specifier
+                && let Some(SiteAnswer::Module(ModuleRef::File(target))) =
+                    graph.find_site_answer(file, site.kind)
             {
-                let found = || Some(sources.public_path(target).to_vec());
-                let name = files.atoms.bytes(spelled.spelling);
-                names.push(FollowedName {
-                    folder_and_name_as_written: [folder, b"//", name].concat(),
-                    public_path_for_require: is_required.then(found).flatten(),
-                    public_path_for_import: (!is_required).then(found).flatten(),
-                });
+                write_down(site.kind, files.atoms.bytes(written), target);
             }
         }
     }
@@ -145,24 +244,104 @@ pub(super) fn collect_folder_paths(
 pub(super) fn collect_source_texts(
     projects: &PerProject<ProgramView<'_, '_>>,
     modules: &[ProgramModule],
-    types_in_function_texts: &FxHashMap<ProgramFile, PackedTypeRanges>,
+    erased_ranges_by_file: &FxHashMap<ProgramFile, PackedTypeRanges>,
+    runs_tests: bool,
     in_parallel: InParallel<'_>,
 ) -> SourceTexts {
     let mut steps = StepClock::new(Stage::LinkAndEmit);
-    let mut slots: Vec<(ProgramModule, Option<ModuleSource>)> =
-        modules.iter().map(|&module| (module, None)).collect();
-    for_each_mut(&mut slots, in_parallel, &|(module, source)| {
-        *source = create_module_source(projects, *module, types_in_function_texts);
+    let mut slots: Vec<Slot> = modules
+        .iter()
+        .map(|&module| Slot {
+            module,
+            source: None,
+            holds_function_source: false,
+        })
+        .collect();
+    let holds_function_sources =
+        runs_tests && has_many_function_sources(projects, erased_ranges_by_file);
+    for_each_mut(&mut slots, in_parallel, &|slot| {
+        slot.source = create_module_source(
+            projects,
+            slot.module,
+            erased_ranges_by_file,
+            holds_function_sources,
+            &mut slot.holds_function_source,
+        );
     });
-    let texts = SourceTexts::new(slots.into_iter().map(|(_, source)| source).collect());
+    let function_sources = hold_function_sources(projects, &mut slots, in_parallel);
+    let texts = SourceTexts::new(slots.into_iter().map(|slot| slot.source).collect());
+    let texts = texts.with_function_sources(function_sources);
     steps.end_with(|| format!("source texts {} MB", texts.size_of_texts() >> 20));
     texts
+}
+
+struct Slot {
+    module: ProgramModule,
+    source: Option<ModuleSource>,
+    /// The text is on disk, and the function source is held apart from it.
+    holds_function_source: bool,
+}
+
+/// A build with fewer keeps them all.
+fn has_many_function_sources(
+    projects: &PerProject<ProgramView<'_, '_>>,
+    erased_ranges_by_file: &FxHashMap<ProgramFile, PackedTypeRanges>,
+) -> bool {
+    const FEW: usize = 64 << 20;
+    let sizes = erased_ranges_by_file.keys();
+    let sizes = sizes.map(|&file| text_of(projects, file).len());
+    sizes.sum::<usize>() > FEW
+}
+
+fn text_of<'p>(projects: &PerProject<ProgramView<'p, '_>>, file: ProgramFile) -> &'p [u8] {
+    let files = projects.get(file.project).files();
+    &files.module(file.file).hir.text[..]
+}
+
+fn hold_function_sources(
+    projects: &PerProject<ProgramView<'_, '_>>,
+    slots: &mut [Slot],
+    in_parallel: InParallel<'_>,
+) -> Arc<FunctionSources> {
+    let mut parts: Vec<Range<usize>> = Vec::with_capacity(slots.len());
+    let mut end = 0;
+    for slot in &*slots {
+        let source = slot.source.as_ref().filter(|_| slot.holds_function_source);
+        let start = end;
+        end += source.map_or(0, ModuleSource::function_source_len);
+        parts.push(start..end);
+    }
+    let mut bytes = vec![0; end];
+    let mut rest = &mut bytes[..];
+    let mut places: Vec<(&mut [u8], &Slot)> = Vec::new();
+    for (slot, part) in slots.iter().zip(&parts) {
+        let (place, behind) = rest.split_at_mut(part.len());
+        places.push((place, slot));
+        rest = behind;
+    }
+    for_each_mut(&mut places, in_parallel, &|(place, slot)| {
+        if let (ProgramModule::File(file), Some(source), true) =
+            (slot.module, &slot.source, slot.holds_function_source)
+        {
+            source.remove_types_from(text_of(projects, file), place);
+        }
+    });
+    let sources = Arc::new(FunctionSources::new(bytes.into_boxed_slice()));
+    for (slot, part) in slots.iter_mut().zip(parts) {
+        if slot.holds_function_source {
+            let source = slot.source.take();
+            slot.source = source.map(|source| source.with_function_source_in(&sources, part));
+        }
+    }
+    sources
 }
 
 fn create_module_source(
     projects: &PerProject<ProgramView<'_, '_>>,
     module: ProgramModule,
-    types_in_function_texts: &FxHashMap<ProgramFile, PackedTypeRanges>,
+    erased_ranges_by_file: &FxHashMap<ProgramFile, PackedTypeRanges>,
+    holds_function_sources: bool,
+    holds_function_source: &mut bool,
 ) -> Option<ModuleSource> {
     let program_file = match module {
         ProgramModule::File(file) => file,
@@ -175,18 +354,22 @@ fn create_module_source(
         return None;
     }
     let text = &files.module(file).hir.text[..];
-    let types = types_in_function_texts.get(&program_file).cloned();
+    let types = erased_ranges_by_file.get(&program_file).cloned();
     let origin = find_module_origin(view, program_file);
     let path = view.sources.diagnostic_path(file);
     let path_on_disk = files.module(file).file_name();
-    let is_on_disk = types.is_none()
-        && project == ProjectId::Application
-        && read_file_bytes(path_on_disk).is_some_and(|on_disk| on_disk == text);
+    // Whoever wants a text that is held apart from its function source compares it with what is on disk then.
+    let is_on_disk = project == ProjectId::Application
+        && match types {
+            None => read_file_bytes(path_on_disk).is_some_and(|on_disk| on_disk == text),
+            Some(_) => holds_function_sources && file_size(path_on_disk) == Some(text.len() as u64),
+        };
+    *holds_function_source = is_on_disk && types.is_some();
     let source = match is_on_disk {
         true => ModuleSource::new_on_disk(path, path_on_disk, text),
         false => ModuleSource::new(path, text),
     };
-    Some(source.with_function_text(types).with_origin(origin))
+    Some(source.with_function_source(types).with_origin(origin))
 }
 
 fn find_module_origin(view: ProgramView<'_, '_>, file: ProgramFile) -> ModuleOrigin {

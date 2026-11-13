@@ -3,7 +3,7 @@ use super::answers::{
     MemberForm, MemberName, ObjectMemberKind, PositionTypes,
 };
 use super::class_stores::{
-    BindingStore, BindingStoreKind, StoreForm, StoreIndex, ThisOwner,
+    BindingStore, BindingStoreKind, StoreForm, StoreIndex, ThisOwner, WrittenStores,
     find_prototype_object_held_by, is_prototype_property,
 };
 use super::queries::Queries;
@@ -17,8 +17,9 @@ use crate::hir::{
 use crate::program::{FileId, Sym};
 use crate::types::TypeId;
 use crate::util::{FxHashMap, FxHashSet, SharedSort};
+use std::cell::OnceCell;
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 enum StorePlace {
     Instance,
     Prototype,
@@ -64,7 +65,6 @@ struct StoreCandidates {
 #[derive(Default)]
 struct ComputedNames {
     has_instance_name: bool,
-    has_static_name: bool,
 }
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
@@ -94,7 +94,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             members: self.list(&members),
             names_stored_in_prototype: self.list(&names_stored_in_prototype),
             has_computed_instance_name: computed.has_instance_name,
-            has_computed_static_name: computed.has_static_name,
         })
     }
 
@@ -108,11 +107,12 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if !can_be_constructor_function(&hir[function]) || !bound.runtime.is_computed() {
             return None;
         }
-        if is_written_as_method(hir, bound, function) {
+        let written = self.c.written_stores(file);
+        if is_written_as_method(hir, bound, written, function) {
             return None;
         }
         let index = self.store_index(file);
-        let candidates = store_candidates(
+        let mut candidates = store_candidates(
             hir,
             bound,
             &index,
@@ -120,11 +120,28 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             bound.declared_symbol(Decl::Fn(function)).some(),
             None,
         );
-        if !candidates
+        for initializer in self.initializers_at_path(FunctionRef { file, function }) {
+            let stores = index
+                .this_stores_of(ThisOwner::Function(initializer))
+                .iter();
+            candidates.stores.extend(stores.map(|store| StoreCandidate {
+                name: store.name,
+                kind: ObjectMemberKind::Field,
+                place: StorePlace::Instance,
+                store: store.assign,
+                value: store.value,
+                form: store.form,
+                is_in_every_construction: false,
+                defined: store.defined,
+                is_stored_by_callee: true,
+                birth: u32::MAX,
+            }));
+        }
+        let stores_like_constructor = candidates
             .stores
             .iter()
-            .any(StoreCandidate::is_of_constructor_function)
-        {
+            .any(StoreCandidate::is_of_constructor_function);
+        if !stores_like_constructor && !self.is_named_by_new(FunctionRef { file, function }) {
             return None;
         }
         let stores_by_itself = candidates
@@ -148,7 +165,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 ClassMemberSource::ThisStore(_) | ClassMemberSource::PrototypeStore(_)
             )
         });
-        if !is_constructor {
+        if !is_constructor && stores_like_constructor {
             return None;
         }
         let shape: &'c ClassShape<'c> = self.arena.alloc(ClassShape {
@@ -156,7 +173,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             members: self.list(&members),
             names_stored_in_prototype: self.list(&names_stored_in_prototype),
             has_computed_instance_name: false,
-            has_computed_static_name: false,
         });
         Some(shape)
     }
@@ -228,9 +244,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             let member = &hir[id];
             match hir.runtime_member_key(id) {
                 PropKey::None => {}
-                PropKey::Computed(_) if member.flags.contains(Flags::STATIC) => {
-                    computed.has_static_name = true;
-                }
+                PropKey::Computed(_) if member.flags.contains(Flags::STATIC) => {}
                 PropKey::Computed(key) => {
                     let is_field = member.kind == MemberKind::Property
                         && !member.flags.contains(Flags::ACCESSOR);
@@ -373,22 +387,24 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let methods_of_prototype: FxHashSet<Atom> =
             methods_of_prototype.map(|store| store.name).collect();
         let hir = self.c.hir(file);
+        let mut only_declared: FxHashMap<MemberName, Vec<usize>> = FxHashMap::default();
+        for (place, member) in members.iter().enumerate().rev() {
+            let is_only_declared = match member.source {
+                ClassMemberSource::Member(id) => hir[id].flags.contains(Flags::AMBIENT),
+                _ => false,
+            };
+            if is_only_declared && !member.is_static && member.kind == ObjectMemberKind::Field {
+                only_declared.entry(member.name).or_default().push(place);
+            }
+        }
+        let values_stored = OnceCell::new();
         for candidate in &stores {
             let name = self.member_name(candidate.name);
             let is_static = candidate.place == StorePlace::Class;
             if candidate.place == StorePlace::Instance && candidate.kind == ObjectMemberKind::Field
             {
-                let only_declared = members.iter_mut().find(|member| {
-                    let is_only_declared = match member.source {
-                        ClassMemberSource::Member(id) => hir[id].flags.contains(Flags::AMBIENT),
-                        _ => false,
-                    };
-                    is_only_declared
-                        && member.name == name
-                        && !member.is_static
-                        && member.kind == ObjectMemberKind::Field
-                });
-                if let Some(member) = only_declared {
+                let place = only_declared.get_mut(&name).and_then(Vec::pop);
+                if let Some(member) = place.map(|place| &mut members[place]) {
                     member.source = candidate.source();
                     member.is_optional = !in_every_construction.contains(&candidate.name);
                     member.is_made_at_birth = made_at_birth.contains(&candidate.name);
@@ -407,7 +423,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             if !is_new {
                 continue;
             }
-            let checked = match find_stored_value(&stores, candidate) {
+            let checked = match find_stored_value(&stores, &values_stored, candidate) {
                 Some(value) if file == self.file => self.ask(|queries| {
                     let ty = queries.c.type_of_expr(file, value);
                     let ty = queries.c.widen_literal(ty);
@@ -488,7 +504,12 @@ fn is_stored_into(
     )
 }
 
-fn is_written_as_method(hir: &hir::File<'_>, bound: &Bound<'_>, function: FnId) -> bool {
+fn is_written_as_method(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    written: WrittenStores<'_>,
+    function: FnId,
+) -> bool {
     let FnOwner::Expr(expression) = bound.fns[function.idx()].owner else {
         return false;
     };
@@ -499,6 +520,7 @@ fn is_written_as_method(hir: &hir::File<'_>, bound: &Bound<'_>, function: FnId) 
         );
         let literal = bound.prop_owner[property.idx()];
         return is_accessor_of_descriptor
+            || written.is_named_prototype_literal(literal)
             || is_stored_into(hir, bound, literal, |place| {
                 is_prototype_property(hir, hir.skip_type_assertions(place))
             });
@@ -563,6 +585,10 @@ fn store_candidates(
             candidate.store,
         )
     });
+    let stores = bound.move_inner_assignments_first(hir, stores, |candidate| {
+        let is_own = candidate.place == StorePlace::Instance && !candidate.is_stored_by_callee;
+        is_own.then_some(candidate.store)
+    });
     StoreCandidates {
         stores,
         prototype_accessor_names,
@@ -615,15 +641,29 @@ fn forms_of_instance_fields(stores: &[StoreCandidate]) -> FxHashMap<Atom, Member
     forms
 }
 
-fn find_stored_value(stores: &[StoreCandidate], candidate: &StoreCandidate) -> Option<ExprId> {
+fn find_stored_value(
+    stores: &[StoreCandidate],
+    values_stored: &OnceCell<FxHashMap<(Atom, StorePlace), ExprId>>,
+    candidate: &StoreCandidate,
+) -> Option<ExprId> {
     match candidate.form {
         StoreForm::Plain | StoreForm::Logical => candidate.value.some(),
         StoreForm::Compound => {
-            let mut to_same_place = stores
-                .iter()
-                .filter(|other| other.name == candidate.name && other.place == candidate.place);
-            let other = to_same_place.find(|other| other.form != StoreForm::Compound)?;
-            Some(other.value)
+            let list_first_of_each = || {
+                let mut first_of_each = FxHashMap::default();
+                for other in stores {
+                    if other.form != StoreForm::Compound {
+                        first_of_each
+                            .entry((other.name, other.place))
+                            .or_insert(other.value);
+                    }
+                }
+                first_of_each
+            };
+            let first_of_each = values_stored.get_or_init(list_first_of_each);
+            first_of_each
+                .get(&(candidate.name, candidate.place))
+                .copied()
         }
     }
 }

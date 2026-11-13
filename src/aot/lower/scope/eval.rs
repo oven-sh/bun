@@ -1,15 +1,15 @@
 mod bindings;
 
-use bun_sema::atom::Atom;
+use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{self, Binding, CodeUnit, ScopeId, ScopeKind, SymbolId};
 use bun_sema::fold::Constant;
-use bun_sema::hir::{ClassId, ExprId, ExprKind, FnKind, IdList};
+use bun_sema::hir::{CallId, ClassId, ExprId, ExprKind, FnKind, IdList};
 
 use super::BindingForm;
 use super::identifiers::BindingRead;
 use crate::builtins::id::BuiltinId;
-use crate::ir::generated::{ECMAMode, EvalScope, EvalScopeFlags};
-use crate::ir::{Edge, EvalScopeId, ValueId};
+use crate::ir::generated::{ECMAMode, EvalScope, EvalScopeFlags, FunctionKind, RuntimeErrorKind};
+use crate::ir::{BlockId, Edge, EvalScopeId, StringId, ValueId, VariableKey};
 use crate::lower::call::{self, Arguments, Callee};
 use crate::lower::{FileLowering, FunctionLowering, commonjs, expression};
 use crate::modules::ModuleKind;
@@ -34,15 +34,15 @@ pub(crate) fn lower_direct_eval(
     call: ExprId,
 ) -> ValueId {
     let hir = lowering.file.hir;
-    let ExprKind::Call(site) = hir[call].kind else {
+    let ExprKind::Call(call_id) = hir[call].kind else {
         unreachable!("lower_direct_eval takes a Call expression");
     };
-    let site = hir[site];
+    let site = hir[call_id];
     let callee = lowering.file.skip_type_syntax(site.callee);
     let callee_name = lowering.file.identifier_name(callee);
     lowering.set_position(hir[callee].pos);
     let (function, this) = lowering.lower_identifier_callee(callee);
-    let arguments = lowering.lower_arguments(site.args);
+    let arguments = lowering.lower_arguments(hir.written_args(call_id));
     lowering.set_position(hir[call].pos);
     let eval = lowering.emit_builtin_itself(BuiltinId::Eval);
     let is_eval = lowering.builder.strict_eq(function, eval);
@@ -60,7 +60,13 @@ pub(crate) fn lower_direct_eval(
     lowering.continue_in(direct);
     let evaluated = match lowering.file.find_binding_named_by_text(call, site.args) {
         Some((binding, name)) => lowering.read_binding(binding, name, BindingRead::Value),
-        None => lowering.emit_direct_eval(call, &arguments),
+        None => {
+            lowering.lower_known_evaluations(call_id, &arguments, join);
+            match hir.is_settled_eval(call_id) {
+                true => lowering.emit_settled_eval_end(call_id, &arguments, join),
+                false => lowering.emit_direct_eval(call, &arguments),
+            }
+        }
     };
     lowering.jump_with(join, &[evaluated]);
 
@@ -129,7 +135,15 @@ impl FileLowering<'_, '_, '_, '_> {
 
     fn compute_eval_context(&self, scope: ScopeId) -> EvalContext {
         let (hir, bound) = (self.hir, self.bound);
-        let arrow_flags_in = |scope: ScopeId| match bound.code_unit(scope) {
+        let unit = match bound.code_unit(scope) {
+            CodeUnit::FieldInitializer(member) if bound.is_field_assigned_behind_class(member) => {
+                let class = bound.member_class(member);
+                let class = class.expect("a field initializer belongs to a member of a class");
+                bound.code_unit(bound.class_scope[class.idx()])
+            }
+            unit => unit,
+        };
+        let arrow_flags = match unit {
             CodeUnit::Function(function) if hir[function].kind == FnKind::Arrow => {
                 EvalScopeFlags::IS_IN_ARROW_FUNCTION
             }
@@ -137,7 +151,6 @@ impl FileLowering<'_, '_, '_, '_> {
                 EvalScopeFlags::default()
             }
         };
-        let arrow_flags = arrow_flags_in(scope);
         let this_scope = self.scopes.lexical_owner(scope);
         let owner = bound.code_unit(this_scope);
         let (flags, this_scope, class) = match owner {
@@ -155,11 +168,6 @@ impl FileLowering<'_, '_, '_, '_> {
                     flags |= EvalScopeFlags::ALLOWS_SUPER_CALL;
                 }
                 (flags, Some(this_scope), bound.function_class(function))
-            }
-            CodeUnit::FieldInitializer(member) if bound.is_field_assigned_behind_class(member) => {
-                let class = bound.member_class(member);
-                let around = class.map(|class| arrow_flags_in(bound.class_scope[class.idx()]));
-                (around.unwrap_or_default(), Some(this_scope), class)
             }
             CodeUnit::FieldInitializer(member) => {
                 let flags = match self.is_code_of_constructor(this_scope) {
@@ -179,6 +187,78 @@ impl FileLowering<'_, '_, '_, '_> {
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
+    /// Where the string is one that the build has compiled, jumps to `join` with its function.
+    fn lower_known_evaluations(&mut self, call: CallId, arguments: &Arguments, join: BlockId) {
+        let hir = self.file.hir;
+        let all = hir.known_evaluations_of(call).iter();
+        let known: Vec<_> = all.filter(|it| hir.is_valid_evaluation(it)).collect();
+        if known.is_empty() {
+            return;
+        }
+        let Some(text) = self.emit_evaluated_string(arguments) else {
+            return;
+        };
+        let texts = known.iter().filter_map(|it| hir.ids(it.arguments).next());
+        let strings: Vec<StringId> = texts.map(|text| self.file.intern_atom(text)).collect();
+        let blocks: Vec<BlockId> = known.iter().map(|_| self.create_block()).collect();
+        let edges: Vec<Edge<'static>> = blocks.iter().map(|&block| Edge::to(block)).collect();
+        let other = self.create_block();
+        self.builder
+            .switch_string(text, &strings, &edges, Edge::to(other));
+        for (evaluation, block) in known.into_iter().zip(blocks) {
+            self.continue_in(block);
+            let function = self.lower_expression(evaluation.function);
+            self.jump_with(join, &[function]);
+        }
+        self.continue_in(other);
+    }
+
+    fn emit_settled_eval_end(
+        &mut self,
+        call: CallId,
+        arguments: &Arguments,
+        join: BlockId,
+    ) -> ValueId {
+        let hir = self.file.hir;
+        let known = hir.known_evaluations_of(call).iter();
+        let name = self.file.intern_atom(known::eval);
+        let refused: Vec<_> = known.filter(|it| !hir.is_valid_evaluation(it)).collect();
+        let text = match refused.is_empty() {
+            true => None,
+            false => self.emit_evaluated_string(arguments),
+        };
+        if let Some(text) = text {
+            let texts = refused.iter().filter_map(|it| hir.ids(it.arguments).next());
+            let strings: Vec<StringId> = texts.map(|text| self.file.intern_atom(text)).collect();
+            let blocks: Vec<BlockId> = refused.iter().map(|_| self.create_block()).collect();
+            let edges: Vec<Edge<'static>> = blocks.iter().map(|&block| Edge::to(block)).collect();
+            let other = self.create_block();
+            self.builder
+                .switch_string(text, &strings, &edges, Edge::to(other));
+            let flags = match self.builder.function().kind {
+                FunctionKind::Arrow => EvalScopeFlags::IS_IN_ARROW_FUNCTION,
+                _ => EvalScopeFlags::default(),
+            };
+            let scope = self.file.fragment.add_eval_scope(EvalScope {
+                mode: self.mode(),
+                flags,
+                ..EvalScope::default()
+            });
+            for (evaluation, block) in refused.into_iter().zip(blocks) {
+                self.continue_in(block);
+                let this_value = self.builder.undefined();
+                let value = (self.builder).direct_eval(scope, text, this_value, None, &[]);
+                match self.file.needs_no_scope(evaluation) {
+                    true => self.jump_with(join, &[value]),
+                    false => self.builder.jump(Edge::to(other)),
+                }
+            }
+            self.continue_in(other);
+        }
+        self.emit_throw_runtime_error(RuntimeErrorKind::OmittedFromExecutable, Some(name));
+        self.builder.undefined()
+    }
+
     fn list_names_of_file(&mut self, eval_scope: bind::EvalScope) -> NamesOfFileForEvals {
         if let Some(names) = &self.file.modules.names_of_file_for_evals {
             return names.clone();
@@ -198,16 +278,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         names
     }
 
-    fn emit_direct_eval(&mut self, call: ExprId, arguments: &Arguments) -> ValueId {
-        let text = match arguments {
-            Arguments::Values(values) => match values.first() {
-                Some(&text) => text,
-                None => return self.builder.undefined(),
-            },
+    fn emit_evaluated_string(&mut self, arguments: &Arguments) -> Option<ValueId> {
+        match arguments {
+            Arguments::Values(values) => values.first().copied(),
             Arguments::List(list) => {
                 let index = self.builder.integer(0);
-                self.builder.elem_get(*list, index)
+                Some(self.builder.elem_get(*list, index))
             }
+        }
+    }
+
+    fn emit_direct_eval(&mut self, call: ExprId, arguments: &Arguments) -> ValueId {
+        let Some(text) = self.emit_evaluated_string(arguments) else {
+            return self.builder.undefined();
         };
         let eval_scope = self.file.bound.eval_scope(call);
         let eval_scope = *eval_scope.expect("lower_direct_eval takes a call with an eval scope");
@@ -238,6 +321,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             bindings,
             outer: names_of_file.listed_once,
         });
+        let own_file = self.file.file;
+        let mark = self
+            .file
+            .ensure_variable(VariableKey::EvaluationMark(own_file));
+        let yes = self.builder.boolean(true);
+        self.builder.put_module_variable(mark, yes);
         self.builder
             .direct_eval(scope, text, this_value, new_target, &operands)
     }

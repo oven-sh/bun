@@ -82,6 +82,7 @@ import {
   type JunitFileSuite,
 } from "./buildkite.ts";
 import { costOfNewTests } from "./ci-cost-of-new-tests.ts";
+import { checkoutVendor } from "./vendor-checkout.ts";
 
 const isX64 = process.arch === "x64";
 
@@ -1698,7 +1699,6 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
             output.stderr.trimEnd(),
           ].filter(Boolean);
 
-    const aotProgramsSkipped = new Map<string, number>();
     const reportAotProgram = (testPath: string, verdict: AotVerdict) => {
       const title = join("test", testPath).replaceAll("\\", "/");
       const result: TestResult = {
@@ -1713,8 +1713,6 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
       if (verdict.state === "skip") {
         console.log(`${getAnsi("gray")}[${++i}/${total}] ${title} - skipped: ${verdict.message}${getAnsi("reset")}`);
         okResults.push({ ...result, status: "skip" });
-        const why = verdict.message.startsWith("todo: ") ? "marked `// Todo:`" : verdict.message;
-        aotProgramsSkipped.set(why, (aotProgramsSkipped.get(why) ?? 0) + 1);
         return;
       }
       if (verdict.state === "pass") {
@@ -1828,17 +1826,6 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
       startGroup(`Running ${parallelSafeTests.length} parallel-safe tests (${parallelSafeWidth}-wide)`);
     }
     await Promise.all(parallelSafeTests.map(t => parallelSafeLimit(() => runOneTest(t, parallelSafeWidth > 1))));
-    for (const [why, count] of aotProgramsSkipped) {
-      const line = `SKIPPED ${count} of ${aotPrograms.length} programs compiled ahead of time: ${why}`;
-      console.log(`${getAnsi("yellow")}${line}${getAnsi("reset")}`);
-      if (why.startsWith("marked ")) continue;
-      reportAnnotationToBuildkite({
-        context: "aot-programs-skipped",
-        label: "programs compiled ahead of time",
-        style: "warning",
-        content: `${escapeHtml(line)} <i>(on ${getBuildLabel()})</i>\n\n`,
-      });
-    }
   }
 
   if (vendorTests?.length) {
@@ -3144,7 +3131,10 @@ function getTests(cwd: string): string[] {
 interface Vendor {
   package: string;
   repository: string;
+  /** The release `commit` is of. */
   tag: string;
+  /** What is checked out. */
+  commit: string;
   packageManager?: string;
   testPath?: string;
   testRunner?: string;
@@ -3185,34 +3175,22 @@ async function getVendorTests(cwd: string): Promise<VendorTest[]> {
 
   return Promise.all(
     relevantVendors.map(
-      async ({ package: name, repository, tag, testPath, testExtensions, testRunner, packageManager, skipTests }) => {
+      async ({
+        package: name,
+        repository,
+        commit,
+        testPath,
+        testExtensions,
+        testRunner,
+        packageManager,
+        skipTests,
+      }) => {
         const vendorPath = join(cwd, "vendor", name);
 
-        if (!existsSync(vendorPath)) {
-          const { ok, error } = await spawnWithTimeout({
-            command: "git",
-            args: ["clone", "--depth", "1", "--single-branch", repository, vendorPath],
-            timeout: testTimeout,
-            cwd,
-          });
-          if (!ok) throw new Error(`failed to git clone vendor '${name}': ${error}`);
-        }
-
-        let { ok, error } = await spawnWithTimeout({
-          command: "git",
-          args: ["fetch", "--depth", "1", "origin", "tag", tag],
-          timeout: testTimeout,
-          cwd: vendorPath,
+        await checkoutVendor({ repository, commit, vendorPath }, async (...args) => {
+          const { ok, error } = await spawnWithTimeout({ command: "git", args, timeout: testTimeout, cwd });
+          if (!ok) throw new Error(`failed to git ${args.join(" ")} for vendor '${name}': ${error}`);
         });
-        if (!ok) throw new Error(`failed to fetch tag ${tag} for vendor '${name}': ${error}`);
-
-        ({ ok, error } = await spawnWithTimeout({
-          command: "git",
-          args: ["checkout", tag],
-          timeout: testTimeout,
-          cwd: vendorPath,
-        }));
-        if (!ok) throw new Error(`failed to checkout tag ${tag} for vendor '${name}': ${error}`);
 
         const packageJsonPath = join(vendorPath, "package.json");
         if (!existsSync(packageJsonPath)) {
@@ -3616,11 +3594,14 @@ async function getExecPathFromBuildkite(target: string, buildId?: string): Promi
       );
     }
 
-    zipPath = readdirSync(archives, { recursive: true, encoding: "utf-8" })
-      .filter(filename => /^bun.*\.zip$/i.test(filename))
-      .map(filename => join(archives, filename))
-      .sort((a, b) => Number(b.includes("profile")) - Number(a.includes("profile")))
-      .at(0);
+    // A download that failed can have left some of the archives.
+    if (!error) {
+      zipPath = readdirSync(archives, { recursive: true, encoding: "utf-8" })
+        .filter(filename => /^bun.*\.zip$/i.test(filename))
+        .map(filename => join(archives, filename))
+        .sort((a, b) => Number(b.includes("profile")) - Number(a.includes("profile")))
+        .at(0);
+    }
 
     if (zipPath) {
       break downloadLoop;
@@ -3639,14 +3620,22 @@ async function getExecPathFromBuildkite(target: string, buildId?: string): Promi
     .filter(filename => /^bun.*\.zip$/i.test(filename))
     .map(filename => join(archives, filename))
     .find(path => path !== archive);
+  const toolsArchive = readdirSync(archives, { encoding: "utf-8" })
+    .filter(filename => /^test-tools-.*\.zip$/.test(filename))
+    .map(filename => join(archives, filename))
+    .at(0);
+  // Two of the archives unpack into this folder, and unzip fails where another makes it first.
+  mkdirSync(join(releasePath, basename(archive, ".zip")), { recursive: true });
   // Side by side: each keeps one processor busy for seconds.
-  const [, strippedFolder] = await Promise.all([
-    unzip(archive, releasePath, { without: [...toolsOfTheEngine, ...linkerMaps] }),
+  const [strippedFolder] = await Promise.all([
     strippedArchive && unpackStripped(strippedArchive),
+    unzip(archive, releasePath, { without: linkerMaps }),
+    toolsArchive && unzip(toolsArchive, releasePath, { without: toolsOfTheEngine }),
   ]);
-  // An archive without them: the tests that start them say so.
+  // A build without them: the tests that start them say so.
   unpackToolsOfTheEngine = async isNeeded => {
-    if (isNeeded) await unzip(archive, releasePath, { only: toolsOfTheEngine }).catch(console.warn);
+    if (isNeeded && toolsArchive)
+      await unzip(toolsArchive, releasePath, { only: toolsOfTheEngine }).catch(console.warn);
     if (archives !== releasePath) rmSync(archives, { recursive: true, force: true });
   };
 

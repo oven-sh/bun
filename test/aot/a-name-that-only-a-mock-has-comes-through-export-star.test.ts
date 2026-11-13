@@ -132,14 +132,9 @@ test("as one program", async () => {
   expect(plain.printed).toContain(
     "one of the two leaves the name out, and both have a new one | both,extra,more,v,w |",
   );
-  // TODO(bun), row 4105: a compiled run follows plain Bun but for a name that the mock adds and a CommonJS file behind a later `export *` really has: in plain Bun the first star
-  // wins, compiled the file that really has it. The list goes red once they agree.
-  const compiled = await printedBy(String(directory), "--aot");
-  expect(compiled.exitCode).toBe(plain.exitCode);
-  const printed = compiled.printed.split("\n");
-  const differing = plain.printed.split("\n").filter((line, index) => line !== printed[index]);
-  expect(differing.map(line => line.split(" | ")[0])).toEqual(["a CommonJS file has the new name"]);
-  expect(compiled.printed).toContain(
-    "a CommonJS file has the new name | c,extra,own,v | v=mocked v:true:true extra=of the CommonJS file:true:true",
+  // The mock adds the name, and a CommonJS file behind a later `export *` really has it: the first star wins.
+  expect(plain.printed).toContain(
+    "a CommonJS file has the new name | c,extra,own,v | v=mocked v:true:true extra=extra:true:true",
   );
+  expect(await printedBy(String(directory), "--aot")).toEqual(plain);
 });

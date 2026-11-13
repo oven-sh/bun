@@ -1,6 +1,7 @@
 use bun_trim::Feature;
 
 use super::*;
+use crate::builtins::id::BuiltinId;
 use crate::engine::SourceLocation;
 use crate::engine::testing::ResultRecords;
 use crate::ir::generated::Witness;
@@ -219,6 +220,7 @@ fn default_lets_nothing_be_removed() {
         causes: vec![missing],
         locales: UsedLocales::Unknown(None),
         starts_workers_from_unseen_code: true,
+        names_bun_build: false,
     };
     assert_eq!(features_of(&[use_of_word(ABSENT_WORD)]), expected);
 }
@@ -314,13 +316,65 @@ fn no_record_gives_empty_list_and_no_cause() {
         causes: Vec::new(),
         locales: listed(&[]),
         starts_workers_from_unseen_code: true,
+        names_bun_build: false,
     };
     assert_eq!(features_of(&[]), expected);
 }
 
 #[test]
+fn bun_build_is_named_where_it_is_seen_asked_for_more_than_a_bundle() {
+    let by = |builtin: BuiltinId, feature: Feature| FeatureUseRecord {
+        builtin: builtin.to_wire(),
+        ..use_of(feature)
+    };
+    let bundling = || by(BuiltinId::BunBuild, Feature::Bundler);
+    let checking = || by(BuiltinId::BunBuild, Feature::Check);
+    let of_kind = |kind: FeatureUseKind| FeatureUseRecord { kind, ..checking() };
+
+    let asked = features_of(&[bundling(), checking()]);
+    assert!(asked.names_bun_build);
+    assert!(asked.uses(Feature::Bundler));
+    assert!(!asked.uses(Feature::Check));
+    let inspected = features_of(&[use_of(Feature::Bundler), use_of(Feature::Check)]);
+    assert!(!inspected.names_bun_build);
+    assert!(inspected.names(Feature::Bundler));
+    assert!(!inspected.uses(Feature::Check));
+
+    assert!(!features_of(&[bundling()]).names_bun_build);
+    for kind in [FeatureUseKind::Unnamed, FeatureUseKind::FoundByName] {
+        let reached = features_of(&[bundling(), of_kind(kind)]);
+        assert!(!reached.names_bun_build, "{kind:?}");
+        assert!(!reached.uses(Feature::Check), "{kind:?}");
+    }
+    let serving = features_of(&[by(BuiltinId::BunServe, Feature::Bundler)]);
+    assert!(serving.names(Feature::Bundler));
+    assert!(!serving.names_bun_build);
+}
+
+#[test]
 fn result_without_image_gives_default() {
     assert_eq!(used_features_of_result(b""), UsedFeatures::default());
+}
+
+#[test]
+fn name_read_off_unknown_value_names_its_feature_and_not_bun_build() {
+    let found_by_name = |feature: Feature| FeatureUseRecord {
+        kind: FeatureUseKind::FoundByName,
+        ..use_of(feature)
+    };
+    let building = FeatureUseRecord {
+        builtin: BuiltinId::BunBuild.to_wire(),
+        ..found_by_name(Feature::Bundler)
+    };
+    let used = features_of(&[building]);
+    assert!(used.names(Feature::Bundler));
+    assert!(!used.names_bun_build);
+    for feature in features_retained_by_name().iter() {
+        assert!(
+            features_of(&[found_by_name(feature)]).names(feature),
+            "{feature:?}"
+        );
+    }
 }
 
 #[test]
@@ -334,6 +388,7 @@ fn result_with_image_gives_its_records() {
         causes: vec![evaluates_text],
         locales: listed(&["de", "en-US"]),
         starts_workers_from_unseen_code: true,
+        names_bun_build: false,
     };
     assert_eq!(used_features_of_result(b"image"), expected);
 }

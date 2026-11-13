@@ -17,7 +17,7 @@
 // # CHECK-NEXT: exited with 0
 declare function report(value: unknown): void;
 const values: unknown[] = [0, 1, "1", "", null, undefined, NaN, true];
-function told(a: unknown, b: unknown) { const same = a === b; const differs = !same; if (differs) return same; return differs; }
+function told(a: unknown, b: unknown) { const same = a === b; const differs = !same; const tested = differs; if (tested) return same; return differs; }
 function named(a: unknown, b: unknown) { const same = a === b; const differs = !same; if (differs) return "differs " + same + " " + differs; return "same " + same + " " + differs; }
 function twice(a: unknown, b: unknown) { const same = a === b; const differs = !same; const again = !differs; if (again) return "same " + same + " " + differs; return "differs " + same + " " + differs; }
 function each(f: (a: unknown, b: unknown) => unknown) { for (let i = 0; i < values.length; i++) { for (let j = 0; j < values.length; j++) report(f(values[i], values[j])); } }

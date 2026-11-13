@@ -1,0 +1,145 @@
+# The remainder by a reciprocal is shown exact for a dividend in [0, 2^32 - 1] and for no other. `(j - 7) % d` may be negative, and -0 is among its answers: it stays in numbers. `j + 4294967296` lies just beyond 32 bits: it stays
+# a division in integers. In `wide` the counter runs to a number that nobody bounds: the loop whose bound the preheader checks for an int32 takes the reciprocal. The divisor is known to nobody: a divisor that Link knows goes its own way and would show nothing.
+# function signed(d: number) { let s = 0; for (let j = 0; j < 1000; j++) s += (j - 7) % d; return s; }
+# function beyond(d: number) { let s = 0; for (let j = 0; j < 1000; j++) s = (s + (j + 4294967296) % d) | 0; return s; }
+# function wide(d: number, n: number) { let s = 0; for (let j = 0; j < n; j++) s = (s + j % d) | 0; return s; }
+# const d = Number(process.argv[2] ?? "5");
+# console.log(signed(d), beyond(d), wide(d, Number(process.argv[3] ?? "9")));
+# RUN: walk f1 f2 f3 mechanisms=all
+# CHECK-NOT: Reciprocal
+# CHECK-LABEL: code f2:Body
+# CHECK: = Mod {{*}} form=Integers
+# CHECK-NOT: Reciprocal
+# CHECK-LABEL: code f3:Body
+# CHECK: = IntegerBound
+# CHECK-NEXT: = TypeTest {{*}} testedType=i32
+# CHECK: int[0, 2147483647] @Int32) isInLoop=true isLoopHead=true
+# CHECK: = RemainderByReciprocal
+
+module m0 path="remainder-is-not-made-by-a-reciprocal-where-the-dividend-may-be-negative-or-wider-than-32-bits.ts" displayPath="remainder-is-not-made-by-a-reciprocal-where-the-dividend-may-be-negative-or-wider-than-32-bits.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = Builtin builtin=Number @340
+    v7 = Builtin builtin=Process @347
+    v8 = PropGet v7 key="argv" @347
+    v9 = Convert v8 declared={type=builtin(ProcessArgv) flags=[IsExpected]} @347
+    v10 = Integer integer=2 @347
+    v11 = ElemGet v9, v10 @355
+    v12 = TypeTest v11 testedType=undefined|null @347
+    Branch v12 -> taken b1(| 0), notTaken b2(| 0) @347
+  b1(v13):
+    v14 = String string="5" @366
+    Jump -> next b3(v14) @366
+  b2(v15):
+    Jump -> next b3(v15) @347
+  b3(v16):
+    v17 = Call v6, -, v16 calleeName="Number" @340
+    v18 = Convert v17 declared={type=number} illTypedCause=DeclarationWithoutBody @340
+    v19 = Builtin builtin=GlobalThis @372
+    v20 = PropGet v19 key="console" [isFreeName] @372
+    v21 = Convert v20 declared={type=builtin(Console) flags=[IsExpected]} @372
+    v22 = PropGet v21 key="log" @372
+    v23 = Convert v22 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @372
+    v24 = Call v1, -, v18 calleeName="signed" @384
+    v25 = Call v3, -, v18 calleeName="beyond" @395
+    v26 = Builtin builtin=Number @414
+    v27 = Builtin builtin=Process @421
+    v28 = PropGet v27 key="argv" @421
+    v29 = Convert v28 declared={type=builtin(ProcessArgv) flags=[IsExpected]} @421
+    v30 = Integer integer=3 @421
+    v31 = ElemGet v29, v30 @429
+    v32 = TypeTest v31 testedType=undefined|null @421
+    Branch v32 -> taken b4(| 0), notTaken b5(| 0) @421
+  b4(v33):
+    v34 = String string="9" @440
+    Jump -> next b6(v34) @440
+  b5(v35):
+    Jump -> next b6(v35) @421
+  b6(v36):
+    v37 = Call v26, -, v36 calleeName="Number" @414
+    v38 = Convert v37 declared={type=number} illTypedCause=DeclarationWithoutBody @414
+    v39 = Call v5, -, v18, v38 calleeName="wide" @406
+    v40 = Call v23, v21, v24, v25, v39 calleeKey="log" calleeName="console.log" @380
+    v41 = Undefined @372
+    Return v41 @372
+}
+function f1 name="signed" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer @37
+    v2 = Convert v1 declared={type=number} @37
+    v3 = Integer @53
+    v4 = Convert v3 declared={type=number} @53
+    Jump -> next b1(v2, v4) @49
+  b1(v5: number, v6: number):
+    LoopHint @49
+    v8 = Integer integer=1000 @60
+    v9 = Less v6, v8 @60
+    Branch v9 -> taken b2(), notTaken b3() @60
+  b2():
+    v10 = Integer integer=7 @81
+    v11 = Sub v6, v10 @81
+    v12 = Mod v11, v0 @86
+    v13 = Add v5, v12 @86
+    v14 = Convert v13 declared={type=number} @71
+    v15 = Increment v6 @66
+    v16 = Convert v15 declared={type=number} @66
+    Jump -> next b1(v14, v16) @66
+  b3():
+    Return v5 @96
+}
+function f2 name="beyond" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer @138
+    v2 = Convert v1 declared={type=number} @138
+    v3 = Integer @154
+    v4 = Convert v3 declared={type=number} @154
+    Jump -> next b1(v2, v4) @150
+  b1(v5: number, v6: number):
+    LoopHint @150
+    v8 = Integer integer=1000 @161
+    v9 = Less v6, v8 @161
+    Branch v9 -> taken b2(), notTaken b3() @161
+  b2():
+    v10 = Integer integer=4294967296 @186
+    v11 = Add v6, v10 @186
+    v12 = Mod v11, v0 @200
+    v13 = Add v5, v12 @200
+    v14 = Integer @205
+    v15 = BitOr v13, v14 @205
+    v16 = Convert v15 declared={type=number} @172
+    v17 = Increment v6 @167
+    v18 = Convert v17 declared={type=number} @167
+    Jump -> next b1(v16, v18) @167
+  b3():
+    Return v5 @215
+}
+function f3 name="wide" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    v2 = Integer @266
+    v3 = Convert v2 declared={type=number} @266
+    v4 = Integer @282
+    v5 = Convert v4 declared={type=number} @282
+    Jump -> next b1(v3, v5) @278
+  b1(v6: number, v7: number):
+    LoopHint @278
+    v9 = Less v7, v1 @289
+    Branch v9 -> taken b2(), notTaken b3() @289
+  b2():
+    v10 = Mod v7, v0 @310
+    v11 = Add v6, v10 @310
+    v12 = Integer @315
+    v13 = BitOr v11, v12 @315
+    v14 = Convert v13 declared={type=number} @297
+    v15 = Increment v7 @292
+    v16 = Convert v15 declared={type=number} @292
+    Jump -> next b1(v14, v16) @292
+  b3():
+    Return v6 @325
+}

@@ -18,8 +18,9 @@ pub use self::published::{Helper, Shape};
 pub use self::quiet::Quiet;
 pub use self::resolve::{
     KnownCallee, PrivateFieldAccess, PrivateFieldCall, PrivateMemberKind, PrivateStateKind,
-    PrivateStateRole, PrivateStateSite, ResolveInput, ResolvedReference, resolve_callee,
-    resolve_loaded_reference, resolve_private_field_call, resolve_reference,
+    PrivateStateRole, PrivateStateSite, PublicFieldAnswer, ResolveInput, ResolvedReference,
+    calls_only_published_helpers, resolve_callee, resolve_loaded_reference,
+    resolve_private_field_call, resolve_public_field, resolve_reference,
 };
 
 use crate::builtins::id::BuiltinId;
@@ -43,6 +44,7 @@ pub struct PublishedFunction {
 pub enum Reference {
     Helper(Helper),
     Global(&'static [&'static str]),
+    Holder,
 }
 
 #[derive(Default)]
@@ -192,5 +194,22 @@ impl KnownHelpers {
         };
         let known = self.function(file, held.definition)?;
         (values.holds_from_the_start && known.relies_on_facts).then_some(known)
+    }
+
+    /// A helper that answers a value with a marker before it asks anything else. What it names for other values does not matter there.
+    pub fn callee_returning_marked_value(
+        &self,
+        files: &Files<'_>,
+        file: FileId,
+        callee: ExprId,
+    ) -> Option<&KnownFunction> {
+        let values = self.binding(file, KnownHelpers::find_called_symbol(files, file, callee)?)?;
+        let [held] = values.functions[..] else {
+            return None;
+        };
+        let known = self.function(file, held.definition)?;
+        let tests_marker_first = known.shape == Shape::ImportStarMarkedOrCopied;
+        (values.holds_from_the_start && (known.relies_on_facts || tests_marker_first))
+            .then_some(known)
     }
 }

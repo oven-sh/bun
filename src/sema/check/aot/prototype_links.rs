@@ -1,4 +1,6 @@
 use super::answers::{ClassDeclaration, ClassParent, ClassRef, FunctionRef};
+use super::class_stores::find_prototype_object_held_by;
+use super::constructor_evidence::{FunctionAtPath, find_function_at_path};
 use super::constructor_function_parents::LinkedFunctions;
 use super::queries::Queries;
 use crate::atom::{Atom, known};
@@ -13,6 +15,7 @@ use crate::hir::{
 use crate::program::FileId;
 use crate::session::Arena;
 use crate::util::{FxHashMap, FxHashSet, SharedSort};
+use bun_threading::Guarded;
 use std::sync::OnceLock;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -38,6 +41,16 @@ pub enum PrototypeOperation {
         object: u32,
         key: u32,
         descriptor: u32,
+    },
+    DefineProperties {
+        object: u32,
+        descriptors: u32,
+    },
+    /// `__publicField(this, "name", value)`: defines a field that the object has and stores one that it lacks.
+    DefineField {
+        object: u32,
+        key: u32,
+        value: u32,
     },
 }
 
@@ -81,6 +94,8 @@ impl LinkEnd {
 pub(super) struct PrototypeLink {
     pub(super) child: LinkEnd,
     pub(super) parent: Option<LinkEnd>,
+    /// The prototype object is a literal that names no parent: another statement may name one.
+    pub(super) is_plain_literal: bool,
 }
 
 #[derive(Copy, Clone)]
@@ -95,13 +110,24 @@ pub(in crate::check) struct PrototypeLinks<'s> {
     calls: &'s [FunctionCall],
     calls_passing_parameters: &'s [(FnId, FunctionCall)],
     calls_passing_this: &'s [(FnId, FunctionCall)],
+    /// Functions of the file, each with a function that passes it its own receiver.
+    receivers_passed: &'s [(FnId, FnId)],
+    /// The same for functions that are only known by the name that they are read under.
+    receivers_passed_by_name: &'s [(Atom, FnId)],
     copied_literals: &'s [(FnId, ExprId)],
     functions_sharing_prototype_objects: &'s [FnId],
     pub(super) linked_functions: OnceLock<LinkedFunctions<'s>>,
     pub(super) declarations_used_like_constructors: OnceLock<&'s [SymbolId]>,
+    pub(super) declarations_named_by_new: OnceLock<&'s [SymbolId]>,
+    pub(super) functions_named_through_variables: OnceLock<&'s [FnId]>,
+    pub(super) functions_constructed_at_paths: OnceLock<&'s [FnId]>,
+    pub(super) initializers_at_paths: OnceLock<&'s [(FnId, FnId)]>,
+    pub(super) constructor_symbols: OnceLock<&'s [SymbolId]>,
+    pub(super) constructor_member_names: OnceLock<&'s [Atom]>,
     pub(super) parameters_seen_to_be_constructors: OnceLock<&'s [(FnId, u32)]>,
     pub(super) parameters_used_like_constructors: OnceLock<&'s [(FnId, u32)]>,
     pub(super) functions_handing_this_on: OnceLock<&'s [FnId]>,
+    links_of_parameters_followed: Guarded<FxHashMap<FnId, &'s [PrototypeLink]>>,
 }
 
 fn entries_of<T>(entries: &[(FnId, T)], function: FnId) -> &[(FnId, T)] {
@@ -131,12 +157,41 @@ impl<'s> PrototypeLinks<'s> {
         entries_of(self.calls_passing_parameters, function)
     }
 
+    pub(super) fn links_of_parameters_followed_of(
+        &self,
+        function: FnId,
+    ) -> Option<&'s [PrototypeLink]> {
+        self.links_of_parameters_followed
+            .lock()
+            .get(&function)
+            .copied()
+    }
+
+    pub(super) fn keep_links_of_parameters_followed(
+        &self,
+        function: FnId,
+        links: &'s [PrototypeLink],
+    ) {
+        self.links_of_parameters_followed
+            .lock()
+            .entry(function)
+            .or_insert(links);
+    }
+
     pub(super) fn all_calls_passing_parameters(&self) -> &'s [(FnId, FunctionCall)] {
         self.calls_passing_parameters
     }
 
     pub(super) fn calls_passing_this_of(&self, function: FnId) -> &'s [(FnId, FunctionCall)] {
         entries_of(self.calls_passing_this, function)
+    }
+
+    pub(super) fn receivers_passed_to(&self, function: FnId) -> &'s [(FnId, FnId)] {
+        entries_of(self.receivers_passed, function)
+    }
+
+    pub(super) fn receivers_passed_by_name(&self) -> &'s [(Atom, FnId)] {
+        self.receivers_passed_by_name
     }
 
     pub(super) fn shares_prototype_object(&self, function: FnId) -> bool {
@@ -150,14 +205,41 @@ impl<'s> PrototypeLinks<'s> {
     }
 }
 
+#[derive(Default)]
+pub(in crate::check) struct LinksOfFile<'s> {
+    links: OnceLock<PrototypeLinks<'s>>,
+    functions_at_paths: OnceLock<&'s [FunctionAtPath<'s>]>,
+}
+
 impl<'s> Program<'s> {
-    fn aot_prototype_links_of(&self, file: FileId) -> &'s OnceLock<PrototypeLinks<'s>> {
-        let of_files: &'s [OnceLock<PrototypeLinks<'s>>] =
-            *self.aot_prototype_links.get_or_init(|| {
-                let arena = self.session.arena();
-                &*arena.alloc_slice_fill_default(self.files.modules.len())
-            });
+    fn aot_links_of(&self, file: FileId) -> &'s LinksOfFile<'s> {
+        let of_files: &'s [LinksOfFile<'s>] = *self.aot_prototype_links.get_or_init(|| {
+            let arena = self.session.arena();
+            &*arena.alloc_slice_fill_default(self.files.modules.len())
+        });
         &of_files[file.idx()]
+    }
+
+    fn aot_prototype_links_of(&self, file: FileId) -> &'s OnceLock<PrototypeLinks<'s>> {
+        &self.aot_links_of(file).links
+    }
+
+    pub(super) fn aot_functions_at_paths_of(
+        &self,
+        file: FileId,
+    ) -> &'s OnceLock<&'s [FunctionAtPath<'s>]> {
+        &self.aot_links_of(file).functions_at_paths
+    }
+
+    /// Frees the tables of links followed. They're on the regular heap, and what lies in an arena
+    /// is never dropped.
+    pub(in crate::check) fn release_prototype_links(&mut self) {
+        let Some(of_files) = self.aot_prototype_links.get() else {
+            return;
+        };
+        for links in of_files.iter().filter_map(|of_file| of_file.links.get()) {
+            *links.links_of_parameters_followed.lock() = FxHashMap::default();
+        }
     }
 }
 
@@ -174,9 +256,18 @@ pub(super) struct EndFinder<'c, 'p, 's> {
     hir: &'p hir::File<'s>,
     bound: &'p Bound<'s>,
     named_values: &'c dyn NamedValues,
+    paths: &'s [FunctionAtPath<'s>],
 }
 
 impl EndFinder<'_, '_, '_> {
+    fn find_function_at_path(&self, expression: ExprId) -> Option<FunctionRef> {
+        let function = find_function_at_path(self.paths, self.hir, self.bound, expression)?;
+        Some(FunctionRef {
+            file: self.file,
+            function,
+        })
+    }
+
     pub(super) fn find_parameter(&self, reference: ExprId) -> Option<LinkEnd> {
         let Binding::Symbol(symbol) = self.bound.binding(reference) else {
             return None;
@@ -224,6 +315,10 @@ impl EndFinder<'_, '_, '_> {
                     .named_values
                     .find_library_declaration(self.file, expression);
                 let declaration = declaration.map(LinkEnd::LibraryDeclaration);
+                let declaration = declaration.or_else(|| {
+                    let function = self.find_function_at_path(expression)?;
+                    Some(LinkEnd::Declaration(ClassDeclaration::Function(function)))
+                });
                 declaration.or_else(|| self.find_referenced_parameter(expression))
             }
         }
@@ -316,6 +411,14 @@ impl EndFinder<'_, '_, '_> {
             .member_key(self.hir.skip_type_assertions(self.hir[site].callee))
     }
 
+    fn is_literal_without_parent(&self, value: ExprId) -> bool {
+        let ExprKind::Object(properties) = self.hir[self.hir.skip_type_assertions(value)].kind
+        else {
+            return false;
+        };
+        (properties.iter()).all(|property| !is_proto_setter(&self.hir[property]))
+    }
+
     fn find_parent_in_literal(&self, properties: Span<PropId>) -> Option<LinkEnd> {
         let mut properties = properties.iter();
         let parent = properties.find(|&property| is_proto_setter(&self.hir[property]))?;
@@ -393,7 +496,9 @@ impl EndFinder<'_, '_, '_> {
                     NamedValue::PrototypeOperation(
                         PrototypeOperation::LinkClasses { .. }
                         | PrototypeOperation::CallFunction { .. }
-                        | PrototypeOperation::DefineProperty { .. },
+                        | PrototypeOperation::DefineProperties { .. }
+                        | PrototypeOperation::DefineProperty { .. }
+                        | PrototypeOperation::DefineField { .. },
                     )
                     | NamedValue::Class(_)
                     | NamedValue::Function(_) => return None,
@@ -402,21 +507,33 @@ impl EndFinder<'_, '_, '_> {
         }
     }
 
-    pub(super) fn apply_to_arguments(
-        &self,
-        link: PrototypeLink,
-        call: FunctionCall,
-    ) -> Option<PrototypeLink> {
+    pub(super) fn find_ends_of_arguments(&self, call: FunctionCall) -> EndsOfArguments {
+        let arguments = self.arguments_in_front_of_spread(call.call);
+        EndsOfArguments {
+            callee: call.callee.function,
+            ends: arguments.map(|argument| self.find_end(argument)).collect(),
+        }
+    }
+}
+
+pub(super) struct EndsOfArguments {
+    callee: FnId,
+    ends: Vec<Option<LinkEnd>>,
+}
+
+impl EndsOfArguments {
+    pub(super) fn apply_to(&self, link: PrototypeLink) -> Option<PrototypeLink> {
         let find_argument_for = |end: LinkEnd| match end {
             LinkEnd::Declaration(_) | LinkEnd::LibraryDeclaration(_) => Some(end),
-            LinkEnd::Parameter { function, index } if function == call.callee.function => {
-                self.find_end_at(call.call, index)
+            LinkEnd::Parameter { function, index } if function == self.callee => {
+                self.ends.get(index as usize).copied().flatten()
             }
             LinkEnd::Parameter { .. } => None,
         };
         Some(PrototypeLink {
             child: find_argument_for(link.child)?,
             parent: link.parent.and_then(find_argument_for),
+            is_plain_literal: link.is_plain_literal,
         })
     }
 }
@@ -431,9 +548,13 @@ struct LinkCollector<'c, 'p, 's> {
     owners_of_shared_prototype_objects: FxHashMap<LinkEnd, Option<LinkEnd>>,
     links: Vec<PrototypeLink>,
     known_links: FxHashSet<PrototypeLink>,
+    first_links: FxHashMap<LinkEnd, u32>,
+    plain_literals: Vec<(LinkEnd, u32)>,
     calls: Vec<FunctionCall>,
     calls_passing_parameters: Vec<(FnId, FunctionCall)>,
     calls_passing_this: Vec<CallPassingThis>,
+    variables_given_receivers: Vec<(SymbolId, ExprId)>,
+    names_given_receivers: Vec<(Atom, ExprId)>,
     copied_literals: Vec<(FnId, ExprId)>,
 }
 
@@ -444,20 +565,55 @@ impl<'c, 'p, 's> LinkCollector<'c, 'p, 's> {
             owners_of_shared_prototype_objects: FxHashMap::default(),
             links: Vec::new(),
             known_links: FxHashSet::default(),
+            first_links: FxHashMap::default(),
+            plain_literals: Vec::new(),
             calls: Vec::new(),
             calls_passing_parameters: Vec::new(),
             calls_passing_this: Vec::new(),
+            variables_given_receivers: Vec::new(),
+            names_given_receivers: Vec::new(),
             copied_literals: Vec::new(),
         }
     }
 
-    fn add_link(&mut self, child: Option<LinkEnd>, parent: Option<LinkEnd>) {
+    fn add_link(&mut self, at: ExprId, child: Option<LinkEnd>, parent: Option<LinkEnd>) {
         let Some(child) = child else {
             return;
         };
-        let link = PrototypeLink { child, parent };
+        let position = self.ends.hir[at].pos;
+        let first = self.first_links.entry(child).or_insert(position);
+        *first = position.min(*first);
+        self.add(child, parent, false);
+    }
+
+    fn add_plain_literal(&mut self, at: ExprId, child: Option<LinkEnd>) {
+        let Some(child) = child else {
+            return;
+        };
+        self.plain_literals.push((child, self.ends.hir[at].pos));
+        self.add(child, None, true);
+    }
+
+    fn add(&mut self, child: LinkEnd, parent: Option<LinkEnd>, is_plain_literal: bool) {
+        let link = PrototypeLink {
+            child,
+            parent,
+            is_plain_literal,
+        };
         if self.known_links.insert(link) {
             self.links.push(link);
+        }
+    }
+
+    fn add_links_that_literals_replace(&mut self) {
+        for (child, position) in std::mem::take(&mut self.plain_literals) {
+            if self
+                .first_links
+                .get(&child)
+                .is_some_and(|&first| first < position)
+            {
+                self.add(child, None, false);
+            }
         }
     }
 
@@ -494,6 +650,55 @@ impl<'c, 'p, 's> LinkCollector<'c, 'p, 's> {
         {
             let call = FunctionCall { call, callee };
             self.calls_passing_this.push(CallPassingThis { this, call });
+        } else if let Some((_, MemberKey::Name(name))) = ends.hir.member_key(function) {
+            self.names_given_receivers.push((name, this));
+        } else if let ExprKind::Ident(_) = ends.hir[function].kind
+            && let Binding::Symbol(variable) = ends.bound.binding(function)
+        {
+            if let BindingInitializer::Expression(initializer) =
+                ends.bound.binding_initializer(ends.hir, variable)
+            {
+                self.add_name_given_receiver(initializer, this);
+            }
+            self.variables_given_receivers.push((variable, this));
+        }
+    }
+
+    fn add_name_given_receiver(&mut self, read: ExprId, this: ExprId) {
+        if let Some((_, MemberKey::Name(name))) = self.ends.hir.member_key(read) {
+            self.names_given_receivers.push((name, this));
+        }
+    }
+
+    fn visit_store_to_variable(&mut self, target: ExprId, value: ExprId) {
+        let ends = self.ends;
+        if !matches!(ends.hir[target].kind, ExprKind::Ident(_)) {
+            return;
+        }
+        let Binding::Symbol(variable) = ends.bound.binding(target) else {
+            return;
+        };
+        for index in 0..self.variables_given_receivers.len() {
+            let (given, this) = self.variables_given_receivers[index];
+            if given == variable {
+                self.add_name_given_receiver(value, this);
+            }
+        }
+    }
+
+    /// Calls by a name on an object other than `this` say nothing of the receiver.
+    fn drop_names_called_on_objects(&mut self, calls: &[ExprId]) {
+        for &call in calls {
+            if self.names_given_receivers.is_empty() {
+                return;
+            }
+            let Some((object, MemberKey::Name(called))) = self.ends.find_called_member(call) else {
+                continue;
+            };
+            if !matches!(self.ends.hir[object].kind, ExprKind::This) {
+                self.names_given_receivers
+                    .retain(|&(name, _)| name != called);
+            }
         }
     }
 
@@ -520,11 +725,12 @@ impl<'c, 'p, 's> LinkCollector<'c, 'p, 's> {
         match operation {
             PrototypeOperation::SetPrototype { object, parent } => {
                 let child = ends.find_owner_of_prototype_object_at(call, object);
-                self.add_link(child, ends.find_owner_of_prototype_object_at(call, parent));
+                let parent = ends.find_owner_of_prototype_object_at(call, parent);
+                self.add_link(call, child, parent);
             }
             PrototypeOperation::LinkClasses { child, parent } => {
                 let child = ends.find_end_at(call, child);
-                self.add_link(child, ends.find_end_at(call, parent));
+                self.add_link(call, child, ends.find_end_at(call, parent));
             }
             PrototypeOperation::CopyProperties { target } => {
                 let owner = ends.find_owner_of_prototype_object_at(call, target);
@@ -533,9 +739,18 @@ impl<'c, 'p, 's> LinkCollector<'c, 'p, 's> {
             PrototypeOperation::CallFunction { receiver } => {
                 self.visit_call_passing_receiver(call, receiver);
             }
-            PrototypeOperation::CreateObject { .. } | PrototypeOperation::DefineProperty { .. } => {
-            }
+            PrototypeOperation::CreateObject { .. }
+            | PrototypeOperation::DefineProperties { .. }
+            | PrototypeOperation::DefineProperty { .. }
+            | PrototypeOperation::DefineField { .. } => {}
         }
+    }
+
+    fn find_callee_at_path(&self, call: ExprId, _object: ExprId) -> Option<FunctionRef> {
+        let ExprKind::Call(site) = self.ends.hir[call].kind else {
+            return None;
+        };
+        self.ends.find_function_at_path(self.ends.hir[site].callee)
     }
 
     fn visit_call(&mut self, call: ExprId) {
@@ -554,6 +769,11 @@ impl<'c, 'p, 's> LinkCollector<'c, 'p, 's> {
                 Some((_, MemberKey::Name(name))) if name == known::call || name == known::apply => {
                     self.visit_call_passing_receiver(call, 0);
                 }
+                Some((member, MemberKey::Name(_)))
+                    if let Some(callee) = self.find_callee_at_path(call, member) =>
+                {
+                    self.visit_function_call(FunctionCall { call, callee });
+                }
                 Some((
                     _,
                     MemberKey::Name(_) | MemberKey::PrivateName(_) | MemberKey::Computed(_),
@@ -566,6 +786,8 @@ impl<'c, 'p, 's> LinkCollector<'c, 'p, 's> {
     fn visit_store_of_shared_prototype_object(&mut self, target: ExprId, value: ExprId) {
         let ends = self.ends;
         let value = ends.hir.skip_type_assertions(value);
+        // `var proto = Constructor.prototype; factory.prototype = proto;`
+        let value = find_prototype_object_held_by(ends.hir, ends.bound, value).unwrap_or(value);
         let is_prototype_object = matches!(
             ends.hir.member_key(value),
             Some((_, MemberKey::Name(name))) if name == known::prototype
@@ -595,7 +817,11 @@ impl<'c, 'p, 's> LinkCollector<'c, 'p, 's> {
         };
         if name == known::prototype {
             let child = ends.find_end(object);
-            self.add_link(child, self.find_parent_of_created_object(value));
+            if ends.is_literal_without_parent(value) {
+                self.add_plain_literal(target, child);
+            } else {
+                self.add_link(target, child, self.find_parent_of_created_object(value));
+            }
             let copy = ends.hir.skip_type_assertions(value);
             if let Some(NamedValue::PrototypeOperation(operation)) = ends.find_callee(copy)
                 && let PrototypeOperation::CopyProperties { target } = operation
@@ -604,7 +830,7 @@ impl<'c, 'p, 's> LinkCollector<'c, 'p, 's> {
             }
         } else if name == known::__proto__ {
             let child = ends.find_owner_of_prototype_object(object);
-            self.add_link(child, ends.find_owner_of_prototype_object(value));
+            self.add_link(target, child, ends.find_owner_of_prototype_object(value));
         }
     }
 }
@@ -616,11 +842,13 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     pub(super) fn end_finder(&self, file: FileId) -> EndFinder<'c, 'p, 's> {
+        let paths = self.functions_at_paths(file);
         EndFinder {
             file,
             hir: self.c.hir(file),
             bound: self.c.bound(file),
             named_values: self.inputs.named_values,
+            paths,
         }
     }
 
@@ -660,7 +888,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             }
             for (target, value) in stores {
                 collector.visit_store(target, value);
+                collector.visit_store_to_variable(target, value);
             }
+            collector.add_links_that_literals_replace();
+            collector.drop_names_called_on_objects(expressions.of(ExprTag::Call));
         }
         let LinkCollector {
             owners_of_shared_prototype_objects,
@@ -668,9 +899,24 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             calls,
             mut calls_passing_parameters,
             calls_passing_this,
+            names_given_receivers,
             mut copied_literals,
             ..
         } = collector;
+        let find_receiver = |this: ExprId| self.c.this_container(file, this)?.ok();
+        let mut receivers_passed: Vec<(FnId, FnId)> = calls_passing_this
+            .iter()
+            .filter(|passing| passing.call.callee.file == file)
+            .filter_map(|passing| {
+                Some((passing.call.callee.function, find_receiver(passing.this)?))
+            })
+            .collect();
+        receivers_passed.sort_unstable();
+        receivers_passed.dedup();
+        let receivers_passed_by_name: Vec<(Atom, FnId)> = names_given_receivers
+            .iter()
+            .filter_map(|&(name, this)| Some((name, find_receiver(this)?)))
+            .collect();
         let mut links_of_declarations = Vec::new();
         let mut links_of_parameters = Vec::new();
         for link in links {
@@ -713,6 +959,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             calls: list_in(arena, &calls),
             calls_passing_parameters: list_in(arena, &calls_passing_parameters),
             calls_passing_this: list_in(arena, &calls_passing_this),
+            receivers_passed: list_in(arena, &receivers_passed),
+            receivers_passed_by_name: list_in(arena, &receivers_passed_by_name),
             copied_literals: list_in(arena, &copied_literals),
             functions_sharing_prototype_objects: list_in(
                 arena,
@@ -720,9 +968,16 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             ),
             linked_functions: OnceLock::new(),
             declarations_used_like_constructors: OnceLock::new(),
+            declarations_named_by_new: OnceLock::new(),
+            functions_named_through_variables: OnceLock::new(),
+            functions_constructed_at_paths: OnceLock::new(),
+            initializers_at_paths: OnceLock::new(),
+            constructor_symbols: OnceLock::new(),
+            constructor_member_names: OnceLock::new(),
             parameters_seen_to_be_constructors: OnceLock::new(),
             parameters_used_like_constructors: OnceLock::new(),
             functions_handing_this_on: OnceLock::new(),
+            links_of_parameters_followed: Guarded::default(),
         }
     }
 }

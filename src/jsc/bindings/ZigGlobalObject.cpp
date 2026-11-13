@@ -96,6 +96,7 @@
 #include "ErrorStackTrace.h"
 #include "IDLTypes.h"
 #include "ImportMetaObject.h"
+#include <wtf/SetForScope.h>
 #include "JS2Native.h"
 #include "JSAbortAlgorithm.h"
 #include "JSAbortController.h"
@@ -400,7 +401,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // the global `Loader` would let user code dereference a non-object
             // and trip JSValue::synthesizePrototype's isSymbol() debug assert.
             JSC::Options::exposeInternalModuleLoader() = false;
-            JSC::Options::useSharedArrayBuffer() = true;
+            JSC::Options::alwaysUseSharedArrayBuffer() = true;
             JSC::Options::useJITCage() = false;
 #if defined(BUN_DISABLE_SHADOW_REALM)
             JSC::Options::useShadowRealm() = false;
@@ -501,7 +502,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             if (Bun::isCodeGenerationFromStringsStrict()) [[unlikely]]
                 JSC::Options::disallowNonStaticCode() = true;
             if (Bun::isCodeGenerationStrictOnlyBesideCompiledProgram()) [[unlikely]]
-                JSC::Options::disallowNonStaticCodeOnlyBesideCompiledCode() = true;
+                JSC::Options::disallowNonStaticCodeOnlyWithCompiledCode() = true;
             if (JSC::isFeatureRemoved(JSC::RemovableFeature::Interpreter)) [[unlikely]] {
                 JSC::Options::functionOverrides() = nullptr;
                 JSC::Options::validateBytecode() = false;
@@ -667,7 +668,7 @@ Zig::GlobalObject* defaultGlobalObject(JSC::VM& vm)
 
 static constexpr int32_t contextOfMacros = std::numeric_limits<int32_t>::max();
 
-static const JSC::GlobalObjectMethodTable& methodTableOfProgram(int32_t executionContextId)
+const JSC::GlobalObjectMethodTable& methodTableOfProgram(int32_t executionContextId)
 {
     if (Bun__hasStandaloneModuleGraph())
         return Zig::StandaloneGlobalObject::globalObjectMethodTable();
@@ -1014,7 +1015,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) BunString Bun__evict
 #if ENABLE(AOT)
     // A compiled module that another imports by a statement is in no registry.
     if (Bun::hasCompiledModules()) {
-        JSC::AOT::forEachFileAwaitingAtTopLevel(globalObject, [&](int64_t order, const String& specifier) {
+        JSC::AOT::forEachTLASuspendedModule(globalObject, [&](int64_t order, const String& specifier) {
             if (awaiting.containsIf([&](auto& entry) { return entry.second == specifier; }))
                 return;
             size_t index = awaiting.size();
@@ -1022,6 +1023,15 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) BunString Bun__evict
                 --index;
             awaiting.insert(index, std::pair { order, specifier });
         });
+        const auto& plugins = globalObject->onLoadPlugins;
+        for (const auto& factory : plugins.compiledMockFactories.span().subspan(plugins.stashedFactoryCount)) {
+            // The loader fetches nothing for an import() of the mocked module itself.
+            if (!factory.isAwaitedByImporter || factory.patched->status() != JSC::JSPromise::Status::Pending)
+                continue;
+            String path = JSC::AOT::moduleFilePath(JSC::AOT::ModuleID(factory.module));
+            if (!fetching.contains(path))
+                fetching.append(path);
+        }
     }
 #endif
     for (auto& key : unfinished)
@@ -1666,7 +1676,7 @@ JSC_DEFINE_CUSTOM_SETTER(errorConstructorPrepareStackTraceSetter,
 
 // onmessage/onerror are CustomValue properties, so JSC invokes these callbacks
 // with the property receiver as thisValue, which is not necessarily the global
-// object: `new Proxy(globalThis, {}).onmessage = fn` passes the Proxy.
+// object: the global of `vm.createContext(globalThis)` as a Reflect.set receiver.
 static Zig::GlobalObject* globalObjectForEventHandler(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue thisValue)
 {
     if (auto* globalObject = dynamicDowncast<Zig::GlobalObject>(JSValue::decode(thisValue)))
@@ -2598,7 +2608,7 @@ JSC_DEFINE_CUSTOM_GETTER(getDebugIDs, (JSGlobalObject * globalObject, EncodedJSV
 {
     auto& vm = JSC::getVM(globalObject);
     JSObject* debugIDs = constructEmptyObject(globalObject);
-    debugIDs->putDirect(vm, Identifier::fromString(vm, makeString("Error\n    at "_s, Zig::externalSourceMapFileURL(), ":1:1"_s)), jsString(vm, buildIDAsUUID()));
+    debugIDs->putDirect(vm, Identifier::fromString(vm, makeString("Error\n    at "_s, Zig::externalSourceMapDisplayPath(), ":1:1"_s)), jsString(vm, buildIDAsUUID()));
     if (JSObject* holder = JSValue::decode(thisValue).getObject())
         holder->putDirect(vm, property, debugIDs, PropertyAttribute::DontEnum | 0);
     return JSValue::encode(debugIDs);
@@ -3082,7 +3092,7 @@ void GlobalObject::finishCreation(VM& vm)
              init.set(bunObject);
              // As for `process` below: require("bun") comes to the object without the name.
              if (init.vm.hasCompiledCode()) [[unlikely]]
-                 JSC::AOT::hostDidCreateObjectOfGlobal(init.owner, JSC::Identifier::fromString(init.vm, "Bun"_s).impl(), bunObject);
+                 JSC::AOT::hostDidCreateGlobalMember(init.owner, JSC::Identifier::fromString(init.vm, "Bun"_s).impl(), bunObject);
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSBunRequestParamsPrototype), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              init.set(Bun::createJSBunRequestParamsPrototype(init.vm, static_cast<Zig::GlobalObject*>(init.owner)));
@@ -3248,7 +3258,7 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(process);
             // The global object adds its `process` at the first read of the name. A program may come to the object without it: import process from "node:process".
             if (init.vm.hasCompiledCode()) [[unlikely]]
-                JSC::AOT::hostDidCreateObjectOfGlobal(init.owner, JSC::Identifier::fromString(init.vm, "process"_s).impl(), process);
+                JSC::AOT::hostDidCreateGlobalMember(init.owner, JSC::Identifier::fromString(init.vm, "process"_s).impl(), process);
         });
 
     m_streamsRuntime.initialize(this);
@@ -4175,6 +4185,12 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     const bool isImportCall = std::exchange(globalObject->onLoadPlugins.isResolvingImportCall, false);
 #endif
 
+    bool isImportStatement = !std::exchange(globalObject->onResolvePlugins.isResolvingImportCall, false);
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode() && JSC::AOT::isResolvingImportCall(vm))
+        isImportStatement = false;
+#endif
+
     // JSC asks this way about the key of a top-level load (JSModuleLoader::loadModule), which is resolved already.
     if (!useImportMap)
         RELEASE_AND_RETURN(scope, key.toPropertyKey(globalObject));
@@ -4238,6 +4254,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         BunString keyZ = Bun::toString(keyString);
         BunString referrerZ = Bun::toString(referrerString);
         BunString queryZ = BunStringEmpty;
+        SetForScope importStatement(globalObject->onResolvePlugins.isResolvingImportStatement, isImportStatement);
         Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ, &queryZ);
         RETURN_IF_EXCEPTION(scope, {});
         if (!res.success) {
@@ -4251,7 +4268,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
             resolved = makeString(resolved, query);
     }
     if (hasModuleMocks) [[unlikely]]
-        resolved = Bun::keyOfImportByPackage(globalObject, resolved, referrerString, true);
+        resolved = Bun::packageImportKey(globalObject, resolved, referrerString, true);
     if (moduleMocksRun) [[unlikely]]
         resolved = Bun::keyOfImportWhileModuleMocksRun(globalObject, resolved, referrerString, true);
     Identifier resolvedKey = Identifier::fromString(vm, resolved);
@@ -4262,12 +4279,18 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     // Only module mocks need these, and only the end of a test file is sure to clear them.
     if (isImportCall && globalObject->m_lazyTestModuleObject.isInitialized()) [[unlikely]] {
         globalObject->onLoadPlugins.keyOfImportCall = resolved;
-        if (globalObject->onLoadPlugins.modulesAskedFor.add(resolved).isNewEntry)
+        if (globalObject->onLoadPlugins.loadRoots.add(resolved).isNewEntry)
             globalObject->onLoadPlugins.hasNewLoad = true;
     }
     if (Bun::hasCompiledModules()) [[unlikely]] {
         Bun::willResolveImport(globalObject, resolved, referrer);
         RETURN_IF_EXCEPTION(scope, {});
+#if ENABLE(AOT)
+        if (JSC::AOT::isResolvingImportCallWithoutAttributes(vm)) {
+            Bun::throwIfOnlyTyped(globalObject, resolved, keyString, referrerString, false);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+#endif
     }
     return resolvedKey;
 }
@@ -4358,15 +4381,17 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
 
     auto referrer = JSC::Identifier::fromString(vm, sourceOriginStringHolder);
     globalObject->onLoadPlugins.isResolvingImportCall = globalObject->onLoadPlugins.hasVirtualModules();
+    globalObject->onResolvePlugins.isResolvingImportCall = true;
     JSC::Identifier key = loader->resolve(globalObject, JSC::Identifier::fromString(vm, moduleName), referrer, nullptr, /* useImportMap */ true);
+    globalObject->onResolvePlugins.isResolvingImportCall = false;
     if (scope.exception()) [[unlikely]]
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
 
     if (Bun::hasCompiledModules() && !Bun::moduleGraphOfLoader(globalObject, loader)) [[unlikely]] {
-        Bun::willRequire(globalObject, moduleNameValue, JSC::AOT::LoadByName::Import);
+        Bun::willRequire(globalObject, moduleNameValue, JSC::AOT::LoadKind::Import);
         if (scope.exception()) [[unlikely]]
             return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
-        JSC::AOT::AskerOfModule asker(globalObject, sourceOriginStringHolder);
+        JSC::AOT::ModuleRequesterScope requesterScope(globalObject, Bun::requesterForUncompiledImportCall(sourceOriginStringHolder));
         JSC::JSPromise* imported = Bun::importCompiledModule(globalObject, key.string(), parameters.get(), referrerAsyncOrder);
         if (scope.exception()) [[unlikely]]
             return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
@@ -4431,7 +4456,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     if (Bun::hasCompiledModules() && !Bun::moduleGraphOfLoader(globalObject, loader)) [[unlikely]] {
         // The loader keeps parameters of the type alone for an import() without attributes, and fetches with them where a require() takes over a load in flight.
         bool hasImportAttributes = parameters && (parameters->type() != ScriptFetchParameters::Type::JavaScript || !parameters->attributes().isEmpty());
-        JSC::AOT::AskerOfModule asker(globalObject, Bun::askerOfImport(referrer));
+        JSC::AOT::ModuleRequesterScope requesterScope(globalObject, Bun::requesterForImporter(referrer));
         JSC::JSPromise* compiled = Bun::compiledModuleSource(static_cast<Zig::GlobalObject*>(globalObject), moduleKey, hasImportAttributes ? parameters.get() : nullptr);
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (compiled)
@@ -4535,8 +4560,8 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     ASSERT(result);
     if (auto* promise = dynamicDowncast<JSC::JSPromise>(result)) {
         // JSC doesn't add a registry entry for the module passed to import() until this settles.
-        if (!entry && plugins.modulesAskedFor.contains(moduleKey) && !plugins.moduleMocksBeingLoaded.contains(moduleKey))
-            plugins.fetchesOfModulesAskedFor.set(moduleKey, JSC::Strong<JSC::JSObject> { vm, promise });
+        if (!entry && plugins.loadRoots.contains(moduleKey) && !plugins.moduleMocksBeingLoaded.contains(moduleKey))
+            plugins.loadRootFetches.set(moduleKey, JSC::Strong<JSC::JSObject> { vm, promise });
         return unlessFetchedMeanwhile(promise);
     }
     return unlessFetchedMeanwhile(rejectedInternalPromise(globalObject, result));

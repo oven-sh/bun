@@ -586,7 +586,7 @@ const SEPARATOR: &[u8] = b" > ";
 /// `outer`, the separator and `name`, which JS has as `string`. A `None` is no name and adds nothing. "" is a name.
 fn join(global: &JSGlobalObject, outer: Option<JSValue>, name: Option<&[u8]>, string: JSValue) -> JsResult<Option<JSValue>> {
     let (Some(outer), Some(name)) = (outer, name) else {
-        return Ok(outer.or(name.map(|_| string)));
+        return Ok(outer.or_else(|| name.map(|_| string)));
     };
     let mut rest: SmallVec<[u8; 128]> = SmallVec::from_slice(SEPARATOR);
     rest.extend_from_slice(name);

@@ -1,7 +1,20 @@
-import { describe, expect, it } from "bun:test";
-import { isLinux, isMacOS, isPosix, isWindows, tempDir } from "harness";
+import { beforeAll, describe, expect, it } from "bun:test";
+import {
+  bunEnv,
+  bunExe,
+  dtUnknownReaddir,
+  isLinux,
+  isMacOS,
+  isPosix,
+  isWindows,
+  MAX_PATH_BYTES,
+  nodeExeAtLeast,
+  tempDir,
+} from "harness";
 import fs from "node:fs";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { inEveryForm, listInEveryForm, shorten } from "./readdir-recursive-forms-fixture";
 
 // On POSIX systems, MAX_PATH_BYTES is 4096.
 // Path validation must account for the actual UTF-8 byte length of strings,
@@ -340,5 +353,194 @@ describe("callback APIs report a path longer than MAX_PATH_BYTES through the cal
       expect.objectContaining({ code: "ENAMETOOLONG", path: tooLong }),
     );
     expect(() => fs.renameSync(other, tooLong)).toThrow(expect.objectContaining({ code: "ENAMETOOLONG" }));
+  });
+});
+
+// Recursive readdir opens each subdirectory by its path relative to the root
+// directory. The OS accepts that path up to MAX_PATH_BYTES - 1 bytes. This limit
+// is Bun's: the limit of Node.js counts the root path too.
+describe.if(isPosix)("recursive readdir at the path length limit", () => {
+  type Entries = Parameters<typeof inEveryForm>[0];
+  const fixture = join(import.meta.dir, "readdir-recursive-forms-fixture.ts");
+  const repeat = (char: string, length: number) => Buffer.alloc(length, char).toString();
+  // Node.js 26.9 is the first release in which every form of the fixture works.
+  const node = nodeExeAtLeast("26.9.0");
+
+  // What the fixture prints for `root` when `exe` runs it.
+  async function listInChild(exe: string, root: string, options: { cwd?: string; env?: NodeJS.Dict<string> } = {}) {
+    await using proc = Bun.spawn({
+      cmd: [exe, fixture, root],
+      cwd: options.cwd,
+      env: options.env ?? bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) throw new Error(`${exe} exited with code ${exitCode}: ${stderr}`);
+    return { listing: JSON.parse(stdout), stderr };
+  }
+
+  // The forms of `readdir`, without the two of `fs.Dir`.
+  const readdirForms = (listing: Record<string, string[]>) =>
+    Object.fromEntries(Object.entries(listing).filter(([form]) => !form.includes("opendir")));
+
+  // Makes a chain of directories with a file in the deepest one, and returns what
+  // is below `root`. The deepest directory has a 255-byte name and an absolute
+  // path 64 bytes short of the limit, so the OS accepts every path in the tree.
+  function makeTreeNearTheLimit(root: string): Entries {
+    const chain: string[] = [];
+    for (let left = MAX_PATH_BYTES - 64 - root.length; left > 1; left -= chain[0].length + 1) {
+      chain.unshift(repeat("d", Math.min(255, left - 1)));
+    }
+    fs.mkdirSync(join(root, ...chain), { recursive: true });
+    fs.writeFileSync(join(root, ...chain, "leaf.txt"), "");
+    return [
+      ...chain.map((_, depth): Entries[number] => [join(...chain.slice(0, depth + 1)), "directory"]),
+      [join(...chain, "leaf.txt"), "file"],
+    ];
+  }
+
+  // Makes, below `root`, and returns what a listing of `root` has:
+  //   <parent>/e*255                    MAX_PATH_BYTES - 1 bytes from the root: the OS opens it
+  //   <parent>/e*255/inside.txt
+  // and with `atTheLimit`:
+  //   <parent>/s*127/t*128              MAX_PATH_BYTES bytes from the root: too long for the OS
+  //   <parent>/s*127/t*128/hidden.txt   not listed
+  // The absolute paths are too long for the OS, so the entries below <parent>
+  // are made from inside it.
+  function makeTreeAcrossTheLimit(root: string, { atTheLimit = false } = {}): Entries {
+    const levels = Array(MAX_PATH_BYTES / 256 - 1).fill(repeat("d", 255));
+    const parent = join(...levels);
+    const [e, s, t] = [repeat("e", 255), repeat("s", 127), repeat("t", 128)];
+    fs.mkdirSync(join(root, parent), { recursive: true });
+    const cwd = process.cwd();
+    process.chdir(join(root, parent));
+    try {
+      fs.mkdirSync(e);
+      fs.writeFileSync(join(e, "inside.txt"), "");
+      if (atTheLimit) {
+        fs.mkdirSync(join(s, t), { recursive: true });
+        fs.writeFileSync(join(s, t, "hidden.txt"), "");
+      }
+    } finally {
+      process.chdir(cwd);
+    }
+    const entries: Entries = [
+      ...levels.map((_, depth): Entries[number] => [join(...levels.slice(0, depth + 1)), "directory"]),
+      [join(parent, e), "directory"],
+      [join(parent, e, "inside.txt"), "file"],
+    ];
+    if (atTheLimit) {
+      expect(join(parent, s, t).length).toBe(MAX_PATH_BYTES);
+      entries.push([join(parent, s), "directory"], [join(parent, s, t), "directory"]);
+    }
+    return entries;
+  }
+
+  // A symlink whose target has a component longer than NAME_MAX: the OS answers
+  // ENAMETOOLONG when it opens the link.
+  function makeTreeWithLongLink(root: string): Entries {
+    fs.mkdirSync(join(root, "sub"));
+    fs.writeFileSync(join(root, "sub", "file.txt"), "");
+    fs.symlinkSync(repeat("x", 300), join(root, "sub", "link"));
+    return [
+      ["sub", "directory"],
+      ["sub/file.txt", "file"],
+      ["sub/link", "symlink"],
+    ];
+  }
+
+  it("descends into a directory whose path is close to the limit", async () => {
+    using dir = tempDir("readdir-near-limit", {});
+    const entries = makeTreeNearTheLimit(String(dir));
+    expect(await listInEveryForm(String(dir))).toEqual(inEveryForm(entries));
+  });
+
+  it("descends into a directory at MAX_PATH_BYTES - 1 from the root", async () => {
+    using dir = tempDir("readdir-up-to-limit", {});
+    const entries = makeTreeAcrossTheLimit(String(dir));
+    expect(await listInEveryForm(String(dir))).toEqual(inEveryForm(entries));
+  });
+
+  // Node.js 26.8 and later fails the whole call with ENAMETOOLONG when it cannot
+  // enter a directory. Bun lists the directory and goes on.
+  it("lists a directory at MAX_PATH_BYTES from the root and does not enter it", async () => {
+    using dir = tempDir("readdir-at-limit", {});
+    const entries = makeTreeAcrossTheLimit(String(dir), { atTheLimit: true });
+    expect(readdirForms(await listInEveryForm(String(dir)))).toEqual(readdirForms(inEveryForm(entries)));
+  });
+
+  it("lists a symlink that the OS does not follow because of its length", async () => {
+    using dir = tempDir("readdir-long-link", {});
+    const entries = makeTreeWithLongLink(String(dir));
+    expect(await listInEveryForm(String(dir))).toEqual(inEveryForm(entries));
+  });
+
+  // A link to its own directory, with a 255-byte name. Each level is 256 bytes
+  // longer, so the link at MAX_PATH_BYTES - 1 is the last one that is followed.
+  it("follows a symlink cycle up to the limit", async () => {
+    using dir = tempDir("readdir-cycle", { "f.txt": "" });
+    const root = String(dir);
+    const link = repeat("L", 255);
+    fs.symlinkSync(".", join(root, link));
+    const expected: string[] = [];
+    for (let depth = 0; depth <= MAX_PATH_BYTES / 256; depth++) {
+      const levels = Array(depth).fill(link);
+      expected.push(shorten(join(...levels, link)), shorten(join(...levels, "f.txt")));
+    }
+    expected.sort();
+    const list = (names: string[]) => names.map(shorten).sort();
+    expect({
+      readdirSync: list(fs.readdirSync(root, { recursive: true })),
+      "promises.readdir": list(await fs.promises.readdir(root, { recursive: true })),
+    }).toEqual({ readdirSync: expected, "promises.readdir": expected });
+  });
+
+  // Each of these waits for a child process, so they run concurrently.
+  describe.concurrent("in a child process", () => {
+    let shimEnv: NodeJS.Dict<string>;
+    // Compiles the shim. A C compiler on a busy CI machine can take longer than
+    // the default hook timeout.
+    beforeAll(async () => {
+      if (dtUnknownReaddir.available) shimEnv = await dtUnknownReaddir.env();
+    }, 30_000);
+
+    it("descends as far below a relative root", async () => {
+      using dir = tempDir("readdir-relative-root", {});
+      const entries = makeTreeAcrossTheLimit(String(dir));
+      const { listing } = await listInChild(bunExe(), ".", { cwd: String(dir) });
+      expect(listing).toEqual(inEveryForm(entries));
+    });
+
+    it.skipIf(!dtUnknownReaddir.available)("lists the same when readdir reports no entry types", async () => {
+      using dir = tempDir("readdir-up-to-limit-unknown", {});
+      const entries = makeTreeAcrossTheLimit(String(dir));
+      const { listing, stderr } = await listInChild(bunExe(), String(dir), { env: shimEnv });
+      expect(stderr).toContain(dtUnknownReaddir.marker);
+      expect(listing).toEqual(inEveryForm(entries));
+    });
+
+    it.skipIf(!dtUnknownReaddir.available)(
+      "lists the directory at MAX_PATH_BYTES with its type when readdir reports no entry types",
+      async () => {
+        using dir = tempDir("readdir-at-limit-unknown", {});
+        const entries = makeTreeAcrossTheLimit(String(dir), { atTheLimit: true });
+        const { listing, stderr } = await listInChild(bunExe(), String(dir), { env: shimEnv });
+        expect(stderr).toContain(dtUnknownReaddir.marker);
+        expect(readdirForms(listing)).toEqual(readdirForms(inEveryForm(entries)));
+      },
+    );
+
+    it.skipIf(!node)("Node.js lists the same close to the limit", async () => {
+      using dir = tempDir("readdir-near-limit-node", {});
+      const entries = makeTreeNearTheLimit(String(dir));
+      expect((await listInChild(node!, String(dir))).listing).toEqual(inEveryForm(entries));
+    });
+
+    it.skipIf(!node)("Node.js lists the same for a symlink that the OS does not follow", async () => {
+      using dir = tempDir("readdir-long-link-node", {});
+      const entries = makeTreeWithLongLink(String(dir));
+      expect((await listInChild(node!, String(dir))).listing).toEqual(inEveryForm(entries));
+    });
   });
 });

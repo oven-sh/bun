@@ -2990,6 +2990,7 @@ pub struct StringPointer {
     pub offset: u32,
     pub length: u32,
 }
+impl_any_bit_pattern!(StringPointer);
 impl StringPointer {
     #[inline]
     pub fn slice<'a>(self, buf: &'a [u8]) -> &'a [u8] {

@@ -521,7 +521,7 @@ public:
     WriteBarrier<JSString> requireKey;
     WriteBarrier<JSString> writtenSpecifier;
     // With two paths: the modules that have asked for one of the two files, each with the originals of the two that had loaded it by then, at any depth (0: neither).
-    // Such a module gets the other file as it is on disk: see wasLoadedByOriginal(). Null until an original is loaded. Dropped when modules leave the registry or require.cache.
+    // What the original of one file has loaded gets the other file as it is on disk: see wasLoadedByOriginal(). Null until an original is loaded. Dropped when modules leave the registry or require.cache.
     WriteBarrier<JSC::JSMap> loadedByOriginals;
     enum : uint8_t {
         OriginalOfImport = 1,
@@ -1105,6 +1105,7 @@ __attribute__((minsize)) static uint8_t originalsInLoaderThatLoaded(Zig::GlobalO
 // A file counts as loaded by its own original. Nothing is looked up until an original is loaded. From then on each asker is looked for once, until modules leave the loader.
 __attribute__((minsize)) static bool wasLoadedByOriginal(Zig::GlobalObject* globalObject, JSModuleMock* mock, const String& asker, uint8_t original)
 {
+    ASSERT(mock->requireKey);
     // The runner's own load of a test file has no importer.
     if (asker.isNull())
         return false;

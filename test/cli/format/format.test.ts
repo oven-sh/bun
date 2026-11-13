@@ -2036,6 +2036,69 @@ describe.concurrent("bun fmt", () => {
       expect(result.files).toEqual({ "a.md": byPrettier });
     });
 
+    // Prettier and oxfmt 0.72.0 print an empty line between the fences of a code block that has no line between them.
+    // That line is code: `<pre><code></code></pre>` becomes `<pre><code>\n</code></pre>`. And where an empty line
+    // ends the unclosed code of a container, Prettier drops that line of the code. Each row is the text, Bun's output
+    // in both flavors and Prettier's output.
+    test.each([
+      ["```\n```\n", "```\n```\n", "```\n\n```\n"],
+      ["```js\n```\n", "```js\n```\n", "```js\n\n```\n"],
+      ["~~~js\n~~~\n", "```js\n```\n", "```js\n\n```\n"],
+      ["> ```\n> ```\n", "> ```\n> ```\n", "> ```\n>\n> ```\n"],
+      ["- ```\n  ```\n", "- ```\n  ```\n", "- ```\n\n  ```\n"],
+      ["```\n", "```\n```\n", "```\n\n```\n"],
+      ["```", "```\n```\n", "```\n\n```\n"],
+      ["> ```\n", "> ```\n> ```\n", "> ```\n>\n> ```\n"],
+      ["- ```\n", "- ```\n  ```\n", "- ```\n\n  ```\n"],
+      ["- ```\n- b\n", "- ```\n  ```\n- b\n", "- ```\n\n  ```\n- b\n"],
+      ["```\n\n```\n", "```\n\n```\n", "```\n\n```\n"],
+      ["```\n\n", "```\n\n```\n", "```\n\n```\n"],
+      ["- ```\n\n  ```\n", "- ```\n\n  ```\n", "- ```\n\n  ```\n"],
+      ["> ```\n>\n> ```\n", "> ```\n>\n> ```\n", "> ```\n>\n> ```\n"],
+      ["> ```\n>\n", "> ```\n>\n> ```\n", "> ```\n>\n> ```\n"],
+      ["> ```js\n>\n", "> ```js\n>\n> ```\n", "> ```js\n>\n> ```\n"],
+      ["> ```\n>\n\nfoo\n", "> ```\n>\n> ```\n\nfoo\n", "> ```\n>\n> ```\n\nfoo\n"],
+      ["> ```\n>\n>\n", "> ```\n>\n>\n> ```\n", "> ```\n>\n> ```\n"],
+      ["> ```\n> a\n>\n", "> ```\n> a\n>\n> ```\n", "> ```\n> a\n> ```\n"],
+      ["> ```\n> a\n>\n>\n", "> ```\n> a\n>\n>\n> ```\n", "> ```\n> a\n>\n> ```\n"],
+      ["> ```\n> a\n>\n\nfoo\n", "> ```\n> a\n>\n> ```\n\nfoo\n", "> ```\n> a\n> ```\n\nfoo\n"],
+      ["> ```\n> a\n>\nfoo\n", "> ```\n> a\n>\n> ```\n\nfoo\n", "> ```\n> a\n> ```\n\nfoo\n"],
+      ["- ```\n\n\npara\n", "- ```\n\n\n  ```\n\npara\n", "- ```\n\n  ```\n\npara\n"],
+      ["- ```\n  a\n\n- b\n", "- ```\n  a\n\n  ```\n- b\n", "- ```\n  a\n\n  ```\n- b\n"],
+      ["```\na\n\n", "```\na\n\n```\n", "```\na\n\n```\n"],
+    ])("an empty line between or at the end of the fences: %j", async (before, after, byPrettier) => {
+      expect(Bun.markdown.html(after)).toBe(Bun.markdown.html(before));
+      const files = { "a.md": before, "b.md": after };
+      const [result, asOxfmt] = await Promise.all([
+        format(files, [], { reads: ["a.md", "b.md"] }),
+        format(files, ["--flavor=oxfmt"], { reads: ["a.md", "b.md"] }),
+      ]);
+      expect(result.files).toEqual({ "a.md": after, "b.md": after });
+      expect(result.exitCode).toBe(0);
+      expect(asOxfmt.files).toEqual({ "a.md": after, "b.md": after });
+      expect(asOxfmt.exitCode).toBe(0);
+      if (after !== byPrettier) {
+        expect(Bun.markdown.html(byPrettier)).not.toBe(Bun.markdown.html(before));
+      }
+    });
+
+    // An empty line at the end of unclosed math in a container is not part of the math, as in Prettier.
+    test("math that ends with an empty line", async () => {
+      const files = { "a.md": "> $$\n> a\n>\n", "b.md": "> $$\n>\n", "c.md": "$$\n\n$$\n" };
+      const result = await format(files, [], { reads: ["a.md", "b.md", "c.md"] });
+      expect(result.files).toEqual({ "a.md": "> $$\n> a\n> $$\n", "b.md": "> $$\n> $$\n", "c.md": "$$\n$$\n" });
+      expect(result.exitCode).toBe(0);
+    });
+
+    // oxfmt prints one empty line for code that is only whitespace, in a language that it formats. A block with no line
+    // between its fences is not that.
+    test("code that is only whitespace, in the oxfmt flavor", async () => {
+      const files = { "a.md": "```js\n   \n```\n", "b.md": "```js\n```\n" };
+      const result = await format(files, ["--flavor=oxfmt"], { reads: ["a.md", "b.md"] });
+      expect(result.files).toEqual({ "a.md": "```js\n\n```\n", "b.md": "```js\n```\n" });
+      expect(result.exitCode).toBe(0);
+    });
+
     describe("a file that starts with a line of four dashes", () => {
       // Front matter is fenced by exactly three dashes, plus signs or dots. Prettier 3.9.9 and oxfmt 0.72.0 treat the
       // first three characters of a longer line as the fence, and what's left of the closing line turns into a list

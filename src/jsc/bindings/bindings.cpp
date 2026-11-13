@@ -360,8 +360,7 @@ static ALWAYS_INLINE bool hasEqualityTesters(JSGlobalObject* globalObject)
 extern "C" JSC::EncodedJSValue Expect__leaveSubsetTestersOut(JSC::JSGlobalObject*);
 extern "C" void Expect__putTestersBack(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 
-// For as long as an asymmetric matcher compares or runs user code, the testers in use have no subsetEquality() of `this.utils`.
-// Expect__leaveSubsetTestersOut() says why.
+// While an asymmetric matcher compares or runs user code, the testers in use have no subsetEquality() of `this.utils`.
 class SubsetTestersLeftOut {
 public:
     ALWAYS_INLINE SubsetTestersLeftOut(JSGlobalObject* globalObject)

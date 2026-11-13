@@ -1,7 +1,4 @@
-// Copyright (c) Meta Platforms, Inc. and affiliates.
-//
-// This source code is licensed under the MIT license found in the
-// LICENSE file in the root directory of this source tree.
+// Copyright (c) Meta Platforms, Inc. and affiliates. MIT license: what src/runtime/test_runner/equality_testers.rs is ported from.
 
 #include "root.h"
 
@@ -15,8 +12,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/Operations.h>
 
-// What `iterableEquality` and `subsetEquality` of `this.utils` ask of the values they compare.
-// The two are in src/runtime/test_runner/equality_testers.rs, which says what they are ported from.
+// What `iterableEquality` and `subsetEquality` of src/runtime/test_runner/equality_testers.rs ask of the values they compare.
 
 using namespace JSC;
 
@@ -200,8 +196,7 @@ static JSValue openIterator(JSGlobalObject* globalObject, JSValue value)
     RELEASE_AND_RETURN(scope, call(globalObject, method, callData, value, ArgList()));
 }
 
-// Empty with nothing thrown if that throws: iterableEquality() then takes the two for no iterables, as the `catch` of Jest's does.
-// An error of a stack that ran out stays thrown. After Jest's `catch` the next call throws it again, and here equals() would go on and take the two for equal.
+// Empty with nothing thrown if that throws, as after the `catch` of Jest's. A stack overflow stays thrown: equals() would go on and take the two for equal.
 extern "C" EncodedJSValue ExpectEqualityTesters__tryOpenIterator(JSGlobalObject* globalObject, EncodedJSValue encodedValue)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
@@ -303,8 +298,7 @@ extern "C" bool ExpectEqualityTesters__isObjectWithKeys(JSGlobalObject* globalOb
     return true;
 }
 
-// Jest's hasPropertyInObject(): an own property of `value`, or of an object on its prototype chain that is not Object.prototype.
-// Like Jest's, it calls itself for each prototype, so that a Proxy that is its own prototype ends in a RangeError.
+// Jest's hasPropertyInObject(). Like it, it calls itself for each prototype, so that a Proxy that is its own prototype ends in a RangeError.
 static bool hasPropertyInObject(JSGlobalObject* globalObject, JSValue value, PropertyName key)
 {
     auto& vm = getVM(globalObject);
@@ -346,8 +340,7 @@ static bool isSubsetTester(JSValue tester)
     return hostFunction == toTagged(Bun__ExpectMatcherUtils__subsetEquality) || hostFunction == toTagged(Bun__ExpectMatcherUtils__subsetEqualityWithContext);
 }
 
-// The testers of `list` that are no subsetEquality() of `this.utils`, and not what a call of it hands to the comparison of a property.
-// Empty, with nothing thrown, if `list` has neither.
+// `list` without subsetEquality() of `this.utils` and what a call of it hands to its properties. Empty, with nothing thrown, if it has neither.
 extern "C" EncodedJSValue ExpectEqualityTesters__withoutSubsetTesters(JSGlobalObject* globalObject, EncodedJSValue encodedList)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));

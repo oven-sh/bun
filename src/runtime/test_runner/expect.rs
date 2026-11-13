@@ -2742,8 +2742,7 @@ impl ExpectMatcherContext {
         Self::compare(cx.global(), a.to_js(), b.to_js(), custom_testers.to_js(), strict_check, true)
     }
 
-    /// `this.equals()` for the testers of `this.utils`, which compare the members of their two values with it. It is
-    /// no barrier: an async matcher in a member makes the matcher wait that asked the tester.
+    /// `this.equals()` for the testers of `this.utils`. It is no barrier: an async matcher in a member makes the asking matcher wait.
     #[inline(never)]
     pub(crate) fn equals_with(
         global_this: &JSGlobalObject,

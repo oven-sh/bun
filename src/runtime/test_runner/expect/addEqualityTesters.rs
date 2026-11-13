@@ -147,10 +147,7 @@ impl Expect {
         Ok(None)
     }
 
-    /// For as long as an asymmetric matcher compares or runs user code, the testers in use have no `subsetEquality()` of
-    /// `this.utils`: the matcher says itself how much of a value it takes. Those of Vitest are not asked of it either
-    /// (vitest-dev/vitest#11100), and Jest's only of the registered testers. Returns what `Expect__putTestersBack()`
-    /// takes, or nothing if none of the testers is a subset tester.
+    /// An asymmetric matcher says itself how much of a value it takes (vitest-dev/vitest#11100): returns the testers to put back after it, if any.
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Expect__leaveSubsetTestersOut(global: &JSGlobalObject) -> JSValue {
         Self::leave_subset_testers_out(global).unwrap_or_default()

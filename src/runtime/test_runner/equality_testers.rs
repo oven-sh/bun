@@ -1,19 +1,6 @@
-// Copyright (c) Meta Platforms, Inc. and affiliates.
-//
-// This source code is licensed under the MIT license found in the
-// LICENSE file in the root directory of this source tree.
+// Copyright (c) Meta Platforms, Inc. and affiliates. MIT license: packages/expect-utils/src/utils.ts of Jest 30.5.2.
 
-//! `this.utils.iterableEquality` and `this.utils.subsetEquality`: the testers that the matchers of Jest hand to
-//! `equals()`, for a custom matcher to hand to `this.equals()`. They are `iterableEquality()` and `subsetEquality()` of
-//! @jest/expect-utils 30.5.2 (packages/expect-utils/src/utils.ts of https://github.com/jestjs/jest) with `this.equals()`
-//! in the place of their `equals()`, and differ from them in three ways:
-//!
-//! - What a call hands to the comparison of its members is Vitest's. With Jest's, a Set that is reached again below
-//!   another Set is compared until the stack runs out (vitest-dev/vitest#5535).
-//! - The members are compared as strictly as the comparison that asked the tester. Jest's `toStrictEqual()` is strict
-//!   through testers, which stay in the list. Bun's is strict through its engine, which a tester that compares
-//!   loosely would switch off for everything below it.
-//! - What an asymmetric matcher compares is not asked of `subsetEquality` (`Expect__leaveSubsetTestersOut`).
+//! `this.utils.iterableEquality` and `this.utils.subsetEquality`: Jest's two testers, with `this.equals()` for `equals()`.
 
 use core::ffi::c_void;
 
@@ -49,9 +36,7 @@ impl ExpectMatcherUtils {
         iterable_equality(global, callee.to_js(), a, b, custom_testers.to_js(), stacks)
     }
 
-    /// The reference's `iterableEqualityWithStack()`, which is what a call hands to the comparison of its members:
-    /// `(a, b) => iterableEquality(a, b, [...testers], [...aStack], [...bStack])`. The function that `bind()` makes
-    /// holds the three lists, and `iterableEquality` as its `this`. `in_use` is the list that it is asked with.
+    /// Jest's `iterableEqualityWithStack()`. `bind()` holds the three lists and `iterableEquality` as `this`. `in_use` is the list it is asked with.
     pub(crate) fn iterable_equality_with_stack(
         cx: &mut JsScope<'_>,
         this_value: JsLocal<'_>,
@@ -68,8 +53,7 @@ impl ExpectMatcherUtils {
         if !are_iterables(global, a, b)? {
             return Ok(JSValue::UNDEFINED);
         }
-        // `testers` is from before an asymmetric matcher took the subset testers out of the list in use
-        // (`Expect__leaveSubsetTestersOut`), so the members of what that matcher compares get none from it either.
+        // `testers` is from before an asymmetric matcher took the subset testers out of the list in use, so it loses them here.
         let (testers, in_use) = (testers.to_js(), in_use.to_js());
         let without_subset_testers = if in_use.is_array() && !has_subset_tester(global, in_use)? {
             without_subset_testers(global, testers)?
@@ -109,8 +93,7 @@ impl ExpectMatcherUtils {
         subset_equality(global, testers, JSMap::create(global), object.to_js(), subset)
     }
 
-    /// The reference's `subsetEqualityWithContext(seenReferences)`, which is what a call hands to the comparison of
-    /// each property. The function that `bind()` makes holds the testers and the `Map` of `subset_equality()`.
+    /// Jest's `subsetEqualityWithContext(seenReferences)`. `bind()` holds the testers and the `Map` of `subset_equality()`.
     pub(crate) fn subset_equality_with_context(
         cx: &mut JsScope<'_>,
         testers: JsLocal<'_>,
@@ -132,8 +115,7 @@ impl ExpectMatcherUtils {
     }
 }
 
-/// `a` and `b` are iterables that are no arrays. `tester` is `this.utils.iterableEquality`, which the list for the
-/// members leaves out. The two stacks hold the pairs that the calls further out compare.
+/// `tester` is `this.utils.iterableEquality`, which the list for the members leaves out. The stacks hold the pairs of the calls further out.
 fn iterable_equality(
     global: &JSGlobalObject,
     tester: JSValue,
@@ -152,7 +134,9 @@ fn iterable_equality(
 
     let custom_testers = list_or_new(global, custom_testers)?;
     let testers = without(global, custom_testers, tester)?;
+    // Jest binds `testers`, and then compares a Set that is reached again until the stack runs out (vitest-dev/vitest#5535).
     testers.push(global, bind(global, with_stack_function(global), tester, &[custom_testers, a_stack, b_stack])?)?;
+    // Jest's toStrictEqual() is strict through testers that stay in the list. Bun's is strict through the engine, so the members keep that.
     let is_strict = ExpectMatcherUtils::is_comparing_strictly(global);
     let equals = |a: JSValue, b: JSValue| ExpectMatcherContext::equals_with(global, a, b, testers, is_strict);
 
@@ -161,8 +145,7 @@ fn iterable_equality(
         if !a_size.is_strict_equal(member(global, b, "size")?, global)? {
             return Ok(JSValue::FALSE);
         }
-        // As in Jest, in Vitest and in `toEqual()`, one member of `b` can stand for two members of `a`
-        // (jestjs/jest#16546).
+        // As in Jest, in Vitest and in `toEqual()`, one member of `b` can stand for two members of `a` (jestjs/jest#16546).
         let tag = collection_tag(global, a)?;
         if tag == CollectionTag::Set || is_unordered(global, a, IMMUTABLE_SET)? {
             let mut all_found = true;
@@ -203,8 +186,7 @@ fn iterable_equality(
         }
     }
 
-    // A Set or a Map can be read again. These two can be iterators that are read once, as a generator is. A matcher in a
-    // member that waits for a promise makes its matcher run again, which would find the two at their ends, so none waits.
+    // These two can be read once, as a generator is: a matcher in a member can't wait for a promise and have its matcher run again.
     let pass = Pass::barrier();
     let _entered = pass.enter();
 
@@ -259,8 +241,7 @@ fn is_unordered(global: &JSGlobalObject, value: JSValue, sentinel: &'static str)
     Ok(member(global, value, sentinel)?.to_boolean() && !member(global, value, IMMUTABLE_ORDERED)?.to_boolean())
 }
 
-/// `subset` is an object whose keys are compared. `testers` has no `this.utils.subsetEquality`. `seen` is the
-/// reference's `seenReferences`: a `Map` of the subsets that the calls further out compare.
+/// `testers` has no `this.utils.subsetEquality`. `seen` is Jest's `seenReferences`: a `Map` of the subsets of the calls further out.
 fn subset_equality(
     global: &JSGlobalObject,
     testers: JSValue,
@@ -298,8 +279,7 @@ fn subset_equality(
     Ok(JSValue::js_boolean(is_subset))
 }
 
-/// The default of `customTesters`, `[]`, or the array it was given. The reference throws a `TypeError` as well when it
-/// calls `filter()` on anything else.
+/// The default of `customTesters`, `[]`, or the array it was given. Jest's `filter()` call throws a `TypeError` for anything else too.
 fn list_or_new(global: &JSGlobalObject, custom_testers: JSValue) -> JsResult<JSValue> {
     if custom_testers.is_undefined() {
         return JSValue::create_empty_array(global, 0);
@@ -344,8 +324,7 @@ fn is_native_function(global: &JSGlobalObject, value: JSValue) -> JsResult<bool>
     jsc::host_fn::from_js_host_call_generic(global, || ExpectEqualityTesters__isNativeFunction(global, value))
 }
 
-/// `None` if no call further out compares `a`, and the pair is now on the two stacks. Else whether that call compares
-/// it with `b`.
+/// `None` if no call further out compares `a`, and the pair is now on the stacks. Else whether that call compares it with `b`.
 fn enter(global: &JSGlobalObject, a_stack: JSValue, b_stack: JSValue, a: JSValue, b: JSValue) -> JsResult<Option<bool>> {
     unsafe extern "C" {
         safe fn ExpectEqualityTesters__enter(global: &JSGlobalObject, a_stack: JSValue, b_stack: JSValue, a: JSValue, b: JSValue) -> i8;
@@ -354,8 +333,7 @@ fn enter(global: &JSGlobalObject, a_stack: JSValue, b_stack: JSValue, a: JSValue
     Ok((found >= 0).then_some(found == 1))
 }
 
-/// Takes the pair off the two stacks again. Like the reference, an answer of false because a size, an item or an own
-/// property differs leaves it on.
+/// Takes the pair off the stacks. Like Jest, an answer of false because a size, an item or an own property differs leaves it on.
 fn leave(global: &JSGlobalObject, a_stack: JSValue, b_stack: JSValue) -> JsResult<()> {
     unsafe extern "C" {
         safe fn ExpectEqualityTesters__leave(global: &JSGlobalObject, a_stack: JSValue, b_stack: JSValue);
@@ -378,8 +356,7 @@ fn without(global: &JSGlobalObject, list: JSValue, tester: JSValue) -> JsResult<
     jsc::host_fn::from_js_host_call(global, || ExpectEqualityTesters__copy(global, list, tester))
 }
 
-/// `list` without `this.utils.subsetEquality` and without what a call of it hands to the comparison of a property.
-/// `None` if it has neither.
+/// `list` without `this.utils.subsetEquality` and what a call of it hands to its properties. `None` if it has neither.
 pub(crate) fn without_subset_testers(global: &JSGlobalObject, list: JSValue) -> JsResult<Option<JSValue>> {
     unsafe extern "C" {
         safe fn ExpectEqualityTesters__withoutSubsetTesters(global: &JSGlobalObject, list: JSValue) -> JSValue;
@@ -423,8 +400,7 @@ fn collection_tag(global: &JSGlobalObject, value: JSValue) -> JsResult<Collectio
     })
 }
 
-/// `for (const value of iterable)`. `each` answers whether the loop goes on. Like the statement, it closes the iterator
-/// when the loop stops early or `each` throws.
+/// `for (const value of iterable)`: `each` answers whether the loop goes on, and an early stop or a throw closes the iterator.
 fn for_of(global: &JSGlobalObject, iterable: JSValue, each: &mut dyn FnMut(JSValue) -> JsResult<bool>) -> JsResult<()> {
     type Each<'a> = &'a mut dyn FnMut(JSValue) -> JsResult<bool>;
     unsafe extern "C" {

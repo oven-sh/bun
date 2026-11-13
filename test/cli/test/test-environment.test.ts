@@ -1146,6 +1146,26 @@ describe.concurrent("test environment", () => {
         },
       );
 
+      // The stub is made in the first test file, under a name that the project's window had while the preloads ran.
+      test("is not what a preload's beforeAll stubs under a name of the project's window", async () => {
+        using dir = tempDir("test-environment", {
+          ...windows,
+          "bunfig.toml": `[test]\nenvironment = "jsdom"\npreload = ["./preload.js"]\n`,
+          "preload.js": `
+            import { beforeAll, vi } from "bun:test";
+            beforeAll(() => vi.stubGlobal("customElements", "customElements of the preload"));`,
+          "1-node.test.js": `// ${VITEST} node\n${log("customElements")}`,
+          "2-happy-dom.test.js": `// ${VITEST} happy-dom\n${log("customElements")}`,
+        });
+        const { stdout, stderr, exitCode } = await bunTest(String(dir));
+        expect(lines(stdout)).toEqual([
+          "1-node: customElements of the preload",
+          "2-happy-dom: customElements of the preload",
+        ]);
+        expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
+        expect(exitCode).toBe(0);
+      });
+
       // happy-dom's window always gives `Headers`, over Bun's. jsdom's has one, and gives it only where globalThis has none.
       test.each([[["./1-happy-dom.test.js", "./2-jsdom.test.js"]], [["./2-jsdom.test.js", "./1-happy-dom.test.js"]]])(
         "a name of Bun's that the project's window replaced stays Bun's for another window: %j",

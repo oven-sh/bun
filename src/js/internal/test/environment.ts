@@ -402,7 +402,7 @@ const failedToLoad = new $Map<string, unknown>();
 // Without --isolate, the test files of every environment share globalThis. A name that one of them left there does not
 // keep a window that opens later from giving globalThis its own: leave() puts the file's back. What does keep it are
 // the names that globalThis had before the first test file, Bun's and the preloads', and what a preload has stubbed.
-const listNamesBeforeTestFiles: () => string[] | undefined = $newCppFunction(
+const listNamesBeforeTestFiles: () => [before: string[], stubbed: string[]] | undefined = $newCppFunction(
   "TestEnvironment.cpp",
   "jsFunctionTestEnvironmentNamesBeforeTestFiles",
   0,
@@ -412,14 +412,17 @@ let enteredBeforeTestFiles: { defined: string[]; originals: (PropertyDescriptor 
 
 // Undefined while no test file has run: every name on globalThis is then one of those.
 function namesOfGlobalBeforeTestFiles() {
-  const list = listNamesBeforeTestFiles();
-  if (!list) return;
+  const lists = listNamesBeforeTestFiles();
+  if (!lists) return;
+  const { 0: before, 1: stubbed } = lists;
   const names = new $Map<string, true>();
-  for (let i = 0; i < list.length; i++) names.$set(list[i], true);
+  for (let i = 0; i < before.length; i++) names.$set(before[i], true);
   if (enteredBeforeTestFiles) {
     const { defined, originals } = enteredBeforeTestFiles;
     for (let i = 0; i < defined.length; i++) if (!originals[i]) names.$delete(defined[i]);
   }
+  // A stub is globalThis's own under a name of that window too: the runner makes it again after each file.
+  for (let i = 0; i < stubbed.length; i++) names.$set(stubbed[i], true);
   return names;
 }
 

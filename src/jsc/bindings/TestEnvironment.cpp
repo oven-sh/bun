@@ -72,8 +72,8 @@ static RefPtr<JSC::PropertyNameArray> namesOf(JSC::JSGlobalObject* global)
     return names.releaseData();
 }
 
-// For environment.ts: the names that the test files' global had before the first of them ran, and the names that a
-// preload has stubbed. Undefined while no test file has run: the global still has just those names.
+// For environment.ts, two lists: the names that the test files' global had before the first of them ran, and the names
+// that a preload has stubbed. Undefined while no test file has run: the global still has just those names.
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionTestEnvironmentNamesBeforeTestFiles, __attribute__((minsize)), (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame*))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -91,16 +91,22 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionTestEnvironmentNamesBeforeTes
     for (auto& name : clientData->namesBeforeTestFiles->propertyNameVector())
         names.append(JSC::jsString(vm, name.string()));
     // A hook of a preload stubs in the first test file, and the runner makes a preload's stubs again after each file.
+    JSC::MarkedArgumentBuffer stubbed;
     if (JSC::JSValue stubs = globalObject->mockModule.globalsOfPreload.get()) {
         auto* iterator = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), uncheckedDowncast<JSC::JSMap>(stubs), JSC::IterationKind::Entries);
         while (true) {
             auto [name, stub] = iterator->nextWithAdvance(vm);
             if (!name)
                 break;
-            names.append(name);
+            stubbed.append(name);
         }
     }
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::constructArray(lexicalGlobalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), names)));
+    JSC::MarkedArgumentBuffer lists;
+    lists.append(JSC::constructArray(lexicalGlobalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), names));
+    RETURN_IF_EXCEPTION(scope, {});
+    lists.append(JSC::constructArray(lexicalGlobalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), stubbed));
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::constructArray(lexicalGlobalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), lists)));
 }
 
 // Whether every change to an own property of `object` changes its structure or one of its property slots.

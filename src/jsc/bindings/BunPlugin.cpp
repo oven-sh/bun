@@ -10,6 +10,7 @@
 #include "ZigGlobalObject.h"
 #include "NodeAsyncHooks.h"
 
+#include <JavaScriptCore/FrameTracers.h>
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/FunctionCodeBlock.h>
 #include <JavaScriptCore/InternalFieldTuple.h>

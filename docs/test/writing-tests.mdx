@@ -61,6 +61,8 @@ test("2 * 2", done => {
 });
 ```
 
+To fail the test, pass an error to `done`. A [lifecycle hook](/test/lifecycle#error-handling) that takes a `done` parameter fails the same way.
+
 ## Timeouts
 
 Optionally specify a per-test timeout in milliseconds by passing a number as the third argument to `test`.

@@ -1685,11 +1685,10 @@ describe("the peer's close comes after the messages it sent", () => {
     held.peer?.close();
   });
 
-  // node hands the messages of a port that is receiving to no listener, and then closes it.
-  // There a port is receiving after start(), after removeAllListeners("message") and after a
-  // first `onmessage = null`. bun keeps the messages of such a port, so its 'close' stays
-  // behind them until they are read. 1.4.x fired that 'close' ahead of them.
-  test.todo.each<[string, (port: any) => void]>([
+  // A port that is receiving hands each message to its 'message' listeners, also when it has
+  // none, and the peer's close follows. As in node, a port is receiving after start(), after
+  // removeAllListeners("message") and after a first `onmessage = null`.
+  test.each<[string, (port: any) => void]>([
     ["start()", port => port.start()],
     [
       "removeAllListeners('message')",
@@ -1699,7 +1698,7 @@ describe("the peer's close comes after the messages it sent", () => {
       },
     ],
     ["a first onmessage = null", port => (port.onmessage = null)],
-  ])("node: a port with no listener gets 'close' after %s, without its unread message", async (_name, prepare) => {
+  ])("and a port with no listener gets it after %s, without its unread message", async (_name, prepare) => {
     const { port1, port2 } = new MessageChannel();
     const { seen } = record(port2);
     prepare(port2);
@@ -2229,6 +2228,27 @@ describe("transfer list invalidated while the message is serialized", () => {
     other.close();
     otherPeer.close();
   });
+});
+
+// The parentPort of a web Worker is no port of its own: its listeners are the global scope's.
+test("removeAllListeners() on the parentPort of a web Worker returns it", async () => {
+  const worker = new globalThis.Worker(
+    URL.createObjectURL(
+      new Blob([
+        `const { parentPort } = require("node:worker_threads");
+         parentPort.on("message", () => {});
+         postMessage(parentPort.removeAllListeners("message") === parentPort);`,
+      ]),
+    ),
+  );
+  try {
+    const result = Promise.withResolvers<unknown>();
+    worker.onmessage = event => result.resolve(event.data);
+    worker.onerror = event => result.reject(new Error(event.message));
+    expect(await result.promise).toBe(true);
+  } finally {
+    worker.terminate();
+  }
 });
 
 test("MessagePort NodeEventTarget methods", () => {
@@ -3000,12 +3020,14 @@ test("parentPort messages are delivered while a top-level await is pending", asy
 // a message dispatched while it has no handler (#40141). A second MessagePort is the gate: the
 // parent posts everything, then says "go", so the listener is attached strictly afterwards.
 describe("parentPort queues messages until a 'message' listener is attached", () => {
-  async function run(workerSrc: string, batch: unknown[]) {
+  // When the worker says "listening", the parent posts `last`.
+  async function run(workerSrc: string, batch: unknown[], last?: unknown) {
     const { port1, port2 } = new MessageChannel();
     const w = new Worker(workerSrc, { eval: true, workerData: { gate: port2 }, transferList: [port2] });
     w.postMessage("early");
     const replies: unknown[] = [];
     w.on("message", m => {
+      if (m === "listening") w.postMessage(last);
       if (m !== "started") return replies.push(m);
       for (const item of batch) w.postMessage(item);
       port1.postMessage("go");
@@ -3040,6 +3062,48 @@ describe("parentPort queues messages until a 'message' listener is attached", ()
       [0, 1, 2, 3],
     );
     expect(replies).toEqual(["first:early", "second:0", "second:1", "second:2", "second:3"]);
+    expect(code).toBe(0);
+  });
+
+  // The worker_threads module does not start parentPort: only the worker's first 'message'
+  // listener does, also when it comes after the entry module has evaluated.
+  test.each([
+    ["nothing", ""],
+    [
+      "a listener it added and removed",
+      `const never = () => {}; parentPort.on("message", never); parentPort.off("message", never);`,
+    ],
+  ])("listener attached after the entry module evaluated, which did %s with parentPort", async (_name, before) => {
+    const { replies, code } = await run(
+      `const { parentPort, workerData } = require("worker_threads");
+       ${before}
+       workerData.gate.once("message", () => {
+         parentPort.on("message", m => { parentPort.postMessage("got " + m); if (m === 2) process.exit(0); });
+       });
+       setImmediate(() => parentPort.postMessage("started"));`,
+      [0, 1, 2],
+    );
+    expect(replies).toEqual(["got early", "got 0", "got 1", "got 2"]);
+    expect(code).toBe(0);
+  });
+
+  // node: "port.start() ... is only useful for ignoring messages when no event listener is present".
+  test.each([
+    ["start()", `parentPort.start();`],
+    ["removeAllListeners()", `parentPort.on("message", () => {}); parentPort.removeAllListeners("message");`],
+  ])("unless the worker left parentPort receiving with %s: those messages are gone", async (_name, before) => {
+    const { replies, code } = await run(
+      `const { parentPort, workerData } = require("worker_threads");
+       ${before}
+       workerData.gate.once("message", () => {
+         parentPort.on("message", m => { parentPort.postMessage("got " + m); if (m === "last") process.exit(0); });
+         parentPort.postMessage("listening");
+       });
+       setImmediate(() => parentPort.postMessage("started"));`,
+      [0, 1, 2],
+      "last",
+    );
+    expect(replies).toEqual(["listening", "got last"]);
     expect(code).toBe(0);
   });
 });

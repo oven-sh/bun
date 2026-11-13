@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/worker_threads.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 4b1d2dfce35036bd4b694be3a8983426d217479f024b4892787b351a84305ca9.
+// Written against that file with the SHA-256 0ab360222ce0c5fd0698784b6472738386d662cc800433297975e642ca7131ad.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 declare const self: EventTarget & {
@@ -284,9 +284,11 @@ function injectFakeEmitter(Class: { prototype: EventTarget }) {
   function removeAllListeners(this: Target, type?: string) {
     const map = registryFor(this, false);
     if (!map) return this;
+    let removedMessageListener = false;
     const removeType = (t: string) => {
       const byListener = map.get(t);
       if (byListener) {
+        if (t === "message" && byListener.size > 0) removedMessageListener = true;
         for (const w of byListener.values()) this.removeEventListener(t, w);
         map.delete(t);
       }
@@ -298,6 +300,10 @@ function injectFakeEmitter(Class: { prototype: EventTarget }) {
     } else {
       removeType(type!);
     }
+    // node's removeAllListeners() skips [kRemoveListener], so its port stays receiving. The removals above stopped
+    // this one: start it again, unless the target is no port of its own (the parentPort of a web Worker).
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/event_target.js#L1029-L1039
+    if (removedMessageListener && _isMessagePortActive(this)) nativeMessagePortStart.$call(this);
     return this;
   }
 
@@ -333,6 +339,7 @@ const MessagePort = _MessagePort;
 // closedMessagePorts lets moveMessagePortToContext report ERR_CLOSED_MESSAGE_PORT.
 const closedMessagePorts = new WeakSet();
 const nativeMessagePortClose = MessagePort.prototype.close;
+const nativeMessagePortStart = MessagePort.prototype.start;
 Object.defineProperty(MessagePort.prototype, "close", {
   value: function close(this: MessagePort, cb?: () => void) {
     closedMessagePorts.add(this);
@@ -659,14 +666,14 @@ if (
   // removing the listeners let the thread exit — node's parentPort lifecycle.
   if (transferredParentPort) {
     parentPort = transferredParentPort;
-    // node auto-starts parentPort, but delivery waits until the entry module has
+    // As in node, nothing starts parentPort here: what the parent posts waits for the
+    // worker's first 'message' listener. Delivery also waits until the entry module has
     // evaluated (registering it natively is how start() knows to defer). Only
     // parentPort receives what the parent posts: `self.onmessage` on the global
     // scope is not a channel in a node worker, as in node. The port arrives
     // without a loop ref, so an unlistened parentPort does not by itself keep
     // the thread alive (a 'message' listener refs it, as in node).
     _setParentPort(parentPort);
-    parentPort.start();
   }
 }
 if (!isMainThread && parentPort === null) parentPort = fakeParentPort();

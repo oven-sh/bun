@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { once } from "node:events";
 import { join } from "node:path";
-import { receiveMessageOnPort } from "node:worker_threads";
+import { receiveMessageOnPort, Worker } from "node:worker_threads";
 
 // Exercises the MessagePortPipe layer that backs MessagePort/MessageChannel:
 // cross-thread wakeup coalescing, per-pipe isolation (no global registry),
@@ -368,6 +369,140 @@ describe("MessagePort pipe", () => {
       exitCode: 0,
       signalCode: null,
     });
+  });
+
+  // A side is receiving from its port's start() until its port stops it, which the removal
+  // of the last 'message' listener does. A stopped side keeps what arrives, and the peer's
+  // close stays behind that. The next listener starts the side again.
+  test("a stopped side keeps what arrives and holds the peer's close, then resumes in order", async () => {
+    const turns = async () => {
+      for (let i = 0; i < 4; i++) await new Promise<void>(resolve => setImmediate(resolve));
+    };
+    const { port1, port2 } = new MessageChannel();
+    const seen: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    port2.addEventListener("close", () => {
+      seen.push("close");
+      closed.resolve();
+    });
+    const first = (event: MessageEvent) => {
+      seen.push(event.data);
+      port2.removeEventListener("message", first);
+    };
+    port2.addEventListener("message", first);
+    for (const message of ["a", "b", "c"]) port1.postMessage(message);
+    await turns();
+    port1.postMessage("d");
+    port1.close();
+    await turns();
+    expect(seen).toEqual(["a"]);
+    port2.addEventListener("message", event => seen.push(event.data));
+    await closed.promise;
+    expect(seen).toEqual(["a", "b", "c", "d", "close"]);
+  });
+
+  // A send posts a drain task to its receiver's event loop only when the side is receiving:
+  // a drain of any other side has nothing to do. `concurrentTasksEmpty` is that loop's queue
+  // of posted tasks.
+  test("a send wakes only a side that is receiving", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { getEventLoopStats } = require("bun:internal-for-testing");
+         const { MessageChannel } = require("node:worker_threads");
+         const listener = () => {};
+         const turns = async () => { for (let i = 0; i < 4; i++) await new Promise(resolve => setImmediate(resolve)); };
+         const rows = {
+           "never started": () => {},
+           "a 'close' listener": port => port.on("close", listener),
+           "on() and off()": port => { port.on("message", listener); port.off("message", listener); },
+           "start(), on() and off()": port => { port.start(); port.on("message", listener); port.off("message", listener); },
+           "onmessage = a function, then null": port => { port.onmessage = listener; port.onmessage = null; },
+           "a 'close' listener, on() and off()": port => { port.on("close", listener); port.on("message", listener); port.off("message", listener); },
+           "start()": port => port.start(),
+           "on()": port => port.on("message", listener),
+           "on() and removeAllListeners()": port => { port.on("message", listener); port.removeAllListeners(); },
+         };
+         const out = {};
+         for (const [name, prepare] of Object.entries(rows)) {
+           const { port1, port2 } = new MessageChannel();
+           prepare(port2);
+           await turns();
+           const idle = getEventLoopStats().concurrentTasksEmpty;
+           port1.postMessage("x");
+           out[name] = { idle, woken: !getEventLoopStats().concurrentTasksEmpty };
+           await turns();
+           port1.close();
+           port2.close();
+           await turns();
+         }
+         console.log(JSON.stringify(out));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual({
+      "never started": { idle: true, woken: false },
+      "a 'close' listener": { idle: true, woken: false },
+      "on() and off()": { idle: true, woken: false },
+      "start(), on() and off()": { idle: true, woken: false },
+      "onmessage = a function, then null": { idle: true, woken: false },
+      "a 'close' listener, on() and off()": { idle: true, woken: false },
+      "start()": { idle: true, woken: true },
+      "on()": { idle: true, woken: true },
+      "on() and removeAllListeners()": { idle: true, woken: true },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // The receiving thread stops its side after each message and starts it again a loop turn
+  // later, while another thread keeps sending. A stop and a start write the state word that
+  // each send reads for its wakeup: no message may stay queued with no drain for it.
+  test("a side stopped and started between messages gets every message of a sending thread, in order", async () => {
+    const count = 500;
+    const { port1, port2 } = new MessageChannel();
+    const worker = new Worker(
+      `const { workerData: { port, count } } = require("node:worker_threads");
+       for (let i = 0; i < count; i++) port.postMessage(i);
+       port.close();`,
+      { eval: true, workerData: { port: port1, count }, transferList: [port1] },
+    );
+    const seen: number[] = [];
+    const closed = Promise.withResolvers<void>();
+    worker.on("error", closed.reject);
+    port2.on("close", () => closed.resolve());
+    const take = (message: number) => {
+      seen.push(message);
+      port2.off("message", take);
+      setImmediate(() => port2.on("message", take));
+    };
+    port2.on("message", take);
+    await closed.promise;
+    expect(seen).toEqual(Array.from({ length: count }, (_, i) => i));
+    port2.close();
+    await worker.terminate();
+  });
+
+  // A side that start() made receiving takes every message, also when its port has no
+  // 'message' listener, so the close that the sending thread queued behind them arrives.
+  test("a receiving side with no listener takes every message of a sending thread, then the close", async () => {
+    const { port1, port2 } = new MessageChannel();
+    let closed = false;
+    port2.addEventListener("close", () => (closed = true));
+    port2.start();
+    const worker = new Worker(
+      `const { workerData: { port } } = require("node:worker_threads");
+       for (let i = 0; i < 500; i++) port.postMessage(i);
+       port.close();`,
+      { eval: true, workerData: { port: port1 }, transferList: [port1] },
+    );
+    await once(worker, "exit");
+    for (let i = 0; i < 4; i++) await new Promise<void>(resolve => setImmediate(resolve));
+    expect({ left: receiveMessageOnPort(port2), closed }).toEqual({ left: undefined, closed: true });
+    port2.close();
   });
 
   // GC contract: JS wrappers for MessageChannel / MessagePort / BroadcastChannel

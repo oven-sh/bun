@@ -1,5 +1,4 @@
 use std::borrow::Cow;
-use std::cell::Cell;
 use std::io::Write as _;
 
 use bun_ast::ImportKind;
@@ -18,7 +17,6 @@ pub struct ResolveMessage {
     // store the duped text directly so we don't pull in `bun_paths::fs::Path`
     // (which is lifetime-parameterised over its backing buffer).
     pub(crate) referrer: Box<[u8]>,
-    pub(crate) logged: Cell<bool>,
 }
 
 /// `ImportKind.label()` — the canonical table lives in
@@ -280,7 +278,6 @@ impl ResolveMessage {
         let resolve_error = ResolveMessage {
             msg: msg.clone(),
             referrer: Box::<[u8]>::from(referrer),
-            logged: Cell::new(false),
         };
         Ok(resolve_error.to_js(global))
     }

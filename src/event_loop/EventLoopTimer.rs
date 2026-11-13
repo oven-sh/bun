@@ -197,6 +197,7 @@ pub enum Tag {
     DNSResolver,
     DnsSdConnection,
     WindowsNamedPipe,
+    PosixPipe,
     WTFTimer,
     PostgresSQLConnectionTimeout,
     PostgresSQLConnectionMaxLifetime,
@@ -251,6 +252,7 @@ impl Tag {
             | Tag::DNSResolver
             | Tag::DnsSdConnection
             | Tag::WindowsNamedPipe
+            | Tag::PosixPipe
             | Tag::PostgresSQLConnectionTimeout
             | Tag::PostgresSQLConnectionMaxLifetime
             | Tag::MySQLConnectionTimeout

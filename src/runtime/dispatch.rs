@@ -139,6 +139,8 @@ use crate::api::bun_process::waiter_thread_posix::ResultTask as ProcessWaiterThr
 use bun_bundler::DeferredBatchTask::DeferredBatchTask as BundleV2DeferredBatchTask;
 type BundleV2ParseTaskResult = bun_bundler::parse_task::Result<'static>;
 
+#[cfg(unix)]
+use crate::socket::posix_pipe::PosixPipe;
 use crate::socket::upgraded_duplex::UpgradedDuplex;
 #[cfg(windows)]
 use crate::socket::windows_named_pipe::WindowsNamedPipe;
@@ -307,6 +309,16 @@ pub(crate) fn run_task(
             unsafe {
                 crate::socket::WindowsNamedPipeContext::run_event(cast_ptr!(
                     crate::socket::WindowsNamedPipeContext
+                ))
+            };
+        }
+        #[cfg(unix)]
+        task_tag::PosixPipeContext => {
+            // Same shape as `WindowsNamedPipeContext`: may free the context.
+            // SAFETY: tag identifies the pointee; the queue owns it until here.
+            unsafe {
+                crate::socket::PosixPipeContext::run_event(cast_ptr!(
+                    crate::socket::PosixPipeContext
                 ))
             };
         }
@@ -1088,6 +1100,15 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
             }
         }
         poll_tag::TERMINAL_POLL => feature_poll_arm!([Terminal], TerminalPoll),
+        poll_tag::POSIX_PIPE_WRITER => {
+            #[cfg(unix)]
+            feature_poll_arm!(
+                [Sockets],
+                bun_io::pipe_writer::PosixStreamingWriter<PosixPipe>
+            );
+            #[cfg(not(unix))]
+            debug_assert!(false, "PosixPipeWriter poll on non-unix");
+        }
         // `OutputReader = BufferedReader` in install crate — separate tag for ownership.
         poll_tag::LIFECYCLE_SCRIPT_SUBPROCESS_OUTPUT_READER => {
             poll_arm!(bun_io::BufferedReader, |h| {
@@ -1425,6 +1446,22 @@ pub(crate) unsafe fn __bun_fire_timer(
             {
                 if cfg!(debug_assertions) {
                     unreachable!("WindowsNamedPipe timer on non-Windows");
+                }
+                Ok(())
+            }
+        }
+        EventLoopTimerTag::PosixPipe => {
+            #[cfg(unix)]
+            {
+                let container = owner!(PosixPipe, event_loop_timer);
+                // SAFETY: per fn contract.
+                unsafe { (*container).on_timeout() };
+                Ok(())
+            }
+            #[cfg(not(unix))]
+            {
+                if cfg!(debug_assertions) {
+                    unreachable!("PosixPipe timer on non-unix");
                 }
                 Ok(())
             }
@@ -1854,6 +1891,12 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             release!(crate::socket::WindowsNamedPipeContext);
             #[cfg(not(windows))]
             unreachable!("windows-only tag");
+        }
+        task_tag::PosixPipeContext => {
+            #[cfg(unix)]
+            release!(crate::socket::PosixPipeContext);
+            #[cfg(not(unix))]
+            unreachable!("unix-only tag");
         }
         task_tag::CopyFileWindowsMkdirp => {
             #[cfg(windows)]

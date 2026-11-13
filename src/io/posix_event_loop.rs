@@ -198,6 +198,9 @@ pub enum PollTag {
     ParentDeathWatchdog,
     LifecycleScriptSubprocessOutputReader,
     MemoryPressure,
+    /// `StreamingWriter<PosixPipe>` — the write half of a FIFO/char-device fd
+    /// adopted by `net.Socket({ fd, readable: true })`.
+    PosixPipeWriter,
 }
 
 /// Compatibility module — call sites in `bun_runtime`/`bun_install` still spell
@@ -221,6 +224,7 @@ pub mod poll_tag {
     pub const LIFECYCLE_SCRIPT_SUBPROCESS_OUTPUT_READER: PollTag =
         PollTag::LifecycleScriptSubprocessOutputReader;
     pub const MEMORY_PRESSURE: PollTag = PollTag::MemoryPressure;
+    pub const POSIX_PIPE_WRITER: PollTag = PollTag::PosixPipeWriter;
 }
 
 #[derive(Copy, Clone)]

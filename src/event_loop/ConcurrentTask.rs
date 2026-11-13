@@ -145,6 +145,7 @@ pub mod task_tag {
         ValkeyDeferredClose,
         ValkeyDeferredFailure,
         WindowsNamedPipeContext,
+        PosixPipeContext,
         Write,
         Writev,
     }

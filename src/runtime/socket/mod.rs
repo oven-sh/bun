@@ -32,6 +32,12 @@ pub(crate) mod windows_named_pipe;
 #[path = "WindowsNamedPipeContext.rs"]
 pub(crate) mod windows_named_pipe_context;
 
+// Never-constructed ZST that registers `BufferedReaderParentLink[PosixPipe]`
+// so the Windows link resolves (link_interface! variants cannot be cfg'd).
+#[cfg(windows)]
+#[path = "posix_pipe_stub.rs"]
+pub(crate) mod posix_pipe;
+
 mod bundled_root_certs;
 mod cert_files;
 #[cfg(all(unix, not(target_vendor = "apple")))]

@@ -7355,8 +7355,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void JSMock__didBeginTestFile(Zig::GlobalObje
 #endif
 }
 
-// Whether the end of the mock puts a loaded instance back under `specifier` (see stashLoadedModule()) while a fetch is in flight there.
-// If that fetch went on, it would read the file and make a second instance.
+// A fetch of `specifier` that went on would read the file and make a second instance beside the one that stashLoadedModule() set aside.
 static bool hasOriginalSetAside(Zig::GlobalObject* globalObject, const ModulesToEvict& evict, const String& specifier)
 {
     if (!evict.packagesToRestore.contains(specifier))
@@ -7617,8 +7616,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) bool JSMock__undoMod
             (void)scope.tryClearException();
     }
 
-    // A mock that waited for its turn is gone with the file, and a later load may wait for the load that asked for it. That load goes on:
-    // with the turn it finds no mock, calls no factory and takes the module itself. The others never settle, as the load of an abandoned factory.
+    // With its turn, a load whose mock is gone with the file finds no mock, calls no factory and takes the module itself. The others never settle.
     Vector<JSC::Strong<JSC::JSObject>> turnsOfLoadsThatGoOn;
     for (auto& waiting : waitingMocks) {
         String specifier = uncheckedDowncast<JSModuleMock>(waiting.mock.get())->specifier->tryGetValue().data;

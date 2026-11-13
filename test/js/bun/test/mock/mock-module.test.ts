@@ -2539,6 +2539,90 @@ describe.concurrent("a name that import and require() resolve to two files", () 
     );
   });
 
+  test("a mock without a factory over the ES module that has run: the file that it is made of", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "__mocks__/dual.cjs": `(globalThis.loaded ??= []).push("dual manual"); module.exports = { which: "manual", fn: () => "manual" };`,
+        // The file that require() loads is an ES module that awaits.
+        "node_modules/awaits/package.json": JSON.stringify({
+          name: "awaits",
+          exports: { ".": { import: "./esm.mjs", require: "./for-require.mjs" } },
+        }),
+        "node_modules/awaits/esm.mjs": esm("awaits"),
+        "node_modules/awaits/for-require.mjs": `(globalThis.loaded ??= []).push("awaits for require"); await 0; export const which = "real for require"; export const fn = () => "real for require";`,
+        // The CommonJS file requires a second file, which requires the ES module when it is called.
+        "node_modules/reverse/package.json": JSON.stringify({
+          name: "reverse",
+          exports: { ".": { import: "./esm.mjs", require: "./cjs/index.cjs" } },
+        }),
+        "node_modules/reverse/esm.mjs": `export const which = "real esm"; export const fn = () => "real esm";`,
+        "node_modules/reverse/cjs/index.cjs": `const load = require("./load.cjs"); module.exports = { which: "real cjs", fn: () => "real cjs", viaLoad: () => load.get().which };`,
+        "node_modules/reverse/cjs/load.cjs": `exports.get = () => require("../esm.mjs");`,
+        // The CommonJS file of these two throws.
+        "node_modules/broken/package.json": JSON.stringify({
+          name: "broken",
+          exports: { ".": { import: "./esm.mjs", require: "./cjs.cjs" } },
+        }),
+        "node_modules/broken/esm.mjs": `export const which = "real esm"; export const fn = () => "real esm";`,
+        "node_modules/broken/cjs.cjs": `throw new Error("cjs failed");`,
+        "node_modules/throws/package.json": JSON.stringify({
+          name: "throws",
+          exports: { ".": { import: "./esm.mjs", require: "./cjs.cjs" } },
+        }),
+        "node_modules/throws/esm.mjs": esm("throws"),
+        "node_modules/throws/cjs.cjs": `(globalThis.loaded ??= []).push("throws cjs"); throw new Error("the file for require() failed");`,
+        "made-of.test.js": `
+          import { expect, jest, mock, test } from "bun:test";
+          import * as dual from "dual";
+          import * as awaits from "awaits";
+          import * as reverse from "reverse";
+          import * as broken from "broken";
+          import * as throws from "throws";
+          test("a file of __mocks__ is loaded at the call, and require() gets its exports", () => {
+            jest.doMock("dual");
+            expect([dual.which, dual.fn()]).toEqual(["manual", "manual"]);
+            const required = require("dual");
+            expect(required.fn).toBe(dual.fn);
+            expect(jest.requireMock("dual")).toBe(required);
+            expect(globalThis.loaded.filter(name => name.startsWith("dual "))).toEqual(["dual esm", "dual manual"]);
+          });
+          test("a file that awaits: the call does not throw, and the import is patched once the file has loaded", async () => {
+            jest.doMock("awaits");
+            expect([jest.isMockFunction(awaits.fn), awaits.which]).toEqual([false, "real esm"]);
+            expect(() => require("awaits")).toThrow("require() async module");
+            expect(await import("awaits")).toBe(awaits);
+            expect([jest.isMockFunction(awaits.fn), awaits.which]).toEqual([true, "real for require"]);
+            expect(require("awaits").fn).toBe(awaits.fn);
+          });
+          test("the file that require() loads, also after a mock whose factory took the original of the ES module", async () => {
+            mock.module("./folder", async importOriginal => ({ ...(await importOriginal()), which: "first" }));
+            const folder = await import("./folder");
+            expect([folder.which, folder.fn()]).toEqual(["first", "real esm"]);
+            jest.doMock("./folder");
+            expect([jest.isMockFunction(folder.fn), folder.which]).toEqual([true, "real cjs"]);
+            expect(require("./folder").fn).toBe(folder.fn);
+          });
+          test("what that file loads gets the ES module as it is on disk, as it does where require() loads the file", () => {
+            jest.doMock("reverse", { spy: true });
+            expect([reverse.which, require("reverse").viaLoad()]).toEqual(["real cjs", "real esm"]);
+          });
+          test("a file that throws is no mock", async () => {
+            expect(() => jest.doMock("broken")).toThrow("cjs failed");
+            expect(() => require("broken")).toThrow("cjs failed");
+            expect([broken.fn(), await import("broken")]).toEqual(["real esm", broken]);
+          });
+          test("and it leaves the mock before it standing", () => {
+            mock.module("throws", () => ({ which: "first" }));
+            expect(() => jest.doMock("throws")).toThrow("the file for require() failed");
+            expect([throws.which, require("throws").which]).toEqual(["first", "first"]);
+          });
+        `,
+      },
+      6,
+    );
+  });
+
   test("a mock that ends, and one that is made again", async () => {
     await expectFixturesToPass(
       {

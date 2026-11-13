@@ -108,4 +108,38 @@ describe.skipIf(unsupported || isWindows)("a source that a child process removes
         expect(moved.filter(line => line === there(name))).toHaveLength(2);
     });
   });
+
+  test("is gone where another is left and the program has no descriptor", async () => {
+    await slot(async () => {
+      const names = ["lib/a.cjs", "lib/b.cjs", "src/c.cjs"];
+      using dir = tempDir("sources-without-descriptors", {
+        "main.cjs": `const fs = require("node:fs"), path = require("node:path");
+const ask = () => ${JSON.stringify(names)}.map(name => fs.existsSync(path.join(__dirname, name))).join();
+const askWithoutDescriptors = () => {
+  const open = [];
+  try {
+    for (;;) open.push(fs.openSync("/dev/null", "r"));
+  } catch {}
+  const answers = ask();
+  for (const fd of open) fs.closeSync(fd);
+  return answers;
+};
+askWithoutDescriptors();
+console.log(${names.map(name => `require("./${name}").name`).join()}, ask());
+console.log(askWithoutDescriptors());
+`,
+        ...Object.fromEntries(names.map(name => [name, `exports.name = "${name}";\n`])),
+      });
+      using out = tempDir("sources-without-descriptors", {});
+      const executable = join(String(out), "main");
+      const built = await run(
+        [bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", executable],
+        String(dir),
+      );
+      expect(built.exitCode, built.stderr).toBe(0);
+      for (const name of ["main.cjs", "lib/a.cjs", "src/c.cjs"]) rmSync(join(String(dir), name));
+      const { stdout } = await run(["sh", "-c", `ulimit -n 128 && exec ${executable}`], String(out));
+      expect(stdout).toBe("lib/a.cjs lib/b.cjs src/c.cjs false,true,false\nfalse,true,false\n");
+    });
+  });
 });

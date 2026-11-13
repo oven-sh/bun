@@ -3051,6 +3051,13 @@ impl H2FrameParser {
 
     pub(crate) fn on_auto_flush(&self) -> bool {
         let _keepalive = self.keepalive();
+        // An empty write buffer here means a later write in the same flush()
+        // cycle already drained the bytes the failing send left behind (racy
+        // one-off errnos, e.g. macOS EPROTOTYPE) - the transport recovered, and
+        // the tick goes on to what else waits for it.
+        if self.transport_write_fatal.get() && !self.has_backpressure() {
+            self.transport_write_fatal.set(false);
+        }
         if self.transport_write_fatal.get() {
             // Returning `false` makes DeferredTaskQueue::run remove the entry
             // itself, so only the registration's flag and ref are released here
@@ -3060,14 +3067,7 @@ impl H2FrameParser {
             // early-return instead of removing a map entry run() still owns.
             self.auto_flusher.get().registered.set(false);
             self.deref();
-            // An empty write buffer here means a later write in the same flush()
-            // cycle already drained the bytes the failing send left behind (racy
-            // one-off errnos, e.g. macOS EPROTOTYPE) - the transport recovered.
-            if self.has_backpressure() {
-                self.close_transport_after_fatal_write();
-            } else {
-                self.transport_write_fatal.set(false);
-            }
+            self.close_transport_after_fatal_write();
             return false;
         }
         if self.pending_header_compression_error.get() {
@@ -3093,6 +3093,9 @@ impl H2FrameParser {
         }
         let _ = self.flush();
         // we will unregister ourselves when the buffer is empty
+        if Self::corked() != Some(self.as_ctx_ptr()) {
+            self.unregister_auto_flush();
+        }
         true
     }
 

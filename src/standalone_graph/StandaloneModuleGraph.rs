@@ -84,6 +84,7 @@ pub struct StandaloneModuleGraph {
     pub startup_module_count: u32,
     pub runtime_options: RuntimeOptions,
     pub compiled_program: Option<CompiledProgram>,
+    pub(crate) sources_on_disk: bun_threading::Guarded<StringArrayHashMap<Option<Box<[u8]>>>>,
 }
 
 /// Runtime defaults chosen at build time (`Flags::HAS_RUNTIME_OPTIONS` record: `u32 flags`, `u32 value`).
@@ -1243,6 +1244,7 @@ impl StandaloneModuleGraph {
                 startup_module_count: 0,
                 runtime_options: RuntimeOptions::default(),
                 compiled_program: None,
+                sources_on_disk: bun_threading::Guarded::default(),
             });
         }
 
@@ -1617,6 +1619,7 @@ impl StandaloneModuleGraph {
             startup_module_count: startup_module_count.min(module_count as u32),
             runtime_options,
             compiled_program,
+            sources_on_disk: bun_threading::Guarded::default(),
         })
     }
 

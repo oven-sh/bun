@@ -28,8 +28,7 @@ let cur = 0;
 let stream;
 
 const readInterval = setInterval(common.mustCallAtLeast(() => {
-  // A stream that lived until this turn may have read all that was written: the next one would find nothing.
-  if (stream || fs.statSync(file).size === cur) return;
+  if (stream) return;
 
   stream = fs.createReadStream(file, {
     highWaterMark: hwm,

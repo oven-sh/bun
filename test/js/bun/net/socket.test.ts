@@ -1742,11 +1742,19 @@ describe("TLS write() that ends short while another TLS socket is stalled", () =
 
 // After its close_notify a socket reads on until the peer's. A close ahead of that, over unread input, is a reset,
 // and the kernel drops what it had not sent yet.
-it.each([
-  ["that the kernel took at once", 1024 * 1024, 0],
-  ["that waited for the kernel", 4 * 1024 * 1024, 0],
-  ["that left the kernel no room for the close_notify", 1024 * 1024, 2],
-])("TLS end() while the peer is still sending delivers a write %s", async (_name, size, refusals) => {
+describe("TLS end() while the peer is still sending delivers a write", () => {
+  it.each([
+    ["that the kernel took at once", 1024 * 1024],
+    ["that waited for the kernel", 4 * 1024 * 1024],
+  ])("%s", async (_name, size) => await endWhilePeerSends(size));
+
+  it.skipIf(!socketFaultInjection.available())(
+    "that left the kernel no room for the close_notify",
+    async () => await endWhilePeerSends(1024 * 1024, 2),
+  );
+});
+
+async function endWhilePeerSends(size: number, refusals = 0) {
   const upload = 8 * 1024 * 1024;
   const payload = Buffer.alloc(upload, "a");
   type Side = { total: number; reported: number; received: number; events: string[] };
@@ -1783,7 +1791,7 @@ it.each([
     port: 0,
     tls,
     socket: handlers(size, socket => {
-      if (refusals && socketFaultInjection.available()) {
+      if (refusals) {
         socketFaultInjection.set({ syscall: "send", action: "zero", fd: (socket as any).fd, repeat: refusals });
       }
       socket.end();
@@ -1806,7 +1814,7 @@ it.each([
     client: { received: size, events: ["end", "close"] },
     server: { received: upload, closed: "close" },
   });
-});
+}
 
 // A close must not cut off ciphertext that write() already reported, so it waits for the kernel to take
 // it. The owner has let go by then: only the deadline (10 s on a 4 s tick) ends the wait for such a peer.

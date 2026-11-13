@@ -1053,9 +1053,10 @@ impl SourceProvider for BundlerServices {
 
     fn list_files_embedded_implicitly(&self) -> Vec<Vec<u8>> {
         let files = self.files_for_file_system.lock();
-        let embedded = files.implicitly_embedded.iter();
+        let embedded = files.implicitly_embedded.iter().chain(&files.asked_about);
         let mut paths: Vec<Vec<u8>> = embedded.map(|it| it.to_vec()).collect();
         paths.sort_unstable();
+        paths.dedup();
         paths
     }
 

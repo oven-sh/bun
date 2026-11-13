@@ -112,7 +112,7 @@ impl ListedModules {
                 byte_count,
                 format: None,
                 imports: Vec::new(),
-                code_byte_count: byte_count,
+                code_byte_count: 0,
             });
         }
     }

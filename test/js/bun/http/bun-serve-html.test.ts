@@ -1417,7 +1417,17 @@ test.concurrent("a route fails when a module that another route bundled imports 
       const status = path => fetch(new URL(path, server.url)).then(response => response.status);
       console.log(await status("/first"), await status("/second"), await status("/second"), await status("/other"));
       writeFileSync("broken.ts", "export {};");
-      console.log(await status("/second"), await status("/first"));
+      // With BUN_ASSUME_PERFECT_INCREMENTAL, the default of debug builds, a failed route waits for the watcher.
+      const deadline = Date.now() + 30_000;
+      async function rebuiltStatus(path) {
+        let rebuilt = await status(path);
+        while (rebuilt !== 200 && Date.now() < deadline) {
+          await Bun.sleep(10);
+          rebuilt = await status(path);
+        }
+        return rebuilt;
+      }
+      console.log(await rebuiltStatus("/second"), await rebuiltStatus("/first"));
     `,
   });
   const { stdout, stderr, exitCode } = await runServeFixture(dir);

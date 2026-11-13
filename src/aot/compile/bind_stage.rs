@@ -474,9 +474,7 @@ impl NamedFiles {
             let (file, operand, _) = of_operand[0];
             let embedded = of_operand.iter().map(|it| &it.2);
             let names: Vec<Box<[u8]>> = embedded
-                .filter(|&it| {
-                    provider.is_embedded_implicitly(it, false) && noted.insert(it.clone())
-                })
+                .filter(|&it| provider.is_embedded_implicitly(it, true) && noted.insert(it.clone()))
                 .map(|it| compute_display_path(project_root, it))
                 .collect();
             if names.is_empty() {

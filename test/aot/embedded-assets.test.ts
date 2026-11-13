@@ -974,6 +974,56 @@ console.log(path.basename(named.helper), named.list(), named.part("a"), named.re
     ]);
   }, 120_000);
 
+  test("--explain and the metafile list the files that a package only tests for", async () => {
+    using dir = tempDir("aot-queried-package-files-listed", {
+      "app/package.json": `{ "name": "app" }`,
+      "app/node_modules/tester/package.json": `{ "name": "tester", "version": "1.0.0", "main": "index.cjs" }`,
+      "app/node_modules/tester/index.cjs": `const fs = require("node:fs"), path = require("node:path");
+exports.exists = () => fs.existsSync(path.join(__dirname, "tested.txt"));
+exports.existsToo = () => fs.existsSync(path.join(__dirname, "tested.txt"));
+exports.size = () => fs.statSync(path.join(__dirname, "sized.txt")).size;
+exports.isReadable = () => !fs.accessSync(path.join(__dirname, "readable.txt"));
+exports.read = () => fs.existsSync(path.join(__dirname, "read.txt")) && fs.readFileSync(path.join(__dirname, "read.txt"), "utf8");
+`,
+      "app/node_modules/tester/tested.txt": "tested",
+      "app/node_modules/tester/sized.txt": "sized",
+      "app/node_modules/tester/readable.txt": "readable",
+      "app/node_modules/tester/read.txt": "read",
+      "app/node_modules/tester/unnamed.txt": "nobody names it",
+      "app/main.mjs": `import tester from "tester";
+console.log(tester.exists(), tester.existsToo(), tester.size(), tester.isReadable(), tester.read());
+`,
+    });
+    const metafile = join(String(dir), "meta.json");
+    const flags = ["--explain", "--metafile=" + metafile];
+    const { plain, built, compiled } = await bothWaysIn(String(dir), "app", "./main.mjs", ...flags);
+    expect(plain.stdout).toBe("true true 5 true read\n");
+    expect(compiled).toEqual(plain);
+    const slashes = (text: string) => text.replaceAll("\\", "/");
+    const notes = [...(built.stdout + built.stderr).matchAll(/note: TS100176: [^:\n]*: ([^\r\n]+)/g)];
+    const below = "node_modules/tester/";
+    expect(notes.map(it => slashes(it[1])).sort()).toEqual([
+      below + "readable.txt",
+      below + "sized.txt",
+      below + "tested.txt",
+    ]);
+    type Metafile = {
+      inputs: Record<string, { bytes: number }>;
+      outputs: Record<string, { bytes: number; inputs: Record<string, { bytesInOutput: number }> }>;
+    };
+    const { inputs, outputs }: Metafile = JSON.parse(readFileSync(metafile, "utf8"));
+    const [output] = Object.values(outputs);
+    const sizes = Object.keys(inputs).map(
+      name => `${slashes(name)} ${inputs[name].bytes} ${output.inputs[name].bytesInOutput}`,
+    );
+    expect(sizes.filter(it => it.startsWith(below) && it.includes(".txt "))).toEqual([
+      below + "read.txt 4 0",
+      below + "readable.txt 8 0",
+      below + "sized.txt 5 0",
+      below + "tested.txt 6 0",
+    ]);
+  }, 120_000);
+
   test("packages that are installed above the root", async () => {
     using dir = tempDir("aot-package-files-above-the-root", {
       ...packages("app"),

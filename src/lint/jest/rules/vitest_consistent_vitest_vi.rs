@@ -157,7 +157,7 @@ impl ConsistentVitestVi {
         target.is_some_and(|it| !bun_test::is_known(self.function.as_bytes(), Some(it)) && !is_together(it))
     }
 
-    /// True if the new name changes what runs or what type checks: a use is then on another `function`, on a type-only import or on one that `bun test` doesn't treat as it treats the name, or a second import declares `function`: see [`bun_test`].
+    /// True if the new name changes what runs or what type checks: a use is then on another `function`, on a type-only import or on one that `bun test` doesn't treat as it treats the name, or the file declares `function` a second time: see [`bun_test`].
     #[cold]
     fn changes_uses<'a>(&self, file: &'a File<'a>, import: Import<'a>) -> bool {
         let (function, opposite) = (self.function.as_bytes(), self.opposite.as_bytes());
@@ -169,14 +169,17 @@ impl ConsistentVitestVi {
         let Some(declared) = self.declared(import) else {
             return false;
         };
-        // Beside a type-only import of `function` in another statement, the renamed import would declare the name a second time.
-        let (statement, here) = (Node::Stmt(import.stmt()), Node::Stmt(import.stmt()).scope().resolve_bytes(function));
-        if here.is_some_and(|it| it.declarations().any(|it| ts_utils::is_type_import(it) && it.parent() != Some(statement))) {
+        // Beside another declaration of `function`, the renamed import would declare the name a second time. A type or an interface merges with it.
+        let (statement, here) = (Node::Stmt(import.stmt()), Node::Stmt(import.stmt()).scope().get_bytes(function));
+        let is_second = |it: Declaration<'a>| it.parent() != Some(statement) && !matches!(it, Declaration::Interface(_) | Declaration::TypeAlias(_));
+        if here.is_some_and(|it| it.declarations().any(is_second)) {
             return true;
         }
         let (before, is_value) = (bun_test::is_known(opposite, Some(declared)), !is_type_only(Some(declared)));
-        // A type-only import that gets the name `function` takes the uses of the global of that name. TypeScript rejects those that are values.
-        if !is_value && !declares && file.unresolved_references_to(function).any(is_value_use) {
+        // The `function` that the fix writes is a type-only import too under `import type`, or where the name keeps its `type` as the only specifier.
+        let stays_type_only = !is_value && (import.is_type_only() || import_entries_of(import).count() == 1);
+        // Such an import takes the uses of the global of that name, and TypeScript rejects those that are values.
+        if stays_type_only && !declares && file.unresolved_references_to(function).any(is_value_use) {
             return true;
         }
         declared.references().any(|it| {

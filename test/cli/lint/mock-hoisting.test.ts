@@ -669,6 +669,17 @@ const groups: { name: string; rule: string; config: Files; cases: Record<string,
           greets(),
         prints: ["mock"],
       },
+      // Beside another specifier, the fix writes `vi` without `type`. The call on the global then has a value.
+      "a type-only import of the name beside test, and a call on the global vi": {
+        file: "greet.test.ts",
+        text:
+          'import { type vitest, test } from "vitest";\n' +
+          importGreet +
+          mock("vi") +
+          "export type Utils = typeof vitest;\n" +
+          greets(),
+        prints: ["mock"],
+      },
     },
   },
   {
@@ -717,6 +728,16 @@ const groups: { name: string; rule: string; config: Files; cases: Record<string,
           greets(),
         prints: ["runs dep.js", "real"],
         dangerously: ["runs dep.js", "real"],
+      },
+      // The same for a value import. `bun test` doesn't load a JavaScript file that imports `vi` twice.
+      "vi in another statement": {
+        text:
+          'import { vi } from "vitest";\nimport { vitest, test } from "vitest";\n' +
+          importGreet +
+          mock("vi") +
+          greets(),
+        prints: ["mock"],
+        dangerously: [],
       },
     },
   },

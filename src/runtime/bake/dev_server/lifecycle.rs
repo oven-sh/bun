@@ -564,22 +564,14 @@ impl Drop for DevServer {
         }
 
         // WebSockets should be deinitialized before other parts.
-        // `websocket.close()` synchronously dispatches `HmrSocket.onClose`,
-        // which calls `dev.active_websocket_connections.remove(s)` and
-        // destroys the `HmrSocket`. Snapshot the keys first.
-        {
-            let count = self.active_websocket_connections.len();
-            if count > 0 {
-                let sockets: Vec<*mut HmrSocket> =
-                    self.active_websocket_connections.keys().copied().collect();
-                for s in sockets {
-                    // SAFETY: s is a valid HmrSocket ptr owned by the connection map
-                    if let Some(websocket) = unsafe { (*s).underlying } {
-                        websocket.close();
-                    }
-                }
+        for &s in ::core::mem::take(&mut self.active_websocket_connections).keys() {
+            // SAFETY: a socket is live until it is closed. The borrow ends before that.
+            let socket = unsafe { &mut *s };
+            socket.release(self);
+            socket.dev = ::core::ptr::null_mut();
+            if let Some(websocket) = socket.underlying {
+                websocket.close();
             }
-            debug_assert!(self.active_websocket_connections.is_empty());
         }
 
         if self.memory_visualizer_timer.state.get() == EventLoopTimerState::ACTIVE {

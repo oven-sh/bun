@@ -986,7 +986,8 @@ impl BunTest {
         Self::bun_test_then_or_catch(cx.global(), value.to_js(), context, true)
     }
 
-    fn on_done_error(global_this: &JSGlobalObject, entry: &RefDataValue, error: JSValue) {
+    fn on_done_error(global_this: &JSGlobalObject, done: &DoneCallback, error: JSValue) {
+        let entry = &done.entry;
         if let Some(strong) = clone_active_strong() {
             let this = strong.get();
             let is_running_test = this
@@ -994,6 +995,8 @@ impl BunTest {
                 .get_current_and_valid_execution_sequence(entry)
                 .is_some_and(|(sequence, _)| sequence.active_entry == sequence.test_entry);
             if is_running_test {
+                // Set before the report: printing the error runs its getters, and a getter can call done() again.
+                done.called.set(true);
                 this.on_uncaught_exception(global_this, Some(error), false, entry);
                 // As for any other uncaught exception: the test is over whatever its callback returns,
                 // and `on_before_exit()` doesn't drain the event loop of a file that failed.
@@ -1003,6 +1006,8 @@ impl BunTest {
                 return;
             }
         }
+        // `called` is not set before this report: the `onError` of a `Bun.ModuleGraph` or an `uncaughtException`
+        // listener can take the error, and the done() that it then calls is all the runner gets.
         let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, error, false);
     }
 
@@ -1025,11 +1030,11 @@ impl BunTest {
             // in Bun 1.2.20, this is a no-op
             // in Jest, this is "Expected done to be called once, but it was called multiple times."
             // Vitest does not support done callbacks
-        } else {
-            // error is only reported for the first done() call
-            if was_error {
-                Self::on_done_error(global_this, &this.entry, value);
-            }
+            return Ok(());
+        }
+        // error is only reported for the first done() call
+        if was_error {
+            Self::on_done_error(global_this, this, value);
         }
         this.called.set(true);
         let Some(ref_in) = this.r#ref.take() else {

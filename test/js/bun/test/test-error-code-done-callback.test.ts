@@ -21,6 +21,116 @@ test("done(error) ends a test that returns a promise that never settles", async 
   expect(exitCode).toBe(1);
 });
 
+// Runs `bun test` on one file. `reported` has an entry for each error that the runner printed and for each timeout.
+async function runDoneFixture(source: string) {
+  using dir = tempDir("done-error", { "a.test.js": source });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--reporter=junit", "--reporter-outfile=junit.xml"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const junit = await Bun.file(path.join(String(dir), "junit.xml"))
+    .text()
+    .catch(() => "");
+  return {
+    log: stdout.match(/^> ([^\r\n]*)/m)?.[1],
+    reported: stderr.match(/^error: [^\r\n]*|timed out/gm),
+    junitFailures: junit.match(/<failure[^>]*>/g),
+    exitCode,
+  };
+}
+
+test.concurrent("a test's done(error) reports once when a getter of the error calls done() again", async () => {
+  const result = await runDoneFixture(`
+    import { test } from "bun:test";
+
+    // The runner reads "message" to print the error. The first read calls done() again.
+    const calledAgain = [];
+    function errorThatCallsDone(name, again) {
+      return Object.defineProperty(new Error(), "message", {
+        get() {
+          if (!calledAgain.includes(name)) {
+            calledAgain.push(name);
+            again();
+          }
+          return "first";
+        },
+      });
+    }
+
+    test("before the callback returns", done => {
+      done(errorThatCallsDone("test", () => done(new Error("second"))));
+    });
+    test("after the callback returned", done => {
+      setImmediate(() => done(errorThatCallsDone("later", () => done(new Error("second")))));
+    });
+    test("with the same error", done => {
+      const error = errorThatCallsDone("same error", () => done(error));
+      done(error);
+    });
+    test("the getters ran", () => console.log("> " + calledAgain.join(", ")));
+  `);
+  expect(result).toEqual({
+    log: "test, later, same error",
+    reported: ["error: first", "error: first", "error: first"],
+    junitFailures: new Array(3).fill(`<failure type="Error" message="first">`),
+    exitCode: 1,
+  });
+});
+
+test.concurrent("a hook's done(error) is reported when a Bun.ModuleGraph onError gives it back to done()", async () => {
+  const { reported, exitCode } = await runDoneFixture(`
+    import { afterAll, afterEach, beforeAll, beforeEach, describe, test } from "bun:test";
+
+    // The onError of a graph takes an error that a hook gives to done() in the context of the graph.
+    // This one calls done() with it, inside the first call. That call must still report the error.
+    function graphOf(done) {
+      return new Bun.ModuleGraph({ onError: error => done(error) });
+    }
+
+    for (const [name, hook] of Object.entries({ beforeAll, beforeEach, afterEach, afterAll })) {
+      describe(name, () => {
+        hook(done => {
+          graphOf(done).run(() => done(new Error(name + " failed")));
+        });
+        test("has a hook", () => {});
+      });
+      describe(name + ", later", () => {
+        hook(done => {
+          graphOf(done).run(() => setImmediate(() => done(new Error(name + " failed later"))));
+        });
+        test("has a hook", () => {});
+      });
+    }
+    // The test of this hook already has its result, so the hook cannot fail it.
+    describe("afterEach of a test that is expected to fail", () => {
+      afterEach(done => {
+        graphOf(done).run(() => done(new Error("afterEach of a failing test failed")));
+      });
+      test.failing("has a hook", () => {
+        throw new Error("expected");
+      });
+    });
+  `);
+  expect({ reported, exitCode }).toEqual({
+    reported: [
+      "error: beforeAll failed",
+      "error: beforeAll failed later",
+      "error: beforeEach failed",
+      "error: beforeEach failed later",
+      "error: afterEach failed",
+      "error: afterEach failed later",
+      "error: afterAll failed",
+      "error: afterAll failed later",
+      "error: afterEach of a failing test failed",
+    ],
+    exitCode: 1,
+  });
+});
+
 test("verify we print error messages passed to done callbacks", () => {
   const { stdout, stderr } = Bun.spawnSync({
     cmd: [bunExe(), "test", path.resolve(import.meta.dir, "test-error-done-callback-fixture.ts")],

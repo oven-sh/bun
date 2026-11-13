@@ -3022,7 +3022,7 @@ pub(crate) fn download_to_path(
             let http_proxy: Option<bun_url::URL<'_>> = env.get_http_proxy_for(&url);
             refresher.start(b"Downloading", 0);
 
-            let mut async_http = Box::new(bun_http::AsyncHTTP::init_sync(
+            let mut async_http = bun_http::AsyncHTTP::init_sync(
                 bun_http::Method::GET,
                 url,
                 Default::default(),
@@ -3031,11 +3031,10 @@ pub(crate) fn download_to_path(
                 http_proxy,
                 bun_http::ProxySettings::from_env(env),
                 bun_http::FetchRedirect::Follow,
-            ));
+            );
             async_http.client.progress = Some(&mut refresher);
             async_http.client.flags.reject_unauthorized = reject_unauthorized;
             let send_result = async_http.send_sync(&mut compressed_archive_bytes);
-            drop(async_http);
 
             refresher.end();
             let status_code = send_result?.status_code() as u16;

@@ -1,6 +1,7 @@
 use core::ffi::c_void;
 
 use bun_io::StreamBuffer;
+use bun_ptr::RefPtr;
 use bun_threading::guarded::GuardedLock;
 use bun_threading::{Guarded, Mutex};
 
@@ -41,36 +42,16 @@ impl Callback {
 
 impl ThreadSafeStreamBuffer {
     /// The http thread calls `callback(context)` when the buffer drains.
-    /// The raw pointer carries both initial refs: the main thread adopts one into a
-    /// `RefPtr`, the http thread keeps the other in `Stream::buffer` until `detach()`.
-    pub fn new<T>(callback: fn(*mut T), context: *mut T) -> *mut Self {
-        bun_core::heap::into_raw(Box::new(Self {
+    pub fn new<T>(callback: fn(*mut T), context: *mut T) -> [RefPtr<Self>; 2] {
+        let this = bun_core::heap::into_raw(Box::new(Self {
             state: Guarded::new(State {
                 buffer: StreamBuffer::default(),
                 callback: Some(Callback::init(callback, context)),
             }),
-            // .initExactRefs(2) — 1 for main thread and 1 for http thread
             ref_count: bun_ptr::ThreadSafeRefCount::init_exact_refs(2),
-        }))
-    }
-
-    /// Upgrade an attached intrusive-ref handle to `&Self`.
-    ///
-    /// INVARIANT: while `p` is held, the HTTP side owns one intrusive ref on
-    /// the buffer (taken at attach, released in `Stream::detach`); the buffer
-    /// is a separate heap allocation that outlives the returned borrow. The
-    /// main thread holds a `&Self` too; all that either thread changes is
-    /// inside the `Guarded` or atomic. Centralises the SAFETY argument shared by
-    /// `http_request_body::Stream::buffer_ref` and `HTTPClient::write_to_stream`.
-    #[inline]
-    pub(crate) fn from_attached<'a>(p: core::ptr::NonNull<Self>) -> &'a Self {
-        // SAFETY: see INVARIANT above.
-        unsafe { p.as_ref() }
-    }
-
-    pub fn deref(this: core::ptr::NonNull<Self>) {
-        // SAFETY: `this` is a live heap allocation produced by `new`.
-        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this.as_ptr()) };
+        }));
+        // SAFETY: each adopts one of the two refs.
+        unsafe { [RefPtr::from_raw(this), RefPtr::from_raw(this)] }
     }
 
     /// Locks the mutex; the guard unlocks it on `Drop`.

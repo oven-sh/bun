@@ -140,9 +140,11 @@ impl Animation {
         // string variants share one code path.
         let name_str: Option<&[u8]> = match &self.name {
             AnimationName::None => None,
-            AnimationName::Ident(ident) => Some(ident.v()),
-            // SAFETY: arena-owned slice lives for the parse session.
-            AnimationName::String(s) => Some(unsafe { crate::arena_str(*s) }),
+            AnimationName::Ident(ident) | AnimationName::GlobalIdent(ident) => Some(ident.v()),
+            AnimationName::String(s) | AnimationName::GlobalString(s) => {
+                // SAFETY: arena-owned slice lives for the parse session.
+                Some(unsafe { crate::arena_str(*s) })
+            }
         };
 
         // Unlike lightningcss — which only emits the components when a name is
@@ -263,6 +265,10 @@ pub enum AnimationName {
     Ident(CustomIdent),
     /// A `<string>` name of a `@keyframes` rule.
     String(CSSString),
+    /// `Ident` parsed in the global scope of a CSS module: the printer does not hash it.
+    GlobalIdent(CustomIdent),
+    /// `String` parsed in the global scope of a CSS module.
+    GlobalString(CSSString),
 }
 
 impl AnimationName {
@@ -272,11 +278,13 @@ impl AnimationName {
     pub fn eql(&self, other: &Self) -> bool {
         match (self, other) {
             (AnimationName::None, AnimationName::None) => true,
-            (AnimationName::Ident(a), AnimationName::Ident(b)) => {
+            (AnimationName::Ident(a), AnimationName::Ident(b))
+            | (AnimationName::GlobalIdent(a), AnimationName::GlobalIdent(b)) => {
                 use crate::generics::CssEql;
                 a.eql(b)
             }
-            (AnimationName::String(a), AnimationName::String(b)) => {
+            (AnimationName::String(a), AnimationName::String(b))
+            | (AnimationName::GlobalString(a), AnimationName::GlobalString(b)) => {
                 // SAFETY: arena-owned slices live for the parse session.
                 unsafe { bun_core::strings::eql(&**a, &**b) }
             }
@@ -296,6 +304,15 @@ impl AnimationName {
                 // SAFETY: arena-owned slice.
                 hasher.update(unsafe { crate::arena_str(*s) });
             }
+            AnimationName::GlobalIdent(i) => {
+                hasher.update(&3u32.to_ne_bytes());
+                i.hash(hasher);
+            }
+            AnimationName::GlobalString(s) => {
+                hasher.update(&4u32.to_ne_bytes());
+                // SAFETY: arena-owned slice.
+                hasher.update(unsafe { crate::arena_str(*s) });
+            }
         }
     }
 
@@ -306,6 +323,8 @@ impl AnimationName {
             AnimationName::None => AnimationName::None,
             AnimationName::Ident(i) => AnimationName::Ident(*i),
             AnimationName::String(s) => AnimationName::String(*s),
+            AnimationName::GlobalIdent(i) => AnimationName::GlobalIdent(*i),
+            AnimationName::GlobalString(s) => AnimationName::GlobalString(*s),
         }
     }
 
@@ -317,23 +336,36 @@ impl AnimationName {
         {
             return Ok(AnimationName::None);
         }
+        let global = input.flags.global_scope();
         if let Ok(s) = input.try_parse(|i| i.expect_string()) {
-            return Ok(AnimationName::String(s));
+            return Ok(if global {
+                AnimationName::GlobalString(s)
+            } else {
+                AnimationName::String(s)
+            });
         }
         let ident = CustomIdent::parse(input)?;
-        Ok(AnimationName::Ident(ident))
+        Ok(if global {
+            AnimationName::GlobalIdent(ident)
+        } else {
+            AnimationName::Ident(ident)
+        })
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         let css_module_animation_enabled = if let Some(css_module) = &dest.css_module {
             css_module.config.animation
+                && !matches!(
+                    self,
+                    AnimationName::GlobalIdent(_) | AnimationName::GlobalString(_)
+                )
         } else {
             false
         };
 
         match self {
             AnimationName::None => return dest.write_str("none"),
-            AnimationName::Ident(s) => {
+            AnimationName::Ident(s) | AnimationName::GlobalIdent(s) => {
                 // SAFETY: arena-owned slice valid for 'bump.
                 let name: &[u8] = unsafe { crate::arena_str(s.v) };
                 if css_module_animation_enabled {
@@ -347,7 +379,7 @@ impl AnimationName {
                 }
                 return s.to_css_with_options(dest, css_module_animation_enabled);
             }
-            AnimationName::String(s) => {
+            AnimationName::String(s) | AnimationName::GlobalString(s) => {
                 // SAFETY: arena-owned slice valid for 'bump.
                 let name: &[u8] = unsafe { crate::arena_str(*s) };
                 if css_module_animation_enabled {
@@ -372,7 +404,7 @@ impl AnimationName {
     }
 }
 
-/// The raw-token fallback of `animation` and `animation-name`. In a CSS module it tags the keyframes names.
+/// The raw-token fallback of `animation` and `animation-name`. It tags the local keyframes names of a CSS module.
 #[cold]
 pub(crate) fn parse_unparsed(
     property_id: PropertyId,
@@ -380,7 +412,7 @@ pub(crate) fn parse_unparsed(
     options: &css::ParserOptions,
 ) -> css::Result<Property> {
     let mut unparsed = UnparsedProperty::parse(property_id, input, options)?;
-    if input.flags.css_modules() {
+    if input.flags.local_scope() {
         for token in unparsed.value.v.iter_mut() {
             if let TokenOrValue::Token(Token::Ident(ident)) = *token
                 && !is_keyword(ident)

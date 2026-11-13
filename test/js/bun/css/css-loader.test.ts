@@ -158,10 +158,21 @@ describe.concurrent("css module exports", () => {
         :global .g4 .g5 { color: green }
         .before :global .g6 { color: green }
         :local .panel { color: green }
+        :global { .g7 { color: green } @keyframes turn { to { opacity: 1 } } :local { .back { color: green } } }
+        .menu :global { .g8 { color: green } }
+        .spin:global { animation: turn 1s }
       `,
     });
     expect(await runtimeAndBundled(String(dir))).toEqual({
-      default: { inner: "inner_BLNoTg", loc: "loc_BLNoTg", before: "before_BLNoTg", panel: "panel_BLNoTg" },
+      default: {
+        inner: "inner_BLNoTg",
+        loc: "loc_BLNoTg",
+        before: "before_BLNoTg",
+        panel: "panel_BLNoTg",
+        back: "back_BLNoTg",
+        menu: "menu_BLNoTg",
+        spin: "spin_BLNoTg",
+      },
     });
   });
 
@@ -364,9 +375,10 @@ describe.concurrent("css module exports", () => {
   test("invalid rules and declarations are skipped", async () => {
     const emptySelector = "Invalid selector. Empty selector is not allowed";
     const cases = {
-      "global-block.module.css": {
-        css: `:global { .reset { margin: 0 } }\n.card { margin: 0 }`,
-        exports: { card: "card_zb_7FQ" },
+      // A rule that is only `:local` holds rules like the file does: only the invalid one is dropped.
+      "local-block.module.css": {
+        css: `:local { .one { color: red } $gap: 4px; .two { color: red } .three { color: red } }\n.four { color: red }`,
+        exports: { one: "one_Fi7B_Q", three: "three_Fi7B_Q", four: "four_Fi7B_Q" },
         bundler: emptySelector,
       },
       "global-keyframes.module.css": {

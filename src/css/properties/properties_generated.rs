@@ -3830,13 +3830,15 @@ impl Property {
                     return Ok(Property::ViewTransitionName(c));
                 }
             }
-            PropertyId::ViewTransitionClass => {
+            PropertyId::ViewTransitionClass if !input.flags.global_scope() => {
                 if let Some(c) =
                     parse_value::<css::css_values::ident::NoneOrCustomIdentList>(input, options)
                 {
                     return Ok(Property::ViewTransitionClass(c));
                 }
             }
+            // Global to the CSS module, as the class in `::view-transition-group(.card)`: the raw tokens print as written.
+            PropertyId::ViewTransitionClass => {}
             PropertyId::ViewTransitionGroup => {
                 if let Some(c) = parse_value::<transition::ViewTransitionGroup>(input, options) {
                     return Ok(Property::ViewTransitionGroup(c));

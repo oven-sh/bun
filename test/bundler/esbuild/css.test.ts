@@ -223,7 +223,186 @@ describe("bundler", () => {
   //   minifyIdentifiers: true,
   // });
 
-  // TODO: some classes are commented out bc we don't support :global or :local yet
+  // esbuild exports `local_name1`, `local_name2` and `none` too, hashes the quoted "none" and prints every rule
+  // on its own. Bun exports the names that have a `@keyframes` rule, keeps a quoted "none" and merges the rules.
+  itBundled("css/ImportCSSFromJSLocalAtKeyframes", {
+    files: {
+      "/entry.js": /* js */ `
+        import styles from "./styles.module.css"
+        console.log(styles)
+      `,
+      "/styles.module.css": /* css */ `
+        @keyframes local_name { to { color: red } }
+
+        div :global { animation-name: none }
+        div :local { animation-name: none }
+
+        div :global { animation-name: global_name }
+        div :local { animation-name: local_name }
+
+        div :global { animation-name: global_name1, none, global_name2, Inherit, INITIAL, revert, revert-layer, unset }
+        div :local { animation-name: local_name1, none, local_name2, Inherit, INITIAL, revert, revert-layer, unset }
+
+        div :global { animation: 2s infinite global_name }
+        div :local { animation: 2s infinite local_name }
+
+        /* Someone wanted to be able to name their animations "none" */
+        @keyframes "none" { to { color: red } }
+        div :global { animation-name: "none" }
+        div :local { animation-name: "none" }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toEqualIgnoringWhitespace(`
+        // styles.module.css
+        var styles_module_default = {
+          local_name: "local_name_-MSaAA"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+      `);
+      api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(`
+        /* styles.module.css */
+        @keyframes local_name_-MSaAA {
+          to {
+            color: red;
+          }
+        }
+
+        div {
+          animation-name: none;
+          animation-name: none;
+          animation-name: global_name;
+          animation-name: local_name_-MSaAA;
+          animation-name: global_name1, none, global_name2, Inherit, INITIAL, revert, revert-layer, unset;
+          animation-name: local_name1_-MSaAA, none, local_name2_-MSaAA, Inherit, INITIAL, revert, revert-layer, unset;
+          animation: 2s infinite global_name;
+          animation: 2s infinite local_name_-MSaAA;
+        }
+
+        @keyframes "none" {
+          to {
+            color: red;
+          }
+        }
+
+        div {
+          animation-name: "none";
+          animation-name: "none";
+        }
+      `);
+    },
+  });
+
+  // The rules of esbuild's test that build. esbuild prints `:scope .button` for a rule of a top-level block.
+  // Bun prints the rule as if it stood at the top level, and merges rules with the same declarations.
+  itBundled("css/ImportCSSFromJSLowerBareLocalAndGlobal", {
+    files: {
+      "/entry.js": /* js */ `
+        import styles from "./styles.module.css"
+        console.log(styles)
+      `,
+      "/styles.module.css": /* css */ `
+        .before { color: #000 }
+        :local { .button { color: #000 } }
+        .after { color: #000 }
+
+        .before { color: #001 }
+        :global { .button { color: #001 } }
+        .after { color: #001 }
+
+        div { :local { .button { color: #002 } } }
+        div { :global { .button { color: #003 } } }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toEqualIgnoringWhitespace(`
+        // styles.module.css
+        var styles_module_default = {
+          before: "before_-MSaAA",
+          button: "button_-MSaAA",
+          after: "after_-MSaAA"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+      `);
+      api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(`
+        /* styles.module.css */
+        .before_-MSaAA, .button_-MSaAA, .after_-MSaAA {
+          color: #000;
+        }
+
+        .before_-MSaAA, .button, .after_-MSaAA {
+          color: #001;
+        }
+
+        div .button_-MSaAA {
+          color: #002;
+        }
+
+        div .button {
+          color: #003;
+        }
+      `);
+    },
+  });
+
+  // esbuild removes the rules of a.module.css that b.module.css repeats. Bun removes nothing across files.
+  itBundled("css/DeduplicateRulesGlobalVsLocalNames", {
+    files: {
+      "/entry.module.css": /* css */ `
+        @import "a.module.css";
+        @import "b.module.css";
+      `,
+      "/a.module.css": /* css */ `
+        a { color: red }
+        b { color: green }
+
+        :global(.foo) { color: red }
+        :global(.bar) { color: green }
+
+        :local(.foo) { color: red }
+        :local(.bar) { color: green }
+
+        div :global { animation-name: anim_global }
+        div :local { animation-name: anim_local }
+      `,
+      "/b.module.css": /* css */ `
+        a { color: red }
+        b { color: blue }
+
+        :global(.foo) { color: red }
+        :global(.bar) { color: blue }
+
+        :local(.foo) { color: red }
+        :local(.bar) { color: blue }
+
+        div :global { animation-name: anim_global }
+        div :local { animation-name: anim_local }
+      `,
+    },
+    entryPoints: ["/entry.module.css"],
+    outdir: "/out",
+    minifySyntax: true,
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.module.css").toEqualIgnoringWhitespace(`
+        /* a.module.css */
+        a{color:red}b{color:green}.foo{color:red}.bar{color:green}.foo_BLNoTg{color:red}.bar_BLNoTg{color:green}div{animation-name:anim_global;animation-name:anim_local_BLNoTg}
+        /* b.module.css */
+        a{color:red}b{color:#00f}.foo{color:red}.bar{color:#00f}.foo_Kd7Gww{color:red}.bar_Kd7Gww{color:#00f}div{animation-name:anim_global;animation-name:anim_local_Kd7Gww}
+        /* entry.module.css */
+      `);
+    },
+  });
+
+  // Two rules are commented out. esbuild reads a `composes` name in a `:global` block as a global name.
+  // Bun reads it as a local name, as css-loader does. The global one is `composes: GLOBAL4 from global`.
   itBundled("css/ImportCSSFromJSComposes", {
     files: {
       "/entry.js": /* js */ `

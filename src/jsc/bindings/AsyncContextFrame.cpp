@@ -145,29 +145,10 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__callbackOf(JSC::EncodedJSValue
     return stored;
 }
 
-#define ASYNCCONTEXTFRAME_CALL_IMPL(...)                                                                                   \
-    if (!functionObject.isCell())                                                                                          \
-        return jsUndefined();                                                                                              \
-    auto& vm = global->vm();                                                                                               \
-    if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]]                                                     \
-        return jsUndefined();                                                                                              \
-    if (Bun::isFromRetiredTestIsolationRealm(functionObject)) [[unlikely]]                                                 \
-        return jsUndefined();                                                                                              \
-    JSValue restoreAsyncContext;                                                                                           \
-    InternalFieldTuple* asyncContextData = nullptr;                                                                        \
-    if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(functionObject)) {                                              \
-        if (Bun::shouldDropCallbackOfStoppedModuleGraph(defaultGlobalObject(global), wrapper->context.get())) [[unlikely]] \
-            return jsUndefined();                                                                                          \
-        functionObject = uncheckedDowncast<JSC::JSObject>(wrapper->callback.get());                                        \
-        asyncContextData = global->m_asyncContextData.get();                                                               \
-        restoreAsyncContext = asyncContextData->getInternalField(0);                                                       \
-        asyncContextData->putInternalField(vm, 0, wrapper->context.get());                                                 \
-    }                                                                                                                      \
-    auto result = JSC::profiledCall(__VA_ARGS__);                                                                          \
-    if (asyncContextData) {                                                                                                \
-        asyncContextData->putInternalField(vm, 0, restoreAsyncContext);                                                    \
-    }                                                                                                                      \
-    return result;
+bool AsyncContextFrame::isOfStoppedModuleGraph(JSGlobalObject* globalObject) const
+{
+    return Bun::shouldDropCallbackOfStoppedModuleGraph(defaultGlobalObject(globalObject), context.get());
+}
 
 JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args)
 {
@@ -181,10 +162,19 @@ JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, 
         return JSC::profiledCall(global, ProfilingReason::API, functionObject, JSC::getCallData(functionObject), thisValue, args);
     }
 
-    ASYNCCONTEXTFRAME_CALL_IMPL(global, ProfilingReason::API, functionObject, JSC::getCallData(functionObject), thisValue, args);
+    if (!functionObject.isCell())
+        return jsUndefined();
+    auto& vm = global->vm();
+    if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]]
+        return jsUndefined();
+    if (Bun::isFromRetiredTestIsolationRealm(functionObject)) [[unlikely]]
+        return jsUndefined();
+    CallScope asyncContext(vm, global, functionObject);
+    if (asyncContext.calleeIsOfStoppedModuleGraph()) [[unlikely]]
+        return jsUndefined();
+    return JSC::profiledCall(global, ProfilingReason::API, functionObject, JSC::getCallData(functionObject), thisValue, args);
 }
 JSValue AsyncContextFrame::profiledCall(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args)
 {
     return AsyncContextFrame::call(global, functionObject, thisValue, args);
 }
-#undef ASYNCCONTEXTFRAME_CALL_IMPL

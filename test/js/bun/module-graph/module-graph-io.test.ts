@@ -1134,6 +1134,51 @@ describe.concurrent("ModuleGraph: an error in what a graph opened is the graph's
       exitCode: 0,
     });
   });
+
+  // As an 'uncaughtException' listener of the process does: the report is made before the store of the callback is gone.
+  test("onError reads the AsyncLocalStorage store of the callback that threw", async () => {
+    const dir = fixture({
+      "main.mjs": `
+        import { AsyncLocalStorage } from "node:async_hooks";
+        import crypto from "node:crypto";
+        import zlib from "node:zlib";
+        const storage = new AsyncLocalStorage();
+        const sources = {
+          "setTimeout": boom => setTimeout(boom, 1),
+          "process.nextTick": boom => process.nextTick(boom),
+          "crypto.randomBytes callback": boom => crypto.randomBytes(8, boom),
+          "a zlib stream's 'data'": boom => { const gzip = zlib.createGzip(); gzip.once("data", boom); gzip.end("x"); },
+          "Bun.spawn onExit": boom => { Bun.spawn({ cmd: [process.execPath, "-e", ""], stdio: ["ignore", "ignore", "ignore"], onExit: boom }); },
+        };
+        const seen = {};
+        const done = Promise.withResolvers();
+        const graph = new Bun.ModuleGraph({
+          onError(error) {
+            seen[error.message] = String(storage.getStore());
+            if (Object.keys(seen).length === Object.keys(sources).length) done.resolve();
+          },
+        });
+        for (const [name, schedule] of Object.entries(sources)) {
+          graph.run(() => storage.run("the store of " + name, () => schedule(() => { throw new Error(name); })));
+        }
+        await done.promise;
+        console.log(JSON.stringify(seen));
+        process.exit(0);
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(dir);
+    expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+      stdout: {
+        "setTimeout": "the store of setTimeout",
+        "process.nextTick": "the store of process.nextTick",
+        "crypto.randomBytes callback": "the store of crypto.randomBytes callback",
+        "a zlib stream's 'data'": "the store of a zlib stream's 'data'",
+        "Bun.spawn onExit": "the store of Bun.spawn onExit",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 // An Agent opens its sockets as whoever made it, but the request that waits for one stays its

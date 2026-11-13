@@ -685,6 +685,7 @@ impl ScopeFunctions {
                     description,
                     callback,
                     bun_test::ExecutionEntryCfg {
+                        flavor: self.cfg.flavor,
                         calling,
                         around: None,
                         fixtures: Some(self.fixtures).filter(|fixtures| !fixtures.is_empty()),
@@ -846,6 +847,14 @@ pub(crate) enum FunctionKind {
     TestOrDescribe,
     Hook,
     VitestHook,
+}
+impl FunctionKind {
+    pub(crate) fn hook(flavor: Flavor) -> FunctionKind {
+        match flavor {
+            Flavor::Jest => FunctionKind::Hook,
+            Flavor::Vitest => FunctionKind::VitestHook,
+        }
+    }
 }
 
 #[derive(Copy, Clone)]

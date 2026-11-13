@@ -62,7 +62,7 @@ fn current_test_name(global: &JSGlobalObject, test: Test) -> JsResult<JSValue> {
     let name = with_sequence(test, |sequence| {
         // SAFETY: the `BunTest` kept alive by `with_sequence` owns the entry.
         sequence.test_entry.map(|entry| unsafe { entry.as_ref() }).map(|entry| {
-            full_test_name(entry, if entry.calling.is_vitest() { b" > " } else { b" " }, false)
+            full_test_name(entry, if entry.flavor == bun_test::Flavor::Vitest { b" > " } else { b" " }, false)
         })
     });
     match name.flatten() {

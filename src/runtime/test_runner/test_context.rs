@@ -15,7 +15,7 @@ use bun_resolver::fs::FileSystem;
 use super::bun_test::js_fns::Signature;
 use super::bun_test::{
     Around, AroundPhase, BaseScope, BunTest, BunTestPtr, BunTestPtrWeak, DescribeScope, EntryData,
-    ExecutionEntry, Only, Phase, RefDataValue, ScopeMode,
+    ExecutionEntry, Flavor, Only, Phase, RefDataValue, ScopeMode,
 };
 use super::execution::{ExecutionSequence, Result as ExecutionResult};
 use super::expect::Expect;
@@ -147,9 +147,10 @@ impl TestContext {
         })
     }
 
-    pub(crate) fn defer(&self, buntest: &mut BunTest, when: Deferred, callback: JSValue, timeout: u32) {
+    /// `flavor` is the module of what registers `callback`.
+    pub(crate) fn defer(&self, buntest: &mut BunTest, when: Deferred, callback: JSValue, timeout: u32, flavor: Flavor) {
         let gets_context = matches!(when, Deferred::OnTestFinished | Deferred::OnTestFailed);
-        let entry = buntest.create_vitest_entry(callback, timeout, gets_context);
+        let entry = buntest.create_extra_entry(callback, timeout, gets_context, flavor);
         if when == Deferred::Around {
             // SAFETY: just allocated.
             unsafe { (*entry.as_ptr()).around = Some((Around::Each, AroundPhase::TearDown)) };
@@ -164,7 +165,7 @@ impl TestContext {
         };
         // SAFETY: as in `running`.
         let when = if unsafe { sequence.as_ref() }.is_before_run_test() { Deferred::AroundFixture } else { Deferred::Fixture };
-        self.defer(buntest.get(), when, tear_down, timeout);
+        self.defer(buntest.get(), when, tear_down, timeout, Flavor::OF_FIXTURES);
         true
     }
 
@@ -361,6 +362,14 @@ impl TestContext {
         name: &'static str,
         signature: &'static [u8],
     ) -> JsResult<()> {
+        // The entry that runs in the context's sequence registers the callback, so the callback is of that entry's module.
+        let registering = Self::from_js(this_value.to_js()).and_then(|this| {
+            // SAFETY: as in `of_call`.
+            let (buntest, sequence) = unsafe { &*this }.running(this_value.to_js())?;
+            // SAFETY: as in `running`. The running file keeps the sequence's entries alive.
+            let entry = unsafe { sequence.as_ref().active_entry?.as_ref() };
+            Some((buntest, entry.flavor))
+        });
         let args = parse_arguments(
             global,
             (first, JsLocal::UNDEFINED),
@@ -369,16 +378,17 @@ impl TestContext {
             Signature::Str(signature),
             ParseArgumentsCfg {
                 callback: CallbackMode::Require,
-                kind: FunctionKind::VitestHook,
+                // Only the default timeout depends on the kind, and a context that isn't running registers nothing.
+                kind: registering.as_ref().map_or(FunctionKind::VitestHook, |&(_, flavor)| FunctionKind::hook(flavor)),
                 inherited: Default::default(),
             },
         )?;
         let this = Self::of_call(global, this_value)?;
-        let Some((buntest, _sequence)) = this.running(this_value.to_js()) else {
+        let Some((buntest, flavor)) = registering else {
             return Err(Self::throw_finished(global, name));
         };
         if let Some(callback) = args.callback {
-            this.defer(buntest.get(), when, callback, args.options.timeout);
+            this.defer(buntest.get(), when, callback, args.options.timeout, flavor);
         }
         Ok(())
     }

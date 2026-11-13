@@ -335,17 +335,21 @@ pub(crate) fn run(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> JsResult<JSV
         Around::Each => {
             if let Some(context) = context
                 && let Some(payload) = TestContext::from_js(context)
+                && let Some(entry) = entry
             {
                 let outer = test_context::js::async_context_get_cached(context).unwrap_or_default();
                 js::context_set_cached(this_value, global, context);
                 js::outer_async_context_set_cached(this_value, global, outer);
                 test_context::js::async_context_set_cached(context, global, async_context);
+                // SAFETY: the running file keeps the active entry alive.
+                let flavor = unsafe { entry.as_ref() }.flavor;
                 // SAFETY: the wrapper owns the payload, and the sequence keeps the wrapper alive.
                 unsafe { &*payload }.defer(
                     buntest.get(),
                     Deferred::Around,
                     tear_down,
                     this.timeout,
+                    flavor,
                 );
             }
         }

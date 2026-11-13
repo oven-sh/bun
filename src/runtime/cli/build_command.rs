@@ -60,7 +60,7 @@ impl BuildCommand {
     #[inline(never)]
     pub(crate) fn exec(
         ctx: Context,
-        fetcher: Option<&bundle_v2::DependenciesScanner>,
+        fetcher: Option<&mut bundle_v2::DependenciesScanner<'_>>,
     ) -> Result<(), crate::Error> {
         Global::configure_allocator(Global::AllocatorConfiguration {
             long_running: true,
@@ -147,7 +147,7 @@ impl BuildCommand {
             std::ptr::from_ref::<transpiler::Transpiler>(this_transpiler).cast(),
             core::mem::size_of::<transpiler::Transpiler>(),
         );
-        if let Some(fetch) = fetcher {
+        if let Some(fetch) = &fetcher {
             this_transpiler
                 .options
                 .entry_points

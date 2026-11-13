@@ -506,15 +506,16 @@ export function mockLaidOver(part: number, parts: number) {
   // its test is.
   const limitOfATest = Math.ceil(20 / slots) * (part === 1 ? limitOfAPackedRun : limitOfARun) + 30_000;
   if (part === 1) {
-    const withoutMockingPreload = witnesses.filter(column => !column.includes(".laid-by-preload."));
-    const limit = limitOfAPackedRun;
-    test.concurrent("the columns of real programs and a witness for each fault", () => judge(packedRuns[0], packed(all, withoutMockingPreload), 5000, limit), limitOfATest);
-    test.concurrent("the same beside preloads that lay mocks", () => judge(packedRuns[1], packed(all, witnesses), 5000, limit), limitOfATest);
     // A project holds the lines that begin with its name, so a line that begins otherwise is held by nothing. Where the list is written anew, such a line goes out.
+    // It stands in front: behind the packed runs, a test that runs alone would make the projects wait until both of them are over.
     if (!rewrite)
       test("every line of the list names a project", () => {
         expect(known.filter(line => line && !line.startsWith("#") && !namesAProject(line))).toEqual([]);
       });
+    const withoutMockingPreload = witnesses.filter(column => !column.includes(".laid-by-preload."));
+    const limit = limitOfAPackedRun;
+    test.concurrent("the columns of real programs and a witness for each fault", () => judge(packedRuns[0], packed(all, withoutMockingPreload), 5000, limit), limitOfATest);
+    test.concurrent("the same beside preloads that lay mocks", () => judge(packedRuns[1], packed(all, witnesses), 5000, limit), limitOfATest);
   }
   // The two realms of a column stand side by side.
   const names = [...all.keys()].sort();

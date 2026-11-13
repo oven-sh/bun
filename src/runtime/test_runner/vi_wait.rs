@@ -352,8 +352,10 @@ impl ViWait {
         // As in Vitest, `waitFor` and `waitUntil` advance a fake clock on every tick of theirs, and `expect.poll` between two attempts.
         if self.kind != Kind::Poll || !(is_first || self.callback_pending.get()) {
             match fake_timers::advance_by_ms(global, f64::from(self.interval_ms)) {
-                Ok(thrown) if thrown.is_empty() => {}
-                Ok(thrown) => return Err(global.throw_value(thrown)),
+                Ok(thrown) | Err(Stop::ClockGone(thrown)) if thrown.is_empty() => {}
+                Ok(thrown) | Err(Stop::ClockGone(thrown)) => {
+                    return Err(global.throw_value(thrown));
+                }
                 Err(Stop::Vm(err)) => return Err(err),
                 // Polling again wouldn't help, since at the loop limit the next advance stops on the same queued ticks.
                 Err(Stop::Ticks(thrown)) => return self.settle(global, this_value, Err(thrown)),

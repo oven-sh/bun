@@ -70,7 +70,7 @@ fn module_preload_registration(
     write!(
         &mut code,
         "{}(import.meta.url,[",
-        bstr::BStr::new(chunk.renamer.as_renamer().name_for_symbol(chunks_ref))
+        bstr::BStr::new(c.renamer_for_chunk(chunk).name_for_symbol(chunks_ref))
     )
     .unwrap();
     for (i, &chunk_index) in reached.iter().enumerate() {
@@ -119,12 +119,6 @@ pub(crate) fn post_process_js_chunk(
     // nodes here outside any `ASTMemoryAllocator` scope; without this their
     // embedded `Vec<Property>`/`Vec<Expr>` buffers leak from the global heap.
     let _ast_alloc_heap = js_ast::StoreAstAllocHeap::new();
-
-    // The renamer is
-    // not used after this function, so it is reset to `None` before returning
-    // (success path below). `ChunkRenamer`'s variants free their owned storage
-    // via Drop; the `symbols` view inside is `ManuallyDrop` (non-owning), so
-    // graph storage is never freed.
 
     let arena = Arena::new();
 
@@ -277,7 +271,7 @@ pub(crate) fn post_process_js_chunk(
                 stmts: prefix_stmts,
                 ..Default::default()
             }],
-            chunk.renamer.as_renamer(),
+            c.renamer_for_chunk(chunk),
         );
         if let Some(mi) = module_info.as_deref_mut() {
             // One result per entry of `parts_in_chunk_in_order`, in that order.
@@ -305,7 +299,7 @@ pub(crate) fn post_process_js_chunk(
                 stmts: suffix_stmts,
                 ..Default::default()
             }],
-            chunk.renamer.as_renamer(),
+            c.renamer_for_chunk(chunk),
         );
     }
 
@@ -350,7 +344,7 @@ pub(crate) fn post_process_js_chunk(
                 chunk.entry_point.source_index(),
                 worker_arena,
                 &arena,
-                chunk.renamer.as_renamer(),
+                c.renamer_for_chunk(chunk),
                 module_info.as_deref_mut(),
                 cross_chunk_exports,
             );

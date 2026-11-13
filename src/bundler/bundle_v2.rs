@@ -5853,7 +5853,7 @@ pub mod bv2_impl {
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
-            // It points into `linker`.
+            // Nothing reads it after printing.
             chunks[0].renamer = Default::default();
             let linker_graph = linker.into_graph();
 

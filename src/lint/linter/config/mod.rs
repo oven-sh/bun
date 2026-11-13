@@ -1643,9 +1643,6 @@ impl Config {
                 .collect(),
         };
         config.linter = linter;
-        config.parser_name = (language_options.get(b"parser"))
-            .and_then(Json::as_str)
-            .map(Box::from);
         config.changes_linter = (indices.iter())
             .any(|index| (self.objects.get(*index as usize)).is_some_and(|it| it.changes_linter));
         if config.may_route_to_eslint() && !config.changes_linter {

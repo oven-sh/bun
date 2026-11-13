@@ -40,9 +40,9 @@ pub enum ExecutableFormat {
 }
 
 impl ExecutableFormat {
-    pub(crate) const MAGIC_SIZE: usize = 4;
+    pub const MAGIC_SIZE: usize = 4;
 
-    pub(crate) fn from_magic(magic: &[u8]) -> Option<ExecutableFormat> {
+    pub fn from_magic(magic: &[u8]) -> Option<ExecutableFormat> {
         if magic.starts_with(b"\x7fELF") {
             Some(ExecutableFormat::Elf)
         } else if magic.starts_with(&MH_MAGIC_64.to_le_bytes()) {
@@ -69,8 +69,6 @@ pub enum KnownSection {
     RemovableFeatureState,
     BuildId,
     RuntimeDescription,
-    /// Bun's own code, compiled when Bun was built. No segment holds it: nothing loads it until a test run asks for it.
-    CompiledLibrary,
 }
 
 #[derive(Copy, Clone)]
@@ -119,12 +117,6 @@ impl KnownSection {
                 macho_segment: b"__TEXT",
                 macho_section: b"__bun_aot",
                 pe: *b".bunaot\0",
-            },
-            KnownSection::CompiledLibrary => SectionNames {
-                elf: b".bun_library",
-                macho_segment: b"__BUN",
-                macho_section: b"__bun_library",
-                pe: *b".bunlib\0",
             },
         }
     }

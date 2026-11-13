@@ -818,15 +818,8 @@ impl Response {
     }
 
     pub(crate) fn construct_json(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
+        let global_this = cx.global();
         let args = JsLocal::to_js_slice(args);
-        Self::construct_json_response(cx.global(), args, JsonArgument::Value)
-    }
-
-    fn construct_json_response(
-        global_this: &JSGlobalObject,
-        args: &[JSValue],
-        argument: JsonArgument,
-    ) -> JsResult<JSValue> {
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
 
         // `Init`'s field drop glue releases its refs on `?`. `Body` has NO `Drop` and its
@@ -846,7 +839,7 @@ impl Response {
         );
 
         if let Some(&json_value) = args.first() {
-            let str = Self::json_text_of(global_this, json_value, argument)?;
+            let str = Self::json_text_of(global_this, json_value)?;
 
             if !str.is_empty() {
                 debug_assert!(str.tag() == bun_core::Tag::WTFStringImpl);
@@ -883,15 +876,39 @@ impl Response {
         Ok(Response::to_js(RefPtr::new(response), global_this))
     }
 
-    fn json_text_of(
+    /// `construct_json` on a value and the members of a literal. The value is serialized before the members are taken.
+    fn json_from_parts(
         global_this: &JSGlobalObject,
         json_value: JSValue,
-        argument: JsonArgument,
-    ) -> JsResult<BunString> {
-        if argument == JsonArgument::Text && json_value.is_string_literal() {
-            return json_value.to_bun_string(global_this);
+        parts: &InitParts,
+    ) -> JsResult<JSValue> {
+        let response = scopeguard::guard(
+            Response {
+                body: JsCell::new(Body::new(BodyValue::Empty)),
+                ..Default::default()
+            },
+            |r| r.body.get().reset(),
+        );
+        let str = Self::json_text_of(global_this, json_value)?;
+        if !str.is_empty() {
+            debug_assert!(str.tag() == bun_core::Tag::WTFStringImpl);
+            let value = &response.body.get().value;
+            value.set(BodyValue::WTFStringImpl(str.leak_wtf_impl()));
+            value.with_mut(|v| v.to_blob_if_possible());
         }
+        response.init.set(Init::from_parts(global_this, parts)?);
+        let headers_ref = response.get_or_create_headers(global_this)?;
+        headers_ref.put_default(
+            HTTPHeaderName::ContentType,
+            &StringView::ascii(bun_http_types::MimeType::JSON.value.as_ref()),
+            global_this,
+        )?;
+        let response = scopeguard::ScopeGuard::into_inner(response);
+        Ok(Response::to_js(RefPtr::new(response), global_this))
+    }
 
+    #[inline(always)]
+    fn json_text_of(global_this: &JSGlobalObject, json_value: JSValue) -> JsResult<BunString> {
         // Validate top-level values that are not JSON serializable (Node.js compatibility)
         if json_value.is_undefined()
             || json_value.is_symbol()
@@ -1183,19 +1200,24 @@ fn Response__createFromParts(
     })
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum JsonArgument {
-    Value,
-    Text,
-}
-
-/// `Response.json(value, init)` for compiled code that has already serialized `value`: argument 0 is the JSON text (`jsonTextForm`).
-pub(crate) fn construct_json_from_text(
-    cx: &mut JsScope<'_>,
-    args: &[JsLocal<'_>],
-) -> JsResult<JSValue> {
-    let args = JsLocal::to_js_slice(args);
-    Response::construct_json_response(cx.global(), args, JsonArgument::Text)
+/// `Response.json(value, { status, statusText, headers })` (`literalPartsForm` of the table of built-ins).
+#[unsafe(no_mangle)]
+#[bun_jsc::host_call]
+fn Response__jsonFromParts(
+    global_this: &JSGlobalObject,
+    value: JSValue,
+    status: JSValue,
+    status_text: JSValue,
+    headers: JSValue,
+) -> JSValue {
+    let parts = InitParts {
+        status,
+        status_text,
+        headers,
+    };
+    bun_jsc::to_js_host_call(global_this, || {
+        Response::json_from_parts(global_this, value, &parts)
+    })
 }
 
 // We deliberately do NOT `impl Drop for Init` so struct-update

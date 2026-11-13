@@ -1,0 +1,17 @@
+# A lookup from the class object of Heir goes on to that of Base. What is defined past the lists of Base is told of every class below it, and of no class beside it.
+# -- source: main.js
+# const key = Symbol.hasInstance;
+# class Base { static [key] = (value) => value % 2 === 0; }
+# class Heir extends Base {}
+# class Lower extends Heir {}
+# class Beside {}
+# class Last {}
+# print(2 instanceof Heir, 2 instanceof Lower, 2 instanceof Beside, 2 instanceof Last);
+# -- end of source
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 {{*}}names-defined-past-lists=[static]
+# CHECK: layout L1 {{*}}names-defined-past-lists=[static]
+# CHECK: layout L2 {{*}}names-defined-past-lists=[static]
+# CHECK: layout L3
+# CHECK-NOT: names-defined-past-lists
+# CHECK: layout L4

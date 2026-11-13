@@ -1,0 +1,1 @@
+try { require("./three.js"); } catch {} exports.c = "real";

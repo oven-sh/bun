@@ -1,0 +1,33 @@
+# The name arrives on the promise through two functions, the second callee of the call in front of the wait through sixteen: it is no async function and answers with a promise that it has kept. The wait watches the callee from its first telling on, so it hears of the second one in whatever order the two arrive, and proves nothing of the value.
+# f1 = kindOf
+# -- source: wait-behind-a-call-hears-of-a-second-callee-that-comes-behind-the-name.js
+# async function load() { return 1; }
+# function kindOf(v) { return typeof v; }
+# async function use(f) { const v = await f(); return kindOf(v); }
+# function late1(x) { return x; }
+# function late2(x) { return x; }
+# function pass1(x) { return x; }
+# function pass2(x) { return x; }
+# function pass3(x) { return x; }
+# function pass4(x) { return x; }
+# function pass5(x) { return x; }
+# function pass6(x) { return x; }
+# function pass7(x) { return x; }
+# function pass8(x) { return x; }
+# function pass9(x) { return x; }
+# function pass10(x) { return x; }
+# function pass11(x) { return x; }
+# function pass12(x) { return x; }
+# function pass13(x) { return x; }
+# function pass14(x) { return x; }
+# function pass15(x) { return x; }
+# function pass16(x) { return x; }
+# const kept = load();
+# late2(late1(kept)).then = function (done) { done("text"); };
+# function other() { return kept; }
+# use(load);
+# use(pass16(pass15(pass14(pass13(pass12(pass11(pass10(pass9(pass8(pass7(pass6(pass5(pass4(pass3(pass2(pass1(other)))))))))))))))));
+# -- end of source
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f1
+# LINK-NEXT: parameter 0

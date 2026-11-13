@@ -1,0 +1,26 @@
+# -- source: main.cjs
+# print(early(1));
+# function Crate(kind) { this.kind = kind; }
+# function early(i) { const a = new Crate(i); const b = new Crate(i + 1); return typeof a.sum + typeof b.sum; }
+# Crate.prototype.sum = function () { return this.kind + 1; };
+# function pair(i) { const a = new Crate(i); const b = new Crate(i + 1); return a.sum() + b.sum(); }
+# let n = 0;
+# for (let i = 0; i < 40; i++) n += pair(i);
+# print(n);
+# -- end of source
+# Once the guards of a constructor function have begun, the walk assumes that the read of its prototype ends no guard that held.
+# The run-time effects check (testing=CheckEffectsAtRunTime) checks the operation against that assumption, by the count of guards that ended.
+# The count of guards that were armed is left unchecked for this operation, by name, because that very read may define the class.
+# Here the first object is allocated before the statements that set up the class, so the class is first encountered at that read.
+# Without the fault, the guards have not begun there, the walk assumes nothing about the read, and the effects check reports nothing.
+# Fault injection, testing=IgnorePrototypeReads: the walk assumes that the guards have begun. The effects check fires, so the count of guards that ended is still checked for this operation.
+# This does not show a guard that held before the call and then ended: the runtime also counts the guards that it arms and ends within one call.
+# If a program ever triggers this report without an injected fault, look into that first.
+# The test stores no run with the fault injected and without the effects check.
+# RUN(HONEST): run-in-shell mechanisms=all testing=CheckEffectsAtRunTime
+# HONEST: undefinedundefined
+# HONEST-NEXT: 1680
+# HONEST-NEXT: exited with 0
+# RUN(RINGS): run-in-shell mechanisms=all testing=IgnorePrototypeReads,CheckEffectsAtRunTime
+# RINGS: the declared effects of operation:GetConstructPrototype and of the proven types of its operands say that the call does not write MemberGuards, but guards were invalidated
+# RINGS: crashed with SIGABRT

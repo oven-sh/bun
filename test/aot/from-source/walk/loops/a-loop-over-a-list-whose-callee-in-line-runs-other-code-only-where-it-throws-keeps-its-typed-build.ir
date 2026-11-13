@@ -1,0 +1,27 @@
+# f3 = sumOf
+# -- source: a-loop-over-a-list-whose-callee-in-line-runs-other-code-only-where-it-throws-keeps-its-typed-build.ts
+# declare function print(...values: unknown[]): void;
+# type Box = { w: number; h: number; tag: string };
+# function area(box: Box): number { return box.w * box.h + box.tag.length; }
+# function checked(box: Box, scale: number): number {
+#   if (scale < 0) throw new RangeError("scale");
+#   return area(box) * scale;
+# }
+# function sumOf(boxes: Box[]): number {
+#   let total = 0;
+#   for (const box of boxes) total += checked(box, 2) + checked(box, 3);
+#   return total;
+# }
+# const kept: Box[] = [];
+# for (let i = 0; i < 8; i++) kept.push({ w: i, h: i + 1, tag: "t" });
+# (globalThis as any).kept = kept;
+# (globalThis as any).entries = [area, checked, sumOf];
+# print(sumOf(kept));
+# -- end of source
+# `checked` and `area` are copied in line. What runs other code in the copy is the construction of the RangeError, on a way that throws: no turn that comes round passes it. The row books that code under the call of the
+# loop's own body, which does come round; whether the typed build is left on a usual way is seen where it is walked: it is not, so the loop keeps both builds.
+# RUN: walk f3 mechanisms=all
+# CHECK-COUNT-2: isLoopHead=true
+# CHECK-NOT: isLoopHead=true
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 880

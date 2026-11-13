@@ -1,0 +1,17 @@
+# -- source: a-kept-map-of-accessors-alone-is-not-let-go.js
+# const accessors = { first: { get() { return 1; } }, second: { get() { return 2; } } };
+# const internals = { kept: undefined, other: 1 };
+# function Writer() {}
+# Object.defineProperties(Writer.prototype, accessors);
+# internals.kept = accessors;
+# print(new Writer().first);
+# -- end of source
+# The twin of a-kept-map-with-one-data-descriptor-is-let-go-behind-the-naming: each entry is an accessor as written. Object.defineProperties() only looks into the map and its descriptors and keeps neither;
+# the getters are laid by name. Nothing goes, and the record that keeps the map is proven to hold it.
+# RUN(STAYS): summary f0
+# STAYS: accessor-as-written getter=f
+# STAYS-NOT: -> Unknown
+# RUN(FIELDS): link fields mechanisms=all
+# FIELDS: "kept" proven=undefined|L
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 1

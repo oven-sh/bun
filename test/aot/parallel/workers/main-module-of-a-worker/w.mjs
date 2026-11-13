@@ -1,1 +1,0 @@
-postMessage([import.meta.main])

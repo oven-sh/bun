@@ -1,0 +1,4 @@
+const out = [], say = f => { try { out.push(String(f())); } catch (e) { out.push(e.constructor.name); } };
+function at(k) { const make = x => class extends Array { #f = x; #m() { return x + 1; } ask(o) { return eval("o.#f + o.#m()"); } put(o, v) { return eval("o.#f = v, o.#f"); } has(o) { return eval("#f in o") + "," + eval("#m in o"); } }; const A = make(k), B = make(k + 7), a = new A(), c = new A(), b = new B(); say(() => a.ask(a)); say(() => a.ask(c)); say(() => a.ask(b)); say(() => b.ask(b)); say(() => a.put(a, k)); say(() => a.put(b, k)); say(() => a.has(a)); say(() => a.has(b)); say(() => a.has({})); }
+const n = +(process.argv[2] || 60); let h = 0; for (let k = 0; k < n; k++) at(k); for (const s of out) for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 1000003;
+console.log(h, out.length, out.slice(0, 8).join("|"));

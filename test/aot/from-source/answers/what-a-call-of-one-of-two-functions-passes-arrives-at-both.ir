@@ -1,0 +1,37 @@
+# -- source: main.js
+# function one(x) { return x + 1; }
+# function two(x) { return x + 2; }
+# function half(x) { return x / 2; }
+# function third(x) { return x / 3; }
+# function pick(i) { return i & 1 ? one : two; }
+# function part(i) { return i & 1 ? half : third; }
+# print(one(1));
+# print(two(1));
+# print(pick(1)("s"));
+# print(pick(2)(0.5));
+# print(half(3));
+# print(part(1)(5));
+# print(part(2)(1.5));
+# print(part(1)());
+# -- end of source
+# Every caller of the four is known, and two of the calls are calls by value of one of two functions, outside of any loop: they enter by the entry that takes values of any kind. If what they pass did not arrive at the parameters of both, `x` would be proven a whole number in `one` and a number in `half`, and the text, the fraction and the argument that is left out would be read as such.
+# RUN(ANSWER): run-in-shell globalThis.unused = 0;
+# ANSWER: 2
+# ANSWER-NEXT: 3
+# ANSWER-NEXT: s1
+# ANSWER-NEXT: 2.5
+# ANSWER-NEXT: 1.5
+# ANSWER-NEXT: 2.5
+# ANSWER-NEXT: 0.5
+# ANSWER-NEXT: NaN
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime globalThis.unused = 0;
+# CHECKED: 2
+# CHECKED-NEXT: 3
+# CHECKED-NEXT: s1
+# CHECKED-NEXT: 2.5
+# CHECKED-NEXT: 1.5
+# CHECKED-NEXT: 2.5
+# CHECKED-NEXT: 0.5
+# CHECKED-NEXT: NaN
+# CHECKED-NEXT: exited with 0

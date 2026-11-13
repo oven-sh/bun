@@ -1,0 +1,17 @@
+# f1 = line
+# -- source: object-literals-inside-an-object-literal.ts
+# type Point = { x: number; y: number };
+# type Line = { start: Point; end: Point };
+# function line(a: number, b: number): Line {
+#   return { start: { x: a, y: b }, end: { x: b, y: a } };
+# }
+# declare const input: any;
+# const made = line(+input, +input);
+# (globalThis as any).answer = [made, made.start.x + made.start.y + made.end.x + made.end.y];
+# -- end of source
+# The compiler before this one: 16 instructions, 3 of them patches.
+# When the bound was taken: steps: operations 36, patches 5, moves 4, unlikely or rare 0.
+# RUN(X64): steps most:40 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 40

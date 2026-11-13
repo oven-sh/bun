@@ -42,7 +42,7 @@ const named = name => globalThis[["", name].join("")];
 test("the build does not see whose members these are, and nobody hears of the refusals", () => {
   try { named("String").prototype[Symbol.iterator] = () => 0; } catch {}
   try { Reflect.defineProperty(named("Array").prototype, Symbol.iterator, { value: 1 }); } catch {}
-  try { delete named("Map").prototype[Symbol.iterator]; } catch {}
+  try { delete named("RegExp").prototype[Symbol.split]; } catch {}
   try { Object.setPrototypeOf(named("Request").prototype, null); } catch {}
   expect(1).toBe(1);
 });
@@ -54,9 +54,16 @@ async function bunTest(cwd: string, ...flags: string[]) {
   return { output: stdout + stderr, exitCode };
 }
 
+// One run for each list of flags: what the build warns of and what the run lists at its end are read off the same output.
+const runs = new Map<string, ReturnType<typeof bunTest>>();
+const compiledRun = (...flags: string[]) =>
+  runs.getOrInsertComputed(flags.join(" "), async () => {
+    using dir = tempDir("aot-refused-changes", files);
+    return await bunTest(String(dir), "--aot", ...flags);
+  });
+
 test.skipIf(!!unsupported)("bun test --aot warns of every write to a read-only built-in when it builds", async () => {
-  using dir = tempDir("aot-refused-changes", files);
-  const { output, exitCode } = await bunTest(String(dir), "--aot");
+  const { output, exitCode } = await compiledRun();
   const lines = output.split("\n");
   const places = lines.flatMap((line, index) =>
     line.startsWith("warn: TS100014: this assignment throws if it runs")
@@ -80,8 +87,7 @@ test.skipIf(!!unsupported).each([
 ])(
   "bun test --aot names every refused change to a read-only built-in, where it was made and which file ran, %s",
   async (_, flags) => {
-    using dir = tempDir("aot-refused-changes", files);
-    const { output, exitCode } = await bunTest(String(dir), "--aot", ...flags);
+    const { output, exitCode } = await compiledRun(...flags);
     const lines = output.split("\n");
     const heading = lines.findIndex(line => line.includes("read-only built-ins"));
     expect(lines[heading]).toBe(
@@ -102,7 +108,7 @@ test.skipIf(!!unsupported).each([
       "  Cannot change the prototype of Request.prototype, at d-unseen.test.js:7, while d-unseen.test.js ran",
       "  Cannot define Array.prototype[Symbol(Symbol.iterator)], at d-unseen.test.js:5, while d-unseen.test.js ran",
       "  Cannot delete Array.prototype[Symbol(Symbol.iterator)], at a-patches.test.js:15, while a-patches.test.js ran",
-      "  Cannot delete Map.prototype[Symbol(Symbol.iterator)], at d-unseen.test.js:6, while d-unseen.test.js ran",
+      "  Cannot delete RegExp.prototype[Symbol(Symbol.split)], at d-unseen.test.js:6, while d-unseen.test.js ran",
     ]);
     expect(output).toContain(" 5 pass");
     expect(exitCode).toBe(0);

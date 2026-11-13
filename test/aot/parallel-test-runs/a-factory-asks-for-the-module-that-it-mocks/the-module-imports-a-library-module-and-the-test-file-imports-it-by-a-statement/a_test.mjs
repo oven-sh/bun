@@ -1,0 +1,1 @@
+import { test, vi } from "bun:test"; import { get, Bus, extra } from "./dep.mjs"; vi.mock("./dep.mjs", async () => ({ ...(await import("./dep.mjs")), extra: 1 })); test("t", () => { console.log("| " + get() + " " + typeof new Bus().on + " " + extra); });

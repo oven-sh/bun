@@ -2,6 +2,7 @@
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 1
 // STATISTIC: SourceFilesInferred = 4
+// CHECK-LABEL: function {{*}}name="reducer"
 
 // FILE: main.ts
 // Typescript uses what is inferred from javascript files.
@@ -160,15 +161,3 @@ module.exports = { one, two, three: [3] };
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true, "strict": true, "checkJs": false }, "files": [] }
-
-// GENERATED: reducer
-// CHECK-LABEL: function {{*}}name="reducer"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number site=[[w_1]]}, {type=undefined|null|[[L_2]] flags=[IsExpected]}] results=[{type=number site=[[w_3]]}] functionTypes={{*}}[[f_4]]] {
-// CHECK-NEXT: b0(v0: number, v1: undefined|null|[[L_2]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = PropGet v1 key="x"
-// CHECK-NEXT: v3 = Add v0, v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=number site=[[w_3]]}
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }

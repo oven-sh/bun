@@ -1,0 +1,25 @@
+# `new Map(list.values())`: an iterator has neither elements nor keys nor values, so nothing was asked of the entries, nothing was stored and nothing escaped: the getters of the entries stayed unreached.
+# Nobody lists here what an iterator hands out: it escapes, and with it the list that it goes over.
+# -- source: map-of-an-iterator.ts
+# class Pair {
+#     key: string;
+#     value: number;
+#     constructor(key: string, value: number) {
+#         this.key = key;
+#         this.value = value;
+#     }
+#     get 0() {
+#         return this.key;
+#     }
+#     get 1() {
+#         return this.value;
+#     }
+# }
+# const list: any[] = [];
+# for (let i = 0; i < 3; i++)
+#     list.push(new Pair("k" + i, i));
+# console.log(new Map(list.values()).size);
+# -- end of source
+# RUN: link functions mechanisms=all
+# CHECK: function f2 cycle=
+# CHECK: function f3 cycle=

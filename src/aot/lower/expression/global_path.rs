@@ -1,20 +1,30 @@
 #[cfg(test)]
 mod tests;
 
-use bun_sema::atom::Atom;
-use bun_sema::hir::ExprId;
+use bun_sema::atom::{Atom, known};
+use bun_sema::bind::Binding;
+use bun_sema::hir::{ExprId, ExprKind};
 
 use crate::builtins::id::BuiltinId;
 use crate::builtins::{Resolved, SourceDialect};
 use crate::diagnostic_codes::Code;
 use crate::ir::ValueId;
-use crate::lower::FunctionLowering;
 use crate::lower::member::PropertyName;
+use crate::lower::{FileLowering, FunctionLowering};
 
 #[derive(Copy, Clone, Debug)]
 pub(in crate::lower) struct GlobalPathMember {
     pub(in crate::lower) holder: Option<ValueId>,
     pub(in crate::lower) name: Atom,
+}
+
+impl FileLowering<'_, '_, '_, '_> {
+    pub(in crate::lower) fn binding_of_defined_root(&self, expression: ExprId) -> Binding {
+        match self.hir[expression].kind {
+            ExprKind::Ident(_) => self.bound.binding(expression),
+            _ => self.bound.runtime.binding_of_defined_path(expression),
+        }
+    }
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
@@ -25,23 +35,43 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
             Some(Resolved::Builtin(_) | Resolved::DynamicGlobal(_) | Resolved::Intrinsic(_))
             | None => {
-                let member = self.lower_global_path_holder(path);
-                let value = self.emit_global_path_member(member.holder, member.name);
+                let member = self.lower_global_path_holder(expression, path);
+                let value = match member.holder {
+                    Some(_) => self.emit_global_path_member(member.holder, member.name),
+                    None => self.get_root_of_global_path(expression, member.name),
+                };
                 self.expect_resolved_path(expression, value)
             }
         }
     }
 
-    pub(in crate::lower) fn lower_global_path_holder(&mut self, path: &[Atom]) -> GlobalPathMember {
+    pub(in crate::lower) fn lower_global_path_holder(
+        &mut self,
+        expression: ExprId,
+        path: &[Atom],
+    ) -> GlobalPathMember {
         let (&name, holders) = path.split_last().expect("a global path names a global");
         let mut holder = None;
         for &holder_name in holders {
-            holder = Some(self.emit_global_path_member(holder, holder_name));
+            holder = Some(match holder {
+                Some(_) => self.emit_global_path_member(holder, holder_name),
+                None => self.get_root_of_global_path(expression, holder_name),
+            });
         }
         GlobalPathMember { holder, name }
     }
 
-    // The functions of Bun's own modules are created in the scope of the global object, below the `let` and `const` bindings of scripts, so a script that declares `let process` does not shadow the global there.
+    pub(in crate::lower) fn get_root_of_global_path(
+        &mut self,
+        expression: ExprId,
+        name: Atom,
+    ) -> ValueId {
+        match self.file.binding_of_defined_root(expression) {
+            Binding::Free => self.emit_free_name_get(name, false),
+            binding => self.get_binding_without_expression(binding, name),
+        }
+    }
+
     fn sees_script_bindings(&self) -> bool {
         match self.file.source.dialect() {
             SourceDialect::Program => true,
@@ -65,8 +95,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn report_global_without_support(&mut self, name: Atom) {
-        let text = self.file.queries.atom_bytes(name);
-        if text == b"ShadowRealm" && self.sees_script_bindings() {
+        if name == known::ShadowRealm && self.sees_script_bindings() {
             let span = self.file.span_at(self.position());
             self.file
                 .diagnostics

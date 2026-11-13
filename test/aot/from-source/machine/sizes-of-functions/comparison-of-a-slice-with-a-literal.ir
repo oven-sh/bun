@@ -1,0 +1,14 @@
+# f1 = isHttp
+# -- source: comparison-of-a-slice-with-a-literal.ts
+# function isHttp(url: string): boolean {
+#   return url.slice(0, 4) === "http";
+# }
+# declare const input: any;
+# (globalThis as any).answer = isHttp(input);
+# -- end of source
+# The compiler before this one: 35 instructions, 4 of them patches.
+# When the bound was taken: steps: operations 16, patches 3, moves 7, unlikely or rare 7.
+# RUN(X64): steps most:23 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 23

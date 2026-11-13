@@ -1,4 +1,5 @@
 // RUN: lower
+// OPTIONS: builtin-modules
 // CHECK-LABEL: function {{*}}name="declares"
 // CHECK-NOT: handler=
 // CHECK: key="resource"

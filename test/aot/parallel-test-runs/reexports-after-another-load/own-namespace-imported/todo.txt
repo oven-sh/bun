@@ -1,0 +1,1 @@
+"SAID 100 100 true" | "SAID 200 200 true": a namespace object that is held from the first run under --rerun-each reads the variables of the latest run

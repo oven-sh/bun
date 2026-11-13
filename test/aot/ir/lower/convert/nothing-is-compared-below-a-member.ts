@@ -1,20 +1,22 @@
 // RUN: link
-// CHECK: layout {{*}}name="WidePoint"
-// CHECK-NOT: supertypes=
-// CHECK: layout {{*}}name="WideHolder"{{*}}supertypes=[{{*}}[[holder]]]
-// CHECK: layout {{*}}name="WideOuter"{{*}}supertypes=[{{*}}[[outer]]]
-// CHECK: layout [[outer]] name="Outer"
-// CHECK: layout [[holder]] name="Holder"
+// CHECK: layout {{*}}key="label"{{*}}supertypes=[
 
-// A value of one structural type flows into another. The source goes below the target, and so does each member's type below the type of the member it is read as. What lies below
-// a member is not compared: a literal is converted where it is built, every read is tested where it stands, and the types down there are ones nobody else asks the checker for.
-interface Point {
-  x: number;
+// RUN(OUTER): link
+// OUTER: layout {{*}}key="count"{{*}}supertypes=[
+
+// RUN(BELOW): link
+// BELOW-NOT: layout {{*}}name="WidePoint"{{*}}supertypes=
+
+// A value of one structural type is cast to another. The source goes below the target, and so does each member's type below the type of the member it is read as. What lies below
+// a member is not compared: the types down there are ones nobody else asks the checker for.
+// The layout of an object type has no name, so `WideHolder` and `WideOuter` are known by the one name that only they have.
+class Point {
+  x = 0;
 }
 
-interface WidePoint {
-  x: number;
-  y: number;
+class WidePoint {
+  x = 1;
+  y = 2;
 }
 
 interface Holder {
@@ -35,20 +37,10 @@ interface WideOuter {
   count: number;
 }
 
-function makePoint(): WidePoint {
-  return { x: 1, y: 2 };
-}
-
-function makeHolder(): WideHolder {
-  return { point: makePoint(), label: "a" };
-}
-
-function makeOuter(): WideOuter {
-  return { holder: makeHolder(), count: 1 };
-}
-
 function read(outer: Outer) {
   return outer.holder.point.x;
 }
 
-export const x = read(makeOuter());
+export function pass(outer: WideOuter) {
+  return read(outer as Outer);
+}

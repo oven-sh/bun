@@ -1,0 +1,18 @@
+# `this.items = [];`: a field stored through `this` is expected to hold what the checker says of the stored value, and an empty literal is typed never[]. Of what the list will hold that says nothing.
+# Taken at its word, an element read in a loop was expected to be undefined, and the read off the true element stood on a rare road.
+# f3 = longest
+# -- source: an-empty-list-stored-through-this-says-nothing-of-what-it-will-hold.cjs
+# class Bag { constructor() { this.items = []; } add(item) { this.items.push(item); return this; } longest(count) { const items = this.items; let most = 0; for (let i = 0; i < count; i++) if (items[i].length > most) most = items[i].length; return most; } }
+# const box = {};
+# box[String(['k0'])] = [new Bag().add('a').add('bcd').add('ef')];
+# print(box.k0[0].longest(box.k0.length + 2));
+# -- end of source
+# RUN: walk f3 mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK: = TypeTest {{*}}testedType=Array
+# RUN(NEVER): walk f3 mechanisms=all
+# NEVER-NOT: testedType=undefined
+# RUN(NOLIST): walk f3 mechanisms=all
+# NOLIST-NOT: Array<never>
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 3

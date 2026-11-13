@@ -4156,6 +4156,7 @@ static ModuleMocksThatLosePaths moduleMocksThatLosePathsTo(Zig::GlobalObject* gl
 
 // `mock` has two paths and has taken them from `losers`. Its ES module is under the import path and its module object of require.cache under the require path: of those it has taken over what the losers saved.
 // The other side of each path is not its own. A loser had its module object under the import path if require() loads that path for it, and its ES module under the require path if that is its import path.
+// With two paths, a loser whose import path it is may also have a module object there: what require() of that very path got. It holds the loser's exports, and the loser saved nothing of it.
 // Those end here as unmockModule() ends them, so that the next load of either path comes to `mock`. A mock with one path has both sides under it, and nothing is left.
 __attribute__((minsize)) static void endSidesThatModuleMockLeaves(Zig::GlobalObject* globalObject, JSModuleMock* mock, ModuleMocksThatLosePaths losers)
 {
@@ -4166,8 +4167,8 @@ __attribute__((minsize)) static void endSidesThatModuleMockLeaves(Zig::GlobalObj
     auto comesBack = [&](const JSModuleMock* loser) { return loser->isFromPreload && !mock->isFromPreload; };
     ModulesToEvict evict;
     String importKey = mock->importKey->tryGetValue().data;
-    if (auto* loser = losers.ofImportPath; loser && loser->keyForRequire()->tryGetValue().data == importKey) {
-        if (!comesBack(loser)) {
+    if (auto* loser = losers.ofImportPath) {
+        if (loser->keyForRequire()->tryGetValue().data == importKey && !comesBack(loser)) {
             restoreModuleObjectOfModuleMock(globalObject, loser);
             RETURN_IF_EXCEPTION(scope, );
         }

@@ -5,5 +5,6 @@ function WriteStream() {
 function ReadStream() {
   throw new Error("tty.ReadStream is not implemented for browsers");
 }
-export { ReadStream, WriteStream, isatty };
-export default { ReadStream, WriteStream, isatty };
+const tty = { ReadStream, WriteStream, isatty };
+export { ReadStream, WriteStream, isatty, tty as "module.exports" };
+export default tty;

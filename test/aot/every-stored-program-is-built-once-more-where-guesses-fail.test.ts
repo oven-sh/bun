@@ -3,7 +3,8 @@
 // And once more with --aot-harden=proof-checks, where a proof that does not hold stops the program by name. The builds of each way are counted on stderr, so that no flag drops a way without a word.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
+import { join, sep } from "node:path";
 import { lineThatLeavesOut } from "./harness/lines-that-leave-out";
 import { run } from "./harness/run";
 import { test } from "./supported";
@@ -16,13 +17,14 @@ const program = `function sum(list: number[]) {
 console.log(sum([1, 2, 3.5]), sum([4, 5, 6]));
 `;
 
-async function driven(words: string[], environment: Record<string, string> = {}, head = "", text = program) {
-  using folder = tempDir("where-guesses-fail", { "tsconfig.json": "{}", "sums.ts": head + text });
+async function start(words: string[], environment: Record<string, string>, programs: Record<string, string>) {
+  using folder = tempDir("where-guesses-fail", { "tsconfig.json": "{}", ...programs });
   const root = String(folder);
   // One of these programs stops on purpose. A crash report that a passing test file leaves behind is laid on the next file that fails, which then gets no second try.
   const { BUILDKITE_BUILD_NUMBER: _, BUN_CRASH_REPORT_URL: __, ...env } = bunEnv;
+  const files = Object.keys(programs).map(name => join(root, name));
   const { stdout, stderr, exitCode } = await run(
-    [bunExe(), join(import.meta.dir, "run-parallel.ts"), `--root=${root}`, "--jobs=3", ...words, join(root, "sums.ts")],
+    [bunExe(), join(import.meta.dir, "run-parallel.ts"), `--root=${root}`, "--jobs=3", ...words, ...files],
     root,
     { ...env, ...environment },
   );
@@ -30,12 +32,30 @@ async function driven(words: string[], environment: Record<string, string> = {},
     .split(/\r?\n/)
     .filter(Boolean)
     .map(line => JSON.parse(line));
-  return { lines, stderr, exitCode };
+  return { lines, stderr, exitCode, root };
 }
-const waysOf = async (words: string[], environment?: Record<string, string>) => {
-  const { lines, exitCode } = await driven(words, environment);
-  return { ways: lines.find(({ state }) => state !== "compiling")?.ways, exitCode };
+type Ran = Awaited<ReturnType<typeof start>>;
+// The builds are what costs. The driver is started once for each list of arguments, and every test that asks the same of it reads that run.
+const runs = new Map<string, Promise<Ran>>();
+const started = (words: string[], environment: Record<string, string>, programs: Record<string, string>) =>
+  runs.getOrInsertComputed(JSON.stringify([words, environment, programs]), () => start(words, environment, programs));
+const driven = (words: string[], environment: Record<string, string> = {}, head = "", text = program) =>
+  started(words, environment, { "sums.ts": head + text });
+/** The one line in which the driver says how a program went. */
+const verdictOf = ({ lines, root }: Ran, name = "sums.ts") =>
+  lines.find(({ file, state }) => file === join(root, name) && state !== "compiling");
+/** What that line says, and how the driver ended. A program that passes has no stage and no message: where one fails that should not, the difference shows why. */
+const saidOf = (ran: Ran, name?: string) => {
+  const { ways, stage, message } = verdictOf(ran, name) ?? {};
+  return { ways, stage, message, exitCode: ran.exitCode };
 };
+/** The last that the driver says on stderr: the builds of each way and, behind them, what a line has left out. */
+const countsOf = ({ stderr, root }: Ran) =>
+  /^builds by way: .*\nleft out by a line: .*\n(?:  not (?:compared|built): .*\n)*/m
+    .exec(stderr)?.[0]
+    .replaceAll(root + sep, "");
+const waysOf = async (words: string[], environment?: Record<string, string>) =>
+  saidOf(await driven(words, environment));
 const inFourWays = (n: string) => ({
   ways: {
     compiled: "pass",
@@ -45,17 +65,19 @@ const inFourWays = (n: string) => ({
   },
   exitCode: 0,
 });
+const fourBuilds =
+  "builds by way: compiled 1 | under --aot-erase-types 1 | under --aot-testing=FailSpeculations:3 1 | under --aot-harden=proof-checks 1\n";
 
 test("a program is built as written, with its types erased, where one guess in three fails, and where proofs are checked", async () => {
   expect(await waysOf([])).toEqual(inFourWays("3"));
 }, 120_000);
 
 test("the builds of each way are counted, and --no-erased is named where it leaves them out", async () => {
-  expect((await driven([])).stderr).toContain(
-    "builds by way: compiled 1 | under --aot-erase-types 1 | under --aot-testing=FailSpeculations:3 1 | under --aot-harden=proof-checks 1\n",
-  );
-  expect((await driven(["--no-erased"])).stderr).toContain(
-    "builds by way: compiled 1 | --no-erased leaves out every build behind the first\n",
+  const [whole, first] = await Promise.all([driven([]), driven(["--no-erased"])]);
+  expect(countsOf(whole)).toBe(fourBuilds + "left out by a line: 0 not compared | 0 not built\n");
+  expect(countsOf(first)).toBe(
+    "builds by way: compiled 1 | --no-erased leaves out every build behind the first\n" +
+      "left out by a line: 0 not compared | 0 not built\n",
   );
 }, 120_000);
 
@@ -79,65 +101,88 @@ test.each(["1", "1:8", "0", "three"])(
   "--one-guess-in=%s is refused: where every guess fails no typed copy is entered",
   async n => {
     const { lines, stderr, exitCode } = await driven([`--one-guess-in=${n}`]);
-    expect({ lines, exitCode }).toEqual({ lines: [], exitCode: 1 });
-    expect(stderr).toContain(`--one-guess-in=${n}: <n> or <n>:<seed>, and n over 1`);
+    expect({ lines, stderr, exitCode }).toEqual({
+      lines: [],
+      stderr: expect.stringContaining(`error: --one-guess-in=${n}: <n> or <n>:<seed>, and n over 1\n`),
+      exitCode: 1,
+    });
   },
 );
 
+const notCompared = "// Prints what goes by the copy that runs: nothing, for the test\n";
+
 test("a program that prints what goes by the copy that runs is built and run there, and not compared", async () => {
-  const { lines, exitCode } = await driven(
-    [],
-    {},
-    "// Prints what goes by the copy that runs: nothing, for the test\n",
-  );
-  expect({ ways: lines.find(({ state }) => state !== "compiling")?.ways, exitCode }).toEqual({
+  const ran = await driven([], {}, notCompared);
+  expect({ ...saidOf(ran), counts: countsOf(ran) }).toEqual({
     ways: {
       compiled: "pass",
       "under --aot-erase-types": "built and run, not compared",
       "under --aot-testing=FailSpeculations:3": "built and run, not compared",
       "under --aot-harden=proof-checks": "built and run, not compared",
     },
+    counts:
+      fourBuilds +
+      "left out by a line: 3 not compared | 0 not built\n" +
+      "  not compared: sums.ts under --aot-erase-types\n" +
+      "  not compared: sums.ts under --aot-testing=FailSpeculations:3\n" +
+      "  not compared: sums.ts under --aot-harden=proof-checks\n",
     exitCode: 0,
   });
 }, 120_000);
 
 const noBuild = "// No build under --aot-harden=proof-checks";
-const waysUnder = async (head: string, text?: string) => {
-  const { lines, stderr, exitCode } = await driven([], {}, head, text);
-  return { ways: lines.find(({ state }) => state !== "compiling")?.ways, stderr, exitCode };
-};
 const { "under --aot-harden=proof-checks": _, ...theOtherThree } = inFourWays("3").ways;
 
 test("a line leaves the build of one way out; the other ways are held, and stderr lists it", async () => {
-  expect(await waysUnder(`${noBuild}: for the test\n`)).toEqual({
+  const ran = await driven([], {}, `${noBuild}: for the test\n`);
+  expect({ ...saidOf(ran), counts: countsOf(ran) }).toEqual({
     ways: theOtherThree,
-    stderr: expect.stringMatching(
-      /left out by a line: 0 not compared \| 1 not built\n  not built: \S*sums\.ts under --aot-harden=proof-checks\n/,
-    ),
+    counts:
+      "builds by way: compiled 1 | under --aot-erase-types 1 | under --aot-testing=FailSpeculations:3 1\n" +
+      "left out by a line: 0 not compared | 1 not built\n" +
+      "  not built: sums.ts under --aot-harden=proof-checks\n",
     exitCode: 0,
   });
 }, 360_000);
 
-test.each([
-  ["names a way that this driver does not build", `${noBuild.replace("proof-checks", "proof-cheks")}: for the test\n`],
+const noSuchWay = "its flags are those of no way in which the program is built whatever the build of CI";
+const refusedLines = [
+  [
+    "names a way that this driver does not build",
+    `${noBuild.replace("proof-checks", "proof-cheks")}: for the test\n`,
+    noSuchWay,
+  ],
   [
     "names the way that goes by the number of CI's build",
     "// No build under --aot-testing=FailSpeculations:3: for the test\n",
+    noSuchWay,
   ],
-  ["says no reason", `${noBuild}:\n`],
-  ["says blanks for a reason", `${noBuild}:   \n`],
+  ["says no reason", `${noBuild}:\n`, "it says no reason"],
+  ["says blanks for a reason", `${noBuild}:   \n`, "it says no reason"],
   [
     "names the way that goes by the number of CI's build though the program asks for it itself",
     "// Under: --aot-testing=FailSpeculations:3: for the test\n// No build under --aot-testing=FailSpeculations:3: for the test\n",
+    noSuchWay,
   ],
-  ["leaves every build behind the first uncompared and says no reason", "// Prints what goes by the copy that runs:\n"],
-  ["stands below the head", `\n${noBuild}: for the test\n`],
-])(
+  [
+    "leaves every build behind the first uncompared and says no reason",
+    "// Prints what goes by the copy that runs:\n",
+    "it says no reason",
+  ],
+  ["stands below the head", `\n${noBuild}: for the test\n`, "it stands below the head"],
+].map(([what, head, why], row) => [what, head, why, `line-${row}.ts`]);
+// Such a line is refused where the program is read, before its first build. So one start judges all of them, a program each, and --no-erased spares the builds behind the first, which ask the compiler and not this driver.
+const withRefusedLines = () =>
+  started(["--no-erased"], {}, Object.fromEntries(refusedLines.map(([, head, , name]) => [name, head + program])));
+
+test.each(refusedLines)(
   "a line that %s fails the program",
-  async (_, head) => {
-    const { lines, exitCode } = await driven([], {}, head);
-    expect({ failed: lines.filter(({ state }) => state === "fail").map(({ stage }) => stage), exitCode }).toEqual({
-      failed: expect.arrayContaining(["read"]),
+  async (_, head, why, name) => {
+    expect(saidOf(await withRefusedLines(), name)).toEqual({
+      ways: { compiled: "fail" },
+      stage: "read",
+      // The line, and why it is not read.
+      message: `${head.split("\n").findLast(Boolean)}: ${why}`,
       exitCode: 1,
     });
   },
@@ -145,22 +190,29 @@ test.each([
 );
 
 test("another exit code in a way that is not compared fails it all the same", async () => {
-  const { ways, exitCode } = await waysUnder(
-    "// Prints what goes by the copy that runs: nothing, for the test\n",
-    "process.exit(3);\n",
-  );
-  expect({ way: ways?.["under --aot-erase-types"], exitCode }).toEqual({ way: "fail", exitCode: 1 });
+  expect(saidOf(await driven([], {}, notCompared, "process.exit(3);\n"))).toEqual({
+    ways: {
+      compiled: "fail",
+      "under --aot-erase-types": "fail",
+      "under --aot-testing=FailSpeculations:3": "fail",
+      "under --aot-harden=proof-checks": "fail",
+    },
+    // The line of the file is that of its first build: plain Bun ends with 3 too, and no `// Exit code:` says so.
+    stage: "reference",
+    message: "the reference ended with exit code 3, not with 0: see `// Exit code:`",
+    exitCode: 1,
+  });
 }, 120_000);
 
-test("a stop in a way that is not compared fails it all the same", async () => {
-  const { ways, exitCode } = await waysUnder(
-    "// Flags: --aot-testing=TreatEqualIntegersAsLess\n// Prints what goes by the copy that runs: nothing, for the test\n",
-    `const given: number[] = JSON.parse("[-9, 0, 4, 2, 7]");
+// The program of from-source/machine/where-the-emitters-hold-the-dividend-of-a-division-of-the-built-ins-is-held-to-its-told-range.ir, which says what the fault does to it.
+// Its loop counts `left` down. With one that tests `turn !== turns`, the first build and the one with its types erased never end under this fault, and fill the memory until the driver ends them.
+const dividesUnderAFalseRange = `const given: number[] = JSON.parse("[-9, 0, 4, 2, 7]");
 function tally(low: number, add: number, step: number, by: number, turns: number): unknown[] {
   const out: unknown[] = [];
   const divisor = (by & 7) + 1;
   let held: number | undefined = undefined;
-  for (let turn = 0; turn !== turns; turn++) {
+  for (let left = turns; left > 0; left--) {
+    const turn = turns - left;
     if (held !== undefined && -1 < held && held <= 1000) out.push((held / divisor) | 0);
     else out.push("none");
     held = (low | 0) + ((add + turn * step) | 0);
@@ -168,16 +220,32 @@ function tally(low: number, add: number, step: number, by: number, turns: number
   return out;
 }
 console.log(tally(given[0]!, given[1]!, given[2]!, given[3]!, given[4]!).join(" "));
-`,
-  );
-  expect({ way: ways?.["under --aot-harden=proof-checks"], exitCode }).toEqual({ way: "fail", exitCode: 1 });
+`;
+
+test("a stop in a way that is not compared fails it all the same", async () => {
+  const head = `// Flags: --aot-testing=TreatEqualIntegersAsLess\n${notCompared}`;
+  const ran = await driven([], {}, head, dividesUnderAFalseRange);
+  expect({ ...saidOf(ran), stderr: verdictOf(ran)?.actual?.stderr }).toEqual({
+    // Nothing but the stop fails the program: the builds without the check print what plain Bun prints.
+    ways: {
+      compiled: "pass",
+      "under --aot-erase-types": "built and run, not compared",
+      "under --aot-testing=FailSpeculations:3": "built and run, not compared",
+      "under --aot-harden=proof-checks": "fail",
+    },
+    stage: "run",
+    message: "under --aot-harden=proof-checks: it ended by SIGABRT",
+    stderr: expect.stringMatching(/^bun: internal AOT error: type check failed at \S+ \(tally\)$/m),
+    exitCode: 1,
+  });
 }, 120_000);
 
-test("the lines by which something of a stored program is not compared or not built are these, and a new one is written here too", async () => {
+test("the lines by which something of a stored program is not compared or not built are these, and a new one is written here too", () => {
   const stored = join(import.meta.dir, "parallel");
   const found: string[] = [];
-  for await (const file of new Bun.Glob("**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}").scan(stored))
-    for (const [, what] of (await Bun.file(join(stored, file)).text()).matchAll(lineThatLeavesOut))
+  // Some thirty thousand files, read as the driver reads them. A read that is awaited takes a turn of the event loop, and all of them many times what the reads take.
+  for (const file of new Bun.Glob("**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}").scanSync(stored))
+    for (const [, what] of readFileSync(join(stored, file), "utf8").matchAll(lineThatLeavesOut))
       found.push(`${file.replaceAll("\\", "/")}: ${what}`);
   expect(found.sort()).toEqual([
     "async/await-direct-call-function-tests-args.ts: Prints what the compiler saves",
@@ -194,6 +262,12 @@ test("the lines by which something of a stored program is not compared or not bu
 
 test("--no-erased leaves it out with the other builds behind the first, and --deal prices it", async () => {
   expect(await waysOf(["--no-erased"])).toEqual({ ways: { compiled: "pass" }, exitCode: 0 });
-  const priceOf = async (words: string[]) => (await driven(["--deal", ...words])).lines[0].ms as number;
-  expect(await priceOf([])).toBe(4 * (await priceOf(["--no-erased"])));
+  // One line for the program, with what all of its builds take: four, or the first alone.
+  const [whole, first] = await Promise.all([driven(["--deal"]), driven(["--deal", "--no-erased"])]);
+  const ms: number = first.lines[0]?.ms;
+  expect(ms).toBeGreaterThan(0);
+  expect([whole, first].map(({ lines, exitCode }) => ({ lines, exitCode }))).toEqual([
+    { lines: [{ ms: 4 * ms, files: [join(whole.root, "sums.ts")] }], exitCode: 0 },
+    { lines: [{ ms, files: [join(first.root, "sums.ts")] }], exitCode: 0 },
+  ]);
 }, 120_000);

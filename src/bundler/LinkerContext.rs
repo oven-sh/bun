@@ -366,8 +366,12 @@ impl<'a> LinkerContext<'a> {
         source_index: u32,
     ) -> bool {
         use crate::linker_graph::FileColumns as _;
-        if !self.graph.code_splitting || record.source_index.get() == source_index {
+        if !self.graph.code_splitting {
             return false;
+        }
+        if record.source_index.get() == source_index {
+            let wrap = self.graph.meta.items_flags()[source_index as usize].wrap;
+            return self.import_of_itself_loads_chunk(record, wrap);
         }
         let crosses_chunk = match record.kind {
             ImportKind::Dynamic => true,
@@ -377,6 +381,20 @@ impl<'a> LinkerContext<'a> {
             _ => false,
         };
         crosses_chunk
+            && self.graph.files.items_entry_point_kind()[record.source_index.get() as usize]
+                .is_entry_point()
+    }
+
+    /// An `import()` of the importing file loads the file's chunk when the file has no wrapper.
+    pub(crate) fn import_of_itself_loads_chunk(
+        &self,
+        record: &ImportRecord,
+        wrap: WrapKind,
+    ) -> bool {
+        use crate::linker_graph::FileColumns as _;
+        self.graph.code_splitting
+            && record.kind == ImportKind::Dynamic
+            && wrap == WrapKind::None
             && self.graph.files.items_entry_point_kind()[record.source_index.get() as usize]
                 .is_entry_point()
     }

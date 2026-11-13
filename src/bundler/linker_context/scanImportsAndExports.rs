@@ -133,6 +133,9 @@ pub(crate) fn scan_imports_and_exports(
     let lifted_setter_params: *mut [Ref] = meta.lifted_setter_param;
 
     {
+        // `import()` calls of the file itself in lifted CommonJS files, as (file, record).
+        let mut self_imports_of_lifted_files: Vec<(IndexInt, u32)> = Vec::new();
+
         // Step 1: Figure out what modules must be CommonJS
         for source_index_ in &reachable {
             let _trace = perf::trace("Bundler.FigureOutCommonJS");
@@ -382,28 +385,20 @@ pub(crate) fn scan_imports_and_exports(
                                 col!(flags)[other_file].wrap = WrapKind::Cjs;
                                 col!(exports_kind)[other_file] = ExportsKind::Cjs;
                             }
-                        } else if other_flags.contains(AstFlags::FORCE_CJS_TO_ESM)
-                            && this.is_external_dynamic_import(record, id as u32)
-                        {
-                            let exports = &col_ref!(named_exports)[other_file];
-                            let user_entry = col_ref!(entry_point_kinds)[other_file]
-                                == EntryPoint::Kind::UserSpecified;
-                            // `__esModule` makes `exports.default` the `default`, as in `bun run`.
-                            let default_is_module_exports = !exports.contains(b"default")
-                                || (other_flags.contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
-                                    && !user_entry
-                                    && !exports.contains(b"__esModule"));
-                            let default_is_read = user_entry
-                                || col_ref!(dynamic_import_aliases)[id]
-                                    .get(&(import_record_index as u32))
-                                    .is_none_or(|dynamic_use| {
-                                        dynamic_use
-                                            .aliases
-                                            .slice()
-                                            .iter()
-                                            .any(|alias| alias.slice() == b"default")
-                                    });
-                            if default_is_module_exports && default_is_read {
+                        } else if other_flags.contains(AstFlags::FORCE_CJS_TO_ESM) {
+                            if other_file == id {
+                                // Decided after step 2: the file can still get a wrapper.
+                                self_imports_of_lifted_files
+                                    .push((id as IndexInt, import_record_index as u32));
+                            } else if this.is_external_dynamic_import(record, id as u32)
+                                && import_reads_module_exports_as_default(
+                                    &col_ref!(named_exports)[other_file],
+                                    other_flags,
+                                    col_ref!(entry_point_kinds)[other_file],
+                                    col_ref!(dynamic_import_aliases)[id]
+                                        .get(&(import_record_index as u32)),
+                                )
+                            {
                                 col!(flags)[other_file].needs_synthetic_default_export = true;
                             }
                         }
@@ -498,6 +493,22 @@ pub(crate) fn scan_imports_and_exports(
                         }
                     }
                 }
+            }
+        }
+
+        for (id, import_record_index) in self_imports_of_lifted_files {
+            let id = id as usize;
+            let record =
+                &col_ref!(import_records_list)[id].as_slice()[import_record_index as usize];
+            if this.is_external_dynamic_import(record, id as u32)
+                && import_reads_module_exports_as_default(
+                    &col_ref!(named_exports)[id],
+                    col_ref!(ast_flags_list)[id],
+                    col_ref!(entry_point_kinds)[id],
+                    col_ref!(dynamic_import_aliases)[id].get(&import_record_index),
+                )
+            {
+                col!(flags)[id].needs_synthetic_default_export = true;
             }
         }
 
@@ -1428,6 +1439,30 @@ pub(crate) fn scan_imports_and_exports(
     }
 
     Ok(())
+}
+
+/// An `import()` of a lifted CommonJS chunk reads `default` as `module.exports`.
+fn import_reads_module_exports_as_default(
+    exports: &NamedExports,
+    target_flags: AstFlags,
+    target_entry_point_kind: EntryPoint::Kind,
+    dynamic_use: Option<&bun_ast::ast_result::DynamicImportUse>,
+) -> bool {
+    let user_entry = target_entry_point_kind == EntryPoint::Kind::UserSpecified;
+    // `__esModule` makes `exports.default` the `default`, as in `bun run`.
+    let default_is_module_exports = !exports.contains(b"default")
+        || (target_flags.contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+            && !user_entry
+            && !exports.contains(b"__esModule"));
+    let default_is_read = user_entry
+        || dynamic_use.is_none_or(|dynamic_use| {
+            dynamic_use
+                .aliases
+                .slice()
+                .iter()
+                .any(|alias| alias.slice() == b"default")
+        });
+    default_is_module_exports && default_is_read
 }
 
 #[inline]

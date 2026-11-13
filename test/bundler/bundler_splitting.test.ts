@@ -513,6 +513,472 @@ describe("bundler", () => {
     if (hashed) api.writeFile(`/out/${entry}.js`, `import "./${hashed}";`);
   };
 
+  // A file that calls `import()` on itself is an `import()` target like any other: the call loads its chunk.
+  itBundled("splitting/DynamicImportOfItself", {
+    files: {
+      "/a.js": `import "./s.js"; console.log("a");`,
+      "/b.js": `import "./s.js"; console.log("b");`,
+      "/s.js": /* js */ `
+        export const s = 1;
+        export default 2;
+        console.log("s");
+        import("./s.js").then(ns => console.log(Object.keys(ns).join(), ns.s));
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/a.js", stdout: "s\na\ndefault,s 1" },
+      { file: "/out/b.js", stdout: "s\nb\ndefault,s 1" },
+    ],
+  });
+  itBundled("splitting/DynamicImportOfItselfIsTheNamespaceOtherFilesGet", {
+    files: {
+      "/main.js": /* js */ `
+        import { self } from "./s.js";
+        Promise.all([self, import("./s.js")]).then(([a, b]) => console.log(a === b, Object.keys(a).join()));
+      `,
+      "/s.js": `export const self = import("./s.js");`,
+    },
+    entryPoints: ["/main.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/main.js", stdout: "true self" },
+  });
+  // The chunk names itself, with and without a hash of its content in that name, and runs once.
+  for (const entryNaming of ["[name].[ext]", "[name].entry-[hash].[ext]"]) {
+    itBundled(`splitting/DynamicImportOfItselfInEntryPoint/${entryNaming}`, {
+      files: {
+        "/main.js": /* js */ `
+          export const s = 1;
+          console.log("main");
+          import("./main.js").then(ns => console.log(ns.s));
+        `,
+      },
+      entryPoints: ["/main.js"],
+      entryNaming,
+      splitting: true,
+      outdir: "/out",
+      format: "esm",
+      onAfterBundle(api) {
+        launchHashedEntry(api, "main");
+      },
+      run: { file: "/out/main.js", stdout: "main\n1" },
+    });
+  }
+  const importsItself = {
+    "/n0.js": /* js */ `
+      export function f0() { return "f0"; }
+      (async () => {
+        try { const m = await import("./n0.js"); console.log("self " + Object.keys(m).join()); }
+        catch (e) { console.log("self rejects " + e.message); }
+      })();
+    `,
+  };
+  for (const target of ["bun", "node", "browser"] as const) {
+    for (const minify of [false, true]) {
+      itBundled(`splitting/DynamicImportOfItselfSettles/${target}${minify ? "/minify" : ""}`, {
+        files: importsItself,
+        entryPoints: ["/n0.js"],
+        splitting: true,
+        target,
+        minifyIdentifiers: minify,
+        minifySyntax: minify,
+        minifyWhitespace: minify,
+        outdir: "/out",
+        format: "esm",
+        run: { file: "/out/n0.js", stdout: "self f0" },
+      });
+    }
+  }
+  // Bun 1.4.0 bundled this one: the require() put a wrapper on n0.js, which a split require() does not. With the
+  // wrapper the import() gets the exports object of the file, without it the namespace of the chunk.
+  for (const splitRequire of [true, false]) {
+    itBundled(`splitting/DynamicImportOfItselfInRequiredFile/${splitRequire ? "split" : "inline"}`, {
+      files: {
+        "/n0.js": /* js */ `
+          export function f0() { return "f0"; }
+          (async () => {
+            try { const m = await import("./n0.js"); console.log("self " + Object.keys(m).join(), m[Symbol.toStringTag]); }
+            catch (e) { console.log("self rejects " + e.message); }
+            const c = await import("./n3.js"); console.log("n3 " + c.default.get());
+          })();
+        `,
+        "/n3.js": `exports.get = () => Object.keys(require("./n0.js")).join();`,
+      },
+      entryPoints: ["/n0.js"],
+      splitting: true,
+      splitRequire,
+      target: "bun",
+      outdir: "/out",
+      format: "esm",
+      run: { file: "/out/n0.js", stdout: `self f0 ${splitRequire ? "Module" : "undefined"}\nn3 f0` },
+    });
+  }
+  itBundled("splitting/DynamicImportOfItselfInCommonJS", {
+    files: {
+      "/lifted.js": /* js */ `
+        exports.a = 1;
+        import("./lifted.js").then(m => console.log("lifted", Object.keys(m).sort().join(), m.a));
+      `,
+      "/kept.js": /* js */ `
+        module.exports = { a: 1 };
+        import("./kept.js").then(m => console.log("kept", Object.keys(m).sort().join(), m.default.a));
+      `,
+    },
+    entryPoints: ["/lifted.js", "/kept.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/lifted.js", stdout: "lifted a,default 1" },
+      { file: "/out/kept.js", stdout: "kept a,default 1" },
+    ],
+  });
+  itBundled("splitting/DynamicImportOfItselfBeforeTopLevelAwait", {
+    files: {
+      "/t0.js": /* js */ `
+        export function f0() { return "f0"; }
+        console.log("t0 start");
+        import("./t0.js").then(m => console.log("self " + Object.keys(m).join()));
+        await 0;
+        console.log("t0 end");
+      `,
+    },
+    entryPoints: ["/t0.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/t0.js", stdout: "t0 start\nt0 end\nself f0" },
+  });
+  itBundled("splitting/DynamicImportOfItselfWithResultDropped", {
+    files: {
+      "/d.js": /* js */ `
+        export const d = 1;
+        import("./d.js");
+        console.log("ran");
+      `,
+    },
+    entryPoints: ["/d.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/d.js", stdout: "ran" },
+  });
+  // a3.js is replaced by the file it requires, so the import() in x.js names x.js.
+  itBundled("splitting/DynamicImportOfItselfThroughRedirect", {
+    files: {
+      "/x.js": /* js */ `
+        export const x = 1;
+        import("./a3.js").then(() => console.log("settled"), e => console.log("rejects " + e.message));
+      `,
+      "/a3.js": `module.exports = require("./x.js");`,
+    },
+    entryPoints: ["/x.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/x.js", stdout: "settled" },
+  });
+  // A file with a wrapper keeps binding an import() of itself to that wrapper. Here the require() of the file itself
+  // makes the wrapper.
+  itBundled("splitting/DynamicImportOfItselfBesideRequireOfItself", {
+    files: {
+      "/s.js": /* js */ `
+        export const s = 1;
+        const viaRequire = require("./s.js");
+        import("./s.js").then(ns => console.log(ns.s, viaRequire.s, ns[Symbol.toStringTag]));
+      `,
+    },
+    entryPoints: ["/s.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/s.js", stdout: "1 1 undefined" },
+  });
+  // A file with a wrapper binds an import() of itself to that wrapper, as before. Each of these prints the same with
+  // the call loading a chunk only once the named part of the runtime or the bundler handles it.
+  itBundled("splitting/DynamicImportOfItselfInWrappedFile/CalledWhileSplitRequireLoads", {
+    files: {
+      "/entry.cjs": /* js */ `
+        globalThis.loadSelf = () => import("./entry.cjs");
+        const r = require("./r.mjs");
+        console.log("entry end " + r.v);
+      `,
+      "/r.mjs": /* js */ `
+        export const v = 2;
+        globalThis.loadSelf().then(ns => console.log("self " + Object.keys(ns).sort().join()), e => console.log("self rejects " + e.message));
+      `,
+    },
+    entryPoints: ["/entry.cjs"],
+    outputPaths: ["/out/entry.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/entry.js", stdout: "entry end 2\nself default" },
+  });
+  itBundled("splitting/DynamicImportOfItselfInWrappedFile/PendingWhileSplitRequireLoads", {
+    files: {
+      "/entry.cjs": /* js */ `
+        import("./entry.cjs").then(ns => console.log("self " + Object.keys(ns).sort().join()), e => console.log("self rejects " + e.message));
+        require("./n1.mjs");
+        console.log("entry end");
+      `,
+      "/n1.mjs": `import("./entry.cjs");`,
+    },
+    entryPoints: ["/entry.cjs"],
+    outputPaths: ["/out/entry.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/entry.js", stdout: "entry end\nself default" },
+  });
+  itBundled("splitting/DynamicImportOfItselfInWrappedFile/ESModuleThatRequiresItself", {
+    files: {
+      "/entry.mjs": /* js */ `
+        export const a = 1;
+        const me = require("./entry.mjs");
+        globalThis.loadSelf = () => import("./entry.mjs");
+        const r = require("./r.mjs");
+        console.log("entry end " + r.v + " " + typeof me);
+      `,
+      "/r.mjs": /* js */ `
+        export const v = 2;
+        globalThis.loadSelf().then(ns => console.log("self " + Object.keys(ns).sort().join()), e => console.log("self rejects " + e.message));
+      `,
+    },
+    entryPoints: ["/entry.mjs"],
+    outputPaths: ["/out/entry.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/entry.js", stdout: "entry end 2 object\nself a" },
+  });
+  itBundled("splitting/DynamicImportOfItselfInWrappedFile/Minified", {
+    files: {
+      "/e0.js": /* js */ `
+        import { x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11 } from "./s.js";
+        import c from "./c.cjs";
+        const ns = await c.self();
+        console.log("e0", [x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11].length, ns.default.id);
+      `,
+      "/e1.js": /* js */ `
+        import { x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11 } from "./s.js";
+        console.log("e1", [x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11].length);
+      `,
+      "/s.js": Array.from({ length: 11 }, (_, i) => `export const x${i + 1} = {id:"x${i + 1}"};`).join("\n"),
+      "/c.cjs": /* js */ `
+        module.exports = { id: "c" };
+        module.exports.self = () => import("./c.cjs");
+      `,
+    },
+    entryPoints: ["/e0.js", "/e1.js"],
+    splitting: true,
+    target: "bun",
+    minifyIdentifiers: true,
+    minifySyntax: true,
+    minifyWhitespace: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/e0.js", stdout: "e0 11 c" },
+  });
+  itBundled("splitting/DynamicImportOfItselfInWrappedFile/PublicPath", {
+    files: {
+      "/kept.cjs": /* js */ `
+        module.exports = { v: 1 };
+        import("./kept.cjs").then(m => console.log("self " + m.default.v), e => console.log("self rejects " + e.message));
+      `,
+    },
+    entryPoints: ["/kept.cjs"],
+    outputPaths: ["/out/kept.js"],
+    publicPath: "/assets/",
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/kept.js", stdout: "self 1" },
+  });
+  itBundled("splitting/DynamicImportOfItselfInWrappedFile/NonAsciiName", {
+    files: {
+      "/café.cjs": /* js */ `
+        module.exports = { v: 1 };
+        import("./café.cjs").then(m => console.log("self " + m.default.v), e => console.log("self rejects " + e.message));
+      `,
+    },
+    entryPoints: ["/café.cjs"],
+    outputPaths: ["/out/café.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/café.js", stdout: "self 1" },
+  });
+  // The names that `export *` copies from a CommonJS file at run time are on the exports object, not on a namespace.
+  itBundled("splitting/DynamicImportOfItselfInWrappedFile/RunTimeExportStar", {
+    files: {
+      "/main.cjs": `const r = require("./barrel.js"); console.log("main " + Object.keys(r).sort().join());`,
+      "/barrel.js": /* js */ `
+        export * from "./lib.cjs";
+        export const own = 1;
+        import("./barrel.js").then(ns => console.log("self " + Object.keys(ns).sort().join()), e => console.log("self rejects " + e.message));
+      `,
+      "/lib.cjs": `module.exports = { a: 1, b: 2 };`,
+    },
+    entryPoints: ["/main.cjs"],
+    outputPaths: ["/out/main.js"],
+    splitting: true,
+    splitRequire: false,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/main.js", stdout: "main a,b,own\nself a,b,own" },
+  });
+  // lifted.js gets its wrapper from the require() in main.cjs, which the linker reads after lifted.js itself.
+  itBundled("splitting/DynamicImportOfItselfInWrappedFile/LiftedCommonJSWrappedByALaterFile", {
+    files: {
+      "/lifted.js": /* js */ `
+        exports.a = 1;
+        import("./lifted.js").then(m => console.log("self", Object.keys(m).sort().join(), m.a));
+      `,
+      "/main.cjs": `const l = require("./lifted.js"); console.log("main " + l.a);`,
+    },
+    entryPoints: ["/lifted.js", "/main.cjs"],
+    outputPaths: ["/out/lifted.js", "/out/main.js"],
+    splitting: true,
+    splitRequire: false,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/main.js", stdout: "main 1\nself a,default 1" },
+  });
+  // The calls are made after the file has run, from another file.
+  itBundled("splitting/DynamicImportOfItselfCalledTwiceAfterTheFileRan", {
+    files: {
+      "/main.js": /* js */ `
+        import { again, n } from "./s.js";
+        const [a, b] = await Promise.all([again(), again()]);
+        console.log(a === b, a.n === n, Object.keys(a).sort().join(","));
+      `,
+      "/s.js": /* js */ `
+        export const n = 1;
+        export const again = () => import("./s.js");
+      `,
+    },
+    entryPoints: ["/main.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/main.js", stdout: "true true again,n" },
+  });
+  // A page script that imports itself: the call names a chunk that the browser can fetch.
+  itBundled("splitting/DynamicImportOfItselfInHTMLPage", {
+    files: {
+      "/index.html": /* html */ `<script type="module" src="./app.ts"></script>`,
+      "/app.ts": /* ts */ `
+        export const name = "app"
+        import('./app.ts').then(m => console.log("self", m.name))
+      `,
+    },
+    entryPoints: ["/index.html"],
+    splitting: true,
+    target: "browser",
+    outdir: "/out",
+    onAfterBundle(api) {
+      const js = jsFilesIn(api);
+      const code = js.map(f => api.readFile("/out/" + f)).join("\n");
+      expect(code).not.toContain("require_app");
+      const [, chunk] = code.match(/import\("\.\/(app-[a-z0-9]+\.js)"\)/) ?? [];
+      expect(js).toContain(chunk);
+    },
+  });
+  // The same page imported by a server: the manifest lists the chunk that the call names.
+  itBundled("splitting/DynamicImportOfItselfInHTMLPageOfServerBuild", {
+    files: {
+      "/main.ts": /* ts */ `
+        import page from './index.html'
+        console.log(page.files.filter(file => /app-[a-z0-9]+\.js$/.test(file.path)).length)
+      `,
+      "/index.html": /* html */ `<script type="module" src="./app.ts"></script>`,
+      "/app.ts": /* ts */ `
+        export const name = "app"
+        import('./app.ts').then(m => console.log("self", m.name))
+      `,
+    },
+    entryPoints: ["/main.ts"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/main.js", stdout: "1" },
+  });
+  itBundled("splitting/DynamicImportOfItselfInMetafile", {
+    files: {
+      "/main.js": `import "./s.js";`,
+      "/s.js": /* js */ `
+        export const s = 1;
+        import("./s.js").then(ns => console.log(ns.s));
+      `,
+    },
+    entryPoints: ["/main.js"],
+    splitting: true,
+    metafile: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      const metafile = JSON.parse(api.readFile("/metafile.json"));
+      const [input] = Object.entries<any>(metafile.inputs).find(([k]) => k.endsWith("s.js"))!;
+      const records = metafile.inputs[input].imports.filter((i: any) => i.kind === "dynamic-import");
+      expect(records).toHaveLength(1);
+      // The record names the chunk of s.js, as an import() of s.js from any other file does.
+      const chunk = Object.keys(metafile.outputs).find(k => metafile.outputs[k].entryPoint === input);
+      expect(chunk).toBeDefined();
+      expect(records[0].path).toBe(chunk);
+    },
+    run: { file: "/out/main.js", stdout: "1" },
+  });
+  test("splitting/DynamicImportOfItselfNamesItsHashedChunkTheSameInTwoBuilds", async () => {
+    using dir = tempDir("splitting-self-import-hash", {
+      "main.js": /* js */ `
+        export const s = 1;
+        import("./main.js").then(ns => console.log(ns.s));
+      `,
+    });
+    const build = async (outdir: string) => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "build",
+          "./main.js",
+          "--splitting",
+          "--entry-naming=[name]-[hash].[ext]",
+          "--outdir=" + outdir,
+        ],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      const [name] = readdirSync(join(String(dir), outdir));
+      return { name, text: readFileSync(join(String(dir), outdir, name), "utf8") };
+    };
+    const [first, second] = [await build("out1"), await build("out2")];
+    expect(first.name).toMatch(/^main-[a-z0-9]{8}\.js$/);
+    expect(first.text).toContain(`import("./${first.name}")`);
+    expect(second).toEqual(first);
+  });
+
   // An entry point takes a fold only with [hash] in its name, so a fold test runs with both kinds of name.
   function itFolds(
     id: string,

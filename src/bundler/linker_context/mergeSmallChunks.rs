@@ -812,7 +812,9 @@ pub(crate) fn merge_small_chunks(
             }
             for &record_index in part.import_record_indices.iter() {
                 let record = &records[record_index as usize];
+                // An `import()` of the file itself makes the file load no other chunk.
                 if !record.source_index.is_valid()
+                    || record.source_index.get() == source_index
                     || !this.is_external_dynamic_import(record, source_index)
                 {
                     continue;

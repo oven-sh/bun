@@ -681,6 +681,11 @@ pub struct PosixStreamingWriter<Parent: PosixStreamingWriterParent> {
     pub is_done: bool,
     pub(crate) closed_without_reporting: bool,
     pub force_sync: bool,
+    /// Whether closing the writer also closes its fd (off the event-loop
+    /// thread, via `Closer`). Off when the parent owns the fd and closes it
+    /// itself once `on_close` has been reported (`PosixPipe`); the poll is
+    /// released either way. Same knob as `PosixBufferedWriter::close_fd`.
+    pub close_fd: bool,
     /// Last reported `WriteStatus == Pending` (i.e. write(2) returned EAGAIN).
     backed_up: core::cell::Cell<bool>,
     rwf_unsupported: core::cell::Cell<bool>,
@@ -695,6 +700,7 @@ impl<Parent: PosixStreamingWriterParent> Default for PosixStreamingWriter<Parent
             is_done: false,
             closed_without_reporting: false,
             force_sync: false,
+            close_fd: true,
             backed_up: core::cell::Cell::new(false),
             rwf_unsupported: core::cell::Cell::new(false),
         }
@@ -875,7 +881,8 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         if self.get_fd() != Fd::INVALID {
             debug_assert!(!self.closed_without_reporting);
             self.closed_without_reporting = true;
-            self.handle.close(None, None::<fn(*mut c_void)>);
+            self.handle
+                .close_impl(None, None::<fn(*mut c_void)>, self.close_fd);
         }
     }
 
@@ -1124,10 +1131,11 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         }
 
         let parent = self.parent;
-        self.handle.close(
+        self.handle.close_impl(
             Some(parent.cast()),
             // SAFETY: parent was set via set_parent with a *mut Parent.
             Some(|ctx: *mut c_void| unsafe { Parent::on_close(ctx.cast::<Parent>()) }),
+            self.close_fd,
         );
     }
 

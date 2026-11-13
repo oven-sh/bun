@@ -2088,6 +2088,172 @@ describe("Socket fd adoption", () => {
       exitCode: 0,
     });
   });
+
+  // The adopted fd is owned, not borrowed (node: uv_pipe_open + uv_close):
+  // destroying the socket closes it, on the event-loop thread, before 'close'
+  // is emitted. fstat() right after 'close' is therefore EBADF, never a race
+  // against a close(2) still queued on a pool thread. The FIFO's other end,
+  // which the socket never saw, stays open.
+  it.skipIf(isWindows)("destroy() closes the adopted fd (> 2) before 'close' fires, without EOF", async () => {
+    const { rfd, wfd } = openFifo("destroy-open.fifo");
+    try {
+      const socket = new Socket({ fd: rfd, readable: true });
+      const errors: string[] = [];
+      socket.on("error", err => errors.push((err as NodeJS.ErrnoException).code!));
+      const data = once(socket, "data");
+      fs.writeSync(wfd, "ping");
+      expect(String((await data)[0])).toBe("ping");
+      expect(fstatCode(rfd)).toBe("open");
+
+      let fdAtClose: string | undefined;
+      const closed = new Promise<void>(resolve =>
+        socket.once("close", () => {
+          fdAtClose = fstatCode(rfd);
+          resolve();
+        }),
+      );
+      socket.destroy();
+      await closed;
+      expect({ errors, fdAtClose, rfd: fstatCode(rfd), wfd: fstatCode(wfd) }).toEqual({
+        errors: [],
+        fdAtClose: "EBADF",
+        rfd: "EBADF",
+        wfd: "open",
+      });
+    } finally {
+      fs.closeSync(wfd);
+    }
+  });
+
+  // An fd open for both directions (a FIFO opened O_RDWR: what it writes, it
+  // reads back) is read and written through two descriptors, the fd itself
+  // and a dup() of it, since epoll registers a given fd once. Both are gone
+  // once 'close' fires. Runs in a child so the fd table is otherwise still.
+  it.skipIf(isWindows)("closes both halves of a read-write adopted fd once 'close' fires", async () => {
+    const path = join(tmpdirSync(), "loopback.fifo");
+    execFileSync("mkfifo", [path]);
+    const script = /* js */ `
+      const fs = require("node:fs");
+      const net = require("node:net");
+      const openFds = () => fs.readdirSync("/dev/fd").map(Number);
+      const fstatCode = fd => {
+        try {
+          fs.fstatSync(fd);
+          return "open";
+        } catch (e) {
+          return e.code;
+        }
+      };
+      const before = openFds();
+      const fd = fs.openSync(${JSON.stringify(path)}, "r+");
+      const socket = new net.Socket({ fd, readable: true, writable: true });
+      socket.on("error", err => console.log(JSON.stringify({ error: err.code })));
+      socket.once("data", chunk => {
+        const got = String(chunk);
+        // While open: the fd and the writer's dup.
+        const dupInUse = openFds().filter(n => !before.includes(n)).length >= 2;
+        socket.once("close", () => {
+          const leaked = openFds().filter(n => !before.includes(n));
+          console.log(JSON.stringify({ got, dupInUse, fd: fstatCode(fd), leaked }));
+        });
+        socket.destroy();
+      });
+      socket.write("loop");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ report: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
+      report: JSON.stringify({ got: "loop", dupInUse: true, fd: "EBADF", leaked: [] }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Stdio is the exception to ownership: fds 0-2 are only ever dup()'d, so
+  // the socket going away neither closes fd 0 nor leaves O_NONBLOCK on it
+  // (the flag lives on the open file description, so setting it on the dup
+  // would have changed fd 0 too). The child's fd 0 is a *blocking* FIFO read
+  // end; after the socket has closed, fd 0 is still open, still blocking, and
+  // a plain blocking read(2) on it still works.
+  it.skipIf(isWindows)("an adopted fd 0 is neither closed nor switched to O_NONBLOCK by the socket", async () => {
+    const path = join(tmpdirSync(), "stdin.fifo");
+    execFileSync("mkfifo", [path]);
+    // A blocking read end needs a writer to exist, and a writer needs a reader:
+    // a throwaway non-blocking read end breaks the cycle.
+    const tmp = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+    const wfd = fs.openSync(path, "w");
+    const rfd = fs.openSync(path, "r");
+    fs.closeSync(tmp);
+    try {
+      const script = /* js */ `
+        const fs = require("node:fs");
+        const net = require("node:net");
+        // O_NONBLOCK is 0o4000 on Linux; elsewhere the blocking read below is the check.
+        const nonblocking = () =>
+          process.platform === "linux"
+            ? (parseInt(fs.readFileSync("/proc/self/fdinfo/0", "utf8").match(/^flags:\\s*(\\d+)/m)[1], 8) & 0o4000) !== 0
+            : false;
+        const fstatCode = fd => {
+          try {
+            fs.fstatSync(fd);
+            return "open";
+          } catch (e) {
+            return e.code;
+          }
+        };
+        const socket = new net.Socket({ fd: 0, readable: true });
+        socket.on("error", err => console.log(JSON.stringify({ error: err.code })));
+        socket.once("data", chunk => {
+          const got = String(chunk);
+          socket.once("close", () => {
+            console.log(JSON.stringify({ got, stdin: fstatCode(0), nonblocking: nonblocking() }));
+            const buf = Buffer.alloc(64);
+            const n = fs.readSync(0, buf);
+            console.log(JSON.stringify({ after: buf.toString("utf8", 0, n) }));
+          });
+          socket.destroy();
+        });
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdin: rfd,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      fs.writeSync(wfd, "ping");
+      // The second line can only be read once the first was printed (the fd
+      // is blocking): the bytes for it are written in response to the first.
+      let stdout = "";
+      let wroteAfter = false;
+      const decoder = new TextDecoder();
+      for await (const chunk of proc.stdout) {
+        stdout += decoder.decode(chunk, { stream: true });
+        if (!wroteAfter && stdout.includes("\n")) {
+          wroteAfter = true;
+          fs.writeSync(wfd, "after\n");
+        }
+      }
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const lines = stdout
+        .trim()
+        .split("\n")
+        .map(line => JSON.parse(line));
+      expect({ lines, stderr: stderr.trim(), exitCode }).toEqual({
+        lines: [{ got: "ping", stdin: "open", nonblocking: false }, { after: "after\n" }],
+        stderr: "",
+        exitCode: 0,
+      });
+    } finally {
+      fs.closeSync(rfd);
+      fs.closeSync(wfd);
+    }
+  });
 });
 
 describe.concurrent("socket that already sent FIN and is paused with unread data", () => {

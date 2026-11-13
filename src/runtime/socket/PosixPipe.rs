@@ -20,12 +20,17 @@
 //! - `on_close` fires once, when every half that was started is done, and
 //!   releases the connection's ref on the owning context.
 //!
-//! Fd ownership: the reader and writer each own the fd they were started
-//! with and close it when they finish. The adopted fd itself is handed to one
-//! of them (the other half gets a `dup`), except for fds 0-2, which are only
-//! ever `dup`'d: stdio is never closed and never switched to `O_NONBLOCK`
-//! through this path (`O_NONBLOCK` lives on the open file description, so
-//! setting it on a dup would change stdio too).
+//! Fd ownership: the adopted fd is owned, not borrowed (node's `uv_pipe_open`
+//! semantics): it is handed to the reader, or to the writer when the fd is
+//! write-only, and the other half gets a `dup` (epoll registers an fd once,
+//! so two polls cannot share one). Fds 0-2 are the exception: stdio is only
+//! ever `dup`'d, never closed and never switched to `O_NONBLOCK` through this
+//! path (`O_NONBLOCK` lives on the open file description, so setting it on a
+//! dup would change stdio too). The reader's and writer's own fd-closing is
+//! turned off: `close_read_fd` / `close_write_fd` close each half's fd on
+//! this thread before `on_end` / `on_close` are reported, so the fd is
+//! already gone when JS sees `'close'` (the `Closer` the halves would use
+//! closes on a pool thread, which the tests could observe as a still-open fd).
 
 use core::cell::Cell;
 use core::ffi::{c_int, c_uint, c_void};
@@ -61,6 +66,11 @@ pub(crate) struct PosixPipe {
     /// The fd `open` adopted, for `PosixPipe__fd` (`socket.fd` / `getFd`).
     /// The reader / writer hold their own handles to it.
     pub(crate) fd: Cell<Fd>,
+    /// The fds the reader / writer were started with; `Fd::INVALID` before
+    /// `open` and once closed. Closed by `close_read_fd` / `close_write_fd`
+    /// (see the module doc), never by the halves themselves.
+    read_fd: Cell<Fd>,
+    write_fd: Cell<Fd>,
     /// The per-thread VM singleton outlives this struct (it is torn down only
     /// at thread exit, after every pipe is closed), so `&'static` is the
     /// honest model here rather than a threaded lifetime.
@@ -287,6 +297,8 @@ impl PosixPipe {
         if self.flags.get().contains(Flags::OPENING) {
             return;
         }
+        // Before `on_end`: the fd is gone by the time JS sees the event.
+        self.close_read_fd();
         let _keep_alive = self.keep_alive();
         (self.handlers.on_end)(self.handlers.ctx);
         self.end_writer_or_finish();
@@ -303,6 +315,7 @@ impl PosixPipe {
             self.open_error.set(Some(err));
             return;
         }
+        self.close_read_fd();
         let _keep_alive = self.keep_alive();
         self.on_error(err);
     }
@@ -362,14 +375,18 @@ impl PosixPipe {
         self.on_error(err);
     }
 
-    /// The writer released its fd. The reader, if still running, goes with it;
-    /// once both halves are done the connection is closed.
+    /// The writer released its poll (not its fd: `close_fd` is off). The
+    /// reader, if still running, goes with it; once both halves are done the
+    /// connection is closed.
     fn on_writer_close(&self) {
         bun_output::scoped_log!(PosixPipe, "onWriterClose");
         if self.flags.get().contains(Flags::WRITER_DONE) {
             return;
         }
         self.update_flags(|f| f.insert(Flags::WRITER_DONE));
+        // Reached from inside the writer's `close()`, so only the fd is
+        // touched here, never `self.writer`.
+        self.close_write_fd();
         if self.flags.get().contains(Flags::OPENING) {
             return;
         }
@@ -377,6 +394,34 @@ impl PosixPipe {
     }
 
     // ── shared teardown ─────────────────────────────────────────────────────
+
+    /// Releases the reader's poll and closes the fd it was started with, on
+    /// this thread. Idempotent.
+    fn close_read_fd(&self) {
+        self.reader.with_mut(|r| {
+            // Marks the reader done, which stops the read loop this may be
+            // running under (a `destroy()` from a 'data' handler) before that
+            // loop reads the fd again. Set by hand: `deinit` only sets it
+            // while the handle is open, and asserts it is not set yet.
+            r.flags.insert(PosixFlags::CLOSED_WITHOUT_REPORTING);
+            r.handle.close_without_closing_fd();
+            r.deinit();
+        });
+        let fd = self.read_fd.replace(Fd::INVALID);
+        if fd != Fd::INVALID {
+            fd.close();
+        }
+    }
+
+    /// Closes the fd the writer was started with, on this thread. The writer
+    /// has already released its poll (`on_writer_close`, `end()`, or its
+    /// `Drop`). Idempotent.
+    fn close_write_fd(&self) {
+        let fd = self.write_fd.replace(Fd::INVALID);
+        if fd != Fd::INVALID {
+            fd.close();
+        }
+    }
 
     /// End the writer (after its buffered bytes drain), or close straight away
     /// when there is no writer left to wait for.
@@ -388,12 +433,12 @@ impl PosixPipe {
         }
     }
 
-    /// Stop the reader without a callback (its fd closes with it) and report
-    /// the close once.
+    /// Stop the reader without a callback, close its fd, and report the close
+    /// once.
     fn finish_close(&self) {
         if self.flags.get().reader_active() {
             self.update_flags(|f| f.insert(Flags::READER_DONE));
-            self.reader.with_mut(|r| r.deinit());
+            self.close_read_fd();
         }
         self.on_close();
     }
@@ -663,6 +708,8 @@ impl PosixPipe {
             deferred_writer_close: Cell::new(false),
             root: Cell::new(core::ptr::null_mut()),
             fd: Cell::new(Fd::INVALID),
+            read_fd: Cell::new(Fd::INVALID),
+            write_fd: Cell::new(Fd::INVALID),
             handlers,
             // defaults:
             reader: JsCell::new(BufferedReader::init::<PosixPipe>()),
@@ -745,8 +792,9 @@ impl PosixPipe {
             info.nonblocking = bun_sys::update_nonblocking(fd, true).is_ok();
         }
 
-        // The reader takes `fd` itself; the writer gets a dup so each half owns
-        // the fd it closes. Stdio is only ever dup'd (never closed, see above).
+        // The reader takes `fd` itself; the writer gets a dup so each half has
+        // its own fd to poll and close. Stdio is only ever dup'd (never
+        // closed, see the module doc).
         let mut dups: [Fd; 2] = [Fd::INVALID; 2];
         let read_fd = if !info.readable {
             Fd::INVALID
@@ -782,6 +830,9 @@ impl PosixPipe {
         if write_fd != Fd::INVALID {
             let started = self.writer.with_mut(|w| {
                 w.set_parent(this);
+                // `close_write_fd` closes it, synchronously, after the writer
+                // reports its close.
+                w.close_fd = false;
                 w.start(write_fd, info.pollable)
             });
             if let Err(err) = started {
@@ -790,6 +841,7 @@ impl PosixPipe {
                 self.update_flags(|f| f.remove(Flags::OPENING));
                 return Err(err);
             }
+            self.write_fd.set(write_fd);
             self.update_flags(|f| f.insert(Flags::HAS_WRITER));
             self.writer.with_mut(|w| {
                 if let Some(poll) = w.get_poll() {
@@ -811,6 +863,8 @@ impl PosixPipe {
             // `on_reader_error` (OPENING parks it in `open_error`).
             let started = self.reader.with_mut(|r| {
                 r.set_parent(this.cast::<c_void>());
+                // `close_read_fd` releases the poll and closes the fd.
+                r.flags.remove(PosixFlags::CLOSE_HANDLE);
                 if info.nonblocking {
                     r.flags.insert(PosixFlags::NONBLOCKING);
                 }
@@ -832,7 +886,8 @@ impl PosixPipe {
                     r.deinit();
                 });
                 if self.flags.get().contains(Flags::HAS_WRITER) {
-                    // Quiet: OPENING makes `on_writer_close` only record it.
+                    // Quiet: OPENING makes `on_writer_close` only record it
+                    // and close the writer's dup.
                     self.writer.with_mut(|w| w.end());
                     self.update_flags(|f| f.insert(Flags::WRITER_DONE));
                 }
@@ -844,6 +899,7 @@ impl PosixPipe {
                 });
                 return Err(err);
             }
+            self.read_fd.set(read_fd);
             self.update_flags(|f| f.insert(Flags::HAS_READER));
             if info.nonblocking {
                 self.reader.with_mut(|r| {
@@ -1059,13 +1115,15 @@ impl PosixPipe {
         // A TLS close_notify (`ssl_on_close`) reaches here with both halves
         // still open: close them now rather than when the context is freed a
         // tick later. Both flags are set first so the writer's close callback
-        // does not re-enter `finish_close` → `on_close`.
+        // does not re-enter `finish_close` → `on_close` (and so skips the fd:
+        // closed below instead).
         let flags = self.flags.get();
         self.update_flags(|f| f.insert(Flags::READER_DONE | Flags::WRITER_DONE));
-        self.reader.with_mut(|r| r.deinit());
+        self.close_read_fd();
         if flags.writer_active() {
             self.writer.with_mut(|w| w.end());
         }
+        self.close_write_fd();
         self.writer.with_mut(|w| w.outgoing.reset());
         if !flags.contains(Flags::WRAPPER_BUSY) {
             self.wrapper.set(None);

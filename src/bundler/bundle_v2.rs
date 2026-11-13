@@ -5450,36 +5450,18 @@ pub mod bv2_impl {
                 let mut js_files: Vec<Index> =
                     Vec::with_capacity(self.graph.ast.len() - self.graph.css_file_count - 1);
 
-                let asts = self.graph.ast.slice();
-                let css_asts = asts.items_css();
-                // SoA columns are physically disjoint slabs but rustc cannot
-                // see that through `&Slice`. Route the two columns we mutate (`parts`,
-                // `import_records`) through `split_raw()` (root-provenance `*mut [T]`,
-                // no `&mut` intermediate) so the per-index `&mut` does not conflict
-                // with the `&asts` reads (`css`, `target`). Mirrors the pattern at
-                // `find_reachable_files` (~L1457). The slab does not resize for the
-                // duration of this loop and no other `&mut` to these columns exists.
-                let ast_raw = asts.split_raw();
-                let parts_col: *mut bun_ast::PartList = ast_raw.parts.cast::<bun_ast::PartList>();
-                let import_records_col: *mut import_record::List =
-                    ast_raw.import_records.cast::<import_record::List>();
-
-                let input_files = self.graph.input_files.slice();
-                let loaders = input_files.items_loader();
-                let sources = input_files.items_source();
                 for index in 1..self.graph.ast.len() {
-                    // SAFETY: `index < ast.len()`; see note above for column aliasing.
-                    let part_list = unsafe { &mut *parts_col.add(index) };
-                    // SAFETY: `index < ast.len()`; see note above for column aliasing.
-                    let import_records = unsafe { &mut *import_records_col.add(index) };
-                    let maybe_css = &css_asts[index];
-                    let target = asts.items_target()[index];
+                    let ast = self.graph.ast.split_mut();
+                    let loaders = self.graph.input_files.items_loader();
+                    let sources = self.graph.input_files.items_source();
+                    let import_records = &mut ast.import_records[index];
+                    let target = ast.target[index];
                     // Dev Server proceeds even with failed files.
                     // These files are filtered out via the lack of any parts.
                     //
                     // Actual empty files will contain a part exporting an empty object.
-                    if part_list.len() != 0 {
-                        if maybe_css.is_some() {
+                    if ast.parts[index].len() != 0 {
+                        if ast.css[index].is_some() {
                             // CSS has restrictions on what files can be imported.
                             // This means the file can become an error after
                             // resolution, which is not usually the case.
@@ -5489,7 +5471,7 @@ pub mod bv2_impl {
                             if LinkerContext::scan_css_imports(
                                 u32::try_from(index).expect("int cast"),
                                 import_records.as_slice(),
-                                css_asts,
+                                ast.css,
                                 sources,
                                 loaders,
                                 &mut log,
@@ -5537,13 +5519,7 @@ pub mod bv2_impl {
                                 if loaders[record.source_index.get() as usize] != Loader::Css {
                                     continue;
                                 }
-                                // SAFETY: `source_index < ast.len()` (validated above); read
-                                // via the raw column ptr so we don't reborrow `asts.parts()`
-                                // while `import_records` (a sibling column) is held `&mut`.
-                                if unsafe {
-                                    (*parts_col.add(record.source_index.get() as usize)).len()
-                                } == 0
-                                {
+                                if ast.parts[record.source_index.get() as usize].len() == 0 {
                                     record.source_index = Index::INVALID;
                                     // The importer isn't bundled again when the stylesheet is fixed, so its
                                     // output must treat this import the same as a stylesheet that didn't fail.
@@ -5577,7 +5553,7 @@ pub mod bv2_impl {
                 // Find CSS entry points. Originally, this was computed up front, but
                 // failed files do not remember their loader, and plugins can
                 // asynchronously decide a file is CSS.
-                let css = asts.items_css();
+                let css = self.graph.ast.items_css();
                 for entry_point in &self.graph.entry_points {
                     if css[entry_point.get() as usize].is_some() {
                         start.css_entry_points.put(
@@ -7855,30 +7831,22 @@ pub mod bv2_impl {
         ProbablyTypescriptType,
     }
 
-    /// `import_data` is a raw slice into
-    /// `graph.meta[i].resolved_exports[..].potentially_ambiguous_export_star_refs`.
-    /// The graph SoA is never reallocated during `match_import_with_export`, so
-    /// the pointer stays valid for the iterator's lifetime; the caller only reads
-    /// `.data` from each entry.
-    pub struct ImportTrackerIterator {
+    pub struct ImportTrackerIterator<'a> {
         pub(crate) status: ImportTrackerStatus,
         pub(crate) value: crate::ImportTracker,
-        /// Backref into the link-graph SoA (`graph.meta[..].resolved_exports[..].
-        /// potentially_ambiguous_export_star_refs`). `BackRef` (not `*const [T]`)
-        /// so the single read site in `match_import_with_export` is a safe `Deref`;
-        /// the pointee slab is never reallocated while the iterator is live.
-        pub(crate) import_data: bun_ptr::BackRef<[crate::ImportData]>,
+        /// `potentially_ambiguous_export_star_refs` of the export that was found.
+        pub(crate) import_data: &'a [crate::ImportData],
         /// `Found` an `export default X` where `X` is an import in that file
         /// (`Ast::export_default_alias_of_import`).
         pub(crate) default_alias_of: bun_ast::Ref,
     }
 
-    impl Default for ImportTrackerIterator {
+    impl Default for ImportTrackerIterator<'_> {
         fn default() -> Self {
             Self {
                 status: ImportTrackerStatus::default(),
                 value: crate::ImportTracker::default(),
-                import_data: bun_ptr::BackRef::new(&[] as &[crate::ImportData]),
+                import_data: &[],
                 default_alias_of: bun_ast::Ref::NONE,
             }
         }

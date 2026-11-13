@@ -2246,7 +2246,7 @@ impl DescribeScope {
         phase: AddedInPhase,
     ) {
         let entry = ExecutionEntry::create(None, callback, cfg, Some(&mut *self), base, phase);
-        // `create` drops the callback in a skipped scope, and a hook entry without one would be reported as a test.
+        // `create` drops the callback in a skipped scope. A hook kept without one would still get a group of its own, which splits a concurrent group.
         if entry.callback.is_none() {
             return;
         }

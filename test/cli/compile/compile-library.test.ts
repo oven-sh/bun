@@ -1339,43 +1339,31 @@ export function make(options: Host.Options): number {
       ],
     },
     {
-      title: "gets a number where the bundle reads it for the metadata of a decorator",
-      name: "Host",
+      title: "gets a number where only the JSX factory of the project reads it",
+      name: "Dom",
       files: {
         "tsconfig.json": JSON.stringify({
-          compilerOptions: {
-            ...JSON.parse(tsconfig).compilerOptions,
-            experimentalDecorators: true,
-            emitDecoratorMetadata: true,
-          },
+          compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, jsx: "react", jsxFactory: "Dom.h" },
         }),
-        "src/index.ts": `declare namespace Host {
-  const version: number;
-  interface Shape {
-    id: number;
-  }
+        "src/index.tsx": `declare namespace Dom {
+  function h(tag: unknown, props: unknown, ...children: unknown[]): JSX.Element;
 }
 declare global {
-  namespace Reflect {
-    function decorate(...parameters: unknown[]): any;
-    function metadata(key: unknown, value: unknown): any;
+  namespace JSX {
+    interface IntrinsicElements {
+      div: {};
+    }
+    interface Element {
+      tag: unknown;
+    }
   }
 }
-declare function dec(target: unknown, key: string, descriptor: PropertyDescriptor): void;
-export class Finder {
-  @dec
-  find(shape: Host.Shape) {
-    return shape.id + Host.version;
-  }
+export function view() {
+  return <div />;
 }
 `,
       },
-      lines: [
-        "declare namespace Host2 {",
-        "find(shape: Host2.Shape) {",
-        "return shape.id + Host.version;",
-        'typeof Host === "undefined" || typeof Host.Shape === "undefined" ? Object : Host.Shape',
-      ],
+      lines: ["declare namespace Dom2 {", 'return /* @__PURE__ */ Dom.h("div", null);'],
     },
     {
       title: "gets a number where a banner reads its name",
@@ -1405,7 +1393,8 @@ export class Finder {
 
   test.each(names.map(named => [named.title, named] as const))("a declared namespace %s", async (_, named) => {
     using dir = tempDir("library-typed-file-declared-names", library(named.files));
-    const built = await bun(String(dir), "compile", "--library", "src/index.ts", ...(named.flags ?? []));
+    const entry = "src/index.tsx" in named.files ? "src/index.tsx" : "src/index.ts";
+    const built = await bun(String(dir), "compile", "--library", entry, ...(named.flags ?? []));
     expect(built).toMatchObject({ stderr: "", exitCode: 0 });
     const hasName = new RegExp(`(?<![\\w$])${named.name}\\d*(?![\\w$])`);
     const found = typedFile(dir)

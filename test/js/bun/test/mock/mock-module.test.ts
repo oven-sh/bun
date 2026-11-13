@@ -5723,6 +5723,7 @@ describe.concurrent("a test file's module mocks are undone when it ends, even wi
       },
     });
   `;
+  // One of the runs below has --timeout=100, which is for the wait between files and not for this test.
   const nextLoadsTheModules = `
     import { expect, test } from "bun:test";
     import { seen } from "./user.js";

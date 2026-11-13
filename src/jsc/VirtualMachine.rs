@@ -6593,8 +6593,6 @@ impl VirtualMachine {
         let state = &self.test_isolation_state;
         if state.shares_global && state.file_context == crate::ContextId::NONE {
             let global = self.global();
-            // What the snapshot below cannot see: the listeners of `globalThis`, what `performance` holds, the capture
-            // callback of `process`.
             Bun__TestGlobals__resetNativeState(global);
             // The first call snapshots the globals. Later calls restore them.
             let restore_globals = crate::cpp::Bun__TestGlobals__getRestoreFunction(global)?;

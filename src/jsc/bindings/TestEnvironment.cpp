@@ -27,8 +27,7 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__TestGlobals__g
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(Bun::DeclaredModuleLoad::requireForCommandLine(globalObject, Bun::InternalModuleRegistry::InternalTestGlobals)));
 }
 
-// `bun test --isolate=modules`: removes what the last test file left in the native state of the kept global object and of its
-// `process`, which no property shows. What a shared built-in module keeps in its own variables is out of reach from here.
+// `bun test --isolate=modules`: removes the native state, which no property shows, that the last test file left on the global object.
 extern "C" void Bun__TestGlobals__resetNativeState(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);

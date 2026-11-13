@@ -331,7 +331,7 @@ function loadImpl(): Loaded {
   // shim's fallthrough re-emits `uncaughtException` with the origin arg so user
   // listeners still see it.
   function setupExceptionCapture() {
-    // The list of the shim. `bun test --isolate=modules` empties it before each test file.
+    // The list of addUncaughtExceptionCaptureCallback(), which says why it is on `process`.
     if ($getByIdDirectPrivate(process, "uncaughtExceptionCaptureCallbacks")) return;
     require("internal/repl/node-shims").addUncaughtExceptionCaptureCallback(replExceptionCaptureCallback);
   }

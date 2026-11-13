@@ -218,6 +218,8 @@ declare namespace NodeJS {
     noDeprecation?: boolean;
     traceDeprecation?: boolean;
     traceProcessWarnings?: boolean;
+    /** The callbacks behind the capture callback that internal/repl/node-shims sets for node:repl. */
+    $uncaughtExceptionCaptureCallbacks: ((err: unknown) => unknown)[] | undefined;
   }
 }
 

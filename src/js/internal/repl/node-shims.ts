@@ -327,13 +327,9 @@ const getOwnNonIndexProperties: (value: object, filter: number) => (string | sym
 // additive API with a dispatcher list. The shim occupies the exclusive slot
 // for the process lifetime once the first REPL starts — see repl.js
 // setupExceptionCapture() for the rationale.
-//
-// The list is a private property of `process`, not a variable of this module:
-// `bun test --isolate=modules` shares the module between test files, and
-// Bun__TestGlobals__resetNativeState empties the slot and the property before
-// each of them.
 
 function addUncaughtExceptionCaptureCallback(cb: (err: unknown) => unknown) {
+  // On `process`, not in a variable of this module: `bun test --isolate=modules` empties it with the slot for each file.
   let captureCallbacks: ((err: unknown) => unknown)[] | undefined = $getByIdDirectPrivate(
     process,
     "uncaughtExceptionCaptureCallbacks",

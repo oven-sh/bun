@@ -618,7 +618,19 @@ impl PosixPipe {
             let _ = w.flush();
         });
         if !self.flags.get().disconnected() && self.flags.get().writer_active() {
-            let result = self.with_writer(|w| w.flush());
+            let ev = self.event_loop_ctx();
+            let result = self.with_writer(|w| {
+                let result = w.flush();
+                // A synchronous drain reports no `on_write(Drained)`: release
+                // the hold `call_write_or_end` took once nothing is pending, or
+                // an unref()'d socket keeps the process alive after one small
+                // write (the coalescing threshold parks it for exactly this
+                // flush).
+                if !w.has_pending_data() {
+                    w.disable_keeping_process_alive(ev);
+                }
+                result
+            });
             if let WriteResult::Err(err) = result {
                 self.on_error(err);
             }

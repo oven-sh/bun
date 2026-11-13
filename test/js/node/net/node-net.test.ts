@@ -1903,6 +1903,105 @@ describe("Socket fd adoption", () => {
     },
   );
 
+  // Loop liveness of an adopted pipe fd follows libuv's stream rules: the
+  // socket's own ref holds the loop (`unref()` drops it), the reader never
+  // holds it on its own, and bytes the kernel has not taken yet hold it until
+  // they are written. So an unref()'d writer with a write larger than the pipe
+  // buffer keeps the process running, the unref()'d reader at the other end is
+  // serviced meanwhile, and the process exits by itself once the write is done.
+  it.skipIf(isWindows)("an unref()'d adopted fd keeps the loop alive only while a write is pending", async () => {
+    const dir = tmpdirSync();
+    execFileSync("mkfifo", [join(dir, "pending-write.fifo")]);
+    const size = 256 * 1024;
+    const script = /* js */ `
+      const fs = require("node:fs");
+      const net = require("node:net");
+      const path = ${JSON.stringify(join(dir, "pending-write.fifo"))};
+      const rfd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+      const wfd = fs.openSync(path, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+      const errors = [];
+      let received = 0;
+      let written = false;
+      const reader = new net.Socket({ fd: rfd, readable: true });
+      reader.unref();
+      reader.on("error", err => errors.push("reader:" + err.code));
+      reader.on("data", chunk => (received += chunk.length));
+      const writer = new net.Socket({ fd: wfd, readable: true, writable: true });
+      writer.on("error", err => errors.push("writer:" + err.code));
+      writer.write(Buffer.alloc(${size}, "w"), () => (written = true));
+      writer.unref();
+      process.on("exit", () => console.log(JSON.stringify({ errors, written, received })));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const report = JSON.parse(stdout.trim() || "null");
+    // A pipe holds at most 64 KiB, so anything beyond that was written after
+    // the script finished, by a loop only the pending write was holding; the
+    // last chunk may still sit in the pipe when the write completes and the
+    // loop lets go.
+    expect({
+      errors: report?.errors,
+      written: report?.written,
+      receivedPastPipeBuffer: report?.received > 64 * 1024,
+      receivedAtMost: report?.received <= size,
+      stderr: stderr.trim(),
+      exitCode,
+    }).toEqual({
+      errors: [],
+      written: true,
+      receivedPastPipeBuffer: true,
+      receivedAtMost: true,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A write the kernel took right away (flushed synchronously, below the
+  // writer's coalescing threshold) leaves nothing pending: the hold it took
+  // must be released on that path too, or an unref()'d socket pins the process.
+  it.skipIf(isWindows)("an unref()'d adopted fd lets the process exit once a small write is flushed", async () => {
+    const dir = tmpdirSync();
+    execFileSync("mkfifo", [join(dir, "small-write.fifo")]);
+    const script = /* js */ `
+      const fs = require("node:fs");
+      const net = require("node:net");
+      const path = ${JSON.stringify(join(dir, "small-write.fifo"))};
+      const rfd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+      const wfd = fs.openSync(path, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+      const writer = new net.Socket({ fd: wfd, readable: true, writable: true });
+      writer.on("error", err => console.log("error:" + err.code));
+      writer.write("ping");
+      writer.unref();
+      process.on("exit", () => {
+        const chunk = Buffer.alloc(64);
+        let out = "";
+        try {
+          out = chunk.toString("utf8", 0, fs.readSync(rfd, chunk));
+        } catch (e) {
+          out = "read:" + e.code;
+        }
+        console.log(out);
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
+      stdout: "ping",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   // Runs in a child so the count starts from zero.
   it.skipIf(isWindows)("releases the native pipe context once the socket has closed", async () => {
     const dir = tmpdirSync();

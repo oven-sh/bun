@@ -2411,6 +2411,253 @@ test("a store reaches the sandbox when the global inherits from the global of an
   expect(Object.keys(sandbox)).toEqual(["a", "s", "z"]);
 });
 
+// Every expected value is what Node.js 26.12.1 returns, except where a comment says otherwise.
+describe("an index key on the global of a contextified object", () => {
+  // The setter leaves what it was given on its receiver.
+  const withSetter = () =>
+    Object.defineProperty({}, 3, {
+      set(value: unknown) {
+        this.seen = value;
+      },
+    });
+  const getterOnly = () => Object.defineProperty({}, 3, { get: () => "g", enumerable: true });
+  const readOnly = () => Object.defineProperty({}, 3, { value: "ro", enumerable: true, configurable: true });
+  // The code calls forget(), and the host deletes index 5 from the contextified object.
+  const withForget = () => {
+    const sandbox: Record<PropertyKey, unknown> = {};
+    return Object.defineProperty(sandbox, "forget", { value: () => delete sandbox[5] });
+  };
+  // A Proxy that lists its `set` and `deleteProperty` traps in `traps` of its target.
+  const recording = (target: Record<PropertyKey, unknown>, refused?: "set" | "deleteProperty") => () => {
+    const traps: string[] = (target.traps = []);
+    const proxy: object = new Proxy(target, {
+      set(target, key, value, receiver) {
+        traps.push(`set ${String(key)} on ${receiver === proxy ? "the Proxy" : "another receiver"}`);
+        return refused !== "set" && Reflect.set(target, key, value);
+      },
+      deleteProperty(target, key) {
+        traps.push(`deleteProperty ${String(key)}`);
+        return refused !== "deleteProperty" && Reflect.deleteProperty(target, key);
+      },
+    });
+    return proxy;
+  };
+
+  // [code, what the contextified object is, the contextified object, the result, the contextified object afterwards]
+  const rows: [string, string, () => any, unknown, unknown][] = [
+    [
+      "this[#5] = 1; [this[#5], 5 in this, Object.keys(this).join()]",
+      "an object",
+      () => ({}),
+      [1, true, "5"],
+      { 5: 1 },
+    ],
+    [
+      "'use strict'; this[#5] = 1; [this[#5], 5 in this, Object.keys(this).join()]",
+      "an object",
+      () => ({}),
+      [1, true, "5"],
+      { 5: 1 },
+    ],
+    ["globalThis[#5] = 'b'; this[#5]", "an object that has the index", () => ({ 5: "a" }), "b", { 5: "b" }],
+    ["this[#1] += 5; this[#1]++; this[#1]", "an object that has the index", () => ({ 1: 1 }), 7, { 1: 7 }],
+    ["this[#5] = Symbol.iterator; typeof this[#5]", "an object", () => ({}), "symbol", { 5: Symbol.iterator }],
+    ["this[#3] = 4; this.length", "an Array", () => [1, 2, 3], 4, [1, 2, 3, 4]],
+    ["this[#0] = 7; this[#0]", "a Uint8Array", () => new Uint8Array(2), 7, new Uint8Array([7, 0])],
+
+    ["this[#3] = 1; this[#3]", "an object with a setter", withSetter, undefined, { seen: 1 }],
+    [
+      "this[#3] = 1; this[#3]",
+      "an object that inherits a setter",
+      () => Object.create(withSetter()),
+      undefined,
+      { seen: 1 },
+    ],
+    ["this[#3] = 1; this[#3]", "an object with only a getter", getterOnly, "g", { 3: "g" }],
+    ["'use strict'; this[#3] = 1; this[#3]", "an object with only a getter", getterOnly, "g", { 3: "g" }],
+    ["this[#3] = 1; this[#3]", "an object with a read-only property", readOnly, "ro", { 3: "ro" }],
+    [
+      "'use strict'; try { this[#3] = 1 } catch (error) { error.name }",
+      "an object with a read-only property",
+      readOnly,
+      "TypeError",
+      { 3: "ro" },
+    ],
+
+    // The global keeps what the contextified object refuses.
+    [
+      "this[#0] = 1; this[#9] = 2; [this[#0], this[#9]]",
+      "a frozen object",
+      () => Object.freeze({ 0: "x" }),
+      ["x", 2],
+      { 0: "x" },
+    ],
+    [
+      "'use strict'; try { this[#0] = 1 } catch (error) { error.name }",
+      "a frozen object",
+      () => Object.freeze({ 0: "x" }),
+      "TypeError",
+      { 0: "x" },
+    ],
+    ["'use strict'; this[#9] = 2; this[#9]", "a frozen object", () => Object.freeze({}), 2, {}],
+    [
+      "this[#9] = 2; this[#9] = 3; [this[#9], delete this[#9], this[#9], 9 in this]",
+      "an object that is not extensible",
+      () => Object.preventExtensions({}),
+      [3, true, undefined, false],
+      {},
+    ],
+    [
+      "this[#3] = 1; this[#3]",
+      "an object that inherits a read-only property",
+      () => Object.create(readOnly()),
+      "ro",
+      {},
+    ],
+    // The store goes on to the global, where a setter that the global inherits gets it with globalThis as its receiver.
+    [
+      "var seen; Object.defineProperty(Object.prototype, 5, { set(value) { seen = [value, this === globalThis]; } }); this[#5] = 1; seen",
+      "an object",
+      () => ({}),
+      [1, true],
+      { 5: 1, seen: [1, true] },
+    ],
+    // A read-only property that the global inherits stops the store before the contextified object.
+    [
+      "Object.defineProperty(Object.prototype, 5, { value: 'read-only' }); this[#5] = 1; this[#5]",
+      "an object",
+      () => ({}),
+      "read-only",
+      {},
+    ],
+    // The global keeps nothing of what the contextified object took.
+    [
+      "this[#5] = 1; forget(); [this[#5], 5 in this]",
+      "an object that the host deletes the index from",
+      withForget,
+      [undefined, false],
+      {},
+    ],
+
+    ["delete this[#0]", "an object that has the index", () => ({ 0: "x" }), true, {}],
+    ["'use strict'; delete this[#0]", "an object that has the index", () => ({ 0: "x" }), true, {}],
+    [
+      "delete globalThis[#0]; [this[#0], 0 in this, Object.keys(this).join()]",
+      "an object that has the index",
+      () => ({ 0: "x" }),
+      [undefined, false, ""],
+      {},
+    ],
+    ["delete this[#7]", "an object", () => ({}), true, {}],
+    ["this[#4] = 1; delete this[#4]; [this[#4], 4 in this]", "an object", () => ({}), [undefined, false], {}],
+    ["delete this[#0]", "a frozen object", () => Object.freeze({ 0: "x" }), false, { 0: "x" }],
+    [
+      "'use strict'; try { delete this[#0] } catch (error) { error.name }",
+      "a frozen object",
+      () => Object.freeze({ 0: "x" }),
+      "TypeError",
+      { 0: "x" },
+    ],
+    [
+      "[delete this[#2], this[#2]]",
+      "an object that inherits the index",
+      () => Object.create({ 2: "inherited" }),
+      [true, "inherited"],
+      {},
+    ],
+    ["delete this[#1]", "an Array", () => [1, 2, 3], true, [1, , 3]],
+    ["[delete this[#0], delete this[#5]]", "a Uint8Array", () => new Uint8Array(2), [false, true], new Uint8Array(2)],
+    ["delete this[#4294967294]", "an object that has the largest index", () => ({ 4294967294: "x" }), true, {}],
+    ["delete this[#4294967295]", "an object with a key above the largest index", () => ({ 4294967295: "x" }), true, {}],
+
+    // A Proxy gets one trap for the operation.
+    ["this[#5] = 1", "a Proxy", recording({}), 1, { 5: 1, traps: ["set 5 on the Proxy"] }],
+    ["'use strict'; this[#5] = 1", "a Proxy", recording({}), 1, { 5: 1, traps: ["set 5 on the Proxy"] }],
+    [
+      "this[#5] = 1; this[#5]",
+      "a Proxy that refuses the store",
+      recording({}, "set"),
+      1,
+      { traps: ["set 5 on the Proxy"] },
+    ],
+    ["delete this[#0]", "a Proxy", recording({ 0: "x" }), true, { traps: ["deleteProperty 0"] }],
+    ["delete this[#7]", "a Proxy", recording({}), true, { traps: ["deleteProperty 7"] }],
+    [
+      "delete this[#0]",
+      "a Proxy that refuses the delete",
+      recording({ 0: "x" }, "deleteProperty"),
+      false,
+      { 0: "x", traps: ["deleteProperty 0"] },
+    ],
+  ];
+
+  // `#5` is written as `5`, which reaches the global as an index, and as `String(5)`, which reaches it as a name.
+  describe.each([
+    ["a number", (code: string) => code.replaceAll("#", "")],
+    ["a string", (code: string) => code.replace(/#(\d+)/g, "String($1)")],
+  ])("given as %s", (_, spell) => {
+    test.each(rows)("%s over %s", (code, _, contextified, result, afterwards) => {
+      const sandbox = contextified();
+      expect([runInContext(spell(code), createContext(sandbox)), sandbox]).toEqual([result, afterwards]);
+    });
+
+    test("reaches the contextified object through the global of another context", () => {
+      const sandbox: Record<number, unknown> = { 0: "x" };
+      const outer = createContext(runInContext("this", createContext(sandbox)));
+      expect([runInContext(spell("this[#1] = 'stored'; delete this[#0]"), outer), sandbox]).toEqual([
+        true,
+        { 1: "stored" },
+      ]);
+    });
+
+    // Node.js 26.12.1 stores it under the key "-2".
+    test("the largest index keeps its key", () => {
+      const sandbox: Record<number, unknown> = {};
+      expect([
+        runInContext(spell("this[#4294967294] = 1; this[#4294967294]"), createContext(sandbox)),
+        sandbox,
+      ]).toEqual([1, { 4294967294: 1 }]);
+    });
+
+    test("vm.constants.DONT_CONTEXTIFY keeps it on the global", () => {
+      const context = createContext(constants.DONT_CONTEXTIFY);
+      expect(runInContext(spell("this[#5] = 1; [this[#5], Object.keys(this).includes('5')]"), context)).toEqual([
+        1,
+        true,
+      ]);
+      expect([context[5], runInContext(spell("delete this[#5]"), context), context[5]]).toEqual([1, true, undefined]);
+    });
+  });
+
+  test("from outside the context", () => {
+    const sandbox: unknown[] = [];
+    const global = runInContext("this", createContext(sandbox));
+    global[1] = "stored";
+    Array.prototype.push.call(global, "pushed");
+    expect(sandbox).toEqual([, "stored", "pushed"]);
+    expect([delete global[1], 1 in global, sandbox]).toEqual([true, false, [, , "pushed"]]);
+  });
+
+  test("with another receiver, the index is defined there", () => {
+    const global = runInContext("this", createContext({}));
+    const receiver = {};
+    expect([Reflect.set(global, 5, "stored", receiver), receiver]).toEqual([true, { 5: "stored" }]);
+  });
+
+  test("in a loop that the JIT compiles", () => {
+    const sandbox: Record<number, number> = {};
+    const context = createContext(sandbox);
+    expect(runInContext("for (let i = 0; i < 2000; i++) this[i % 7] = i; Object.keys(this).join()", context)).toBe(
+      "0,1,2,3,4,5,6",
+    );
+    expect(sandbox).toEqual({ 0: 1995, 1: 1996, 2: 1997, 3: 1998, 4: 1999, 5: 1993, 6: 1994 });
+    expect(runInContext("for (let i = 0; i < 2000; i++) delete this[i % 7]; Object.keys(this).join()", context)).toBe(
+      "",
+    );
+    expect(sandbox).toEqual({});
+  });
+});
+
 test.concurrent("a sandbox that inherits from the global of its own context", async () => {
   const code = `
     const vm = require("node:vm");
@@ -2609,6 +2856,8 @@ test.concurrent("operations on contexts that are nested too deeply throw a Range
       "in": inner => "missing" in inner,
       "getOwnPropertyDescriptor": inner => Object.getOwnPropertyDescriptor(inner, "missing"),
       "hasOwn": inner => Object.hasOwn(inner, "base"),
+      "set an index": inner => void (inner[0] = 2),
+      "set an index given as a name": inner => Reflect.set(inner, 0, 2),
     };
     let inner = { base: 1 };
     // A level of the others takes less of the stack than one of "get", but not that much less.
@@ -2637,6 +2886,59 @@ test.concurrent("operations on contexts that are nested too deeply throw a Range
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "went all the way down: \n", stderr: "", exitCode: 0 });
+});
+
+// A level of these takes so little of the stack that the test above would need hundreds of contexts more to overflow it.
+test.concurrent("a delete of an index on nested contexts throws a RangeError when the stack runs out", async () => {
+  const fixture = /* js */ `
+    const vm = require("node:vm");
+    const single = vm.runInContext("this", vm.createContext({}));
+    let nested = single;
+    for (let depth = 0; depth < 20; depth++) nested = vm.runInContext("this", vm.createContext(nested));
+    const operations = {
+      "delete an index": inner => delete inner[0],
+      "delete an index given as a name": inner => Reflect.deleteProperty(inner, 0),
+    };
+    for (const name in operations) {
+      // The first call takes more of the stack than the later ones.
+      operations[name](single);
+      operations[name](nested);
+      let outcome;
+      // Unwinds from the overflow to the first call that has the stack for one context. 20 more contexts need more than that.
+      (function descend() {
+        try {
+          descend();
+        } catch (overflow) {
+          if (outcome) return;
+          try {
+            operations[name](single);
+          } catch {
+            throw overflow;
+          }
+          try {
+            operations[name](nested);
+            outcome = "returned";
+          } catch (error) {
+            outcome = error.name;
+          }
+        }
+      })();
+      console.log(name + ":", outcome);
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    // A small stack limit, so descend() overflows it soon.
+    env: { ...bunEnv, BUN_JSC_maxPerThreadStackUsage: isDebug || isASAN ? "450000" : "200000" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "delete an index: RangeError\ndelete an index given as a name: RangeError\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 test.concurrent("DONT_CONTEXTIFY: an accessor's `this` is globalThis in every JIT tier", async () => {

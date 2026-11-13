@@ -1690,6 +1690,17 @@ describe("spyOn", () => {
         expect(sandbox).toMatchObject({ missing: "added", parseInt: "added" });
       });
 
+      test("leaves the sandbox unchanged once a spy on an index is restored", () => {
+        if (!isBun) return;
+        const { sandbox, context, global } = makeContext(contextify);
+        const descriptors = Object.getOwnPropertyDescriptors(sandbox);
+        const fn = spyOn(global, 5).mockReturnValue("spied");
+        expect(vm.runInContext("this[5]", context)).toBe("spied");
+        fn.mockRestore();
+        expect(Object.getOwnPropertyDescriptors(sandbox)).toEqual(descriptors);
+        expect(vm.runInContext("5 in this", context)).toBe(false);
+      });
+
       test("a spy on a key that the sandbox inherits is on the sandbox, where an assignment replaces it", () => {
         const { sandbox, context, global } = makeContext(contextify);
         if (!("toString" in sandbox)) return;

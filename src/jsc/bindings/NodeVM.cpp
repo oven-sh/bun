@@ -1155,6 +1155,64 @@ static bool isSafeToForwardToContextifiedObject(JSGlobalObject* globalObject, Th
     return false;
 }
 
+// JSObject::getPropertySlot(), except that an index is returned and not looked up. That function parses the name only where its walk of
+// named storage ends without an answer, so this adds no parse. Check it against JSObject.h when WebKit is upgraded.
+static ALWAYS_INLINE bool getPropertySlotUnlessIndex(JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName, PropertySlot& slot, std::optional<uint32_t>& index)
+{
+    VM& vm = JSC::getVM(globalObject);
+    while (true) {
+        if (TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags())) [[unlikely]] {
+            if (std::optional<uint32_t> parsed = parseIndex(propertyName)) {
+                index = parsed;
+                return false;
+            }
+            return object->getNonIndexPropertySlot(globalObject, propertyName, slot);
+        }
+        Structure* structure = object->structureID().decode();
+        if (object->getOwnNonIndexPropertySlot(vm, structure, propertyName, slot))
+            return true;
+        JSValue prototype = structure->storedPrototype(object);
+        if (!prototype.isObject())
+            break;
+        object = asObject(prototype);
+    }
+    index = parseIndex(propertyName);
+    return false;
+}
+
+static bool isReadOnlyData(const PropertySlot& slot)
+{
+    return !slot.isAccessor() && (slot.attributes() & PropertyAttribute::ReadOnly);
+}
+
+struct IndexDeclaration {
+    bool isDeclared { false };
+    bool isReadOnly { false };
+};
+
+// V8's GetRealNamedPropertyAttributes() for an index: [[GetOwnProperty]] up the prototype chain, which a Proxy or a typed array ends.
+static IndexDeclaration getIndexDeclaration(JSGlobalObject* globalObject, JSObject* object, unsigned index)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    while (true) {
+        PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
+        bool isOwn = object->methodTable()->getOwnPropertySlotByIndex(object, globalObject, index, slot);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (isOwn)
+            return { true, isReadOnlyData(slot) };
+        if (object->type() == ProxyObjectType)
+            return { true, false };
+        if (isTypedArrayType(object->type()))
+            return {};
+        JSValue prototype = object->getPrototype(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!prototype.isObject())
+            return {};
+        object = asObject(prototype);
+    }
+}
+
 bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
     auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(cell);
@@ -1181,8 +1239,16 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
     }
     bool isDeclaredOnGlobalObject = slot.type() == JSC::PutPropertySlot::NewProperty;
     PropertySlot getter(sandbox, PropertySlot::InternalMethodType::Get, nullptr);
-    bool isDeclaredOnSandbox = sandbox->getPropertySlot(globalObject, propertyName, getter);
+    std::optional<uint32_t> index;
+    bool isDeclaredOnSandbox = getPropertySlotUnlessIndex(globalObject, sandbox, propertyName, getter, index);
     RETURN_IF_EXCEPTION(scope, false);
+    if (index) [[unlikely]] {
+        // Base::put() below hands an index to putByIndex(), which would store a second time. With another receiver it does not.
+        if (!isThisValueAltered(slot, thisObject))
+            RELEASE_AND_RETURN(scope, putByIndex(cell, globalObject, *index, value, slot.isStrictMode()));
+        isDeclaredOnSandbox = sandbox->getPropertySlot(globalObject, *index, getter);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
 
     bool isDeclared = isDeclaredOnGlobalObject || isDeclaredOnSandbox;
     bool isFunction = value.isCallable();
@@ -1207,6 +1273,72 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
 
     slot.setThisValue(thisValue);
     RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
+}
+
+// Node's IndexedPropertySetterCallback, then the rest of V8's store, which that callback ends only at an accessor of the contextified object:
+// https://github.com/nodejs/node/blob/v26.12.1/src/node_contextify.cc#L598-L661
+// Not inlined, so that putByIndex() is only a tail call for a global without a contextified object.
+static NEVER_INLINE bool contextifiedPutByIndex(NodeVMGlobalObject* thisObject, JSGlobalObject* globalObject, unsigned index, JSValue value, bool shouldThrow)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!isSafeToForwardToContextifiedObject(globalObject, scope)) [[unlikely]]
+        return false;
+
+    // The callback stores nothing where the index is read-only, on the global or on the contextified object.
+    JSObject* sandbox = thisObject->contextifiedObject();
+    PropertySlot globalSlot(thisObject, PropertySlot::InternalMethodType::GetOwnProperty);
+    bool isOwnedByGlobal = JSObject::getOwnPropertySlotByIndex(thisObject, globalObject, index, globalSlot);
+    bool isReadOnlyOnGlobal = isOwnedByGlobal && isReadOnlyData(globalSlot);
+    if (JSValue prototype = thisObject->getPrototypeDirect(); !isOwnedByGlobal && prototype.isObject()) {
+        isReadOnlyOnGlobal = getIndexDeclaration(globalObject, asObject(prototype), index).isReadOnly;
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    IndexDeclaration onSandbox = getIndexDeclaration(globalObject, sandbox, index);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (isReadOnlyOnGlobal)
+        return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
+    if (!onSandbox.isReadOnly) {
+        // Sloppy, as in the callback: a store that the contextified object refuses is not an error.
+        sandbox->methodTable()->putByIndex(sandbox, globalObject, index, value, false);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+
+    PropertySlot sandboxSlot(sandbox, PropertySlot::InternalMethodType::GetOwnProperty);
+    bool isOwnedBySandbox = sandbox->methodTable()->getOwnPropertySlotByIndex(sandbox, globalObject, index, sandboxSlot);
+    RETURN_IF_EXCEPTION(scope, false);
+    bool isAccessorOfSandbox = isOwnedBySandbox && sandboxSlot.isAccessor();
+    bool isReadOnlyOfSandbox = isOwnedBySandbox && isReadOnlyData(sandboxSlot);
+    if (isAccessorOfSandbox && onSandbox.isDeclared)
+        return true;
+
+    // The rest is V8's store on the global, which keeps an index of its own up to date.
+    if (isOwnedByGlobal)
+        RELEASE_AND_RETURN(scope, JSObject::putByIndex(thisObject, globalObject, index, value, shouldThrow));
+    // An accessor or a Proxy that the global inherits takes the store, with globalThis as the receiver.
+    if (JSValue prototype = thisObject->getPrototypeDirect(); prototype.isObject()) {
+        bool putResult = false;
+        bool isIntercepted = asObject(prototype)->attemptToInterceptPutByIndexOnHoleForPrototype(globalObject, thisObject->globalThis(), index, value, shouldThrow, putResult);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (isIntercepted)
+            return putResult;
+    }
+    // The contextified object did not take the index as a property of its own, so the global keeps it.
+    if (!isOwnedBySandbox)
+        RELEASE_AND_RETURN(scope, JSObject::putByIndex(thisObject, globalObject, index, value, shouldThrow));
+    if (isAccessorOfSandbox || isReadOnlyOfSandbox)
+        return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
+    // V8 then defines the value on the contextified object (Node's PropertyDefinerCallback), which a Proxy sees as one more trap. As in put(), that is left out.
+    return true;
+}
+
+bool NodeVMGlobalObject::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index, JSValue value, bool shouldThrow)
+{
+    auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(cell);
+    // JSObject::putByIndex() hands an index above MAX_ARRAY_INDEX to put().
+    if (!thisObject->m_sandbox || index > MAX_ARRAY_INDEX)
+        return Base::putByIndex(cell, globalObject, index, value, shouldThrow);
+    return contextifiedPutByIndex(thisObject, globalObject, index, value, shouldThrow);
 }
 
 // [[Get]] that reports whether the property exists. A JSC Proxy always says yes, so without a `get` trap ask its target, like V8.
@@ -1574,7 +1706,39 @@ bool NodeVMGlobalObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObje
         return false;
     }
 
+    // Base::deleteProperty() hands an index to deletePropertyByIndex(), which would delete from the contextified object a second time.
+    // A delete by name fills the slot, so only a name that left it empty is parsed.
+    if (!slot.isCacheableDelete()) [[unlikely]] {
+        if (std::optional<uint32_t> index = parseIndex(propertyName))
+            RELEASE_AND_RETURN(scope, Base::deletePropertyByIndex(cell, globalObject, *index));
+    }
     RELEASE_AND_RETURN(scope, Base::deleteProperty(cell, globalObject, propertyName, slot));
+}
+
+// Node's IndexedPropertyDeleterCallback: https://github.com/nodejs/node/blob/v26.12.1/src/node_contextify.cc#L916-L935
+// Not inlined, for the same reason as contextifiedPutByIndex().
+static NEVER_INLINE bool contextifiedDeletePropertyByIndex(NodeVMGlobalObject* thisObject, JSGlobalObject* globalObject, unsigned index)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!isSafeToForwardToContextifiedObject(globalObject, scope)) [[unlikely]]
+        return false;
+
+    JSObject* sandbox = thisObject->contextifiedObject();
+    bool deleted = sandbox->methodTable()->deletePropertyByIndex(sandbox, globalObject, index);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!deleted)
+        return false;
+    RELEASE_AND_RETURN(scope, JSObject::deletePropertyByIndex(thisObject, globalObject, index));
+}
+
+bool NodeVMGlobalObject::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index)
+{
+    auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(cell);
+    // JSObject::deletePropertyByIndex() hands an index above MAX_ARRAY_INDEX to deleteProperty().
+    if (!thisObject->m_sandbox || index > MAX_ARRAY_INDEX)
+        return Base::deletePropertyByIndex(cell, globalObject, index);
+    return contextifiedDeletePropertyByIndex(thisObject, globalObject, index);
 }
 
 bool NodeVMGlobalObject::setPrototype(JSObject* object, JSGlobalObject* globalObject, JSValue prototype, bool shouldThrowIfCantSet)

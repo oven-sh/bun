@@ -196,7 +196,7 @@ impl Drop for ReportedLog<'_> {
     #[optimize(size)]
     fn drop(&mut self) {
         if self.log.errors > 0 {
-            let _ = self.log.print(std::ptr::from_mut::<bun_core::io::Writer>(bun_output::error_writer()));
+            let _ = self.log.print(bun_output::error_writer());
             self.success.set(false);
         }
     }

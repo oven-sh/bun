@@ -850,10 +850,6 @@ fn fmt_status_text_line(
     }
 }
 
-// `Output::error_writer()` / `Output::writer()` already return an unbounded
-// `&mut io::Writer`; the previous local `err_w`/`out_w` wrappers were no-op
-// reborrows. Call sites use the `Output` accessors directly.
-
 /// Name, message and stack of the error(s) thrown by the test that is
 /// currently failing, captured as they are printed so structured reporters
 /// get them without re-running the exception formatter.
@@ -4287,9 +4283,7 @@ impl Drop for PrintLogAfterFile {
             // SAFETY: the VM owns the Log and outlives `TestCommand::run`.
             let log = unsafe { &mut *log.as_ptr() };
             if log.errors > 0 {
-                let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                    Output::error_writer(),
-                ));
+                let _ = log.print(Output::error_writer());
                 log.msgs.clear();
                 log.errors = 0;
             }

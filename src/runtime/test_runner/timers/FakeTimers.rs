@@ -359,6 +359,15 @@ struct Replaced {
     api: Api,
     original: Strong,
     fake: Strong,
+    /// If `original` is a restored spy when `fake` goes, the spy was restored under `fake`.
+    may_be_restored_under_fake: bool,
+}
+
+impl Replaced {
+    /// True if `original` is a spy that was restored while `fake` was in its place. Its restore has put back what it replaced.
+    fn is_over_spy_restored_since(&self) -> bool {
+        self.may_be_restored_under_fake && JSMock__isRestoredSpy(self.original.get())
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -877,13 +886,12 @@ impl FakeTimers {
                 }
             });
         }
-        for Replaced { api, original, .. } in deactivated.replaced {
-            // Restored while the clock was faked, it has already put back what it replaced.
-            if matches!(api, Api::Date | Api::Performance) && JSMock__isRestoredSpy(original.get())
-            {
+        for replaced in deactivated.replaced {
+            // Restored while the fake timers were on, the spy has already put back what it replaced.
+            if replaced.is_over_spy_restored_since() {
                 continue;
             }
-            api.put(global, original.get());
+            replaced.api.put(global, replaced.original.get());
         }
         deactivated.drives
     }
@@ -907,6 +915,7 @@ impl FakeTimers {
             api,
             fake,
             original,
+            ..
         } in &replaced
         {
             api.put(global, fake.get());
@@ -944,6 +953,8 @@ impl FakeTimers {
             let replaced_now = unsafe { &(*timer_all()).fake_timers.replaced }
                 .iter()
                 .find(|replaced| replaced.api == api)
+                // After the restore of the spy under the fake, the property has what that spy replaced, or what the test put there since.
+                .filter(|replaced| !replaced.is_over_spy_restored_since())
                 .map(|replaced| replaced.original.get());
             let original = match replaced_now {
                 Some(original) => original,
@@ -967,6 +978,7 @@ impl FakeTimers {
                     api,
                     original: Strong::create(original, global),
                     fake: Strong::create(original, global),
+                    may_be_restored_under_fake: false,
                 });
                 continue;
             }
@@ -978,10 +990,16 @@ impl FakeTimers {
                 _ => bun_jsc::cpp::Bun__FakeTimers__createFunction(global, api as u8)?,
             };
             Bun__FakeTimers__setOriginal(global, originals, fake, original);
+            // Saves the calls on `original` for a function that is no mock: a mock function is an `InternalFunction`, and no timer function is one.
+            let is_mock = original.js_type() == bun_jsc::JSType::InternalFunction;
             fakes.push(Replaced {
                 api,
                 original: Strong::create(original, global),
                 fake: Strong::create(fake, global),
+                // A restored spy that the test put on the property itself is a value like any other. On the two clocks it stays off too, as before.
+                may_be_restored_under_fake: is_mock
+                    && (matches!(api, Api::Date | Api::Performance)
+                        || !JSMock__isRestoredSpy(original)),
             });
         }
         Ok(fakes)

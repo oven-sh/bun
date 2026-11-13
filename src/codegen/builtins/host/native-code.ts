@@ -1,7 +1,6 @@
 import * as b from "bun-builtins-table";
 
-export const handedOver = b.handedOver;
-export const objectHandedOver = handedOver;
+export const retainedByNativeCode = b.retainedByNativeCode;
 // Native code of which the table says what it answers and nothing else: it may do with its operands whatever native code can.
 export const constructing = (returns: b.TableType, implementation: typeof b.generic = b.generic) =>
   ({

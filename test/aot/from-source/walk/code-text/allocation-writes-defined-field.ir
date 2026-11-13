@@ -1,0 +1,24 @@
+# -- source: main.ts
+# declare function print(...all: unknown[]): void;
+# interface Options { host?: string; port?: number }
+# function bare(port: number): Options { const o: Options = { port }; Object.defineProperty(o, "host", { value: "defined" }); return o; }
+# function other(port: number): Options { const o: Options = { port }; return o; }
+# print(bare(1).host, other(2).port);
+# -- end of source
+# f1 = bare, f2 = other, L1 = Options. Only Object.defineProperty() gives "host" a value. Its slot is planned as read-only, not enumerable and not configurable, and the structure of L1 lists it that way.
+# An allocation creates a plain data property. Link once missed an allocation, and JSON.stringify() silently dropped the key.
+# RUN(LINK): link fields mechanisms=all
+# LINK: field L1.0 "host" {{*}}form=read-only.not-enumerable.not-configurable.
+# RUN: verify-code mechanisms=all
+# CHECK: {{*}}f2 Body b0 v2 (NewObject): an allocation writes a field that only definitions may write: L1.field0 "host"
+# RUN(WALKED): walk f2 mechanisms=all
+# WALKED: NewObject {{*}} layout=L1 fields=[1]
+# -- code
+# code f2:Body {
+#   v0: "defined" @JSValue = String string="defined"
+#   b0(v1: int[0, 2147483647] @Int32) entry=0:
+#     v2: L1 @Cell = NewObject -, v0, v1 layout=L1 fields=[0, 1] traits=[mayCollect, mayTouchMemory]
+#     v3: L1 @JSValue = Box v2
+#     Return v3
+# }
+# -- end of code

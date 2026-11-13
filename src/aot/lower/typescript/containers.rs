@@ -1,6 +1,7 @@
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, BindingKind, Decl, InitialState, ScopeId, ScopeKind, SymbolId};
 use bun_sema::hir::{self, ModuleName};
+use rustc_hash::FxHashSet;
 
 use crate::ir::ValueId;
 use crate::lower::{FunctionLowering, object, scope};
@@ -23,9 +24,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let locals = bound.scopes[bound.symbol_scope(binding).idx()].locals;
         let local = bound.lookup(locals, name).unwrap_or(binding);
         let declarations = &bound.symbol(local).decls;
-        let first = declarations.iter().find(|&&it| self.produces_code(it));
-        let exported = bound.export_symbol_of_value_symbol_if_exported(binding);
-        let is_exported = bound.symbol(exported).decls.contains(&declaration);
+        let hir = self.file.hir;
+        let first = bound.first_declaration(hir, local, |it| self.produces_code(it));
+        let exported = bound.exported_value(binding);
+        let is_exported = bound.is_exported_by_container(declaration);
         let merged = if is_exported { exported } else { binding };
         let is_stored_by_code = [binding, merged].into_iter().any(|variable| {
             !bound.stores_to(variable).is_empty() || bound.is_visible_to_eval(variable)
@@ -35,11 +37,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             merged,
             name,
             is_single_declaration: declarations.len() == 1
+                && !bound.has_refused_declarations(local)
                 && bound.symbol(exported).decls.len() == 1
                 && !is_stored_by_code
                 && !self.is_inside_name_with_two_tables(bound.symbol_scope(binding))
                 && !(is_exported && self.is_member_of_container(exported)),
-            ends_dead_zone: has_dead_zone && first == Some(&declaration),
+            ends_dead_zone: has_dead_zone && first == Some(declaration),
         }
     }
 
@@ -62,12 +65,26 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             ) else {
                 return false;
             };
-            let locals = bound.scopes[bound.symbol_scope(binding).idx()].locals;
-            let local = bound.lookup(locals, name).unwrap_or(binding);
-            let exported = bound.export_symbol_of_value_symbol_if_exported(binding);
-            let exported = &bound.symbol(exported).decls;
-            (bound.symbol(local).decls.iter()).any(|it| !exported.contains(it))
+            self.has_two_tables(binding, name)
         })
+    }
+
+    fn has_two_tables(&self, binding: SymbolId, name: Atom) -> bool {
+        let known = &self.file.namespaces_with_two_tables;
+        if let Some(&has_two) = known.borrow().get(&binding) {
+            return has_two;
+        }
+        let bound = self.file.bound;
+        let locals = bound.scopes[bound.symbol_scope(binding).idx()].locals;
+        let local = bound.lookup(locals, name).unwrap_or(binding);
+        let exported = bound.exported_value(binding);
+        let has_two = local != exported && {
+            let listed: FxHashSet<Decl> = bound.symbol(exported).decls.iter().copied().collect();
+            let mut declarations = bound.symbol(local).decls.iter();
+            declarations.any(|declaration| !listed.contains(declaration))
+        };
+        known.borrow_mut().insert(binding, has_two);
+        has_two
     }
 
     fn produces_code(&self, declaration: Decl) -> bool {

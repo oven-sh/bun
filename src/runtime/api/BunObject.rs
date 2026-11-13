@@ -866,7 +866,7 @@ pub(crate) fn resolve_sync(
         return Err(global_this.throw_invalid_arguments(format_args!("parent must be a string")));
     };
     let mode = if esm {
-        ResolveMode::Esm
+        ResolveMode::EsmResolve
     } else {
         ResolveMode::Require
     };
@@ -918,7 +918,7 @@ pub(crate) fn bun_resolve_sync(
             global,
             &specifier_str,
             &source_str,
-            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
+            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve).loading_nothing_if_esm(),
         )?
         .into_js(global)
     })
@@ -982,7 +982,7 @@ pub(crate) fn bun_resolve_sync_with_paths(
             global,
             &specifier_str,
             &source_str,
-            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
+            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve).loading_nothing_if_esm(),
         )?
         .into_js(global)
     })
@@ -1264,18 +1264,23 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> 
         };
         let graph = bun_standalone_graph::Graph::get_ref()
             .filter(|_| bun_standalone_graph::is_bun_standalone_file_path(joined));
-        let embedded = graph.and_then(|graph| graph.find_ref(joined));
+        let embedded = graph.and_then(|graph| graph.find_data(joined));
         if graph.is_some_and(|graph| graph.find_dir(joined)) {
             use bun_jsc::SysErrorJsc as _;
             let err = sys::Error::from_code(bun_sys::E::EISDIR, sys::Tag::open).with_path(joined);
             return Err(global_this.throw_value(err.to_js(global_this)));
         }
 
+        let written = bun_standalone_graph::find_written_file(joined);
         let path_len = joined.len();
         buf[path_len] = 0;
+        let written = written.map(|path| bun_core::ZBox::from_vec(path.into_vec()));
 
         // SAFETY: buf[path_len] == 0 written above
-        let buf_z = bun_core::ZStr::from_buf(&buf[..], path_len);
+        let buf_z = match &written {
+            Some(path) => &**path,
+            None => bun_core::ZStr::from_buf(&buf[..], path_len),
+        };
 
         // Conforming applications must specify either MAP_PRIVATE or MAP_SHARED.
         let flags = if options.shared {
@@ -1474,7 +1479,7 @@ fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JS
         // We don't really do that right now, but exposing the output source
         // code here as an easily accessible Blob is even worse for them.
         // So let's omit any source code files from the list.
-        if !file.appears_in_embedded_files_array() {
+        if !file.appears_in_embedded_files_array() || graph.is_file_for_file_system_alone(file) {
             continue;
         }
         sort_indices.push(index as u32);

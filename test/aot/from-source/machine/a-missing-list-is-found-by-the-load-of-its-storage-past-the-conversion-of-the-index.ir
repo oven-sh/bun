@@ -1,0 +1,46 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function makeStack() {
+#     let depth = 0;
+#     let slots: (number | undefined)[] | undefined | null = [];
+#     function push(value: number): void {
+#         slots![depth] = value;
+#         depth++;
+#     }
+#     function pop(): void {
+#         depth--;
+#         slots![depth] = undefined;
+#     }
+#     function lose(how: undefined | null): void { slots = how; }
+#     function show(): string { return depth + " " + String(slots); }
+#     return { push, pop, lose, show };
+# }
+# function tried(what: () => unknown): string {
+#     try {
+#         return "answers " + String(what());
+#     } catch (error) {
+#         return (error as Error).name + ": " + (error as Error).message;
+#     }
+# }
+# const stack = makeStack();
+# for (let turn = 1; turn < 5; ++turn)
+#     stack.push(turn);
+# print(tried(stack.pop), stack.show());
+# print(tried(stack.pop), stack.show());
+# stack.lose(undefined);
+# print(tried(stack.pop), stack.show());
+# print(tried(() => stack.push(9)), stack.show());
+# stack.lose(null);
+# print(tried(stack.pop), stack.show());
+# -- end of source
+# The counter is held as a number, so a conversion stands between the question "is there a list?" and the load of the list's storage.
+# RUN: run-in-shell mechanisms=all
+# CHECK: answers undefined 3 1,2,3,
+# CHECK-NEXT: answers undefined 2 1,2,,
+# CHECK-NEXT: TypeError: undefined is not an object 1 undefined
+# CHECK-NEXT: TypeError: undefined is not an object 1 undefined
+# CHECK-NEXT: TypeError: null is not an object 0 null
+# CHECK-NEXT: exited with 0
+# REQUIRES(HANDED): x86_64 as-written
+# RUN(HANDED): compile NullChecksFoldedIntoAccesses mechanisms=all
+# HANDED: statistic NullChecksFoldedIntoAccesses 8

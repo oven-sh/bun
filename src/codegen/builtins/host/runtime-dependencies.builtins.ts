@@ -1,5 +1,5 @@
 import * as b from "bun-builtins-table";
-import lightStreams from "../../../js/internal/streams/load_all.ts";
+import lightStreams from "../../../js/ahead-of-time/internal/streams/load_all.ts";
 import { pathOfNativeFunction } from "../paths.ts";
 import {
   asyncContextCell,
@@ -289,7 +289,7 @@ const heldAs = (called: b.FunctionRef, property: b.BuiltinPath) => b.functionUse
 // The host brings the list behind `module.children` up to date: (list, child). What the program has stored in the list's place is out of sight from the store on, and the analysis lets the children go with it.
 const moduleChildrenFunctions = [
   b.functionUsed(
-    b.functionIn("builtins/CommonJS", "pushObservableChild"),
+    b.functionIn("builtins/CompiledCommonJS", "pushObservableChild"),
     b.calledByHost({
       times: "Repeatedly",
       args: [b.instance("Array").holding({ element: b.builtin("%ModuleObject%") }), b.builtin("%ModuleObject%")],
@@ -299,7 +299,7 @@ const moduleChildrenFunctions = [
 ];
 
 const requireCacheFunctions = [
-  ...functionsIn("builtins/CommonJS", "createRequireCacheOverCompiledProgram"),
+  ...functionsIn("builtins/CompiledCommonJS", "createRequireCacheOverCompiledProgram"),
   ...moduleChildrenFunctions,
 ];
 
@@ -320,12 +320,24 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   // In an executable the getter is native code.
   "%ModuleRequirePrototype%.main": moduleChildrenFunctions,
   "%ModuleRequirePrototype%.resolve": functionsIn("builtins/CommonJS", "requireResolve"),
-  "Array.prototype.sort": functionsIn("prelude/array-sort", "sortByDifference", "sortByReversedDifference").map(
-    called => ({
-      ...called,
-      when: b.whenCallRunsOtherCode,
-    }),
-  ),
+  "Math.max": functionsIn("prelude/written-lists", "maxOfList"),
+  "Math.min": functionsIn("prelude/written-lists", "minOfList"),
+  "Array.prototype.sort": functionsIn(
+    "prelude/array-sort",
+    "sort",
+    "sortByDifference",
+    "sortByReversedDifference",
+    "sortByKeys",
+  ).map(called => ({
+    ...called,
+    when: b.whenCallRunsOtherCode,
+  })),
+  "Array.prototype.toSorted": functionsIn(
+    "prelude/array-sort",
+    "toSorted",
+    "toSortedByDifference",
+    "toSortedByReversedDifference",
+  ).map(called => ({ ...called, when: b.whenCallRunsOtherCode })),
   "Buffer.from": functionsIn("builtins/JSBufferConstructor", "from"),
   "Buffer.isBuffer": functionsIn("builtins/JSBufferConstructor", "isBuffer"),
   "Buffer.prototype.offset": functionsIn("builtins/JSBufferPrototype", "offset"),
@@ -428,6 +440,16 @@ const nodeCryptoBinding = ["native:Cpp:node_crypto_binding.cpp:createNodeCryptoB
 // The run time warns of a promise that is rejected without a handler, and of one that gets its handler afterwards, only where `--unhandled-rejections` is set. No text can name this entry: the build names it for the option.
 const warningsOfRejections = "%WarningsOfRejections%";
 const promises = [warningsOfRejections];
+
+// A test run may run a file from source. Compiled code never calls these functions: the interpreter does. No text can name these entries: the build names them for test runs.
+// The second function calls functions of others, which only code that the build did not see keeps.
+const interpretedFiles = "%InterpretedFiles%";
+const functionsOfInterpreter = [
+  b.functionIn("IteratorHelpers", "performIteration"),
+  b.functionIn("DisposableStackPrototype", "getDisposeMethod"),
+];
+const interpretedAsyncFiles = "%InterpretedAsyncFiles%";
+const asyncFunctionsOfInterpreter = [b.functionIn("DisposableStackPrototype", "getAsyncDisposeMethod")];
 
 // The overload for a delay that fits a timer says that it runs no code.
 const timersWithOtherDelays = ["setInterval", "setTimeout"].map(path => ({ path, when: b.whenCallRunsOtherCode }));
@@ -632,7 +654,7 @@ const nativeCalls = [
       {
         file: inBindings("webcore/JSEventTarget.cpp"),
         caller: "jsEventTargetPrototypeFunction_addEventListenerBody",
-        onBehalfOf: eventTargetSources,
+        onBehalfOf: ["EventTarget.prototype.addEventListener", "addEventListener"],
       },
       {
         file: inBindings("webcore/MessagePort.cpp"),
@@ -805,6 +827,8 @@ const undeclaredNativeCode = "%UndeclaredNativeCode%";
 export default b.declarations(
   b.namespace(undeclaredNativeCode, {}, { callsFunctions: warningFunctionsOfUndeclaredCode }),
   b.namespace(warningsOfRejections, {}, { listsAllMembers: true }),
+  b.namespace(interpretedFiles, {}, { callsFunctions: functionsOfInterpreter }),
+  b.namespace(interpretedAsyncFiles, {}, { callsFunctions: asyncFunctionsOfInterpreter }),
   ...nativeCalls,
   callsOfInspect,
   Object.entries(loadedModulesByPath).flatMap(([path, loads]) => b.extend(path, { loads })),
@@ -864,6 +888,7 @@ export default b.declarations(
     otherNames: b.string,
     keepsStringsOfStoredValues: true,
     nativeAccessors: ["TZ", "NODE_TLS_REJECT_UNAUTHORIZED", "BUN_CONFIG_VERBOSE_FETCH"],
+    locked: { holder: "process.env", names: [] },
     platforms: ["Darwin", "Linux", "FreeBSD", "Android"],
   }),
   b.hostObject(windowsEnvironmentStorageCell, { otherNames: b.string }),
@@ -1041,7 +1066,7 @@ export default b.declarations(
     ],
     namesOfMethodsCallingLoads: [customInspect],
     // The object behind `require.cache` prints a copy of itself.
-    functionsLayingSuchMethods: functionsIn("builtins/CommonJS", "createRequireCacheOverCompiledProgram"),
+    functionsLayingSuchMethods: functionsIn("builtins/CompiledCommonJS", "createRequireCacheOverCompiledProgram"),
     moduleLoaderFunctions: functionsIn(
       "builtins/CommonJS",
       "internalRequire",

@@ -1,0 +1,15 @@
+# -- source: the-turns-of-a-for-of-inside-a-for-of-over-lists-begin-again.ts
+# declare function print(...values: unknown[]): void;
+# const units: number[][] = [[0, 1, 2], [3, 4, 5]];
+# const masks = new Uint16Array(6).fill(3);
+# function run(): number { let sum = 0; for (const unit of units) for (const cell of unit) sum |= masks[cell]! << cell; return sum; }
+# print(run());
+# -- end of source
+# LIBRARY: own
+# The cleanup of the inner for-of has the cleanup of the outer one for its handler. Both loops step a list by index alone, so neither cleanup closes anything: a throw in the inner body leaves the function, and the body stands under no handler.
+# While it counted as under a handler no turn of the inner typed copy could begin again: the rare arm under a hole came back, met the usual way, and what was read went round boxed.
+# RUN(COUNT): compile IterationRestartsEmitted mechanisms=all
+# COUNT: statistic IterationRestartsEmitted 2
+# RUN: run-in-shell mechanisms=all
+# CHECK: 127
+# CHECK-NEXT: exited with 0

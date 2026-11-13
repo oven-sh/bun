@@ -29,6 +29,13 @@ impl SaidTypes {
         self.shard(ty).lock().get(&(ty, is_checked)).copied()
     }
 
+    /// Call when the checker's types get new numbers.
+    pub fn forget(&self) {
+        for shard in &self.shards {
+            *shard.lock() = LeastFiles::default();
+        }
+    }
+
     pub fn note_commit(&self, file: FileId, is_checked: bool, said: &[CheckerTypeId]) {
         for &ty in said {
             let mut least_files = self.shard(ty).lock();

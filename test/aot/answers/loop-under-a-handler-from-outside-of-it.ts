@@ -4,7 +4,8 @@
 // # RUN(FORM): walk f1 mechanisms=all
 // # FORM-LABEL: code f1:Body
 // # FORM: LeavesOwedError
-// # RUN(KEPT): walk f4 mechanisms=all
+// # A version whose turns read the field at its site runs no other code, so its poll leaves the handler too. The loop that reads by name keeps it.
+// # RUN(KEPT): walk f4 mechanisms=all-Guesses
 // # KEPT-LABEL: code f4:Body
 // # KEPT-NOT: LeavesOwedError
 // # At the end the shell runs the same text itself: every answer is the same.

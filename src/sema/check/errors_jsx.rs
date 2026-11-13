@@ -343,17 +343,16 @@ impl Checker<'_, '_> {
                 self.grammar_error_at((file, tag.pos, tag.end), 2639, &[]);
             }
         }
-        let mut seen: Vec<PropKey> = Vec::new();
+        let mut seen = crate::util::FxHashSet::<PropKey>::default();
         for p in jsx.attrs.iter() {
             let attr = &hir[p];
             if attr.kind == PropKind::Spread {
                 continue;
             }
-            if seen.contains(&attr.key) {
+            if !seen.insert(attr.key) {
                 let at = (file, attr.pos, self.end_of_jsx_attr_name(file, p));
                 return self.grammar_error_at(at, 17001, &[]);
             }
-            seen.push(attr.key);
             // The parser places the `Missing` of `name={}` at the `{`.
             if attr.value.is_some() && matches!(hir[attr.value].kind, ExprKind::Missing) {
                 let at = (file, hir[attr.value].pos, attr.end);
@@ -1102,7 +1101,8 @@ impl Checker<'_, '_> {
         }
         // `allPropertiesTable`, which excludes accessors: `prop.Name` and `prop.ValueDeclaration`, which is that of the
         // symbol that all declarations of the name share.
-        let mut explicit_props: Vec<(Atom, PropId)> = Vec::new();
+        let mut explicit_props: Vec<Option<(Atom, PropId)>> = Vec::new();
+        let mut places = crate::util::FxHashMap::<Atom, usize>::default();
         for p in props.iter() {
             let prop = &hir[p];
             if prop.kind != PropKind::Spread {
@@ -1112,8 +1112,10 @@ impl Checker<'_, '_> {
                 ) && let Some(name) = self.member_name(file, prop.key)
                 {
                     let value_declaration = self.first_declaration_of_literal_member(file, p);
-                    explicit_props.retain(|w| w.0 != name);
-                    explicit_props.push((name, value_declaration));
+                    if let Some(earlier) = places.insert(name, explicit_props.len()) {
+                        explicit_props[earlier] = None;
+                    }
+                    explicit_props.push(Some((name, value_declaration)));
                 }
                 continue;
             }
@@ -1128,7 +1130,7 @@ impl Checker<'_, '_> {
             // `tryMergeUnionOfObjectTypeAndEmptyObject`
             let merged = self.try_merge_union_of_object_type_and_empty_object(ty);
             let parts = self.parts(merged);
-            for &(name, overwritten) in &explicit_props {
+            for &(name, overwritten) in explicit_props.iter().flatten() {
                 // Neither optional nor partial: every constituent is guaranteed to have it.
                 let mut always = !parts.is_empty();
                 for &part in parts {

@@ -2,7 +2,8 @@
 // the compiler relies on that, and a program that makes a transpiler stays closed. Plain Bun runs the macro.
 // Alone: beside a program that evaluates text the macro is refused by the loader, which prints an error and sets the exit code
 const fs = require("node:fs");
-const path = (process.platform === "win32" ? require("node:os").tmpdir().replaceAll("\\", "/") : "/tmp") + "/bun-aot-test-macro-of-the-transpiler.ts";
+// Each run has a file of its own: the builds of this program run beside one another, and each removes its file.
+const path = (process.platform === "win32" ? require("node:os").tmpdir().replaceAll("\\", "/") : "/tmp") + "/bun-aot-test-macro-of-the-transpiler-" + process.pid + ".ts";
 fs.writeFileSync(path, "export function answer() { globalThis.leftByTheMacro = 1; Array.prototype.leftByTheMacro = 1; return 42; }\n");
 const transpiler = new Bun.Transpiler({ loader: "ts" });
 console.log(transpiler.transformSync("const a: number = 1; console.log(a as number);").trim().replace(/\n/g, " "));

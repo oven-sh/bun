@@ -1,0 +1,17 @@
+# f1 = add
+# -- source: add-to-a-number-in-a-variable-of-the-module.ts
+# let total = 0.5;
+# function add(step: number): void {
+#   total += step;
+# }
+# declare const input: any;
+# add(+input);
+# add(1.5);
+# (globalThis as any).answer = total;
+# -- end of source
+# The compiler before this one: 3 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 7, patches 0, moves 1, unlikely or rare 0.
+# RUN(X64): steps most:8 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 8

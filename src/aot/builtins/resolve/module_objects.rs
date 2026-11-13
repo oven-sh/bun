@@ -1,6 +1,6 @@
 use super::mention_use::MentionUse;
 use super::mentions::mentioned_id;
-use super::module_cache::is_module_cache;
+use super::module_cache::{is_module_cache, name_of_module_cache};
 use super::resolver::{ExprState, ResolvedValue, Resolver};
 use super::{
     BuiltinPath, ModuleField, ModuleObjectMention, ModuleObjectOwner, ModuleObjectUse,
@@ -14,12 +14,12 @@ use bun_sema::hir::{
     self, BinOp, ExprId, ExprKind, MemberKey, NodeData, PatId, PatKind, PropKey, PropKind, StmtId,
     StmtKind, UnOp,
 };
-use bun_sema::import_sites::{OwnRequire, find_own_require, is_made_require};
+use bun_sema::import_sites::{OwnRequire, answers_with_require, find_own_require, is_made_require};
 use smallvec::{SmallVec, smallvec};
 
-const HOLDER_HANDED_ON: (ModuleObjectOwner, ModuleObjectUse) = (
+const HOLDER_ESCAPED: (ModuleObjectOwner, ModuleObjectUse) = (
     ModuleObjectOwner::EntryPoint,
-    ModuleObjectUse::HolderHandedOn,
+    ModuleObjectUse::HolderEscaped,
 );
 
 fn leads_to_main_module(global: BuiltinId) -> bool {
@@ -75,6 +75,13 @@ fn is_test_or_dropped(hir: &hir::File<'_>, node: ExprId, statement: StmtId) -> b
     }
 }
 
+fn made_require() -> ResolvedValue {
+    ResolvedValue::object(BuiltinPath {
+        id: BuiltinId::ModuleRequire,
+        mutability: Mutability::ChangesOnItsOwn,
+    })
+}
+
 impl Resolver<'_, '_> {
     pub(super) fn find_made_require(&self, object: ExprId) -> Option<ResolvedValue> {
         let input = self.input;
@@ -88,12 +95,17 @@ impl Resolver<'_, '_> {
             && input.dialect == SourceDialect::Program
             && table::exists_on(BuiltinId::ModuleRequire, input.platform)
             && (is_made_require(input.hir, input.bound, object) || is_imported());
-        is_made.then(|| {
-            ResolvedValue::object(BuiltinPath {
-                id: BuiltinId::ModuleRequire,
-                mutability: Mutability::ChangesOnItsOwn,
-            })
-        })
+        is_made.then(made_require)
+    }
+
+    /// The table in `const { cache } = createRequire(import.meta.url)` and in `make().cache`.
+    pub(super) fn find_created_require_cache(&self, require: ExprId) -> Option<ResolvedValue> {
+        let input = self.input;
+        let is_require = input.dialect == SourceDialect::Program
+            && (self.find_made_require(require).is_some()
+                || answers_with_require(input.hir, input.bound, input.decisions, require));
+        let cache = self.find_member(made_require(), name_of_module_cache())?;
+        is_require.then(|| ResolvedValue::object(cache))
     }
 
     fn is_nullish_constant(&self, e: ExprId) -> bool {
@@ -171,14 +183,12 @@ impl Resolver<'_, '_> {
     }
 
     fn goes_out_of_sight(&self, e: ExprId) -> bool {
-        let is_handed_on = matches!(
+        let escapes = matches!(
             self.classify_use(e),
             MentionUse::Exposed | MentionUse::ReadByComputedKey
         );
         let member = self.find_member_of(e);
-        is_handed_on
-            && !self.is_only_tested(e)
-            && !member.is_some_and(|member| self.is_deleted(member))
+        escapes && !self.is_only_tested(e) && !member.is_some_and(|member| self.is_deleted(member))
     }
 
     fn is_plain_read(&self, member: ExprId) -> bool {
@@ -326,11 +336,11 @@ impl Resolver<'_, '_> {
         match self.classify_use(e) {
             MentionUse::Aliased => None,
             MentionUse::Holder if self.is_what_its_exports_are_called_with(e) => {
-                Some(ModuleObjectUse::HandedOn)
+                Some(ModuleObjectUse::Escaped)
             }
             MentionUse::Holder if self.is_answered_without_object(e, owner) => None,
             _ if self.is_given_exports_by_descriptor(e) => Some(ModuleObjectUse::Object),
-            _ if self.goes_out_of_sight(e) => Some(ModuleObjectUse::HandedOn),
+            _ if self.goes_out_of_sight(e) => Some(ModuleObjectUse::Escaped),
             _ => Some(ModuleObjectUse::Object),
         }
     }
@@ -346,7 +356,7 @@ impl Resolver<'_, '_> {
             BuiltinId::ModuleObjectChildren
                 if !self.is_plain_read(member) || self.goes_out_of_sight(member) =>
             {
-                ModuleObjectUse::HandedOn
+                ModuleObjectUse::Escaped
             }
             BuiltinId::ModuleObjectChildren => ModuleObjectUse::Children,
             _ if !self.is_plain_read(member) => return None,
@@ -354,7 +364,7 @@ impl Resolver<'_, '_> {
                 ModuleObjectUse::ParentTested
             }
             BuiltinId::ModuleObjectParent if self.goes_out_of_sight(member) => {
-                ModuleObjectUse::HandedOn
+                ModuleObjectUse::Escaped
             }
             BuiltinId::ModuleObjectParent => ModuleObjectUse::Parent,
             _ if self.is_certainly_of(object, owner) => ModuleObjectUse::Field(field_of(id)?),
@@ -379,7 +389,7 @@ impl Resolver<'_, '_> {
         })
     }
 
-    fn is_holder_handed_on(&self, e: ExprId, holder: BuiltinId) -> bool {
+    fn does_holder_escape(&self, e: ExprId, holder: BuiltinId) -> bool {
         match self.classify_use(e) {
             MentionUse::Exposed => true,
             MentionUse::Destructured(pattern) => {
@@ -431,17 +441,17 @@ impl Resolver<'_, '_> {
             ExprState::Held(value) => (value, true),
             _ => return None,
         };
-        let handed_on = (ModuleObjectOwner::Related, ModuleObjectUse::HandedOn);
+        let escaped_use = (ModuleObjectOwner::Related, ModuleObjectUse::Escaped);
         let owner = match table::canonical_id(value.path.id) {
             BuiltinId::ModuleObject if is_held => {
-                let is_handed_on =
+                let escapes =
                     self.goes_out_of_sight(e) || self.is_what_its_exports_are_called_with(e);
-                return is_handed_on.then_some(handed_on);
+                return escapes.then_some(escaped_use);
             }
             BuiltinId::ModuleObjectChildren | BuiltinId::ModuleObjectParent
                 if self.input.hir.member_key(e).is_none() =>
             {
-                return self.goes_out_of_sight(e).then_some(handed_on);
+                return self.goes_out_of_sight(e).then_some(escaped_use);
             }
             BuiltinId::ModuleObject => ModuleObjectOwner::OwnFile,
             BuiltinId::ModuleRequireMain | BuiltinId::ProcessMainModule => {
@@ -449,18 +459,18 @@ impl Resolver<'_, '_> {
             }
             BuiltinId::ModuleRequire => {
                 return self
-                    .is_holder_handed_on(e, BuiltinId::ModuleRequire)
-                    .then_some((ModuleObjectOwner::EntryPoint, ModuleObjectUse::HandedOn));
+                    .does_holder_escape(e, BuiltinId::ModuleRequire)
+                    .then_some((ModuleObjectOwner::EntryPoint, ModuleObjectUse::Escaped));
             }
             BuiltinId::Process => {
                 return self
-                    .is_holder_handed_on(e, BuiltinId::Process)
-                    .then_some(HOLDER_HANDED_ON);
+                    .does_holder_escape(e, BuiltinId::Process)
+                    .then_some(HOLDER_ESCAPED);
             }
             id if table::has_flag(id, BuiltinFlags::IS_GLOBAL_OBJECT) => {
-                let is_handed_on = self.is_holder_handed_on(e, BuiltinId::GlobalThis)
+                let escapes = self.does_holder_escape(e, BuiltinId::GlobalThis)
                     || matches!(self.classify_use(e), MentionUse::ReadByComputedKey);
-                return is_handed_on.then_some(HOLDER_HANDED_ON);
+                return escapes.then_some(HOLDER_ESCAPED);
             }
             id @ (BuiltinId::ModuleObjectChildren | BuiltinId::ModuleObjectParent) => {
                 return self.find_use_of_member(e, id);
@@ -510,7 +520,7 @@ impl Resolver<'_, '_> {
                         self.find_named_member(some_module_object(), name)
                     }
                     _ => {
-                        push(owner, ModuleObjectUse::HandedOn);
+                        push(owner, ModuleObjectUse::Escaped);
                         continue;
                     }
                 };
@@ -536,7 +546,7 @@ impl Resolver<'_, '_> {
             return None;
         };
         (self.holds_main_module(object) && self.is_plain_read(member))
-            .then_some((ModuleObjectOwner::EntryPoint, ModuleObjectUse::HandedOn))
+            .then_some((ModuleObjectOwner::EntryPoint, ModuleObjectUse::Escaped))
     }
 
     fn holds_main_module(&self, object: ExprId) -> bool {
@@ -574,7 +584,7 @@ impl Resolver<'_, '_> {
                     }
             }
         };
-        is_out_of_sight.then_some((ModuleObjectOwner::EntryPoint, ModuleObjectUse::HandedOn))
+        is_out_of_sight.then_some((ModuleObjectOwner::EntryPoint, ModuleObjectUse::Escaped))
     }
 
     fn may_store_path_of_main_module(
@@ -616,7 +626,7 @@ impl Resolver<'_, '_> {
             let is_evaluated = matches!(state, ExprState::Unresolved);
             let global = self.find_global_out_of_sight_through(expr);
             if is_evaluated && global.is_some_and(leads_to_main_module) {
-                let (owner, object_use) = HOLDER_HANDED_ON;
+                let (owner, object_use) = HOLDER_ESCAPED;
                 mentions.push(ModuleObjectMention {
                     expr,
                     owner,
@@ -690,7 +700,7 @@ impl Resolver<'_, '_> {
             mentions.push(ModuleObjectMention {
                 expr: ExprId::NONE,
                 owner: ModuleObjectOwner::EntryPoint,
-                object_use: ModuleObjectUse::HandedOn,
+                object_use: ModuleObjectUse::Escaped,
             });
         }
         self.output.module_object_mentions = mentions;

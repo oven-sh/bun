@@ -1,0 +1,17 @@
+# f2 = sum
+# -- source: main.mjs
+# function create(numbers) {
+#   const md = { t: null, n: 0 };
+#   md.start = function () { md.n = 0; md.t = new Int32Array(numbers); return md; };
+#   md.sum = function () { let s = 0; for (let i = 0; i < 20; i++) s = (s + md.t[i & 7]) | 0; return s; };
+#   return md;
+# }
+# const all = JSON.parse('[]');
+# for (let k = 0; k < 3; k++) all.push(create([k, 1, 2, 3, 4, 5, 6, 7]).start());
+# print(all[0].sum(), all[1].sum(), all[2].sum());
+# -- end of source
+# A view is expected of the field: it is asked at its read and has no versions of its own.
+# RUN(COUNT): compile UnknownFieldLoopsVersioned mechanisms=all
+# COUNT: statistic UnknownFieldLoopsVersioned 0
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 62 65 68

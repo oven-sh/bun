@@ -23,11 +23,12 @@
 //! keeps the per-tick hot path inlined (see PORTING.md §Dispatch hot-path).
 //!
 //! State methods take `(&mut Interpreter, this: NodeId)` and look their
-//! own data up via `interp.node_mut(this)` / `interp.nodes[this]`.
+//! own data up via `interp.as_<state>(this)` / `interp.as_<state>_mut(this)`.
 
 use bun_collections::VecExt;
 use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::{JsCell, JsCellRefExt as _, JsRef};
+use bun_ptr::AliasableBox;
 use core::cell::Cell;
 use core::fmt;
 use core::ops::ControlFlow;
@@ -156,7 +157,7 @@ impl Node {
         }
     }
 
-    pub(crate) fn base_mut(&mut self) -> Option<&mut Base> {
+    fn base_mut(&mut self) -> Option<&mut Base> {
         match self {
             Node::Free => None,
             Node::Script(s) => Some(&mut s.base),
@@ -279,10 +280,10 @@ pub(crate) struct Interpreter {
 
     pub(crate) event_loop: EventLoopHandle,
 
-    pub args: JsCell<Box<ShellArgs>>,
-
-    pub(crate) root_shell: JsCell<ShellExecEnv>,
+    // Drop order: `nodes`, `root_io` and `root_shell` each borrow from what follows, up to `args`.
     pub(crate) root_io: JsCell<IO>,
+    pub(crate) root_shell: JsCell<ShellExecEnv>,
+    pub args: JsCell<Box<ShellArgs>>,
 
     pub(crate) keep_alive: JsCell<bun_io::KeepAlive>,
     /// The `Bun.ModuleGraph` context whose script started this (`run_from_js`), if any. Every
@@ -299,7 +300,6 @@ pub(crate) struct Interpreter {
     pub(crate) exit_code: Cell<Option<ExitCode>>,
     /// The JS wrapper. Strong from `run_from_js` until `finish` has settled the promise.
     pub(crate) this_value: JsCell<JsRef>,
-    pub(crate) cleanup_state: Cell<CleanupState>,
     pub(crate) estimated_size_for_gc: usize,
 
     /// Lazily-populated UTF-8 cache for the JS-side argv (`$@`/`$N` expansion
@@ -334,13 +334,6 @@ impl InterpreterFlags {
     pub(crate) fn set_failed(&mut self, v: bool) {
         if v { self.0 |= 0b100 } else { self.0 &= !0b100 }
     }
-}
-
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
-pub enum CleanupState {
-    NeedsFullCleanup,
-    RuntimeCleaned,
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -496,7 +489,7 @@ impl Interpreter {
         let cwd_z = bun_core::ZStr::from_buf(pathbuf.as_slice(), cwd_len);
 
         let cwd_fd = match bun_sys::open(cwd_z, bun_sys::O::DIRECTORY | bun_sys::O::RDONLY, 0) {
-            Ok(fd) => fd,
+            Ok(fd) => OwnedFd(fd),
             Err(e) => return Err(ShellErr::new_sys(&e)),
         };
 
@@ -524,10 +517,7 @@ impl Interpreter {
         };
         let stdin_fd = match stdin_fd_res {
             Ok(fd) => fd,
-            Err(e) => {
-                closefd(cwd_fd);
-                return Err(ShellErr::new_sys(&e));
-            }
+            Err(e) => return Err(ShellErr::new_sys(&e)),
         };
 
         let stdin_reader = IOReader::init(stdin_fd, event_loop);
@@ -566,7 +556,6 @@ impl Interpreter {
             // `on_root_child_done` has recorded the real exit code.
             exit_code: Cell::new(None),
             this_value: JsCell::new(JsRef::empty()),
-            cleanup_state: Cell::new(CleanupState::NeedsFullCleanup),
             estimated_size_for_gc: 0,
             vm_args_utf8: JsCell::new(Vec::new()),
             command_ctx: ctx,
@@ -807,9 +796,7 @@ impl Interpreter {
         })
     }
 
-    /// Free a slot. The node's own
-    /// `deinit` (which closes IO, derefs the shell env, etc.) must run first;
-    /// this only recycles the storage.
+    /// Drop the node and recycle its slot. The node's own `deinit` must run first.
     pub(crate) fn free_node(&self, id: NodeId) {
         // Guard: callers may have stored `NodeId::NONE` in `currently_executing`
         // when `spawn_expr` failed (Subshell init error path). Nothing
@@ -846,7 +833,7 @@ impl Interpreter {
         if let Node::Pipeline(p) = self.node(parent) {
             let rightmost = p.cmds.as_deref().is_none_or(|c| {
                 c.len() < 2
-                    || matches!(c.last(), Some(crate::shell::states::pipeline::CmdOrResult::Cmd(id)) if *id == child)
+                    || matches!(c.last(), Some(crate::shell::states::pipeline::CmdOrResult::Cmd { id, .. }) if *id == child)
             });
             if rightmost {
                 self.as_pipeline_mut(parent).base.interrupted = true;
@@ -924,7 +911,7 @@ impl Interpreter {
 
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub(crate) fn node_mut(&self, id: NodeId) -> &mut Node {
+    fn node_mut(&self, id: NodeId) -> &mut Node {
         // SAFETY: see `nodes_mut` — single-JS-thread, no overlapping borrow.
         unsafe { &mut self.nodes_mut()[id.idx()] }
     }
@@ -1219,7 +1206,7 @@ impl Interpreter {
                 if self.failed() {
                     // The trampoline that ran `fail` rejects the promise.
                     self.keep_alive.with_mut(|k| k.disable());
-                    self.deref_root_shell_and_io_if_needed(true);
+                    self.release_root();
                 } else if let Some(resolve) = js::resolve_get_cached(this_jsvalue) {
                     let loop_ = self.event_loop;
                     // `global_this` is `Some` on the `EventLoopHandle::Js` path
@@ -1231,7 +1218,7 @@ impl Interpreter {
                         .get_buffered_stdout(global_this)
                         .and_then(|out| Ok((out, self.get_buffered_stderr(global_this)?)));
                     self.keep_alive.with_mut(|k| k.disable());
-                    self.deref_root_shell_and_io_if_needed(true);
+                    self.release_root();
                     let _entered = loop_.entered();
                     // The shell state machine (`Yield`) has no exception channel,
                     // so the promise is settled by a top-level call of its own:
@@ -1369,7 +1356,7 @@ impl Interpreter {
         );
 
         if let Err(e) = self.setup_io_before_run() {
-            self.deref_root_shell_and_io_if_needed(true);
+            self.release_root();
             let shellerr = ShellErr::new_sys(&e);
             return Err(throw_shell_err(
                 shellerr,
@@ -1396,30 +1383,10 @@ impl Interpreter {
         Ok(())
     }
 
-    /// Idempotent
-    /// teardown of `root_io`/`root_shell` for the JS event-loop path; called
-    /// from `finish()` (success) and `run_from_js()` (early error). Guards on
-    /// `cleanup_state` so a later `Drop` doesn't double-free.
-    fn deref_root_shell_and_io_if_needed(&self, free_buffered_io: bool) {
-        if self.cleanup_state.get() == CleanupState::RuntimeCleaned {
-            return;
-        }
-
-        if free_buffered_io {
-            // Can safely be called multiple times.
-            self.root_shell.with_mut(|rs| {
-                if let Bufio::Owned(o) = &mut rs._buffered_stderr {
-                    o.clear_and_free();
-                }
-                if let Bufio::Owned(o) = &mut rs._buffered_stdout {
-                    o.clear_and_free();
-                }
-            });
-        }
-
-        // Cannot be safely called multiple times: drops the `Rc<IOReader>`/`Rc<IOWriter>` refs.
+    /// Frees what the script ran on without waiting for the wrapper to be collected.
+    fn release_root(&self) {
         self.root_io.set(IO::default());
-        self.root_shell.with_mut(|rs| rs.deinit_embedded(false));
+        self.root_shell.with_mut(|rs| *rs = ShellExecEnv::empty());
 
         // Note: free the parse arena eagerly. `bun_alloc::Arena` is
         // a `MimallocArena` (a full `mi_heap_t`): every shell parse pulls
@@ -1442,8 +1409,6 @@ impl Interpreter {
             a.script_ast = ast::Script { stmts: &[] };
             a.__arena.reset();
         });
-
-        self.cleanup_state.set(CleanupState::RuntimeCleaned);
     }
 
     pub(crate) fn get_buffered_stdout(
@@ -1551,55 +1516,20 @@ impl Interpreter {
 }
 
 impl Drop for Interpreter {
-    /// Runs whatever teardown `finish()` didn't.
     fn drop(&mut self) {
         log!(
-            "Interpreter(0x{:x}) drop (cleanup_state={})",
-            std::ptr::from_ref(self) as usize,
-            <&'static str>::from(self.cleanup_state.get()),
+            "Interpreter(0x{:x}) drop",
+            std::ptr::from_ref(self) as usize
         );
-        match self.cleanup_state.get() {
-            CleanupState::NeedsFullCleanup => {
-                // `Node` has no `Drop`. Slots stay for the env walk below. Windows leaks them, see `abort_after_failed_start`.
-                #[cfg(not(windows))]
-                {
-                    let node_count = self.nodes.get().len();
-                    for i in 0..node_count {
-                        let id = NodeId(i as u32);
-                        if matches!(self.nodes.get()[id.idx()].kind(), StateKind::Cmd) {
-                            Cmd::deinit_from_finalizer(self, id);
-                        }
-                    }
+        // `Cmd` has no `Drop`. Windows leaks them, see `abort_after_failed_start`.
+        #[cfg(not(windows))]
+        if self.free_list.get().len() != self.nodes.get().len() {
+            let node_count = self.nodes.get().len();
+            for i in 0..node_count {
+                let id = NodeId(i as u32);
+                if matches!(self.nodes.get()[id.idx()].kind(), StateKind::Cmd) {
+                    Cmd::deinit_from_finalizer(self, id);
                 }
-                // A node owns its `base.shell` iff it differs from its parent's: `dupe_for_subshell` made it.
-                {
-                    let root_shell_ptr: *mut ShellExecEnv = self.root_shell.as_ptr();
-                    let nodes = self.nodes.get();
-                    let owned_envs: Vec<*mut ShellExecEnv> = nodes
-                        .iter()
-                        .filter_map(|n| {
-                            let base = n.base()?;
-                            if base.shell.is_null() {
-                                return None;
-                            }
-                            let parent_shell: *mut ShellExecEnv =
-                                if base.parent == NodeId::INTERPRETER {
-                                    root_shell_ptr
-                                } else {
-                                    nodes.get(base.parent.idx())?.base()?.shell
-                                };
-                            (base.shell != parent_shell).then_some(base.shell)
-                        })
-                        .collect();
-                    for env in owned_envs {
-                        ShellExecEnv::deinit_impl(env);
-                    }
-                }
-                self.root_io.set(IO::default());
-                self.root_shell.with_mut(|rs| rs.deinit_embedded(true));
-            }
-            CleanupState::RuntimeCleaned => {
-                // `finish()` cleaned up via `deref_root_shell_and_io_if_needed`.
             }
         }
 
@@ -1647,9 +1577,7 @@ pub(crate) fn throw_shell_err(
 // ────────────────────────────────────────────────────────────────────────────
 
 /// Shell execution environment (env vars, cwd, captured stdout/stderr).
-/// Every state node holds a `*mut ShellExecEnv` in its `Base`; some nodes
-/// (Script, Subshell, command-substitution, pipeline children) own a duped
-/// env that they must `deinit`.
+/// Every state node holds a `*mut ShellExecEnv` in its `Base`.
 pub(crate) struct ShellExecEnv {
     pub(crate) _buffered_stdout: Bufio,
     pub(crate) _buffered_stderr: Bufio,
@@ -1658,7 +1586,7 @@ pub(crate) struct ShellExecEnv {
     pub(crate) export_env: EnvMap,
     pub(crate) __prev_cwd: Vec<u8>,
     pub(crate) __cwd: Vec<u8>,
-    pub(crate) cwd_fd: Fd,
+    pub(crate) cwd_fd: OwnedFd,
 }
 
 pub(crate) enum Bufio {
@@ -1693,6 +1621,19 @@ pub(crate) enum ShellExecEnvKind {
 }
 
 impl ShellExecEnv {
+    fn empty() -> ShellExecEnv {
+        ShellExecEnv {
+            _buffered_stdout: Bufio::default(),
+            _buffered_stderr: Bufio::default(),
+            shell_env: EnvMap::init(),
+            cmd_local_env: EnvMap::init(),
+            export_env: EnvMap::init(),
+            __prev_cwd: Vec::new(),
+            __cwd: Vec::new(),
+            cwd_fd: OwnedFd(Fd::INVALID),
+        }
+    }
+
     pub(crate) fn memory_cost(&self) -> usize {
         let mut size = core::mem::size_of::<ShellExecEnv>();
         size += self.shell_env.memory_cost();
@@ -1777,16 +1718,14 @@ impl ShellExecEnv {
     /// `shell_env`/`export_env`, gives it a fresh empty `cmd_local_env`, and
     /// borrows or owns buffered stdout/stderr per `kind` (subshell/pipeline
     /// borrow the parent's buffers so output bubbles up; cmd-subst owns).
-    ///
-    /// Caller frees with `ShellExecEnv::deinit_impl(p)`.
     pub(crate) fn dupe_for_subshell(
         &mut self,
         io: &IO,
         kind: ShellExecEnvKind,
-    ) -> bun_sys::Result<*mut ShellExecEnv> {
+    ) -> bun_sys::Result<AliasableBox<ShellExecEnv>> {
         use crate::shell::io::OutKind;
 
-        let dupedfd = bun_sys::dup(self.cwd_fd)?;
+        let cwd_fd = OwnedFd(bun_sys::dup(self.cwd_fd.fd())?);
 
         // For `.fd` with a captured
         // buffer, borrow that; for `.ignore`, own a fresh one; for `.pipe`,
@@ -1811,7 +1750,7 @@ impl ShellExecEnv {
         let stdout = bufio_for(&io.stdout, self.buffered_stdout());
         let stderr = bufio_for(&io.stderr, self.buffered_stderr());
 
-        let duped = Box::new(ShellExecEnv {
+        Ok(AliasableBox::new(ShellExecEnv {
             _buffered_stdout: stdout,
             _buffered_stderr: stderr,
             shell_env: self.shell_env.clone(),
@@ -1819,52 +1758,8 @@ impl ShellExecEnv {
             export_env: self.export_env.clone(),
             __prev_cwd: self.__prev_cwd.clone(),
             __cwd: self.__cwd.clone(),
-            cwd_fd: dupedfd,
-        });
-        Ok(bun_core::heap::into_raw(duped))
-    }
-
-    /// Teardown for the heap-allocated subshell/pipeline-child case.
-    ///
-    /// # Safety
-    /// `this` must have been returned by `dupe_for_subshell` (or otherwise
-    /// `heap::alloc`'d) and not yet freed.
-    pub(crate) fn deinit_impl(this: *mut ShellExecEnv) {
-        log!("[ShellExecEnv] deinit 0x{:x}", this as usize);
-        // SAFETY: precondition above. Reclaim the Box; `Drop` for the env
-        // maps / vecs / owned `Bufio` runs on drop. Only `cwd_fd` needs an
-        // explicit close.
-        let boxed = unsafe { bun_core::heap::take(this) };
-        closefd(boxed.cwd_fd);
-        // EnvMap/Vec/Vec<u8> drop impls free their storage; `Bufio::Borrowed`
-        // is a raw ptr so its drop is a no-op.
-        drop(boxed);
-    }
-
-    /// Teardown for the *embedded* root env (held by value in `Interpreter`).
-    /// `deinit_impl(this: *mut)` covers the heap-allocated subshell case.
-    pub(crate) fn deinit_embedded(&mut self, free_buffered_io: bool) {
-        log!(
-            "[ShellExecEnv] deinit 0x{:x}",
-            std::ptr::from_ref(self) as usize
-        );
-        if free_buffered_io {
-            if let Bufio::Owned(o) = &mut self._buffered_stdout {
-                o.clear_and_free();
-            }
-            if let Bufio::Owned(o) = &mut self._buffered_stderr {
-                o.clear_and_free();
-            }
-        }
-        // EnvMap has a Drop impl; replace with fresh to free now and leave
-        // valid state for any later `Drop` of the outer `Interpreter` box.
-        self.shell_env = EnvMap::init();
-        self.cmd_local_env = EnvMap::init();
-        self.export_env = EnvMap::init();
-        self.__cwd = Vec::new();
-        self.__prev_cwd = Vec::new();
-        closefd(self.cwd_fd);
-        self.cwd_fd = bun_sys::Fd::INVALID;
+            cwd_fd,
+        }))
     }
 
     /// `cd -`.
@@ -1954,14 +1849,12 @@ impl ShellExecEnv {
         };
         let new_cwd_z = bun_core::ZStr::from_buf(&buf[..], new_cwd_len);
 
-        let new_cwd_fd = shell_openat(
-            self.cwd_fd,
+        self.cwd_fd = OwnedFd(shell_openat(
+            self.cwd_fd.fd(),
             new_cwd_z,
             bun_sys::O::DIRECTORY | bun_sys::O::RDONLY,
             0,
-        )?;
-
-        closefd(self.cwd_fd);
+        )?);
 
         self.__prev_cwd.clear();
         self.__prev_cwd.extend_from_slice(&self.__cwd[..]);
@@ -1972,8 +1865,6 @@ impl ShellExecEnv {
 
         debug_assert_eq!(*self.__cwd.last().unwrap(), 0);
         debug_assert_eq!(*self.__prev_cwd.last().unwrap(), 0);
-
-        self.cwd_fd = new_cwd_fd;
 
         // Only `OLDPWD` is gated on `!in_init`;
         // `PWD` is written unconditionally so the very first env (built during
@@ -2135,6 +2026,23 @@ pub(crate) fn is_pollable_from_mode(mode: bun_sys::Mode) -> bool {
 pub(crate) fn closefd(fd: Fd) {
     use bun_sys::FdExt;
     let _ = fd.close_allowing_bad_file_descriptor(None);
+}
+
+/// Closes with [`closefd`], which, unlike `Dir`, leaves a descriptor that landed on 0-2 open.
+pub(crate) struct OwnedFd(Fd);
+
+impl OwnedFd {
+    pub(crate) fn fd(&self) -> Fd {
+        self.0
+    }
+}
+
+impl Drop for OwnedFd {
+    fn drop(&mut self) {
+        if self.0.is_valid() {
+            closefd(self.0);
+        }
+    }
 }
 
 /// Same as `bun_sys::dup` on POSIX; on Windows the duped handle is converted

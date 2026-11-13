@@ -206,7 +206,7 @@ impl Expansion {
                         return Yield::Failed(this);
                     }
                 };
-                let script = Script::init(interp, duped, &sub.script, this, io);
+                let script = Script::init_cmd_subst(interp, duped, &sub.script, this, io);
                 interp.as_expansion_mut(this).child_script = Some(script);
                 return Script::start(interp, script);
             }

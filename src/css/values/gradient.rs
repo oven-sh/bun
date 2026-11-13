@@ -311,6 +311,10 @@ impl LinearGradient {
             LineDirection::default(vendor_prefix != VendorPrefix::NONE)
         };
         let items = parse_items::<LengthPercentage>(input)?;
+        // Chromium and WebKit reject a transition hint in a prefixed gradient.
+        if vendor_prefix != VendorPrefix::NONE && has_hint(&items) {
+            return Err(input.new_custom_error(css::ParserError::invalid_value));
+        }
         Ok(LinearGradient {
             direction,
             items,
@@ -401,6 +405,14 @@ impl RadialGradient {
         }
 
         let items = parse_items::<LengthPercentage>(input)?;
+        // A prefixed name takes the css3-images-20110217 syntax, which shares only `<shape> || <extent>`.
+        if vendor_prefix != VendorPrefix::NONE
+            && (position.is_some()
+                || shape.as_ref().is_some_and(|shape| !shape.is_keyword())
+                || has_hint(&items))
+        {
+            return Err(input.new_custom_error(css::ParserError::invalid_value));
+        }
         Ok(RadialGradient {
             // todo_stuff.depth
             shape: shape.unwrap_or_else(EndingShape::default),
@@ -1029,6 +1041,14 @@ pub enum EndingShape {
 impl EndingShape {
     // parse + to_css — provided by #[derive(css::Parse, css::ToCss)].
 
+    /// `<shape> || <extent>`, with no radius.
+    fn is_keyword(&self) -> bool {
+        matches!(
+            self,
+            EndingShape::Circle(Circle::Extent(_)) | EndingShape::Ellipse(Ellipse::Extent(_))
+        )
+    }
+
     fn default() -> EndingShape {
         EndingShape::Ellipse(Ellipse::Extent(ShapeExtent::FarthestCorner))
     }
@@ -1389,6 +1409,12 @@ crate::css_eql_partialeq!(
     ShapeExtent,
     Circle,
 );
+
+fn has_hint<D>(items: &[GradientItem<D>]) -> bool {
+    items
+        .iter()
+        .any(|item| matches!(item, GradientItem::Hint(_)))
+}
 
 pub(crate) fn parse_items<D: GradientPosition>(
     input: &mut css::Parser,

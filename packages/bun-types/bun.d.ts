@@ -3390,6 +3390,21 @@ declare module "bun" {
      *
      * Add `""` to the list to allow fully opaque specifiers like `import(fn())`.
      *
+     * This option does not check string-literal specifiers. Whatever it is set
+     * to, a string literal that does not resolve fails the build. The one
+     * exception is a call whose failure the code around it handles:
+     *
+     * - `require()`, `require.resolve()`, or an awaited `import()` inside a
+     *   `try` or `catch` block
+     * - `import()` followed by `.catch()` or a two-argument `.then()`
+     *
+     * Such a build succeeds. The output keeps the `import()` or
+     * `require.resolve()` call, which looks the specifier up again at run
+     * time. The `require()` call becomes an expression that throws.
+     *
+     * The CLI flags are `--allow-unresolved <pattern>` and `--reject-unresolved`
+     * (the same as `[]`).
+     *
      * @default ["*"]
      */
     allowUnresolved?: string[];

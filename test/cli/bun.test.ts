@@ -439,7 +439,16 @@ describe("bun", () => {
       ["audit", "--audit-level", "greater than or equal to <level> (low,"],
       ["test", "--rerun-each", "Re-run each test file <NUMBER> times"],
       ["test", "--bail", "Exit the test suite after <NUMBER> failures"],
-      ["build", "--allow-unresolved", "Use '<empty>' for opaque specifiers"],
+      [
+        "build",
+        "--allow-unresolved",
+        "arguments that are not string literals if they match one of these glob patterns. Use '<empty>' for opaque specifiers",
+      ],
+      [
+        "build",
+        "--reject-unresolved",
+        "Fail the build on any import()/require()/require.resolve() argument that is not a string literal.",
+      ],
       ["add", "-F, --filter", "Add the package(s) to the matching workspaces instead of the current package"],
       ["add", "--catalog", 'depend on it as "catalog:" (use --catalog=NAME for a named catalog)'],
       ["remove", "-F, --filter", "Remove the package(s) from the matching workspaces instead of the current package"],

@@ -64,6 +64,14 @@ impl<'a> HotUpdateContext<'a> {
 
         &mut self.resolved_index_cache[start..][..len][i.get() as usize]
     }
+
+    /// The client file that this bundle resolved for a source, if any.
+    pub(crate) fn client_file(
+        &self,
+        i: bun_ast::Index,
+    ) -> Option<incremental_graph::ClientFileIndex> {
+        self.resolved_index_cache[i.get() as usize].unwrap::<{ bake::Side::Client }>()
+    }
 }
 
 fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr_event: bool) {
@@ -363,10 +371,20 @@ fn finalize_bundle_inner(
         }
     }
 
-    for (chunk, metadata) in css_chunks_mut.iter_mut().zip(result.css_file_list.values()) {
+    // A path has one stylesheet. The browser's copies go first, so the copy of another graph is stored only where there is none.
+    let css_entries = result.css_file_list.keys();
+    let is_browser_copy =
+        |i: &usize| targets[css_entries[*i].get() as usize] == bun_ast::Target::Browser;
+    for i in (0..n_css)
+        .filter(is_browser_copy)
+        .chain((0..n_css).filter(|i| !is_browser_copy(i)))
+    {
+        let chunk = &mut css_chunks_mut[i];
+        let metadata = &result.css_file_list.values()[i];
         debug_assert!(matches!(chunk.content, bundler::chunk::Content::Css(_)));
 
         let index = bun_ast::Index::init(chunk.entry_point.source_index());
+        let graph = targets[index.get() as usize].bake_graph();
 
         // Report a chunk that failed to print as its entry point's failure. The next
         // good build's `receive_chunk` clears it.
@@ -392,26 +410,56 @@ fn finalize_bundle_inner(
                 format_args!("Failed to generate CSS for this file ({})", err.name()),
             );
         }
-        if log.errors > 0 {
-            let entry_key = entry_source.path.key_for_incremental_graph();
+        // A CSS module with a `composes` that cannot be followed fails the same way.
+        let mut failure = if log.errors > 0 {
+            Some(&log)
+        } else {
+            result
+                .css_module_errors
+                .iter()
+                .find_map(|(failed, log)| (*failed == index).then_some(log))
+        };
+        let key = entry_source.path.key_for_incremental_graph();
+        let is_served = graph == bake::Graph::Client || !dev.client_graph.keeps_css_root(key);
+        // Nothing clears a failure of this copy of a plain stylesheet. The browser's copy has the result for the page.
+        if failure.is_some() && !is_served && !bun_css::css_modules::is_module_path(key) {
+            failure = None;
+        }
+        if let Some(log) = failure {
+            if !is_served {
+                dev.server_graph.insert_failure(
+                    incremental_graph::InsertFailureKey::AbsPath(key, graph),
+                    log,
+                )?;
+                continue;
+            }
             dev.client_graph.insert_failure(
-                incremental_graph::InsertFailureKey::AbsPath(entry_key, bake::Graph::Client),
-                &log,
+                incremental_graph::InsertFailureKey::AbsPath(key, bake::Graph::Client),
+                log,
             )?;
             let file_index = dev
                 .client_graph
-                .get_file_index(entry_key)
+                .get_file_index(key)
                 .expect("insert_failure registered the entry");
             // Pass 2 needs the index to diff the `@import` edges. Editing an imported
             // file follows those edges to rebundle this chunk.
             *ctx.get_cached_index(bake::Side::Client, index) =
                 CachedFileIndex::from(Some(file_index));
             dev.client_graph
-                .restore_failed_css_root(file_index, hash(entry_key));
+                .restore_failed_css_root(file_index, hash(key));
             // This lets a server route's trace reach the failed client file.
+            let failed_graph = (graph != bake::Graph::Client).then_some(graph);
+            if metadata.imported_on_server || failed_graph.is_some() {
+                dev.server_graph
+                    .insert_css_file_on_server(&mut ctx, index, key, failed_graph)?;
+            }
+            continue;
+        }
+        if !is_served {
+            // The page has the stylesheet of the browser's copy. This copy only needs its server record.
             if metadata.imported_on_server {
                 dev.server_graph
-                    .insert_css_file_on_server(&mut ctx, index, entry_key)?;
+                    .insert_css_file_on_server(&mut ctx, index, key, None)?;
             }
             continue;
         }
@@ -446,9 +494,6 @@ fn finalize_bundle_inner(
         };
 
         // Create an entry for this file.
-        let key = ctx.sources[index.get() as usize]
-            .path
-            .key_for_incremental_graph();
         // TODO: use a hash mix with the first half being a path hash and the second half content hash
         let h = hash(key);
         // Track css files that look like tailwind files.
@@ -486,7 +531,7 @@ fn finalize_bundle_inner(
         // so that edges can be attached.
         if metadata.imported_on_server {
             dev.server_graph
-                .insert_css_file_on_server(&mut ctx, index, key)?;
+                .insert_css_file_on_server(&mut ctx, index, key, None)?;
         }
     }
 
@@ -587,6 +632,10 @@ fn finalize_bundle_inner(
         ) {
             continue;
         }
+        // A CSS module's stub: its records are the stylesheet's, which the CSS loop below handles.
+        if input_file_loaders[part_range.source_index.get() as usize].is_css() {
+            continue;
+        }
         match targets[part_range.source_index.get() as usize].bake_graph() {
             bake::Graph::Server | bake::Graph::Ssr => dev.server_graph.process_chunk_dependencies(
                 &mut ctx,
@@ -608,8 +657,24 @@ fn finalize_bundle_inner(
             index,
         )?;
     }
+    // A class-name module that changed also changes what the routes that import it render.
+    for i in 0..dev.server_graph.current_chunk_source_maps.len() {
+        let marker = dev.server_graph.current_chunk_source_maps[i].file_index;
+        if dev.server_graph.get_file_by_index(marker).file_kind() == FileKind::Css {
+            dev.server_graph.trace_dependencies(
+                marker,
+                ctx.gts,
+                incremental_graph::TraceDependencyGoal::StopAtBoundary,
+                marker,
+            )?;
+        }
+    }
     for chunk in css_chunks_mut.iter() {
         let entry_index = bun_ast::Index::init(chunk.entry_point.source_index());
+        // The copy of another graph has no client file when the page uses the browser's copy.
+        if ctx.client_file(entry_index).is_none() {
+            continue;
+        }
         dev.client_graph.process_chunk_dependencies(
             &mut ctx,
             incremental_graph::ProcessMode::Css,
@@ -925,17 +990,10 @@ fn finalize_bundle_inner(
     w_int!(i32, -1);
 
     let css_chunks = &*css_chunks_mut;
-    // If a chunk failed to print, the page keeps its last good stylesheet.
+    // Only a stylesheet that this bundle stored is sent. After a failure the page keeps its last good one.
     let css_chunk_printed = |chunk: &bundler::chunk::Chunk| {
-        !chunk
-            .compile_results_for_chunk
-            .iter()
-            .any(|compile_result| {
-                matches!(
-                    compile_result,
-                    bundler::CompileResult::Css { result: Err(_), .. }
-                )
-            })
+        ctx.client_file(bun_ast::Index::init(chunk.entry_point.source_index()))
+            .is_some_and(|file| !dev.client_graph.get_file_by_index(file).failed)
     };
     let printed_css_count = css_chunks.iter().filter(|c| css_chunk_printed(c)).count();
     if will_hear_hot_update {

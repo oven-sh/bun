@@ -440,6 +440,10 @@ pub enum ExportedName<'a> {
 
 pub trait ComposesGraph {
     fn stylesheet(&self, source_index: u32) -> Option<&BundlerStyleSheet>;
+    /// True for a stylesheet that has no AST because it failed to parse. Its own error is reported.
+    fn stylesheet_failed(&self, _source_index: u32) -> bool {
+        false
+    }
     fn source(&self, source_index: u32) -> &Source<'_>;
     fn import_record(&self, source_index: u32, import_record_index: u32) -> &ImportRecord<'_>;
 }
@@ -526,14 +530,16 @@ impl<'a> ComposesVisitor<'a> {
                 }
                 let other_index = other_index.get();
                 let Some(other_sheet) = self.graph.stylesheet(other_index) else {
-                    log.add_error_fmt(
-                        self.graph.source(source_index),
-                        compose.loc,
-                        format_args!(
-                            "Cannot use the \"composes\" property with the {} file (it is not a CSS file)",
-                            quote(self.graph.source(other_index).path.pretty),
-                        ),
-                    );
+                    if !self.graph.stylesheet_failed(other_index) {
+                        log.add_error_fmt(
+                            self.graph.source(source_index),
+                            compose.loc,
+                            format_args!(
+                                "Cannot use the \"composes\" property with the {} file (it is not a CSS file)",
+                                quote(self.graph.source(other_index).path.pretty),
+                            ),
+                        );
+                    }
                     return;
                 };
                 for name in compose.names.slice() {

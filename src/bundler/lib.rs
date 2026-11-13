@@ -94,6 +94,7 @@ pub use options_impl::PathTemplate;
 
 pub use HTMLImportManifest::html_import_manifest;
 pub use bun_core::cheap_prefix_normalizer;
+pub(crate) use bundle_v2::css_module_name_path;
 pub use bundle_v2::{
     CompileResult, CompileResultForSourceMap, ContentHasher, EventLoop, ImportTracker, PartRange,
     StableRef, WrapKind, generic_path_with_pretty_initialized, target_from_hashbang,

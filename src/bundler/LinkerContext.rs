@@ -920,6 +920,9 @@ impl<'a> LinkerContext<'a> {
         // has finished pushing wrapper / entry-point parts.
         {
             let loaders = self.parse_graph().input_files.items_loader();
+            let sources = self.parse_graph().input_files.items_source();
+            let is_bake_dev =
+                self.options.output_format == crate::options::OutputFormat::InternalBakeDev;
             let parts_col = self.graph.ast.items_parts();
             let mut parts_live: Vec<bun_collections::AutoBitSet> =
                 Vec::with_capacity(parts_col.len());
@@ -931,6 +934,14 @@ impl<'a> LinkerContext<'a> {
                 // walks its parts, so seed the bit here to preserve the old
                 // `Part::is_live = true` initializer.
                 if loaders.get(i).is_some_and(|l| *l == Loader::Html) && parts.len() > 1 {
+                    bits.set(1);
+                }
+                // Likewise for a CSS module's stub: the dev format links imports at runtime.
+                if is_bake_dev
+                    && parts.len() > 1
+                    && loaders.get(i).is_some_and(|l| l.is_css())
+                    && crate::bun_css::css_modules::is_module_path(sources[i].path.pretty)
+                {
                     bits.set(1);
                 }
                 parts_live.push(bits);
@@ -2423,6 +2434,8 @@ impl<'a> LinkerContext<'a> {
         }
 
         let all_css_asts = self.graph.ast.items_css();
+        let all_targets = self.graph.ast.items_target();
+        let has_dev_server = self.dev_server.is_some();
         let all_symbols: &[bun_ast::symbol::List<'a>] = self.graph.ast.items_symbols();
         // SAFETY: parse_graph backref; raw deref because `all_sources` is held
         // across `&mut self.mangled_props` below (split borrow).
@@ -2468,7 +2481,11 @@ impl<'a> LinkerContext<'a> {
                         let scratch = ::bun_alloc::Arena::new();
                         let final_generated_name = crate::bun_css::css_modules::scoped_name(
                             &scratch,
-                            source.path.pretty,
+                            crate::css_module_name_path(
+                                source.path.pretty,
+                                all_targets[r#ref.source_index() as usize],
+                                has_dev_server,
+                            ),
                             original_name,
                         );
                         // The map owns its boxed values (freed with `mangled_props`).
@@ -4844,6 +4861,34 @@ impl<'a> LinkerContext<'a> {
         crate::linker_context::generate_code_for_lazy_export::generate_code_for_lazy_export(
             self,
             source_index,
+        )
+    }
+
+    /// See `linker_context/scanImportsAndExports.rs`.
+    #[inline]
+    pub(crate) fn validate_css_module_composes(
+        &self,
+        source_index: crate::IndexInt,
+        log: &mut Log,
+    ) {
+        crate::linker_context::scan_imports_and_exports::validate_css_module_composes(
+            self,
+            source_index,
+            log,
+        )
+    }
+
+    /// See `linker_context/generateCodeForLazyExport.rs`.
+    #[inline]
+    pub(crate) fn populate_css_module_lazy_export(
+        &self,
+        source_index: crate::IndexInt,
+        log: &mut Log,
+    ) -> Result<(), AllocError> {
+        crate::linker_context::generate_code_for_lazy_export::populate_css_module_lazy_export(
+            self,
+            source_index,
+            log,
         )
     }
 

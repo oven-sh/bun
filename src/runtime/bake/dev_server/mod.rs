@@ -104,8 +104,7 @@ pub(crate) use protocol::{ConsoleLogKind, HmrTopic, HmrTopicBits, IncomingMessag
 use router_glue::{OpaqueFileIdOrOptional, from_opaque_file_id, relative_path, to_opaque_file_id};
 pub(crate) use watcher_atomics::{NextEvent, WatcherAtomics};
 
-/// `DevServer.FileKind` — kept in lockstep with `bun_bundler::bake_types::CacheKind`
-/// (the vtable boundary maps between them via an exhaustive match).
+/// `DevServer.FileKind`. `File::cache_kind` maps it to the bundler's `CacheKind`.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub(crate) enum FileKind {

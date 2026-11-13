@@ -78,10 +78,7 @@ impl DevServer {
     }
 }
 
-#[derive(Copy, Clone)]
-pub(crate) struct CacheEntry {
-    pub(crate) kind: FileKind,
-}
+pub(crate) use bun_bundler::bake_types::CacheEntry;
 
 impl DevServer {
     pub(crate) fn is_file_cached(&mut self, path: &[u8], side: bake::Graph) -> Option<CacheEntry> {
@@ -92,8 +89,9 @@ impl DevServer {
 
         let _g = self.graph_safety_lock.guard();
 
+        use bun_bundler::bake_types::CacheKind;
         macro_rules! check {
-            ($g:expr, |$file:ident| $bundled_for_side:expr) => {{
+            ($g:expr, |$file:ident| $bundled_for_side:expr, $holds_css_module:expr) => {{
                 let g = $g;
                 let index = g.bundled_files.get_index(path)?;
                 if g.stale_files.is_set(index) {
@@ -105,22 +103,35 @@ impl DevServer {
                 if !$bundled_for_side {
                     return None;
                 }
-                return Some(CacheEntry {
-                    kind: $file.file_kind(),
-                });
+                let kind = $file.cache_kind();
+                // A CSS module is a module in each graph that imports it: only that graph's registry answers.
+                if kind == CacheKind::Css && bun_css::css_modules::is_module_path(path) {
+                    return $holds_css_module.then_some(CacheEntry {
+                        kind: CacheKind::CssModule,
+                    });
+                }
+                return Some(CacheEntry { kind });
             }};
         }
         match side {
-            bake::Graph::Client => check!(&self.client_graph, |_file| true),
-            // The server and SSR graphs share one record per file. Only a JS record tracks which graph bundled it.
-            bake::Graph::Server | bake::Graph::Ssr => check!(&self.server_graph, |file| {
-                file.file_kind() != FileKind::Js
-                    || if side == bake::Graph::Ssr {
+            bake::Graph::Client => {
+                check!(&self.client_graph, |file| true, file.has_css_module())
+            }
+            // The server and SSR graphs share one record per file. A JS record and a CSS module track which graph bundled them.
+            bake::Graph::Server | bake::Graph::Ssr => {
+                let bundled_for_side = |file: &incremental_graph::File| {
+                    if side == bake::Graph::Ssr {
                         file.is_ssr
                     } else {
                         file.is_rsc
                     }
-            }),
+                };
+                check!(
+                    &self.server_graph,
+                    |file| file.file_kind() != FileKind::Js || bundled_for_side(file),
+                    bundled_for_side(file)
+                )
+            }
         }
     }
 

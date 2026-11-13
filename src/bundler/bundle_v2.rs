@@ -14,6 +14,7 @@ use bun_core::ThreadLock;
 // the outer `BundleV2` struct see exactly the same types as the impl bodies.
 pub use bv2_impl::api;
 pub use bv2_impl::bake_types;
+pub(crate) use bv2_impl::css_module_name_path;
 pub use bv2_impl::dispatch;
 pub(crate) use bv2_impl::write_metafile_output;
 pub use bv2_impl::{
@@ -395,7 +396,10 @@ pub mod bv2_impl {
             Unknown = 0,
             Js = 1,
             Asset = 2,
+            /// A stylesheet the page loads through a `<link>` tag; a JS import of it binds nothing.
             Css = 3,
+            /// A stylesheet plus an HMR module, keyed by the file's path, that exports its class names.
+            CssModule = 4,
         }
         #[derive(Copy, Clone)]
         pub struct CacheEntry {
@@ -2962,7 +2966,11 @@ pub mod bv2_impl {
                 // For non-javascript files, make all of these files share indices.
                 // For example, it is silly to bundle index.css depended on by client+server twice.
                 // It makes sense to separate these for JS because the target affects DCE
-                if self.transpiler.options.server_components && !loader.is_javascript_like() {
+                // The dev server keeps a copy per graph, as `process_resolve_queue` does.
+                if self.transpiler.options.server_components
+                    && !loader.is_javascript_like()
+                    && self.dev_server.is_none()
+                {
                     // reshaped for borrowck — cannot hold two `&mut` into
                     // `self.graph` simultaneously, so re-derive the map per insert.
                     let key_text: Box<[u8]> = path.text.to_vec().into_boxed_slice();
@@ -4158,8 +4166,7 @@ pub mod bv2_impl {
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
 
             // `bun.new(ServerComponentParseTask, …)` — heap-owned by the
-            // worker pool; freed via `bun.destroy` in `on_complete` after the
-            // result posts back to the bundle thread.
+            // worker pool; `task_callback_wrap` frees it once the task ran.
             let task = bun_core::heap::into_raw(Box::new(ServerComponentParseTask {
                 data,
                 ctx: Some(bun_ptr::ParentRef::from_ref_mut(self)),
@@ -5716,6 +5723,7 @@ pub mod bv2_impl {
 
             let mut ctx = DevServerInput {
                 css_entry_points: ArrayHashMap::new(),
+                css_parse_failures: Vec::new(),
             };
             self.enqueue_entry_points_dev_server(bake_entry_points, &mut ctx.css_entry_points)?;
 
@@ -5744,12 +5752,17 @@ pub mod bv2_impl {
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
+            // No AST scope is active on this thread. What the link makes here lives in the bundle's heap.
+            let mut ast_memory_store = bun_ast::ASTMemoryAllocator::borrowing(self.graph.heap);
+            let ast_scope = ast_memory_store.enter();
+
             self.clone_ast().map_err(|_| AllocError)?;
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
             self.dynamic_import_entry_points = ArrayHashMap::new();
             let mut html_files: ArrayHashMap<Index, ()> = ArrayHashMap::new();
+            let mut css_module_stubs: Vec<Index> = Vec::new();
 
             // Separate non-failing files into two lists: JS and CSS
             let js_reachable_files: &[Index] = 'reachable_files: {
@@ -5775,6 +5788,8 @@ pub mod bv2_impl {
                 let input_files = self.graph.input_files.slice();
                 let loaders = input_files.items_loader();
                 let sources = input_files.items_source();
+                let mut invalid_css_imports: Vec<(Index, bun_ast::Log)> = Vec::new();
+                let mut failed_css_roots: Vec<Index> = Vec::new();
                 for index in 1..self.graph.ast.len() {
                     // SAFETY: `index < ast.len()`; see note above for column aliasing.
                     let part_list = unsafe { &mut *parts_col.add(index) };
@@ -5806,19 +5821,9 @@ pub mod bv2_impl {
                                 // TODO: it could be possible for a plugin to change
                                 // the type of loader from whatever it was into a
                                 // css-compatible loader.
-                                dev_server
-                                    .handle_parse_task_failure(
-                                        crate::Error::InvalidCssImport,
-                                        bake::Graph::Client,
-                                        sources[index].path.text,
-                                        &raw const log,
-                                        self,
-                                    )
-                                    .map_err(|_| AllocError)?;
-                                // Since there is an error, do not treat it as a
-                                // valid CSS chunk.
-                                let _ = start.css_entry_points.swap_remove(&Index::init(
-                                    u32::try_from(index).expect("int cast"),
+                                invalid_css_imports.push((
+                                    Index::init(u32::try_from(index).expect("int cast")),
+                                    log,
                                 ));
                             }
                         } else {
@@ -5852,10 +5857,23 @@ pub mod bv2_impl {
                                     (*parts_col.add(record.source_index.get() as usize)).len()
                                 } == 0
                                 {
+                                    let failed = record.source_index.get() as usize;
+                                    failed_css_roots.push(record.source_index);
                                     record.source_index = Index::INVALID;
                                     // The importer isn't bundled again when the stylesheet is fixed, so its
                                     // output must treat this import the same as a stylesheet that didn't fail.
-                                    record.path.is_disabled = true;
+                                    if loaders[index] != Loader::Html
+                                        && bun_css::css_modules::is_module_path(
+                                            sources[failed].path.pretty,
+                                        )
+                                    {
+                                        record.path = sources[failed].path;
+                                    } else {
+                                        record.path.is_disabled = true;
+                                        record.flags.insert(
+                                            bun_ast::ImportRecordFlags::IS_DEV_SERVER_STYLESHEET,
+                                        );
+                                    }
                                     continue;
                                 }
 
@@ -5897,6 +5915,59 @@ pub mod bv2_impl {
                     }
                 }
 
+                // A stylesheet that only stylesheets import has its edges, and so its failure, in the client graph.
+                for (index, target, err, log) in core::mem::take(&mut start.css_parse_failures) {
+                    let is_root = failed_css_roots.contains(&index)
+                        || self.graph.entry_points.contains(&index);
+                    let graph = if is_root {
+                        target.bake_graph()
+                    } else {
+                        bake::Graph::Client
+                    };
+                    dev_server
+                        .handle_parse_task_failure(
+                            err,
+                            graph,
+                            sources[index.get() as usize].path.text,
+                            &raw const log,
+                            self,
+                        )
+                        .map_err(|_| AllocError)?;
+                }
+                // A stylesheet with an invalid import gets no chunk. Only the root of a CSS module fails in the graph of its copy.
+                for (index, log) in &invalid_css_imports {
+                    let source = &sources[index.get() as usize];
+                    let graph = if start.css_entry_points.swap_remove(index)
+                        && bun_css::css_modules::is_module_path(source.path.pretty)
+                    {
+                        asts.items_target()[index.get() as usize].bake_graph()
+                    } else {
+                        bake::Graph::Client
+                    };
+                    dev_server
+                        .handle_parse_task_failure(
+                            crate::Error::InvalidCssImport,
+                            graph,
+                            source.path.text,
+                            std::ptr::from_ref(log),
+                            self,
+                        )
+                        .map_err(|_| AllocError)?;
+                }
+
+                // A CSS module also ships a module with its class-name map, in the JS chunk of its graph.
+                for entry_point in start.css_entry_points.keys() {
+                    let idx = entry_point.get() as usize;
+                    // SAFETY: `idx < ast.len()`; see the column aliasing note above.
+                    let part_count = unsafe { (*parts_col.add(idx)).len() };
+                    if part_count > 1
+                        && bun_css::css_modules::is_module_path(sources[idx].path.pretty)
+                    {
+                        js_files.push(*entry_point);
+                        css_module_stubs.push(*entry_point);
+                    }
+                }
+
                 break 'reachable_files self.arena().alloc_slice_copy(&js_files);
             };
 
@@ -5924,6 +5995,19 @@ pub mod bv2_impl {
                 )
             }
             .map_err(|_| AllocError)?;
+
+            // This pipeline skips `generate_code_for_lazy_export`, so fill the class-name maps here.
+            let mut css_module_errors: Vec<(Index, bun_ast::Log)> = Vec::new();
+            for source_index in &css_module_stubs {
+                let mut log = bun_ast::Log::init();
+                self.linker
+                    .validate_css_module_composes(source_index.get(), &mut log);
+                self.linker
+                    .populate_css_module_lazy_export(source_index.get(), &mut log)?;
+                if log.has_errors() {
+                    css_module_errors.push((*source_index, log));
+                }
+            }
 
             // HMR skips tree-shaking, so size and seed the part-liveness bitsets
             // here: every part of every JS file is considered live.
@@ -6005,16 +6089,47 @@ pub mod bv2_impl {
                 let sources = self.graph.input_files.items_source();
                 let mut log = bun_ast::Log::init();
                 too_deep.add_to_log(sources, &mut log);
+                let root = entry_point.get() as usize;
+                // A CSS module fails in the graph of its copy, as for an invalid import.
+                let graph = if bun_css::css_modules::is_module_path(sources[root].path.pretty) {
+                    self.graph.ast.items_target()[root].bake_graph()
+                } else {
+                    bake::Graph::Client
+                };
                 dev_server
                     .handle_parse_task_failure(
                         crate::Error::InvalidCssImport,
-                        bake::Graph::Client,
-                        sources[entry_point.get() as usize].path.text,
+                        graph,
+                        sources[root].path.text,
                         &raw const log,
                         self,
                     )
                     .map_err(|_| AllocError)?;
                 let _ = start.css_entry_points.ordered_remove(&entry_point);
+            }
+            // The class-name module of a CSS module that failed above would clear the failure.
+            let failed = |source_index: u32| {
+                let index = Index::init(source_index);
+                css_module_stubs.contains(&index)
+                    && (!start.css_entry_points.contains(&index)
+                        || css_module_errors.iter().any(|(failed, _)| *failed == index))
+            };
+            if css_module_stubs.iter().any(|stub| failed(stub.get())) {
+                let chunk::Content::Javascript(js) = &mut chunks[0].content else {
+                    unreachable!()
+                };
+                js.files_in_chunk_order = js
+                    .files_in_chunk_order
+                    .iter()
+                    .copied()
+                    .filter(|source_index| !failed(*source_index))
+                    .collect();
+                js.parts_in_chunk_in_order = js
+                    .parts_in_chunk_in_order
+                    .iter()
+                    .copied()
+                    .filter(|range| !failed(range.source_index.get()))
+                    .collect();
             }
             for (entry_point, order) in css_orders {
                 let order_len = order.len() as usize;
@@ -6062,6 +6177,10 @@ pub mod bv2_impl {
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
+            // `finalize_bundle` runs JS and frees the bundle. The state holds the small lists that it reads.
+            drop(ast_scope);
+            let _ast_alloc_state = ast_memory_store.take_ast_state();
+
             dev_server
                 .finalize_bundle(
                     self,
@@ -6069,6 +6188,7 @@ pub mod bv2_impl {
                         chunks,
                         css_file_list: core::mem::take(&mut start.css_entry_points),
                         html_files,
+                        css_module_errors,
                     },
                 )
                 .map_err(|_| AllocError)
@@ -7040,6 +7160,10 @@ pub mod bv2_impl {
                                     || entry.kind == bake_types::CacheKind::Css
                                 {
                                     import_record.path.is_disabled = true;
+                                    import_record.flags.set(
+                                        bun_ast::ImportRecordFlags::IS_DEV_SERVER_STYLESHEET,
+                                        entry.kind == bake_types::CacheKind::Css,
+                                    );
                                 }
                             }
                             continue 'outer;
@@ -7838,15 +7962,36 @@ pub mod bv2_impl {
                                 [err.source_index.get() as usize]
                                 .path
                                 .text;
-                            dev_server
-                                .handle_parse_task_failure(
+                            // SAFETY: the start data of the bundle that this task belongs to, or null. Only this thread uses it.
+                            let start = unsafe {
+                                dev_server
+                                    .current_bundle_start_data()
+                                    .cast::<DevServerInput>()
+                                    .as_mut()
+                            };
+                            let is_server_stylesheet = err.target != Target::Browser
+                                && err.step == crate::parse_task::Step::Parse
+                                && this.graph.input_files.items_loader()
+                                    [err.source_index.get() as usize]
+                                    == Loader::Css;
+                            if let Some(start) = start.filter(|_| is_server_stylesheet) {
+                                start.css_parse_failures.push((
+                                    err.source_index,
+                                    err.target,
                                     err.err,
-                                    err.target.bake_graph(),
-                                    abs_path,
-                                    &raw const err.log,
-                                    std::ptr::from_mut(this),
-                                )
-                                .expect("oom");
+                                    core::mem::take(&mut err.log),
+                                ));
+                            } else {
+                                dev_server
+                                    .handle_parse_task_failure(
+                                        err.err,
+                                        err.target.bake_graph(),
+                                        abs_path,
+                                        &raw const err.log,
+                                        std::ptr::from_mut(this),
+                                    )
+                                    .expect("oom");
+                            }
                         } else if !err.log.msgs.is_empty() {
                             // SAFETY: `transpiler.log` is a live BACKREF set in BundleV2::init.
                             err.log.append_to(this.transpiler.log_mut());
@@ -8085,6 +8230,21 @@ pub mod bv2_impl {
         None
     }
 
+    const SSR_PRETTY_PREFIX: &[u8] = b"ssr:";
+
+    /// The path that CSS module names hash. Only the dev server drops `ssr:`: in a build, equal names make equal CSS chunks.
+    pub(crate) fn css_module_name_path(
+        pretty: &[u8],
+        target: options::Target,
+        has_dev_server: bool,
+    ) -> &[u8] {
+        if has_dev_server && target == options::Target::ServerComponentsSsr {
+            pretty.strip_prefix(SSR_PRETTY_PREFIX).unwrap_or(pretty)
+        } else {
+            pretty
+        }
+    }
+
     pub fn generic_path_with_pretty_initialized<'b>(
         path: &bun_paths::fs::Path<'_>,
         target: options::Target,
@@ -8104,7 +8264,7 @@ pub mod bv2_impl {
 
         // `pretty` is only displayed, never opened, so it can be longer than MAX_PATH_BYTES.
         let ssr_prefix: &[u8] = if target == options::Target::ServerComponentsSsr {
-            b"ssr:"
+            SSR_PRETTY_PREFIX
         } else {
             b""
         };
@@ -8240,6 +8400,8 @@ pub mod bv2_impl {
     /// The lifetime of this structure is tied to the bundler's arena
     pub struct DevServerInput {
         pub(crate) css_entry_points: ArrayHashMap<Index, CssEntryPointMeta>,
+        /// Stylesheets of a server-side graph that failed to parse. The graph that records each is known at the link.
+        pub(crate) css_parse_failures: Vec<(Index, options::Target, crate::Error, bun_ast::Log)>,
     }
 
     /// The lifetime of this structure is tied to the bundler's arena
@@ -8247,6 +8409,8 @@ pub mod bv2_impl {
         pub chunks: &'a mut [Chunk<'a>],
         pub css_file_list: ArrayHashMap<Index, CssEntryPointMeta>,
         pub html_files: ArrayHashMap<Index, ()>,
+        /// Client CSS modules with a `composes` that cannot be followed. Each fails like a chunk that did not print.
+        pub css_module_errors: Vec<(Index, bun_ast::Log)>,
     }
 
     pub(crate) fn generate_unique_key() -> u64 {

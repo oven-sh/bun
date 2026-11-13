@@ -729,9 +729,9 @@ describe("bundler", async () => {
       },
     });
 
-    // CSS imports are delivered out-of-band by the dev server, so the JS
-    // chunk only contains the importing module. This used to panic while
-    // linking the CSS file's lazy-export JS stub.
+    // The stylesheet of a CSS module is delivered out-of-band by the dev
+    // server. Its class-name map is a module of its own that the importer
+    // lists as a dependency.
     itBundled("bake-dev/loader-css-module-import", {
       format: "internal_bake_dev",
       outdir: "/out",
@@ -744,9 +744,40 @@ describe("bundler", async () => {
       },
       onAfterBundle(api) {
         const jsFile = readdirSync(api.outdir).find(x => x.endsWith(".js"))!;
-        expect(api.readFile(join("/out", jsFile))).toContain('"entry.ts"');
+        const js = api.readFile(join("/out", jsFile));
+        expect(js).toContain('"entry.ts"');
+        expect(js).toContain('"styles.module.css", 1, "default"');
+        expect(js).toContain('"styles.module.css"(hmr, module, exports)');
+        const scoped = js.match(/foo_[A-Za-z0-9_-]+/)?.[0];
+        expect(scoped).toBeString();
         const cssFile = readdirSync(api.outdir).find(x => x.endsWith(".css"))!;
-        expect(api.readFile(join("/out", cssFile))).toContain("color: red");
+        const css = api.readFile(join("/out", cssFile));
+        expect(css).toContain("color: red");
+        expect(css).toContain(`.${scoped} {`);
+      },
+    });
+
+    // A server-side graph links to the same kind of module.
+    itBundled("bake-dev/loader-css-module-import-server", {
+      format: "internal_bake_dev",
+      target: "bun",
+      outdir: "/out",
+      files: {
+        "/entry.ts": /* js */ `
+          import styles from "./styles.module.css";
+          console.log(styles.foo);
+          export const lazy = () => require("./styles.module.css");
+        `,
+        "/styles.module.css": `.foo { color: red; }`,
+      },
+      onAfterBundle(api) {
+        const jsFile = readdirSync(api.outdir).find(x => x.endsWith(".js"))!;
+        const js = api.readFile(join("/out", jsFile));
+        expect(js).toContain('"styles.module.css", 1, "default"');
+        expect(js).toContain('"styles.module.css"(hmr, module, exports)');
+        expect(js).toContain('hmr.require("styles.module.css")');
+        expect(js).toMatch(/foo: "foo_[A-Za-z0-9_-]+"/);
+        expect(js).not.toContain("default: {}");
       },
     });
   });

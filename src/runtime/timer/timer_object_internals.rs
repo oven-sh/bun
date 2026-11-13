@@ -683,7 +683,12 @@ impl TimerObjectInternals {
                         }
                     }
                 } else {
-                    if kind == KindBig::SetTimeout && !repeat.is_null() {
+                    // The callback can clear the timer, and a nested fire can promote it first.
+                    if kind == KindBig::SetTimeout
+                        && !repeat.is_null()
+                        && !s.flags.get().has_cleared_timer()
+                        && s.flags.get().kind() == Kind::SetTimeout
+                    {
                         if let Some(num) = idle_timeout.get_number() {
                             if num != -1.0 {
                                 // reschedule() inside convertToInterval will see state == .FIRED
@@ -871,7 +876,7 @@ impl TimerObjectInternals {
                 .timer
                 .update(self.event_loop_timer(), &scheduled_time)
         };
-        self.update_flags(|f| f.set_has_cleared_timer(false));
+        debug_assert!(!self.flags.get().has_cleared_timer());
 
         // Set _idleStart to the current monotonic timestamp in milliseconds
         // This mimics Node.js's behavior where _idleStart is the libuv timestamp when the timer was scheduled

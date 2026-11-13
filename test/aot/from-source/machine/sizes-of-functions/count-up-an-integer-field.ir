@@ -12,8 +12,8 @@
 # (globalThis as any).answer = counter.count;
 # -- end of source
 # The compiler before this one: 4 instructions, 0 of them patches.
-# When the bound was taken: steps: operations 5, patches 0, moves 1, unlikely or rare 0.
-# RUN(X64): steps most:6 f1 mechanisms=all-Inlining
+# The field holds an exact integer, which stops at 2 to the 53rd power (as a double an increment took three times the cycles).
+# RUN(X64): steps most:8 f1 mechanisms=all-Inlining
 # REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
 # X64-LABEL: unit f1:Body
-# X64-NEXT: steps: at most 6
+# X64-NEXT: steps: at most 8

@@ -10128,17 +10128,23 @@ impl<'s> Files<'s> {
             }
         };
         let is_root = |&file: &FileId| is_root_of_project(self.module(file).file_name());
-        let file_ids = (0..self.modules.len()).map(|index| FileId(index as u32));
-        let mut pending: Vec<FileId> = file_ids.filter(is_root).filter(is_read).collect();
+        let mut pending: Vec<FileId> = Vec::new();
         let mut is_reached = vec![false; self.modules.len()];
         let mut leads_to_bun_types = false;
-        while let Some(file) = pending.pop() {
-            if self.types_named_by_build(file) == Some(TypesNamedByBuild::Bun) {
-                leads_to_bun_types = true;
-                break;
+        'roots: for index in 0..self.modules.len() {
+            let file = FileId(index as u32);
+            if is_reached[index] || !is_read(&file) || !is_root(&file) {
+                continue;
             }
-            if !std::mem::replace(&mut is_reached[file.idx()], true) {
-                pending.extend(self.module(file).edges.iter().copied().filter(is_read));
+            pending.push(file);
+            while let Some(file) = pending.pop() {
+                if self.types_named_by_build(file) == Some(TypesNamedByBuild::Bun) {
+                    leads_to_bun_types = true;
+                    break 'roots;
+                }
+                if !std::mem::replace(&mut is_reached[file.idx()], true) {
+                    pending.extend(self.module(file).edges.iter().copied().filter(is_read));
+                }
             }
         }
         self.leads_to_bun_types = leads_to_bun_types;

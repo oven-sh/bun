@@ -1,3 +1,4 @@
+// STATISTIC: UndoableStoresMergedAtJoins >= 10
 // Loops that store into arrays on some paths and go on. A later check fails in one iteration: what the path has stored is put back.
 const show = v => (typeof v === "bigint" ? v + "n" : Object.is(v, -0) ? "-0" : typeof v === "string" ? JSON.stringify(v) : typeof v === "object" && v ? "{}" : String(v));
 const text = list => Array.prototype.map.call(list, show).join(",") + "#" + list.length;

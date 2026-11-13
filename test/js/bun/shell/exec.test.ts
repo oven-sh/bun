@@ -27,6 +27,44 @@ describe("bun exec", () => {
     .stdout('hi "there bud"\n')
     .runAsTest("it works2");
 
+  // The scripts read NONE as not set.
+  const paramEnv = { ...bunEnv, NONE: undefined };
+
+  TestBuilder.command`${BUN} exec ${'FOO=bar; echo ${FOO} "${FOO}" ${FOO}baz'}`
+    .env(paramEnv)
+    .stdout("bar bar barbaz\n")
+    .runAsTest("expands ${NAME}");
+
+  TestBuilder.command`${BUN} exec ${'FOO=bar; echo ${FOO:-none} ${NONE:-"a  b"} ${FOO:+set}; echo ${NONE:=made} $NONE'}`
+    .env(paramEnv)
+    .stdout("bar a  b set\nmade made\n")
+    .runAsTest("expands ${NAME<op>word}");
+
+  TestBuilder.command`${BUN} exec ${'true "${NONE:?need NONE}" && echo RAN'}`
+    .env(paramEnv)
+    .stderr("bun: NONE: need NONE\n")
+    .exitCode(1)
+    .runAsTest("${NAME:?word} fails the command when NAME is not set");
+
+  TestBuilder.command`${BUN} exec ${"ENV=${NONE:?} echo cmd"}`
+    .env(paramEnv)
+    .stderr("bun: NONE: parameter null or not set\n")
+    .exitCode(1)
+    .runAsTest("${NAME:?word} in an assignment before a command");
+
+  TestBuilder.command`${BUN} script.sh`
+    .file("script.sh", "ENV=${NONE:?need NONE}\n")
+    .env(paramEnv)
+    .stderr("bun: NONE: need NONE\n")
+    .exitCode(1)
+    .runAsTest("${NAME:?word} in an assignment in a .sh file");
+
+  TestBuilder.command`${BUN} script.sh`
+    .file("script.sh", 'FOO=bar\necho ${FOO} "${FOO}" ${FOO}baz ${NONE:-é ${FOO:+ü}}\n')
+    .env(paramEnv)
+    .stdout("bar bar barbaz é ü\n")
+    .runAsTest("expands ${NAME} and ${NAME<op>word} in a .sh file");
+
   TestBuilder.command`${BUN} exec ${"cat filename"}`
     .file(
       "filename",

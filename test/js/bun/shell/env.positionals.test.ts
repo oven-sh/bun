@@ -14,6 +14,12 @@ describe("$ argv", async () => {
       .stdout(process.argv[i] + "\n")
       .runAsTest(`$${i} should equal process.argv[${i}]`);
   }
+  for (let i = 0; i < Math.min(process.argv.length, 10); i++) {
+    TestBuilder.command`echo ${{ raw: "${" + i + "}" }}`
+      .exitCode(0)
+      .stdout(process.argv[i] + "\n")
+      .runAsTest(`\${${i}} should equal process.argv[${i}]`);
+  }
 });
 
 test("$ argv: standalone", async () => {
@@ -71,6 +77,22 @@ test("$ argv: standalone: only 10", async () => {
   expect(stdout).toBeDefined();
   const out = await stdout.text();
   expect(out.split("\n")).toEqual([script, "a", "bb", "c", "d", "e", "f", "g", "h", "i", "a0", ""]);
+});
+
+test("$ argv: standalone: ${N}", async () => {
+  const script = path.join(import.meta.dir, "fixtures", "positionals3.bun.sh");
+  await using proc = spawn({
+    cmd: [bunExe(), "run", script, "a", "b", "c  d"],
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(err).toBeEmpty();
+  expect(out.split("\n")).toEqual([script, "a", "bb", "a0", "c  d", "none one", ""]);
+  expect(exitCode).toBe(0);
 });
 
 test("$ argv: standalone: non-ascii", async () => {

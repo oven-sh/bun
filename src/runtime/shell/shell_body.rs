@@ -29,9 +29,8 @@ pub(crate) use super::subproc; // declared once in `shell/mod.rs`
 // (still-draft) JSC bridge below. This file keeps the JSC-coupled half
 // (ShellErr, GlobalJS/Mini, shell_cmd_from_js, ShellSrcBuilder, TestingAPIs).
 pub(crate) use bun_shell_parser::parse::{
-    IfClauseTok, LEX_JS_OBJREF_PREFIX, LEX_JS_REF_TERMINATOR, LEX_JS_STRING_PREFIX, LexerAscii,
-    LexerUnicode, ParseError, Parser, Token, ast, is_if_clause_keyword_bunstr, needs_escape_bunstr,
-    needs_escape_utf8_ascii_latin1,
+    IfClauseTok, LEX_JS_OBJREF_PREFIX, LEX_JS_REF_TERMINATOR, LEX_JS_STRING_PREFIX, Token, ast,
+    is_if_clause_keyword_bunstr, needs_escape_bunstr, needs_escape_utf8_ascii_latin1,
 };
 
 #[cfg(windows)]
@@ -127,6 +126,9 @@ pub(crate) mod test {
         CloseParen,
         Var(&'a [u8]),
         VarArgv(u8),
+        ParamBegin(ast::ParamOp),
+        ParamSpace(&'a [u8]),
+        ParamEnd,
         Text(&'a [u8]),
         SingleQuotedText(&'a [u8]),
         DoubleQuotedText(&'a [u8]),
@@ -142,6 +144,11 @@ pub(crate) mod test {
             match the_token {
                 Token::Var(txt) => TestToken::Var(&buf[txt.start as usize..txt.end as usize]),
                 Token::VarArgv(int) => TestToken::VarArgv(int),
+                Token::ParamBegin(op) => TestToken::ParamBegin(op),
+                Token::ParamSpace(txt) => {
+                    TestToken::ParamSpace(&buf[txt.start as usize..txt.end as usize])
+                }
+                Token::ParamEnd => TestToken::ParamEnd,
                 Token::Text(txt) => TestToken::Text(&buf[txt.start as usize..txt.end as usize]),
                 Token::SingleQuotedText(txt) => {
                     TestToken::SingleQuotedText(&buf[txt.start as usize..txt.end as usize])
@@ -214,6 +221,13 @@ pub(crate) mod test {
                     w.write_char('}')
                 }
                 T::VarArgv(n) => write!(w, "{{\"VarArgv\":{}}}", n),
+                T::ParamBegin(op) => write!(w, "{{\"ParamBegin\":\"{}\"}}", op.as_str()),
+                T::ParamSpace(s) => {
+                    w.write_str("{\"ParamSpace\":")?;
+                    encode_json_string(w, s)?;
+                    w.write_char('}')
+                }
+                T::ParamEnd => unit!("ParamEnd"),
                 T::Text(s) => {
                     w.write_str("{\"Text\":")?;
                     encode_json_string(w, s)?;
@@ -551,7 +565,7 @@ impl<'a> ShellSrcBuilder<'a> {
             // marker recognized regardless of quote context (e.g. inside single quotes).
             if needs_escape_bunstr(&bunstr)
                 || is_if_clause_keyword_bunstr(&bunstr)
-                || self.outbuf_ends_with_var_ref()
+                || bun_shell_parser::ends_in_param_head(self.outbuf)
             {
                 self.append_js_str_ref(bunstr)?;
                 return Ok(true);
@@ -581,7 +595,7 @@ impl<'a> ShellSrcBuilder<'a> {
         if ALLOW_ESCAPE {
             if needs_escape_utf8_ascii_latin1(utf8)
                 || IfClauseTok::from_text(utf8).is_some()
-                || self.outbuf_ends_with_var_ref()
+                || bun_shell_parser::ends_in_param_head(self.outbuf)
             {
                 self.append_js_str_ref(BunString::clone_utf8(utf8))?;
                 return Ok(true);
@@ -590,17 +604,6 @@ impl<'a> ShellSrcBuilder<'a> {
 
         self.append_utf8_impl(utf8)?;
         Ok(true)
-    }
-
-    fn outbuf_ends_with_var_ref(&self) -> bool {
-        match self
-            .outbuf
-            .iter()
-            .rposition(|b| !(b.is_ascii_alphanumeric() || *b == b'_'))
-        {
-            Some(i) => self.outbuf[i] == b'$',
-            None => false,
-        }
     }
 
     pub(crate) fn append_utf16_impl(&mut self, utf16: &[u16]) -> Result<(), bun_alloc::AllocError> {
@@ -706,20 +709,13 @@ pub(crate) mod testing_apis {
         )?;
 
         let jsobjs_len: u32 = u32::try_from(marked_argument_buffer.size()).expect("int cast");
-        let lex_result = 'brk: {
-            if strings::is_all_ascii(&script[..]) {
-                let mut lexer = LexerAscii::new(&arena, &script[..], &jsstrings[..], jsobjs_len);
-                if let Err(err) = lexer.lex() {
+        let lex_result =
+            match bun_shell_parser::lex_script(&arena, &script[..], &jsstrings[..], jsobjs_len) {
+                Ok(lex_result) => lex_result,
+                Err(err) => {
                     return Err(global.throw_error(crate::Error::from(err), "failed to lex shell"));
                 }
-                break 'brk lexer.get_result();
-            }
-            let mut lexer = LexerUnicode::new(&arena, &script[..], &jsstrings[..], jsobjs_len);
-            if let Err(err) = lexer.lex() {
-                return Err(global.throw_error(crate::Error::from(err), "failed to lex shell"));
-            }
-            lexer.get_result()
-        };
+            };
 
         if !lex_result.errors.is_empty() {
             let str = lex_result.combine_errors(&arena);

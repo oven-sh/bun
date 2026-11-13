@@ -138,7 +138,7 @@ describe("yield", async () => {
           Bun.gc(true);
           console.log(JSON.stringify(out));
         `),
-        env: bunEnv,
+        env: { ...bunEnv, U: undefined },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -178,6 +178,14 @@ describe("yield", async () => {
       );
     });
 
+    // The `$(...)` is in the word of a `${NAME<op>word}`, which expands only because U is not set.
+    test.concurrent("in a $(...) in the word of a ${NAME:-word}", async () => {
+      await expectRejection(
+        '$`echo ${{ raw: "${U:-a $(echo x > " }}${new Blob(["x"])}${{ raw: "; echo y) b}" }}; echo no`.quiet().nothrow()',
+        builtin,
+      );
+    });
+
     // This one always rejected (the error comes straight out of `.run()`), but
     // the interpreter was never finished and kept the event loop alive forever.
     test.concurrent("first command, and the process still exits", async () => {
@@ -203,6 +211,31 @@ describe("yield", async () => {
 
       expect({ result: stdout.trim(), exitCode }).toEqual({
         result: JSON.stringify(["rejected Error: No space left on device", "resolved 0"]),
+        exitCode: 0,
+      });
+    });
+
+    // The message of a failed assignment value is not a thrown error: the exit code is 1, as with a stderr
+    // that takes the write, and the script continues.
+    test.concurrent.if(isLinux)("a failed write of the error of an assignment value is exit code 1", async () => {
+      await using proc = Bun.spawn({
+        cmd: child(`
+          const run = script => settle($\`\${{ raw: script }}\`.nothrow());
+          console.log(JSON.stringify([
+            await run("A=\${U:?x}"),
+            await run("A=\${U:?x} true"),
+            await run("A=\${U:?x}; A=\${U:?x} true; true"),
+          ]));
+        `),
+        env: { ...bunEnv, U: undefined },
+        stdout: "pipe",
+        stderr: Bun.file("/dev/full"),
+      });
+
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+      expect({ result: stdout.trim(), exitCode }).toEqual({
+        result: JSON.stringify(["resolved 1", "resolved 1", "resolved 0"]),
         exitCode: 0,
       });
     });

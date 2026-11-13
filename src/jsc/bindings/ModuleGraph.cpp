@@ -695,13 +695,22 @@ __attribute__((minsize)) JSPromise* JSModuleGraph::import(Zig::GlobalObject* glo
     // The first import makes its module main, whether or not it then loads. (Not a builtin: it
     // is no graph's module.)
     bool becomesMain = mayBecomeMain && !m_mainPath && !Bun::isBuiltinModule(key.string());
-    if (becomesMain)
-        m_mainPath.set(vm, this, jsString(vm, key.string()));
+    // The host loads the main module, the first time or again: the module that runs now, or that ran under the key before, is require.main.
+    if (becomesMain || (mayBecomeMain && m_mainPath && m_mainPath->tryGetValue().data == key.string() && !loader->getRegisteredMayBeNull(key, ScriptFetchParameters::Type::JavaScript))) {
+        JSString* mainPath = becomesMain ? jsString(vm, key.string()) : m_mainPath.get();
+        nameMainModule(globalObject, this, mainPath);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (becomesMain)
+            m_mainPath.set(vm, this, mainPath);
+    }
     // JSModuleLoader::requestImportModule() after its resolve, which would ask about the key.
     JSPromise* loaded = loader->loadModule(globalObject, key, nullptr, nullptr, { ModuleLoadFlag::Evaluate, ModuleLoadFlag::Dynamic });
     if (scope.exception()) [[unlikely]] {
-        if (becomesMain)
+        if (becomesMain) {
             m_mainPath.clear();
+            // What the load ran before it threw can have required the module under the key.
+            clearMainModule(vm, m_requireMap.get());
+        }
         return nullptr;
     }
     JSPromise* result = JSPromise::create(vm, globalObject->promiseStructure());
@@ -721,6 +730,7 @@ void JSModuleGraph::dispose(Zig::GlobalObject* globalObject)
     // Everything the graph's script opened goes: servers, sockets, timers, in-flight requests,
     // child processes, workers.
     m_context->stop();
+    clearMainModule(vm, m_requireMap.get());
     m_requireMap->clear(globalObject);
     RETURN_IF_EXCEPTION(scope, );
     m_requireCache.clear();

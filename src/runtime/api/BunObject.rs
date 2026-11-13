@@ -659,6 +659,20 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
 // HOST_EXPORT(BunObject_setter_main, jsc)
 pub(crate) fn set_main(global_this: &JSGlobalObject, new_value: JSValue) -> bool {
     // SAFETY: bun_vm() returns the live per-thread singleton.
+    global_this.bun_vm().as_mut().overridden_main.deinit();
+    // The entry point's own path overrides nothing: the main module is again the one that the entry point loaded.
+    if new_value.is_string() {
+        let entry_point = get_main(global_this);
+        if entry_point.is_empty() {
+            return false;
+        }
+        match new_value.is_strict_equal(entry_point, global_this) {
+            Ok(true) => return true,
+            Ok(false) => {}
+            Err(_) => return false,
+        }
+    }
+    // SAFETY: as above.
     global_this
         .bun_vm()
         .as_mut()

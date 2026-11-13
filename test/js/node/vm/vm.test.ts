@@ -977,7 +977,7 @@ describe.concurrent("File and fs.Stats accept a newTarget that belongs to a cont
 
 // The FTL calls a native getter with the inlined function's global object. For a function
 // defined in a vm context, that's the context's global object.
-test.concurrent.each(["cache", "extensions"])(
+test.concurrent.each(["cache", "extensions", "main"])(
   "require.%s returns the same object when read by a function from a vm context",
   async property => {
     await using proc = Bun.spawn({

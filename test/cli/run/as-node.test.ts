@@ -117,6 +117,27 @@ describe("fake node cli", () => {
     );
   });
 
+  // The path on the command line is not the key of the module that the loader finds for it.
+  test.each([".", "index"])("the entry point of `node %s` is the main module", script => {
+    using temp = tempDir("fake-node", {
+      "index.js": "console.log(require.main === module, process.mainModule === module)",
+    });
+    expect(fakeNodeRun(temp, script).stdout).toBe("true true");
+  });
+  test("a file that a preload has run is not the main module when `node .` finds it", () => {
+    // It ran as a module that is not the main module, and nothing runs it again. Node prints the same.
+    using temp = tempDir("fake-node", {
+      "preload.cjs": `require("./index.js");`,
+      "index.js": `
+        globalThis.loads = (globalThis.loads ?? 0) + 1;
+        const ask = () => [globalThis.loads, require.main === module, process.mainModule === module].join();
+        const atLoad = ask();
+        setImmediate(() => console.log(atLoad, ask()));
+      `,
+    });
+    expect(fakeNodeRun(temp, ["-r", "./preload.cjs", "."]).stdout).toBe("1,false,false 1,false,false");
+  });
+
   // Bare `node` now matches Node.js: a TTY stdin enters the REPL, a
   // non-TTY stdin (pipe) prints "Missing script". fakeNodeRun's default
   // stdin is platform-dependent (Windows may inherit a console), so pin

@@ -126,6 +126,7 @@ using namespace JSC;
     macro(lineText) \
     macro(loadEsmIntoCjs) \
     macro(main) \
+    macro(mainModule) \
     macro(makeAbortError) \
     macro(makeDOMException) \
     macro(makeErrorWithCode) \

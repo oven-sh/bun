@@ -313,11 +313,10 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   "%ModuleObject%.parent": moduleChildrenFunctions,
   "%ModuleRequire%.cache": requireCacheFunctions,
   "%ModuleRequire%.extensions": functionsOfDefaultLoaders,
-  "%ModuleRequire%.main": [...functionsIn("builtins/CommonJS", "main"), ...moduleChildrenFunctions],
+  "%ModuleRequire%.main": moduleChildrenFunctions,
   "%ModuleRequire%.resolve": functionsIn("builtins/CommonJS", "requireResolve"),
   "%ModuleRequirePrototype%.cache": requireCacheFunctions,
   "%ModuleRequirePrototype%.extensions": functionsOfDefaultLoaders,
-  // In an executable the getter is native code.
   "%ModuleRequirePrototype%.main": moduleChildrenFunctions,
   "%ModuleRequirePrototype%.resolve": functionsIn("builtins/CommonJS", "requireResolve"),
   "Math.max": functionsIn("prelude/written-lists", "maxOfList"),

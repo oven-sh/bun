@@ -133,6 +133,11 @@ pub(crate) fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier
     false
 }
 
+// HOST_EXPORT(Bun__VM__overriddenMain, c)
+pub(crate) fn overridden_main(this: &mut VirtualMachine) -> JSValue {
+    this.overridden_main.get().unwrap_or_default()
+}
+
 /// Called once by JSCommonJSModule.cpp for the root CJS module so the run command reports
 /// origin `uncaughtException`. `main()` compare filters out an ESM entry that `import`s CJS.
 // HOST_EXPORT(Bun__VM__noteCommonJSEvaluation, c)

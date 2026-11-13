@@ -14,7 +14,11 @@ unsafe extern "C" {
         arg0: &JSGlobalObject,
         arg1: &BunString,
     ) -> *mut JSInternalPromise;
-    safe fn JSC__JSModuleLoader__resolveAndLoadAndEvaluateModule(
+    safe fn JSC__JSModuleLoader__loadAndEvaluateEntryPoint(
+        arg0: &JSGlobalObject,
+        arg1: &BunString,
+    ) -> *mut JSInternalPromise;
+    safe fn JSC__JSModuleLoader__resolveAndLoadAndEvaluateEntryPoint(
         arg0: &JSGlobalObject,
         arg1: &BunString,
     ) -> *mut JSInternalPromise;
@@ -42,15 +46,26 @@ impl JSModuleLoader {
         ))
     }
 
-    /// `JSModuleLoader::resolve` with no importer, then [`Self::load_and_evaluate_module_ptr`]
+    /// [`Self::load_and_evaluate_module_ptr`] of an entry point: the CommonJS module under `key` becomes the main module.
+    pub fn load_and_evaluate_entry_point_ptr(
+        global_object: *mut JSGlobalObject,
+        key: &BunString,
+    ) -> Option<core::ptr::NonNull<JSInternalPromise>> {
+        core::ptr::NonNull::new(JSC__JSModuleLoader__loadAndEvaluateEntryPoint(
+            JSGlobalObject::opaque_ref(global_object),
+            key,
+        ))
+    }
+
+    /// `JSModuleLoader::resolve` with no importer, then [`Self::load_and_evaluate_entry_point_ptr`]
     /// of the key. `None`, with the exception pending, if it does not resolve either.
-    pub fn resolve_and_load_and_evaluate_module_ptr(
+    pub fn resolve_and_load_and_evaluate_entry_point_ptr(
         global_object: *mut JSGlobalObject,
         module_name: &BunString,
     ) -> Option<core::ptr::NonNull<JSInternalPromise>> {
         // `JSGlobalObject` is an opaque ZST handle; `opaque_ref` is the
         // centralised zero-byte deref proof (panics on null).
-        core::ptr::NonNull::new(JSC__JSModuleLoader__resolveAndLoadAndEvaluateModule(
+        core::ptr::NonNull::new(JSC__JSModuleLoader__resolveAndLoadAndEvaluateEntryPoint(
             JSGlobalObject::opaque_ref(global_object),
             module_name,
         ))

@@ -155,6 +155,9 @@ static bool tryFastEnumeration(VM& vm, JSObject* object, const Invocable<void(Un
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
 extern "C" void Bun__VM__setEntryPointEvalResultCJS(void*, EncodedJSValue);
 extern "C" void Bun__VM__noteCommonJSEvaluation(void*, EncodedJSValue);
+extern "C" EncodedJSValue Bun__VM__overriddenMain(void*);
+extern "C" EncodedJSValue SYSV_ABI BunObject_getter_main(JSGlobalObject*);
+extern "C" bool Bun__isMainThreadVM();
 
 // The module a require() function is bound to.
 static JSCommonJSModule* requirerOf(JSValue require)
@@ -163,21 +166,123 @@ static JSCommonJSModule* requirerOf(JSValue require)
     return bound ? dynamicDowncast<JSCommonJSModule>(bound->boundThis()) : nullptr;
 }
 
-// `require.main` of a require() that belongs to a Bun.ModuleGraph is the graph's first
-// import, from the graph's cache: an own accessor on the function, shadowing the prototype's.
-JSC_DEFINE_CUSTOM_GETTER(jsModuleGraphRequireMainGetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+// A require map holds its loader's main module under this name. The global object's map holds the entry point's key first.
+static const Identifier& mainModuleName(VM& vm)
 {
-    auto* requirer = requirerOf(JSValue::decode(thisValue));
-    JSModuleGraph* graph = requirer ? requirer->moduleGraph() : nullptr;
-    if (!graph || graph->mainPath().isUndefined())
-        return JSValue::encode(jsUndefined());
-    return JSValue::encode(graph->requireMap()->get(globalObject, graph->mainPath()));
+    return WebCore::builtinNames(vm).mainModulePrivateName();
 }
 
-static void putModuleGraphRequireMain(VM& vm, JSFunction* requireFunction, JSCommonJSModule* requirer)
+// `bun test` stores no main module: a test file reads by path (test/aot/the-main-module-of-a-test-run.test.ts).
+static bool loadsTestFiles(Zig::GlobalObject* globalObject, JSModuleGraph* graph)
 {
-    if (requirer->moduleGraph())
-        requireFunction->putDirectCustomAccessor(vm, WebCore::builtinNames(vm).mainPublicName(), JSC::CustomGetterSetter::create(vm, jsModuleGraphRequireMainGetter, nullptr), JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly);
+    return isBunTest && (!graph || graph == testFileModuleGraph(globalObject)) && Bun__isMainThreadVM();
+}
+
+// The entry point's key in `graph`'s loader (null: the global object's) before a CommonJS module runs under it, or not a string.
+static JSValue namedKeyOfEntryPoint(JSModuleGraph* graph, JSValue slot)
+{
+    if (graph)
+        return graph->mainPath();
+    return slot ? slot : jsUndefined();
+}
+
+// What `graph`'s loader (null: the global object's) has for a main module, whatever `Bun.main` holds.
+static JSValue mainModuleOfLoader(Zig::GlobalObject* globalObject, JSModuleGraph* graph)
+{
+    auto& vm = globalObject->vm();
+    JSMap* requireMap = requireMapOf(globalObject, graph);
+    JSValue main = requireMap->getDirect(vm, mainModuleName(vm));
+    if (main && main.isObject()) [[likely]]
+        return main;
+    // The entry point has not run as a CommonJS module: what the cache holds under its key answers, if anything.
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue key = namedKeyOfEntryPoint(graph, main);
+    if (!key.isString()) {
+        if (graph)
+            return jsUndefined();
+        // No load has named the key: a preload runs, or the program has no entry point. The path in `Bun.main` is the key.
+        key = JSValue::decode(BunObject_getter_main(globalObject));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    RELEASE_AND_RETURN(scope, requireMap->get(globalObject, key));
+}
+
+JSValue mainModuleOfProcess(Zig::GlobalObject* globalObject, JSModuleGraph* graph)
+{
+    // A test file and a program that stored into `Bun.main` read what the cache holds under the path in `Bun.main`.
+    if (loadsTestFiles(globalObject, graph) || JSValue::decode(Bun__VM__overriddenMain(globalObject->bunVM()))) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        JSValue path = JSValue::decode(BunObject_getter_main(globalObject));
+        RETURN_IF_EXCEPTION(scope, {});
+        RELEASE_AND_RETURN(scope, requireMapOf(globalObject, graph)->get(globalObject, path));
+    }
+    return mainModuleOfLoader(globalObject, graph);
+}
+
+JSValue mainModuleOf(Zig::GlobalObject* globalObject, JSModuleGraph* graph)
+{
+    // The main module of a Bun.ModuleGraph is its first import, whatever `Bun.main` holds.
+    if (graph)
+        return mainModuleOfLoader(globalObject, graph);
+    // The engine answers for the files of an ahead-of-time executable: none of them is in the require map.
+    if (Bun::hasCompiledModules())
+        return Bun::mainModuleOfExecutable(globalObject);
+    return mainModuleOfProcess(globalObject, nullptr);
+}
+
+void nameMainModule(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JSString* key)
+{
+    if (loadsTestFiles(globalObject, graph))
+        return;
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSMap* requireMap = requireMapOf(globalObject, graph);
+    JSValue held = requireMap->get(globalObject, key);
+    RETURN_IF_EXCEPTION(scope, );
+    JSValue named = graph ? jsUndefined() : JSValue(key);
+    // The module ran before this load, which runs none. In the global object's loader it is the main module only under the path in `Bun.main`.
+    if (auto* loaded = dynamicDowncast<JSCommonJSModule>(held); loaded && loaded->hasEvaluated) {
+        bool isMainModule = true;
+        if (!graph) {
+            JSValue path = JSValue::decode(BunObject_getter_main(globalObject));
+            RETURN_IF_EXCEPTION(scope, );
+            isMainModule = path.isString() && asString(path)->equal(globalObject, key);
+            RETURN_IF_EXCEPTION(scope, );
+        }
+        named = isMainModule ? JSValue(loaded) : jsUndefined();
+    }
+    if (named.isUndefined())
+        clearMainModule(vm, requireMap);
+    else
+        requireMap->putDirect(vm, mainModuleName(vm), named);
+}
+
+void clearMainModule(VM& vm, JSMap* requireMap)
+{
+    if (requireMap->getDirect(vm, mainModuleName(vm)))
+        requireMap->putDirect(vm, mainModuleName(vm), jsUndefined());
+}
+
+void becomeMainModuleIfEntryPoint(Zig::GlobalObject* globalObject, JSCommonJSModule* module)
+{
+    auto& vm = globalObject->vm();
+    JSModuleGraph* graph = module->moduleGraph();
+    if (loadsTestFiles(globalObject, graph))
+        return;
+    JSMap* requireMap = requireMapOf(globalObject, graph);
+    JSValue main = requireMap->getDirect(vm, mainModuleName(vm));
+    if (main && main.isObject()) [[likely]]
+        return;
+    JSValue key = namedKeyOfEntryPoint(graph, main);
+    JSValue filename = module->filename();
+    if (!key.isString() || !filename.isString() || asString(filename)->length() != asString(key)->length())
+        return;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // A program can compile a module of the same name that the cache does not hold: `new Module(filename)`.
+    JSValue held = requireMap->get(globalObject, key);
+    RETURN_IF_EXCEPTION(scope, );
+    if (held == module)
+        requireMap->putDirect(vm, mainModuleName(vm), module);
 }
 
 // The source a graph's module is compiled from: the same text, in a code-cache entry of its
@@ -283,7 +388,6 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         RETURN_IF_EXCEPTION(scope, );
         requireFunction->putDirect(vm, vm.propertyNames->resolve, resolveFunction, 0);
         RETURN_IF_EXCEPTION(scope, );
-        putModuleGraphRequireMain(vm, requireFunction, moduleObject);
         moduleObject->putDirect(vm, WebCore::clientData(vm)->builtinNames().requirePublicName(), requireFunction, 0);
         RETURN_IF_EXCEPTION(scope, );
         moduleObject->hasEvaluated = true;
@@ -319,6 +423,9 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
 
         RELEASE_AND_RETURN(scope, true);
     }
+
+    becomeMainModuleIfEntryPoint(globalObject, moduleObject);
+    RETURN_IF_EXCEPTION(scope, false);
 
 #if ENABLE(AOT)
     // The original of a mocked file.
@@ -591,9 +698,23 @@ static const HashTableValue RequireResolveFunctionPrototypeValues[] = {
     { "paths"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, requireResolvePathsFunction, 1 } },
 };
 
+JSC_DEFINE_CUSTOM_GETTER(jsRequireMainGetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    auto* requirer = requirerOf(JSValue::decode(thisValue));
+    // `globalObject` can be a node:vm context. See jsRequireCacheGetter.
+    return JSValue::encode(mainModuleOf(defaultGlobalObject(globalObject), requirer ? requirer->moduleGraph() : nullptr));
+}
+
+// The property is read-only, so no store gets here. It is the function under `set` of the property's descriptor.
+JSC_DEFINE_CUSTOM_SETTER(jsRequireMainSetter, (JSC::JSGlobalObject*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::PropertyName))
+{
+    return true;
+}
+
 static const HashTableValue RequireFunctionPrototypeValues[] = {
     { "cache"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsRequireCacheGetter, jsRequireCacheSetter } },
     { "extensions"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsRequireExtensionsGetter, jsRequireExtensionsSetter } },
+    { "main"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::GetterSetterType, jsRequireMainGetter, jsRequireMainSetter } },
 };
 
 Structure* RequireFunctionPrototype::createStructure(
@@ -638,40 +759,11 @@ RequireFunctionPrototype* RequireFunctionPrototype::create(
     return prototype;
 }
 
-// No file of an ahead-of-time executable is in the require map.
-JSC_DEFINE_CUSTOM_GETTER(jsRequireMainOfExecutableGetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue, JSC::PropertyName))
-{
-    return JSValue::encode(Bun::mainModuleOfExecutable(uncheckedDowncast<Zig::GlobalObject>(globalObject)));
-}
-
-// The property is read-only, so no store gets here. What describes it holds a function under `set`, as it does where the accessor is made of a function of the library.
-JSC_DEFINE_CUSTOM_SETTER(jsRequireMainOfExecutableSetter, (JSC::JSGlobalObject*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::PropertyName))
-{
-    return true;
-}
-
 void RequireFunctionPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    auto* globalObject = this->globalObject();
-
     Bun::reifyStaticPropertyTable(vm, info(), RequireFunctionPrototypeValues, *this);
-    if (Bun::hasCompiledModules()) {
-        this->putDirectCustomAccessor(vm, WebCore::builtinNames(vm).mainPublicName(), JSC::CustomGetterSetter::create(vm, jsRequireMainOfExecutableGetter, jsRequireMainOfExecutableSetter), JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly);
-        return;
-    }
-    JSC::JSFunction* requireDotMainFunction = JSFunction::create(
-        vm,
-        globalObject,
-        commonJSMainCodeGenerator(vm),
-        globalObject->globalScope());
-
-    this->putDirectAccessor(
-        globalObject,
-        JSC::Identifier::fromString(vm, "main"_s),
-        JSC::GetterSetter::create(vm, globalObject, requireDotMainFunction, requireDotMainFunction),
-        PropertyAttribute::Accessor | PropertyAttribute::ReadOnly | 0);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(getterFilename, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
@@ -1782,6 +1874,10 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
         }
         RETURN_IF_EXCEPTION(scope, );
 
+        // The module's own `_compile` runs the text in place of evaluateCommonJSModuleOnce().
+        becomeMainModuleIfEntryPoint(globalObject, this);
+        RETURN_IF_EXCEPTION(scope, );
+
         // _compile(source, filename)
         MarkedArgumentBuffer arguments;
         arguments.append(jsString(vm, sourceStringWithoutWrapper));
@@ -2009,7 +2105,6 @@ JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* l
         moduleObject,
         ArgList(), 1, Bun::commonStrings(vm).requireString(), requireSourceCode);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    putModuleGraphRequireMain(vm, requireFunction, moduleObject);
 
     SourceCode resolveSourceCode = makeSource("resolve"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
 

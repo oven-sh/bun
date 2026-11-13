@@ -817,6 +817,22 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * globalObject, JSC::Ca
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+extern "C" JSC::EncodedJSValue SYSV_ABI BunObject_getter_main(JSC::JSGlobalObject*);
+
+// Module.runMain() or an override of it loads the entry point in place of `bun:main`. With a `key`: only if the entry point is the module under it.
+static void nameEntryPointAsMainModule(Zig::GlobalObject* globalObject, const String* key = nullptr)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    JSValue main = JSValue::decode(BunObject_getter_main(globalObject));
+    RETURN_IF_EXCEPTION(scope, );
+    if (!main.isString())
+        return;
+    String path = asString(main)->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
+    if (!key || *key == path)
+        RELEASE_AND_RETURN(scope, Bun::nameMainModule(globalObject, nullptr, asString(main)));
+}
+
 extern "C" void Bun__VirtualMachine__setOverrideModuleRunMainPromise(void* bunVM, JSPromise* promise);
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -827,6 +843,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC:
 
     // JSC::loadAndEvaluateModule() takes a key.
     auto key = globalObject->moduleLoader()->resolve(globalObject, JSC::Identifier::fromString(vm, name), {}, nullptr, /* useImportMap */ true);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // Node makes whatever module Module.runMain() loads the main module. Here the entry point alone becomes it.
+    nameEntryPointAsMainModule(defaultGlobalObject(globalObject), &key.string().string());
     RETURN_IF_EXCEPTION(scope, {});
 
     auto* promise = JSC::loadAndEvaluateModule(globalObject, key.string(), nullptr, nullptr);
@@ -859,6 +879,8 @@ extern "C" JSC::EncodedJSValue NodeModuleModule__callOverriddenRunMain(Zig::Glob
         throwException(global, scope, createNotAFunctionError(global, overrideHandler));
         return {};
     }
+    nameEntryPointAsMainModule(global);
+    RETURN_IF_EXCEPTION(scope, {});
     MarkedArgumentBuffer args;
     args.append(argv1);
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::profiledCall(global, JSC::ProfilingReason::API, overrideHandler, callData, global, args)));

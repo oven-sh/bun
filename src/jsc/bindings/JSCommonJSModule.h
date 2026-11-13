@@ -202,6 +202,18 @@ JSC::JSValue createRequireCacheObject(JSC::JSGlobalObject*, JSC::JSMap* requireM
 // Returns `graph`'s `require.cache` object, created on first use, or the global object's if `graph` is null.
 JSC::JSValue requireCacheOf(Zig::GlobalObject*, JSModuleGraph* graph, JSCommonJSModule* owner);
 
+// A loader's main module is the CommonJS module that runs under the key of its entry point. Its require map holds it beside the entries.
+
+// `require.main` of a require() of `graph`'s loader (null: the global object's).
+JSC::JSValue mainModuleOf(Zig::GlobalObject*, JSModuleGraph* graph);
+// `process.mainModule`. `graph`: the one of the running test file, if it has one.
+JSC::JSValue mainModuleOfProcess(Zig::GlobalObject*, JSModuleGraph* graph);
+// `graph`'s loader (null: the global object's) is about to load its entry point, the module under `key`.
+void nameMainModule(Zig::GlobalObject*, JSModuleGraph* graph, JSC::JSString* key);
+// Call before code runs the text of `module`. If the cache holds it under the entry point's key, it is the main module from now on.
+void becomeMainModuleIfEntryPoint(Zig::GlobalObject*, JSCommonJSModule* module);
+void clearMainModule(JSC::VM&, JSC::JSMap* requireMap);
+
 // `graph`: the Bun.ModuleGraph whose loader is importing the file (the module goes in
 // its require cache), or null for the global object's loader.
 std::optional<JSC::SourceCode> createCommonJSModule(

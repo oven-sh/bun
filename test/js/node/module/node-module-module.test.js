@@ -1520,6 +1520,20 @@ console.log("survived", require("./late.js"));`,
       });
     });
 
+    // test/js/bun/resolve/require.test.ts has these overrides for a file that is not a Worker. Node has no main module
+    // for a file that an override requires, and prints "false false" for the second one.
+    test.each([
+      ["calls the original with the path", `() => runMain(process.argv[1])`],
+      ["requires the path", `() => void require(process.argv[1])`],
+    ])("to a function that %s: the file of a Worker is its main module", async (_, override) => {
+      const preload = `const Module = require("module");\nconst runMain = Module.runMain;\nModule.runMain = ${override};`;
+      const main = `
+        for (const key of Object.keys(require.cache)) delete require.cache[key];
+        console.log(require.main === module, process.mainModule === module);
+      `;
+      expect(await run(preload, true, main)).toEqual({ stdout: "true true\n", stderr: "", exitCode: 0 });
+    });
+
     test.each([
       ["is not a function", "{}", "Object is not a function"],
       ["throws", `() => { throw new Error("thrown"); }`, "thrown"],

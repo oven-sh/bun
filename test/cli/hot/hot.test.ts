@@ -1331,3 +1331,83 @@ it("--hot does not emit beforeExit to the listeners of a failed run", async () =
   expect(await stdout("still running")).toBe(true);
   expect(await runner.exited).toBe(0);
 });
+
+it("--hot makes the reloaded entry point require.main and process.mainModule", async () => {
+  // The first run reads process.mainModule, so the property holds a value of its own when the second run starts.
+  const source = (run: number) => `
+    const main = require.main;
+    console.log("run ${run}", main === module, process.mainModule === module, require("./child.cjs").main() === module);
+    ${run === 2 ? "process.exit(0);" : ""}
+  `;
+  using dir = tempDir("hot-main-module", {
+    "main.cjs": source(1),
+    "child.cjs": `exports.main = () => require.main;`,
+  });
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const stdout = follow(runner.stdout);
+  expect(await stdout("run 1 true true true")).toBe(true);
+
+  writeFileSync(join(String(dir), "main.cjs"), source(2));
+  expect(await stdout("run 2 true true true")).toBe(true);
+  expect(await runner.exited).toBe(0);
+});
+
+// The watcher reports a file that is removed on Linux.
+it.skipIf(!isLinux)("--hot leaves no main module when a reload finds no entry point", async () => {
+  // A timer of the first run still fires after the reload.
+  using dir = tempDir("hot-main-module-gone", {
+    "main.cjs": `
+      const main = require.main;
+      console.log("run 1", main === module, process.mainModule === module);
+      setInterval(() => console.log("later", typeof require.main, typeof process.mainModule), 10);
+    `,
+  });
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "ignore",
+    stdin: "ignore",
+  });
+  const stdout = follow(runner.stdout);
+  expect(await stdout("later object object")).toBe(true);
+
+  rmSync(join(String(dir), "main.cjs"));
+  expect(await stdout("later undefined undefined")).toBe(true);
+});
+
+it("--hot leaves no main module when the reloaded entry point is an ES module", async () => {
+  // What the first run stores in globalThis is there in the second run.
+  using dir = tempDir("hot-main-module-esm", {
+    "main.js": `
+      const main = require.main;
+      globalThis.ask = () => [typeof require.main, typeof process.mainModule].join();
+      console.log("run 1", main === module, process.mainModule === module);
+    `,
+  });
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const stdout = follow(runner.stdout);
+  expect(await stdout("run 1 true true")).toBe(true);
+
+  writeFileSync(
+    join(String(dir), "main.js"),
+    `console.log("run 2", globalThis.ask());\nprocess.exit(0);\nexport {};\n`,
+  );
+  expect(await stdout("run 2 undefined,undefined")).toBe(true);
+  expect(await runner.exited).toBe(0);
+});

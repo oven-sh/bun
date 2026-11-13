@@ -70,7 +70,7 @@ const heldInOneWay: Record<string, string[]> = {
   "bun test": ["console.timeStamp: is missing"],
 };
 const engineInOneWay: Record<string, string[]> = {
-  "bun test": ["console.timeStamp: is missing", "process.mainModule: is an accessor"],
+  "bun test": ["console.timeStamp: is missing"],
   // The bundler's `require` in place of a module's own.
   "an executable": [
     "%ModuleRequirePrototype%.cache: is an accessor",

@@ -5,11 +5,6 @@ interface RequiredESMNamespace {
   "module.exports"?: unknown;
 }
 
-$getter;
-export function main() {
-  return $requireMap.$get(Bun.main);
-}
-
 // This function is bound when constructing instances of CommonJSModule
 $visibility = "Private";
 export function require(this: JSCommonJSModule, _id: string) {

@@ -1038,15 +1038,6 @@ static JSString* requireCacheKey(Zig::GlobalObject* globalObject, const JSModule
     return mock->requireKey && !lostIt ? mock->requireKey.get() : mock->importKey.get();
 }
 
-// The mock's own path, and the path of its module object in require.cache where that is another one.
-__attribute__((minsize)) static Vector<String, 2> pathsOfMockedModule(Zig::GlobalObject* globalObject, const JSModuleMock* mock)
-{
-    Vector<String, 2> paths { mock->importKey->tryGetValue().data };
-    if (JSString* key = requireCacheKey(globalObject, mock); key != mock->importKey.get())
-        paths.append(key->tryGetValue().data);
-    return paths;
-}
-
 // What is loaded of the module that `mock` stands for: the ES module under the mock's own path, and the module object of require.cache under the path that require() resolves the mocked name to.
 __attribute__((minsize)) static LoadedModule findLoadedModule(Zig::GlobalObject* globalObject, const JSModuleMock* mock)
 {
@@ -2473,8 +2464,8 @@ __attribute__((minsize)) JSValue JSModuleMock::callFactory(Zig::GlobalObject* gl
         return {};
     }
 #endif
-    // With two paths, originalNamespace is the original of the file that an import loads. An automock of Jest's kind is made of the file that require() loads.
-    if (!dependency && !factoryValue && !spy && !(requireKey && isOfJest()))
+    // With two paths, originalNamespace is the original of the file that an import loads. A mock without a factory that has two paths is of Jest's kind, and is made of the file that require() loads.
+    if (!dependency && !factoryValue && !spy && !requireKey)
         dependency = originalNamespace.get();
 #if ENABLE(AOT)
     if (!dependency && !factoryValue && !spy && unevaluatedCompiledModule && (wasLaidOverFactoryThatTakesOriginal || !JSC::AOT::hasActiveMock(globalObject, JSC::AOT::ModuleID(*unevaluatedCompiledModule)))) {
@@ -2524,9 +2515,9 @@ __attribute__((minsize)) JSValue JSModuleMock::callFactory(Zig::GlobalObject* gl
 
     if (!factoryValue) {
         // With two paths, what the mock has kept is the original only of the file that dependencyKeyOfModuleMock() names.
-        JSValue commonJSExports = requireKey && !isOfJest() ? JSValue() : originalCommonJSExports.get();
+        JSValue commonJSExports = originalCommonJSExports.get();
         if (!commonJSExports || commonJSExports.inherits<JSC::JSModuleNamespaceObject>()) {
-            JSObject* exports = requireKey && isOfJest() ? nullptr : esmExportsBeforePatches(globalObject, this);
+            JSObject* exports = requireKey ? nullptr : esmExportsBeforePatches(globalObject, this);
             RETURN_IF_EXCEPTION(scope, {});
             if (exports)
                 RELEASE_AND_RETURN(scope, Bun::mockObject(globalObject, exports, spy, true));
@@ -4775,14 +4766,8 @@ __attribute__((minsize)) static void unmockModule(Zig::GlobalObject* globalObjec
         RETURN_IF_EXCEPTION(scope, );
         keepModuleMockOfLoadInFlight(globalObject, mock, mock->requireKey->tryGetValue().data, underRequirePath);
     }
-    // By `held`: the table no longer tells which paths the mock had. Under a path that does not end, what the mock has set aside stays aside,
-    // and what lies under a path that a later mock has taken is that mock's.
-    if (mock->hasSetLoadedModuleAside || (mock->isOfVitest() && isInNodeModules(specifier))) {
-        if (held.importPath)
-            evict.packagesToBringBack.append(specifier);
-        if (mock->requireKey && held.requirePath)
-            evict.packagesToBringBack.append(mock->requireKey->tryGetValue().data);
-    }
+    if (mock->hasSetLoadedModuleAside || (mock->isOfVitest() && isInNodeModules(specifier)))
+        evict.packagesToBringBack.append(specifier);
 
     JSObject* saved = mock->originalExportsOfEvictedModule ? mock->originalExportsOfEvictedModule.get() : mock->originalExports.get();
     if (auto* patched = mock->patchedNamespace.get(); patched && saved && held.importPath) {
@@ -6328,7 +6313,9 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     JSC::JSString* writtenString = specifierString;
     JSC::JSString* requireKey = nullptr;
     bool exists = false;
-    if (resolveModuleMockSpecifier(globalObject, callframe, specifierString, specifier, &requireKey, exists))
+    // As in Vitest, vi.mock() and vi.doMock() mock what an import loads: require() of the name gets its file.
+    bool isOfVitest = function == ModuleMockFunction::ViMock || function == ModuleMockFunction::ViDoMock;
+    if (resolveModuleMockSpecifier(globalObject, callframe, specifierString, specifier, isOfVitest ? nullptr : &requireKey, exists))
         globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -6532,22 +6519,17 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     bool isLoadInFlight = loaded.staleESMEntry;
     if (leavesLoadedModuleAlone && staysTheOriginal && (loaded.esmNamespace || loaded.commonJSModule)) {
         // Before the move, while its importers are found under this key.
-        Vector<String, 2> paths = pathsOfMockedModule(globalObject, mock);
         if (loadedByTestFile != globalObject->onLoadPlugins.testFile) {
             ModulesToEvict evict;
             evict.onlyImportersFromEarlierTestFiles = true;
-            for (auto& path : paths) {
-                evict.patchedESModules.append(path);
-                evict.patchedCommonJSModules.append(path);
-                evict.packagesSetAside.append(path);
-            }
+            evict.patchedESModules.append(specifier);
+            evict.patchedCommonJSModules.append(specifier);
+            evict.packagesSetAside.append(specifier);
             evictModulesAndTheirImporters(globalObject, WTF::move(evict));
             RETURN_IF_EXCEPTION(scope, {});
         }
-        for (auto& path : paths) {
-            setLoadedModuleAside(globalObject, path);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
+        setLoadedModuleAside(globalObject, specifier);
+        RETURN_IF_EXCEPTION(scope, {});
 #if ENABLE(AOT)
         // It lies under the key of the original now, in place of the instance of a preload's mock that an earlier mock of the test file had set aside.
         if (auto* ofPreload = vm.hasCompiledCode() && !previous && !mock->hasSetMockOfPreloadAside ? displacedMockOfPreload(globalObject, specifier) : nullptr)
@@ -9223,8 +9205,8 @@ static ALWAYS_INLINE String keyOfImportByPackageInline(Zig::GlobalObject* global
     if (!Zig::isInNodeModules(importer) || Zig::isBuiltinModuleKey(key))
         return key;
     auto* mock = Zig::moduleMockAnsweringFor(globalObject, key);
-    // A module that was patched in place is the only instance there is. With two paths the mock patches the ES module under its import path, and the module object under requireCacheKey().
-    bool hasOriginal = mock && mock->isOfVitest() && !(mock->originalExports && mock->importKey->tryGetValue().data == key) && !(mock->originalCommonJSExports && Zig::requireCacheKey(globalObject, mock)->tryGetValue().data == key);
+    // A module that was patched in place is the only instance there is. A mock of Vitest's kind has one path: what it has patched lies under `key`.
+    bool hasOriginal = mock && mock->isOfVitest() && !mock->originalExports && !mock->originalCommonJSExports;
     if (!hasOriginal || (isESM && !Zig::isExternalizedByVitest(globalObject, importer)))
         return key;
     return Zig::originalModuleKey(key);

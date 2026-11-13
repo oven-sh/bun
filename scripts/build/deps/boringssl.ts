@@ -24,7 +24,7 @@ import { quote } from "../shell.ts";
 import type { Dependency, DirectBuild } from "../source.ts";
 import { LIBC_ALLOCATION_SYMBOLS, depSourceDir } from "../source.ts";
 
-const BORINGSSL_COMMIT = "89a2ff2be775267283a2c8e35044e49ddab5e5aa";
+const BORINGSSL_COMMIT = "0ada4d8ebb849ae7ff6c2587c987cf08e4e2f588";
 
 export const boringssl: Dependency = {
   name: "boringssl",
@@ -137,7 +137,7 @@ const CRYPTO_SRCS = [
   "crypto/cpu_aarch64_fuchsia.cc", "crypto/cpu_aarch64_linux.cc", "crypto/cpu_aarch64_openbsd.cc",
   "crypto/cpu_aarch64_sysreg.cc", "crypto/cpu_aarch64_win.cc", "crypto/cpu_arm_freebsd.cc",
   "crypto/cpu_arm_linux.cc", "crypto/cpu_intel.cc", "crypto/crypto.cc",
-  "crypto/curve25519/curve25519.cc", "crypto/curve25519/curve25519_64_adx.cc",
+  "crypto/curve25519/cpace.cc", "crypto/curve25519/curve25519.cc", "crypto/curve25519/curve25519_64_adx.cc",
   "crypto/curve25519/spake25519.cc", "crypto/des/des.cc", "crypto/dh/dh_asn1.cc",
   "crypto/dh/params.cc", "crypto/digest/digest_extra.cc", "crypto/dsa/dsa.cc",
   "crypto/dsa/dsa_asn1.cc", "crypto/ec/ec_asn1.cc", "crypto/ec/ec_derive.cc",
@@ -145,8 +145,9 @@ const CRYPTO_SRCS = [
   "crypto/ecdsa/ecdsa_p1363.cc", "crypto/engine/engine.cc", "crypto/err/err.cc",
   "crypto/evp/evp.cc", "crypto/evp/evp_asn1.cc", "crypto/evp/evp_ctx.cc", "crypto/evp/evp_kem.cc",
   "crypto/evp/p_dh.cc", "crypto/evp/p_dsa.cc", "crypto/evp/p_ec.cc", "crypto/evp/p_ed25519.cc",
-  "crypto/evp/p_hkdf.cc", "crypto/evp/p_mldsa.cc", "crypto/evp/p_mlkem.cc", "crypto/evp/p_rsa.cc",
-  "crypto/evp/p_x25519.cc", "crypto/evp/p_xwing.cc", "crypto/evp/pbkdf.cc", "crypto/evp/print.cc", "crypto/evp/scrypt.cc",
+  "crypto/evp/p_hkdf.cc", "crypto/evp/p_keccak.cc", "crypto/evp/p_mldsa.cc", "crypto/evp/p_mlkem.cc",
+  "crypto/evp/p_rsa.cc", "crypto/evp/p_slhdsa.cc", "crypto/evp/p_x25519.cc", "crypto/evp/p_xwing.cc",
+  "crypto/evp/pbkdf.cc", "crypto/evp/print.cc", "crypto/evp/scrypt.cc",
   "crypto/evp/sign.cc", "crypto/ex_data.cc", "crypto/fipsmodule/fips_shared_support.cc",
   "crypto/fuzzer_mode.cc", "crypto/hpke/hpke.cc", "crypto/hrss/hrss.cc",
   "crypto/lhash/lhash.cc", "crypto/md4/md4.cc", "crypto/md5/md5.cc", "crypto/mem.cc",

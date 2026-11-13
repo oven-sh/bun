@@ -733,13 +733,11 @@ unsafe extern "C" {
     pub fn SHA1_Init(sha: *mut SHA_CTX) -> c_int;
     pub fn SHA1_Update(sha: *mut SHA_CTX, data: *const c_void, len: usize) -> c_int;
     pub fn SHA1_Final(out: *mut u8, sha: *mut SHA_CTX) -> c_int;
-    pub fn SHA1(data: *const u8, len: usize, out: *mut u8) -> *mut u8;
 
     // ── SHA-256 ──────────────────────────────────────────────────────────
     pub fn SHA256_Init(sha: *mut SHA256_CTX) -> c_int;
     pub fn SHA256_Update(sha: *mut SHA256_CTX, data: *const c_void, len: usize) -> c_int;
     pub fn SHA256_Final(out: *mut u8, sha: *mut SHA256_CTX) -> c_int;
-    pub fn SHA256(data: *const u8, len: usize, out: *mut u8) -> *mut u8;
 
     // ── SSL ──────────────────────────────────────────────────────────────
     pub safe fn SSL_library_init() -> c_int;

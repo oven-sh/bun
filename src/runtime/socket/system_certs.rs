@@ -94,8 +94,9 @@ impl Loader {
             // SAFETY: on success BoringSSL hands us ownership of `name` and `der` (`der_len` bytes).
             unsafe { boringssl::OPENSSL_free(name.cast()) };
             let mut digest = [0u8; 32];
-            // SAFETY: `der` points at `der_len` readable bytes; `digest` has room for SHA-256.
-            unsafe { boringssl::SHA256(der, der_len as usize, digest.as_mut_ptr()) };
+            // SAFETY: `der` points at `der_len` readable bytes.
+            let der_bytes = unsafe { core::slice::from_raw_parts(der, der_len as usize) };
+            bun_sha_hmac::sha::hashers::SHA256::hash(der_bytes, &mut digest);
             let mut ok = true;
             if !self.ders.contains_key(&digest) {
                 // SAFETY: `der` points at `der_len` readable bytes.

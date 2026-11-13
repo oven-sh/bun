@@ -629,18 +629,34 @@ it("Check getPeerCertificate can properly handle '\\0' for fix CVE-2009-2408.", 
   }
 });
 
-it("tls.connect should not accept untrusted certificates", async () => {
+it.each([
+  [
+    "untrusted",
+    {
+      key: readFileSync(join(import.meta.dir, "fixtures", "agent1-key.pem")),
+      cert: readFileSync(join(import.meta.dir, "fixtures", "agent1-cert.pem")),
+    },
+    "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+    "unable to verify the first certificate",
+  ],
+  [
+    "untrusted and expired",
+    {
+      key: readFileSync(join(import.meta.dir, "..", "http", "fixtures", "openssl.key")),
+      cert: readFileSync(join(import.meta.dir, "..", "http", "fixtures", "openssl.crt")),
+      passphrase: "123123123",
+    },
+    "CERT_HAS_EXPIRED",
+    "certificate has expired",
+  ],
+])("tls.connect should not accept %s certificates", async (_name, identity, code, message) => {
   const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();
   let server: Server | null = null;
   let socket: TLSSocket | null = null;
 
   try {
     server = tls
-      .createServer({
-        key: readFileSync(join(import.meta.dir, "..", "http", "fixtures", "openssl.key")),
-        cert: readFileSync(join(import.meta.dir, "..", "http", "fixtures", "openssl.crt")),
-        passphrase: "123123123",
-      })
+      .createServer(identity)
       .on("error", reject)
       .listen(0, () => {
         const address = server?.address() as AddressInfo;
@@ -657,8 +673,8 @@ it("tls.connect should not accept untrusted certificates", async () => {
       });
 
     const err = await promise;
-    expect(err.code).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
-    expect(err.message).toBe("unable to verify the first certificate");
+    expect(err.code).toBe(code);
+    expect(err.message).toBe(message);
   } finally {
     //@ts-ignore
     socket?.end();
@@ -991,5 +1007,59 @@ describe("expired or not-yet-valid CA in the trust set", () => {
     bad[notBefore + 2] = 0x58; // 'X'
     const pem = `-----BEGIN CERTIFICATE-----\n${bad.toString("base64")}\n-----END CERTIFICATE-----\n`;
     expect(() => tls.createSecureContext({ ca: [F.root, pem] })).toThrow();
+  });
+});
+
+describe("trust anchors", () => {
+  const read = (name: string) => readFileSync(join(import.meta.dir, "fixtures", "trust-anchor", name), "utf8");
+  const pem = (names: string[]) => names.map(name => read(`${name}.pem`));
+  const crls = (names: string[]) => names.map(name => read(`${name}.crl`));
+
+  async function connect(chain: string[], clientOptions: tls.ConnectionOptions, serverOptions?: tls.TlsOptions) {
+    await using server = tls.createServer({ key: read("leaf.key"), cert: pem(chain).join(""), ...serverOptions });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const port = (server.address() as AddressInfo).port;
+    const socket = tls.connect({ host: "127.0.0.1", port, servername: "localhost", ...clientOptions });
+    const outcome = await once(socket, "secureConnect").then(
+      () => "authorized",
+      err => err.code,
+    );
+    socket.destroy();
+    return outcome;
+  }
+
+  // The codes are those of Node.js v24.20.0.
+  it.each([
+    [["leaf", "intermediate"], "root", "authorized"],
+    [["leaf", "intermediate"], "root-key-usage-only", "authorized"],
+    [["leaf", "intermediate"], "root-pathlen-0", "PATH_LENGTH_EXCEEDED"],
+    [["leaf", "intermediate"], "root-client-eku", "INVALID_PURPOSE"],
+    [["leaf", "intermediate"], "root-not-a-ca", "INVALID_PURPOSE"],
+    [["leaf", "intermediate"], "root-unknown-critical", "UNSPECIFIED"],
+    [["self-signed-client-eku"], "self-signed-client-eku", "INVALID_PURPOSE"],
+  ])("extensions are enforced: %p under %s", async (chain, ca, expected) => {
+    expect(await connect(chain, { ca: pem([ca]) })).toBe(expected);
+  });
+
+  it.each([
+    [["root"], ["root-empty", "intermediate-empty"], false, "authorized"],
+    [["root"], ["root-empty", "intermediate-revokes-leaf"], false, "CERT_REVOKED"],
+    [
+      ["root"],
+      ["root-empty", "intermediate-revokes-leaf", "intermediate-attribute-certificates"],
+      false,
+      "CERT_REVOKED",
+    ],
+    [["root", "intermediate", "leaf"], ["root-empty", "intermediate-revokes-leaf"], true, "CERT_REVOKED"],
+    [["root", "intermediate"], ["root-revokes-intermediate", "intermediate-empty"], true, "UNABLE_TO_GET_CRL"],
+    [["leaf"], ["intermediate-revokes-leaf"], true, "UNABLE_TO_GET_CRL"],
+  ])("ca: %p, crl: %p, allowPartialTrustChain: %p", async (ca, crl, allowPartialTrustChain, expected) => {
+    const options = { ca: pem(ca), crl: crls(crl), allowPartialTrustChain };
+    expect(await connect(["leaf", "intermediate"], options)).toBe(expected);
+  });
+
+  it("allowPartialTrustChain does not shorten the chain a server completes from its `ca`", async () => {
+    const serverOptions = { ca: pem(["leaf", "intermediate", "root"]), allowPartialTrustChain: true };
+    expect(await connect(["leaf"], { ca: pem(["root"]) }, serverOptions)).toBe("authorized");
   });
 });

@@ -150,13 +150,6 @@ unsafe extern "C" fn SHA256_Final(out: *mut u8, sha: *mut SHA256_CTX) -> c_int {
     unsafe { out.cast::<[u8; 32]>().write(finish(&mut *sha)) };
     1
 }
-#[unsafe(no_mangle)]
-#[linkage = "weak"]
-unsafe extern "C" fn SHA256(data: *const u8, len: usize, out: *mut u8) -> *mut u8 {
-    // SAFETY: the caller passes a slice as a pointer and a length, and room for 32 bytes.
-    unsafe { out.cast::<[u8; 32]>().write(sha256(bytes(data, len))) };
-    out
-}
 
 static SHA256_MARKER: u8 = 0;
 
@@ -445,14 +438,6 @@ mod tests {
         text
     }
 
-    fn sha256_one_shot(input: &[u8]) -> [u8; 32] {
-        let mut digest = [0; 32];
-        // SAFETY: `input` is a slice, and `digest` has room for 32 bytes.
-        let out = unsafe { SHA256(input.as_ptr(), input.len(), digest.as_mut_ptr()) };
-        assert_eq!(out, digest.as_mut_ptr());
-        digest
-    }
-
     fn sha256_incremental(parts: [&[u8]; 3]) -> [u8; 32] {
         let mut context = MaybeUninit::<SHA256_CTX>::uninit();
         let sha = context.as_mut_ptr();
@@ -538,7 +523,6 @@ mod tests {
             let (middle, tail) = rest.split_at(length.min(64) - head.len());
             let parts = [head, middle, tail];
             let digest = sha256(&input);
-            assert_eq!(sha256_one_shot(&input), digest, "{length} bytes");
             assert_eq!(sha256_incremental(parts), digest, "{length} bytes");
             assert_eq!(evp_one_shot(&input), digest, "{length} bytes");
             assert_eq!(evp_incremental(parts), digest, "{length} bytes");
@@ -557,7 +541,16 @@ mod tests {
     fn null_input_with_zero_length_is_empty() {
         let mut digest = [0; 32];
         // SAFETY: a length of 0 reads nothing through `data`, and `digest` has room for 32 bytes.
-        unsafe { SHA256(null(), 0, digest.as_mut_ptr()) };
+        unsafe {
+            EVP_Digest(
+                null(),
+                0,
+                digest.as_mut_ptr(),
+                null_mut(),
+                EVP_sha256(),
+                null_mut(),
+            )
+        };
         assert_eq!(digest, sha256(b""));
     }
 

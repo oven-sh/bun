@@ -188,6 +188,11 @@ static void nq_on_path_switch(lsquic_conn_t *c, int validated, int is_preferred,
 _Static_assert(sizeof(lsxpack_strlen_t) == 4 && offsetof(struct lsxpack_header, chain_next_idx) == sizeof(char *) + 24,
     "LSXPACK_MAX_STRLEN must be UINT32_MAX");
 
+_Static_assert(ssl_compliance_policy_fips_202205 == 1 && ssl_compliance_policy_wpa3_192_202304 == 3 &&
+    X509_V_FLAG_CRL_CHECK == 0x4 && X509_V_FLAG_CRL_CHECK_ALL == 0x8 &&
+    X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS == 0x40000000,
+    "update the constants in src/runtime/node/quic/tls.rs");
+
 #define US_NQ_HSET_MIN_BUF 256
 
 struct nq_hset {

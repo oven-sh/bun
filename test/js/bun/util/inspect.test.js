@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import { EventEmitter } from "events";
+import { openSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -1493,6 +1495,229 @@ describe("own non-enumerable properties are not printed", () => {
     }
     expect(Bun.inspect(new Foo())).toBe("Foo {\n  field: 1,\n  getter: [Getter],\n  method: [Function: method],\n}");
     expect(Bun.inspect(new TextDecoder())).toContain('encoding: "utf-8"');
+  });
+});
+
+describe("a property named constructor", () => {
+  it("is printed when the object owns it", () => {
+    expect(Bun.inspect({ constructor: "K", a: 1 })).toBe('{\n  constructor: "K",\n  a: 1,\n}');
+    expect(Bun.inspect(JSON.parse('{"constructor":1}'))).toBe("{\n  constructor: 1,\n}");
+    expect(Bun.inspect({ constructor: null })).toBe("{\n  constructor: null,\n}");
+    expect(Bun.inspect({ constructor: { b: 2 } })).toBe("{\n  constructor: {\n    b: 2,\n  },\n}");
+    expect(Bun.inspect({ [Symbol("constructor")]: 1 })).toBe("{\n  [Symbol(constructor)]: 1,\n}");
+
+    const nullPrototype = Object.create(null);
+    nullPrototype.constructor = "K";
+    expect(Bun.inspect(nullPrototype)).toBe('[Object: null prototype] {\n  constructor: "K",\n}');
+
+    class Shadowing {
+      constructor() {
+        this.constructor = "own";
+      }
+    }
+    expect(Bun.inspect(new Shadowing())).toBe('Shadowing {\n  constructor: "own",\n}');
+  });
+
+  it("next to an accessor, and as an accessor", () => {
+    expect(Bun.inspect({ constructor: "K", get g() {} })).toBe('{\n  constructor: "K",\n  g: [Getter],\n}');
+    let called = false;
+    const accessor = {
+      get constructor() {
+        called = true;
+        return 1;
+      },
+    };
+    expect(Bun.inspect(accessor)).toBe("{\n  constructor: [Getter],\n}");
+    expect(called).toBe(false);
+  });
+
+  it("nested", () => {
+    expect(Bun.inspect({ a: { constructor: 1 } })).toBe("{\n  a: {\n    constructor: 1,\n  },\n}");
+    expect(Bun.inspect([{ constructor: 1 }])).toBe("[\n  {\n    constructor: 1,\n  }\n]");
+    expect(Bun.inspect(new Map([["m", { constructor: 1 }]]))).toBe('Map(1) {\n  "m": {\n    constructor: 1,\n  },\n}');
+    expect(Bun.inspect(new Set([{ constructor: 1 }]))).toBe("Set(1) {\n  {\n    constructor: 1,\n  },\n}");
+  });
+
+  it("array", () => {
+    const array = [1];
+    array.constructor = "K";
+    expect(Bun.inspect(array)).toBe('[ 1, constructor: "K" ]');
+  });
+
+  it("sorted and compact", () => {
+    expect(Bun.inspect({ constructor: "K", a: 1 }, { sorted: true })).toBe('{\n  a: 1,\n  constructor: "K",\n}');
+    expect(Bun.inspect({ constructor: "K", a: 1 }, { compact: true })).toBe('{ constructor: "K", a: 1 }');
+  });
+
+  it("is printed for a prototype that holds it as an enumerable property", () => {
+    function Old() {}
+    Old.prototype = { constructor: Old, method() {} };
+    expect(Bun.inspect(Old.prototype)).toBe("Old {\n  constructor: [Function: Old],\n  method: [Function: method],\n}");
+    // The name in front of the braces still comes from it.
+    expect(Bun.inspect({ constructor: function Named() {}, a: 1 })).toBe(
+      "Named {\n  constructor: [Function: Named],\n  a: 1,\n}",
+    );
+  });
+
+  it("is not printed when a prototype owns it", () => {
+    class Foo {
+      method() {}
+    }
+    expect(Bun.inspect(new Foo())).toBe("Foo {\n  method: [Function: method],\n}");
+
+    class WithGetter {
+      get g() {}
+    }
+    expect(Bun.inspect(new WithGetter())).toBe("WithGetter {\n  g: [Getter],\n}");
+
+    function Base() {}
+    function Sub() {}
+    Sub.prototype = Object.create(Base.prototype);
+    Sub.prototype.constructor = Sub;
+    expect(Bun.inspect(new Sub())).toBe("Sub {}");
+
+    function Old() {}
+    Old.prototype = { constructor: Old, method() {} };
+    expect(Bun.inspect(new Old())).toBe("Old {\n  method: [Function: method],\n}");
+
+    function OldWithGetter() {}
+    OldWithGetter.prototype = { constructor: OldWithGetter, get g() {} };
+    expect(Bun.inspect(new OldWithGetter())).toBe("OldWithGetter {\n  g: [Getter],\n}");
+
+    expect(Bun.inspect(Object.create({ constructor: "x", a: 1 }))).toBe("{\n  a: 1,\n}");
+    // node:events assigns `constructor` to the prototype of EventEmitter, which makes it enumerable.
+    expect(Bun.inspect(new EventEmitter())).not.toContain("constructor");
+  });
+
+  it("is not printed when it is not enumerable", () => {
+    const hidden = Object.defineProperty({ a: 1 }, "constructor", { value: "hidden" });
+    expect(Bun.inspect(hidden)).toBe("{\n  a: 1,\n}");
+    expect(Bun.inspect(hidden, { sorted: true })).toBe("{\n  a: 1,\n}");
+
+    class Foo {
+      method() {}
+    }
+    expect(Bun.inspect(Foo.prototype)).toBe("Foo {}");
+    expect(Bun.inspect(Foo.prototype, { sorted: true })).toBe("Foo {}");
+  });
+
+  it("is printed when it holds the class of the object", () => {
+    function Big(value) {
+      this.c = [value];
+      this.constructor = Big;
+    }
+    expect(Bun.inspect(new Big(7))).toBe("Big {\n  c: [ 7 ],\n  constructor: [Function: Big],\n}");
+    expect(Bun.inspect(new Big(7), { sorted: true })).toBe(
+      "Big {\n  c: [\n    7\n  ],\n  constructor: [Function: Big],\n}",
+    );
+    expect(Bun.inspect(new Big(7), { compact: true })).toBe("Big { c: [ 7 ], constructor: [Function: Big] }");
+    const withGetter = Object.defineProperty(new Big(7), "g", { get() {}, enumerable: true });
+    expect(Bun.inspect(withGetter)).toBe("Big {\n  c: [ 7 ],\n  constructor: [Function: Big],\n  g: [Getter],\n}");
+    const array = [1];
+    array.constructor = Array;
+    expect(Bun.inspect(array)).toBe("[ 1, constructor: [class Array] ]");
+  });
+
+  it("is printed where the entries of a value are listed as an object", () => {
+    expect(Bun.inspect(new Headers({ constructor: "x", a: "b" }))).toBe(
+      'Headers {\n  "constructor": "x",\n  "a": "b",\n}',
+    );
+    expect(Bun.inspect(new URLSearchParams("constructor=x&a=b"))).toBe(
+      'URLSearchParams {\n  "constructor": "x",\n  "a": "b",\n}',
+    );
+    const form = new FormData();
+    form.set("constructor", "x");
+    form.set("a", "b");
+    expect(Bun.inspect(form)).toBe('FormData {\n  "constructor": "x",\n  "a": "b",\n}');
+    expect(Bun.inspect(new Bun.CookieMap("constructor=x; a=b"))).toBe('{\n  "constructor": "x",\n  "a": "b",\n}');
+  });
+
+  it("is printed in the text of an error that quotes the value", () => {
+    expect(() => openSync("never-opened", { constructor: 1 })).toThrow(
+      "The argument 'flags' is invalid. Received { constructor: 1 }",
+    );
+    expect(() => new MessageEvent("message", { source: { constructor: 1 } })).toThrow(
+      'MessageEvent constructor: Expected eventInitDict.source ("{ constructor: 1 }") to be an instance of MessagePort.',
+    );
+    const buffer = Object.assign(Buffer.from([1]), { x: { constructor: 1 } });
+    expect(util.inspect(buffer)).toBe("<Buffer 01, x: { constructor: 1 }>");
+  });
+
+  it("a symbol with that description is printed on a prototype, like every other symbol", () => {
+    class SymbolKey {
+      [Symbol("constructor")]() {}
+      m() {}
+    }
+    expect(Bun.inspect(new SymbolKey())).toBe(
+      "SymbolKey {\n  [Symbol(constructor)]: [Function],\n  m: [Function: m],\n}",
+    );
+
+    class SymbolKeyWithGetter {
+      [Symbol("constructor")]() {}
+      get g() {}
+    }
+    expect(Bun.inspect(new SymbolKeyWithGetter())).toBe(
+      "SymbolKeyWithGetter {\n  g: [Getter],\n  [Symbol(constructor)]: [Function],\n}",
+    );
+  });
+
+  describe("prints the same as a key of any other name", () => {
+    // `constructed` sorts where `constructor` does among the keys of these shapes.
+    const twin = "constructed";
+    const chain = () => {
+      let object = { l5: 5 };
+      for (const key of ["l4", "l3", "l2", "l1"]) object = Object.assign(Object.create(object), { [key]: 1 });
+      return object;
+    };
+    class Foo {
+      m() {}
+    }
+    const shapes = {
+      "alone": key => ({ [key]: 1 }),
+      "next to a property": key => ({ [key]: 1, a: 2 }),
+      "next to an accessor": key => Object.defineProperty({ [key]: 1 }, "g", { get() {}, enumerable: true }),
+      "next to Symbol.toStringTag": key => ({ [key]: 1, [Symbol.toStringTag]: "Tag" }),
+      "over five prototypes": key => Object.assign(Object.create(chain()), { [key]: 1 }),
+      "over a prototype with a symbol key and __esModule": key =>
+        Object.assign(Object.create({ __esModule: true, p: 1, [Symbol.for("s")]: 2 }), { [key]: 1 }),
+      "without a prototype": key => Object.assign(Object.create(null), { [key]: 1 }),
+      "on an array": key => Object.assign([1], { [key]: 1 }),
+      "on a class instance": key => Object.assign(new Foo(), { [key]: 1 }),
+    };
+
+    it.each(Object.entries(shapes))("%s", (_, make) => {
+      const print = key => [{}, { sorted: true }, { compact: true }].map(options => Bun.inspect(make(key), options));
+      expect(print("constructor").map(text => text.replaceAll("constructor", twin))).toEqual(print(twin));
+    });
+  });
+
+  // Each of these names is special somewhere: on a function, on Object.prototype or to a printer.
+  it.each([
+    "constructor",
+    "call",
+    "apply",
+    "bind",
+    "name",
+    "length",
+    "prototype",
+    "caller",
+    "arguments",
+    "toString",
+    "valueOf",
+    "hasOwnProperty",
+    "isPrototypeOf",
+    "then",
+    "toJSON",
+    "inspect",
+  ])("an own key is printed whatever its name: %s", name => {
+    const printed = [
+      Bun.inspect({ [name]: 1234567 }),
+      Bun.inspect({ [name]: 1234567, a: 1 }),
+      Bun.inspect(Object.defineProperty({ [name]: 1234567 }, "g", { get() {}, enumerable: true })),
+      Bun.inspect({ [name]: 1234567 }, { sorted: true }),
+      Bun.inspect({ [name]: 1234567 }, { compact: true }),
+    ];
+    expect(printed.map(text => text.includes(`${name}: 1234567`))).toEqual([true, true, true, true, true]);
   });
 });
 

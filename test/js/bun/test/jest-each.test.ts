@@ -283,6 +283,27 @@ describe.concurrent("titles", () => {
     });
   });
 
+  it("%p, %o, %O and %s print a row's own constructor key, and not the one of its class", async () => {
+    expect(
+      await titlesOf(
+        [
+          [
+            "%p|%o|%O|%s",
+            `[{ constructor: "K", a: 1 }, { constructor: "L", a: 1 }, new Foo()].map(value => [value, value, value, value])`,
+          ],
+        ],
+        `class Foo { m() {} }`,
+      ),
+    ).toEqual({
+      titles: [
+        '{ constructor: "K", a: 1 }|{ constructor: "K", a: 1 }|{ constructor: "K", a: 1 }|{ constructor: "K", a: 1 }',
+        '{ constructor: "L", a: 1 }|{ constructor: "L", a: 1 }|{ constructor: "L", a: 1 }|{ constructor: "L", a: 1 }',
+        "Foo { m: [Function: m] }|Foo { m: [Function: m] }|Foo { m: [Function: m] }|Foo { m: [Function: m] }",
+      ],
+      exitCode: 0,
+    });
+  });
+
   it("%#, %$ and %% take no value, and anything else after a % is kept", async () => {
     expect(
       await titlesOf([

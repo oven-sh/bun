@@ -319,14 +319,30 @@ enum class End : uint8_t {
     NoStack,
 };
 
+// Operand code (a getter, a Proxy trap) gets a RangeError from JSC at the soft limit. The first run ends above it,
+// so that a comparison that cannot end gets node's answer and not that error. Which run answers depends on this
+// number.
+static void* stackEndOfFirstRun(JSC::VM& vm)
+{
+#if ASAN_ENABLED
+    static constexpr size_t headroom = 384 * KB;
+#else
+    static constexpr size_t headroom = 128 * KB;
+#endif
+    return static_cast<char*>(vm.softStackLimit()) + headroom;
+}
+
 struct CycleState {
-    explicit CycleState(void* stackEnd)
-        : stackEnd(stackEnd)
+    explicit CycleState(JSC::VM& vm)
+        : stackEnd(stackEndOfFirstRun(vm))
     {
+        open.fill(vm, 16, [](JSValue*) {});
     }
 
-    // A run without memos: the pairs that are being compared, `actual` before `expected`.
+    // A run without memos: the pairs that are being compared, `actual` before `expected`, in the first `openValues`
+    // slots of `open`.
     JSC::MarkedVector<JSValue, 16> open;
+    size_t openValues { 0 };
     // The run has no stack below this address: it throws there, or it gives up (`ended`).
     void* stackEnd;
     bool throwsAtStackEnd { false };
@@ -358,19 +374,6 @@ static Comparison* bodyOf(Arm arm)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Operand code (a getter, a Proxy trap) gets a RangeError from JSC at the soft limit. The first run ends above it,
-// so that a comparison that cannot end gets node's answer and not that error. Which run answers depends on this
-// number.
-static void* stackEndOfFirstRun(JSC::VM& vm)
-{
-#if ASAN_ENABLED
-    static constexpr size_t headroom = 384 * KB;
-#else
-    static constexpr size_t headroom = 128 * KB;
-#endif
-    return static_cast<char*>(vm.softStackLimit()) + headroom;
-}
-
 // A run without memos that has fewer open pairs than this where its stack ends was called with little stack left:
 // the caller is deep, not the comparison.
 static constexpr size_t pairsOfADeepComparison = 32;
@@ -379,10 +382,10 @@ static constexpr size_t pairsOfADeepComparison = 32;
 // caller is deep compares on as far as it is safe.
 static NEVER_INLINE bool endsAtStackEnd(JSC::JSGlobalObject* globalObject, CycleState& cycles, JSC::ThrowScope& scope)
 {
-    const bool calledDeep = !cycles.memos && cycles.open.size() < 2 * pairsOfADeepComparison;
+    const bool calledDeep = !cycles.memos && cycles.openValues < 2 * pairsOfADeepComparison;
     if (!cycles.throwsAtStackEnd && !calledDeep) {
         if (!cycles.memos)
-            cycles.pairsWhereStackEnded = cycles.open.size() / 2;
+            cycles.pairsWhereStackEnded = cycles.openValues / 2;
         cycles.ended = End::NoStack;
         return true;
     }
@@ -550,22 +553,37 @@ static NEVER_INLINE bool withMemos(JSC::JSGlobalObject* globalObject, JSC::Marke
     return result;
 }
 
+static bool withOpenPair(JSC::JSGlobalObject*, JSC::MarkedArgumentBuffer&, CycleState&, JSC::ThrowScope&, JSValue actual, JSValue expected, Arm);
+
+// `open` has no slot left: twice as many, then the pair again. Not inline, and withOpenPair comes back to it with a
+// jump, so that what the calls here keep in a frame is not under the nested pairs.
+static NEVER_INLINE bool withOpenPairInMoreSlots(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected, Arm arm)
+{
+    for (size_t more = cycles.open.size(); more; more--)
+        cycles.open.append(JSValue());
+    return withOpenPair(globalObject, gcBuffer, cycles, scope, actual, expected, arm);
+}
+
 // A run without memos gives up at a pair inside its own comparison: that comparison cannot end. It has no other
 // verdict: one side alone that comes back says nothing about a pair that was never compared.
 static NEVER_INLINE bool withOpenPair(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected, Arm arm)
 {
-    const auto open = cycles.open.span();
+    const auto slots = cycles.open.mutableSpan();
+    const size_t openValues = cycles.openValues;
+    if (openValues + 2 > slots.size()) [[unlikely]]
+        return withOpenPairInMoreSlots(globalObject, gcBuffer, cycles, scope, actual, expected, arm);
+    const auto open = slots.first(openValues);
     for (size_t i = 0; i + 1 < open.size(); i += 2) {
         if (open[i] == actual && open[i + 1] == expected) {
             cycles.ended = End::PairRepeats;
             return false;
         }
     }
-    cycles.open.append(actual);
-    cycles.open.append(expected);
+    slots[openValues] = actual;
+    slots[openValues + 1] = expected;
+    cycles.openValues = openValues + 2;
     const bool result = bodyOf(arm)(globalObject, gcBuffer, cycles, scope, actual, expected);
-    cycles.open.removeLast();
-    cycles.open.removeLast();
+    cycles.openValues -= 2;
     return result;
 }
 
@@ -1227,7 +1245,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPartialDeepStrictEqual,
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::MarkedArgumentBuffer gcBuffer;
-    PartialDeepEqual::CycleState cycles { PartialDeepEqual::stackEndOfFirstRun(vm) };
+    PartialDeepEqual::CycleState cycles { vm };
     bool result = PartialDeepEqual::compareBranch(globalObject, gcBuffer, cycles, scope, callframe->argument(0), callframe->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
     if (cycles.ended != PartialDeepEqual::End::None) [[unlikely]] {

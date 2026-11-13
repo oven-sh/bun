@@ -2,7 +2,7 @@ import { pathToFileURL } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, bunRun, isLinux, isMacOS, isRoot, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
-import { join, resolve, sep } from "path";
+import { delimiter, join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
 
@@ -428,6 +428,278 @@ describe("NODE_PATH test", () => {
 
     expect(exitCode).toBe(0);
     expect(stdout.toString().trim()).toBe("NODE_PATH from lib works");
+  });
+
+  it.concurrent("reads the exports of a package that it finds through NODE_PATH", async () => {
+    // Longer than the 512 bytes that the resolver keeps of a subpath.
+    const longSubpath = ["a", "b", "c"].map(letter => Buffer.alloc(200, letter).toString()).join("/") + "/x.js";
+    const withMain = (manifest: object) => JSON.stringify({ main: "./legacy.js", ...manifest });
+    const empty = (folder: string, names: string[]) => Object.fromEntries(names.map(name => [`${folder}/${name}`, ""]));
+    using dir = tempDir("node-path-exports", {
+      "gp1/npkg/package.json": withMain({
+        exports: { ".": "./m.js", "./mapped": "./real-target.js", "./priv/*": null },
+      }),
+      "gp1/npkg/m.js": `module.exports = "EXPORTS-DOT";`,
+      "gp1/npkg/legacy.js": `module.exports = "LEGACY-MAIN";`,
+      ...empty("gp1/npkg", ["real-target.js", "hidden.js", "priv/secret.js"]),
+      "gp1/@scope/pkg/package.json": JSON.stringify({ exports: { ".": "./idx.js" } }),
+      ...empty("gp1/@scope/pkg", ["idx.js"]),
+      "gp1/str/package.json": withMain({ exports: "./m.js" }),
+      ...empty("gp1/str", ["m.js", "legacy.js"]),
+      "gp1/arr/package.json": withMain({ exports: ["./m.js"] }),
+      ...empty("gp1/arr", ["m.js", "legacy.js"]),
+      "gp1/rootcond/package.json": withMain({ exports: { import: "./esm.mjs", require: "./cjs.cjs" } }),
+      ...empty("gp1/rootcond", ["esm.mjs", "cjs.cjs", "legacy.js"]),
+      "gp1/condonly/package.json": withMain({ exports: { ".": { import: "./esm.mjs" } } }),
+      ...empty("gp1/condonly", ["esm.mjs", "legacy.js"]),
+      "gp1/unbuilt/package.json": withMain({ exports: { ".": "./dist/index.js" } }),
+      ...empty("gp1/unbuilt", ["legacy.js"]),
+      "gp1/efalse/package.json": withMain({ exports: false }),
+      ...empty("gp1/efalse", ["legacy.js"]),
+      "gp1/enum/package.json": withMain({ exports: 7 }),
+      ...empty("gp1/enum", ["legacy.js"]),
+      "gp1/mixed/package.json": withMain({ exports: { ".": "./m.js", "import": "./esm.mjs" } }),
+      ...empty("gp1/mixed", ["m.js", "esm.mjs", "legacy.js"]),
+      "gp1/legacy-only/package.json": JSON.stringify({ main: "./lib.js" }),
+      ...empty("gp1/legacy-only", ["lib.js", "sub.js"]),
+      "gp1/MyClass.js": "",
+      "gp1/lit@1.0.0/index.js": "",
+      "gp1/ver@2.0.0/package.json": withMain({ exports: { ".": "./m.js" } }),
+      ...empty("gp1/ver@2.0.0", ["m.js", "legacy.js"]),
+      "gp1/beside.js": "",
+      "gp1/beside/package.json": withMain({ exports: { ".": "./m.js" } }),
+      ...empty("gp1/beside", ["m.js", "legacy.js"]),
+      "gp1/pexp/package.json": JSON.stringify({ exports: { "./d/": "./d/", "./w/*": "./w/*" } }),
+      ...empty("gp1/pexp", ["d/y.ts", "d/y.js", "w/x.ts", "w/x.js"]),
+      "gp1/dual/package.json": JSON.stringify({ exports: { ".": "./m.js" } }),
+      ...empty("gp1/dual", ["m.js"]),
+      "gp2/dual/package.json": JSON.stringify({ main: "./m.js" }),
+      ...empty("gp2/dual", ["m.js", "hidden.js"]),
+      "gp2/only2/package.json": JSON.stringify({ exports: { ".": "./m.js" } }),
+      ...empty("gp2/only2", ["m.js"]),
+      "store/linked/package.json": withMain({ exports: { ".": "./m.js" } }),
+      ...empty("store/linked", ["m.js", "legacy.js"]),
+      ...(isWindows
+        ? {}
+        : {
+            "gp1/wild/package.json": JSON.stringify({ exports: { "./*": "./*" } }),
+            [`gp1/wild/${longSubpath}`]: "",
+          }),
+      "app/package.json": JSON.stringify({
+        name: "app",
+        imports: { "#root": "npkg", "#dep": "npkg/mapped", "#hid": "npkg/hidden.js" },
+      }),
+      "app/probe.mjs": `
+        import { mkdirSync, writeFileSync } from "node:fs";
+        import { createRequire } from "node:module";
+        import { join, relative, sep } from "node:path";
+        const require = createRequire(import.meta.url);
+        const [root, ...specifiers] = process.argv.slice(2);
+        const answer = find => {
+          try {
+            return relative(root, find()).replaceAll(sep, "/");
+          } catch (e) {
+            return "ERR:" + e.code;
+          }
+        };
+        const answers = specifier => [
+          answer(() => require.resolve(specifier)),
+          answer(() => Bun.resolveSync(specifier, import.meta.dirname)),
+        ];
+        const rows = Object.fromEntries(specifiers.map(specifier => [specifier, answers(specifier)]));
+        const loaded = [require("npkg"), (await import("npkg")).default];
+
+        // A package that is made after the resolver has read the folder beside it.
+        const late = join(root, "gp1", "late");
+        mkdirSync(late);
+        writeFileSync(join(late, "package.json"), JSON.stringify({ main: "./legacy.js", exports: { ".": "./m.js" } }));
+        writeFileSync(join(late, "m.js"), "");
+        writeFileSync(join(late, "legacy.js"), "");
+        console.log(JSON.stringify({ loaded, rows, late: answers("late") }));
+      `,
+    });
+    const root = realpathSync(String(dir));
+    symlinkSync(join(root, "store", "linked"), join(root, "gp1", "linked"), "junction");
+
+    // Each row: what require.resolve() finds, then what Bun.resolveSync() finds.
+    const same = (path: string) => [path, path];
+    const notFound = ["ERR:MODULE_NOT_FOUND", "ERR:ERR_MODULE_NOT_FOUND"];
+    const rows: Record<string, string[]> = {
+      "npkg": same("gp1/npkg/m.js"),
+      "npkg/mapped": same("gp1/npkg/real-target.js"),
+      "@scope/pkg": same("gp1/@scope/pkg/idx.js"),
+      "str": same("gp1/str/m.js"),
+      "arr": same("gp1/arr/m.js"),
+      "rootcond": ["gp1/rootcond/cjs.cjs", "gp1/rootcond/esm.mjs"],
+      // As in node_modules: "pkg/key.js" is also read as the key "./key".
+      "npkg/mapped.js": same("gp1/npkg/real-target.js"),
+      // Where "exports" has no file for the subpath, the lookup by "main" and by file name still answers.
+      "npkg/package.json": same("gp1/npkg/package.json"),
+      "npkg/hidden.js": same("gp1/npkg/hidden.js"),
+      "npkg/priv/secret.js": same("gp1/npkg/priv/secret.js"),
+      "condonly": ["gp1/condonly/legacy.js", "gp1/condonly/esm.mjs"],
+      "unbuilt": same("gp1/unbuilt/legacy.js"),
+      // As in Node, the folder has the whole text in front of the subpath as its name.
+      "npkg@1.2.3": notFound,
+      "npkg@": notFound,
+      "@scope/pkg@": notFound,
+      "lit@1.0.0": same("gp1/lit@1.0.0/index.js"),
+      "ver@2.0.0": same("gp1/ver@2.0.0/m.js"),
+      // Node loads "main" when "exports" is not a map, a text or a list.
+      "efalse": same("gp1/efalse/legacy.js"),
+      "enum": same("gp1/enum/legacy.js"),
+      "mixed": same("gp1/mixed/legacy.js"),
+      "legacy-only": same("gp1/legacy-only/lib.js"),
+      "legacy-only/sub.js": same("gp1/legacy-only/sub.js"),
+      "MyClass.js": same("gp1/MyClass.js"),
+      // The folder of a package comes before a file of its name.
+      "beside": same("gp1/beside/m.js"),
+      // Outside node_modules ".ts" comes before ".js", for a key that ends in "/" and for a key with "*".
+      "pexp/d/y": same("gp1/pexp/d/y.ts"),
+      "pexp/w/x": same("gp1/pexp/w/x.ts"),
+      // The first entry that has the package answers, also when that package has no "main".
+      "dual": same("gp1/dual/m.js"),
+      "dual/hidden.js": same("gp2/dual/hidden.js"),
+      "only2": same("gp2/only2/m.js"),
+      // A package manager links the folder of a package from its store.
+      "linked": same("store/linked/m.js"),
+      // What "imports" of the importer's package.json names.
+      "#root": same("gp1/npkg/m.js"),
+      "#dep": same("gp1/npkg/real-target.js"),
+      "#hid": same("gp1/npkg/hidden.js"),
+      ...(isWindows ? {} : { [`wild/${longSubpath}`]: same(`gp1/wild/${longSubpath}`) }),
+    };
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--no-install", "probe.mjs", root, ...Object.keys(rows)],
+      env: { ...bunEnv, NODE_PATH: [join(root, "gp1"), join(root, "gp2")].join(delimiter) },
+      cwd: join(root, "app"),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      loaded: ["EXPORTS-DOT", "EXPORTS-DOT"],
+      rows,
+      late: same("gp1/late/m.js"),
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("finds the same file for a package in a NODE_PATH entry as for one in node_modules", async () => {
+    const manifest = JSON.stringify({
+      main: "./legacy.js",
+      exports: {
+        ".": "./m.js",
+        "./mapped": "./real-target.js",
+        "./b/*": "./dir/*",
+        "./b/*.js": null,
+        "./x.js": null,
+        "./x": "./real.js",
+        "./w/*": "./w/*",
+        "./d/": "./d/",
+      },
+    });
+    const names = [
+      "m.js",
+      "legacy.js",
+      "real-target.js",
+      "dir/q.js",
+      "real.js",
+      "w/x.ts",
+      "w/x.js",
+      "d/y.ts",
+      "d/y.js",
+    ];
+    const packageIn = (folder: string) => ({
+      [`${folder}/par/package.json`]: manifest,
+      ...Object.fromEntries(names.map(name => [`${folder}/par/${name}`, ""])),
+    });
+    using dir = tempDir("node-path-parity", {
+      ...packageIn("app/node_modules"),
+      ...packageIn("global/node_modules"),
+      "elsewhere/probe.mjs": `
+        import { createRequire } from "node:module";
+        import { join, relative, sep } from "node:path";
+        const [root, ...specifiers] = process.argv.slice(2);
+        const answers = (from, folder) => {
+          const require = createRequire(join(from, "importer.js"));
+          const answer = find => {
+            try {
+              return relative(join(root, folder), find()).replaceAll(sep, "/");
+            } catch (e) {
+              return "ERR:" + e.code;
+            }
+          };
+          const rows = specifiers.map(specifier => [
+            specifier,
+            [answer(() => require.resolve(specifier)), answer(() => Bun.resolveSync(specifier, from))],
+          ]);
+          return Object.fromEntries(rows);
+        };
+        console.log(JSON.stringify({
+          inNodeModules: answers(join(root, "app"), "app/node_modules"),
+          throughNodePath: answers(join(root, "elsewhere"), "global/node_modules"),
+        }));
+      `,
+    });
+    const root = realpathSync(String(dir));
+    // Each of these is a file that "exports" names, or one that the node_modules lookup finds beside "exports".
+    const specifiers = [
+      "par",
+      "par/mapped",
+      "par/mapped.js",
+      "par/package.json",
+      "par/b/q.js",
+      "par/x.js",
+      "par/w/x",
+      "par/d/y",
+    ];
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--no-install", "probe.mjs", root, ...specifiers],
+      env: { ...bunEnv, NODE_PATH: join(root, "global", "node_modules") },
+      cwd: join(root, "elsewhere"),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const { inNodeModules, throughNodePath } = JSON.parse(stdout);
+    expect(Object.keys(inNodeModules)).toEqual(specifiers);
+    expect(inNodeModules["par"]).toEqual(["par/m.js", "par/m.js"]);
+    expect(throughNodePath).toEqual(inNodeModules);
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("loads a package that a NODE_PATH entry exports without a request to the registry", async () => {
+    const requests: string[] = [];
+    using registry = Bun.serve({
+      port: 0,
+      fetch(request) {
+        requests.push(new URL(request.url).pathname);
+        return new Response("not found", { status: 404 });
+      },
+    });
+    using dir = tempDir("node-path-autoinstall", {
+      "gp/only-exports/package.json": JSON.stringify({ exports: { ".": "./m.js" } }),
+      "gp/only-exports/m.js": `module.exports = "FROM-NODE-PATH";`,
+      "app/index.js": `console.log(require("only-exports"));`,
+      "app/bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${registry.port}/"\n`,
+    });
+    const root = realpathSync(String(dir));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: { ...bunEnv, NODE_PATH: join(root, "gp"), BUN_INSTALL_CACHE_DIR: join(root, ".bun-cache") },
+      cwd: join(root, "app"),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, requests }).toEqual({ stdout: "FROM-NODE-PATH\n", stderr: "", requests: [] });
+    expect(exitCode).toBe(0);
   });
 });
 

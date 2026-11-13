@@ -627,7 +627,6 @@ impl ServerWebSocket {
                 // accounting because the closed flag is already set.)
                 self.websocket().close();
                 closed_here = true;
-                this_value.unprotect();
             }
 
             let handled =

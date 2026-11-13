@@ -798,7 +798,7 @@ pub trait SourceContext: Sized {
     /// that is done by the caller ([`NewSource::decrement_count`]) *after* this
     /// returns, via `Box::from_raw`, which then runs `Drop` on every field. Freeing
     /// here would deallocate the storage backing the live `&self` borrow (UAF).
-    fn deinit_fn(&self);
+    fn deinit_fn(&self) {}
 
     /// The JS wrapper was collected while native refs remain. Runs inside a GC
     /// sweep: no JS. `ByteStream` tells its producer nobody can read it now.

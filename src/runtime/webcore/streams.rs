@@ -176,18 +176,6 @@ pub enum StreamResult {
     IntoArrayAndDone(IntoArray),
 }
 
-impl StreamResult {
-    pub(crate) fn release(&mut self) {
-        match self {
-            StreamResult::Owned(owned) | StreamResult::OwnedAndDone(owned) => {
-                owned.clear_and_free()
-            }
-            StreamResult::Err(StreamError::JSValue(s)) => s.deinit(),
-            _ => {}
-        }
-    }
-}
-
 /// One sink chunk in its source encoding, so whoever buffers it transcodes straight into its own buffer.
 #[derive(Clone, Copy)]
 pub(crate) enum EncodedChunk<'a> {
@@ -370,8 +358,6 @@ impl Writable {
         promise: &mut JSPromise,
         cx: &bun_jsc::JsThread<'_>,
     ) {
-        // Adopt the caller's outstanding protect(); Drop unprotects on all paths.
-        let _guard = jsc::js_value::Protected::adopt(promise.to_js());
         let settled = match result {
             Writable::Err(err) => {
                 promise.reject_with_async_stack(cx.global(), Ok(err.to_js(cx.global())))
@@ -596,10 +582,8 @@ impl StreamResult {
         // Adopt the caller's outstanding protect(); Drop unprotects on all paths.
         let _unprotect = jsc::js_value::Protected::adopt(JSPromise::opaque_ref(promise).to_js());
 
-        // A completion for a VM that no longer runs script settles nothing: `release()` frees
-        // `.owned`/`.owned_and_done` and unprotects `.err` instead of leaking them.
+        // A completion for a VM that no longer runs script settles nothing.
         if !vm.script_allowed() {
-            result.release();
             *result = StreamResult::Temporary(RawSlice::EMPTY);
             return;
         }

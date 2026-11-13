@@ -899,8 +899,7 @@ impl JSValkeyClient {
         rest: &[JSValue],
         is_fields: fn(JSValue) -> bool,
     ) -> bool {
-        // An iterator adds (key, collection): a key and the `Map` or object, the value again and the `Set`.
-        // An index and its array pass the test below without this.
+        // An iterator adds (key, collection): a key and the `Map` or object, the value again and the `Set`. An index and its array need no exemption.
         if let [key, collection] = rest
             && collection.is_object()
             && !collection.is_array()

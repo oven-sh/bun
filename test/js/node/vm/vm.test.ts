@@ -4040,3 +4040,165 @@ describe("import attributes with an array-index key", () => {
     expect(attributes[0]).toBe("a");
   });
 });
+
+// The global of a context answers for the properties of its contextified object. A store with that global as the receiver
+// ends in a definition, which the context hands on: the native setter behind the property gets the object that holds it.
+describe.concurrent("a store with the global of a context as the receiver runs the native setter of the holder", () => {
+  async function run(script: string) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  const printed = (value: unknown) => ({ stdout: JSON.stringify(value) + "\n", stderr: "", exitCode: 0 });
+
+  const requireFixture = `
+    const vm = require("node:vm");
+    const Module = require("node:module");
+    const holder = Module.prototype;
+    const globalOf = object => vm.runInContext("globalThis", vm.createContext(object));
+
+    const stores = {
+      "Reflect.set() on another object"(value) {
+        Reflect.set({}, "require", value, globalOf(holder));
+      },
+      "Reflect.set() on the holder"(value) {
+        Reflect.set(holder, "require", value, globalOf(holder));
+      },
+      "Reflect.set() on a function"(value) {
+        Reflect.set(function () {}, "require", value, globalOf(holder));
+      },
+      "Reflect.set() on a Proxy"(value) {
+        Reflect.set(new Proxy({}, {}), "require", value, globalOf(holder));
+      },
+      "Reflect.set() on a Proxy with a set trap that hands the receiver on"(value) {
+        const set = (target, key, stored, receiver) => Reflect.set(target, key, stored, receiver);
+        Reflect.set(new Proxy({}, { set }), "require", value, globalOf(holder));
+      },
+      "super.require = value"(value) {
+        ({ __proto__: {}, store(stored) { super.require = stored; } }).store.call(globalOf(holder), value);
+      },
+      "super.require = value in strict code"(value) {
+        ({ __proto__: {}, store(stored) { "use strict"; super.require = stored; } }).store.call(globalOf(holder), value);
+      },
+      "super[key] = value"(value) {
+        const key = "require";
+        ({ __proto__: {}, store(stored) { super[key] = stored; } }).store.call(globalOf(holder), value);
+      },
+      "super[key] = value in strict code"(value) {
+        const key = "require";
+        ({ __proto__: {}, store(stored) { "use strict"; super[key] = stored; } }).store.call(globalOf(holder), value);
+      },
+      "Reflect.set() by code of the context"(value) {
+        vm.runInContext('value => Reflect.set({}, "require", value, globalThis)', vm.createContext(holder))(value);
+      },
+      "the value of this in the context as the receiver"(value) {
+        Reflect.set({}, "require", value, vm.runInContext("this", vm.createContext(holder)));
+      },
+      "the global that vm.compileFunction() returns as the receiver"(value) {
+        const contextGlobal = vm.compileFunction("return globalThis", [], { parsingContext: vm.createContext(holder) })();
+        Reflect.set({}, "require", value, contextGlobal);
+      },
+      "the global of a context over the global of a context"(value) {
+        Reflect.set({}, "require", value, globalOf(globalOf(holder)));
+      },
+      "the global of a context over a Proxy"(value) {
+        Reflect.set({}, "require", value, globalOf(new Proxy(holder, {})));
+      },
+      "the global of a context over a Proxy with a defineProperty trap"(value) {
+        const definitions = [];
+        const defineProperty = (target, key, descriptor) => {
+          definitions.push(Object.keys(descriptor).join());
+          return Reflect.defineProperty(target, key, descriptor);
+        };
+        Reflect.set({}, "require", value, globalOf(new Proxy(holder, { defineProperty })));
+        if (definitions.join("|") !== "value") throw new Error("the trap got " + JSON.stringify(definitions));
+      },
+      "a holder that is not extensible"(value) {
+        Object.preventExtensions(holder);
+        Reflect.set({}, "require", value, globalOf(holder));
+      },
+      "a sealed holder"(value) {
+        Object.seal(holder);
+        Reflect.set({}, "require", value, globalOf(holder));
+      },
+    };
+
+    const original = holder.require;
+    const results = {};
+    for (const [name, store] of Object.entries(stores)) {
+      const calls = [];
+      function override(id) {
+        calls.push(id);
+        return original.call(this, id);
+      }
+      try {
+        store(override);
+        require("node:path");
+        results[name] = [holder.require === override, calls];
+      } catch (error) {
+        results[name] = String(error);
+      }
+      holder.require = original;
+    }
+    console.log(JSON.stringify(results));
+  `;
+  // What Node.js v26.3.0 prints for each store.
+  const installed = [true, ["node:path"]];
+
+  test("Module.prototype.require", async () => {
+    const { stdout, stderr, exitCode } = await run(requireFixture);
+    const results: Record<string, unknown> = stdout ? JSON.parse(stdout) : {};
+    expect({ results, stderr, exitCode }).toEqual({
+      results: Object.fromEntries(Object.keys(results).map(store => [store, installed])),
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(Object.keys(results)).toHaveLength(17);
+  });
+
+  test("a defineProperty trap of the contextified object that refuses leaves the holder as it is", async () => {
+    const script = `
+      const vm = require("node:vm");
+      const Module = require("node:module");
+      const original = Module.prototype.require;
+      let refused = 0;
+      const proxy = new Proxy(Module.prototype, { defineProperty: () => (refused++, false) });
+      Reflect.set({}, "require", function override() {}, vm.runInContext("globalThis", vm.createContext(proxy)));
+      console.log(JSON.stringify([refused > 0, Module.prototype.require === original]));
+    `;
+    expect(await run(script)).toEqual(printed([true, true]));
+  });
+
+  // Node.js does not take a function for the contextified object, so this has no answer from it.
+  test("Error.prepareStackTrace", async () => {
+    const script = `
+      const vm = require("node:vm");
+      Reflect.set({}, "prepareStackTrace", () => "formatted", vm.runInContext("globalThis", vm.createContext(Error)));
+      console.log(JSON.stringify(new Error("x").stack));
+    `;
+    expect(await run(script)).toEqual(printed("formatted"));
+  });
+
+  test.skipIf(typeof ShadowRealm === "undefined")("onmessage and onerror of a ShadowRealm", async () => {
+    const script = `
+      const realm = new ShadowRealm();
+      const seen = realm.evaluate(\`
+        const vm = process.getBuiltinModule("node:vm");
+        const contextGlobal = vm.runInContext("globalThis", vm.createContext(globalThis));
+        const seen = [];
+        Reflect.set({}, "onmessage", event => seen.push("message: " + event.data), contextGlobal);
+        Reflect.set({}, "onerror", event => seen.push("error: " + event.error), contextGlobal);
+        dispatchEvent(new MessageEvent("message", { data: "delivered" }));
+        dispatchEvent(new ErrorEvent("error", { error: "delivered" }));
+        onmessage = onerror = null;
+        JSON.stringify(seen);
+      \`);
+      console.log(JSON.stringify({ realm: JSON.parse(seen), main: [typeof onmessage, typeof onerror] }));
+      // A handler that went to the main realm would keep the process alive.
+      onmessage = onerror = null;
+    `;
+    expect(await run(script)).toEqual(
+      printed({ realm: ["message: delivered", "error: delivered"], main: ["object", "object"] }),
+    );
+  });
+});

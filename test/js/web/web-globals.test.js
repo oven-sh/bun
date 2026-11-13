@@ -199,8 +199,8 @@ test.concurrent(
   },
 );
 
-// The global of a node:vm context made from globalThis answers for the properties of globalThis. As the receiver of a
-// Reflect.set it is what the native setter gets as its `this`, and it is no global object of Bun's own.
+// The global of a node:vm context made from globalThis answers for the properties of globalThis. A Reflect.set with it as
+// the receiver ends in a definition, which the context hands on to globalThis: the native setter gets globalThis.
 test.concurrent(
   "onmessage/onerror: Reflect.set with the global of a node:vm context of globalThis as the receiver",
   async () => {

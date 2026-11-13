@@ -8189,6 +8189,17 @@ impl<'s> Files<'s> {
             .filter(move |problem| problem.0 == file)
     }
 
+    /// The files with `GetIncludeProcessorDiagnostics`.
+    pub fn files_with_include_problems(&self) -> Vec<FileId> {
+        let with_errors = self.include_errors.iter().map(|it| it.0);
+        let files = (0..self.modules.len()).map(|at| FileId(at as u32));
+        let without_references = files.filter(|&it| !self.module(it).missing_references.is_empty());
+        let mut files: Vec<FileId> = without_references.chain(with_errors).collect();
+        files.shared_sort_unstable();
+        files.dedup();
+        files
+    }
+
     /// The module that `file` imports implicitly for its JSX.
     pub fn jsx_runtime(&self, file: FileId) -> Option<Atom> {
         let module = &self.modules[file.idx()];

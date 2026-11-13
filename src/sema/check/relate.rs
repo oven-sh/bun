@@ -521,6 +521,19 @@ struct StrippedTarget<'p> {
     corresponds: bool,
 }
 
+/// A union with fewer members is searched for each type on its own. See `Checker::contains_type`.
+const MANY_TARGETS: usize = 512;
+
+/// How many types `a` and `b` have in common from the start.
+fn common_prefix_len(a: &[TypeId], b: &[TypeId]) -> usize {
+    const BLOCK: usize = 32;
+    let (blocks_of_a, blocks_of_b) = (a.as_chunks::<BLOCK>().0, b.as_chunks::<BLOCK>().0);
+    let equal = blocks_of_a.iter().zip(blocks_of_b);
+    let from = BLOCK * equal.take_while(|(a, b)| a == b).count();
+    let rest = a[from..].iter().zip(&b[from..]);
+    from + rest.take_while(|(a, b)| a == b).count()
+}
+
 // Type kind predicates for callers that already have the `TypeData`.
 
 /// `Checker::is_object_type`
@@ -4112,7 +4125,17 @@ impl<'p, 's> Checker<'p, 's> {
             count,
             corresponds,
         } = self.undefined_stripped_target_if_needed(sources, target);
-        for (i, &t) in sources.iter().enumerate() {
+        // Where `targets` is read on. Both lists are in `CompareTypes` order.
+        let has_many = targets.len() >= MANY_TARGETS;
+        let only_literals = has_many && self.types().member_flags(target) & !tf::LITERAL == 0;
+        let mut next = match only_literals {
+            true => common_prefix_len(sources, targets),
+            false => 0,
+        };
+        for (i, &t) in sources.iter().enumerate().skip(next) {
+            if has_many && self.is_literal_in_next_targets(targets, &mut next, t, only_literals) {
+                continue;
+            }
             // Many unions are mappings of one another, so the members at the same index are related.
             if corresponds {
                 let at = i % count;
@@ -4134,6 +4157,32 @@ impl<'p, 's> Checker<'p, 's> {
             result &= related;
         }
         result
+    }
+
+    /// True if `t` is a literal and among `targets`, the constituents of a union, from `next` on. `next` is moved behind
+    /// it, or to where it would be. A union with thousands of literals is compared with another in one pass over both.
+    #[inline]
+    fn is_literal_in_next_targets(
+        &self,
+        targets: &[TypeId],
+        next: &mut usize,
+        t: TypeId,
+        only_literals: bool,
+    ) -> bool {
+        let targets = &targets[*next..];
+        if only_literals && targets.first() == Some(&t) {
+            *next += 1;
+            return true;
+        }
+        if targets.is_empty() || self.flags(t) & tf::LITERAL == 0 {
+            return false;
+        }
+        let (is_found, at) = match self.binary_search_types(targets, t) {
+            Ok(at) => (true, at + 1),
+            Err(at) => (false, at),
+        };
+        *next += at;
+        is_found
     }
 
     /// `getUndefinedStrippedTargetIfNeeded`: `undefined`, which optionality adds, would break the

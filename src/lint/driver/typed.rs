@@ -353,6 +353,15 @@ fn check_and_lint_in(
     project: Project<'_>,
     is_first_pass: bool,
 ) -> (Vec<Option<Linted>>, Vec<ProgramKind>) {
+    // What an earlier pass of `--fix`, or another program, couldn't check is checked again.
+    {
+        let mut noted = context.not_type_checked.lock();
+        if !noted.is_empty() {
+            let checked = indices.iter().map(|&it| files[it].path.to_vec());
+            let checked: FxHashSet<Vec<u8>> = checked.map(crate::paths::to_native).collect();
+            noted.retain(|it| !checked.contains(&it.path));
+        }
+    }
     let by_path = ByPath {
         exact: indices
             .iter()
@@ -463,7 +472,7 @@ fn check_and_lint_in(
             Some(linted) => results.lock()[at] = Some(linted),
             // It'll be linted without types. If the tree is too deep for the parser, the linter reports that itself.
             None if !checker.hir(file).ran_out_of_stack && checker.bound(file).ran_out_of_stack => {
-                context.out_of_stack.lock().push(path.to_vec());
+                note_not_type_checked(context, path, NotTypeCheckedBecause::NestedTooDeeply);
             }
             None => {}
         }
@@ -571,9 +580,15 @@ fn check_and_lint_in(
         }
         note_invalid_tsconfig(context, rejected);
     }
-    // The linter itself reports code that's nested too deeply for the parser.
-    let out_of_stack = incomplete.into_iter().filter(|it| !it.is_nested_too_deeply);
-    (context.out_of_stack.lock()).extend(out_of_stack.map(|it| to_native(&it.path).to_vec()));
+    for it in incomplete {
+        if let Some(at) = by_path.get(&it.path, is_case_sensitive) {
+            let why = match it.is_nested_too_deeply {
+                true => NotTypeCheckedBecause::NestedTooDeeply,
+                false => NotTypeCheckedBecause::OutOfStack,
+            };
+            note_not_type_checked(context, files[indices[at]].path, why);
+        }
+    }
     let mut results = std::mem::take(results.get_mut());
     // Each of these was checked and linted as an empty file. Linting it without types reports why it can't be read.
     for path in &unreadable {
@@ -722,6 +737,127 @@ pub(crate) fn is_type_error(message: &LintMessage) -> bool {
         && matches!(&message.rule_id, Some(RuleId::Unknown(id)) if id.starts_with(b"typescript/TS"))
 }
 
+/// A file that the type checker didn't check in full.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct NotTypeChecked {
+    why: NotTypeCheckedBecause,
+    /// As in `FileResult::path`.
+    pub(crate) path: Vec<u8>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum NotTypeCheckedBecause {
+    /// A query was abandoned.
+    OutOfStack,
+    /// The tree is too deep for the binder, or for the parser.
+    NestedTooDeeply,
+    /// `bun_sema_driver::host::is_below_backslash`
+    BelowBackslash,
+}
+
+fn note_not_type_checked(context: &Context, path: &[u8], why: NotTypeCheckedBecause) {
+    let path = crate::paths::to_native(path.to_vec());
+    let mut noted = context.not_type_checked.lock();
+    noted.push(NotTypeChecked { why, path });
+}
+
+impl NotTypeCheckedBecause {
+    /// The start of the warning about some files, and what stands behind their names.
+    fn warning(self) -> (&'static [u8], &'static [u8]) {
+        match self {
+            Self::OutOfStack => (
+                b"The type checker ran out of stack in ",
+                b"\n  Rules that need type information may have missed problems there. This is a bug in Bun.",
+            ),
+            Self::NestedTooDeeply => (
+                b"The code is nested too deeply for the type checker in ",
+                b"\n  Rules that need type information did not run there.",
+            ),
+            Self::BelowBackslash => (
+                b"The type checker cannot read a path that has a backslash in a directory's name: ",
+                b"\n  Rules that need type information did not run there.",
+            ),
+        }
+    }
+
+    /// `--type-check`
+    fn error(self) -> &'static [u8] {
+        match self {
+            Self::OutOfStack => {
+                b"The type checker ran out of stack. Type errors in this file may be missing. This is a bug in Bun."
+            }
+            Self::NestedTooDeeply => {
+                b"The code is nested too deeply for the type checker. Type errors in this file may be missing."
+            }
+            Self::BelowBackslash => {
+                b"The type checker cannot read this file because a directory in its path has a backslash in its name."
+            }
+        }
+    }
+}
+
+/// [`Context::not_type_checked`], without the files that couldn't be parsed, which say so themselves.
+fn not_type_checked(context: &Context, results: &[FileResult]) -> Vec<NotTypeChecked> {
+    let mut noted = std::mem::take(&mut *context.not_type_checked.lock());
+    if !noted.is_empty() {
+        bun_lint::utils::sort::sort_by(&mut noted, |a, b| a.cmp(b));
+        noted.dedup();
+        let rejected = results.iter().filter(|it| it.counts.fatal_errors > 0);
+        let rejected: FxHashSet<&[u8]> = rejected.map(|it| &it.path[..]).collect();
+        noted.retain(|it| !rejected.contains(&it.path[..]));
+    }
+    noted
+}
+
+/// Without `--type-check`: the warnings about the files that weren't checked in full.
+pub(crate) fn warnings_about_not_type_checked(
+    context: &Context,
+    results: &[FileResult],
+) -> Vec<Vec<u8>> {
+    if context.checks_types {
+        return Vec::new();
+    }
+    let noted = not_type_checked(context, results);
+    let warnings = noted.chunk_by(|a, b| a.why == b.why).map(|files| {
+        let (start, end) = files[0].why.warning();
+        let examples = files.iter().take(3).map(|it| {
+            let path = crate::paths::from_native(&it.path);
+            crate::paths::relative_escaped(context.cwd, &path)
+        });
+        let examples: Vec<Vec<u8>> = examples.collect();
+        let more: &[u8] = if files.len() > 3 { b", .." } else { b"" };
+        [start, &examples.join(&b", "[..]), more, end].concat()
+    });
+    warnings.collect()
+}
+
+/// With `--type-check`, a file that wasn't checked in full has an error, as it does for `bun check`: nobody has looked for
+/// its type errors. Call this once no rule runs any more.
+pub(crate) fn report_not_type_checked(context: &Context, results: &mut [FileResult]) {
+    if !context.checks_types {
+        return;
+    }
+    let noted = not_type_checked(context, results);
+    let mut by_path: FxHashMap<&[u8], Vec<LintMessage>> = FxHashMap::default();
+    for it in &noted {
+        by_path.entry(&it.path).or_default().push(LintMessage {
+            message: it.why.error().to_vec(),
+            line: 1,
+            column: 1,
+            ..LintMessage::default()
+        });
+    }
+    if by_path.is_empty() {
+        return;
+    }
+    for result in results {
+        if let Some(messages) = by_path.remove(&result.path[..]) {
+            result.messages.splice(0..0, messages);
+            result.counts = Counts::of(&result.messages);
+        }
+    }
+}
+
 /// The warning for a file where
 /// [`File::is_too_large_for_flow_analysis`](bun_lint::ast::File::is_too_large_for_flow_analysis) is true.
 /// typescript-eslint reports nothing.
@@ -767,7 +903,15 @@ pub(crate) fn lint(
         ..Fixing::default()
     };
     let mut states: Vec<Fixing> = files.iter().map(state).collect();
-    let mut pending: Vec<usize> = (0..files.len()).collect();
+    let is_readable = |&index: &usize| {
+        let path = files[index].path;
+        let is_below_backslash = bun_sema_driver::host::is_below_backslash(path);
+        if is_below_backslash {
+            note_not_type_checked(context, path, NotTypeCheckedBecause::BelowBackslash);
+        }
+        !is_below_backslash
+    };
+    let mut pending: Vec<usize> = (0..files.len()).filter(is_readable).collect();
     let mut staged = (context.only).map_or_else(AlreadyRead::default, |it| it.already_read(true));
     // Also add each staged text under the path the file is linted as, which may contain a symlink.
     staged.extend(files.iter().filter_map(|file| {

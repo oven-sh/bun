@@ -2595,6 +2595,26 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
       expect([timed.stdout, timed.exitCode]).toEqual(["", 0]);
     });
 
+    test("--timing lists the ten files that took longest to check, the longest first", async () => {
+      const files = Object.fromEntries(
+        Array.from({ length: 12 }, (_, i) => [`src/a${i}.ts`, `export const a${i} = ${i};\n`]),
+      );
+      const literals = Array.from({ length: 200 }, (_, i) => `"${i}"`).join(" | ");
+      using dir = project({
+        ...files,
+        "src/slow.ts": `type A = ${literals};\nexport declare const a: \`\${A}\${A}\`;\n`,
+      });
+      const [timed, plain] = await Promise.all([check(dir, ["--timing"]), check(dir)]);
+      const [, list] = timed.stderr.split("  slowest files:\n");
+      const lines = list.trimEnd().split("\n");
+      const listed = lines.map(line => /^ +([\d.]+)ms  (src\/\w+\.ts)$/.exec(line)!.slice(1));
+      expect(listed[0][1]).toBe("src/slow.ts");
+      const times = listed.map(([time]) => Number(time));
+      expect(times).toEqual(times.toSorted((a, b) => b - a));
+      expect(new Set(listed.map(([, path]) => path)).size).toBe(10);
+      expect(plain.stderr).not.toContain("slowest files");
+    });
+
     // TypeScript 7.0.2 reports no errors here. `Pick` and `Omit` look up the properties they keep by name. Creating a
     // union's property resolves the types of the properties it combines, and `shape`'s is still being resolved.
     test.each([`Pick<N, "id">`, `Omit<N, "shape">`, `Pick<N, Exclude<keyof N, "shape">>`])(

@@ -59,9 +59,8 @@ pub(crate) struct Context<'c, 'm> {
     pub(crate) js_plugins: &'c Host<'c>,
     /// Rules that comments turn on but that didn't run, because their plugins aren't loaded.
     pub(crate) skipped_in_comments: &'c Guarded<Vec<Box<[u8]>>>,
-    /// Files in which the type checker ran out of stack, so rules that need types may have missed something. Native
-    /// paths.
-    pub(crate) out_of_stack: &'c Guarded<Vec<Vec<u8>>>,
+    /// Files that the type checker didn't check in full.
+    pub(crate) not_type_checked: &'c Guarded<Vec<crate::typed::NotTypeChecked>>,
     /// Programs whose config file has no `include`, with native paths. See `typed::is_out_of_proportion`.
     pub(crate) without_include: &'c Guarded<Vec<bun_sema_driver::WithoutInclude>>,
     /// Files that fixes would have left with a syntax error, each with the rules whose fixes were dropped because of

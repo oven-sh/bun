@@ -244,6 +244,15 @@ Bun checks each file with the same `tsconfig.json` your editor uses for it:
 - If that `tsconfig.json` does not include the file but has `references`, Bun uses the referenced project that includes the file. The `tsconfig.json` from `create vite` works this way.
 - If no project includes the file, Bun still checks it, with the options of the nearest `tsconfig.json`.
 
+To report only the errors of the files you name, and not those of the files they import, add `--no-follow-imports`. Bun loads the whole project, so each file gets the errors that a check of the project reports in it. It computes the types of the other files only where a named file needs them.
+
+```bash terminal icon="terminal"
+bun check --no-follow-imports src/index.ts src/server.ts
+bun check -p tsconfig.json --no-follow-imports @changed-files.txt
+```
+
+With `--no-follow-imports`, each path must be a file, and the project must include it or import it. If the nearest `tsconfig.json` has only `references`, a referenced project must include it. Anything else is an error, and so is an empty list of files. Errors in `tsconfig.json` and errors about the program, such as a missing global type or a `/// <reference>` to a file that doesn't exist, are always reported.
+
 A directory means the files of the project inside that directory. If the project has no files there, Bun checks every file in the directory that `exclude` does not rule out. An example is `bun check scripts` when `include` is `["src"]`.
 
 ### Without a `tsconfig.json`
@@ -698,7 +707,8 @@ bun check [flags] [...files or directories]
 | `--no-pretty`            | One line per error, like `tsc --pretty false`. Default when piped   |
 | `--all`                  | Show every error. Without it, identical errors are grouped above 50 |
 | `--threads <n>`          | Number of threads. Default: one per CPU core                        |
-| `--timing`               | Print how long loading and checking took                            |
+| `--no-follow-imports`    | Report only the errors of the files you name                        |
+| `--timing`               | Print how long loading and checking took, and the slowest files     |
 | `--cwd <path>`           | Set the working directory                                           |
 | `--no-script`            | Run the type checker even if the project has a `check` script       |
 | `--aot`                  | Check entry points the way [`bun compile`](/compiler/aot) does      |

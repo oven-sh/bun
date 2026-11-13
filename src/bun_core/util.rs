@@ -4392,7 +4392,7 @@ impl SpawnStatus {
 // the extern decl is `cfg(unix)` (Windows spawns go through libuv and never
 // link this symbol).
 pub mod spawn_ffi {
-    use core::ffi::{c_char, c_int, c_void};
+    use core::ffi::{c_char, c_int};
 
     /// Matches `bun_spawn_request_file_action_t::kind`.
     #[repr(u8)]
@@ -4493,7 +4493,7 @@ pub mod spawn_ffi {
             pid: *mut c_int,
             path: *const c_char,
             request: *const BunSpawnRequest,
-            pending_fork: *const c_void,
+            pending_fork: *const core::ffi::c_void,
             argv: *const *const c_char,
             envp: *const *const c_char,
         ) -> isize;

@@ -16,7 +16,7 @@ bun_bundler::link_impl_DevServerHandle! {
             }
         },
         finalize_bundle(bv2, result) => {
-            // `bv2` borrows the three `Transpiler`s stored inline in `DevServer`
+            // `bv2` borrows the `Transpiler`s stored inline in `DevServer`
             // (stable heap address); the `'static` is a stand-in for the
             // DevServer-self lifetime — see the comment on `CurrentBundle.bv2`.
             super::finalize::finalize_bundle(&mut *this, &mut *bv2.cast(), result)

@@ -461,27 +461,11 @@ pub mod EntryPoint {
     pub(crate) use crate::entry_point::Kind;
 }
 use crate::bundled_ast::Flags as AstFlags;
-use crate::generic_path_with_pretty_initialized;
 type DeclaredSymbolList = bun_ast::DeclaredSymbolList;
 
 impl<'a> LinkerContext<'a> {
     pub(crate) fn arena(&self) -> &'a Bump {
         self.graph.arena()
-    }
-
-    /// `arena` must be the arena owned by the thread making this call — on
-    /// worker threads (chunk post-processing) that is `worker.arena()`, NOT
-    /// `self.arena()` (the bundle-thread graph arena). `generic_path_with_pretty_initialized`
-    /// allocates the duped display path from it, and `MimallocArena` asserts
-    /// single-thread ownership, so passing the wrong arena is a cross-thread
-    /// allocation (debug panic / release heap corruption).
-    pub(crate) fn path_with_pretty_initialized(
-        &mut self,
-        path: &bun_paths::fs::Path<'a>,
-        arena: &'a Bump,
-    ) -> Result<bun_paths::fs::Path<'a>, BunError> {
-        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
-        generic_path_with_pretty_initialized(path, self.options.target, top_level_dir, arena)
     }
 
     pub(crate) fn should_include_part(&self, source_index: crate::IndexInt, part: &Part) -> bool {
@@ -1823,7 +1807,7 @@ pub(crate) unsafe fn pending_part_range_prologue<'c, 'a>(
 }
 
 impl<'a> LinkerContext<'a> {
-    pub(crate) fn generate_isolated_hash(&mut self, chunk: &Chunk, arena: &'a Bump) -> u64 {
+    pub(crate) fn generate_isolated_hash(&mut self, chunk: &Chunk) -> u64 {
         let _trace = bun::perf::trace("Bundler.generateIsolatedHash");
 
         let mut hasher = ContentHasher::default();
@@ -1833,33 +1817,15 @@ impl<'a> LinkerContext<'a> {
         // that live in separate parts in the same file must not be merged. This only
         // needs to be done for JavaScript files, not CSS files.
         if let crate::chunk::Content::Javascript(js) = &chunk.content {
-            // SAFETY: parse_graph backref; exclusive access via &mut *.
-            let sources = unsafe { (*self.parse_graph).input_files.items_source_mut() };
+            let sources = self.parse_graph().input_files.items_source();
             for part_range in js.parts_in_chunk_in_order.iter() {
-                let source: &mut Source = &mut sources[part_range.source_index.get() as usize];
+                let source: &Source = &sources[part_range.source_index.get() as usize];
 
-                let file_path: &[u8] = 'brk: {
-                    if source.path.is_file() {
-                        // Use the pretty path as the file name since it should be platform-
-                        // independent (relative paths and the "/" path separator)
-                        if source.path.text.as_ptr() == source.path.pretty.as_ptr() {
-                            source.path = self
-                                .path_with_pretty_initialized(&source.path, arena)
-                                .expect("OOM");
-                        }
-                        // Note: `Path::assert_pretty_is_valid` lives on the
-                        // resolver-side `Path<'a>`; the logger `Path` has no
-                        // such debug hook yet.
-                        debug_assert!(source.path.text.as_ptr() != source.path.pretty.as_ptr());
-
-                        break 'brk source.path.pretty;
-                    } else {
-                        // If this isn't in the "file" namespace, just use the full path text
-                        // verbatim. This could be a source of cross-platform differences if
-                        // plugins are storing platform-specific information in here, but then
-                        // that problem isn't caused by esbuild itself.
-                        break 'brk source.path.text;
-                    }
+                let file_path: &[u8] = if source.path.is_file() {
+                    // Relative with "/" separators, or the key of an in-memory file.
+                    source.path.pretty
+                } else {
+                    source.path.text
                 };
 
                 // Include the path namespace in the hash

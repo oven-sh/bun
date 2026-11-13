@@ -3494,12 +3494,15 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
         keys.append(key);
     }
     // An import of the path that require() resolves a mocked name to gets the mock's own path, so what the loader holds under the first is the mock's only if it has live exports.
-    // Any other module there ran before the mock and stays, as its module object in require.cache does where the mock had patched that.
+    // An ES module there ran before the mock and stays. What the loader made of a CommonJS module stays with its module object in require.cache, which the mock may have patched:
+    // require() of a path that the loader alone holds gets a namespace object.
     for (auto& paths : evict.pathsOfTwoFileMocks) {
         auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, paths.first));
         auto* record = entry ? entry->record() : nullptr;
+        if (!record || record->hasLiveExports() || entry->status() >= JSC::ModuleRegistryEntry::Status::FetchFailed)
+            continue;
         auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record);
-        if (record && !record->hasLiveExports() && entry->status() < JSC::ModuleRegistryEntry::Status::FetchFailed && !(cyclic && cyclic->evaluationError()))
+        if (cyclic ? !cyclic->evaluationError() : staysInRequireCache.contains(paths.first))
             staysInRegistry.add(paths.first);
     }
 

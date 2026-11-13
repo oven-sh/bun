@@ -3924,8 +3924,9 @@ describe("rm", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({ rmSync: "ENOTDIR", promise: "ENOTDIR", callback: "ENOTDIR" });
+    expect(exitCode).toBe(0);
   });
 
   // unlink(2) refuses with EPERM: on macOS a file with the user immutable flag
@@ -3961,8 +3962,9 @@ describe("rm", () => {
           ...spawnOptions,
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+        expect(stderr).toBe("");
         expect(JSON.parse(stdout)).toEqual({ rmSync: "EPERM", promise: "EPERM", callback: "EPERM" });
+        expect(exitCode).toBe(0);
         expect(fs.existsSync(file)).toBe(true);
       } finally {
         restore();

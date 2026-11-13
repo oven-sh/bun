@@ -6,9 +6,9 @@
 //
 // test/harness.ts imports this file, so it takes nothing from there. A tool that does not import the harness imports this file,
 // and calls `withoutInstallingPackages` for a folder that it makes anywhere else than in `tmpdir()`.
-import { existsSync, mkdirSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 /** Whether `bun run` leaves the registry alone for a program in `folder`. */
 export function hasNodeModulesAbove(folder: string): boolean {
@@ -28,17 +28,20 @@ export function withoutInstallingPackages(folder: string): string {
 /** Where to make a temporary folder in which `bun run` does ask the registry. */
 export function temporaryFolderThatInstalls(): string {
   const temporary = realpathSync.native(tmpdir());
-  return existsSync(join(temporary, "node_modules")) ? dirname(temporary) : temporary;
+  return /^(bun-tests|buntmp)-/.test(basename(temporary)) ? dirname(temporary) : temporary;
 }
 
 try {
   const temporary = realpathSync(tmpdir());
   if (!hasNodeModulesAbove(temporary)) {
-    const root = withoutInstallingPackages(join(temporary, `bun-tests-${process.getuid?.() ?? 0}`));
+    const user = process.getuid?.() ?? 0;
+    const root = withoutInstallingPackages(join(temporary, `bun-tests-${user}`));
+    if (lstatSync(root).uid !== user) throw new Error(`${root} belongs to another user`);
     for (const name of process.platform === "win32" ? ["TEMP", "TMP"] : ["TMPDIR"]) process.env[name] = root;
   }
-} catch {
+} catch (error) {
   // A fixture that imports the harness may be given a temporary directory that is missing or read-only.
+  if (!["ENOENT", "EROFS", "EACCES"].includes((error as NodeJS.ErrnoException).code!)) throw error;
 }
 try {
   withoutInstallingPackages(dirname(import.meta.dir));

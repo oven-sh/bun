@@ -851,7 +851,7 @@ export function unprivilegedSpawnOptions(dir: string): { uid?: number; gid?: num
     for (const entry of fs.readdirSync(dir, { recursive: true, encoding: "utf8" })) {
       fs.lchownSync(join(dir, entry), NOBODY, NOBODY);
     }
-    const tmp = fs.realpathSync(os.tmpdir());
+    const tmp = fs.realpathSync(temporaryFolderThatInstalls());
     for (let parent = dirname(fs.realpathSync(dir)); parent !== dirname(parent); parent = dirname(parent)) {
       const mode = fs.statSync(parent).mode & 0o7777;
       if (mode & 0o001) continue;

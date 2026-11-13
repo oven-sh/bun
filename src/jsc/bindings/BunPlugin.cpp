@@ -3630,6 +3630,9 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             // It imports the real package whether or not vi.mock() mocks it.
             if (isExternalizedByVitest(globalObject, importer) && (evict.packagesToBringBack.contains(key) || evict.packagesSetAside.contains(key)))
                 continue;
+            // The file that an import of a mocked name loads got the file that require() resolves the name to as it is on disk: see keyOfImportWithTwoPaths().
+            if (stays && evict.pathsOfTwoFileMocks.containsIf([&](auto& paths) { return paths.first == key && paths.second == importer; }))
+                continue;
             if (!testFile || importer == key || (stays && evict.onlyImportersFromEarlierTestFiles && testFile == plugins.testFile))
                 continue;
             bool stayed = staysInRegistry.remove(importer);

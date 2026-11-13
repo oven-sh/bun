@@ -1527,7 +1527,7 @@ function getPipelineOptions(): PipelineOptions | undefined {
   };
 
   return {
-    canary: !parseBoolean(process.env.RELEASE),
+    canary: true,
     skipEverything: parseOption(/\[(skip ci|no ci)\]/i),
     skipBuilds: parseOption(/\[(skip builds?|no builds?|only tests?)\]/i),
     forceBuilds: parseOption(/\[(force builds?)\]/i),

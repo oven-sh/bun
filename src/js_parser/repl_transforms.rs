@@ -15,6 +15,7 @@ use bun_ast::stmt::Data as StmtData;
 use bun_ast::{B, Binding, E, Expr, ExprNodeList, G, S, Stmt};
 
 use crate::p::P;
+use crate::parser::StmtsKind;
 
 impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     /// Apply REPL-mode transforms to the AST.
@@ -168,45 +169,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                             stmt.loc,
                         ));
 
-                        // Add this.funcName = funcName assignment
-                        let this_expr = self.new_expr(E::This {}, stmt.loc);
-                        // `original_name` is an arena-owned `StoreStr` valid for 'a; `.slice()`
-                        // detaches the borrow from `self.symbols` so the &mut self calls below
-                        // don't conflict.
-                        let name_str: &[u8] = self.symbols[name_ref.inner_index() as usize]
-                            .original_name
-                            .slice();
-                        let this_dot = self.new_expr(
-                            E::Dot {
-                                target: this_expr,
-                                name: name_str.into(),
-                                name_loc: name_loc.loc,
-                                ..Default::default()
-                            },
-                            stmt.loc,
-                        );
-                        let func_id = self.new_expr(
-                            E::Identifier {
-                                ref_: name_ref,
-                                ..Default::default()
-                            },
-                            name_loc.loc,
-                        );
-                        let assign = self.new_expr(
-                            E::Binary {
-                                op: js_ast::OpCode::BinAssign,
-                                left: this_dot,
-                                right: func_id,
-                            },
-                            stmt.loc,
-                        );
-                        inner_stmts.push(self.s(
-                            S::SExpr {
-                                value: assign,
-                                ..Default::default()
-                            },
-                            stmt.loc,
-                        ));
+                        inner_stmts.push(self.repl_store_fn_to_session(name_loc, stmt.loc));
                     }
                     // Add the function declaration itself
                     inner_stmts.push(*stmt);
@@ -540,6 +503,80 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         }
 
         Ok(())
+    }
+
+    /// `this.NAME = NAME;` copies a function to the session: `this` at the top level of an input is the global object.
+    fn repl_store_fn_to_session(&mut self, name: js_ast::LocRef, loc: bun_ast::Loc) -> Stmt {
+        let this_expr = self.new_expr(E::This {}, loc);
+        // `.slice()` detaches the borrow from `self.symbols`, so the `&mut self` calls below don't conflict.
+        let name_str: &[u8] = self.symbols[name.ref_.inner_index() as usize]
+            .original_name
+            .slice();
+        let this_dot = self.new_expr(
+            E::Dot {
+                target: this_expr,
+                name: name_str.into(),
+                name_loc: name.loc,
+                ..Default::default()
+            },
+            loc,
+        );
+        let func_id = self.new_expr(
+            E::Identifier {
+                ref_: name.ref_,
+                ..Default::default()
+            },
+            name.loc,
+        );
+        let assign = self.new_expr(
+            E::Binary {
+                op: js_ast::OpCode::BinAssign,
+                left: this_dot,
+                right: func_id,
+            },
+            loc,
+        );
+        self.s(
+            S::SExpr {
+                value: assign,
+                ..Default::default()
+            },
+            loc,
+        )
+    }
+
+    /// Annex B.3.3 in a REPL input: declares the `var` of the block-level function `name` in front of the wrapper, and appends the store of its declaration to `stmts`.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn repl_store_block_fn(
+        &mut self,
+        name: js_ast::LocRef,
+        loc: bun_ast::Loc,
+        kind: StmtsKind,
+        stmts: &mut BumpVec<'a, Stmt>,
+    ) {
+        let symbol = &self.symbols[name.ref_.inner_index() as usize];
+        // A later declaration of the name holds the `let`. In another case of a switch, that `let` can be uninitialized here.
+        if kind == StmtsKind::SwitchStmt && symbol.remove_overwritten_function_declaration() {
+            return;
+        }
+        // `hoist_symbols` gave the function a `var` of the input if the input's symbol of the name is the function's, or one it links to.
+        let Some(var) = self
+            .module_scope()
+            .members
+            .get(symbol.original_name.slice())
+        else {
+            return;
+        };
+        if js_ast::symbol::follow_symbols(&self.symbols, name.ref_)
+            != js_ast::symbol::follow_symbols(&self.symbols, var.ref_)
+        {
+            return;
+        }
+        // `append_part` declares it at the top level of the input, and the REPL transform moves that `var` in front of the wrapper.
+        self.relocated_top_level_vars.push(name);
+        self.record_usage(name.ref_);
+        stmts.push(self.repl_store_fn_to_session(name, loc));
     }
 
     /// Convert named imports to individual var assignments from the dynamic import

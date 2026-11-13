@@ -1595,6 +1595,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     .kind
                                     == SymbolKind::HoistedFunction
                             {
+                                if p.options.repl_mode {
+                                    let name = data.func.name.unwrap();
+                                    p.repl_store_block_fn(name, stmt.loc, kind, &mut visited);
+                                }
                                 break 'list_getter &mut before;
                             }
                         }

@@ -62,7 +62,7 @@ struct Shared {
 }
 
 impl Shared {
-    fn write_prefix(&self, config: &ScriptConfig, writer: &mut OutputWriter) -> Result<(), Error> {
+    fn write_prefix(&self, config: &ScriptConfig, writer: &OutputWriter) -> Result<(), Error> {
         if self.use_colors {
             writer.write_all(COLORS[config.group % COLORS.len()])?;
         }
@@ -92,7 +92,7 @@ pub(crate) struct Lines<'a> {
 
 impl Lines<'_> {
     /// Child stdout -> parent stdout, child stderr -> parent stderr
-    fn writer(&self) -> &'static mut OutputWriter {
+    fn writer(&self) -> &'static OutputWriter {
         if self.is_stderr {
             Output::error_writer()
         } else {

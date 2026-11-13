@@ -256,7 +256,7 @@ impl ErrorReportRequest {
         };
 
         {
-            let stderr = Output::error_writer_buffered();
+            let stderr = &mut Output::error_writer_buffered();
             let _flush = Output::flush_guard();
             // `print_externally_remapped_zig_exception` takes a runtime
             // `allow_ansi_color` flag.

@@ -1154,12 +1154,16 @@ options = { singleQuote = true }
     expect(await formatIn(cwd, project, args)).toEqual({ stdout: "", stderr: "", exitCode: 0, changed: expected });
   });
 
-  test("patterns in a file passed with --config are relative to the working directory", async () => {
-    const { "bunfig.toml": bunfig, ...rest } = project;
-    const files = { ...rest, "tools/bunfig.toml": bunfig };
-    const result = await formatIn(".", files, ["packages/app"], ["--config=tools/bunfig.toml"]);
-    expect(result).toEqual({ stdout: "", stderr: "", exitCode: 0, changed: expected });
-  });
+  // `bun -c fmt` is `bun fmt --check`. With a path, `-c` is `--config`, so `fmt` writes.
+  test.each([[["--config=tools/bunfig.toml"]], [["--config", "tools/bunfig.toml"]], [["-c", "tools/bunfig.toml"]]])(
+    "patterns in a file passed with %j are relative to the working directory",
+    async before => {
+      const { "bunfig.toml": bunfig, ...rest } = project;
+      const files = { ...rest, "tools/bunfig.toml": bunfig };
+      const result = await formatIn(".", files, ["packages/app"], before);
+      expect(result).toEqual({ stdout: "", stderr: "", exitCode: 0, changed: expected });
+    },
+  );
 
   test("--ignore-pattern is relative to the working directory", async () => {
     const { changed } = await formatIn("packages/app", project, [".", "--ignore-pattern", "test/"]);

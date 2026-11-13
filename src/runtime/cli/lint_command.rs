@@ -35,30 +35,31 @@ fn change_directory(cwd: &[u8]) {
     }
 }
 
-/// Returns `--cwd` from `bun`'s own flags, which precede `command`.
-fn cwd_before(command: &[u8]) -> Option<&'static [u8]> {
+/// The last value of one of `bun`'s own flags `names` before `command`: `--cwd <dir>`, `--cwd=<dir>`, `-c=<path>`.
+fn value_before(command: &[u8], names: &[&[u8]]) -> Option<&'static [u8]> {
     let mut found = None;
     let mut args = arguments_before(command).into_iter();
     while let Some(arg) = args.next() {
-        let given = match arg.strip_prefix(b"--cwd") {
-            Some(b"") => args.next(),
-            Some(rest) => rest.strip_prefix(b"="),
-            None => None,
+        let Some(rest) = names.iter().find_map(|name| arg.strip_prefix(*name)) else {
+            continue;
+        };
+        let given = match rest {
+            b"" => args.next(),
+            rest => rest.strip_prefix(b"="),
         };
         found = given.or(found);
     }
     found
 }
 
-/// Returns `--config=<path>` from `bun`'s own flags, which precede `command`. Without the `=`, the path is parsed as
-/// the command.
+/// Returns `--cwd` from `bun`'s own flags, which precede `command`.
+fn cwd_before(command: &[u8]) -> Option<&'static [u8]> {
+    value_before(command, &[b"--cwd"])
+}
+
+/// Returns `--config` from `bun`'s own flags, which precede `command`.
 fn bunfig_before(command: &[u8]) -> Option<&'static [u8]> {
-    (arguments_before(command).into_iter())
-        .filter_map(|arg| {
-            arg.strip_prefix(b"--config=")
-                .or_else(|| arg.strip_prefix(b"-c="))
-        })
-        .next_back()
+    value_before(command, &[b"--config", b"-c"])
 }
 
 /// Calls `read` with each bunfig.toml that can apply to `command`, its path relative to the working directory, and

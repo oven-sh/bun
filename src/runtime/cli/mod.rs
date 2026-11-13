@@ -1487,16 +1487,19 @@ pub(crate) mod command {
         command: &[u8],
         knows: fn(&[u8]) -> bool,
     ) -> Vec<&'static bun_core::ZStr> {
-        let is_of_bun = |arg: &[u8]| match strings::split_once_char(arg, b'=') {
-            // `bun -c=bunfig.toml lint`. Without a value it's `--check` of `bun fmt`.
-            Some((name, _)) => matches!(name, b"--config" | b"-c" | b"--cwd"),
-            None => matches!(arg, b"--config" | b"--cwd" | b"--help" | b"--silent"),
-        };
         let at = super::script_or_command::place_of_command(command).unwrap_or(argv.len());
-        let mut args: Vec<_> = (argv.iter().take(at).skip(1))
-            .filter(|arg| arg.as_bytes().starts_with(b"-"))
-            .filter(|arg| !is_of_bun(arg.as_bytes()) && knows(arg.as_bytes()))
-            .copied()
+        let is_of_bun = |arg: &[u8], place: usize| match strings::split_once_char(arg, b'=') {
+            Some((name, _)) => matches!(name, b"--config" | b"-c" | b"--cwd"),
+            // `bun -c bunfig.toml lint` takes the path. `bun -c fmt` is `fmt --check`.
+            None => {
+                matches!(arg, b"--config" | b"--cwd" | b"--help" | b"--silent")
+                    || (arg == b"-c" && place + 1 < at)
+            }
+        };
+        let mut args: Vec<_> = (argv.iter().enumerate().take(at).skip(1))
+            .filter(|(_, arg)| arg.as_bytes().starts_with(b"-"))
+            .filter(|(place, arg)| !is_of_bun(arg.as_bytes(), *place) && knows(arg.as_bytes()))
+            .map(|(_, arg)| *arg)
             .collect();
         args.extend_from_slice(after_command(argv, command));
         args

@@ -289,7 +289,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // Used for forcing CommonJS
     pub(crate) has_with_scope: bool,
 
-    /// Non-strict code has syntax that strict code rejects, so the file cannot be an ES module.
+    /// The file has syntax that strict code rejects and no `import`, `export` or top-level `await`, so it cannot be an ES module.
     pub(crate) has_sloppy_only_syntax: bool,
 
     /// A module-scope `var` has the name of a top-level function, which module code rejects.
@@ -4916,12 +4916,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.current_scope().strict_mode != js_ast::StrictModeKind::SloppyMode
     }
 
-    /// In strict code the same syntax is an error in a CommonJS file too, so it says nothing about the file.
+    /// `import`, `export` and top-level `await` make the module scope strict before the visit pass. With them the file stays an ES module.
     #[inline]
     pub(crate) fn mark_sloppy_only_syntax(&mut self) {
-        if self.options.features.commonjs_at_runtime && !self.is_strict_mode() {
+        if self.options.features.commonjs_at_runtime
+            && self.module_scope().strict_mode == js_ast::StrictModeKind::SloppyMode
+        {
             self.has_sloppy_only_syntax = true;
         }
+    }
+
+    /// Whether a sloppy function behind a label stays the statement of the label. `has_sloppy_only_syntax` makes the
+    /// file CommonJS unless it is a declared ES module, and there the engine declares the function in the statement
+    /// list around the label. In a block of its own the function is assigned only when the label runs.
+    #[inline]
+    pub(crate) fn keeps_labelled_function_bare(&self) -> bool {
+        self.has_sloppy_only_syntax
+            && !self.is_strict_mode()
+            && self.options.module_type != options::ModuleType::Esm
     }
 
     #[inline]

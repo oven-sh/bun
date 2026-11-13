@@ -1012,8 +1012,10 @@ pub(crate) fn statement_cares_about_scope(stmt: &Stmt) -> bool {
     match stmt.data {
         SBlock(_) | SEmpty(_) | SDebugger(_) | SExpr(_) | SIf(_) | SFor(_) | SForIn(_)
         | SForOf(_) | SDoWhile(_) | SWhile(_) | SWith(_) | STry(_) | SSwitch(_) | SReturn(_)
-        | SThrow(_) | SBreak(_) | SContinue(_) | SDirective(_) | SLabel(_) => false,
+        | SThrow(_) | SBreak(_) | SContinue(_) | SDirective(_) => false,
 
+        // A function can be the statement of a label: `P::keeps_labelled_function_bare`.
+        SLabel(ref label) => statement_cares_about_scope(&label.stmt),
         SLocal(ref local) => local.kind != js_ast::LocalKind::KVar,
         _ => true,
     }

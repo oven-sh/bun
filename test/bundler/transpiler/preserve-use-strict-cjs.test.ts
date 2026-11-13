@@ -59,6 +59,25 @@ out.tryBlock = attempt(() => tryBlock());
 label: function labelled() { return 6; }
 out.labelled = attempt(() => labelled());
 
+// A function behind a label is a declaration of the statement list around the label.
+out.labelThenPlain = attempt(function () {
+  lf: function f() { return "labelled"; }
+  return f();
+  function f() { return "plain"; }
+});
+
+out.labelAfterVar = attempt(function () {
+  var f = "V";
+  lf: function f() { return "labelled"; }
+  return typeof f === "function" ? f() : f;
+});
+
+out.labelAfterAssignment = attempt(function () {
+  f = "A";
+  lf: function f() { return "labelled"; }
+  return typeof f === "function" ? "function" : f;
+});
+
 if (typeof featureTest !== "function") { function featureTest() { return "own"; } }
 out.featureTest = typeof featureTest === "function" ? featureTest() : "fallback";
 
@@ -211,6 +230,9 @@ module.exports = out;
       ifBody: "function",
       tryBlock: 5,
       labelled: 6,
+      labelThenPlain: "plain",
+      labelAfterVar: "V",
+      labelAfterAssignment: "A",
       featureTest: "own",
       shadow: ["outer", "block", "block"],
       inFunction: "in",
@@ -517,9 +539,6 @@ module.exports = (function () {${body}
   // Right on main and in node, wrong here. A row fails when its cause is fixed, and then it moves to the tables above.
   describe("known differences from node", () => {
     const node = {
-      labelThenPlain: "plain",
-      labelAfterVar: "V",
-      labelAfterAssignment: "A",
       generatorArguments: "[object Arguments]",
       twoOfANameWithEval: "2",
     };
@@ -536,25 +555,6 @@ const attempt = fn => {
   }
 };
 const out = {};
-
-// The printer puts a labelled function in a block, so it is assigned when the label runs.
-out.labelThenPlain = attempt(function () {
-  lf: function f() { return "labelled"; }
-  return f();
-  function f() { return "plain"; }
-});
-
-out.labelAfterVar = attempt(function () {
-  var f = "V";
-  lf: function f() { return "labelled"; }
-  return typeof f === "function" ? f() : f;
-});
-
-out.labelAfterAssignment = attempt(function () {
-  f = "A";
-  lf: function f() { return "labelled"; }
-  return typeof f === "function" ? "function" : f;
-});
 
 // JavaScriptCore: in a generator the block function takes the name before its block runs.
 out.generatorArguments = attempt(function () {

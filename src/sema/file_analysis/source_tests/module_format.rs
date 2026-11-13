@@ -41,16 +41,31 @@ const FORMATS: &[(&str, &str, ModuleFormat)] = &[
     ("a.mjs", r#"l: function f() {}"#, Esm),
     ("a.js", r#"l: { function f() {} }"#, Esm),
     ("a.js", r#"if (a) { function f() {} }"#, Esm),
-    ("a.js", r#"class A { m() { l: function f() {} } }"#, Esm),
+    (
+        "a.js",
+        r#"class A { m() { l: function f() {} } }"#,
+        CommonJs,
+    ),
     (
         "a.js",
         r#"function g() { "use strict"; if (a) function f() {} }"#,
-        Esm,
+        CommonJs,
     ),
+    ("a.js", r#"{ "use strict"; l: function f() {} }"#, CommonJs),
     ("a.js", r#"import.meta; l: function f() {}"#, Esm),
     (
         "a.ts",
         r#"import type { A } from "m"; l: function f() {}"#,
+        Esm,
+    ),
+    (
+        "a.ts",
+        r#"import type A = require("m"); l: function f() {}"#,
+        Esm,
+    ),
+    (
+        "a.ts",
+        r#"declare module "m" { import a from "a"; } l: function f() {}"#,
         Esm,
     ),
     ("a.mjs", r#"module.exports = 1;"#, CommonJs),
@@ -1834,6 +1849,9 @@ fn function_in_block_under_the_name_of_a_commonjs_variable_is_no_sign_of_commonj
     ] {
         analyzed("a.js", text, |s| {
             assert_eq!(s.analysis.module_format, format, "{text}");
+        });
+        analyzed("a.mjs", text, |s| {
+            assert_eq!(s.analysis.module_format, Esm, "{text}");
         });
         analyzed("a.cjs", text, |s| {
             assert_eq!(s.analysis.module_format, CommonJs, "{text}");

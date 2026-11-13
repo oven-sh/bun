@@ -20,7 +20,7 @@ describe.concurrent("commonjs-no-export", () => {
 });
 
 // Strict code rejects a function declaration as the body of a label, `if` or `else`.
-// A file that has one in non-strict code is not an ES module.
+// A file that has one, and no `import`, `export` or top-level `await`, is not an ES module.
 // These tests are serial: each one starts bun, and a debug build is slow when many start at once.
 describe("a function declaration as the body of a label, if or else", () => {
   const probe = `(function () { return this === undefined; })() ? "strict" : "sloppy"`;
@@ -168,16 +168,14 @@ describe("a function declaration as the body of a label, if or else", () => {
     });
   });
 
-  test("leaves the file an ES module when the parser treats the code as strict", async () => {
+  test("leaves the file an ES module when it has the import keyword", async () => {
     const files = {
-      "class-label.js": `class A { m() { ${label} } }\n` + named("label in a class method"),
-      "class-if.js": `class A { m() { ${ifBody} } }\n` + named("if in a class method"),
-      "strict-function.js": `function o() { "use strict"; ${label} }\n` + named("label in a strict function"),
-      "strict-arrow.js": `const o = () => { "use strict"; ${ifBody} };\n` + named("if in a strict arrow function"),
-      "type-import.ts": `import type { T } from "./t";\n` + label + named("type-only import"),
       "import.js": `import "node:fs";\n` + label + named("import statement"),
+      "import-meta.js": `import.meta.url;\n` + label + named("import.meta"),
+      "type-import.ts": `import type { T } from "./t";\n` + label + named("type-only import"),
+      "type-import-equals.ts": `import type T = require("./t");\n` + label + named("type-only import ="),
     };
-    using dir = tempDir("sloppy-fn-decl-strict", {
+    using dir = tempDir("sloppy-fn-decl-import", {
       ...files,
       "t.ts": "export type T = number;\n",
       "main.mjs": Object.keys(files)
@@ -185,9 +183,51 @@ describe("a function declaration as the body of a label, if or else", () => {
         .join(""),
     });
     expect(await spawn(String(dir), ["main.mjs"])).toEqual({
+      stdout: "import statement: strict\nimport.meta: strict\ntype-only import: strict\ntype-only import =: strict\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("makes the file CommonJS where only bun's parser takes the code for strict", async () => {
+    // Node.js runs these files as sloppy CommonJS: a "use strict" string is a directive only at the start of a
+    // function or of the file, and only as written.
+    const files = {
+      "block.js": `{ "use strict"; ${label} }\n` + named("directive in a block"),
+      "try.js": `try { "use strict"; ${ifBody} } catch {}\n` + named("directive in a try block"),
+      "parenthesized.js": `function o() { ("use strict"); ${label} }\n` + named("directive in parentheses"),
+    };
+    using dir = tempDir("sloppy-fn-decl-directive", { ...files, "main.cjs": requireAll(files) });
+    expect(await spawn(String(dir), ["main.cjs"])).toEqual({
+      stdout: "directive in a block: sloppy\ndirective in a try block: sloppy\ndirective in parentheses: sloppy\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("declares a function behind a label as Node.js does", async () => {
+    // In sloppy code the function is a declaration of the statement list around the label.
+    const shapes = {
+      "call above the label": `const r = f(); l: function f() { return "f"; } return r;`,
+      "read above the label": `const t = typeof f; l: function f() {} return t;`,
+      "label, then a function of the name": `l: function f() { return "labelled"; } return f(); function f() { return "plain"; }`,
+      "var of the name, then label": `var f = "V"; l: function f() { return "labelled"; } return typeof f === "function" ? f() : f;`,
+      "store to the name, then label": `f = "A"; l: function f() { return "labelled"; } return typeof f;`,
+      "two labels": `const t = typeof f; a: b: function f() {} return t;`,
+      "label in a block": `const t = typeof f; { l: function f() { return "f"; } } return t + " " + f();`,
+    };
+    using dir = tempDir("sloppy-fn-decl-label", {
+      "a.js":
+        `console.log("file:", top());\nl: function top() { return "top"; }\n` +
+        Object.entries(shapes)
+          .map(([name, body]) => `console.log(${JSON.stringify(name + ":")}, (function () { ${body} })());\n`)
+          .join(""),
+    });
+    expect(await spawn(String(dir), ["a.js"])).toEqual({
       stdout:
-        "label in a class method: strict\nif in a class method: strict\nlabel in a strict function: strict\n" +
-        "if in a strict arrow function: strict\ntype-only import: strict\nimport statement: strict\n",
+        "file: top\ncall above the label: f\nread above the label: function\nlabel, then a function of the name: plain\n" +
+        "var of the name, then label: V\nstore to the name, then label: string\ntwo labels: function\n" +
+        "label in a block: undefined f\n",
       stderr: "",
       exitCode: 0,
     });
@@ -215,28 +255,31 @@ describe("a function declaration as the body of a label, if or else", () => {
     },
   );
 
-  // The loader reports no module type for these files, so the file contents decide, as for `__dirname`.
+  // The loader reports no module type for these files, so the file contents decide (#40940).
+  // The form is then a hint like `__dirname`: whatever kind that one gives, the form gives too.
   test("gives the same kind as the `__dirname` hint where the loader reports no module type", async () => {
     const hint = "void __dirname;\n";
+    const places = [".jsx in a module package", "no extension in a module package", "imported .mjs"];
     using dir = tempDir("sloppy-fn-decl-loader", {
       "typed/package.json": `{ "type": "module" }`,
-      "typed/label.jsx": label + named(".jsx in a module package, label"),
-      "typed/hint.jsx": hint + named(".jsx in a module package, __dirname"),
-      "typed/label": label + named("no extension in a module package, label"),
-      "typed/hint": hint + named("no extension in a module package, __dirname"),
-      "label.mjs": label + named("imported .mjs, label"),
-      "hint.mjs": hint + named("imported .mjs, __dirname"),
+      "typed/label.jsx": label + named(places[0] + ", label"),
+      "typed/hint.jsx": hint + named(places[0] + ", __dirname"),
+      "typed/label": label + named(places[1] + ", label"),
+      "typed/hint": hint + named(places[1] + ", __dirname"),
+      "label.mjs": label + named(places[2] + ", label"),
+      "hint.mjs": hint + named(places[2] + ", __dirname"),
       "main.mjs":
         `import { createRequire } from "node:module";\n` +
         `const require = createRequire(import.meta.url);\n` +
         ["label.jsx", "hint.jsx", "label", "hint"].map(file => `require("./typed/${file}");\n`).join("") +
         `await import("./label.mjs");\nawait import("./hint.mjs");\n`,
     });
-    expect(await spawn(String(dir), ["main.mjs"])).toEqual({
-      stdout:
-        ".jsx in a module package, label: sloppy\n.jsx in a module package, __dirname: sloppy\n" +
-        "no extension in a module package, label: sloppy\nno extension in a module package, __dirname: sloppy\n" +
-        "imported .mjs, label: sloppy\nimported .mjs, __dirname: sloppy\n",
+    const { stdout, stderr, exitCode } = await spawn(String(dir), ["main.mjs"]);
+    const kinds = Object.fromEntries(stdout.split("\n").map(line => line.split(": ")));
+    const kindsOf = (hint: string) => places.map(place => kinds[`${place}, ${hint}`]);
+    expect(kindsOf("__dirname")).toEqual(places.map(() => expect.stringMatching(/^(strict|sloppy)$/)));
+    expect({ kinds: kindsOf("label"), stderr, exitCode }).toEqual({
+      kinds: kindsOf("__dirname"),
       stderr: "",
       exitCode: 0,
     });
@@ -258,7 +301,8 @@ describe("a function declaration as the body of a label, if or else", () => {
   });
 
   // A CommonJS file cannot take the import of the JSX runtime that the parser generates: the load fails with
-  // "SyntaxError: Unexpected token '{'. import call expects one or two arguments." (#12812).
+  // "SyntaxError: Unexpected token '{'. import call expects one or two arguments." Without the form the file is an
+  // ES module and loads. #38012 gives a CommonJS file that import with `require()`: this row is a regular test then.
   test.failing("runs a file that also needs the JSX runtime import", async () => {
     using dir = tempDir("sloppy-fn-decl-jsx", {
       "node_modules/react/package.json": JSON.stringify({
@@ -267,9 +311,9 @@ describe("a function declaration as the body of a label, if or else", () => {
         exports: { "./jsx-dev-runtime": "./jsx-runtime.js", "./jsx-runtime": "./jsx-runtime.js" },
       }),
       "node_modules/react/jsx-runtime.js": "exports.jsxDEV = exports.jsx = exports.jsxs = type => ({ type });\n",
-      "a.jsx": label + "const element = <div />;\n" + `console.log(${probe}, g(), element.type);\n`,
+      "a.jsx": "if (globalThis.never) function g() {}\n" + `console.log(${probe}, (<div />).type);\n`,
     });
-    expect(await spawn(String(dir), ["a.jsx"])).toEqual({ stdout: "sloppy g div\n", stderr: "", exitCode: 0 });
+    expect(await spawn(String(dir), ["a.jsx"])).toEqual({ stdout: "sloppy div\n", stderr: "", exitCode: 0 });
   });
 
   test("runs a file that also needs a decorator helper", async () => {

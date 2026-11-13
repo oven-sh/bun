@@ -4,12 +4,12 @@ use super::{
     CommonJsEvidence, EsmSyntax, FormatByDeclaredType, FormatDecision, ModuleFormat,
     file_esm_syntax, statement_esm_syntax,
 };
-use crate::bind::{Binding, Bound, CommonJsVariable, Decl, Parent, ScopeId, ScopeKind, SymbolId};
+use crate::bind::{Binding, Bound, CommonJsVariable, Decl, Parent, SymbolId};
 use crate::file_analysis::has_written_top_level_await;
 use crate::fold::{Decisions, FoldError, FoldErrorKind};
 use crate::hir::{
-    ExprId, File, Flags, FnBody, NodeData, PatId, PatKind, StmtId, StmtKind, VarKind,
-    find_transpiled_mark, is_marked_as_commonjs, rare,
+    ExprId, File, Flags, FnBody, ImportEqualsId, NodeData, PatId, PatKind, StmtId, StmtKind,
+    VarKind, find_transpiled_mark, is_marked_as_commonjs, rare,
 };
 use crate::import_sites::{ImportScan, is_runtime_import};
 
@@ -71,7 +71,7 @@ pub(crate) fn decide_module_format(
     let has_weak_evidence = uses.uses_require_or_path
         || scan.has_import_equals_require
         || hir.has_use_strict_directive(FnBody::Block(hir.body))
-        || has_function_as_body_in_sloppy_code(hir, bound);
+        || has_function_as_body(hir, bound);
     let formats = FormatByDeclaredType {
         esm: ModuleFormat::Esm,
         commonjs: match file_esm_syntax(hir) {
@@ -292,8 +292,10 @@ fn has_with_statement(hir: &File<'_>, bound: &Bound<'_>) -> bool {
     })
 }
 
-/// `l: function f() {}` or `if (a) function f() {}` in code that its own syntax leaves sloppy. Strict code rejects it, so the file is no ES module.
-fn has_function_as_body_in_sloppy_code(hir: &File<'_>, bound: &Bound<'_>) -> bool {
+/// A function declaration is the statement of a label or of `if`, which strict code rejects, so `bun run` takes the
+/// file for CommonJS. Not with the `import` keyword: its parser also finds that in a type-only `import x = require()`
+/// and in an `import` of a `declare module`.
+fn has_function_as_body(hir: &File<'_>, bound: &Bound<'_>) -> bool {
     if hir.rare_syntax & rare::DECLARATION_AS_BODY == 0 || file_esm_syntax(hir) != EsmSyntax::None {
         return false;
     }
@@ -301,26 +303,22 @@ fn has_function_as_body_in_sloppy_code(hir: &File<'_>, bound: &Bound<'_>) -> boo
         let body_kind = hir.stmts.get(body.idx()).map(|it| it.kind);
         matches!(body_kind, Some(StmtKind::Fn(_))) && !hir.is_erased_statement(body)
     };
-    hir.stmts.iter().enumerate().any(|(index, statement)| {
-        let has_function = match statement.kind {
+    let is_type_only = |alias: ImportEqualsId| {
+        let alias = hir.import_equals.get(alias.idx());
+        alias.is_some_and(|it| it.flags.contains(Flags::TYPE_ONLY))
+    };
+    let mut has_function = false;
+    for (index, statement) in hir.stmts.iter().enumerate() {
+        let is_form = match statement.kind {
+            StmtKind::Import(_) if !hir.is_in_jsdoc(statement.start) => return false,
+            StmtKind::ImportEquals(alias) if is_type_only(alias) => return false,
             StmtKind::Labeled { body, .. } => is_function(body),
             StmtKind::If { yes, no, .. } => is_function(yes) || is_function(no),
             _ => false,
         };
-        has_function && is_sloppy_by_syntax(hir, bound, bound.scope_of_stmt(StmtId(index as u32)))
-    })
-}
-
-fn is_sloppy_by_syntax(hir: &File<'_>, bound: &Bound<'_>, mut scope: ScopeId) -> bool {
-    while scope.is_some() {
-        match bound.scopes[scope.idx()].kind {
-            ScopeKind::File => return !hir.is_strict_by_syntax,
-            ScopeKind::Fn(function) => return !hir[function].is_strict_by_syntax,
-            ScopeKind::Class(_) => return false,
-            _ => scope = bound.runtime_parent_scope(hir, scope),
-        }
+        has_function |= is_form && bound.parent_of_stmt(StmtId(index as u32)) != Parent::None;
     }
-    false
+    has_function
 }
 
 fn has_live_export_assignment(

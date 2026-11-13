@@ -2621,6 +2621,7 @@ Object.defineProperty(Socket.prototype, "pending", {
   get: function () {
     return !this._handle || this.connecting;
   },
+  configurable: true,
 });
 
 // Queued/in-flight plain writes would be stranded on the retired TCP wrapper
@@ -3798,6 +3799,8 @@ Object.defineProperty(Server.prototype, "listening", {
   get() {
     return !!this._handle;
   },
+  configurable: true,
+  enumerable: true,
 });
 
 Server.prototype.ref = function ref() {

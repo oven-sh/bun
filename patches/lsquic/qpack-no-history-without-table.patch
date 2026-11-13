@@ -1,0 +1,18 @@
+--- a/src/liblsquic/lsquic_qenc_hdl.c
++++ b/src/liblsquic/lsquic_qenc_hdl.c
+@@ -418,6 +418,15 @@ qeh_write_headers (struct qpack_enc_hdl
+         enc_flags = LQEF_NO_INDEX;
+         LSQ_DEBUG("encoder stream is unavailable, won't index headers");
+     }
++    /* bun: ls-qpack reads its history of encoded fields only to choose what
++     * to insert into the dynamic table, but it records every field there at
++     * any capacity.  It grows the history 4 elements at a time and copies all
++     * of it each time, so a block of N fields costs N^2 / 8 copies.  With a
++     * capacity of 0 nothing reads the history, and lsquic never raises the
++     * capacity after lsquic_qeh_settings().
++     */
++    if (qeh->qeh_encoder.qpe_cur_max_capacity == 0)
++        enc_flags |= LQEF_NO_HIST_UPD;
+     write_to_stream = qeh->qeh_enc_sm_out
+                                 && lsquic_frab_list_empty(&qeh->qeh_fral);
+     total_enc_sz = 0;

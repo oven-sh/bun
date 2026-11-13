@@ -871,6 +871,8 @@ __attribute__((minsize)) static void displacePreloadModuleMocksUnderPathsOf(Zig:
 
 // The end of a test file gives a mock of a preload the paths back that the file had taken from it, and what the mock had saved of its module object under one of them.
 // A path that another mock of the preload had taken from it before stays that one's. A mock with one path comes back under it, as it did before a mock could have two.
+// A hook of the preload may have laid a mock over the test file's under such a path meanwhile. It loses the path here as it would to a later mock: what it saved of its module object there
+// is from here on held by the mock that comes back, and of its ES module there it holds nothing more. Left with its other path alone, it would hand out the first as the original of that one: see requireCacheKey().
 // Returns the paths that it has again.
 static PathsHeldByModuleMock giveBackPathsOfPreloadModuleMock(Zig::GlobalObject* globalObject, JSModuleMock* mock)
 {
@@ -879,14 +881,35 @@ static PathsHeldByModuleMock giveBackPathsOfPreloadModuleMock(Zig::GlobalObject*
     PathsHeldByModuleMock back { !mock->requireKey || mock->getsImportPathBack, mock->requireKey && mock->getsRequirePathBack };
     mock->getsImportPathBack = false;
     mock->getsRequirePathBack = false;
-    if (back.importPath)
-        plugins.addModuleMock(vm, mock->importKey->tryGetValue().data, mock);
-    if (back.requirePath)
-        plugins.addModuleMock(vm, mock->requireKey->tryGetValue().data, mock);
     if (JSValue saved = mock->originalCommonJSExportsToGetBack.get()) {
         mock->originalCommonJSExports.set(vm, mock, saved);
         mock->originalCommonJSExportsToGetBack.clear();
     }
+    auto takeBack = [&](JSC::JSString* key) {
+        String path = key->tryGetValue().data;
+        // While no mock has had two paths, the mock under the path is out of the table with this, as it was before a mock could have two.
+        auto* loser = plugins.hasHadModuleMockWithTwoPaths ? moduleMockAnsweringFor(globalObject, path) : nullptr;
+        if (loser && loser != mock) {
+            if (loser->keyForRequire()->tryGetValue().data == path) {
+                // Saved of what lies under the path now, so it stands in place of what the mock itself had saved there.
+                if (JSValue saved = loser->originalCommonJSExports.get(); saved && mock->keyForRequire() == key)
+                    mock->originalCommonJSExports.set(vm, mock, saved);
+                loser->originalCommonJSExports.clear();
+            }
+            if (loser->importKey->tryGetValue().data == path) {
+                loser->originalExports.clear();
+                loser->originalNamespace.clear();
+                loser->patchedNamespace.clear();
+                loser->originalExportsOfEvictedModule.clear();
+                loser->patchOrder = 0;
+            }
+        }
+        plugins.addModuleMock(vm, path, mock);
+    };
+    if (back.importPath)
+        takeBack(mock->importKey.get());
+    if (back.requirePath)
+        takeBack(mock->requireKey.get());
     return back;
 }
 

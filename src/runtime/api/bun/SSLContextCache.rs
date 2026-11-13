@@ -83,7 +83,7 @@ impl SSLContextCache {
         if opts.reads_files() {
             return Some(ctx);
         }
-        let evicted = Self::of_this_thread().keep(&ctx);
+        let evicted = Self::with_this_threads(|cache| cache.keep(&ctx));
         // Freeing it can run `bun_ssl_ctx_cache_on_free`, which reaches the cache through the entry, so the borrow has to be over.
         drop(evicted);
         Some(ctx)
@@ -112,17 +112,17 @@ impl SSLContextCache {
         d: Digest,
         err: &mut create_bun_socket_error_t,
     ) -> Option<OwnedSslCtx> {
-        Self::of_this_thread().find_or_build(opts, d, err)
+        Self::with_this_threads(|cache| cache.find_or_build(opts, d, err))
     }
 
-    fn of_this_thread<'a>() -> &'a mut Self {
+    fn with_this_threads<R>(f: impl FnOnce(&mut Self) -> R) -> R {
         let state = crate::jsc_hooks::runtime_state();
         debug_assert!(
             !state.is_null(),
             "runtime_state() before init_runtime_state"
         );
-        // SAFETY: the per-thread `RuntimeState` boxed in `init_runtime_state` is address-stable until VM teardown, only the JS thread gets here, and each caller's borrow ends with its one call.
-        unsafe { &mut (*state).ssl_ctx_cache }
+        // SAFETY: the per-thread `RuntimeState` boxed in `init_runtime_state` is address-stable until VM teardown, only the JS thread gets here, and neither caller's closure gets here again.
+        f(unsafe { &mut (*state).ssl_ctx_cache })
     }
 
     /// Moves `ctx` to the front of `kept`. Returns the context that fell off the end.

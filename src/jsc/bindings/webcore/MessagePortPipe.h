@@ -13,16 +13,10 @@
 // `Side::draining` a small batch per lock acquisition and dispatches them one
 // at a time, draining microtasks between each (matching Node's MakeCallback /
 // InternalCallbackScope behavior), up to a fixed 1024 per task before
-// continuing on the loop's next iteration (a closed peer's backlog is finite and
-// is delivered whole). A port transferred mid-loop carries
+// continuing on the loop's next iteration. A port transferred mid-loop carries
 // the whole remaining queue to the new owner: detach() puts `draining` back in
 // front of the inbox, in order.
-//
-// A side's close is recorded in the *other* side's state word (PeerClosed), under
-// that side's lock. A closed side never sends again, so "PeerClosed and nothing
-// queued" is Node's close message at the front of the queue: the receiver is handed
-// the peer's close only once it has consumed everything sent before it, and reads
-// both facts in one load. Only a drain task posted for the close hands it over.
+// A side's close is recorded in the other side's state word (PeerClosed), so it sits behind what that side sent.
 //
 // The Web API semantics (start(), close(), transfer, event dispatch) live in
 // MessagePort; this class knows nothing about EventTarget or JS.
@@ -70,25 +64,24 @@ public:
     // `fromSide` is the sender's side; the message lands in the *other* side's inbox.
     void send(uint8_t fromSide, MessageWithMessagePorts&&);
 
-    // Receiver-thread synchronous pop, for node:worker_threads receiveMessageOnPort. A read
-    // that finds only the peer's close schedules the drain that hands it over.
+    // Receiver-thread synchronous pop, for node:worker_threads receiveMessageOnPort.
     std::optional<MessageWithMessagePorts> takeOne(uint8_t side);
 
     // Attach this side to a context + port. Schedules a drain if messages are
-    // already queued (e.g. after transfer) or the peer's close is pending. Passing a
-    // null port is allowed and means "just buffer, don't dispatch" (used before start()).
+    // already queued (e.g. after transfer). Passing a null port is allowed and
+    // means "just buffer, don't dispatch" (used before start()).
+    // Also schedules one when the peer's close is pending.
     void attach(uint8_t side, ScriptExecutionContext&, ThreadSafeWeakPtr<MessagePort>);
-    // Like attach() but only records ctxId/port so the peer's close can be handed to a
-    // port that never started (no 'message' listener). The drain it enables dispatches
-    // no messages. No-op if already attached/registered/closed.
+    // Like attach() but only records ctxId/port so the peer's close() can deliver
+    // a 'close' event to a port that never started (no 'message' listener). Does
+    // NOT enable drains. No-op if already attached/registered/closed.
     void registerCloseContext(uint8_t side, ScriptExecutionContext&, ThreadSafeWeakPtr<MessagePort>);
     void detach(uint8_t side);
     // Explicit == a real, permanent close: close(), context teardown, or an orphaned
     // transferred endpoint. Collected == the owning MessagePort's wrapper was garbage
-    // collected while still entangled. Only Explicit sets PeerClosedByRequest on the other
-    // side, so until the port is told jsRef() can tell a real close from a collection (node
-    // never collects an entangled port, so reading PeerClosed alone made .ref() GC-dependent).
-    // Both set PeerClosed.
+    // collected while still entangled. Only Explicit sets PeerClosedByRequest, so jsRef()
+    // can tell a real close from a collection (node never collects an entangled port,
+    // so reading PeerClosed alone made .ref() GC-dependent). Both set PeerClosed.
     enum class CloseKind : uint8_t { Explicit,
         Collected };
     void close(uint8_t side, CloseKind = CloseKind::Collected);
@@ -102,8 +95,7 @@ public:
 private:
     MessagePortPipe() = default;
 
-    // `closeTurn`: the task is posted for the peer's close, which was seen with nothing
-    // queued ahead of it. Only such a task hands the close to the port.
+    // `closeTurn`: posted for the peer's close, seen with nothing queued. Only such a task hands the close over.
     void scheduleDrain(uint8_t side, ScriptExecutionContextIdentifier, BunLoopKind, bool closeTurn);
     void markPeerClosed(uint8_t peerSide, CloseKind);
     void drainAndDispatch(uint8_t side, ScriptExecutionContextIdentifier expectedCtx, bool closeTurn);
@@ -127,13 +119,10 @@ private:
         // Packed flags + count. Written only while holding `lock`; read locklessly.
         std::atomic<uint64_t> state { 0 };
 
-        // The one way a message leaves this side, for the drain and for takeOne(). `st` is
-        // `state` as loaded under `lock`. EndOfStream: nothing is queued and the peer's
-        // close is pending.
+        // The one way a message leaves this side. `st` is `state` as loaded under `lock`.
         ALWAYS_INLINE Take take(uint64_t st, std::optional<MessageWithMessagePorts>& message) WTF_REQUIRES_LOCK(lock)
         {
-            // From inside a handler (receiveMessageOnPort), the next message in order may
-            // already sit in the drain's batch.
+            // Called from inside a handler (receiveMessageOnPort), the next message may sit in the drain's batch.
             auto& queue = draining.isEmpty() ? inbox : draining;
             if (queue.isEmpty())
                 return closePending(st) ? Take::EndOfStream : Take::Nothing;

@@ -281,9 +281,7 @@ void MessagePort::peerClosed()
 
 void MessagePort::peerCloseHeld()
 {
-    // Node keeps a ref()'d port that reads nothing open behind its unread messages, and the
-    // process never exits. Give back only that keepalive: m_isRefd stays, so a 'message'
-    // listener added later refs the loop until the messages and the close are delivered.
+    // Only the ref() keepalive (node keeps it, and never exits): m_isRefd stays for a later 'message' listener.
     if (!m_hasRef)
         return;
     m_hasRef = false;
@@ -420,19 +418,17 @@ bool MessagePort::virtualHasPendingActivity() const
 {
     // Called from the GC thread concurrently with the mutator; must be
     // lockless. m_pipe is a Ref<> held for the port's whole lifetime, so
-    // the dereference is always safe; state() is one atomic load, and that
-    // word holds both the peer's close and what is queued ahead of it. The
-    // plain bool reads can observe stale values but cannot crash — at worst
-    // the wrapper is collected one cycle early or late, which is the same
-    // tolerance as before this refactor.
+    // the dereference is always safe; state() (the peer's close and the queue) is read with
+    // atomic loads. The plain bool reads can observe stale values but
+    // cannot crash — at worst the wrapper is collected one cycle early
+    // or late, which is the same tolerance as before this refactor.
     if (!scriptExecutionContext() || m_isDetached)
         return false;
     uint64_t s = m_pipe->state(m_side);
     // A 'close' listener must outlive a GC until the event lands: the pipe's drain
     // holds only a weak ref back here. This does pin both ends of an idle channel until
     // the context dies; node retains more — it never collects an entangled port at all.
-    // Not while the close waits behind messages that nothing here reads: only script
-    // that still holds this wrapper can read them.
+    // Not while the close waits behind unread messages: only script that holds this wrapper can read them.
     if (m_hasCloseEventListener.load(std::memory_order_acquire) && !m_closeEventDispatched
         && (m_hasMessageEventListener || !(s & MessagePortPipe::PeerClosed) || (s & MessagePortPipe::DrainScheduled)))
         return true;
@@ -453,8 +449,7 @@ bool MessagePort::virtualHasPendingActivity() const
         return true;
 
     // Keep alive if the peer is still open and could send more, or messages are
-    // already queued for us. PeerClosed is stored under our lock after the peer's
-    // last send(), so this one load cannot see the close without that message.
+    // already queued for us: PeerClosed is stored after the peer's last send(), so one load has both.
     return !MessagePortPipe::atEndOfStream(s);
 }
 
@@ -562,16 +557,7 @@ WebCoreOpaqueRoot root(MessagePort* port)
 
 void MessagePort::jsRef(JSGlobalObject* lexicalGlobalObject)
 {
-    // A closed or transferred-away port can never receive messages again, so
-    // taking a self-ref (and an event-loop ref) here would only leak:
-    // close()/disentangle() have already run and nothing will ever release a
-    // ref taken afterwards. Same once the peer has closed and nothing it sent is
-    // left: peerClosed() ran jsUnref() or is about to, and nothing releases a ref
-    // re-taken after it, so `.ref()` or a late `onmessage =` would pin the loop
-    // forever. Node no-ops both.
-    // Before the port is told, only an explicit peer close counts: node never closes a
-    // channel because a port was collected, so keying on PeerClosed alone made this
-    // GC-dependent.
+    // Nothing would release a ref taken once nothing can arrive: closed, transferred, told of the peer's close.
     if (!isEntangled())
         return;
     uint64_t s = m_pipe->state(m_side);

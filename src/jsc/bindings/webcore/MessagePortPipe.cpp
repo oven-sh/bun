@@ -59,10 +59,11 @@ void MessagePortPipe::scheduleDrain(uint8_t side, ScriptExecutionContextIdentifi
         pipe->drainAndDispatch(side, ctxId, closeTurn);
     });
     if (!posted) {
-        // Context already torn down. Drop DrainScheduled, unless the side has moved on:
-        // detach() dropped the bit then, and by now it can be the next owner's.
+        // Context already torn down. Drop DrainScheduled so a future
+        // attach() to a new context can reschedule.
         auto& s = m_sides[side];
         Locker locker { s.lock };
+        // Not for a side that moved on: detach() dropped the bit, and by now it can be the next owner's.
         if (s.ctxId == ctxId)
             s.state.fetch_and(~uint64_t(DrainScheduled), std::memory_order_acq_rel);
     }
@@ -76,21 +77,14 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
     // messages one at a time, but without a separate posted task per
     // message. The per-invocation limit is a fixed count (not "whatever was
     // queued when the drain began", which a sender on another thread can make
-    // arbitrarily large); the rest continues after the loop has polled. A closed
-    // peer cannot add to its backlog, so that one is delivered whole.
+    // arbitrarily large); the rest continues after the loop has polled.
     //
     // Messages move inbox -> `draining` a small batch per lock acquisition and are
     // popped from `draining` one at a time (still under the lock, but without a
     // sender contending for it per message). If the handler transfers this port
     // (pipe->detach clears `s.port`/`Attached`), detach() splices `draining` back
     // in front of the inbox so everything stays buffered, in order, for the new owner.
-    //
-    // The peer's close is handed to the port from here and nowhere else, by a task that
-    // finds nothing queued: as Node's ReceiveMessage() (src/node_messaging.cc) does with
-    // the close message, which sits behind everything sent before it (nodejs/node#27705).
-    // That task is one posted for the close (`closeTurn`), after the close was seen with
-    // nothing ahead of it. A task posted earlier, by a send, only posts that one: 'close'
-    // then keeps its place behind what other ports had queued by then.
+    // The peer's close is handed over here only, by a task posted for it (`closeTurn`) that finds nothing queued.
     auto& s = m_sides[side];
 
     RefPtr<MessagePort> port;
@@ -113,8 +107,7 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
                 s.state.store(st & ~DrainScheduled, std::memory_order_release);
                 return;
             }
-            // DrainScheduled stays set until the close was handed over: it keeps the
-            // port's wrapper alive for the dispatch (virtualHasPendingActivity()).
+            // DrainScheduled stays set through the hand-over: it pins the wrapper (virtualHasPendingActivity()).
             closeIsNext = true;
             loopKind = s.ctxLoopKind;
             s.state.store(st | DrainScheduled | (closeTurn ? PeerCloseDelivered : 0), std::memory_order_release);
@@ -134,11 +127,7 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
         return;
     }
 
-    // Not receiving: no 'message' listener (never added, or all removed), or registered
-    // for the peer's close only. Leave the inbox buffered and stop draining; a later
-    // addEventListener re-schedules this drain. A close behind those messages stays there.
-    // (Node differs for a port that start() left receiving with no listener: it hands the
-    // messages to nobody and then closes the port.)
+    // Not receiving (no 'message' listener, or registered for 'close' only): the inbox stays, and the close behind it.
     auto* context = port->scriptExecutionContext();
     if (!attached || !port->hasMessageEventListener() || !context || !context->globalObject()) {
         bool closeHeld;
@@ -171,8 +160,7 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
                 break;
             uint64_t st = s.state.load(std::memory_order_relaxed);
             if (s.draining.isEmpty() && !s.inbox.isEmpty()) {
-                // A closed peer sends nothing more, so what it left is delivered whole, as
-                // Node does (it bounds a pass by the queue's size at its start).
+                // A closed peer sends nothing more: what it left is delivered whole, as Node does.
                 if (st & PeerClosed)
                     limit = std::max(limit, static_cast<size_t>(s.inbox.size()));
                 if (!limit) {
@@ -230,9 +218,9 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
         }
     }
 
+    // Budget spent with messages left. We are on `context`'s thread: continue on
+    // its next loop iteration (after I/O and timers), not in this drain.
     if (rescheduleCtx) {
-        // Budget spent with messages left. We are on `context`'s thread: continue on
-        // its next loop iteration (after I/O and timers), not in this drain.
         context->postTaskAfterYield([pipe = Ref { *this }, side, rescheduleCtx](ScriptExecutionContext&) {
             pipe->drainAndDispatch(side, rescheduleCtx, false);
         });
@@ -252,8 +240,7 @@ std::optional<MessageWithMessagePorts> MessagePortPipe::takeOne(uint8_t side)
     {
         Locker locker { s.lock };
         uint64_t st = s.state.load(std::memory_order_relaxed);
-        // Only the peer's close is left. Node closes the port on this read; here the
-        // drain hands the close over once the caller has returned.
+        // Only the peer's close is left: the drain hands it over once the caller has returned.
         if (s.take(st, message) == Take::EndOfStream && (st & ContextKnown) && !(st & DrainScheduled)) {
             s.state.store(st | DrainScheduled, std::memory_order_release);
             wakeCtx = s.ctxId;
@@ -281,9 +268,7 @@ void MessagePortPipe::attach(uint8_t side, ScriptExecutionContext& context, Thre
         uint64_t st = s.state.load(std::memory_order_relaxed);
         ASSERT(!(st & Closed));
         uint64_t ns = st | Attached | ContextKnown;
-        // Also for a pending close with nothing ahead of it (the peer closed while this
-        // side was in transit or had no context), or the receiving context's listener
-        // loop-ref is never released.
+        // Also for a pending close with nothing ahead of it: the peer closed while this side had no owner.
         closeTurn = closePending(st) && !queuedCount(st);
         if ((queuedCount(st) > 0 || closeTurn) && !(st & DrainScheduled)) {
             ns |= DrainScheduled;
@@ -339,8 +324,8 @@ void MessagePortPipe::detach(uint8_t side)
     // the old context can't be recalled, but it captured the old ctxId and
     // drainAndDispatch()'s s.ctxId != expectedCtx check makes it a no-op —
     // even if a new owner attach()es to a different context before it runs.
-    // Messages remain queued for the next owner, and so does the peer's close:
-    // PeerCloseDelivered is per owner.
+    // Messages remain queued for the next owner.
+    // So does the peer's close: PeerCloseDelivered is per owner.
     s.state.fetch_and(~uint64_t(Attached | ContextKnown | DrainScheduled | PeerCloseDelivered), std::memory_order_acq_rel);
 }
 
@@ -385,14 +370,14 @@ void MessagePortPipe::close(uint8_t side, CloseKind kind)
         // outside the lock; they may hold the last ref to pipes whose
         // destructors also take locks.
 
-        // Tell each closed pipe's entangled peer so it can fire 'close' and
+        // Notify each closed pipe's entangled peer so it can fire 'close' and
         // release its event-loop ref — including nested in-transit ports drained
         // from the worklist, not just the originally-closed side.
-        // Always, even for a collected wrapper. Node never collects an entangled
+        // Always notify, even for a collected wrapper. Node never collects an entangled
         // port so it never faces this; bun does, and a peer that is never told is
         // stranded -- its loop ref is never released and the process hangs. A 'close'
-        // fired at GC timing is the lesser evil. (Until the port is told, jsRef() still
-        // ignores a collected peer: it keys on PeerClosedByRequest, not on PeerClosed.)
+        // fired at GC timing is the lesser evil. (jsRef() still ignores a collected
+        // peer until the port is told: it keys on PeerClosedByRequest, not on PeerClosed.)
         pipe->markPeerClosed(1 - sd, sdKind);
     }
 }
@@ -408,12 +393,9 @@ void MessagePortPipe::markPeerClosed(uint8_t peerSide, CloseKind kind)
         uint64_t st = s.state.load(std::memory_order_relaxed);
         if (st & Closed)
             return;
-        // The closed side's last send() is already in this inbox, so this one store
-        // puts the close behind it.
+        // The closed side's last send() is already in this inbox: this store puts the close behind it.
         uint64_t ns = st | PeerClosed | (kind == CloseKind::Explicit ? PeerClosedByRequest : 0);
-        // send()'s wake rule, for any side with a context. One without (in transit, or
-        // never registered) is woken by attach() / registerCloseContext(), which read
-        // PeerClosed under this lock.
+        // A side with no context yet is woken by attach() / registerCloseContext(), which read PeerClosed under this lock.
         closeTurn = !queuedCount(st);
         if ((st & ContextKnown) && !(st & DrainScheduled)) {
             ns |= DrainScheduled;

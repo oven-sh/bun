@@ -16,6 +16,8 @@ Two `import` lines for one module make it harder to see what a file takes from i
 
 The rule compares the files that the paths resolve to, so `./utils` and `./utils.js` count as the same module. Each of the imports is reported.
 
+The default `typescript` resolver resolves a package to its types. A package whose wildcard export (`"./icons/*"`) gives every entry one `types` file then makes `icons/check` and `icons/x` the same module. Set the resolver's `conditionNames` without `types` so that they resolve to their code, as the [`import/no-unresolved`](/lint/rules/import/no-unresolved) page shows.
+
 A namespace import (`import * as`) can't be merged with named imports, so it's allowed next to one. The same goes for `import type` next to a value import.
 
 `--fix` merges the imports into the first one.

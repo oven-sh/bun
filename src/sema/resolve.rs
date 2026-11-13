@@ -704,6 +704,8 @@ pub struct Options {
     /// `customConditions`: conditions that match in the `exports` and `imports` of a
     /// `package.json`, in addition to the default ones.
     pub custom_conditions: Vec<Vec<u8>>,
+    /// eslint-import-resolver-typescript's `conditionNames`: the only conditions besides `default` that match.
+    pub condition_names: Option<Vec<Vec<u8>>>,
     /// `GetResolvePackageJsonExports`. The resolver uses `has_exports_feature`.
     pub resolve_package_json_exports: bool,
     /// `GetResolvePackageJsonImports`. The resolver uses `has_imports_feature`.
@@ -3022,11 +3024,17 @@ impl<'h> Resolver<'h> {
         if look.tracer.is_some() {
             // `GetConditions`
             let by_mode: &[u8] = if look.import { b"import" } else { b"require" };
-            let mut conditions: Vec<&[u8]> = vec![by_mode, b"types"];
-            if self.options.resolves_like_node || look.all_features {
-                conditions.push(b"node");
-            }
-            conditions.extend(self.options.custom_conditions.iter().map(Vec::as_slice));
+            let conditions: Vec<&[u8]> = match &self.options.condition_names {
+                Some(names) => names.iter().map(Vec::as_slice).collect(),
+                None => {
+                    let mut conditions = vec![by_mode, b"types"];
+                    if self.options.resolves_like_node || look.all_features {
+                        conditions.push(b"node");
+                    }
+                    conditions.extend(self.options.custom_conditions.iter().map(Vec::as_slice));
+                    conditions
+                }
+            };
             let quoted = conditions.iter().map(|it| [b"'", *it, b"'"].concat());
             let quoted: Vec<Vec<u8>> = quoted.collect();
             let mode: &[u8] = if look.esm { b"ESM" } else { b"CJS" };
@@ -3308,6 +3316,9 @@ impl<'h> Resolver<'h> {
         }
         // Otherwise as in `node_modules`: a full pass for types first, then a pass for the other
         // kinds of file.
+        if self.options.condition_names.is_some() {
+            return self.exports(dir, exports, &key, look);
+        }
         match self.exports(dir, exports, &key, look.for_types()) {
             Found::No => self.exports(dir, exports, &key, look.for_the_rest()),
             found => found,
@@ -4141,6 +4152,23 @@ impl<'h> Resolver<'h> {
     /// JavaScript in a nearer one. A specifier that the search for types finds explicitly
     /// unresolved isn't searched for again.
     fn node_modules(&self, spec: &[u8], from_dir: &[u8], look: Look) -> Found {
+        // eslint-import-resolver-typescript: one pass, then `@types` over JavaScript.
+        if self.options.condition_names.is_some() {
+            let found = self.node_modules_once(spec, from_dir, look);
+            if let Found::File(path) = &found
+                && look.declarations
+                && !spec.starts_with(b"@types/")
+                && is_javascript(path)
+            {
+                let mangled = look.mangle_scoped_package_name(spec);
+                let types =
+                    self.node_modules_once(&[b"@types/", &mangled[..]].concat(), from_dir, look);
+                if let Found::File(_) = types {
+                    return types;
+                }
+            }
+            return found;
+        }
         if look.typescript || look.declarations {
             if look.tracer.is_some() {
                 look.trace(6417, &[Arg::Bytes(&look.for_types().extensions())]);
@@ -4744,9 +4772,14 @@ impl<'h> Resolver<'h> {
 
     /// `conditionMatches` against the conditions `GetConditions` returns, which include `types`.
     fn condition_matches(&self, condition: &[u8], look: Look) -> bool {
+        if condition == b"default" {
+            return true;
+        }
+        if let Some(names) = &self.options.condition_names {
+            return names.iter().any(|it| it == condition);
+        }
         let by_mode: &[u8] = if look.import { b"import" } else { b"require" };
-        condition == b"default"
-            || condition == by_mode
+        condition == by_mode
             || condition == b"node" && (self.options.resolves_like_node || look.all_features)
             || self
                 .options

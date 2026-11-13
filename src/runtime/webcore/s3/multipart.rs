@@ -92,7 +92,6 @@
 use core::cell::{Cell, OnceCell};
 use core::ffi::c_void;
 use std::io::Write as _;
-use std::rc::Rc;
 
 use bstr::BStr;
 
@@ -246,8 +245,7 @@ pub(crate) enum PartState {
 }
 
 pub(crate) struct UploadPart {
-    /// Refcounted so `perform` can keep the bytes alive if the request frees the part.
-    pub(crate) data: JsCell<Option<Rc<Vec<u8>>>>,
+    pub(crate) data: JsCell<Vec<u8>>,
     pub(crate) state: Cell<PartState>,
     pub(crate) part_number: Cell<u16>, // max is 10,000
     pub(crate) retry: Cell<u8>,        // auto retry, decrement until 0 and fail after this
@@ -270,7 +268,7 @@ enum PartBytes {
 
 impl UploadPart {
     fn free_data(&self) {
-        self.data.set(None);
+        self.data.set(Vec::new());
     }
 
     pub(crate) fn on_part_response(
@@ -306,7 +304,7 @@ impl UploadPart {
             }
             S3PartResult::Etag(etag) => {
                 scoped_log!(S3MultiPartUpload, "onPartResponse {} success", part_number);
-                let sent = this.data.get().as_deref().map_or(0, Vec::len);
+                let sent = this.data.get().len();
                 this.free_data();
                 // we will need to order this
                 ctx.multipart_etags.with_mut(|etags| {
@@ -327,7 +325,6 @@ impl UploadPart {
     }
 
     fn perform(&self, ctx: &RefPtr<MultiPartUpload>) -> bun_jsc::JsResult<()> {
-        let data = self.data.get().clone();
         let mut params_buffer = [0u8; 2048];
         let written = {
             let mut w: &mut [u8] = &mut params_buffer[..];
@@ -348,7 +345,7 @@ impl UploadPart {
                 path: &ctx.path,
                 method: bun_http::Method::PUT,
                 proxy_url: ctx.proxy_url(),
-                body: data.as_deref().map_or(&[][..], Vec::as_slice),
+                body: self.data.get(),
                 search_params: Some(search_params),
                 request_payer: ctx.request_payer,
                 ..Default::default()
@@ -471,7 +468,7 @@ impl MultiPartUpload {
             // zero set just in case
             for _ in 0..queue_size {
                 queue.push(UploadPart {
-                    data: JsCell::new(None),
+                    data: JsCell::default(),
                     part_number: Cell::new(0),
                     index: Cell::new(0),
                     retry: Cell::new(0),
@@ -488,7 +485,7 @@ impl MultiPartUpload {
             PartBytes::Whole => self.buffered.take().list,
             PartBytes::First(len) => self.buffered.get().slice()[..len].to_vec(),
         };
-        queue_item.data.set(Some(Rc::new(data)));
+        queue_item.data.set(data);
         queue_item.part_number.set(part_number);
         queue_item.index.set(index as u8); // @truncate
         queue_item.retry.set(self.options.get().retry);
@@ -958,8 +955,7 @@ impl MultiPartUpload {
     fn process_buffered(this: &RefPtr<Self>, part_size: usize) {
         // The upload of a context that has stopped sends nothing (its writer is a disposed
         // `Bun.ModuleGraph`'s leftover script): what stops a context aborts it, a turn later for
-        // one that was made in a context already stopped. Not refused request by request: a
-        // refusal is a completion, and this can be running inside the sink's write.
+        // one that was made in a context already stopped.
         if this.abort_handle.context_stopped() {
             return;
         }

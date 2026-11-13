@@ -791,6 +791,13 @@ static PathsHeldByModuleMock pathsHeldByModuleMock(Zig::GlobalObject* globalObje
     return { holds(mock->importKey.get()), holds(mock->requireKey.get()) };
 }
 
+// The key that the mock's own module has in the loader's registry: its import path, or its require path where that is the only one the mock has kept. See keyOfImportWithTwoPaths().
+static JSString* registryKey(Zig::GlobalObject* globalObject, const JSModuleMock* mock)
+{
+    PathsHeldByModuleMock held = mock->requireKey ? pathsHeldByModuleMock(globalObject, mock) : PathsHeldByModuleMock {};
+    return held.requirePath && !held.importPath ? mock->requireKey.get() : mock->importKey.get();
+}
+
 // Each mock once: one with two paths lies in the table twice.
 static void listModuleMocks(Zig::GlobalObject* globalObject, JSC::MarkedArgumentBuffer& mocks)
 {
@@ -1545,7 +1552,7 @@ static void addToImportChain(Zig::GlobalObject* globalObject, BunPlugin::OnLoad:
     if (size_t query = key.find('?'); query != notFound)
         running.importChainWithoutQuery.add(key.left(query));
     // See giveTurns(). The load that now asks for it has to be fetched first.
-    if (globalObject->onLoadPlugins.waitingModuleMocks.containsIf([&](auto& waiting) { return uncheckedDowncast<JSModuleMock>(waiting.mock.get())->importKey->tryGetValue().data == key; })) [[unlikely]] {
+    if (globalObject->onLoadPlugins.waitingModuleMocks.containsIf([&](auto& waiting) { return registryKey(globalObject, uncheckedDowncast<JSModuleMock>(waiting.mock.get()))->tryGetValue().data == key; })) [[unlikely]] {
         globalObject->onLoadPlugins.ranksAreStale = true;
         giveTurnsSoon(globalObject);
     }
@@ -2833,7 +2840,7 @@ __attribute__((noinline, minsize)) static void rankWaitingModuleMocks(Zig::Globa
     for (size_t i = 0; i < plugins.waitingModuleMocks.size(); ++i) {
         plugins.waitingModuleMocks[i].rank = 0;
         plugins.waitingModuleMocks[i].load = String();
-        keys.append(JSC::Identifier::fromString(vm, uncheckedDowncast<JSModuleMock>(plugins.waitingModuleMocks[i].mock.get())->importKey->tryGetValue().data));
+        keys.append(JSC::Identifier::fromString(vm, registryKey(globalObject, uncheckedDowncast<JSModuleMock>(plugins.waitingModuleMocks[i].mock.get()))->tryGetValue().data));
         indexOf.add(keys.last().impl(), i);
     }
     size_t numberOfKeysOfMocks = indexOf.size();
@@ -3072,7 +3079,7 @@ __attribute__((minsize)) static void giveTurns(Zig::GlobalObject* globalObject)
     if (std::exchange(plugins.ranksAreStale, false))
         rankWaitingModuleMocks(globalObject);
     auto hasToWait = [&](auto& waiting) {
-        String specifier = uncheckedDowncast<JSModuleMock>(waiting.mock.get())->importKey->tryGetValue().data;
+        String specifier = registryKey(globalObject, uncheckedDowncast<JSModuleMock>(waiting.mock.get()))->tryGetValue().data;
         return plugins.moduleMocksWithTurn.containsIf([&](auto& other) {
             if (other.load != waiting.load)
                 return false;
@@ -7309,7 +7316,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
         uncheckedDowncast<JSModuleMock>(factory.mock.get())->forgetFailureKeptForImports();
 #endif
     for (auto& waiting : std::exchange(plugins.waitingModuleMocks, {}))
-        evict.abandonedModules.append(uncheckedDowncast<JSModuleMock>(waiting.mock.get())->importKey->tryGetValue().data);
+        evict.abandonedModules.append(registryKey(globalObject, uncheckedDowncast<JSModuleMock>(waiting.mock.get()))->tryGetValue().data);
     plugins.moduleMocksWithTurn.clear();
     plugins.modulesGivenTimeToRequestImports.clear();
     plugins.modulesAskedFor.clear();
@@ -7318,7 +7325,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     while (!plugins.runningModuleMocks.isEmpty()) {
         auto* mock = uncheckedDowncast<JSModuleMock>(plugins.runningModuleMocks.last().mock.get());
-        evict.abandonedModules.append(mock->importKey->tryGetValue().data);
+        evict.abandonedModules.append(registryKey(globalObject, mock)->tryGetValue().data);
 #if ENABLE(AOT)
         // Under `bun test` whoever imports a module whose own body is under way joins that evaluation: a mock that ends meanwhile holds nobody up, and the import gets what the module is when the body ends.
         JSC::JSPromise* bodyOfModuleItself = vm.hasCompiledCode() && mock->importsOriginal ? intactOriginalEvaluation(globalObject, mock) : nullptr;
@@ -8517,7 +8524,7 @@ bool isModuleMockInUse(Zig::GlobalObject* globalObject, JSC::JSObject* moduleMoc
     auto* mock = dynamicDowncast<Zig::JSModuleMock>(moduleMock);
     if (!mock || mock->state != Zig::JSModuleMock::State::NotCalled)
         return true;
-    String key = mock->importKey->value(globalObject);
+    String key = Zig::registryKey(globalObject, mock)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, true);
     return Zig::moduleMockAnsweringFor(globalObject, key) == mock;
 }
@@ -8635,12 +8642,11 @@ __attribute__((minsize)) static JSC::JSObject* generateSettledModuleMock(JSValue
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* mock = uncheckedDowncast<Zig::JSModuleMock>(source);
-    String key = mock->importKey->value(globalObject);
+    // The mock, and the path that the loader found it under: see sourceCodeOfModuleMock().
+    auto* fetched = uncheckedDowncast<JSC::InternalFieldTuple>(source);
+    auto* mock = uncheckedDowncast<Zig::JSModuleMock>(fetched->getInternalField(0));
+    String key = asString(fetched->getInternalField(1))->value(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    // A mock that has kept its require path alone is loaded under that path: see keyOfImportWithTwoPaths(). The mock of its import path is another one.
-    if (auto held = Zig::pathsHeldByModuleMock(defaultGlobalObject(globalObject), mock); held.requirePath && !held.importPath)
-        key = mock->requireKey->tryGetValue().data;
 
     // Re-mocked or unmocked since the fetch: use the new mock if it has settled, else evict so only the load in flight gets this one.
     auto* registered = Zig::moduleMockAnsweringFor(defaultGlobalObject(globalObject), key);
@@ -8668,8 +8674,13 @@ __attribute__((minsize)) JSC::JSSourceCode* sourceCodeOfModuleMock(Zig::GlobalOb
     auto* mock = Zig::toModuleMock(globalObject, scope, moduleMock);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    if (mock->state == Zig::JSModuleMock::State::Settled)
-        return Zig::createSyntheticSourceCode(vm, mock, generateSettledModuleMock, key, true);
+    if (mock->state == Zig::JSModuleMock::State::Settled) {
+        // The loader found the mock under `key`, or under the path that `key` is the unwaited copy of. Of a mock with two paths that is the second one once a later mock has taken the first.
+        String copied = Zig::specifierOfUnwaitedModuleMockKey(key);
+        const String& fetched = copied.isNull() ? key : copied;
+        JSC::JSString* path = mock->requireKey && mock->requireKey->tryGetValue().data == fetched ? mock->requireKey.get() : mock->importKey.get();
+        return Zig::createSyntheticSourceCode(vm, Zig::moduleMockWith(globalObject, mock, path), generateSettledModuleMock, key, true);
+    }
 
     String dependency = Zig::dependencyKeyOfModuleMock(globalObject, mock);
     RETURN_IF_EXCEPTION(scope, nullptr);
@@ -8731,8 +8742,8 @@ static ALWAYS_INLINE String keyOfImportByPackageInline(Zig::GlobalObject* global
     if (!Zig::isInNodeModules(importer) || Zig::isBuiltinModuleKey(key))
         return key;
     auto* mock = Zig::moduleMockAnsweringFor(globalObject, key);
-    // A module that was patched in place is the only instance there is.
-    bool hasOriginal = mock && mock->isOfVitest() && !mock->originalExports && !mock->originalCommonJSExports;
+    // A module that was patched in place is the only instance there is. With two paths the mock patches the ES module under its import path, and the module object under requireCacheKey().
+    bool hasOriginal = mock && mock->isOfVitest() && !(mock->originalExports && mock->importKey->tryGetValue().data == key) && !(mock->originalCommonJSExports && Zig::requireCacheKey(globalObject, mock)->tryGetValue().data == key);
     if (!hasOriginal || (isESM && !Zig::isExternalizedByVitest(globalObject, importer)))
         return key;
     return Zig::originalModuleKey(key);
@@ -8836,7 +8847,8 @@ __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject
     for (auto& running : globalObject->onLoadPlugins.runningModuleMocks) {
         auto* mock = uncheckedDowncast<Zig::JSModuleMock>(running.mock.get());
         String mocked = mock->importKey->tryGetValue().data;
-        if (Zig::isStillRegisteredModuleMock(globalObject, mocked, mock)) [[likely]]
+        // A mock that has kept one of its two paths is not replaced.
+        if (Zig::isRegisteredModuleMock(globalObject, mock) || Zig::isStillRegisteredModuleMock(globalObject, mocked, mock)) [[likely]]
             continue;
         auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(globalObject->vm(), mocked));
         bool isFetchInFlight = entry && !entry->record();
@@ -8872,7 +8884,7 @@ __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject
         for (auto& running : globalObject->onLoadPlugins.runningModuleMocks) {
             if (callers.contains(running.mock.get()))
                 continue;
-            grew = callers.containsIf([&](JSObject* caller) { return running.importChain.contains(uncheckedDowncast<Zig::JSModuleMock>(caller)->importKey->tryGetValue().data); });
+            grew = callers.containsIf([&](JSObject* caller) { return running.importChain.contains(Zig::registryKey(globalObject, uncheckedDowncast<Zig::JSModuleMock>(caller))->tryGetValue().data); });
             if (grew) {
                 callers.append(running.mock.get());
                 break;
@@ -8885,13 +8897,14 @@ __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject
     String asked;
     while (std::exchange(asked, given) != given) {
         for (auto& running : globalObject->onLoadPlugins.runningModuleMocks) {
+            auto* mock = uncheckedDowncast<Zig::JSModuleMock>(running.mock.get());
             bool isInChain = running.importChain.contains(importer);
-            String mocked = uncheckedDowncast<Zig::JSModuleMock>(running.mock.get())->importKey->tryGetValue().data;
-            // Once another mock has replaced it, imports from its file are no longer attributed to the factory.
-            bool isFactory = importer == running.file && (!Zig::moduleMockAnsweringFor(globalObject, mocked) || Zig::isStillRegisteredModuleMock(globalObject, mocked, uncheckedDowncast<Zig::JSModuleMock>(running.mock.get())));
+            String mocked = Zig::registryKey(globalObject, mock)->tryGetValue().data;
+            // Once another mock has replaced it, imports from its file are no longer attributed to the factory. A mock that has kept one of its two paths is not replaced.
+            bool isFactory = importer == running.file && (Zig::isRegisteredModuleMock(globalObject, mock) || !Zig::moduleMockAnsweringFor(globalObject, mocked) || Zig::isStillRegisteredModuleMock(globalObject, mocked, mock));
             // The file alone can't tell which of its factories called import(). The async context can.
             if (!callers.isEmpty() && !callers.contains(running.mock.get()))
-                isFactory = isFactory && !haveUnfinishedImporterInCommon(globalObject, mocked, uncheckedDowncast<Zig::JSModuleMock>(callers[0])->importKey->tryGetValue().data);
+                isFactory = isFactory && !haveUnfinishedImporterInCommon(globalObject, mocked, Zig::registryKey(globalObject, uncheckedDowncast<Zig::JSModuleMock>(callers[0]))->tryGetValue().data);
             else if (!callers.isEmpty())
                 isFactory = true;
             if (!isInChain && !isFactory && (isImporterBeingLoaded || !running.importChainWithoutQuery.contains(importer)))
@@ -8910,7 +8923,11 @@ __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject
             if (auto module = willPatch ? Bun::compiledModuleForPath(mocked) : std::nullopt; module && JSC::AOT::hasImportStartedLoading(globalObject, *module) && JSC::AOT::wasLoadedByImport(globalObject, *module) && !JSC::AOT::isEvicted(globalObject, *module))
                 continue;
 #endif
-            String instead = uncheckedDowncast<Zig::JSModuleMock>(running.mock.get())->hasKey(given) ? Zig::originalModuleKey(given) : given;
+            // The factory gets the original of its own module. With two paths a later mock may have taken the path that is asked for, and that mock answers.
+            bool isOwnPath = mock->hasKey(given);
+            if (auto* answering = isOwnPath && mock->requireKey ? Zig::moduleMockAnsweringFor(globalObject, given) : nullptr)
+                isOwnPath = answering == mock || (answering->factory.get() == mock->factory.get() && answering->function == mock->function);
+            String instead = isOwnPath ? Zig::originalModuleKey(given) : given;
             String copy = Zig::nonBlockingModuleKey(globalObject, running, instead, mocked);
             if (isESM)
                 instead = copy;

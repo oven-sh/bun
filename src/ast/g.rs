@@ -5,7 +5,7 @@ use crate::binding::Binding as BindingNodeIndex;
 use crate::expr::Expr as ExprNodeIndex;
 use crate::stmt::Stmt;
 use crate::ts as TypeScript;
-use crate::{ExprData, ExprNodeList, LocRef, StmtNodeList, StoreSlice, StoreStr, flags};
+use crate::{ExprData, LocRef, StmtNodeList, StoreSlice, StoreStr, flags};
 
 /// Downstream crates address the flag enum via `G::FnFlags::IsExport` etc.;
 /// re-export the enum + set type here.
@@ -53,9 +53,10 @@ pub struct ExportStarAlias {
     pub original_name: StoreStr,
 }
 
+#[derive(Clone, Copy)]
 pub struct Class {
     pub class_keyword: crate::Range,
-    pub ts_decorators: ExprNodeList,
+    pub ts_decorators: StoreSlice<ExprNodeIndex>,
     pub class_name: Option<LocRef>,
     pub extends: Option<ExprNodeIndex>,
     pub body_loc: crate::Loc,
@@ -76,7 +77,7 @@ impl Default for Class {
     fn default() -> Self {
         Self {
             class_keyword: crate::Range::NONE,
-            ts_decorators: bun_alloc::AstAlloc::vec(),
+            ts_decorators: StoreSlice::EMPTY,
             class_name: None,
             extends: None,
             body_loc: crate::Loc::EMPTY,
@@ -131,6 +132,18 @@ impl Class {
     }
 }
 
+pub(crate) fn deep_clone_decorators(
+    decorators: &[ExprNodeIndex],
+    bump: &bun_alloc::Arena,
+    stack_check: bun_core::StackCheck,
+) -> crate::Result<StoreSlice<ExprNodeIndex>> {
+    let mut clones = bun_alloc::ArenaVec::with_capacity_in(decorators.len(), bump);
+    for decorator in decorators {
+        clones.push(decorator.deep_clone_no_detach(bump, stack_check)?);
+    }
+    Ok(clones.into())
+}
+
 // invalid shadowing if left as Comment
 pub struct Comment {
     pub loc: crate::Loc,
@@ -142,6 +155,7 @@ pub struct ClassStaticBlock {
     pub loc: crate::Loc,
 }
 
+#[derive(Clone, Copy)]
 pub struct Property {
     /// This is used when parsing a pattern that uses default values:
     ///
@@ -159,7 +173,7 @@ pub struct Property {
     // Arena-owned. `StoreRef` centralises the raw-pointer deref so the
     // accessors below stay safe.
     pub class_static_block: Option<crate::StoreRef<ClassStaticBlock>>,
-    pub ts_decorators: ExprNodeList,
+    pub ts_decorators: StoreSlice<ExprNodeIndex>,
     // Key is optional for spread
     pub key: Option<ExprNodeIndex>,
 
@@ -178,7 +192,7 @@ impl Default for Property {
             kind: PropertyKind::Normal,
             flags: flags::PROPERTY_NONE,
             class_static_block: None,
-            ts_decorators: bun_alloc::AstAlloc::vec(),
+            ts_decorators: StoreSlice::EMPTY,
             key: None,
             value: None,
             ts_metadata: TypeScript::Metadata::MNone,
@@ -204,20 +218,6 @@ impl Property {
         self.class_static_block.as_deref_mut()
     }
 
-    /// Copies the property. The copy's expressions and static block still point to `self`'s nodes.
-    pub fn shallow_clone(&self) -> Property {
-        Property {
-            initializer: self.initializer,
-            kind: self.kind,
-            flags: self.flags,
-            class_static_block: self.class_static_block,
-            ts_decorators: bun_alloc::AstAlloc::vec_from_slice(self.ts_decorators.slice()),
-            key: self.key,
-            value: self.value,
-            ts_metadata: self.ts_metadata.clone(),
-        }
-    }
-
     pub(crate) fn deep_clone(
         &self,
         bump: &bun_alloc::Arena,
@@ -239,10 +239,7 @@ impl Property {
             kind: self.kind,
             flags: self.flags,
             class_static_block,
-            // Vec<Expr> per-element deep clone.
-            ts_decorators: self
-                .ts_decorators
-                .try_deep_clone_with(|e| e.deep_clone_no_detach(bump, stack_check))?,
+            ts_decorators: deep_clone_decorators(&self.ts_decorators, bump, stack_check)?,
             key: match self.key {
                 Some(key) => Some(key.deep_clone_no_detach(bump, stack_check)?),
                 None => None,
@@ -251,7 +248,7 @@ impl Property {
                 Some(value) => Some(value.deep_clone_no_detach(bump, stack_check)?),
                 None => None,
             },
-            ts_metadata: self.ts_metadata.clone(),
+            ts_metadata: self.ts_metadata,
         })
     }
 }
@@ -270,6 +267,7 @@ pub enum PropertyKind {
     AutoAccessor,
 }
 
+#[derive(Clone, Copy)]
 pub struct FnBody {
     pub loc: crate::Loc,
     pub stmts: StmtNodeList,
@@ -290,6 +288,7 @@ impl FnBody {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct Fn {
     pub name: Option<LocRef>,
     pub open_parens_loc: crate::Loc,
@@ -336,19 +335,17 @@ impl Fn {
             name: self.name,
             open_parens_loc: self.open_parens_loc,
             args: StoreSlice::new_mut(args),
-            body: FnBody {
-                loc: self.body.loc,
-                stmts: self.body.stmts,
-            },
+            body: self.body,
             arguments_ref: self.arguments_ref,
             flags: self.flags,
-            return_ts_metadata: self.return_ts_metadata.clone(),
+            return_ts_metadata: self.return_ts_metadata,
         })
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct Arg {
-    pub ts_decorators: ExprNodeList,
+    pub ts_decorators: StoreSlice<ExprNodeIndex>,
     pub binding: BindingNodeIndex,
     pub default: Option<ExprNodeIndex>,
 
@@ -361,7 +358,7 @@ pub struct Arg {
 impl Default for Arg {
     fn default() -> Self {
         Self {
-            ts_decorators: bun_alloc::AstAlloc::vec(),
+            ts_decorators: StoreSlice::EMPTY,
             binding: BindingNodeIndex::default(),
             default: None,
             is_typescript_ctor_field: false,
@@ -377,17 +374,14 @@ impl Arg {
         stack_check: bun_core::StackCheck,
     ) -> crate::Result<Arg> {
         Ok(Arg {
-            // Vec<Expr> per-element deep clone.
-            ts_decorators: self
-                .ts_decorators
-                .try_deep_clone_with(|e| e.deep_clone_no_detach(bump, stack_check))?,
+            ts_decorators: deep_clone_decorators(&self.ts_decorators, bump, stack_check)?,
             binding: self.binding,
             default: match self.default {
                 Some(d) => Some(d.deep_clone_no_detach(bump, stack_check)?),
                 None => None,
             },
             is_typescript_ctor_field: self.is_typescript_ctor_field,
-            ts_metadata: self.ts_metadata.clone(),
+            ts_metadata: self.ts_metadata,
         })
     }
 }

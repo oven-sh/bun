@@ -1,0 +1,18 @@
+IO.puts "--- Bun-Next : Test du Bundler Simple ---"
+
+entry_path = "test_bundle/index.js"
+IO.puts "Analyse du point d'entrée : #{entry_path}"
+
+case BunNext.Native.bundle_simple(entry_path) do
+  modules when is_list(modules) ->
+    IO.puts "✅ #{Enum.count(modules)} modules trouvés."
+    Enum.each(modules, fn %{path: path, source: source} ->
+      IO.puts "\n--- Module: #{path} ---"
+      IO.puts source
+    end)
+    
+  {:error, reason} ->
+    IO.puts "❌ Erreur de bundling : #{reason}"
+end
+
+IO.puts "--- Fin du test ---"

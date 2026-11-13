@@ -933,8 +933,9 @@ describe.skipIf(!isBun)("passing a module namespace to expect.extend()", () => {
   });
 });
 
-// What the two answer is in expect-utils.test.ts. These tests are about the matcher that gets them.
-describe("this.utils.iterableEquality and this.utils.subsetEquality", () => {
+// What the two answer is in expect-utils.test.ts. These tests are about the matcher that gets them, and about what
+// Bun's own matchers do beside it.
+describe.skipIf(!isBun)("this.utils.iterableEquality and this.utils.subsetEquality", () => {
   /** Calls `probe` with the `this` of a custom matcher. */
   function inMatcher(probe) {
     let result;
@@ -1156,6 +1157,8 @@ describe("this.utils.iterableEquality and this.utils.subsetEquality", () => {
     const item = { id: 1 };
     const longerItem = { id: 1, required: "x" };
     const equalByToEqual = sample => ({ asymmetricMatch: other => passes(() => expect(other).toEqual(sample)) });
+    const [items, longerItems] = [() => new Set([item]), () => new Set([longerItem])];
+    const containing = sample => expect.objectContaining(sample);
     check({
       "any()": [[true, true], () => both({ a: 1, b: 2 }, { a: expect.any(Number) })],
       "any() that does not match": [[false, false], () => both({ a: "x", b: 2 }, { a: expect.any(Number) })],
@@ -1212,6 +1215,45 @@ describe("this.utils.iterableEquality and this.utils.subsetEquality", () => {
         [false, false],
         () => both({ a: { c: 1, d: 2 } }, { a: equalByToEqual({ c: 1 }) }),
       ],
+      // toMatchObject() compares a Set by its properties (#15673), so these rows are the made matcher alone. What
+      // iterableEquality hands to the members of a Set is from before the asymmetric matcher, and has subsetEquality.
+      "objectContaining() in a Set, with a Set whose item has a property less": [
+        false,
+        () =>
+          passes(() =>
+            expect(new Set([{ inner: longerItems() }]))._toMatchShape(new Set([containing({ inner: items() })])),
+          ),
+      ],
+      "objectContaining() in a property of an object in a Set": [
+        false,
+        () =>
+          passes(() =>
+            expect(new Set([{ a: { inner: longerItems() } }]))._toMatchShape(
+              new Set([{ a: containing({ inner: items() }) }]),
+            ),
+          ),
+      ],
+      "arrayContaining() in a Set, with a Set whose item has a property more": [
+        false,
+        () =>
+          passes(() => expect(new Set([[items()]]))._toMatchShape(new Set([expect.arrayContaining([longerItems()])]))),
+      ],
+      "objectContaining() in a Set, with a Set of the same items": [
+        true,
+        () =>
+          passes(() =>
+            expect(new Set([{ inner: items(), b: 2 }]))._toMatchShape(new Set([containing({ inner: items() })])),
+          ),
+      ],
+      "a Set beside objectContaining() in a Set, whose item has a property less": [
+        true,
+        () =>
+          passes(() =>
+            expect(new Set([{ a: { inner: items() }, b: longerItems() }]))._toMatchShape(
+              new Set([{ a: containing({ inner: items() }), b: items() }]),
+            ),
+          ),
+      ],
     });
   });
 
@@ -1230,11 +1272,12 @@ describe("this.utils.iterableEquality and this.utils.subsetEquality", () => {
     expect(context.equals(gen([1]), gen([2]))).toBe(true);
   });
 
-  /** Runs `bun test` on a file with this text. */
+  /** Runs `bun test` on a file with this text, or on the files of an object of names and texts. */
   async function runTestFile(text) {
-    using dir = tempDir("expect-extend-testers", { "testers.test.js": text });
+    const files = typeof text === "string" ? { "testers.test.js": text } : text;
+    using dir = tempDir("expect-extend-testers", files);
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "testers.test.js"],
+      cmd: [bunExe(), "test", ...Object.keys(files)],
       cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
@@ -1256,6 +1299,9 @@ describe("this.utils.iterableEquality and this.utils.subsetEquality", () => {
       constructor(items) { this.#items = items; }
       *[Symbol.iterator]() { yield* this.#items; }
     }
+    function* gen(items) { yield* items; }
+    /** A promise that is pending when a matcher gets it. */
+    const later = value => Promise.resolve().then(() => value);
     let utils;
     expect.extend({ toGrabUtils() { utils = this.utils; return { pass: true, message: () => "" }; } });
     expect(0).toGrabUtils();
@@ -1302,11 +1348,25 @@ describe("this.utils.iterableEquality and this.utils.subsetEquality", () => {
           expect(make()).toEqual(make());
           expect(make()).toStrictEqual(make());
         });
+        test("a matcher in a member of a Set or a Map waits for a promise", async () => {
+          const containing = text => expect.resolvesTo.stringContaining(text);
+          await expect(new Set([later("one")])).toEqual(new Set([containing("one")]));
+          await expect(new Set([later("one")])).not.toEqual(new Set([containing("two")]));
+          await expect(new Map([[1, later("one")]])).toEqual(new Map([[1, containing("one")]]));
+          await expect(new Map([[1, later("one")]])).not.toEqual(new Map([[1, containing("two")]]));
+          await expect({ a: [new Set([later("one")])] }).toStrictEqual({ a: [new Set([containing("one")])] });
+        });
+        test("a matcher in an item of an iterable that may be read once can't wait", () => {
+          const compare = () => expect(gen([later("one")])).toEqual(gen([expect.resolvesTo.stringContaining("one")]));
+          expect(compare).toThrow("An async matcher only works inside an expect() matcher");
+        });
     `);
       expect(results).toEqual([
         "(pass) iterables are compared by their items",
         "(pass) toStrictEqual() stays strict for the members of an iterable",
         "(pass) an object that two Sets hold is compared once",
+        "(pass) a matcher in a member of a Set or a Map waits for a promise",
+        "(pass) a matcher in an item of an iterable that may be read once can't wait",
       ]);
       expect(exitCode).toBe(0);
     },
@@ -1322,8 +1382,57 @@ describe("this.utils.iterableEquality and this.utils.subsetEquality", () => {
           expect({ a: new Hidden([1]), b: 2 }).toEqual({ a: new Hidden([1]) });
           expect({ a: new Hidden([1]), b: 2 }).not.toEqual({ a: new Hidden([2]) });
         });
+        test("a matcher in a property waits for a promise", async () => {
+          const containing = text => expect.resolvesTo.stringContaining(text);
+          await expect({ a: later("one"), b: 2 }).toEqual({ a: containing("one") });
+          await expect({ a: later("one"), b: 2 }).not.toEqual({ a: containing("two") });
+          await expect({ a: { b: [later("one")], c: 3 } }).toEqual({ a: { b: [containing("one")] } });
+          await expect({ a: new Set([later("one")]), b: 2 }).toEqual({ a: new Set([containing("one")]) });
+        });
     `);
-    expect(results).toEqual(["(pass) toEqual() takes an object with fewer properties"]);
+    expect(results).toEqual([
+      "(pass) toEqual() takes an object with fewer properties",
+      "(pass) a matcher in a property waits for a promise",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("the testers that a file registers are gone in the next file", async () => {
+    const isSubsetEqual = `(() => {
+      try {
+        expect({ a: 1, b: 2 }).toEqual({ a: 1 });
+        return true;
+      } catch {
+        return false;
+      }
+    })()`;
+    const { results, exitCode } = await runTestFile({
+      "a.test.js": `
+        ${registering(["iterableEquality", "subsetEquality"])}
+        test("the file that registers them", () => {
+          expect(${isSubsetEqual}).toBe(true);
+        });
+      `,
+      // An asymmetric matcher is the first to compare in this file.
+      "b.test.js": `
+        import { expect, test } from "bun:test";
+        test("the next file", () => {
+          expect({ a: 1 }).toEqual(expect.objectContaining({ a: 1 }));
+          expect(${isSubsetEqual}).toBe(false);
+        });
+      `,
+      "c.test.js": `
+        import { expect, test } from "bun:test";
+        test("the file after it", () => {
+          expect(${isSubsetEqual}).toBe(false);
+        });
+      `,
+    });
+    expect(results).toEqual([
+      "(pass) the file that registers them",
+      "(pass) the next file",
+      "(pass) the file after it",
+    ]);
     expect(exitCode).toBe(0);
   });
 
@@ -1388,7 +1497,7 @@ describe("this.utils.iterableEquality and this.utils.subsetEquality", () => {
             } catch (error) {
               answer = error.constructor.name;
             }
-            if (name.includes("20000")) answer = answer === true ? true : "false or RangeError";
+            if (name.includes("20000") && (answer === false || answer === "RangeError")) answer = "false or RangeError";
             return [name, answer === undefined ? "undefined" : answer];
           });
           console.log(JSON.stringify(Object.fromEntries(answers)));

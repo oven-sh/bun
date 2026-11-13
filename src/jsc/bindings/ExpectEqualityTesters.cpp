@@ -1,7 +1,11 @@
+// Copyright (c) Meta Platforms, Inc. and affiliates.
+//
+// This source code is licensed under the MIT license found in the
+// LICENSE file in the root directory of this source tree.
+
 #include "root.h"
 
 #include "GeneratedExpect.h"
-#include "ZigGlobalObject.h"
 #include <JavaScriptCore/ArrayConstructor.h>
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/IteratorOperations.h>
@@ -12,7 +16,7 @@
 #include <JavaScriptCore/Operations.h>
 
 // What `iterableEquality` and `subsetEquality` of `this.utils` ask of the values they compare.
-// The two are in src/runtime/test_runner/equality_testers.rs.
+// The two are in src/runtime/test_runner/equality_testers.rs, which says what they are ported from.
 
 using namespace JSC;
 
@@ -218,26 +222,30 @@ extern "C" EncodedJSValue ExpectEqualityTesters__entries(JSGlobalObject* globalO
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* object = asObject(JSValue::decode(encodedObject));
     MarkedArgumentBuffer entries;
-    auto append = [&](PropertyNameMode mode, DontEnumPropertiesMode dontEnum) {
-        JSArray* keys = ownPropertyKeys(globalObject, object, mode, dontEnum);
-        RETURN_IF_EXCEPTION(scope, );
+    for (bool isOfObjectEntries : { false, true }) {
+        JSArray* keys = ownPropertyKeys(globalObject, object, isOfObjectEntries ? PropertyNameMode::Strings : PropertyNameMode::Symbols, DontEnumPropertiesMode::Include);
+        RETURN_IF_EXCEPTION(scope, {});
         for (unsigned i = 0; i < keys->length(); i++) {
             JSValue key = keys->getIndex(globalObject, i);
-            RETURN_IF_EXCEPTION(scope, );
+            RETURN_IF_EXCEPTION(scope, {});
             auto name = key.toPropertyKey(globalObject);
-            RETURN_IF_EXCEPTION(scope, );
+            RETURN_IF_EXCEPTION(scope, {});
             if (name == vm.propertyNames->iteratorSymbol)
                 continue;
+            // Object.entries() looks at each property again before it reads it: the getter of one before it can have deleted it.
+            if (isOfObjectEntries) {
+                PropertyDescriptor descriptor;
+                bool isOwn = object->getOwnPropertyDescriptor(globalObject, name, descriptor);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (!isOwn || !descriptor.enumerable())
+                    continue;
+            }
             JSValue value = object->get(globalObject, name);
-            RETURN_IF_EXCEPTION(scope, );
+            RETURN_IF_EXCEPTION(scope, {});
             entries.append(constructArrayPair(globalObject, key, value));
-            RETURN_IF_EXCEPTION(scope, );
+            RETURN_IF_EXCEPTION(scope, {});
         }
-    };
-    append(PropertyNameMode::Symbols, DontEnumPropertiesMode::Include);
-    RETURN_IF_EXCEPTION(scope, {});
-    append(PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude);
-    RETURN_IF_EXCEPTION(scope, {});
+    }
     if (entries.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return {};
@@ -296,22 +304,35 @@ extern "C" bool ExpectEqualityTesters__isObjectWithKeys(JSGlobalObject* globalOb
 }
 
 // Jest's hasPropertyInObject(): an own property of `value`, or of an object on its prototype chain that is not Object.prototype.
+// Like Jest's, it calls itself for each prototype, so that a Proxy that is its own prototype ends in a RangeError.
+static bool hasPropertyInObject(JSGlobalObject* globalObject, JSValue value, PropertyName key)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (value.isNull() || !jsTypeofIsObject(globalObject, value) || value == globalObject->objectPrototype())
+        return false;
+    if (!vm.isSafeToRecurse()) [[unlikely]] {
+        throwStackOverflowError(globalObject, scope);
+        return false;
+    }
+    JSObject* object = asObject(value);
+    bool hasOwn = object->hasOwnProperty(globalObject, key);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (hasOwn)
+        return true;
+    JSValue prototype = object->getPrototype(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    bool isInherited = hasPropertyInObject(globalObject, prototype, key);
+    RETURN_IF_EXCEPTION(scope, false);
+    return isInherited;
+}
+
 extern "C" bool ExpectEqualityTesters__hasPropertyInObject(JSGlobalObject* globalObject, EncodedJSValue encodedValue, EncodedJSValue encodedKey)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     auto key = JSValue::decode(encodedKey).toPropertyKey(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
-    JSValue value = JSValue::decode(encodedValue);
-    while (!value.isNull() && jsTypeofIsObject(globalObject, value) && value != globalObject->objectPrototype()) {
-        JSObject* object = asObject(value);
-        bool hasOwn = object->hasOwnProperty(globalObject, key);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (hasOwn)
-            return true;
-        value = object->getPrototype(globalObject);
-        RETURN_IF_EXCEPTION(scope, false);
-    }
-    return false;
+    RELEASE_AND_RETURN(scope, hasPropertyInObject(globalObject, JSValue::decode(encodedValue), key));
 }
 
 static bool isSubsetTester(JSValue tester)
@@ -325,47 +346,38 @@ static bool isSubsetTester(JSValue tester)
     return hostFunction == toTagged(Bun__ExpectMatcherUtils__subsetEquality) || hostFunction == toTagged(Bun__ExpectMatcherUtils__subsetEqualityWithContext);
 }
 
-namespace Bun {
-
-// An asymmetric matcher such as expect.arrayContaining() says itself how much of a value it takes, so the comparisons that it
-// makes are not asked of subsetEquality(): those of Vitest are not either (vitest-dev/vitest#11100), and Jest's only ask
-// the registered testers. Puts the testers without it in the place of the testers in use, and answers what
-// putTestersBack() takes. Empty if none of them is subsetEquality().
-JSValue leaveSubsetTestersOut(JSGlobalObject* globalObject)
+// The testers of `list` that are no subsetEquality() of `this.utils`, and not what a call of it hands to the comparison of a property.
+// Empty, with nothing thrown, if `list` has neither.
+extern "C" EncodedJSValue ExpectEqualityTesters__withoutSubsetTesters(JSGlobalObject* globalObject, EncodedJSValue encodedList)
 {
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* utils = uncheckedDowncast<Bindgen::Generated::JSExpectMatcherUtils>(static_cast<Zig::GlobalObject*>(globalObject)->m_testMatcherUtilsObject.getConcurrently());
-    auto* all = dynamicDowncast<JSArray>(utils->m_equalityTesters.get());
-    if (!all)
-        return {};
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    auto* list = uncheckedDowncast<JSArray>(JSValue::decode(encodedList));
     MarkedArgumentBuffer others;
-    for (unsigned i = 0; i < all->length(); i++) {
-        JSValue tester = all->getIndex(globalObject, i);
+    unsigned length = list->length();
+    for (unsigned i = 0; i < length; i++) {
+        JSValue tester = list->getIndex(globalObject, i);
         RETURN_IF_EXCEPTION(scope, {});
         if (!isSubsetTester(tester))
             others.append(tester);
     }
-    if (others.size() == all->length())
+    if (others.size() == length)
         return {};
     if (others.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return {};
     }
-    if (others.isEmpty()) {
-        utils->m_equalityTesters.clear();
-        return all;
-    }
-    JSArray* withoutSubsetTesters = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), others);
-    RETURN_IF_EXCEPTION(scope, {});
-    utils->m_equalityTesters.set(vm, utils, withoutSubsetTesters);
-    return all;
+    RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), others)));
 }
 
-void putTestersBack(JSGlobalObject* globalObject, JSValue all)
+extern "C" bool ExpectEqualityTesters__hasSubsetTester(JSGlobalObject* globalObject, EncodedJSValue encodedList)
 {
-    auto* utils = uncheckedDowncast<Bindgen::Generated::JSExpectMatcherUtils>(static_cast<Zig::GlobalObject*>(globalObject)->m_testMatcherUtilsObject.getConcurrently());
-    utils->m_equalityTesters.set(getVM(globalObject), utils, all);
-}
-
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    auto* list = uncheckedDowncast<JSArray>(JSValue::decode(encodedList));
+    for (unsigned i = 0; i < list->length(); i++) {
+        JSValue tester = list->getIndex(globalObject, i);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (isSubsetTester(tester))
+            return true;
+    }
+    return false;
 }

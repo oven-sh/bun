@@ -628,6 +628,22 @@ describe("Bun's two answer what those of @jest/expect-utils answer", () => {
         false,
         () => iterableEquality(new URLSearchParams("a=1"), new URLSearchParams("a=2")),
       ],
+      // Like Object.entries(), which looks at each property again before it reads it.
+      "an own property that the getter of the one before it deletes": [
+        true,
+        () =>
+          iterableEquality(
+            {
+              get a() {
+                delete (this as { b?: number }).b;
+                return 1;
+              },
+              b: 2,
+              *[Symbol.iterator]() {},
+            },
+            { a: 1, *[Symbol.iterator]() {} },
+          ),
+      ],
       "Sets that hold themselves": [true, () => iterableEquality(setOfItself(), setOfItself())],
       "Maps that hold themselves": [true, () => iterableEquality(mapOfItself(), mapOfItself())],
     }));
@@ -1139,6 +1155,14 @@ describe("Bun's two answer what those of @jest/expect-utils answer", () => {
       ],
       "a Proxy that is revoked": ["TypeError", () => iterableEquality(revoked(), revoked())],
       "a subset that is a Proxy that is revoked": ["TypeError", () => subsetEquality({}, revoked())],
+      // The reference calls itself for each prototype.
+      "an object that is its own prototype": [
+        "RangeError",
+        () => {
+          const object: object = new Proxy({}, { getPrototypeOf: () => object });
+          return subsetEquality(object, { a: 1 });
+        },
+      ],
       "a subset that is a Proxy whose ownKeys() throws": [
         "RangeError",
         () => subsetEquality({}, new Proxy({ a: 1 }, { ownKeys: throws(RangeError) })),

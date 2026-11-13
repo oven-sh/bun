@@ -357,27 +357,24 @@ static ALWAYS_INLINE bool hasEqualityTesters(JSGlobalObject* globalObject)
     return matcherUtils && uncheckedDowncast<Bun::Bindgen::Generated::JSExpectMatcherUtils>(matcherUtils)->m_equalityTesters;
 }
 
-namespace Bun {
-// ExpectEqualityTesters.cpp
-JSC::JSValue leaveSubsetTestersOut(JSC::JSGlobalObject*);
-void putTestersBack(JSC::JSGlobalObject*, JSC::JSValue);
-}
+extern "C" JSC::EncodedJSValue Expect__leaveSubsetTestersOut(JSC::JSGlobalObject*);
+extern "C" void Expect__putTestersBack(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 
 // For as long as an asymmetric matcher compares or runs user code, the testers in use have no subsetEquality() of `this.utils`.
-// leaveSubsetTestersOut() says why.
+// Expect__leaveSubsetTestersOut() says why.
 class SubsetTestersLeftOut {
 public:
     ALWAYS_INLINE SubsetTestersLeftOut(JSGlobalObject* globalObject)
         : m_globalObject(globalObject)
     {
         if (hasEqualityTesters(globalObject)) [[unlikely]]
-            m_allTesters = Bun::leaveSubsetTestersOut(globalObject);
+            m_allTesters = JSValue::decode(Expect__leaveSubsetTestersOut(globalObject));
     }
 
     ALWAYS_INLINE ~SubsetTestersLeftOut()
     {
         if (m_allTesters) [[unlikely]]
-            Bun::putTestersBack(m_globalObject, m_allTesters);
+            Expect__putTestersBack(m_globalObject, JSValue::encode(m_allTesters));
     }
 
 private:

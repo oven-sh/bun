@@ -1,18 +1,26 @@
+// Copyright (c) Meta Platforms, Inc. and affiliates.
+//
+// This source code is licensed under the MIT license found in the
+// LICENSE file in the root directory of this source tree.
+
 //! `this.utils.iterableEquality` and `this.utils.subsetEquality`: the testers that the matchers of Jest hand to
 //! `equals()`, for a custom matcher to hand to `this.equals()`. They are `iterableEquality()` and `subsetEquality()` of
-//! @jest/expect-utils 30.5.2 with `this.equals()` in the place of their `equals()`, and differ from them in two ways:
+//! @jest/expect-utils 30.5.2 (packages/expect-utils/src/utils.ts of https://github.com/jestjs/jest) with `this.equals()`
+//! in the place of their `equals()`, and differ from them in three ways:
 //!
 //! - What a call hands to the comparison of its members is Vitest's. With Jest's, a Set that is reached again below
 //!   another Set is compared until the stack runs out (vitest-dev/vitest#5535).
 //! - The members are compared as strictly as the comparison that asked the tester. Jest's `toStrictEqual()` is strict
 //!   through testers, which stay in the list. Bun's is strict through its engine, which a tester that compares
 //!   loosely would switch off for everything below it.
+//! - What an asymmetric matcher compares is not asked of `subsetEquality` (`Expect__leaveSubsetTestersOut`).
 
 use core::ffi::c_void;
 
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{self as jsc, JSFunction, JSGlobalObject, JSMap, JSValue, JsResult};
 
+use super::expect_core::expect_deferred::Pass;
 use super::pretty_format::{call_method, item, member, member_by_value};
 use super::{ExpectMatcherContext, ExpectMatcherUtils};
 use crate::generated_bindgen::expect::{self as generated, js_ExpectMatcherUtils as js};
@@ -43,7 +51,7 @@ impl ExpectMatcherUtils {
 
     /// The reference's `iterableEqualityWithStack()`, which is what a call hands to the comparison of its members:
     /// `(a, b) => iterableEquality(a, b, [...testers], [...aStack], [...bStack])`. The function that `bind()` makes
-    /// holds the three lists, and `iterableEquality` as its `this`.
+    /// holds the three lists, and `iterableEquality` as its `this`. `in_use` is the list that it is asked with.
     pub(crate) fn iterable_equality_with_stack(
         cx: &mut JsScope<'_>,
         this_value: JsLocal<'_>,
@@ -52,6 +60,7 @@ impl ExpectMatcherUtils {
         b_stack: JsLocal<'_>,
         a: JsLocal<'_>,
         b: JsLocal<'_>,
+        in_use: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         let (a, b) = (a.to_js(), b.to_js());
@@ -59,7 +68,18 @@ impl ExpectMatcherUtils {
         if !are_iterables(global, a, b)? {
             return Ok(JSValue::UNDEFINED);
         }
-        let testers = copy(global, testers.to_js())?;
+        // `testers` is from before an asymmetric matcher took the subset testers out of the list in use
+        // (`Expect__leaveSubsetTestersOut`), so the members of what that matcher compares get none from it either.
+        let (testers, in_use) = (testers.to_js(), in_use.to_js());
+        let without_subset_testers = if in_use.is_array() && !has_subset_tester(global, in_use)? {
+            without_subset_testers(global, testers)?
+        } else {
+            None
+        };
+        let testers = match without_subset_testers {
+            Some(testers) => testers,
+            None => copy(global, testers)?,
+        };
         let stacks = [copy(global, a_stack.to_js())?, copy(global, b_stack.to_js())?];
         iterable_equality(global, this_value.to_js(), a, b, testers, stacks)
     }
@@ -183,6 +203,11 @@ fn iterable_equality(
         }
     }
 
+    // A Set or a Map can be read again. These two can be iterators that are read once, as a generator is. A matcher in a
+    // member that waits for a promise makes its matcher run again, which would find the two at their ends, so none waits.
+    let pass = Pass::barrier();
+    let _entered = pass.enter();
+
     // The reference steps both by hand, closes neither, and takes two that it can't open for no iterables.
     let a_iterator = try_open_iterator(global, a)?;
     let b_iterator = if a_iterator.is_some() { try_open_iterator(global, b)? } else { None };
@@ -289,7 +314,7 @@ fn with_stack_function(global: &JSGlobalObject) -> JSValue {
     let utils = ExpectMatcherUtils::singleton(global);
     js::iterable_equality_with_stack_get_cached(utils).unwrap_or_else(|| {
         let host_function = generated::Bun__ExpectMatcherUtils__iterableEqualityWithStack;
-        let function = JSFunction::create(global, "iterableEqualityWithStack", host_function, 5, Default::default());
+        let function = JSFunction::create(global, "iterableEqualityWithStack", host_function, 6, Default::default());
         js::iterable_equality_with_stack_set_cached(utils, global, function);
         function
     })
@@ -351,6 +376,23 @@ fn copy(global: &JSGlobalObject, list: JSValue) -> JsResult<JSValue> {
 /// `list.filter(item => item !== tester)`
 fn without(global: &JSGlobalObject, list: JSValue, tester: JSValue) -> JsResult<JSValue> {
     jsc::host_fn::from_js_host_call(global, || ExpectEqualityTesters__copy(global, list, tester))
+}
+
+/// `list` without `this.utils.subsetEquality` and without what a call of it hands to the comparison of a property.
+/// `None` if it has neither.
+pub(crate) fn without_subset_testers(global: &JSGlobalObject, list: JSValue) -> JsResult<Option<JSValue>> {
+    unsafe extern "C" {
+        safe fn ExpectEqualityTesters__withoutSubsetTesters(global: &JSGlobalObject, list: JSValue) -> JSValue;
+    }
+    let others = jsc::host_fn::from_js_host_call_generic(global, || ExpectEqualityTesters__withoutSubsetTesters(global, list))?;
+    Ok((!others.is_empty()).then_some(others))
+}
+
+fn has_subset_tester(global: &JSGlobalObject, list: JSValue) -> JsResult<bool> {
+    unsafe extern "C" {
+        safe fn ExpectEqualityTesters__hasSubsetTester(global: &JSGlobalObject, list: JSValue) -> bool;
+    }
+    jsc::host_fn::from_js_host_call_generic(global, || ExpectEqualityTesters__hasSubsetTester(global, list))
 }
 
 /// A function of two parameters that calls `target` with `this` and with `bound` ahead of its arguments.

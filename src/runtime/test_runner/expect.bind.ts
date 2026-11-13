@@ -312,7 +312,7 @@ export const subsetEquality = b.fn({
 export const iterableEqualityWithStack = b.fn({
   ...utility("iterableEqualityWithStack", "iterable_equality_with_stack"),
   passThis: true,
-  args: { testers: b.any, aStack: b.any, bStack: b.any, a: b.any, b: b.any },
+  args: { testers: b.any, aStack: b.any, bStack: b.any, a: b.any, b: b.any, inUse: b.any },
 });
 export const subsetEqualityWithContext = b.fn({
   ...utility("subsetEqualityWithContext", "subset_equality_with_context"),

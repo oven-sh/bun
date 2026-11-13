@@ -90,7 +90,7 @@ pub(crate) fn generate_compile_result_for_js_chunk(
     let result = generate_code_for_file_in_chunk_js(
         c,
         &mut buffer_writer,
-        chunk.renamer.as_renamer(),
+        c.renamer_for_chunk(chunk),
         chunk,
         part_range,
         to_common_js_ref,

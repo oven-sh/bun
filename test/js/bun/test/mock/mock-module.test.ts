@@ -2085,6 +2085,10 @@ describe.concurrent("a name that import and require() resolve to two files", () 
             mock.module("single", () => ({ ...require("single"), extra: 1 }));
             expect(require("single")).toEqual({ which: "real single", extra: 1 });
           });
+          test("a factory that spreads require() of a builtin module", () => {
+            mock.module("path", () => ({ ...require("path"), extra: 1 }));
+            expect([typeof require("path").join, require("path").extra]).toEqual(["function", 1]);
+          });
           test("vi.mock() leaves a library in node_modules the file", () => {
             expect([require("other").which, require("cjs-lib").which()]).toEqual(["mock", "real other"]);
           });
@@ -2099,7 +2103,7 @@ describe.concurrent("a name that import and require() resolve to two files", () 
           });
         `,
       },
-      7,
+      8,
     );
   });
 

@@ -284,16 +284,6 @@ pub struct Location {
     pub(crate) column: u32,
 }
 
-impl Location {
-    pub fn dummy() -> Location {
-        Location {
-            source_index: u32::MAX,
-            line: u32::MAX,
-            column: u32::MAX,
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug)]
 pub struct Num {
     pub(crate) has_sign: bool,

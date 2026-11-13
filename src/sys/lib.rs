@@ -1168,19 +1168,13 @@ pub mod O {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub const PATH: i32 = libc::O_PATH;
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub const NOATIME: i32 = libc::O_NOATIME;
-    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub const TMPFILE: i32 = libc::O_TMPFILE;
-    // Windows defines these (non-zero) so the `O.PATH` /
-    // `O.NOATIME` bit-tests in `openat_windows_impl` are meaningful.
+    // Windows defines this (non-zero) so the `O.PATH` bit-test in
+    // `openat_windows_impl` is meaningful.
     #[cfg(windows)]
     pub const PATH: i32 = 0o10000000;
-    #[cfg(windows)]
-    pub const NOATIME: i32 = 0o1000000;
     #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
     pub const PATH: i32 = 0;
-    #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
-    pub const NOATIME: i32 = 0;
     // Defined for every platform; Darwin-only flags map to 0
     // elsewhere so `flags & O.EVTONLY` etc. compile and are no-ops.
     #[cfg(unix)]

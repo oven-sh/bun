@@ -44,6 +44,28 @@ async function run(cmd: string[], files: Record<string, string>, written: string
 
 const runTests = (source: string, written?: string[]) => run(["test"], { "a.test.js": prelude + source }, written);
 
+/** For test files whose code handles a matcher's failure after the matcher has failed. */
+const handlesLater = (flavor: "bun:test" | "vitest") => `
+  import { afterEach, beforeAll, describe, expect, test, vi } from "${flavor}";
+  import { drainMicrotasks } from "bun:jsc";
+  const later = (value, ms = 1) => new Promise(resolve => setTimeout(resolve, ms, value));
+  const laterReject = (value, ms = 1) => new Promise((_, reject) => setTimeout(reject, ms, value));
+  const outcome = promise => promise.then(() => "fulfilled", () => "rejected");
+  const jobs = async () => { for (let i = 0; i < 8; i++) await null; };
+  // A matcher on a promise that is pending at the call. The matcher fails a few promise jobs later, in the same turn.
+  const failing = () => {
+    const { promise, resolve } = Promise.withResolvers();
+    const matcher = expect(promise).resolves.toBe(2);
+    resolve(1);
+    return matcher;
+  };
+  // For a handler that has to come after the failure.
+  const failed = matcher => {
+    if (Bun.peek.status(matcher) !== "rejected") throw new Error("the matcher has not failed yet");
+    return matcher;
+  };
+`;
+
 /** The source line of a.test.js that each error's first stack frame points at. */
 function failingLines(stderr: string, source: string) {
   const lines = (prelude + source).split("\n");
@@ -302,6 +324,560 @@ describe.concurrent(".resolves and .rejects", () => {
       'expect(promise).resolves.toBe("first of several");',
       'expect(promise).rejects.toBe("second of several");',
       'const matcher = expect(promise).resolves.toBe("handled later");',
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  // Vitest 5.1.0 and Jest 30.5.2 pass each test above "in the next setImmediate() callback".
+  // Bun 1.4.2 passes the first five in a "vitest" file, where vi.waitFor() is a hand-written loop.
+  test.each(["bun:test", "vitest"] as const)(
+    'a failure fails its test only if nothing handles it in the turn in which the matcher fails: "%s"',
+    async flavor => {
+      const { stdout, report, exitCode } = await run(["test"], {
+        "a.test.js": `
+          ${handlesLater(flavor)}
+          test("a settled promise, in an async function", async () => {
+            console.log(await outcome((async () => expect(Promise.reject(5)).rejects.toBe(6))()));
+          });
+          test("a pending promise, in an async function", async () => {
+            console.log(await outcome((async () => expect(laterReject(5)).rejects.toBe(6))()));
+          });
+          test("given to expect().rejects", async () => {
+            const returned = (async () => expect(Promise.resolve(1)).resolves.toBe(2))();
+            await expect(returned).rejects.toThrow("expect(received).toBe(expected)");
+          });
+          test("in Promise.allSettled()", async () => {
+            const double = vi.fn(async value => value * 2);
+            const results = await Promise.allSettled([1, 2].map(async value => expect(double(value)).resolves.toBe(2)));
+            console.log(results.map(result => result.status).join());
+          });
+          test("in vi.waitFor()", async () => {
+            let calls = 0;
+            const count = vi.fn(async () => ++calls);
+            await vi.waitFor(async () => expect(count()).resolves.toBe(3), { interval: 1 });
+            console.log(calls);
+          });
+          test("8 promise jobs later", async () => {
+            const matcher = failing();
+            await jobs();
+            console.log(await outcome(failed(matcher)));
+          });
+          test("8 promise jobs later, in process.nextTick()", async () => {
+            const matcher = failing();
+            await jobs();
+            console.log(await new Promise(resolve => process.nextTick(() => resolve(outcome(failed(matcher))))));
+          });
+          test("8 promise jobs later, in the turn of a timer", async () => {
+            const { promise, resolve } = Promise.withResolvers();
+            const matcher = expect(promise).resolves.toBe(2);
+            setTimeout(resolve, 1, 1);
+            await promise;
+            await jobs();
+            console.log(await outcome(failed(matcher)));
+          });
+          test("after drainMicrotasks(), in the same call", async () => {
+            const matcher = failing();
+            drainMicrotasks();
+            console.log(await outcome(failed(matcher)));
+          });
+          test("in the next setImmediate() callback", async () => {
+            const { promise, resolve } = Promise.withResolvers();
+            const matcher = expect(promise).resolves.toBe(2);
+            setImmediate(resolve, 1);
+            console.log(await new Promise(resolve => setImmediate(() => resolve(outcome(failed(matcher))))));
+          });
+          test("in a later turn", async () => {
+            const matcher = failing();
+            await later();
+            console.log(await outcome(failed(matcher)));
+          });
+          test("never", () => {
+            failing();
+          });
+          // The promise of .finally() rejects with no handler first. expect() then marks it as handled.
+          test("passed on by .finally(), then given to expect().rejects", async () => {
+            const matcher = failing();
+            await jobs();
+            const passedOn = failed(matcher).finally(() => {});
+            await jobs();
+            await expect(failed(passedOn)).rejects.toThrow("expect(received).toBe(expected)");
+          });
+          test("next", () => {});
+        `,
+      });
+      expect(stdout).toEqual([
+        "rejected",
+        "rejected",
+        "fulfilled,rejected",
+        "3",
+        "rejected",
+        "rejected",
+        "rejected",
+        "rejected",
+        "rejected",
+        "rejected",
+      ]);
+      expect(report).toEqual([
+        "(pass) a settled promise, in an async function",
+        "(pass) a pending promise, in an async function",
+        "(pass) given to expect().rejects",
+        "(pass) in Promise.allSettled()",
+        "(pass) in vi.waitFor()",
+        "(pass) 8 promise jobs later",
+        "(pass) 8 promise jobs later, in process.nextTick()",
+        "(pass) 8 promise jobs later, in the turn of a timer",
+        "(pass) after drainMicrotasks(), in the same call",
+        "error: expect(received).toBe(expected)",
+        "(fail) in the next setImmediate() callback",
+        "error: expect(received).toBe(expected)",
+        "(fail) in a later turn",
+        "error: expect(received).toBe(expected)",
+        "(fail) never",
+        "(pass) passed on by .finally(), then given to expect().rejects",
+        "(pass) next",
+      ]);
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  test("every matcher that waits, and whatever holds it, leaves a failure that its caller handles to the caller", async () => {
+    const handled = `
+      ${handlesLater("bun:test")}
+      const handled = async (name, matcher = failing()) => {
+        await jobs();
+        console.log(name + ":", await outcome(failed(matcher)));
+      };
+    `;
+    const { stdout, report, exitCode } = await run(["test", "--preload=./preload.js"], {
+      "preload.js": handled + `handled("preload");`,
+      "a.test.js": `
+        ${handled}
+        const soon = async value => {
+          await null;
+          return value;
+        };
+        expect.extend({
+          async toBeSoon(received, expected) {
+            await null;
+            return { pass: received === expected, message: () => "toBeSoon" };
+          },
+        });
+        await handled("top level");
+        describe("describe()", () => {
+          handled("describe()");
+          test("test", () => {});
+        });
+        for (const [name, matcher] of Object.entries({
+          ".rejects": () => expect(soon(1)).rejects.toBe(1),
+          "toThrow()": () => expect(() => soon(1)).toThrow(),
+          "a custom matcher": () => expect(1).toBeSoon(2),
+          "an asymmetric matcher": () => expect([1]).toEqual([expect.toBeSoon(2)]),
+          "expect.resolvesTo": () => expect(soon("one")).toEqual(expect.resolvesTo.stringContaining("two")),
+        })) {
+          test(name, () => handled(name, matcher()));
+        }
+        describe("hooks", () => {
+          beforeAll(() => handled("beforeAll"));
+          afterEach(() => handled("afterEach"));
+          test("test", () => {});
+        });
+        describe("concurrent tests", () => {
+          test.concurrent("before the first await", () => handled("before the first await"));
+          test.concurrent("after the first await", async () => {
+            await later();
+            await handled("after the first await");
+          });
+        });
+      `,
+    });
+    expect(stdout.toSorted()).toEqual([
+      ".rejects: rejected",
+      "a custom matcher: rejected",
+      "after the first await: rejected",
+      "afterEach: rejected",
+      "an asymmetric matcher: rejected",
+      "before the first await: rejected",
+      "beforeAll: rejected",
+      "describe(): rejected",
+      "expect.resolvesTo: rejected",
+      "preload: rejected",
+      "toThrow(): rejected",
+      "top level: rejected",
+    ]);
+    // No "error:" and no "# Unhandled error between tests".
+    expect(report.toSorted()).toEqual([
+      "(pass) .rejects",
+      "(pass) a custom matcher",
+      "(pass) an asymmetric matcher",
+      "(pass) concurrent tests > after the first await",
+      "(pass) concurrent tests > before the first await",
+      "(pass) describe() > test",
+      "(pass) expect.resolvesTo",
+      "(pass) hooks > test",
+      "(pass) toThrow()",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test('the hooks and the concurrent tests of "vitest" leave a failure that they handle to themselves too', async () => {
+    const { stdout, report, exitCode } = await run(["test"], {
+      "a.test.js": `
+        import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
+        // Here a matcher on a settled promise returns a promise too, and fails in the first promise job.
+        const failing = (own = expect) => own(Promise.resolve(1)).resolves.toBe(2);
+        const handled = async (name, own) => {
+          const matcher = failing(own);
+          await null;
+          await null;
+          if (Bun.peek.status(matcher) !== "rejected") throw new Error("the matcher has not failed yet");
+          console.log(name + ":", await matcher.then(() => "fulfilled", () => "rejected"));
+        };
+        describe("handled", () => {
+          beforeAll(() => handled("beforeAll"));
+          beforeEach(() => handled("beforeEach"));
+          afterEach(() => handled("afterEach"));
+          afterAll(() => handled("afterAll"));
+          test("test", () => {});
+          test.concurrent("concurrent", ({ expect }) => handled("concurrent", expect));
+        });
+        describe("not handled", () => {
+          describe("beforeAll", () => {
+            beforeAll(() => void failing());
+            test("test", () => {});
+          });
+          describe("beforeEach", () => {
+            beforeEach(() => void failing());
+            test("test", () => {});
+          });
+          describe("afterEach", () => {
+            afterEach(() => void failing());
+            test("test", () => {});
+          });
+          describe("afterAll", () => {
+            afterAll(() => void failing());
+            test("test", () => {});
+          });
+          test.concurrent("concurrent", ({ expect }) => void failing(expect));
+        });
+      `,
+    });
+    expect(stdout.toSorted()).toEqual([
+      "afterAll: rejected",
+      "afterEach: rejected",
+      "afterEach: rejected",
+      "beforeAll: rejected",
+      "beforeEach: rejected",
+      "beforeEach: rejected",
+      "concurrent: rejected",
+    ]);
+    expect(report).toEqual([
+      "(pass) handled > test",
+      "(pass) handled > concurrent",
+      "error: expect(received).toBe(expected)",
+      "(fail) not handled > beforeAll > (unnamed)",
+      "error: expect(received).toBe(expected)",
+      "(fail) not handled > beforeEach > test",
+      "error: expect(received).toBe(expected)",
+      "(fail) not handled > afterEach > test",
+      "(pass) not handled > afterAll > test",
+      "error: expect(received).toBe(expected)",
+      "(fail) not handled > afterAll > (unnamed)",
+      "error: expect(received).toBe(expected)",
+      "(fail) not handled > concurrent",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("the later verdict for test.failing and retry, and the cases in which the runner cannot tell or wait", async () => {
+    const { stdout, report, exitCode } = await run(["test"], {
+      "a.test.js": `
+        ${handlesLater("bun:test")}
+        test.failing("test.failing, and the test catches the failure", async () => {
+          const matcher = failing();
+          await jobs();
+          await outcome(failed(matcher));
+        });
+        test("retry", async () => {
+          const matcher = failing();
+          await jobs();
+          await outcome(failed(matcher));
+        }, { retry: 2 });
+        // While another rejected promise has no handler, the runner cannot tell where the failure went.
+        let handed;
+        afterEach(() => {
+          handed?.catch(() => {});
+          handed = undefined;
+        });
+        test("catches the failure while another rejected promise has no handler", async () => {
+          await later();
+          const matcher = failing();
+          await jobs();
+          await outcome(failed(matcher));
+          handed = Promise.reject(new Error("handed to afterEach"));
+        });
+        // The error of the test comes first. The failure of the matcher follows once the microtasks have run.
+        test("throws later in the turn in which the matcher failed", async () => {
+          await later();
+          failing();
+          await jobs();
+          throw new Error("thrown later");
+        });
+        // This test ends before the runner asks again, so its own error is the report.
+        test("throws after drainMicrotasks()", () => {
+          failing();
+          drainMicrotasks();
+          throw new Error("thrown by the test");
+        });
+        // Native code that continues a disposed graph settles no promise, so this failure can't wait for a handler.
+        test("in a Bun.ModuleGraph that is disposed before the matcher fails", async () => {
+          const graph = new Bun.ModuleGraph();
+          const { promise, resolve } = Promise.withResolvers();
+          const matcher = graph.run(() => expect(promise).resolves.toBe(2));
+          resolve(1);
+          graph.dispose();
+          await jobs();
+          console.log(Bun.peek.status(matcher));
+        });
+      `,
+      "b.test.js": `
+        import { expect, test } from "vitest";
+        const failing = () => expect(Promise.resolve(1)).resolves.toBe(2);
+        test.fails("test.fails, and the test catches the failure", async () => {
+          const matcher = failing();
+          await null;
+          await matcher.catch(() => {});
+        });
+      `,
+    });
+    expect(stdout).toEqual(["pending"]);
+    expect(report).toEqual([
+      "(fail) test.failing, and the test catches the failure",
+      "(pass) retry",
+      "error: expect(received).toBe(expected)",
+      "(fail) catches the failure while another rejected promise has no handler",
+      "error: thrown later",
+      "error: expect(received).toBe(expected)",
+      "(fail) throws later in the turn in which the matcher failed",
+      "error: thrown by the test",
+      "(fail) throws after drainMicrotasks()",
+      "error: expect(received).toBe(expected)",
+      "(fail) in a Bun.ModuleGraph that is disposed before the matcher fails",
+      "(fail) test.fails, and the test catches the failure",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  // A sync advance runs the timers and their microtasks inside the call. An async advance runs them in turns of their own.
+  test.each(["bun:test", "vitest"] as const)(
+    'a sync advance of fake timers is the turn of the failure, and an async advance is a later turn: "%s"',
+    async flavor => {
+      const { stdout, report, exitCode } = await run(["test"], {
+        "a.test.js": `
+          ${handlesLater(flavor)}
+          afterEach(() => void vi.useRealTimers());
+          test("after vi.advanceTimersByTime() runs the matcher, in the same call", async () => {
+            vi.useFakeTimers();
+            await null;
+            const { promise, resolve } = Promise.withResolvers();
+            setTimeout(resolve, 5, 1);
+            const matcher = expect(promise).resolves.toBe(2);
+            vi.advanceTimersByTime(5);
+            console.log(await outcome(failed(matcher)));
+          });
+          test("after await vi.advanceTimersByTimeAsync()", async () => {
+            vi.useFakeTimers();
+            const matcher = failing();
+            await vi.advanceTimersByTimeAsync(0);
+            console.log(await outcome(failed(matcher)));
+          });
+        `,
+      });
+      expect(stdout).toEqual(["rejected", "rejected"]);
+      expect(report).toEqual([
+        "(pass) after vi.advanceTimersByTime() runs the matcher, in the same call",
+        "error: expect(received).toBe(expected)",
+        "(fail) after await vi.advanceTimersByTimeAsync()",
+      ]);
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  // server.stop(true) in the handler closes the socket of a request whose body has not come. The server rejects the
+  // read once the handler has returned, and drains the microtasks inside its own dispatch. The runner does not step
+  // in a nested drain, so the verdict has to wait for the next one.
+  test("a failure in a nested drain gets its verdict after that drain, and is not lost", async () => {
+    const { stdout, report, exitCode } = await run(["test"], {
+      "a.test.js": `
+        ${handlesLater("bun:test")}
+        function bodyRejectedInANestedDrain() {
+          const { promise: body, resolve: hand } = Promise.withResolvers();
+          const server = Bun.serve({
+            port: 0,
+            hostname: "127.0.0.1",
+            idleTimeout: 0,
+            fetch(request) {
+              hand(request.text());
+              server.stop(true);
+              return new Response("late");
+            },
+          });
+          Bun.connect({
+            hostname: "127.0.0.1",
+            port: server.port,
+            socket: {
+              open(socket) {
+                socket.write("POST / HTTP/1.1\\r\\nHost: x\\r\\nContent-Length: 10\\r\\n\\r\\n");
+              },
+              data() {},
+              close() {},
+              error() {},
+            },
+          }).catch(() => {});
+          return body;
+        }
+        test("handled 8 promise jobs later, in the nested drain", async () => {
+          const body = bodyRejectedInANestedDrain();
+          const matcher = expect(body).resolves.toBe("x");
+          await body.catch(() => {});
+          await jobs();
+          console.log(await outcome(failed(matcher)));
+        });
+        test("never handled, and the test waits for the matcher", () => {
+          expect(bodyRejectedInANestedDrain()).resolves.toBe("x");
+        });
+        test("never handled, and the test ends in the nested drain", async () => {
+          const body = bodyRejectedInANestedDrain();
+          expect(body).resolves.toBe("x");
+          await body.catch(() => {});
+        });
+        test("next", () => {});
+      `,
+    });
+    expect(stdout).toEqual(["rejected"]);
+    expect(report).toEqual([
+      "(pass) handled 8 promise jobs later, in the nested drain",
+      "error: expect(received).resolves.toBe(expected)",
+      "(fail) never handled, and the test waits for the matcher",
+      "error: expect(received).resolves.toBe(expected)",
+      "(fail) never handled, and the test ends in the nested drain",
+      "(pass) next",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  // Such a reaction leaves a rejected promise with no handler, so the caller of the matcher still fails. The runner
+  // reports that second rejection as well, for whatever runs then: each "next" is there to take it.
+  test("a reaction that only passes the rejection on does not handle a failure that came before it", async () => {
+    const vitest = `
+      import { expect, test } from "vitest";
+      const later = () => new Promise(resolve => setTimeout(resolve, 1));
+      // Here a matcher on a settled promise returns a promise too. The promise of helper() gets its rejection.
+      const helper = async () => expect(Promise.resolve(1)).resolves.toBe(2);
+      // The promise of step() gets another error object.
+      const step = async run => {
+        try {
+          return await run();
+        } catch (error) {
+          throw new Error("the step failed", { cause: error });
+        }
+      };
+    `;
+    const { results, exitCode } = await run(["test"], {
+      "a.test.js": `
+        ${handlesLater("bun:test")}
+        const reactions = {
+          ".finally()": matcher => void matcher.finally(() => {}),
+          ".then() with one function": matcher => void matcher.then(() => {}),
+          "an async function that nothing awaits": matcher => void (async () => void (await matcher))(),
+          "a .catch() that throws another error": matcher =>
+            void matcher.catch(error => {
+              throw new Error("wrapped", { cause: error });
+            }),
+          "Promise.any()": matcher => void Promise.any([matcher]),
+        };
+        const passedOn = async (reaction = reactions[".finally()"]) => {
+          const matcher = failing();
+          await jobs();
+          reaction(failed(matcher));
+        };
+        for (const [name, reaction] of Object.entries(reactions)) {
+          describe(name, () => {
+            test("in the first turn of the test", () => passedOn(reaction));
+            test("in a later turn of the test", async () => {
+              await later();
+              await passedOn(reaction);
+            });
+            test("next", () => {});
+          });
+        }
+        describe("in beforeAll", () => {
+          beforeAll(async () => {
+            await later();
+            await passedOn();
+          });
+          test("test", () => {});
+        });
+        test.failing("in test.failing", async () => {
+          await later();
+          await passedOn();
+        });
+        test("next", () => {});
+      `,
+      "b.test.js": `
+        ${vitest}
+        test("an async helper that nothing awaits", async () => {
+          await later();
+          helper();
+        });
+        test("next", () => {});
+        test("a helper that wraps the error, and that nothing awaits", async () => {
+          await later();
+          step(helper);
+        });
+        test("next", () => {});
+      `,
+      // With a listener the runner does not report the rejection that was passed on. The listener gets it.
+      "c.test.js": `
+        ${vitest}
+        process.on("unhandledRejection", () => {});
+        test("a helper that wraps the error, in a file with an unhandledRejection listener", async () => {
+          await later();
+          step(helper);
+        });
+        test("next", () => {});
+        // Bun.build() waits for the setup() of a plugin in a nested tick, with this test on the stack. The listener
+        // gets the rejection at the end of that tick, which is before the runner can ask.
+        test("passed on in a nested tick, in a file with an unhandledRejection listener", async () => {
+          const { promise, resolve } = Promise.withResolvers();
+          const matcher = expect(promise).resolves.toBe(2);
+          resolve(1);
+          (async () => {
+            for (let i = 0; i < 8; i++) await null;
+            matcher.finally(() => {});
+          })();
+          const plugin = { name: "nested tick", setup: () => Bun.sleep(1) };
+          await Bun.build({ entrypoints: ["./none.js"], plugins: [plugin] }).catch(() => {});
+        });
+        test("next", () => {});
+      `,
+    });
+    expect(results.filter(line => !line.endsWith("next"))).toEqual([
+      "(fail) .finally() > in the first turn of the test",
+      "(fail) .finally() > in a later turn of the test",
+      "(fail) .then() with one function > in the first turn of the test",
+      "(fail) .then() with one function > in a later turn of the test",
+      "(fail) an async function that nothing awaits > in the first turn of the test",
+      "(fail) an async function that nothing awaits > in a later turn of the test",
+      "(fail) a .catch() that throws another error > in the first turn of the test",
+      "(fail) a .catch() that throws another error > in a later turn of the test",
+      "(fail) Promise.any() > in the first turn of the test",
+      "(fail) Promise.any() > in a later turn of the test",
+      "(fail) in beforeAll > (unnamed)",
+      "(pass) in test.failing",
+      "(fail) an async helper that nothing awaits",
+      "(fail) a helper that wraps the error, and that nothing awaits",
+      "(fail) a helper that wraps the error, in a file with an unhandledRejection listener",
+      "(fail) passed on in a nested tick, in a file with an unhandledRejection listener",
     ]);
     expect(exitCode).toBe(1);
   });
@@ -1068,6 +1644,45 @@ describe.concurrent(".resolves and .rejects", () => {
     expect(stdout).toEqual(["300"]);
     expect(exitCode).toBe(0);
   });
+});
+
+// --isolate gives each file a realm of its own, and --isolate=modules runs each file in a Bun.ModuleGraph.
+// Not concurrent: on a debug build --isolate=modules takes seconds to start, and longer beside 20 other spawns.
+test.each(isolationFlags)("a failed matcher gets the later verdict in each file: bun test %j", async flags => {
+  const file = (flavor: "bun:test" | "vitest") => `
+    ${handlesLater(flavor)}
+    test("caught later", async () => {
+      const matcher = failing();
+      await jobs();
+      console.log(await outcome(failed(matcher)));
+    });
+    test("never handled", async () => {
+      await later();
+      failing();
+      await jobs();
+    });
+    // The last test, so that no test gets the report of the rejection that .finally() passed on.
+    test("passed on", async () => {
+      await later();
+      const matcher = failing();
+      await jobs();
+      failed(matcher).finally(() => {});
+    });
+  `;
+  const { stdout, results, exitCode } = await run(["test", ...flags], {
+    "a.test.js": file("bun:test"),
+    "b.test.js": file("vitest"),
+  });
+  expect(stdout).toEqual(["rejected", "rejected"]);
+  expect(results).toEqual([
+    "(pass) caught later",
+    "(fail) never handled",
+    "(fail) passed on",
+    "(pass) caught later",
+    "(fail) never handled",
+    "(fail) passed on",
+  ]);
+  expect(exitCode).toBe(1);
 });
 
 describe.concurrent("matchers that have to wait for a promise", () => {

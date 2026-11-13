@@ -60,6 +60,29 @@ extern "C" bool ExpectDeferred__isHandled(EncodedJSValue promise)
     return uncheckedDowncast<JSPromise>(JSValue::decode(promise))->isHandled();
 }
 
+// Rejects without telling the rejection tracker and leaves isHandled() false, so the runner can ask later whether a reaction came.
+extern "C" void ExpectDeferred__rejectUndecided(JSGlobalObject* globalObject, EncodedJSValue encodedPromise, EncodedJSValue error)
+{
+    auto* promise = uncheckedDowncast<JSPromise>(JSValue::decode(encodedPromise));
+    ASSERT(promise->status() == JSPromise::Status::Pending);
+    promise->rejectAsHandled(getVM(globalObject), JSValue::decode(error));
+    promise->setFlags(promise->flags() & ~JSPromise::isHandledFlag);
+}
+
+extern "C" uint32_t ExpectDeferred__reportedRejections(JSGlobalObject* globalObject)
+{
+    return defaultGlobalObject(globalObject)->reportedRejectionCount();
+}
+
+// Also true with a reaction on the promise if a rejected promise has no handler, or had none at a report after `reportedBefore`: the reaction may only have passed the rejection on.
+extern "C" bool ExpectDeferred__isStillUnhandled(JSGlobalObject* globalObject, EncodedJSValue encodedPromise, uint32_t reportedBefore)
+{
+    if (!uncheckedDowncast<JSPromise>(JSValue::decode(encodedPromise))->isHandled())
+        return true;
+    auto* global = defaultGlobalObject(globalObject);
+    return global->hasUnhandledRejection() || global->reportedRejectionCount() != reportedBefore;
+}
+
 // A JSC::Exception, because unlike an Error it keeps its stack frames' code alive.
 extern "C" EncodedJSValue ExpectDeferred__captureCallSite(JSGlobalObject* globalObject)
 {

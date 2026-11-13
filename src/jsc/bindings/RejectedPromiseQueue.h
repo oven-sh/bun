@@ -27,6 +27,10 @@ public:
     void release(JSC::JSCell* owner, size_t mark);
     // Right before a drained promise is reported as unhandled.
     void markReported(JSC::JSGlobalObject* owner, JSC::JSPromise*);
+    // Whether a promise rejected since the last drain still has no handler. JS thread only.
+    bool hasUnhandled() const;
+    // How many promises markReported() has seen. Wraps.
+    uint32_t reportedCount() const { return m_reportedCount; }
     template<typename Visitor> void visit(JSC::JSCell* owner, Visitor&);
     bool isEmpty() const { return m_entries.isEmpty(); }
 
@@ -44,6 +48,7 @@ private:
     WTF::Vector<Entry> m_held;
     // Promises reported as unhandled. Weak: a reported promise that dies leaves it.
     JSC::WriteBarrier<JSC::JSWeakSet> m_reported;
+    uint32_t m_reportedCount { 0 };
 };
 
 // Inlined into promiseRejectionTracker, their one caller.

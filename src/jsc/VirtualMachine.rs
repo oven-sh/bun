@@ -5504,6 +5504,7 @@ impl VirtualMachine {
         is_esm: bool,
         is_a_file_path: bool,
         global_cache: bun_resolver::GlobalCache,
+        retry_on_not_found: bool,
     ) -> crate::CrateResult<()> {
         use bun_js_parser::Macro;
         use bun_resolver::{ResultUnion, node_fallbacks};
@@ -5571,7 +5572,7 @@ impl VirtualMachine {
         // A `loop`
         // returning the resolver result; `retry_on_not_found` is consumed on
         // the first miss.
-        let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
+        let mut retry_on_not_found = retry_on_not_found && bun_paths::is_absolute(source_to_use);
         let result: bun_resolver::Result = loop {
             let import_kind = if is_esm {
                 bun_ast::ImportKind::Stmt
@@ -5765,6 +5766,7 @@ impl VirtualMachine {
             query_string,
             mode,
             global.bun_vm().transpiler.resolver.opts.global_cache,
+            false,
         )
     }
 
@@ -5773,6 +5775,9 @@ impl VirtualMachine {
     /// An `onResolve` plugin is asked once, as an `import` asks it, and its answer is resolved both ways.
     /// The second path is `None` when it is the first one and when `require()` resolves to nothing.
     /// When the `import` resolves to nothing, that is the result and `require()` is not asked.
+    /// For `require()` a miss is an answer: nothing is installed, and a file that appeared after its folder
+    /// was listed is not found.
+    /// `query_string` gets the query that the caller appends to both paths.
     pub fn resolve_for_import_and_require(
         global: &JSGlobalObject,
         specifier: &bun_core::String,
@@ -5787,31 +5792,52 @@ impl VirtualMachine {
             Err(error) => return Ok(Err(error)),
         };
         let global_cache = global.bun_vm().transpiler.resolver.opts.global_cache;
-        let resolve = |query: Option<&mut bun_core::String>, mode: ResolveMode| match &answer {
-            Some(answer) => {
-                Self::resolve_answer_of_on_resolve::<true>(global, answer, source, query, mode)
+        let resolve = |query: &mut bun_core::String, mode: ResolveMode, miss_is_an_answer: bool| {
+            match &answer {
+                Some(answer) => Self::resolve_answer_of_on_resolve::<true>(
+                    global,
+                    answer,
+                    source,
+                    Some(query),
+                    mode,
+                    miss_is_an_answer,
+                ),
+                None => Self::resolve_without_on_resolve::<true>(
+                    global,
+                    specifier,
+                    source,
+                    Some(query),
+                    mode,
+                    global_cache,
+                    miss_is_an_answer,
+                ),
             }
-            None => Self::resolve_without_on_resolve::<true>(
-                global,
-                specifier,
-                source,
-                query,
-                mode,
-                global_cache,
-            ),
         };
-        let for_import = match resolve(Some(query_string), ResolveMode::Esm)? {
+        let mut for_import = match resolve(&mut *query_string, ResolveMode::Esm, false)? {
             Ok(path) => path,
             Err(error) => return Ok(Err(error)),
         };
         if !also_for_require {
             return Ok(Ok((for_import, None)));
         }
-        let for_require = match resolve(None, ResolveMode::Require)? {
-            Ok(path) if !path.eql(&for_import) => Some(path),
-            _ => None,
+        // A name that only an `import` resolves misses here at every call, and listing the importer's folder
+        // again for a miss grows stores that are never freed.
+        let mut query_for_require = bun_core::String::EMPTY;
+        let mut for_require = match resolve(&mut query_for_require, ResolveMode::Require, true)? {
+            Ok(path) if !path.eql(&for_import) => path,
+            _ => return Ok(Ok((for_import, None))),
         };
-        Ok(Ok((for_import, for_require)))
+        // The caller appends `query_string` to both paths. The two have different queries when only one of them
+        // is an `onResolve` answer that stands as it is, query included: each path then takes its own here.
+        if !query_for_require.eql(query_string) {
+            let with_query = |path: &bun_core::String, query: &bun_core::String| {
+                bun_core::String::create_format(format_args!("{path}{query}"))
+            };
+            for_import = with_query(&for_import, query_string);
+            for_require = with_query(&for_require, &query_for_require);
+            *query_string = bun_core::String::EMPTY;
+        }
+        Ok(Ok((for_import, Some(for_require))))
     }
 
     /// `None` when no `onResolve` claims `specifier`, or `same_is_no_answer` is set and it returns `specifier` unchanged.
@@ -5840,6 +5866,7 @@ impl VirtualMachine {
             source,
             query_string,
             mode,
+            false,
         )
         .map(Some)
     }
@@ -5892,6 +5919,7 @@ impl VirtualMachine {
         source: &bun_core::String,
         query_string: Option<&mut bun_core::String>,
         mode: ResolveMode,
+        miss_is_an_answer: bool,
     ) -> JsResult<Result<bun_core::String, JSValue>> {
         let (answer, global_cache) = match answer {
             OnResolveAnswer::VirtualModule(key) => return Ok(Ok(key.clone())),
@@ -5904,6 +5932,7 @@ impl VirtualMachine {
             query_string,
             mode,
             global_cache,
+            miss_is_an_answer,
         )?;
         // Not on disk: either an `onLoad` serves it, or nothing is loaded and the callback's absolute path stands, like the answer of a resolve hook in Node.js.
         if resolved.is_err() {
@@ -5915,6 +5944,8 @@ impl VirtualMachine {
         Ok(resolved)
     }
 
+    /// `miss_is_an_answer`: the caller asks whether there is a path and reports no miss. Nothing is installed
+    /// and no folder is listed again to avoid one, and the error of one is `undefined`, not a `ResolveMessage`.
     fn resolve_without_on_resolve<const IS_A_FILE_PATH: bool>(
         global: &JSGlobalObject,
         specifier: &bun_core::String,
@@ -5922,6 +5953,7 @@ impl VirtualMachine {
         query_string: Option<&mut bun_core::String>,
         mode: ResolveMode,
         global_cache: bun_resolver::GlobalCache,
+        miss_is_an_answer: bool,
     ) -> JsResult<Result<bun_core::String, JSValue>> {
         const MAX_LEN: usize = (bun_paths::MAX_PATH_BYTES as f64 * 1.5) as usize;
         // `data:` URLs carry the module source inline and never touch the
@@ -6066,9 +6098,16 @@ impl VirtualMachine {
             normalize_source(source_utf8.slice()),
             mode.is_esm(),
             IS_A_FILE_PATH,
-            global_cache,
+            match miss_is_an_answer {
+                true => bun_resolver::GlobalCache::disable,
+                false => global_cache,
+            },
+            !miss_is_an_answer,
         );
         if let Err(err) = resolve_result {
+            if miss_is_an_answer {
+                return Ok(Err(JSValue::UNDEFINED));
+            }
             let import_kind = mode.import_kind();
             // Find a `.resolve`-metadata msg if the log has one.
             let resolve_msg_index = log

@@ -1923,14 +1923,18 @@ impl<'a, 's> Syntax<'a, 's> {
 
     /// A declared namespace is an object when the program runs where it holds a variable, a function, a class or an enum.
     fn is_erased_object(&self, found: &Declared) -> bool {
-        use StmtKind::{Class, Enum, Fn, Module, Var};
         let file = self.file;
+        let is_value = |inner: &Stmt| {
+            matches!(
+                inner.kind,
+                StmtKind::Var(_) | StmtKind::Fn(_) | StmtKind::Class(_) | StmtKind::Enum(_)
+            )
+        };
         let holds_a_value = |&statement: &StmtId| {
             let (start, end) = (file[statement].start, file[statement].loc.end);
             let is_inside = |inner: &&Stmt| start < inner.start && inner.start < end;
-            let mut inner = file.stmts.iter().filter(is_inside);
-            matches!(file[statement].kind, Module(_))
-                && inner.any(|inner| matches!(inner.kind, Var(_) | Fn(_) | Class(_) | Enum(_)))
+            matches!(file[statement].kind, StmtKind::Module(_))
+                && file.stmts.iter().filter(is_inside).any(is_value)
         };
         let is_erased = |&statement: &StmtId| file.is_erased_statement(statement);
         found.statements.iter().all(is_erased) && found.statements.iter().any(holds_a_value)
@@ -2195,6 +2199,15 @@ fn link(
                 (module.types.iter().flat_map(|types| &types.references))
                     .any(|reference| reference.0 == at && is_it(&reference.1))
             };
+            // Of a module of another output, the file has the `declare global` blocks and what its types need.
+            let is_written = |at: u32| {
+                let holds = |id: &StmtId| file[*id].start <= at && at < file[*id].loc.end;
+                let needed = wanted.iter().filter(|place| place.0 == index);
+                let mut needed = needed.filter_map(|place| declared[index].get(&place.1[..]));
+                index < mapped
+                    || (augmentations.iter()).any(|place| place.0 == index && holds(&place.1))
+                    || needed.any(|it| it.statements.iter().chain(&it.enum_statement).any(holds))
+            };
             let names = (file.names.iter())
                 .filter(|head| !head.is_qualified())
                 .map(|head| head.pos());
@@ -2204,7 +2217,7 @@ fn link(
                 .filter(|&at| is_inside(&module.type_ranges, at));
             let mut heads = names
                 .chain(queries)
-                .filter(|&at| module.syntax.word(at) == name);
+                .filter(|&at| module.syntax.word(at) == name && is_written(at));
             let keeps_its_text = index != keeper && module.types.is_none();
             !(keeps_its_text && declared[index].contains_key(name)) && heads.all(is_its_name)
         })

@@ -1387,6 +1387,38 @@ export class Finder {
     expect(found.map(line => line.trim())).toEqual(named.lines);
   });
 
+  test("a declared namespace keeps its name in each of two entry points that declare it", async () => {
+    const entry = (name: string) => `declare namespace Host {
+  const version: number;
+  interface Options {
+    size: number;
+  }
+}
+export function ${name}(options: Host.Options) {
+  return Host.version + options.size;
+}
+`;
+    using dir = tempDir(
+      "library-typed-file-declared-entries",
+      library({ "src/index.ts": entry("one"), "src/extra.ts": entry("two") }),
+    );
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts", "src/extra.ts");
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    const named = (file: string) => readFileSync(join(String(dir), "dist", file), "utf8").match(/^.*\bHost\d*\b.*$/gm);
+    expect({ index: named("index.aot.ts"), extra: named("extra.aot.ts") }).toEqual({
+      index: [
+        "declare namespace Host {",
+        "function one(options: Host.Options) {",
+        "  return Host.version + options.size;",
+      ],
+      extra: [
+        "declare namespace Host {",
+        "function two(options: Host.Options) {",
+        "  return Host.version + options.size;",
+      ],
+    });
+  });
+
   test("--splitting: a declared namespace keeps its name in the chunk that reads it", async () => {
     using dir = tempDir(
       "library-typed-file-declared-chunks",

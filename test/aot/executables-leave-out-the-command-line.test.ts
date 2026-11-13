@@ -1,4 +1,5 @@
 // An executable compiled ahead of time never starts the JIT and never acts as `bun`, so `bun build --compile --aot` leaves both out, with or without --trim.
+// So does the test runner where nothing in the executable can come by it: trim-keeps-the-test-runner-only-when-named.test.ts.
 // What the program itself can use stays. Each way into what was left out answers with a sentence.
 import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
@@ -108,6 +109,7 @@ const commandLineAndJit = model.features
   .filter(each => each.enteredFrom === "command-line" || each.name === "JIT")
   .map(each => each.name)
   .sort();
+const commandLineJitAndTestRunner = [...commandLineAndJit, "Test"].sort();
 const compilers = ["AotCompiler", "Check", "ImageCompiler", "JIT"];
 const lacks = (option: string, part: string, name: string) =>
   `${option}: this executable doesn't include ${part}. To keep ${part}, build it with trim: { allow: ["bundler", "${name}"] }`;
@@ -135,7 +137,7 @@ function removedFeaturesOf(executable: Build): string[] {
 
   test("leaves out the command line and the JIT, and nothing a program can use", async () => {
     const hello = await built("hello");
-    expect(removedFeaturesOf(hello)).toEqual(commandLineAndJit);
+    expect(removedFeaturesOf(hello)).toEqual(commandLineJitAndTestRunner);
     expect(await run([hello.executable], folder)).toEqual({ stdout: "hello world\n", stderr: "", exitCode: 0 });
     expect(sizeOf(await shared.build("hello.ts")) - sizeOf(hello)).toBeGreaterThan(30_000_000);
   }, 600_000);

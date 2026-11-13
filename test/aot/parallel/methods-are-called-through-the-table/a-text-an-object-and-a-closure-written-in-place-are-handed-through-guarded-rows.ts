@@ -1,4 +1,3 @@
-// STATISTIC: MethodCallsThroughTable >= 3
 interface Figure { area(n: unknown): number }
 const weigh = (n: any): number => (typeof n === "string" ? n.length : typeof n === "function" ? n() : n.n);
 class Plate implements Figure { constructor(readonly side: number) {} area(n: unknown) { return this.side * 1000 + weigh(n); } }

@@ -850,7 +850,9 @@ const cargoTestPlatform: Platform = { os: "linux", arch: "x64", distro: "debian"
  */
 function getCargoTestStep(buildId: string | undefined): CommandStep {
   const buildStep = `${getTargetKey(cargoTestPlatform)}-build-bun`;
-  const profileDir = `${getTargetTriplet(cargoTestPlatform)}-profile`;
+  const triplet = getTargetTriplet(cargoTestPlatform);
+  const profileDir = `${triplet}-profile`;
+  const from = `--step ${buildStep}${buildId ? ` --build ${buildId}` : ""}`;
   return {
     key: `${getPlatformKey(cargoTestPlatform)}-cargo-test`,
     label: `${getPlatformLabel(cargoTestPlatform)} - cargo-test`,
@@ -860,8 +862,10 @@ function getCargoTestStep(buildId: string | undefined): CommandStep {
     cancel_on_build_failing: isMergeQueue(),
     timeout_in_minutes: 30,
     command: [
-      `buildkite-agent artifact download '${profileDir}.zip' . --step ${buildStep}${buildId ? ` --build ${buildId}` : ""}`,
-      `unzip -o '${profileDir}.zip' '${profileDir}/testaot' '${profileDir}/bun-profile'`,
+      `buildkite-agent artifact download '${profileDir}.zip' . ${from}`,
+      `buildkite-agent artifact download 'test-tools-${triplet}.zip' . ${from}`,
+      `unzip -o '${profileDir}.zip' '${profileDir}/bun-profile'`,
+      `unzip -o 'test-tools-${triplet}.zip' '${profileDir}/testaot'`,
       `chmod +x ${profileDir}/testaot ${profileDir}/bun-profile`,
       // ($$ is a literal $ after pipeline-upload interpolation.)
       `TESTAOT="$$PWD/${profileDir}/testaot" BUN_UNDER_TEST="$$PWD/${profileDir}/bun-profile" bun run rust:test`,
@@ -1042,7 +1046,7 @@ function getImageSteps(
 
 const windowsSignPlatform: Platform = { os: "windows", arch: "x64", release: "2019" };
 
-/** Each build-bun step produces two zips: <triplet>-profile.zip and <triplet>.zip */
+/** The zips of a build-bun step that are released: <triplet>-profile.zip and <triplet>.zip */
 function getBuildArtifacts(platforms: Platform[]): { artifact: string; step: string }[] {
   return platforms.flatMap(platform =>
     ["-profile.zip", ".zip"].map(suffix => ({
@@ -1527,7 +1531,7 @@ function getPipelineOptions(): PipelineOptions | undefined {
   };
 
   return {
-    canary: !parseBoolean(process.env.RELEASE),
+    canary: true,
     skipEverything: parseOption(/\[(skip ci|no ci)\]/i),
     skipBuilds: parseOption(/\[(skip builds?|no builds?|only tests?)\]/i),
     forceBuilds: parseOption(/\[(force builds?)\]/i),

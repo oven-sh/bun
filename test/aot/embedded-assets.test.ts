@@ -658,6 +658,60 @@ export const start = async () => {
     expect(compiled).toEqual(plain);
   }, 120_000);
 
+  test.each([
+    ["removes a folder", ["remove"], "first"],
+    ["starts a process", ["start"], "changed"],
+    ["removes a folder, and starts a process later", ["remove", "start later"], "first"],
+  ])(
+    "another process writes a file of a package after the program %s",
+    async (_, deeds, expected) => {
+      using dir = tempDir("aot-files-of-a-package-changed-by-others", {
+        "app/package.json": `{ "name": "app" }`,
+        "app/node_modules/store/package.json": `{ "name": "store", "version": "1.0.0", "exports": "./index.mjs" }`,
+        "app/node_modules/store/below.cjs": `exports.below = name => require("node:path").join(__dirname, name);`,
+        "app/node_modules/store/index.mjs": `import fs from "node:fs";
+import path from "node:path";
+export { below } from "./below.cjs";
+export const read = () => fs.readFileSync(path.join(import.meta.dirname, "a.txt"), "utf8");
+`,
+        "app/node_modules/store/a.txt": "first",
+        "app/main.mjs": `import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { below, read } from "store";
+const deeds = process.argv.slice(2);
+const start = () => Bun.spawnSync({ cmd: [process.env.BUN_OF_TEST, "--version"], stdout: "ignore" });
+if (deeds.includes("start")) start();
+if (deeds.includes("remove")) fs.rmSync(fs.mkdtempSync(path.join(os.tmpdir(), "store-")), { recursive: true });
+console.log("ready");
+for await (const _ of console) break;
+if (deeds.includes("start later")) start();
+console.log(read(), path.basename(below("a.txt")));
+`,
+      });
+      const app = join(String(dir), "app");
+      const outfile = join(String(dir), "built.exe");
+      const built = await run(app, [bunExe(), "build", "--compile", "--aot", "./main.mjs", "--outfile", outfile]);
+      expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+        stderr: "",
+        exitCode: 0,
+      });
+      const env = { ...bunEnv, BUN_OF_TEST: bunExe() };
+      await using program = Bun.spawn({ cmd: [outfile, ...deeds], cwd: app, env, stdin: "pipe", stdout: "pipe" });
+      let said = "";
+      for await (const bytes of program.stdout) {
+        said += new TextDecoder().decode(bytes);
+        if (said.trim() !== "ready") continue;
+        writeFileSync(join(app, "node_modules/store/a.txt"), "changed");
+        program.stdin.write("go\n");
+        program.stdin.end();
+      }
+      expect(said.split(/\r?\n/)).toEqual(["ready", expected + " a.txt", ""]);
+      expect(await program.exited).toBe(0);
+    },
+    120_000,
+  );
+
   test("a data file that a package has written is loaded as it is on the disk", async () => {
     using dir = tempDir("aot-written-data-file", {
       "app/node_modules/store/package.json": `{ "name": "store", "version": "1.0.0", "exports": "./index.mjs" }`,

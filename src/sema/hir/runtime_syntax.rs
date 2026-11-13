@@ -207,10 +207,23 @@ impl<S: Storage> FileIn<S> {
 }
 
 impl File<'_> {
+    /// `Function` makes sloppy functions in strict code too.
+    pub fn makes_sloppy_functions(&self) -> bool {
+        self.known_evaluations
+            .iter()
+            .any(|it| it.is_in_global_scope)
+    }
+
     pub fn set_strict(&mut self) {
         self.is_strict = true;
+        let evaluations = &self.known_evaluations[..];
+        let is_made_by_function = |start: u32| {
+            let count = evaluations.partition_point(|it| it.start <= start);
+            let evaluation = evaluations[..count].last();
+            evaluation.is_some_and(|it| it.is_in_global_scope && start < it.end)
+        };
         for function in self.fns.iter_mut() {
-            function.is_strict = true;
+            function.is_strict |= !is_made_by_function(function.start);
         }
     }
 

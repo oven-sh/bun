@@ -441,11 +441,9 @@ impl Resolver<'_, '_> {
                 )
         };
         let mut pattern_keys = hir.pat_props.iter().map(|property| property.key);
-        let mut kinds = hir.exprs.iter().map(|expr| expr.kind);
         self.output.may_call_evaluator
-            || self.computed.iter().any(is_taken)
+            || self.constructor_reads.iter().any(is_taken)
             || pattern_keys.any(|key| key == PropKey::Name(known::constructor))
-            || kinds.any(|kind| matches!(kind, ExprKind::String(known::constructor)))
     }
 
     fn note_text_taken_by_pattern(&mut self, name: Atom) {

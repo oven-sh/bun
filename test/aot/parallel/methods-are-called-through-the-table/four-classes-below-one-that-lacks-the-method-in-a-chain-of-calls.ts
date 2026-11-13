@@ -1,4 +1,3 @@
-// STATISTIC: MethodCallsThroughTable >= 4
 class Base { constructor(readonly n: number) {} }
 class A extends Base { f(x: number) { return this.n + x; } }
 class B extends Base { f(x: number) { return this.n * 2 + x; } }

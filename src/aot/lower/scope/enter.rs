@@ -1,3 +1,4 @@
+use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, CodeUnit, InitialState, ScopeId, ScopeKind, SymbolId};
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::hir::{FnKind, IdList, StmtId, StmtKind};
@@ -9,6 +10,7 @@ use super::state::{EnteredScope, EnvironmentPutOff};
 use super::{
     BindingRef, DeadZone, LocalBinding, ScopeSlot, Storage, bindings, dead_zone, environments,
 };
+use crate::ir::generated::GlobalDeclarationStep;
 use crate::ir::{
     BlockId, ClassSlot, LocalVariable, PositionFlags, Type, TypeTable, ValueId, VariableKey,
 };
@@ -219,9 +221,37 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.instantiate_functions_made_by(scope, MakerOfScope::Here);
     }
 
+    /// EvalDeclarationInstantiation, in the order of the engine
+    fn declare_globals_of_script(&mut self, globals: &[(Atom, bool)]) {
+        let steps = [
+            (GlobalDeclarationStep::FindDuplicate, [false, true]),
+            (GlobalDeclarationStep::CheckProperty, [true, false]),
+            (GlobalDeclarationStep::Create, [true, false]),
+        ];
+        for (step, kinds) in steps {
+            for is_function in kinds {
+                let of_kind = globals.iter().filter(|it| it.1 == is_function);
+                for &(name, _) in of_kind {
+                    let key = self.file.atom_key(name);
+                    self.file.fragment.note_write(key);
+                    self.builder.declare_global(key, step, is_function);
+                }
+            }
+        }
+    }
+
     fn instantiate_functions_made_by(&mut self, scope: ScopeId, maker: MakerOfScope) {
+        let globals = self.file.list_globals_of_script(scope);
+        self.declare_globals_of_script(&globals);
         for index in 0..self.file.scopes.hoisted_functions(scope).len() {
             let (symbol, function) = self.file.scopes.hoisted_functions(scope)[index];
+            if !globals.is_empty() {
+                let id = function::declare_source_function(self.file, function, None);
+                let closure = self.emit_closure(id, None);
+                let name = self.file.bound.symbol(symbol).name;
+                self.emit_free_name_set(name, closure);
+                continue;
+            }
             if self.file.scopes.initial_function(symbol).is_some() {
                 continue;
             }
@@ -293,6 +323,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         for &binding in self.file.scopes.stored_in_loop(statement) {
             let local = self.scopes.find_local(binding);
             let local = local.expect("the scope of a local is entered before the loop");
+            modified.push(local.variable);
+        }
+        for whole in self.whole_strings_of(self.file.scopes.stored_in_loop(statement)) {
+            let local = self.scopes.find_local(whole);
+            let local = local.expect("the longer string is declared outside the loop");
             modified.push(local.variable);
         }
         if let StmtKind::For { .. } = self.file.hir[statement].kind {

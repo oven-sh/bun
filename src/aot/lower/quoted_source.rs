@@ -1291,6 +1291,9 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         &self,
         expression: ExprId,
     ) -> Option<&'a [u8]> {
+        if !self.inputs.options.runs_tests {
+            return None;
+        }
         let hir = self.hir;
         let written = hir[expression];
         let namespace = match written.kind {

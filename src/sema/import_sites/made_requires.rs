@@ -2001,6 +2001,29 @@ pub(super) fn follow_settled_bindings(hir: &File<'_>, bound: &Bound<'_>, e: Expr
     settled_chain(hir, bound, e).last().unwrap_or(e)
 }
 
+fn declared_initializer(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> Option<ExprId> {
+    let Some(ExprKind::Ident(_)) = expr_kind(hir, e) else {
+        return None;
+    };
+    let Binding::Symbol(symbol) = bound.binding(e) else {
+        return None;
+    };
+    match bound.binding_initializer(hir, symbol) {
+        BindingInitializer::Expression(source) if bound.is_evaluated_ident(e) => {
+            Some(hir.skip_type_assertions(source))
+        }
+        _ => None,
+    }
+}
+
+/// What the names were declared with, whatever is stored to them afterwards.
+pub(super) fn follow_declared_bindings(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> ExprId {
+    let first = hir.skip_type_assertions(e);
+    let chain = std::iter::successors(Some(first), |&e| declared_initializer(hir, bound, e));
+    let declared = chain.take(LONGEST_CHAIN_OF_BINDINGS + 1).last();
+    declared.unwrap_or(first)
+}
+
 pub fn holds_import_meta_require(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
     if !bound.may_name_own_require()
         || !matches!(

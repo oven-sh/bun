@@ -147,6 +147,7 @@ fn create_analysis<'s>(
         paths_from_own_directory: scan.paths_from_own_directory,
         answers_of_resolvers: scan.answers_of_resolvers,
         names_of_workers: scan.names_of_workers,
+        names_preloaded: scan.names_preloaded,
         paths_of_changed_files: scan.paths_of_changed_files,
         module_relative_reads: scan.module_relative_reads,
         module_relative_patterns: scan.module_relative_patterns,

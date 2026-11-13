@@ -595,7 +595,9 @@ itRendering("click(selector) waits for element to stop animating", async () => {
   expect(Number(left)).toBe(100);
 });
 
-itRendering("click(selector) rejects on timeout when obscured", async () => {
+// Not itRendering: the deadline does not depend on frames, so this holds on
+// a CI runner with no display too.
+it("click(selector) rejects on timeout when obscured", async () => {
   await using view = new Bun.WebView({ width: 300, height: 300 });
   await view.navigate(
     "data:text/html," +
@@ -609,6 +611,26 @@ itRendering("click(selector) rejects on timeout when obscured", async () => {
   // callAsyncJavaScript: surfaces the page-side throw as
   // WKErrorJavaScriptAsyncFunctionResultRejected.
   await expect(view.click("#under", { timeout: 200 })).rejects.toThrow(/timeout waiting for '#under'/);
+});
+
+it("click(selector) and scrollTo(selector) time out when the page renders no frames", async () => {
+  await using view = new Bun.WebView({ width: 300, height: 300 });
+  await view.navigate(
+    html(`
+      <button id=x onclick="window.__clicked=1" style="position:fixed;left:0;top:0;width:50px;height:50px">x</button>
+    `),
+  );
+  // A page that renders no frames never runs a rAF callback. The
+  // actionability loop must still reach its deadline.
+  await view.evaluate("window.requestAnimationFrame = () => 0");
+
+  await expect(view.click("#missing", { timeout: 300 })).rejects.toThrow(/timeout waiting for '#missing'/);
+  await expect(view.scrollTo("#missing", { timeout: 300 })).rejects.toThrow(/timeout waiting for '#missing'/);
+
+  // An element that exists gets its second stability sample at the
+  // deadline, so the click lands instead of the promise staying pending.
+  await view.click("#x", { timeout: 300 });
+  expect(await view.evaluate("window.__clicked")).toBe(1);
 });
 
 itRendering("click(selector) with options", async () => {

@@ -609,6 +609,16 @@ function emitDrain(stream: FSStream) {
   }
 }
 
+// The sink rejects for a failed write. Node reports one on a tick (Writable's onwriteError), and
+// no tick runs once 'exit' is being emitted: a write that fails there has no callback and no 'error'.
+function reportSinkError(cb: ((err: any) => void) | undefined, err: any, stream?: FSStream) {
+  if (process._exiting) return;
+  if (cb) cb(err);
+  // Node.js onwriteError: callback AND destroy are both invoked; the
+  // callback is additive, not a replacement for the 'error' event.
+  if (stream) require("internal/streams/destroy").errorOrDestroy(stream, err);
+}
+
 function _write(data, encoding, cb) {
   const fileSink = this[kWriteStreamFastPath];
 
@@ -620,7 +630,7 @@ function _write(data, encoding, cb) {
           emitDrain(this);
           cb(null);
         })
-        .catch(cb);
+        .catch(err => reportSinkError(cb, err));
       return false; // Indicate backpressure
     } else {
       cb(null);
@@ -665,10 +675,7 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
           if (cb) cb(null);
           emitDrain(this);
         },
-        err => {
-          if (cb) cb(err);
-          require("internal/streams/destroy").errorOrDestroy(this, err);
-        },
+        err => reportSinkError(cb, err, this),
       );
       return false;
     } else {
@@ -733,12 +740,7 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
           emitDrain(this);
           cb(null);
         },
-        err => {
-          cb(err);
-          // Node.js onwriteError: callback AND destroy are both invoked; the
-          // callback is additive, not a replacement for the 'error' event.
-          require("internal/streams/destroy").errorOrDestroy(this, err);
-        },
+        err => reportSinkError(cb, err, this),
       );
       return false; // Indicate backpressure
     } else {
@@ -776,7 +778,7 @@ writeStreamPrototype._writev = function (data, cb) {
           emitDrain(this);
           cb(null);
         })
-        .catch(cb);
+        .catch(err => reportSinkError(cb, err));
       return false;
     } else {
       cb(null);

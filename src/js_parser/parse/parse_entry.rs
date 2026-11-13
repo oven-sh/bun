@@ -168,6 +168,8 @@ pub struct Options<'a> {
     pub module_type: options::ModuleType,
     /// The source is one of JavaScriptCore's builtins: `@name` is a name.
     pub jsc_builtin_syntax: bool,
+    /// The source is a function without the class around it: a private name needs no declaration.
+    pub undeclared_private_names: bool,
     pub output_format: options::Format,
 
     pub transform_only: bool,
@@ -223,6 +225,7 @@ impl<'a> Default for Options<'a> {
             allow_unresolved: &options::AllowUnresolved::DEFAULT,
             module_type: options::ModuleType::Unknown,
             jsc_builtin_syntax: false,
+            undeclared_private_names: false,
             output_format: options::Format::Esm,
             transform_only: false,
             import_meta_glob: None,
@@ -318,6 +321,7 @@ impl<'a> Options<'a> {
             allow_unresolved: self.allow_unresolved,
             module_type: self.module_type,
             jsc_builtin_syntax: self.jsc_builtin_syntax,
+            undeclared_private_names: self.undeclared_private_names,
             output_format: self.output_format,
             transform_only: self.transform_only,
             import_meta_glob: self.import_meta_glob,
@@ -402,6 +406,7 @@ impl<'a> Options<'a> {
             allow_unresolved: &options::AllowUnresolved::DEFAULT,
             module_type: options::ModuleType::Unknown,
             jsc_builtin_syntax: false,
+            undeclared_private_names: false,
             output_format: options::Format::Esm,
             transform_only: false,
             import_meta_glob: None,

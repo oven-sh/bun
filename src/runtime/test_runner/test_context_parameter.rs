@@ -24,7 +24,7 @@ pub(crate) enum ContextParameter {
 pub(crate) const TEXT_LEFT_OUT: &str = "fixtures are chosen by the properties that a callback destructures, and this build holds no function source to read them from (--no-compile-function-source)";
 
 unsafe extern "C" {
-    safe fn Bun__JSFunction__sourceFromParameters(
+    pub(super) safe fn Bun__JSFunction__sourceFromParameters(
         function: JSValue,
         is_arrow_function: &mut bool,
     ) -> bun_core::String;

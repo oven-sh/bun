@@ -4492,6 +4492,17 @@ static bool mentionsOriginalModule(Zig::GlobalObject* globalObject, JSC::CallFra
     return false;
 }
 
+extern "C" bool JSMock__printsUnlikePlainRun(Zig::GlobalObject*);
+extern "C" BunString JSMock__printAsPlainRun(JSC::EncodedJSValue factory);
+
+// The text of `factory` as a plain run prints it, which is what mentionsOriginalModule() reads. Null to read `source` itself.
+__attribute__((noinline, minsize)) static String printAsPlainRun(JSC::JSFunction* factory, StringView source)
+{
+    if (!source.contains("importOriginal"_s) && !source.contains("importActual"_s) && !source.contains("requireActual"_s))
+        return {};
+    return JSMock__printAsPlainRun(JSValue::encode(factory)).transferToWTFString();
+}
+
 #if ENABLE(AOT)
 static void restoreStashedFactories(Zig::GlobalObject*, JSModuleMock*);
 
@@ -5949,7 +5960,13 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
             mock->importsOriginal = true;
         else if (factoryFunction && !factoryFunction->isHostFunction()) {
             auto* executable = factoryFunction->jsExecutable();
-            mock->importsOriginal = executable->parameterCount() || mentionsOriginalModule(globalObject, callframe, executable->source().view(), specifier);
+            if (executable->parameterCount())
+                mock->importsOriginal = true;
+            else {
+                StringView text = executable->source().view();
+                String asPlainRunPrints = JSMock__printsUnlikePlainRun(globalObject) ? printAsPlainRun(factoryFunction, text) : String();
+                mock->importsOriginal = mentionsOriginalModule(globalObject, callframe, asPlainRunPrints.isNull() ? text : StringView(asPlainRunPrints), specifier);
+            }
             RETURN_IF_EXCEPTION(scope, {});
         }
 #if ENABLE(AOT)

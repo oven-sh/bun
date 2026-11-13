@@ -20,13 +20,12 @@ use crate::options;
 use crate::options::Loader;
 
 use crate::LinkerContext;
-use crate::linker_context::generate_compile_result_for_css_chunk::generate_compile_result_for_css_chunk;
+use crate::linker_context::generate_compile_result_for_css_chunk::{
+    generate_compile_result_for_css_chunk, nest_external_imports,
+};
 use crate::linker_context::generate_compile_result_for_html_chunk::generate_compile_result_for_html_chunk;
 use crate::linker_context::generate_compile_result_for_js_chunk::generate_compile_result_for_js_chunk;
 use crate::linker_context::output_file_list_builder::OutputFileList as OutputFileListBuilder;
-use crate::linker_context::prepare_css_asts_for_chunk::{
-    PrepareCssAstTask, prepare_css_asts_for_chunk,
-};
 use crate::linker_context::static_route_visitor::StaticRouteVisitor;
 use crate::linker_context::write_output_files_to_disk::write_output_files_to_disk;
 use crate::linker_context_mod::{GenerateChunkCtx, PendingPartRange};
@@ -114,48 +113,9 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
         debug!("  DONE {} source maps (line offset)", chunks.len());
     }
 
-    {
-        // Per CSS chunk:
-        // Remove duplicate rules across files. This must be done in serial, not
-        // in parallel, and must be done from the last rule to the first rule.
-        if c.parse_graph().css_file_count > 0 {
-            let total_count: usize = {
-                let mut total_count: usize = 0;
-                for chunk in chunks.iter() {
-                    if chunk.content.is_css() {
-                        total_count += 1;
-                    }
-                }
-                total_count
-            };
-
-            debug!(" START {} prepare CSS ast (total count)", total_count);
-
-            let group = bun_threading::WaitGroup::init_with_count(total_count);
-            let mut batch = ThreadPoolLib::Batch::default();
-            let mut tasks: Vec<PrepareCssAstTask> = Vec::with_capacity(total_count);
-            for chunk in chunks.iter_mut() {
-                if chunk.content.is_css() {
-                    tasks.push(PrepareCssAstTask {
-                        task: ThreadPoolLib::CountedTask::new(prepare_css_asts_for_chunk, &group),
-                        // `.cast()` erases the inner `'a`: the task's pointers are to `'static` types.
-                        chunk: std::ptr::from_mut::<Chunk>(chunk).cast(),
-                        linker: std::ptr::from_mut::<LinkerContext>(c).cast(),
-                    });
-                    // Capacity pre-reserved → push never reallocates → ptr stays stable.
-                    let task = tasks.last_mut().unwrap();
-                    batch.push(ThreadPoolLib::Batch::from(&raw mut task.task.task));
-                }
-            }
-            debug_assert_eq!(tasks.len(), total_count);
-            c.worker_pool().schedule(batch);
-            group.wait();
-
-            debug!("  DONE {} prepare CSS ast (total count)", total_count);
-        } else if cfg!(debug_assertions) {
-            for chunk in chunks.iter() {
-                debug_assert!(!chunk.content.is_css());
-            }
+    for chunk in chunks.iter_mut() {
+        if let crate::chunk::Content::Css(css) = &mut chunk.content {
+            nest_external_imports(c, &mut css.imports_in_chunk_in_order);
         }
     }
 

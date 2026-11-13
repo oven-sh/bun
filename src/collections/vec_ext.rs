@@ -468,7 +468,9 @@ impl ByteVecExt for Vec<u8> {
 }
 
 impl crate::pool::ObjectPoolType for Vec<u8> {
-    const INIT: Option<fn() -> Result<Self, bun_core::Error>> = Some(|| Ok(Vec::new()));
+    fn init() -> Self {
+        Vec::new()
+    }
     #[inline]
     fn reset(&mut self) {
         self.clear();

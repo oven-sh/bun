@@ -644,7 +644,6 @@ dependencies = [
  "bun_dotenv",
  "bun_io",
  "bun_ptr",
- "bun_sys",
  "bun_threading",
  "bun_uws",
  "strum",

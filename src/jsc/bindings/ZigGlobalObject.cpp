@@ -4022,7 +4022,7 @@ RefPtr<Performance> GlobalObject::performance()
     return m_performance;
 }
 
-extern "C" void Bun__handleRejectedPromise(Zig::GlobalObject* JSGlobalObject, JSC::JSPromise* promise, JSC::EncodedJSValue rejectionOwner);
+extern "C" bool Bun__handleRejectedPromise(Zig::GlobalObject* JSGlobalObject, JSC::JSPromise* promise, JSC::EncodedJSValue rejectionOwner);
 
 void GlobalObject::handleRejectedPromises()
 {
@@ -4039,6 +4039,7 @@ void GlobalObject::handleRejectedPromises()
         JSC::MarkedArgumentBuffer rejectionOwners;
         m_aboutToBeNotifiedRejectedPromises.drainTo(this, promises, rejectionOwners);
         RELEASE_ASSERT(!promises.hasOverflowed() && !rejectionOwners.hasOverflowed());
+        bool owesCheckpoint = false;
         for (size_t i = 0, size = promises.size(); i < size; ++i) {
             auto* promise = static_cast<JSC::JSPromise*>(promises.at(i).asCell());
             if (promise->isHandled())
@@ -4046,7 +4047,7 @@ void GlobalObject::handleRejectedPromises()
             // From here on a handler on this promise is late: promiseRejectionTracker(Handle) owes it 'rejectionHandled'.
             m_aboutToBeNotifiedRejectedPromises.markReported(this, promise);
 
-            Bun__handleRejectedPromise(this, promise, JSValue::encode(rejectionOwners.at(i)));
+            owesCheckpoint |= Bun__handleRejectedPromise(this, promise, JSValue::encode(rejectionOwners.at(i)));
             if (auto ex = scope.exception()) {
                 if (virtual_machine.isTerminationException(ex)) [[unlikely]]
                     return;
@@ -4054,6 +4055,9 @@ void GlobalObject::handleRejectedPromises()
                 this->reportUncaughtExceptionAtEventLoop(this, ex);
             }
         }
+        // The ticks and the microtasks of the listeners run now (node: processTicksAndRejections).
+        if (owesCheckpoint && drainMicrotasks())
+            return;
         // An unhandledRejection handler may itself reject a promise; loop
         // until the list stays empty.
     } while (!m_aboutToBeNotifiedRejectedPromises.isEmpty());

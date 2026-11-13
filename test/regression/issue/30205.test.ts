@@ -4,7 +4,7 @@
 // file and gcUnprotect()s the previous one. NapiEnv holds a raw
 // `Zig::GlobalObject*` in m_globalObject; for non-experimental addons
 // (nm_version != NAPI_VERSION_EXPERIMENTAL), napi finalizers are deferred to
-// the event loop as NapiFinalizerTask. Objects rooted on the old global only
+// a turn of the event loop. Objects rooted on the old global only
 // become collectable when the swap unprotects it, so their finalizers run
 // while loading the *next* file. Finalizer.run → NapiHandleScope::open then
 // reads and writes the dead old global (NapiHandleScopeImplStructure(),
@@ -56,8 +56,8 @@ describe.skipIf(!canBuildNodeAddons())("#30205", () => {
   // finalizers, so it reproduces deterministically on Linux x64 ASAN too.
   // On unpatched main this hits the JSCell cellState assertion on file 2.
   // `await 0` at module scope makes loadEntryPointForTestRunner go through
-  // waitForPromise → event_loop.tick(), which is where the enqueued
-  // NapiFinalizerTask actually runs.
+  // waitForPromise → event_loop.tick(), which is where the deferred
+  // finalizers actually run.
   function makeFixtures(n: number): Record<string, string> {
     const files: Record<string, string> = {};
     for (let i = 0; i < n; i++) {

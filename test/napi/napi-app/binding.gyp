@@ -373,6 +373,38 @@
                 "NAPI_VERSION=8",
             ],
         },
+        {
+            "target_name": "test_instance_data_finalizer_order",
+            "sources": ["test_instance_data_finalizer_order.c"],
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": [
+                "NAPI_DISABLE_CPP_EXCEPTIONS",
+            ],
+        },
+        {
+            "target_name": "test_instance_data_finalizer_order_experimental",
+            "sources": ["test_instance_data_finalizer_order.c"],
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": [
+                "NAPI_DISABLE_CPP_EXCEPTIONS",
+                "NAPI_EXPERIMENTAL",
+            ],
+        },
+        {
+            "target_name": "test_instance_data_finalizer_order_plugin",
+            "sources": ["test_instance_data_finalizer_order.c"],
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": [
+                "NAPI_DISABLE_CPP_EXCEPTIONS",
+                "NATIVE_BUNDLER_PLUGIN",
+            ],
+        },
         # The Windows link shapes of an addon that names node.exe in its import tables without
         # node-gyp's win_delay_load_hook. On other platforms they are ordinary addons.
         {

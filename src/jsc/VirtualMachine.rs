@@ -259,10 +259,8 @@ pub struct VirtualMachine {
     pub(crate) hide_bun_stackframes: bool,
 
     pub is_shutting_down: bool,
-    /// Set once `on_exit()` is past `RareData::cleanup_hooks`, run or not
-    /// (`exit_tears_down_napi_envs`). The list is never walked again, so a hook
-    /// pushed after this (a finalizer deferred from the final collection) would only leak.
-    pub(crate) has_run_cleanup_hooks: bool,
+    /// [`exit_and_free`](Self::exit_and_free) has begun, so [`teardown`](Self::teardown) follows.
+    teardown_follows_exit: bool,
     pub is_main_thread: bool,
     pub exit_handler: ExitHandler,
 
@@ -1788,10 +1786,6 @@ impl VirtualMachine {
         self.is_shutting_down
     }
 
-    pub fn has_run_cleanup_hooks(&self) -> bool {
-        self.has_run_cleanup_hooks
-    }
-
     /// Exported to C++ as `Bun__VM__scriptExecutionStatus` via virtual_machine_exports.rs.
     pub fn script_execution_status(&self) -> crate::ScriptExecutionStatus {
         if self.is_shutting_down || !self.script_allowed() {
@@ -2450,9 +2444,11 @@ impl VirtualMachine {
         self.handle.stop();
 
         if self.exit_tears_down_napi_envs() {
+            if self.exit_runs_teardown() {
+                self.run_queued_addon_callbacks();
+            }
             self.run_cleanup_hooks();
         }
-        self.has_run_cleanup_hooks = true;
 
         // Persist the Node compile cache (NODE_COMPILE_CACHE /
         // module.enableCompileCache()) after user exit handlers ran.
@@ -2469,14 +2465,38 @@ impl VirtualMachine {
     /// like a worker's, and that teardown expects the envs to be gone, so it tears them
     /// down on every exit too.
     fn exit_tears_down_napi_envs(&self) -> bool {
-        !self.is_main_thread()
-            || !self.exit_handler.requested
+        !self.exit_handler.requested || self.exit_runs_teardown()
+    }
+
+    /// Whether [`teardown`](Self::teardown) follows `on_exit()`.
+    pub fn exit_runs_teardown(&self) -> bool {
+        self.teardown_follows_exit
+            || !self.is_main_thread()
             || self.should_destruct_main_thread_on_exit()
     }
 
-    /// Drains `RareData::cleanup_hooks`, repeating while the hooks push more (an env's
-    /// cleanup defers finalizers onto this list once shutdown has begun). The `Vec` is
-    /// taken out of `rare_data` before the hooks run: they re-enter the VM.
+    /// Node settles an addon's handles and requests before its cleanup hooks. Here the loop releases what it has queued.
+    fn run_queued_addon_callbacks(&mut self) {
+        use bun_event_loop::task_tag;
+        const TAGS: [bun_event_loop::TaskTag; 3] = [
+            task_tag::NapiPendingFinalizers,
+            task_tag::NapiAsyncWork,
+            task_tag::UvHandleClose,
+        ];
+        let has_hooks =
+            (self.rare_data.as_deref()).is_some_and(|rare| !rare.cleanup_hooks.is_empty());
+        if !has_hooks {
+            return;
+        }
+        // As the hooks do, the callbacks start with no exception pending.
+        self.global().clear_exception();
+        while self.regular_event_loop.release_queued_tasks_tagged(&TAGS)
+            + self.macro_event_loop.release_queued_tasks_tagged(&TAGS)
+            != 0
+        {}
+    }
+
+    /// Drains `RareData::cleanup_hooks`. The `Vec` leaves `rare_data` before the hooks run: they re-enter the VM.
     fn run_cleanup_hooks(&mut self) {
         loop {
             let hooks = match self.rare_data.as_deref_mut() {
@@ -2524,6 +2544,7 @@ impl VirtualMachine {
         // SAFETY: fn contract (statement-scoped exclusive access: the handlers run script).
         let exit_code = unsafe {
             (*this).is_shutting_down = true;
+            (*this).teardown_follows_exit = true;
             (*this).on_exit();
             (*this).exit_handler.exit_code
         };
@@ -2600,6 +2621,7 @@ impl VirtualMachine {
         // here; the few `&mut` steps below are statement-scoped, because the
         // hooks re-derive their own access from `this`.
         let vm = unsafe { &*this };
+        debug_assert!(vm.exit_runs_teardown());
         let hooks = runtime_hooks();
 
         // ---- A. no more script; stop phase ------------------------------------
@@ -2680,20 +2702,27 @@ impl VirtualMachine {
         // A released completion can be a native continuation that opens
         // something new (a multipart upload's next part); sweep again so it is
         // cancelled rather than waited out.
-        // SAFETY: fn contract (statement-scoped exclusive access).
-        vm.handle.close_and_wait(|| unsafe {
-            (*this).release_queued_work();
-            let _ = Self::stop_phase_sweep(this, kind);
-        });
-        // Node-API finalizers that `NapiEnv::cleanup` held back for an `execute()` on the pool.
-        // SAFETY: fn contract (statement-scoped exclusive access).
-        unsafe {
-            if let Some(rare) = (*this).rare_data.as_deref_mut() {
+        vm.handle.close_and_wait(
+            // SAFETY: fn contract (statement-scoped exclusive access).
+            || unsafe {
+                (*this).release_queued_work();
+                let _ = Self::stop_phase_sweep(this, kind);
+            },
+            // Node-API finalizers that `NapiEnv::cleanup` held back. What they start is waited for too.
+            // SAFETY: fn contract (statement-scoped exclusive access).
+            || unsafe {
+                let Some(rare) = (*this).rare_data.as_deref_mut() else {
+                    return false;
+                };
+                if rare.cleanup_hooks_after_teardown_wait.is_empty() {
+                    return false;
+                }
                 let held_back = core::mem::take(&mut rare.cleanup_hooks_after_teardown_wait);
                 rare.cleanup_hooks.extend(held_back);
-            }
-            (*this).run_cleanup_hooks();
-        }
+                (*this).run_cleanup_hooks();
+                true
+            },
+        );
         // SAFETY: fn contract (statement-scoped exclusive access).
         unsafe { (*this).stop_import_watcher() };
         // The exiting main thread now parks the process-wide HTTP thread —

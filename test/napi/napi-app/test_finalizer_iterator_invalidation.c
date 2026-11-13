@@ -14,7 +14,7 @@ static void problematic_finalizer(napi_env env, void* finalize_data, void* final
     // Save env for later use
     if (!saved_env) saved_env = env;
     
-    // Operations that can trigger GC and modify m_finalizers during iteration:
+    // Operations that can trigger GC and change the env's finalizer lists while cleanup() drains them:
     
     // 1. Try to force GC if available
     napi_value global, gc_func;

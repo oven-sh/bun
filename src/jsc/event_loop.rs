@@ -1058,6 +1058,27 @@ impl EventLoop {
         self.release_pending_immediates();
     }
 
+    /// [`Self::release_queued_tasks`] for the tasks of `tags` alone: the queue stays open. Returns how many it released.
+    pub fn release_queued_tasks_tagged(&mut self, tags: &[bun_event_loop::TaskTag]) -> usize {
+        let batch = self.concurrent_tasks.pop_batch();
+        Self::take_concurrent_tasks(&mut self.tasks, batch);
+        let mut released = 0;
+        let mut index = 0;
+        // A release can queue more tasks, so the length is read each time.
+        while index < self.tasks.readable_length() {
+            let task = self.tasks.peek_item(index);
+            if !tags.contains(&task.tag) {
+                index += 1;
+                continue;
+            }
+            self.tasks.ordered_remove_item(index);
+            // SAFETY: JS thread, heap alive; `task` just left the queue.
+            unsafe { self.release_task_unrun(task) };
+            released += 1;
+        }
+        released
+    }
+
     /// Cancel (never run) every queued ImmediateObject; each cancel drops the
     /// immediate's keep-alive on this loop, so the loop must still exist.
     fn release_pending_immediates(&mut self) {

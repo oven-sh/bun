@@ -107,7 +107,8 @@ use crate::api::native_promise_context::DeferredDerefTask as NativePromiseContex
 #[cfg(not(windows))]
 use bun_spawn::static_pipe_writer::Poll as StaticPipeWriterPoll;
 
-use crate::napi::{NapiFinalizerTask, ThreadSafeFunction, napi_async_work};
+use crate::napi::napi_body::NapiEnv;
+use crate::napi::{ThreadSafeFunction, napi_async_work};
 
 use bun_jsc::PosixSignalTask;
 use bun_jsc::RuntimeTranspilerStore;
@@ -601,11 +602,13 @@ pub(crate) fn run_task(
                 ThreadSafeFunction::on_dispatch(function);
             })
         }
-        task_tag::NapiFinalizerTask => feature_arm!(
+        task_tag::NapiPendingFinalizers => in_features!(
             [NativeAddons],
-            |finalizer: NapiFinalizerTask| -> JsResult<()> {
-                NapiFinalizerTask::run_on_js_thread(finalizer)?;
-                Ok(())
+            (
+                env: *mut NapiEnv = cast_ptr!(NapiEnv),
+                event_loop: &mut EventLoop = el,
+            ) -> JsResult<()> {
+                NapiEnv::run_pending_finalizer(env, event_loop)
             }
         )?,
         task_tag::UvLoopDispatch => {
@@ -1763,7 +1766,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             release_in!([TlsSockets], crate::server::ServerDeinitTask<true, true>)
         }
         task_tag::NapiAsyncWork => release_in!([NativeAddons], napi_async_work),
-        task_tag::NapiFinalizerTask => release_in!([NativeAddons], NapiFinalizerTask),
+        task_tag::NapiPendingFinalizers => release_in!([NativeAddons], NapiEnv),
         task_tag::NativePromiseContextDeferredDerefTask => {
             release_in!(
                 [Serve, HtmlRewriter, S3Client, Cron],

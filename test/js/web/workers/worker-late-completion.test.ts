@@ -271,7 +271,7 @@ describe.skipIf(!isDebug && !isASAN)("work that comes back after its worker bega
 });
 
 const cc = isWindows ? null : process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
-test.concurrent.skipIf(!cc)("napi_queue_async_work fails in a finalizer during a worker's final GC", async () => {
+test.concurrent.skipIf(!cc)("napi_queue_async_work in a finalizer when a worker exits", async () => {
   using dir = tempDir("worker-late-napi", {});
   const addon = path.join(String(dir), "addon.node");
   await using build = Bun.spawn({
@@ -289,7 +289,8 @@ test.concurrent.skipIf(!cc)("napi_queue_async_work fails in a finalizer during a
     stderr: "inherit",
   });
   expect(await build.exited).toBe(0);
-  // The worker keeps the external reachable, so it's only finalized when the worker's heap is destroyed.
+  // The worker keeps the external reachable, so it's finalized when the addon's env is torn down. The
+  // worker's VM still takes work then, and waits for it before it closes.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -305,8 +306,7 @@ test.concurrent.skipIf(!cc)("napi_queue_async_work fails in a finalizer during a
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // 23 is napi_cannot_run_js.
-  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "queued from finalizer: 23\n", stderr: "", exitCode: 0 });
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "queued from finalizer: 0\n", stderr: "", exitCode: 0 });
 });
 
 // A `Bun.file()` / `Bun.stdin` read of a pipe or tty that has no data yet

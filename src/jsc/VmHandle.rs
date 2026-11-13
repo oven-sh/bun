@@ -440,12 +440,17 @@ impl VmHandle {
     /// (release everything queued, on this thread, heap alive) whenever
     /// something may have arrived; then refuse weak accessors and wait out any
     /// mid-call. After this returns nothing off-thread can reach the VM.
+    /// `everything_is_back` runs first whenever no ticket is out. True means it did work, and the wait goes on.
     ///
     /// Unbounded by design: a job that cannot be cancelled makes this take as
     /// long as the job (as Node's environment cleanup does). Every wake source
     /// (ticket drop, post) notifies the condvar; the 1 s timeout is a backstop
     /// and the debug build's cadence for naming the outstanding tickets.
-    pub(crate) fn close_and_wait(&self, mut service: impl FnMut()) {
+    pub(crate) fn close_and_wait(
+        &self,
+        mut service: impl FnMut(),
+        mut everything_is_back: impl FnMut() -> bool,
+    ) {
         self.assert_js_thread();
         let s = &*self.0;
         s.hot.state.store(State::Draining as u8, Ordering::SeqCst);
@@ -456,6 +461,14 @@ impl VmHandle {
         let mut next_report = test_gate::first_report_secs(self);
         loop {
             service();
+            // A holder posts before it gives its ticket up: with none out and nothing posted, every holder was served.
+            if s.tickets.load(Ordering::SeqCst) == 0
+                && s.loop_of(LoopKind::Regular).concurrent_tasks.is_empty()
+                && s.loop_of(LoopKind::Macro).concurrent_tasks.is_empty()
+                && everything_is_back()
+            {
+                continue;
+            }
             let mut g = s.drained.0.lock();
             if !s.loop_of(LoopKind::Regular).concurrent_tasks.is_empty()
                 || !s.loop_of(LoopKind::Macro).concurrent_tasks.is_empty()
@@ -533,6 +546,12 @@ impl VirtualMachine {
     #[inline]
     pub fn closed(&self) -> bool {
         self.handle_ref().closed()
+    }
+
+    /// Whether a [`Ticket`] of this VM is outstanding. JS thread.
+    #[inline]
+    pub fn has_work_on_other_threads(&self) -> bool {
+        self.handle_ref().tickets_outstanding() != 0
     }
 }
 

@@ -282,6 +282,8 @@ public:
     // Stopping: the stop has been requested (any thread; `!scriptAllowed()`). Stopped: it has been carried out on
     // this thread and JSC forbids execution. Either way no script may be entered on this VM.
     ALWAYS_INLINE bool isStoppingOrStopped(const JSC::VM& vm) const { return !scriptAllowed() || vm.executionForbidden(); }
+    // A build of this VM's can call into a native addon from the bundler threads (onBeforeParse). Never reset.
+    bool hasNativeBundlerPlugin { false };
     Bun::JSCTaskScheduler deferredWorkTimer;
 
     // One slot per string of the executable's module-info string table,

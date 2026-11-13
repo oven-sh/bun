@@ -1,6 +1,6 @@
 // Non-experimental (NAPI_VERSION 8) addon that napi_wrap()s each object it's
 // handed. Because nm_version != NAPI_VERSION_EXPERIMENTAL, the finalizer is
-// deferred to a NapiFinalizerTask on the event loop rather than run inside GC
+// deferred to a turn of the event loop rather than run inside GC
 // sweep. Under `bun test --isolate`, objects rooted on the old global only
 // become collectable once the swap gcUnprotect()s it; their finalizers then
 // run while the *next* file is loading, with a NapiEnv whose m_globalObject

@@ -2,18 +2,17 @@
 
 #include "napi.h"
 #include "napi_macros.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace Bun {
 
-void NapiFinalizer::call(WTF::RefPtr<NapiEnv> env, void* data, bool immediate)
+WTF_MAKE_TZONE_ALLOCATED_IMPL(NapiTrackedFinalizer);
+
+void NapiFinalizer::call(napi_env env, void* data)
 {
     if (m_callback) {
         NAPI_LOG_CURRENT_FUNCTION;
-        if (immediate) {
-            m_callback(env.get(), data, m_hint);
-        } else {
-            Bun__napi_enqueue_finalizer(env.get(), m_callback, data, m_hint);
-        }
+        m_callback(env, data, m_hint);
     }
 }
 

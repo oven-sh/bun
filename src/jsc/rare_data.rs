@@ -161,7 +161,7 @@ impl EntropyCache {
 
 // Safe fn-pointer type: `ctx` is an opaque round-trip pointer the registrant
 // supplied alongside `func`; the caller (`execute`) never dereferences it, only
-// forwards it. Each implementor (e.g. N-API's `run_as_cleanup_hook`) owns the
+// forwards it. Each implementor (e.g. N-API's `Bun__napi_register_cleanup_callback`) owns the
 // cast/deref locally, so invoking the pointer carries no caller-side precondition.
 pub(crate) type CleanupHookFunction = extern "C" fn(*mut c_void);
 

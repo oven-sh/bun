@@ -37,39 +37,4 @@ void NapiRef::unref()
     }
 }
 
-void NapiRef::clear()
-{
-    NAPI_LOG("ref clear %p", this);
-    finalizer.call(env.ptr(), nativeObject);
-    globalObject.clear();
-    weakValueRef.clear();
-    strongRef.clear();
-}
-
-void NapiRef::callFinalizerFromGC()
-{
-    if (!finalizer.callback()) {
-        return;
-    }
-    if (!env->mustDeferFinalizers() || !env->inGC()) {
-        callFinalizer();
-        return;
-    }
-    NAPI_LOG("queue finalizer of ref %p", this);
-    env->enqueueRefFinalizer(this);
-}
-
-}
-
-void NapiEnv::drainOneRefFinalizer(napi_env env, void*, void*)
-{
-    if (env->m_pendingRefFinalizers.isEmpty()) {
-        return;
-    }
-    Zig::NapiRef* ref = env->m_pendingRefFinalizers.takeFirst();
-    if (!env->m_pendingRefFinalizers.isEmpty()) {
-        Bun__napi_enqueue_finalizer(env, drainOneRefFinalizer, env, nullptr);
-    }
-    // May delete `ref` and enqueue or delete other refs.
-    ref->callFinalizer();
 }

@@ -17,3 +17,18 @@ Alternatively, use `process.dlopen`:
 let mod = { exports: {} };
 process.dlopen(mod, "./my-node-module.node");
 ```
+
+## Finalizers when a `Worker` exits
+
+When a `Worker` exits or is terminated, Bun tears down the environment of each add-on that the `Worker` loaded. Bun calls the add-on in this order:
+
+1. The finalizers of values that the garbage collector has already collected, and the `complete` callbacks of async work that has finished.
+2. The cleanup hooks from `napi_add_env_cleanup_hook`, newest first.
+3. The finalizers of the values that are still alive, newest first. These are the values of `napi_wrap`, `napi_add_finalizer`, `napi_create_external`, and the external buffer functions.
+4. The finalizer of `napi_set_instance_data`.
+
+A finalizer of the add-on can read the instance data, because Bun runs the instance data finalizer last.
+
+Node.js uses a different order in two cases. Node.js runs the finalizers of external buffers before the cleanup hooks. Node.js runs the instance data finalizer at the position of the `napi_set_instance_data` call among the values. To free state at the same point in both runtimes, use a cleanup hook.
+
+On the main thread, `process.exit()` tears down no environment, so Bun runs none of these callbacks.

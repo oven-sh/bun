@@ -188,8 +188,14 @@ impl InstallCompletionsCommand {
 
         let stdout = File::stdout();
 
+        #[cfg(not(windows))]
         let shell = env_var::SHELL
             .platform_get()
+            .map_or(Shell::Unknown, Shell::from_env);
+        // POSIX shells on Windows (Git Bash, MSYS2, Cygwin) set $SHELL too. It is
+        // read only here: `bun add -g` keeps printing PowerShell-style PATH hints.
+        #[cfg(windows)]
+        let shell = bun_core::getenv_z(bun_core::zstr!("SHELL"))
             .map_or(Shell::Unknown, Shell::from_env);
 
         let cwd_len = match bun_sys::getcwd(&mut cwd_buf) {
@@ -214,8 +220,32 @@ impl InstallCompletionsCommand {
         #[cfg(windows)]
         {
             let _ = Self::install_uninstaller_windows();
-            Self::print_powershell_completions_unsupported();
-            return Ok(());
+            match shell {
+                Shell::Bash | Shell::Zsh | Shell::Fish => {
+                    if !env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false)
+                        && !bun_sys::isatty(stdout.handle)
+                    {
+                        return Self::write_and_exit(&stdout, shell.completions());
+                    }
+                    let (file, rc): (&str, &str) = match shell {
+                        Shell::Zsh => ("_bun", "~/.zshrc"),
+                        Shell::Fish => ("bun.fish", "~/.config/fish/config.fish"),
+                        _ => ("bun.completion.bash", "~/.bashrc"),
+                    };
+                    pretty_errorln!(
+                        "<r>To install the completions on Windows, redirect them to a file and source it from {}:\n\n  <b>bun completions > ~/.bun/{}<r>\n  <b>echo 'source ~/.bun/{}' >> {}<r>\n",
+                        rc,
+                        file,
+                        file,
+                        rc,
+                    );
+                    return Ok(());
+                }
+                Shell::Pwsh | Shell::Unknown => {
+                    Self::print_powershell_completions_unsupported();
+                    return Ok(());
+                }
+            }
         }
 
         #[cfg(not(windows))]

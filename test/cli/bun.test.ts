@@ -4,7 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, isMusl, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 describe("bun", () => {
   describe("NO_COLOR", () => {
@@ -413,6 +413,57 @@ describe("bun", () => {
         expect((await zsh(String(dir))).exitCode).toBe(0);
         expect(fs.readFileSync(join(String(dir), ".zshrc"), "utf8")).toBe(added);
       });
+    });
+  });
+  // https://github.com/oven-sh/bun/issues/25042: Git Bash, MSYS2 and Cygwin set $SHELL on Windows,
+  // sometimes to a Windows path ending in .exe; `bun completions` only ever printed the PowerShell notice.
+  describe.if(isWindows)("completions in a POSIX shell on Windows", () => {
+    // `bun completions` drops bunx and an uninstaller next to the executable, so it runs a stand-in.
+    async function standIn(dir: string): Promise<string> {
+      const exe = join(dir, basename(bunExe()));
+      try {
+        fs.linkSync(fs.realpathSync(bunExe()), exe);
+      } catch {
+        fs.copyFileSync(bunExe(), exe);
+      }
+      return exe;
+    }
+
+    test.concurrent.each([
+      ["/usr/bin/bash", "bun.bash"],
+      ["C:\\Program Files\\Git\\usr\\bin\\bash.exe", "bun.bash"],
+      ["/usr/bin/zsh", "bun.zsh"],
+      ["/usr/bin/fish", "bun.fish"],
+    ])("SHELL=%s prints the completion script when stdout is a pipe", async (shell, file) => {
+      using dir = tempDir("completions-windows-posix", {});
+      const exe = await standIn(String(dir));
+      await using proc = Bun.spawn({
+        cmd: [exe, "completions"],
+        cwd: String(dir),
+        env: { ...bunEnv, SHELL: shell },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("PowerShell completions are not yet written");
+      expect(stdout).toBe(fs.readFileSync(join(import.meta.dir, "..", "..", "completions", file), "utf8"));
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("SHELL=pwsh still reports that PowerShell completions do not exist", async () => {
+      using dir = tempDir("completions-windows-pwsh", {});
+      const exe = await standIn(String(dir));
+      await using proc = Bun.spawn({
+        cmd: [exe, "completions"],
+        cwd: String(dir),
+        env: { ...bunEnv, SHELL: "pwsh" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("");
+      expect(stderr).toContain("PowerShell completions are not yet written for Bun.");
+      expect(exitCode).toBe(0);
     });
   });
   describe("--help preserves <placeholder> text", () => {

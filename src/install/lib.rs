@@ -349,7 +349,11 @@ pub mod ShellCompletions {
     impl Shell {
         pub fn from_env(shell: &[u8]) -> Shell {
             use bun_core::strings;
-            let basename = bun_paths::basename(shell);
+            let mut basename = bun_paths::basename(shell);
+            // `C:\Program Files\Git\usr\bin\bash.exe`, as some Windows shells set $SHELL.
+            if basename.len() > 4 && basename[basename.len() - 4..].eq_ignore_ascii_case(b".exe") {
+                basename = &basename[..basename.len() - 4];
+            }
             if strings::eql_comptime(basename, b"bash") {
                 Shell::Bash
             } else if strings::eql_comptime(basename, b"zsh") {

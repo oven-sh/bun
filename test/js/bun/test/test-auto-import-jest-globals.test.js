@@ -200,6 +200,14 @@ describe.concurrent("a file that imports from a test module", () => {
             test("test", () => expect(1).toBe(1));
           });
         `,
+        // TypeScript drops an import that nothing uses. The declaration still counts as an import of the module.
+        "e-imports-a-name-that-nothing-uses.test.ts": `import { mock } from "bun:test"; ${own}`,
+        "f-imports-a-type.test.ts": `
+          import type { Mock } from "bun:test";
+          describe("builtin beside a type", () => {
+            test("test", () => expect(1).toBe(1));
+          });
+        `,
       });
       const { stdout, stderr, exitCode } = await run(String(dir), ["test", "--preload=./preload.ts", flag]);
       expect({
@@ -208,6 +216,8 @@ describe.concurrent("a file that imports from a test module", () => {
         exitCode,
       }).toEqual({
         stdout: [
+          "own describe",
+          "own expect true",
           "own describe",
           "own expect true",
           "own describe",
@@ -223,7 +233,50 @@ describe.concurrent("a file that imports from a test module", () => {
           "(pass) test",
           "(pass) the other globals",
           "(pass) builtin > test",
+          "(pass) test",
+          "(pass) the other globals",
+          "(pass) builtin beside a type > test",
         ],
+        exitCode: 0,
+      });
+    },
+  );
+
+  // With --isolate the preload runs in front of every test file, on a new global each time.
+  test.each(
+    ["--no-isolate", "--isolate"].flatMap(flag => [
+      [flag, "preload.js", `import { vi } from "vitest"; vi;`],
+      [flag, "preload.js", `import { mock } from "bun:test"; mock;`],
+      [flag, "preload.ts", `import { mock } from "bun:test";`],
+    ]),
+  )(
+    "a preload that imports a test module reads the name of the runner in front of every test file: %s %s %s",
+    async (flag, preload, header) => {
+      const file = `
+        import { test } from "bun:test";
+        test("test", () => {
+          console.log("wraps the runner's", typeof expect.ofRunner);
+          expect(1).toBe(1);
+        });
+      `;
+      using dir = tempDir("jest-globals", {
+        [preload]: `
+          ${header}
+          const ofRunner = expect;
+          globalThis.expect = Object.assign(value => ofRunner(value), { ofRunner });
+        `,
+        "a.test.js": file,
+        "b.test.js": file,
+        "c.test.js": file,
+      });
+      const { stdout, stderr, exitCode } = await run(String(dir), ["test", `--preload=./${preload}`, flag]);
+      expect({
+        stdout: stdout.split("\n").filter(line => line.startsWith("wraps")),
+        results: stderr.match(/^\((pass|fail)\) [a-z >]+[a-z]/gm),
+        exitCode,
+      }).toEqual({
+        stdout: Array(3).fill("wraps the runner's function"),
+        results: Array(3).fill("(pass) test"),
         exitCode: 0,
       });
     },

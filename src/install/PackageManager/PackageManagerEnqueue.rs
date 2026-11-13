@@ -774,7 +774,7 @@ fn wait_for_tasks(this: &mut PackageManager) -> crate::Result<()> {
         if this.pending_task_count() > 0 {
             let log_level = this.options.log_level;
             if let Err(err) =
-                run_tasks::run_tasks::<VoidRunTasksCallbacks>(this, &mut (), false, log_level)
+                run_tasks::run_tasks(this, run_tasks::Caller::BlockedImport, false, log_level)
             {
                 break Err(err);
             }
@@ -802,12 +802,6 @@ fn wait_for_tasks(this: &mut PackageManager) -> crate::Result<()> {
     }
 
     result
-}
-
-/// `Ctx = ()`, no callbacks.
-struct VoidRunTasksCallbacks;
-impl run_tasks::RunTasksCallbacks for VoidRunTasksCallbacks {
-    type Ctx = ();
 }
 
 pub fn enqueue_network_task(this: &mut PackageManager, task: *mut NetworkTask) {

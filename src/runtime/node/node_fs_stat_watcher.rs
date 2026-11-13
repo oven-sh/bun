@@ -210,8 +210,7 @@ impl StatWatcherScheduler {
             // `set_timer`), kept alive across the hop by the watcher's RefPtr.
             scheduler: unsafe { ParentRef::from_raw_mut(this) },
         });
-        let holder = bun_core::heap::into_raw(holder);
-        ticket.post(ConcurrentTask::create_from(holder));
+        ticket.post(ConcurrentTask::create(Task::from_boxed(holder)));
     }
 
     pub(crate) fn timer_callback(&mut self) {
@@ -1038,16 +1037,13 @@ impl StatWatcherTimerUpdate {
     }
 }
 
-impl bun_event_loop::Taskable for StatWatcherTimerUpdate {
+impl bun_event_loop::BoxedTask for StatWatcherTimerUpdate {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::StatWatcherTimerUpdate;
     /// The holder owns nothing (a non-owning scheduler ref); timers are
     /// already disarmed, so just drop it.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — the box `schedule_timer_update` posted.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
+    fn release_unrun(self: Box<Self>) {}
     /// The scheduler's own timer; calls no script.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }

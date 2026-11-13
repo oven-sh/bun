@@ -42,7 +42,7 @@ use bun_install_types::NodeLinker::NodeLinker;
 // to avoid one giant `impl PackageManager` block.
 use crate::package_manager_real::enqueue::{self, add_dependency_error};
 use crate::package_manager_real::remove_stale_workspace_links::remove_stale_workspace_links;
-use crate::package_manager_real::run_tasks::{RunTasksCallbacks, run_tasks};
+use crate::package_manager_real::run_tasks::{Caller, run_tasks};
 use crate::package_manager_real::{
     UpdateRequest, enqueue_dependency_list, enqueue_dependency_with_main, enqueue_patch_task_pre,
     save_lockfile, setup_global_dir, update_lockfile_if_needed, write_yarn_lock,
@@ -1106,15 +1106,6 @@ pub fn install_with_manager(
 // ─── runAndWaitFn closure family ──────────────────────────────────────────
 // A const-generic struct + three thin wrapper fns.
 
-/// `RunTasksCallbacks` impl for the void-callback `runTasks` call inside
-/// `runAndWaitFn::isDone` (no hooks, `progress_bar = true`). Only these
-/// flags differ from the default.
-struct InstallWaitCallbacks;
-impl RunTasksCallbacks for InstallWaitCallbacks {
-    type Ctx = ();
-    const PROGRESS_BAR: bool = true;
-}
-
 struct RunAndWaitClosure<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool> {
     err: Option<crate::Error>,
     /// The wait also ends once only the deferred peers are left to resolve. The tarballs that are
@@ -1136,13 +1127,8 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
 
             this.drain_dependency_list();
 
-            // void RunTasksCallbacks — the trait dispatch needs a
-            // concrete `RunTasksCallbacks` impl; `extract_ctx` collapses to `()` so we
-            // do NOT pass `this` as both receiver and ctx (would alias `&mut`).
             let log_level = this.options.log_level;
-            if let Err(err) =
-                run_tasks::<InstallWaitCallbacks>(this, &mut (), CHECK_PEERS, log_level)
-            {
+            if let Err(err) = run_tasks(this, Caller::Resolver, CHECK_PEERS, log_level) {
                 closure.err = Some(err);
                 return true;
             }

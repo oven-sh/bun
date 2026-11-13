@@ -56,6 +56,7 @@ bun_dispatch::link_interface! {
         LifecycleScript,
         InstallGit,
         SecurityScan,
+        CapturedChild,
         Shell,
         FilterRunHandle,
         MultiRunHandle,

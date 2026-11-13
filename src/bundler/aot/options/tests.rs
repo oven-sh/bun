@@ -414,8 +414,8 @@ fn jsx_pragma_converts() {
     let code = convert_code(|options| {
         options.jsx.runtime = jsx::Runtime::Classic;
         options.jsx.development = false;
-        options.jsx.factory = jsx::MemberList::Owned(Box::new([Box::from(&b"h"[..])]));
-        options.jsx.package_name = Cow::Borrowed(b"preact");
+        options.jsx.factory = jsx::MemberList::Shared([Box::from(&b"h"[..])].into());
+        options.jsx.set_import_source(b"preact");
     });
     assert_eq!(code.jsx.runtime, JsxRuntime::Classic);
     assert!(!code.jsx.is_development);

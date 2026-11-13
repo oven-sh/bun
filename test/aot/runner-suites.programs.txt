@@ -349,6 +349,8 @@ test/bundler/bundler_compile_autoload.test.ts: bundler > compile/AutoloadBunfigE
 test/bundler/bundler_compile_autoload.test.ts: bundler > compile/AutoloadBunfigEnabledWithExecArgv
 test/bundler/bundler_compile_autoload.test.ts: bundler > compile/AutoloadPackageJsonExportsCLI
 test/bundler/bundler_compile_autoload.test.ts: bundler > compile/AutoloadPackageJsonExportsEnabled
+test/bundler/bundler_compile_autoload.test.ts: bundler > compile/AutoloadTsconfigJsxDisabled
+test/bundler/bundler_compile_autoload.test.ts: bundler > compile/AutoloadTsconfigJsxEnabled
 test/bundler/bundler_compile_autoload.test.ts: bundler > compile/AutoloadTsconfigPathsCLI
 test/bundler/bundler_compile_autoload.test.ts: bundler > compile/AutoloadTsconfigPathsEnabled
 test/bundler/bundler_compile_prelinked.test.ts: bundler > compile/prelinked/BannerFooter/ImportMeta

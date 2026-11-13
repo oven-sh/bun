@@ -711,7 +711,7 @@ impl TransformTask {
         // self.log.msgs.allocator = bun.default_allocator → no-op
 
         let jsx = match tsconfig {
-            Some(ts) => ts.merge_jsx(transpiler.options.jsx.clone()),
+            Some(ts) => transpiler.options.jsx_under(&ts.jsx),
             None => transpiler.options.jsx.clone(),
         };
 
@@ -1124,7 +1124,7 @@ impl JSTranspiler {
             arena.alloc(bun_ast::Source::init_path_string(name, processed_code));
 
         let jsx = match config.tsconfig.as_deref() {
-            Some(ts) => ts.merge_jsx(self.transpiler.get().options.jsx.clone()),
+            Some(ts) => self.transpiler.get().options.jsx_under(&ts.jsx),
             None => self.transpiler.get().options.jsx.clone(),
         };
 
@@ -1479,7 +1479,7 @@ impl JSTranspiler {
 
         let source = bun_ast::Source::init_path_string(loader.stdin_name(), code);
         let jsx = match self.config.get().tsconfig.as_deref() {
-            Some(ts) => ts.merge_jsx(self.transpiler.get().options.jsx.clone()),
+            Some(ts) => self.transpiler.get().options.jsx_under(&ts.jsx),
             None => self.transpiler.get().options.jsx.clone(),
         };
 

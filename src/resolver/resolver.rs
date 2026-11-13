@@ -269,9 +269,9 @@ pub use ::bun_options_types::global_cache::GlobalCache;
 // inside `impl Resolver` resolve unchanged.
 use crate::options;
 use crate::result::{
-    DebugLogs, DirEntryResolveQueueItem, ExternalKind, FlushMode, LoadResult, MatchResult,
-    MatchStatus, PathPair, PendingResolution, PendingResolutionTag, Result, ResultFlags,
-    ResultUnion,
+    DebugLogs, DirEntryResolveQueueItem, ExternalKind, FlushMode, JsxConfig, JsxLayer, LoadResult,
+    MatchResult, MatchStatus, PathPair, PendingResolution, PendingResolutionTag, Result,
+    ResultFlags, ResultUnion,
 };
 use crate::standalone_module_graph::StandaloneModuleGraph;
 use bun_alloc as allocators;
@@ -1525,7 +1525,7 @@ impl<'a> Resolver<'a> {
                     package_json: res.package_json,
                     dirname_fd: res.dirname_fd,
                     file_fd: res.file_fd,
-                    jsx: self.opts.jsx.clone(),
+                    jsx: JsxConfig::OF_BUILD,
                     ..Default::default()
                 });
             }
@@ -1988,17 +1988,13 @@ impl<'a> Resolver<'a> {
             }
 
             if let Some(own) = self.aot_package_config(path.text()) {
-                result.jsx = own.merge_jsx(options::jsx::Pragma {
-                    development: result.jsx.development,
-                    ..Default::default()
-                });
                 (result.flags).set_emit_decorator_metadata(own.emit_decorator_metadata);
                 (result.flags).set_experimental_decorators(own.experimental_decorators);
                 (result.flags).set_use_define_for_class_fields(
                     own.use_define_for_class_fields != Some(false),
                 );
+                result.jsx.push(JsxLayer::AotPackage(own));
             } else if let Some(tsconfig) = self.enclosing_tsconfig_json(&dir) {
-                result.jsx = tsconfig.merge_jsx(core::mem::take(&mut result.jsx));
                 result.flags.set_emit_decorator_metadata(
                     result.flags.emit_decorator_metadata() || tsconfig.emit_decorator_metadata,
                 );
@@ -2008,6 +2004,7 @@ impl<'a> Resolver<'a> {
                 if let Some(v) = tsconfig.use_define_for_class_fields {
                     result.flags.set_use_define_for_class_fields(v);
                 }
+                result.jsx.push(JsxLayer::TSConfig(tsconfig));
             }
 
             // Probe the listing in one `entries_mutex` critical section: a
@@ -2193,7 +2190,10 @@ impl<'a> Resolver<'a> {
                                 package_json: res.package_json,
                                 dirname_fd: res.dirname_fd,
                                 file_fd: res.file_fd,
-                                jsx: tsconfig.merge_jsx(self.opts.jsx.clone()),
+                                jsx: JsxConfig {
+                                    of_build: true,
+                                    layers: [Some(JsxLayer::TSConfig(tsconfig)), None, None],
+                                },
                                 ..Default::default()
                             });
                         }
@@ -2242,7 +2242,7 @@ impl<'a> Resolver<'a> {
                     path_pair: entry.path_pair,
                     package_json: entry.package_json,
                     file_fd: entry.file_fd,
-                    jsx: self.opts.jsx.clone(),
+                    jsx: JsxConfig::OF_BUILD,
                     ..Default::default()
                 });
             }
@@ -2322,7 +2322,7 @@ impl<'a> Resolver<'a> {
                     // check_package_path re-runs this lookup; give it the bare name.
                     import_path = import_path_without_node_prefix;
                 } else {
-                    result.jsx = self.opts.jsx.clone();
+                    result.jsx = JsxConfig::OF_BUILD;
 
                     if let Some(fallback_module) =
                         NodeFallbackModules::map().get(import_path_without_node_prefix)
@@ -2561,7 +2561,7 @@ impl<'a> Resolver<'a> {
                                 path_pair: match_result.path_pair,
                                 dirname_fd: match_result.dirname_fd,
                                 package_json: Some(pkg),
-                                jsx: self.opts.jsx.clone(),
+                                jsx: JsxConfig::OF_BUILD,
                                 module_type: match_result.module_type,
                                 flags,
                                 ..Default::default()
@@ -2603,7 +2603,7 @@ impl<'a> Resolver<'a> {
                 path_pair: res.path_pair,
                 dirname_fd: res.dirname_fd,
                 package_json: res.package_json,
-                jsx: self.opts.jsx.clone(),
+                jsx: JsxConfig::OF_BUILD,
                 ..Default::default()
             })
         } else {
@@ -2699,7 +2699,7 @@ impl<'a> Resolver<'a> {
                                     path_pair: pair,
                                     dirname_fd: node_module.dirname_fd,
                                     package_json: Some(package_json),
-                                    jsx: self.opts.jsx.clone(),
+                                    jsx: JsxConfig::OF_BUILD,
                                     ..Default::default()
                                 });
                             } else {
@@ -2713,7 +2713,7 @@ impl<'a> Resolver<'a> {
                                         primary,
                                         secondary: None,
                                     },
-                                    jsx: self.opts.jsx.clone(),
+                                    jsx: JsxConfig::OF_BUILD,
                                     ..Default::default()
                                 });
                             }
@@ -2740,7 +2740,7 @@ impl<'a> Resolver<'a> {
                         primary: Path::empty(),
                         secondary: None,
                     },
-                    jsx: self.opts.jsx.clone(),
+                    jsx: JsxConfig::OF_BUILD,
                     ..Default::default()
                 };
                 result.path_pair = res.path_pair;
@@ -6799,8 +6799,17 @@ impl<'a> Resolver<'a> {
                 }
                 let loaded = self.load_tsconfig(tsconfigpath, fd);
                 self.log = log;
+                let mut loaded = loaded?;
+                if let Some(config) = loaded.as_deref_mut()
+                    && !info.abs_real_path.is_empty()
+                {
+                    let above = core::iter::successors(parent, |directory| directory.get_parent())
+                        .map(|directory| (directory.abs_path, directory.abs_real_path));
+                    let directories = core::iter::once((path, info.abs_real_path)).chain(above);
+                    config.name_files_by_real_directory(&directories);
+                }
                 // A leaked Box, interned into DirInfo: it outlives the resolver.
-                info.tsconfig_json = loaded?.map(|it| {
+                info.tsconfig_json = loaded.map(|it| {
                     NonNull::new(bun_core::heap::into_raw(it)).expect("heap::alloc is non-null")
                 });
                 info.enclosing_tsconfig_json = info.tsconfig_json();
@@ -6886,10 +6895,16 @@ impl<'a> Resolver<'a> {
             }
 
             let mut merged_config = current;
+            if parent_configs.len() > 0 {
+                let base = (merged_config.abs_path.clone(), merged_config.jsx.clone());
+                merged_config.jsx_of_files.push(base);
+            }
             // starting from the base config (end of the list)
             // successively apply the inheritable attributes to the next config
             while let Some(mut parent_config) = parent_configs.pop() {
                 let mc = &mut *merged_config;
+                // The path of the file that was asked for: the last one of the chain.
+                mc.abs_path = core::mem::take(&mut parent_config.abs_path);
                 mc.emit_decorator_metadata =
                     mc.emit_decorator_metadata || parent_config.emit_decorator_metadata;
                 if let Some(v) = parent_config.use_define_for_class_fields {
@@ -6898,8 +6913,9 @@ impl<'a> Resolver<'a> {
                 if !parent_config.base_url.is_empty() {
                     mc.base_url = core::mem::take(&mut parent_config.base_url);
                 }
-                mc.jsx = parent_config.merge_jsx(mc.jsx.clone());
-                mc.jsx_flags.insert_all(parent_config.jsx_flags);
+                let jsx = core::mem::take(&mut parent_config.jsx);
+                mc.jsx.lay_over(&jsx);
+                mc.jsx_of_files.push((mc.abs_path.clone(), jsx));
 
                 if let Some(value) = parent_config.preserve_imports_not_used_as_values {
                     mc.preserve_imports_not_used_as_values = Some(value);
@@ -7032,6 +7048,17 @@ impl<'a> Resolver<'a> {
         }
     }
 
+    /// The tsconfig.json of the project that `dir_info` is in: the nearest one. `None` under `--tsconfig-override`.
+    pub fn project_tsconfig_json(
+        &mut self,
+        dir_info: &DirInfo::DirInfo,
+    ) -> Option<&'static TSConfigJSON> {
+        match self.tsconfig_override() {
+            Some(_) => None,
+            None => dir_info.enclosing_tsconfig_json,
+        }
+    }
+
     /// `DirInfo::tsconfig_json`, for this resolver.
     pub fn tsconfig_json(&mut self, dir_info: &DirInfo::DirInfo) -> Option<TSConfigRef> {
         match self.tsconfig_override() {
@@ -7054,6 +7081,7 @@ fn is_typescript_path(path: &[u8]) -> bool {
 }
 
 /// The configuration file that applies in a directory.
+#[derive(Clone)]
 pub enum TSConfigRef {
     /// `DirInfo` keeps it for as long as the process lasts.
     OfDirectory(&'static TSConfigJSON),

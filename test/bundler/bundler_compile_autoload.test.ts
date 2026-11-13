@@ -455,6 +455,75 @@ console.log("PRELOAD");
     },
   });
 
+  // Test that tsconfig.json JSX settings apply to files transpiled at runtime when autoloadTsconfig: true
+  // Uses a dynamic import path that the bundler cannot resolve at compile time
+  itBundled("compile/AutoloadTsconfigJsxEnabled", {
+    compile: {
+      autoloadTsconfig: true,
+    },
+    files: {
+      "/entry.ts": /* ts */ `
+        // Use a dynamic path that can't be resolved at compile time
+        // This forces view.tsx to be transpiled at runtime with the runtime tsconfig.json
+        const viewPath = "./view" + ".tsx";
+        import(viewPath)
+          .then(m => console.log(m.default))
+          .catch(e => console.log("import-failed: " + e.message));
+      `,
+    },
+    runtimeFiles: {
+      "/tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          jsx: "react",
+          jsxFactory: "h",
+        },
+      }),
+      "/view.tsx": /* tsx */ `
+        const h = (tag: string) => "h:" + tag;
+        export default <div />;
+      `,
+    },
+    run: {
+      stdout: "h:div",
+      setCwd: true,
+    },
+  });
+
+  // Test that tsconfig.json JSX settings do NOT apply when autoloadTsconfig: false (default)
+  // view.tsx is then transpiled with the default automatic runtime, which imports a stand-in for react
+  itBundled("compile/AutoloadTsconfigJsxDisabled", {
+    compile: {
+      autoloadTsconfig: false,
+    },
+    files: {
+      "/entry.ts": /* ts */ `
+        // Without runtime tsconfig.json, view.tsx is transpiled with the default JSX settings
+        const viewPath = "./view" + ".tsx";
+        import(viewPath)
+          .then(m => console.log(m.default))
+          .catch(e => console.log("import-failed: " + e.message));
+      `,
+    },
+    runtimeFiles: {
+      "/tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          jsx: "react",
+          jsxFactory: "h",
+        },
+      }),
+      "/view.tsx": /* tsx */ `
+        const h = (tag: string) => "h:" + tag;
+        export default <div />;
+      `,
+      "/node_modules/react/jsx-dev-runtime.js": `export const jsxDEV = tag => "react:" + tag;`,
+      "/node_modules/react/jsx-runtime.js": `export const jsx = tag => "react:" + tag;`,
+    },
+    run: {
+      stdout: "react:div",
+      setCwd: true,
+    },
+  });
+
   // Test that package.json exports are loaded at runtime when autoloadPackageJson: true
   // Uses a dynamic import path that the bundler cannot resolve at compile time
   itBundled("compile/AutoloadPackageJsonExportsEnabled", {

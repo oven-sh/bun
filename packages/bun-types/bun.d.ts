@@ -3683,7 +3683,8 @@ declare module "bun" {
     tsconfig?: string;
 
     /**
-     * JSX configuration options
+     * JSX configuration options. An option given here wins over the same
+     * option in the `tsconfig.json` of the project.
      */
     jsx?: {
       runtime?: "automatic" | "classic";

@@ -541,23 +541,6 @@ impl<'a> Transpiler<'a> {
 
 use bun_resolver::tsconfig_json::TSConfigJSON;
 
-/// D042: resolver-side and bundler-side `jsx::Pragma` are now the SAME
-/// nominal type (`bun_options_types::jsx::Pragma`). Identity clone; kept so
-/// existing call sites compile unchanged.
-#[inline(always)]
-fn jsx_pragma_from_resolver(
-    src: &bun_resolver::tsconfig_json::options::jsx::Pragma,
-) -> crate::options_impl::jsx::Pragma {
-    src.clone()
-}
-
-/// D042: types unified — delegate to the resolver's own
-/// `TSConfigJSON::merge_jsx` (5-field conditional copy keyed on `jsx_flags`).
-#[inline]
-fn merge_tsconfig_jsx_into(tsconfig: &TSConfigJSON, out: &mut crate::options_impl::jsx::Pragma) {
-    *out = tsconfig.merge_jsx(core::mem::take(out));
-}
-
 impl<'a> Transpiler<'a> {
     /// Initialize `self.linker` with the log of this `Transpiler`,
     /// optionally auto-configuring JSX from the nearest `tsconfig.json`.
@@ -568,10 +551,11 @@ impl<'a> Transpiler<'a> {
             // Most of the time, this will already be cached
             let top_level_dir = Fs::FileSystem::get().top_level_dir();
             if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
+                self.note_project_tsconfig(&root_dir);
                 if let Some(tsconfig) = self.resolver.tsconfig_json(&root_dir) {
-                    // If we don't explicitly pass JSX, try to get it from the root tsconfig
-                    if self.options.transform_options.jsx.is_none() {
-                        self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx);
+                    // Beside a bunfig.toml, a `--jsx-*` flag or `Bun.build()`, only `run_env_loader` takes its JSX.
+                    if self.options.transform_options.jsx.is_empty() {
+                        self.options.lay_tsconfig_over_jsx(&tsconfig);
                     }
                     self.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
                     self.options.experimental_decorators = tsconfig.experimental_decorators;
@@ -580,6 +564,14 @@ impl<'a> Transpiler<'a> {
                     }
                 }
             }
+        }
+    }
+
+    /// Notes which tsconfig.json is the project's, when the user's sources state an option that it must not decide.
+    fn note_project_tsconfig(&mut self, working_directory: &bun_resolver::DirInfo) {
+        if !self.options.jsx_user_stated.states_nothing() {
+            self.options.jsx_project_tsconfig =
+                self.resolver.project_tsconfig_json(working_directory);
         }
     }
 
@@ -623,12 +615,7 @@ impl<'a> Transpiler<'a> {
                 let has_production_env = env.is_production();
                 if !was_production && has_production_env {
                     self.options.set_production(true);
-                    // The resolver's FORWARD_DECL `BundleOptions` now exposes
-                    // `set_production` (flips `production` + `jsx.development`
-                    // and self-guards on `force_node_env`; resolver/lib.rs).
-                    // Call it directly so resolver-side production gating
-                    // (conditional-export `"production"` matching) stays in
-                    // sync, instead of the partial single-field write.
+                    // The resolver has its own copy of `production`.
                     self.resolver.opts.set_production(true);
                 }
 
@@ -642,8 +629,9 @@ impl<'a> Transpiler<'a> {
                     _ => return Ok(()),
                 };
 
+                self.note_project_tsconfig(&dir_info);
                 if let Some(tsconfig) = self.resolver.tsconfig_json(&dir_info) {
-                    merge_tsconfig_jsx_into(&tsconfig, &mut self.options.jsx);
+                    self.options.lay_tsconfig_over_jsx(&tsconfig);
                 }
 
                 // Copy the listing's basenames out under `entries_mutex`,
@@ -830,10 +818,9 @@ impl<'a> ParseResult<'a> {
 impl ParseOptions<'_, '_> {
     /// What a package with the "aot" condition says about JSX, decorators and class fields, in place of what the program says.
     pub fn apply_aot_package_config(&mut self, own: &TSConfigJSON) {
-        self.jsx = own.merge_jsx(crate::options_impl::jsx::Pragma {
-            development: self.jsx.development,
-            ..Default::default()
-        });
+        // Of the program's JSX settings only `development` reaches the package.
+        use crate::options_impl::jsx::{Pragma, Stated};
+        self.jsx = Pragma::resolve(&[&Stated::of_development(self.jsx.development), &own.jsx]);
         self.emit_decorator_metadata = own.emit_decorator_metadata;
         self.experimental_decorators = own.experimental_decorators;
         self.use_define_for_class_fields = own.use_define_for_class_fields != Some(false);
@@ -888,23 +875,6 @@ use bun_options_types::schema::api;
 // lower-tier crate; bundler re-exports). There are no by-value conversion
 // shims — `to_parser_module_type` is an identity fn and `parse_maybe`
 // threads `self.options.define` / `runtime_transpiler_cache` directly.
-//
-// D042 UNIFIED: `crate::options_impl::jsx::Pragma` IS
-// `js_ast::parser::options::JSX::Pragma` (both re-export
-// `bun_options_types::jsx::Pragma`). Only the `_None → Automatic` fold is
-// applied so parser-side `== Automatic` checks in visitExpr/parseJSXElement
-// keep their pre-unification semantics (parser only ever sees a resolved
-// runtime).
-#[inline]
-pub(crate) fn to_parser_jsx_pragma(
-    mut p: crate::options_impl::jsx::Pragma,
-) -> js_ast::parser::options::JSX::Pragma {
-    use crate::options_impl::jsx::Runtime;
-    if p.runtime == Runtime::_None {
-        p.runtime = Runtime::Automatic;
-    }
-    p
-}
 
 // `crate::options_impl::ModuleType` IS `js_ast::parser::options::ModuleType`
 // (both re-export `bun_options_types::bundle_enums::ModuleType`). Identity shim
@@ -969,8 +939,6 @@ pub(crate) fn resolver_bundle_options_subset(
             options::PackagesOption::External => ropts::Packages::External,
             options::PackagesOption::Bundle => ropts::Packages::Bundle,
         },
-        // D042: same nominal type on both sides.
-        jsx: src.jsx.clone(),
         // Spec `options.ResolveFileExtensions` — clone all four owned slices so
         // the resolver honours user `--extension-order` and the per-target
         // `.node` augmentation `from_api` applied.
@@ -1420,7 +1388,7 @@ impl<'a> Transpiler<'a> {
                 use js_ast::parser::options as p_opts;
                 let mut opts = js_ast::ParserOptions::<'_> {
                     ts: loader.is_typescript(),
-                    jsx: to_parser_jsx_pragma(jsx),
+                    jsx,
                     keep_names: true,
                     ignore_dce_annotations: self.options.ignore_dce_annotations,
                     keep_directives: false,
@@ -2807,7 +2775,7 @@ impl<'a> Transpiler<'a> {
             | options::Loader::Md => {
                 // borrowck — `parse` consumes `&mut self`, so capture
                 // the option fields needed for `ParseOptions` first.
-                let jsx = jsx_pragma_from_resolver(&resolve_result.jsx);
+                let jsx = self.options.jsx_for(resolve_result);
                 let dirname_fd = resolve_result.dirname_fd;
                 let emit_decorator_metadata = resolve_result.flags.emit_decorator_metadata();
                 let experimental_decorators = resolve_result.flags.experimental_decorators();

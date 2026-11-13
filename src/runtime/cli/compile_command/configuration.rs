@@ -536,8 +536,7 @@ fn finish(
     this_transpiler.resolver.env_loader = NonNull::new(this_transpiler.env);
 
     if ctx.bundler_options.production {
-        this_transpiler.options.jsx.development = false;
-        this_transpiler.resolver.opts.jsx.development = false;
+        this_transpiler.options.set_jsx_development(false);
     }
 
     match &ctx.debug.macros {

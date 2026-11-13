@@ -3046,8 +3046,9 @@ pub mod bv2_impl {
                 side_effects: result.primary_side_effects_data,
                 ..Default::default()
             })?;
+            let jsx = self.transpiler_for_target(target).options.jsx_for(&result);
             // Arena-owned; freed on heap reset.
-            let task_val = ParseTask::init(&result, path, source_index, self);
+            let task_val = ParseTask::init(&result, jsx, path, source_index, self);
             let task: &mut ParseTask = self.arena().alloc(task_val);
             task.loader = Some(loader);
             task.task.node.next = core::ptr::null_mut();
@@ -3133,7 +3134,8 @@ pub mod bv2_impl {
             })?;
             // Arena-owned; freed on heap reset.
             let task_path = self.parse_task_path(result, path);
-            let task_val = ParseTask::init(result, task_path, source_index, self);
+            let jsx = self.transpiler_for_target(target).options.jsx_for(result);
+            let task_val = ParseTask::init(result, jsx, task_path, source_index, self);
             let task: &mut ParseTask = self.arena().alloc(task_val);
             task.loader = Some(loader);
             task.task.node.next = core::ptr::null_mut();
@@ -4013,18 +4015,20 @@ pub mod bv2_impl {
                 side_effects: loader.side_effects(),
                 ..Default::default()
             })?;
+            // The JSX options of the program, whatever tsconfig.json governs the file.
+            let jsx = self.transpiler_for_target(known_target).options.jsx.clone();
             // `ParseTask::init` takes `bun_ast::Index`; both Index newtypes
             // are `repr(transparent)` u32 so reconstruct via `.get()`.
             // Arena-owned; freed on heap reset.
             let task_val = ParseTask::init(
                 resolve_result,
+                jsx,
                 path,
                 bun_ast::Index::init(source_index.get()),
                 self,
             );
             let task: &mut ParseTask = self.arena().alloc(task_val);
             task.loader = Some(loader);
-            task.jsx = self.transpiler_for_target(known_target).options.jsx.clone();
             task.task.node.next = core::ptr::null_mut();
             task.io_task.node.next = core::ptr::null_mut();
             task.known_target = known_target;
@@ -6724,6 +6728,7 @@ pub mod bv2_impl {
                         // Arena-owned.
                         let resolve_task_val = ParseTask::init(
                             &file_map_result,
+                            transpiler.options.jsx.clone(),
                             file_map_result.path_pair.primary,
                             bun_ast::Index::INVALID,
                             self,
@@ -6731,7 +6736,6 @@ pub mod bv2_impl {
                         let resolve_task: &mut ParseTask = self.arena().alloc(resolve_task_val);
                         resolve_task.known_target = target;
                         // Use transpiler JSX options, applying force_node_env like the disk path does
-                        resolve_task.jsx = transpiler.options.jsx.clone();
                         resolve_task.jsx.development = transpiler.options.forced_jsx_development();
                         resolve_task.loader = Some(import_record_loader);
                         resolve_task.side_effects = bun_ast::SideEffects::HasSideEffects;
@@ -7105,6 +7109,7 @@ pub mod bv2_impl {
                 // Arena-owned.
                 let resolve_task_val = ParseTask::init(
                     &resolve_result,
+                    transpiler.options.jsx_for(&resolve_result),
                     resolve_result.path_pair.primary,
                     bun_ast::Index::INVALID,
                     self,
@@ -7117,7 +7122,6 @@ pub mod bv2_impl {
                     target
                 };
 
-                resolve_task.jsx = resolve_result.jsx.clone();
                 resolve_task.jsx.development = transpiler.options.forced_jsx_development();
 
                 resolve_task.loader = Some(import_record_loader);

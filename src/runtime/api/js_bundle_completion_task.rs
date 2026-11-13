@@ -10,7 +10,6 @@
 
 use bun_options_types::TargetExt as _;
 use core::ptr::{self, NonNull};
-use std::io::Write as _;
 
 use bun_alloc::Arena;
 use bun_bundler::bundle_v2::{
@@ -1078,52 +1077,6 @@ impl CompletionStruct for JSBundleCompletionTask {
         }
 
         transpiler.options.entry_points = config.entry_points.keys().to_vec().into_boxed_slice();
-        // Convert API JSX config back to options.JSX.Pragma
-        let jsx_import = &config.jsx.import_source;
-        let default_factory = options::jsx::MemberList::Static(options::jsx::defaults::FACTORY);
-        let default_fragment = options::jsx::MemberList::Static(options::jsx::defaults::FRAGMENT);
-        transpiler.options.jsx = options::jsx::Pragma {
-            factory: options::jsx::Pragma::member_list_to_components_if_different(
-                &default_factory,
-                &config.jsx.factory,
-            )
-            .unwrap_or(default_factory),
-            fragment: options::jsx::Pragma::member_list_to_components_if_different(
-                &default_fragment,
-                &config.jsx.fragment,
-            )
-            .unwrap_or(default_fragment),
-            runtime: options::jsx::Runtime::from(config.jsx.runtime),
-            development: config.jsx.development,
-            package_name: if !jsx_import.is_empty() {
-                std::borrow::Cow::Owned(jsx_import.to_vec())
-            } else {
-                std::borrow::Cow::Borrowed(b"react".as_slice())
-            },
-            classic_import_source: if !jsx_import.is_empty() {
-                std::borrow::Cow::Owned(jsx_import.to_vec())
-            } else {
-                std::borrow::Cow::Borrowed(b"react".as_slice())
-            },
-            side_effects: config.jsx.side_effects,
-            parse: true,
-            import_source: options::jsx::ImportSource {
-                development: if !jsx_import.is_empty() {
-                    let mut v = Vec::with_capacity(jsx_import.len() + 16);
-                    let _ = write!(&mut v, "{}/jsx-dev-runtime", bstr::BStr::new(jsx_import));
-                    std::borrow::Cow::Owned(v)
-                } else {
-                    std::borrow::Cow::Borrowed(options::jsx::defaults::IMPORT_SOURCE_DEV)
-                },
-                production: if !jsx_import.is_empty() {
-                    let mut v = Vec::with_capacity(jsx_import.len() + 12);
-                    let _ = write!(&mut v, "{}/jsx-runtime", bstr::BStr::new(jsx_import));
-                    std::borrow::Cow::Owned(v)
-                } else {
-                    std::borrow::Cow::Borrowed(options::jsx::defaults::IMPORT_SOURCE)
-                },
-            },
-        };
         transpiler.options.no_macros = config.no_macros;
         transpiler.options.loaders =
             options::loaders_from_transform_options(config.loaders.as_ref(), config.target)?;
@@ -1412,7 +1365,12 @@ impl CompletionStruct for JSBundleCompletionTask {
             ignore_dce_annotations: config.ignore_dce_annotations,
             drop: config.drop.keys().to_vec(),
             bunfig_path: Box::default(),
-            jsx: Some(config.jsx.clone()),
+            // `build` is `Some` for every build, so `configure_linker` skips the working-directory tsconfig.json.
+            jsx: options::jsx::Sources {
+                build: Some(config.jsx.clone()),
+                server_mode: config.jsx_server_mode,
+                ..Default::default()
+            },
             // Relative to where the entry points are relative to, as for `--tsconfig-override`.
             tsconfig_override: (!config.tsconfig_override.list.is_empty()).then(|| {
                 let cwd = match config.dir.list.is_empty() {

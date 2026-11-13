@@ -38,16 +38,6 @@ pub(crate) mod js_bundler {
 
     type OwnedString = MutableString;
 
-    /// `options::JSX::Runtime` → `api::JsxRuntime` (only the reverse `From`
-    /// exists upstream).
-    fn jsx_runtime_to_api(r: options::JSX::Runtime) -> api::JsxRuntime {
-        match r {
-            options::JSX::Runtime::_None => api::JsxRuntime::_none,
-            options::JSX::Runtime::Automatic => api::JsxRuntime::Automatic,
-            options::JSX::Runtime::Classic => api::JsxRuntime::Classic,
-        }
-    }
-
     /// A map of file paths to their in-memory contents.
     /// LAYERING: the data-only struct (`map: StringHashMap<Box<[u8]>>`) and
     /// `get`/`contains`/`resolve` live in `bun_bundler::bundle_v2` so the
@@ -124,7 +114,10 @@ pub(crate) mod js_bundler {
         pub(crate) outdir: OwnedString,
         pub(crate) rootdir: OwnedString,
         pub(crate) tsconfig_override: OwnedString,
-        pub(crate) jsx: api::Jsx,
+        /// Only what the `jsx` option states; `jsx::Sources` holds the `development` default of `Bun.build()`.
+        pub(crate) jsx: options::jsx::Stated,
+        /// Development mode of the server whose HTML route this build is; `None` for `Bun.build()`.
+        pub(crate) jsx_server_mode: Option<bool>,
         pub(crate) force_node_env: options::ForceNodeEnv,
         pub(crate) code_splitting: bool,
         pub(crate) split_require: bool,
@@ -192,14 +185,8 @@ pub(crate) mod js_bundler {
                 outdir: OwnedString::default(),
                 rootdir: OwnedString::default(),
                 tsconfig_override: OwnedString::default(),
-                jsx: api::Jsx {
-                    factory: Box::default(),
-                    fragment: Box::default(),
-                    runtime: api::JsxRuntime::Automatic,
-                    import_source: Box::default(),
-                    development: true, // Default to development mode like old Pragma
-                    ..Default::default()
-                },
+                jsx: options::jsx::Stated::default(),
+                jsx_server_mode: None,
                 force_node_env: options::ForceNodeEnv::Unspecified,
                 code_splitting: false,
                 split_require: true,
@@ -1185,9 +1172,9 @@ pub(crate) mod js_bundler {
                     let _ =
                         bun_core::copy_lowercase(&slice.slice()[0..len], &mut str_lower[0..len]);
                     if let Some(runtime) = options::JSX::RUNTIME_MAP.get(&str_lower[0..len]) {
-                        this.jsx.runtime = jsx_runtime_to_api(runtime.runtime);
+                        this.jsx.runtime = Some(runtime.runtime);
                         if let Some(dev) = runtime.development {
-                            this.jsx.development = dev;
+                            this.jsx.development = Some(dev);
                         }
                     } else {
                         return Err(global_this.throw_invalid_arguments(format_args!(
@@ -1199,26 +1186,35 @@ pub(crate) mod js_bundler {
                 }
 
                 if let Some(slice) = jsx_value.get_optional_slice(global_this, b"factory")? {
-                    this.jsx.factory = Box::<[u8]>::from(slice.slice());
+                    this.jsx.factory = options::jsx::MemberList::stated(
+                        slice.slice(),
+                        options::jsx::defaults::FACTORY,
+                    );
                     drop(slice);
                 }
 
                 if let Some(slice) = jsx_value.get_optional_slice(global_this, b"fragment")? {
-                    this.jsx.fragment = Box::<[u8]>::from(slice.slice());
+                    this.jsx.fragment = options::jsx::MemberList::stated(
+                        slice.slice(),
+                        options::jsx::defaults::FRAGMENT,
+                    );
                     drop(slice);
                 }
 
                 if let Some(slice) = jsx_value.get_optional_slice(global_this, b"importSource")? {
-                    this.jsx.import_source = Box::<[u8]>::from(slice.slice());
+                    if !slice.slice().is_empty() {
+                        this.jsx.import_source =
+                            Some(options::jsx::ImportSource::new(slice.slice()));
+                    }
                     drop(slice);
                 }
 
                 if let Some(dev) = jsx_value.get_boolean_loose(global_this, "development")? {
-                    this.jsx.development = dev;
+                    this.jsx.development = Some(dev);
                 }
 
                 if let Some(val) = jsx_value.get_boolean_loose(global_this, "sideEffects")? {
-                    this.jsx.side_effects = val;
+                    this.jsx.side_effects = Some(val);
                 }
             }
 

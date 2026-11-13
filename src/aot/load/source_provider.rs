@@ -355,9 +355,7 @@ pub fn apply_jsx_settings(pragma: &mut jsx::Pragma, settings: &JsxSettings) {
     if !settings.fragment.is_empty() {
         pragma.fragment = members(&settings.fragment).into();
     }
-    pragma.package_name = Cow::Owned(settings.import_source.clone());
-    pragma.classic_import_source = pragma.package_name.clone();
-    pragma.set_import_source();
+    pragma.set_import_source(&settings.import_source);
 }
 
 pub fn compile_components_without_bundler(

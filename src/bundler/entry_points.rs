@@ -37,7 +37,9 @@ pub struct ServerEntryPoint {
 // auto-generated `Drop`, so no explicit impl is needed.
 
 impl ServerEntryPoint {
-    /// A `--hot` reload evaluates this again. `Bun.serve` reuses the running server (VM hot map).
+    /// `bun:main` imports the namespace of the entry point and does nothing more. When it has
+    /// evaluated, `moduleLoaderEvaluate` looks in that namespace for a server to start
+    /// (`Bun::evaluateEntryPointWrapper` in `BunCompiledEntryPoint.cpp`).
     pub fn generate(entry: &mut ServerEntryPoint, path_to_use: &[u8]) -> crate::Result<()> {
         // Use the global arena so this buffer's lifetime is decoupled
         // from whichever arena the caller's VM happens to be using; the
@@ -46,24 +48,14 @@ impl ServerEntryPoint {
         let mut code: Vec<u8> = Vec::new();
         write!(
             &mut code,
-            "// @bun\n\
-             import * as start from \"{}\";\n\
-             var entryNamespace = start;\n\
-             function isServerConfig(def) {{\n\
-             \x20  return def && def !== globalThis && (typeof def.fetch === 'function' || def.app != undefined) && typeof def.stop !== 'function';\n\
-             }}\n\
-             if (typeof entryNamespace?.then === 'function') {{\n\
-             \x20  entryNamespace = entryNamespace.then((entryNamespace) => {{\n\
-             \x20     if (isServerConfig(entryNamespace?.default))  {{\n\
-             \x20       const server = Bun.serve(entryNamespace.default);\n\
-             \x20       console.debug(`Started ${{server.development ? 'development ' : ''}}server: ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);\n\
-             \x20     }}\n\
-             \x20  }}, reportError);\n\
-             }} else if (isServerConfig(entryNamespace?.default)) {{\n\
-             \x20  const server = Bun.serve(entryNamespace.default);\n\
-             \x20  console.debug(`Started ${{server.development ? 'development ' : ''}}server: ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);\n\
-             }}\n",
-            strings::format_escapes(path_to_use, strings::QuoteEscapeFormatFlags { quote_char: b'"', ..Default::default() }),
+            "// @bun\nimport * as start from \"{}\";\n",
+            strings::format_escapes(
+                path_to_use,
+                strings::QuoteEscapeFormatFlags {
+                    quote_char: b'"',
+                    ..Default::default()
+                }
+            ),
         )
         .map_err(|_| crate::Error::FormatError)?;
 

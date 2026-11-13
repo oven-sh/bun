@@ -149,6 +149,18 @@ pub enum MainEntryPoint {
     Bake,
 }
 
+/// Who looks at the exports of the entry for a server to start (`export default { fetch }`), once
+/// the entry has evaluated.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ServerLook {
+    /// Nobody: the look is done, or this kind of entry gets none.
+    None,
+    /// `moduleLoaderEvaluate`, when it has evaluated `bun:main`.
+    BehindBunMain,
+    /// The compiled program, which runs a compiled entry with no `bun:main` above it.
+    BehindCompiledEntry,
+}
+
 /// The built-in module that `Bun__loadBuiltinEntryPoint` runs. Mirrors
 /// `Bun::BuiltinEntryPoint` in `BuiltinEntryPoint.cpp`.
 #[repr(u8)]
@@ -183,7 +195,7 @@ pub struct VirtualMachine {
     /// `main()`.
     main: Option<bun_ptr::RawSlice<u8>>,
     pub main_entry_point: MainEntryPoint,
-    pub did_look_for_server: bool,
+    pub(crate) server_look: ServerLook,
     pub main_resolved_path: bun_core::String,
     pub main_hash: u32,
     /// Set if code overrides Bun.main to a custom value.
@@ -829,14 +841,26 @@ impl ExitHandler {
 
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__VM__shouldLookForServer(vm: &VirtualMachine) -> bool {
-        vm.main_entry_point == MainEntryPoint::Compiled
-            && !vm.did_look_for_server
-            && !vm.transpiler.options.disable_transpilation
+        vm.server_look == ServerLook::BehindCompiledEntry
+    }
+
+    /// `moduleLoaderEvaluate` asks for every module that evaluates.
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__VM__shouldLookForServerBehindBunMain(
+        vm: &VirtualMachine,
+    ) -> bool {
+        vm.server_look == ServerLook::BehindBunMain
     }
 
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__VM__didLookForServer(vm: &mut VirtualMachine) {
-        vm.did_look_for_server = true;
+        vm.server_look = ServerLook::None;
+    }
+
+    /// The path of the entry module, empty when there is none. Borrowed.
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__VM__entryPath(vm: &VirtualMachine) -> bun_core::StringView<'_> {
+        bun_core::StringView::borrow_utf8(vm.main().unwrap_or_default())
     }
 
     #[unsafe(no_mangle)]
@@ -3452,6 +3476,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).main).write(None);
             addr_of_mut!((*vm).main_hash).write(0);
             addr_of_mut!((*vm).main_entry_point).write(MainEntryPoint::File);
+            addr_of_mut!((*vm).server_look).write(ServerLook::None);
             addr_of_mut!((*vm).main_resolved_path).write(bun_core::String::EMPTY);
             addr_of_mut!((*vm).bake_config_plugin_names).write(Box::default());
             addr_of_mut!((*vm).bake_pages).write(false);
@@ -3781,7 +3806,12 @@ impl VirtualMachine {
         }
         self.has_loaded = self.main_entry_point == MainEntryPoint::Compiled
             && crate::compiled_program::runs_in_place();
-        self.did_look_for_server = false;
+        self.server_look = match self.main_entry_point {
+            _ if self.transpiler.options.disable_transpilation => ServerLook::None,
+            MainEntryPoint::File => ServerLook::BehindBunMain,
+            MainEntryPoint::Compiled => ServerLook::BehindCompiledEntry,
+            _ => ServerLook::None,
+        };
 
         if let (MainEntryPoint::File, Some(entry_path)) = (self.main_entry_point, entry_path) {
             if let Some(hooks) = hooks {

@@ -2,19 +2,26 @@
 
 #include "BunCompiledEntryPoint.h"
 
-#if ENABLE(AOT)
-
-#include "BunCompiledModules.h"
 #include "BunString.h"
 #include "ZigGlobalObject.h"
+#include <JavaScriptCore/AbstractModuleRecord.h>
 #include <JavaScriptCore/ArgList.h>
+#include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/JSFunction.h>
+#include <JavaScriptCore/JSModuleLoader.h>
+#include <JavaScriptCore/JSModuleNamespaceObject.h>
+#include <JavaScriptCore/ModuleRegistryEntry.h>
 #include <array>
 #include <wtf/text/MakeString.h>
 
+#if ENABLE(AOT)
+#include "BunCompiledModules.h"
+
 extern "C" bool Bun__VM__shouldLookForServer(void*);
-extern "C" void Bun__VM__didLookForServer(void*);
 extern "C" BunString Bun__VM__entryRootKey(void*);
+#endif
+extern "C" void Bun__VM__didLookForServer(void*);
+extern "C" BunString Bun__VM__entryPath(void*);
 
 namespace Bun {
 
@@ -41,6 +48,18 @@ static bool isServerConfig(Zig::GlobalObject* globalObject, JSValue config)
     return !stop.isCallable();
 }
 
+// The program did not write this call of Bun.serve(), so an error of it says who made the call.
+static void addNoteOfServeCall(Zig::GlobalObject* globalObject, Exception* exception)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto* error = vm.isTerminationException(exception) ? nullptr : dynamicDowncast<ErrorInstance>(exception->value());
+    JSValue message = error ? error->getDirect(vm, vm.propertyNames->message) : JSValue();
+    if (!message || !message.isString())
+        return;
+    String entryPath = Bun__VM__entryPath(globalObject->bunVM()).toWTFString(BunString::ZeroCopy);
+    error->putDirect(vm, vm.propertyNames->message, jsString(vm, makeString(asString(message)->tryGetValue().data, "\nnote: Bun called Bun.serve() with the default export of \""_s, entryPath, '"')), static_cast<unsigned>(PropertyAttribute::DontEnum));
+}
+
 static void startServerFromNamespace(Zig::GlobalObject* globalObject, JSValue entryNamespace)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -62,7 +81,10 @@ static void startServerFromNamespace(Zig::GlobalObject* globalObject, JSValue en
     MarkedArgumentBuffer serveArguments;
     serveArguments.append(config);
     JSValue server = JSC::call(globalObject, serve, bun, serveArguments, "Bun.serve is not a function"_s);
-    RETURN_IF_EXCEPTION(scope, void());
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        addNoteOfServeCall(globalObject, exception);
+        return;
+    }
     JSValue console = globalObject->get(globalObject, Identifier::fromString(vm, "console"_s));
     RETURN_IF_EXCEPTION(scope, void());
     JSValue debug = console.get(globalObject, Identifier::fromString(vm, "debug"_s));
@@ -90,6 +112,57 @@ JSC_DEFINE_HOST_FUNCTION(functionStartServerFromNamespace, (JSGlobalObject * lex
     return JSValue::encode(jsUndefined());
 }
 
+// An entry point that exports a function `then` is asked through it, as `await import()` would ask, for what holds the server.
+static void lookForServer(Zig::GlobalObject* globalObject, JSValue entryNamespace)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue then = entryNamespace.get(globalObject, vm.propertyNames->then);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!then.isCallable())
+        RELEASE_AND_RETURN(scope, startServerFromNamespace(globalObject, entryNamespace));
+    JSValue reportError = globalObject->get(globalObject, Identifier::fromString(vm, "reportError"_s));
+    RETURN_IF_EXCEPTION(scope, void());
+    MarkedArgumentBuffer arguments;
+    arguments.append(JSFunction::create(vm, globalObject, 1, String(), functionStartServerFromNamespace, ImplementationVisibility::Private));
+    arguments.append(reportError);
+    scope.release();
+    JSC::call(globalObject, then, entryNamespace, arguments, "then is not a function"_s);
+}
+
+// A ShadowRealm, a Bun.ModuleGraph and node:vm can each evaluate a module with the key `bun:main`. The wrapper is the one that
+// the loader of the program's own global object holds under that key.
+bool isRegisteredEntryPointWrapper(Zig::GlobalObject* globalObject, JSModuleLoader* moduleLoader, JSValue moduleRecordValue)
+{
+    auto& vm = JSC::getVM(globalObject);
+    if (globalObject != defaultGlobalObject(vm) || moduleLoader != globalObject->moduleLoader())
+        return false;
+    auto* entry = moduleLoader->registryEntry(Identifier::fromString(vm, "bun:main"_s));
+    return entry && JSValue(entry->record()) == moduleRecordValue;
+}
+
+JSValue evaluateEntryPointWrapper(Zig::GlobalObject* globalObject, JSModuleLoader* moduleLoader, JSValue key, JSValue moduleRecordValue, RefPtr<ScriptFetcher>&& scriptFetcher, JSValue sentValue, JSValue resumeMode)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue result = moduleLoader->evaluateNonVirtual(globalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode);
+    RETURN_IF_EXCEPTION(scope, {});
+    Bun__VM__didLookForServer(globalObject->bunVM());
+    // The entry point is the one import of the wrapper.
+    auto* wrapper = uncheckedDowncast<AbstractModuleRecord>(moduleRecordValue);
+    const auto& imports = wrapper->requestedModules();
+    auto* entryPoint = imports.size() == 1 ? wrapper->hostResolveImportedModule(globalObject, imports.first().m_specifier, imports.first().type()) : nullptr;
+    if (!entryPoint)
+        return result;
+    JSValue entryNamespace = entryPoint->getModuleNamespace(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    lookForServer(globalObject, entryNamespace);
+    RETURN_IF_EXCEPTION(scope, {});
+    return result;
+}
+
+#if ENABLE(AOT)
+
 bool isMainModuleImport(JSGlobalObject* lexicalGlobalObject, AOT::ModuleID module)
 {
     void* bunVM = defaultGlobalObject(lexicalGlobalObject)->bunVM();
@@ -107,19 +180,9 @@ void didEvaluateMainModule(JSGlobalObject* lexicalGlobalObject, AOT::ModuleID en
         return;
     JSValue entryNamespace = AOT::moduleNamespace(globalObject, entryPoint);
     RETURN_IF_EXCEPTION(scope, void());
-    JSValue then = entryNamespace.get(globalObject, vm.propertyNames->then);
-    RETURN_IF_EXCEPTION(scope, void());
-    if (!then.isCallable())
-        RELEASE_AND_RETURN(scope, startServerFromNamespace(globalObject, entryNamespace));
-    JSValue reportError = globalObject->get(globalObject, Identifier::fromString(vm, "reportError"_s));
-    RETURN_IF_EXCEPTION(scope, void());
-    MarkedArgumentBuffer arguments;
-    arguments.append(JSFunction::create(vm, globalObject, 1, String(), functionStartServerFromNamespace, ImplementationVisibility::Private));
-    arguments.append(reportError);
-    scope.release();
-    JSC::call(globalObject, then, entryNamespace, arguments, "then is not a function"_s);
+    RELEASE_AND_RETURN(scope, lookForServer(globalObject, entryNamespace));
 }
 
-} // namespace Bun
-
 #endif // ENABLE(AOT)
+
+} // namespace Bun

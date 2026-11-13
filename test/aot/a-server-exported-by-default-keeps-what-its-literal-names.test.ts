@@ -259,3 +259,40 @@ describe.concurrent("an executable answers as plain Bun does", () => {
     expect(await served(["./served"], cwd)).toEqual(plain);
   });
 });
+
+test("an error of the host's call of Bun.serve() says who made the call, as in plain Bun", async () => {
+  using dir = tempDir("aot-a-server-exported-by-default-fails", {
+    "main.ts": `export default { port: 99999999, ${first} };\nconsole.log("ran");`,
+  });
+  const cwd = String(dir);
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", "served"],
+    cwd,
+    env,
+    stdout: "ignore",
+    stderr: "inherit",
+  });
+  expect(await build.exited).toBe(0);
+  const failed = async (cmd: string[]) => {
+    await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const lines = stderr.split(/\r?\n/);
+    const error = lines.findIndex(line => line.startsWith("RangeError"));
+    // The executable names the file by where it holds it.
+    return {
+      stdout,
+      error: lines.slice(error, error + 2).map(line => line.replace(/".*main\.ts"$/, '"main.ts"')),
+      exitCode,
+    };
+  };
+  const plain = await failed([bunExe(), "main.ts"]);
+  expect(plain).toEqual({
+    stdout: "ran\n",
+    error: [
+      'RangeError: The value of "options.port" is out of range. It must be >= 0 and <= 65535. Received 99999999',
+      'note: Bun called Bun.serve() with the default export of "main.ts"',
+    ],
+    exitCode: 1,
+  });
+  expect(await failed(["./served"])).toEqual(plain);
+});

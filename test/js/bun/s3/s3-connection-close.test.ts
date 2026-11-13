@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir, tls } from "harness";
+import { join } from "node:path";
 
 // Every S3 PUT/DELETE answers with a zero-length body, and any endpoint behind
 // a load balancer may reply with `Connection: close`. The client must treat
@@ -161,4 +162,57 @@ describe("close-delimited response body", () => {
       expect(proc.signalCode).toBeNull();
     },
   );
+});
+
+test.concurrent("S3 streaming callbacks retain custom TLS configuration", async () => {
+  const chunk = Buffer.alloc(64 * 1024, 0x61);
+  using server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls,
+    fetch() {
+      let remaining = 16;
+      return new Response(
+        new ReadableStream({
+          pull(controller) {
+            if (remaining-- > 0) controller.enqueue(chunk);
+            else controller.close();
+          },
+        }),
+      );
+    },
+  });
+  using dir = tempDir("s3-stream-tls-config", { "ca.pem": tls.cert });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const tls = require("node:tls");
+      tls.DEFAULT_CIPHERS += ":!aNULL";
+      const client = new Bun.S3Client({
+        accessKeyId: "key", secretAccessKey: "secret", bucket: "bucket",
+        endpoint: ${JSON.stringify(server.url.href)},
+      });
+      for (let i = 0; i < 3; i++) {
+        let bytes = 0;
+        let chunks = 0;
+        for await (const chunk of client.file("object").stream()) {
+          if (Buffer.compare(chunk, Buffer.alloc(chunk.length, 0x61)) !== 0) throw new Error("corrupt body");
+          bytes += chunk.length;
+          chunks++;
+        }
+        if (bytes !== 1024 * 1024 || chunks < 2) throw new Error(JSON.stringify({bytes, chunks}));
+      }
+      console.log("3 complete streams");
+    `,
+    ],
+    env: { ...envWithoutProxy, NODE_EXTRA_CA_CERTS: join(String(dir), "ca.pem") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("3 complete streams");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });

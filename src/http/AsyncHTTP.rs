@@ -1,4 +1,4 @@
-use core::ptr::NonNull;
+use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_ast::{Loc, Log};
@@ -271,6 +271,19 @@ pub struct Options<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl<'a> AsyncHTTP<'a> {
+    /// # Safety
+    /// `source` is an HTTP-thread working copy of the live request at `target`.
+    /// The caller transfers its aliased buffers without dropping either copy.
+    pub unsafe fn copy_result(source: *const Self, target: *mut Self) {
+        // SAFETY: the callback owns both live requests; TLS references are independently owned.
+        unsafe {
+            let tls_props = (*target).client.tls_props.take();
+            ptr::write(target, ptr::read(source));
+            // The copied pointer borrows the working request's reference until its terminal callback.
+            ptr::write(&raw mut (*target).client.tls_props, tls_props);
+        }
+    }
+
     /// Erase the borrow lifetime for storage in intrusive queues / raw-pointer
     /// callback contexts. See [`HTTPClient::as_erased_ptr`] for rationale.
     #[inline(always)]
@@ -522,6 +535,7 @@ impl<'a> AsyncHTTP<'a> {
         http_proxy: Option<URL<'a>>,
         proxy_settings: Option<Box<crate::ProxySettings>>,
         redirect_type: FetchRedirect,
+        tls_props: Option<SSLConfigSharedPtr>,
     ) -> AsyncHTTP<'a> {
         Self::init(
             method,
@@ -534,6 +548,7 @@ impl<'a> AsyncHTTP<'a> {
             Options {
                 http_proxy,
                 proxy_settings,
+                tls_props,
                 ..Options::default()
             },
         )
@@ -723,7 +738,7 @@ impl<'a> AsyncHTTP<'a> {
                 // (`start_queued_task`), so any owned field that was already
                 // populated at that point — `request_headers`,
                 // `client.header_entries`, `client.proxy_headers`,
-                // `client.proxy_settings`, `client.tls_props` — is *shared*
+                // `client.proxy_settings` — is *shared*
                 // with the original and must NOT be dropped here; the original
                 // drops them when its `Box<AsyncHTTP>` is reclaimed. Only the
                 // state the clone built up itself during request processing is
@@ -769,6 +784,7 @@ impl<'a> AsyncHTTP<'a> {
                     client.close_proxy_tunnel(false);
                     debug_assert!(client.h2.is_none());
                     drop(core::mem::take(&mut client.custom_ssl_ctx));
+                    drop(core::mem::take(&mut client.tls_props));
                     // `state` was `Default` at `ptr::read` time and was
                     // populated by the clone (`on_start` → `client.start`); it
                     // owns the decompressor / compressed_body buffers.

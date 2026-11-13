@@ -342,7 +342,7 @@ impl NetworkTask {
         // completion callback.
         unsafe {
             let real = async_http.real.expect("unreachable").as_ptr();
-            ptr::write(real, ptr::read(async_http));
+            AsyncHTTP::copy_result(async_http, real);
         }
         // SAFETY: the HTTP thread is the sole writer for this call; nothing
         // exclusive to `*this` outlives this block, which ends before the
@@ -731,6 +731,7 @@ impl NetworkTask {
             http::FetchRedirect::Follow,
             AsyncHTTPOptions {
                 http_proxy,
+                tls_props: pm.registry_tls_config(scope),
                 proxy_settings: pm.proxy_settings(),
                 idle_timeout_seconds: pm.idle_timeout_seconds(),
                 ..Default::default()
@@ -921,8 +922,17 @@ impl NetworkTask {
         // the identical pattern in `for_manifest` above.
         let url = URL::parse(unsafe { bun_ptr::detach_lifetime(&self.url_buf) });
 
+        let tls_props = match authorization {
+            Authorization::AllowAuthorization => pm
+                .options
+                .tarball_credentials(scope, &url, normalized)
+                .and_then(|registry| pm.registry_tls_config(registry)),
+            Authorization::NoAuthorization => None,
+        };
+
         let mut http_options = AsyncHTTPOptions {
             http_proxy: pm.http_proxy(&url),
+            tls_props,
             proxy_settings: pm.proxy_settings(),
             idle_timeout_seconds: pm.idle_timeout_seconds(),
             ..Default::default()

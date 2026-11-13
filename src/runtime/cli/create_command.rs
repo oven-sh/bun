@@ -1717,6 +1717,7 @@ impl Example {
             http_proxy,
             HTTP::ProxySettings::from_env(env_loader),
             HTTP::FetchRedirect::Follow,
+            None,
         ));
         async_http.client.progress_node = Some(core::ptr::NonNull::from(&mut refresher.root));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
@@ -1801,6 +1802,7 @@ impl Example {
             http_proxy,
             HTTP::ProxySettings::from_env(env_loader),
             HTTP::FetchRedirect::Follow,
+            None,
         );
         async_http.client.progress_node = Some(core::ptr::NonNull::from(&mut refresher.root));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
@@ -1882,6 +1884,7 @@ impl Example {
             http_proxy,
             HTTP::ProxySettings::from_env(env_loader),
             HTTP::FetchRedirect::Follow,
+            None,
         );
         async_http.client.progress_node = Some(core::ptr::NonNull::from(&mut refresher.root));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
@@ -1932,6 +1935,7 @@ impl Example {
             http_proxy,
             HTTP::ProxySettings::from_env(env_loader),
             HTTP::FetchRedirect::Follow,
+            None,
         ));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 

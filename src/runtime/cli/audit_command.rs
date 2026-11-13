@@ -319,15 +319,21 @@ struct AuditRegistry {
     href: Box<[u8]>,
     url_hash: u64,
     authorization: Option<Vec<u8>>,
+    tls_props: Option<http::ssl_config::SharedPtr>,
     is_default: bool,
 }
 
 impl AuditRegistry {
-    fn from_scope(scope: &bun_install::npm::registry::Scope, is_default: bool) -> AuditRegistry {
+    fn from_scope(
+        pm: &PackageManager,
+        scope: &bun_install::npm::registry::Scope,
+        is_default: bool,
+    ) -> AuditRegistry {
         AuditRegistry {
             href: Box::<[u8]>::from(strings::without_trailing_slash(scope.url.href())),
             url_hash: scope.url_hash,
             authorization: scope.authorization(&scope.url.url()),
+            tls_props: pm.registry_tls_config(scope),
             is_default,
         }
     }
@@ -414,7 +420,7 @@ fn collect_packages_for_audit(
     let root_id = pm.root_package_id.get(&pm.lockfile, pm.workspace_name_hash);
 
     let mut groups: Vec<(AuditRegistry, Vec<PackageVersions>)> = vec![(
-        AuditRegistry::from_scope(&pm.options.scope, true),
+        AuditRegistry::from_scope(pm, &pm.options.scope, true),
         Vec::new(),
     )];
 
@@ -469,7 +475,10 @@ fn collect_packages_for_audit(
                 {
                     Some(i) => i,
                     None => {
-                        groups.push((AuditRegistry::from_scope(package_scope, false), Vec::new()));
+                        groups.push((
+                            AuditRegistry::from_scope(pm, package_scope, false),
+                            Vec::new(),
+                        ));
                         groups.len() - 1
                     }
                 };
@@ -674,6 +683,7 @@ fn send_audit_request(
         headers.entries,
         headers.content.written_slice(),
         &compressed_body,
+        registry.tls_props.clone(),
     );
     // A registry URL that is not http(s) is a configuration error, not a registry without an audit endpoint.
     let mut is_fatal = registry.is_default;

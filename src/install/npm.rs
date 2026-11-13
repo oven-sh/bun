@@ -53,9 +53,10 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     }
 
     // An `_auth` whose username could not be derived still authenticates the request.
-    let Some(authorization) = registry.authorization(&registry_url) else {
+    let authorization = registry.authorization(&registry_url);
+    if authorization.is_none() && !registry.has_client_identity() {
         return Err(WhoamiError::NeedAuth);
-    };
+    }
 
     let auth_type: &[u8] = match &manager.options.publish_config.auth_type {
         Some(auth_type) => auth_type.as_str().as_bytes(),
@@ -75,14 +76,18 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     let header_list: [(&[u8], &[u8]); 8] = [
         (b"accept", b"*/*"),
         (b"accept-encoding", b"gzip/deflate"),
-        (b"authorization", &authorization),
         (b"npm-auth-type", auth_type),
         (b"npm-command", b"whoami"),
         (b"user-agent", user_agent.as_bytes()),
         (b"Connection", b"keep-alive"),
         (b"Host", registry_url.host),
+        (
+            b"authorization",
+            authorization.as_deref().unwrap_or_default(),
+        ),
     ];
-    let headers = HeaderBuilder::from_pairs(&header_list)?;
+    let header_count = header_list.len() - usize::from(authorization.is_none());
+    let headers = HeaderBuilder::from_pairs(&header_list[..header_count])?;
 
     let mut print_buf: Vec<u8> = Vec::new();
     write!(
@@ -96,8 +101,14 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     let url = URL::parse(&print_buf);
     let header_buf: &[u8] = headers.content.written_slice();
 
-    let mut req =
-        manager.registry_request(http::Method::GET, url, headers.entries, header_buf, b"");
+    let mut req = manager.registry_request(
+        http::Method::GET,
+        url,
+        headers.entries,
+        header_buf,
+        b"",
+        manager.registry_tls_config(registry),
+    );
 
     let res = match manager.send_with_retries(&mut req, &mut response_buf) {
         Ok(res) => res,
@@ -251,6 +262,8 @@ pub mod registry {
 
         /// The `.npmrc` key this registry's URL resolves to, once every source was applied.
         pub(crate) url_auth_key: Option<Box<[u8]>>,
+        pub certfile: Box<[u8]>,
+        pub keyfile: Box<[u8]>,
     }
 
     /// After `:` in yarn's shape (`/api/:_authToken=T`), after `/` in JFrog's (`/npm/_auth=<b64>`).
@@ -382,14 +395,20 @@ pub mod registry {
             self.url_hash = Self::hash(strings::without_trailing_slash(self.url.href()));
         }
 
+        pub fn has_client_identity(&self) -> bool {
+            !self.certfile.is_empty() && !self.keyfile.is_empty()
+        }
+
         pub(crate) fn has_credentials(&self) -> bool {
-            !self.token.is_empty() || !self.auth.is_empty()
+            !self.token.is_empty() || !self.auth.is_empty() || self.has_client_identity()
         }
 
         pub(crate) fn copy_credentials_from(&mut self, other: &Scope) {
             self.token.clone_from(&other.token);
             self.auth.clone_from(&other.auth);
             self.user.clone_from(&other.user);
+            self.certfile.clone_from(&other.certfile);
+            self.keyfile.clone_from(&other.keyfile);
             self.declared_in_npmrc = other.declared_in_npmrc;
         }
 
@@ -577,6 +596,8 @@ pub mod registry {
                 token: registry.token,
                 auth,
                 user,
+                certfile: registry.certfile,
+                keyfile: registry.keyfile,
                 declared_in_npmrc: registry.declared_in_npmrc,
                 ..Default::default()
             };

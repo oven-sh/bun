@@ -1147,6 +1147,36 @@ impl PackageManager {
         .then_some(30)
     }
 
+    pub fn registry_tls_config(
+        &self,
+        registry: &crate::npm::registry::Scope,
+    ) -> Option<http::ssl_config::SharedPtr> {
+        if registry.certfile.is_empty() && registry.keyfile.is_empty() {
+            return None;
+        }
+        let mut config = http::ssl_config::SSLConfig::default();
+        config.requires_custom_request_ctx = true;
+        if !registry.certfile.is_empty() {
+            config.cert_file_name = bun_core::dupe_z(&registry.certfile);
+        }
+        if !registry.keyfile.is_empty() {
+            config.key_file_name = bun_core::dupe_z(&registry.keyfile);
+        }
+        if !self.options.ca_file_name.is_empty() {
+            config.ca_file_name = bun_core::dupe_z(self.options.ca_file_name);
+        }
+        if !self.options.ca.is_empty() {
+            config.ca = Some(
+                self.options
+                    .ca
+                    .iter()
+                    .map(|ca| bun_core::dupe_z(ca))
+                    .collect(),
+            );
+        }
+        Some(http::ssl_config::global_registry::intern(config))
+    }
+
     /// A blocking request, with the proxy and the certificate check the environment asks for.
     /// Send it with `send_with_retries`, unless the registry must not receive the request twice.
     pub fn registry_request<'a>(
@@ -1156,6 +1186,7 @@ impl PackageManager {
         headers: http::headers::EntryList,
         headers_buf: &'a [u8],
         body: &'a [u8],
+        tls_props: Option<http::ssl_config::SharedPtr>,
     ) -> http::AsyncHTTP<'a> {
         let http_proxy = self.http_proxy(&url);
         let mut req = http::AsyncHTTP::init_sync(
@@ -1167,6 +1198,7 @@ impl PackageManager {
             http_proxy,
             self.proxy_settings(),
             http::FetchRedirect::Follow,
+            tls_props,
         );
         req.client.flags.reject_unauthorized = self.tls_reject_unauthorized();
         req.client.flags.redirect_credentials = http::RedirectCredentialsPolicy::HttpsUpgrade;

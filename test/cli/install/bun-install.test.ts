@@ -17,6 +17,7 @@ import {
   normalizeBunSnapshot,
   readdirSorted,
   runBunInstall,
+  serveBothSchemes,
   substDrive,
   tempDir,
   textLockfile,
@@ -1393,31 +1394,6 @@ describe.concurrent("bun-install", () => {
     const manifestPath = "/no-deps";
     const tarballPath = "/no-deps/-/no-deps-1.0.0.tgz";
 
-    // Serves both schemes on one port. A connection that starts with a TLS handshake record (0x16) is piped to
-    // `httpsPort`, and any other connection to `httpPort`.
-    async function serveBothSchemes(httpPort: number, httpsPort: number) {
-      const server = createServer(client => {
-        client.on("error", () => {});
-        client.once("data", (first: Buffer) => {
-          const upstream = connect(first[0] === 0x16 ? httpsPort : httpPort, "127.0.0.1");
-          upstream.on("error", () => client.destroy());
-          client.on("error", () => upstream.destroy());
-          upstream.write(first);
-          client.pipe(upstream).pipe(client);
-        });
-      });
-      const listening = Promise.withResolvers<void>();
-      server.on("error", listening.reject);
-      server.listen(0, "127.0.0.1", listening.resolve);
-      await listening.promise;
-      return {
-        port: (server.address() as AddressInfo).port,
-        [Symbol.dispose]() {
-          server.close();
-        },
-      };
-    }
-
     // The registry lives on `registry`://127.0.0.1; `target` is the scheme and
     // hostname it redirects to. The port differs too, unless `samePort` puts
     // both servers behind one port. https servers use the harness certificate,
@@ -1512,7 +1488,7 @@ describe.concurrent("bun-install", () => {
         },
       });
       const [httpServer, httpsServer] = registryScheme === "http" ? [registry, targetServer] : [targetServer, registry];
-      using bothSchemes = samePort ? await serveBothSchemes(httpServer.port!, httpsServer.port!) : undefined;
+      await using bothSchemes = samePort ? await serveBothSchemes(httpServer.port!, httpsServer.port!) : undefined;
       const registryPort = bothSchemes?.port ?? registry.port;
       const targetPort = bothSchemes?.port ?? targetServer.port;
 
@@ -1586,7 +1562,7 @@ describe.concurrent("bun-install", () => {
           hostname: "127.0.0.1",
           fetch: req => Response.redirect(`https://127.0.0.1:${targetPort}${new URL(req.url).pathname}`, 308),
         });
-        using bothSchemes = samePort ? await serveBothSchemes(registry.port!, targetServer.port!) : undefined;
+        await using bothSchemes = samePort ? await serveBothSchemes(registry.port!, targetServer.port!) : undefined;
         const registryPort = bothSchemes?.port ?? registry.port;
         const targetPort = bothSchemes?.port ?? targetServer.port;
 

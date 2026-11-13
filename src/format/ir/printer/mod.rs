@@ -272,7 +272,12 @@ pub(crate) fn print(
     buffers.suffix_indentions.clear();
     buffers.line_suffixes.clear();
     buffers.group_modes.clear();
-    buffers.before_try.unstable.clear();
+    // An error can end a print before its try state is taken back.
+    let before = &mut buffers.before_try;
+    before.unstable.clear();
+    before.inner.clear();
+    before.open_groups.clear();
+    before.holders.clear();
     buffers.marks = [None; 2];
     let start = out.len();
     let mut printer = Printer {

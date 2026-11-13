@@ -1507,10 +1507,11 @@ describe.concurrent("bun fmt", () => {
       const rows = all.filter(row => flavor === "Prettier" || (row[0] !== "js" && row[3] === undefined));
       const names = rows.map(([extension], index) => `${index}.${extension}`);
       const texts = Object.fromEntries(rows.map(([, text], index) => [names[index], text]));
-      const first = await format({ ...config, ...texts }, args, { reads: names });
-      const second = await format({ ...config, ...(first.files as Record<string, string>) }, args, { reads: names });
+      const quiet = ["--log-level=warn", ...args];
+      const first = await format({ ...config, ...texts }, quiet, { reads: names });
+      const second = await format({ ...config, ...(first.files as Record<string, string>) }, quiet, { reads: names });
       const expected = Object.fromEntries(rows.map(([, , printed], index) => [names[index], printed]));
-      expect([first.exitCode, second.exitCode]).toEqual([0, 0]);
+      expect([first.stderr, second.stderr, first.exitCode, second.exitCode]).toEqual(["", "", 0, 0]);
       return { first: first.files, second: second.files, expected };
     }
 
@@ -1667,11 +1668,11 @@ describe.concurrent("bun fmt", () => {
       ];
       const names = rows.map((_, index) => `${index}.ts`);
       const texts = Object.fromEntries(rows.map(([text], index) => [names[index], text]));
-      const first = await format(texts, [], { reads: names });
+      const first = await format(texts, ["--log-level=warn"], { reads: names });
       expect(first.files).toEqual(Object.fromEntries(rows.map(([, printed], index) => [names[index], printed])));
-      const second = await format(first.files as Record<string, string>, [], { reads: names });
+      const second = await format(first.files as Record<string, string>, ["--log-level=warn"], { reads: names });
       expect(second.files).toEqual(Object.fromEntries(rows.map(([, , printed], index) => [names[index], printed])));
-      expect([first.exitCode, second.exitCode]).toEqual([0, 0]);
+      expect([first.stderr, second.stderr, first.exitCode, second.exitCode]).toEqual(["", "", 0, 0]);
     });
   });
 

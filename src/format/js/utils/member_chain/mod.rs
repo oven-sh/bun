@@ -16,6 +16,7 @@ use super::typecast::is_cast_target;
 use crate::js::parentheses::expression::expression_needs_parentheses;
 use crate::js::print::call_like_expression::arguments::arguments_grouped_layout;
 use crate::js::print::call_like_expression::is_printed_as_member_chain;
+use crate::js::print::parameters::FormatFormalParameters;
 use crate::prelude::*;
 use crate::{best_fitting, write};
 use bun_core::strings;
@@ -489,8 +490,8 @@ fn push_arguments_if_printed_the_same<'a>(
 }
 
 /// True if the arguments of `call` are printed the same way the next time once one of them breaks: none but the
-/// grouped one can stay broken, and neither can the return type of a grouped function, which puts every argument
-/// on its own line too (`write_grouped_arguments`).
+/// grouped one can stay broken, and neither can the signature of a grouped function, which puts every argument on
+/// its own line too (`write_grouped_arguments`).
 fn arguments_print_the_same_once_broken<'a>(call: Call<'a>, f: &Formatter<'a>) -> bool {
     let args = call.args();
     let Some(layout) = arguments_grouped_layout(args, f) else {
@@ -504,8 +505,10 @@ fn arguments_print_the_same_once_broken<'a>(call: Call<'a>, f: &Formatter<'a>) -
         |span: Span| strings::contains_char(f.source_text().text_for(&span), b'{');
     !(args.iter().enumerate()).any(|(index, argument)| match index == grouped {
         false => can_stay_expanded(argument.span()),
-        true => (argument.as_fn().and_then(|function| function.return_type()))
-            .is_some_and(|return_type| can_stay_expanded(return_type.span())),
+        true => argument.as_fn().is_some_and(|function| {
+            can_stay_expanded(FormatFormalParameters(function).span())
+                || (function.return_type()).is_some_and(|it| can_stay_expanded(it.span()))
+        }),
     })
 }
 

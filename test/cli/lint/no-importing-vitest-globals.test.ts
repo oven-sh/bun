@@ -5,7 +5,8 @@
 // `--fix-dangerously`. No flag applies a fix whose text is wrong for the code around it.
 //
 // Each case is a test file that passes. It's linted as written and with each flag, with and without an oxlint config,
-// and `bun test` runs it as written and after each flag. What it prints tells whether a fix changed what it does.
+// and `bun test` runs it as written and after each flag. What it prints tells whether a fix changed what it does. The
+// rule is for a project with Vitest's globals, so `bun test` runs the cases with `globals = "vitest"`.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
@@ -15,6 +16,8 @@ import { endChildren, longLimit, spawn } from "../children";
 afterAll(endChildren);
 
 const rule = "vitest/no-importing-vitest-globals";
+/** Its fix removes an `export {}` from a file that has another `import` or `export`. */
+const emptyExport = "no-useless-empty-export";
 
 type Case = {
   /** The file that the rule reports. `TAG` stands for the string that starts each line the case prints. */
@@ -23,6 +26,10 @@ type Case = {
   prints: string[];
   /** The text after `--fix`. Without it, `--fix` leaves the file alone. */
   fixed?: string;
+  /** The text after `--fix` where only the fix of another rule applies. */
+  fixedByAnotherRule?: string;
+  /** The text after each flag next to an oxlint config, where the other rule differs. */
+  withOxlintConfig?: Record<Flag, string>;
   /** The text after `--fix-dangerously`, which is oxlint's, for a case that `--fix` leaves alone. */
   dangerously?: string;
   /** What the case prints after `--fix-dangerously`. Nothing, if not set. */
@@ -36,18 +43,14 @@ type Case = {
 /** A test that prints `value`. Every case uses each name it declares, so that no other rule has a fix for it. */
 const prints = (value: string, test = "test") =>
   `${test}("prints", () => {\n  expect(${value}).toBe(${value});\n  console.log(TAG, ${value});\n});\n`;
-/** A test that prints whether the file is strict. */
-const printsStrict =
-  'test("prints", () => {\n  const frozen = Object.freeze({ sep });\n  let threw = false;\n  try {\n    frozen.sep = "";\n' +
-  "  } catch {\n    threw = true;\n  }\n  expect(threw).toBe(threw);\n  console.log(TAG, threw);\n});\n";
 /** A hook of `@effect/vitest` runs what the callback returns. The global one keeps it for later. */
 const hook = (name: string) => `let ready = 0;\n${name}(() => () => {\n  ready = 1;\n});\n` + prints("ready");
 
-// `bun test` takes `assert` of "vitest" from `chai`. oxlint takes `@effect/vitest` for Vitest: it exports Vitest's
-// names, but `it` and two hooks are its own.
+const withEmptyExportFrom = (first: string) =>
+  `${first}\nexport {} from "./other.ts";\nconst name = "one";\n` + prints("name");
+
+// oxlint takes `@effect/vitest` for Vitest: it exports Vitest's names, but `it` and two hooks are its own.
 const packages = {
-  "node_modules/chai/package.json": '{ "name": "chai", "main": "index.js" }',
-  "node_modules/chai/index.js": "exports.assert = value => value === true;\n",
   "node_modules/@effect/vitest/package.json": '{ "name": "@effect/vitest", "type": "module", "main": "index.js" }',
   "node_modules/@effect/vitest/index.js":
     'import { it as base, beforeAll as all, beforeEach as each } from "vitest";\nexport * from "vitest";\n' +
@@ -62,10 +65,12 @@ const cases: Record<string, Case> = {
     prints: ["1"],
     dangerously: "\n" + prints("spy.fn(() => 1)()"),
   },
+  // `vitest` is a global too, and the same object. The fix is held back because the key isn't the name.
   "require(): a key bound under the name of another global": {
     text: 'const { vi: vitest, test, expect } = require("vitest");\n' + prints("vitest.fn(() => 1)()"),
     prints: ["1"],
     dangerously: "\n" + prints("vitest.fn(() => 1)()"),
+    printsDangerously: ["1"],
   },
   "require(): a key with a pattern": {
     text: 'const { vi: { fn }, test, expect } = require("vitest");\n' + prints("fn(() => 1)()"),
@@ -100,12 +105,6 @@ const cases: Record<string, Case> = {
     prints: ["1"],
     dangerously: "const one = 1;\n" + prints("spy.fn(() => one)()"),
   },
-  // `bun test` has no global `chai`, and the `chai` of its "vitest" is undefined.
-  "require(): `chai`": {
-    text: 'const { chai, test, expect } = require("vitest");\n' + prints("chai"),
-    prints: ["undefined"],
-    dangerously: "\n" + prints("chai"),
-  },
   // The fix drops the annotation.
   "require(): a type annotation": {
     file: "case.test.ts",
@@ -113,6 +112,21 @@ const cases: Record<string, Case> = {
     prints: ["undefined"],
     dangerously: "const { inject } = require('vitest');\n" + prints('inject("port")'),
     printsDangerously: ["undefined"],
+  },
+  // The fix drops the type arguments.
+  "require(): type arguments": {
+    file: "case.test.ts",
+    text: 'const { inject, test, expect } = require<typeof import("vitest")>("vitest");\n' + prints('inject("port")'),
+    prints: ["undefined"],
+    dangerously: "const { inject } = require('vitest');\n" + prints('inject("port")'),
+    printsDangerously: ["undefined"],
+  },
+  // A `var` can be assigned as well. This one isn't.
+  "require(): a `var`": {
+    text: 'var { test, expect } = require("vitest");\n' + prints("1"),
+    prints: ["1"],
+    dangerously: "\n" + prints("1"),
+    printsDangerously: ["1"],
   },
   // Another module imports the names.
   "require(): exported": {
@@ -122,14 +136,7 @@ const cases: Record<string, Case> = {
     prints: ["undefined"],
     dangerously: "export const { inject } = require('vitest');\n",
   },
-  "require(): a name that the file exports": {
-    file: "helpers.ts",
-    text: 'const { expect, inject } = require("vitest");\nexport { expect, inject };\n',
-    files: { "case.test.ts": 'import { expect, inject } from "./helpers.ts";\n' + prints('inject("port")') },
-    prints: ["undefined"],
-    dangerously: "const { inject } = require('vitest');\nexport { expect, inject };\n",
-  },
-  // The global can't be assigned.
+  // The assignment would then be to the global.
   "require(): a `let` that the file assigns": {
     text:
       'let { test, expect } = require("vitest");\nconst plain = test;\ntest = (name, fn) => plain(`${name}, wrapped`, fn);\n' +
@@ -159,6 +166,13 @@ const cases: Record<string, Case> = {
     dangerously: "\n" + hook("beforeEach"),
     printsDangerously: ["0"],
   },
+  "require(): in a namespace": {
+    file: "case.test.ts",
+    text: 'namespace Tests {\n  const { test, expect } = require("vitest");\n' + prints("1") + "}\n",
+    prints: ["1"],
+    dangerously: "namespace Tests {\n  \n" + prints("1") + "}\n",
+    printsDangerously: ["1"],
+  },
 
   // The fix goes by the local name alone.
   "import: another export under the name of a global": {
@@ -167,21 +181,15 @@ const cases: Record<string, Case> = {
     dangerously: "\n" + prints('vi("port")'),
   },
   // The fix drops a specifier that's imported under a string name.
-  "import: an export named by a string, under another name": {
+  "import: a global named by a string, under another name": {
     text: 'import { "vi" as spy, test, expect } from "vitest";\n' + prints("spy.fn(() => 1)()"),
     prints: ["1"],
     dangerously: 'import {  } from "vitest";\n' + prints("spy.fn(() => 1)()"),
   },
-  "import: an export named by a string, under its own name": {
+  "import: another export named by a string": {
     text: 'import { "inject" as inject, test, expect } from "vitest";\n' + prints('inject("port")'),
     prints: ["undefined"],
     dangerously: 'import {  } from "vitest";\n' + prints('inject("port")'),
-  },
-  // `bun test` has no global `assert`.
-  "import: `assert`": {
-    text: 'import { assert, test, expect } from "vitest";\n' + prints("assert(true)"),
-    prints: ["true"],
-    dangerously: "\n" + prints("assert(true)"),
   },
   "import: `it` of @effect/vitest": {
     text: 'import { it, expect } from "@effect/vitest";\n' + prints("1", "it.effect"),
@@ -194,21 +202,18 @@ const cases: Record<string, Case> = {
     dangerously: "\n" + hook("beforeAll"),
     printsDangerously: ["0"],
   },
-  "import: a name that the file exports": {
-    file: "helpers.ts",
-    text: 'import { expect, inject } from "vitest";\nexport { expect, inject };\n',
-    files: { "case.test.ts": 'import { expect, inject } from "./helpers.ts";\n' + prints('inject("port")') },
-    prints: ["undefined"],
-    dangerously: 'import { inject } from "vitest";\nexport { expect, inject };\n',
+  // The package can declare any of the names itself. These two are Vitest's.
+  "import: the other names of @effect/vitest": {
+    text:
+      'import { test, expect, it as base } from "@effect/vitest";\ntest("is a test", () => {});\n' +
+      prints("1", "base.effect"),
+    prints: ["1"],
+    dangerously:
+      'import { it as base } from "@effect/vitest";\ntest("is a test", () => {});\n' + prints("1", "base.effect"),
+    printsDangerously: ["1"],
   },
-  // Without an `import`, Bun runs a file that has `require` as CommonJS, which isn't strict.
-  "import: the last import of a file with require()": {
-    text: 'import { test, expect } from "vitest";\nconst { sep } = require("node:path");\n' + printsStrict,
-    prints: ["true"],
-    dangerously: '\nconst { sep } = require("node:path");\n' + printsStrict,
-    printsDangerously: ["false"],
-  },
-  // Without an `import`, TypeScript takes the file for a script: its names are global, and it can't have an `await`.
+  // Without an `import` or an `export`, TypeScript takes the file for a script, unless `moduleDetection` is "force":
+  // its names are global, and it can't have an `await`.
   "import: the last import of a TypeScript file that declares a name": {
     file: "case.test.ts",
     text: 'import { test, expect } from "vitest";\nconst name = "one";\n' + prints("name"),
@@ -224,10 +229,47 @@ const cases: Record<string, Case> = {
     printsDangerously: ["1"],
   },
 
+  // `typescript/no-useless-empty-export` removes the `export {}` in the same pass, so it can't keep the module.
+  "import: the last import of a TypeScript file that declares a name, next to `export {}`": {
+    file: "case.test.ts",
+    text: 'import { test, expect } from "vitest";\nexport {};\nconst name = "one";\n' + prints("name"),
+    prints: ["one"],
+    fixedByAnotherRule: 'import { test, expect } from "vitest";\n\nconst name = "one";\n' + prints("name"),
+    dangerously: '\n\nconst name = "one";\n' + prints("name"),
+    printsDangerously: ["one"],
+  },
+  // With an oxlint config that rule leaves the statement, because it loads a module.
+  "import: the last import of a TypeScript file that declares a name, next to `export {} from`": {
+    file: "case.test.ts",
+    text: withEmptyExportFrom('import { test, expect } from "vitest";'),
+    files: { "other.ts": "export const other = 1;\n" },
+    prints: ["one"],
+    fixedByAnotherRule: 'import { test, expect } from "vitest";\n\nconst name = "one";\n' + prints("name"),
+    dangerously: '\n\nconst name = "one";\n' + prints("name"),
+    printsDangerously: ["one"],
+    withOxlintConfig: {
+      "--fix": withEmptyExportFrom('import { test, expect } from "vitest";'),
+      "--fix-dangerously": withEmptyExportFrom(""),
+    },
+  },
+
   // oxlint's text is `import  } from "vitest";`.
   "import: next to a default import": {
     text: 'import vitest, { test, expect } from "vitest";\n' + prints("typeof vitest"),
     prints: ["object"],
+  },
+  // oxlint's text leaves the `export { .. }` without the name.
+  "require(): a name that the file exports": {
+    file: "helpers.ts",
+    text: 'const { expect, inject } = require("vitest");\nexport { expect, inject };\n',
+    files: { "case.test.ts": 'import { expect, inject } from "./helpers.ts";\n' + prints('inject("port")') },
+    prints: ["undefined"],
+  },
+  "import: a name that the file exports": {
+    file: "helpers.ts",
+    text: 'import { expect, inject } from "vitest";\nexport { expect, inject };\n',
+    files: { "case.test.ts": 'import { expect, inject } from "./helpers.ts";\n' + prints('inject("port")') },
+    prints: ["undefined"],
   },
   // oxlint's text leaves `export` to the next statement.
   "require(): exported, with no name that stays": {
@@ -236,7 +278,7 @@ const cases: Record<string, Case> = {
     files: { "case.test.js": 'import { test, expect, one } from "./helpers.js";\n' + prints("one") },
     prints: ["1"],
   },
-  // The test would become the body of the `if`.
+  // The next statement would become the body of the `if`.
   "require(): a `var` that's the body of an `if`": {
     text:
       'if (typeof Bun === "undefined") var { describe } = require("vitest");\nconsole.log(TAG, typeof describe);\n' +
@@ -260,6 +302,26 @@ const cases: Record<string, Case> = {
     text: '// @ts-ignore\nimport { test, expect } from "vitest";\n' + prints("1"),
     prints: ["1"],
   },
+  // The string would become a directive.
+  "import: above a string statement": {
+    text: 'import { test, expect } from "vitest";\n"use strict";\n' + prints("1"),
+    prints: ["1"],
+  },
+  // The compiler drops the type, so the string would be the first statement.
+  "require(): above a type and a string statement": {
+    file: "case.test.ts",
+    text:
+      'const { test, expect } = require("vitest");\ntype One = 1;\n"use strict";\nconst one: One = 1;\n' +
+      prints("one"),
+    prints: ["1"],
+  },
+  // Bun and esbuild take `calls++` and the `(` on a later line for a call.
+  "import: between a statement that ends in `++` and a `(`": {
+    text:
+      'let ran = 0, calls = 0\ncalls++\nimport { test, expect } from "vitest";\n(function () { ran = 1 })()\n' +
+      prints("ran + calls"),
+    prints: ["2"],
+  },
   // `(function () {` would continue `const id = x => x`.
   "import: between a statement without a `;` and a `(`": {
     text:
@@ -282,17 +344,15 @@ const cases: Record<string, Case> = {
     prints: ["undefined"],
     fixed: "const { inject } = require('vitest');\n" + prints('vi.fn(() => inject("port"))()'),
   },
+  "import: a global named by a string, under its own name": {
+    text: 'import { "vi" as vi, test, expect } from "vitest";\n' + prints("vi.fn(() => 1)()"),
+    prints: ["1"],
+    fixed: 'import {  } from "vitest";\n' + prints("vi.fn(() => 1)()"),
+  },
   "import: a global under another name stays": {
     text: 'import { vi as spy, test, expect } from "vitest";\n' + prints("spy.fn(() => 1)()"),
     prints: ["1"],
     fixed: 'import { vi as spy } from "vitest";\n' + prints("spy.fn(() => 1)()"),
-  },
-  "import: the other names of @effect/vitest": {
-    text:
-      'import { test, expect, it as base } from "@effect/vitest";\ntest("is a test", () => {});\n' +
-      prints("1", "base.effect"),
-    prints: ["1"],
-    fixed: 'import { it as base } from "@effect/vitest";\ntest("is a test", () => {});\n' + prints("1", "base.effect"),
   },
   "import: the last import of a TypeScript file that only calls, with an await in a function": {
     file: "case.test.ts",
@@ -305,12 +365,14 @@ const cases: Record<string, Case> = {
     prints: ["one"],
     fixed: '\nconst name = "one";\n' + prints("name"),
   },
-  "import: one of two imports of a file with require()": {
+  // The other import of Vitest stays, so the file is still a module.
+  "import: next to an import of Vitest that stays, in a TypeScript file that declares a name": {
+    file: "case.test.ts",
     text:
-      'import { test, expect } from "vitest";\nimport { sep } from "node:path";\nconst os = require("node:os");\n' +
-      prints("sep === os.EOL"),
-    prints: ["false"],
-    fixed: '\nimport { sep } from "node:path";\nconst os = require("node:os");\n' + prints("sep === os.EOL"),
+      'import { test, expect } from "vitest";\nimport { inject } from "vitest";\nconst name = "port";\n' +
+      prints("inject(name)"),
+    prints: ["undefined"],
+    fixed: '\nimport { inject } from "vitest";\nconst name = "port";\n' + prints("inject(name)"),
   },
   // The export is of the other module's `expect`, not of the one that goes.
   "import: next to an export of the name from another module": {
@@ -318,6 +380,15 @@ const cases: Record<string, Case> = {
     files: { "other.js": "export const expect = 1;\n" },
     prints: ["1"],
     fixed: '\nexport { expect as other } from "./other.js";\n' + prints("1"),
+  },
+  // The directive is for the line of `// @ts-nocheck`.
+  "import: below a header with a directive for another comment": {
+    file: "case.test.ts",
+    text:
+      '// eslint-disable-next-line @typescript-eslint/ban-ts-comment\n// @ts-nocheck\nimport { test, expect } from "vitest";\n' +
+      prints("1"),
+    prints: ["1"],
+    fixed: "// eslint-disable-next-line @typescript-eslint/ban-ts-comment\n// @ts-nocheck\n\n" + prints("1"),
   },
   "import: below a comment that isn't for the next line": {
     text: '// @vitest-environment node\nimport { test, expect } from "vitest";\n' + prints("1"),
@@ -363,6 +434,23 @@ for (const [first, next] of Object.entries(continuations)) {
   };
 }
 
+// Each name that `bun test` has as a global of Vitest. It has no `assert` or `chai`, which Vitest has.
+const globals =
+  "suite test describe it expectTypeOf assertType expect vitest vi beforeAll afterAll beforeEach afterEach onTestFailed onTestFinished";
+for (const name of globals.split(" ")) {
+  const isTheGlobal = prints(`${name} === globalThis.${name}`);
+  cases[`import: \`${name}\` alone`] = {
+    text: `import { ${name} } from "vitest";\n` + isTheGlobal,
+    prints: ["true"],
+    fixed: "\n" + isTheGlobal,
+  };
+  cases[`require(): \`${name}\` alone`] = {
+    text: `const { ${name} } = require("vitest");\n` + isTheGlobal,
+    prints: ["true"],
+    fixed: "\n" + isTheGlobal,
+  };
+}
+
 const env = { ...bunEnv, AGENT: "0", CLAUDECODE: undefined, GITHUB_ACTIONS: undefined, NO_COLOR: "1" };
 
 async function run(cwd: string, ...args: string[]) {
@@ -393,19 +481,20 @@ const entries = Object.entries(cases).map(([name, it], index) => ({
   tag: `@@${index}@@`,
 }));
 const results = new Map<string, Result>();
-let exitCodeAsWritten: number | undefined;
+let exitCodes: { asWritten: number; fixed: number } | undefined;
 
 // Each flag has a copy of all the cases, with and without an oxlint config. A copy is linted in one run and tested in
 // one run of `bun test`: a process per case and step would be some 400 of them.
 beforeAll(async () => {
   const oxlintrc = JSON.stringify({
-    plugins: ["vitest"],
+    plugins: ["vitest", "typescript"],
     categories: { correctness: "off" },
-    rules: { [rule]: "warn" },
+    rules: { [rule]: "warn", [`typescript/${emptyExport}`]: "warn" },
   });
   const copies = ["as written", ...flags, ...flags.map(flag => `oxlint ${flag}`)];
   const files: Record<string, string> = { ...packages };
   for (const copy of copies) {
+    files[`${copy}/bunfig.toml`] = '[test]\nglobals = "vitest"\n';
     if (copy.startsWith("oxlint")) files[`${copy}/.oxlintrc.json`] = oxlintrc;
     for (const { it, directory, tag } of entries) {
       for (const [path, text] of Object.entries({ ...it.files, [fileOf(it)]: it.text })) {
@@ -416,7 +505,7 @@ beforeAll(async () => {
   using dir = tempDir("bun-lint-vitest-globals", files);
   const root = String(dir);
 
-  const withRule = ["--rule", `${rule}: warn`];
+  const withRule = ["--rule", `${rule}: warn`, "--rule", `@typescript-eslint/${emptyExport}: warn`];
   const lint = (copy: string, ...args: string[]) => run(join(root, copy), "lint", "-f", "json", ...args);
   const lintThenTest = async (flag: Flag) => {
     await lint(flag, flag, ...withRule);
@@ -429,7 +518,7 @@ beforeAll(async () => {
     lintThenTest("--fix-dangerously"),
     ...flags.map(flag => lint(`oxlint ${flag}`, flag)),
   ]);
-  exitCodeAsWritten = asWritten.exitCode;
+  exitCodes = { asWritten: asWritten.exitCode, fixed: fixed.exitCode };
 
   type Message = { ruleId: string | null; fix?: object; suggestions?: object[] };
   if (!report.stdout.startsWith("[")) throw new Error(`bun lint printed no JSON: ${report.stdout}\n${report.stderr}`);
@@ -462,15 +551,15 @@ beforeAll(async () => {
   }
 }, longLimit);
 
-test("every case passes as written", () => {
-  expect(exitCodeAsWritten).toBe(0);
+test("every case passes as written and after --fix", () => {
+  expect(exitCodes).toEqual({ asWritten: 0, fixed: 0 });
 });
 
 for (const { name, it, tag } of entries) {
   const isFixed = it.fixed !== undefined;
   const isHeld = it.dangerously !== undefined;
   test(`${isFixed ? "--fix fixes" : isHeld ? "only --fix-dangerously fixes" : "no flag fixes"} ${name}`, () => {
-    const afterFix = withTag(it.fixed ?? it.text, tag);
+    const afterFix = withTag(it.fixed ?? it.fixedByAnotherRule ?? it.text, tag);
     const afterDangerously = withTag(it.dangerously ?? it.fixed ?? it.text, tag);
     expect(results.get(name)).toEqual({
       offers: isFixed ? "a fix" : isHeld ? "a dangerous fix" : "no fix",
@@ -480,7 +569,10 @@ for (const { name, it, tag } of entries) {
         "--fix-dangerously": isHeld ? (it.printsDangerously ?? []) : it.prints,
       },
       text: { "--fix": afterFix, "--fix-dangerously": afterDangerously },
-      textWithOxlintConfig: { "--fix": afterFix, "--fix-dangerously": afterDangerously },
+      textWithOxlintConfig: {
+        "--fix": withTag(it.withOxlintConfig?.["--fix"] ?? afterFix, tag),
+        "--fix-dangerously": withTag(it.withOxlintConfig?.["--fix-dangerously"] ?? afterDangerously, tag),
+      },
     });
   });
 }

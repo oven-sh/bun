@@ -33,13 +33,16 @@ fn makes_a_module(statement: Stmt<'_>) -> bool {
 /// True if the file is still a module after every `export {}` is removed.
 pub fn is_module_without_empty_exports<'a>(file: &'a File<'a>) -> bool {
     let is_empty = |it: Stmt<'a>| matches!(it.kind(), StmtKind::ExportNamed(export) if !export.has_from() && export.items().is_empty());
-    is_module_without(file, is_empty)
+    let mut statements = file.body().iter();
+    statements.any(|it| makes_a_module(it) && !is_empty(it))
 }
 
-/// True if the file is still a module after every statement that `is_removed` accepts is removed.
+/// True if the file is still a module after every statement that `is_removed` accepts is removed, and every export of no names.
 pub fn is_module_without<'a>(file: &'a File<'a>, is_removed: impl Fn(Stmt<'a>) -> bool) -> bool {
+    // `@typescript-eslint/no-useless-empty-export` can remove an `export {}` or an `export {} from "a"` in the same pass.
+    let is_empty = |it: Stmt<'a>| matches!(it.kind(), StmtKind::ExportNamed(export) if export.items().is_empty());
     let mut statements = file.body().iter();
-    statements.any(|it| makes_a_module(it) && !is_removed(it))
+    statements.any(|it| makes_a_module(it) && !is_empty(it) && !is_removed(it))
 }
 
 /// True if the file declares `interface`'s name more than once. Replacing the interface with a type alias would then be

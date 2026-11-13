@@ -66,6 +66,24 @@ const reachCases: Record<string, ReachCase> = {
     `,
     retained: ["first", "second", "feature_handlers"],
   },
+  "the descriptor of an Objective-C block, in an input with selectors": {
+    more: `
+      void *_NSConcreteStackBlock[32];
+      __attribute__((noinline)) int objc_msgSend(id receiver, SEL selector) { return receiver != (id)selector; }
+      @protocol Counter
+      - (int)first;
+      - (int)second;
+      @end
+      __attribute__((noinline)) int call(int (^block)(id), id value) { return block(value); }
+      __attribute__((noinline)) int with_block(int x) { return call(^(id value) { return x + (value != 0); }, 0); }
+      __attribute__((noinline)) int feature_sends(id<Counter> counter) { return [counter first] + [counter second]; }
+      int more(int x) { return feature_sends((id)(long)x) + with_block(x); }
+    `,
+    main: `int with_block(int); int main(int argc, char **argv) { return argc > 5 ? GUARDED(Extra, entered, argc) : with_block(argc) == 1 ? 0 : 1; }`,
+    retained: ["with_block", "call", "__with_block_block_invoke"],
+    removable: ["feature_sends", "objc_msgSend"],
+    compileFlags: { more: ["-x", "objective-c", "-fno-objc-msgsend-selector-stubs", "-w"] },
+  },
   "an address taken through the global offset table": {
     more: `${mixingFunction("feature_target", 3)} int more(int x) { return feature_target(x); }`,
     main: `

@@ -3564,8 +3564,14 @@ void JSC__JSValue___then(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1
 
 void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC::JSGlobalObject* global, const EncodedSlice* arg1)
 {
+    auto& vm = JSC::getVM(global);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(global);
     const JSC::Identifier identifier = Zig::toIdentifier(*arg1, global);
-    Bun::testFileModuleLoader(defaultGlobalObject(global))->removeEntry(identifier); // takes the loader's cellLock itself
+    Bun::testFileModuleLoader(globalObject)->removeEntry(identifier); // takes the loader's cellLock itself
+    // A CommonJS loader entry only re-exports the module cached in the require map, and require() of an ES module caches a wrapper there: the next load must find neither.
+    JSC__JSMap__remove(Bun::testFileRequireMap(globalObject), globalObject, JSC::JSValue::encode(JSC::jsString(vm, identifier.string())));
+    RELEASE_AND_RETURN(scope, );
 }
 
 void JSC__VM__collectAsync(JSC::VM* vm, bool full)

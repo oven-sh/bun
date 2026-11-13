@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 
 test("--rerun-each should run tests exactly N times", async () => {
   using dir = tempDir("test-rerun-each", {
@@ -286,3 +287,184 @@ test("--rerun-each re-evaluates a file whose path is not ASCII", async () => {
   expect(stdout + stderr).toMatch(/3 pass/);
   expect(exitCode).toBe(0);
 });
+
+// The lines of the summary, without the times.
+function summaryOf(stderr: string) {
+  return stderr
+    .split("\n")
+    .map(line => line.trim().replace(/ \[[\d.]+m?s\]$/, ""))
+    .filter(line => /^\d+ (pass|skip|fail|error)$|^Ran /.test(line));
+}
+
+// Two files, so that --parallel=2 runs them in worker processes. A .js file that uses require() and module is CommonJS too.
+async function rerunCommonJSTestFiles(flags: string[]) {
+  const source = (file: string) => `
+    const { test, expect } = require("bun:test");
+    console.log(JSON.stringify({ file: "${file}", evaluation: require("./dep.cjs").countEvaluation("${file}") }));
+    test("is the main module", () => {
+      expect(require.main).toBe(module);
+    });
+  `;
+  using dir = tempDir("test-rerun-each-cjs", {
+    "dep.cjs": `
+      const evaluations = {};
+      exports.countEvaluation = file => (evaluations[file] = (evaluations[file] ?? 0) + 1);
+    `,
+    "a.test.cjs": source("a"),
+    "b.test.js": source("b"),
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--rerun-each=3", ...flags, "./a.test.cjs", "./b.test.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // A --parallel worker's console.log arrives on the coordinator's stderr.
+  const evaluations: { file: string; evaluation: number }[] = (stdout + stderr)
+    .split("\n")
+    .filter(line => line.startsWith('{"file"'))
+    .map(line => JSON.parse(line))
+    .sort((a, b) => a.file.localeCompare(b.file));
+  return { evaluations, summary: summaryOf(stderr), exitCode };
+}
+
+// dep.cjs stays cached over the reruns of a file in every mode: --isolate swaps the global after the last rerun.
+const everyEvaluationCounted = {
+  evaluations: [
+    { file: "a", evaluation: 1 },
+    { file: "a", evaluation: 2 },
+    { file: "a", evaluation: 3 },
+    { file: "b", evaluation: 1 },
+    { file: "b", evaluation: 2 },
+    { file: "b", evaluation: 3 },
+  ],
+  summary: ["6 pass", "0 fail", "Ran 6 tests across 2 files."],
+  exitCode: 0,
+};
+const concurrentModes: [string, string[]][] = [
+  ["by default", []],
+  ["with --isolate", ["--isolate"]],
+  ["with --parallel", ["--parallel=2"]],
+  ["with --parallel --no-isolate", ["--parallel=2", "--no-isolate"]],
+];
+
+test.concurrent.each(concurrentModes)(
+  "--rerun-each evaluates a CommonJS test file again for every rerun %s",
+  async (_, flags) => {
+    expect(await rerunCommonJSTestFiles(flags)).toEqual(everyEvaluationCounted);
+  },
+);
+
+// Not concurrent: --isolate=modules takes 1.6 s to start in a debug build, and beside the other cases this one can time out.
+test("--rerun-each evaluates a CommonJS test file again for every rerun with --isolate=modules", async () => {
+  expect(await rerunCommonJSTestFiles(["--isolate=modules"])).toEqual(everyEvaluationCounted);
+});
+
+async function rerunFiles(prefix: string, files: Record<string, string>, ...args: string[]) {
+  using dir = tempDir(prefix, files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", ...args],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const snapshots = Object.keys(files).filter(path => path.endsWith(".snap"));
+  const written = await Promise.all(snapshots.map(path => Bun.file(join(String(dir), path)).text()));
+  return { summary: summaryOf(stderr), exitCode, snapshots: written };
+}
+
+// The directory name is not ASCII: the require map key has to match the loader's key for such a path too.
+test.concurrent("--rerun-each fails when a CommonJS test file fails or throws in a later run", async () => {
+  const ran = await rerunFiles(
+    "test-rerun-each-cjs-dír-ñ",
+    {
+      "fails.test.cjs": `
+        const { test, expect } = require("bun:test");
+        globalThis.failsRuns = (globalThis.failsRuns ?? 0) + 1;
+        test("passes in run 1 only", () => {
+          expect(globalThis.failsRuns).toBe(1);
+        });
+      `,
+      "throws.test.cjs": `
+        const { test } = require("bun:test");
+        globalThis.throwsRuns = (globalThis.throwsRuns ?? 0) + 1;
+        if (globalThis.throwsRuns === 2) throw new RangeError("thrown in run 2");
+        test("is registered in run 1 only", () => {});
+      `,
+    },
+    "--rerun-each=3",
+    "./fails.test.cjs",
+    "./throws.test.cjs",
+  );
+  expect(ran).toEqual({
+    summary: ["2 pass", "3 fail", "1 error", "Ran 5 tests across 2 files."],
+    exitCode: 1,
+    snapshots: [],
+  });
+});
+
+// The require map also holds the wrapper that require() makes of an ES module. A rerun has to drop the one of run 1.
+test.concurrent("--rerun-each gives require() of an ES module test file the exports of the current run", async () => {
+  const ran = await rerunFiles(
+    "test-rerun-each-esm-required",
+    {
+      "load.cjs": `module.exports = path => require(path);`,
+      "a.test.mjs": `
+        import { test, expect } from "bun:test";
+        import { createRequire } from "node:module";
+        const load = createRequire(import.meta.url)("./load.cjs");
+        export const token = {};
+        test("require() of this file gives the exports of this run", () => {
+          expect(load(import.meta.path).token).toBe(token);
+        });
+      `,
+    },
+    "--rerun-each=3",
+    "./a.test.mjs",
+  );
+  expect(ran).toEqual({
+    summary: ["3 pass", "0 fail", "Ran 3 tests across 1 file."],
+    exitCode: 0,
+    snapshots: [],
+  });
+});
+
+// With --update-snapshots, a run that registers no tests takes the entries of the tests that did not run out of a Jest-format file.
+test.concurrent(
+  "--rerun-each with --update-snapshots keeps the snapshot of a skipped test of a CommonJS test file",
+  async () => {
+    const snapshot =
+      "// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing\n" +
+      '\nexports[`kept 1`] = `"value"`;\n' +
+      '\nexports[`skipped 1`] = `"other"`;\n';
+    const ran = await rerunFiles(
+      "test-rerun-each-cjs-snapshot",
+      {
+        "s.test.cjs": `
+          const { test, expect } = require("bun:test");
+          test("kept", () => {
+            expect("value").toMatchSnapshot();
+          });
+          test.skip("skipped", () => {
+            expect("other").toMatchSnapshot();
+          });
+        `,
+        "__snapshots__/s.test.cjs.snap": snapshot,
+      },
+      "--update-snapshots",
+      "--rerun-each=2",
+      "./s.test.cjs",
+    );
+    expect(ran).toEqual({
+      summary: ["2 pass", "2 skip", "0 fail", "Ran 4 tests across 1 file."],
+      exitCode: 0,
+      snapshots: [snapshot],
+    });
+  },
+);

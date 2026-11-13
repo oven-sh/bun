@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "node:events";
 import { createServer as createHttpServer } from "node:http";
+import http2 from "node:http2";
 import * as net from "node:net";
 
 // https://github.com/oven-sh/bun/issues/9180
@@ -377,5 +378,52 @@ test("proxied native byte stream sends headers before its upstream body", async 
     aborter.abort();
     upstream.closeAllConnections();
     await new Promise<void>(resolve => upstream.close(() => resolve()));
+  }
+});
+
+// HTTP/2 clients must receive the HEADERS frame while the DATA frames are
+// still pending, just as HTTP/1.1 clients receive their header block.
+test("HTTP/2 streaming response sends HEADERS before its first DATA", async () => {
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  using server = Bun.serve({
+    port: 0,
+    http2: true,
+    development: false,
+    fetch() {
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(c) {
+            controller = c;
+          },
+        }),
+        {
+          headers: { "content-type": "text/event-stream" },
+        },
+      );
+    },
+  });
+  const client = http2.connect(`http://127.0.0.1:${server.port}`);
+  const request = client.request({ ":method": "GET", ":path": "/" });
+  const headersPromise = new Promise<http2.IncomingHttpHeaders>((resolve, reject) => {
+    request.once("response", resolve);
+    request.once("error", reject);
+  });
+  const bodyParts: Buffer[] = [];
+  const bodyPromise = new Promise<string>((resolve, reject) => {
+    request.on("data", chunk => bodyParts.push(chunk));
+    request.once("end", () => resolve(Buffer.concat(bodyParts).toString()));
+    request.once("error", reject);
+  });
+  try {
+    request.end();
+    const headers = await headersPromise;
+    expect(headers[":status"]).toBe(200);
+    expect(headers["content-type"]).toBe("text/event-stream");
+    controller.enqueue(new TextEncoder().encode("first"));
+    controller.close();
+    expect(await bodyPromise).toBe("first");
+  } finally {
+    request.close();
+    client.destroy();
   }
 });

@@ -42,13 +42,12 @@ use bun_wyhash::{Wyhash, Wyhash11};
 
 use crate::analytics;
 use crate::bun_bunfig::Arguments as Command;
-use crate::bun_progress::{Node as ProgressNode, Progress};
+use crate::bun_progress::Progress;
 use crate::lockfile::tree::is_filtered_dependency_or_workspace;
 use crate::lockfile::{self, Lockfile};
 use crate::network_task::ForTarballError;
 use crate::package_manager::Options::LogLevel;
 use crate::package_manager::{self, PackageManager, WorkspaceFilter, run_tasks};
-use crate::package_manager_real::ProgressStrings;
 use crate::prune::{LinkedNodeModules, OldModules};
 use crate::{
     self as install, DependencyID, PackageID, PackageInstall, PackageNameHash, Resolution,
@@ -162,7 +161,7 @@ impl<'a, 'b> Wait<'a, 'b> {
         self.installer.release_members();
 
         let pkg_manager = self.installer.manager_mut();
-        if let Some(node) = pkg_manager.scripts_node_mut() {
+        if let Some(node) = pkg_manager.scripts_node {
             // if we're just waiting for scripts, make it known.
 
             // .monotonic is okay because this is just used for progress; we don't rely on
@@ -174,7 +173,7 @@ impl<'a, 'b> Wait<'a, 'b> {
             if pending_lifecycle_scripts > 0
                 && pkg_manager.pending_task_count() <= pending_lifecycle_scripts + 1
             {
-                node.activate();
+                pkg_manager.progress.activate(node);
                 pkg_manager.progress.refresh();
             }
         }
@@ -2119,24 +2118,8 @@ pub(crate) fn install_isolated_packages(
         .map(|st| (st.st_dev, st.st_ino));
 
     {
-        let mut download_node: ProgressNode;
-        let mut install_node: ProgressNode = ProgressNode::default();
-        let mut scripts_node: ProgressNode;
-        let progress: *mut Progress = &raw mut manager.progress;
-        // SAFETY: `progress` aliases `manager.progress`; reborrows below are
-        // disjoint from the other `manager.*` field accesses.
-        let progress = unsafe { &mut *progress };
-
         if manager.options.log_level.show_progress() {
-            progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-            let root_node = progress.start(b"", 0);
-            download_node = root_node.start(ProgressStrings::download(), 0);
-            install_node = root_node.start(ProgressStrings::install(), store.entries.len());
-            scripts_node = root_node.start(ProgressStrings::script(), 0);
-
-            manager.downloads_node = None;
-            manager.scripts_node = Some(core::ptr::NonNull::from(&mut scripts_node));
-            manager.downloads_node = Some(&raw mut download_node);
+            manager.start_link_progress(store.entries.len());
         }
 
         let node_pkg_ids = store.nodes.items_pkg_id();
@@ -2184,7 +2167,6 @@ pub(crate) fn install_isolated_packages(
             })
             .collect();
 
-        let show_progress = manager.options.log_level.show_progress();
         let installed = DynamicBitSet::init_empty(lockfile.packages.len())?;
         let trusted_dependencies_from_update_requests =
             manager.find_trusted_dependencies_from_update_requests();
@@ -2194,7 +2176,6 @@ pub(crate) fn install_isolated_packages(
             manager: manager_ptr,
             command_ctx,
             installed,
-            install_node: show_progress.then_some(&mut install_node),
             store: &store,
             tasks,
             tasks_in_flight: &tasks_in_flight,
@@ -2650,14 +2631,13 @@ pub(crate) fn install_isolated_packages(
         installer.warn_left_out_links();
         installer.record_update_request_trust();
 
-        if installer.manager().options.log_level.show_progress() {
-            progress.root.end();
-            *progress = Progress::default();
+        let manager = installer.manager_mut();
+        if manager.options.log_level.show_progress() {
+            manager.progress.end();
+            manager.progress = Progress::default();
         }
-        // Defensive: clear the stack-local progress-node pointers so the
-        // accessors can't observe dangling pointers after this frame returns.
-        installer.manager_mut().scripts_node = None;
-        installer.manager_mut().downloads_node = None;
+        manager.scripts_node = None;
+        manager.downloads_node = None;
 
         let mut summary = core::mem::take(&mut installer.summary);
         summary.successfully_installed = Some(core::mem::take(&mut installer.installed));

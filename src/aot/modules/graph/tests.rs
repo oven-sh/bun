@@ -66,18 +66,23 @@ fn source_text_file(file: FileId) -> FileRow {
         namespace_values: Vec::new(),
         evaluating_sites: Vec::new(),
         unread_sites: Vec::new(),
+        destructured_holders: Vec::new(),
         holders: Vec::new(),
+        holders_by_call: OnceLock::new(),
         answer_members: Vec::new(),
         names_read_on_answers: Vec::new(),
         exports: Vec::new(),
         ambiguous_names: Vec::new(),
         unread_exports: Vec::new(),
+        names_left_out: Vec::new(),
         is_left_to_loader: false,
         required_names: Vec::new(),
         names_searched_behind_stars: Vec::new(),
         handed_on: Vec::new(),
         named_by_stars: Vec::new(),
         names_from_stars: Vec::new(),
+        names_of_unlisted_stars: Vec::new(),
+        name_stars: Vec::new(),
         reaches_mock: false,
     }
 }
@@ -122,8 +127,12 @@ fn unfinished_graph(file_count: usize, rows: Vec<FileRow>) -> ModuleGraph {
         commonjs_exports: CommonJsExports::default(),
         plan: Plan::new(OrderParts::without_sites(file_count), Vec::new()),
         member_stores: (0..file_count).map(|_| OnceLock::new()).collect(),
+        instance_layouts: (0..file_count).map(|_| OnceLock::new()).collect(),
+        reexport_paths: Default::default(),
         data_linked_by_names_alone: Box::default(),
         forms_require_checks_first: Vec::new(),
+        module_forms: Box::default(),
+        folders_of_databases: Vec::new(),
         star_names_left_out: StarNamesLeftOut::default(),
         names_laid_on_object_prototype: Vec::new(),
     }
@@ -406,6 +415,7 @@ fn computed_site_without_candidates_is_all() {
 fn member_binding_is_found_by_expression() {
     let imported_from = |file| AccessedModule {
         module: file_module(file),
+        name: known::default,
         is_imported: true,
     };
     let first = FileRow {
@@ -436,6 +446,7 @@ fn member_binding_is_found_by_expression() {
 fn required_member_of_commonjs_file_has_no_member_binding() {
     let accessed = |is_imported| AccessedModule {
         module: file_module(1),
+        name: known::default,
         is_imported,
     };
     let binding = ImportBinding::Synthetic(SyntheticExportId(0));
@@ -715,10 +726,12 @@ fn external_module_keeps_no_name_of_a_data_file_that_the_build_links() {
     remove_unread_data_exports(&mut linked_by_build);
     assert_eq!(linked_by_build[1].exports.len(), 2);
     assert_eq!(linked_by_build[1].unread_exports, [SymbolId(2)]);
+    assert_eq!(linked_by_build[1].names_left_out, [known::r#type]);
     let mut left_to_loader = rows(true);
     remove_unread_data_exports(&mut left_to_loader);
     assert_eq!(left_to_loader[1].exports.len(), 3);
     assert!(left_to_loader[1].unread_exports.is_empty());
+    assert!(left_to_loader[1].names_left_out.is_empty());
 }
 
 #[test]

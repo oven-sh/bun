@@ -1,0 +1,17 @@
+# f1 = area
+# -- source: enter-a-typed-function-from-outside.ts
+# function area(width: number, height: number): number {
+#   return width * height;
+# }
+# function areaOfSquare(side: number): number {
+#   return area(side, side) + 1;
+# }
+# declare const input: any;
+# (globalThis as any).answer = input(area) + areaOfSquare(+input);
+# -- end of source
+# The compiler before this one: 2 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 15, patches 1, moves 1, unlikely or rare 0.
+# RUN(X64): steps most:16 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 16

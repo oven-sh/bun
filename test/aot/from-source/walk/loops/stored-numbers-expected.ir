@@ -1,0 +1,14 @@
+# f1 = Meter
+# f2 = load
+# f3 = run
+# -- source: main.mjs
+# function Meter() { this.count = 0; this.name = 0; }
+# Meter.prototype.load = function (values) { this.count = values[0]; this.name = values[1]; };
+# Meter.prototype.run = function (turns) { for (let turn = 0; turn < turns; turn++) { this.count += turn; this.name = "meter"; } };
+# const meter = new Meter(); globalThis.unseen = meter; meter.load((0, eval)(String(Math.random()))); meter.run(3);
+# print(meter.count, meter.name);
+# -- end of source
+# Numbers are all that the program itself is seen to store into count; into name it stores a string too.
+# RUN: link held fields
+# CHECK: "count" proven=number
+# CHECK-NOT: "name" proven=number writers

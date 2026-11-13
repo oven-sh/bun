@@ -1,8 +1,8 @@
 use super::effects::{can_lose_trust, requested_diagnostics};
 use super::queue::{LOWERING_ROUNDS, ROLE_ROUNDS, run_queue};
-use super::{CheckedProgram, CompileRequest, FileWork, LoadedProgram, RoleDecision};
-use crate::{Diagnostic, equal_diagnostics};
-use bun_sema::check::aot::LeftOutBodies;
+use super::{CheckedProgram, CompileRequest, FileWork, LoadedProgram, PartsOfVisit, RoleDecision};
+use crate::{Diagnostic, MIN_TASKS, cost_of_file, equal_diagnostics};
+use bun_sema::check::aot::{FileOrigin, LeftOutBodies};
 use bun_sema::check::commit::CyclesEntered;
 use bun_sema::check::{Checker, Requested};
 use bun_sema::hir::FileKind;
@@ -20,6 +20,9 @@ pub fn check_and_lower<'s, T: Send>(
     files_to_lower: &[FileId],
     lower: &(dyn Fn(&mut Checker<'_, 's>, FileId) -> Option<T> + Sync),
 ) -> CheckedProgram<T> {
+    let lower = &|checker: &mut Checker<'_, 's>, file: FileId, _: &PartsOfVisit<'_, 's>| {
+        lower(checker, file)
+    };
     let note_commit = &|_: FileId, _: &T| {};
     check_and_lower_noting_commits(
         loaded,
@@ -64,6 +67,9 @@ pub fn check_whole_files<'s>(
     )
 }
 
+type LowerFile<'a, 's, T> =
+    dyn Fn(&mut Checker<'_, 's>, FileId, &PartsOfVisit<'_, 's>) -> Option<T> + Sync + 'a;
+
 pub struct Passes<'a> {
     pub count: PassCount,
     pub before_next: &'a (dyn Fn() + Sync),
@@ -81,22 +87,33 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
     request: &CompileRequest<'_, 's>,
     roles: &RoleDecision,
     files_to_lower: &[FileId],
-    lower: &(dyn Fn(&mut Checker<'_, 's>, FileId) -> Option<T> + Sync),
+    lower: &LowerFile<'_, 's, T>,
     note_commit: &(dyn Fn(FileId, &T) + Sync),
     passes: &Passes<'_>,
 ) -> CheckedProgram<T> {
     let files = loaded.files();
     let is_left_out = |file: FileId| is_left_out(request, file);
     let is_checker_renewed = AtomicBool::new(false);
-    let requested = |file: FileId| match is_left_out(file) {
-        true => Requested::Types,
-        false => requested_diagnostics(
-            loaded.origin(file),
-            !files.needs_another_program(file)
-                && !files.module_options(file).keeps_type_errors_to_itself
-                && !loaded.is_excluded_by_project(file)
-                && files.hir(file).syntax_errors().next().is_none(),
-        ),
+    let checks_dependency_sources = request.code.checks_dependency_sources;
+    let requested = |file: FileId| {
+        if is_left_out(file) {
+            return Requested::Types;
+        }
+        let is_asked_otherwise = !files.module_options(file).keeps_type_errors_to_itself
+            && !loaded.is_excluded_by_project(file)
+            && files.hir(file).syntax_errors().next().is_none();
+        let origin = loaded.origin(file);
+        match checks_dependency_sources
+            && is_asked_otherwise
+            && origin == FileOrigin::DependencySource
+            && files.matches_own_project_checks(file)
+        {
+            true => Requested::All,
+            false => requested_diagnostics(
+                origin,
+                is_asked_otherwise && !files.needs_another_program(file),
+            ),
+        }
     };
     let slots = slots_by_file(files, roles, files_to_lower);
     let products: Vec<Guarded<Option<T>>> =
@@ -107,13 +124,12 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
         .copied()
         .filter(|&file| files.module(file).is_read_by_every_task)
         .collect();
-    files.let_trees_go_behind(&to_check);
     let passes_left = AtomicUsize::new(usize::MAX);
     let work = FileWork {
         requested: &requested,
-        after_file: Some(&|checker, file| {
+        after_file: Some(&|checker, file, parts| {
             if let Some(slot) = slots[file.idx()]
-                && let Some(product) = lower(checker, file)
+                && let Some(product) = lower(checker, file, parts)
             {
                 *products[slot as usize].lock() = Some(product);
             }
@@ -153,7 +169,10 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
     passes_left.store(parts.len(), Ordering::Relaxed);
     for part in parts {
         let began = std::time::Instant::now();
-        passes_left.fetch_sub(1, Ordering::Relaxed);
+        if passes_left.fetch_sub(1, Ordering::Relaxed) == 1 {
+            // Before that, a new checker asks every file again.
+            files.let_trees_go_behind(&part);
+        }
         if report.is_some() {
             // SAFETY: the tasks of the pass before have ended, and what they lowered holds nothing of the checker's.
             unsafe { loaded.renew_checker(&|count, each| host.parallel(count, each)) };
@@ -209,7 +228,9 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
     incomplete.retain(|file| !roles.incomplete.contains(file));
     CheckedProgram {
         lowered,
-        diagnostics: loaded.program_origins().apply_effects(diagnostics),
+        diagnostics: loaded
+            .program_origins()
+            .apply_effects_to_check(diagnostics, checks_dependency_sources),
         incomplete,
         #[cfg(test)]
         rounds: report.rounds,
@@ -228,21 +249,28 @@ fn passes_that_wait_for_no_file(files: &Files<'_>, to_check: &[FileId], most: us
     (sizes().sum::<usize>() / (largest * THREADS_OF_A_PASS)).clamp(1, most.max(1))
 }
 
-fn cut_into_passes(files: &Files<'_>, to_check: Vec<FileId>, count: usize) -> Vec<Vec<FileId>> {
+fn cut_into_passes(files: &Files<'_>, mut to_check: Vec<FileId>, count: usize) -> Vec<Vec<FileId>> {
     if count < 2 || to_check.len() < 2 {
         return vec![to_check];
     }
+    let cost_of = |file: FileId| cost_of_file(files, file);
+    let least_cost = to_check.iter().map(|&file| cost_of(file)).sum::<usize>() / MIN_TASKS;
+    // The types of a JavaScript file come out of its code. A check begins with the large ones, so that others find their types.
+    let is_large_script =
+        |file: &mut FileId| files.hir(*file).is_js && cost_of(*file) >= least_cost;
+    let large_scripts: Vec<FileId> = to_check.extract_if(.., is_large_script).collect();
+    let text_size = |file: FileId| files.module(file).hir.text.len();
     let mut position_of = vec![u32::MAX; files.modules.len()];
     for (position, &file) in (0u32..).zip(&to_check) {
         position_of[file.idx()] = position;
     }
     let mut changes = vec![0i64; to_check.len() + 1];
     let mut sizes_so_far = Vec::with_capacity(to_check.len() + 1);
-    let mut so_far = 0usize;
+    let mut so_far: usize = large_scripts.iter().map(|&file| text_size(file)).sum();
     for (position, &file) in (0u32..).zip(&to_check) {
         sizes_so_far.push(so_far);
+        so_far += text_size(file);
         let module = files.module(file);
-        so_far += module.hir.text.len();
         for &other in module.edges.iter().chain(module.code_edges) {
             let other = position_of[other.idx()];
             if other != u32::MAX && other != position {
@@ -259,7 +287,7 @@ fn cut_into_passes(files: &Files<'_>, to_check: Vec<FileId>, count: usize) -> Ve
     let share = (so_far / count).max(1);
     let mut cuts: Vec<usize> = Vec::new();
     for cut in 1..count {
-        let (least, most) = (share * cut - share / 6, share * cut + share / 6);
+        let (least, most) = (share * cut - share / 6, share * cut + share / 10);
         let first = sizes_so_far.partition_point(|&size| size < least);
         let last = sizes_so_far.partition_point(|&size| size <= most);
         let first = first.max(cuts.last().map_or(1, |&before| before + 1));
@@ -283,6 +311,8 @@ fn cut_into_passes(files: &Files<'_>, to_check: Vec<FileId>, count: usize) -> Ve
     for &cut in cuts.iter().rev() {
         parts.push(rest.split_off(cut));
     }
+    rest.extend(large_scripts);
+    rest.shared_sort_by_key(|&file| files.rank_of_file(file));
     parts.push(rest);
     parts.reverse();
     parts

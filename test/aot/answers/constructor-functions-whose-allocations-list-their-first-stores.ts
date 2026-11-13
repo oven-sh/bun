@@ -16,12 +16,13 @@
 // # BELOW: = NewObject {{*}}fields=[0, 1, 2]
 // # RUN(MOVED): walk f18 mechanisms=-TypedSlots
 // # MOVED-LABEL: code f18:Body
+// # MOVED: = AreMembersUnchanged
 // # MOVED: = NewObject {{*}}fields=[0, 1, 2]
-// # MOVED: = HasLayoutPrototype
-// # `this` itself and a call each end the row. ALL OR NOTHING: where the allocation may list only a part of the row (an argument that is missing, a second store under one name), it lists nothing
+// # MOVED-NOT: = HasLayoutPrototype
+// # `this` itself, a call and an argument that is missing each end the row: the allocation lists what stands in front, and the stores behind it create their fields in their order. ALL OR NOTHING OF THAT ROW: where one of its values does not fit its slot, or a name is stored twice, it lists nothing
 // # RUN(FEW): walk f20 mechanisms=all
 // # FEW-LABEL: code f20:Body
-// # FEW-NOT: = NewObject {{*}}fields=[
+// # FEW: = NewObject {{*}}fields=[0, 1, 2]
 // # RUN(SELF): walk f22 mechanisms=all
 // # SELF-LABEL: code f22:Body
 // # (`o.self === o` is a value compared with itself: it folds, nothing needs the object any more, and the sweep takes the allocation with its stores. The answers say the rest.)
@@ -36,7 +37,8 @@
 // # so the allocation lists nothing, and the store goes by name on the likely way, not behind a guard that never holds (answers 26 and 27)
 // # RUN(SIGHTED): walk f27 mechanisms=all
 // # SIGHTED-NOT: = NewObject {{*}}fields=[
-// # SIGHTED: = PropSet {{*}}key="a"
+// # SIGHTED: = AreMembersUnchanged {{*}}key="a"
+// # SIGHTED: = CallDirect
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
 // # CHECK: 28 of 28 of 28

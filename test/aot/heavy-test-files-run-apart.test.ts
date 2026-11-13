@@ -19,9 +19,15 @@ const fileThatTakes = (name: string, milliseconds: number, before = "") => `
     appendFileSync(process.env.TRAIL, "end ${name}\\n");
   });`;
 
+// With a sanitizer a light file takes longer to start than the heavy one sleeps.
+const waitFor = (name = "") =>
+  name &&
+  `const { readFileSync } = require("node:fs");
+    while (!readFileSync(process.env.TRAIL, "utf8").includes("start ${name}\\n")) await Bun.sleep(5);`;
+
 const startOf = (code: string) => `Bun.spawnSync([process.execPath, "-e", ${JSON.stringify(code)}]);`;
 
-type Measured = { milliseconds: number; megabytes?: number };
+type Measured = { milliseconds: number; megabytes?: number; waitsFor?: string };
 
 async function trailOf(records: { [name: string]: Measured }, words: string, ...flags: string[]) {
   const names = Object.keys(records);
@@ -30,7 +36,12 @@ async function trailOf(records: { [name: string]: Measured }, words: string, ...
       names.flatMap(name => (of(records[name]) === undefined ? [] : [[`${name}.test.js`, of(records[name])]])),
     );
   using dir = tempDir("heavy-test-files-run-apart", {
-    ...Object.fromEntries(names.map(name => [`${name}.test.js`, fileThatTakes(name, records[name].milliseconds)])),
+    ...Object.fromEntries(
+      names.map(name => [
+        `${name}.test.js`,
+        fileThatTakes(name, records[name].milliseconds, waitFor(records[name].waitsFor)),
+      ]),
+    ),
     "timings.json": JSON.stringify({
       version: 1,
       files: table(it => it.milliseconds),
@@ -85,7 +96,7 @@ test("as long as a heavy file is left, the others get what fits beside it", asyn
   const trail = await trailOf(
     {
       a: { milliseconds: 1600, megabytes: 900 },
-      heavy: { milliseconds: 1500, megabytes: 3000 },
+      heavy: { milliseconds: 1500, megabytes: 3000, waitsFor: "b" },
       b: { milliseconds: 90, megabytes: 862 },
       c: { milliseconds: 80, megabytes: 400 },
       d: { milliseconds: 70 },
@@ -158,4 +169,36 @@ test.skipIf(!isLinux)("a compiled run writes by how much each file's worker grew
   // A run that is not compiled measures nothing and keeps what the table says.
   expect((await run([bunExe(), "test", ...flags], String(dir), env)).exitCode).toBe(0);
   expect(JSON.parse(readFileSync(join(String(dir), "timings.json"), "utf8")).memory).toEqual(written.memory);
+});
+
+test.skipIf(!isLinux)("what the file before left behind is not taken off a file's growth", async () => {
+  // One worker is held by the first file until the last has ended, so the other two run in one worker, one behind the other.
+  // The second leaves 300 MB that nothing holds once it has ended. The third has them collected and then takes as much itself: its worker is never
+  // larger than it was when the file began.
+  using dir = tempDir("heavy-test-files-behind-one-another", {
+    "a-holds-a-worker.test.js": fileThatTakes(
+      "a-holds-a-worker",
+      1,
+      `while (!require("node:fs").readFileSync(process.env.TRAIL, "utf8").includes("end c-grows")) await Bun.sleep(20);`,
+    ),
+    // The file holds them as long as it is there.
+    "b-leaves-garbage.test.js":
+      fileThatTakes("b-leaves-garbage", 1, "held = Buffer.alloc(300 << 20, 1);") +
+      "let held; export const size = () => held?.length;",
+    "c-grows.test.js": fileThatTakes("c-grows", 1, "Bun.gc(true); globalThis.kept = Buffer.alloc(300 << 20, 1);"),
+  });
+  const trail = join(String(dir), "trail.txt");
+  const flags = ["--isolate", "--parallel=2", "--timeout=60000", "--timings=timings.json", "--update-timings", "."];
+  expect((await run([bunExe(), "test", "--aot", ...flags], String(dir), { ...bunEnv, TRAIL: trail })).exitCode).toBe(0);
+  const lines = readFileSync(trail, "utf8").trim().split("\n");
+  expect(lines.filter(line => !line.endsWith("a-holds-a-worker"))).toEqual([
+    "start b-leaves-garbage",
+    "end b-leaves-garbage",
+    "start c-grows",
+    "end c-grows",
+  ]);
+  expect(lines.indexOf("start a-holds-a-worker")).toBeLessThan(lines.indexOf("start c-grows"));
+  expect(lines.at(-1)).toBe("end a-holds-a-worker");
+  const { memory } = JSON.parse(readFileSync(join(String(dir), "timings.json"), "utf8"));
+  expect(memory["c-grows.test.js"]).toBeWithin(280, 500);
 });

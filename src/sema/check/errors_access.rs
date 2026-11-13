@@ -6,7 +6,6 @@
 //! `checkVariableLikeDeclaration` with `getBindingElementTypeFromParentType` for binding elements, in TypeScript
 //! 7.0.2's checker.go.
 
-use super::aot::DiagnosticSubject;
 use super::enclosing_declaration::Enclosing;
 use super::errors::is_close;
 use super::errors_names_and_exports::fully_qualified_name;
@@ -704,11 +703,10 @@ impl<'p> Checker<'p, '_> {
         if !matches!(self.hir(file)[literal_member].key, PropKey::Computed(_)) {
             return self
                 .bound(file)
-                .declarations_of_literal_member(literal_member)[0];
+                .first_declaration_of_literal_member(literal_member);
         }
-        let declarations = self.declarations_of_member(file, Decl::Property(literal_member));
-        match declarations.first() {
-            Some(&(_, Decl::Property(first))) => first,
+        match self.first_declaration_of_member(file, Decl::Property(literal_member)) {
+            Some((_, Decl::Property(first))) => first,
             _ => literal_member,
         }
     }
@@ -892,9 +890,14 @@ impl<'p> Checker<'p, '_> {
             _ => return,
         };
         let error_node = |c: &Self| (file, at_name, c.end_of_name_at(file, at_name));
+        let binding_element = match bound.pat_parent[element.idx()] {
+            PatParent::Prop(_, p) => hir.node(p),
+            PatParent::Elem(_, e) => hir.node(e),
+            _ => hir.parent(hir.node(element)),
+        };
         self.check_property_accessibility_at_location(
             file,
-            hir.parent(hir.node(element)),
+            binding_element,
             at,
             PropertyAccess {
                 is_super,
@@ -1012,11 +1015,7 @@ impl<'p> Checker<'p, '_> {
             };
             self.new_diagnostic_chain(chain, at, code, &args)
         };
-        // What was made of a name that the brought declarations declare lacks the member by their word alone.
-        diagnostic.subject = match self.is_expression_brought(file, e) {
-            true => DiagnosticSubject::BroughtDeclaration,
-            false => subject,
-        };
+        diagnostic.subject = subject;
         self.reporting_nonexistent.pop();
         self.reprinting = reprinting;
         // A query re-entered while building the message is no reason to roll back the message.

@@ -4,6 +4,8 @@ use crate::hir::ListBlock;
 use crate::session::ArenaBox;
 use bun_threading::Guarded;
 use std::cell::{Cell, RefCell, UnsafeCell};
+use std::collections::VecDeque;
+use std::ptr::NonNull;
 use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicU32, AtomicU64, AtomicUsize};
 
@@ -65,6 +67,15 @@ struct Tasks {
     running: Vec<u64>,
     taken: [u64; WORDS],
     unripe: Vec<(u64, *const ModuleCell<'static>)>,
+    /// In the order of their times.
+    unread: VecDeque<UnreadBlock>,
+}
+
+/// A block that only the tasks that had begun by `time` may still be reading.
+struct UnreadBlock {
+    time: u64,
+    session: u64,
+    block: NonNull<u8>,
 }
 
 // SAFETY: `watch_no_more` takes the cells of a program out before the program ends.
@@ -84,6 +95,7 @@ static TASKS: Guarded<Tasks> = Guarded::new(Tasks {
     running: Vec::new(),
     taken: [0; WORDS],
     unripe: Vec::new(),
+    unread: VecDeque::new(),
 });
 
 static TASKS_ENDED: AtomicU64 = AtomicU64::new(0);
@@ -487,6 +499,35 @@ impl Drop for ReadingNoTrees {
     }
 }
 
+/// Frees `block` when every task that has begun by now has ended.
+///
+/// # Safety
+/// `block` was allocated in an arena of the session with this number, and only tasks that have begun by now may still be
+/// reading it.
+pub(crate) unsafe fn free_after_tasks(session: u64, block: NonNull<u8>) {
+    let mut tasks = TASKS.lock();
+    let time = tasks.time;
+    tasks.time += 1;
+    tasks.unread.push_back(UnreadBlock {
+        time,
+        session,
+        block,
+    });
+    HAS_UNREAD_BLOCKS.store(true, SeqCst);
+}
+
+static HAS_UNREAD_BLOCKS: AtomicBool = AtomicBool::new(false);
+
+/// The session with this number ends, and its blocks with it.
+pub(crate) fn forget_blocks_of(session: u64) {
+    if HAS_UNREAD_BLOCKS.load(SeqCst) {
+        // Another program's task may be freeing some of them.
+        let _nobody_frees = RELEASING_RIPE_CELLS.write();
+        let mut tasks = TASKS.lock();
+        tasks.unread.retain(|it| it.session != session);
+    }
+}
+
 pub struct ReadingTask {
     bit: Bit,
     outer: Bit,
@@ -545,7 +586,7 @@ impl Drop for ReadingTask {
             }
         }
         let _releasing = RELEASING_RIPE_CELLS.read();
-        let ripe: Vec<(u64, *const ModuleCell<'static>)> = {
+        let (ripe, unread) = {
             let mut tasks = TASKS.lock();
             tasks.taken[word] &= !bit;
             let began = PIN.replace(self.outer_pin).began;
@@ -553,11 +594,18 @@ impl Drop for ReadingTask {
             tasks.running.swap_remove(at.expect("it began"));
             TASKS_ENDED.fetch_add(1, Relaxed);
             let first = tasks.running.iter().copied().min().unwrap_or(u64::MAX);
-            tasks
+            let ripe: Vec<(u64, *const ModuleCell<'static>)> = tasks
                 .unripe
                 .extract_if(.., |entry| entry.0 < first)
-                .collect()
+                .collect();
+            let count = tasks.unread.partition_point(|entry| entry.time < first);
+            let unread: Vec<UnreadBlock> = tasks.unread.drain(..count).collect();
+            (ripe, unread)
         };
+        for UnreadBlock { block, .. } in unread {
+            // SAFETY: `free_after_tasks`: every task that could read it has ended, and its session hasn't.
+            unsafe { bun_alloc::mimalloc::mi_free(block.as_ptr().cast()) };
+        }
         for (_, module) in ripe {
             // SAFETY: `watch_no_more` of its program waits for `RELEASING_RIPE_CELLS`.
             let module = unsafe { &*module };

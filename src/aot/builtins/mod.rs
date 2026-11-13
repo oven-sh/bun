@@ -17,7 +17,8 @@ pub use prototype_operations::{named_value_of, prototype_operation_of};
 pub use resolve::{
     BuiltinPath, EvaluatedText, EvaluatedTextForm, FileFacts, ImportTargets, KeyOfModuleCache,
     ModuleExport, ResolveInput, Resolved, ResolvedBuiltins, SourceDialect, SpyCall,
-    commonjs_variable_builtin, find_module_export, resolve_file, resolve_within,
+    can_lay_key_that_native_code_asks_of_process, commonjs_variable_builtin, find_module_export,
+    is_module_cache, resolve_file, resolve_within,
 };
 pub use runtime_uses::{AsksOfText, RuntimeUses};
 pub use table::{

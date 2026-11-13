@@ -2,11 +2,12 @@
 # declare function unseen(x: any): any;
 # function run(n: number): number { let sum = 0; for (let i = 0; i < n; i++) sum = table.handler(sum) | 0; return sum; }
 # function attempt(n: number): number { try { return run(n); } catch (error) { return -1; } }
+# const turns = unseen(3) | 0;
 # const withNoTurn = attempt(0);
-# const withTurns = attempt(3);
+# const withTurns = attempt(turns);
 # const table = { handler: (x: number) => x + 3 };
 # unseen(table);
-# print(withNoTurn, withTurns, attempt(0), attempt(3));
+# print(withNoTurn, withTurns, attempt(0), attempt(turns));
 # declare function print(...values: unknown[]): void;
 # -- end of source
 # `table` is a constant of the module, read in a loop by a function that may be entered while it is in its dead zone. No turn writes it, so its read stands in front of the typed copy of the loop.

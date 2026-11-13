@@ -1,0 +1,16 @@
+# Kin of an-element-read-for-a-field-in-a-loop-is-asked-one-question-for-hole-and-cell.ir: the hole is written or made by the length; the error names undefined, as it did.
+# LIBRARY: own
+# -- source: main.ts
+# class Point { x: number; constructor(x: number) { this.x = x; } }
+# function sum(points: Point[]): number { let total = 0; const size = points.length; for (let i = 0; i < size; i++) total += points[i].x; return total; }
+# function tell(points: Point[]): void { try { print(sum(points)); } catch (error) { print((error as Error).constructor.name, (error as Error).message.startsWith("undefined is not an object")); } }
+# const points = [new Point(1.5), new Point(2.5), new Point(4)];
+# tell(points);
+# points.length = 2;
+# points.length = 3;
+# tell(points);
+# declare function print(...values: unknown[]): void;
+# -- end of source
+# RUN(SHELL): run-in-shell 0;
+# SHELL: 8
+# SHELL-NEXT: TypeError true

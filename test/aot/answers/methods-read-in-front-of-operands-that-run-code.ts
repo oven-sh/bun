@@ -2,14 +2,18 @@
 // # the method is read, then an operand runs code, then the call is made: a call by value. Its stub looks at the receiver: as made now, so as made at the read. Whatever the operand does to the receiver, what was READ is what is called
 // # f10 = tell, f11 = twice, f1 = gather, f2 = fill, f3 = keep, f4 = once, f5 = keysOf, f6 = probe, f7 = run
 // # RUN(PUSHED): bytes f1:Body mechanisms=all-Inlining
-// # where the receiver's class is proven the read is a look at the receiver alone, and the stub of the call fetches the method that was left unread if the operand has changed the receiver since
-// # PUSHED: CallMethodThatMayBeUnread.ArrayPush
+// # where the receiver's class is proven the loop is built twice: the typed version calls nothing to push, the other reads the method in front of the operand and calls what it has read
+// # PUSHED: ReadAtSite.OfCell under (SiteCache {{*}} "push"
+// # PUSHED: CallMethodOfProvenBuiltinClassByValue.ArrayPush
 // # RUN(SET): bytes f2:Body mechanisms=all-Inlining
 // # SET: CallMethodOfProvenBuiltinClassByValue.MapSet
 // # RUN(ADDED): bytes f3:Body mechanisms=all-Inlining
-// # ADDED: CallMethodThatMayBeUnread.SetAdd
+// # ADDED: Call Stub SetAdd.Bits
+// # ADDED: CallMethodOfProvenBuiltinClassByValue.SetAdd
 // # RUN(ONCE): bytes f4:Body mechanisms=all-Inlining
-// # ONCE: CallMethodOfBuiltinClassByValue.ArrayPush
+// # where the class is expected and not proven the read is a look too: it asks the class besides; what it finds as made stays unread, anything else is read there, in front of the operand
+// # ONCE: ReadMethodAtSiteUnlessReceiverFindsIt.ArrayPush
+// # ONCE: CallMethodOfAnyReceiverThatMayBeUnread.ArrayPush
 // # RUN(PROBED): bytes f6:Body mechanisms=all-Inlining
 // # PROBED: CallMethodOfBuiltinClassByValue.RegExpTest
 // # LIBRARY: own
@@ -26,15 +30,17 @@ function fill(table: Map<string, number>, names: string[], f: (name: string) => 
 function keep(seen: Set<number>, from: number[], f: (x: number) => number): number { for (let i = 0; i < from.length; i++) seen.add(f(from[i])); return seen.size; }
 function once(list: number[], f: () => number): number { const length = list.push(f()); return length + 0; }
 function keysOf(table: Map<string, number>): string { let keys = ""; table.forEach((value, key) => { keys += key + ","; }); return keys; }
+// The indexes come out of a list: what stands at a WRITTEN place of a written list is known by the place (what-a-written-list-holds-at-each-written-place-1), and gather() would be built once for each callee.
+const at: number[] = [0, 1, 2];
 let fs: ((x: number) => number)[] = [twice, x => x + 1, x => -x];
-tell(() => gather([1, 2, 3], fs[0]).join());
-tell(() => gather([1, 2, 3], fs[1]).join());
-tell(() => gather([], fs[2]).join());
+tell(() => gather([1, 2, 3], fs[at[0]]).join());
+tell(() => gather([1, 2, 3], fs[at[1]]).join());
+tell(() => gather([], fs[at[2]]).join());
 tell(() => fill(new Map(), ["a", "b", "a"], name => name.length));
 // The set has left the program, so nobody can say that it stays as its class makes it: else no operand can do anything to it and the method is called without a look at the receiver (instances-that-stay-as-made-1).
 const handedOut = new Set<number>();
 (globalThis as any).handedOutOfThisTest = handedOut;
-tell(() => keep(handedOut, [1, 2, 1, 3], fs[2]));
+tell(() => keep(handedOut, [1, 2, 1, 3], fs[at[2]]));
 const list: number[] = [];
 tell(() => once(list, () => 7));
 tell(() => once(list, () => 8));

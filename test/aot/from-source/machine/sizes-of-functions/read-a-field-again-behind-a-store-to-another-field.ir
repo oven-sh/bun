@@ -1,0 +1,18 @@
+# f1 = shift
+# -- source: read-a-field-again-behind-a-store-to-another-field.ts
+# type Point = { x: number; y: number };
+# function shift(point: Point, by: number): number {
+#   const before = point.x;
+#   point.y = by;
+#   return before + point.x;
+# }
+# declare const input: any;
+# const point: Point = { x: +input, y: +input };
+# (globalThis as any).answer = shift(point, +input) + point.y;
+# -- end of source
+# The compiler before this one: 4 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 6, patches 0, moves 1, unlikely or rare 0.
+# RUN(X64): steps most:7 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 7

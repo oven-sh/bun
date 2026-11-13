@@ -7,17 +7,17 @@
 # print(both(5), Meter.raw);
 # -- end of source
 # While the class object is not made, the field lies in the variable that the record of the class names for it. The read gives the word, or absent where the field does not lie there or something has been put on the cell;
-# absent: the access goes as it is written. The store comes behind such a read. The second read stands behind the store, which writes what the read reads: it is asked again.
+# absent: the accesses go as they are written. The store comes behind such a read. The read behind the store is what was stored: one look serves both, and the arm that goes as written takes both.
 # The accessor that is laid between the two calls makes the class object, which empties the variable for good: the same code then runs the accessor.
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: = GetStaticFieldOrAbsent {{*}}valueType=absent|anything
 # CHECK: = TypeTest {{*}}testedType=absent
 # CHECK: = PropSet {{*}}key="raw"
+# CHECK-NEXT: = PropGet {{*}}key="raw"
 # CHECK: = PutStaticField
-# CHECK: = GetStaticFieldOrAbsent {{*}}valueType=absent|anything
-# CHECK: = TypeTest {{*}}testedType=absent
-# CHECK: = PropGet {{*}}key="raw"
+# CHECK-NOT: = TypeTest {{*}}testedType=absent
+# CHECK: Jump
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 10 4
 # ANSWERS: 500 100

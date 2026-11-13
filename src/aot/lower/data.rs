@@ -2,8 +2,9 @@ mod values;
 
 use bun_sema::atom::known;
 use bun_sema::bind::BindingInitializer;
+use bun_sema::check::aot::ObjectMemberKind;
 use bun_sema::fold::{Constant, Decision};
-use bun_sema::hir::ExprId;
+use bun_sema::hir::{EnumId, ExprId};
 use rustc_hash::FxHashMap;
 use smallvec::smallvec;
 
@@ -13,12 +14,13 @@ use super::{FileLowering, FunctionLowering};
 use crate::builtins::id::BuiltinId;
 use crate::diagnostic_codes::Code;
 use crate::ir::generated::{Data, DataNode, LimitId};
-use crate::ir::{DataId, LayoutId, ValueId};
+use crate::ir::{DataId, LayoutId, PropertyKeyId, ValueId};
 use crate::modules::ExportBinding;
 
 #[derive(Default)]
 pub(crate) struct DataState {
     records: FxHashMap<ExprId, DataId>,
+    enums: FxHashMap<EnumId, DataId>,
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
@@ -56,6 +58,23 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         let root = values::create_object_node(self.file, layout, entries);
         let data = add_record(self.file, literal, root);
+        self.builder.data(data)
+    }
+
+    pub(in crate::lower) fn lower_data_of_enum(
+        &mut self,
+        declaration: EnumId,
+        names: &[(PropertyKeyId, ObjectMemberKind)],
+        entries: &[(Constant, Constant)],
+    ) -> ValueId {
+        if let Some(&data) = self.file.modules.data.enums.get(&declaration) {
+            return self.builder.data(data);
+        }
+        let layout = self.file.untyped_layout(names);
+        let root = values::create_object_node(self.file, layout, entries);
+        let module = Some(self.file.module_id());
+        let data = self.file.fragment.add_data(Data { root, module });
+        self.file.modules.data.enums.insert(declaration, data);
         self.builder.data(data)
     }
 

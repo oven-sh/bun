@@ -2,14 +2,14 @@
 // CHECK: function {{*}}kind=CommonJsModule
 // CHECK: [[first]] = FinishObject
 // CHECK-NEXT: PutModuleVariable [[first]] variable=[[exports]]
-// CHECK-NEXT: PutModuleVariable [[first]] variable=[[held]]
-// CHECK-NEXT: [[early]] = GetModuleVariable variable=[[held]]
-// CHECK: PropSet [[early]], {{*}}key="z"
+// CHECK: PropSet [[first]], {{*}}key="z"
 // CHECK: PutModuleVariable {{*}}variable=[[exports]]
-// CHECK-NEXT: [[late]] = GetModuleVariable variable=[[held]]
-// CHECK: PropSet [[late]], {{*}}key="b"
+// CHECK: PropSet [[first]], {{*}}key="b"
 
-// A store through a type assertion is a store: `module.exports` comes to hold another value, and `exports` goes on naming the object that the body began with, which has a variable of its own.
+// RUN(LOCAL): lower
+// LOCAL-NOT: GetModuleVariable
+
+// A store through a type assertion is a store: `module.exports` comes to hold another value, and `exports` goes on naming the object that the body began with, as a binding of the body: no variable of the module holds it.
 // @ts-nocheck
 exports.z = 0;
 (module.exports as any) = { a: 1 };

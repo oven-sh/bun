@@ -230,7 +230,21 @@ impl<'p, 's> Checker<'p, 's> {
     /// The type of `sym` as a value.
     #[inline]
     pub fn type_of_symbol(&mut self, sym: Sym) -> TypeId {
+        let snapshot = match self.task.view() {
+            Some(view) if self.task.file != Some(sym.file) => {
+                view.snapshot_without_hidden_commits(sym.file)
+            }
+            _ => None,
+        };
+        if let Some(snapshot) = snapshot
+            && let Some(known) = self.recent_symbol_types.get(sym, snapshot)
+        {
+            return known;
+        }
         if let Some(known) = self.p.symbol_types.get(&self.task, &sym) {
+            if let Some(snapshot) = snapshot {
+                self.recent_symbol_types.put(sym, snapshot, known);
+            }
             return known;
         }
         self.resolve_type_of_symbol(sym)
@@ -407,6 +421,7 @@ impl<'p, 's> Checker<'p, 's> {
             // assigned.
             Ok(stored) if table_flags.contains(SymFlags::ENUM_MEMBER) => {
                 self.p.symbol_types.rewrite(&self.task, sym, ty, stored);
+                self.recent_symbol_types.forget(sym);
             }
             Ok(stored) => {
                 self.p.symbol_types.insert(&self.task, sym, ty, stored);
@@ -3571,6 +3586,7 @@ impl<'p, 's> Checker<'p, 's> {
         // Which properties go into the rest, and the names of the others.
         let (mut rest_indexes, mut excluded_keys): (Vec<usize>, Vec<TypeId>) =
             (Vec::new(), Vec::new());
+        let omitted_names: crate::util::FxHashSet<Atom> = omitted.iter().copied().collect();
         if let Some(members) = &members {
             for (i, prop) in members.shape().props.iter().enumerate() {
                 // `getLiteralTypeFromProperty`: a property that isn't public, or is named `#name`,
@@ -3584,7 +3600,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let Some(key) = self.key_type_of_prop(apparent, prop) else {
                     continue;
                 };
-                let is_omitted = omitted.contains(&prop.name)
+                let is_omitted = omitted_names.contains(&prop.name)
                     || !omitted_keys.is_never() && self.is_assignable(key, omitted_keys);
                 if !is_omitted && self.is_spreadable_property(prop) {
                     rest_indexes.push(i);

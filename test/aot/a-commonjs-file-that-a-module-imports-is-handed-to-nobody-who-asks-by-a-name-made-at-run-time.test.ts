@@ -1,5 +1,5 @@
 // Link follows what a CommonJS file exports into the variables of the ES modules that import it, and proves what `sum` is called with.
-// Evaluated text lays a loader into the table of node:module; a require of a path that is missing at the build turns to the host, which calls that loader; the loader asks for the file by a name made at run time.
+// Evaluated text that the build does not know lays a loader into the table of node:module; a require of a path that is missing at the build turns to the host, which calls that loader; the loader asks for the file by a name made at run time.
 // It is refused, and the program goes on: the loader of the engine still gets the module that stands for the file in the graph of main.mjs.
 //
 // Each program is built alone, in a folder of its own whose path is spelled into it: the file must be missing at the build, or the build reads it as data and nothing turns to the host.
@@ -31,7 +31,7 @@ const asks: Record<string, string> = {
 test.each(Object.entries(asks))(
   "%s",
   async (_, ask) => {
-    using dir = tempDir("aot-file-behind-a-face-is-asked-for", { "main.mjs": main, "sum.cjs": sum });
+    using dir = tempDir("aot-file-behind-a-facade-is-asked-for", { "main.mjs": main, "sum.cjs": sum });
     const directory = String(dir).replaceAll("\\", "/");
     const text = `(from) => { const Module = process.getBuiltinModule("node:module"); Module._extensions[".json"] = function (made) { ${ask} made.exports = 1; }; }`;
     await Bun.write(
@@ -39,7 +39,7 @@ test.each(Object.entries(asks))(
       `"use strict";
 const fs = require("node:fs");
 globalThis.out = "not called";
-(0, eval)(${JSON.stringify(text)})(__filename);
+(0, eval)(JSON.parse(${JSON.stringify(JSON.stringify(text))}))(__filename);
 fs.writeFileSync("${directory}/late.json", "{}"); try { require("${directory}/late.json"); } finally { fs.rmSync("${directory}/late.json"); }
 `,
     );

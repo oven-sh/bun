@@ -1,0 +1,19 @@
+# -- source: main.js
+# class O { constructor() { this.x = 1; } m() { return this.x; } }
+# const o = new O();
+# function Base(v) { this.held = v; }
+# class A extends Base { constructor(v) { super(v); this.y = 2; } }
+# const a = new A(o);
+# print(a.y, o.m(), a.held === o);
+# -- end of source
+# Every caller of `Base` is known, and the only one is the class below it. What arrives at `this` is what that caller hands over: the object made for the class. If objects that nobody sees arrived there as soon as a layout stands below, the store would hand `o` to everybody and its layout would be let go.
+# RUN(LAYOUTS): link layouts mechanisms=all
+# LAYOUTS: layout L0 changes=[] stays-with-compiled-code
+# RUN(FUNCTIONS): link functions mechanisms=all
+# FUNCTIONS: parameter 0 expected=L1 declared proven=L1
+# RUN(ANSWER): run-in-shell globalThis.unused = 0;
+# ANSWER: 2 1 true
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime globalThis.unused = 0;
+# CHECKED: 2 1 true
+# CHECKED-NEXT: exited with 0

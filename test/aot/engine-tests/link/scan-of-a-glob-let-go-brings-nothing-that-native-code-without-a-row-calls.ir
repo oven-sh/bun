@@ -1,0 +1,40 @@
+# hidden(Bun.Glob.prototype.scan); setImmediate(() => {})
+# A function of the host whose row says nothing may call whatever native code calls, and print an object: what the host loads for that is in the program. This one is written in JavaScript, which the
+# program holds, over a native method that reads its operand, walks folders and calls nothing of the library: the row says so.
+# The control: undeclared-row-that-constructs-nothing-lets-objects-of-any-class-exist.ir.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f2 unreached
+# CHECK-NOT: function f3 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="internal:util/inspect" displayPath="internal:util/inspect" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalUtilInspect body=f2
+module m2 path="/$bun/js/builtins/Glob.ts" displayPath="/$bun/js/builtins/Glob.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=GlobScan function=f3
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="setImmediate" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(SetImmediate) flags=[IsExpected]}
+    v3 = NewClosure function=f1
+    v4 = Call v2, -, v3 calleeName="setImmediate"
+    v5 = Builtin builtin=BunGlobPrototypeScan
+    v6 = PropGet v0 key="hidden" [isFreeName]
+    v7 = Call v6, -, v5
+    Return v7
+}
+function f1 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f3 name="scan" module=m2 kind=Method role=Library flags=[HasExplicitName] length=1 enclosingRuntimeFunction=GlobScan thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

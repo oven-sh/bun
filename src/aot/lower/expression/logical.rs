@@ -20,29 +20,37 @@ struct Level {
     join: BlockId,
 }
 
-fn where_left_side_goes_at_once(
+fn where_left_sides_go_at_once(
     levels: &[Level],
-    number: usize,
-) -> (Option<LocalVariable>, BlockId) {
-    let is_truthy = match levels[number].operator {
-        LogicalOperator::And => false,
-        LogicalOperator::Or => true,
-        LogicalOperator::Nullish => return (levels[number].result, levels[number].join),
+) -> SmallVec<[(Option<LocalVariable>, BlockId); 4]> {
+    let Some(last) = levels.last() else {
+        return SmallVec::new();
     };
-    for outer in number + 1..levels.len() {
-        match (levels[outer].operator, is_truthy) {
-            (LogicalOperator::And, false)
-            | (LogicalOperator::Or | LogicalOperator::Nullish, true) => {}
-            (LogicalOperator::And, true) | (LogicalOperator::Or, false) => {
-                return (None, levels[outer].rhs);
+    let mut where_falsy_goes = (last.result, last.join);
+    let mut where_truthy_goes = where_falsy_goes;
+    let mut answers: SmallVec<[(Option<LocalVariable>, BlockId); 4]> = levels
+        .iter()
+        .enumerate()
+        .rev()
+        .map(|(number, level)| match level.operator {
+            LogicalOperator::And => {
+                where_truthy_goes = (None, level.rhs);
+                where_falsy_goes
             }
-            (LogicalOperator::Nullish, false) => {
-                return (levels[outer - 1].result, levels[outer - 1].join);
+            LogicalOperator::Or => {
+                where_falsy_goes = (None, level.rhs);
+                where_truthy_goes
             }
-        }
-    }
-    let last = levels[levels.len() - 1];
-    (last.result, last.join)
+            LogicalOperator::Nullish => {
+                if let Some(inner) = number.checked_sub(1).map(|inner| levels[inner]) {
+                    where_falsy_goes = (inner.result, inner.join);
+                }
+                (level.result, level.join)
+            }
+        })
+        .collect();
+    answers.reverse();
+    answers
 }
 
 fn is_written_as_boolean(kind: ExprKind) -> bool {
@@ -152,6 +160,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 }
             })
             .collect();
+        let goes_at_once = match passes_by_operators {
+            true => where_left_sides_go_at_once(&levels),
+            false => SmallVec::new(),
+        };
 
         let mut exit_of_chain =
             (!spine.is_empty() && self.file.is_chain_root(innermost)).then(|| self.create_block());
@@ -166,7 +178,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 result, rhs, join, ..
             } = levels[number];
             let (result_at_once, at_once) = match passes_by_operators {
-                true => where_left_side_goes_at_once(&levels, number),
+                true => goes_at_once[number],
                 false => (result, join),
             };
             self.branch_on_logical_operator(value, operator, result_at_once, rhs, at_once);

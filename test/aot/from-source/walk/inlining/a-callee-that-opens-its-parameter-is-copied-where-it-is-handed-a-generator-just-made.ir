@@ -1,0 +1,21 @@
+# `function one(..) { return first(some(..)); }` with `function first(iter) { if (iter !== undefined) { for (const value of iter) { return value; } } return undefined; }`: a helper that takes the first of whatever
+# can be iterated, handed a generator made for it. Outside loops the helper was called. In its own unit nothing is known of its parameter: a guess at a list that never holds, then the iterator is opened, `next` read,
+# the step and the close each by a call of the library. TypeScript 6: getUnmatchedProperty(): 0.67 M generators a run.
+# A callee without a loop that comes round, no larger than what is copied in loops, that opens an iteration over a parameter is copied where the call hands it what a generator function has just made: what is iterated
+# is then a generator of one function: one test that nobody has laid anything above it, and the steps in line.
+# f1 = some . f2 = first . f3 = one
+# -- source: main.cjs
+# "use strict";
+# let log = "";
+# function* some(n) { try { for (let i = 0; i < n; i++) { log += "y" + i; yield i * 2 + 1; } log += "end"; } finally { log += "f"; } }
+# function first(iter) { if (iter !== undefined) { for (const value of iter) { return value; } } return undefined; }
+# function one(n) { return first(some(n)); }
+# hand(one);
+# print(one(0), one(1), one(2), first(undefined), first([7, 8]), first(new Set([9])), first("text"), log);
+# -- end of source
+# RUN(ONE): walk f3 mechanisms=all
+# ONE: frame 1 callee=f2
+# ONE: = MakesPlainGenerators
+# ONE-NOT: function=f2 traits
+# RUN(ANSWERS): run-in-shell hand = function () { };
+# ANSWERS: undefined 1 1 undefined 7 9 t endfy0fy0f

@@ -1,0 +1,12 @@
+# `total = total + box.rows[place] * box.more[place]`: the front of the loop tells apart the list that ONE slot of the holder finds; the copies handed what was found to the reads of that slot alone, so the second list stayed unknown, its read stayed closed, the turn stayed loud, and the first list's proof fell with it.
+# In each copy the other reads by name off the same proven holder, whose value the turn reads under an index and reckons with, are expected to be what the first was found to be. The expectation is tested in the turn.
+# -- source: the-second-list-of-one-holder-takes-the-expectation-of-the-first-in-the-copies-of-the-loop.cjs
+# const box = { rows: JSON.parse("[1, 2, 3, 4.5]"), more: JSON.parse("[2, 3, 4, 5]") };
+# function sum(start) { let total = start; for (let place = 0; place < box.rows.length; place++) total = total + box.rows[place] * box.more[place]; return total; }
+# print(sum([].length + 1));
+# -- end of source
+# RUN(COUNT): compile UnrolledLoopsForIndexingType mechanisms=all
+# The two lists are asked together: one copy for the kind of both.
+# COUNT: statistic UnrolledLoopsForIndexingType 1
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 43.5

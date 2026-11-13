@@ -147,6 +147,34 @@ fn analyzed_hoist(text: &str, test: impl for<'s> FnOnce(&Analyzed<'s>, AnnexBFun
 }
 
 #[test]
+fn function_expression_finds_itself() {
+    for (text, finds_itself) in [
+        ("(function f() { return f; })();", true),
+        ("(function f(a = f) {})();", true),
+        ("(function f() { return () => [1].map(() => f); })();", true),
+        ("(function f() { function g() { f(); } })();", true),
+        ("(function f() {})();", false),
+        ("f(function f() {});", false),
+        ("(function f() { let f = 1; return f; })();", false),
+        ("(function f(f) { return f; })();", false),
+        ("(function f() { var f; f = 1; })();", false),
+        ("(function f() { return { f: 1 }.f; })();", false),
+        ("(function () { return f; })(); function f() {}", false),
+        ("(function f() { return arguments; })();", true),
+        ("(function f() { return eval('f'); })();", true),
+    ] {
+        analyzed("/a.js", text, |s| {
+            let function = first_function(s, FnKind::Expr);
+            assert_eq!(
+                s.bound.finds_itself(&s.hir, function),
+                finds_itself,
+                "{text}"
+            );
+        });
+    }
+}
+
+#[test]
 fn merged_redeclarations() {
     analyzed("a.cjs", "var f = 1; function f() {} f;", |s| {
         let f = function_symbol(s, "f");
@@ -987,7 +1015,7 @@ fn eval_symbols_behind_simple_catch_parameters() {
 fn eval_dynamic_lookups() {
     analyzed(
         "a.cjs",
-        r#"var x; function f() { eval(""); return x; }"#,
+        r#"var x; function f() { eval(t); return x; }"#,
         |s| {
             let x = NodeData::Expr(s.ident("x", 0));
             let scope = s.bound.dynamic_lookup_scope(x).unwrap();
@@ -997,20 +1025,20 @@ fn eval_dynamic_lookups() {
             );
         },
     );
-    let strict = r#""use strict"; var x; function f() { eval(""); return x; }"#;
+    let strict = r#""use strict"; var x; function f() { eval(t); return x; }"#;
     analyzed("a.cjs", strict, |s| {
         let x = NodeData::Expr(s.ident("x", 0));
         assert_eq!(s.bound.dynamic_lookup_scope(x), None);
     });
     analyzed(
         "a.cjs",
-        r#"function f() { var y; eval(""); return y; }"#,
+        r#"function f() { var y; eval(t); return y; }"#,
         |s| {
             let y = NodeData::Expr(s.ident("y", 0));
             assert_eq!(s.bound.dynamic_lookup_scope(y), None);
         },
     );
-    analyzed("a.cjs", r#"eval(""); require("a"); other;"#, |s| {
+    analyzed("a.cjs", r#"eval(t); require("a"); other;"#, |s| {
         let lookup = |name| {
             s.bound
                 .dynamic_lookup_scope(NodeData::Expr(s.ident(name, 0)))
@@ -1018,18 +1046,14 @@ fn eval_dynamic_lookups() {
         assert_eq!(lookup("require"), None);
         assert_eq!(lookup("other"), Some(ScopeId(0)));
     });
-    analyzed(
-        "a.cjs",
-        r#"function f() { eval(""); require("a"); }"#,
-        |s| {
-            let require = NodeData::Expr(s.ident("require", 0));
-            let scope = s.bound.dynamic_lookup_scope(require).unwrap();
-            assert_eq!(
-                s.bound.scopes[scope.idx()].kind,
-                ScopeKind::Fn(s.function("f"))
-            );
-        },
-    );
+    analyzed("a.cjs", r#"function f() { eval(t); require("a"); }"#, |s| {
+        let require = NodeData::Expr(s.ident("require", 0));
+        let scope = s.bound.dynamic_lookup_scope(require).unwrap();
+        assert_eq!(
+            s.bound.scopes[scope.idx()].kind,
+            ScopeKind::Fn(s.function("f"))
+        );
+    });
 }
 
 #[test]
@@ -1062,13 +1086,13 @@ fn members_of_an_enum_take_the_variables_of_evaluated_text() {
             .dynamic_lookup_scope(NodeData::Expr(s.ident("q", 0)));
         scope.map(|scope| s.bound.scopes[scope.idx()].kind)
     };
-    let text = r#"var q; enum E { A = (eval(""), q) }"#;
+    let text = r#"var q; enum E { A = (eval(t), q) }"#;
     analyzed("a.cts", text, |s| {
         assert!(matches!(lookup_of_q(s), Some(ScopeKind::Enum(_))));
     });
-    let text = r#"var q; enum E { A = eval("") } q;"#;
+    let text = r#"var q; enum E { A = eval(t) } q;"#;
     analyzed("a.cts", text, |s| assert_eq!(lookup_of_q(s), None));
-    let text = r#""use strict"; var q; enum E { A = (eval(""), q) }"#;
+    let text = r#""use strict"; var q; enum E { A = (eval(t), q) }"#;
     analyzed("a.cts", text, |s| assert_eq!(lookup_of_q(s), None));
 }
 
@@ -1076,103 +1100,103 @@ fn members_of_an_enum_take_the_variables_of_evaluated_text() {
 fn eval_variables_between_body_and_parameters() {
     let cases = [
         (
-            r#"function f(a, b = 2) { eval(""); return a; }"#,
+            r#"function f(a, b = 2) { eval(t); return a; }"#,
             "a",
             0,
             true,
         ),
         (
-            r#"function f(a, b = 2) { eval(""); return b; }"#,
+            r#"function f(a, b = 2) { eval(t); return b; }"#,
             "b",
             0,
             true,
         ),
         (
-            r#"function f(a, b = 2) { eval(""); return arguments; }"#,
+            r#"function f(a, b = 2) { eval(t); return arguments; }"#,
             "arguments",
             0,
             true,
         ),
         (
-            r#"function f(a, b = 2) { eval(""); return () => a; }"#,
+            r#"function f(a, b = 2) { eval(t); return () => a; }"#,
             "a",
             0,
             true,
         ),
         (
-            r#"function f({ [k]: a }) { eval(""); return a; }"#,
+            r#"function f({ [k]: a }) { eval(t); return a; }"#,
             "a",
             0,
             true,
         ),
-        (r#"var f = (a, b = 2) => [eval(""), a];"#, "a", 0, true),
-        (r#"function f(a, b = a) { eval(""); }"#, "a", 0, false),
-        (r#"function f(a, b = () => a) { eval(""); }"#, "a", 0, false),
-        (r#"var f = (a, b = a) => eval("");"#, "a", 0, false),
+        (r#"var f = (a, b = 2) => [eval(t), a];"#, "a", 0, true),
+        (r#"function f(a, b = a) { eval(t); }"#, "a", 0, false),
+        (r#"function f(a, b = () => a) { eval(t); }"#, "a", 0, false),
+        (r#"var f = (a, b = a) => eval(t);"#, "a", 0, false),
         (
-            r#"function f(a, b = 2) { var a; eval(""); return a; }"#,
+            r#"function f(a, b = 2) { var a; eval(t); return a; }"#,
             "a",
             0,
             false,
         ),
         (
-            r#"function f(a, b = 2) { var arguments; eval(""); return arguments; }"#,
+            r#"function f(a, b = 2) { var arguments; eval(t); return arguments; }"#,
             "arguments",
             0,
             false,
         ),
         (
-            r#"function f(a, b = 2) { let c; eval(""); return c; }"#,
+            r#"function f(a, b = 2) { let c; eval(t); return c; }"#,
             "c",
             0,
             false,
         ),
-        (r#"function f(a, b) { eval(""); return a; }"#, "a", 0, false),
+        (r#"function f(a, b) { eval(t); return a; }"#, "a", 0, false),
         (
-            r#"function f(a, ...b) { eval(""); return a; }"#,
+            r#"function f(a, ...b) { eval(t); return a; }"#,
             "a",
             0,
             true,
         ),
         (
-            r#"function f(a, { b }) { eval(""); return a; }"#,
+            r#"function f(a, { b }) { eval(t); return a; }"#,
             "a",
             0,
             true,
         ),
         (
-            r#"function f(a, ...b) { eval(""); return arguments; }"#,
+            r#"function f(a, ...b) { eval(t); return arguments; }"#,
             "arguments",
             0,
             true,
         ),
         (
-            r#"function f(a, ...b) { var a; eval(""); return a; }"#,
+            r#"function f(a, ...b) { var a; eval(t); return a; }"#,
             "a",
             0,
             false,
         ),
         (
-            r#"function f(a, ...b) { function a() {} eval(""); return a; }"#,
+            r#"function f(a, ...b) { function a() {} eval(t); return a; }"#,
             "a",
             0,
             false,
         ),
         (
-            r#"function f(a, ...b) { var arguments; eval(""); return arguments; }"#,
+            r#"function f(a, ...b) { var arguments; eval(t); return arguments; }"#,
             "arguments",
             0,
             false,
         ),
         (r#"function f(a, b = 2) { return a; }"#, "a", 0, false),
         (
-            r#"function f(a, b = 2) { (() => eval(""))(); return a; }"#,
+            r#"function f(a, b = 2) { (() => eval(t))(); return a; }"#,
             "a",
             0,
             false,
         ),
         (
-            r#""use strict"; function f(a, b = 2) { eval(""); return a; }"#,
+            r#""use strict"; function f(a, b = 2) { eval(t); return a; }"#,
             "a",
             0,
             false,
@@ -1188,7 +1212,7 @@ fn eval_variables_between_body_and_parameters() {
             assert_eq!(end != function_scope, expected, "{text}");
         });
     }
-    let text = r#"function f(a, b = 2) { eval(""); with (b) { return a; } }"#;
+    let text = r#"function f(a, b = 2) { eval(t); with (b) { return a; } }"#;
     analyzed("a.cjs", text, |s| {
         let with = first_stmt(s, |kind| matches!(kind, StmtKind::With { .. }));
         let ident = s.ident("a", 0);
@@ -1212,20 +1236,26 @@ fn eval_variables_of_parameters_and_of_body() {
     }
     use Start::{Function, Parameter, Static};
     let cases = [
-        (r#"function f(a, b = x) { eval(""); }"#, Static),
-        (r#"function f(a, b = () => x) { eval(""); }"#, Static),
-        (r#"var f = (a, b = () => x) => eval("");"#, Static),
-        (r#"function f(a, b = 2) { eval(""); return x; }"#, Function),
-        (r#"function f(a, b = eval("")) { return x; }"#, Function),
-        (r#"function f(a, b = eval(""), c = x) {}"#, Parameter),
+        (r#"function f(a, b = x) { eval(t); }"#, Static),
+        (r#"function f(a, b = () => x) { eval(t); }"#, Static),
+        (r#"var f = (a, b = () => x) => eval(t);"#, Static),
+        (r#"function f(a, b = 2) { eval(t); return x; }"#, Function),
+        // A written text declares the names that it spells.
+        (r#"function f(a, b = 2) { eval(""); return x; }"#, Static),
         (
-            r#"function f(a, b = eval(""), c = () => x) { eval(""); }"#,
+            r#"function f(a, b = 2) { eval("var x"); return x; }"#,
+            Function,
+        ),
+        (r#"function f(a, b = eval(t)) { return x; }"#, Function),
+        (r#"function f(a, b = eval(t), c = x) {}"#, Parameter),
+        (
+            r#"function f(a, b = eval(t), c = () => x) { eval(t); }"#,
             Parameter,
         ),
-        (r#"var f = (a, b = eval(""), c = () => x) => 0;"#, Function),
-        (r#"var f = (a, b = eval("")) => x;"#, Function),
+        (r#"var f = (a, b = eval(t), c = () => x) => 0;"#, Function),
+        (r#"var f = (a, b = eval(t)) => x;"#, Function),
         (
-            r#""use strict"; function f(a, b = eval(""), c = x) {}"#,
+            r#""use strict"; function f(a, b = eval(t), c = x) {}"#,
             Static,
         ),
     ];

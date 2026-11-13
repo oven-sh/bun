@@ -1,14 +1,20 @@
-use bun_sema::bind::FnOwner;
+use bun_sema::atom::{Atom, known};
+use bun_sema::bind::{Binding, BindingInitializer, CodeUnit, FnOwner, Parent, SymbolId};
 use bun_sema::check::aot::{
-    ClassRef, FunctionRef, GaveUp, PositionTypes, SignatureShape, WrittenType,
+    ClassRef, FunctionRef, GaveUp, PositionTypes, ShapeKind, SignatureShape, WrittenType,
 };
-use bun_sema::hir::{ClassId, Flags, FnId, Member, MemberId, MemberKind};
+use bun_sema::hir::{
+    ClassId, ExprId, ExprKind, Flags, FnId, FnKind, Member, MemberId, MemberKey, MemberKind,
+    StmtKind,
+};
+
+use smallvec::SmallVec;
 
 use super::FunctionPositions;
-use crate::ir::{ContentsSlot, DeclaredType, Mapped, PositionFlags, TypeId, TypeTable};
-use crate::lower::FileLowering;
+use crate::ir::{ContentsSlot, DeclaredType, LayoutId, Mapped, PositionFlags, TypeId, TypeTable};
 use crate::lower::scope::{BindingRef, ScopeSlot};
 use crate::lower::types::find_contents_type;
+use crate::lower::{CheckerTypeId, FileLowering};
 
 pub(super) fn compute_function_positions(
     file: &mut FileLowering<'_, '_, '_, '_>,
@@ -95,13 +101,32 @@ impl FileLowering<'_, '_, '_, '_> {
                 positions.push(DeclaredType::untyped());
                 continue;
             };
-            let position = self.create_position(entry.types);
+            let mut position = self.create_position(entry.types);
+            if !self.is_checked() {
+                self.note_declared_records(function, index as u32, entry.types);
+                if position.is_expected() && self.queries.is_handed_instance(parameters.at(index)) {
+                    position = position.inferred();
+                }
+            }
             positions.push(match entry.is_optional {
                 true => self.add_undefined(position),
                 false => position,
             });
         }
         positions
+    }
+
+    fn note_declared_records(&mut self, function: FnId, parameter: u32, types: PositionTypes) {
+        let mut open: SmallVec<[CheckerTypeId; 8]> = SmallVec::new();
+        open.extend(types.written.written());
+        open.extend(types.checked.ok());
+        while let Some(ty) = open.pop() {
+            match self.queries.type_shape(ty).map(|shape| shape.kind) {
+                Ok(ShapeKind::Union(members)) => open.extend_from_slice(members),
+                Ok(ShapeKind::Object) => self.note_declared_record(function, parameter, ty),
+                Ok(_) | Err(_) => {}
+            }
+        }
     }
 
     fn find_class_member(&self, function: FnId) -> Option<(ClassId, MemberId)> {
@@ -180,6 +205,14 @@ fn compute_this_position(
         };
         return file.class_this_type(class, Some(member));
     }
+    if let Some(layout) = find_layout_whose_prototype_holds(file, source.function) {
+        return expect_type(file.fragment.types.intern_layout(layout));
+    }
+    if let Some(constructor) = file.queries.find_constructor_of_prototype_function(source)
+        && let Some(layout) = find_allocated_layout(file, constructor)
+    {
+        return expect_type(file.fragment.types.intern_layout(layout));
+    }
     if let Some(layout) = file.constructor_function_layout(source)
         && file
             .queries
@@ -189,7 +222,150 @@ fn compute_this_position(
         let is_tested = file.is_receiver_tested(source.function);
         return file.create_receiver_position(instance, is_tested);
     }
-    DeclaredType::untyped()
+    match find_layout_of_passed_receiver(file, source) {
+        Some(layout) => expect_type(file.fragment.types.intern_layout(layout)),
+        None => DeclaredType::untyped(),
+    }
+}
+
+fn find_layout_of_passed_receiver(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    source: FunctionRef,
+) -> Option<LayoutId> {
+    let hir = file.hir;
+    let owner = file.bound.fns[source.function.idx()].owner;
+    let name = match (hir[source.function].kind, owner) {
+        (FnKind::Expr, FnOwner::Expr(written)) => find_name_stored_under(file, written),
+        (FnKind::Decl | FnKind::Expr, _) => None,
+        _ => return None,
+    };
+    let mut found = None;
+    for caller in file.queries.functions_passing_receiver(source, name) {
+        let layout = find_layout_of_receiver(file, caller)?;
+        if found.is_some_and(|found| found != layout) {
+            return None;
+        }
+        found = Some(layout);
+    }
+    found
+}
+
+/// `name` of `object.name = function`.
+fn find_name_stored_under(file: &FileLowering<'_, '_, '_, '_>, function: ExprId) -> Option<Atom> {
+    let Parent::Expr(assignment) = file.bound.parent_of_expr(function) else {
+        return None;
+    };
+    let ExprKind::Assign {
+        op: None,
+        target,
+        value,
+    } = file.hir[assignment].kind
+    else {
+        return None;
+    };
+    match file.hir.member_key(target) {
+        Some((_, MemberKey::Name(name))) if value == function => Some(name),
+        Some(_) | None => None,
+    }
+}
+
+fn find_layout_of_receiver(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    function: FnId,
+) -> Option<LayoutId> {
+    if let Some((class, member)) = file.find_class_member(function) {
+        return match is_static_member(&file.hir[member]) {
+            true => None,
+            false => Some(file.own_class_layout(class)),
+        };
+    }
+    find_layout_whose_prototype_holds(file, function).or_else(|| {
+        let source = FunctionRef {
+            file: file.file,
+            function,
+        };
+        let constructor = file
+            .queries
+            .find_constructor_of_prototype_function(source)?;
+        find_allocated_layout(file, constructor)
+    })
+}
+
+fn find_layout_whose_prototype_holds(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    function: FnId,
+) -> Option<LayoutId> {
+    let (hir, bound) = (file.hir, file.bound);
+    if hir[function].kind != FnKind::Expr {
+        return None;
+    }
+    let FnOwner::Expr(mut owner) = bound.fns[function.idx()].owner else {
+        return None;
+    };
+    while let Parent::Stmt(statement) = bound.parent_of_expr(owner) {
+        let StmtKind::Return(_) = hir[statement].kind else {
+            return None;
+        };
+        let CodeUnit::Function(around) = bound.code_unit(bound.scope_of_stmt(statement)) else {
+            return None;
+        };
+        bound.get_immediately_invoked_function_expression(hir, around)?;
+        let FnOwner::Expr(written) = bound.fns[around.idx()].owner else {
+            return None;
+        };
+        let Parent::Expr(call) = bound.parent_of_expr(written) else {
+            return None;
+        };
+        owner = call;
+    }
+    let Parent::Expr(assignment) = bound.parent_of_expr(owner) else {
+        return None;
+    };
+    let ExprKind::Assign {
+        op: None,
+        target,
+        value,
+    } = hir[assignment].kind
+    else {
+        return None;
+    };
+    let ExprKind::Dot { obj: prototype, .. } = hir[target].kind else {
+        return None;
+    };
+    let ExprKind::Dot { obj, name, .. } = hir[prototype].kind else {
+        return None;
+    };
+    if value != owner || name != known::prototype || !matches!(hir[obj].kind, ExprKind::Ident(_)) {
+        return None;
+    }
+    let Binding::Symbol(symbol) = bound.binding(obj) else {
+        return None;
+    };
+    find_allocated_layout(file, symbol)
+}
+
+fn find_allocated_layout(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    constructor: SymbolId,
+) -> Option<LayoutId> {
+    let (hir, bound) = (file.hir, file.bound);
+    let constructor = match bound.binding_initializer(hir, constructor) {
+        BindingInitializer::Class(class) => return Some(file.own_class_layout(class)),
+        BindingInitializer::Function(constructor) => constructor,
+        BindingInitializer::Expression(initializer) => match hir[initializer].kind {
+            ExprKind::Fn(constructor) => constructor,
+            ExprKind::Ident(_) => {
+                let class = file.queries.only_class_stored_in_variable(initializer)?;
+                return Some(file.class_layout(class));
+            }
+            _ => return None,
+        },
+        _ => return None,
+    };
+    file.constructor_function_layout(FunctionRef {
+        file: file.file,
+        function: constructor,
+    })
 }
 
 fn is_static_member(member: &Member) -> bool {

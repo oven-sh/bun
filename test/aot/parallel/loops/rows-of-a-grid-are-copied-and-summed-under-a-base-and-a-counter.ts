@@ -1,4 +1,4 @@
-// STATISTIC: NumbersBesideCountersAskedInFrontOfLoops >= 3
+// STATISTIC: InvariantNumberGuardsHoisted >= 3
 // A grid in one view, as renderers and parsers keep them: every access goes by `row * width + column` or `offset + index`, and the numbers come out of fields and divisions, so that nothing in the text says that they are whole.
 // What the build makes of the loops may not show: among the whole numbers that they are written for come a fraction, -0, NaN, an infinity and numbers beyond 32 bits.
 class Grid {

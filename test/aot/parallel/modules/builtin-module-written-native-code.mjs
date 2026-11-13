@@ -92,5 +92,5 @@ bun: false true true false
 an entry of the cache: 1 true true false
 true false true
 exit code 1
-error: Cannot store an entry under 'bun:jsc' in require.cache: the build read no store under that key, so require("bun:jsc") was compiled to answer with the module. Spell the key where it is stored: require.cache["bun:jsc"] = entry. In a test, mock.module("bun:jsc", () => ({ .. })) replaces the module too. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+error: Cannot store an entry under 'bun:jsc' in require.cache: the build saw no store under that key, so require("bun:jsc") always returns the compiled module. Write the key out where you store it, as in require.cache["bun:jsc"] = entry, or use mock.module() in a test. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
 */

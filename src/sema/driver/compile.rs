@@ -4,6 +4,7 @@ mod effects;
 mod load;
 mod locator;
 mod log_message;
+mod parts;
 mod queue;
 mod roles;
 mod runtime_json;
@@ -14,9 +15,11 @@ mod threads;
 pub use check::{
     PassCount, Passes, check_and_lower, check_and_lower_noting_commits, check_whole_files,
 };
+pub(crate) use load::take_bun_types_below;
 pub use load::{FileFinder, FileFinderTables, load_program, resolve_names_known_in_part};
 pub use locator::{Locator, TextLocator};
 pub use log_message::log_message;
+pub use parts::PartsOfVisit;
 pub use roles::{decide_roles, keep_verified_roles};
 pub use threads::{
     drop_thread_caches, run_on_one_thread_while, run_on_region_thread, run_on_threads_while,
@@ -24,6 +27,7 @@ pub use threads::{
 };
 
 use self::effects::ProgramOrigins;
+pub use self::effects::says_that_name_is_not_found;
 #[cfg(test)]
 use crate::RoundReport;
 use crate::{CompilerOption, Diagnostic, Incomplete, Libs, Progress};
@@ -60,6 +64,8 @@ pub struct CompileRequest<'a, 's> {
     pub progress: Option<&'a Progress>,
     pub left_out_bodies: Option<&'a LeftOutBodies>,
     pub discards_first_visits: bool,
+    /// `Request::order`
+    pub order: u32,
 }
 
 pub struct LoadedProgram<'s> {
@@ -70,6 +76,7 @@ pub struct LoadedProgram<'s> {
     is_checker_freed: AtomicBool,
     cycles_entered: Guarded<Vec<(u32, u32, usize, CyclesEntered)>>,
     origins: Vec<FileOrigin>,
+    origins_behind_reach: OnceLock<Vec<FileOrigin>>,
     project_origin: FileOrigin,
     pub diagnostics: Vec<BuildDiagnostic>,
     bun_types: BunTypes,
@@ -80,6 +87,7 @@ pub struct LoadedProgram<'s> {
 
 pub(crate) enum BunTypes {
     Installed,
+    /// Installed, and the project's `types` don't name them: `tsc` doesn't read them.
     InstalledAndNotNamed,
     Brought,
     Missing(WithoutBunTypes),
@@ -107,7 +115,30 @@ impl<'s> LoadedProgram<'s> {
     }
 
     pub fn origin(&self, file: FileId) -> FileOrigin {
-        self.origins[file.idx()]
+        self.origins()[file.idx()]
+    }
+
+    fn origins(&self) -> &[FileOrigin] {
+        self.origins_behind_reach.get().unwrap_or(&self.origins)
+    }
+
+    /// `texts` are in the program only through entry points that are evaluated text: the code of the program that names
+    /// them is reached by nothing. `guessed` are in it only because a Worker may start from one of them, so no error in them
+    /// stops the build.
+    pub fn settle_origins(&self, texts: &[FileId], guessed: &[FileId]) {
+        let is_of_program = |file: &&FileId| self.origins[file.idx()] == FileOrigin::ProgramSource;
+        let guessed: Vec<FileId> = guessed.iter().filter(is_of_program).copied().collect();
+        if texts.is_empty() && guessed.is_empty() {
+            return;
+        }
+        let mut origins = self.origins.clone();
+        for file in guessed {
+            origins[file.idx()] = FileOrigin::TestedSource;
+        }
+        for file in texts {
+            origins[file.idx()] = FileOrigin::EvaluatedText;
+        }
+        let _ = self.origins_behind_reach.set(origins);
     }
 
     pub fn leave_files_to_loader(&self, mut files: Vec<FileId>) {
@@ -183,6 +214,7 @@ impl<'s> LoadedProgram<'s> {
         all
     }
 
+    /// `tsc -p` does not check the file: it is only reachable from an entry point that the project's `exclude` lists.
     fn is_excluded_by_project(&self, file: FileId) -> bool {
         self.files_that_project_excludes
             .binary_search(&file)
@@ -192,7 +224,7 @@ impl<'s> LoadedProgram<'s> {
     fn program_origins(&self) -> ProgramOrigins<'_, 's> {
         ProgramOrigins {
             files: Some(self.files),
-            origins: &self.origins,
+            origins: self.origins(),
             project_origin: self.project_origin,
             bun_types: &self.bun_types,
             has_configuration_file: self.has_configuration_file,
@@ -278,9 +310,12 @@ pub struct CheckedProgram<T> {
     pub rounds: Vec<RoundReport>,
 }
 
+pub(crate) type AfterFile<'a, 's> =
+    dyn Fn(&mut Checker<'_, 's>, FileId, &PartsOfVisit<'_, 's>) + Sync + 'a;
+
 pub(crate) struct FileWork<'a, 's> {
     pub requested: &'a (dyn Fn(FileId) -> Requested + Sync),
-    pub after_file: Option<&'a (dyn Fn(&mut Checker<'_, 's>, FileId) + Sync)>,
+    pub after_file: Option<&'a AfterFile<'a, 's>>,
     pub after_commit: &'a (dyn Fn(FileId) + Sync),
     pub frees_tree: &'a (dyn Fn(FileId) -> bool + Sync),
     pub is_last_pass: &'a (dyn Fn() -> bool + Sync),

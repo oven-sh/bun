@@ -39,7 +39,7 @@
 //
 // How it is built and run
 //   --flags "<flags>"     added to every product build; --engine-flags is the same for the engine runner
-//   --modes a,b           only these build modes. Always on: default, erased, separate-entry-points. Only when named: no-flow-results
+//   --modes a,b           only these build modes. Always on: default, erased, separate-entry-points
 //   --no-verifiers        leave the compiler's verifiers off, as in a user's build
 //   --gc-stress 1,2,3,5,7,11   run the executable with a collection at every n-th slow-path allocation, with freed cells scribbled and never reused. n, and
 //                         whether collections are full or eden, are picked per batch and recorded in the finding's flags as --run-env=<variable>.
@@ -57,7 +57,7 @@
 //   --known <file>        more accepted differences, in the format of accepted-differences.tsv, which is always read. May be repeated
 //   --reduce-seconds <n>  time limit of one reduction (default 600 on the product runner, a third of that on the engine runner)
 //   --count-only          only list failures in failures.tsv and count them in groups.tsv: nothing is confirmed, reduced or stored
-//   --no-attribution      do not ask whether a finding goes away without the verifiers, the facts or the written types, which takes a build each
+//   --no-attribution      do not ask whether a finding goes away without the verifiers or the written types, which takes a build each
 //   --work <folder>       where programs and executables are written (default /dev/shm if it exists)
 //   --min-free-gb <n>     pause while --work or --out has less free space (default 4)
 //
@@ -71,6 +71,7 @@
 //   failures.tsv          every failure, including known and repeated ones
 //   findings.tsv          one line per distinct finding
 //   same-without-aot.tsv  differences from `bun <file>` that an executable built without --aot shows too: not findings
+//   driver-errors.txt     faults of the fuzzer itself. Each may have cost a finding: the exit code is 1 where there is one
 //   findings/<name>/      reduced.*, original.*, plain.txt, compiled.txt and finding.json (seed, source, runner, mode, flags, binary, cause).
 //                         A multi-file program is a folder reduced/ or original/ whose entry point is main.*
 import { existsSync, mkdirSync, readdirSync, rmSync } from "fs";
@@ -136,6 +137,7 @@ if (replay) {
   const out = option("out") ?? join(process.cwd(), "fuzz-out");
   mkdirSync(out, { recursive: true });
   const round = () => String(1 + Math.max(0, ...readdirSync(out).map(Number).filter(Number.isInteger)));
+  let driverErrors = 0;
   do {
     const summary = await fuzz({
       runners,
@@ -162,7 +164,8 @@ if (replay) {
       batch: option("batch") ? Number(option("batch")) : undefined,
     });
     console.log(summary.status);
+    driverErrors += summary.driverErrors;
   } while (has("rounds") && !existsSync(join(out, "STOP")));
-  // A source may leave something behind that keeps the process alive.
-  process.exit(0);
+  // A source may leave something behind that keeps the process alive. A fault of the fuzzer itself may have cost a finding.
+  process.exit(driverErrors ? 1 : 0);
 }

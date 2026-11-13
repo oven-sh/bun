@@ -1,14 +1,15 @@
 use bun_sema::atom::Atom;
 use bun_sema::bind::{CodeUnit, PrivateNameId};
-use bun_sema::check::aot::{ClassMemberSource, ClassRef};
+use bun_sema::check::aot::ClassMemberSource;
 use bun_sema::hir::{ClassId, Flags, MemberId, ParamId, PatKind, PropKey};
+use bun_sema::program::FileId;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use super::{ClassElement, FieldValue, is_auto_accessor, is_derived_class};
-use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{Field, FieldFlags, FunctionFlags, FunctionKind, OperandKind};
 use crate::ir::{ClassSlot, DeclaredType, FunctionId, FunctionKey, LayoutId, TypeTable, ValueId};
+use crate::known_helpers::StateOwner;
 use crate::lower::member::{GivenName, PropertyName};
 use crate::lower::scope::{BindingRef, ScopeSlot};
 use crate::lower::{FileLowering, FunctionLowering, function, layouts};
@@ -95,18 +96,19 @@ impl FileLowering<'_, '_, '_, '_> {
     pub(in crate::lower) fn private_state_fields(
         &mut self,
         layout: LayoutId,
-        class: ClassRef,
+        home: FileId,
+        owner: StateOwner,
     ) -> SmallVec<[Field; 4]> {
         let inputs = self.inputs;
         let files = self.queries.files();
         let states = inputs
             .known_helpers
-            .private_states(files, inputs.modules, class.file);
+            .private_states(files, inputs.modules, home);
         let Some(states) = states else {
             return SmallVec::new();
         };
-        let bound = files.bound(class.file);
-        let states = states.states_of_class(class.class).iter();
+        let bound = files.bound(home);
+        let states = states.states_of_owner(owner).iter();
         let names: SmallVec<[Atom; 4]> = states
             .map(|state| bound.symbol(state.symbol).name)
             .collect();
@@ -169,7 +171,7 @@ pub(in crate::lower) fn is_called_by_evaluated_text(
     })
 }
 
-pub(super) fn declare_initializer(
+pub(in crate::lower) fn declare_initializer(
     file: &mut FileLowering<'_, '_, '_, '_>,
     class: ClassId,
     is_static: bool,
@@ -239,10 +241,26 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.emit_stored_definition(stored, this, value);
             }
             ClassElement::RunInitializers { initializers } => {
-                let list = self.get_initializer_list(class, initializers);
-                self.emit_initializer_run(list, this);
+                self.emit_listed_initializer_run(class, initializers, this);
             }
             ClassElement::StaticBlock(member) => self.lower_static_block(member, this),
+        }
+        self.set_position(caller_position);
+    }
+
+    pub(super) fn emit_field_born_with(
+        &mut self,
+        class: ClassId,
+        member: MemberId,
+        value: ValueId,
+        this: ValueId,
+    ) {
+        let caller_position = self.position();
+        let target = self.find_field_target(class, member);
+        self.set_position(self.file.hir[member].name_pos);
+        match target {
+            FieldTarget::Property(name) => self.emit_define(this, name, value),
+            FieldTarget::Private(name) => self.emit_field_definition(this, name, value),
         }
         self.set_position(caller_position);
     }
@@ -262,6 +280,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.emit_define(this, PropertyName::Constant(key), undefined);
     }
 
+    pub(super) fn lower_value_of_defined_field(
+        &mut self,
+        class: ClassId,
+        member: MemberId,
+    ) -> ValueId {
+        let function_name = match self.find_field_target(class, member) {
+            FieldTarget::Property(name) => self.name_under_member(member, name),
+            FieldTarget::Private(name) => self.name_under_private_name(class, name),
+        };
+        let initial = self.lower_field_initializer_expression(member, Some(function_name));
+        self.convert_initial_value(class, member, initial)
+    }
+
     fn lower_field(
         &mut self,
         class: ClassId,
@@ -272,9 +303,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) {
         let target = self.find_field_target(class, member);
         let function_name = match (is_defined, target) {
-            (true, FieldTarget::Property(name)) => {
-                Some(GivenName::under_member(&self.file.hir[member], name))
-            }
+            (true, FieldTarget::Property(name)) => Some(self.name_under_member(member, name)),
             (true, FieldTarget::Private(name)) => Some(self.name_under_private_name(class, name)),
             (false, _) => self.find_name_of_decorated_value(member),
         };
@@ -364,12 +393,20 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     }
                     None => self.builder.undefined(),
                 };
-                let list = self.get_initializer_list(class, initializers);
-                let arguments = [list, this, undecorated];
-                self.emit_builtin_call(BuiltinId::CompilerHelpersRunValueInitializers, &arguments)
+                self.emit_listed_value_initializer_run(class, initializers, this, undecorated)
             }
         };
+        self.convert_initial_value(class, member, initial)
+    }
+
+    fn convert_initial_value(
+        &mut self,
+        class: ClassId,
+        member: MemberId,
+        initial: ValueId,
+    ) -> ValueId {
         let position = member_field_position(self.file, class, member);
+        let source = self.file.hir[member].init.some();
         self.convert_initializer(initial, position, source)
     }
 

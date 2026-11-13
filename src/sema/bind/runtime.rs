@@ -155,9 +155,24 @@ pub enum BindingInitializer {
     Opaque,
 }
 
+impl BindingInitializer {
+    pub fn function(&self, hir: &File<'_>) -> Option<FnId> {
+        match *self {
+            BindingInitializer::Function(function) => Some(function),
+            BindingInitializer::Expression(value) => {
+                match hir[hir.skip_type_assertions(value)].kind {
+                    ExprKind::Fn(function) => Some(function),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+}
+
 bitflags::bitflags! {
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
-    pub struct FunctionFlags: u8 {
+    pub struct FunctionFlags: u16 {
         const HAS_PARAMETER_EXPRESSIONS = 1 << 0;
         const USES_ARGUMENTS = 1 << 1;
         const HAS_DIRECT_EVAL = 1 << 2;
@@ -166,6 +181,8 @@ bitflags::bitflags! {
         const HANDS_ARGUMENTS_ON = 1 << 5;
         const READS_ELEMENTS_OF_ARGUMENTS = 1 << 6;
         const MAY_READ_ABOVE_ARGUMENTS = 1 << 7;
+        /// A function expression whose body or parameters mention its own name.
+        const MENTIONS_OWN_NAME = 1 << 8;
     }
 }
 
@@ -207,6 +224,8 @@ pub struct EvalScope {
     pub file_symbols: IdList<SymbolId>,
     pub constructor_symbols: IdList<SymbolId>,
     pub is_sloppy: bool,
+    /// It sees no name of the file.
+    pub is_in_global_code: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]

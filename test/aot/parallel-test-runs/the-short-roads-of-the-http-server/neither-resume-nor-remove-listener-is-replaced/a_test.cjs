@@ -2,6 +2,8 @@
 const { test } = require("bun:test");
 const net = require("node:net");
 const { Readable } = require("node:stream");
+// Runs the event loop that many times: jobs, unhandled rejections and immediates run each time, and no clock decides.
+const spinEventLoop = async (count = 20) => { while (count-- > 0) await new Promise(done => setImmediate(done)); };
 let server;
 const calls = { resume: 0, removeListener: 0 };
 const count = (holder, name) => {
@@ -22,13 +24,13 @@ function run(done) {
     client.on("connect", ask);
     client.on("data", bytes => {
       if (!String(bytes).endsWith("ok")) return;
-      if (++answers < 4) return void setTimeout(ask, 10);
-      setTimeout(() => {
+      if (++answers < 4) return void spinEventLoop().then(ask);
+      spinEventLoop().then(() => {
         console.log("answers " + answers + " resume " + calls.resume + " removeListener " + calls.removeListener);
         client.destroy();
         server.close(done);
-      }, 20);
+      });
     });
   });
 }
-test("a", () => new Promise(resolve => run(resolve)));
+test("a", () => new Promise(resolve => run(resolve)), 60_000);

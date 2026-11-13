@@ -44,6 +44,11 @@ const programs = {
     differs,
   ],
   "only-the-first-build-differs.js": [`console.log("a value: " + (compiled && isFirstBuild ? 1 : 2));`, differs],
+  // In the second build the program is not the entry point, so both sides print another line there, and it holds no frame.
+  "asks-for-the-entry-point.js": [
+    `console.log("the main module: " + (compiled && isFirstBuild ? "none" : typeof require.main));`,
+    differs,
+  ],
   "exit-code-differs.js": [
     `console.log("the top frame: " + shown);\nif (compiled && isFirstBuild) process.exit(3);`,
     differs,

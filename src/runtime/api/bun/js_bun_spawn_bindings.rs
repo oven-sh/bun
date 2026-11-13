@@ -1156,6 +1156,7 @@ fn spawn_maybe_sync(
         ..Default::default()
     };
 
+    crate::node::fs::note_process_start();
     // SAFETY: `argv`/`env_array` are local null-terminated C-string arrays
     // with argv[0] non-null; valid for this call.
     let mut spawned = match unsafe {

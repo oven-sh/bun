@@ -1,0 +1,18 @@
+// list.splice(..) whose result nobody reads, of every count: what is left, its kind, its holes, its length, lists that others hold, species, frozen lists, collections between.
+class Sub extends Array<number> { }
+const show = (l: any): string => "[" + Array.from({ length: l.length }, (_, k) => k in l ? (Object.is(l[k], -0) ? "-0" : typeof l[k] === "object" && l[k] ? "o" : String(l[k])) : "hole").join() + "]";
+function two(l: any[], at: number): void { l.splice(at, 0, at, at + 1); }
+function out(l: any[], at: number, n: number): void { l.splice(at, n); }
+function three(l: any[], at: number, n: number): void { l.splice(at, n, "a", 0.5, undefined); }
+function ints(l: any[], at: number, n: number): void { l.splice(at, n, 7, 8, 9, 10); }
+function doubles(l: any[], at: number, n: number): void { l.splice(at, n, 0.25, -0, NaN); }
+function objects(l: any[], at: number, n: number): void { l.splice(at, n, { x: at }, [at]); }
+function loop(l: any[], n: number): string { for (let i = 0; i < n; i++) { l.splice(i & 7, 0, i, i + 1); l.splice(i & 3, 2); if (i % 5 === 4) l.splice(1, 1, i, i, i); if (l.length > 60) l.splice(10, l.length - 20); } return show(l); }
+function typed(n: number): string { const l: number[] = [1, 2, 3, 4, 5]; for (let i = 0; i < n; i++) { l.splice(i % 5, 0, i, i * 2); l.splice(2, 2); } return l.join(); }
+function halves(n: number): string { const l: number[] = [0.5, 1.5, 2.5]; for (let i = 0; i < n; i++) { l.splice(i % 3, 1, i + 0.5, i); l.splice(0, 1); } return l.join(); }
+const makers: (() => any[])[] = [() => [1, 2, 3, 4, 5, 6, 7, 8], () => [0.5, 1.5, 2.5, NaN, 4], () => ["a", "b", {}, 4], () => [, 1, , 3, , 5], () => [], () => new Array(6), () => Object.freeze([1, 2, 3]) as any, () => Object.seal([1, 2, 3]) as any, () => Object.preventExtensions([1, 2, 3]) as any, () => Sub.from([1, 2, 3, 4]), () => { const l: any = [1, 2, 3, 4]; l.constructor = { [Symbol.species]: function () { log.push("species"); return []; } }; return l; }, () => { const l: any[] = [1, 2, 3]; l.length = 5; return l; }, () => { const l: any[] = []; l[40] = 1; return l; }, () => Object.defineProperty([1, 2, 3], 1, { get() { log.push("get"); return 9; }, configurable: true }), () => Object.setPrototypeOf([1, , 3], { 1: "up" }), () => Array.from({ length: 70 }, (_, k) => k), () => new Proxy([1, 2, 3], {})], log: string[] = [], lines: string[] = [];
+const calls: ((l: any[]) => void)[] = [l => two(l, 2), l => two(l, -1), l => out(l, 1, 2), l => out(l, 0, 99), l => out(l, -2, 1), l => out(l, 3, 0), l => out(l, 1.5 as any, "2" as any), l => three(l, 1, 1), l => three(l, 0, 3), l => ints(l, 2, 2), l => ints(l, 0, 9), l => doubles(l, 1, 0), l => objects(l, 1, 1), l => objects(l, 99, 0), l => { two(l, 0); out(l, 1, 1); three(l, 2, 2); }];
+for (let round = 0; round < 4; round++) for (const make of makers) for (const f of calls) { const l = make(), other = l; let line: string; try { f(l); line = show(other); } catch (error) { line = (error as Error).name + show(other); } lines.push(line); }
+lines.push(loop([1, 2, 3, 4], 300), loop([0.5, 2], 300), loop(["a"], 300), typed(300), halves(300), String(log.length));
+const kept: any[][] = []; for (let i = 0; i < 3000; i++) { const l: any[] = [{ i }, { i }, { i }]; l.splice(1, 1, { a: i }, { b: i }, { c: i }); l.splice(0, 2, "s" + i); if (i % 100 === 0) kept.push(l); } lines.push(kept.map(l => JSON.stringify(l)).join());
+let hash = 7; const text = lines.join("\n"); for (let k = 0; k < text.length; k++) hash = (hash * 31 + text.charCodeAt(k)) | 0; console.log(lines.slice(0, 260).join("\n")); console.log(lines.slice(-8).join("\n").slice(0, 4000)); console.log(lines.length, hash);

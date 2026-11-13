@@ -1,0 +1,14 @@
+# The lighter weight is for a chain on ONE value alone: sixteen equalities of which each second one asks the OTHER parameter make no Switch, so they weigh sixteen as before and the helper stays a call in the loop.
+# f1 = bothLoud, f2 = countBoth
+# -- source: equalities-of-different-values-weigh-as-before-in-a-loop.js
+# function bothLoud(a, b) { return a === 3 || b === 5 || a === 8 || b === 11 || a === 12 || b === 17 || a === 19 || b === 21 || a === 23 || b === 26 || a === 28 || b === 31 || a === 33 || b === 36 || a === 38 || b === 41; }
+# function countBoth(list) { let n = 0; for (let i = 1; i < list.length; i++) if (bothLoud(list[i], list[i - 1])) n++; return n; }
+# const list = []; for (let i = 0; i < 48; i++) list.push(i * 7 % 43);
+# print(countBoth(list));
+# -- end of source
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 13
+# RUN(LOOP): walk f2 mechanisms=all
+# LOOP-LABEL: code f2:Body
+# LOOP: frame 1 callee=f1
+# LOOP-NOT: = CallDirect {{*}} function=f1

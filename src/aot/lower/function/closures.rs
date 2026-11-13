@@ -13,6 +13,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         function: FnId,
         name: Option<GivenName>,
     ) -> ValueId {
+        let hir = self.file.hir;
+        if hir.is_evaluated_function(function) {
+            self.set_position(hir.replaced_callee_position(hir[function].start));
+            self.builder.check_evaluation(true);
+        }
         self.create_named_closure(function, name, None)
     }
 
@@ -37,6 +42,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         arguments: EntryArguments<'_>,
     ) -> ValueId {
         let key = self.file.function_key(function);
+        super::header::complete_header(self.file, function);
         let header = self.file.function_header(function);
         let flags = header.flags;
         let this_type = header.this_type;

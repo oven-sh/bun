@@ -1,7 +1,6 @@
 use super::canonical::{CanonicalFunction, CanonicalInput, OuterName, canonical_function};
 use super::quiet::{
-    Quiet, enclosing_statement, is_absent_from_object_prototype, is_global_name,
-    is_in_statement_of_file, plain_member,
+    Quiet, is_absent_from_object_prototype, is_global_name, is_in_statement_of_file, plain_member,
 };
 use super::table::{Table, TableEntry, signature_of};
 use super::{Helper, Reference, Shape, find_by_key};
@@ -41,6 +40,9 @@ pub enum KnownReference {
         symbol: SymbolId,
         helper: Helper,
     },
+    Holder {
+        symbol: SymbolId,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -49,6 +51,7 @@ pub struct KnownFunction {
     pub functions: Box<[FnId]>,
     pub references: Box<[KnownReference]>,
     pub relies_on_facts: bool,
+    pub names_locked_globals: bool,
     pub is_named_only_to_be_called: bool,
 }
 
@@ -71,6 +74,7 @@ pub struct BindingValues {
     pub functions: SmallVec<[HeldFunction; 2]>,
     pub certainty: Certainty,
     pub holds_from_the_start: bool,
+    pub defined_by: Option<StmtId>,
 }
 
 #[derive(Default)]
@@ -216,6 +220,13 @@ pub(super) fn find(input: &FindInput<'_, '_>) -> FileHelpers {
     finder.finish()
 }
 
+#[derive(Clone, Copy)]
+enum Alternative {
+    Function(HeldFunction),
+    Undefined,
+    Other,
+}
+
 impl<'a, 's> Finder<'a, 's> {
     fn quiet(&self) -> Quiet<'a, 's> {
         Quiet {
@@ -236,6 +247,7 @@ impl<'a, 's> Finder<'a, 's> {
             file: self.file,
             max_bytes: table.max_bytes,
             is_outer_name: &|_| false,
+            known: Some(&table.functions),
         };
         for function in (0..self.file.hir.fns.len() as u32).map(FnId) {
             if matches!(self.file.hir[function].body, FnBody::None)
@@ -315,6 +327,7 @@ impl<'a, 's> Finder<'a, 's> {
             return None;
         };
         match reference {
+            Reference::Holder => Some(KnownReference::Holder { symbol }),
             Reference::Helper(helper) if self.is_loaded_from_another_file(symbol) => {
                 Some(KnownReference::Loaded { symbol, helper })
             }
@@ -442,17 +455,22 @@ impl<'a, 's> Finder<'a, 's> {
         let Some(definition) = self.find_definition(symbol) else {
             return false;
         };
-        let created = match self.file.bound.fns[function.idx()].owner {
-            FnOwner::Expr(created) => enclosing_statement(self.file.bound, created),
-            FnOwner::None | FnOwner::Stmt(_) | FnOwner::Member(_) | FnOwner::Type(_) => None,
-        };
-        let (Some(defined), Some(created)) = (definition.statement, created) else {
+        let (hir, bound) = (self.file.hir, self.file.bound);
+        let FnOwner::Expr(written) = bound.fns[function.idx()].owner else {
             return false;
         };
-        let parent = self.file.bound.parent_of_stmt(defined);
+        let (Some(defined), Some(created)) =
+            (definition.statement, bound.statement_of_expr(written))
+        else {
+            return false;
+        };
+        let parent = bound.parent_of_stmt(defined);
         matches!(parent, Parent::File | Parent::FnBody(_))
-            && parent == self.file.bound.parent_of_stmt(created)
-            && self.file.hir[defined].start < self.file.hir[created].start
+            && parent == bound.parent_of_stmt(created)
+            && (hir[defined].start < hir[created].start
+                || (defined == created
+                    && matches!(hir[defined].kind, StmtKind::Var(_))
+                    && hir[definition.value].end <= hir[written].pos))
     }
 
     fn find_definition(&self, symbol: SymbolId) -> Option<Definition> {
@@ -462,7 +480,7 @@ impl<'a, 's> Finder<'a, 's> {
         match bound.binding_initializer(hir, symbol) {
             BindingInitializer::Expression(value) => Some(Definition {
                 value,
-                statement: enclosing_statement(bound, value),
+                statement: bound.statement_of_expr(value),
                 is_stored_again: stores.iter().any(|store| is_live(store.target)),
             }),
             BindingInitializer::Opaque if bound.binding_kind(symbol) == BindingKind::Var => {
@@ -615,58 +633,85 @@ impl<'a, 's> Finder<'a, 's> {
     fn collect_alternatives(
         &self,
         expression: ExprId,
-        alternatives: &mut SmallVec<[Option<HeldFunction>; 4]>,
-    ) {
+        drops_undefined: bool,
+        alternatives: &mut SmallVec<[Alternative; 4]>,
+    ) -> bool {
         let hir = self.file.hir;
         if self.file.decisions.is_dead_expr(expression) {
-            return;
+            return false;
+        }
+        if !bun_core::StackCheck::init().is_safe_to_recurse() {
+            alternatives.push(Alternative::Other);
+            return true;
         }
         let expression = hir.skip_type_assertions(expression);
-        match hir[expression].kind {
-            ExprKind::Fn(function) => alternatives.push(Some(HeldFunction {
+        let held = match hir[expression].kind {
+            ExprKind::Fn(function) => Alternative::Function(HeldFunction {
                 definition: function,
                 closure: function,
-            })),
+            }),
             ExprKind::Binary {
                 op: BinOp::And,
                 left,
                 right,
             } if self.is_undefined_this(hir.skip_type_assertions(left))
-                || self.reads_untouched_exports(left, right) => {}
+                || self.reads_untouched_exports(left, right) =>
+            {
+                if !drops_undefined {
+                    alternatives.push(Alternative::Undefined);
+                }
+                return false;
+            }
             ExprKind::Binary {
-                op: BinOp::Or | BinOp::And | BinOp::Nullish,
+                op: BinOp::And,
                 left,
                 right,
             } => {
-                self.collect_alternatives(left, alternatives);
-                self.collect_alternatives(right, alternatives);
+                let mut of_left = SmallVec::<[Alternative; 4]>::new();
+                let reaches_right = self.collect_alternatives(left, drops_undefined, &mut of_left);
+                let may_be_falsy = |held: &Alternative| !matches!(held, Alternative::Function(_));
+                alternatives.extend(of_left.into_iter().filter(may_be_falsy));
+                if reaches_right {
+                    self.collect_alternatives(right, drops_undefined, alternatives);
+                }
+                return reaches_right;
+            }
+            ExprKind::Binary {
+                op: BinOp::Or | BinOp::Nullish,
+                left,
+                right,
+            } => {
+                let left = self.collect_alternatives(left, true, alternatives);
+                return self.collect_alternatives(right, drops_undefined, alternatives) || left;
             }
             ExprKind::Binary {
                 op: BinOp::Comma,
                 right,
                 ..
-            } => self.collect_alternatives(right, alternatives),
+            } => return self.collect_alternatives(right, drops_undefined, alternatives),
             ExprKind::Cond { test, branches } => {
                 let branches = hir.branches(branches);
-                self.collect_alternatives(branches.yes, alternatives);
-                if !self.quiet().names_locked_object(test) {
-                    self.collect_alternatives(branches.no, alternatives);
-                }
+                let yes = self.collect_alternatives(branches.yes, drops_undefined, alternatives);
+                return (!self.quiet().names_locked_object(test)
+                    && self.collect_alternatives(branches.no, drops_undefined, alternatives))
+                    || yes;
             }
             ExprKind::Call(call) if hir[call].args.is_empty() => {
-                alternatives.push(match hir[hir.skip_type_assertions(hir[call].callee)].kind {
-                    ExprKind::Fn(definition) => {
-                        let returned = self.returned_function(definition);
-                        returned.map(|closure| HeldFunction {
+                match hir[hir.skip_type_assertions(hir[call].callee)].kind {
+                    ExprKind::Fn(definition) => match self.returned_function(definition) {
+                        Some(closure) => Alternative::Function(HeldFunction {
                             definition,
                             closure,
-                        })
-                    }
-                    _ => None,
-                });
+                        }),
+                        None => Alternative::Other,
+                    },
+                    _ => Alternative::Other,
+                }
             }
-            _ => alternatives.push(None),
-        }
+            _ => Alternative::Other,
+        };
+        alternatives.push(held);
+        true
     }
 
     fn returned_function(&self, function: FnId) -> Option<FnId> {
@@ -716,19 +761,24 @@ impl<'a, 's> Finder<'a, 's> {
                     false => Certainty::MayHoldOtherValues,
                 },
                 holds_from_the_start: is_stable && is_declaration,
+                defined_by: None,
             };
         }
         let Some(definition) = self.find_definition(symbol) else {
             return BindingValues::default();
         };
         let mut alternatives = SmallVec::new();
-        self.collect_alternatives(definition.value, &mut alternatives);
+        self.collect_alternatives(definition.value, false, &mut alternatives);
         let mut values = BindingValues::default();
         let mut has_other = definition.is_stored_again;
         for held in alternatives {
             match held {
-                Some(held) if self.verify(held.definition) => values.functions.push(held),
-                Some(_) | None => has_other = true,
+                Alternative::Function(held) if self.verify(held.definition) => {
+                    values.functions.push(held)
+                }
+                Alternative::Function(_) | Alternative::Undefined | Alternative::Other => {
+                    has_other = true
+                }
             }
         }
         let recorded = bound.binding_stability_ignoring(symbol, &|_| true);
@@ -740,6 +790,7 @@ impl<'a, 's> Finder<'a, 's> {
         };
         values.holds_from_the_start =
             !has_other && !self.may_start_early() && self.is_in_head(definition);
+        values.defined_by = definition.statement;
         values
     }
 
@@ -774,6 +825,18 @@ impl<'a, 's> Finder<'a, 's> {
         })
     }
 
+    fn finds_locked_members(&self, shape: Shape) -> bool {
+        let is_locked_member = |member: BuiltinId| {
+            is_locked(member)
+                && table::entry(member).mutability == Mutability::AlwaysLocked
+                && !self.file.builtins.is_unlocked(member)
+        };
+        match shape {
+            Shape::ExportStarOfKeysIfMissing => is_locked_member(BuiltinId::ArrayPrototypeForEach),
+            _ => true,
+        }
+    }
+
     fn is_fact(&mut self, reference: KnownReference) -> bool {
         match reference {
             KnownReference::Helper {
@@ -798,6 +861,7 @@ impl<'a, 's> Finder<'a, 's> {
                     && (is_initialized_first || self.is_defined_in_head(symbol))
             }
             KnownReference::Loaded { .. } => false,
+            KnownReference::Holder { .. } => true,
         }
     }
 
@@ -810,6 +874,7 @@ impl<'a, 's> Finder<'a, 's> {
         }
         let references = matched.references.clone();
         let answer = matched.verdict == Verdict::Accepted
+            && self.finds_locked_members(matched.entry.shape)
             && self.names_only_locked_globals(&matched.canonical.globals)
             && references
                 .into_iter()
@@ -848,12 +913,17 @@ impl<'a, 's> Finder<'a, 's> {
     fn finish(self) -> FileHelpers {
         let head_allows_reads_of_open_globals = !self.may_start_early();
         let replace_themselves = self.matched.iter().filter(|(_, matched)| {
-            matched.verdict == Verdict::Accepted
-                && matched.entry.shape == Shape::TypeofAnswersSymbolForSymbols
+            matched.verdict == Verdict::Accepted && matched.entry.shape.replaces_itself()
         });
         let only_called: SmallVec<[FnId; 1]> = replace_themselves
             .map(|(&function, _)| function)
             .filter(|&function| self.is_named_only_to_be_called(function))
+            .collect();
+        let names_locked_globals: SmallVec<[FnId; 4]> = self
+            .matched
+            .iter()
+            .filter(|(_, matched)| self.names_only_locked_globals(&matched.canonical.globals))
+            .map(|(&function, _)| function)
             .collect();
         let accepted = self.matched.into_iter().filter_map(|(function, matched)| {
             (matched.verdict == Verdict::Accepted).then(|| {
@@ -862,6 +932,7 @@ impl<'a, 's> Finder<'a, 's> {
                     functions: matched.canonical.inner_functions.into_boxed_slice(),
                     references: matched.references.into_boxed_slice(),
                     relies_on_facts: matched.relies_on_facts.unwrap_or(false),
+                    names_locked_globals: names_locked_globals.contains(&function),
                     is_named_only_to_be_called: only_called.contains(&function),
                 };
                 (function, known)

@@ -222,7 +222,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             // SAFETY: single-writer (Once gate), process-lifetime storage,
             // CLI is single-threaded at this point.
             let buf = unsafe { &mut *SHELL_BUF.get() };
-            let len = Self::find_shell_impl(path, cwd, buf)?;
+            let path = bun_install::lifecycle_script_runner::strip_bin_dirs(path);
+            let len = Self::find_shell_impl(&path, cwd, buf)?;
             buf[len] = 0;
             // SAFETY: `buf[len] == 0` written above; SHELL_BUF is `'static`.
             Some(ZStr::from_buf(&buf[..], len))
@@ -2205,6 +2206,21 @@ impl RunCommand {
         original_script_for_bun_run: Option<&[u8]>,
     ) -> crate::Result<::core::convert::Infallible> {
         use crate::api::bun_process::{Status as SpawnStatus, sync};
+
+        if cfg!(windows)
+            && bun_which::is_batch_file(executable)
+            && let Some(arg) =
+                (passthrough.iter()).find(|arg| bun_which::batch_arg_has_cmd_metachars(arg))
+        {
+            if !ctx.debug.silent {
+                pretty_errorln!(
+                    "<r><red>error<r>: Failed to run \"<b>{}<r>\": argument {} contains a cmd.exe special character and cannot be passed to a .bat/.cmd file",
+                    bstr::BStr::new(Self::basename_or_bun(executable)),
+                    bun_core::fmt::quote(&arg[..]),
+                );
+            }
+            Global::exit(1);
+        }
 
         let mut argv: Vec<Box<[u8]>> = Vec::with_capacity(1 + passthrough.len());
         argv.push(executable.to_vec().into_boxed_slice());

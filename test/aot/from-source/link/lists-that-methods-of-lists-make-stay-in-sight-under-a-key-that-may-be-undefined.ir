@@ -1,0 +1,24 @@
+# What a method of a list as made and Array.from make is a list itself: under a key that is a number or undefined the list itself stays in sight. A list that went out takes the road of strangers.
+# L0 .. L5 = the six classes, L6 = Out, whose list is handed out. flat is not among them: it asks whatever it reaches whether it is a list, so what it reaches goes out whatever the new list is.
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 changes=[] stays-with-compiled-code
+# CHECK: layout L1 changes=[] stays-with-compiled-code
+# CHECK: layout L2 changes=[] stays-with-compiled-code
+# CHECK: layout L3 changes=[] stays-with-compiled-code
+# CHECK: layout L4 changes=[] stays-with-compiled-code
+# CHECK: layout L5 changes=[] stays-with-compiled-code
+# RUN(OUT): link layouts mechanisms=all
+# OUT-NOT: layout L6 changes=[] stays-with-compiled-code
+# -- source: lists-that-methods-of-lists-make-stay-in-sight-under-a-key-that-may-be-undefined.ts
+# class ByMap { n = 1; }
+# class ByFilter { n = 2; }
+# class BySlice { n = 3; }
+# class BySplice { n = 4; }
+# class ByConcat { n = 5; }
+# class ByFrom { n = 7; }
+# class Out { n = 8; }
+# const queue: number[] = [0];
+# const a = [1].map(() => new ByMap()), b = [new ByFilter()].filter(x => x.n > 0), c = [new BySlice()].slice(), d = [new BySplice(), new BySplice()].splice(0, 1), e = [new ByConcat()].concat([]), g = Array.from([new ByFrom()]);
+# const h = [new Out()].slice(); (globalThis as any).kept = h;
+# console.log(a[queue.shift()!]?.n, b[queue[0]!]?.n, c[queue[0]!]?.n, d[queue[0]!]?.n, e[queue[0]!]?.n, g[queue[0]!]?.n, h[queue[0]!]?.n);
+# -- end of source

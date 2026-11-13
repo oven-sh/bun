@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 bbea0492eb352f964f1cd9f067c562d07a0c3d64ad5614447e5d7aa39ca76d4e.
+// Written against that file with the SHA-256 1e35b7acfc0b65ca8a59bc0cc19766dfea5fef36350b18fb0353d64f7f2cefb7.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -2476,7 +2476,7 @@ function Socket(this: $Node.Socket, options?: $Node.SocketOptions): void {
       // device fd keeps the sync-write arm below.
       Socket.prototype.connect.$call(this, {
         fd,
-        pauseOnConnect: opts.pauseOnCreate === true || opts.pauseOnConnect === true,
+        pauseOnConnect: opts.pauseOnCreate === true,
       });
       this[kAdoptedFd] = fd;
     } else if (

@@ -314,13 +314,11 @@ pub(crate) fn run_task(
         }
         #[cfg(unix)]
         task_tag::PosixPipeContext => {
-            // Same shape as `WindowsNamedPipeContext`: may free the context.
-            // SAFETY: tag identifies the pointee; the queue owns it until here.
-            unsafe {
-                crate::socket::PosixPipeContext::run_event(cast_ptr!(
-                    crate::socket::PosixPipeContext
-                ))
-            };
+            feature_arm!([Sockets], |context: crate::socket::PosixPipeContext| {
+                // Same shape as `DuplexUpgradeContext`: may free the context.
+                // SAFETY: tag identifies the pointee; the queue owns it until here.
+                unsafe { crate::socket::PosixPipeContext::run_event(context) };
+            })
         }
         #[cfg(windows)]
         task_tag::GetAddrInfoLibuvComplete => {
@@ -1453,10 +1451,9 @@ pub(crate) unsafe fn __bun_fire_timer(
         EventLoopTimerTag::PosixPipe => {
             #[cfg(unix)]
             {
-                let container = owner!(PosixPipe, event_loop_timer);
-                // SAFETY: per fn contract.
-                unsafe { (*container).on_timeout() };
-                Ok(())
+                feature_timer_arm!([Sockets], PosixPipe, event_loop_timer, |container, _now, _vm| {
+                    (*container).on_timeout()
+                })
             }
             #[cfg(not(unix))]
             {
@@ -1894,7 +1891,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         }
         task_tag::PosixPipeContext => {
             #[cfg(unix)]
-            release!(crate::socket::PosixPipeContext);
+            release_in!([Sockets], crate::socket::PosixPipeContext);
             #[cfg(not(unix))]
             unreachable!("unix-only tag");
         }

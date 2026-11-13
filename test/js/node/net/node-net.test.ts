@@ -1680,9 +1680,32 @@ describe("Socket fd adoption", () => {
       socket.on("close", () => events.push("close"));
       const closed = once(socket, "close");
 
-      const first = once(socket, "data");
+      // A 'data' that never comes fails with the state of the socket and of the
+      // pipe (was the byte read but not delivered, or never read?), not a
+      // per-test timeout.
+      const first = new Promise<Buffer>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          reject(
+            new Error(
+              `no 'data' within 10s: ${JSON.stringify({
+                events,
+                readableFlowing: socket.readableFlowing,
+                connecting: socket.connecting,
+                pending: socket.pending,
+                destroyed: socket.destroyed,
+                handle: socket._handle ? "present" : "null",
+                leftInPipe: drain(rfd),
+              })}`,
+            ),
+          );
+        }, 10_000);
+        socket.once("data", chunk => {
+          clearTimeout(timer);
+          resolve(chunk);
+        });
+      });
       fs.writeSync(wfd, "ping");
-      events.push(`data:${(await first)[0]}`);
+      events.push(`data:${await first}`);
       expect({ events, destroyed: socket.destroyed, fd: fstatCode(rfd) }).toEqual({
         events: ["data:ping"],
         destroyed: false,

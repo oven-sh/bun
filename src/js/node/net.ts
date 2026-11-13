@@ -2086,7 +2086,7 @@ function Socket(options?): void {
       // device fd keeps the sync-write arm below.
       Socket.prototype.connect.$call(this, {
         fd,
-        pauseOnConnect: opts.pauseOnCreate === true || opts.pauseOnConnect === true,
+        pauseOnConnect: opts.pauseOnCreate === true,
       });
       this[kAdoptedFd] = fd;
     } else if (

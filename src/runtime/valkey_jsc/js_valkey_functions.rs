@@ -884,6 +884,19 @@ impl JSValkeyClient {
         )
     }
 
+    /// `hmget`, `hset` and `hmset` send an array or object of fields as the whole call, so a field after it would be dropped.
+    #[cold]
+    #[inline(never)]
+    fn rest_holds_field(global: &JSGlobalObject, rest: &[JSValue]) -> bool {
+        let is_field = |value: &JSValue| {
+            value.is_string()
+                || value.as_array_buffer(global).is_some()
+                || value.as_class_ref::<crate::webcore::Blob>().is_some()
+        };
+        // `lists.map(client.hmget.bind(client, key))` passes an index and then the array, so neither is a field.
+        rest.first().is_some_and(|value| value.is_array()) || rest.iter().any(is_field)
+    }
+
     // Implement hmget (get multiple values from hash)
     pub(crate) fn hmget(
         &self,
@@ -908,6 +921,11 @@ impl JSValkeyClient {
         args.push(key);
 
         if second_arg.is_array() {
+            if fields.len() > 1 && Self::rest_holds_field(global, &fields[1..]) {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "HMGET takes its fields as one array or as separate arguments, not both"
+                )));
+            }
             let array_len = second_arg.get_length(global)?;
             if array_len == 0 {
                 return Err(global.throw(format_args!("HMGET requires at least one field")));
@@ -1006,6 +1024,28 @@ impl JSValkeyClient {
         )
     }
 
+    #[cold]
+    #[inline(never)]
+    fn hset_reject_field_after_fields(
+        global: &JSGlobalObject,
+        command: &'static str,
+        fields: JSValue,
+        rest: &[JSValue],
+    ) -> JsResult<()> {
+        if !Self::rest_holds_field(global, rest) {
+            return Ok(());
+        }
+        // A buffer or a `Blob` in the place of the field is read as an object of fields (#41640).
+        if fields.as_array_buffer(global).is_some()
+            || fields.as_class_ref::<crate::webcore::Blob>().is_some()
+        {
+            return Err(global.throw_invalid_argument_type(command, "field", "string"));
+        }
+        Err(global.throw_invalid_arguments(format_args!(
+            "{command} takes its fields as one object or array, or as separate arguments, not both"
+        )))
+    }
+
     fn hset_impl(
         &self,
         this_value: JsWrapper<'_, Self>,
@@ -1029,6 +1069,9 @@ impl JSValkeyClient {
 
         if second_arg.is_object() && !second_arg.is_array() {
             // Pattern 1: Object/Record - hset(key, {field: value, ...})
+            if fields.len() > 1 {
+                Self::hset_reject_field_after_fields(global, command, second_arg, &fields[1..])?;
+            }
             let Some(obj) = second_arg.get_object() else {
                 return Err(global.throw_invalid_argument_type(command, "fields", "object"));
             };
@@ -1051,6 +1094,9 @@ impl JSValkeyClient {
             }
         } else if second_arg.is_array() {
             // Pattern 3: Array - hmset(key, [field, value, ...])
+            if fields.len() > 1 {
+                Self::hset_reject_field_after_fields(global, command, second_arg, &fields[1..])?;
+            }
             let mut iter = second_arg.array_iterator(global)?;
             if iter.len % 2 != 0 {
                 return Err(global.throw(format_args!(

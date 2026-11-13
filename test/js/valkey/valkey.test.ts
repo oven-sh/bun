@@ -5413,6 +5413,35 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         }).toThrow("Array must have an even number of elements (field-value pairs)");
       });
 
+      test("should throw error for a field after an array or object of fields", async () => {
+        // The types declare none of the refused calls.
+        const redis: any = ctx.redis;
+        const key = "hash-field-after-fields-test";
+        const hsetForms = (command: string) =>
+          `${command} takes its fields as one object or array, or as separate arguments, not both`;
+
+        await redis.hset(key, { field1: "value1" });
+
+        expect(() => redis.hmget(key, ["field1"], "field2")).toThrow(
+          "HMGET takes its fields as one array or as separate arguments, not both",
+        );
+        expect(() => redis.hset(key, { field2: "value2" }, "field3", "value3")).toThrow(hsetForms("HSET"));
+        expect(() => redis.hset(key, ["field2", "value2"], "field3", "value3")).toThrow(hsetForms("HSET"));
+        expect(() => redis.hmset(key, { field2: "value2" }, "field3", "value3")).toThrow(hsetForms("HMSET"));
+        expect(() => redis.hmset(key, ["field2", "value2"], "field3", "value3")).toThrow(hsetForms("HMSET"));
+        expect(await redis.hgetall(key)).toEqual({ field1: "value1" });
+
+        // Array.prototype.map passes (fields, index, array): each call has one array or object of fields.
+        expect(await Promise.all([["field1"], ["missing"]].map(redis.hmget.bind(redis, key)))).toEqual([
+          ["value1"],
+          [null],
+        ]);
+        expect(
+          await Promise.all([{ field2: "value2" }, { field3: "value3" }].map(redis.hset.bind(redis, key))),
+        ).toEqual([1, 1]);
+        expect(await redis.hgetall(key)).toEqual({ field1: "value1", field2: "value2", field3: "value3" });
+      });
+
       test("should handle large number of fields", async () => {
         const redis = ctx.redis;
         const key = "hash-large-test";
@@ -7718,6 +7747,92 @@ describe("RedisClient command encoding", () => {
       ["BITCOUNT", "k", "5", "30", "BIT"],
       ["BITCOUNT", "k", "1", "1", "BYTE"],
       ["BITCOUNT", "binary-key", "0", "0"],
+    ]);
+  });
+
+  // hmget, hset and hmset send an array or object of fields as the whole call.
+  // A string, a buffer or a Blob after it, or an array right after it, is a field that was dropped.
+  const hmgetForms = "HMGET takes its fields as one array or as separate arguments, not both";
+  const hsetForms = (command: string) =>
+    `${command} takes its fields as one object or array, or as separate arguments, not both`;
+  const notAString = (command: string) => `Expected field to be a string for '${command}'.`;
+
+  test.each<[call: string, invoke: (client: any) => unknown, message: string]>([
+    ['hmget("h", ["f1"], "f2", "f3")', c => c.hmget("h", ["f1"], "f2", "f3"), hmgetForms],
+    ['hmget("h", ["f1"], ["f2"])', c => c.hmget("h", ["f1"], ["f2"]), hmgetForms],
+    ['hmget("h", ["f1"], undefined, "f3")', c => c.hmget("h", ["f1"], undefined, "f3"), hmgetForms],
+    ['hmget("h", ["f1"], 0, "f2")', c => c.hmget("h", ["f1"], 0, "f2"), hmgetForms],
+    ['hmget("h", ["f1"], "")', c => c.hmget("h", ["f1"], ""), hmgetForms],
+    ['hmget("h", ["f1"], Buffer.from("f2"))', c => c.hmget("h", ["f1"], Buffer.from("f2")), hmgetForms],
+    ['hmget("h", ["f1"], new Blob(["f2"]))', c => c.hmget("h", ["f1"], new Blob(["f2"])), hmgetForms],
+    ['hset("h", { a: 1 }, "b", "2")', c => c.hset("h", { a: 1 }, "b", "2"), hsetForms("HSET")],
+    ['hset("h", { a: 1 }, ["b", "2"])', c => c.hset("h", { a: 1 }, ["b", "2"]), hsetForms("HSET")],
+    ['hset("h", { a: 1 }, "")', c => c.hset("h", { a: 1 }, ""), hsetForms("HSET")],
+    ['hset("h", ["a", "1"], "b", "2")', c => c.hset("h", ["a", "1"], "b", "2"), hsetForms("HSET")],
+    ['hset("h", ["a", "1"], ["b", "2"])', c => c.hset("h", ["a", "1"], ["b", "2"]), hsetForms("HSET")],
+    ['hmset("h", { a: 1 }, "b", "2")', c => c.hmset("h", { a: 1 }, "b", "2"), hsetForms("HMSET")],
+    ['hmset("h", ["a", "1"], "b", "2")', c => c.hmset("h", ["a", "1"], "b", "2"), hsetForms("HMSET")],
+    ['hmset("h", ["a", "1"], null, "b", "2")', c => c.hmset("h", ["a", "1"], null, "b", "2"), hsetForms("HMSET")],
+    // A buffer or a Blob in the place of the field is read as an object of fields, and its value was dropped.
+    ['hset("h", Buffer.from("ab"), "v")', c => c.hset("h", Buffer.from("ab"), "v"), notAString("HSET")],
+    ['hset("h", new Blob(["ab"]), "v")', c => c.hset("h", new Blob(["ab"]), "v"), notAString("HSET")],
+    ['hmset("h", new Uint8Array([97]), "v")', c => c.hmset("h", new Uint8Array([97]), "v"), notAString("HMSET")],
+  ])("%s throws and writes nothing", async (_call, invoke, message) => {
+    const received = await recordCommands(async (client: any) => {
+      // toThrow() also passes for a returned promise that rejects. The refusal has to be synchronous.
+      let thrown: unknown;
+      try {
+        Promise.resolve(invoke(client)).catch(() => {});
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toMatchObject({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message });
+      await client.ping();
+    });
+    expect(received).toEqual([["PING"]]);
+  });
+
+  test("hmget(), hset() and hmset() do not read any other argument after an array or object of fields", async () => {
+    const received = await recordCommands(async (client: any) => {
+      await client.hmget("h", ["f1", "f2"]);
+      await client.hmget("h", ["f1"], undefined);
+      await client.hmget("h", ["f1"], null, undefined);
+      await client.hmget("h", ["f1"], 0);
+      await client.hmget("h", ["f1"], () => {});
+      // map() passes an index and then the array. Array.from() passes an index.
+      await Promise.all([["f1", "f2"], ["f3"]].map(client.hmget.bind(client, "h")));
+      await Promise.all(Array.from([["f4"]], client.hmget.bind(client, "h")));
+      await client.hset("h", { a: 1, b: "2" });
+      await client.hset("h", { a: 1 }, undefined);
+      await client.hset("h", { a: 1 }, () => {});
+      await client.hset("h", ["a", "1"], null);
+      await Promise.all([{ a: 1 }, { b: 2 }].map(client.hset.bind(client, "h")));
+      await client.hmset("h", ["a", "1", "b", "2"]);
+      await Promise.all(
+        [
+          ["a", "1"],
+          ["b", "2"],
+        ].map(client.hmset.bind(client, "h")),
+      );
+    });
+    expect(received).toEqual([
+      ["HMGET", "h", "f1", "f2"],
+      ["HMGET", "h", "f1"],
+      ["HMGET", "h", "f1"],
+      ["HMGET", "h", "f1"],
+      ["HMGET", "h", "f1"],
+      ["HMGET", "h", "f1", "f2"],
+      ["HMGET", "h", "f3"],
+      ["HMGET", "h", "f4"],
+      ["HSET", "h", "a", "1", "b", "2"],
+      ["HSET", "h", "a", "1"],
+      ["HSET", "h", "a", "1"],
+      ["HSET", "h", "a", "1"],
+      ["HSET", "h", "a", "1"],
+      ["HSET", "h", "b", "2"],
+      ["HMSET", "h", "a", "1", "b", "2"],
+      ["HMSET", "h", "a", "1"],
+      ["HMSET", "h", "b", "2"],
     ]);
   });
 

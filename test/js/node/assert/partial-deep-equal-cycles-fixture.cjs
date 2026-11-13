@@ -1,6 +1,6 @@
 // What Node.js answers for `assert.partialDeepStrictEqual(actual, expected)` when the operands have cycles, as the
-// first comparison of a new process. assert.test.cjs holds Bun to these answers. They are those of Node.js v26.12.1,
-// the version that Bun reports.
+// first comparison of a new process. deep-equal.test.ts holds Bun to these answers. They are those of Node.js
+// v26.12.1, the version that Bun reports.
 //
 // Node.js compares with no cycle check until one comparison of the process throws, a stack overflow included. From
 // then on it looks for cycles in every comparison, and some of its answers change (`detectCycles` in

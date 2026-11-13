@@ -1502,3 +1502,246 @@ test("reports an error for a coverage directory longer than the path buffer", as
   expect(stderr).toContain("ENAMETOOLONG: File name too long: Failed to write lcov.info");
   expect(exitCode).toBe(1);
 });
+
+describe.concurrent("a test that calls process.chdir() does not move lcov.info or rename the files in it", () => {
+  const plugin = `
+Bun.plugin({
+  name: "modules that are no files",
+  setup(build) {
+    build.module("plugin:kept", () => ({ contents: "export function kept() { return 1; }", loader: "js" }));
+    build.module("virtual:ignored", () => ({
+      contents: "export function used() { return 1; }\\nexport function unused() { return 2; }",
+      loader: "js",
+    }));
+  },
+});
+`;
+  const files = {
+    "elsewhere/keep.txt": "",
+    "src/add.ts": `export function add(a: number, b: number) {\n  return a + b;\n}\n`,
+    "src/ignored.ts": `export function ignored() {\n  return 1;\n}\n`,
+    "setup.ts": plugin,
+    "a.test.ts": `
+import { expect, test } from "bun:test";
+import { add } from "./src/add";
+test("runs first", () => {
+  expect(add(2, 2)).toBe(4);
+});
+`,
+    // The last file, so the run and its worker end in the other folder.
+    "b.test.ts": `
+import { expect, test } from "bun:test";
+import { kept } from "plugin:kept";
+import { used } from "virtual:ignored";
+import { add } from "./src/add";
+import { ignored } from "./src/ignored";
+test("changes the working directory", () => {
+  process.chdir(import.meta.dir + "/elsewhere");
+  expect(add(1, 2) + ignored() + kept() + used()).toBe(6);
+});
+`,
+  };
+  // "virtual:ignored" has a function that nothing calls: the run fails the threshold if the report lists it.
+  const bunfig = `[test]
+preload = ["./setup.ts"]
+coverageSkipTestFiles = true
+coveragePathIgnorePatterns = ["src/ignored.ts", "setup.ts", "virtual:*"]
+coverageThreshold = 0.9
+`;
+  const posix = (text: string) => text.replaceAll("\\", "/");
+
+  async function run(args: string[], moreBunfig: string, from: string) {
+    using dir = tempDir("coverage-chdir", { ...files, "bunfig.toml": bunfig + moreBunfig });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov", "--coverage-reporter=text", ...args],
+      env: bunEnv,
+      cwd: path.join(String(dir), from),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const reports = [...new Bun.Glob("**/lcov.info").scanSync({ cwd: String(dir) })];
+    return {
+      reports: reports.map(posix),
+      sources: reports
+        .flatMap(report =>
+          readFileSync(path.join(String(dir), report), "utf8")
+            .split(/\r?\n/)
+            .filter(line => line.startsWith("SF:"))
+            .map(posix),
+        )
+        .sort(),
+      tableRows: stderr
+        .split(/\r?\n/)
+        .filter(line => /^ \S+ +\|/.test(line))
+        .map(line => posix(line.trim().split(" ")[0]))
+        .sort(),
+      exitCode,
+    };
+  }
+
+  test.each([
+    ["--coverage-dir", ["--coverage-dir=cov"], "", "cov/lcov.info", "."],
+    ["coverageDir in bunfig.toml", [], `coverageDir = "cov"\n`, "cov/lcov.info", "."],
+    ["the default folder", [], "", "coverage/lcov.info", "."],
+    ["a --parallel worker that keeps its global", ["--parallel=2", "--no-isolate"], "", "coverage/lcov.info", "."],
+    ["a run that --cwd starts in the folder above", ["--cwd", ".."], "", "coverage/lcov.info", "elsewhere"],
+  ])("%s", async (_, args, moreBunfig, report, from) => {
+    expect(await run(args, moreBunfig, from)).toEqual({
+      reports: [report],
+      sources: ["SF:plugin:kept", "SF:src/add.ts"],
+      tableRows: ["plugin:kept", "src/add.ts"],
+      exitCode: 0,
+    });
+  });
+
+  // Windows refuses to remove the working directory of a process.
+  test.skipIf(isWindows)("in a folder that the test removes before the run ends", async () => {
+    using dir = tempDir("coverage-chdir-removed", {
+      "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`,
+      "src/add.ts": files["src/add.ts"],
+      "scratch.test.ts": `
+import { afterAll, expect, test } from "bun:test";
+import { mkdirSync, rmSync } from "node:fs";
+import { add } from "./src/add";
+const scratch = import.meta.dir + "/scratch";
+test("works in a scratch folder", () => {
+  mkdirSync(scratch);
+  process.chdir(scratch);
+  expect(add(1, 2)).toBe(3);
+});
+afterAll(() => rmSync(scratch, { recursive: true }));
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("Failed to write lcov.info");
+    expect({
+      reports: [...new Bun.Glob("**/lcov.info").scanSync({ cwd: String(dir) })],
+      // A debug build also lists the built-in modules that the test file loads.
+      sources: readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf8").match(
+        /^SF:(?!node:|internal:).*$/gm,
+      ),
+      here: readdirSync(String(dir)).sort(),
+      exitCode,
+    }).toEqual({
+      reports: ["coverage/lcov.info"],
+      sources: ["SF:src/add.ts"],
+      here: ["bunfig.toml", "coverage", "scratch.test.ts", "src"],
+      exitCode: 0,
+    });
+  });
+});
+
+// Each mode runs one project twice. The reports, the names in them and the exit code do not depend on
+// whether a test changed the working directory.
+describe.concurrent("a run reports the same with and without a test that changes the working directory", () => {
+  const files = {
+    // Above the folder of the run.
+    "shared/util.ts": `export function util() {\n  return 1;\n}\n`,
+    "project/elsewhere/keep.txt": "",
+    "project/src/add.ts": `export function add(a: number, b: number) {\n  return a + b;\n}\n`,
+    "project/setup.ts": `
+Bun.plugin({
+  name: "modules that are no files",
+  setup(build) {
+    build.module("plugin:kept", () => ({ contents: "export function kept() { return 1; }", loader: "js" }));
+    build.module("virtual:ignored", () => ({
+      contents: "export function used() { return 1; }\\nexport function unused() { return 2; }",
+      loader: "js",
+    }));
+  },
+});
+`,
+    "project/a.test.ts": `
+import { expect, test } from "bun:test";
+import fromData from "data:text/javascript,export default function fromData() { return 1; }";
+import { kept } from "plugin:kept";
+import { used } from "virtual:ignored";
+import { util } from "../shared/util";
+import { add } from "./src/add";
+test("adds", () => {
+  if (process.env.CHANGES_DIRECTORY) process.chdir(import.meta.dir + "/elsewhere");
+  expect(add(1, 2) + util() + kept() + used() + fromData()).toBe(7);
+});
+`,
+    "project/b.test.ts": `
+import { expect, test } from "bun:test";
+import { add } from "./src/add";
+test("adds again", () => {
+  expect(add(2, 2)).toBe(4);
+});
+`,
+    // "virtual:ignored" has a function that nothing calls: the run fails the threshold if the report lists it.
+    "project/bunfig.toml": `[test]
+preload = ["./setup.ts"]
+coverageSkipTestFiles = true
+coveragePathIgnorePatterns = ["setup.ts", "virtual:*"]
+coverageThreshold = 0.9
+`,
+  };
+  const posix = (text: string) => text.replaceAll("\\", "/");
+
+  async function run(args: string[], changesDirectory: boolean) {
+    using dir = tempDir("coverage-chdir-or-not", files);
+    const project = path.join(String(dir), "project");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "test",
+        "--reporter=junit",
+        "--reporter-outfile=r.xml",
+        "--coverage",
+        "--coverage-reporter=lcov",
+        "--coverage-reporter=text",
+        "--timings=t.json",
+        "--update-timings",
+        ...args,
+      ],
+      env: { ...bunEnv, CHANGES_DIRECTORY: changesDirectory ? "1" : undefined },
+      cwd: project,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const read = (name: string) => readFileSync(path.join(project, name), "utf8");
+    return {
+      tree: [...new Bun.Glob("**").scanSync({ cwd: String(dir) })].map(posix).sort(),
+      junit: read("r.xml").replaceAll(/ (time|hostname|timestamp)="[^"]*"/g, ""),
+      lcov: posix(read("coverage/lcov.info")),
+      timings: Object.keys(JSON.parse(read("t.json")).files).sort(),
+      // The file titles, the results and the rows of the coverage table. --parallel prints files as they end,
+      // and a title again after another file's output.
+      console: [
+        ...new Set(
+          stderr
+            .split(/\r?\n/)
+            .filter(line => /\.test\.ts:$|^\((pass|fail)\)|\|/.test(line))
+            .map(line => posix(line.replace(/ \[[\d.]+m?s\]$/, ""))),
+        ),
+      ].sort(),
+      exitCode,
+    };
+  }
+
+  test.each([
+    ["a serial run", []],
+    ["--isolate, in the last file", ["--isolate", "./b.test.ts", "./a.test.ts"]],
+    ["--parallel --no-isolate", ["--parallel=2", "--no-isolate"]],
+  ])("%s", async (_, args) => {
+    const [moved, stayed] = await Promise.all([run(args, true), run(args, false)]);
+    expect(stayed.tree).toContain("project/coverage/lcov.info");
+    expect({ timings: stayed.timings.includes("a.test.ts"), exitCode: stayed.exitCode }).toEqual({
+      timings: true,
+      exitCode: 0,
+    });
+    expect(moved).toEqual(stayed);
+  });
+});

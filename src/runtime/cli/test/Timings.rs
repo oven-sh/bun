@@ -18,10 +18,10 @@ use bun_core::{Output, strings};
 use bun_options_types::context::Shard;
 use bun_parsers::json as bun_json;
 use bun_ptr::Interned;
-use bun_resolver::fs::FileSystem;
 use bun_sys::{Fd, File};
 
 use super::parallel::file_range::FileRange;
+use crate::test_command::{report_path, run_relative};
 use bun_collections::index_sort;
 
 pub(crate) struct Timings {
@@ -151,7 +151,7 @@ impl Timings {
     }
 
     fn key_for(abs_path: &[u8]) -> Vec<u8> {
-        let rel = bun_paths::resolve_path::relative(FileSystem::get().top_level_dir(), abs_path);
+        let rel = run_relative(abs_path);
         let mut key = rel.to_vec();
         if cfg!(windows) {
             bun_paths::resolve_path::platform_to_posix_in_place(&mut key[..]);
@@ -334,17 +334,22 @@ impl Timings {
         }
         out.extend_from_slice(b"\n}\n");
 
-        let mut tmp: Vec<u8> = self.path.to_vec();
-        let _ = write!(&mut tmp, ".{}.tmp", std::process::id());
-        let tmp_z = bun_core::ZBox::from_vec(tmp);
-        let dest_z = bun_core::ZBox::from_bytes(&self.path);
         let flags =
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC | bun_sys::O::CLOEXEC;
-        let result = File::make_open(tmp_z.as_bytes(), flags, 0o666)
-            .and_then(|f| f.write_all(&out))
-            .and_then(|()| bun_sys::renameat(Fd::cwd(), &tmp_z, Fd::cwd(), &dest_z));
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let result = report_path(&self.path, &mut path_buf).and_then(|dest| {
+            let mut tmp: Vec<u8> = dest.to_vec();
+            let _ = write!(&mut tmp, ".{}.tmp", std::process::id());
+            let tmp_z = bun_core::ZBox::from_vec(tmp);
+            let dest_z = bun_core::ZBox::from_bytes(dest);
+            File::make_open(tmp_z.as_bytes(), flags, 0o666)
+                .and_then(|f| f.write_all(&out))
+                .and_then(|()| bun_sys::renameat(Fd::cwd(), &tmp_z, Fd::cwd(), &dest_z))
+                .inspect_err(|_| {
+                    let _ = bun_sys::unlinkat(Fd::cwd(), &tmp_z);
+                })
+        });
         if let Err(err) = result {
-            let _ = bun_sys::unlinkat(Fd::cwd(), &tmp_z);
             Output::err(
                 crate::Error::WriteFailed,
                 "Failed to write --timings file {}\n{}",

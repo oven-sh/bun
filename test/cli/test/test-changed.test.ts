@@ -394,6 +394,45 @@ describe.concurrent("bun test --changed", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The scan for --changed runs the macros of every test file before the first test.
+  test.each([[[]], [["--parallel=2"]]])(
+    "a macro that changes the working directory does not move the run %j",
+    async args => {
+      using dir = tempDir("test-changed-macro-chdir", {
+        "package.json": JSON.stringify({ name: "changed-test", type: "module" }),
+        "elsewhere/keep.txt": "",
+        "macro.ts": `export function move() {\n  process.chdir(import.meta.dir + "/elsewhere");\n  return 1;\n}\n`,
+        "setup.ts": `console.log("LOG preload");\n`,
+        "a.test.ts": `import { test, expect } from "bun:test";\nimport { move } from "./macro.ts" with { type: "macro" };\nconst moved = move();\ntest("a", () => expect(moved).toBe(1));\n`,
+        "b.test.ts": `import { test, expect } from "bun:test";\ntest("b", () => expect(1).toBe(1));\n`,
+      });
+      initRepo(String(dir));
+      appendFileSync(join(String(dir), "a.test.ts"), "// touched\n");
+      appendFileSync(join(String(dir), "b.test.ts"), "// touched\n");
+
+      const { stdout, stderr, exitCode } = await runTestChanged(String(dir), [
+        ...args,
+        "--preload",
+        "./setup.ts",
+        "--reporter=junit",
+        "--reporter-outfile=junit.xml",
+      ]);
+      expect({
+        // --parallel prints a file's title again after another file's output.
+        titles: [...new Set(stderr.split(/\r?\n/).filter(line => line.endsWith(".test.ts:")))].sort(),
+        // --parallel prints what a worker wrote to stdout on stderr.
+        preloaded: (stdout + stderr).includes("LOG preload"),
+        reports: [...new Bun.Glob("**/junit.xml").scanSync({ cwd: String(dir) })],
+        exitCode,
+      }).toEqual({
+        titles: ["a.test.ts:", "b.test.ts:"],
+        preloaded: true,
+        reports: ["junit.xml"],
+        exitCode: 0,
+      });
+    },
+  );
+
   test("a node:vm timeout can interrupt a hot loop", async () => {
     using dir = tempDir("test-changed-vm-timeout", {
       "package.json": JSON.stringify({ name: "vm-timeout", type: "module" }),

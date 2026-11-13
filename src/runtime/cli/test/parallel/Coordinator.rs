@@ -19,7 +19,7 @@ use super::file_range::FileRange;
 use super::frame::{self, Frame};
 use super::worker::{SpawnContext, Worker, WorkerPipe};
 use crate::cli::run_compiled::log_first_time_in_test_run;
-use crate::test_command::CommandLineReporter;
+use crate::test_command::{CommandLineReporter, run_relative};
 
 // `Status` lives in `crate::api::bun::process`
 // (not the lower-tier `bun_spawn` crate). Worker.exit_status is this type.
@@ -639,10 +639,7 @@ impl<'a> Coordinator<'a> {
     }
 
     pub(crate) fn rel_path(&self, file_idx: u32) -> &[u8] {
-        bun_paths::resolve_path::relative(
-            bun_paths::fs::FileSystem::instance().top_level_dir(),
-            self.files[file_idx as usize].as_bytes(),
-        )
+        run_relative(self.files[file_idx as usize].as_bytes())
     }
 
     fn ensure_header(&mut self, file_idx: u32) {
@@ -1215,12 +1212,7 @@ impl<'a> Coordinator<'a> {
             while let Some(idx) = w.range.pop_front() {
                 bun_core::pretty_error!(
                     "<r><red>✗<r> <b>{}<r> <d>({})<r>\n",
-                    // Reshaped for borrowck — inline rel_path body
-                    // since `self.workers` is mutably borrowed.
-                    bstr::BStr::new(bun_paths::resolve_path::relative(
-                        bun_paths::fs::FileSystem::instance().top_level_dir(),
-                        self.files[idx as usize].as_bytes(),
-                    )),
+                    bstr::BStr::new(run_relative(self.files[idx as usize].as_bytes())),
                     bstr::BStr::new(reason),
                 );
                 self.reporter.summary().fail += 1;

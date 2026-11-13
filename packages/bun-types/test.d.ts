@@ -1271,7 +1271,7 @@ declare module "bun:test" {
 
   export interface TestSuite {
     type: "suite";
-    /** The `describe()` block's label, or the file's path relative to the working directory. */
+    /** The `describe()` block's label, or the file's path relative to the folder the run started in. */
     name: string;
     /** The file's name, the enclosing blocks' names and this block's name, joined by `" > "`. */
     fullName: string;

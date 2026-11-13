@@ -8128,8 +8128,14 @@ impl VirtualMachine {
         let message = &exception.message;
         let frames = exception.stack.frames();
         let top_frame = frames.first();
-        let dir = bun_core::env_var::GITHUB_WORKSPACE::get()
-            .unwrap_or_else(|| bun_bundler::bun_fs::FileSystem::get().top_level_dir());
+        // `bun test` names a file from the folder the run started in, wherever a test left the working directory.
+        let dir = bun_core::env_var::GITHUB_WORKSPACE::get().unwrap_or_else(|| {
+            if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
+                bun_paths::fs::FileSystem::instance().initial_top_level_dir()
+            } else {
+                bun_bundler::bun_fs::FileSystem::get().top_level_dir()
+            }
+        });
         bun_core::Output::flush();
 
         let writer = bun_core::Output::error_writer();

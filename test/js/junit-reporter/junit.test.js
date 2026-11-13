@@ -1,7 +1,9 @@
 import { file, spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { join } from "node:path";
+import { bunEnv, bunExe, isWindows, MAX_PATH_BYTES, tempDir } from "harness";
+import { existsSync, readdirSync, readFileSync, realpathSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 
 const xml2js = require("xml2js");
 
@@ -959,7 +961,7 @@ describe("junit reporter", () => {
     const [dataUrlCase, sourceUrlCase, longPathCase, pathCase] = result.testsuites.testsuite[0].testcase;
 
     expect(dataUrlCase.failure[0]._).toContain(`at fromDataUrl (${dataUrl}:1:`);
-    // The frame in the test file itself is still relative to the cwd.
+    // The frame in the test file itself is still relative to the folder of the run.
     expect(dataUrlCase.failure[0]._).toContain("at dataUrlTest (source-url.test.js:");
     expect(sourceUrlCase.failure[0]._).toContain("at fromSourceUrl (webpack://app/./src/x.ts:1:");
     expect(longPathCase.failure[0]._).toContain(`at fromLongPath (${longPath}:1:`);
@@ -1216,6 +1218,244 @@ describe("only block", () => {
       expect({ xml: bunfig.xml, exitCode: bunfig.exitCode }).toEqual({ xml: null, exitCode: 1 });
     });
   });
+
+  describe.concurrent("a test that calls process.chdir() does not move the report or rename its files", () => {
+    const files = {
+      "package.json": "{}",
+      "junit.xml": "the report of an earlier run",
+      "elsewhere/keep.txt": "",
+      "first.test.js": `import { expect, test } from "bun:test";
+test("changes the working directory", () => {
+  process.chdir(import.meta.dir + "/elsewhere");
+});
+test("fails after the change", () => {
+  expect(1).toBe(2);
+});
+`,
+      "second.test.js": `import { test } from "bun:test";
+test("runs in another file", () => {});
+`,
+      "setup.js": `process.chdir(import.meta.dir + "/elsewhere");\n`,
+    };
+    const first = `  <testsuite name="first.test.js" file="first.test.js" tests="2" assertions="1" failures="1" skipped="0">
+    <testcase name="changes the working directory" classname="" file="first.test.js" line="2" assertions="0" />
+    <testcase name="fails after the change" classname="" file="first.test.js" line="5" assertions="1">
+      <failure type="AssertionError" message="expect(received).toBe(expected)&#10;&#10;Expected: 2&#10;Received: 1&#10;">AssertionError: expect(received).toBe(expected)&#10;&#10;Expected: 2&#10;Received: 1&#10;&#10;      at first.test.js:6:13&#10;</failure>
+    </testcase>
+  </testsuite>
+`;
+    const second = `  <testsuite name="second.test.js" file="second.test.js" tests="1" assertions="0" failures="0" skipped="0">
+    <testcase name="runs in another file" classname="" file="second.test.js" line="2" assertions="0" />
+  </testsuite>
+`;
+    const document = (tests, suites) =>
+      `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="bun test" tests="${tests}" assertions="1" failures="1" skipped="0">\n${suites}</testsuites>\n`;
+    const bothTitles = ["first.test.js:", "second.test.js:"];
+    const junit = ["--reporter=junit", "--reporter-outfile=junit.xml"];
+
+    async function report(args, bunfig = "", from = ".") {
+      using dir = tempDir("junit-chdir", { ...files, "bunfig.toml": bunfig });
+      await using proc = spawn([bunExe(), "test", ...args], {
+        cwd: join(String(dir), from),
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      return {
+        xml: filterJunitXmlOutput(await file(join(String(dir), "junit.xml")).text()),
+        elsewhere: readdirSync(join(String(dir), "elsewhere")),
+        // --parallel prints the files in the order in which they end, and a title again after another file's output.
+        titles: [...new Set(stderr.split(/\r?\n/).filter(line => line.endsWith(".test.js:")))].sort(),
+        exitCode,
+      };
+    }
+
+    it.each([
+      ["in a serial run", [], document(3, first + second), bothTitles],
+      ["in the first file of an --isolate run", ["--isolate"], document(3, first + second), bothTitles],
+      [
+        "in the last file of an --isolate run",
+        ["--isolate", "./second.test.js", "./first.test.js"],
+        document(3, second + first),
+        bothTitles,
+      ],
+      ["before --bail ends the run", ["--bail=1"], document(2, first), ["first.test.js:"]],
+      ["in a --parallel worker", ["--parallel=2"], document(3, first + second), bothTitles],
+      [
+        "in the only file of a --parallel run",
+        ["--parallel=2", "./first.test.js"],
+        document(2, first),
+        ["first.test.js:"],
+      ],
+      [
+        "in a preload of an --isolate run",
+        ["--isolate", "--preload", "./setup.js"],
+        document(3, first + second),
+        bothTitles,
+      ],
+      [
+        "in a preload of a --parallel worker",
+        ["--parallel=2", "--preload", "./setup.js"],
+        document(3, first + second),
+        bothTitles,
+      ],
+    ])("%s", async (_, args, xml, titles) => {
+      expect(await report([...junit, ...args])).toEqual({ xml, elsewhere: ["keep.txt"], titles, exitCode: 1 });
+    });
+
+    it("in a run that --cwd starts in the folder above", async () => {
+      expect(await report([...junit, "--cwd", ".."], "", "elsewhere")).toEqual({
+        xml: document(3, first + second),
+        elsewhere: ["keep.txt"],
+        titles: bothTitles,
+        exitCode: 1,
+      });
+    });
+
+    it("with the outfile from [test.reporter] junit in bunfig.toml", async () => {
+      expect(await report([], `[test.reporter]\njunit = "junit.xml"\n`)).toEqual({
+        xml: document(3, first + second),
+        elsewhere: ["keep.txt"],
+        titles: bothTitles,
+        exitCode: 1,
+      });
+    });
+
+    // Windows opens "C:junit.xml" as "junit.xml" below a folder.
+    it.skipIf(!isWindows)("with an outfile that has a drive letter and no root", async () => {
+      const outfile = realpathSync(tmpdir()).slice(0, 2) + "junit.xml";
+      expect(await report(["--reporter=junit", "--reporter-outfile=" + outfile])).toEqual({
+        xml: document(3, first + second),
+        elsewhere: ["keep.txt"],
+        titles: bothTitles,
+        exitCode: 1,
+      });
+    });
+
+    // Windows refuses to remove the working directory of a process.
+    it.skipIf(isWindows).each([
+      ["a serial run", []],
+      ["the last file of an --isolate run", ["--isolate", "./second.test.js", "./scratch.test.js"]],
+    ])("in a folder that the test removes before %s ends", async (_, args) => {
+      using dir = tempDir("junit-chdir-removed", {
+        "package.json": "{}",
+        "second.test.js": files["second.test.js"],
+        "scratch.test.js": `import { afterAll, test } from "bun:test";
+import { mkdirSync, rmSync } from "node:fs";
+const scratch = import.meta.dir + "/scratch";
+test("works in a scratch folder", () => {
+  mkdirSync(scratch);
+  process.chdir(scratch);
+});
+afterAll(() => rmSync(scratch, { recursive: true }));
+`,
+      });
+      await using proc = spawn([bunExe(), "test", ...junit, ...(args.length ? args : ["./scratch.test.js"])], {
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      expect(stderr).not.toContain("Failed to write JUnit report");
+      expect({
+        suites: (await file(join(String(dir), "junit.xml")).text()).match(/<testsuite name="[^"]*"/g),
+        here: readdirSync(String(dir)).sort(),
+        exitCode,
+      }).toEqual({
+        suites: [...(args.length ? [`<testsuite name="second.test.js"`] : []), `<testsuite name="scratch.test.js"`],
+        here: ["junit.xml", "package.json", "scratch.test.js", "second.test.js"],
+        exitCode: 0,
+      });
+    });
+  });
+
+  it("names a file by its whole path when its folder's name only starts with the name of the run's folder", async () => {
+    using dir = tempDir("junit-sibling-folder", {
+      "app/package.json": "{}",
+      "app-api/a.test.js": `import { test } from "bun:test";\ntest("passes", () => {});`,
+    });
+    await using proc = spawn(
+      [bunExe(), "test", "--reporter=junit", "--reporter-outfile=junit.xml", "../app-api/a.test.js"],
+      { cwd: join(String(dir), "app"), env: bunEnv, stdout: "ignore", stderr: "pipe" },
+    );
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [suite] = (await file(join(String(dir), "app", "junit.xml")).text()).match(/<testsuite [^>]*>/);
+    const path = join(String(dir), "app-api", "a.test.js");
+
+    expect(stderr).toContain(" 1 pass");
+    expect({ name: suite.match(/ name="([^"]*)"/)[1], file: suite.match(/ file="([^"]*)"/)[1] }).toEqual({
+      name: path,
+      file: path,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // Windows removes `..` from a path before it follows a link.
+  it.skipIf(isWindows)("leaves .. in a relative outfile to the system, which follows a symlink first", async () => {
+    await using tmpDir = tempDir("junit-outfile-dotdot", {
+      "package.json": "{}",
+      "other/deep/keep.txt": "",
+      "a.test.js": `import { test } from "bun:test";\ntest("passes", () => {});`,
+    });
+    symlinkSync(join(tmpDir, "other", "deep"), join(tmpDir, "link"));
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile=link/../junit.xml"], {
+      cwd: tmpDir,
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain(" 1 pass");
+    expect({ here: readdirSync(tmpDir).sort(), other: readdirSync(join(tmpDir, "other")).sort() }).toEqual({
+      here: ["a.test.js", "link", "other", "package.json"],
+      other: ["deep", "junit.xml"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // On Windows the system refuses a path long before it fills the path buffer.
+  it.skipIf(isWindows)(
+    "writes a relative outfile that fills the path buffer, and reports one a byte longer",
+    async () => {
+      const fixture = {
+        "package.json": "{}",
+        "a.test.js": `import { test } from "bun:test";\ntest("passes", () => {});`,
+      };
+      using fitsDir = tempDir("junit-outfile-fits", fixture);
+      using overDir = tempDir("junit-outfile-over", fixture);
+      const folder = Buffer.alloc(200, "d").toString();
+      const run = async (dir, bytesOver) => {
+        // The folder of the run, a separator, the outfile and a NUL share the buffer.
+        const length = MAX_PATH_BYTES - 1 - (dir.length + 1) + bytesOver;
+        const folders = Math.floor((length - 1) / (folder.length + 1));
+        const name = Buffer.alloc(length - folders * (folder.length + 1), "f").toString();
+        const outfile = [...Array(folders).fill(folder), name].join("/");
+        await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", outfile], {
+          cwd: dir,
+          env: bunEnv,
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        return { outfile, name, parent: dirname(join(dir, outfile)), stderr, exitCode };
+      };
+      const [fits, over] = await Promise.all([run(String(fitsDir), 0), run(String(overDir), 1)]);
+
+      expect(fits.stderr).not.toContain("Failed to write JUnit report");
+      expect(readdirSync(fits.parent)).toEqual([fits.name]);
+      expect(readFileSync(join(fits.parent, fits.name), "utf8")).toContain(`<testcase name="passes"`);
+      expect(fits.exitCode).toBe(0);
+
+      expect(over.stderr).toContain(" 1 pass");
+      expect(over.stderr).toContain(`Failed to write JUnit report to ${over.outfile}\nENAMETOOLONG: `);
+      expect(existsSync(over.parent)).toBe(false);
+      expect(over.exitCode).toBe(0);
+    },
+  );
 
   it("prints a write error when the outfile is longer than the path buffer", async () => {
     // A bunfig value can be longer than the path buffer on every platform.

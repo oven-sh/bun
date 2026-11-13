@@ -694,6 +694,12 @@ pub fn relative(from: &[u8], to: &[u8]) -> &'static [u8] {
     relative_platform::<platform::Auto, false>(from, to)
 }
 
+/// [`relative`], except that a `to` which is not absolute is below `base`, not below the working directory.
+pub fn relative_to_base<'a>(base: &'a [u8], to: &[u8]) -> &'a [u8] {
+    debug_assert!(platform::Auto::P.is_absolute(base));
+    relative_platform_below::<platform::Auto, false>(Some(base), base, to)
+}
+
 pub fn relative_buf_z<'a>(buf: &'a mut [u8], from: &[u8], to: &[u8]) -> &'a ZStr {
     let rel = relative_platform_buf::<platform::Auto, true>(buf, from, to);
     let len = rel.len();
@@ -797,7 +803,16 @@ pub fn relative_platform<P: PlatformT, const ALWAYS_COPY: bool>(
     from: &[u8],
     to: &[u8],
 ) -> &'static [u8] {
-    let cwd = relative_cwd::<P>(from, to);
+    relative_platform_below::<P, ALWAYS_COPY>(None, from, to)
+}
+
+/// [`relative_platform`] with relative operands below `base`. Without a `base` they are below the working directory.
+fn relative_platform_below<'a, P: PlatformT, const ALWAYS_COPY: bool>(
+    base: Option<&'a [u8]>,
+    from: &[u8],
+    to: &[u8],
+) -> &'a [u8] {
+    let cwd = base.unwrap_or_else(|| relative_cwd::<P>(from, to));
     let from_needed = relative_operand_needed::<P>(cwd, from);
     let to_needed = relative_operand_needed::<P>(cwd, to);
     // A path has at most as many separators as bytes. Count them only if that bound does not fit.
@@ -3008,6 +3023,20 @@ mod tests {
             let result = relative_platform::<platform::Posix, true>(&from, b"/b");
             assert_eq!(result, b"../b");
             assert_eq!(is_in_fixed_relative_buffer(result.as_ptr().addr()), fits);
+        }
+    }
+
+    #[test]
+    fn relative_with_a_base_takes_a_relative_operand_to_be_below_it() {
+        let base = b"/proj";
+        for (to, expected) in [
+            (&b"/proj/src/a.ts"[..], &b"src/a.ts"[..]),
+            (b"/other/a.ts", b"../other/a.ts"),
+            (b"virtual:thing", b"virtual:thing"),
+            (b"virt//up/../thing", b"virt/thing"),
+        ] {
+            let result = relative_platform_below::<platform::Posix, true>(Some(base), base, to);
+            assert_eq!(result, expected);
         }
     }
 

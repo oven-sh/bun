@@ -5,8 +5,28 @@ import { test } from "./supported";
 
 const lib = `globalThis.runs = (globalThis.runs ?? 0) + 1;\nexports.n = globalThis.runs;\n`;
 const head = `const { test } = require("bun:test");\nconst { writeFileSync } = require("node:fs");\n`;
-const runs = {
+const runs: Record<string, { earlier?: string; test: string; said: string; named: string[] }> = {
   "a file that is taken out of require.cache and required again": {
+    test: `${head}test("a", () => {
+  require("./lib.cjs");
+  delete require.cache[require.resolve("./lib.cjs")];
+  console.log("SAID", require("./lib.cjs").n);
+});`,
+    said: "SAID 2",
+    named: ["lib.cjs"],
+  },
+  "a file that is required again after the test changed the working directory": {
+    test: `${head}test("a", () => {
+  require("./lib.cjs");
+  delete require.cache[require.resolve("./lib.cjs")];
+  process.chdir(__dirname + "/elsewhere");
+  console.log("SAID", require("./lib.cjs").n);
+});`,
+    said: "SAID 2",
+    named: ["lib.cjs"],
+  },
+  "a file that is required again after an earlier test file changed the working directory": {
+    earlier: `${head}test("moves", () => process.chdir(__dirname + "/elsewhere"));`,
     test: `${head}test("a", () => {
   require("./lib.cjs");
   delete require.cache[require.resolve("./lib.cjs")];
@@ -45,11 +65,14 @@ const runs = {
   },
 };
 
-test.each(Object.entries(runs))("%s", async (_, { test, said, named }) => {
+test.each(Object.entries(runs))("%s", async (_, { earlier, test, said, named }) => {
   using directory = tempDir("files-that-ran-from-their-text", {
     "package.json": `{ "name": "made-up" }`,
     "lib.cjs": lib,
     "bad.cjs": "!!!",
+    "elsewhere/keep.txt": "",
+    // Runs before a.test.cjs: the run takes the files of its folder by name.
+    ...(earlier && { "0.test.cjs": earlier }),
     "a.test.cjs": test,
   });
   const { stdout, stderr } = await run([bunExe(), "test", "--aot"], String(directory), bunEnv);

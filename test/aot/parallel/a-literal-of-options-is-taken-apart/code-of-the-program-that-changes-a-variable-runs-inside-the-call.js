@@ -1,5 +1,5 @@
 // Converting the body, the status and the text and reading the headers runs code of the program: what it changes is read anew behind the call.
-// STATISTIC: LiteralArgumentsTakenApart >= 4
+// STATISTIC: LiteralArgumentsScalarized >= 4
 function local(status) {
   let n = 0;
   const made = new Response({ toString() { n++; return "1"; } }, { status, headers: { get a() { n += 10; return "b"; } } });

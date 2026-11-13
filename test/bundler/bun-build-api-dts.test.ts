@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "fs";
+import { mkdirSync, readdirSync, readFileSync, symlinkSync } from "fs";
 import { tempDir } from "harness";
 import { join } from "path";
 
@@ -152,117 +152,6 @@ export { join };
     expect(filesIn(join(root, "out"))).toContain("index.aot.ts");
   });
 
-  // The bundle has `0` for `Unit.Px`, and the typed file has `0 as Unit.Px`. That does not widen to `Unit` as `Unit.Px`
-  // does, so a place without an annotation takes `: Unit`. Under an `as`, the place has the type of the `as`.
-  test.each([
-    ["", {}],
-    [", with minify.syntax", { minify: { syntax: true } }],
-  ])("a place without an annotation whose value is an enum member under a cast%s", async (_, options) => {
-    using dir = tempDir("build-api-dts-enum-cast", {
-      "tsconfig.json": project["tsconfig.json"],
-      "src/index.ts": `export enum Unit {
-  Px,
-  Em,
-}
-export enum Color {
-  Red = "red",
-}
-export function useIt(first = 1, unit = Unit.Px as Unit | null) {
-  unit = null;
-  return [first, unit];
-}
-export function only(unit = Unit.Px as Unit | null) {
-  return unit;
-}
-let current = Color.Red as string;
-export function paint(color: string): string {
-  current = color;
-  return current;
-}
-export class Box {
-  unit = Unit.Px as Unit | undefined;
-  clear(): void {
-    this.unit = undefined;
-  }
-}
-export function constant(unit = Unit.Em as const): Unit.Em {
-  return unit;
-}
-export function widened(unit = Unit.Px, other = Unit.Px satisfies Unit, third = Unit.Px!) {
-  unit = Unit.Em;
-  other = Unit.Em;
-  third = Unit.Em;
-  return [unit, other, third];
-}
-console.log(useIt(), useIt(1, null), useIt(1, Unit.Em), only(null), paint("blue"), new Box().unit, constant(), widened());
-`,
-    });
-    const root = String(dir);
-    const built = await Bun.build({
-      entrypoints: [join(root, "src/index.ts")],
-      outdir: join(root, "out"),
-      tsconfig: join(root, "tsconfig.json"),
-      target: "bun",
-      dts: true,
-      ...options,
-    });
-    expect(built.logs).toEqual([]);
-    // The name of an enum can have a number behind it, and each value has the name of its member in a comment.
-    const typed = readFileSync(join(root, "out/index.aot.ts"), "utf8")
-      .replace(/\b(Unit|Color)\d+/g, "$1")
-      .replace(/ \/\* \w+ \*\//g, "");
-    expect(typed).toContain("function useIt(first = 1, unit = 0 as Unit.Px as Unit | null) {");
-    expect(typed).toContain("function only(unit = 0 as Unit.Px as Unit | null) {");
-    expect(typed).toContain(`current = "red" as Color.Red as string;`);
-    expect(typed).toContain("  unit = 0 as Unit.Px as Unit | undefined;");
-    // `0 as Unit.Em` is what `Unit.Em as const` is.
-    expect(typed).toContain("function constant(unit: Unit.Em = 1 as Unit.Em): Unit.Em {");
-    expect(typed).toContain(
-      "function widened(unit: Unit = 0 as Unit.Px, other: Unit = 0 as Unit.Px satisfies Unit, third: Unit = (0 as Unit.Px)!) {",
-    );
-  });
-
-  // A constant that only a type names is not in the bundle. The typed file declares it with what the type checker says.
-  test("a constant that only a type names is declared with a type that names nothing", async () => {
-    using dir = tempDir("build-api-dts-constants", {
-      "tsconfig.json": project["tsconfig.json"],
-      "src/flag.ts": `type Flag = true | false;
-declare const stored: Flag;
-export const on = stored;
-`,
-      "src/index.ts": `import { on } from "./flag";
-type Flag = "yes" | "no";
-const big = 1e999;
-const small = -1e999;
-const word = "a";
-export type On = typeof on;
-export type Sizes = [typeof big, typeof small, typeof word];
-export function pick(flag: Flag): On {
-  return flag === "yes";
-}
-export function sizes(): Sizes {
-  return [1e999, -1e999, "a"];
-}
-`,
-    });
-    const root = String(dir);
-    const built = await Bun.build({
-      entrypoints: [join(root, "src/index.ts")],
-      outdir: join(root, "out"),
-      tsconfig: join(root, "tsconfig.json"),
-      dts: true,
-    });
-    expect(built.logs).toEqual([]);
-    const typed = readFileSync(join(root, "out/index.aot.ts"), "utf8");
-    // `Flag` of the other file is `boolean`, and no type is `Infinity`.
-    expect(typed.match(/^declare const .*$/gm)?.sort()).toEqual([
-      "declare const big: number;",
-      "declare const on: boolean;",
-      "declare const small: number;",
-      `declare const word: "a";`,
-    ]);
-  });
-
   test("two builds at once keep their files apart", async () => {
     using dir = tempDir("build-api-dts-twice", {
       ...Object.fromEntries(Object.entries(project).map(([path, text]) => ["a/" + path, text])),
@@ -293,133 +182,42 @@ export function sizes(): Sizes {
 
 // The React Compiler prints `function useStep(step = 1) {` as `function useStep(t0) { let step = t0 === undefined ? 1 : t0;`.
 describe("Bun.build({ dts: true, reactCompiler: true }): a parameter whose default value is in the function body", () => {
-  const state = `export function useState<T>(initial: T): [T] {\n  return [initial];\n}\n`;
+  const state = `export function useState<T>(initial: T): [T, (next: T) => void] {
+  return [initial, () => {}];
+}
+`;
   const hooks = `import { useState } from "./state";
-export enum Unit {
-  Px,
-  Em,
-}
-export enum Color {
-  Red = "red",
-}
 export function useBoth(first: number = 1, second: number = 2): number {
   const [value] = useState(first);
   return value + second;
 }
-export function useStep(first: number = 1, step = 2): number {
-  const [value] = useState(first);
-  return value + step;
+export function useStep(step = 2): number {
+  const [value] = useState(step);
+  return value;
 }
-export function useRange(first: number = 1, start: number = 0, end: number): number {
-  const [value] = useState(first);
-  return value + start + end;
+export function useRange(start: number = 0, size = 1, end: number): number {
+  const [value] = useState(start);
+  return value + size + end;
 }
-export function useFormat(first: number = 1, format: (value: number) => string = String, value: number): string {
-  const [text] = useState(format(value + first));
+export function useFormat(format: (value: number) => string = String, value: number): string {
+  const [text] = useState(format(value));
   return text;
 }
-export function useName(first: number = 1, { name }: { name: string } = { name: "x" }, suffix: string = "!"): string {
+export function useMake(make: new () => Date = Date, year: number): number {
+  const [made] = useState(new make());
+  return made.getFullYear() + year;
+}
+export function useName({ name }: { name: string } = { name: "x" }, [first] = ["a"], suffix: string = "!"): string {
   const [value] = useState(name);
-  return value + suffix + first;
+  return value + first + suffix;
 }
-export function usePoint(first: number = 1, point: [number, number] = [0, 0]): [number, number] {
-  const [value] = useState(point);
-  return [value[0] + first, value[1]];
-}
-export function useUnit(first: number = 1, unit = Unit.Px): string {
+export function useOver(first?: number): number;
+export function useOver(first: string, second?: number): number;
+export function useOver(first: number | string = 1, second: number = 2): number {
   const [value] = useState(first);
-  return value + Unit[unit];
+  return Number(value) + second;
 }
-export function usePadded(first: number = 1, unit = Unit.Em, pad = 2, text: string): string {
-  const [value] = useState(text);
-  return value.padStart(pad + first) + Unit[unit];
-}
-interface Options {
-  label: string;
-}
-export function useCast(
-  first = 1,
-  unit = Unit.Px as Unit | null,
-  color = Color.Red as string,
-  last = Unit.Em!,
-  exact = Unit.Px as const,
-  known = (Unit.Em as Unit | null)!,
-  options = { label: "x" } as Options,
-): string {
-  const [value] = useState(first);
-  return value + String(unit) + color + Unit[last] + Unit[exact] + Unit[known] + options.label;
-}
-export function useParse(first = 1, parse = Number as (text: string) => number, text: string): number {
-  const [value] = useState(first);
-  return value + parse(text);
-}
-export function useTyped(first = 1, second = 2 as typeof first): string {
-  const [value] = useState(first);
-  return value + second.toFixed(1);
-}
-function same<T>(value: T): T {
-  return value;
-}
-export function useQueried(first = 1, maybe: string | undefined = undefined, pick: typeof same = same): string {
-  const [value] = useState(maybe);
-  const kept: typeof maybe = value;
-  const picked: typeof pick<number> = pick;
-  return String(kept) + picked(first);
-}
-export function useSigned(
-  first: number = 1,
-  second: typeof first = 2,
-  pick: typeof same = same,
-  run: typeof pick<number> = pick,
-): number {
-  const [value] = useState(first);
-  return value + second + run(1);
-}
-export function useMeasured(first = 1, unit = 2): number {
-  const [value] = useState(first);
-  return (value + 1) as typeof unit;
-}
-type Flag = true | false;
-function stored(): Flag {
-  return true;
-}
-export function useNoted(first = 1, flag = stored()): number {
-  const [value] = useState(first);
-  return flag ? value : 0;
-}
-export function useReturned(first = 1, value: number | undefined = undefined): typeof value {
-  const [seen] = useState(first);
-  return seen > 1 ? value : undefined;
-}
-export function useCell(first = 1, unit = Unit.Px as Unit | null): string {
-  const [value] = useState(first);
-  if (unit === null) return value + "none";
-  switch (unit) {
-    case Unit.Px:
-      return value + "px";
-    case Unit.Em:
-      return value + "em";
-  }
-}
-export function useNested(base: number): number {
-  const [value] = useState(base);
-  const add = (first: number = 0, right: number = 1): number => first + right;
-  return add(value);
-}
-function pad(value: string): string;
-function pad(value: number): number;
-function pad(value: any): any {
-  return value;
-}
-type Step = (base: number, scale?: number, by?: number, unit?: Unit | null) => number;
-export function useStepper(n: number): Step {
-  const [value] = useState(n);
-  const step: Step = (base, scale = 1, by = value, unit = Unit.Px as Unit) => {
-    const next: number = pad(by);
-    return base * scale + next + (unit ?? 0);
-  };
-  return step;
-}
+export const useArrow = (first: number = 1, second = 2): number => useState(first)[0] + second;
 export function useLabel(label: string, size?: number): string {
   const [value] = useState(label);
   return value + (size ?? 0);
@@ -429,25 +227,31 @@ export function plain(first: number = 1, second: number = 2): number {
 }
 `;
   // What the sources accept. With these in the bundle, a typed file that asks for more is left out with a warning.
-  const calls = `console.log(useBoth(), useBoth(5), useStep(), useRange(undefined, undefined, 5), useFormat(undefined, undefined, 1));
-console.log(useName(), usePoint(), useUnit(), usePadded(undefined, undefined, undefined, "a"), useNested(1));
-console.log(useStepper(2)(1), useStepper(2)(1, 2, 3), useLabel("a"), plain(), useCast(), useCast(1, null, "blue"));
-console.log(useCell(), useCell(1, null), useCell(1, Unit.Em), useParse(undefined, undefined, "1"), useTyped());
-console.log(useQueried(), useQueried(1, "a", same), useSigned(), useSigned(1, 2), useMeasured(), useReturned());
-console.log(useNoted(), useNoted(1, false));
+  const calls = `console.log(useBoth(), useBoth(5), useStep(), useRange(undefined, undefined, 5), useFormat(undefined, 1));
+console.log(useMake(undefined, 1), useName(), useOver(), useOver("a"), useArrow(), useLabel("a"), plain());
 `;
-  // The parameters of each function, from the second one on where the first one is the compiler's. The first default
-  // value of a list is where the `length` of the function ends, and how the compiler prints it is not the subject here.
-  // Nor is the `: any` that the check of the typed files writes behind a parameter that has no type.
+  // A hook beside the ones of a test. Main writes it with parameters that have to be passed.
+  const useBeside = `export function useBeside(first: number = 1, second: number = 2): number {
+  const [value] = useState(first);
+  return value + second;
+}
+`;
+  // The parameters of each function. The check of the typed files writes `: any` behind a parameter that has no type.
   const parametersIn = (typed: string) =>
     Object.fromEntries(
-      Array.from(typed.matchAll(/^function (\w+)(?:<[^>]*>)?\((.*)\)(?:: [^{\n]+)? \{$/gm), ([, name, list]) => [
-        name,
-        list.replace(/^t0[^,]*, /, "").replaceAll("?: any", "?"),
-      ]),
+      Array.from(
+        typed.matchAll(/^(?:function|const) (\w+)(?:<[^>]*>)?(?: = )?\((.*)\)(?:: [^{\n]+)? \{$/gm),
+        ([, name, list]) => [name, list.replaceAll(": any", "")],
+      ),
     );
-  const build = (root: string, options: Partial<Bun.BuildConfig> = {}) =>
-    Bun.build({
+  const typedFile = async (files: Record<string, string>, options: Partial<Bun.BuildConfig> = {}) => {
+    using dir = tempDir("build-api-dts-moved-default", {
+      "tsconfig.json": project["tsconfig.json"],
+      "src/state.ts": state,
+      ...files,
+    });
+    const root = String(dir);
+    const built = await Bun.build({
       entrypoints: [join(root, "src/index.tsx")],
       outdir: join(root, "out"),
       tsconfig: join(root, "tsconfig.json"),
@@ -456,86 +260,264 @@ console.log(useNoted(), useNoted(1, false));
       dts: true,
       ...options,
     });
-
-  const parameters = {
-    useState: "initial: T",
-    _temp: "t1?: number",
-    useBoth: "t1?: number",
-    // The type checker says what `step = 2` is.
-    useStep: "t1?: number",
-    // A `?` before a parameter that has to be passed is an error.
-    useRange: "t1: number | undefined, end: number",
-    useFormat: "t1: ((value: number) => string) | undefined, value: number",
-    // The annotation of a pattern is where the pattern is.
-    useName: "t1?, t2?: string",
-    usePoint: "t1?: [number, number]",
-    // `Unit.Px` is `0` in the bundle, and the parameter has the type of the enum.
-    useUnit: expect.stringMatching(/^t1\?: Unit\d*$/),
-    usePadded: expect.stringMatching(/^t1: Unit\d* \| undefined, t2: number \| undefined, text: string$/),
-    // An `as` on the default value is the type of the parameter. Under `!` it has the enum, under `as const` the member.
-    // `(T) & {}` is `T` without `null` and `undefined`, as `(x as T)!` is.
-    useCast: expect.stringMatching(
-      /^t1\?: Unit\d* \| null, t2\?: string, t3\?: Unit\d*, t4\?: Unit\d*\.Px, t5\?: \(Unit\d* \| null\) & \{\}, t6\?: Options$/,
-    ),
-    useParse: "t1: ((text: string) => number) | undefined, text: string",
-    // `typeof first` is not the type of `t0`, which takes `undefined`. The type checker says what `second` is.
-    useTyped: "t1?: number",
-    useQueried: "t1?: string | undefined, t2?: typeof same",
-    // Where only the parameter is in scope, `T & ({} | null)` is its type without `undefined`.
-    useSigned: "t1?: (typeof t0 & ({} | null)), t2?: typeof same, t3?: (typeof t2<number> & ({} | null))",
-    useMeasured: "t1?: number",
-    useReturned: "t1?: number | undefined",
-    // The type checker says `Flag` for it, which is a name that another type of the bundle can have too.
-    useNoted: "t1?: boolean",
-    stored: "",
-    same: "value: T",
-    // Its `switch` has a `case` for each value only if `unit` has its type.
-    useCell: expect.stringMatching(/^t1\?: Unit\d* \| null$/),
-    useNested: "base: number",
-    pad: "value: any",
-    useStepper: "n: number",
-    useLabel: "label: string, size?: number",
-    // What the compiler leaves as it is written keeps its default values.
-    plain: "first: number = 1, second: number = 2",
+    expect(built.logs).toEqual([]);
+    return readFileSync(join(root, "out/index.aot.ts"), "utf8");
   };
 
-  test.each([
-    ["a call in the bundle that leaves it out", calls],
-    ["no call in the bundle", ""],
-  ])("can be left out, and keeps its type: %s", async (_, calls) => {
-    using dir = tempDir("build-api-dts-moved-default", {
-      "tsconfig.json": project["tsconfig.json"],
-      "src/state.ts": state,
-      "src/index.tsx": hooks + calls,
+  test("can be left out", async () => {
+    expect(parametersIn(await typedFile({ "src/index.tsx": hooks + calls }))).toEqual({
+      useState: "initial: T",
+      useBoth: "t0?: number, t1?: number",
+      // Without an annotation it has the type of a parameter without one.
+      useStep: "t0?",
+      // A `?` before a parameter that has to be passed is an error.
+      useRange: "t0: number | undefined, t1, end: number",
+      useFormat: "t0: ((value: number) => string) | undefined, value: number",
+      useMake: "t0: (new () => Date) | undefined, year: number",
+      // The annotation of a pattern is not copied: the parameter takes the `?` alone.
+      useName: "t0?, t1?, t2?: string",
+      useOver: "t0?: number | string, t1?: number",
+      useArrow: "t0?: number, t1?",
+      useLabel: "label: string, size?: number",
+      // What the compiler leaves as it is written keeps its default values.
+      plain: "first: number = 1, second: number = 2",
     });
-    const root = String(dir);
-    const built = await build(root);
-    expect(built.logs).toEqual([]);
-    const typed = readFileSync(join(root, "out/index.aot.ts"), "utf8");
-    expect(parametersIn(typed)).toEqual(parameters);
-    // The default value has its type from the annotation.
-    expect(typed).toContain("let point: [number, number] = t1 === undefined ? [");
-    // Without an annotation, a callback takes the type of its parameter from where it is passed to. An `as` on the
-    // default value does not change that.
-    expect(typed).toMatch(/let step: Step = \(base, t0[^,]*, t1\?, t2\?\) => \{/);
-    // In the function body, the variable that holds the default value is what `typeof` names.
-    expect(typed).toContain("2 as typeof first");
-    expect(typed).toContain("kept: typeof maybe = value");
-    expect(typed).toContain("picked: typeof pick<number> = pick");
-    // The output has no variable for a parameter that only a type names.
-    expect(typed).toContain("value + 1 as (typeof t1 & ({} | null))");
-    // A parameter takes `undefined` where that is its default value too.
-    expect(typed).toContain("t1?: number | undefined): typeof t1 {");
+  });
+
+  const queried = `import { useState } from "./state";
+function take(point: [number, number]): number {
+  return point[0] + point[1];
+}
+export function useSigned(first: number = 1, second: typeof first = 2): number {
+  const [value] = useState(first);
+  return value + second;
+}
+export function useRequired(first: number = 1, second: typeof first): string {
+  const [value] = useState(first);
+  return (value + second).toFixed(1);
+}
+export function useQueried(first: number = 1, point: [number, number] = [0, 0]): number {
+  const [seen] = useState(first);
+  const origin: typeof point = [seen, seen];
+  return take(origin) + point[0];
+}
+export function useTyped(first: number = 1): number {
+  const [value] = useState(first);
+  return value;
+}
+export const useAlike: typeof useTyped = (first: number = 1) => {
+  const [value] = useState(first);
+  return value + 1;
+};
+`;
+  // `typeof first` is the type of `first` with its default value, which has no `undefined`. A parameter with a `?` has.
+  // Main writes the typed file of this build too: only `useBeside` has other parameters there.
+  test("stays as the output has it in a function with a `typeof` of it, or of its parameter", async () => {
+    const typed = await typedFile({ "src/index.tsx": queried + useBeside });
+    expect(typed).toContain("const useAlike: typeof useTyped = (t0: number) => {");
+    expect(parametersIn(typed)).toEqual({
+      useState: "initial: T",
+      take: "point: [number, number]",
+      useSigned: "t0: number, t1: typeof t0",
+      useRequired: "t0: number, second: typeof t0",
+      useQueried: "t0: number, t1: [number, number]",
+      useTyped: "t0: number",
+      useBeside: "t0?: number, t1?: number",
+    });
+  });
+
+  // Now, as on main: the typed files are left out, "TS2554: Expected 2 arguments, but got 0."
+  test.todo("can be left out of a function with a `typeof` of it", async () => {
+    const typed = await typedFile({ "src/index.tsx": queried + "console.log(useSigned(), useQueried());\n" });
+    expect(parametersIn(typed)).toMatchObject({ useSigned: expect.stringMatching(/^t0\?: number, t1\?: /) });
+  });
+
+  const callees = `function pick<T>(make: (label: string, seed: T) => T, seed: T): T {
+  return make("a", seed);
+}
+function pick3<T>(make: (seed: T, label: string, extra: number) => T, seed: T): T {
+  return make(seed, "a", 0);
+}
+interface Counter {
+  count: number;
+}
+function useReducer<S, A>(reducer: (state: S, action: A) => S, initial: S): S {
+  return initial;
+}
+function useReduced<S, R extends (state: S, action: string) => S>(reducer: R): [S, (action: string) => void] {
+  return [reducer(undefined as S, "init"), () => {}];
+}
+function keepT<F extends (x: T, y: string) => void, T>(visit: F): T[] {
+  return [];
+}
+function run(task: () => number): number {
+  return task();
+}
+`;
+  // TypeScript infers type arguments from the type of a function that is a value, and from an annotated parameter of
+  // a callback, where a default value adds no `undefined` and a `?` does. So only a function that a build calls by its
+  // name takes the `?`. Main writes the typed file of this build too: only `useBeside` has other parameters there.
+  test("stays as the output has it in a function that is a value", async () => {
+    const typed = await typedFile({
+      "src/index.tsx": `import { useState } from "./state";
+${callees}
+export function useTotal(items: string[]) {
+  const [n] = useState(items.length);
+  return items.reduce((total: number = 0, item) => total + item.length + n, 0);
+}
+export function useLengths(items: string[]) {
+  const [n] = useState(items.length);
+  return items.reduce((total: number = 0, item) => total + item.length, 0) + n;
+}
+export function useSizes(items: Array<{ size: number }>) {
+  const [n] = useState(items.length);
+  return items.reduce((total: number = 0, { size }: { size: number }) => total + size + n, 0);
+}
+export function useSum(items: Array<{ size: number }>) {
+  const [n] = useState(items.length);
+  const add = (total: number = 0, { size }: { size: number }) => total + size + n;
+  return items.reduce(add, 0);
+}
+export function usePicked(start: number) {
+  const [n] = useState(start);
+  return pick((label, seed: number = 1) => seed + n + label.length, n);
+}
+export function usePickedFirst(start: number) {
+  const [n] = useState(start);
+  return pick3((seed: number = 1, label: string) => seed + n + label.length, n);
+}
+export function useCounter(start: number) {
+  const [n] = useState(start);
+  return useReducer((state: Counter = { count: 0 }) => ({ count: state.count + n }), { count: n });
+}
+export function useCount(step: number) {
+  const [n] = useState(step);
+  const [count] = useReduced((state: number = 0, action) => state + n + action.length);
+  return count * 2;
+}
+export function useSeen(start: number) {
+  const [n] = useState(start);
+  return keepT((x: number = 1, y) => void (x + y.length + n));
+}
+export function useStep(base: number) {
+  const [n] = useState(base);
+  let step = (by: number = 1) => n + by;
+  if (n > 10) {
+    step = (by: number = 2) => n - by;
+  }
+  return step(1);
+}
+${useBeside}`,
+    });
+    expect(typed).toContain("return items.reduce((t0: number, item) => {");
+    expect(typed).toMatch(/^function _temp\(t0: number, item(?:: any)?\) \{$/m);
+    expect(typed).toContain("return items.reduce((t0: number, t1) => {");
+    expect(typed).toMatch(/let add = \(t0: number, t1(?:: any)?\) => \{/);
+    expect(typed).toContain("return pick((label, t0: number) => {");
+    expect(typed).toContain("return pick3((t0: number, label: string) => {");
+    expect(typed).toContain("return useReducer((t0: Counter) => {");
+    expect(typed).toContain("let [count] = useReduced((t0: number, action) => {");
+    expect(typed).toContain("return keepT((t0: number, y)");
+    expect(typed).toContain("let step = (t0: number) => {");
+    expect(typed).toContain("step = (t1: number) => {");
+    expect(typed).toContain("function useBeside(t0?: number, t1?: number): number {");
+  });
+
+  // React's `useCallback` is not in the output: its callback is where the call was, as an argument of `pick`.
+  test("stays as the output has it in a callback that the compiler takes out of useCallback", async () => {
+    const typed = await typedFile(
+      {
+        "src/index.tsx": `import { useCallback, useState } from "react";
+function pick<T>(make: (label: string, seed: T) => T, seed: T): T {
+  return make("a", seed);
+}
+export function usePicked(start: number) {
+  const [n] = useState(start);
+  return pick(
+    useCallback((label, seed: number = 1) => seed + n + label.length, [n]),
+    n,
+  );
+}
+${useBeside}`,
+        "node_modules/react/package.json": JSON.stringify({
+          name: "react",
+          version: "19.0.0",
+          exports: { ".": { types: "./index.d.ts", default: "./index.js" } },
+        }),
+        "node_modules/react/index.js": `export const useState = initial => [initial];\nexport const useCallback = callback => callback;\n`,
+        "node_modules/react/index.d.ts": `export declare function useState<T>(initial: T): [T];
+export declare function useCallback<T extends Function>(callback: T, deps: readonly unknown[]): T;
+`,
+      },
+      { external: ["react"] },
+    );
+    expect(typed).toContain("return pick((label, t0: number) => {");
+    expect(typed).toContain("function useBeside(t0?: number, t1?: number): number {");
+  });
+
+  // Now, as on main: the typed files are left out, "TS2345: Argument of type '(t0: number) => number' is not assignable
+  // to parameter of type '() => number'."
+  test.todo("can be left out of a callback", async () => {
+    const typed = await typedFile({
+      "src/index.tsx": `import { useState } from "./state";
+${callees}
+export function useRun(start: number): number {
+  const [n] = useState(start);
+  return run((extra: number = 1) => n + extra);
+}
+`,
+    });
+    expect(typed).toContain("return run((t0?: number) => {");
+  });
+
+  test("keeps a comment that is before its type", async () => {
+    const typed = await typedFile({
+      "src/index.tsx": `import { useState } from "./state";
+export function useComment(
+  first: // how many
+  number = 1,
+  n: number,
+): number {
+  const [value] = useState(first);
+  return value + n;
+}
+export function useFormat(
+  format: // how
+  (value: number) => string = String,
+  value: number,
+): string {
+  const [seen] = useState(value);
+  return format(seen);
+}
+export function useMode(
+  mode:
+    // the default
+    | "light"
+    | "dark" = "light",
+  n: number,
+): string {
+  const [value] = useState(mode);
+  return value + n;
+}
+console.log(useComment(undefined, 1), useFormat(undefined, 1), useMode(undefined, 1), useMode("light", 1));
+`,
+    });
+    expect(typed).toContain("function useComment(t0: // how many\n  number | undefined, n: number): number {");
+    expect(typed).toContain(
+      "function useFormat(t0: // how\n  ((value: number) => string) | undefined, value: number): string {",
+    );
+    expect(typed).toContain(
+      'function useMode(t0:\n    // the default\n    | "light"\n    | "dark" | undefined, n: number): string {',
+    );
   });
 
   test("in a module that is not checked", async () => {
-    using dir = tempDir("build-api-dts-moved-default-unchecked", {
+    const typed = await typedFile({
       "tsconfig.json": JSON.stringify({
-        compilerOptions: { ...JSON.parse(project["tsconfig.json"]).compilerOptions, allowJs: true, jsx: "react-jsx" },
+        compilerOptions: { ...JSON.parse(project["tsconfig.json"]).compilerOptions, jsx: "react-jsx" },
       }),
       "package.json": JSON.stringify({ name: "hooks", compilerOptions: { strict: true, jsx: "react-jsx" } }),
-      "src/state.ts": state,
-      "src/index.tsx": `export { useLoose } from "./loose";\nexport { plainJs, useJs } from "./hooks.js";\n`,
+      "src/index.tsx": `export { useLoose } from "./loose";\n`,
       "src/loose.tsx": `// @ts-nocheck
 import { useState } from "./state";
 export function useLoose(first: number = 1, second: number = 2, third = 3) {
@@ -543,69 +525,168 @@ export function useLoose(first: number = 1, second: number = 2, third = 3) {
   return value + second + third;
 }
 `,
-      "src/hooks.js": `import { useState } from "./state";
-export function useJs(first = 1, { second } = { second: 2 }, third = 3) {
-  const [value] = useState(first);
-  return value + second + third;
-}
-export function plainJs(first, second) {
-  return first + second;
-}
-`,
     });
-    const root = String(dir);
-    const built = await build(root);
-    expect(built.logs).toEqual([]);
-    expect(parametersIn(readFileSync(join(root, "out/index.aot.ts"), "utf8"))).toEqual({
-      useState: "initial: T",
-      useLoose: "t1?, t2?",
-      useJs: "t1?, t2?",
-      plainJs: "first, second",
-    });
+    expect(parametersIn(typed)).toEqual({ useState: "initial: T", useLoose: "t0?, t1?, t2?" });
   });
 
-  test("in the output for a browser, which keeps what a function computes from one call to the next", async () => {
-    using dir = tempDir("build-api-dts-moved-default-client", {
-      "tsconfig.json": project["tsconfig.json"],
-      "src/index.tsx": `import { useState } from "react";
-export function usePoint(first: number = 1, point: [number, number] = [0, 0], scale = 2): number {
-  const [value] = useState(point);
-  return (value[0] + value[1]) * scale + first;
-}
-console.log(usePoint(), usePoint(1, [1, 2]), usePoint(1, [1, 2], 3));
-`,
-      "node_modules/react/package.json": JSON.stringify({
-        name: "react",
-        version: "19.0.0",
-        exports: {
-          ".": { types: "./index.d.ts", default: "./index.js" },
-          "./compiler-runtime": { types: "./compiler-runtime.d.ts", default: "./compiler-runtime.js" },
-        },
+  // The checker has no types of a module that it reaches through node_modules: the rule reads the syntax alone.
+  test("in a module of another package of the workspace", async () => {
+    using dir = tempDir("build-api-dts-moved-default-workspace", {
+      "app/tsconfig.json": JSON.stringify({
+        compilerOptions: { ...JSON.parse(project["tsconfig.json"]).compilerOptions, jsx: "react-jsx" },
       }),
-      "node_modules/react/index.js": `export const useState = initial => [initial];\n`,
-      "node_modules/react/index.d.ts": `export declare function useState<T>(initial: T): [T];\n`,
-      "node_modules/react/compiler-runtime.js": `export const c = size => new Array(size);\n`,
-      "node_modules/react/compiler-runtime.d.ts": `export declare function c(size: number): any[];\n`,
+      "app/package.json": JSON.stringify({ name: "app", compilerOptions: { strict: true, jsx: "react-jsx" } }),
+      "app/src/index.tsx": `import { useTotal } from "hooks";
+export function useAll(items: string[]): number {
+  return useTotal(items);
+}
+`,
+      "packages/hooks/package.json": JSON.stringify({
+        name: "hooks",
+        version: "1.0.0",
+        exports: { ".": "./index.tsx" },
+      }),
+      "packages/hooks/index.tsx": `${state}export function useTotal(items: string[], first: number = 1): number {
+  const [n] = useState(items.length);
+  return items.reduce((total: number = 0, item) => total + item.length + n, first);
+}
+`,
     });
     const root = String(dir);
-    const built = await build(root, { target: "browser", external: ["react", "react/*"] });
+    mkdirSync(join(root, "app/node_modules"));
+    symlinkSync(join(root, "packages/hooks"), join(root, "app/node_modules/hooks"), "junction");
+    const built = await Bun.build({
+      entrypoints: [join(root, "app/src/index.tsx")],
+      outdir: join(root, "app/out"),
+      tsconfig: join(root, "app/tsconfig.json"),
+      target: "bun",
+      reactCompiler: true,
+      dts: true,
+    });
     expect(built.logs).toEqual([]);
-    const typed = readFileSync(join(root, "out/index.aot.ts"), "utf8");
-    expect(typed).toContain(`import { c as _c } from "react/compiler-runtime";`);
-    expect(parametersIn(typed)).toEqual({ usePoint: "t1?: [number, number], t2?: number" });
+    const typed = readFileSync(join(root, "app/out/index.aot.ts"), "utf8");
+    expect(typed).toContain("return items.reduce((t1: number, item) => {");
+    expect(parametersIn(typed)).toEqual({
+      useState: "initial: T",
+      useTotal: "items: string[], t0?: number",
+      useAll: "items: string[]",
+    });
   });
 
-  test("with minify.syntax, which puts the variables of a function into one statement", async () => {
-    using dir = tempDir("build-api-dts-moved-default-minify", {
-      "tsconfig.json": project["tsconfig.json"],
+  // The rule reads the text that the compiler had, which is not the text on the disk here.
+  test("in a module that a plugin changes", async () => {
+    const typed = await typedFile(
+      {
+        "src/index.tsx": `import { useState } from "./state";
+export function useSigned(first: number = 1, second: typeof first = 2): number {
+  const [value] = useState(first);
+  return value + second;
+}
+${useBeside}`,
+      },
+      {
+        plugins: [
+          {
+            name: "banner",
+            setup(build) {
+              build.onLoad({ filter: /index\.tsx$/ }, async ({ path }) => ({
+                contents: "// a line that a plugin adds\n" + (await Bun.file(path).text()),
+                loader: "tsx",
+              }));
+            },
+          },
+        ],
+      },
+    );
+    expect(parametersIn(typed)).toMatchObject({
+      useSigned: expect.stringMatching(/^t0: number, t1: typeof /),
+      useBeside: "t0?: number, t1?: number",
+    });
+  });
+
+  // The stand-in declares `c`. The `react/compiler-runtime` of `@types/react` declares nothing, and the typed files of a
+  // browser build are left out against it (TS2305), with this parameter list or another.
+  test("in the output for a browser, which keeps what a function computes from one call to the next", async () => {
+    const typed = await typedFile(
+      {
+        "src/index.tsx": `import { useState } from "react";
+export function usePair(first: number = 1, second: number = 2): number[] {
+  const [value] = useState(first);
+  return [value, second];
+}
+console.log(usePair(), usePair(1), usePair(1, 2));
+`,
+        "node_modules/react/package.json": JSON.stringify({
+          name: "react",
+          version: "19.0.0",
+          exports: {
+            ".": { types: "./index.d.ts", default: "./index.js" },
+            "./compiler-runtime": { types: "./compiler-runtime.d.ts", default: "./compiler-runtime.js" },
+          },
+        }),
+        "node_modules/react/index.js": `export const useState = initial => [initial];\n`,
+        "node_modules/react/index.d.ts": `export declare function useState<T>(initial: T): [T];\n`,
+        "node_modules/react/compiler-runtime.js": `export const c = size => new Array(size);\n`,
+        "node_modules/react/compiler-runtime.d.ts": `export declare function c(size: number): any[];\n`,
+      },
+      { target: "browser", external: ["react", "react/*"] },
+    );
+    expect(typed).toContain(`import { c as _c } from "react/compiler-runtime";`);
+    expect(parametersIn(typed)).toEqual({ usePair: "t0?: number, t1?: number" });
+  });
+
+  test("with minify.syntax and minify.whitespace", async () => {
+    const typed = await typedFile({ "src/index.tsx": hooks + calls }, { minify: { syntax: true, whitespace: true } });
+    expect(typed).toContain("function useBoth(t0?: number,t1?: number): number{");
+    expect(typed).toContain("function useFormat(t0: ((value: number) => string) | undefined,value: number): string{");
+  });
+
+  test("with two entry points and splitting", async () => {
+    using dir = tempDir("build-api-dts-moved-default-splitting", {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { ...JSON.parse(project["tsconfig.json"]).compilerOptions, jsx: "react-jsx" },
+      }),
+      "package.json": JSON.stringify({ name: "hooks", compilerOptions: { strict: true, jsx: "react-jsx" } }),
       "src/state.ts": state,
-      "src/index.tsx": hooks + calls,
+      "src/hooks.tsx": `import { useState } from "./state";
+${useBeside}export function useOther(first: number = 1): number {
+  const [value] = useState(first);
+  return value;
+}
+`,
+      "src/a.tsx": `import { useBeside } from "./hooks";
+export function useA(first: number = 1): number {
+  return useBeside(first);
+}
+console.log(useA(), useBeside());
+`,
+      "src/b.tsx": `import { useBeside, useOther } from "./hooks";
+export function useB(start: number = 0, end: number): number {
+  return useBeside(start, end);
+}
+export const hooks = [useOther];
+console.log(useB(undefined, 1), useBeside());
+`,
     });
     const root = String(dir);
-    const built = await build(root, { minify: { syntax: true } });
+    const built = await Bun.build({
+      entrypoints: [join(root, "src/a.tsx"), join(root, "src/b.tsx")],
+      outdir: join(root, "out"),
+      tsconfig: join(root, "tsconfig.json"),
+      target: "bun",
+      reactCompiler: true,
+      splitting: true,
+      dts: true,
+    });
     expect(built.logs).toEqual([]);
-    const typed = readFileSync(join(root, "out/index.aot.ts"), "utf8");
-    expect(parametersIn(typed)).toEqual(parameters);
-    expect(typed).toContain(", second: number = t1 === void 0 ? 2 : t1,");
+    const typed = filesIn(join(root, "out"))
+      .filter(path => path.endsWith(".aot.ts"))
+      .map(path => readFileSync(join(root, "out", path), "utf8"));
+    expect(typed.map(parametersIn).sort((a, b) => Object.keys(a)[0].localeCompare(Object.keys(b)[0]))).toEqual([
+      { useA: "t0?: number" },
+      { useB: "t0: number | undefined, end: number" },
+      // Another file of the build has `useOther` as a value.
+      { useState: "initial: T", useBeside: "t0?: number, t1?: number", useOther: "t0: number" },
+    ]);
   });
 });

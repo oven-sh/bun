@@ -134,74 +134,179 @@ export function join(first: string, second: string): string {
     expect(readFileSync(join(String(dir), "out/index.aot.ts"), "utf8")).not.toContain("__DEV__");
   });
 
+  test("a build without it writes what it always did", async () => {
+    using dir = tempDir("build-without-dts", project);
+    const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out");
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(readdirSync(join(String(dir), "out"))).toEqual(["index.js"]);
+  });
+
+  // A `//` comment ends at its line break, so the type stays on the line after it.
+  test("a comment before the type of an optional parameter property is kept", async () => {
+    using dir = tempDir("build-dts-comment", {
+      ...project,
+      "src/index.ts": `export class Box {
+  constructor(
+    public size?: // in pixels
+    number,
+  ) {}
+}
+`,
+    });
+    const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts");
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(readFileSync(join(String(dir), "out/index.aot.ts"), "utf8")).toContain(
+      "  public size?: // in pixels\n    number | undefined;\n",
+    );
+  });
+
   // The React Compiler prints `(first = 1)` as `(t0) { let first = t0 === undefined ? 1 : t0`.
   const hooks = {
-    "tsconfig.json": project["tsconfig.json"],
-    "package.json": project["package.json"],
+    ...project,
     "src/state.ts": `export function useState<T>(initial: T): [T] {\n  return [initial];\n}\n`,
     "src/index.tsx": `import { useState } from "./state";
 export function useBoth(first: number = 1, second: number = 2): number {
   const [value] = useState(first);
   return value + second;
 }
-export function useRange(first: number = 1, start = 0, end: number): number {
-  const [value] = useState(first);
-  return value + start + end;
+export function useRange(start: number = 0, end: number): number {
+  const [value] = useState(start);
+  return value + end;
 }
-export enum Unit {
-  Px,
-  Em,
+export function useFormat(format: (value: number) => string = String, value: number): string {
+  const [text] = useState(format(value));
+  return text;
 }
-export function useCell(first: number = 1, unit = Unit.Px as Unit | null): string {
-  const [value] = useState(first);
-  return value + String(unit);
+export function useTotal(items: string[]) {
+  const [n] = useState(items.length);
+  return items.reduce((total: number = 0, item) => total + item.length + n, 0);
 }
+export const useArrow = (first: number = 1, second: number = 2): number => useState(first)[0] + second;
 `,
   };
-  const hookFlags = ["--outdir", "out", "--dts", "--react-compiler", "--target=bun"];
+  const withCompiler = ["build", "./src/index.tsx", "--outdir", "out", "--dts", "--react-compiler", "--target=bun"];
 
   test("--react-compiler: a parameter whose default value is in the function body can be left out", async () => {
-    using dir = tempDir("build-dts-react-compiler", {
+    using dir = tempDir("build-dts-moved-default", {
       ...hooks,
-      "src/index.tsx": hooks["src/index.tsx"] + `console.log(useBoth(), useBoth(5), useBoth(5, 6));\n`,
+      "src/index.tsx": hooks["src/index.tsx"] + "console.log(useBoth());\n",
     });
-    const built = await bun(String(dir), "build", "./src/index.tsx", ...hookFlags);
+    const built = await bun(String(dir), ...withCompiler);
     expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    const read = (name: string) => readFileSync(join(String(dir), "out", name), "utf8");
-    expect(read("index.d.ts")).toContain("export declare function useBoth(first?: number, second?: number): number;");
-    expect(read("index.aot.ts")).toContain("t1?: number): number {\n");
-    expect(read("index.aot.ts")).toContain("  let second: number = t1 === undefined ? 2 : t1;\n");
-    expect(read("index.aot.ts")).toContain("t1: number | undefined, end: number): number {\n");
+    expect(readFileSync(join(String(dir), "out/index.aot.ts"), "utf8")).toContain(
+      "function useBoth(t0?: number, t1?: number): number {",
+    );
   });
 
-  test("--react-compiler: such a parameter still takes no other type", async () => {
-    using dir = tempDir("build-dts-react-compiler-callers", {
+  test("--react-compiler: a function with such a parameter has the type that index.d.ts says", async () => {
+    using dir = tempDir("build-dts-moved-default-same", {
       ...hooks,
-      "uses.ts": `import { Unit, useBoth, useCell, useRange } from "./out/index.aot";
-export const sums: number[] = [useBoth(), useBoth(1), useBoth(1, 2), useRange(undefined, undefined, 1), useRange(1, 2, 3)];
-export const cells: string[] = [useCell(), useCell(1, null), useCell(1, Unit.Em)];
-// @ts-expect-error
-useBoth("1");
-// @ts-expect-error
-useBoth(1, "2");
-// @ts-expect-error
-useRange(1, 2);
-// @ts-expect-error
-useRange(1, "0", 1);
-// @ts-expect-error
-useCell(1, "px");
+      "same.ts": `import * as declared from "./out/index";
+import * as typed from "./out/index.aot";
+type Same<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+export const useBoth: Same<typeof typed.useBoth, typeof declared.useBoth> = true;
+export const useRange: Same<typeof typed.useRange, typeof declared.useRange> = true;
+export const useFormat: Same<typeof typed.useFormat, typeof declared.useFormat> = true;
+export const useTotal: Same<typeof typed.useTotal, typeof declared.useTotal> = true;
+export const useArrow: Same<typeof typed.useArrow, typeof declared.useArrow> = true;
 `,
     });
-    const built = await bun(String(dir), "build", "./src/index.tsx", ...hookFlags);
+    const built = await bun(String(dir), ...withCompiler);
     expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    // An error, and one that is expected and missing, is a line of the output.
-    expect(await bun(String(dir), "check", "--no-pretty", "uses.ts")).toMatchObject({ stdout: "", exitCode: 0 });
+    expect(await bun(String(dir), "check", "--no-pretty", "same.ts")).toMatchObject({ stdout: "", exitCode: 0 });
   });
 
-  test("a build without it writes what it always did", async () => {
-    using dir = tempDir("build-without-dts", project);
-    const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out");
+  // TypeScript infers the type arguments of a call from an annotated parameter of a callback, where a default value
+  // adds no `undefined` and a `?` does. Main writes the typed file of this build: only `useBeside` has another type there.
+  test("--react-compiler: a hook keeps its type where a call gives the parameter of a callback a type", async () => {
+    const callees = {
+      fold: "fold(items, (total: number = 0) => count(n, total), 0)",
+      foldItem: "fold(items, (total: number = 0, item: string) => count(n, total, item), 0)",
+      on: "on((payload: number = 0) => use(n, payload))",
+      useReducer: "useReducer((state: number = 0) => count(n, state), 0)",
+      useReducerOf: "useReducer((state: Counter = { count: 0 }) => ({ count: count(n, state) }), { count: n })",
+      store: "new Store((state: number = 0) => count(n, state), 0).state",
+      configure: "configure({ initial: n, onChange: (value: number = 0) => use(n, value) })",
+      pipeline: "pipeline(0, (value: number = 0) => count(n, value), (value: number = 0) => count(n, value))",
+      memoize: "memoize((argument: number = 0) => count(n, argument))",
+      watch: "watch((previous: number = 0) => count(n, previous), 0)",
+      curried: "curried((first: number = 0) => (second: number) => second + count(n, first))",
+      reduce: "items.reduce((total: number = 0, item) => total + item.length + n, 0)",
+    };
+    const names = Object.keys(callees).map(name => "use" + name[0].toUpperCase() + name.slice(1));
+    using dir = tempDir("build-dts-moved-default-callback", {
+      ...project,
+      "src/lib.ts": `export function useState<T>(initial: T): [T] {
+  return [initial];
+}
+export function count(...values: unknown[]): number {
+  return values.length;
+}
+export function use(...values: unknown[]): void {}
+export interface Counter {
+  count: number;
+}
+export function fold<U>(items: string[], step: (total: U, item: string, index: number) => U, initial: U): U {
+  return items.reduce((total, item, index) => step(total, item, index), initial);
+}
+export function on<T>(handler: (payload: T, meta: { at: number }) => void): T[] {
+  return [];
+}
+export type AnyActionArg = [] | [any];
+export function useReducer<S, A extends AnyActionArg>(
+  reducer: (prevState: S, ...args: A) => S,
+  initialState: S,
+): [S, (...args: A) => void] {
+  return [initialState, () => {}];
+}
+export class Store<T> {
+  constructor(
+    public reduce: (state: T, action: string) => T,
+    public state: T,
+  ) {}
+}
+export function configure<T>(options: { initial: T; onChange: (value: T, previous: T) => void }): T {
+  return options.initial;
+}
+export function pipeline<T>(initial: T, ...steps: Array<(value: T, index: number) => T>): T {
+  return steps.reduce((value, step, index) => step(value, index), initial);
+}
+export function memoize<A, R>(compute: (argument: A, cache: Map<A, R>) => R): (argument: A) => R {
+  const cache = new Map<A, R>();
+  return argument => compute(argument, cache);
+}
+export function watch<T>(get: (previous: T, tick: number) => T, initial: T): T;
+export function watch(get: (previous: string, tick: number) => string): string;
+export function watch(get: (previous: any, tick: number) => any, initial?: any): any {
+  return get(initial, 0);
+}
+export function curried<T>(make: (first: T, label: string) => (second: T) => T): T | undefined {
+  return undefined;
+}
+`,
+      "src/index.tsx": `import { Counter, Store, configure, count, curried, fold, memoize, on, pipeline, use, useReducer, useState, watch } from "./lib";
+${names
+  .map(
+    (name, index) => `export function ${name}(items: string[]) {
+  const [n] = useState(items.length);
+  return ${Object.values(callees)[index]};
+}
+`,
+  )
+  .join("")}export function useBeside(first: number = 1, second: number = 2): number {
+  const [value] = useState(first);
+  return value + second;
+}
+`,
+      "same.ts": `import * as declared from "./out/index";
+import * as typed from "./out/index.aot";
+type Same<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+${[...names, "useBeside"]
+  .map(name => `export const ${name}: Same<typeof typed.${name}, typeof declared.${name}> = true;\n`)
+  .join("")}`,
+    });
+    const built = await bun(String(dir), ...withCompiler);
     expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    expect(readdirSync(join(String(dir), "out"))).toEqual(["index.js"]);
+    expect(await bun(String(dir), "check", "--no-pretty", "same.ts")).toMatchObject({ stdout: "", exitCode: 0 });
   });
 });

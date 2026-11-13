@@ -51,7 +51,7 @@ fn lower_function_of_throwing_file(
             declare_what_other_files_may_name(file);
             lower_function_that_throws(file, function, message);
         }
-        FunctionKey::FaceBody(_) => file.lower_face_body(function),
+        FunctionKey::FacadeBody(_) => file.lower_facade_body(function),
         FunctionKey::CheckBody(_) => file.lower_check_body(function),
         FunctionKey::Instantiation(_) => {
             super::finish_body(FunctionLowering::begin(file, function), None);

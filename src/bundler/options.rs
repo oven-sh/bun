@@ -1279,8 +1279,6 @@ pub struct TypeChecked<'a, 'i> {
     pub conditions: &'a [Box<[u8]>],
     /// `loaders`. A file that only has types is not in the bundle, so not among `sources`.
     pub loaders: &'a LoaderHashTable,
-    /// Whether `react_compiler` is on. Its output has the default value of a parameter in the function body.
-    pub react_compiler: bool,
     /// The path of each JavaScript or TypeScript file that an entry point resolved to, or that a
     /// page imports.
     pub entry_points: &'i mut dyn Iterator<Item = &'a [u8]>,
@@ -2121,7 +2119,7 @@ pub enum ImportPathFormat {
     PackagePath,
 }
 
-pub(crate) mod bundle_options_defaults {
+pub mod bundle_options_defaults {
     pub(crate) const EXTENSION_ORDER: &[&[u8]] = &[
         b".tsx", b".ts", b".jsx", b".cts", b".cjs", b".js", b".mjs", b".mts", b".json",
     ];
@@ -2129,7 +2127,7 @@ pub(crate) mod bundle_options_defaults {
     pub(crate) const MAIN_FIELD_EXTENSION_ORDER: &[&[u8]] =
         &[b".js", b".cjs", b".cts", b".tsx", b".ts", b".jsx", b".json"];
 
-    pub(crate) const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
+    pub const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
         b".tsx", b".jsx", b".mts", b".ts", b".mjs", b".js", b".cts", b".cjs", b".json",
     ];
 

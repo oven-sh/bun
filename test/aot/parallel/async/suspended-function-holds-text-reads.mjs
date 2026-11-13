@@ -65,5 +65,6 @@ console.log("a function that reads a local on a path never taken answers", await
 await readOnlyInFront(3);
 console.log("a function that leaves a for-of loop behind an await answers", await listWalkedByForOf(4));
 await listWalkedToItsEnd(5);
-await generatorAtItsYield(6);
-await asyncGeneratorAtItsYield(7);
+// The two arguments come from where the build cannot know them: of a written number it proves that the path is never taken, and then the local may go.
+await generatorAtItsYield(process.argv.length + 4);
+await asyncGeneratorAtItsYield(process.argv.length + 5);

@@ -10,7 +10,7 @@ raiseDefaultTimeout(120_000);
 
 const test = oneAtATime.concurrent;
 
-const refusal = `Cannot read the entry of '/lib.mjs' in require.cache: the build found nothing that reads the cache, so the module was compiled for the code that imports it. Spell the read in a file that the tests import: require.cache[require.resolve("./module")]`;
+const refusal = `Cannot read the entry of '/lib.mjs' in require.cache: the build saw no code that reads the cache, so the module has no entry. Write the read out in a file that the tests import: require.cache[require.resolve("./module")]`;
 const asks = `"path", "return import('node:module').then(m => m.default._cache[path].exports)"`;
 const project = {
   "package.json": `{ "name": "made-up-product", "version": "1.0.0", "type": "module", "main": "./product.mjs" }`,

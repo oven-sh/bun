@@ -19,6 +19,7 @@ pub(crate) struct MemoryHost {
     required: Vec<(Vec<u8>, Vec<u8>)>,
     node_paths: Vec<Vec<u8>>,
     found: Vec<(Vec<u8>, Vec<u8>)>,
+    found_with_side_effects: Vec<Vec<u8>>,
     holds_modules_with_queries: bool,
     given_in_memory: Vec<Vec<u8>>,
     reads: bun_threading::Guarded<FxHashMap<Vec<u8>, usize>>,
@@ -48,6 +49,11 @@ impl MemoryHost {
     pub(crate) fn finds(mut self, specifier: &str, path: &str) -> MemoryHost {
         self.found.push((specifier.into(), path.into()));
         self
+    }
+
+    pub(crate) fn finds_with_side_effects(mut self, specifier: &str, path: &str) -> MemoryHost {
+        self.found_with_side_effects.push(specifier.into());
+        self.finds(specifier, path)
     }
 
     pub(crate) fn holding_modules_with_queries(mut self) -> MemoryHost {
@@ -262,10 +268,12 @@ impl CodeHost for MemoryHost {
     fn find_code_file(&self, search: &FileSearch<'_>) -> FoundCode {
         let mut found = self.found.iter();
         if let Some((_, path)) = found.find(|(specifier, _)| specifier == search.specifier) {
+            let mut with_side_effects = self.found_with_side_effects.iter();
             return FoundCode::File {
                 path: path.clone(),
                 required: None,
                 links_followed: true,
+                has_side_effects: with_side_effects.any(|it| it == search.specifier),
             };
         }
         let in_node_paths = || {
@@ -294,8 +302,9 @@ impl CodeHost for MemoryHost {
         match found {
             FoundCode::File {
                 path,
+                required: _,
                 links_followed,
-                ..
+                has_side_effects,
             } if search.prefers_module_field => {
                 let mut pairs = self.required.iter();
                 let required = pairs.find(|pair| pair.0 == path).map(|pair| pair.1.clone());
@@ -303,6 +312,7 @@ impl CodeHost for MemoryHost {
                     path,
                     required,
                     links_followed,
+                    has_side_effects,
                 }
             }
             found => found,

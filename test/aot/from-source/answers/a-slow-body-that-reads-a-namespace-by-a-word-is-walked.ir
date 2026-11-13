@@ -3,8 +3,8 @@
 # declare function id(x: any): any;
 # class Tag { n = 1; m = 2; }
 # function count(o: any): number { let names = 0; for (const name in o) names++; return names; }
-# function tell(tag: Tag): number { let work = 0; for (let i = 0; i < 2; i++) work = (work + tag.n + tag.m) | 0; return count(space) + work; }
-# function plain(tag: Tag): number { let work = 0; for (let i = 0; i < 2; i++) work = (work + tag.n + tag.m) | 0; return work; }
+# function tell(tag: Tag): number { let work = (tag.n + tag.m + tag.n + tag.m + tag.n - tag.n + tag.m - tag.m + tag.n - tag.n + tag.m - tag.m) | 0; return count(space) + work; }
+# function plain(tag: Tag): number { let work = (tag.n + tag.m + tag.n + tag.m + tag.n - tag.n + tag.m - tag.m + tag.n - tag.n + tag.m - tag.m) | 0; return work; }
 # print(tell(new Tag()), tell(id({ n: 1, m: 2 })), plain(new Tag()), plain(id({ n: 1, m: 2 })));
 # declare function print(...values: unknown[]): void;
 # -- source: other.ts
@@ -14,8 +14,8 @@
 # Both functions have a guard, and a slow body for what it turns away; neither slow body holds a Builtin operation. That of plain() is written straight, and so is the body of other.ts, which runs once and only stores.
 # That of tell() reads a namespace object, which the walked form takes out of a word of the instance: what lies there is what the importer was bound to. Straight code has only the question to the run time,
 # which answers the namespace of now. So the read has no straight form, and the body is walked.
-# RUN(STRAIGHT): compile UnitsWrittenStraight mechanisms=all
-# REQUIRES(STRAIGHT): faulting-loop-polls
-# STRAIGHT: statistic UnitsWrittenStraight 2
+# RUN(STRAIGHT): compile StraightUnitsCompiled mechanisms=all
+# REQUIRES(STRAIGHT): faulting-loop-polls as-written
+# STRAIGHT: statistic StraightUnitsCompiled 2
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 8 8 6 6

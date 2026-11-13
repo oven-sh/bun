@@ -224,7 +224,6 @@ impl BuildCommand {
                 tsconfig: ctx.args.tsconfig_override.as_deref(),
                 conditions: &ctx.args.conditions,
                 loaders: &this_transpiler.options.loaders,
-                react_compiler: ctx.bundler_options.react_compiler,
                 entry_points: &mut entry_points.map(|path| &**path),
                 sources: &mut core::iter::empty(),
             };
@@ -973,6 +972,25 @@ impl BuildCommand {
                     }
                 }
 
+                if ctx.bundler_options.keeps_entry_points {
+                    let is_entry_point = |file: &&options::OutputFile| {
+                        file.output_kind == options::OutputKind::EntryPoint
+                    };
+                    let entry_points = output_files.iter().filter(is_entry_point);
+                    let sources = entry_points.map(|file| file.src_path.text);
+                    let written = ctx.args.entry_points.iter().map(|path| &path[..]);
+                    let checked = super::compile_command::check_entry_points_are_kept(
+                        outfile, written, sources,
+                    );
+                    if let Err(failure) = checked {
+                        super::compile_command::exit_with_failure(
+                            log_ref,
+                            super::compile_command::RequestOrigin::CompileCommand,
+                            compile_target,
+                            &failure,
+                        );
+                    }
+                }
                 let flags = {
                     use bun_standalone_module_graph::StandaloneModuleGraph::Flags;
                     let mut flags = Flags::default();

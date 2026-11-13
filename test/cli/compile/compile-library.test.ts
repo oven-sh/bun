@@ -535,6 +535,10 @@ describe.concurrent("bun compile --library", () => {
     [["--aot"], () => "error: --library cannot be used with --aot\n"],
     [["--trim"], () => "error: --library cannot be used with --trim\n"],
     [["--format=iife"], () => "error: --library only supports --format=esm and --format=cjs\n"],
+    [
+      ["--target=bun-linux-x64"],
+      () => "error: --library only supports --target=bun, --target=node and --target=browser\n",
+    ],
   ])("%j is refused", async (flags, stderr) => {
     using dir = tempDir("library-refused", { ...sources, "package.json": JSON.stringify(packageJson) });
     expect(await bun(String(dir), "compile", "--library", "src/index.ts", ...flags)).toEqual({
@@ -950,6 +954,7 @@ export function literal(which: "plain" | "loud"): { done: true } {
 `,
   };
 
+  // The React Compiler prints `(first = 1)` as `(t0) { let first = t0 === undefined ? 1 : t0`.
   test("--react-compiler: a parameter whose default value is in the function body can be left out", async () => {
     using dir = tempDir(
       "library-typed-file-react-compiler",
@@ -966,7 +971,7 @@ export const sums: number[] = [useBoth(), useBoth(5), useBoth(5, 6)];
     );
     const built = await bun(String(dir), "compile", "--library", "src/index.tsx", "--react-compiler");
     expect(built).toMatchObject({ stderr: "", exitCode: 0 });
-    expect(typedFile(dir)).toContain("t1?: number): number {\n");
+    expect(typedFile(dir)).toContain("function useBoth(t0?: number, t1?: number): number {\n");
     // A package whose .aot.ts files are left out has no "aot" condition.
     expect(json(join(String(dir), "dist/package.json")).exports).toEqual({
       ".": conditions("index"),

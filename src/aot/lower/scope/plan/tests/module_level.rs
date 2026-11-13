@@ -11,6 +11,7 @@ use crate::lower::scope::testing::{functions_of_kind, walk_scopes, with_scope_in
 use crate::lower::scope::{BindingRef, Placement, ScopeSlot, Storage};
 
 const MODULE: ScopeSlot = ScopeSlot::CommonJs(CommonJsVariable::Module);
+const EXPORTS: ScopeSlot = ScopeSlot::CommonJs(CommonJsVariable::Exports);
 
 fn is_symbol(binding: &BindingRef) -> bool {
     match binding {
@@ -238,7 +239,7 @@ fn function_with_captures_is_not_initial() {
 }
 
 #[test]
-fn commonjs_name_is_no_binding_without_wrapper_parameters() {
+fn commonjs_name_other_than_exports_is_no_binding_without_wrapper_parameters() {
     for source in [
         "function f() { return module; } f();",
         "function f() { return [require, exports, __filename, __dirname]; } f();",
@@ -247,10 +248,10 @@ fn commonjs_name_is_no_binding_without_wrapper_parameters() {
     ] {
         analyze_source("main.cjs", source, |probe| {
             assert!(!probe.has_wrapper_parameters(), "{source}");
-            assert!(
-                probe.bindings(probe.file_scope()).iter().all(is_symbol),
-                "{source}"
-            );
+            let exports = probe.file_slot(EXPORTS);
+            let bindings = probe.bindings(probe.file_scope());
+            let mut slots = bindings.iter().filter(|binding| !is_symbol(binding));
+            assert!(slots.all(|&binding| binding == exports), "{source}");
             for kind in [FnKind::Decl, FnKind::Expr] {
                 for function in probe.functions(kind) {
                     assert!(probe.captures(function).is_empty(), "{source}");

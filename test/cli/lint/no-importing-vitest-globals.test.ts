@@ -271,6 +271,12 @@ const cases: Record<string, Case> = {
     files: { "case.test.ts": 'import { expect, inject } from "./helpers.ts";\n' + prints('inject("port")') },
     prints: ["undefined"],
   },
+  "require(): a key with a pattern whose name the file exports": {
+    file: "helpers.ts",
+    text: 'const { vi: { fn }, inject } = require("vitest");\nexport { fn, inject };\n',
+    files: { "case.test.ts": 'import { fn, inject } from "./helpers.ts";\n' + prints('fn(() => inject("port"))()') },
+    prints: ["undefined"],
+  },
   // oxlint's text leaves `export` to the next statement.
   "require(): exported, with no name that stays": {
     file: "helpers.js",
@@ -359,6 +365,21 @@ const cases: Record<string, Case> = {
     text: 'import { test, expect } from "vitest";\ntest("waits", async () => {\n  await 1;\n});\n' + prints("1"),
     prints: ["1"],
     fixed: '\ntest("waits", async () => {\n  await 1;\n});\n' + prints("1"),
+  },
+  // These make a module for TypeScript too.
+  "import: the last import of a TypeScript file that declares a name and has `import.meta`": {
+    file: "case.test.ts",
+    text: 'import { test, expect } from "vitest";\nconst name = import.meta.url.slice(0, 4);\n' + prints("name"),
+    prints: ["file"],
+    fixed: "\nconst name = import.meta.url.slice(0, 4);\n" + prints("name"),
+  },
+  "import: the last import of a TypeScript file that declares a name and has `import a = require()`": {
+    file: "case.test.ts",
+    text:
+      'import { test, expect } from "vitest";\nimport path = require("node:path");\nconst name = path.sep.length;\n' +
+      prints("name"),
+    prints: ["1"],
+    fixed: '\nimport path = require("node:path");\nconst name = path.sep.length;\n' + prints("name"),
   },
   "import: the last import of a JavaScript file that declares a name": {
     text: 'import { test, expect } from "vitest";\nconst name = "one";\n' + prints("name"),

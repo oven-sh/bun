@@ -99,11 +99,16 @@ fn goes_whole(statement: Stmt) -> bool {
 
 /// True if TypeScript takes the file for a script once the imports that go whole are gone, and the file has what differs in a script.
 fn becomes_a_script<'a>(file: &'a File<'a>) -> bool {
+    // `import.meta` and `import a = require("a")` make a module too, whatever `tsconfig.json` says.
+    let requires = |it: Stmt<'a>| it.tag() == StmtTag::ImportEquals && it.module_specifier_span().is_some();
+    let is_module = || file.has_exprs([ExprTag::ImportMeta]) || file.body().iter().any(requires);
+    if file.is_javascript() || utils::visible::is_module_without(file, goes_whole) || is_module() {
+        return false;
+    }
     // A script's names are global, and it can't have a top-level `await`. `tsconfig.json` can say that no file is a script.
     let is_plain = |it: Stmt<'a>| matches!(it.tag(), StmtTag::Expr | StmtTag::Empty | StmtTag::ExportNamed);
-    let declares_names = || file.body().iter().any(|it| !is_plain(it) && !goes_whole(it));
     let awaits = || file.exprs_of_kind(ExprTag::Await).any(|it| Node::Expr(it).enclosing_function().is_none());
-    !file.is_javascript() && !utils::visible::is_module_without(file, goes_whole) && (declares_names() || awaits())
+    file.body().iter().any(|it| !is_plain(it) && !goes_whole(it)) || awaits()
 }
 
 fn check_import<'a>(node: Stmt<'a>, import_decl: Import<'a>, cx: &Cx<'a, NoImportingVitestGlobals>) {
@@ -219,11 +224,12 @@ fn check_variable_declaration<'a>(
                 continue;
             };
             // An `export { name }` of a name that goes would be left without it.
-            let is_exported = |it: PatProp<'a>| match it.value().kind() {
-                PatKind::Ident(local) => !is_kept_property(&it) && is_exported_by_name(cx.file(), local),
-                _ => false,
-            };
-            if properties.iter().any(is_exported) {
+            let mut is_exported = false;
+            for property in properties.iter().filter(|it| !is_kept_property(it)) {
+                let mut check = |it: Pat<'a>| is_exported |= it.as_ident().is_some_and(|local| is_exported_by_name(cx.file(), local));
+                property.value().for_each_binding(&mut check);
+            }
+            if is_exported {
                 return None;
             }
             let non_global_imports: SmallVec<[&[u8]; 8]> = properties.iter().filter(is_kept_property).map(|it| it.text()).collect();

@@ -107,8 +107,12 @@ public:
             Vector<String> givenTheOriginal;
             // isWaitingForModule()'s cache.
             WTF::UncheckedKeyHashSet<String> waitingModules;
+            // Those of them that wait only by a guess: a module that another load was still fetching, and what imports it.
+            WTF::UncheckedKeyHashSet<String> modulesGuessedToWait = {};
             // The same for the modules that wait only because a module awaits an import().
             WTF::UncheckedKeyHashSet<String> modulesAwaitingImport = {};
+            // The async evaluation order of each module whose code called import() for the factory. See isWaitingForModule().
+            WTF::Vector<int64_t, 1> callerAsyncOrders = {};
             // importChain for imports by compiled code, which the loader does not see.
             WTF::BitVector compiledImportChain = {};
             // givenTheOriginal for compiled files that required the mocked file.

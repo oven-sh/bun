@@ -4536,18 +4536,39 @@ describe.concurrent("a module that a factory loads while the module awaits impor
   });
 
   // A copy of the test file would register its tests a second time. The test file waits as it did, and the run says so.
-  test("a test file that a factory from another file loads again gets no copy", async () => {
+  test.each([
+    [
+      "awaits import() of the mocked module",
+      {
+        "own.test.js": `
+          import { expect, test, vi } from "bun:test";
+          import { name } from "./dep.js";
+          vi.mock("./dep.js", require("./factory.cjs"));
+          export const shared = "shared";
+          test("never runs", () => expect(name).toBe("mock"));
+        `,
+      },
+    ],
+    [
+      "imports a module that awaits it with a statement",
+      {
+        "mocks.js": `import { mock } from "bun:test"; mock.module("./dep.js", require("./factory.cjs"));`,
+        "waits.js": `export const { name } = await import("./dep.js");`,
+        "own.test.js": `
+          import { expect, test } from "bun:test";
+          import "./mocks.js";
+          import { name } from "./waits.js";
+          export const shared = "shared";
+          test("never runs", () => expect(name).toBe("mock"));
+        `,
+      },
+    ],
+  ])("a test file that a factory from another file loads again gets no copy, where it %s", async (_, ownFiles) => {
     using dir = tempDir("mock-module", {
       "dep.js": `export const name = "real";`,
       "factory.cjs": `module.exports = async () => ({ name: "mock", shared: (await import("./helper.js")).viaHelper() });`,
       "helper.js": `import { shared } from "./own.test.js"; export const viaHelper = () => shared;`,
-      "own.test.js": `
-        import { expect, test, vi } from "bun:test";
-        import { name } from "./dep.js";
-        vi.mock("./dep.js", require("./factory.cjs"));
-        export const shared = "shared";
-        test("never runs", () => expect(name).toBe("mock"));
-      `,
+      ...ownFiles,
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "./own.test.js"],
@@ -4832,6 +4853,218 @@ describe.concurrent("a module that a factory loads while the module awaits impor
       },
       1,
     );
+  });
+
+  // For what an import statement names while its file is still being fetched, the runner guesses that it waits. An awaited import() takes no such guess for a wait.
+  test("a module that awaits import() of a module that only a guess says to wait stays the one instance", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "held.js": `globalThis.heldRuns = (globalThis.heldRuns ?? 0) + 1; export const held = "held";`,
+        "inner.js": `import { held } from "./held.js"; globalThis.innerRuns = (globalThis.innerRuns ?? 0) + 1; export const inner = held;`,
+        "last.js": `export const last = 1;`,
+        "statement.js": `import { inner } from "./inner.js"; import "./last.js"; export const viaStatement = inner;`,
+        "waits.js": `const { inner } = await import("./inner.js"); globalThis.runs = (globalThis.runs ?? 0) + 1; export const seen = inner;`,
+        "guess.test.js": `
+          import { expect, test, vi } from "bun:test";
+          const gate = Promise.withResolvers(), started = Promise.withResolvers(), lastStarted = Promise.withResolvers();
+          Bun.plugin({
+            name: "held",
+            setup(build) {
+              build.onLoad({ filter: /held\\.js$/ }, async () => (started.resolve(), await gate.promise, undefined));
+              build.onLoad({ filter: /last\\.js$/ }, () => (lastStarted.resolve(), undefined));
+            },
+          });
+          test("the factory and the program get the same module", async () => {
+            vi.doMock("./other.js", () => ({ other: "mock" }));
+            let inFactory;
+            const first = import("./waits.js");
+            await started.promise;
+            vi.doMock("./dep.js", async () => {
+              // inner.js is guessed to wait: statement.js names it, and held.js below it is still being fetched.
+              const statement = import("./statement.js");
+              await lastStarted.promise;
+              const waits = import("./waits.js");
+              gate.resolve();
+              inFactory = await waits;
+              await statement;
+              return { name: "mock", inFactory: inFactory.seen };
+            });
+            const dep = await import("./dep.js");
+            expect([{ ...dep }, (await first) === inFactory, globalThis.runs]).toEqual([{ name: "mock", inFactory: "held" }, true, 1]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  // The copy makes a mock call again only where its module has made that call: at the same place of the body.
+  test("a mock call that the copy makes behind its await, where the module has yet to make it, is made", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.js": `export const name = "real";`,
+        "other.js": `export const value = "real";`,
+        "lays.js": `import { mock } from "bun:test"; export const lay = value => mock.module("./other.js", () => ({ value }));`,
+        "waits.js": `
+          import { lay } from "./lays.js";
+          lay("before");
+          const { name } = await import("./dep.js");
+          lay("after with " + name);
+          globalThis.runs = (globalThis.runs ?? 0) + 1;
+          export const seen = name;
+          export const other = async () => (await import("./other.js")).value;
+        `,
+        "places.test.js": `
+          import { expect, test, vi } from "bun:test";
+          test("the factory reads what its copy laid behind the await", async () => {
+            vi.doMock("./dep.js", async () => {
+              const copy = await import("./waits.js");
+              return { name: "mock", inFactory: copy.seen, otherInFactory: await copy.other() };
+            });
+            const waits = await import("./waits.js");
+            const dep = await import("./dep.js");
+            const values = [waits.seen, dep.inFactory, dep.otherInFactory, await waits.other(), globalThis.runs];
+            expect(values).toEqual(["mock", "real", "after with real", "after with mock", 2]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test.each([
+    ["an automock", `vi.mock("./other.js");`],
+    ["a spy", `vi.doMock("./other.js", { spy: true });`],
+    ["a vi.fn() factory", `vi.doMock("./other.js", vi.fn(() => ({ call: vi.fn(() => "mock") })));`],
+    ["a bound factory", `mock.module("./other.js", (function () { return { call: vi.fn(() => "mock") }; }).bind(null));`],
+  ])("a mock that the module made stays the module's: %s", async (_, mockIt) => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "other.js": `export const call = () => "real";`,
+        "waits.js": `
+          import { mock, vi } from "bun:test";
+          ${mockIt}
+          const other = await import("./other.js");
+          export const mine = other.call;
+          const { name } = await import("./dep.js");
+          ${counted}
+        `,
+        "owner.test.js": `
+          import { expect, test, vi } from "bun:test";
+          import * as waits from "./waits.js";
+          vi.mock("./dep.js", ${importsIt});
+          test("the mock in force is the one that the module made", async () => {
+            const dep = await import("./dep.js");
+            const other = await import("./other.js");
+            expect([waits.seen, dep.inFactory, globalThis.runs, other.call === waits.mine]).toEqual(["mock", "real", 2, true]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  // JSC lets what an import() loads go on without the module whose code called that import(). That module is the one instance, whatever kind of function the factory is.
+  test.each([
+    ["a bound function", `vi.mock("./dep.js", (async () => ({ name: "mock", built: typeof (await import("./builders.js")).build })).bind(null));`, ""],
+    [
+      "a function that another module wraps",
+      `mock.module("./dep.js", wrapped(async () => ({ name: "mock", built: typeof (await import("./builders.js")).build })));`,
+      `import { wrapped } from "./wraps.js";`,
+    ],
+  ])("the file of a factory is not copied for what the factory loads, where the factory is %s", async (_, mockIt, imports) => {
+    await expectFixturesToPass(
+      {
+        "dep.js": `export const name = "real";`,
+        "wraps.js": `export const wrapped = factory => async importOriginal => ({ ...(await importOriginal()), ...(await factory()) });`,
+        "builders.js": `
+          import { label, registry } from "./mocks.js";
+          globalThis.buildersRuns = (globalThis.buildersRuns ?? 0) + 1;
+          export const build = () => label;
+          export const register = what => registry.add(what);
+        `,
+        "mocks.js": `
+          import { mock, vi } from "bun:test";
+          ${imports}
+          ${mockIt}
+          const { name } = await import("./dep.js");
+          globalThis.runs = (globalThis.runs ?? 0) + 1;
+          export const label = "saw " + name;
+          export const registry = new Set();
+        `,
+        "own.test.js": `
+          import { expect, test } from "bun:test";
+          import { label, registry } from "./mocks.js";
+          test("what the factory loaded writes to the file that the program has", async () => {
+            const dep = await import("./dep.js");
+            const builders = await import("./builders.js");
+            builders.register("by builders");
+            const values = [label, dep.name, dep.built, builders.build(), [...registry]];
+            expect([...values, globalThis.runs, globalThis.buildersRuns]).toEqual(["saw mock", "mock", "function", "saw mock", ["by builders"], 1, 1]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test("the file of a factory is not copied where it imports a module that awaits, and what the factory loads imports it", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "lays.js": `import { mock } from "bun:test"; import { factory } from "./factory.js"; mock.module("./dep.js", factory);`,
+        "factory.js": `
+          import "./lays.js";
+          import { seen } from "./waits.js";
+          export async function factory() {
+            return { name: "mock", viaHelper: typeof (await import("./helper.js")).viaHelper };
+          }
+          export const shared = "shared";
+          globalThis.factoryFileRuns = (globalThis.factoryFileRuns ?? 0) + 1;
+          export { seen };
+        `,
+        "helper.js": `import { shared } from "./factory.js"; export const viaHelper = () => shared;`,
+        "own.test.js": `
+          import { expect, test } from "bun:test";
+          import { seen } from "./factory.js";
+          test("each file runs once", async () => {
+            const dep = await import("./dep.js");
+            expect([seen, dep.viaHelper, globalThis.factoryFileRuns, globalThis.runs]).toEqual(["mock", "function", 1, 1]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  // The body of the copy calls import() through a function of another module. The call is the factory's, as the copy's own call is.
+  test("the copy ends the wait also where a function of another module calls import() for it", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "loads.js": `export const loadDep = () => import("./dep.js");`,
+        "waits.js": `import { loadDep } from "./loads.js"; const { name } = await loadDep(); ${counted}`,
+        "copy.test.js": hoisted(fromBunTest, "vi.mock"),
+      },
+      1,
+    );
+  });
+
+  // Nothing evaluates a module that called import() again for the next test file: it keeps what it got, as every such module does.
+  test("without --isolate, the next test file gets the module of the file before it", async () => {
+    const testFile = (n: number) => `
+      import { expect, test, vi } from "bun:test";
+      import * as waits from "./waits.js";
+      vi.mock("./dep.js", async () => ({ name: "mock ${n}", inFactory: (await import("./waits.js")).seen }));
+      test("file ${n}", async () => {
+        const dep = await import("./dep.js");
+        expect([waits.seen, dep.name, dep.inFactory, globalThis.runs]).toEqual(${n === 1 ? `["mock 1", "mock 1", "real", 2]` : `["mock 1", "mock 2", "mock 1", 2]`});
+      });
+    `;
+    const both = { ...files, "first.test.js": testFile(1), "second.test.js": testFile(2) };
+    await expectFixturesToPass(both, 2, ["./first.test.js", "./second.test.js"]);
   });
 });
 

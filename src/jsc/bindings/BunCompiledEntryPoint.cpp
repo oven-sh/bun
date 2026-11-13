@@ -30,23 +30,50 @@ using namespace JSC;
 
 static JSC_DECLARE_HOST_FUNCTION(functionStartServerFromNamespace);
 
+// The program did not ask for the reads of the look. A read that throws, of a name that the object says it does not have, answers a
+// question that only Bun asked: the throw is dropped, and the answer is empty. Every other throw is the program's: of a name that the
+// object has, of an object that cannot say, and a termination.
+static JSValue getForLook(JSGlobalObject* globalObject, JSValue object, PropertyName name)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    JSValue value = object.get(globalObject, name);
+    auto* exception = scope.exception();
+    if (!exception) [[likely]]
+        return value;
+    if (!object.isObject() || !scope.tryClearException())
+        return {};
+    bool hasName = asObject(object)->hasProperty(globalObject, name);
+    if (scope.exception()) [[unlikely]] {
+        // A Proxy can refuse that question too. Then its first throw stays.
+        if (!scope.tryClearException())
+            return {};
+        hasName = true;
+    }
+    if (hasName)
+        throwException(globalObject, scope, exception);
+    return {};
+}
+
+// An export that throws when it is asked for a name that it does not have is no server, and is asked for nothing more.
 static bool isServerConfig(Zig::GlobalObject* globalObject, JSValue config)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!config.toBoolean(globalObject) || config == globalObject->globalThis())
         return false;
-    JSValue fetch = config.get(globalObject, Identifier::fromString(vm, "fetch"_s));
+    JSValue fetch = getForLook(globalObject, config, Identifier::fromString(vm, "fetch"_s));
     RETURN_IF_EXCEPTION(scope, false);
+    if (!fetch)
+        return false;
     if (!fetch.isCallable()) {
-        JSValue app = config.get(globalObject, Identifier::fromString(vm, "app"_s));
+        JSValue app = getForLook(globalObject, config, Identifier::fromString(vm, "app"_s));
         RETURN_IF_EXCEPTION(scope, false);
-        if (app.isUndefinedOrNull())
+        if (!app || app.isUndefinedOrNull())
             return false;
     }
-    JSValue stop = config.get(globalObject, Identifier::fromString(vm, "stop"_s));
+    JSValue stop = getForLook(globalObject, config, Identifier::fromString(vm, "stop"_s));
     RETURN_IF_EXCEPTION(scope, false);
-    return !stop.isCallable();
+    return stop && !stop.isCallable();
 }
 
 // The program wrote none of the reads and calls of the look, and no frame of a stack trace names them. The error says what Bun did.
@@ -74,8 +101,11 @@ static void startServerFromNamespace(Zig::GlobalObject* globalObject, JSValue en
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (entryNamespace.isUndefinedOrNull())
         return;
-    JSValue config = entryNamespace.get(globalObject, vm.propertyNames->defaultKeyword);
+    // An exported `then` hands over any value.
+    JSValue config = getForLook(globalObject, entryNamespace, vm.propertyNames->defaultKeyword);
     RETURN_IF_EXCEPTION(scope, void());
+    if (!config)
+        return;
     bool isConfig = isServerConfig(globalObject, config);
     RETURN_IF_EXCEPTION(scope, void());
     if (!isConfig)
@@ -84,8 +114,10 @@ static void startServerFromNamespace(Zig::GlobalObject* globalObject, JSValue en
     RETURN_IF_EXCEPTION(scope, void());
     JSValue serve = bun.get(globalObject, Identifier::fromString(vm, "serve"_s));
     RETURN_IF_EXCEPTION(scope, void());
-    config = entryNamespace.get(globalObject, vm.propertyNames->defaultKeyword);
+    config = getForLook(globalObject, entryNamespace, vm.propertyNames->defaultKeyword);
     RETURN_IF_EXCEPTION(scope, void());
+    if (!config)
+        return;
     MarkedArgumentBuffer serveArguments;
     serveArguments.append(config);
     JSValue server = JSC::call(globalObject, serve, bun, serveArguments, "Bun.serve is not a function"_s);

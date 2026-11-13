@@ -20,3 +20,5 @@ bun_collections.workspace = true
 bun_paths.workspace = true
 bun_sys.workspace = true
 bun_wyhash.workspace = true
+bun_libdeflate_sys.workspace = true
+bun_zlib.workspace = true

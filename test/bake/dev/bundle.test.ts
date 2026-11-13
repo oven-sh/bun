@@ -877,6 +877,93 @@ const separateSSRGraph = { ...minimalFramework.serverComponents!, separateSSRGra
     },
   });
 }
+// Every copy of a "use client" file is compiled with the file's own tsconfig.json.
+{
+  const files = {
+    "app/tsconfig.json": JSON.stringify({
+      compilerOptions: {
+        jsx: "react-jsx",
+        jsxImportSource: "own-jsx",
+        experimentalDecorators: true,
+        useDefineForClassFields: false,
+      },
+    }),
+    "app/Comp.tsx": `
+      "use client";
+      function countArgs(...args) {
+        Base.decoratorArgs = args.length;
+      }
+      class Base {
+        static decoratorArgs = 0;
+        static setterCalls = 0;
+        set field(value) {
+          Base.setterCalls++;
+        }
+      }
+      class Derived extends Base {
+        field = 1;
+        @countArgs method() {}
+      }
+      new Derived();
+      export const compiled = {
+        jsx: <div />,
+        decoratorArgs: Base.decoratorArgs,
+        setterCalls: Base.setterCalls,
+      };
+    `,
+    "node_modules/own-jsx/package.json": JSON.stringify({ name: "own-jsx", version: "1.0.0" }),
+    "node_modules/own-jsx/jsx-runtime.js": `export const jsx = () => "own-jsx";`,
+    "node_modules/own-jsx/jsx-dev-runtime.js": `export const jsxDEV = () => "own-jsx dev";`,
+    "node_modules/react/package.json": JSON.stringify({ name: "react", version: "1.0.0" }),
+    "node_modules/react/jsx-runtime.js": `export const jsx = () => "react";`,
+    "node_modules/react/jsx-dev-runtime.js": `export const jsxDEV = () => "react dev";`,
+    "routes/index.ts": `
+      import * as Comp from "../app/Comp";
+      export default function (req, meta) {
+        return Response.json({ compiled: Comp.compiled, modules: meta.modules });
+      }
+    `,
+  };
+  // A legacy decorator of a method gets (target, key, descriptor). With
+  // "useDefineForClassFields": false a field assignment calls the setter.
+  const compiled = { jsx: "own-jsx dev", decoratorArgs: 3, setterCalls: 1 };
+
+  devTest("the SSR copy of a 'use client' file keeps the file's tsconfig options", {
+    framework: { ...minimalFramework, serverComponents: separateSSRGraph },
+    files: {
+      ...files,
+      "routes/ssr.ts": `
+        import { compiled } from "../app/Comp" with { bunBakeGraph: "ssr" };
+        export default function () {
+          return Response.json(compiled);
+        }
+      `,
+    },
+    async test(dev) {
+      // This page makes the SSR copy. The second one loads it.
+      expect((await dev.fetch("/")).status).toBe(200);
+      expect(await dev.fetch("/ssr").json()).toEqual(compiled);
+    },
+  });
+  devTest("the browser copy of a 'use client' file keeps the file's tsconfig options", {
+    framework: {
+      fileSystemRouterTypes: [{ ...minimalFramework.fileSystemRouterTypes![0], clientEntryPoint: "./client.ts" }],
+      serverComponents: oneServerGraph,
+    },
+    files: { ...files, "client.ts": `import "bun:bake/client";` },
+    async test(dev) {
+      const page = await dev.fetch("/").json();
+      const script = await dev.fetch(page.modules[0]).text();
+      // The runtime comes first and names every helper, so look at the module only.
+      const start = script.indexOf('"app/Comp.tsx":');
+      const module = script.slice(start, script.indexOf("\n  },", start));
+      expect(module).toContain("own-jsx/jsx-dev-runtime");
+      expect(module).not.toContain("react/jsx-dev-runtime");
+      expect(module).toContain("__legacyDecorateClassTS");
+      expect(module).toContain("this.field = 1");
+    },
+  });
+}
 devTest("build error in a file imported by a 'use client' component", {
   framework: minimalFramework,
   files: {

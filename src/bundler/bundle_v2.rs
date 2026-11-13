@@ -4056,6 +4056,7 @@ pub mod bv2_impl {
             loader: Loader,
             known_target: options::Target,
             module_type: options::ModuleType,
+            tsconfig_options: parse_task::TsconfigOptions,
         ) -> Result<IndexInt, AllocError> {
             let source_index = Index::init(u32::try_from(self.graph.ast.len()).expect("int cast"));
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
@@ -4081,20 +4082,11 @@ pub mod bv2_impl {
             // SAFETY: `graph.input_files` owns `stored.contents` for the bundle
             // pass, and the row is not replaced before the task has read it.
             let contents: &'a [u8] = unsafe { interned_slice(stored.contents()) };
-            let jsx = if known_target == Target::ServerComponentsSsr
-                && !self
-                    .framework
-                    .as_ref()
-                    .unwrap()
-                    .server_components
-                    .as_ref()
-                    .unwrap()
-                    .separate_ssr_graph
-            {
-                self.transpiler.options.jsx.clone()
-            } else {
-                self.transpiler_for_target(known_target).options.jsx.clone()
-            };
+            let mut jsx = tsconfig_options.jsx;
+            jsx.development = self
+                .transpiler_for_target(known_target)
+                .options
+                .forced_jsx_development();
             let task: &mut ParseTask = self.arena().alloc(ParseTask {
                 ctx: Some(bun_ptr::ParentRef::from_ref_mut(self)),
                 path: task_path,
@@ -4103,7 +4095,9 @@ pub mod bv2_impl {
                 jsx,
                 source_index: bun_ast::Index::init(source_index.get()),
                 module_type,
-                emit_decorator_metadata: false, // TODO
+                emit_decorator_metadata: tsconfig_options.emit_decorator_metadata,
+                experimental_decorators: tsconfig_options.experimental_decorators,
+                use_define_for_class_fields: tsconfig_options.use_define_for_class_fields,
                 package_version: bun_ast::StoreStr::EMPTY,
                 loader: Some(loader),
                 known_target,
@@ -7750,6 +7744,10 @@ pub mod bv2_impl {
                             this.graph.input_files.items_loader()[result_source_index];
                         let source_module_type: options::ModuleType =
                             this.graph.ast.items_module_type()[result_source_index];
+                        let tsconfig_options = *result
+                            .client_copy_options
+                            .take()
+                            .expect("set for a \"use client\" file");
 
                         let (reference_source_index, ssr_index) = if separate_ssr_graph {
                             // Enqueue two files, one in server graph, one in ssr graph.
@@ -7788,6 +7786,7 @@ pub mod bv2_impl {
                                     source_loader,
                                     Target::ServerComponentsSsr,
                                     source_module_type,
+                                    tsconfig_options,
                                 )
                                 .expect("oom");
 
@@ -7807,6 +7806,7 @@ pub mod bv2_impl {
                                     source_loader,
                                     Target::Browser,
                                     source_module_type,
+                                    tsconfig_options,
                                 )
                                 .expect("oom");
 

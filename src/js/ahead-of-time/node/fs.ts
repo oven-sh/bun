@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/fs.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 391a2c740c17c25977978983b86383138f13e17050b6604e60e5d49a7aad8ea1.
+// Written against that file with the SHA-256 82d668ce74907d15696411a6389da5d3d9fbedab579afc58b691bac7353c21a5.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:fs"
@@ -36,6 +36,7 @@ const constants = $processBindingConstants.fs;
 const { guardCallback, kCustomPromisifyArgsSymbol } = require("internal/shared");
 
 // Captured at load: a process.nextTick that user code replaces later (fake timers) must not hold back fs callbacks.
+// The read also creates the tick queue. With none, the first tick that an fs.glob callback queues runs before its jobs.
 const nextTick = process.nextTick;
 
 // guardCallback reroutes a throw inside the user callback to the
@@ -705,7 +706,7 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
     callback = wrapFsCallback(callback);
     // Invoke the callback from process.nextTick so an exception thrown by it
     // surfaces as an uncaught exception instead of rejecting this internal
-    // promise chain (same convention as glob() below).
+    // promise chain.
     fs.stat(path).then(
       onOpendirStatFulfilled.bind(null, callback, path, result),
       onOpendirStatRejected.bind(null, callback, path),
@@ -1332,17 +1333,17 @@ function glob(pattern: string | string[], options, callback) {
     callback = options;
     options = undefined;
   }
-  validateFunction(callback, "callback");
+  // Guarded: in Node a throw rejects then()'s promise, and Bun by default tells no 'uncaughtException' listener of that.
+  callback = ensureCallback(callback);
 
-  // Invoke the callback from process.nextTick so that an exception thrown by
-  // the callback surfaces as an uncaught exception instead of rejecting the
-  // internal promise chain (and is never routed back into `callback` as an
-  // error), matching Node.js.
-  settleCallback(Array.fromAsync(require("internal/fs/glob").glob(pattern, options ?? kEmptyObject)), callback);
+  // Node's glob calls back from the promise reaction: https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L3207-L3214
+  require("internal/fs/glob")
+    .globAll(pattern, options ?? kEmptyObject)
+    .$then(res => callback(null, res), callback);
 }
 
 function globSync(pattern: string | string[], options?) {
-  return Array.from(require("internal/fs/glob").globSync(pattern, options ?? kEmptyObject));
+  return require("internal/fs/glob").globSync(pattern, options ?? kEmptyObject);
 }
 
 // The stream classes are accessors on `exports` so that loading node:fs does not load node:stream. The first read, or

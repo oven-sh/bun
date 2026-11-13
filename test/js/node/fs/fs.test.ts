@@ -14,6 +14,7 @@ import {
   isMacOS,
   isPosix,
   isWindows,
+  nodeExeAtLeast,
   tempDir,
   tempDirWithFiles,
   tmpdirSync,
@@ -7790,7 +7791,7 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
 });
 
 // Node calls an fs callback from the event loop, then runs the process.nextTick
-// queue, then the microtasks.
+// queue, then the microtasks. fs.glob is the exception, in the last describe.
 describe("a process.nextTick queued by an fs callback runs before a microtask it queues", () => {
   type Start = (dir: string, callback: () => void) => void;
 
@@ -7956,7 +7957,7 @@ describe("a process.nextTick queued by an fs callback runs before a microtask it
     expect(exitCode).toBe(0);
   });
 
-  // These APIs are promise chains in JS and reach their callback through process.nextTick.
+  // These APIs are promise chains in JS. All but fs.glob reach their callback through process.nextTick.
   it("while user code has replaced process.nextTick, for the APIs that are promise chains", async () => {
     using dir = tempDir("fs-callback-order", {
       "file.txt": "hello",
@@ -7992,6 +7993,156 @@ describe("a process.nextTick queued by an fs callback runs before a microtask it
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("Dir.close Dir.read Dir.read(buffered) cp glob opendir rm rmdir");
     expect(exitCode).toBe(0);
+  });
+
+  // Node's glob() hands the callback to PromisePrototypeThen, so the callback is the promise reaction and runs in a job:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L3207-L3214
+  describe("except for fs.glob, whose callback is a promise reaction", () => {
+    type Start = (dir: string, callback: (...args: unknown[]) => void) => void;
+
+    const walkFailed = new Error("walk failed");
+    const failingWalk = (cwd: string) => ({
+      cwd,
+      exclude() {
+        throw walkFailed;
+      },
+    });
+    const cases: Array<[string, Start, unknown[]]> = [
+      ["with options", (dir, cb) => fs.glob("*.txt", { cwd: dir }, cb), [null, ["file.txt"]]],
+      ["without options", (_dir, cb) => fs.glob("no-file-has-this-name.txt", cb), [null, []]],
+      ["when the walk fails", (dir, cb) => fs.glob("sub/*.txt", failingWalk(dir), cb), [walkFailed]],
+    ];
+
+    it.each(cases)("%s", async (_name, start, expectedArguments) => {
+      using dir = tempDir("fs-glob-callback-order", { "file.txt": "hello", "sub/nested.txt": "hello" });
+      await tickQueueExists();
+
+      const { promise, resolve } = Promise.withResolvers<void>();
+      const order: string[] = [];
+      let received: unknown[] | undefined;
+      const step = (name: string) => () => {
+        order.push(name);
+        if (order.length === 3) resolve();
+      };
+      start(String(dir), (...args) => {
+        received = args;
+        step("callback")();
+        process.nextTick(step("nextTick"));
+        queueMicrotask(step("microtask"));
+      });
+      await promise;
+
+      expect({ order, received }).toEqual({
+        order: ["callback", "microtask", "nextTick"],
+        received: expectedArguments,
+      });
+    });
+
+    // Each script runs in a folder with file.txt and sub/nested.txt. A glob of "sub/*.txt" asks `exclude`, so its walk fails.
+    const arms: Array<[string, string, string]> = [
+      ["fulfilled", `"*.txt", { cwd: __dirname }`, "file.txt"],
+      ["rejected", `"sub/*.txt", { cwd: __dirname, exclude() { throw new Error("walk failed"); } }`, "walk failed"],
+    ];
+    const scripts: Array<[string, string, string[]]> = [
+      // node:fs reads process.nextTick when it loads, which makes the tick queue. With no tick queue, the first tick
+      // that a job queues runs before the jobs that wait.
+      [
+        "the first tick of the process is the one that the callback queues",
+        `
+          const order = [];
+          require("fs").glob("*.txt", { cwd: __dirname }, () => {
+            order.push("callback");
+            process.nextTick(() => order.push("nextTick"));
+            queueMicrotask(() => order.push("microtask"));
+            setImmediate(() => console.log(order.join(" ")));
+          });
+        `,
+        ["callback microtask nextTick"],
+      ],
+      // In node this throw rejects the promise that then() returns, and the unhandled rejection reaches the
+      // 'uncaughtException' listeners by default. Bun reports the throw to them directly.
+      ...arms.map(([arm, globArguments, calledWith]): [string, string, string[]] => [
+        `the callback of a ${arm} glob throws: an uncaughtException in the async context of the caller, and no second call`,
+        `
+          const store = new (require("async_hooks").AsyncLocalStorage)();
+          const log = [];
+          process.on("uncaughtException", error => log.push("uncaught in " + store.getStore() + ": " + error.message));
+          process.on("exit", () => console.log(log.join("\\n")));
+          store.run("the store of the caller", () =>
+            require("fs").glob(${globArguments}, (error, matches) => {
+              log.push("callback: " + (error ? error.message : matches));
+              throw new Error("thrown by the callback");
+            }),
+          );
+        `,
+        [`callback: ${calledWith}`, "uncaught in the store of the caller: thrown by the callback"],
+      ]),
+      // Node's handlers return what the callback returns, so the promise of then() takes the state of that promise.
+      ...arms.map(([arm, globArguments]): [string, string, string[]] => [
+        `the callback of a ${arm} glob returns a rejected promise that the program handles: an unhandled rejection`,
+        `
+          const log = [];
+          process.on("unhandledRejection", error => log.push("unhandled rejection: " + error.message));
+          process.on("exit", () => console.log(log.join("\\n")));
+          require("fs").glob(${globArguments}, () => {
+            const returned = Promise.reject(new Error("returned by the callback"));
+            returned.catch(() => log.push("handled by the program"));
+            return returned;
+          });
+        `,
+        ["handled by the program", "unhandled rejection: returned by the callback"],
+      ]),
+      // Node v26 takes Array.fromAsync from its primordials, and Node's main branch has Glob#globAll() in its place.
+      [
+        "the program replaced Array.fromAsync before node:fs loaded",
+        `
+          Array.fromAsync = () => {
+            throw new Error("the replaced Array.fromAsync ran");
+          };
+          require("fs").glob("*.txt", { cwd: __dirname }, (error, matches) => console.log(matches.join()));
+        `,
+        ["file.txt"],
+      ],
+      // Node gathers the matches of fs.globSync from a SafeSet with its primordial ArrayFrom, and makes no copy of them.
+      [
+        "fs.globSync after the program replaced Array.from and the iterator of Set",
+        `
+          Array.from = () => {
+            throw new Error("the replaced Array.from ran");
+          };
+          const iterator = Set.prototype[Symbol.iterator];
+          Set.prototype[Symbol.iterator] = function () {
+            return this.constructor === Set ? iterator.call(this) : ["replaced"][Symbol.iterator]();
+          };
+          const fs = require("fs");
+          console.log(fs.globSync("*.txt", { cwd: __dirname }).join());
+          console.log(fs.globSync("*.txt", { cwd: __dirname, withFileTypes: true }).map(entry => entry.name).join());
+        `,
+        ["file.txt", "file.txt"],
+      ],
+    ];
+
+    async function run(executable: string, script: string) {
+      using dir = tempDir("fs-glob-callback", { "file.txt": "hello", "sub/nested.txt": "hello", "script.cjs": script });
+      await using proc = Bun.spawn({
+        cmd: [executable, join(String(dir), "script.cjs")],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim().split(/\r?\n/), stderr, exitCode };
+    }
+
+    it.concurrent.each(scripts)("%s", async (_name, script, stdout) => {
+      expect(await run(bunExe(), script)).toEqual({ stdout, stderr: "", exitCode: 0 });
+    });
+
+    // Node before v24.3.0 calls a callback that throws a second time.
+    const node = nodeExeAtLeast("24.3.0");
+    it.concurrent.skipIf(!node).each(scripts)("as node does: %s", async (_name, script, stdout) => {
+      expect(await run(node!, script)).toEqual({ stdout, stderr: "", exitCode: 0 });
+    });
   });
 });
 

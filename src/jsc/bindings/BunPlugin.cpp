@@ -1608,14 +1608,33 @@ static bool patchesModuleBeingEvaluated(Zig::GlobalObject* globalObject, JSModul
     return record && !record->hasLiveExports() && record->status() >= JSC::CyclicModuleRecord::Status::Linked && !record->isSCCEvaluated();
 }
 
-// Returns a promise for `next` to settle. `next` is called once `loading` has settled, either way, with (mock, that promise) as its context.
-// Only the original of the file that an import loads waits this way, so `next` goes on with the mock's import path.
-__attribute__((minsize)) static JSC::JSPromise* originalModuleAfter(Zig::GlobalObject* globalObject, JSModuleMock* mock, JSC::JSPromise* loading, JSC::NativeFunction next)
+// The context of a wait for the original of one file of a mock: (mock, (the promise to settle with that original, the path of the file)).
+struct ModuleMockWithOriginal {
+    JSModuleMock* mock { nullptr };
+    JSC::JSPromise* original { nullptr };
+    JSC::JSString* pathOfOriginal { nullptr };
+};
+
+static JSC::InternalFieldTuple* moduleMockWithOriginal(Zig::GlobalObject* globalObject, JSModuleMock* mock, JSC::JSPromise* original, JSC::JSString* pathOfOriginal)
+{
+    return moduleMockWith(globalObject, mock, JSC::InternalFieldTuple::create(globalObject->vm(), globalObject->internalFieldTupleStructure(), original, pathOfOriginal));
+}
+
+static ModuleMockWithOriginal toModuleMockWithOriginal(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSValue context)
+{
+    auto [mock, pair] = toModuleMockWith<JSC::InternalFieldTuple>(globalObject, scope, context);
+    RETURN_IF_EXCEPTION(scope, {});
+    return { mock, uncheckedDowncast<JSC::JSPromise>(pair->getInternalField(0)), asString(pair->getInternalField(1)) };
+}
+
+// Returns a promise for `next` to settle. `next` is called once `loading` has settled, either way, with moduleMockWithOriginal() as its context.
+// With two paths the mock stands for two files, and `next` goes on with the original of the one at `pathOfOriginal`.
+__attribute__((minsize)) static JSC::JSPromise* originalModuleAfter(Zig::GlobalObject* globalObject, JSModuleMock* mock, JSC::JSString* pathOfOriginal, JSC::JSPromise* loading, JSC::NativeFunction next)
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::JSPromise* original = JSC::JSPromise::create(vm, globalObject->promiseStructure());
     JSC::JSFunction* didLoad = JSC::JSFunction::create(vm, globalObject, 2, String(), next, ImplementationVisibility::Private);
-    loading->performPromiseThenWithContext(vm, globalObject, didLoad, didLoad, jsUndefined(), moduleMockWith(globalObject, mock, original));
+    loading->performPromiseThenWithContext(vm, globalObject, didLoad, didLoad, jsUndefined(), moduleMockWithOriginal(globalObject, mock, original, pathOfOriginal));
     return original;
 }
 
@@ -1623,9 +1642,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionModuleMockDidLoadBeforeOriginal, (JSC::JSGlob
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto [mock, original] = toModuleMockWith<JSC::JSPromise>(lexicalGlobalObject, scope, callframe->argument(1));
+    auto [mock, original, pathOfOriginal] = toModuleMockWithOriginal(lexicalGlobalObject, scope, callframe->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
-    JSC::JSPromise* loading = importOriginalModule(defaultGlobalObject(lexicalGlobalObject), mock, mock->importKey->tryGetValue().data, false, String(), false);
+    JSC::JSPromise* loading = importOriginalModule(defaultGlobalObject(lexicalGlobalObject), mock, pathOfOriginal->tryGetValue().data, false, String(), false);
     if (scope.exception()) [[unlikely]]
         original->rejectWithCaughtException(vm, scope);
     else
@@ -1639,9 +1658,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionModuleMockDidWaitForTurnOfOriginal, (JSC::JSG
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto [mock, original] = toModuleMockWith<JSC::JSPromise>(lexicalGlobalObject, scope, callframe->argument(1));
+    auto [mock, original, pathOfOriginal] = toModuleMockWithOriginal(lexicalGlobalObject, scope, callframe->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
-    JSC::JSPromise* loading = importOriginalModule(defaultGlobalObject(lexicalGlobalObject), mock, mock->importKey->tryGetValue().data, false, String(), true);
+    JSC::JSPromise* loading = importOriginalModule(defaultGlobalObject(lexicalGlobalObject), mock, pathOfOriginal->tryGetValue().data, false, String(), true);
     if (scope.exception()) [[unlikely]]
         original->rejectWithCaughtException(vm, scope);
     else
@@ -1655,19 +1674,19 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionModuleMockFailedBelowOriginal, (JSC::JSGlobal
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSPromise* original = toModuleMockWith<JSC::JSPromise>(lexicalGlobalObject, scope, callframe->argument(1)).second;
+    JSC::JSPromise* original = toModuleMockWithOriginal(lexicalGlobalObject, scope, callframe->argument(1)).original;
     RETURN_IF_EXCEPTION(scope, {});
     original->reject(vm, callframe->argument(0));
     return JSValue::encode(jsUndefined());
 }
 
-static JSC::JSPromise* originalModuleOnceWhatLiesBelowHasEnded(Zig::GlobalObject* globalObject, JSModuleMock* mock, JSC::JSPromise* ending)
+static JSC::JSPromise* originalModuleOnceWhatLiesBelowHasEnded(Zig::GlobalObject* globalObject, JSModuleMock* mock, JSC::JSString* pathOfOriginal, JSC::JSPromise* ending)
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::JSPromise* original = JSC::JSPromise::create(vm, globalObject->promiseStructure());
     JSC::JSFunction* didEnd = JSC::JSFunction::create(vm, globalObject, 2, String(), jsFunctionModuleMockDidWaitForTurnOfOriginal, ImplementationVisibility::Private);
     JSC::JSFunction* didFail = JSC::JSFunction::create(vm, globalObject, 2, String(), jsFunctionModuleMockFailedBelowOriginal, ImplementationVisibility::Private);
-    ending->performPromiseThenWithContext(vm, globalObject, didEnd, didFail, jsUndefined(), moduleMockWith(globalObject, mock, original));
+    ending->performPromiseThenWithContext(vm, globalObject, didEnd, didFail, jsUndefined(), moduleMockWithOriginal(globalObject, mock, original, pathOfOriginal));
     return original;
 }
 #endif
@@ -1677,20 +1696,21 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionModuleMockDidLoadImportsOfOri
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    auto [mock, original] = toModuleMockWith<JSC::JSPromise>(globalObject, scope, callframe->argument(1));
+    auto [mock, original, pathOfOriginal] = toModuleMockWithOriginal(globalObject, scope, callframe->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
-    String specifier = mock->importKey->value(globalObject);
+    String specifier = registryKey(globalObject, mock)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+    String path = pathOfOriginal->tryGetValue().data;
 
     // Enter an import cycle through the mock module: entering it through the original would evaluate the mock module before the original.
-    auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(vm, originalModuleKey(specifier)));
+    auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(vm, originalModuleKey(path)));
     bool importsMock = mock->state == JSModuleMock::State::NotCalled && entry && entry->record()
         && anyUnevaluatedImport(entry->record(), [&](JSC::CyclicModuleRecord* imported) { return imported->moduleKey().string() == specifier; });
-    JSC::JSPromise* loading = importsMock ? importModuleKey(globalObject, specifier) : importOriginalModule(globalObject, mock, specifier, false, String(), false);
+    JSC::JSPromise* loading = importsMock ? importModuleKey(globalObject, specifier) : importOriginalModule(globalObject, mock, path, false, String(), false);
     if (scope.exception()) [[unlikely]]
         original->rejectWithCaughtException(vm, scope);
     else
-        original->pipeFrom(vm, importsMock ? originalModuleAfter(globalObject, mock, loading, jsFunctionModuleMockDidLoadBeforeOriginal) : loading);
+        original->pipeFrom(vm, importsMock ? originalModuleAfter(globalObject, mock, pathOfOriginal, loading, jsFunctionModuleMockDidLoadBeforeOriginal) : loading);
     return JSValue::encode(jsUndefined());
 }
 
@@ -1800,7 +1820,7 @@ __attribute__((minsize)) static JSC::JSPromise* importOriginalModule(Zig::Global
     String specifier = mock->importKey->value(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
     // With two paths the mock stands for two files, and `path` says which. What the mock has kept of its ES module is the file that an import loads,
-    // and only the original of that file takes the steps below that wait for another load.
+    // so only the original of that file is made of it below, or waits for the module that the mock has patched.
     bool loadsFileOfImport = !mock->requireKey || path != mock->requireKey->tryGetValue().data;
     JSString* pathOfOriginal = loadsFileOfImport ? mock->importKey.get() : mock->requireKey.get();
 
@@ -1812,7 +1832,7 @@ __attribute__((minsize)) static JSC::JSPromise* importOriginalModule(Zig::Global
     if (!exports && loadsFileOfImport && mayLoadOthersFirst && patchesModuleBeingEvaluated(globalObject, mock, specifier)) {
         JSC::JSPromise* evaluating = importModuleKey(globalObject, specifier);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        return originalModuleAfter(globalObject, mock, evaluating, jsFunctionModuleMockDidLoadBeforeOriginal);
+        return originalModuleAfter(globalObject, mock, pathOfOriginal, evaluating, jsFunctionModuleMockDidLoadBeforeOriginal);
     }
     if (exports)
         exports = withoutUninitializedExports(globalObject, exports);
@@ -1866,7 +1886,7 @@ __attribute__((minsize)) static JSC::JSPromise* importOriginalModule(Zig::Global
         JSC::JSPromise* underWay = intactOriginalEvaluation(globalObject, mock);
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (underWay)
-            return originalModuleAfter(globalObject, mock, underWay, jsFunctionModuleMockDidLoadBeforeOriginal);
+            return originalModuleAfter(globalObject, mock, pathOfOriginal, underWay, jsFunctionModuleMockDidLoadBeforeOriginal);
     }
     if (globalObject->aotInstance() && Bun::isBunTest && !exports) {
         exports = namespaceOfCompiledFileThatRanAheadOfMock(globalObject, mock);
@@ -1902,12 +1922,12 @@ __attribute__((minsize)) static JSC::JSPromise* importOriginalModule(Zig::Global
             JSC::JSPromise* below = JSC::AOT::pendingEvaluationInGraph(globalObject, *file);
             RETURN_IF_EXCEPTION(scope, nullptr);
             if (below)
-                return originalModuleOnceWhatLiesBelowHasEnded(globalObject, mock, below);
+                return originalModuleOnceWhatLiesBelowHasEnded(globalObject, mock, pathOfOriginal, below);
             for (const auto& running : globalObject->onLoadPlugins.runningModuleMocks) {
                 auto* other = uncheckedDowncast<JSModuleMock>(running.mock.get());
                 auto* pending = other != mock && other->state == JSModuleMock::State::Running && other->result ? dynamicDowncast<JSC::JSPromise>(other->result.get()) : nullptr;
                 if (pending && other->unevaluatedCompiledModule && JSC::AOT::importsStatically(globalObject, *file, JSC::AOT::ModuleID(*other->unevaluatedCompiledModule)))
-                    return originalModuleOnceWhatLiesBelowHasEnded(globalObject, mock, pending);
+                    return originalModuleOnceWhatLiesBelowHasEnded(globalObject, mock, pathOfOriginal, pending);
             }
         }
         if (before)
@@ -1930,7 +1950,7 @@ __attribute__((minsize)) static JSC::JSPromise* importOriginalModule(Zig::Global
             JSC::JSPromise* evaluation = JSC::AOT::pendingEvaluation(globalObject, *compiled, hasAlreadyWaited);
             RETURN_IF_EXCEPTION(scope, nullptr);
             if (evaluation)
-                return originalModuleAfter(globalObject, mock, evaluation, jsFunctionModuleMockDidWaitForTurnOfOriginal);
+                return originalModuleAfter(globalObject, mock, pathOfOriginal, evaluation, jsFunctionModuleMockDidWaitForTurnOfOriginal);
         }
     }
 #endif
@@ -1943,13 +1963,14 @@ __attribute__((minsize)) static JSC::JSPromise* importOriginalModule(Zig::Global
     bool mayBeAnotherFactory = !running && !from.isNull() && !globalObject->onLoadPlugins.runningModuleMocks.isEmpty();
 
     // Only an import of the mocked module calls the factory, so find out whether the original has one before evaluating anything.
-    if (loadsFileOfImport && mayLoadOthersFirst && !mayBeAnotherFactory && mock->importsOriginal && mock->state == JSModuleMock::State::NotCalled) {
+    // With two paths that is the original of the file that the mock's own module imports: see dependencyKeyOfModuleMock().
+    if (mayLoadOthersFirst && !mayBeAnotherFactory && mock->importsOriginal && mock->state == JSModuleMock::State::NotCalled) {
         String dependency = dependencyKeyOfModuleMock(globalObject, mock);
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (dependency == key) {
             JSC::JSPromise* loading = Bun::testFileModuleLoader(globalObject)->loadModule(globalObject, JSC::Identifier::fromString(vm, key), nullptr, nullptr, {});
             RETURN_IF_EXCEPTION(scope, nullptr);
-            return originalModuleAfter(globalObject, mock, loading, jsFunctionModuleMockDidLoadImportsOfOriginal);
+            return originalModuleAfter(globalObject, mock, pathOfOriginal, loading, jsFunctionModuleMockDidLoadImportsOfOriginal);
         }
     }
 

@@ -6186,8 +6186,10 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         RETURN_IF_EXCEPTION(scope, {});
     }
     // The same for the mock of another path whose module object lies under the path of this one's. It keeps its other path, so only that side of it ends.
+    // One that had this path alone was loaded under it by an import: see keyOfImportWithTwoPaths(). That module is its own, and goes with it: it is no original to set aside below.
     auto* mockOfOtherPath = leavesLoadedModuleAlone ? moduleMockWithModuleObjectUnder(globalObject, mock->keyForRequire()->tryGetValue().data) : nullptr;
-    if (mockOfOtherPath && mockOfOtherPath != previous && !mockOfOtherPath->isFromPreload && (loaded.commonJSModule || loaded.staleCommonJSEntry || mockOfOtherPath->originalCommonJSExports)) {
+    bool hasOwnESModuleThere = mockOfOtherPath && loaded.esmNamespace && loaded.esmNamespace->moduleRecord()->hasLiveExports() && !pathsHeldByModuleMock(globalObject, mockOfOtherPath).importPath;
+    if (mockOfOtherPath && mockOfOtherPath != previous && !mockOfOtherPath->isFromPreload && (loaded.commonJSModule || loaded.staleCommonJSEntry || mockOfOtherPath->originalCommonJSExports || hasOwnESModuleThere)) {
         endModuleObjectOfModuleMock(globalObject, mockOfOtherPath);
         RETURN_IF_EXCEPTION(scope, {});
         loaded = findLoadedModule(globalObject, mock);
@@ -6284,7 +6286,9 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
             globalObject->onLoadPlugins.compiledMocksToRun.removeAllMatching([&](const auto& waiting) { return waiting.second.get() == previous && !isFormThatNobodyHasLoaded(globalObject, specifier, waiting.first); });
 #endif
     } else {
-        if (loaded.esmNamespace)
+        // Under a mock of another path that answers for this one, a module with live exports is that mock's own: see keyOfImportWithTwoPaths(). It is no original, and nothing is saved of it.
+        bool isModuleOfAnotherMock = loaded.esmNamespace && loaded.esmNamespace->moduleRecord()->hasLiveExports() && moduleMockAnsweringFor(globalObject, specifier);
+        if (loaded.esmNamespace && !isModuleOfAnotherMock)
             mock->originalExports.set(vm, mock, JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure()));
 #if ENABLE(AOT)
         // A compiled require() of a built-in module keeps its entry of require.cache with the program.

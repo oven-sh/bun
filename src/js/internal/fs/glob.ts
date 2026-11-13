@@ -1,10 +1,11 @@
 // Port of Node.js lib/internal/fs/glob.js (v26.3.0):
-//   https://github.com/nodejs/node/blob/50c35fea9e64d50ab3bb5f359e8523de89d6c798/lib/internal/fs/glob.js
+//   https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/lib/internal/fs/glob.js
 // backed by a vendored copy of minimatch (Node's deps/minimatch/index.js, ISC license):
-//   https://github.com/nodejs/node/blob/50c35fea9e64d50ab3bb5f359e8523de89d6c798/deps/minimatch/index.js
+//   https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/deps/minimatch/index.js
 // embedded below lazyMinimatch(); the vendored block is third-party and not edited but for types — the port above it follows bun's style.
+// The port also has nodejs/node 74dcdbb5f1, ab7f4c88b7, 54a1311d9e: the walker is that of v24.22.1 (v26.12.1 adds only `maxDepth`).
 //
-// This is not backed by Bun.Glob: the vendored test-fs-glob.mjs (448 cases)
+// This is not backed by Bun.Glob: the vendored test-fs-glob.mjs (448 cases at v26.3.0)
 // exercises minimatch-specific semantics — withFileTypes Dirents, the
 // exclude-array matching rules, symlink-walking and dotfile rules — that
 // Bun.Glob.scan does not implement (328/448 fail with the Bun.Glob-backed
@@ -157,6 +158,9 @@ function createMatcher(pattern: string, options: MinimatchOptions = kEmptyObject
   };
   return new (lazyMinimatch().Minimatch)(pattern, opts);
 }
+
+// An exclude pattern is only compared with paths, never looked up on disk, so its literal parts ignore case too.
+const kExcludeMatcherOptions: MinimatchOptions = { nocaseMagicOnly: false };
 
 function cloneSet(values: Set<string>) {
   const cloned = new Set<string>();
@@ -410,7 +414,7 @@ class Glob {
         // consistent comparison before instantiating matchers.
         const matchers: Minimatch[] = [];
         for (const pat of exclude) {
-          matchers.push(createMatcher(resolve(this.#root, pat)));
+          matchers.push(createMatcher(resolve(this.#root, pat), kExcludeMatcherOptions));
         }
         this.#isExcluded = makeMatchersExclude(matchers);
         this.#results.setup(this.#root, this.#isExcluded);
@@ -641,9 +645,6 @@ class Glob {
       const nSymlinks = new Set<number>();
       for (const index of pattern.indexes) {
         // For each child, check potential patterns
-        if (this.#cache.seen(entryPath, pattern, index) || this.#cache.seen(entryPath, pattern, index + 1)) {
-          return;
-        }
         const current = pattern.at(index);
         const nextIndex = index + 1;
         const next = pattern.at(nextIndex);
@@ -682,9 +683,9 @@ class Glob {
             // e.g **/b/c when entry is a/b - add c to potential patterns
             subPatterns.add(index + 2);
           }
-          if ((nextMatches || pattern.at(0) === ".") && (entryIsDirectory || entry.isSymbolicLink()) && !fromSymlink) {
+          if ((nextMatches || pattern.at(0) === ".") && entryIsDirectory && !fromSymlink) {
             // If pattern after ** matches, or pattern starts with "."
-            // and entry is a directory or symlink, add to potential patterns
+            // and entry is a directory, add to potential patterns
             subPatterns.add(nextIndex);
           }
 
@@ -860,9 +861,6 @@ class Glob {
       const nSymlinks = new Set<number>();
       for (const index of pattern.indexes) {
         // For each child, check potential patterns
-        if (this.#cache.seen(entryPath, pattern, index) || this.#cache.seen(entryPath, pattern, index + 1)) {
-          return;
-        }
         const current = pattern.at(index);
         const nextIndex = index + 1;
         const next = pattern.at(nextIndex);
@@ -905,9 +903,9 @@ class Glob {
             // e.g **/b/c when entry is a/b - add c to potential patterns
             subPatterns.add(index + 2);
           }
-          if ((nextMatches || pattern.at(0) === ".") && (entryIsDirectory || entry.isSymbolicLink()) && !fromSymlink) {
+          if ((nextMatches || pattern.at(0) === ".") && entryIsDirectory && !fromSymlink) {
             // If pattern after ** matches, or pattern starts with "."
-            // and entry is a directory or symlink, add to potential patterns
+            // and entry is a directory, add to potential patterns
             subPatterns.add(nextIndex);
           }
 
@@ -1100,7 +1098,7 @@ interface MinimatchFunction extends Omit<MinimatchModule, "minimatch"> {
 let _minimatch: MinimatchModule | undefined;
 // ─────────────────────────────────────────────────────────────────────────
 // Vendored: Node.js deps/minimatch/index.js (v26.3.0, ISC license). The code is unmodified; the types are added.
-//   https://github.com/nodejs/node/blob/50c35fea9e64d50ab3bb5f359e8523de89d6c798/deps/minimatch/index.js
+//   https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/deps/minimatch/index.js
 // ─────────────────────────────────────────────────────────────────────────
 function lazyMinimatch(): MinimatchModule {
   if (_minimatch) return _minimatch;

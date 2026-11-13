@@ -63,7 +63,7 @@ public:
     // the file or the same `pluginContents` and loader, with the same test globals ("bun:test" or "vitest").
     static Zig::SourceProvider* lookup(JSC::VM&, const WTF::String& key, const CodeString* pluginContents = nullptr);
 
-    // No-op unless isTagCacheable(provider.m_tag) and !provider.m_dependsOnMoreThanSource.
+    // No-op unless isTagCacheable(provider.m_tag), !provider.m_dependsOnMoreThanSource and !provider.m_fromEarlierGeneration.
     // Replaces any existing entry, since two in-flight fetches of a key both miss and both insert.
     static void insert(JSC::VM&, const WTF::String& key, Zig::SourceProvider&, const CodeString* pluginContents = nullptr);
 
@@ -79,6 +79,7 @@ public:
     static void insertIfAbsent(JSC::VM&, const WTF::String& key, Zig::SourceProvider&, const CodeString* pluginContents = nullptr);
 
     static void evict(JSC::VM&, const WTF::String& key);
+    // Evicts every entry. What a transpile that is out brings back is not cached either: it read its file before.
     static void clear(JSC::VM&);
 };
 

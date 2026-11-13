@@ -45,6 +45,7 @@
 #include "BunClientData.h"
 #include "BuiltinModuleKeys.h"
 #include "CodeGenerationFromStrings.h"
+#include "IsolatedModuleCache.h"
 #include "JSCommonJSModule.h"
 #include "ModuleGraph.h"
 #include "ModuleLoader.h"
@@ -7150,6 +7151,8 @@ __attribute__((minsize)) static JSC::EncodedJSValue resetModules(JSC::JSGlobalOb
     for (auto& factory : globalObject->onLoadPlugins.compiledMockFactories)
         uncheckedDowncast<JSModuleMock>(factory.mock.get())->clearRetainedFailure();
 #endif
+    // After a reset a load reads its file, so the sources that `bun test --isolate` keeps go.
+    Bun::IsolatedModuleCache::clear(vm);
     evictModulesAndTheirImporters(globalObject, WTF::move(evict));
     RETURN_IF_EXCEPTION(scope, {});
 #if ENABLE(AOT)

@@ -6178,6 +6178,13 @@ impl VirtualMachine {
                 .unwrap_or(false)
     }
 
+    /// `IsolatedModuleCache::clear()` ran. See `RuntimeTranspilerStore::source_cache_clears`.
+    #[unsafe(export_name = "Bun__VM__didClearIsolationSourceProviderCache")]
+    pub extern "C" fn did_clear_isolation_source_provider_cache(&self) {
+        let clears = &self.transpiler_store.source_cache_clears;
+        clears.set(clears.get().wrapping_add(1));
+    }
+
     #[unsafe(export_name = "Bun__VM__isMainModule")]
     pub extern "C" fn is_main_module(&self, key: &bun_core::String) -> bool {
         self.main().is_some_and(|main| key.eql_utf8(main))

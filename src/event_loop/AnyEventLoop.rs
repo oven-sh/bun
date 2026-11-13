@@ -421,14 +421,14 @@ impl EventLoopHandle {
 /// the loop's VM is closed and the caller has the task back to release on this
 /// thread.
 #[must_use = "a refused task must be released by its producer"]
-pub enum Posted {
+pub enum Posted<T = Box<ConcurrentTask>> {
     Queued,
-    Refused(NonNull<ConcurrentTask>),
+    Refused(T),
 }
 
 pub trait PostToJs: Send + Sync {
     /// Queue `task` on the VM this poster was created for and wake it, or hand it back if the VM has closed.
-    fn post(&self, task: NonNull<ConcurrentTask>) -> Posted;
+    fn post(&self, task: Box<ConcurrentTask>) -> Posted;
 }
 
 pub type JsPoster = std::sync::Arc<dyn PostToJs>;

@@ -1536,12 +1536,28 @@ describe("assert.partialDeepStrictEqual with cycles", () => {
     // A function is a value with no other match too: the Set does not hold this one, so no member is compared.
     expect(answerOf(new Set([proxy, 0, 1]), new Set([{}, () => {}]))).toBe("fail");
 
-    // An earlier member of `expected` took it, so it needs another member of `actual`.
+    // In a Set of one or two, an earlier member of `expected` can take it. Then it needs another member of `actual`.
     const taken = { v: 1, w: 2 };
-    fails(() => assert.partialDeepStrictEqual(new Set([taken, { z: 1 }]), new Set([{ v: 1 }, taken])));
+    fails(() => assert.partialDeepStrictEqual(new Set([taken, { v: 1, z: 1 }]), new Set([{ v: 1 }, taken])));
     assert.partialDeepStrictEqual(new Set([taken, { v: 1, w: 2, z: 1 }]), new Set([{ v: 1 }, taken]));
     // It took itself, so a later member of `expected` needs another member of `actual`.
     fails(() => assert.partialDeepStrictEqual(new Set([taken, { z: 1 }]), new Set([taken, { v: 1 }])));
+    // In a Set of three or more it stays its own match. The third member can be any value.
+    assert.partialDeepStrictEqual(new Set([taken, { v: 1, z: 1 }, 0]), new Set([{ v: 1 }, taken]));
+    fails(() => assert.partialDeepStrictEqual(new Set([taken, { z: 1 }, 0]), new Set([taken, { v: 1 }])));
+
+    // The order of such members in the Sets does not matter: none of them is compared.
+    const members = [0, 1, 2].map(() => ({
+      get v() {
+        reads.push("member");
+        return 1;
+      },
+    }));
+    assert.partialDeepStrictEqual(
+      new Set([members[1], members[0], members[2]]),
+      new Set([members[2], members[0], members[1]]),
+    );
+    expect(reads).toEqual([]);
   });
 
   test("a Set of actual is looked up as it is before a member is compared", () => {

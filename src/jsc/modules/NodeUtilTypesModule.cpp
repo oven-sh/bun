@@ -826,8 +826,13 @@ static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
 }
 
 // node looks every item of `expected` up in `actual` before it compares one: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/comparisons.js#L757-L785
-static NEVER_INLINE bool lookUpItems(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSSet* actualSet, JSC::JSSet* expectedSet, JSC::MarkedArgumentBuffer& gcBuffer, size_t itemsStart, size_t itemCount)
+static NEVER_INLINE bool lookUpItems(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSSet* actualSet, JSC::JSSet* expectedSet, JSC::MarkedArgumentBuffer& gcBuffer, size_t itemsStart, WTF::Vector<bool, 8>& usedIndices)
 {
+    const size_t itemCount = usedIndices.size();
+    // In a Set of fewer than three, node lets an earlier item of `expected` take an object that both Sets hold: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/comparisons.js#L739-L755
+    const bool keepsItself = actualSet->size() >= 3;
+    // The Sets most often hold the objects that both hold in one order: the search for the next one begins after the last one.
+    size_t next = 0;
     auto iter = JSC::JSSetIterator::create(globalObject->vm(), globalObject->setIteratorStructure(), expectedSet, JSC::IterationKind::Keys);
     RETURN_IF_EXCEPTION(scope, false);
     JSValue expectedItem;
@@ -840,12 +845,22 @@ static NEVER_INLINE bool lookUpItems(JSC::JSGlobalObject* globalObject, JSC::Thr
                 return false;
             continue;
         }
-        // An object that `actual` holds too goes on as the place of that item.
-        for (size_t i = 0; shared && i < itemCount; i++) {
-            if (gcBuffer.at(itemsStart + i) == expectedItem) {
-                expectedItem = JSC::jsNumber(static_cast<uint32_t>(i));
+        size_t place = itemCount;
+        for (size_t tried = 0; shared && tried < itemCount; tried++) {
+            const size_t candidate = next + tried < itemCount ? next + tried : next + tried - itemCount;
+            if (gcBuffer.at(itemsStart + candidate) == expectedItem) {
+                place = candidate;
+                next = candidate + 1;
                 break;
             }
+        }
+        if (place < itemCount) {
+            if (keepsItself) {
+                usedIndices[place] = true;
+                continue;
+            }
+            // It goes on as the place of that item of `actual`: matchWithItself takes the item, if it is free then.
+            expectedItem = JSC::jsNumber(static_cast<uint32_t>(place));
         }
         gcBuffer.append(expectedItem);
     }
@@ -890,7 +905,7 @@ static bool setSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
     usedIndices.fill(false, itemCount);
 
     // Every lookup comes before the first comparison, which can run a getter that changes a Set.
-    bool allLookedUp = lookUpItems(globalObject, scope, actualSet, expectedSet, gcBuffer, itemsStart, itemCount);
+    bool allLookedUp = lookUpItems(globalObject, scope, actualSet, expectedSet, gcBuffer, itemsStart, usedIndices);
     RETURN_IF_EXCEPTION(scope, false);
     if (!allLookedUp)
         return false;

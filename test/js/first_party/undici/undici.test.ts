@@ -337,6 +337,36 @@ describe("undici", () => {
       expect(json.headers["x-foo"]).toBe("bar");
     });
 
+    // https://github.com/nodejs/undici/blob/v6.21.3/lib/api/api-request.js#L141-L147
+    it("gives opaque and context as undici does", async () => {
+      const opaque = { mine: true };
+      const first = await request(`${hostUrl}/get`);
+      const second = await request(`${hostUrl}/get`, { opaque });
+
+      expect({ opaque: first.opaque, context: first.context }).toEqual({ opaque: null, context: undefined });
+      expect(second.opaque).toBe(opaque);
+    });
+
+    // undici keeps the `history` of the redirects in this object. The shim has the object and no history.
+    it("gives a context of its own to each request that follows redirects", async () => {
+      const first = await request(`${hostUrl}/get`, { maxRedirections: 2 });
+      const second = await request(`${hostUrl}/get`, { maxRedirections: 2 });
+
+      expect(first.context).toEqual({});
+      expect(second.context).not.toBe(first.context);
+    });
+
+    it("a write to a result does not reach the headers of the next request", async () => {
+      const { opaque, context } = await request(`${hostUrl}/headers`, { maxRedirections: 2 });
+      for (const part of [opaque, context]) {
+        if (part != null) (part as Record<string, string>)["x-written-to-a-result"] = "yes";
+      }
+
+      const { body } = await request(`${hostUrl}/headers`);
+      const { headers } = (await body.json()) as { headers: Record<string, string> };
+      expect(headers).not.toHaveProperty("x-written-to-a-result");
+    });
+
     // it("should allow the use of FormData", async () => {
     //   const form = new FormData();
     //   form.append("foo", "bar");

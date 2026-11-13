@@ -1,6 +1,8 @@
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { isPosix, isRoot, tempDir, tempDirWithFiles } from "harness";
+import { isPosix, isRoot, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { symlinkSync } from "node:fs";
+import { join } from "node:path";
 import { createTestBuilder } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
 
@@ -261,6 +263,165 @@ describe.concurrent("bunshell ls", () => {
     });
   });
 
+  // POSIX: with -l as the last format flag, and without -H or -L, a symlink operand is listed itself. In every
+  // other case a symlink to a directory is followed. The links are junctions on Windows.
+  describe("symlink operand", () => {
+    // A junction needs no privilege on Windows and has an absolute target. POSIX ignores the type.
+    const link = (dir: string, target: string, name: string) =>
+      symlinkSync(join(dir, target), join(dir, name), "junction");
+    const fixture = () => {
+      const dir = tempDir("ls-symlink-operand", { "dir/x": "", "file": "" });
+      link(String(dir), "dir", "link");
+      link(String(dir), "link", "link-to-link");
+      return dir;
+    };
+    // `lrwxrwxrwx   1     0     0        3 Nov 04 00:00 link` becomes `l link`. A line of the short format stays.
+    const entry = (line: string) => line.replace(/^(.)\S{9}(?: +\S+){7} /, "$1 ");
+    const result = async (command: ReturnType<typeof $>) => {
+      const { stdout, stderr, exitCode } = await command.quiet();
+      const lines = stdout
+        .toString()
+        .split("\n")
+        .filter(line => line.length > 0);
+      return { stdout: lines.map(entry), stderr: stderr.toString(), exitCode };
+    };
+    const ls = (line: string, cwd: string) => result($`${{ raw: line }}`.cwd(cwd));
+    const lists = (...stdout: string[]) => ({ stdout, stderr: "", exitCode: 0 });
+    const fails = (operand: string, message: string) => ({
+      stdout: [],
+      stderr: `ls: ${operand}: ${message}\n`,
+      exitCode: 1,
+    });
+
+    // What `ls` prints for each operand under each rule:
+    //   short:    no -l. A link to a directory is followed.
+    //   long:     -l is the last format flag. A link is listed itself.
+    //   followed: -l with -H or -L, or with a later -C, -m or -x. The rule of `short`, in the long format.
+    const missing = fails("missing", "No such file or directory");
+    const throughFile = fails("through-file", "Not a directory");
+    const operands = [
+      // operand, short, long, followed
+      ["dir", lists("x"), lists("- x"), lists("- x")],
+      ["link", lists("x"), lists("l link"), lists("- x")],
+      ["./link", lists("x"), lists("l ./link"), lists("- x")],
+      ["link-to-link", lists("x"), lists("l link-to-link"), lists("- x")],
+      ["link/", lists("x"), lists("- x"), lists("- x")],
+      ["link//", lists("x"), lists("- x"), lists("- x")],
+      ["link/.", lists("x"), lists("- x"), lists("- x")],
+      ["link/x", lists("link/x"), lists("- link/x"), lists("- link/x")],
+      ["file", lists("file"), lists("- file"), lists("- file")],
+      ["missing", missing, missing, missing],
+      ["file-link", lists("file-link"), lists("l file-link"), lists("l file-link")],
+      ["dangling", lists("dangling"), lists("l dangling"), lists("l dangling")],
+      ["loop", lists("loop"), lists("l loop"), lists("l loop")],
+      ["through-file", throughFile, lists("l through-file"), throughFile],
+    ] as const;
+    // A junction cannot lead to a file or to itself, so these operands are for POSIX.
+    const posixOnly = ["file-link", "dangling", "loop", "through-file"];
+    const posixLinks = (dir: string) => {
+      link(dir, "file", "file-link");
+      link(dir, "missing", "dangling");
+      link(dir, "loop", "loop");
+      link(dir, join("file", "x"), "through-file");
+    };
+
+    test.each([
+      ["ls", 1],
+      ["ls -l", 2],
+      ["ls -ltr", 2],
+      ["ls -lh", 2],
+      ["ls -lR", 2],
+      ["ls -Cl", 2],
+      ["ls -lCl", 2],
+      ["ls -lC", 3],
+      ["ls -lm", 3],
+      ["ls -lx", 3],
+      ["ls -lH", 3],
+      ["ls -Hl", 3],
+      ["ls -l -H", 3],
+      ["ls -H -l", 3],
+      ["ls -lL", 3],
+      ["ls -L -l", 3],
+      ["ls -HCl", 3],
+      ["ls -LCl", 3],
+    ] as const)("%s with each operand", async (command, column) => {
+      using dir = fixture();
+      if (isPosix) posixLinks(String(dir));
+      const expected: Record<string, unknown> = {};
+      const actual: Record<string, unknown> = {};
+      for (const row of operands) {
+        const operand = row[0];
+        if (!isPosix && posixOnly.includes(operand)) continue;
+        expected[operand] = row[column];
+        actual[operand] = await ls(`${command} ${operand}`, String(dir));
+      }
+      expect(actual).toEqual(expected);
+    });
+
+    // What GNU prints for these rows. Observed, as in the table above: the line of the link itself, and exit code 0
+    // for a link that leads nowhere.
+    describe.if(isPosix)("-H and -L read the target of a link", () => {
+      test.failing.each([
+        ["ls -lH file-link", lists("- file-link")],
+        ["ls -lL file-link", lists("- file-link")],
+        ["ls -lH dangling", fails("dangling", "No such file or directory")],
+        ["ls -L dangling", fails("dangling", "No such file or directory")],
+        ["ls -lL loop", fails("loop", "Too many levels of symbolic links")],
+      ])("%s", async (line, expected) => {
+        using dir = fixture();
+        posixLinks(String(dir));
+        expect(await ls(line, String(dir))).toEqual(expected);
+      });
+    });
+
+    test.each([
+      ["ls -la link", lists("l link")],
+      ["ls -lA link", lists("l link")],
+      ["ls -ld link", lists("l link")],
+      ["ls -dl link", lists("l link")],
+      ["ls -d link", lists("link")],
+      // A `\` is a separator on Windows only.
+      ...(isWindows ? ([["ls -l link\\\\", lists("- x")]] as const) : []),
+    ])("%s", async (line, expected) => {
+      using dir = fixture();
+      expect(await ls(line, String(dir))).toEqual(expected);
+    });
+
+    test("ls -l with an absolute operand", async () => {
+      using dir = fixture();
+      const absolute = join(String(dir), "link");
+      expect(await result($`ls -l ${absolute}`)).toEqual(lists(`l ${absolute}`));
+      expect(await result($`ls -l ${absolute + "/"}`)).toEqual(lists("- x"));
+    });
+
+    test("ls -l link/sub/.. lists the directory that the link leads to", async () => {
+      using dir = tempDir("ls-symlink-dotdot", { "dir/sub/x": "" });
+      link(String(dir), "dir", "link");
+      expect(await ls("ls -l link/sub/..", String(dir))).toEqual(lists("d sub"));
+    });
+
+    // `ls` writes the operands in the order that they complete, so the lines are sorted here.
+    test("ls -l link file prints two long lines and no section", async () => {
+      using dir = fixture();
+      const { stdout, ...rest } = await ls("ls -l link file", String(dir));
+      expect({ stdout: stdout.sort(), ...rest }).toEqual(lists("- file", "l link"));
+    });
+
+    test("ls -l * has a section for the directory and none for a link", async () => {
+      using dir = fixture();
+      const { stdout, ...rest } = await ls("ls -l *", String(dir));
+      expect({ stdout: stdout.sort(), ...rest }).toEqual(lists("- file", "- x", "dir:", "l link", "l link-to-link"));
+    });
+
+    // On Windows `ls -l` runs `lstat` on the operand first. That call can fail for a path this long, and the
+    // directory still has to be listed.
+    test.if(isWindows)("ls -l lists a directory whose path is longer than MAX_PATH", async () => {
+      const deep = `${Buffer.alloc(140, "a").toString()}/${Buffer.alloc(140, "b").toString()}`;
+      using dir = tempDir("ls-long-path", { [`${deep}/x`]: "" });
+      expect(await ls(`ls -l ${deep}`, String(dir))).toEqual(lists("- x"));
+    });
+  });
+
   describe("errors", () => {
     TestBuilder.command`ls lskdjflksdjf`
       .stderr("ls: lskdjflksdjf: No such file or directory\n")
@@ -320,6 +481,29 @@ describe.concurrent("bunshell ls", () => {
         .stdout("")
         .stderr(s => expect(s).toContain("Permission denied"))
         .run();
+      await TestBuilder.command`ls -l restricted`
+        .setTempdir(tempdir)
+        .exitCode(1)
+        .stdout("")
+        .stderr(s => expect(s).toContain("Permission denied"))
+        .run();
+      // With -l a symlink is listed itself, so nothing that it leads to is opened.
+      await $`ln -s restricted/x link-into-restricted`.quiet().throws(true).cwd(tempdir);
+      for (const [flags, operand] of [
+        ["-l", "link-to-restricted"],
+        ["-ld", "link-to-restricted"],
+        ["-l", "link-into-restricted"],
+      ]) {
+        await TestBuilder.command`ls ${flags} ${operand}`
+          .setTempdir(tempdir)
+          .exitCode(0)
+          .stdout(s => {
+            expect(s).toStartWith("l");
+            expect(s).toEndWith(` ${operand}\n`);
+          })
+          .stderr("")
+          .run();
+      }
       await $`chmod 755 restricted`.quiet().throws(true).cwd(tempdir); // cleanup
     });
 

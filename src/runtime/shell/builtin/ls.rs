@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::io::Write as _;
 
-use bun_core::ZBox;
+use bun_core::{ZBox, strings};
 use bun_sys::{E, FdExt, O, S, dir_iterator};
 
 use crate::shell::ExitCode;
@@ -120,6 +120,7 @@ impl Ls {
                         let task = ShellLsTask::create(
                             cmd,
                             opts,
+                            TaskKind::Operand,
                             task_count_ptr,
                             cwd,
                             ZBox::from_bytes(path),
@@ -136,6 +137,7 @@ impl Ls {
                     let task = ShellLsTask::create(
                         cmd,
                         opts,
+                        TaskKind::Directory,
                         task_count_ptr,
                         cwd,
                         ZBox::from_bytes(b"."),
@@ -246,13 +248,24 @@ impl Ls {
                 b'a' => opts.dotfiles = DotfileMode::All,
                 b'A' => opts.dotfiles = DotfileMode::AlmostAll,
                 b'd' => opts.list_directories = true,
-                b'l' => opts.long_listing = true,
+                b'l' => {
+                    opts.long_listing = true;
+                    if opts.symlinks == OperandSymlinks::ToDirectory {
+                        opts.symlinks = OperandSymlinks::Never;
+                    }
+                }
+                // coreutils: a format flag after `-l` ends its no-follow. The output stays long here.
+                b'C' | b'm' | b'x' => {
+                    if opts.symlinks == OperandSymlinks::Never {
+                        opts.symlinks = OperandSymlinks::ToDirectory;
+                    }
+                }
+                b'H' | b'L' => opts.symlinks = OperandSymlinks::Followed,
                 b'R' => opts.recursive = true,
                 // The remaining short flags are recognised but currently no-op.
-                b'r' | b'1' | b'b' | b'B' | b'c' | b'C' | b'D' | b'f' | b'F' | b'g' | b'G'
-                | b'h' | b'H' | b'i' | b'I' | b'k' | b'L' | b'm' | b'n' | b'N' | b'o' | b'p'
-                | b'q' | b'Q' | b's' | b'S' | b't' | b'T' | b'u' | b'U' | b'v' | b'w' | b'x'
-                | b'X' | b'Z' => {}
+                b'r' | b'1' | b'b' | b'B' | b'c' | b'D' | b'f' | b'F' | b'g' | b'G' | b'h'
+                | b'i' | b'I' | b'k' | b'n' | b'N' | b'o' | b'p' | b'q' | b'Q' | b's' | b'S'
+                | b't' | b'T' | b'u' | b'U' | b'v' | b'w' | b'X' | b'Z' => {}
                 _ => return ParseFlag::IllegalOption(Box::from(&flag[1..2])),
             }
         }
@@ -340,6 +353,7 @@ impl OutputTaskVTable for Ls {
 pub(crate) struct ShellLsTask {
     pub cmd: NodeId,
     pub opts: Opts,
+    kind: TaskKind,
     pub print_directory: bool,
     /// Shared atomic counter (lives in `ExecState` inside `Box<Ls>`; address
     /// is stable for the lifetime of the Exec state).
@@ -363,6 +377,7 @@ impl ShellLsTask {
     fn create(
         cmd: NodeId,
         opts: Opts,
+        kind: TaskKind,
         task_count: *const AtomicUsize,
         cwd: bun_sys::Fd,
         path: ZBox,
@@ -372,6 +387,7 @@ impl ShellLsTask {
         let mut task = Box::new(ShellLsTask {
             cmd,
             opts,
+            kind,
             print_directory: false,
             task_count,
             cwd,
@@ -397,6 +413,7 @@ impl ShellLsTask {
         let mut subtask = Box::new(ShellLsTask {
             cmd: self.cmd,
             opts: self.opts,
+            kind: TaskKind::Directory,
             print_directory: true,
             task_count: self.task_count,
             cwd: self.cwd,
@@ -449,9 +466,27 @@ impl ShellLsTask {
             this.now_secs = bun_core::time::timestamp().max(0) as u64;
         }
 
-        let fd = match shell_openat(this.cwd, this.path.as_zstr(), O::RDONLY | O::DIRECTORY, 0) {
+        let mut symlinks = match this.kind {
+            TaskKind::Operand => this.opts.symlinks,
+            TaskKind::Directory => OperandSymlinks::ToDirectory,
+        };
+        if cfg!(windows) && symlinks == OperandSymlinks::Never {
+            // O_NOFOLLOW (FILE_OPEN_REPARSE_POINT) opens a junction itself, as an empty directory.
+            if this.list_operand_from_lstat() {
+                return;
+            }
+            symlinks = OperandSymlinks::ToDirectory;
+        }
+        let nofollow = if symlinks == OperandSymlinks::Never {
+            O::NOFOLLOW
+        } else {
+            0
+        };
+
+        let flags = O::RDONLY | O::DIRECTORY | nofollow;
+        let fd = match shell_openat(this.cwd, this.path.as_zstr(), flags, 0) {
             Err(open_err) => {
-                this.list_non_directory_operand(&open_err);
+                this.list_non_directory_operand(&open_err, symlinks);
                 return;
             }
             Ok(fd) => fd,
@@ -504,31 +539,55 @@ impl ShellLsTask {
     }
 
     /// coreutils operand rule: `stat`, and on ENOENT or ELOOP `lstat` so a symlink is itself.
-    fn list_non_directory_operand(&mut self, open_err: &bun_sys::Error) {
-        match shell_statat(self.cwd, self.path.as_zstr()) {
-            // A directory that would not open: report the open error.
-            Ok(stat) if S::ISDIR(stat.st_mode as _) => {
-                self.err = Some(self.error_with_path(open_err));
-                return;
-            }
-            Ok(_) => {}
-            Err(e) if matches!(e.get_errno(), E::ENOENT | E::ELOOP) => {}
-            Err(e) => {
-                self.err = Some(self.error_with_path(&e));
-                return;
+    fn list_non_directory_operand(&mut self, open_err: &bun_sys::Error, symlinks: OperandSymlinks) {
+        if symlinks != OperandSymlinks::Never {
+            match shell_statat(self.cwd, self.path.as_zstr()) {
+                // A directory that would not open: report the open error.
+                Ok(stat) if S::ISDIR(stat.st_mode as _) => {
+                    self.err = Some(self.error_with_path(open_err));
+                    return;
+                }
+                Ok(_) => {}
+                Err(e) if matches!(e.get_errno(), E::ENOENT | E::ELOOP) => {}
+                Err(e) => {
+                    self.err = Some(self.error_with_path(&e));
+                    return;
+                }
             }
         }
         match shell_lstatat(self.cwd, self.path.as_zstr()) {
-            Ok(stat) => {
-                // An operand is never subject to the -a/-A filter.
-                let name = ZBox::from_bytes(self.path.as_bytes());
-                if self.opts.long_listing {
-                    self.add_entry_long_from_stat(name.as_bytes(), &stat);
-                } else {
-                    self.add_entry_short(name.as_bytes());
-                }
+            Ok(stat) if symlinks == OperandSymlinks::Never && S::ISDIR(stat.st_mode as _) => {
+                self.err = Some(self.error_with_path(open_err));
             }
+            Ok(stat) => self.add_operand(&stat),
             Err(e) => self.err = Some(self.error_with_path(&e)),
+        }
+    }
+
+    /// Lists an operand that `lstat` does not call a directory. False: the open has to decide.
+    fn list_operand_from_lstat(&mut self) -> bool {
+        let path = self.path.as_bytes();
+        let name = &path[strings::last_index_of_any(path, b"/\\").map_or(0, |sep| sep + 1)..];
+        // `link/` and `link/.` name what the link leads to, but `lstat` still describes the link.
+        if matches!(name, b"" | b"." | b"..") {
+            return false;
+        }
+        match shell_lstatat(self.cwd, self.path.as_zstr()) {
+            Ok(stat) if !S::ISDIR(stat.st_mode as _) => {
+                self.add_operand(&stat);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// An operand is never subject to the -a/-A filter.
+    fn add_operand(&mut self, stat: &bun_sys::Stat) {
+        let name = ZBox::from_bytes(self.path.as_bytes());
+        if self.opts.long_listing {
+            self.add_entry_long_from_stat(name.as_bytes(), stat);
+        } else {
+            self.add_entry_short(name.as_bytes());
         }
     }
 
@@ -813,4 +872,27 @@ pub(crate) struct Opts {
     pub(crate) long_listing: bool,
     /// `-R`, `--recursive` — list subdirectories recursively
     pub(crate) recursive: bool,
+    /// What `-l`, `-H` and `-L` say about a symlink operand.
+    symlinks: OperandSymlinks,
+}
+
+/// How `ls` treats a symlink named on the command line (coreutils `dereference`).
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum OperandSymlinks {
+    /// No flag decides: a link to a directory is followed, and the directory is listed.
+    #[default]
+    ToDirectory,
+    /// `-l` is the last of the coreutils format flags `-l`, `-C`, `-m`, `-x`: the link is listed.
+    Never,
+    /// `-H` or `-L`, before or after `-l`: as `ToDirectory`.
+    Followed,
+}
+
+/// What a task lists. Only an operand can be a symlink that is not followed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TaskKind {
+    /// A path named on the command line.
+    Operand,
+    /// The default `.`, or a subdirectory that `-R` found.
+    Directory,
 }

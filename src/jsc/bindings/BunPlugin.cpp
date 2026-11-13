@@ -7356,9 +7356,11 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void JSMock__didBeginTestFile(Zig::GlobalObje
 #endif
 }
 
-// A fetch of `specifier` that went on would read the file and make a second instance beside the one that stashLoadedModule() set aside.
-static bool hasOriginalSetAside(Zig::GlobalObject* globalObject, const String& specifier)
+// Mirrors packagesToRestore in unmockModule(), also for a mock that the test has ended: a fetch that went on would read the file and make a second instance.
+static bool hasOriginalSetAside(Zig::GlobalObject* globalObject, const ModulesToEvict& evict, JSModuleMock* mock, const String& specifier)
 {
+    if (!mock->didStashLoadedModule && !(mock->isOfVitest() && isInNodeModules(specifier)) && !evict.packagesToRestore.contains(specifier))
+        return false;
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* loader = Bun::testFileModuleLoader(globalObject);
@@ -7629,7 +7631,9 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) bool JSMock__undoMod
     for (auto& waiting : waitingMocks) {
         auto* mock = uncheckedDowncast<JSModuleMock>(waiting.mock.get());
         String specifier = mock->specifier->tryGetValue().data;
-        bool goesOn = letsWaitingLoadsGoOn && !registeredModuleMock(globalObject, specifier) && hasSomethingForLoad(mock, specifier) && !hasOriginalSetAside(globalObject, specifier);
+        if (scope.exception()) [[unlikely]]
+            (void)scope.tryClearException();
+        bool goesOn = letsWaitingLoadsGoOn && !registeredModuleMock(globalObject, specifier) && hasSomethingForLoad(mock, specifier) && !hasOriginalSetAside(globalObject, evict, mock, specifier);
         if (scope.exception()) [[unlikely]]
             (void)scope.tryClearException();
         if (goesOn)

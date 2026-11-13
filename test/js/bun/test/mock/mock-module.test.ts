@@ -5407,6 +5407,40 @@ describe.concurrent("a test file's module mocks are undone when it ends, even wi
     );
   });
 
+  // The original that the test has loaded beside the mock is not put back under the name of the module.
+  test.each([
+    ["jest.requireActual", `expect(jest.requireActual("./k.js").x).toBe("real");`],
+    ["vi.importActual", `expect((await vi.importActual("./k.js")).x).toBe("real");`],
+  ])(
+    "a load that waits for the turn of a factory gets the module itself after %s() of the module",
+    async (_, loadsOriginal) => {
+      await expectFixturesToPass(
+        {
+          ...modules,
+          "preload.js": holdsSlow(""),
+          "a.test.js": `
+            import { expect, jest, mock, test, vi } from "bun:test";
+            mock.module("./k.js", () => (globalThis.events.push("factory"), { x: "mock" }));
+            test("leaves an import that has asked for the mock, and loads the original", async () => {
+              ${leavesImport}
+              ${loadsOriginal}
+            });
+          `,
+          "b.test.js": `
+            import { expect, test } from "bun:test";
+            test("what kept the import gets the module itself", async () => {
+              globalThis.gate.resolve();
+              expect((await globalThis.kept).seen).toBe("real/slow");
+              expect(globalThis.events).toEqual([]);
+            });
+          `,
+        },
+        2,
+        heldArgs,
+      );
+    },
+  );
+
   // m.js has a file in __mocks__ and a.js is automocked: neither has a factory to call, and neither waits for a turn.
   test("a load that waits for the turn of a factory keeps the file of __mocks__ that it has asked for", async () => {
     await expectFixturesToPass(

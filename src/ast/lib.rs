@@ -445,7 +445,7 @@ impl IntoText for Box<[u8]> {
 }
 
 /// Sink adapter for [`Log::print`] — lets callers pass either a borrowed
-/// `fmt::Write` impl or the `*mut bun_core::io::Writer` returned by
+/// `fmt::Write` impl or the `&bun_core::io::Writer` returned by
 /// `Output::error_writer()` (the dominant call shape across the tree).
 pub trait IntoLogWrite {
     type W: fmt::Write;
@@ -458,29 +458,20 @@ impl<'a, W: fmt::Write> IntoLogWrite for &'a mut W {
         self
     }
 }
-/// `fmt::Write` view over a `*mut bun_core::io::Writer`.
-pub struct IoWriterAdapter(*mut bun_core::io::Writer);
-impl fmt::Write for IoWriterAdapter {
+/// `fmt::Write` view over a `bun_core::io::Writer`.
+pub struct IoWriterAdapter<'a>(&'a bun_core::io::Writer);
+impl fmt::Write for IoWriterAdapter<'_> {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        if self.0.is_null() {
-            return Ok(());
-        }
-        // SAFETY: `Output::error_writer()` returns a pointer to a long-lived
-        // adapter header (see bun_core::io::Writer); callers hold it only for
-        // the duration of this `print` call.
-        unsafe { (*self.0).write_all(s.as_bytes()) }.map_err(|_| fmt::Error)
+        self.0.write_all(s.as_bytes()).map_err(|_| fmt::Error)
     }
 }
-impl IntoLogWrite for *mut bun_core::io::Writer {
-    type W = IoWriterAdapter;
+impl<'a> IntoLogWrite for &'a bun_core::io::Writer {
+    type W = IoWriterAdapter<'a>;
     #[inline]
-    fn into_log_write(self) -> IoWriterAdapter {
+    fn into_log_write(self) -> IoWriterAdapter<'a> {
         IoWriterAdapter(self)
     }
 }
-// NOTE: a `&mut *mut Writer` blanket can't coexist with the generic
-// `&mut W: fmt::Write` impl above (coherence reservation). Callers holding a
-// `&mut *mut Writer` deref to `*mut Writer` and hit the impl above.
 
 // ───────────────────────────────────────────────────────────────────────────
 // Kind

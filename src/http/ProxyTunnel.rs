@@ -9,7 +9,7 @@ use bun_uws as uws;
 
 use crate::http_cert_error::HTTPCertError;
 use crate::http_context::{HTTPSocket, PeerVerification};
-use crate::internal_state::{HTTPStage, Stage};
+use crate::internal_state::{HTTPStage, ReadEnd, Stage};
 use crate::ssl_config::SSLConfig;
 use crate::ssl_wrapper::{Handlers as SSLWrapperHandlers, InitError, SSLWrapper, WriteDataError};
 use crate::{AlpnOffer, HTTPClient};
@@ -513,7 +513,8 @@ fn on_close(ctx: *mut HTTPClient) {
         && this.state.stage != Stage::Fail
         && !this.state.flags.is_redirect_pending;
     let mut fail_err: Option<crate::Error> = None;
-    if in_progress && this.state.is_body_complete_on_close() {
+    // The inner TLS session ended. How the outer socket ends is for `HTTPClient::on_close`.
+    if in_progress && this.state.is_body_complete_on_close(ReadEnd::Fin) {
         match this.state.finalize_body_on_eof() {
             Ok(()) => {
                 // `this` dead (NLL); reborrow via `client_from_ctx` inside.

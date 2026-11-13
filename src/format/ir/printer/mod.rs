@@ -1004,7 +1004,7 @@ impl<'d> Printer<'d> {
             }
         }
         before.unstable.extend(before.inner.drain(..).rev());
-        before.holders.extend(before.open_groups.drain(..));
+        before.holders.append(&mut before.open_groups);
         Ok(false)
     }
 

@@ -220,7 +220,7 @@ describe("path.matchesGlob(path, glob) matches as minimatch does for Node", () =
       ["x(y/z", "x(y/./z", true],
       ["x(y/./z", "x(y/./z", true],
       ["a/b/c", "a/b/../../**/c", false],
-      ["a" + "/".repeat(5000) + "b", "a/b", true],
+      ["a" + Buffer.alloc(5000, "/").toString() + "b", "a/b", true],
       ["src/a.js", "src\\*.js", true],
       ["a/b", "{a,b}/../b", false],
       ["a/c", "{a,b/..}/c", true],

@@ -117,7 +117,7 @@ test(
 
 ### 🧟 Zombie Process Killer
 
-When a test times out, Bun kills any still-running processes that the test spawned with `Bun.spawn`, `Bun.spawnSync`, or `node:child_process`, and logs a message to the console. This prevents zombie processes from lingering after timed-out tests.
+When a test times out, Bun kills any still-running processes that the test spawned with `Bun.spawn`, `Bun.spawnSync`, or `node:child_process`, and logs a message to the console. This prevents zombie processes from lingering after timed-out tests. A test that waits in `Bun.spawnSync` or in a synchronous `node:child_process` call cannot end before that child does: on Linux and macOS, Bun sends `SIGKILL` to that child if it is still running 500 milliseconds after the timeout. Tests that run concurrently do not get this.
 
 ## Test Modifiers
 

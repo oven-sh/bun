@@ -1,5 +1,5 @@
 use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::{JSGlobalObject, JSValue, JsClass as _, JsResult};
+use bun_jsc::{HostReturn as _, JSGlobalObject, JSValue, JsClass as _, JsResult};
 
 use super::super::jest::{FileColumns as _, Jest};
 use crate::generated_bindgen::expect::js_ExpectMatcherUtils as js;
@@ -119,8 +119,7 @@ impl Expect {
         Ok(())
     }
 
-    fn run_equality_testers(global: &JSGlobalObject, a: JSValue, b: JSValue) -> JsResult<Option<bool>> {
-        let Some(testers) = Self::equality_testers(global)? else { return Ok(None) };
+    fn run_equality_testers(global: &JSGlobalObject, testers: JSValue, a: JSValue, b: JSValue) -> JsResult<Option<bool>> {
         let context = ExpectMatcherContext { flags: Flags::default(), parent: None }.to_js(global);
         let mut iter = testers.array_iterator(global)?;
         while let Some(tester) = iter.next()? {
@@ -139,14 +138,21 @@ impl Expect {
         Ok(None)
     }
 
-    /// Called by C++ deep equality. Returns 1 for equal, 0 for not equal or threw, -1 if no tester decided.
+    /// Called by C++ deep equality with the testers that the comparison carries. Returns 1 for equal, 0 for not equal
+    /// or threw, -1 if no tester decided.
     #[unsafe(no_mangle)]
-    pub(crate) extern "C" fn Expect__runEqualityTesters(global: &JSGlobalObject, a: JSValue, b: JSValue) -> i8 {
-        match Self::run_equality_testers(global, a, b) {
+    pub(crate) extern "C" fn Expect__runEqualityTesters(global: &JSGlobalObject, testers: JSValue, a: JSValue, b: JSValue) -> i8 {
+        match Self::run_equality_testers(global, testers, a, b) {
             Ok(Some(equal)) => i8::from(equal),
             Ok(None) => -1,
             Err(_) => 0,
         }
+    }
+
+    /// Called by C++ when a matcher starts a comparison and some are registered. Empty for none, or if it threw.
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Expect__registeredEqualityTesters(global: &JSGlobalObject) -> JSValue {
+        Self::equality_testers(global).map(Option::unwrap_or_default).or_pending_exception()
     }
 }
 
@@ -157,25 +163,5 @@ impl ExpectMatcherContext {
             Some(testers) => Ok(testers),
             None => JSValue::create_empty_array(global, 0),
         }
-    }
-}
-
-/// Until dropped, deep equality uses `testers` (`ZERO` for none) instead of the registered ones.
-pub(crate) struct EqualityTestersScope<'a> {
-    global: &'a JSGlobalObject,
-    outer: JSValue,
-}
-
-impl<'a> EqualityTestersScope<'a> {
-    pub(crate) fn enter(global: &'a JSGlobalObject, testers: JSValue) -> JsResult<Self> {
-        let outer = Expect::equality_testers(global)?.unwrap_or_default();
-        js::equality_testers_set_cached(ExpectMatcherUtils::singleton(global), global, testers);
-        Ok(Self { global, outer })
-    }
-}
-
-impl Drop for EqualityTestersScope<'_> {
-    fn drop(&mut self) {
-        js::equality_testers_set_cached(ExpectMatcherUtils::singleton(self.global), self.global, self.outer);
     }
 }

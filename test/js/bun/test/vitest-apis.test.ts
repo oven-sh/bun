@@ -1264,6 +1264,447 @@ describe("expect.addEqualityTesters", () => {
     expect(litre()).toEqual(thousandMillilitres());
   });
 
+  // Jest 30.5.2 and Vitest 5.1.0 give these answers too, unless a test says otherwise.
+  describe("a comparison keeps its testers to itself", () => {
+    type Tester = (this: any, a: any, b: any, customTesters: unknown[]) => boolean | undefined;
+    const bothHave =
+      (key: string): Tester =>
+      (a, b) =>
+        a !== null && b !== null && typeof a === "object" && typeof b === "object" && key in a && key in b
+          ? true
+          : undefined;
+    const only =
+      (a: unknown, b: unknown): Tester =>
+      (x, y) =>
+        (x === a && y === b) || (x === b && y === a) ? true : undefined;
+    // Registered with expect.addEqualityTesters(): two objects with a `registered` key are equal.
+    const registeredTester = bothHave("registered");
+    // Only ever in the list of a this.equals() call: two objects with a `listed` key are equal.
+    const listedTester = bothHave("listed");
+    const registeredPair = (): [object, object] => [{ registered: 1, more: 1 }, { registered: 2 }];
+    const listedPair = (): [object, object] => [{ listed: 1, more: 1 }, { listed: 2 }];
+    const pass = { pass: true, message: () => "" };
+
+    let equals: (a: unknown, b: unknown, customTesters?: unknown, strictCheck?: boolean) => boolean;
+    let returnedMatcher: { customTesters: unknown[] };
+    let testersOfMatcher: unknown[] = [];
+    const readTestersOfAMatcher = () => ((expect(0) as any).toReadItsTesters(), testersOfMatcher);
+
+    beforeAll(() => {
+      expect.addEqualityTesters([registeredTester]);
+      expect.extend({
+        toReadItsTesters() {
+          testersOfMatcher = this.customTesters;
+          return pass;
+        },
+        toRun(_received: unknown, fn: () => void) {
+          fn();
+          return pass;
+        },
+        toCompareWith(received: unknown, expected: unknown, customTesters: unknown) {
+          return { pass: this.equals(received, expected, customTesters as any), message: () => "" };
+        },
+        toLendEquals() {
+          equals = this.equals as typeof equals;
+          returnedMatcher = this as any;
+          return pass;
+        },
+      });
+      (expect(0) as any).toLendEquals();
+    });
+
+    const passes = (assertion: () => unknown) => {
+      try {
+        assertion();
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const which = (registered: boolean, listed: boolean) =>
+      registered ? (listed ? "both" : "registered") : listed ? "listed" : "neither";
+    /** Which of the two testers a matcher asks. */
+    const asked = (compare: (a: unknown, b: unknown) => unknown) =>
+      which(
+        passes(() => compare(...registeredPair())),
+        passes(() => compare(...listedPair())),
+      );
+    const among = (testers: unknown[]) => which(testers.includes(registeredTester), testers.includes(listedTester));
+
+    /** What code that runs now gets from `expect`. */
+    const observe = () => ({
+      "this.customTesters": among(readTestersOfAMatcher()),
+      "this.customTesters of a matcher that returned": among(returnedMatcher.customTesters),
+      "this.customTesters in expect.m().asymmetricMatch(x)": among(
+        ((expect as any).toReadItsTesters().asymmetricMatch(0), testersOfMatcher),
+      ),
+      toEqual: asked((a, b) => expect(a).toEqual(b)),
+      toStrictEqual: asked((a, b) => expect({ a }).toStrictEqual({ a: b })),
+      toMatchObject: asked((a, b) => expect({ a }).toMatchObject({ a: b })),
+      toContainEqual: asked((a, b) => expect([a]).toContainEqual(b)),
+      toHaveProperty: asked((a, b) => expect({ a }).toHaveProperty("a", b)),
+      toHaveBeenCalledWith: asked((a, b) => {
+        const fn = mock();
+        fn(a);
+        expect(fn).toHaveBeenCalledWith(b);
+      }),
+      "toEqual(expect.objectContaining())": asked((a, b) => expect({ a }).toEqual(expect.objectContaining({ a: b }))),
+      "toEqual(expect.arrayContaining())": asked((a, b) => expect([a]).toEqual(expect.arrayContaining([b]))),
+      "resolves.toEqual": asked((a, b) => expect(Promise.resolve(a)).resolves.toEqual(b)),
+    });
+    const registeredEverywhere = {
+      "this.customTesters": "registered",
+      "this.customTesters of a matcher that returned": "registered",
+      "this.customTesters in expect.m().asymmetricMatch(x)": "registered",
+      toEqual: "registered",
+      toStrictEqual: "registered",
+      toMatchObject: "registered",
+      toContainEqual: "registered",
+      toHaveProperty: "registered",
+      toHaveBeenCalledWith: "registered",
+      "toEqual(expect.objectContaining())": "registered",
+      "toEqual(expect.arrayContaining())": "registered",
+      "resolves.toEqual": "registered",
+    };
+
+    test("outside a comparison, matchers ask the registered testers", () => {
+      expect(observe()).toEqual(registeredEverywhere);
+    });
+
+    // Each makes the comparison of its two values run `probe`.
+    const insidePoints: [string, (probe: () => void) => [unknown, unknown]][] = [
+      [
+        "a getter",
+        probe => [
+          {
+            get at() {
+              probe();
+              return 1;
+            },
+          },
+          { at: 1 },
+        ],
+      ],
+      ["asymmetricMatch() of a value", probe => [{ at: 1 }, { at: { asymmetricMatch: () => (probe(), true) } }]],
+      [
+        "an expect.extend() matcher as an asymmetric matcher",
+        probe => [{ at: 1 }, { at: (expect as any).toRun(probe) }],
+      ],
+    ];
+    describe.each([
+      ["a list", [listedTester]],
+      ["no list", undefined],
+    ])("matchers that run inside this.equals() with %s ask the registered testers", (_, list) => {
+      test.each(insidePoints)("from %s", (_, values) => {
+        let inside: unknown;
+        const [received, expected] = values(() => (inside ??= observe()));
+        (expect(received) as any).toCompareWith(expected, list);
+        expect(inside).toEqual(registeredEverywhere);
+      });
+    });
+
+    test("matchers that a tester of the list runs ask the registered testers", () => {
+      let inside: unknown;
+      const probing: Tester = a => (a === "probe" && (inside ??= observe()), undefined);
+      (expect("probe") as any).toCompareWith("probe", [probing, listedTester]);
+      expect(inside).toEqual(registeredEverywhere);
+    });
+
+    test("a list that a registered tester gives to this.equals() stays in that call too", () => {
+      let inside: unknown;
+      const starting: Tester = function (a) {
+        if (a !== "start" || inside) return undefined;
+        const received = {
+          get at() {
+            inside ??= observe();
+            return 1;
+          },
+        };
+        return this.equals(received, { at: 1 }, [listedTester]) ? undefined : false;
+      };
+      expect.addEqualityTesters([starting]);
+      expect("start").toEqual("start");
+      expect(inside).toEqual(registeredEverywhere);
+    });
+
+    test("the matcher that calls this.equals() keeps the registered testers in its own this.customTesters", () => {
+      let read: unknown[][] = [];
+      expect.extend({
+        toReadItsTestersWhileItCompares() {
+          const matcher = this;
+          let inside: unknown[] | undefined;
+          const received = {
+            get at() {
+              inside ??= matcher.customTesters;
+              return 1;
+            },
+          };
+          const before = this.customTesters;
+          this.equals(received, { at: 1 }, [listedTester]);
+          read = [before, inside!, this.customTesters];
+          return pass;
+        },
+      });
+      (expect(0) as any).toReadItsTestersWhileItCompares();
+      expect(read.map(among)).toEqual(["registered", "registered", "registered"]);
+      expect(new Set(read).size).toBe(1);
+    });
+
+    test("a comparison goes on with its own testers after a matcher ran inside it", () => {
+      const [registeredA, registeredB] = registeredPair();
+      const [listedA, listedB] = listedPair();
+      const nested = { asymmetricMatch: () => (expect(registeredA).toEqual(registeredB), true) };
+      expect(equals({ first: 1, then: listedA }, { first: nested, then: listedB }, [listedTester])).toBe(true);
+      expect(equals({ first: 1, then: registeredA }, { first: nested, then: registeredB }, [listedTester])).toBe(false);
+      expect(equals({ first: 1, then: registeredA }, { first: nested, then: registeredB })).toBe(false);
+      const inner = { asymmetricMatch: () => equals(listedA, listedB, [bothHave("inner")]) === false };
+      expect(equals({ first: 1, then: listedA }, { first: inner, then: listedB }, [listedTester])).toBe(true);
+    });
+
+    // Each puts a pair below the two values that this.equals() gets.
+    type Place = [string, (a: unknown, b: unknown) => [unknown, unknown]];
+    const plainPlaces: Place[] = [
+      ["an array", (a, b) => [[a], [b]]],
+      ["a Map", (a, b) => [new Map([["key", a]]), new Map([["key", b]])]],
+      ["a Set", (a, b) => [new Set([a]), new Set([b])]],
+    ];
+    const matcherPlaces: Place[] = [
+      ["expect.arrayContaining()", (a, b) => [[0, a], expect.arrayContaining([b])]],
+      ["a property of expect.objectContaining()", (a, b) => [{ a, more: 1 }, expect.objectContaining({ a: b })]],
+      [
+        "an object in expect.objectContaining()",
+        (a, b) => [{ at: { a }, more: 1 }, expect.objectContaining({ at: { a: b } })],
+      ],
+      [
+        "expect.objectContaining() in expect.objectContaining()",
+        (a, b) => [{ at: { a, more: 1 } }, expect.objectContaining({ at: expect.objectContaining({ a: b }) })],
+      ],
+      ["expect.arrayContaining() in a property", (a, b) => [{ at: [a] }, { at: expect.arrayContaining([b]) }]],
+    ];
+
+    test.each(plainPlaces)("this.equals() asks its list, and no registered tester, about a pair in %s", (_, place) => {
+      expect(equals(...place(...listedPair()), [listedTester])).toBe(true);
+      expect(equals(...place(...listedPair()), [listedTester], true)).toBe(true);
+      expect(equals(...place(...registeredPair()), [listedTester])).toBe(false);
+      expect(equals(...place(...registeredPair()))).toBe(false);
+    });
+
+    test.each([...plainPlaces, ...matcherPlaces])(
+      "this.equals() asks a list with the registered testers about a pair in %s",
+      (_, place) => {
+        expect(equals(...place(...registeredPair()), readTestersOfAMatcher())).toBe(true);
+        expect(equals(...place(...registeredPair()), [...readTestersOfAMatcher()])).toBe(true);
+        expect(equals(...place(...registeredPair()), [...readTestersOfAMatcher()], true)).toBe(true);
+      },
+    );
+
+    // Jest 30.5.2 answers each line the other way: its asymmetric matchers ask the registered testers.
+    test("like Vitest 5.1.0, an asymmetric matcher inside this.equals() asks the list of that call", () => {
+      for (const [, place] of matcherPlaces) {
+        expect(equals(...place(...listedPair()), [listedTester])).toBe(true);
+        expect(equals(...place(...listedPair()), [listedTester], true)).toBe(true);
+        expect(equals(...place(...registeredPair()), [listedTester])).toBe(false);
+        expect(equals(...place(...registeredPair()))).toBe(false);
+      }
+    });
+
+    test("this.equals() asks its list about the elements of a typed array", () => {
+      expect(equals(new Uint8Array([1, 7]), new Uint8Array([2, 7]), [only(1, 2)])).toBe(true);
+      expect(equals(new Uint8Array([1, 7]), new Uint8Array([2, 7]))).toBe(false);
+      expect.addEqualityTesters([only(250, 251)]);
+      expect(equals(new Uint8Array([250]), new Uint8Array([251]), [only(1, 2)])).toBe(false);
+      expect(new Uint8Array([250])).toEqual(new Uint8Array([251]));
+    });
+
+    test("a tester gets the list of its comparison as its third argument", () => {
+      const thirdArguments: unknown[] = [];
+      const recording: Tester = (_a, _b, customTesters) => (thirdArguments.push(customTesters), undefined);
+      const list = [recording];
+      expect(equals({ a: [1] }, { a: [1] }, list)).toBe(true);
+      expect(thirdArguments).toHaveLength(3);
+      expect(thirdArguments.every(testers => testers === list)).toBe(true);
+    });
+
+    // Jest 30.5.2 does the same. Vitest 5.1.0 gives the matcher the list of the comparison.
+    test("this.customTesters of a matcher that a comparison runs as an asymmetric matcher is the registered testers", () => {
+      const registered = readTestersOfAMatcher();
+      const asMatcher = () => (expect as any).toReadItsTesters();
+      for (const list of [[listedTester], [], undefined]) {
+        testersOfMatcher = [];
+        expect(equals(0, asMatcher(), list)).toBe(true);
+        expect(testersOfMatcher).toBe(registered);
+        expect(equals({ at: [0] }, { at: expect.arrayContaining([asMatcher()]) }, list)).toBe(true);
+        expect(equals({ at: 0, more: 1 }, expect.objectContaining({ at: asMatcher() }), list)).toBe(true);
+        expect(testersOfMatcher).toBe(registered);
+      }
+      expect(0).toEqual(asMatcher());
+      expect(testersOfMatcher).toBe(registered);
+    });
+
+    /** Registers `late` when a comparison reads its first property, before the comparison reaches `value`. */
+    const registering = (late: Tester, value: unknown) => {
+      let isRegistered = false;
+      return {
+        get first() {
+          if (!isRegistered) expect.addEqualityTesters([late]);
+          isRegistered = true;
+          return 1;
+        },
+        then: value,
+      };
+    };
+
+    // Each starts one comparison.
+    const comparisons: [string, (a: unknown, b: unknown) => boolean][] = [
+      ["this.equals() with a list", (a, b) => equals(a, b, [listedTester])],
+      ["this.equals() with an empty list", (a, b) => equals(a, b, [])],
+      ["this.equals() with no list", (a, b) => equals(a, b)],
+      ["this.equals() with a copy of this.customTesters", (a, b) => equals(a, b, [...readTestersOfAMatcher()])],
+      ["toEqual()", (a, b) => passes(() => expect(a).toEqual(b))],
+      ["toStrictEqual()", (a, b) => passes(() => expect(a).toStrictEqual(b))],
+      ["toMatchObject()", (a, b) => passes(() => expect(a).toMatchObject(b as object))],
+      ["toHaveProperty()", (a, b) => passes(() => expect({ at: a }).toHaveProperty("at", b))],
+      // Jest and Vitest add to the array that this.customTesters is, so there this call asks the tester too.
+      ["this.equals() with this.customTesters", (a, b) => equals(a, b, readTestersOfAMatcher())],
+    ];
+    test.each(comparisons)(
+      "a tester that is registered while %s compares stays registered, and that comparison does not ask it",
+      (name, compare) => {
+        const late = only(`${name} a`, `${name} b`);
+        expect(compare(registering(late, `${name} a`), { first: 1, then: `${name} b` })).toBe(false);
+        expect(readTestersOfAMatcher()).toContain(late);
+        expect(`${name} a`).toEqual(`${name} b`);
+      },
+    );
+
+    test("toContainEqual() compares each element on its own, so a tester registered in one is asked for the next", () => {
+      const expected = { first: 2, then: 0 };
+      const late = only("the next element", expected);
+      expect([registering(late, 0), "the next element"]).toContainEqual(expected);
+    });
+
+    test.each([
+      ["toEqual()", (a: unknown, b: unknown) => expect(a).toEqual(b)],
+      ["toStrictEqual()", (a: unknown, b: unknown) => expect(a).toStrictEqual(b)],
+      ["toMatchObject()", (a: unknown, b: unknown) => expect(a).toMatchObject(b as object)],
+      ["expect.arrayContaining()", (a: unknown, b: unknown) => expect([a]).toEqual(expect.arrayContaining([b]))],
+      [
+        "expect.objectContaining()",
+        (a: unknown, b: unknown) => expect({ at: a }).toEqual(expect.objectContaining({ at: b })),
+      ],
+      ["this.equals()", (a: unknown, b: unknown) => expect(equals(a, b, [...readTestersOfAMatcher()])).toBe(true)],
+    ])(
+      "%s keeps the testers that it started with when they are registered nowhere else and garbage is collected",
+      (_, assert) => {
+        let step = 0;
+        const [registeredA, registeredB] = registeredPair();
+        // The first getter leaves the comparison as the only holder of its array. The second runs with no tester on the stack.
+        const received = {
+          get first() {
+            if (step++ === 0) expect.addEqualityTesters([() => undefined]);
+            return 1;
+          },
+          get second() {
+            if (step++ === 1) {
+              Bun.gc(true);
+              Array.from({ length: 4096 }, (_, index) => [index, index, index]);
+            }
+            return 2;
+          },
+          third: registeredA,
+        };
+        assert(received, { first: 1, second: 2, third: registeredB });
+        expect(step).toBeGreaterThanOrEqual(2);
+      },
+    );
+  });
+
+  test.concurrent.each(isolationFlags)(
+    "a tester that is registered inside this.equals() is a tester of its test file %j",
+    async args => {
+      const lend = `
+        let equals, customTesters;
+        expect.extend({
+          toLend() {
+            equals = this.equals;
+            customTesters = this.customTesters;
+            return { pass: true, message: () => "" };
+          },
+        });
+        const only = (a, b) => (x, y) => (x === a && y === b ? true : undefined);
+        const registering = (late, value) => {
+          let isRegistered = false;
+          return {
+            get first() {
+              if (!isRegistered) expect.addEqualityTesters([late]);
+              isRegistered = true;
+              return 1;
+            },
+            then: value,
+          };
+        };
+      `;
+      const { results, stderr, exitCode } = await runTests(
+        {
+          "shared.ts": `
+            import { expect } from "bun:test";
+            export const only = (a, b) => (x, y) => (x === a && y === b ? true : undefined);
+            expect.addEqualityTesters([only("shared 1 a", "shared 1 b"), only("shared 2 a", "shared 2 b")]);
+          `,
+          "a-nothing-registered.test.ts": `
+            import { expect, test } from "bun:test";
+            ${lend}
+            test("the first tester can be registered inside this.equals()", () => {
+              expect(0).toLend();
+              expect(customTesters).toEqual([]);
+              expect(equals(registering(only("a", "b"), "a"), { first: 1, then: "b" })).toBe(false);
+              expect("a").toEqual("b");
+              expect(equals(registering(only("c", "d"), "c"), { first: 1, then: "d" }, [])).toBe(false);
+              expect("c").toEqual("d");
+            });
+          `,
+          "b-registers-inside.test.ts": `
+            import { expect, test } from "bun:test";
+            import "./shared";
+            ${lend}
+            expect.addEqualityTesters([only("own a", "own b")]);
+            test("a tester registered inside this.equals() applies until the file ends", () => {
+              expect(0).toLend();
+              expect(customTesters).toHaveLength(3);
+              expect(equals(registering(only("inside a", "inside b"), 0), { first: 1, then: 0 })).toBe(true);
+              expect(0).toLend();
+              expect(customTesters).toHaveLength(4);
+              expect("inside a").toEqual("inside b");
+              expect("own a").toEqual("own b");
+              expect("shared 2 a").toEqual("shared 2 b");
+            });
+          `,
+          "c-next.test.ts": `
+            import { expect, test } from "bun:test";
+            import "./shared";
+            ${lend}
+            test("the next file has the testers of the shared module only", () => {
+              expect(0).toLend();
+              expect(customTesters).toHaveLength(2);
+              expect("shared 1 a").toEqual("shared 1 b");
+              expect("shared 2 a").toEqual("shared 2 b");
+              expect("own a").not.toEqual("own b");
+              expect("inside a").not.toEqual("inside b");
+              expect("a").not.toEqual("b");
+            });
+          `,
+        },
+        args,
+      );
+      expect(results, stderr).toEqual([
+        "(pass) the first tester can be registered inside this.equals()",
+        "(pass) a tester registered inside this.equals() applies until the file ends",
+        "(pass) the next file has the testers of the shared module only",
+      ]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
   const perFile = {
     "tester.ts": `
       export class Celsius { constructor(public degrees: number) {} }

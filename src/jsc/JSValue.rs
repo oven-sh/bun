@@ -2794,6 +2794,19 @@ impl JSValue {
             JSC__JSValue__jestStrictDeepEquals(self, other, global)
         })
     }
+    /// `this.equals(a, b, customTesters, strictCheck)` of a custom matcher or an equality tester: like the two
+    /// above, but the comparison asks `testers` (an array, or `ZERO` for none) and no registered tester.
+    pub fn jest_deep_equals_with_testers(
+        self,
+        other: JSValue,
+        global: &JSGlobalObject,
+        testers: JSValue,
+        is_strict: bool,
+    ) -> JsResult<bool> {
+        host_fn::from_js_host_call_generic(global, || {
+            JSC__JSValue__jestDeepEqualsWithTesters(self, other, global, testers, is_strict)
+        })
+    }
     /// `JSValue.jestDeepMatch` — `expect(a).toMatchObject(b)` /
     /// snapshot-property-matcher subset comparison. Also returns the value to print for `self`. If the result
     /// equals `replace_when`, that's a copy with `subset`'s asymmetric matchers in place of what they matched.
@@ -2913,6 +2926,13 @@ unsafe extern "C" {
         this: JSValue,
         other: JSValue,
         global: &JSGlobalObject,
+    ) -> bool;
+    safe fn JSC__JSValue__jestDeepEqualsWithTesters(
+        this: JSValue,
+        other: JSValue,
+        global: &JSGlobalObject,
+        testers: JSValue,
+        is_strict: bool,
     ) -> bool;
     safe fn JSC__JSValue__jestDeepMatch(
         this: JSValue,

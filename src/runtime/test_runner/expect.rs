@@ -2741,14 +2741,9 @@ impl ExpectMatcherContext {
         } else {
             custom_testers
         };
-        let _testers = super::expect::add_equality_testers::EqualityTestersScope::enter(global_this, custom_testers)?;
         let pass = Pass::barrier();
         let _entered = pass.enter();
-        if strict_check {
-            a.jest_strict_deep_equals(b, global_this)
-        } else {
-            a.jest_deep_equals(b, global_this)
-        }
+        a.jest_deep_equals_with_testers(b, global_this, custom_testers, strict_check)
     }
 }
 

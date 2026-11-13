@@ -93,7 +93,13 @@ export default b.declarations(
     "SubtleCrypto",
     ...methodsOfSubtleCrypto.map(name => `SubtleCrypto.prototype.${name}`),
   ),
-  extendAll(["WebGpu", "Events"], "navigator.gpu", ...classesOfWebGPU),
+  // Native code of which the table says nothing may make an object of any class below DOMException and Event, so those two would keep the rest.
+  extendAll(
+    ["WebGpu", "Events"],
+    "navigator.gpu",
+    ...classesOfWebGPU.filter(name => name !== "GPUPipelineError" && name !== "GPUUncapturedErrorEvent"),
+  ),
+  extendAll(["Events"], "GPUUncapturedErrorEvent"),
   extendAll(["CryptoObject", "CryptoGlobal"], "Crypto"),
   extendAll(["CryptoGlobal", "CryptoObject"], "crypto"),
 

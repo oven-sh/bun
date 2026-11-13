@@ -688,6 +688,15 @@ export default b.declarations(
       target: targetOfEvent,
       currentTarget: targetOfEvent,
       srcElement: targetOfEvent,
+      // A new list of targets, of which it makes none.
+      composedPath: {
+        returns: b.instance("Array").exactly.holding({ element: b.anyMadeOf() }).fresh,
+        capability: "heap",
+        throws: true,
+        uses: { this: [b.exposedFrom(targetsOfEventsCell)] },
+        reads: ["ExternalState"],
+        implementation: b.hostCall,
+      },
       cancelBubble: flagOfEvent,
       returnValue: flagOfEvent,
       ...Object.fromEntries(

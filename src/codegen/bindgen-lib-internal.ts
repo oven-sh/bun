@@ -287,7 +287,7 @@ const optionalParameterType = (type: ParameterType, absent: TypeSpec): Parameter
 });
 
 /** `type` for an argument that every value it does not take leaves out. The members of an object are still read. */
-function ignoringParameterType(type: ParameterType): ParameterType {
+export function ignoringParameterType(type: ParameterType): ParameterType {
   const readsMembers = type.conversion === "Dictionary";
   const accepted: TypeSpec = readsMembers ? unionType(type.accepted, anyPrimitiveType) : { type: "Anything" };
   const converted: TypeSpec = readsMembers ? unionType(accepted, { type: "Object" }) : accepted;

@@ -38,6 +38,7 @@ import {
   SequenceType,
   Signature,
   Type,
+  ignoringParameterType,
   memberIdentifier,
   symbolDescription,
   type Builtin,
@@ -395,7 +396,24 @@ function leavesCellsAlone(type: Type, converted: TypeSpec): boolean {
 
 // The wrapper goes over a list by the @@iterator that the operand has, and over a record by its keys.
 const iteratesOperand = ({ args }: Signature): boolean =>
-  args.some(({ type }) => findContainers(type).some(container => protocolsOfContainer(container).length > 0));
+  [...collectParts(args.map(({ type }) => type))].some(part => protocolsOfContainer(part).length > 0);
+
+// What ends the call before the last conversion: an argument that is refused, and where the function rejects, anything.
+function mayEndBeforeConversion({ args, rejects }: Signature): boolean {
+  const last = args.findLastIndex(({ type }) =>
+    conversionProtocols[type.parameterType.conversion].includes("ToPrimitive"),
+  );
+  return last !== -1 && (rejects || args.slice(0, last).some(({ type }) => type.canRefuse));
+}
+
+function parameterOf(signature: Signature, index: number): b.TableType {
+  const parameter = signature.args[index].type.parameterType;
+  // The call returns whatever it is handed.
+  if (signature.rejects && parameter.mode !== "Rest") return new b.TableType(ignoringParameterType(parameter));
+  if (index >= signature.requiredCount) return new b.TableType(parameter);
+  const required = new b.TableType({ ...parameter, mode: "Required" });
+  return signature.webIDL && !signature.args[index].type.takesUndefined ? required.refusing(b.notPassed) : required;
+}
 
 function capabilityOf(signature: Signature, result: TypeSpec, converted: readonly TypeSpec[]): Capability {
   const { args, capability } = signature;
@@ -429,13 +447,7 @@ function createField(
   return {
     ...columns,
     this: receiver === null ? undefined : new b.TableType(receiver.type),
-    args: Object.fromEntries(
-      args.map(({ name, type }, index): [string, b.TableType] => {
-        const isFollowedByRequired = index < signature.requiredCount;
-        const parameter = type.parameterType;
-        return [name, new b.TableType(isFollowedByRequired ? { ...parameter, mode: "Required" } : parameter)];
-      }),
-    ),
+    args: Object.fromEntries(args.map(({ name }, index) => [name, parameterOf(signature, index)])),
     returns: createStrictType(result),
     // A thunk holds what the Rust function returns to the words, or hands back the wrapper itself (answersThis). A body in C++ has no thunk.
     resultIsDeclaredOnly: (!hasThunk(signature) && checkedWordsOf(signature.returns) !== null) || undefined,
@@ -447,6 +459,8 @@ function createField(
     ),
     runsOnlyOperandCode:
       columns.runsOnlyOperandCode ?? ((capability !== "js" && iteratesOperand(signature)) || undefined),
+    readsStateBeforeConversions:
+      columns.readsStateBeforeConversions ?? (mayEndBeforeConversion(signature) || undefined),
     throws:
       signature.throws ||
       isHeld(signature) ||
@@ -593,7 +607,9 @@ function collectFunction(
       signature.requiredArguments > 0 || signature.rejects ? null : thunkOf(signature),
     ),
   );
-  const fields = overloads.flatMap(overload => overload.fields);
+  // By the types alone, a signature fits a call that has more arguments, and the first that fits is taken.
+  const countOf = ({ args }: DeclaredField) => (fn.dispatchesByCount ? Object.keys(args).length : 0);
+  const fields = overloads.flatMap(overload => overload.fields).toSorted((a, b) => countOf(b) - countOf(a));
   // Nobody has read a member of a class of which the schema says nothing but that it is there.
   const isUnread = fn.signatures.every(
     signature =>
@@ -861,8 +877,8 @@ function collectClassMember(
   if (methods.some(method => method.privateSymbol !== undefined)) return [];
   if (isStatic) return collectFunction(member, path, null, signature => methodSymbolName(type, signature as Method));
   if (!hasInstanceReceiver(type)) return collectFunction(member, path, null, () => null);
-  // The host function answers undefined for a receiver that is no instance, and the thunk takes an instance.
-  if (methods[0].invalidThis === "undefined")
+  // The host function answers a receiver that is no instance with undefined or a rejected promise, and the thunk takes an instance.
+  if (methods[0].invalidThis === "undefined" || methods[0].rejects)
     return collectFunction(member, path, b.any.parameter, () => null, type.name);
   // The thunk of a function that `protoCaller` calls takes other arguments, and its host function reads the callee, which a frame of values lacks.
   if (type.protoCaller !== undefined) return collectFunction(member, path, type.parameterType, () => null, type.name);

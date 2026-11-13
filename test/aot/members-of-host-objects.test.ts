@@ -24,5 +24,6 @@ test("each class of events that the global object has takes its type first", () 
     return typeof value === "function" && (value === Event || value.prototype instanceof Event);
   });
   expect(found).toContain("Event");
-  expect(found.map(name => new (globalThis as any)[name]("mine", {}).type)).toEqual(found.map(() => "mine"));
+  const init = { error: new GPUValidationError("GPUUncapturedErrorEvent requires one") };
+  expect(found.map(name => new (globalThis as any)[name]("mine", init).type)).toEqual(found.map(() => "mine"));
 });

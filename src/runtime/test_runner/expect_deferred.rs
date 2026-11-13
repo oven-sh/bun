@@ -344,9 +344,8 @@ impl Pass {
     }
 
     #[inline]
-    fn innermost<'a>() -> &'a Cell<*const Pass> {
-        // SAFETY: every JS thread has a `RuntimeState` that outlives the script it runs.
-        unsafe { &(*crate::jsc_hooks::runtime_state()).matcher_pass }
+    fn innermost() -> &'static Cell<*const Pass> {
+        &crate::jsc_hooks::runtime_state().matcher_pass
     }
 
     #[inline]

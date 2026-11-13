@@ -35,14 +35,14 @@ use crate::selector::parser::{
 /// (from left to right). Once the process is complete, callers should invoke
 /// build(), which transforms the contents of the SelectorBuilder into a heap-
 /// allocated Selector and leaves the builder in a drained state.
-pub struct SelectorBuilder<Impl: ValidSelectorImpl> {
+pub struct SelectorBuilder<'bump, Impl: ValidSelectorImpl<'bump>> {
     /// The entire sequence of simple selectors, from left to right, without combinators.
     ///
     /// We make this large because the result of parsing a selector is fed into a new
     /// Arc-ed allocation, so any spilled vec would be a wasted allocation. Also,
     /// Components are large enough that we don't have much cache locality benefit
     /// from reserving stack space for fewer of them.
-    simple_selectors: SmallList<GenericComponent<Impl>, 32>,
+    simple_selectors: SmallList<GenericComponent<'bump, Impl>, 32>,
 
     /// The combinators, and the length of the compound selector to their left.
     combinators: SmallList<(Combinator, usize), 32>,
@@ -50,24 +50,24 @@ pub struct SelectorBuilder<Impl: ValidSelectorImpl> {
     /// The length of the current compound selector.
     current_len: usize,
 
-    alloc: ArenaPtr,
+    alloc: ArenaPtr<'bump>,
 }
 
-pub(crate) struct BuildResult<Impl: ValidSelectorImpl> {
+pub(crate) struct BuildResult<'bump, Impl: ValidSelectorImpl<'bump>> {
     pub(crate) specificity_and_flags: SpecificityAndFlags,
-    pub(crate) components: Vec<GenericComponent<Impl>, ArenaPtr>,
+    pub(crate) components: Vec<GenericComponent<'bump, Impl>, ArenaPtr<'bump>>,
 }
 
-impl<Impl: ValidSelectorImpl> Default for SelectorBuilder<Impl> {
+impl<'bump, Impl: ValidSelectorImpl<'bump>> Default for SelectorBuilder<'bump, Impl> {
     #[inline]
     fn default() -> Self {
         Self::init_in(ArenaPtr::global())
     }
 }
 
-impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
+impl<'bump, Impl: ValidSelectorImpl<'bump>> SelectorBuilder<'bump, Impl> {
     #[inline]
-    pub(crate) fn init_in(alloc: ArenaPtr) -> Self {
+    pub(crate) fn init_in(alloc: ArenaPtr<'bump>) -> Self {
         Self {
             simple_selectors: SmallList::default(),
             combinators: SmallList::default(),
@@ -93,13 +93,13 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
     }
 
     /// Pushes a simple selector onto the current compound selector.
-    pub(crate) fn push_simple_selector(&mut self, ss: GenericComponent<Impl>) {
+    pub(crate) fn push_simple_selector(&mut self, ss: GenericComponent<'bump, Impl>) {
         debug_assert!(!ss.is_combinator());
         self.simple_selectors.append(ss);
         self.current_len += 1;
     }
 
-    pub(crate) fn last_simple_selector(&self) -> Option<&GenericComponent<Impl>> {
+    pub(crate) fn last_simple_selector(&self) -> Option<&GenericComponent<'bump, Impl>> {
         self.simple_selectors.last()
     }
 
@@ -114,7 +114,7 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
     /// Consumes the builder, producing a Selector.
     ///
     /// *NOTE*: This will free all allocated memory in the builder
-    pub(crate) fn build(&mut self, flags: SelectorFlags) -> BuildResult<Impl> {
+    pub(crate) fn build(&mut self, flags: SelectorFlags) -> BuildResult<'bump, Impl> {
         let specificity = compute_specificity::<Impl>(self.simple_selectors.slice());
         // `build_with_specificity_and_flags()` drains the contents; `Drop` on
         // `SelectorBuilder` frees the SmallList capacity when the builder goes
@@ -133,73 +133,28 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
     /// order requires additional allocations, and undoing the reversal when serializing the
     /// selector. So we could just change this code to store the components in the same order
     /// as the source.
-    fn build_with_specificity_and_flags(&mut self, spec: SpecificityAndFlags) -> BuildResult<Impl> {
-        // Capture combinators.len() before borrowing simple_selectors.slice().
-        let combinators_len = self.combinators.len();
+    fn build_with_specificity_and_flags(
+        &mut self,
+        spec: SpecificityAndFlags,
+    ) -> BuildResult<'bump, Impl> {
+        let mut components = Vec::new_in(self.alloc);
 
-        let (rest, current) = split_from_end::<GenericComponent<Impl>>(
-            self.simple_selectors.slice(),
-            self.current_len,
-        );
-        let combinators = self.combinators.slice();
-
-        let mut components: Vec<GenericComponent<Impl>, ArenaPtr> = Vec::new_in(self.alloc);
-
-        let mut current_simple_selectors_i: usize = 0;
-        let mut combinator_i: i64 = i64::from(combinators_len) - 1;
-        let mut rest_of_simple_selectors = rest;
-        let mut current_simple_selectors = current;
-
+        let mut compound_len = self.current_len;
         loop {
-            if current_simple_selectors_i < current_simple_selectors.len() {
-                // `GenericComponent<Impl>` is not `Copy`; we bitwise-move it out
-                // via `ptr::read` — sound because every element of
-                // `simple_selectors` is consumed exactly once across the loop,
-                // and `set_len(0)` below suppresses the source slice's `Drop`.
-                // SAFETY: each index is read at most once (the cursor
-                // monotonically advances; `rest_of_simple_selectors` is the
-                // disjoint prefix of the previous `current` slice). The source
-                // storage is leaked-then-truncated via `set_len(0)`.
-                let moved = unsafe {
-                    core::ptr::read(&raw const current_simple_selectors[current_simple_selectors_i])
-                };
-                components.push(moved);
-                current_simple_selectors_i += 1;
-            } else {
-                if combinator_i >= 0 {
-                    let (combo, len) =
-                        combinators[usize::try_from(combinator_i).expect("int cast")];
-                    let (rest2, current2) =
-                        split_from_end::<GenericComponent<Impl>>(rest_of_simple_selectors, len);
-                    rest_of_simple_selectors = rest2;
-                    current_simple_selectors_i = 0;
-                    current_simple_selectors = current2;
-                    combinator_i -= 1;
-                    components.push(GenericComponent::Combinator(combo));
-                    continue;
-                }
-                break;
+            let start = self.simple_selectors.0.len() - compound_len;
+            for component in self.simple_selectors.0.drain(start..) {
+                components.push(component);
             }
+            let Some((combinator, len)) = self.combinators.pop() else {
+                break;
+            };
+            components.push(GenericComponent::Combinator(combinator));
+            compound_len = len;
         }
-
-        // This function should take every component from `self.simple_selectors`
-        // and place it into `components` and return it.
-        //
-        // This means that we shouldn't leak any `GenericComponent<Impl>`, so
-        // it is safe to just set the length to 0.
-        //
-        // Combinators don't need to be deinitialized because they are simple enums.
-        self.simple_selectors.set_len(0);
-        self.combinators.set_len(0);
 
         BuildResult {
             specificity_and_flags: spec,
             components,
         }
     }
-}
-
-fn split_from_end<T>(s: &[T], at: usize) -> (&[T], &[T]) {
-    let midpoint = s.len() - at;
-    (&s[0..midpoint], &s[midpoint..])
 }

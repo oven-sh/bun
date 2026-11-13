@@ -2734,7 +2734,7 @@ pub(crate) struct TreeShakeCtx<'a, 'r> {
     pub(crate) parts_live: &'r mut [bun_collections::AutoBitSet],
     pub(crate) import_records: &'r [bun_ast::import_record::List<'a>],
     pub(crate) entry_point_kinds: &'r [EntryPoint::Kind],
-    pub(crate) css_reprs: &'r [crate::bundled_ast::CssCol],
+    pub(crate) css_reprs: &'r [crate::bundled_ast::CssCol<'a>],
     pub(crate) worklist: Vec<TreeShakeWork>,
 }
 

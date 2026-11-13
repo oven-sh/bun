@@ -13,19 +13,12 @@ pub use bun_css::BundlerStyleSheet;
 
 /// Arena-owned handle to a parsed CSS stylesheet.
 ///
-/// The pointee lives in a per-file `Bump` whose ownership is held by
-/// `Graph.heap` (bumps are `Pin<Box<Bump>>` owned by the
-/// graph and outlive every `BundledAst` row by struct drop order). No `'arena`
-/// lifetime is threaded — N files imply N distinct per-worker bumps with no
-/// single common lifetime — so the invariant is enforced by drop order, not
-/// the type system. `StoreRef`'s `Deref`/`DerefMut` encapsulate the single
-/// documented `unsafe` deref justified by that invariant; callers use `&*r`
-/// (or `Option::as_deref`) instead of open-coded `unsafe { &*ptr }`.
-pub(crate) type CssAstRef = bun_ast::StoreRef<BundlerStyleSheet>;
+/// It lives in a `Worker.heap`, so `deinit_without_freeing_arena` drops it before the workers.
+pub(crate) type CssAstRef<'arena> = bun_ast::StoreRef<BundlerStyleSheet<'arena>>;
 
 /// Element type of the `css` SoA column (`items_css()`). Exposed so bundler
 /// call sites can name the column without re-spelling the pointer shape.
-pub(crate) type CssCol = Option<CssAstRef>;
+pub(crate) type CssCol<'arena> = Option<CssAstRef<'arena>>;
 
 use bun_ast::import_record;
 use bun_core::strings;
@@ -67,7 +60,7 @@ pub struct BundledAst<'arena> {
     pub(crate) parts: part::List<'arena>,
     // See `CssAstRef` doc for the arena drop-order invariant that backs the
     // safe `Deref`.
-    pub(crate) css: CssCol,
+    pub(crate) css: CssCol<'arena>,
     pub(crate) url_for_css: &'arena [u8],
     pub(crate) symbols: symbol::List<'arena>,
     pub(crate) module_scope: Scope,
@@ -115,7 +108,7 @@ bun_collections::multi_array_columns! {
         hashbang: StoreStr,
         export_default_alias_of_import: Ref,
         parts: part::List<'arena>,
-        css: CssCol,
+        css: CssCol<'arena>,
         url_for_css: &'arena [u8],
         symbols: symbol::List<'arena>,
         module_scope: Scope,

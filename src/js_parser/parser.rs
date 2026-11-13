@@ -146,7 +146,7 @@ pub mod options {
         pub import_source: Cow<'static, [u8]>,
     }
 }
-pub use crate::parse::parse_entry::{Options as ParserOptions, Parser};
+pub use crate::parse::parse_entry::{Options as ParserOptions, Parser, TsconfigOptions};
 pub use crate::renamer;
 pub use crate::scan::scan_side_effects::SideEffects;
 

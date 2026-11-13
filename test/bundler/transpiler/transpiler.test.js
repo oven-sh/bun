@@ -3196,6 +3196,175 @@ console.log(<div {...obj} key="after" />);`),
       expect(imports.filter(({ path }) => path === "react")).toHaveLength(1);
       expect(imports).toHaveLength(2);
     });
+
+    describe("decorators and accessor fields", () => {
+      // The import paths a call returns, or every error it throws.
+      const outcome = call => {
+        try {
+          return call().map(({ path }) => path);
+        } catch (e) {
+          return (e.errors ?? [e]).map(({ message, position }) => ({
+            message,
+            line: position?.line,
+            column: position?.column,
+          }));
+        }
+      };
+
+      const shapes = {
+        "accessor field": `class C { accessor x = 1 }`,
+        "static accessor field": `class C { static accessor x = 1 }`,
+        "decorated accessor field": `class C { @d accessor x = 1 }`,
+        "class decorator": `@d class C {}`,
+        "member decorator": `class C { @d m() {} }`,
+        "decorator after export": `export @d class C {}`,
+        "decorator before export": `@d export class C {}`,
+        "class expression decorator": `(@d class {});`,
+        "parenthesized decorator": `@(d) class C {}`,
+        "decorated private field": `class C { @d #p = 1 }`,
+        "decorator that only the legacy grammar accepts": `@d()() class C {}`,
+      };
+      const outcomes = scan =>
+        Object.fromEntries(
+          Object.entries(shapes).map(([name, source]) => [name, outcome(() => scan(`import "./a";\n${source}`))]),
+        );
+      const compilerOptions = {
+        "no tsconfig": undefined,
+        "experimentalDecorators": { experimentalDecorators: true },
+        "emitDecoratorMetadata": { emitDecoratorMetadata: true },
+        "experimentalDecorators and emitDecoratorMetadata": {
+          experimentalDecorators: true,
+          emitDecoratorMetadata: true,
+        },
+      };
+
+      describe.each(["js", "jsx", "ts", "tsx"])("with the %s loader", loader => {
+        it.each(Object.keys(compilerOptions))("scans what scan() scans, %s", name => {
+          const options = compilerOptions[name];
+          const tsconfigs = options
+            ? [{ compilerOptions: options }, JSON.stringify({ compilerOptions: options })]
+            : [undefined];
+          for (const tsconfig of tsconfigs) {
+            for (const trimUnusedImports of [false, true]) {
+              const transpiler = new Bun.Transpiler({ loader, tsconfig, trimUnusedImports });
+              const expected = outcomes(source => transpiler.scan(source).imports);
+              expect(outcomes(source => transpiler.scanImports(source))).toEqual(expected);
+
+              // The loader of the call selects the grammar, not the loader of the instance.
+              const other = new Bun.Transpiler({
+                loader: loader.startsWith("ts") ? "js" : "ts",
+                tsconfig,
+                trimUnusedImports,
+              });
+              expect(outcomes(source => other.scanImports(source, loader))).toEqual(expected);
+            }
+          }
+        });
+
+        it("accepts every shape of the TC39 grammar", () => {
+          const { "decorator that only the legacy grammar accepts": legacyOnly, ...standard } = outcomes(source =>
+            new Bun.Transpiler({ loader }).scanImports(source),
+          );
+          expect(standard).toEqual(Object.fromEntries(Object.keys(standard).map(name => [name, ["./a"]])));
+          expect(legacyOnly[0].message).toBe('Expected "class" but found "("');
+        });
+      });
+
+      it("uses the legacy grammar for TypeScript when the tsconfig sets experimentalDecorators", () => {
+        const source = `import "./a";\n@d()() class C {}`;
+        const legacy = new Bun.Transpiler({
+          loader: "ts",
+          tsconfig: { compilerOptions: { experimentalDecorators: true } },
+        });
+        expect(legacy.scanImports(source)).toEqual([{ kind: "import-statement", path: "./a" }]);
+        expect(outcome(() => legacy.scanImports(source, "js"))).toEqual(
+          outcome(() => legacy.scan(source, "js").imports),
+        );
+
+        const standard = new Bun.Transpiler({ loader: "ts" });
+        expect(() => standard.scanImports(source)).toThrow("Failed to scan imports");
+        expect(standard.scanImports(`import "./b";\nclass C { accessor x = 1 }`)).toEqual([
+          { kind: "import-statement", path: "./b" },
+        ]);
+      });
+
+      // With emitDecoratorMetadata, the type of a decorated member is a value at run time.
+      describe.each(["ts", "tsx"])("metadata types with the %s loader", loader => {
+        const paths = imports => imports.map(({ path }) => path);
+        const both = (transpiler, source) => ({
+          scanImports: paths(transpiler.scanImports(source)),
+          scan: paths(transpiler.scan(source).imports),
+        });
+        const metadata = new Bun.Transpiler({
+          loader,
+          trimUnusedImports: true,
+          tsconfig: { compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true } },
+        });
+
+        it.each([
+          ["a parameter type", `class C { @d m(a: Foo) {} }`],
+          ["an array type", `class C { @d m(a: Foo[]) {} }`],
+          ["a union type", `class C { @d m(a: Foo | undefined) {} }`],
+          ["a return type", `class C { @d m(): Foo { return null } }`],
+          ["a property type", `class C { @d p: Foo; }`],
+          ["a constructor parameter of a decorated class", `@d class C { constructor(a: Foo) {} }`],
+          ["the type of a decorated parameter", `class C { m(@d a: Foo) {} }`],
+          ["a member of a class expression", `const K = class { @d m(a: Foo) {} };`],
+        ])("keeps the import of %s", (_, source) => {
+          const kept = ["./foo", "./d"];
+          expect(both(metadata, `import { Foo } from "./foo"; import { d } from "./d";\n${source}`)).toEqual({
+            scanImports: kept,
+            scan: kept,
+          });
+        });
+
+        it("keeps default and aliased imports", () => {
+          const kept = ["./default", "./aliased", "./d"];
+          const source = `
+            import Default from "./default";
+            import { Foo as Aliased } from "./aliased";
+            import { d } from "./d";
+            class C { @d m(a: Default, b: Aliased) {} }
+          `;
+          expect(both(metadata, source)).toEqual({ scanImports: kept, scan: kept });
+        });
+
+        it("keeps a namespace import", () => {
+          const source = `
+            import * as ns from "./namespace";
+            import { d } from "./d";
+            class C { @d m(a: ns.Foo, b: ns.inner.Bar) {} }
+          `;
+          expect(paths(metadata.scanImports(source))).toEqual(["./namespace", "./d"]);
+        });
+
+        it.each([
+          [
+            "a type argument",
+            `import { Foo } from "./foo"; import { d } from "./d";\nclass C { @d m(a: Array<Foo>) {} }`,
+          ],
+          ["an import type", `import type { Foo } from "./foo"; import { d } from "./d";\nclass C { @d m(a: Foo) {} }`],
+          [
+            "an undecorated member",
+            `import { Foo } from "./foo"; import { d } from "./d";\nclass C { m(a: Foo) {} } d;`,
+          ],
+        ])("drops the import of %s", (_, source) => {
+          expect(both(metadata, source)).toEqual({ scanImports: ["./d"], scan: ["./d"] });
+        });
+
+        it("drops the import without emitDecoratorMetadata", () => {
+          const source = `import { Foo } from "./foo"; import { d } from "./d";\nclass C { @d m(a: Foo) {} }`;
+          for (const compilerOptions of [undefined, { experimentalDecorators: true }]) {
+            const transpiler = new Bun.Transpiler({
+              loader,
+              trimUnusedImports: true,
+              tsconfig: compilerOptions && { compilerOptions },
+            });
+            expect(both(transpiler, source)).toEqual({ scanImports: ["./d"], scan: ["./d"] });
+          }
+        });
+      });
+    });
   });
 
   const parsed = (code, trim = true, autoExport = false, transpiler_ = transpiler) => {

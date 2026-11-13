@@ -2,7 +2,8 @@
 // closed ones, and it must print what plain Bun prints there too. No flag asks for that build: it is made wherever the builds behind the first are made.
 // And once more with --aot-harden=proof-checks, where a proof that does not hold stops the program by name. The builds of each way are counted on stderr, so that no flag drops a way without a word.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { readFileSync } from "node:fs";
 import { join, sep } from "node:path";
 import { lineThatLeavesOut } from "./harness/lines-that-leave-out";
 import { run } from "./harness/run";
@@ -259,29 +260,29 @@ test("a stop in a way that is not compared fails it all the same", async () => {
 });
 
 // Some thirty thousand files. Where they are not in the page cache their reads take seconds, and one behind another several times as long.
-// So the scan begins before the first test, reads them beside one another, and goes on beside the starts of the driver. Its test waits for what is left of it.
-async function scanStoredPrograms() {
-  const stored = join(import.meta.dir, "parallel");
-  const files = await Array.fromAsync(new Bun.Glob("**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}").scan(stored));
-  const found = await Promise.all(
-    files.map(async file =>
-      Array.from(
-        (await Bun.file(join(stored, file)).text()).matchAll(lineThatLeavesOut),
-        ([, what]) => `${file.replaceAll("\\", "/")}: ${what}`,
-      ),
-    ),
-  );
-  return found.flat().sort();
-}
-let linesInStoredPrograms: Promise<string[]>;
+// So the scan begins before the first test, reads them beside one another, and goes on beside the starts of the driver: its test waits for what is left of it.
+// Not in a Bun with assertions. There an awaited read costs the one thread of the tests many times what the read takes, and the test reads the files one by one.
+const stored = join(import.meta.dir, "parallel");
+const storedPrograms = new Bun.Glob("**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}");
+const linesIn = (file: string, text: string) =>
+  Array.from(text.matchAll(lineThatLeavesOut), ([, what]) => `${file.replaceAll("\\", "/")}: ${what}`);
+let scannedAhead: Promise<string[]> | undefined;
 beforeAll(() => {
-  linesInStoredPrograms = scanStoredPrograms();
+  if (isASAN || isDebug) return;
+  scannedAhead = Array.fromAsync(storedPrograms.scan(stored))
+    .then(files => Promise.all(files.map(async file => linesIn(file, await Bun.file(join(stored, file)).text()))))
+    .then(found => found.flat());
   // A rejection is for its test to report, and not for whichever test runs at that moment.
-  linesInStoredPrograms.catch(() => {});
+  scannedAhead.catch(() => {});
 });
 
 test("the lines by which something of a stored program is not compared or not built are these, and a new one is written here too", async () => {
-  expect(await linesInStoredPrograms).toEqual([
+  const found =
+    (await scannedAhead) ??
+    Array.from(storedPrograms.scanSync(stored)).flatMap(file =>
+      linesIn(file, readFileSync(join(stored, file), "utf8")),
+    );
+  expect(found.sort()).toEqual([
     "async/await-direct-call-function-tests-args.ts: Prints what the compiler saves",
     "async/await-direct-call-untyped-version/main.ts: Prints what the compiler saves",
     "calls-fast-paths/class-as-value/main.ts: Prints what the compiler saves",

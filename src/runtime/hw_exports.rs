@@ -17,7 +17,7 @@
 
 use core::ffi::c_void;
 
-use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::bindgen::JsScope;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSInternalPromise, JSValue, StringJsc as _, ZigStackFrame};
 
@@ -272,34 +272,6 @@ mod sql_hooks {
         ssl_config_server_name,
         ssl_config_reject_unauthorized,
     };
-}
-
-// ─── entry-point promise reactions (used by `--print`) ───────────────────────
-
-pub(crate) fn on_resolve_entry_point_result(cx: &mut JsScope<'_>, result: JsLocal<'_>) {
-    let global = cx.global();
-    let result = result.to_js();
-    bun_jsc::ConsoleObject::message_with_type_and_level(
-        bun_jsc::ConsoleObject::MessageType::Log,
-        bun_jsc::ConsoleObject::MessageLevel::Log,
-        global,
-        &[result],
-    );
-    // SAFETY: bun_vm() never null for a Bun-owned global.
-    bun_core::Global::exit(u32::from(global.bun_vm().as_mut().exit_handler.exit_code));
-}
-
-pub(crate) fn on_reject_entry_point_result(cx: &mut JsScope<'_>, result: JsLocal<'_>) {
-    let global = cx.global();
-    let result = result.to_js();
-    bun_jsc::ConsoleObject::message_with_type_and_level(
-        bun_jsc::ConsoleObject::MessageType::Log,
-        bun_jsc::ConsoleObject::MessageLevel::Log,
-        global,
-        &[result],
-    );
-    // SAFETY: bun_vm() never null for a Bun-owned global.
-    bun_core::Global::exit(u32::from(global.bun_vm().as_mut().exit_handler.exit_code));
 }
 
 // `Bun__Chrome__autoDetect` / `Bun__Chrome__ensure` — exported from

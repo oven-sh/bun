@@ -1678,43 +1678,10 @@ impl Run<'_> {
             }
 
             if ctx.runtime_options.eval.eval_and_print {
-                let to_print: JSValue = 'brk: {
-                    let result = vm
-                        .entry_point_result
-                        .value
-                        .get()
-                        .unwrap_or(JSValue::UNDEFINED);
-                    if let Some(promise) = result.as_any_promise() {
-                        match promise.status() {
-                            PromiseStatus::Pending => {
-                                result.then2(
-                                    global,
-                                    JSValue::UNDEFINED,
-                                    crate::generated_bindgen::hw_exports::Bun__onResolveEntryPointResult,
-                                    crate::generated_bindgen::hw_exports::Bun__onRejectEntryPointResult,
-                                );
-                                vm.tick();
-                                vm.auto_tick_active();
-                                while vm.is_event_loop_alive() {
-                                    vm.tick();
-                                    vm.auto_tick_active();
-                                }
-                                break 'brk result;
-                            }
-                            _ => break 'brk promise.result(vm.jsc_vm()),
-                        }
-                    }
-                    result
-                };
-                bun_jsc::ConsoleObject::message_with_type_and_level(
-                    bun_jsc::ConsoleObject::MessageType::Log,
-                    bun_jsc::ConsoleObject::MessageLevel::Log,
-                    global,
-                    &[to_print],
-                );
+                print_eval_result_around_before_exit(vm);
+            } else {
+                vm.on_before_exit();
             }
-
-            vm.on_before_exit();
         }
 
         if log_has_msgs(vm) {
@@ -1785,6 +1752,76 @@ fn dump_build_error(vm: &mut VirtualMachine) {
         ));
     }
     Output::flush();
+}
+
+/// `--print` in `Run::start`: prints the result like `console.log`, runs `beforeExit`, then prints what settled there.
+#[cold]
+#[inline(never)]
+#[cfg_attr(
+    any(target_os = "linux", target_os = "android"),
+    unsafe(link_section = ".text.unlikely.print_eval_result_around_before_exit")
+)]
+fn print_eval_result_around_before_exit(vm: &mut VirtualMachine) {
+    let global = vm.global();
+    let result = vm
+        .entry_point_result
+        .value
+        .get()
+        .unwrap_or(JSValue::UNDEFINED);
+    // The process entry is the outermost frame: a conversion that threw is reported here.
+    let print = |value: JSValue| {
+        crate::dispatch::fold(bun_jsc::from_js_host_call_generic(global, || {
+            bun_jsc::ConsoleObject::message_with_type_and_level(
+                bun_jsc::ConsoleObject::MessageType::Log,
+                bun_jsc::ConsoleObject::MessageLevel::Log,
+                global,
+                &[value],
+            )
+        }));
+    };
+    let mut took_turn = false;
+    let mut printed_pending = None;
+    let to_print = match result.as_any_promise() {
+        None => result,
+        Some(promise) => {
+            // The loop drained on its own: one more turn runs the unref'd work that is already due.
+            if promise.status() == PromiseStatus::Pending && vm.unhandled_error_counter == 0 {
+                took_turn = true;
+                // A rejection in this turn is printed as the result. Marked before the wait: a tick reports an unhandled one before it returns.
+                promise.set_handled(vm.jsc_vm());
+                loop {
+                    vm.tick();
+                    // A task can settle it in the tick. The poll would then block on other ref'd work.
+                    if promise.status() == PromiseStatus::Pending {
+                        vm.auto_tick_active();
+                    }
+                    if promise.status() != PromiseStatus::Pending || !vm.is_event_loop_alive() {
+                        break;
+                    }
+                }
+            }
+            match promise.status() {
+                PromiseStatus::Pending => {
+                    printed_pending = Some(promise);
+                    result
+                }
+                _ => promise.result(vm.jsc_vm()),
+            }
+        }
+    };
+    print(to_print);
+    // The result is printed as soon as it settles. What settled it can have started work that runs before `beforeExit`.
+    while took_turn && vm.unhandled_error_counter == 0 && vm.is_event_loop_alive() {
+        vm.tick();
+        vm.auto_tick_active();
+    }
+    vm.on_before_exit();
+    // Printed as pending, settled since. The mark above outlives the turn, so nothing else reports a rejection.
+    if let Some(promise) = printed_pending
+        && promise.status() != PromiseStatus::Pending
+    {
+        print(promise.result(vm.jsc_vm()));
+    }
 }
 
 /// Cold tail shared by the rejected-entry-point and load-failure paths in

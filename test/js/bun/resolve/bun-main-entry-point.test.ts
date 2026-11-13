@@ -468,10 +468,9 @@ describe("the look for a server in the default export of the entry point", () =>
   });
 
   describe("what the look reads and calls", () => {
-    test.concurrent("an error of Bun.serve() says that Bun called it with the default export", async () => {
-      using dir = tempDir("bun-main-look", {
-        "entry.mjs": `export default { port: 99999999, fetch() {} };\nconsole.log("ran");\n`,
-      });
+    // The program wrote neither the reads of the look nor its call of Bun.serve(): the error says what Bun did.
+    async function errorOf(source: string, error: string) {
+      using dir = tempDir("bun-main-look", { "entry.mjs": source + `\nconsole.log("ran");\n` });
       await using proc = Bun.spawn({
         cmd: [bunExe(), "entry.mjs"],
         env: bunEnv,
@@ -481,13 +480,44 @@ describe("the look for a server in the default export of the entry point", () =>
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       const lines = stripAsanWarning(stderr);
-      const error = lines.findIndex(line => line.startsWith("RangeError"));
-      expect({ stdout, error: lines.slice(error, error + 2), exitCode }).toEqual({
+      const at = lines.indexOf(error);
+      return { printed: { stdout, error: lines.slice(at, at + 2), exitCode }, entry: join(String(dir), "entry.mjs") };
+    }
+
+    test.concurrent.each([
+      [
+        "Bun.serve()",
+        `export default { port: 99999999, fetch() {} };`,
+        'RangeError: The value of "options.port" is out of range. It must be >= 0 and <= 65535. Received 99999999',
+        "called Bun.serve() with",
+      ],
+      [
+        "a read of the default export",
+        `export default { get fetch() { throw new Error("read of fetch"); } };`,
+        "error: read of fetch",
+        'read "fetch" to look for a server in',
+      ],
+      [
+        "a read of what an exported then hands over",
+        `export function then(resolve) { resolve({ get default() { throw new Error("read of default"); } }); }`,
+        "error: read of default",
+        'read "default" to look for a server in',
+      ],
+    ])("an error of %s says what Bun did", async (_, source, error, whatBunDid) => {
+      const { printed, entry } = await errorOf(source, error);
+      expect(printed).toEqual({
         stdout: "ran\n",
-        error: [
-          'RangeError: The value of "options.port" is out of range. It must be >= 0 and <= 65535. Received 99999999',
-          `note: Bun called Bun.serve() with the default export of "${join(String(dir), "entry.mjs")}"`,
-        ],
+        error: [error, `note: Bun ${whatBunDid} the default export of "${entry}"`],
+        exitCode: 1,
+      });
+    });
+
+    test.concurrent("an error that the program froze keeps its message", async () => {
+      const source = `export default { get fetch() { throw Object.freeze(new Error("read of fetch")); } };`;
+      const { printed } = await errorOf(source, "error: read of fetch");
+      expect({ ...printed, error: printed.error.map(line => line.trimStart().split(" ")[0]) }).toEqual({
+        stdout: "ran\n",
+        error: ["error:", "at"],
         exitCode: 1,
       });
     });

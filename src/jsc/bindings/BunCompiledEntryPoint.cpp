@@ -30,35 +30,47 @@ using namespace JSC;
 
 static JSC_DECLARE_HOST_FUNCTION(functionStartServerFromNamespace);
 
+// The program wrote neither the reads of the look nor its call of Bun.serve(), so an error of one says what Bun did.
+static void addNoteOfLook(Zig::GlobalObject* globalObject, Exception* exception, const String& whatBunDid)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto* error = dynamicDowncast<ErrorInstance>(exception->value());
+    unsigned attributes = 0;
+    JSValue message = error ? error->getDirect(vm, vm.propertyNames->message, attributes) : JSValue();
+    if (!message || !message.isString() || (attributes & PropertyAttribute::ReadOnly))
+        return;
+    String entryPath = Bun__VM__entryPath(globalObject->bunVM()).toWTFString(BunString::ZeroCopy);
+    error->putDirect(vm, vm.propertyNames->message, jsString(vm, makeString(asString(message)->tryGetValue().data, "\nnote: Bun "_s, whatBunDid, " the default export of \""_s, entryPath, '"')), static_cast<unsigned>(PropertyAttribute::DontEnum));
+}
+
+static JSValue getForLook(Zig::GlobalObject* globalObject, JSValue object, const Identifier& name)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    JSValue value = object.get(globalObject, name);
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        addNoteOfLook(globalObject, exception, makeString("read \""_s, name.string(), "\" to look for a server in"_s));
+        return {};
+    }
+    return value;
+}
+
 static bool isServerConfig(Zig::GlobalObject* globalObject, JSValue config)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!config.toBoolean(globalObject) || config == globalObject->globalThis())
         return false;
-    JSValue fetch = config.get(globalObject, Identifier::fromString(vm, "fetch"_s));
+    JSValue fetch = getForLook(globalObject, config, Identifier::fromString(vm, "fetch"_s));
     RETURN_IF_EXCEPTION(scope, false);
     if (!fetch.isCallable()) {
-        JSValue app = config.get(globalObject, Identifier::fromString(vm, "app"_s));
+        JSValue app = getForLook(globalObject, config, Identifier::fromString(vm, "app"_s));
         RETURN_IF_EXCEPTION(scope, false);
         if (app.isUndefinedOrNull())
             return false;
     }
-    JSValue stop = config.get(globalObject, Identifier::fromString(vm, "stop"_s));
+    JSValue stop = getForLook(globalObject, config, Identifier::fromString(vm, "stop"_s));
     RETURN_IF_EXCEPTION(scope, false);
     return !stop.isCallable();
-}
-
-// The program did not write this call of Bun.serve(), so an error of it says who made the call.
-static void addNoteOfServeCall(Zig::GlobalObject* globalObject, Exception* exception)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto* error = vm.isTerminationException(exception) ? nullptr : dynamicDowncast<ErrorInstance>(exception->value());
-    JSValue message = error ? error->getDirect(vm, vm.propertyNames->message) : JSValue();
-    if (!message || !message.isString())
-        return;
-    String entryPath = Bun__VM__entryPath(globalObject->bunVM()).toWTFString(BunString::ZeroCopy);
-    error->putDirect(vm, vm.propertyNames->message, jsString(vm, makeString(asString(message)->tryGetValue().data, "\nnote: Bun called Bun.serve() with the default export of \""_s, entryPath, '"')), static_cast<unsigned>(PropertyAttribute::DontEnum));
 }
 
 static void startServerFromNamespace(Zig::GlobalObject* globalObject, JSValue entryNamespace)
@@ -67,7 +79,7 @@ static void startServerFromNamespace(Zig::GlobalObject* globalObject, JSValue en
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (entryNamespace.isUndefinedOrNull())
         return;
-    JSValue config = entryNamespace.get(globalObject, vm.propertyNames->defaultKeyword);
+    JSValue config = getForLook(globalObject, entryNamespace, vm.propertyNames->defaultKeyword);
     RETURN_IF_EXCEPTION(scope, void());
     bool isConfig = isServerConfig(globalObject, config);
     RETURN_IF_EXCEPTION(scope, void());
@@ -77,13 +89,13 @@ static void startServerFromNamespace(Zig::GlobalObject* globalObject, JSValue en
     RETURN_IF_EXCEPTION(scope, void());
     JSValue serve = bun.get(globalObject, Identifier::fromString(vm, "serve"_s));
     RETURN_IF_EXCEPTION(scope, void());
-    config = entryNamespace.get(globalObject, vm.propertyNames->defaultKeyword);
+    config = getForLook(globalObject, entryNamespace, vm.propertyNames->defaultKeyword);
     RETURN_IF_EXCEPTION(scope, void());
     MarkedArgumentBuffer serveArguments;
     serveArguments.append(config);
     JSValue server = JSC::call(globalObject, serve, bun, serveArguments, "Bun.serve is not a function"_s);
     if (auto* exception = scope.exception()) [[unlikely]] {
-        addNoteOfServeCall(globalObject, exception);
+        addNoteOfLook(globalObject, exception, "called Bun.serve() with"_s);
         return;
     }
     JSValue console = globalObject->get(globalObject, Identifier::fromString(vm, "console"_s));

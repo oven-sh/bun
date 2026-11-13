@@ -7333,6 +7333,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireActualModule, (JSC::JSGlobalObject * l
 
     if (JSModuleMock* mock = moduleMockAnsweringFor(globalObject, specifier.keyForRequire()))
         RELEASE_AND_RETURN(scope, JSValue::encode(requireOriginalModule(globalObject, mock, specifier.keyForRequire())));
+    // As in requireMockModule(): a mock that answers for the path of an import alone is found as well, and its original is the file that an import loads.
+    if (JSModuleMock* mock = specifier.requireKeyString ? moduleMockAnsweringFor(globalObject, specifier.key) : nullptr)
+        RELEASE_AND_RETURN(scope, JSValue::encode(requireOriginalModule(globalObject, mock, specifier.key)));
     RELEASE_AND_RETURN(scope, JSValue::encode(requireModuleKey(globalObject, callerPath(vm, callframe), specifier.keyForRequire())));
 }
 
@@ -7405,13 +7408,17 @@ static JSC::EncodedJSValue requireMockModule(JSC::JSGlobalObject* lexicalGlobalO
 
     String key = specifier.keyForRequire();
     JSModuleMock* mock = moduleMockAnsweringFor(globalObject, key);
+    String keyOfMock = key;
+    // No mock answers for the path that require() resolves the name to. One that answers for the path of an import alone is found as well: a mock of vi.mock(), a mock of that file by its path, or a mock of the name that has lost its other path.
+    // Its original is the file that an import loads: requireOriginalModule() picks the file by the path that the mock was found under.
+    if (!mock && specifier.requireKeyString) {
+        mock = moduleMockAnsweringFor(globalObject, specifier.key);
+        if (mock)
+            keyOfMock = specifier.key;
+    }
     if (!fromOriginal) {
         if (mock)
-            RELEASE_AND_RETURN(scope, JSValue::encode(requireModuleKey(globalObject, from, key)));
-        // No mock answers for the path that require() resolves the name to. One that answers for the path of an import alone is found as well: a mock of vi.mock(), or of that file by its path.
-        // It holds nothing of the file that require() loads, so jest.requireActual() and jest.createMockFromModule() load that file as it is.
-        if (specifier.requireKeyString && moduleMockAnsweringFor(globalObject, specifier.key))
-            RELEASE_AND_RETURN(scope, JSValue::encode(requireModuleKey(globalObject, from, specifier.key)));
+            RELEASE_AND_RETURN(scope, JSValue::encode(requireModuleKey(globalObject, from, keyOfMock)));
         JSC::JSString* manualMock = findManualModuleMock(globalObject, from, specifier.written, key, true);
         RETURN_IF_EXCEPTION(scope, {});
         if (manualMock) {
@@ -7421,7 +7428,7 @@ static JSC::EncodedJSValue requireMockModule(JSC::JSGlobalObject* lexicalGlobalO
         }
     }
 
-    JSValue original = mock ? requireOriginalModule(globalObject, mock, key) : requireModuleKey(globalObject, from, key);
+    JSValue original = mock ? requireOriginalModule(globalObject, mock, keyOfMock) : requireModuleKey(globalObject, from, key);
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(Bun::mockObject(globalObject, original, false)));
 }

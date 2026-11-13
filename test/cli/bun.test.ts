@@ -446,7 +446,9 @@ describe("bun", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).not.toContain("PowerShell completions are not yet written");
-      expect(stdout).toBe(fs.readFileSync(join(import.meta.dir, "..", "..", "completions", file), "utf8"));
+      // A Windows checkout may have CRLF where the script embedded at build time has LF.
+      const lf = (s: string) => s.replaceAll("\r\n", "\n");
+      expect(lf(stdout)).toBe(lf(fs.readFileSync(join(import.meta.dir, "..", "..", "completions", file), "utf8")));
       expect(exitCode).toBe(0);
     });
 

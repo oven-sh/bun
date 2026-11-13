@@ -1066,16 +1066,6 @@ __attribute__((minsize)) static LoadedModule findLoadedModule(Zig::GlobalObject*
     return loaded;
 }
 
-// The test file that loaded the module. 0: a preload did, or nothing has loaded it.
-__attribute__((minsize)) static unsigned testFileOfMockedModule(Zig::GlobalObject* globalObject, const JSModuleMock* mock)
-{
-    for (auto& path : pathsOfMockedModule(globalObject, mock)) {
-        if (unsigned testFile = globalObject->onLoadPlugins.testFileOfModule.get(path))
-            return testFile;
-    }
-    return 0;
-}
-
 // Mocks are looked up by exact key, so the extra query makes the loader load the real file.
 static String originalModuleKey(const String& specifier)
 {
@@ -6455,7 +6445,9 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     // Nor does it patch a package, which vi.resetModules() leaves loaded, or what vi.importActual() returned: the factory has to stay lazy.
     // Nor does vi.doMock() patch what a test file loaded. This file's importers keep it. What an earlier file left is loaded again: in Vitest a file starts with nothing loaded.
     bool isDoMock = function == ModuleMockFunction::ViDoMock;
-    unsigned loadedByTestFile = testFileOfMockedModule(globalObject, mock);
+    // The number of the import path alone. What reads it decides for a mock that has no other path: vi.mock(), vi.doMock(), and any mock over compiled code.
+    // A mock with two paths asks each path for its own number where it evicts: see wasLoadedByEarlierTestFile.
+    unsigned loadedByTestFile = globalObject->onLoadPlugins.testFileOfModule.get(specifier);
 #if ENABLE(AOT)
     // The loader has fetched nothing for a compiled module.
     auto testFileOf = [&](JSC::AOT::LoadedBy loadedBy) {
@@ -7049,7 +7041,12 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         evictModulesAndTheirImporters(globalObject, WTF::move(givenOriginalsOfLosers));
         RETURN_IF_EXCEPTION(scope, {});
 
-        bool wasLoadedByEarlierTestFile = (mock->originalExports || mock->originalCommonJSExports) && !mock->isFromPreload && (!previous || previous->isFromPreload) && plugins.testFile > 1 && testFileOfMockedModule(globalObject, mock) != plugins.testFile;
+        // With two paths the mock has saved of two files: of the ES module under its import path, and of the module object under the path of require.cache.
+        // Two test files may have loaded the two, so each side has the number of its own path. A number outlasts the module that it was written for,
+        // so it is read only for a side that the mock has saved something of: that side is loaded now. The eviction lists both sides either way, and keeps the importers of this test file.
+        bool wasESModuleLoadedByEarlierTestFile = mock->originalExports && plugins.testFileOfModule.get(specifier) != plugins.testFile;
+        bool wasModuleObjectLoadedByEarlierTestFile = mock->originalCommonJSExports && plugins.testFileOfModule.get(requireCachePath) != plugins.testFile;
+        bool wasLoadedByEarlierTestFile = (wasESModuleLoadedByEarlierTestFile || wasModuleObjectLoadedByEarlierTestFile) && !mock->isFromPreload && (!previous || previous->isFromPreload) && plugins.testFile > 1;
 #if ENABLE(AOT)
         loaded.staleESMEntry |= loadFailedUnderMockThatIsDisplaced;
 #endif

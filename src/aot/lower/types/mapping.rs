@@ -1,5 +1,6 @@
 use smallvec::SmallVec;
 
+use super::exploration::Explored;
 use super::{Component, EdgeKind, ExploredType, MappedType, TypeEdge};
 use crate::ir::Mapped;
 use crate::ir::generated::LimitId;
@@ -27,16 +28,39 @@ impl FileLowering<'_, '_, '_, '_> {
     fn map_type_anew(&mut self, ty: CheckerTypeId, row: usize, open: &mut OpenTypes) -> Mapped {
         let unstable_answers_before = self.queries.count_unstable_answers();
         match self.explore(ty) {
-            Some(components) => {
+            Explored::Alone(alone) => self.map_alone(&alone, row, unstable_answers_before, open),
+            Explored::Components(components) => {
                 for component in components.iter() {
                     self.map_component(component, unstable_answers_before, open);
                 }
             }
-            None => self.map_exhausted_type(ty, row, unstable_answers_before, open),
+            Explored::Exhausted => self.map_exhausted_type(ty, row, unstable_answers_before, open),
         }
         let entry = self.find_mapped_in_row(row);
         debug_assert!(entry.is_some(), "the last component holds the type");
         entry.map_or(Mapped::UNKNOWN, |entry| entry.mapped)
+    }
+
+    fn map_alone(
+        &mut self,
+        alone: &ExploredType,
+        row: usize,
+        unstable_answers_before: u64,
+        open: &mut OpenTypes,
+    ) {
+        if self.meet_again(alone, row) {
+            return;
+        }
+        let component = core::slice::from_ref(alone);
+        let weight = self.weigh_component(component);
+        self.map_member(
+            component,
+            weight,
+            unstable_answers_before,
+            open,
+            alone.ty,
+            row,
+        );
     }
 
     fn map_component(
@@ -50,10 +74,8 @@ impl FileLowering<'_, '_, '_, '_> {
         if self.find_mapped_in_row(first_row).is_some() {
             return;
         }
-        if let [alone] = component
-            && self.meet_again(alone, first_row)
-        {
-            return;
+        if let [alone] = component {
+            return self.map_alone(alone, first_row, unstable_answers_before, open);
         }
         let weight = self.weigh_component(component);
         for (index, member) in component.iter().enumerate() {
@@ -73,6 +95,11 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     fn weigh_component(&mut self, component: &[ExploredType]) -> Option<u32> {
+        if let [alone] = component
+            && alone.edges.is_empty()
+        {
+            return Some(1);
+        }
         let mut targets: SmallVec<[CheckerTypeId; 8]> = SmallVec::new();
         for member in component {
             for edge in member.edges.iter() {
@@ -189,11 +216,19 @@ impl FileLowering<'_, '_, '_, '_> {
     fn map_exhausted_contents(&mut self, edge: TypeEdge) -> Mapped {
         if self.find_mapped(edge.target).is_none() {
             let unstable_answers_before = self.queries.count_unstable_answers();
-            let Some(components) = self.explore(edge.target) else {
-                return self.map_shallow(edge.target, &mut OpenTypes::new());
-            };
-            for component in components.iter() {
-                self.map_component(component, unstable_answers_before, &mut OpenTypes::new());
+            let open = &mut OpenTypes::new();
+            match self.explore(edge.target) {
+                Explored::Alone(alone) => {
+                    let row = self.queries.row_of_type(edge.target) as usize;
+                    self.map_alone(&alone, row, unstable_answers_before, open);
+                }
+                Explored::Components(components) => {
+                    for component in components.iter() {
+                        self.map_component(component, unstable_answers_before, open);
+                        open.clear();
+                    }
+                }
+                Explored::Exhausted => return self.map_shallow(edge.target, open),
             }
         }
         self.map_mapped_child(edge)

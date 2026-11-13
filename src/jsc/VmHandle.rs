@@ -160,6 +160,7 @@ impl Shared {
     fn loop_of(&self, kind: LoopKind) -> &EventLoop {
         // SAFETY: caller holds a ticket or is inside the weak gate before
         // `Closed`; the VM and both embedded loops are alive.
+        // Callers keep to what `EventLoop` allows other threads.
         unsafe {
             match kind {
                 LoopKind::Regular => &(*self.hot.vm).regular_event_loop,
@@ -740,9 +741,9 @@ pub unsafe extern "C" fn Bun__VmHandle__postAndRelease(
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__eventLoop__refKeepAlive(vm: &VirtualMachine, delta: core::ffi::c_int) {
     if delta > 0 {
-        vm.event_loop_shared().ref_keep_alive();
+        vm.event_loop().ref_keep_alive();
     } else {
-        vm.event_loop_shared().unref_keep_alive();
+        vm.event_loop().unref_keep_alive();
     }
 }
 

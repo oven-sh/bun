@@ -39,7 +39,7 @@ use super::cares_jsc::error_to_deferred;
 use crate::generated_bindgen::dns::LookupOptions;
 use crate::generated_bindgen::dns_internals::ResolverOptions;
 use crate::socket::socket_address::inet::INET6_ADDRSTRLEN;
-use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_cares_sys::c_ares_draft as c_ares;
 
 // `sockaddr_storage` / `addrinfo` / `AF_*` / `AI_*` are absent from `libc` on
@@ -3381,7 +3381,7 @@ pub(crate) struct Resolver {
     pub(crate) polls: JsCell<PollsMap>,
     pub(crate) options: Cell<c_ares::ChannelOptions>,
 
-    pub(crate) event_loop_timer: JsCell<EventLoopTimer>,
+    pub(crate) event_loop_timer: EventLoopTimer,
 
     pub(crate) pending_host_cache_cares: JsCell<PendingCache>,
     pub(crate) pending_host_cache_native: JsCell<PendingCache>,
@@ -3701,9 +3701,7 @@ impl Resolver {
             vm: bun_ptr::BackRef::new(vm),
             polls: JsCell::new(PollsMap::new()),
             options: Cell::new(c_ares::ChannelOptions::default()),
-            event_loop_timer: JsCell::new(EventLoopTimer::init_paused(
-                EventLoopTimerTag::DNSResolver,
-            )),
+            event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::DNSResolver),
             pending_host_cache_cares: JsCell::new(PendingCache::init()),
             pending_host_cache_native: JsCell::new(PendingCache::init()),
             pending_srv_cache_cares: JsCell::new(HiveArray::init()),
@@ -3743,14 +3741,7 @@ impl Resolver {
 
     // ───────────── timer / pending bookkeeping ─────────────
 
-    pub(crate) fn check_timeouts(&self, now: &ElTimespec, vm: &VirtualMachine) {
-        // Caller (`dispatch.rs::fire_timer`) hands us the event-loop's
-        // local `ElTimespec`; `add_timer` works in `bun_core::timespec`. Same
-        // `{ sec: i64, nsec: i64 }` layout — convert field-by-field.
-        let now = bun::timespec {
-            sec: now.sec,
-            nsec: now.nsec,
-        };
+    pub(crate) fn check_timeouts(&self, now: &bun::timespec, vm: &VirtualMachine) {
         let uws_loop = vm.uws_loop_ref();
         // R-2: `&self` carries no `noalias`, and every field touched below is
         // UnsafeCell-backed, so the re-entrant `ares_process_fd` callbacks
@@ -3758,11 +3749,7 @@ impl Resolver {
         // `&Resolver` from their stored ctx without aliasing UB.
         let deref_this = self.as_ctx_ptr();
         scopeguard::defer! {
-            // jsc/runtime crate cycle: low-tier `VirtualMachine.timer` is `()`;
-            // resolve via the high-tier `RuntimeState` hook.
-            let state = crate::jsc_hooks::runtime_state();
-            // SAFETY: `state` is the boxed per-thread `RuntimeState`; single-threaded JS heap.
-            unsafe { (*state).timer.increment_timer_ref(-1, uws_loop) };
+            crate::jsc_hooks::timer_all().increment_timer_ref(-1, uws_loop);
             // SAFETY: `deref_this` is the heap allocation from `init`; releases
             // `add_timer`'s ref. May be the final release; nothing touches
             // `*self` after this point.
@@ -3770,14 +3757,15 @@ impl Resolver {
         }
 
         self.event_loop_timer
-            .with_mut(|t| t.state = EventLoopTimerState::PENDING);
+            .state
+            .set(EventLoopTimerState::PENDING);
 
         if let Ok(channel) = self.get_channel_or_error(vm.global()) {
             if self.any_requests_pending() {
                 c_ares::ares_process_fd(channel, c_ares::ARES_SOCKET_BAD, c_ares::ARES_SOCKET_BAD);
                 // See `on_dns_poll` — c-ares detaches post-callback, so re-check.
                 if self.any_requests_pending() {
-                    let _ = self.add_timer(Some(&now));
+                    let _ = self.add_timer(Some(now));
                 } else {
                     self.remove_timer();
                 }
@@ -3832,7 +3820,7 @@ impl Resolver {
     }
 
     fn add_timer(&self, now: Option<&bun::timespec>) -> bool {
-        if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
+        if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
             return false;
         }
 
@@ -3841,53 +3829,32 @@ impl Resolver {
             .copied()
             .unwrap_or_else(|| bun::timespec::now(bun::TimespecMockMode::ForceRealTime));
         let next = now_ts.add_ms(1000);
-        // `EventLoopTimer.next` uses the event-loop crate's local
-        // `Timespec` (distinct from `bun_core::Timespec`); convert by field.
-        self.event_loop_timer.with_mut(|t| {
-            t.next = ElTimespec {
-                sec: next.sec,
-                nsec: next.nsec,
-            }
-        });
+        self.event_loop_timer.next.set(next);
         let uws_loop = self.vm().uws_loop_ref();
-        let state = crate::jsc_hooks::runtime_state();
-        // SAFETY: `state` is the boxed per-thread `RuntimeState`; single-threaded JS heap.
-        unsafe {
-            (*state).timer.increment_timer_ref(1, uws_loop);
-            // whole-struct provenance: `from_field_ptr!` recovers the container on fire
-            (*state).timer.insert(
-                core::ptr::addr_of!(self.event_loop_timer)
-                    .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
-                    .cast_mut(),
-            );
-        }
+        let timers = crate::jsc_hooks::timer_all();
+        timers.increment_timer_ref(1, uws_loop);
+        timers.insert(&raw const self.event_loop_timer);
         true
     }
 
     fn remove_timer(&self) {
-        if self.event_loop_timer.get().state != EventLoopTimerState::ACTIVE {
+        if self.event_loop_timer.state.get() != EventLoopTimerState::ACTIVE {
             return;
         }
 
         // Normally checkTimeouts does this, so we have to be sure to do it ourself if we cancel the timer
         let this = self.as_ctx_ptr();
         scopeguard::defer! {
+            crate::jsc_hooks::timer_all().increment_timer_ref(-1, self.vm().uws_loop_ref());
             // SAFETY: `this` is the heap allocation from `init`. This releases
             // the ref taken by `add_timer`. Every caller holds at least one
             // other ref for the duration of this call (a `RefPtr` or the
             // global-resolver permanent pin), so this
             // `deref` cannot reach 0 while `&self` is live.
-            unsafe {
-                let uws_loop = (*this).vm().uws_loop_ref();
-                let state = crate::jsc_hooks::runtime_state();
-                (*state).timer.increment_timer_ref(-1, uws_loop);
-                Self::deref(this);
-            }
+            unsafe { Self::deref(this) };
         }
 
-        let state = crate::jsc_hooks::runtime_state();
-        // SAFETY: `state` is the boxed per-thread `RuntimeState`; single-threaded JS heap.
-        unsafe { (*state).timer.remove(self.event_loop_timer.as_ptr()) };
+        crate::jsc_hooks::timer_all().remove(&self.event_loop_timer);
     }
 
     // ───────────── pending-cache helpers ─────────────

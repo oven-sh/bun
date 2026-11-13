@@ -189,7 +189,7 @@ pub fn find_type_ranges(file: &File<'_>) -> TypeRanges {
 pub fn keep_only_comments_beside_types_and<'s>(
     file: &mut File<'s>,
     arena: &'s Arena,
-    is_read_later: fn(&[u8]) -> bool,
+    is_read_later: impl Fn(&[u8]) -> bool,
 ) {
     let mut passed = Vec::new();
     if !file.is_js && !file.comments.is_empty() {
@@ -199,7 +199,7 @@ pub fn keep_only_comments_beside_types_and<'s>(
     }
     for (index, comment) in file.comments.iter().enumerate() {
         let text = file.text.get(comment.pos as usize..comment.end as usize);
-        if text.is_some_and(is_read_later) {
+        if text.is_some_and(&is_read_later) {
             passed.push(index as u32);
         }
     }

@@ -13,8 +13,8 @@ use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, Bound, Decl, InitialState, Parent, SymbolId};
 use bun_sema::fold::{Constant, Decision, FoldedValue};
 use bun_sema::hir::{
-    self, BinOp, Chain, ExprId, ExprKind, MemberKey, NodeData, PatId, PatKind, PropKey, StmtKind,
-    UnOp, VarDeclId, VarKind,
+    self, BinOp, Chain, ExprId, ExprKind, MemberKey, NodeData, PatId, PatKind, PropKey, PropKind,
+    StmtKind, UnOp, VarDeclId, VarKind,
 };
 use bun_sema::program::Sym;
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
@@ -37,6 +37,7 @@ pub(super) enum StandsFor {
         module: ModuleRef,
         has_marker: bool,
         is_star: bool,
+        has_default_alone: bool,
     },
 }
 
@@ -581,6 +582,7 @@ impl FileBinder<'_, '_> {
             module: site.target,
             has_marker: copy.has_marker,
             is_star: copy.passes_marked_answer_on,
+            has_default_alone: copy.wraps_unmarked_answer,
         };
         add_holder(roots, holders, symbol, call, view, stands_for, Some(copy));
         true
@@ -590,6 +592,33 @@ impl FileBinder<'_, '_> {
         let (hir, bound, context) = (self.hir, self.bound, self.context);
         let target = site.target;
         let required = find_outermost_type_assertion(hir, bound, required);
+        let copy = CopiedExports {
+            written: ExprId::NONE,
+            shows: ShownNames::Own,
+            passes_marked_answer_on: false,
+            wraps_unmarked_answer: false,
+            runs_once: site.position == SitePosition::InOrder,
+            is_of_ordinary_object: false,
+            has_marker: false,
+            passes_over_marker: false,
+            reads_own_default: false,
+            may_hold_answer: false,
+            is_looked_at: false,
+            is_called_through: false,
+        };
+        let wrapping = |written: ExprId| {
+            let is_marked = (context.marker)(target) == Some(true);
+            let exports_function = context.tables.commonjs.exports_function(target);
+            (exports_function && !is_marked).then_some(CopiedExports {
+                written,
+                wraps_unmarked_answer: true,
+                may_hold_answer: true,
+                ..copy
+            })
+        };
+        if let Some(written) = self.find_inline_wrapper(required) {
+            return wrapping(written);
+        }
         let written = parent_expression(bound, required)?;
         let ExprKind::Call(call) = hir[written].kind else {
             return None;
@@ -619,16 +648,8 @@ impl FileBinder<'_, '_> {
         let is_marked = self.is_commonjs(target) && (context.marker)(target) == Some(true);
         let copy = CopiedExports {
             written,
-            shows: ShownNames::Own,
-            passes_marked_answer_on: false,
-            runs_once: site.position == SitePosition::InOrder,
             is_of_ordinary_object: is_ordinary_object,
-            has_marker: false,
-            passes_over_marker: false,
-            reads_own_default: false,
-            may_hold_answer: false,
-            is_looked_at: false,
-            is_called_through: false,
+            ..copy
         };
         let asks_for_marker_alone = match known.shape {
             HelperShape::ToEsModuleShowsUnmarkedValueAsDefault => true,
@@ -647,6 +668,12 @@ impl FileBinder<'_, '_> {
                     passes_marked_answer_on: true,
                     ..copy
                 });
+            }
+            HelperShape::ImportDefaultAnswersMarkedValueOrWrapsIt => {
+                return match call.args.len() {
+                    1 => wrapping(written),
+                    _ => None,
+                };
             }
             _ => return None,
         };
@@ -680,6 +707,73 @@ impl FileBinder<'_, '_> {
                     || (context.marker)(target) == Some(false)),
             ..copy
         })
+    }
+
+    /// `(a = require("./a")) && a.__esModule ? a : { default: a }`, as minifiers write the helper in line.
+    fn find_inline_wrapper(&self, required: ExprId) -> Option<ExprId> {
+        let (hir, bound) = (self.hir, self.bound);
+        let assigned = parent_expression(bound, required)?;
+        let ExprKind::Assign {
+            op: None,
+            target,
+            value,
+        } = hir[assigned].kind
+        else {
+            return None;
+        };
+        let name = bound.binding(target);
+        let names_answer = |expression: ExprId| {
+            matches!(hir[expression].kind, ExprKind::Ident(_)) && bound.binding(expression) == name
+        };
+        if value != required
+            || !matches!(hir[target].kind, ExprKind::Ident(_))
+            || !matches!(name, Binding::Symbol(_))
+        {
+            return None;
+        }
+        let test = parent_expression(bound, assigned)?;
+        let written = parent_expression(bound, test)?;
+        let (
+            ExprKind::Binary {
+                op: BinOp::And,
+                left,
+                right,
+            },
+            ExprKind::Cond {
+                test: tested,
+                branches,
+            },
+        ) = (hir[test].kind, hir[written].kind)
+        else {
+            return None;
+        };
+        let branches = hir.branches(branches);
+        let (marked, key) = hir.member_key(right)?;
+        let is_plain = matches!(
+            hir[right].kind,
+            ExprKind::Dot {
+                chain: Chain::No,
+                ..
+            }
+        );
+        let ExprKind::Object(properties) = hir[branches.no].kind else {
+            return None;
+        };
+        let mut properties = properties.iter();
+        let (Some(wrapped), None) = (properties.next(), properties.next()) else {
+            return None;
+        };
+        let wrapped = hir[wrapped];
+        let is_wrapper = left == assigned
+            && tested == test
+            && is_plain
+            && key == MemberKey::Name(known::__esModule)
+            && names_answer(marked)
+            && names_answer(branches.yes)
+            && wrapped.key == PropKey::Name(known::default)
+            && wrapped.kind == PropKind::Init
+            && names_answer(wrapped.value);
+        is_wrapper.then_some(written)
     }
 
     fn binds_getters(&self, helper: &KnownFunction) -> bool {
@@ -867,6 +961,10 @@ impl FileBinder<'_, '_> {
         }
         match stands_for {
             StandsFor::Copy {
+                has_default_alone: true,
+                ..
+            } if name != known::default => return None,
+            StandsFor::Copy {
                 has_marker: false,
                 is_star,
                 ..
@@ -898,6 +996,7 @@ impl FileBinder<'_, '_> {
         let is_imported = matches!(stands_for, StandsFor::ImportedNamespace(_));
         let accessed = AccessedModule {
             module,
+            name,
             is_imported,
         };
         self.imports.accessed.push((member, accessed));

@@ -193,10 +193,42 @@ pub(super) fn member_name_key<'p>(queries: &Queries<'_, 'p, '_>, name: MemberNam
 }
 
 pub(super) fn describe_untyped_members<'a>(
-    members: impl Iterator<Item = (&'a [u8], ObjectMemberKind)>,
+    members: impl Iterator<Item = (&'a [u8], ObjectMemberKind)> + Clone,
 ) -> [u64; 2] {
+    if let Some(count) = count_if_in_order(members.clone()) {
+        return describe_members_in_order(count, members);
+    }
     let mut members: SmallVec<[(&[u8], ObjectMemberKind); 8]> = members.collect();
     describe_listed_untyped_members(&mut members)
+}
+
+/// The number of members, if each name comes after the one before it.
+fn count_if_in_order<'a>(
+    members: impl Iterator<Item = (&'a [u8], ObjectMemberKind)>,
+) -> Option<usize> {
+    let mut count = 0;
+    let mut before: &[u8] = &[];
+    for (name, _) in members {
+        if count != 0 && before >= name {
+            return None;
+        }
+        before = name;
+        count += 1;
+    }
+    Some(count)
+}
+
+fn describe_members_in_order<'a>(
+    count: usize,
+    members: impl Iterator<Item = (&'a [u8], ObjectMemberKind)>,
+) -> [u64; 2] {
+    let mut description = Description::new(Tag::Object);
+    description.word(count as u64);
+    for (name, kind) in members {
+        description.member(NameKey::String(name), kind, false, None);
+    }
+    description.word(0);
+    description.finish()
 }
 
 fn describe_listed_untyped_members(sorted: &mut [(&[u8], ObjectMemberKind)]) -> [u64; 2] {
@@ -211,13 +243,7 @@ fn describe_listed_untyped_members(sorted: &mut [(&[u8], ObjectMemberKind)]) -> 
             count += 1;
         }
     }
-    let mut description = Description::new(Tag::Object);
-    description.word(count as u64);
-    for &(name, kind) in &sorted[..count] {
-        description.member(NameKey::String(name), kind, false, None);
-    }
-    description.word(0);
-    description.finish()
+    describe_members_in_order(count, sorted[..count].iter().copied())
 }
 
 #[cfg(test)]

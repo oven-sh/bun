@@ -1,10 +1,10 @@
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Binding, Parent, SymbolId};
+use bun_sema::bind::{Binding, BindingInitializer, CodeUnit, FunctionFlags, Parent, SymbolId};
 use bun_sema::check::aot::ObjectMemberKind;
 use bun_sema::fold::{TreeNode, push_children};
 use bun_sema::hir::{
-    Call, CallId, Chain, ExprId, ExprKind, FnKind, IdList, NameKind, PatId, PatKind, PropKey,
-    PropKind, StmtId, is_private_name_at, is_proto_setter,
+    Call, CallId, Chain, ExprId, ExprKind, Flags, FnKind, IdList, NameKind, NodeData, PatId,
+    PatKind, PropKey, PropKind, StmtId, is_private_name_at, is_proto_setter,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -13,7 +13,7 @@ use super::{Arguments, Callee, emit_call, emit_call_of};
 use crate::builtins::id::BuiltinId;
 use crate::builtins::{Mutability, Resolved, table};
 use crate::ir::generated::{Layout, LayoutFlags, LayoutKind};
-use crate::ir::{FunctionKey, LayoutId, LayoutKey, PropertyKeyId, ValueId};
+use crate::ir::{Edge, FunctionKey, LayoutId, LayoutKey, PropertyKeyId, ValueId};
 use crate::lower::context::StoresByNameInList;
 use crate::lower::expression::Tail;
 use crate::lower::member::PropertyName;
@@ -350,6 +350,115 @@ pub(super) fn find_locked_builtin(
 }
 
 impl FileLowering<'_, '_, '_, '_> {
+    /// The first three parameters of the function, which hold what its `arguments` hold.
+    fn find_parameters_applied_to_construct(
+        &self,
+        key: FunctionKey,
+        site: Call,
+    ) -> Option<[(SymbolId, Atom); 3]> {
+        let (hir, bound) = (self.hir, self.bound);
+        let callee = self.skip_type_syntax(site.callee);
+        let ExprKind::Dot { obj, name, .. } = hir[callee].kind else {
+            return None;
+        };
+        if name != known::apply
+            || site.args.len() != 2
+            || find_locked_builtin(self, obj) != Some(BuiltinId::ReflectConstruct)
+        {
+            return None;
+        }
+        let receiver = hir.id_at::<ExprId>(site.args, 0);
+        let list = self.skip_type_syntax(hir.id_at(site.args, 1));
+        let (FunctionKey::Source(source), Binding::Arguments(CodeUnit::Function(owner))) =
+            (key, bound.binding(list))
+        else {
+            return None;
+        };
+        let is_plain = matches!(hir[receiver].kind, ExprKind::Null)
+            && matches!(hir[list].kind, ExprKind::Ident(_))
+            && bound.dynamic_lookup_scope(NodeData::Expr(list)).is_none()
+            && source.function == owner
+            && !bound
+                .function_flags(owner)
+                .contains(FunctionFlags::HAS_DIRECT_EVAL);
+        if !is_plain {
+            return None;
+        }
+        let mut mentions = (0..hir.exprs.len() as u32).map(ExprId).filter(|&mention| {
+            matches!(hir[mention].kind, ExprKind::Ident(_))
+                && bound.binding(mention) == bound.binding(list)
+        });
+        if mentions.next() != Some(list) || mentions.next().is_some() {
+            return None;
+        }
+        let mut parameters = [None; 3];
+        for (index, parameter) in parameters.iter_mut().enumerate() {
+            let (symbol, name) = self.find_parameter(owner, index)?;
+            let written = hir[hir[owner].params.iter().nth(index)?];
+            if !bound.stores_to(symbol).is_empty()
+                || written.default.is_some()
+                || written.flags.contains(Flags::REST)
+            {
+                return None;
+            }
+            *parameter = Some((symbol, name));
+        }
+        let [Some(target), Some(list), Some(new_target)] = parameters else {
+            return None;
+        };
+        Some([target, list, new_target])
+    }
+
+    /// The names and values of the data descriptor, each name once.
+    fn find_descriptor_passed_to_variable(
+        &self,
+        site: Call,
+    ) -> Option<SmallVec<[(Atom, ExprId); 4]>> {
+        const NAMES: [&[u8]; 4] = [b"value", b"writable", b"enumerable", b"configurable"];
+        let (hir, bound) = (self.hir, self.bound);
+        let callee = self.skip_type_syntax(site.callee);
+        let arguments: SmallVec<[ExprId; 4]> = hir.ids(site.args).collect();
+        let (ExprKind::Ident(_), Binding::Symbol(symbol), &[target, key, descriptor]) = (
+            hir[callee].kind,
+            bound.binding(callee),
+            arguments.as_slice(),
+        ) else {
+            return None;
+        };
+        let has_spread = [target, key].map(|it| matches!(hir[it].kind, ExprKind::Spread(_)));
+        // The default of a copy of exports, once an import: a definition that Link follows would give every default to each.
+        let is_default = matches!(hir[self.skip_type_syntax(key)].kind, ExprKind::String(name) if name == known::default);
+        let BindingInitializer::Expression(initializer) = bound.binding_initializer(hir, symbol)
+        else {
+            return None;
+        };
+        if has_spread.contains(&true)
+            || is_default
+            || bound.dynamic_lookup_scope(NodeData::Expr(callee)).is_some()
+            || find_locked_builtin(self, initializer) != Some(BuiltinId::ObjectDefineProperty)
+        {
+            return None;
+        }
+        let ExprKind::Object(properties) = hir[self.skip_type_syntax(descriptor)].kind else {
+            return None;
+        };
+        let mut members: SmallVec<[(Atom, ExprId); 4]> = SmallVec::new();
+        for property in properties.iter() {
+            let property = hir[property];
+            let (PropKind::Init | PropKind::Shorthand, PropKey::Name(name)) =
+                (property.kind, property.key)
+            else {
+                return None;
+            };
+            let is_member = NAMES.contains(&self.queries.atom_bytes(name));
+            if !is_member || members.iter().any(|&(known, _)| known == name) {
+                return None;
+            }
+            members.push((name, property.value));
+        }
+        (!members.is_empty()).then_some(members)
+    }
+
     pub(super) fn is_fixed_method(&self, method: BuiltinId) -> bool {
         let replaced = self.inputs.replaced_builtins;
         let is_replaced = |place: BuiltinId| replaced.binary_search(&(place as u32)).is_ok();
@@ -361,6 +470,12 @@ impl FileLowering<'_, '_, '_, '_> {
     pub(in crate::lower) fn is_array_iterator_protocol_intact(&self) -> bool {
         self.is_fixed_method(BuiltinId::ArrayPrototypeSymbolIterator)
             && self.is_fixed_method(BuiltinId::ArrayIteratorPrototypeNext)
+    }
+
+    pub(in crate::lower) fn is_loose_iteration_intact(&self) -> bool {
+        self.is_array_iterator_protocol_intact()
+            && self.is_fixed_method(BuiltinId::FunctionPrototypeCall)
+            && self.is_fixed_method(BuiltinId::FunctionPrototypeBind)
     }
 
     fn find_array_literal(&self, list: ExprId) -> Option<ExprId> {
@@ -569,11 +684,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 };
                 match hir[source.function].kind {
                     FnKind::Constructor => true,
-                    FnKind::Decl | FnKind::Expr => self
-                        .file
-                        .queries
-                        .constructor_function_shape(source)
-                        .is_some(),
+                    FnKind::Decl | FnKind::Expr => {
+                        self.file
+                            .inputs
+                            .modules
+                            .wrapped()
+                            .of_callback(source.file, source.function)
+                            .is_none()
+                            && self
+                                .file
+                                .queries
+                                .constructor_function_shape(source)
+                                .is_some()
+                    }
                     _ => false,
                 }
             }
@@ -618,14 +741,105 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 .or_else(|| self.lower_definitions_of_written_map(call, site)),
             Some(BuiltinId::ArrayFrom) => self.lower_array_from(call, site, tail),
             Some(BuiltinId::Object) => self.lower_empty_object(call, site),
-            Some(BuiltinId::ObjectCreate) => self.lower_object_created_below(call, site, tail),
-            Some(BuiltinId::ObjectAssign) => self.lower_assignment_to_new_object(call, site, tail),
+            Some(BuiltinId::ObjectCreate) => self
+                .lower_object_made_by_maker(call, site)
+                .or_else(|| self.lower_object_created_below(call, site, tail)),
+            Some(BuiltinId::ObjectSetPrototypeOf) => self.lower_literal_below_prototype(call, site),
+            Some(BuiltinId::ObjectAssign) => self
+                .lower_assignment_to_new_object(call, site, tail)
+                .or_else(|| self.lower_assignment_of_literals(call, site, tail)),
             Some(_) => None,
-            None => match self.lower_call_of_assign_helper(call, site) {
-                Some(made) => Some(made),
-                None => self.try_lower_method_call(call, site, tail),
-            },
+            None => self
+                .lower_call_of_assign_helper(call, site)
+                .or_else(|| self.lower_construct_by_arguments(call, site))
+                .or_else(|| self.lower_definition_through_variable(call, site))
+                .or_else(|| self.try_lower_method_call(call, site, tail)),
         }
+    }
+
+    /// `Reflect.construct.apply(null, arguments)`, where the first argument may be the Error constructor.
+    fn lower_construct_by_arguments(&mut self, call: ExprId, site: Call) -> Option<ValueId> {
+        let parameters = self
+            .file
+            .find_parameters_applied_to_construct(self.key, site)?;
+        let callee = self.lower_callee(site.callee, None, None);
+        let [target, list, new_target] =
+            parameters.map(|(symbol, name)| self.get_binding(Binding::Symbol(symbol), name));
+        let result = self.builder.create_variable(None);
+        let (written, done) = (self.create_block(), self.create_block());
+        self.guard_builtin(callee.function, BuiltinId::FunctionPrototypeApply, written);
+        let error = self.emit_builtin_itself(BuiltinId::Error);
+        let is_error = self.builder.strict_eq(target, error);
+        self.emit_guard(is_error, written);
+        let undefined = self.builder.undefined();
+        let has_no_new_target = self.builder.strict_eq(new_target, undefined);
+        let passed = self.create_block();
+        self.builder
+            .branch(has_no_new_target, Edge::to(written), Edge::to(passed));
+        self.continue_in(passed);
+        self.set_position(self.file.call_position(site));
+        let made = self.emit_builtin_call(BuiltinId::ReflectConstruct, &[target, list, new_target]);
+        self.builder.write_variable(result, made);
+        self.jump(done);
+
+        self.continue_in(written);
+        let arguments = self.lower_arguments(site.args);
+        let made = self.emit_call_expression(call, callee, arguments, Tail::No);
+        self.builder.write_variable(result, made);
+        self.jump(done);
+
+        self.continue_in(done);
+        Some(self.builder.read_variable(result))
+    }
+
+    /// `define(object, key, { value: 1 })`, where the variable `define` is initialized with Object.defineProperty.
+    fn lower_definition_through_variable(&mut self, call: ExprId, site: Call) -> Option<ValueId> {
+        let members = self.file.find_descriptor_passed_to_variable(site)?;
+        let hir = self.file.hir;
+        let callee = self.lower_callee(site.callee, None, None);
+        let target = self.lower_expression(hir.id_at(site.args, 0));
+        let key = self.lower_expression(hir.id_at(site.args, 1));
+        let mut values: SmallVec<[(PropertyKeyId, ValueId); 4]> = SmallVec::new();
+        for (name, value) in members {
+            let name = self.file.name_key(name);
+            values.push((
+                name,
+                self.lower_named_evaluation(value, PropertyName::Constant(name)),
+            ));
+        }
+        self.set_position(self.file.call_position(site));
+        let result = self.builder.create_variable(None);
+        let (other, done) = (self.create_block(), self.create_block());
+        self.guard_builtin(callee.function, BuiltinId::ObjectDefineProperty, other);
+        let descriptor = self.emit_data_descriptor(&values);
+        let define = self.emit_builtin_itself(BuiltinId::ObjectDefineProperty);
+        let holder = self.emit_builtin_itself(BuiltinId::Object);
+        let defined = emit_call(self, define, Some(holder), &[target, key, descriptor]);
+        self.builder.write_variable(result, defined);
+        self.jump(done);
+
+        self.continue_in(other);
+        let descriptor = self.emit_data_descriptor(&values);
+        let arguments = Arguments::Values(SmallVec::from_slice(&[target, key, descriptor]));
+        let returned = self.emit_call_expression(call, callee, arguments, Tail::No);
+        self.builder.write_variable(result, returned);
+        self.jump(done);
+
+        self.continue_in(done);
+        Some(self.builder.read_variable(result))
+    }
+
+    fn emit_data_descriptor(&mut self, values: &[(PropertyKeyId, ValueId)]) -> ValueId {
+        let members: SmallVec<[(PropertyKeyId, ObjectMemberKind); 4]> = values
+            .iter()
+            .map(|&(name, _)| (name, ObjectMemberKind::Field))
+            .collect();
+        let layout = self.file.untyped_layout(&members);
+        let mut descriptor = self.begin_object(layout);
+        for &(name, value) in values {
+            self.add_property(&mut descriptor, PropertyName::Constant(name), value, None);
+        }
+        object::finish_object(self, descriptor)
     }
 
     fn lower_object_created_below(

@@ -18,7 +18,7 @@ mod wrapper_variables;
 mod written_arms;
 
 pub use call_sites::{
-    RequireCall, RequireCallForm, WORDS_THAT_MOCK_LOOKS_FOR_IN_FACTORY,
+    MockWordsInText, RequireCall, RequireCallForm, WORDS_THAT_MOCK_LOOKS_FOR_IN_FACTORY,
     does_import_meta_resolve_ask_resolver, ends_in_call_that_reads_frame_of_caller,
     find_heritage_constructed, find_heritage_of_super_call, find_module_printed_as_require,
     find_require_call, is_linked_by_bundler, is_module_call_of_plugin, is_name_read_by_transpiler,

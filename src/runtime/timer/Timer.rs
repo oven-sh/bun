@@ -19,7 +19,7 @@ use super::{
     EventLoopTimerTag, FakeTimers, ImmediateObject, Kind, TimeoutObject, TimeoutWarning,
     TimerObjectInternals,
 };
-use crate::jsc_hooks::timer_all_mut;
+use crate::jsc_hooks::timer_all;
 
 // ════════════════════════════════════════════════════════════════════════════
 // JS-facing surface on `super::All`
@@ -27,14 +27,15 @@ use crate::jsc_hooks::timer_all_mut;
 
 impl All {
     pub(crate) fn update_date_header_timer_if_necessary(
-        &mut self,
+        &self,
         loop_: &UwsLoop,
         vm: &VirtualMachine,
     ) {
         if loop_.should_enable_date_header_timer() {
             // `is_date_timer_active()` is private to mod.rs; inline.
-            if self.date_header_timer.event_loop_timer.state != EventLoopTimerState::ACTIVE {
+            if self.date_header_timer.event_loop_timer.state.get() != EventLoopTimerState::ACTIVE {
                 self.date_header_timer.enable(
+                    self,
                     vm,
                     // Be careful to avoid adding extra calls to bun.timespec.now()
                     // when it's not needed.
@@ -101,7 +102,7 @@ impl All {
 
     /// Convert an arbitrary JavaScript value to a number of milliseconds used to schedule a timer.
     fn js_value_to_countdown(
-        &mut self,
+        &self,
         global_this: &JSGlobalObject,
         countdown: JSValue,
         overflow_behavior: CountdownOverflowBehavior,
@@ -131,8 +132,8 @@ impl All {
                                 countdown_double,
                                 TimeoutWarning::TimeoutOverflowWarning,
                             )?;
-                        } else if countdown_double < 0.0 && !self.warned_negative_number {
-                            self.warned_negative_number = true;
+                        } else if countdown_double < 0.0 && !self.warned_negative_number.get() {
+                            self.warned_negative_number.set(true);
                             Self::warn_invalid_countdown(
                                 global_this,
                                 countdown_double,
@@ -141,9 +142,9 @@ impl All {
                         } else if !countdown.is_undefined()
                             && countdown.is_number()
                             && countdown_double.is_nan()
-                            && !self.warned_not_number
+                            && !self.warned_not_number.get()
                         {
-                            self.warned_not_number = true;
+                            self.warned_not_number.set(true);
                             Self::warn_invalid_countdown(
                                 global_this,
                                 countdown_double,
@@ -172,7 +173,7 @@ impl All {
     ) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         debug_assert!(!promise.is_empty() && !countdown.is_empty());
-        let all = timer_all_mut();
+        let all = timer_all();
         let id = all.next_id();
 
         let countdown_int = all.js_value_to_countdown(
@@ -202,7 +203,7 @@ impl All {
     ) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         debug_assert!(!callback.is_empty() && !arguments.is_empty());
-        let all = timer_all_mut();
+        let all = timer_all();
         let id = all.next_id();
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
@@ -224,7 +225,7 @@ impl All {
     ) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         debug_assert!(!callback.is_empty() && !arguments.is_empty() && !countdown.is_empty());
-        let all = timer_all_mut();
+        let all = timer_all();
         let id = all.next_id();
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
@@ -237,7 +238,7 @@ impl All {
         )?;
         let clock = all.fake_timers.clock_while_active(clock);
         // As in @sinonjs/fake-timers, a fake timer without a delay is due now. See `FakeTimers::min_delay_ms()`.
-        let may_be_zero = clock == Clock::Fake || all.zero_delay_is_due_when_idle;
+        let may_be_zero = clock == Clock::Fake || all.zero_delay_is_due_when_idle.get();
         let countdown_int = countdown_int.max(u32::from(!may_be_zero));
         let is_due_when_idle = clock == Clock::Real && countdown_int == 0;
         let timeout = TimeoutObject::init(
@@ -253,7 +254,7 @@ impl All {
             let object =
                 TimeoutObject::from_js(timeout).expect("TimeoutObject::init returns its wrapper");
             // SAFETY: the wrapper is pinned by the heap that holds the timer.
-            unsafe { (*object).event_loop_timer.is_due_when_idle = true };
+            unsafe { (*object).event_loop_timer.is_due_when_idle.set(true) };
         }
         Ok(timeout)
     }
@@ -267,7 +268,7 @@ impl All {
     ) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         debug_assert!(!callback.is_empty() && !arguments.is_empty() && !countdown.is_empty());
-        let all = timer_all_mut();
+        let all = timer_all();
         let id = all.next_id();
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
@@ -304,16 +305,18 @@ impl All {
     /// The timer `id` names for the running script, removed from the map
     /// (see `VirtualMachine::context_may_name`).
     fn remove_timer_by_id(
-        &mut self,
+        &self,
         vm: &VirtualMachine,
         context: &bun_jsc::ScriptExecutionContext,
         id: u64,
     ) -> Option<*mut TimeoutObject> {
-        let (map, idx) = if let Some(idx) = self.maps.set_timeout.get_index(&id) {
-            (&mut self.maps.set_timeout, idx)
+        // SAFETY: JS thread; the borrow ends with this function, which runs no JS.
+        let maps = unsafe { &mut *self.maps.get() };
+        let (map, idx) = if let Some(idx) = maps.set_timeout.get_index(&id) {
+            (&mut maps.set_timeout, idx)
         } else {
-            let idx = self.maps.set_interval.get_index(&id)?;
-            (&mut self.maps.set_interval, idx)
+            let idx = maps.set_interval.get_index(&id)?;
+            (&mut maps.set_interval, idx)
         };
         let value: *mut EventLoopTimer = map.values()[idx];
         // SAFETY: entry value points to EventLoopTimer embedded in a TimeoutObject
@@ -338,7 +341,7 @@ impl All {
         let vm = global_this.bun_vm_ptr();
         // `clearTimeout` / `clearInterval` / `clearImmediate`, C++ host functions, call this.
         let context = global_this.bun_vm().context_of_caller();
-        let all = timer_all_mut();
+        let all = timer_all();
 
         let timer: &TimerObjectInternals = 'brk: {
             if timer_id_value.is_number() {
@@ -468,15 +471,10 @@ impl DateHeaderTimer {
     /// 1. If the timer was recently updated (< 1 second ago), just reschedule it
     /// 2. If the timer is stale (> 1 second since last update), update the date
     ///    immediately and reschedule
-    fn enable(&mut self, vm: &VirtualMachine, now: &Timespec) {
-        debug_assert!(self.event_loop_timer.state != EventLoopTimerState::ACTIVE);
+    fn enable(&self, timers: &All, vm: &VirtualMachine, now: &Timespec) {
+        debug_assert!(self.event_loop_timer.state.get() != EventLoopTimerState::ACTIVE);
 
-        // `EventLoopTimer.next` is the lower-tier `ElTimespec` stub
-        // (same `{sec,nsec}` layout) until bun_event_loop switches to bun_core::Timespec.
-        let last_update = Timespec {
-            sec: self.event_loop_timer.next.sec,
-            nsec: self.event_loop_timer.next.nsec,
-        };
+        let last_update = self.event_loop_timer.next.get();
         let elapsed = now.duration(&last_update).ms();
 
         // If the last update was more than 1 second ago, the date is stale
@@ -485,17 +483,9 @@ impl DateHeaderTimer {
             // updateDate() is an expensive function.
             vm.uws_loop_ref().update_date();
 
-            let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-            // SAFETY: single JS thread; nothing `All::update` touches overlaps
-            // `date_header_timer`, which `self` aliases (raw-ptr-per-field
-            // re-entry pattern, see jsc_hooks.rs).
-            unsafe { (*Self::timer_all()).update(elt, &now.add_ms(1000)) };
-        } else {
-            // The date was updated recently, just reschedule for the next second
-            let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-            // SAFETY: see above — disjoint-field access on `All`.
-            unsafe { (*Self::timer_all()).insert(elt) };
+            self.event_loop_timer.next.set(now.add_ms(1000));
         }
+        timers.insert(&raw const self.event_loop_timer);
     }
 }
 
@@ -616,9 +606,8 @@ pub(crate) fn fake_request_animation_frame_export(
 ) -> JsResult<JSValue> {
     const NS_PER_MS: u64 = bun_core::time::NS_PER_MS as u64;
     let vm = global.bun_vm();
-    let all = timer_all_mut();
-    let id = all.last_id;
-    all.last_id = all.last_id.wrapping_add(1);
+    let all = timer_all();
+    let id = all.next_id();
 
     let clock = if all.fake_timers.is_installed(function) {
         Clock::Fake
@@ -650,19 +639,19 @@ pub(crate) fn fake_queue_tick_export(
     callback: JSValue,
     arguments: JSValue,
 ) {
-    timer_all_mut()
+    timer_all()
         .fake_timers
         .queue_tick(global, callback, arguments);
 }
 
 // HOST_EXPORT(Bun__FakeTimers__isInstalled, c)
 pub(crate) fn fake_timers_is_installed_export(function: JSValue) -> bool {
-    timer_all_mut().fake_timers.is_installed(function)
+    timer_all().fake_timers.is_installed(function)
 }
 
 // HOST_EXPORT(Bun__FakeTimers__fakes, c)
 pub(crate) fn fake_timers_fakes_export(api: u8) -> bool {
-    timer_all_mut().fake_timers.fakes_api(api)
+    timer_all().fake_timers.fakes_api(api)
 }
 
 // HOST_EXPORT(Bun__FakeTimers__runStep, c)
@@ -674,13 +663,7 @@ pub(crate) fn fake_timers_run_step_export(global: &JSGlobalObject, id: u32) {
 
 // HOST_EXPORT(Bun__readHRTime, c)
 pub(crate) fn read_hrtime_export(vm: &VirtualMachine) -> u64 {
-    // SAFETY: a VM that runs script has its `RuntimeState`; JS thread; field read only.
-    let fake = unsafe {
-        (*crate::jsc_hooks::runtime_state_of(core::ptr::from_ref(vm).cast_mut()))
-            .timer
-            .fake_timers
-            .hrtime()
-    };
+    let fake = crate::jsc_hooks::timer_all_of(vm).fake_timers.hrtime();
     fake.unwrap_or_else(|| vm.origin_timer.elapsed().as_nanos() as u64)
 }
 
@@ -728,7 +711,7 @@ pub(crate) mod internal_bindings {
         id: Option<u64>,
     ) -> bindgen::Result<'a, ()> {
         let Some(id) = id else { return Ok(()) };
-        let current = timer_all_mut().last_id;
+        let current = timer_all().last_id.get();
         if id < current {
             return Err(heap.error_with_code(
                 bun_jsc::ErrorCode::OUT_OF_RANGE,
@@ -746,7 +729,7 @@ pub(crate) mod internal_bindings {
                 ),
             ));
         }
-        timer_all_mut().last_id = id;
+        timer_all().last_id.set(id);
         Ok(())
     }
 }

@@ -30,8 +30,29 @@ impl Checker<'_, '_> {
             ExprKind::Binary { op, .. } => Some(Some(op)),
             _ => Some(None),
         };
-        let grandparent = hir.parent(hir.node(e));
-        let mixed = if hir.kind(grandparent) == Kind::BinaryExpression {
+        // Without `||` or `&&` beside it there's nothing to report.
+        let is_logical = |x: ExprId| {
+            matches!(
+                hir[x].kind,
+                ExprKind::Binary {
+                    op: BinOp::Or | BinOp::And,
+                    ..
+                }
+            )
+        };
+        let may_be_operand_of_logical = match self.bound(file).parent_of_expr(e) {
+            Parent::None => true,
+            Parent::Expr(above) => is_logical(above),
+            _ => false,
+        };
+        let may_be_mixed = may_be_operand_of_logical || is_logical(left) || is_logical(right);
+        let grandparent = match may_be_mixed {
+            true => hir.parent(hir.node(e)),
+            false => Node::NONE,
+        };
+        let mixed = if !may_be_mixed {
+            None
+        } else if hir.kind(grandparent) == Kind::BinaryExpression {
             match hir.data(grandparent) {
                 NodeData::Expr(outer) => match hir[outer].kind {
                     ExprKind::Binary {

@@ -201,7 +201,7 @@ show(() => [...Unused.reader("holder.#hidden", new Unused())]);
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="read"
-// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[IsAsync, HasThis, HasExplicitName] length=2 syntax=[HasLiveAwait] captures=[{type=env [[L_14]] flags=[IsFromCompiler]}, {type=[[f_15]] flags=[IsFromCompiler]}, {type=classtoken flags=[IsFromCompiler]}, {type=anything}] thisType={type=function flags=[IsExpected]} parameters=[{type=undefined|null|[[L_13]] flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[IsAsync, HasThis, HasExplicitName] length=2 syntax=[HasLiveAwait] captures=[{type=env [[L_14]] flags=[IsFromCompiler]}, {type=[[f_15]] flags=[IsFromCompiler]}, {type=classtoken flags=[IsFromCompiler]}, {type=anything}] thisType={type=function flags=[IsExpected]} parameters=[{type=undefined|null|[[L_13]] flags=[IsFromCompiler, IsExpected]}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: env [[L_14]], v1: [[f_15]], v2: classtoken, v3: anything, v4: function, v5: undefined|null|[[L_13]], v6: undefined|null|string):
 // CHECK-NEXT: v7 = NewObject -, v5, v6 layout=[[L_16]] fields=[0, 1]
 // CHECK-NEXT: v8 = NewClosure v0, v7, v1, v2, v3 function=[[f_17]]

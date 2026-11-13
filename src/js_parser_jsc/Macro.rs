@@ -227,8 +227,8 @@ impl MacroContext {
         // `vm` is the per-thread VM (BackRef invariant: outlives this guard).
         // Enables macro mode now; disables on scope exit.
         let _mode_guard = MacroModeGuard::new(vm);
-        // SAFETY: `event_loop()` returns a self-pointer into `*vm`.
-        unsafe { (*(*vm).event_loop()).ensure_waker() };
+        // SAFETY: `vm` is the live per-thread VM.
+        unsafe { &*vm }.event_loop().ensure_waker();
 
         let javascript_object = self.javascript_object;
         // Lazy-init the backing arena now that a macro is actually being
@@ -457,8 +457,8 @@ impl Macro {
         // exit (success, `?`, Rejected) so depth/state can't leak; the caller's
         // own `MacroModeGuard` re-enables for the actual macro call.
         let _init_guard = MacroModeGuard::new(vm);
-        // SAFETY: `vm` is the per-thread VM; uniquely accessed here.
-        unsafe { (*(*vm).event_loop()).ensure_waker() };
+        // SAFETY: `vm` is the live per-thread VM.
+        unsafe { &*vm }.event_loop().ensure_waker();
         if is_new_vm {
             // SAFETY: `vm` is the freshly-allocated per-thread VM.
             unsafe { (*vm).transpiler.configure_defines()? };
@@ -899,8 +899,7 @@ impl<'a> Run<'a> {
                 let _ = self.macro_.vm();
                 let vm = VirtualMachine::get();
                 // The VM stopped before the macro's promise settled: throw its termination and unwind.
-                vm.as_mut()
-                    .wait_for_promise(promise)
+                vm.wait_for_promise(promise)
                     .map_err(|stopped| MacroError::Js(stopped.throw(self.global)))?;
 
                 let promise_result = promise.result(vm.jsc_vm());

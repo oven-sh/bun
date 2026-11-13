@@ -27,11 +27,13 @@
 //! a name or an attribute value is a string literal, and where the first token of a file or a block starts. The default
 //! library has no text, so checks that depend on the text are skipped for it.
 
+use super::errors_aliases::AliasDeclarations;
 use super::*;
 use crate::bind::{Decl, Parent, ScopeId, SymbolId};
 use crate::resolve::{ModuleKind, is_relative, normalize_path};
 use crate::util::SharedSort;
 use bun_collections::ArrayHashMap;
+use std::sync::Arc;
 
 /// State that's constant for a whole file.
 struct Cx<'a> {
@@ -54,7 +56,7 @@ struct Cx<'a> {
     /// `getVerbatimModuleSyntaxErrorMessage`
     esm_syntax_code: u32,
     /// `node.Symbol` for the alias declarations.
-    aliases: ArrayHashMap<Decl, Sym>,
+    aliases: Arc<AliasDeclarations>,
 }
 
 /// The node whose body is the statement list being checked.

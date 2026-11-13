@@ -12,8 +12,8 @@ use super::fragment::{FileMarks, KeyFinders};
 use super::layouts::KnownOrders;
 use super::types::TypeMemo;
 use crate::ir::{
-    FunctionKey, LayoutKey, PropertyKeyId, PropertyKeyTable, StringId, StringTable, TypeTable,
-    VariableKey,
+    BuilderScratch, FunctionKey, LayoutKey, PropertyKeyId, PropertyKeyTable, StringId, StringTable,
+    TypeTable, VariableKey,
 };
 use crate::modules::{self, ModuleRef};
 
@@ -208,6 +208,8 @@ pub(crate) struct TaskState {
     pub(in crate::lower) function_places: Places,
     pub(in crate::lower) memo: TypeMemo,
     pub(in crate::lower) orders: KnownOrders,
+    /// What the builder of the function before has left for the next one.
+    pub(in crate::lower) scratch: Option<BuilderScratch>,
     is_of_program: Option<bool>,
     pub(in crate::lower) atoms: FxHashMap<Atom, StringId>,
     pub(in crate::lower) atom_keys: FxHashMap<Atom, PropertyKeyId>,
@@ -225,6 +227,7 @@ impl TaskState {
             function_places: Places::default(),
             memo: TypeMemo::default(),
             orders: KnownOrders::default(),
+            scratch: None,
             is_of_program: None,
             atoms: FxHashMap::default(),
             atom_keys: FxHashMap::default(),
@@ -266,7 +269,8 @@ impl TaskState {
             layout_places: self.layout_places,
             function_places: self.function_places,
             memo: self.memo.hand_on(carried),
-            orders: KnownOrders::default(),
+            orders: self.orders.hand_on(),
+            scratch: self.scratch,
             is_of_program: carried.and(self.is_of_program),
             atoms: self.atoms,
             atom_keys: self.atom_keys,

@@ -287,7 +287,7 @@ fn teardown(vm: &mut VirtualMachine, function: &Strong) {
             // Same time limit as a hook. No timer is armed for it, so it's only checked when the event loop wakes up.
             let timeout = Jest::runner().map_or(0, |runner| runner.default_timeout_ms);
             let deadline = Timespec::ms_from_now(TimespecMockMode::ForceRealTime, timeout.into());
-            let waited = vm.event_loop_ref().wait_at_top_level(|| {
+            let waited = vm.event_loop().wait_at_top_level(|| {
                 promise.status() != js_promise::Status::Pending
                     || (timeout != 0
                         && Timespec::now(TimespecMockMode::ForceRealTime).greater(&deadline))

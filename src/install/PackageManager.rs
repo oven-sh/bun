@@ -1604,13 +1604,7 @@ fn allocate_package_manager(
         wr!(cache_directory, None);
         wr!(cache_directory_path, ZBox::from_bytes(b""));
         wr!(options, options);
-        wr!(
-            active_lifecycle_scripts,
-            crate::lifecycle_script_runner::List {
-                root: core::ptr::null_mut(),
-                context: crate::lifecycle_script_runner::StartedAtCtx,
-            }
-        );
+        wr!(active_lifecycle_scripts, Default::default());
         wr!(network_task_fifo, NetworkQueue::init());
         wr!(retry_queue, Default::default());
         wr!(patch_task_fifo, PatchTaskFifo::init());

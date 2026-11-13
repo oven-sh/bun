@@ -10715,11 +10715,33 @@ struct DeleteTreeStackItem {
     iter: DirIterator::WrappedIterator,
 }
 
+#[cfg(not(windows))]
+fn delete_tree_target(sub_path: &[u8], kind_hint: sys::FileKind) -> (&[u8], sys::FileKind, bool) {
+    // `O_NOFOLLOW` does not stop `openat("link/")`: the separators come off first.
+    let stripped = strings::trim_right(sub_path, b"/");
+    if stripped.len() == sub_path.len() {
+        return (sub_path, kind_hint, false);
+    }
+    // A path of only separators is the root. Keep one.
+    let stripped = if stripped.is_empty() {
+        &sub_path[..1]
+    } else {
+        stripped
+    };
+    (stripped, sys::FileKind::Directory, true)
+}
+
+#[cfg(windows)]
+fn delete_tree_target(sub_path: &[u8], kind_hint: sys::FileKind) -> (&[u8], sys::FileKind, bool) {
+    (sub_path, kind_hint, false)
+}
+
 pub(crate) fn zig_delete_tree(
     self_: &sys::Dir,
     sub_path: &[u8],
     kind_hint: sys::FileKind,
 ) -> crate::Result<()> {
+    let (sub_path, kind_hint, dir_only) = delete_tree_target(sub_path, kind_hint);
     let initial_iterable_dir =
         match zig_delete_tree_open_initial_subpath(self_, sub_path, kind_hint)? {
             Some(d) => d,
@@ -10912,6 +10934,10 @@ pub(crate) fn zig_delete_tree(
                 if treat_as_dir {
                     match dt_open_dir(sys::Dir::borrow(&parent_dir), name) {
                         Ok(d) => break 'handle_entry d,
+                        // "dir/" never unlinks a file that took the directory's place.
+                        Err(E::ENOTDIR) if dir_only && top.name_is_borrowed => {
+                            return Err(dt_err(E::ENOTDIR));
+                        }
                         Err(E::ENOTDIR) => {
                             treat_as_dir = false;
                             continue 'handle_entry;

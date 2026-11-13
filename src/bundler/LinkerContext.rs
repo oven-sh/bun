@@ -710,8 +710,8 @@ impl<'a> LinkerContext<'a> {
             let browser_paths = &build_graphs[Target::Browser];
 
             for &html_import in server_source_indices.iter() {
-                let path_text = sources[html_import as usize].path.text;
-                let source_index: u32 = browser_paths.get(path_text).unwrap_or_else(|| {
+                let path = &sources[html_import as usize].path;
+                let source_index: u32 = browser_paths.get_path(path).unwrap_or_else(|| {
                     panic!("Assertion failed: HTML import file not found in pathToSourceIndexMap");
                 });
 

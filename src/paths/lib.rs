@@ -768,6 +768,12 @@ pub mod fs {
 
     const _: () = assert!(core::mem::size_of::<Path<'static>>() <= 56);
 
+    /// True when `namespace` is the canonical `file` namespace (empty or `"file"`).
+    #[inline]
+    pub fn is_file_namespace(namespace: &[u8]) -> bool {
+        namespace.is_empty() || namespace == b"file"
+    }
+
     impl<'a> Default for Path<'a> {
         #[inline]
         fn default() -> Self {
@@ -890,7 +896,7 @@ pub mod fs {
 
         #[inline]
         pub fn is_file(&self) -> bool {
-            self.namespace.is_empty() || self.namespace == b"file"
+            is_file_namespace(self.namespace)
         }
 
         #[inline]

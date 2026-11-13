@@ -286,7 +286,6 @@ impl<'a> BundleV2<'a> {
         {
             return;
         }
-        let path_text = path.text;
         let main_target = self.transpiler.options.target;
         let separate_ssr = self
             .framework
@@ -302,7 +301,7 @@ impl<'a> BundleV2<'a> {
             let row = self
                 .graph
                 .path_to_source_index_map(other)
-                .get_or_put_keyed(path_text, key_loader)
+                .get_or_put_keyed(path, key_loader)
                 .expect("oom");
             if !row.found_existing {
                 *row.value_ptr = source_index;
@@ -2887,7 +2886,7 @@ pub mod bv2_impl {
             // borrowck: get-then-put instead of a single get-or-put.
             if self
                 .path_to_source_index_map(target)
-                .get(path.text)
+                .get_path(path)
                 .is_some()
             {
                 return Ok(None);
@@ -2900,7 +2899,7 @@ pub mod bv2_impl {
             let path = self.path_with_pretty_initialized(path, target)?;
             path.assert_pretty_is_valid();
             self.path_to_source_index_map(target)
-                .put(path.text, source_index.get())
+                .put_path(&path, source_index.get())
                 .expect("oom");
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
 
@@ -3321,7 +3320,7 @@ pub mod bv2_impl {
                 return Ok(EntryPointModule::New);
             }
             let existing = match resolved.path_const() {
-                Some(path) => self.path_to_source_index_map(target).get(path.text),
+                Some(path) => self.path_to_source_index_map(target).get_path(path),
                 None => None,
             };
             Ok(existing.map_or(EntryPointModule::None, EntryPointModule::Existing))
@@ -3369,7 +3368,7 @@ pub mod bv2_impl {
                         source_index
                     }
                     // An import made the module first. It is an entry point too.
-                    Ok(None) => match self.path_to_source_index_map(target).get(path.text) {
+                    Ok(None) => match self.path_to_source_index_map(target).get_path(&path) {
                         Some(source_index) => source_index,
                         None => return,
                     },
@@ -6556,14 +6555,14 @@ pub mod bv2_impl {
 
                         if let Some(id) = self
                             .path_to_source_index_map(target)
-                            .get_keyed(path_primary.text, key_loader)
+                            .get_keyed(&path_primary, key_loader)
                         {
                             import_record.source_index = Index::init(id);
                             continue;
                         }
 
                         let resolve_entry = resolve_queue
-                            .get_or_put_keyed(path_primary.text, key_loader)
+                            .get_or_put_keyed(&path_primary, key_loader)
                             .expect("oom");
                         if resolve_entry.found_existing {
                             // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
@@ -6961,7 +6960,7 @@ pub mod bv2_impl {
 
                 if let Some(id) = self
                     .path_to_source_index_map(target)
-                    .get_keyed(path.text, key_loader)
+                    .get_keyed(path, key_loader)
                 {
                     if self.dev_server.is_some() && loader != Loader::Html {
                         import_record.path =
@@ -6981,7 +6980,7 @@ pub mod bv2_impl {
                 }
 
                 let resolve_entry = resolve_queue
-                    .get_or_put_keyed(path.text, key_loader)
+                    .get_or_put_keyed(path, key_loader)
                     .expect("oom");
                 if resolve_entry.found_existing {
                     // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
@@ -7028,7 +7027,7 @@ pub mod bv2_impl {
                 match html_import {
                     HtmlImport::No => {}
                     HtmlImport::Manifest => self
-                        .generate_server_html_module(path, target, import_record, path.text)
+                        .generate_server_html_module(path, target, import_record)
                         .expect("unreachable"),
                     HtmlImport::AfterOnLoad => resolve_task.on_load_decides_html_import = true,
                 }
@@ -7071,7 +7070,7 @@ pub mod bv2_impl {
                 } else {
                     &mut self.graph.build_graphs[target]
                 };
-                let existing = map.get_or_put_keyed(key, key_loader).expect("oom");
+                let existing = map.get_or_put_key(key, key_loader).expect("oom");
 
                 if !existing.found_existing {
                     let new_task: &mut ParseTask = value;
@@ -7162,7 +7161,7 @@ pub mod bv2_impl {
     /// `&mut self` the body needs for `path_to_source_index_map`.
     #[derive(Clone, Copy)]
     pub struct PatchImportRecordsCtx<'a> {
-        pub(crate) source_path: &'a [u8],
+        pub(crate) source_path: Fs::Path<'a>,
         pub(crate) source_key_loader: Option<Loader>,
         pub(crate) loader: Loader,
         pub(crate) target: options::Target,
@@ -7200,7 +7199,7 @@ pub mod bv2_impl {
                         .contains(bun_ast::ImportRecordFlags::KEYED_BY_LOADER)
                 });
                 if let Some(source_index) =
-                    path_to_source_index_map.get_keyed(record.path.text, key_loader)
+                    path_to_source_index_map.get_keyed(&record.path, key_loader)
                     && !record
                         .flags
                         .contains(bun_ast::ImportRecordFlags::AT_ON_RESOLVE_PLUGINS)
@@ -7214,7 +7213,7 @@ pub mod bv2_impl {
                     if let Some(compare) = get_redirect_id(ctx.redirect_import_record_index) {
                         if compare == i as u32 {
                             let _ = path_to_source_index_map.put_keyed(
-                                ctx.source_path,
+                                &ctx.source_path,
                                 ctx.source_key_loader,
                                 source_index,
                             ); // OOM-only Result
@@ -7323,7 +7322,7 @@ pub mod bv2_impl {
                 self.patch_import_record_source_indices(
                     &mut import_records,
                     PatchImportRecordsCtx {
-                        source_path: source.path.text,
+                        source_path: source.path,
                         source_key_loader: self.graph.input_files.items_key_loader()[idx],
                         loader,
                         target,
@@ -7433,7 +7432,6 @@ pub mod bv2_impl {
             path: &Fs::Path<'a>,
             target: options::Target,
             import_record: &mut ImportRecord,
-            path_text: &[u8],
         ) -> Result<(), Error> {
             // Create a separate "virtual" module that becomes the manifest later on, and add it to the graph.
             let fake_source_index = self.graph.input_files.len() as u32;
@@ -7452,7 +7450,7 @@ pub mod bv2_impl {
             import_record.source_index = Index::init(fake_source_index);
             let _ = self
                 .path_to_source_index_map(target)
-                .put(path_text, fake_source_index); // OOM-only Result
+                .put_path(path, fake_source_index); // OOM-only Result
             self.graph
                 .html_imports
                 .server_source_indices
@@ -7512,7 +7510,7 @@ pub mod bv2_impl {
                 // The file has no module. A later import of it makes a new row and gets the same error.
                 self.graph
                     .path_to_source_index_map(target)
-                    .remove(path.text);
+                    .remove_path(&path);
                 return false;
             }
 
@@ -7535,7 +7533,7 @@ pub mod bv2_impl {
                 let entry = self
                     .graph
                     .path_to_source_index_map(Target::Browser)
-                    .get_or_put(path.text)
+                    .get_or_put_path(&path)
                     .expect("oom");
                 if entry.found_existing {
                     return false;
@@ -7781,7 +7779,8 @@ pub mod bv2_impl {
                     this.patch_import_record_source_indices(
                         &mut import_records,
                         PatchImportRecordsCtx {
-                            source_path: source_path_text,
+                            source_path: this.graph.input_files.items_source()[result_source_index]
+                                .path,
                             source_key_loader: this.graph.input_files.items_key_loader()
                                 [result_source_index],
                             loader: result.loader,
@@ -7951,9 +7950,11 @@ pub mod bv2_impl {
 
                         let source_key_loader =
                             this.graph.input_files.items_key_loader()[result_source_index];
+                        let source_path =
+                            this.graph.input_files.items_source()[result_source_index].path;
                         this.graph
                             .path_to_source_index_map(result_ast_target)
-                            .put_keyed(source_path_text, source_key_loader, reference_source_index)
+                            .put_keyed(&source_path, source_key_loader, reference_source_index)
                             .expect("oom");
 
                         this.graph

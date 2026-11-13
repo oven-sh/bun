@@ -317,6 +317,44 @@ test("mock an object", () => {
 
 With `{ spy: true }`, functions keep their implementation, and `value` is modified in place instead of copied.
 
+### Instances of a Mocked Class
+
+Each instance that a mocked class constructs gets its own mock for every method of the class, inherited ones included. The mock on `prototype` records the calls of all instances.
+
+With `{ spy: true }`, the instance gets its own mock only for the methods that the class defines itself. A method that the class inherits from a base class has one mock, on `prototype`, for all instances. That mock belongs to the class, so every instance and every later test sees its recorded calls and a return value that a test sets through one instance. The calls stay until you clear the mock, and the return value until you reset it (see [Cleanup After Each Test File](#cleanup-after-each-test-file)). To mock the method for one instance, assign a mock to the instance.
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect, vi } from "bun:test";
+
+class Model {
+  save() {
+    return "saved";
+  }
+}
+class User extends Model {
+  greet() {
+    return "hello";
+  }
+}
+
+test("spy on a class", () => {
+  const SpiedUser = vi.mockObject(User, { spy: true });
+  const a = new SpiedUser();
+  const b = new SpiedUser();
+
+  expect(a.greet()).toBe("hello");
+  expect(a.greet).toHaveBeenCalledTimes(1);
+  expect(b.greet).not.toHaveBeenCalled();
+  expect(SpiedUser.prototype.greet).toHaveBeenCalledTimes(1);
+
+  expect(a.save).toBe(SpiedUser.prototype.save);
+  a.save = vi.fn(() => "mocked");
+  expect([a.save(), b.save()]).toEqual(["mocked", "saved"]);
+});
+```
+
+A later `{ spy: true }` mock of the same class gives its instances the same mocks. The exception is a class whose `prototype.constructor` is not the class itself, for example after `Klass.prototype = Object.create(Base.prototype)`. From the second mock of such a class on, an instance also gets its own mock for each inherited method.
+
 ## Module Mocks with mock.module()
 
 Use `mock.module(path: string, callback: () => Object)` to override the behavior of a module.
@@ -488,6 +526,8 @@ test("automock", () => {
   expect(add).toHaveBeenCalledWith(1, 2);
 });
 ```
+
+A class of the module gives its instances their own mocks, as described in [Instances of a Mocked Class](#instances-of-a-mocked-class).
 
 `vi.importMock(path)`, `jest.requireMock(path)` and `jest.createMockFromModule(path)` return the same kind of mock without mocking the module.
 
@@ -807,6 +847,9 @@ test("lazy import", async () => {
 - A factory that uses `importOriginal` is called after the original module is evaluated, not before, so after the factories that don't use it. A factory that declares the parameter counts as using it, so the original is evaluated even if the factory never calls it.
 - `export * from` a mocked module re-exports the original's export names if the factory uses `importOriginal`. Names the factory adds aren't re-exported, and names it leaves out are re-exported as `undefined`.
 - If two files import each other and both have hoisted calls, they wait on each other and the run fails with an error that names both files. Keep the hoisted calls in only one of them.
+- An instance that a mocked class constructs has no mock of its own for `constructor`. In Vitest it has one.
+- Without `{ spy: true }`, `vi.mockObject()`, `vi.mock()`, `vi.doMock()` and `vi.importMock()` give an instance the same mocks as `jest.mock()` does: its own mock for each method that the class inherits too. In Vitest it gets one only for the methods that the class defines itself.
+- With `{ spy: true }`, the spies stay on a class when its mock ends, with the return values that were set on them. A later `{ spy: true }` mock of the class finds them there, and its instances get the same mocks as before. In Vitest, a later mock of a module gets its classes without them. From the second `vi.mockObject(value, { spy: true })` of a class on, Vitest gives an instance its own mock for each inherited method too.
 
 ## Implementation Details
 

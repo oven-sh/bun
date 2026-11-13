@@ -239,10 +239,12 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_errno",
+ "bun_libdeflate_sys",
  "bun_paths",
  "bun_sys",
  "bun_tar",
  "bun_wyhash",
+ "bun_zlib",
  "scopeguard",
  "thiserror",
 ]

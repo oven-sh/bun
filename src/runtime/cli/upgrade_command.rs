@@ -16,6 +16,7 @@ use bun_paths::{self, SEP_STR};
 use bun_resolver::fs;
 use bun_sys as sys;
 use bun_url::URL;
+#[cfg(unix)]
 use bun_which::which;
 use bun_wyhash::hash;
 
@@ -180,6 +181,7 @@ impl UpgradeCommand {
         env_loader: &mut DotEnv::Loader,
         mut refresher: Option<&mut Progress::Progress>,
         use_profile: bool,
+        release_path: &str,
     ) -> crate::Result<Option<Version>> {
         let mut headers_buf: Vec<u8> = Self::DEFAULT_GITHUB_HEADERS.to_vec();
 
@@ -209,8 +211,9 @@ impl UpgradeCommand {
         let url_buf: &'static mut Vec<u8> = crate::cli::cli_arena().alloc(Vec::new());
         write!(
             url_buf,
-            "https://{}/repos/Jarred-Sumner/bun-releases-for-updater/releases/latest",
+            "https://{}/{}",
             bstr::BStr::new(github_api_domain),
+            release_path,
         )
         .expect("oom");
         let api_url = URL::parse(&url_buf[..]);
@@ -473,6 +476,14 @@ impl UpgradeCommand {
         Ok(None)
     }
 
+    /// GitHub API path of the release stable upgrades come from.
+    const STABLE_RELEASE_PATH: &'static str =
+        "repos/Jarred-Sumner/bun-releases-for-updater/releases/latest";
+    /// GitHub API path of the canary release. Its assets are republished in
+    /// place, and its `SHASUMS256.txt` can lag behind them, so the archive is
+    /// checked against the per-asset `digest` the API reports.
+    const CANARY_RELEASE_PATH: &'static str = "repos/oven-sh/bun/releases/tags/canary";
+
     const EXE_SUFFIX: &'static str = if cfg!(windows) { ".exe" } else { "" };
 
     const EXE_SUBPATH: &'static str = const_format::concatcp!(
@@ -569,6 +580,7 @@ impl UpgradeCommand {
                 &mut env_loader,
                 Some(&mut *refresher),
                 use_profile,
+                Self::STABLE_RELEASE_PATH,
             )?
             else {
                 return Ok(());
@@ -611,16 +623,54 @@ impl UpgradeCommand {
 
             version
         } else {
-            Version {
-                tag: b"canary"[..].into(),
-                zip_url: const_format::concatcp!(
-                    "https://github.com/oven-sh/bun/releases/download/canary/",
-                    Version::ZIP_FILENAME
-                )
-                .as_bytes()
-                .into(),
-                size: 0,
-                digest: Integrity::default(),
+            let refresher: &mut Progress::Progress =
+                Box::leak(Box::new(Progress::Progress::default()));
+            refresher.start(b"Fetching canary release", 0);
+
+            // The API gives the asset's URL, size and sha256 digest. When it
+            // cannot be reached (rate limit, proxy), fall back to the fixed
+            // download URL without a digest, as before.
+            let from_api = Self::get_latest_version::<false>(
+                &mut env_loader,
+                Some(&mut *refresher),
+                use_profile,
+                Self::CANARY_RELEASE_PATH,
+            );
+
+            refresher.root.end();
+            refresher.refresh();
+
+            match from_api {
+                Ok(Some(version)) if &*version.tag == b"canary" => version,
+                Ok(None) => return Ok(()),
+                other => {
+                    let reason: &[u8] = match &other {
+                        Err(err) => err.name().as_bytes(),
+                        _ => b"unexpected tag_name",
+                    };
+                    bun_core::pretty_errorln!(
+                        "<r><yellow>warn:<r> Could not read the canary release from the GitHub API ({}); the download will not be checked against its digest",
+                        bstr::BStr::new(reason)
+                    );
+                    Version {
+                        tag: b"canary"[..].into(),
+                        zip_url: if use_profile {
+                            const_format::concatcp!(
+                                "https://github.com/oven-sh/bun/releases/download/canary/",
+                                Version::PROFILE_ZIP_FILENAME
+                            )
+                        } else {
+                            const_format::concatcp!(
+                                "https://github.com/oven-sh/bun/releases/download/canary/",
+                                Version::ZIP_FILENAME
+                            )
+                        }
+                        .as_bytes()
+                        .into(),
+                        size: 0,
+                        digest: Integrity::default(),
+                    }
+                }
             }
         };
 
@@ -760,14 +810,17 @@ impl UpgradeCommand {
             let tmpdir_z = ZStr::from_buf(&tmpdir_path_buf[..], tmpdir_path_len);
             let _ = sys::chdir(tmpdir_z);
 
-            // SAFETY: literal ends with NUL.
-            let tmpname: &ZStr = ZStr::from_static(b"bun.zip\0");
             let exe: &[u8] = if use_profile {
                 Self::PROFILE_EXE_SUBPATH.as_bytes()
             } else {
                 Self::EXE_SUBPATH.as_bytes()
             };
 
+            // SAFETY: literal ends with NUL.
+            #[cfg(unix)]
+            let tmpname: &ZStr = ZStr::from_static(b"bun.zip\0");
+
+            #[cfg(unix)]
             let zip_file = match save_dir.open_file(
                 tmpname.as_bytes(),
                 sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
@@ -783,6 +836,7 @@ impl UpgradeCommand {
                 }
             };
 
+            #[cfg(unix)]
             {
                 if let Err(err) = zip_file.write_all(bytes) {
                     let _ = sys::unlinkat(&save_dir, tmpname);
@@ -795,6 +849,7 @@ impl UpgradeCommand {
                 let _ = zip_file.close();
             }
 
+            #[cfg(unix)]
             {
                 scopeguard::defer! {
                     let _ = sys::unlinkat(&save_dir, tmpname);
@@ -868,92 +923,75 @@ impl UpgradeCommand {
                         }
                     }
                 }
-                #[cfg(windows)]
-                {
-                    // Run a powershell script to unzip the file
-                    let mut unzip_script = Vec::new();
-                    write!(
-                        &mut unzip_script,
-                        "$global:ProgressPreference='SilentlyContinue';Expand-Archive -Path \"{}\" \"{}\" -Force",
-                        bun_fmt::escape_powershell(bstr::BStr::new(tmpname.as_bytes())),
-                        bun_fmt::escape_powershell(bstr::BStr::new(&tmpdir_path_buf[..tmpdir_path_len])),
-                    )
-                    .expect("oom");
+            }
 
-                    let mut buf = bun_paths::path_buffer_pool::get();
-                    // Separate fallback buffer — borrowck holds `buf` for the lifetime
-                    // of `which`'s returned `Option<&ZStr>` even across the `None` arm.
-                    let mut buf2 = bun_paths::path_buffer_pool::get();
-                    let powershell_path: &ZStr = match which(
-                        &mut buf,
-                        bun_core::env_var::PATH.get().unwrap_or(b""),
-                        b"",
-                        b"powershell",
-                    ) {
-                        Some(p) => p,
-                        None => {
-                            let system_root = bun_core::env_var::SYSTEMROOT
-                                .get()
-                                .unwrap_or(b"C:\\Windows");
-                            let hardcoded_system_powershell =
-                                bun_paths::join_abs_string_buf_z::<bun_paths::platform::Windows>(
-                                    system_root,
-                                    &mut buf2[..],
-                                    &[
-                                        system_root,
-                                        b"System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-                                    ],
-                                );
-                            if !sys::exists(hardcoded_system_powershell.as_bytes()) {
-                                bun_core::pretty_errorln!(
-                                    "<r><red>error:<r> Failed to unzip {} due to PowerShell not being installed.",
-                                    bstr::BStr::new(tmpname.as_bytes())
-                                );
-                                Global::exit(1);
-                            }
-                            hardcoded_system_powershell
-                        }
-                    };
-
-                    let unzip_argv: [&[u8]; 6] = [
-                        powershell_path.as_bytes(),
-                        b"-NoProfile",
-                        b"-ExecutionPolicy",
-                        b"Bypass",
-                        b"-Command",
-                        &unzip_script,
-                    ];
-
-                    let spawn_res = spawn_sync::spawn(&spawn_sync::Options {
-                        argv: build_argv(&unzip_argv),
-                        envp: None,
-                        cwd: Box::<[u8]>::from(&tmpdir_path_buf[..tmpdir_path_len]),
-                        stderr: spawn_sync::SyncStdio::Inherit,
-                        stdout: spawn_sync::SyncStdio::Inherit,
-                        stdin: spawn_sync::SyncStdio::Inherit,
-                        windows: spawn_windows_options(),
-                        ..Default::default()
-                    });
-                    let spawn_res = match spawn_res {
-                        Ok(r) => r,
-                        Err(err) => {
-                            bun_core::pretty_errorln!(
-                                "<r><red>error:<r> Failed to spawn Expand-Archive on {} due to error {}",
-                                bstr::BStr::new(tmpname.as_bytes()),
-                                err.name()
-                            );
-                            Global::exit(1);
-                        }
-                    };
-                    if let Err(err) = spawn_res {
+            // Windows: take the executable out of the archive in-process.
+            // Expand-Archive behaved differently depending on the PSModulePath
+            // PowerShell inherited, and its failures went unnoticed (exit code 0).
+            #[cfg(windows)]
+            {
+                let extracted = bun_archive::zip::Archive::open(bytes).and_then(|archive| {
+                    // Release archives name their entries with `/`; `find` treats
+                    // `\` (EXE_SUBPATH on Windows) the same.
+                    archive.find(exe)?.map(|entry| entry.read()).transpose()
+                });
+                let data = match extracted {
+                    Ok(Some(data)) => data,
+                    Ok(None) => {
                         bun_core::pretty_errorln!(
-                            "<r><red>error:<r> Failed to run Expand-Archive on {} due to error {}",
-                            bstr::BStr::new(tmpname.as_bytes()),
+                            "<r><red>error:<r> The downloaded release does not contain {}",
+                            bstr::BStr::new(exe)
+                        );
+                        Global::exit(1);
+                    }
+                    Err(err) => {
+                        bun_core::pretty_errorln!(
+                            "<r><red>error:<r> Failed to unzip the downloaded release: {}",
+                            err
+                        );
+                        Global::exit(1);
+                    }
+                };
+
+                let folder: &[u8] = if use_profile {
+                    Version::PROFILE_FOLDER_NAME.as_bytes()
+                } else {
+                    Version::FOLDER_NAME.as_bytes()
+                };
+                let folder_z = bun_core::ZBox::from_bytes(folder);
+                if let Err(err) = sys::mkdirat(&save_dir, folder_z.as_zstr(), 0o755) {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error:<r> Failed to create {}: {}",
+                        bstr::BStr::new(folder),
+                        bstr::BStr::new(err.name())
+                    );
+                    Global::exit(1);
+                }
+                let exe_file = match save_dir.open_file(
+                    exe,
+                    sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
+                    0o755,
+                ) {
+                    Ok(f) => f,
+                    Err(err) => {
+                        bun_core::pretty_errorln!(
+                            "<r><red>error:<r> Failed to create {}: {}",
+                            bstr::BStr::new(exe),
                             bstr::BStr::new(err.name())
                         );
                         Global::exit(1);
                     }
+                };
+                if let Err(err) = exe_file.write_all(&data) {
+                    let _ = exe_file.close();
+                    bun_core::pretty_errorln!(
+                        "<r><red>error:<r> Failed to write {}: {}",
+                        bstr::BStr::new(exe),
+                        bstr::BStr::new(err.name())
+                    );
+                    Global::exit(1);
                 }
+                let _ = exe_file.close();
             }
             {
                 let verify_argv: [&[u8]; 2] = [

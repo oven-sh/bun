@@ -25,9 +25,10 @@ const releaseFolder = `bun-${releaseOs}-${releaseArch}${isMusl ? "-musl" : ""}`;
 const releaseAsset = `${releaseFolder}.zip`;
 
 // Last line `bun upgrade` prints when the downloaded archive is not a zip. On
-// POSIX `unzip` rejects it; on Windows Expand-Archive's failure is only noticed
-// when the executable it should have produced is missing.
-const unpackFailure = isWindows ? "error: Failed to verify Bun (code: ENOENT)\n" : "Unzip failed (exit code: 9)\n";
+// POSIX `unzip` rejects it; on Windows bun reads the archive itself.
+const unpackFailure = isWindows
+  ? "error: Failed to unzip the downloaded release: not a zip archive\n"
+  : "Unzip failed (exit code: 9)\n";
 
 // `bun upgrade` swaps out the executable it runs as, so the release flows run a
 // stand-in in a temp dir instead of bunExe() itself. A hard link is enough: the
@@ -87,13 +88,16 @@ function allAssetNames(profile = false) {
   return names;
 }
 
-// Build a minimal ZIP archive with a single stored (uncompressed) entry.
-// `unzip -o` on POSIX restores the mode from the Unix external-attrs field;
-// Expand-Archive on Windows ignores it.
-function makeZipStored(entryName: string, data: Buffer, unixMode: number): Buffer {
+// Build a minimal ZIP archive with a single entry, stored (uncompressed) or
+// deflated. `unzip -o` on POSIX restores the mode from the Unix external-attrs
+// field; the Windows unpacker ignores it.
+function makeZipStored(entryName: string, data: Buffer, unixMode: number, deflate = false): Buffer {
   const nameBytes = Buffer.from(entryName, "utf8");
   const crc = Bun.hash.crc32(data);
-  const size = data.length;
+  const usize = data.length;
+  const body = deflate ? Buffer.from(Bun.deflateSync(data)) : data;
+  const method = deflate ? 8 : 0;
+  const size = body.length;
 
   const lfhLen = 30 + nameBytes.length;
   const cdhLen = 46 + nameBytes.length;
@@ -118,28 +122,28 @@ function makeZipStored(entryName: string, data: Buffer, unixMode: number): Buffe
   u32(0x04034b50);
   u16(20); // version needed
   u16(0); // flags
-  u16(0); // method: stored
+  u16(method);
   u16(0); // mtime
   u16(0); // mdate
   u32(crc);
   u32(size);
-  u32(size);
+  u32(usize);
   u16(nameBytes.length);
   u16(0);
   raw(nameBytes);
-  raw(data);
+  raw(body);
 
   // Central directory header
   u32(0x02014b50);
   u16((3 << 8) | 20); // made by: Unix, spec 2.0
   u16(20);
   u16(0);
-  u16(0);
+  u16(method);
   u16(0);
   u16(0);
   u32(crc);
   u32(size);
-  u32(size);
+  u32(usize);
   u16(nameBytes.length);
   u16(0);
   u16(0);
@@ -166,10 +170,10 @@ function makeZipStored(entryName: string, data: Buffer, unixMode: number): Buffe
 // executable at the path `bun upgrade` verifies. On POSIX a shell script is
 // enough because `unzip` preserves the mode bits; on Windows the verify step
 // spawns `bun.exe` directly, so the archive has to carry a real PE image.
-async function writeFakeReleaseZip(outPath: string, version: string): Promise<void> {
+async function writeFakeReleaseZip(outPath: string, version: string, deflate = false): Promise<void> {
   if (isWindows) {
     const exe = Buffer.from(await Bun.file(bunExe()).arrayBuffer());
-    await writeFile(outPath, makeZipStored(`${releaseFolder}/bun.exe`, exe, 0o755));
+    await writeFile(outPath, makeZipStored(`${releaseFolder}/bun.exe`, exe, 0o755, deflate));
   } else {
     const script = Buffer.from(fakeReleaseScript(version));
     await writeFile(outPath, makeZipStored(`${releaseFolder}/bun`, script, 0o755));
@@ -184,6 +188,7 @@ function startReleaseServer(opts: {
   zipPath?: string;
   zipBody?: string;
   digest?: string;
+  onRequest?: (pathname: string) => void;
 }): ReleaseServer {
   const assetNames = opts.assetNames ?? allAssetNames();
   const server = Bun.serve({
@@ -191,6 +196,7 @@ function startReleaseServer(opts: {
     port: 0,
     async fetch(req) {
       const { pathname } = new URL(req.url);
+      opts.onRequest?.(pathname);
       if (pathname.startsWith("/download/")) {
         if (opts.zipPath) return new Response(Bun.file(opts.zipPath));
         return new Response(opts.zipBody ?? "this is not a real zip archive");
@@ -506,4 +512,97 @@ it.concurrent("verifies the downloaded release archive against the digest report
   expect(matched.stderr).toEndWith(unpackFailure);
   expect(matched.staged).toEqual(["9.9.8"]);
   expect(matched.exitCode).toBe(1);
+});
+
+it.concurrent.if(isWindows)(
+  "unpacks the release on Windows without PowerShell, from a deflated archive",
+  async () => {
+    // bun used to run `powershell -Command Expand-Archive` and ignore its exit
+    // code. Started with a PSModulePath inherited from PowerShell 7, Windows
+    // PowerShell loaded an Archive module that fails on .NET Framework
+    // (MethodCountCouldNotFindBest), extracted nothing, and the upgrade then
+    // failed with "Failed to verify Bun (code: ENOENT)". A `powershell.exe`
+    // first on PATH that extracts nothing reproduces that deterministically.
+    const version = Bun.version;
+    const exeName = basename(bunExe());
+    const installDir = tmpdirSync();
+    const fakePowerShellDir = tmpdirSync();
+    const zipPath = join(tmpdirSync(), "release.zip");
+    const [execPath] = await Promise.all([
+      installStandIn(installDir),
+      writeFakeReleaseZip(zipPath, version, true),
+      (async () => {
+        const fake = join(fakePowerShellDir, "powershell.exe");
+        try {
+          await link(await realpath(bunExe()), fake);
+        } catch {
+          await copyFile(bunExe(), fake);
+        }
+      })(),
+    ]);
+
+    using server = startReleaseServer({ tagName: `bun-v${version}`, zipPath });
+    using stagingRoot = tempDir("bun-upgrade-no-powershell", {});
+
+    await using proc = Bun.spawn({
+      cmd: [execPath, "upgrade", "--stable"],
+      cwd: installDir,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env: {
+        ...server.env,
+        BUN_TMPDIR: String(stagingRoot),
+        PATH: `${fakePowerShellDir};${server.env.PATH ?? process.env.PATH ?? ""}`,
+      },
+    });
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("Failed to verify Bun");
+    if (stderr.includes("Congrats!")) {
+      // A release build already on this version stops before the download.
+      expect(readdirSync(installDir)).toEqual([exeName]);
+    } else {
+      expectTargetsRelease(stderr, version);
+      expect(stderr).toContain(` Upgraded.\n\nWelcome to Bun v${version}!\n`);
+    }
+    expect(exitCode).toBe(0);
+  },
+);
+
+it.concurrent("checks a canary download against the digest the GitHub API reports for the canary asset", async () => {
+  // The canary release republishes its archives in place and its SHASUMS256.txt
+  // can lag behind them, so `bun upgrade --canary` reads the asset's digest from
+  // the API (repos/oven-sh/bun/releases/tags/canary) instead of downloading
+  // github.com/oven-sh/bun/releases/download/canary/<asset> unchecked.
+  const requested: string[] = [];
+  const wrongDigest = `sha256:${Buffer.alloc(32, 0xcd).toString("hex")}`;
+  using server = startReleaseServer({ tagName: "canary", digest: wrongDigest, onRequest: p => requested.push(p) });
+  using stagingRoot = tempDir("bun-upgrade-canary-digest", {});
+
+  await using proc = Bun.spawn({
+    cmd: [standInExe, "upgrade", "--canary"],
+    cwd: standInDir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env: {
+      ...server.env,
+      BUN_TMPDIR: String(stagingRoot),
+      // Anything that is not the local server goes to a closed port instead of
+      // the internet (the build before this change downloaded from github.com).
+      HTTPS_PROXY: "http://127.0.0.1:9",
+      HTTP_PROXY: "http://127.0.0.1:9",
+      NO_PROXY: server.hostname,
+    },
+  });
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(requested).toContain("/repos/oven-sh/bun/releases/tags/canary");
+  expect(stderr).toEndWith(
+    `error: The file downloaded from https://${server.hostname}:${server.port}/download/${releaseAsset} did not match the checksum reported by the GitHub API for this release.\n` +
+      "note: run bun upgrade again to retry the download\n",
+  );
+  expect(readdirSync(String(stagingRoot))).toEqual([]);
+  expect(exitCode).toBe(1);
 });

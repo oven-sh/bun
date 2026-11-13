@@ -664,7 +664,8 @@ test(
           }
           started++;
           const w1 = new Worker(middle, { eval: true });
-          w1.on("online", () => w1.terminate());
+          // 'up' is the entry's last statement: the requests against w2 are pending by then.
+          w1.on("message", () => w1.terminate());
           w1.on("error", () => {});
           w1.on("exit", () => { exited++; again(); });
         }

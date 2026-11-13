@@ -233,7 +233,7 @@ function destroyMainThreadPort(threadId: number) {
 
 // Deliveries from the main-thread hub are deferred until the entry module has
 // finished evaluating (the native side invokes the entryEvaluated hook right
-// before dispatching 'online'), matching node's bootstrap -> synchronous CJS
+// after it), matching node's bootstrap -> synchronous CJS
 // main ordering: a routed message must not observe "no listeners" while the
 // entry that registers them is still loading.
 let entryEvaluated = false;

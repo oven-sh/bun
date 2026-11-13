@@ -1305,6 +1305,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPartialDeepStrictEqual,
         result = PartialDeepEqual::compareAgain(globalObject, gcBuffer, cycles, scope, callframe->argument(0), callframe->argument(1));
         RETURN_IF_EXCEPTION(scope, {});
     }
+    // A value that did not fit in gcBuffer was left out of the comparison: neither answer is right.
+    if (gcBuffer.hasOverflowed()) [[unlikely]] {
+        JSC::throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
     return JSValue::encode(jsBoolean(result));
 }
 

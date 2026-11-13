@@ -411,10 +411,6 @@ fn print_table(
     } else {
         table_printer.print_table::<false>(&mut array)?;
     }
-    // print_table() swallows JS throws from nested formatting and returns Ok; see ConsoleObject::Formatter::format
-    if global_this.has_exception() {
-        return Err(jsc::JsError::Thrown);
-    }
 
     // writer.flush(): Vec<u8> writer is unbuffered; nothing to flush.
 
@@ -464,10 +460,6 @@ pub(crate) fn inspect<'a>(
         &mut array,
         format_options,
     )?;
-    // format2() swallows JS throws from nested formatting and returns Ok; see ConsoleObject::Formatter::format
-    if global_this.has_exception() {
-        return Err(jsc::JsError::Thrown);
-    }
     // writer.flush(): Vec<u8> is unbuffered.
 
     Ok(array)
@@ -494,9 +486,6 @@ pub(crate) fn bun_inspect_singleline(global_this: &JSGlobalObject, value: JSValu
     )
     .is_err()
     {
-        return BunString::EMPTY;
-    }
-    if global_this.has_exception() {
         return BunString::EMPTY;
     }
     BunString::clone_utf8(&array)

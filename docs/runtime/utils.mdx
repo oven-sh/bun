@@ -653,6 +653,8 @@ const foo = new Foo();
 console.log(foo); // => "foo"
 ```
 
+Bun doesn't catch an error that the method throws. `Bun.inspect()`, `console.log()`, and a failing `bun:test` matcher that prints the object throw that error.
+
 ### `Bun.inspect.table(tabularData, properties, options)`
 
 Format tabular data into a string. Like [`console.table`](https://developer.mozilla.org/en-US/docs/Web/API/console/table_static), except it returns a string rather than printing to the console.

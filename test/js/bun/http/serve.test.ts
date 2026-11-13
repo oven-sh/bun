@@ -528,6 +528,12 @@ it("passes the error to error() when inspecting a non-Response return value thro
         req.params.nested = throwsOnInspect("request inspect");
         return req;
       });
+      // The error printer formats the properties of an Error, and here one of them throws.
+      await hit("error property", async () =>
+        Object.assign(new Error("resolved, not rejected"), {
+          property: Object.defineProperty(/a/, "source", { get() { throw new Error("error property inspect"); } }),
+        }),
+      );
       console.log(JSON.stringify(events));
     `,
     ],
@@ -538,11 +544,11 @@ it("passes the error to error() when inspecting a non-Response return value thro
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr.match(/^error: Expected a Response object.*$/gm) ?? stderr).toEqual(
-    new Array(3).fill("error: Expected a Response object"),
+    new Array(4).fill("error: Expected a Response object"),
   );
   expect(stdout.trim()).toBe(
     JSON.stringify(
-      ["sync", "pending promise", "request"].flatMap(label => [
+      ["sync", "pending promise", "request", "error property"].flatMap(label => [
         `${label}: 500 error(): ${label} inspect`,
         `${label}: 200 ok`,
       ]),

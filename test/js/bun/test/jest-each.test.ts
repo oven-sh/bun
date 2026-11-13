@@ -457,3 +457,47 @@ it("prints rows that are not an array as the messages of matchers print values",
   // @ts-expect-error
   expect(() => it.each("text")).toThrow("Expected array, got text");
 });
+
+it("throws the error that rows that are not an array throw while they are printed", () => {
+  const thrown = new Error("thrown while printing");
+  const rows = {
+    [Symbol.for("nodejs.util.inspect.custom")]() {
+      throw thrown;
+    },
+  };
+  const caught = (each: () => unknown) => {
+    try {
+      each();
+    } catch (error) {
+      return error;
+    }
+    return "did not throw";
+  };
+  // @ts-expect-error
+  expect(caught(() => it.each(rows))).toBe(thrown);
+  // @ts-expect-error
+  expect(caught(() => describe.for(rows))).toBe(thrown);
+});
+
+it("throws the error that rows that are an Error throw while their properties are printed", () => {
+  const thrown = new Error("thrown while printing");
+  const rows = Object.assign(new Error("rows"), {
+    property: Object.defineProperty(/a/, "source", {
+      get() {
+        throw thrown;
+      },
+    }),
+  });
+  const caught = (each: () => unknown) => {
+    try {
+      each();
+    } catch (error) {
+      return error;
+    }
+    return "did not throw";
+  };
+  // @ts-expect-error
+  expect(caught(() => it.each(rows))).toBe(thrown);
+  // @ts-expect-error
+  expect(caught(() => describe.each(rows))).toBe(thrown);
+});

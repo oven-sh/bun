@@ -1,5 +1,5 @@
 use bun_sema::bind::Parent;
-use bun_sema::fold::is_removed_where_never_run;
+use bun_sema::fold::NeverRun;
 use bun_sema::util::SharedSort;
 
 use super::*;
@@ -98,14 +98,17 @@ impl Removable<'_, '_> {
         }
     }
 
-    pub(crate) fn find_regexp_literals_left_out(&self) -> Vec<ExprId> {
+    /// `prints_every_if`: the run counts executions, and `bun test --coverage` removes no code.
+    pub(crate) fn find_regexp_literals_left_out(&self, prints_every_if: bool) -> Vec<ExprId> {
         let hir = self.hir;
+        let never_run = NeverRun::new(hir, self.bound);
         let mut simplified = self.simplify_unused_expressions();
         for statement in hir.stmts.iter() {
             match statement.kind {
                 StmtKind::If { test, no, .. }
                     if self.is_written_as_object(test)
-                        && (no.is_none() || is_removed_where_never_run(hir, no)) =>
+                        && !prints_every_if
+                        && !never_run.keeps_its_if(no) =>
                 {
                     self.simplify_unused(test, &mut simplified);
                 }

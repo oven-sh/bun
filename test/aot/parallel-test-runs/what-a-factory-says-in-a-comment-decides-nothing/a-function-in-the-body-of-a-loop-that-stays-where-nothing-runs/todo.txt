@@ -1,0 +1,1 @@
+"mock undefined" | "mock own": `bun test` prints the body of a loop that stays for a `var` of its head, with the function of that body; the compiler takes a block that holds functions alone for gone

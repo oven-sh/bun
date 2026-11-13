@@ -9,7 +9,7 @@ use bun_collections::{HashMap, IdentityContext, index_sort};
 use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_core::{MutableString, strings};
 use bun_dotenv::Loader as DotEnv;
-use bun_http::{self as http, AsyncHTTP, HeaderBuilder};
+use bun_http::{self as http, HeaderBuilder};
 use bun_picohttp as picohttp;
 use bun_semver::{self as Semver, ExternalString, SlicedString, String as SemverString};
 use bun_sys::{self, Fd, File};
@@ -94,12 +94,12 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 
     let mut response_buf = MutableString::init(1024)?;
     let url = URL::parse(&print_buf);
+    let href = url.href;
     let header_buf: &[u8] = headers.content.written_slice();
 
-    let mut req =
-        manager.registry_request(http::Method::GET, url, headers.entries, header_buf, b"");
+    let req = manager.registry_request(http::Method::GET, url, headers.entries, header_buf, b"");
 
-    let res = match manager.send_with_retries(&mut req, &mut response_buf) {
+    let res = match manager.send_with_retries(req, &mut response_buf) {
         Ok(res) => res,
         Err(bun_http::Error::Alloc(bun_alloc::AllocError)) => {
             return Err(WhoamiError::OutOfMemory);
@@ -112,7 +112,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 
     if res.status_code() >= 400 {
         const OTP_RESPONSE: bool = false;
-        response_error::<OTP_RESPONSE>(&req, &res, None, &mut response_buf)?;
+        response_error::<OTP_RESPONSE>(href, &res, None, &mut response_buf)?;
     }
 
     if let Some(notice) = res.header_if_other_is_absent(b"npm-notice", b"x-local-cache") {
@@ -151,7 +151,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 }
 
 pub fn response_error<const OTP_RESPONSE: bool>(
-    req: &AsyncHTTP,
+    url: &[u8],
     res: &bun_http::HTTPResponseMetadata,
     // `<name>@<version>`
     pkg_id: Option<(&[u8], &[u8])>,
@@ -184,7 +184,7 @@ pub fn response_error<const OTP_RESPONSE: bool>(
             ""
         },
         bun_fmt::escape_control_chars(res.status_text()),
-        bun_fmt::EscapeControlChars(bun_fmt::redacted_npm_url(req.url.href)),
+        bun_fmt::EscapeControlChars(bun_fmt::redacted_npm_url(url)),
     );
 
     if res.status_code() == 404

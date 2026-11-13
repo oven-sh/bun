@@ -2256,9 +2256,8 @@ impl NetworkSink {
         // the pump paths consume `Backpressure`/`Done`.
         let has_source = !matches!(self.source, SourceHandle::None);
 
-        // Our own ref: the write can finish the upload.
-        let result = match self.task.clone() {
-            Some(task) => bun_s3::MultiPartUpload::write_bytes(&task, bytes, false),
+        let result = match &self.task {
+            Some(task) => bun_s3::MultiPartUpload::write_bytes(task, bytes, false),
             None => return Writable::Owned(len),
         };
         match result {
@@ -2280,9 +2279,8 @@ impl NetworkSink {
         let len = bytes.len() as BlobSizeType;
         let has_source = !matches!(self.source, SourceHandle::None);
 
-        // Our own ref: the write can finish the upload.
-        let result = match self.task.clone() {
-            Some(task) => bun_s3::MultiPartUpload::write_latin1(&task, bytes, false),
+        let result = match &self.task {
+            Some(task) => bun_s3::MultiPartUpload::write_latin1(task, bytes, false),
             None => return Writable::Owned(len),
         };
         match result {
@@ -2303,9 +2301,8 @@ impl NetworkSink {
         let has_source = !matches!(self.source, SourceHandle::None);
         // we must always buffer UTF-16
         // we assume the case of all-ascii UTF-16 string is pretty uncommon
-        // Our own ref: the write can finish the upload.
-        let result = match self.task.clone() {
-            Some(task) => bun_s3::MultiPartUpload::write_utf16(&task, text, false),
+        let result = match &self.task {
+            Some(task) => bun_s3::MultiPartUpload::write_utf16(task, text, false),
             None => return Writable::Owned(len),
         };
         match result {
@@ -2328,8 +2325,8 @@ impl NetworkSink {
         self.pending.result = Writable::Done;
         self.pending.run();
         // flush everything and send EOF
-        if let Some(task) = self.task.clone() {
-            let _ = bun_s3::MultiPartUpload::write_bytes(&task, b"", true);
+        if let Some(task) = &self.task {
+            let _ = bun_s3::MultiPartUpload::write_bytes(task, b"", true);
             // bun.handleOom → Rust aborts on OOM
         }
 
@@ -2374,12 +2371,12 @@ impl NetworkSink {
     /// (clean EOF / commit), an upstream error on the ByteStream fast-path must
     /// abort the upload and surface the original JS error to the caller.
     ///
-    /// Raw `*mut Self` because `task.fail()`/`write_bytes(EOF)` synchronously
+    /// Raw `*mut Self` because `task.fail()` will synchronously
     /// fire `S3UploadStreamWrapper::resolve`, which re-borrows this sink, and
     /// the terminal `deref_` may drop rc→0 and free `*this` via `detach_sink`.
     pub(crate) fn end_from_stream(this: *mut Self, err: Option<StreamError>) {
         // SAFETY: `this` is the live Box<NetworkSink> the wrapper owns; short
-        // reborrows below do not span the re-entrant `fail`/`write_bytes` calls.
+        // reborrows below do not span the re-entrant `fail` call.
         let (ended, is_bytestream) = unsafe {
             (
                 (*this).ended,
@@ -2403,7 +2400,7 @@ impl NetworkSink {
         let (task, wrapper) = unsafe {
             (*this).ended = true;
             (*this).source.clear();
-            // Our own ref: `fail`/`write_bytes` re-enter and may clear `(*this).task`.
+            // Our own ref: `fail` re-enters and may clear `(*this).task`.
             let Some(task) = (*this).task.clone() else {
                 return;
             };

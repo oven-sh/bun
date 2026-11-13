@@ -8428,6 +8428,9 @@ __attribute__((minsize)) static JSC::JSObject* generateSettledModuleMock(JSValue
     auto* mock = uncheckedDowncast<Zig::JSModuleMock>(source);
     String key = mock->importKey->value(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
+    // A mock that has kept its require path alone is loaded under that path: see keyOfImportWithTwoPaths(). The mock of its import path is another one.
+    if (auto held = Zig::pathsHeldByModuleMock(defaultGlobalObject(globalObject), mock); held.requirePath && !held.importPath)
+        key = mock->requireKey->tryGetValue().data;
 
     // Re-mocked or unmocked since the fetch: use the new mock if it has settled, else evict so only the load in flight gets this one.
     auto* registered = Zig::moduleMockAnsweringFor(defaultGlobalObject(globalObject), key);

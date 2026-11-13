@@ -52,8 +52,7 @@ function each(
 ) {
   const stretch = Math.ceil(cases.length / parts);
   for (const { name, files } of cases.slice((part - 1) * stretch, part * stretch)) {
-    // A case shares nothing with the others, so they run beside one another on every lane, as many as `--max-concurrency` says.
-    test.concurrent(name, async () => {
+    test(name, async () => {
       const [plain, compiled] = await Promise.all([
         outcomeOf(files, "", plainOnOneThread),
         outcomeOf(files, wordsOfAll, false, "--aot"),

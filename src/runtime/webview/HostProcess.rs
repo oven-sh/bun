@@ -27,7 +27,7 @@ use {
     bun_spawn::{
         EventLoopHandle, ProcessExit, ProcessExitKind, SpawnOptions, SpawnResultExt as _, Stdio,
     },
-    bun_sys::{self, Fd, FdExt as _},
+    bun_sys::{self, Fd},
     core::ffi::c_char,
 };
 
@@ -151,8 +151,7 @@ fn spawn(vm: &VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) -> Res
         0,
         true, // .nonblocking
     )?;
-    // fd0_guard rolls back fds[0] on any error below.
-    let fd0_guard = scopeguard::guard(fds[0], |fd| fd.close());
+    let parent_end = bun_sys::File::from_fd(fds[0]);
     // fds[1] is closed by spawnProcess after dup2 into the child.
 
     let exe = bun_core::self_exe_path()?;
@@ -224,15 +223,13 @@ fn spawn(vm: &VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) -> Res
             scoped_log!(WebViewHost, "watch failed: {}", e);
             // SAFETY: reclaim the Box (drops our process ref).
             drop(unsafe { bun_core::heap::take(self_ptr) });
-            // fd0_guard (declared at the top) closes fds[0]; don't double-close here.
             return Err(crate::Error::WatchFailed);
         }
     }
     INSTANCE.store(self_ptr, core::sync::atomic::Ordering::Relaxed);
     // fd handed to C++ which adopts it into usockets. Not stored here —
     // usockets owns the socket; Rust only owns process lifetime.
-    let fd0 = scopeguard::ScopeGuard::into_inner(fd0_guard);
-    Ok(fd0)
+    Ok(parent_end.into_raw())
 }
 
 // Implemented in WebKitBackend.cpp. Rejects all pending promises, marks the

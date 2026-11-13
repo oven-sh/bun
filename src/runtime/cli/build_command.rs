@@ -12,7 +12,7 @@ use bun_js_parser::parser::Runtime;
 use bun_options_types::context::MacroOptions;
 use bun_options_types::schema::api;
 use bun_paths::resolve_path;
-use bun_sys::{self, Fd, FdExt as _};
+use bun_sys::{self, Fd};
 
 extern crate bun_standalone_graph as bun_standalone_module_graph;
 
@@ -1517,11 +1517,10 @@ pub(crate) fn collect_compile_assets(
         };
         if bun_core::S::ISDIR(st.st_mode as _) {
             let dir = match bun_sys::open_dir_for_iteration(cwd, asset_trimmed) {
-                Ok(d) => d,
+                Ok(d) => bun_sys::File::from_fd(d),
                 Err(e) => return fail(e.with_path(asset)),
             };
-            let _close = scopeguard::guard(dir, |fd| fd.close());
-            let mut walker = match bun_sys::walker_skippable::walk(dir, &[], &[]) {
+            let mut walker = match bun_sys::walker_skippable::walk(dir.fd(), &[], &[]) {
                 Ok(w) => w,
                 Err(_) => bun_core::out_of_memory(),
             };

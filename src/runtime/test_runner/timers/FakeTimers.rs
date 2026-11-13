@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use crate::api::cron::CronJob;
 use crate::jsc::virtual_machine::VirtualMachine;
 use crate::jsc_hooks::timer_all;
+use crate::test_runner::bun_test;
 use crate::timer::{
     AbortSignalTimeout, Clock, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag,
     ImmediateObject, InHeap, TimeoutObject, TimerHeap, TimerObjectInternals,
@@ -470,13 +471,31 @@ impl From<JsError> for Stop {
     }
 }
 
+/// Who set up the current mock. `on_test_file_end` ends the mock of a test file and keeps the mock of a preload.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Owner {
+    TestFile,
+    Preload,
+    /// A hook that runs once for all test files. Its fakes are kept only while each one is on its global.
+    PreloadHook,
+}
+
+impl Owner {
+    fn of_caller(vm: &VirtualMachine) -> Owner {
+        match (bun_test::is_preload_for_the_run(vm), vm.is_in_preload) {
+            (false, _) => Owner::TestFile,
+            (true, true) => Owner::Preload,
+            (true, false) => Owner::PreloadHook,
+        }
+    }
+}
+
 pub(crate) struct FakeTimers {
     active: bool,
     /// Empty while inactive.
     faked: ApiSet,
     fakes_abort_signal_timeout: bool,
-    /// A preload script set up the current mock, so `on_test_file_end` keeps it.
-    from_preload: bool,
+    owner: Owner,
     /// Bumped by `activate` and `forget_installation`. If it changes mid-run, that run's clock is gone.
     installs: u32,
     firing: u32,
@@ -507,7 +526,7 @@ impl Default for FakeTimers {
             active: false,
             faked: ApiSet::default(),
             fakes_abort_signal_timeout: false,
-            from_preload: false,
+            owner: Owner::TestFile,
             installs: 0,
             firing: 0,
             timers: TimerHeap::default(),
@@ -535,7 +554,7 @@ const AUTO_STEP: u32 = 0;
 /// the next `advanceTimersByTime` recomputes `Date.now` from the set time
 /// instead of the stale activation-time offset. `performance.now()` does not
 /// move, so `performance.timeOrigin` follows the rebased offset. While fake
-/// timers are inactive it only records `from_preload`. A NaN `ms` is the "clear override" sentinel:
+/// timers are inactive it only records `owner`. A NaN `ms` is the "clear override" sentinel:
 /// `Date.now()` is real again until the next tick, so the mocked wall clock
 /// and `performance.timeOrigin` go back to real as well.
 #[unsafe(no_mangle)]
@@ -544,7 +563,7 @@ extern "C" fn Bun__FakeTimers__setSystemTime(global: &JSGlobalObject, ms: f64) {
     let this = unsafe { &mut (*timer_all()).fake_timers };
     let vm = global.bun_vm().as_mut();
     if !this.active {
-        this.from_preload = vm.is_in_preload;
+        this.owner = Owner::of_caller(vm);
         return;
     }
     if ms.is_nan() {
@@ -727,7 +746,7 @@ impl FakeTimers {
         self.active = true;
         self.faked = options.faked;
         self.fakes_abort_signal_timeout = options.fakes_abort_signal_timeout;
-        self.from_preload = global.bun_vm().is_in_preload;
+        self.owner = Owner::of_caller(global.bun_vm());
         self.installs = self.installs.wrapping_add(1);
         self.loop_limit = options.loop_limit;
         self.now = Timespec::EPOCH;
@@ -749,7 +768,7 @@ impl FakeTimers {
         Self::hide_clock(global);
         self.active = false;
         self.faked = ApiSet::default();
-        self.from_preload = false;
+        self.owner = Owner::TestFile;
         self.installs = self.installs.wrapping_add(1);
         self.tick_mode = TickMode::Manual;
         if self.tick_timer.state == EventLoopTimerState::ACTIVE {
@@ -1005,6 +1024,34 @@ impl FakeTimers {
                 && let Some(original) = original_of(originals, installed)
             {
                 api.put(global, original);
+            }
+        }
+    }
+
+    /// Whether each fake is on its global, over what it replaced. A test file can undo or replace either. Runs no JS.
+    fn is_whole(global: &JSGlobalObject) -> bool {
+        let mut index = 0;
+        loop {
+            // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
+            let replaced = unsafe { &(*timer_all()).fake_timers.replaced }
+                .get(index)
+                .map(|replaced| (replaced.api, replaced.fake.get(), replaced.original.get()));
+            let Some((api, fake, original)) = replaced else {
+                return true;
+            };
+            index += 1;
+            // The builtin `now` is its own fake, so the clock put nothing on that property.
+            if fake == original {
+                continue;
+            }
+            // A spy under the fake is restored: the fake is still on its global only when a spy over it went last.
+            if JSMock__isRestoredSpy(original) {
+                return false;
+            }
+            let owner = api.owner(global);
+            let name = bun_core::String::static_(api.property());
+            if !owner.is_object() || Bun__FakeTimers__getDirect(global, owner, &name) != fake {
+                return false;
             }
         }
     }
@@ -1738,12 +1785,18 @@ fn advance(global: &JSGlobalObject, ms: f64) -> Result<JSValue, Stop> {
 
 pub(crate) fn on_test_file_end(global: &JSGlobalObject) {
     // SAFETY: per-thread `timer::All`; field reads only.
-    let (active, from_preload) = unsafe {
+    let (active, owner) = unsafe {
         let this = &(*timer_all()).fake_timers;
-        (this.active, this.from_preload)
+        (this.active, this.owner)
+    };
+    let kept = match owner {
+        Owner::TestFile => false,
+        Owner::Preload => true,
+        // Its fakes went over what the first file left on the globals, and any file can take one off again.
+        Owner::PreloadHook => FakeTimers::is_whole(global),
     };
     let mocked = active || !bun_jsc::cpp::Bun__FakeTimers__overriddenDateNow(global).is_nan();
-    if mocked && !from_preload {
+    if mocked && !kept {
         // SAFETY: the live event loop of the per-thread VM.
         let _entered =
             unsafe { bun_jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };

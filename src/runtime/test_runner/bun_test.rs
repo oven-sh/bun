@@ -65,6 +65,26 @@ pub(crate) fn clone_active_strong() -> Option<BunTestPtr> {
     runner.bun_test_root.clone_active_file()
 }
 
+/// Whether `when` holds for the running test file, and the hook that runs in it is one that a preload registered.
+pub(crate) fn in_preload_hook(when: impl FnOnce(&BunTest) -> bool) -> bool {
+    let Some(file) = clone_active_strong() else { return false };
+    let file = file.get();
+    when(file)
+        && file.get_current_state_data().entry(file).is_some_and(|entry| entry.added_in_phase == AddedInPhase::Preload)
+}
+
+/// Whether the caller sets a clock for every test file: a preload's module, or a hook of it that runs once for the run.
+pub(crate) fn is_preload_for_the_run(vm: &VirtualMachine) -> bool {
+    vm.is_in_preload
+        || in_preload_hook(|file| {
+            let preload = &file.bun_test_root.get().hook_scope;
+            // The order of a `first` file starts with one group for each of these. With `last`, they run around each file.
+            file.first_last.first
+                && !file.first_last.last
+                && file.execution.group_index < preload.around_all.len() + preload.before_all.len()
+        })
+}
+
 pub(crate) use super::done_callback::DoneCallback;
 
 pub(crate) mod js_fns {

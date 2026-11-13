@@ -106,10 +106,10 @@ pub(crate) struct LinkerContext<'l, 'a> {
 
     /// One name per binding that crosses a chunk boundary, shared by the
     /// chunk that exports it and every chunk that imports it
-    /// (`assign_cross_chunk_names`). Values live in the linker arena.
-    pub(crate) cross_chunk_names: bun_js_printer::renamer::CrossChunkNames,
+    /// (`assign_cross_chunk_names`).
+    pub(crate) cross_chunk_names: bun_js_printer::renamer::CrossChunkNames<'a>,
     /// `renamer_rows`, for every chunk's `NumberRenamer`. `None`: a file is in several chunks.
-    pub(crate) renamer_rows: Option<Box<[u32]>>,
+    pub(crate) renamer_rows: Option<&'a [u32]>,
 
     /// User entry points (by source index) that reach a split browser `import()`: their chunk registers the chunk graph.
     pub(crate) preload_entries: AutoBitSet,
@@ -696,11 +696,20 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
 
     // CONCURRENCY: `each_ptr` callback — runs on worker threads, one task per
     // `chunk_index`. Writes only to `chunk`.
-    pub(crate) fn generate_js_renamer(&self, chunk: &mut Chunk) {
+    pub(crate) fn generate_js_renamer(&self, chunk: &mut Chunk<'a>) {
         let _worker =
             scopeguard::guard(crate::thread_pool::Worker::get(self.bundle), |w| w.unget());
         if let crate::chunk::Content::Javascript(_) = chunk.content {
             chunk.renamer = rename_symbols_in_chunk(self, chunk).expect("TODO: handle error");
+        }
+    }
+
+    pub(crate) fn renamer_for_chunk<'r>(&'r self, chunk: &'r Chunk) -> renamer::Renamer<'r> {
+        use crate::bun_renamer::ChunkRenamer;
+        match &chunk.renamer {
+            ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),
+            ChunkRenamer::Number(r) => r.to_renamer(&self.graph.symbols, &self.cross_chunk_names),
+            ChunkRenamer::Minify(r) => r.to_renamer(&self.graph.symbols),
         }
     }
 

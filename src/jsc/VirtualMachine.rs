@@ -5770,8 +5770,9 @@ impl VirtualMachine {
 
     /// Resolves `specifier` as an `import` does, and with `also_for_require` then as `require()` does: the `exports`
     /// and `imports` conditions of a package and the order of extensions depend on which of the two asks.
-    /// The second path is `None` when it is the first one, when `require()` resolves to nothing, and when
-    /// an `onResolve` plugin answers: it is asked once and is not told who asks.
+    /// An `onResolve` plugin is asked once, as an `import` asks it, and its answer is resolved both ways.
+    /// The second path is `None` when it is the first one and when `require()` resolves to nothing.
+    /// When the `import` resolves to nothing, that is the result and `require()` is not asked.
     pub fn resolve_for_import_and_require(
         global: &JSGlobalObject,
         specifier: &bun_core::String,
@@ -5779,39 +5780,34 @@ impl VirtualMachine {
         query_string: &mut bun_core::String,
         also_for_require: bool,
     ) -> JsResult<Result<(bun_core::String, Option<bun_core::String>), JSValue>> {
-        if let Some(resolved) = Self::resolve_with_on_resolve::<true>(
-            global,
-            specifier,
-            source,
-            Some(&mut *query_string),
-            ResolveMode::Esm,
-            false,
-        )? {
-            return Ok(resolved.map(|path| (path, None)));
-        }
+        let asked =
+            Self::ask_on_resolve::<true>(global, specifier, source, ResolveMode::Esm, false)?;
+        let answer = match asked.transpose() {
+            Ok(answer) => answer,
+            Err(error) => return Ok(Err(error)),
+        };
         let global_cache = global.bun_vm().transpiler.resolver.opts.global_cache;
-        let for_import = match Self::resolve_without_on_resolve::<true>(
-            global,
-            specifier,
-            source,
-            Some(query_string),
-            ResolveMode::Esm,
-            global_cache,
-        )? {
+        let resolve = |query: Option<&mut bun_core::String>, mode: ResolveMode| match &answer {
+            Some(answer) => {
+                Self::resolve_answer_of_on_resolve::<true>(global, answer, source, query, mode)
+            }
+            None => Self::resolve_without_on_resolve::<true>(
+                global,
+                specifier,
+                source,
+                query,
+                mode,
+                global_cache,
+            ),
+        };
+        let for_import = match resolve(Some(query_string), ResolveMode::Esm)? {
             Ok(path) => path,
             Err(error) => return Ok(Err(error)),
         };
         if !also_for_require {
             return Ok(Ok((for_import, None)));
         }
-        let for_require = match Self::resolve_without_on_resolve::<true>(
-            global,
-            specifier,
-            source,
-            None,
-            ResolveMode::Require,
-            global_cache,
-        )? {
+        let for_require = match resolve(None, ResolveMode::Require)? {
             Ok(path) if !path.eql(&for_import) => Some(path),
             _ => None,
         };
@@ -5827,6 +5823,35 @@ impl VirtualMachine {
         mode: ResolveMode,
         same_is_no_answer: bool,
     ) -> JsResult<Option<Result<bun_core::String, JSValue>>> {
+        let answer = match Self::ask_on_resolve::<IS_A_FILE_PATH>(
+            global,
+            specifier,
+            source,
+            mode,
+            same_is_no_answer,
+        )? {
+            None => return Ok(None),
+            Some(Err(error)) => return Ok(Some(Err(error))),
+            Some(Ok(answer)) => answer,
+        };
+        Self::resolve_answer_of_on_resolve::<IS_A_FILE_PATH>(
+            global,
+            &answer,
+            source,
+            query_string,
+            mode,
+        )
+        .map(Some)
+    }
+
+    /// Asks the `onResolve` callbacks, with the `None` of `resolve_with_on_resolve`. The answer is left unresolved so that one answer can be resolved in two modes.
+    fn ask_on_resolve<const IS_A_FILE_PATH: bool>(
+        global: &JSGlobalObject,
+        specifier: &bun_core::String,
+        source: &bun_core::String,
+        mode: ResolveMode,
+        same_is_no_answer: bool,
+    ) -> JsResult<Option<Result<OnResolveAnswer, JSValue>>> {
         let answer = match run_on_resolve(global, specifier, source, IS_A_FILE_PATH, mode)? {
             None => return Ok(None),
             Some(Err(error)) => return Ok(Some(Err(error))),
@@ -5836,7 +5861,7 @@ impl VirtualMachine {
             return Ok(None);
         }
         if let Some(name) = global.resolve_virtual_module(&answer, source) {
-            return Ok(Some(Ok(name)));
+            return Ok(Some(Ok(OnResolveAnswer::VirtualModule(name))));
         }
         // A bare name that `onLoad` could serve might also be a registry package. If `onResolve` claims
         // it too, it's the plugin's own name, so don't auto-install it.
@@ -5857,9 +5882,24 @@ impl VirtualMachine {
         } else {
             global.bun_vm().transpiler.resolver.opts.global_cache
         };
+        Ok(Some(Ok(OnResolveAnswer::Unresolved(answer, global_cache))))
+    }
+
+    /// Resolves what `ask_on_resolve` returned as `mode` resolves a name.
+    fn resolve_answer_of_on_resolve<const IS_A_FILE_PATH: bool>(
+        global: &JSGlobalObject,
+        answer: &OnResolveAnswer,
+        source: &bun_core::String,
+        query_string: Option<&mut bun_core::String>,
+        mode: ResolveMode,
+    ) -> JsResult<Result<bun_core::String, JSValue>> {
+        let (answer, global_cache) = match answer {
+            OnResolveAnswer::VirtualModule(key) => return Ok(Ok(key.clone())),
+            OnResolveAnswer::Unresolved(answer, global_cache) => (answer, *global_cache),
+        };
         let resolved = Self::resolve_without_on_resolve::<IS_A_FILE_PATH>(
             global,
-            &answer,
+            answer,
             source,
             query_string,
             mode,
@@ -5869,10 +5909,10 @@ impl VirtualMachine {
         if resolved.is_err() {
             let stands = mode.only_resolves() && bun_paths::is_absolute(&answer.to_utf8());
             if stands || global.has_on_load(&answer.to_utf8())? {
-                return Ok(Some(Ok(answer)));
+                return Ok(Ok(answer.clone()));
             }
         }
-        Ok(Some(resolved))
+        Ok(resolved)
     }
 
     fn resolve_without_on_resolve<const IS_A_FILE_PATH: bool>(
@@ -8373,6 +8413,14 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
             format_args!("{MSG_1}undefined\"."),
         )
         .to_js())
+}
+
+/// What `VirtualMachine::ask_on_resolve` returns.
+enum OnResolveAnswer {
+    /// The key of a `build.module()` or `mock.module()` module, which is the same in every mode.
+    VirtualModule(bun_core::String),
+    /// A name or path still to be resolved from the importer, and the `GlobalCache` for that.
+    Unresolved(bun_core::String, bun_resolver::GlobalCache),
 }
 
 /// Keeps a resolve made inside an `onResolve` callback from inheriting the outer resolve's state.

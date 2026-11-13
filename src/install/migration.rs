@@ -288,7 +288,7 @@ fn finish_migration(
 
 fn print_errors_and_reset(manager: &PackageManager, log: &mut bun_ast::Log) {
     if !manager.options.log_level.is_silent() && log.has_errors() {
-        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+        let _ = log.print(Output::error_writer());
         Output::flush();
     }
     log.reset();
@@ -409,7 +409,7 @@ fn report_migrated(
     }
     if log.warnings > 0 && !log.has_errors() {
         Output::flush();
-        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+        let _ = log.print(Output::error_writer());
         log.reset();
     }
     Output::print_elapsed(timer.elapsed().as_nanos() as f64 / 1_000_000.0);

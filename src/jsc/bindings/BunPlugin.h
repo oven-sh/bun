@@ -363,8 +363,8 @@ bool canRequireOriginalOfModuleMockAt(Zig::GlobalObject*, const String& path);
 // A preload's mock that came back at the end of a test file's mock is what the require map holds under `bun test`: it goes with the key.
 void didDeleteKeyOfModuleMock(Zig::GlobalObject*, const String& key);
 #endif
-// What jest.requireActual() returns for the mocked module.
-JSC::JSValue requireOriginalOfModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock);
+// What jest.requireActual() returns for `key`, the path that the mock was looked up under.
+JSC::JSValue requireOriginalOfModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock, const String& key);
 // "node:fs" for "node:fs?actual", the key of the original of a mocked builtin.
 std::optional<ASCIILiteral> builtinModuleOfOriginalKey(const String& key);
 JSC::JSSourceCode* sourceCodeOfModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock, const String& key, const String& typeAttribute);

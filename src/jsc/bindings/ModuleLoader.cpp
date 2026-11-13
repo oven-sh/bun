@@ -456,7 +456,7 @@ static JSValue handleVirtualModuleResult(
     if (wasModuleMock) {
         if (commonJSModule && Bun::canRequireOriginalOfModuleMock(globalObject, moduleMock)) {
             // As in Vitest. Otherwise require() of a mock with a pending factory throws below.
-            JSValue exports = Bun::requireOriginalOfModuleMock(globalObject, moduleMock);
+            JSValue exports = Bun::requireOriginalOfModuleMock(globalObject, moduleMock, specifier->toWTFString(BunString::ZeroCopy));
             RETURN_IF_EXCEPTION(scope, {});
             commonJSModule->setExportsObject(exports);
             commonJSModule->hasEvaluated = true;

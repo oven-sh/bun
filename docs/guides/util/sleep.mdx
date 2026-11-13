@@ -19,6 +19,8 @@ Internally, `Bun.sleep()` is equivalent to the following [`setTimeout`](https://
 await new Promise(resolve => setTimeout(resolve, ms));
 ```
 
+`Bun.sleep()` can also wait for longer than `setTimeout`, which has a limit of 2,147,483,647 milliseconds (about 24.8 days).
+
 ---
 
 See [Utils](/runtime/utils).

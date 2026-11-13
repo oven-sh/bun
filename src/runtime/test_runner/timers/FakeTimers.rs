@@ -689,7 +689,7 @@ impl FakeTimers {
     fn publish_clock(&self, global: &JSGlobalObject) {
         if self.faked.contains(Api::SetTimeout) {
             // Read by `Timespec::now(AllowMockedTime)` and `Bun.cron()`'s calendar.
-            bun_core::mock_time::set(self.now.ns() as i64);
+            bun_core::mock_time::set(self.now);
             bun_core::mock_time::set_wall_ms(self.date_now());
         }
         if self.faked.contains(Api::Date) {

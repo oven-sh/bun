@@ -6361,12 +6361,19 @@ declare module "bun" {
    * ```ts
    * await new Promise((resolve) => setTimeout(resolve, ms));
    * ```
+   * except that `Bun.sleep` can wait for longer than `setTimeout`, which has a
+   * limit of 2,147,483,647 milliseconds (about 24.8 days). The limit of
+   * `Bun.sleep` is 2,147,483,647 seconds (about 68 years). A longer wait, such
+   * as `Infinity`, ends after that time. With the fake timers of `bun:test`, a
+   * longer wait never ends.
+   *
    * `Bun.sleep` and the imported `sleep` function are interchangeable.
    */
   function sleep(ms: number | Date): Promise<void>;
 
   /**
-   * Block the thread for a given number of milliseconds.
+   * Block the thread for a given number of milliseconds. The longest wait is
+   * 2,147,483,647 milliseconds (about 24.8 days).
    *
    * Internally, it calls [nanosleep(2)](https://man7.org/linux/man-pages/man2/nanosleep.2.html)
    */

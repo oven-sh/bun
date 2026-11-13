@@ -6,7 +6,7 @@
 // argv[2] names a group of cases. Each case reports the number of live native
 // contexts at the points its group names. One JSON report per run.
 //
-// Bun only: `Bun.build` is what turns the event loop.
+// Bun only: a function of bun:internal-for-testing is what turns the event loop.
 import * as internals from "bun:internal-for-testing";
 import { Duplex } from "node:stream";
 import tls from "node:tls";
@@ -51,13 +51,8 @@ const connect = side =>
 // null on a build that has no counter.
 const live = () => internals.duplexTLSInternals?.liveCount() ?? null;
 
-// Bun.build() waits for an async plugin setup(): it runs the queued tasks, then the microtask that settles the promise.
-const turn = () =>
-  void Bun.build({
-    entrypoints: ["/turn.js"],
-    files: { "/turn.js": "" },
-    plugins: [{ name: "turn", setup: async () => await null }],
-  });
+// Runs the queued tasks, then the microtask that settles the promise.
+const turnEventLoop = () => internals.runNestedEventLoopUntilSettled(new Promise(resolve => queueMicrotask(resolve)));
 
 const nextTurn = () => new Promise(resolve => setImmediate(resolve));
 
@@ -164,7 +159,7 @@ async function runCallback(arrange) {
     report.before = live();
     canary.destroy();
     socket?.destroy();
-    turn();
+    turnEventLoop();
     report.afterTurn = live();
   };
   const sockets = [canary, ...arrange(c)];
@@ -229,7 +224,7 @@ const ends = {
       wrap(side).on("readable", () => {
         report.open = live();
         graph.dispose();
-        turn();
+        turnEventLoop();
         report.afterTurn = live();
         side.emit("data", "a string after the release");
       }),

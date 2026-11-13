@@ -355,7 +355,7 @@ public:
     using LazyPropertyOfGlobalObject = LazyProperty<JSGlobalObject, T>;
 
     // Filled from the front. A handler that finds it full gets a new function each time.
-    using ThenablesArray = std::array<WriteBarrier<JSFunction>, 57>;
+    using ThenablesArray = std::array<WriteBarrier<JSFunction>, 61>;
     // Native module default-export cache so require(id) === (await import(id)).default.
     // Visited via FOR_EACH_GLOBALOBJECT_GC_MEMBER's std::array<WriteBarrier> overload.
     using NativeModuleDefaultsArray = std::array<WriteBarrier<JSObject>, NativeModuleDefaultSlotCount>;

@@ -3331,22 +3331,18 @@ describe.concurrent("the next test doesn't start inside the call that ended the 
     expect({ results: results(stderr), exitCode }).toEqual({ results: ["(fail) ends", "(pass) next"], exitCode: 1 });
   });
 
-  // Bun.build() ticks the event loop until the plugin's setup() settles, so the test's timeout fires inside that call.
-  test("Bun.build() that outlives the timeout of the test", async () => {
+  // The test's timeout fires inside the call.
+  test("a call that runs the event loop and outlives the timeout of the test", async () => {
     const { stderr, exitCode } = await runFiles({
-      "entry.ts": "",
       "a.test.ts": `
+        import { runNestedEventLoopUntilSettled } from "bun:internal-for-testing";
         import { expect, test } from "bun:test";
         let isCalling = false;
         test("ends", async () => {
           await new Promise(resolve => setTimeout(resolve));
           isCalling = true;
-          const build = Bun.build({
-            entrypoints: ["./entry.ts"],
-            plugins: [{ name: "slow", setup: () => new Promise(resolve => setTimeout(resolve, 300)) }],
-          });
+          runNestedEventLoopUntilSettled(new Promise(resolve => setTimeout(resolve, 300)));
           isCalling = false;
-          await build;
         }, 100);
         test("next", () => expect(isCalling).toBe(false));
       `,

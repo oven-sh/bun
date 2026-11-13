@@ -1468,7 +1468,7 @@ where
 
                 // Switch to forwarding before entering C++. did_connect_with_tunnel
                 // dispatches `open`, and an open handler that spins the event loop
-                // (expect().resolves, a debugger pause) delivers socket data to
+                // (a macro that returns a promise, a debugger pause) delivers socket data to
                 // handle_data while this frame is on the stack; with the state
                 // still `Reading` and `outgoing_websocket` taken, handle_data
                 // would fail the client and close the socket. In `Done` it hands

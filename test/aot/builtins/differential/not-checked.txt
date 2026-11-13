@@ -147,6 +147,8 @@ NativeBindgenBake_pluginsBindTsSetPages/0: it is not called: it changes how modu
 NativeBindgenBake_pluginsBindTsSetPages/1: it is not called: it changes how modules are loaded
 NativeBindgenDeclared_results_testingBindTsDeclaredAsString/0: it is not called: a helper of Bun's own tests that answers outside the type it declares, on purpose
 NativeBindgenDeclared_results_testingBindTsDeclaredAsString/1: it is not called: a helper of Bun's own tests that answers outside the type it declares, on purpose
+NativeBindgenEvent_loopBindTsRunNestedUntilSettled/0: it is not called: it stays away until its operand settles, and a promise of the test may never
+NativeBindgenEvent_loopBindTsRunNestedUntilSettled/1: it is not called: it stays away until its operand settles, and a promise of the test may never
 NativeBindgenFrameworkRouterBindTsParseRoutePattern/0: the process ended or did not come back
 NativeBindgenNode_cluster_bindingBindTsClusterCloseHandle/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NativeBindgenNode_cluster_bindingBindTsClusterCloseHandle/1: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
@@ -196,6 +198,7 @@ NativeFunctionsDeclared_results_testingBindTsDeclaredAsString/0: it is not calle
 NativeFunctionsDns_internalsBindTsNewResolver/0: no set of operands selects it
 NativeFunctionsDns_internalsBindTsSeedCacheForTesting/0: it is not called: it changes how the rest of the process behaves
 NativeFunctionsErrorCodeCppNodeError_proto_toString/0: it is not called: this realm does not have its holder
+NativeFunctionsEvent_loopBindTsRunNestedUntilSettled/0: it is not called: it stays away until its operand settles, and a promise of the test may never
 NativeFunctionsFfiBindTsCc/0: it is not called: it compiles or loads machine code
 NativeFunctionsFfiBindTsPrintSource/1: no set of operands selects it
 NativeFunctionsFormatStackTraceForJSCppJsFunctionDefaultErrorPrepareStackTrace/0: it is not called: this realm does not have its holder

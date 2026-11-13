@@ -518,6 +518,7 @@ test("dns.Resolver: a query's promise reaction can re-enter the event loop", asy
   const rounds = 20;
   const fixture = `
     const dns = require("node:dns");
+    const { runNestedEventLoopUntilSettled } = require("bun:internal-for-testing");
     // Echoes the question back with one A record.
     function answer(query) {
       let off = 12;
@@ -548,20 +549,11 @@ test("dns.Resolver: a query's promise reaction can re-enter the event loop", asy
     const resolver = new dns.promises.Resolver({ timeout: 5000, tries: 1 });
     resolver.setServers(["127.0.0.1:" + server.port]);
 
-    // Bun.build() spins the event loop until the promise returned by a plugin's setup() settles.
     let reentries = 0;
-    const builds = [];
     function reenterEventLoop() {
       const before = reentries;
-      builds.push(Bun.build({
-        entrypoints: ["/entry.js"],
-        files: { "/entry.js": "" },
-        plugins: [{
-          name: "spin",
-          setup: () => new Promise(resolve => setImmediate(() => { reentries++; resolve(); })),
-        }],
-      }));
-      if (reentries !== before + 1) throw new Error("Bun.build() returned without spinning the event loop");
+      runNestedEventLoopUntilSettled(new Promise(resolve => setImmediate(() => { reentries++; resolve(); })));
+      if (reentries !== before + 1) throw new Error("returned without spinning the event loop");
     }
 
     // Each round uses a new name, because c-ares answers a repeated name from its cache without opening a socket.
@@ -572,7 +564,6 @@ test("dns.Resolver: a query's promise reaction can re-enter the event loop", asy
       });
       if (addresses[0] !== "127.0.0.1") throw new Error("unexpected answer: " + addresses);
     }
-    await Promise.all(builds);
     server.close();
     console.log("reentries=" + reentries);
   `;

@@ -559,11 +559,6 @@ impl Loop {
         };
         found
     }
-    #[inline]
-    pub fn tick(&mut self) {
-        // SAFETY: self is a live loop.
-        let _ = unsafe { uv_run(self, RunMode::Default) };
-    }
 }
 
 unsafe extern "C" fn find_active_io_handle_cb(handle: *mut uv_handle_t, found: *mut c_void) {

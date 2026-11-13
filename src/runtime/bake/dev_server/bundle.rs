@@ -1,6 +1,10 @@
 //! Starting bundles: choosing entry points, the bundle queue, and plugin loading.
 
 use super::*;
+use crate::generated_bindgen::dev_server::{
+    Bun__DevServer__onPluginSetupReject, Bun__DevServer__onPluginSetupResolve,
+};
+use bun_jsc::bindgen::{JsLocal, JsScope};
 
 impl DevServer {
     pub(super) fn append_route_entry_points_if_not_stale(
@@ -301,6 +305,123 @@ impl DevServer {
         // TODO: allow recovery from this state
         Ok(())
     }
+
+    /// Holds bundles back while a `setup()` promise of `bundler_options` is pending.
+    pub(super) fn wait_for_plugin_setup(&mut self, global: &JSGlobalObject) -> JsResult<()> {
+        let Some(setup) = &self.bundler_options.pending_plugin_setup else {
+            return Ok(());
+        };
+        let setup = setup.get();
+        let context = match self.plugin_setup_context.get() {
+            Some(context) => context,
+            None => {
+                let context = JSValue::create_array_from_slice(
+                    global,
+                    &[JSValue::from_ptr_address(
+                        ::core::ptr::from_mut(self) as usize
+                    )],
+                )?;
+                self.plugin_setup_context = jsc::StrongOptional::create(context, global);
+                context
+            }
+        };
+        self.plugin_state = PluginState::Pending;
+        setup.then_with_value(
+            global,
+            context,
+            Bun__DevServer__onPluginSetupResolve,
+            Bun__DevServer__onPluginSetupReject,
+        );
+        Ok(())
+    }
+
+    /// A reaction that has not run yet finds no `DevServer`.
+    pub(super) fn forget_plugin_setup(&mut self) {
+        if let Some(context) = self.plugin_setup_context.try_swap() {
+            let _ = context.put_index(self.vm().global(), 0, JSValue::UNDEFINED);
+        }
+        self.bundler_options.plugin_setups.clear();
+        self.bundler_options.pending_plugin_setup = None;
+    }
+
+    /// The `DevServer` that waits for the reaction with this context, if it still does.
+    fn waiting_for_plugin_setup<'a>(
+        global: &JSGlobalObject,
+        context: JSValue,
+    ) -> JsResult<Option<&'a mut DevServer>> {
+        let address = context.get_index(global, 0)?;
+        if address.is_undefined() {
+            return Ok(None);
+        }
+        // SAFETY: `forget_plugin_setup` clears the address before the `DevServer` is freed, and
+        // a promise reaction runs with no other borrow of it on the stack.
+        Ok(Some(unsafe {
+            &mut *(address.as_ptr_address() as *mut DevServer)
+        }))
+    }
+
+    fn on_plugin_setup_resolve(global: &JSGlobalObject, context: JSValue) -> JsResult<()> {
+        let Some(dev) = Self::waiting_for_plugin_setup(global, context)? else {
+            return Ok(());
+        };
+        // The next `setup()` can stop the server, and a drained server frees `dev`, so count as a pending request until the end.
+        let mut server = dev.server;
+        if let Some(server) = server.as_mut() {
+            server.on_pending_request();
+        }
+        dev.bundler_options.pending_plugin_setup = None;
+        if let Err(err) = dev
+            .bundler_options
+            .run_plugin_setups(global)
+            .and_then(|()| dev.wait_for_plugin_setup(global))
+        {
+            let err = global.take_exception(err);
+            Self::plugin_setup_failed(global, Some(dev), err);
+        } else if dev.bundler_options.pending_plugin_setup.is_none() {
+            dev.forget_plugin_setup();
+            dev.plugin_state = PluginState::Loaded;
+            dev.start_next_bundle_if_present();
+        }
+        if let Some(server) = server.as_mut() {
+            server.on_static_request_complete();
+        }
+        Ok(())
+    }
+
+    fn on_plugin_setup_reject(
+        global: &JSGlobalObject,
+        err: JSValue,
+        context: JSValue,
+    ) -> JsResult<()> {
+        let dev = Self::waiting_for_plugin_setup(global, context)?;
+        Self::plugin_setup_failed(global, dev, err);
+        Ok(())
+    }
+
+    fn plugin_setup_failed(global: &JSGlobalObject, dev: Option<&mut DevServer>, err: JSValue) {
+        if let Some(dev) = dev {
+            dev.forget_plugin_setup();
+            bun_core::handle_oom(dev.on_plugins_rejected());
+        }
+        Output::err_generic("Failed to load plugins for Bun.serve:", ());
+        global.bun_vm().as_mut().run_error_handler(err, None);
+    }
+}
+
+pub(crate) fn on_plugin_setup_resolve(
+    cx: &mut JsScope<'_>,
+    _: JsLocal<'_>,
+    context: JsLocal<'_>,
+) -> JsResult<()> {
+    DevServer::on_plugin_setup_resolve(cx.global(), context.to_js())
+}
+
+pub(crate) fn on_plugin_setup_reject(
+    cx: &mut JsScope<'_>,
+    value: JsLocal<'_>,
+    context: JsLocal<'_>,
+) -> JsResult<()> {
+    DevServer::on_plugin_setup_reject(cx.global(), value.to_js(), context.to_js())
 }
 
 #[derive(Default)]

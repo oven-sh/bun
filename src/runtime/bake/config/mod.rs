@@ -33,7 +33,6 @@ impl Drop for UserOptions {
 }
 
 impl UserOptions {
-    /// Currently, this function must run at the top of the event loop.
     pub(crate) fn from_js(config: JSValue, global: &JSGlobalObject) -> JsResult<UserOptions> {
         let arena = Arena::new();
         let mut bundler_options = SplitBundlerOptions::default();

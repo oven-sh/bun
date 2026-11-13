@@ -358,18 +358,15 @@ describe("yield", async () => {
         expect(alive()).toBe(false);
       });
 
-      // `Bun.build()` turns the event loop until an async plugin `setup()` settles, so the killed member exits while the catch block runs.
+      // The killed member exits while the catch block runs.
       test.concurrent("a catch block that turns the event loop", async () => {
         await using proc = Bun.spawn({
           cmd: child(`
+            import { runNestedEventLoopUntilSettled } from "bun:internal-for-testing";
             try {
               await $\`\${bun} --version; ${sleeper} | echo hi > \${new Blob(["x"])}\`.quiet();
             } catch (error) {
-              await Bun.build({
-                entrypoints: ["/turn.js"],
-                files: { "/turn.js": "" },
-                plugins: [{ name: "turn", setup: () => Bun.sleep(50) }],
-              });
+              runNestedEventLoopUntilSettled(Bun.sleep(50));
               console.log("rejected " + error.constructor.name + ": " + error.message);
             }
           `),

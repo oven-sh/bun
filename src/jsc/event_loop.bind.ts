@@ -15,3 +15,7 @@ export const ActiveTasks = b.dictionary({
 });
 
 export const getActiveTasks = b.fn({ returns: ActiveTasks, capability: "heap" });
+
+export const enteredCount = b.fn({ returns: b.i32 });
+
+export const runNestedUntilSettled = b.fn({ args: { promise: b.any }, capability: "js", throws: true });

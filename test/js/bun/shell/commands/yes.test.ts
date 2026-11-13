@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isPosix } from "harness";
 
 $.throws(false);
 
@@ -56,5 +56,35 @@ describe("yes", async () => {
       filled: true,
     });
     expect(exitCode).toBe(0);
+  });
+
+  // `bun exec` has its own event loop. A captured `yes` never does I/O and never ends, so the loop
+  // has to poll between two of its bursts for the exit of the other member to be seen.
+  test.skipIf(!isPosix)("captured under `bun exec`, lets the event loop poll", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "exec", `echo $(sh -c 'echo $$ >&2' | yes)`],
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    let stderr = "";
+    for await (const chunk of proc.stderr) {
+      stderr += Buffer.from(chunk).toString();
+      if (stderr.includes("\n")) break;
+    }
+    const pid = Number(stderr);
+    expect(pid).toBeGreaterThan(0);
+    // A child that has exited stays a zombie, which signal 0 still reaches, until the shell reaps it.
+    const isReaped = () => {
+      try {
+        process.kill(pid, 0);
+        return false;
+      } catch (error) {
+        expect(error).toMatchObject({ code: "ESRCH" });
+        return true;
+      }
+    };
+    while (!isReaped()) await new Promise(resolve => setImmediate(resolve));
+    expect(proc.exitCode).toBeNull();
   });
 });

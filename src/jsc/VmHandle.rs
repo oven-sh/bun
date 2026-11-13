@@ -121,12 +121,10 @@ pub struct Shared {
 struct DebugState {
     js_thread: std::thread::ThreadId,
     live: Guarded<LiveTickets>,
-    /// Test suite only, see [`test_gate`]: the [`TestGate`] mode armed.
+    /// Test suite only — see [`test_gate`].
     gate: AtomicU8,
-    /// Posts the gate holds for `Draining`. The wait does not close past them.
+    /// Posts that the gate holds for `Draining`. The wait does not close past them.
     parked: AtomicU32,
-    /// Awaited weak posts at the gate. A `weak-*` teardown begins at the first.
-    weak_arrivals: AtomicU32,
 }
 
 #[cfg(debug_assertions)]
@@ -325,7 +323,6 @@ impl VmHandle {
                 live: Default::default(),
                 gate: AtomicU8::new(TestGate::Off as u8),
                 parked: AtomicU32::new(0),
-                weak_arrivals: AtomicU32::new(0),
             },
         }))
     }
@@ -552,27 +549,25 @@ pub extern "C" fn Bun__VM__currentLoopKind(vm: &VirtualMachine) -> LoopKind {
 
 // ── Test suite only: deterministic late completions ───────────────────────
 //
-// `BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE` (first-level worker VMs, builds with
-// debug assertions) orders a post from another thread against the worker's
-// teardown, so the path under test runs every time instead of only when the
-// post wins or loses the race. Each post is named on stderr with its outcome.
-// The parked thread keeps the locks it holds, so a worker that blocks on one
-// of them never reaches its teardown: a hang under the gate, not in production.
-
-/// The mode a worker VM arms; `Off` everywhere else.
+// `BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE` (first-level worker VMs; builds with
+// debug assertions): a post from another thread is held until the worker's
+// teardown has begun waiting, so it always arrives *during* the wait — the
+// ticketed path (queued, released on the JS thread, then the wait ends) and
+// the weak path (queued-and-released while draining, or refused once closed)
+// run with their real preconditions every time instead of only when they lose
+// the race. Each is named on stderr. The parked thread keeps whatever locks it
+// holds (the fetch tasklet's mutex, a streaming body's buffer lock), so a row
+// whose worker then blocks on that same lock never reaches teardown: a hang
+// under the gate, not in production.
+#[cfg(debug_assertions)]
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum TestGate {
-    Off = 0,
-    /// `draining`: every post is held until the wait has begun. The wait does
-    /// not close before each held post is made, so all are queued and released.
-    Draining = 1,
-    /// `weak-draining:<TaskTag>`: as `Draining`, and the teardown does not
-    /// begin until the weak post with that tag is at the gate.
-    WeakDraining = 2,
-    /// `weak-closed:<TaskTag>`: as `WeakDraining`, but that post is held until
-    /// the wait has ended, so it is refused.
-    WeakClosed = 3,
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TestGate {
+    Off,
+    /// `draining`: a post is held until the wait has begun, and the wait does not close before each held post is made.
+    Draining,
+    /// `closed`: a weak post that arrives while no ticket is outstanding is held until the wait has closed, so it is refused.
+    Closed,
 }
 
 #[cfg(debug_assertions)]
@@ -580,18 +575,20 @@ mod test_gate {
     use super::{Access, Ordering, Posted, Shared, State, TestGate, Ticket, VmHandle};
     type Task = core::ptr::NonNull<super::ConcurrentTaskItem>;
 
-    /// `<mode>` or `<mode>:<TaskTag>`, as in `weak-closed:CppTask`.
-    fn env() -> (&'static [u8], &'static [u8]) {
-        let value = bun_core::env_var::BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE::get().unwrap_or(b"");
-        bun_core::strings::split_once_char(value, b':').unwrap_or((value, b""))
-    }
     impl TestGate {
-        pub fn from_env() -> TestGate {
-            match env().0 {
+        pub(crate) fn from_env() -> TestGate {
+            match bun_core::env_var::BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE::get().unwrap_or(b"") {
+                b"" => TestGate::Off,
                 b"draining" => TestGate::Draining,
-                b"weak-draining" => TestGate::WeakDraining,
-                b"weak-closed" => TestGate::WeakClosed,
-                _ => TestGate::Off,
+                b"closed" => TestGate::Closed,
+                other => {
+                    bun_core::Output::err_generic(
+                        "BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE={}: the modes are draining and closed",
+                        (bstr::BStr::new(other),),
+                    );
+                    bun_core::Output::flush();
+                    bun_core::Global::exit(1)
+                }
             }
         }
     }
@@ -599,28 +596,11 @@ mod test_gate {
         pub(crate) fn arm_test_gate(&self, mode: TestGate) {
             self.0.debug.gate.store(mode as u8, Ordering::Relaxed);
         }
-
-        /// JS thread, before the teardown begins: C++ stops posting to a
-        /// context once it is terminating, so a `weak-*` mode waits here.
-        pub(crate) fn await_test_gate_weak_post(&self) {
-            let s = &*self.0;
-            if !awaits_weak_post(s) {
-                return;
-            }
-            let mut g = s.drained.0.lock();
-            while s.debug.weak_arrivals.load(Ordering::SeqCst) == 0 {
-                s.drained.1.wait_guarded(&mut g);
-            }
-        }
-    }
-    fn awaits_weak_post(s: &Shared) -> bool {
-        matches!(mode(s), TestGate::WeakDraining | TestGate::WeakClosed)
     }
     fn mode(s: &Shared) -> TestGate {
         match s.debug.gate.load(Ordering::Relaxed) {
             v if v == TestGate::Draining as u8 => TestGate::Draining,
-            v if v == TestGate::WeakDraining as u8 => TestGate::WeakDraining,
-            v if v == TestGate::WeakClosed as u8 => TestGate::WeakClosed,
+            v if v == TestGate::Closed as u8 => TestGate::Closed,
             _ => TestGate::Off,
         }
     }
@@ -678,24 +658,19 @@ mod test_gate {
             };
             say(format_args!("late post: {} ({outcome})", tag.name()));
         };
-        // Other weak posts reach a worker too (a stdio port's flow-control ack).
-        let awaited = awaits_weak_post(s) && tag.name().as_bytes() == env().1;
-        // With a ticket outstanding the wait is for that ticket, and its holder
-        // may make this post first (WebCrypto): hold it until `Draining` only.
-        if awaited && mode(s) == TestGate::WeakClosed && s.tickets.load(Ordering::SeqCst) == 0 {
-            // A weak access in progress: `close_and_wait` returns after the post.
+        // With a ticket outstanding the wait is for that ticket, and its holder may make this post first (WebCrypto).
+        if mode(s) == TestGate::Closed && s.tickets.load(Ordering::SeqCst) == 0 {
+            // A weak access in progress: `close_and_wait` returns only after this post is reported.
             s.active.fetch_add(1, Ordering::SeqCst);
             let _in_progress = Access(s);
-            arrived(s);
+            say(format_args!("weak post at the gate: {}", tag.name()));
             park_until(s, State::Closed);
             let r = post(task);
             report(&r);
             return r;
         }
         s.debug.parked.fetch_add(1, Ordering::SeqCst);
-        if awaited {
-            arrived(s);
-        }
+        say(format_args!("weak post at the gate: {}", tag.name()));
         park_until(s, State::Draining);
         let r = post(task);
         report(&r);
@@ -703,16 +678,10 @@ mod test_gate {
         s.notify();
         r
     }
-    /// The awaited weak post is at the gate, counted in `parked` or `active`.
-    fn arrived(s: &Shared) {
-        s.debug.weak_arrivals.fetch_add(1, Ordering::SeqCst);
-        s.notify();
-    }
-    /// `Draining` may become `Closed` only once every held post is made.
     pub(super) fn nothing_parked(s: &Shared) -> bool {
         s.debug.parked.load(Ordering::SeqCst) == 0
     }
-    /// `Draining` / `Closed` was just published: posts parked for it go now.
+    /// `Draining` or `Closed` was just published: the posts parked for it go now.
     pub(super) fn state_published(h: &VmHandle) {
         if on(&h.0) {
             h.0.notify();
@@ -726,20 +695,8 @@ mod test_gate {
 }
 #[cfg(not(debug_assertions))]
 mod test_gate {
-    use super::{Posted, Shared, TestGate, Ticket, VmHandle};
+    use super::{Posted, Shared, Ticket, VmHandle};
     type Task = core::ptr::NonNull<super::ConcurrentTaskItem>;
-    impl TestGate {
-        #[inline(always)]
-        pub fn from_env() -> TestGate {
-            TestGate::Off
-        }
-    }
-    impl VmHandle {
-        #[inline(always)]
-        pub(crate) fn arm_test_gate(&self, _: TestGate) {}
-        #[inline(always)]
-        pub(crate) fn await_test_gate_weak_post(&self) {}
-    }
     #[inline(always)]
     pub(super) fn before_ticket_post(_: &Ticket) {}
     #[inline(always)]

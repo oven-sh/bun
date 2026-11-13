@@ -2601,8 +2601,6 @@ impl VirtualMachine {
         // hooks re-derive their own access from `this`.
         let vm = unsafe { &*this };
         let hooks = runtime_hooks();
-        // Test suite only (`vm_handle::test_gate`): a no-op unless a gate mode that waits is armed.
-        vm.handle.await_test_gate_weak_post();
 
         // ---- A. no more script; stop phase ------------------------------------
         // The user's last word was the exit handlers (`on_exit`, before this).
@@ -5213,6 +5211,7 @@ impl VirtualMachine {
         // SAFETY: `vm` is the unique live VM on this thread.
         let vm_ref = unsafe { &mut *vm };
         vm_ref.worker = Some(std::ptr::from_ref::<crate::web_worker::WebWorker>(worker).cast());
+        #[cfg(debug_assertions)]
         vm_ref.handle.arm_test_gate(worker.test_gate());
         // The worker's resolver also
         // needs the standalone graph, otherwise embedded `/$bunfs/...` specifiers

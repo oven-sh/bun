@@ -109,8 +109,7 @@ new!(pub BUN_DEBUG_TEST_AOT_WORDS: string, "BUN_DEBUG_TEST_AOT_WORDS", {});
 new!(pub BUN_DEBUG_TEST_AOT_PROGRAM_FILE: string, "BUN_DEBUG_TEST_AOT_PROGRAM_FILE", {});
 // How long `bun check` runs before it draws its progress line (default 300), so a test can see the line on a small project.
 new!(pub BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS: unsigned, "BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS", {});
-// Test suite only, debug builds: a `bun_jsc::vm_handle::TestGate` mode, `draining`,
-// `weak-draining:<TaskTag>` or `weak-closed:<TaskTag>`.
+// Test suite only, debug builds: the `bun_jsc::vm_handle::TestGate` mode that a worker arms, `draining` or `closed`.
 new!(pub BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE: string, "BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE", {});
 new!(pub BUN_DEV_SERVER_TEST_RUNNER: string, "BUN_DEV_SERVER_TEST_RUNNER", {});
 // Debug-only: when set, `NumberRenamer` dumps the symbol table before

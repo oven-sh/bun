@@ -952,6 +952,46 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  // Also runs on debug builds. The fixture is checked with lib.dom and without
+  // it. lib.webworker declares the web streams too, but not the `onabort` that
+  // `LibDomIsLoaded` looks for. The global reader is the one of that lib, as
+  // with lib.dom, and not the reader of node:stream/web.
+  describe("ReadableStreamDefaultReader with lib.webworker.d.ts", () => {
+    test("read() keeps Bun's result type, and every default reader has readMany()", async () => {
+      const checkDir = join(TEMP_DIR, "reader-lib-webworker-check");
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.include = ["reader-check.ts"];
+      tsconfig.compilerOptions.lib = ["ESNext", "WebWorker"];
+      tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
+      await mkdir(checkDir, { recursive: true });
+      await makeTree(checkDir, {
+        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
+        "reader-check.ts": `import { ReadableStream as NodeReadableStream } from "node:stream/web";
+           const reader = new ReadableStream<Uint8Array>().getReader();
+           reader.readMany();
+           new NodeReadableStream<Uint8Array>().getReader().readMany();
+           const result = await reader.read();
+           if (result.done) result.value satisfies undefined;`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+        env: bunEnv,
+        cwd: checkDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
   // Also runs on debug builds: spawned tsc over a single file, like the
   // Bun.mmap check above. @types/node@24 declares `off`/`removeListener` only
   // on EventEmitter, not on `Process`, so the `memoryPressure` overloads in

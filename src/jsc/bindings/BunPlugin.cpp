@@ -1180,6 +1180,8 @@ __attribute__((minsize)) static bool isGivenOriginalOfFile(Zig::GlobalObject* gl
 // A mock with two paths is told of each module that is asked for while it stands: `key` is what `asker` is given. See JSModuleMock::loadedByOriginals.
 // If nothing holds the module yet, the asker loads it: it has the originals that had loaded the asker, and whatever the record had was of a module that has gone.
 // A module that is held already stays with whoever loaded it.
+// Each import and each require() that is resolved comes here once a mock has had two paths, and passes over the table: the mocks with two paths are listed nowhere else,
+// and what the originals of each have loaded is written on that mock alone. A mock that has no record yet compares the asker with its two paths and looks nothing up.
 __attribute__((minsize)) static void noteModuleAskedOfOriginals(Zig::GlobalObject* globalObject, const String& key, const String& asker)
 {
     auto* virtualModules = globalObject->onLoadPlugins.virtualModules;
@@ -1884,7 +1886,8 @@ uint32_t addToFactoryImportChains(Zig::GlobalObject*, JSC::AOT::ModuleID importe
 
 // With two paths, what the mock has kept of its module object in require.cache is the original of another file than the one an import loads.
 // The package's own files and the mock's factory ask for that original by its key: a module object with the kept exports lies there, so that nothing runs the file a second time.
-// It stays when the mock ends, and leaves require.cache with the module object whose exports it holds: see evictModulesAndTheirImporters().
+// It stays when the mock ends, as the original under such a key does where a mock has one path. What was given it stays loaded too, with the exports of the file's one instance,
+// and the loader links that to the file by this entry alone. So it leaves require.cache with the module object whose exports it holds, and what is linked to it goes with it: see evictModulesAndTheirImporters().
 __attribute__((minsize)) static void layKeptOriginalUnderItsKey(Zig::GlobalObject* globalObject, JSModuleMock* mock)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -4127,7 +4130,8 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
                 auto* mock = moduleMockAnsweringFor(globalObject, key);
                 bool isUnderMock = mock && mock->keyForRequire()->tryGetValue().data == key;
                 bool isOfEndedMock = !isUnderMock && !evict.patchedCommonJSModules.contains(key) && evict.pathsOfTwoFileMocks.containsIf([&](auto& paths) { return paths.first == key; });
-                JSValue exportsOfFile = isUnderMock ? mock->originalCommonJSExports.get() : isOfEndedMock ? JSValue() : module->getDirect(vm, exportsName);
+                JSValue exportsOfFile = isUnderMock ? mock->originalCommonJSExports.get() : isOfEndedMock ? JSValue()
+                                                                                                          : module->getDirect(vm, exportsName);
                 if (exportsOfFile && laid->getDirect(vm, exportsName) == exportsOfFile) {
                     evicted.add(original);
                     keys.append(original);

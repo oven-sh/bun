@@ -1046,6 +1046,9 @@ export function turned(x: unknown, p = (true === x) as unknown as number): unkno
 export function named(p: unknown = undefined as unknown as Shape, q: unknown = undefined as unknown as keyof typeof ns): unknown {
   return [p, q, ns.value];
 }
+export function imported(p: unknown = undefined as unknown as typeof import("./ns")): unknown {
+  return p;
+}
 export function folded(p = (false as const) === false, q: boolean = (true as unknown as number) === 1): boolean {
   return p && q;
 }
@@ -1062,6 +1065,7 @@ export class Fields {
       "function twice(x: unknown, p = x === void 0): unknown {",
       "function turned(x: unknown, p = x === !0): unknown {",
       "function named(p: unknown = void 0, q: unknown = void 0): unknown {",
+      "function imported(p: unknown = void 0): unknown {",
       "function folded(p = !0, q: boolean = !1): boolean {",
       "  kept: boolean = !0;",
     ]);

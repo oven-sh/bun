@@ -107,6 +107,11 @@ test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not eval
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > doesn't leak the modules that imported a mock after it ends
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > also when the file fails to load, or has already removed the mock itself
 test/js/bun/test/mock/mock-module.test.ts: requiring the original of a module in a cycle before its async factory runs throws, and the mock still loads
+# The next one: a module that a running factory loads imports the module that the factory mocks, and no file is that module. Plain gives the import what the resolver says. Compiled, the import waits for the mock.
+test/js/bun/test/mock/mock-module.test.ts: the original of a mocked module > of a module that the resolver does not find, for a module that the factory of its mock loads
+# The next one: an ES module of a package with no "type", which Vitest loads as the project's own, imports a mocked package that is not installed. Plain gives it the mock.
+# Compiled takes it for a file that a package keeps to itself, and gives it what the resolver says.
+test/js/bun/test/mock/mock-module.test.ts: the original of a mocked module > of a package that is not installed, for a file of a package that Vitest loads as the project's own
 test/js/bun/test/vitest-flavor.test.ts: [test] globals = "vitest" > is part of the transpiler cache key
 test/js/bun/test/import-meta-env.test.ts: import.meta.env > in other realms
 # These ask about the transpiler cache, which a compiled run doesn't use: they say nothing about compiled code.

@@ -368,9 +368,21 @@ std::optional<ASCIILiteral> builtinModuleOfOriginalKey(const String& key);
 JSC::JSSourceCode* sourceCodeOfModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock, const String& key, const String& typeAttribute);
 // Whether sourceCodeOfModuleMock() generated module `key`. Its import specifiers are NUL-prefixed registry keys.
 bool moduleMockImportsByKey(Zig::GlobalObject*, const String& key);
+// Who gave the key that keyOfImportWhileModuleMocksRun() and packageImportKey() are asked about.
+enum class KeyGivenBy : bool {
+    // The key that is returned is not null.
+    Caller,
+    // A resolve hook has the key of a virtual module: see keyOfVirtualModuleForImporter(). A null key is returned where the importer is owed the original of a
+    // module mock that was made without a module.
+    VirtualModule,
+};
 // Redirects what a running factory imports: the mocked module to its original, and a module that waits for the mock to a private copy, or if it's a mock, to a module that doesn't wait.
-String keyOfImportWhileModuleMocksRun(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
-String packageImportKey(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
+String keyOfImportWhileModuleMocksRun(Zig::GlobalObject*, const String& key, const String& importer, bool isESM, KeyGivenBy = KeyGivenBy::Caller);
+String packageImportKey(Zig::GlobalObject*, const String& key, const String& importer, bool isESM, KeyGivenBy = KeyGivenBy::Caller);
+// What a resolve hook gives an importer for a specifier that names a virtual module: its key, as the two functions above redirect it for this importer.
+// Null where no virtual module answers, and where the one that does is a module mock with no original for this importer. The hook then asks the resolver.
+// `loads` is false for require.resolve() and import.meta.resolveSync(), which ask where the module is: they get the key of the virtual module itself.
+String keyOfVirtualModuleForImporter(Zig::GlobalObject*, const String& specifier, const String& importer, bool isESM, bool loads);
 bool isModuleMockWaitingForFactory(Zig::GlobalObject*, const String& key);
 JSC::JSObject* objectHoldingExportOfModuleMock(JSC::JSGlobalObject*, JSC::JSModuleNamespaceObject*, const JSC::Identifier& name);
 #if ENABLE(AOT)

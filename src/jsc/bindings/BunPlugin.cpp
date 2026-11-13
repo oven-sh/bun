@@ -612,6 +612,8 @@ public:
     bool droppedSavedOriginal { false };
     // The mock waited for the first load by compiled code, and a require() behind it had left a module object in require.cache by then.
     bool keepsModuleObject { false };
+    // When the mock was made, the resolver found no module for the specifier and the loader held none under the key: the key may be no place of an original.
+    bool madeWithoutModule { false };
 #if ENABLE(AOT)
     // The compiled module that the mock replaced before its body ran.
     std::optional<unsigned> unevaluatedCompiledModule;
@@ -1268,6 +1270,16 @@ static String dependencyKeyOfModuleMock(JSC::JSGlobalObject* globalObject, JSMod
     RETURN_IF_EXCEPTION(scope, {});
     // Spying mutates the objects nested in the exports, so it gets its own instance of the original.
     return mock->spy ? makeString(originalModuleKey(specifier), "&spy"_s) : originalModuleKey(specifier);
+}
+
+// The key of the original for an importer that the mock under `key` is not for: a package that vi.mock() leaves alone.
+// A load by that key asks no resolver. So the key is null where a resolve hook has the key of a mock that was made without a module: the hook asks the resolver,
+// as for any import.
+static String keyOfOriginalForImporter(JSModuleMock* mock, const String& key, Bun::KeyGivenBy givenBy)
+{
+    if (mock->madeWithoutModule && givenBy == Bun::KeyGivenBy::VirtualModule)
+        return {};
+    return originalModuleKey(key);
 }
 
 static JSC::JSPromise* thenWithContext(Zig::GlobalObject*, JSC::JSPromise*, JSC::NativeFunction onFulfilled, JSC::NativeFunction onRejected, JSValue context);
@@ -4319,7 +4331,8 @@ static std::optional<JSC::AOT::ModuleAliasKind> findFileAlias(StringView name, S
 #endif
 
 // Returns true if importers can only reach the mock through resolveVirtualModule()'s relative lookup.
-__attribute__((minsize)) static bool resolveModuleMockSpecifier(Zig::GlobalObject* globalObject, JSC::CallFrame* callframe, JSC::JSString*& specifierString, WTF::String& specifier, bool& exists)
+// `resolverFoundNothing` is set where the resolver was asked and found no module. It is not asked about a "file:" URL, or for a caller that has no file.
+__attribute__((minsize)) static bool resolveModuleMockSpecifier(Zig::GlobalObject* globalObject, JSC::CallFrame* callframe, JSC::JSString*& specifierString, WTF::String& specifier, bool& exists, bool* resolverFoundNothing = nullptr)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -4387,6 +4400,8 @@ __attribute__((minsize)) static bool resolveModuleMockSpecifier(Zig::GlobalObjec
         }
         return false;
     }
+    if (resolverFoundNothing)
+        *resolverFoundNothing = true;
 
     if (!specifier.startsWith("./"_s) && !specifier.startsWith(".."_s))
         return false;
@@ -5910,7 +5925,8 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     WTF::String written = specifier;
     JSC::JSString* writtenString = specifierString;
     bool exists = false;
-    if (resolveModuleMockSpecifier(globalObject, callframe, specifierString, specifier, exists))
+    bool resolverFoundNothing = false;
+    if (resolveModuleMockSpecifier(globalObject, callframe, specifierString, specifier, exists, &resolverFoundNothing))
         globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -5976,6 +5992,14 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     RETURN_IF_EXCEPTION(scope, {});
     JSModuleMock* previous = registeredModuleMock(globalObject, specifier);
     [[maybe_unused]] bool wasMocked = previous;
+    // Only the resolver says where a module is. A specifier that it gave nothing for has an original all the same if a module is loaded under it,
+    // or if it names a module that a plugin made with build.module(). What is loaded under the key of a mock is that mock.
+    if (previous)
+        mock->madeWithoutModule = previous->madeWithoutModule && !exists;
+    else if (resolverFoundNothing && !loaded.esmNamespace && !loaded.commonJSModule && !loaded.compiledModule) {
+        auto& plugins = globalObject->onLoadPlugins;
+        mock->madeWithoutModule = !isBuiltinModuleKey(specifier) && !(plugins.hasVirtualModules() && plugins.resolveVirtualModule(specifier, String()));
+    }
 #if ENABLE(AOT)
     if (previous && previous->isFromPreload && previous->state == JSModuleMock::State::Running && !previous->wasFactoryStartedByRequire && !mock->isFromPreload && vm.hasCompiledCode() && Bun__AOT__runsTestFilesAgain()) [[unlikely]]
         Bun::recordRepeatedFileRun(globalObject, specifier, "it was mocked while the factory of the mock of a preload ran"_s);
@@ -7182,6 +7206,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue resetModules(JSC::JSGlobalOb
             if (mock->isFromPreload && !again->isFromPreload)
                 globalObject->onLoadPlugins.displacedPreloadModuleMocks.append(JSC::Strong<JSC::JSObject> { vm, mock });
             again->importsOriginal = mock->importsOriginal;
+            again->madeWithoutModule = mock->madeWithoutModule;
             again->patchedNamespace.setMayBeNull(vm, again, mock->patchedNamespace.get());
             again->originalExportsOfEvictedModule.setMayBeNull(vm, again, mock->originalExportsOfEvictedModule.get());
             again->patchOrder = mock->patchOrder;
@@ -8931,7 +8956,7 @@ bool isModuleMockWaitingForFactory(Zig::GlobalObject* globalObject, const String
 }
 
 // A module that Vitest externalizes gets the original of what vi.mock() mocked. Jest's mocks reach packages too.
-String packageImportKey(Zig::GlobalObject* globalObject, const String& key, const String& importer, bool isESM)
+String packageImportKey(Zig::GlobalObject* globalObject, const String& key, const String& importer, bool isESM, KeyGivenBy givenBy)
 {
     if (!Zig::isInNodeModules(importer) || Zig::isBuiltinModuleKey(key))
         return key;
@@ -8940,7 +8965,22 @@ String packageImportKey(Zig::GlobalObject* globalObject, const String& key, cons
     bool hasOriginal = mock && mock->isOfVitest() && !mock->originalExports && !mock->originalCommonJSExports;
     if (!hasOriginal || (isESM && !Zig::isExternalizedByVitest(globalObject, importer)))
         return key;
-    return Zig::originalModuleKey(key);
+    return Zig::keyOfOriginalForImporter(mock, key, givenBy);
+}
+
+String keyOfVirtualModuleForImporter(Zig::GlobalObject* globalObject, const String& specifier, const String& importer, bool isESM, bool loads)
+{
+    auto& plugins = globalObject->onLoadPlugins;
+    auto key = plugins.resolveVirtualModule(specifier, importer);
+    if (!key)
+        return {};
+    String given = packageImportKey(globalObject, *key, importer, isESM, KeyGivenBy::VirtualModule);
+    // What asks where the module is gets no key of an original.
+    if (!loads)
+        return given.isNull() ? given : *key;
+    if (!given.isNull() && !plugins.runningModuleMocks.isEmpty()) [[unlikely]]
+        given = keyOfImportWhileModuleMocksRun(globalObject, given, importer, isESM, KeyGivenBy::VirtualModule);
+    return given;
 }
 
 // Whether some unfinished module imports both, directly or through other modules. The factories of two loads run at the same time.
@@ -8991,7 +9031,7 @@ __attribute__((minsize)) static bool haveUnfinishedImporterInCommon(Zig::GlobalO
     return false;
 }
 
-__attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject* globalObject, const String& key, const String& importer, bool isESM)
+__attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject* globalObject, const String& key, const String& importer, bool isESM, KeyGivenBy givenBy)
 {
     // It imports nothing, so it waits for no mock, and only its own key is served.
     if (Zig::isModuleMockEvaluatorKey(key))
@@ -9080,6 +9120,16 @@ __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject
             if (auto module = willPatch ? Bun::compiledModuleForPath(mocked) : std::nullopt; module && JSC::AOT::hasImportStartedLoading(globalObject, *module) && JSC::AOT::wasLoadedByImport(globalObject, *module) && !JSC::AOT::isEvicted(globalObject, *module))
                 continue;
 #endif
+            // A mock that was made without a module has no original to give. Where a resolve hook has the key of the mock, the hook asks the resolver instead.
+            if (given == mocked && givenBy == KeyGivenBy::VirtualModule && uncheckedDowncast<Zig::JSModuleMock>(running.mock.get())->madeWithoutModule) [[unlikely]] {
+                // The file alone does not say that the factory is what asks. An import that the rest of its file makes waits for the mock, as the import of any other file does.
+                if (isESM && isFactory && !isInChain && callers.isEmpty())
+                    continue;
+                // Its importer is linked to nothing, and goes with the factory too.
+                if (isInChain && !importer.contains("?actual"_s) && !importer.contains("&actual"_s))
+                    running.givenTheOriginal.append(importer);
+                return {};
+            }
             String instead = given == mocked ? Zig::originalModuleKey(given) : given;
             String copy = Zig::redirectedModuleKey(globalObject, running, instead, mocked);
             if (isESM)

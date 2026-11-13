@@ -4238,8 +4238,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     WTF::String resolved;
     bool hasModuleMocks = globalObject->onLoadPlugins.hasVirtualModules();
     if (hasModuleMocks) {
-        if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(keyString, referrerString))
-            resolved = resolvedString.value();
+        resolved = Bun::keyOfVirtualModuleForImporter(globalObject, keyString, referrerString, true, true);
     } else {
         ASSERT(!globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup);
     }
@@ -4261,11 +4260,11 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
 
         if (!query.isEmpty())
             resolved = makeString(resolved, query);
+        if (hasModuleMocks) [[unlikely]]
+            resolved = Bun::packageImportKey(globalObject, resolved, referrerString, true);
+        if (moduleMocksRun) [[unlikely]]
+            resolved = Bun::keyOfImportWhileModuleMocksRun(globalObject, resolved, referrerString, true);
     }
-    if (hasModuleMocks) [[unlikely]]
-        resolved = Bun::packageImportKey(globalObject, resolved, referrerString, true);
-    if (moduleMocksRun) [[unlikely]]
-        resolved = Bun::keyOfImportWhileModuleMocksRun(globalObject, resolved, referrerString, true);
     Identifier resolvedKey = Identifier::fromString(vm, resolved);
     if (hasModuleMocks) [[unlikely]] {
         Bun::evictModuleThatNothingFetches(globalObject, resolvedKey);

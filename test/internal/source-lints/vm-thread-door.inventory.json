@@ -153,6 +153,7 @@
     "WorkPool::schedule*": 4,
     "owned_task!": [
       "AsyncMkdirp",
+      "CpSingleTask",
       "ReaddirSubtask"
     ],
     "unsafe impl Send": [

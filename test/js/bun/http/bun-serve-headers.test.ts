@@ -265,3 +265,83 @@ describe("response Connection: close closes the socket", () => {
     }
   });
 });
+
+// A slow SSE source must not hold the HTTP headers hostage until the first
+// body chunk. Fetch resolves on complete response headers, before body data.
+test("streaming response sends headers before any body chunk", async () => {
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  using server = Bun.serve({
+    port: 0,
+    development: false,
+    fetch() {
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(c) {
+            controller = c;
+          },
+        }),
+        { headers: { "content-type": "text/event-stream" } },
+      );
+    },
+  });
+
+  const aborter = new AbortController();
+  const timer = setTimeout(() => aborter.abort(), 2_000);
+  try {
+    const response = await fetch(server.url, { signal: aborter.signal });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/event-stream");
+
+    // No body chunk was queued before these assertions. The response is
+    // already visible to the client, and the stream can still deliver data.
+    controller.enqueue(new TextEncoder().encode("first"));
+    controller.close();
+    expect(await response.text()).toBe("first");
+  } finally {
+    clearTimeout(timer);
+    aborter.abort();
+    try {
+      controller?.close();
+    } catch {}
+  }
+});
+
+// Direct streams use a different pump, but the client must still receive a
+// complete HTTP header block while the producer is waiting for its first write.
+test("direct streaming response sends headers before any body chunk", async () => {
+  let releaseBody!: () => void;
+  const bodyReady = new Promise<void>(resolve => {
+    releaseBody = resolve;
+  });
+  using server = Bun.serve({
+    port: 0,
+    development: false,
+    fetch() {
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(controller) {
+            await bodyReady;
+            controller.write("first");
+            controller.close();
+          },
+        } as any),
+        { headers: { "content-type": "text/event-stream" } },
+      );
+    },
+  });
+
+  const aborter = new AbortController();
+  const timer = setTimeout(() => aborter.abort(), 2_000);
+  try {
+    const response = await fetch(server.url, { signal: aborter.signal });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/event-stream");
+    releaseBody();
+    expect(await response.text()).toBe("first");
+  } finally {
+    clearTimeout(timer);
+    releaseBody();
+    aborter.abort();
+  }
+});

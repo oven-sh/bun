@@ -2282,6 +2282,10 @@ where
                             response_stream.ctx = None;
                             this.render_metadata();
                         }
+                        // A stream may not produce its first chunk for a long time
+                        // (or ever). Finish the response headers now so clients
+                        // can observe the status before the body arrives.
+                        resp.flush_headers(true);
 
                         // TODO: should this timeout?
                         let body_value = this.response_mut().unwrap().get_body_value();

@@ -10,7 +10,7 @@
 # for (let i = 0; i < 4; i++) { c.step(); c.back(); seen += c.next(["a", "b", "c"]); }
 # print(c.up, c.both, c.sum, c.twice, c.mixed, c.last, c.told, seen);
 # -- end of source
-# A field that is only stepped by one, in functions that compare it or read it as a key, is an exact integer and lies in a slot of integers. Sums, products, fractions and counters that are only told stay numbers.
+# A field that is only stepped by one is an exact integer and lies in a slot of integers. Sums, products and fractions stay numbers.
 # RUN: link fields mechanisms=all
 # CHECK: field L0.0 "up" proven=int[0, 9007199254740992] writers-known
 # CHECK: field L0.1 "both" proven=int[-9007199254740992, 9007199254740992] writers-known
@@ -18,7 +18,7 @@
 # CHECK: field L0.3 "twice" proven=number writers-known
 # CHECK: field L0.4 "mixed" proven=number writers-known
 # CHECK: field L0.5 "last" proven=int[0, 9007199254740992] writers-known
-# CHECK: field L0.6 "told" proven=number writers-known
+# CHECK: field L0.6 "told" proven=int[0, 9007199254740992] writers-known
 # CHECK: field L0.7 "key" proven=int[0, 9007199254740992] writers-known
 # RUN(ANSWERS): run-in-shell mechanisms=all
 # ANSWERS: 4 0 10 15 0.9375 4 4 abcundefined

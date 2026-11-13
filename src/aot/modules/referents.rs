@@ -5,6 +5,7 @@ mod tests;
 
 use super::ModuleRef;
 use super::bindings::{ExportBinding, ExportLookup, ImportBinding, SiteAnswer};
+use super::commonjs_exports::ForwardedName;
 use super::graph::ModuleGraph;
 use super::interop::{ImportPhase, RequireResult};
 use crate::builtins::table::MemberLookup;
@@ -12,7 +13,9 @@ use crate::builtins::{
     BuiltinId, BuiltinNames, Intrinsic, ModuleExport, Platforms, Resolved, RuntimeModule,
     find_module_export, named_value_of, prototype_operation_of, table,
 };
-use crate::known_helpers::{Helper, KnownHelpers, ResolveInput, resolve_public_field};
+use crate::known_helpers::{
+    Helper, KnownHelpers, ResolveInput, resolve_callee, resolve_public_field,
+};
 use crate::load::Sources;
 use crate::load::sources::parsed_source;
 use bun_sema::atom::{Atom, known};
@@ -24,9 +27,10 @@ use bun_sema::bind::{
 use bun_sema::check::aot::{
     ClassDeclaration, FunctionRef, NamedValue, NamedValues, PrototypeOperation,
 };
-use bun_sema::hir::{BinOp, ExprId, ExprKind, File, MemberKey, StmtKind};
+use bun_sema::hir::{BinOp, ExprId, ExprKind, File, FnId, MemberKey, StmtKind};
 use bun_sema::import_sites::{ImportSiteKind, is_linked_by_bundler};
 use bun_sema::program::{FileId, Files};
+use smallvec::SmallVec;
 
 #[derive(Copy, Clone)]
 pub struct LinkedProject<'a, 's> {
@@ -340,7 +344,14 @@ impl<'s> ReferentContext<'s> for LinkedProject<'_, 's> {
         }
     }
 
+    fn inner_export(&self, file: FileId, body: FnId, name: Option<Atom>) -> Option<ExprId> {
+        self.graph.wrapped().exported_value(file, body, name)
+    }
+
     fn loaded_value(&self, file: FileId, call: ExprId) -> Option<LoadedValue<ModuleRef>> {
+        if let Some(body) = self.graph.wrapped().body_of_call(self.files, file, call) {
+            return Some(LoadedValue::InnerExports { file, body });
+        }
         let analysis = &self.files.compiled(file)?.analysis;
         let site = analysis.import_sites[analysis.import_site_of_call(call)?].kind;
         match site {
@@ -389,6 +400,53 @@ impl<'s> ReferentContext<'s> for LinkedProject<'_, 's> {
                 | ModuleRef::External { .. },
             ) => None,
         }
+    }
+
+    fn forwarded_export(&self, file: FileId, name: Atom) -> Option<Linked> {
+        match self
+            .graph
+            .commonjs()
+            .find_forwarded_name(ModuleRef::File(file), name)?
+        {
+            ForwardedName::Binding(symbol) => Some(LinkedBinding::Binding(symbol)),
+            ForwardedName::Export(ModuleRef::File(file), name) => {
+                let name = Some(name);
+                Some(LinkedBinding::ExportOfCommonJs { file, name })
+            }
+            ForwardedName::Export(..) => None,
+        }
+    }
+
+    fn star_sources(&self, file: FileId) -> SmallVec<[FileId; 4]> {
+        let sources = self.graph.commonjs().name_sources(ModuleRef::File(file));
+        let files = sources.iter().filter_map(|&source| match source {
+            ModuleRef::File(source) if source != file => Some(source),
+            _ => None,
+        });
+        files.collect()
+    }
+
+    fn interop_argument(&self, file: FileId, call: ExprId) -> Option<ExprId> {
+        let helpers = self.known_helpers?;
+        let hir = self.files.hir(file);
+        let ExprKind::Call(site) = hir[call].kind else {
+            return None;
+        };
+        let module = hir.skip_type_assertions(hir.ids(hir[site].args).next()?);
+        if !matches!(hir[module].kind, ExprKind::Call(_)) {
+            return None;
+        }
+        let input = ResolveInput {
+            files: self.files,
+            modules: self.graph,
+            helpers,
+        };
+        let callee = resolve_callee(&input, file, hir[site].callee)?;
+        let is_interop = matches!(
+            callee.helper(helpers)?,
+            Helper::ImportDefault | Helper::ImportStar | Helper::ToEsModule
+        );
+        is_interop.then_some(module)
     }
 
     fn is_dead_store(&self, file: FileId, target: ExprId) -> bool {

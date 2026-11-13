@@ -42,7 +42,8 @@
 # where a head has such a parameter the frame is set up at the entry after all
 # f1 = g, f2 = h, f3 = last, f4 = looped, f5 = straight
 # REQUIRES: x86_64 unsanitized-code
-# RUN: allocate f5:Body mechanisms=all
+# As built the call that takes the third way is evaluated, and the way is gone.
+# RUN: allocate f5:Body mechanisms=all-Inlining
 # CHECK-LABEL: unit f5:Body
 # CHECK: needsFrameAheadOfFramedPart
 # RUN(LOOPED): allocate f4:Body mechanisms=all

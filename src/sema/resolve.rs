@@ -1514,8 +1514,15 @@ fn parent_directory(mut path: &[u8]) -> &[u8] {
 
 #[inline]
 fn ends_with(path: &[u8], suffix: &[u8]) -> bool {
-    let mut path = path.iter().rev();
-    suffix.iter().rev().all(|byte| path.next() == Some(byte))
+    let Some(start) = path.len().checked_sub(suffix.len()) else {
+        return false;
+    };
+    for at in (0..suffix.len()).rev() {
+        if path[start + at] != suffix[at] {
+            return false;
+        }
+    }
+    true
 }
 
 /// The path of `name` in `dir`: `CombinePaths` for a `name` without a root.
@@ -1603,7 +1610,8 @@ pub fn root_length(path: &[u8]) -> usize {
         [b'/', volume, b':'] | [b'/', volume, b':', b'/', ..] if volume.is_ascii_alphabetic() => 3,
         [b'/', b'^'] | [b'/', b'^', b'/', ..] => 2,
         [b'/', b'/', ..] => unc_root_length(path),
-        [b'/', rest @ ..] if !strings::contains_char(rest, b':') => 1,
+        // Without an early exit the loop is vectorized.
+        [b'/', rest @ ..] if !rest.iter().fold(false, |found, &it| found | (it == b':')) => 1,
         [b'/', rest @ ..] => match get_encoded_root_length(rest) {
             url if url < 0 => 1 + url_root_without_separator(&rest[..!url as usize]).len(),
             _ => 1,
@@ -1658,6 +1666,9 @@ pub(crate) fn get_path_components(path: &[u8]) -> SmallVec<[&[u8]; 8]> {
 /// The path that the file system resolves `path` to. It follows `.`, `..` and empty names, which never appear in a
 /// directory listing. Returns `None` if `path` is already absolute and normalized.
 fn normalized_for_lookup(path: &[u8]) -> Option<Vec<u8>> {
+    if is_plainly_normalized(path) {
+        return None;
+    }
     let names = &path[get_root_length(path)..];
     let mut split = strings::split(names, b"/");
     let is_normalized = path.first() == Some(&b'/')
@@ -1666,6 +1677,20 @@ fn normalized_for_lookup(path: &[u8]) -> Option<Vec<u8>> {
             // In the checker's format a URL's root has a `/` before it.
             || get_encoded_root_length(&path[1..]) < 0);
     (!is_normalized).then(|| join(b"/", path))
+}
+
+/// True for a path whose only root is the `/` that it begins with, if none of its names is empty, begins with a dot or
+/// contains a backslash.
+#[inline]
+pub fn is_plainly_normalized(path: &[u8]) -> bool {
+    let [b'/', names @ ..] = path else {
+        return false;
+    };
+    // Without an early exit the loop is vectorized.
+    let may_be_special = path.iter().zip(names).fold(false, |found, (&byte, &next)| {
+        found | ((byte == b'/') & ((next == b'/') | (next == b'.'))) | (next == b'\\')
+    });
+    !may_be_special && names.last().is_some_and(|&last| last != b'/')
 }
 
 /// `NormalizePath` of an absolute path, which keeps a separator at the end.
@@ -1689,10 +1714,31 @@ fn unc_root_length(path: &[u8]) -> usize {
     }
 }
 
+/// The names of the relative path `rest`, if each of them stays as it's written.
+fn find_plain_names(rest: &[u8]) -> Option<&[u8]> {
+    let names = rest.strip_prefix(b"./").unwrap_or(rest);
+    let (&[first, ..], &[.., last]) = (names, names) else {
+        return None;
+    };
+    // Without an early exit the loop is vectorized.
+    let is_special = |byte: u8| (byte == b'\\') | (byte == b':') | (byte == b'^');
+    let pairs = names.iter().zip(&names[1..]);
+    let has_special = pairs.fold(false, |found, (&byte, &next)| {
+        let is_odd_name = (byte == b'/') & ((next == b'/') | (next == b'.'));
+        found | is_odd_name | is_special(byte)
+    });
+    let is_odd_end = last == b'/' || is_special(last);
+    (!has_special && !is_odd_end && first != b'.' && first != b'/').then_some(names)
+}
+
 /// `GetNormalizedAbsolutePath`. `dir` is already normalized and absolute, so it's copied as is.
 /// That leaves one pass over `rest` and one allocation.
 /// (`bun_paths::join_abs_string_buf` copies the whole path three times before it reaches a `Vec`.)
 pub fn join(dir: &[u8], rest: &[u8]) -> Vec<u8> {
+    if let Some(names) = find_plain_names(rest) {
+        let dir = if dir == b"/" { b"" } else { dir };
+        return [dir, b"/", names].concat();
+    }
     // `GetEncodedRootLength`: `C:\a` and `^/a` are absolute paths too, on every system. They are
     // represented as `/C:/a` and `/^/a` here.
     let has_drive = matches!(rest, [drive, b':'] | [drive, b':', b'/' | b'\\', ..] if drive.is_ascii_alphabetic());
@@ -2451,6 +2497,9 @@ pub fn is_declaration_file_name(path: &[u8]) -> bool {
     let root_is_one_slash = path.first() == Some(&b'/') && !path.get(1).is_some_and(is_separator);
     if !root_is_one_slash || path.last().is_some_and(is_separator) {
         return !get_declaration_file_extension(path).is_empty();
+    }
+    if !ends_with(path, b"ts") {
+        return false;
     }
     // The base name is the end of such a path, from its last separator on.
     let base = || &path[path.iter().rposition(is_separator).map_or(0, |at| at + 1)..];

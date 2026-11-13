@@ -149,8 +149,7 @@ pub enum Lookup<'e> {
     TypeScript {
         /// Its `project` option verbatim.
         projects: SmallVec<[&'e [u8]; 1]>,
-        /// Its `conditionNames`: the conditions that match in `exports` and `imports`, besides `default`. `None` is
-        /// its default list.
+        /// Its `conditionNames`. `None` is its default list.
         condition_names: Option<Box<[&'e [u8]]>>,
     },
     /// eslint-import-resolver-node, with its `extensions`.

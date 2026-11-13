@@ -704,8 +704,7 @@ pub struct Options {
     /// `customConditions`: conditions that match in the `exports` and `imports` of a
     /// `package.json`, in addition to the default ones.
     pub custom_conditions: Vec<Vec<u8>>,
-    /// eslint-import-resolver-typescript's `conditionNames`, not a TypeScript option: the conditions that
-    /// match in `exports` and `imports`, besides `default`. Replaces every other condition.
+    /// eslint-import-resolver-typescript's `conditionNames`: the only conditions besides `default` that match.
     pub condition_names: Option<Vec<Vec<u8>>>,
     /// `GetResolvePackageJsonExports`. The resolver uses `has_exports_feature`.
     pub resolve_package_json_exports: bool,

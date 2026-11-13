@@ -2026,9 +2026,11 @@ describe("Socket fd adoption", () => {
   // asynchronous, and an adopted fd > 2 is closed once the socket has closed.
   // @sap/hana-client (#48751) wraps its completion pipe's read end this way.
   //
-  // Readiness of a named FIFO is not reliably reported on macOS (PipeReader.rs),
-  // so reads over a named FIFO are only covered there by the pipe(2) tests at
-  // the end of this block.
+  // On macOS kqueue doesn't wake a FIFO reader when an empty FIFO's last
+  // writer closes (see the FIFO EOF test in bun-serve-file.test.ts), whatever
+  // way the filter is armed, so 'end'/'close' can't be observed over a named
+  // FIFO there. An anonymous pipe(2) reports its EOF, so the pipe(2) tests at
+  // the end of this block are what covers reading on macOS.
   const fifoReadsUnsupported = isWindows || isMacOS;
 
   it.skipIf(fifoReadsUnsupported)("readable: true reads from an adopted FIFO fd and closes it on 'close'", async () => {

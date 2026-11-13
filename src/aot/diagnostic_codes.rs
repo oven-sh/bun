@@ -42,7 +42,7 @@ diagnostic_codes! {
         EveryFileMayLoadAgain = 100079, Warning, "{0}. After that any file of this test run may load again, so the whole run is compiled for that, and not as an executable is. The tests still work, but they don't test the code that ships";
         LoaderFunctionNotAsked = 100080, Warning, "A compiled program calls {0} only for a path that it computes when it runs. Every import, and every require() of a constant path, is resolved at build time and doesn't ask it. If the program depends on this hook, build it with --no-aot";
         WorkerFileNotCompiled = 100081, Warning, "This Worker may start from a file that isn't compiled, and then it fails to load: {0}. Add the file as an entry point, or write its path as new URL(\"./file\", import.meta.url)";
-        WorkerStartedFromUnknownValue = 100082, Warning, "The build can't tell which file this Worker starts from. If that file isn't an entry point, the Worker fails to load";
+        WorkerStartedFromUnknownValue = 100082, Warning, "The build can't tell which file this Worker starts from. If that file isn't an entry point, the Worker fails to load{0}";
         WorkerTextNotCompiled = 100084, Warning, "This Worker may start from code in a text: a data: or blob: URL, or the text of a Worker with eval: true. That code isn't compiled, so it runs in the interpreter. To compile it, move it to a file and write the path as new URL(\"./file\", import.meta.url)";
         FolderNamedAsParentIsSpelled = 100085, Error, "Two files would have the path \"{0}\" in the executable: \"{1}\" and \"{2}\". A folder above that of the entry point is written \"_.._\" there, so no folder beside it can have that name";
         DeletionFromModuleCacheDoesNothing = 100091, Warning, "A compiled module that has run doesn't run again. Taking it out of require.cache does nothing in an executable, and the next require() returns the same exports";
@@ -59,6 +59,7 @@ diagnostic_codes! {
         IgnoreCommentSilencesNothing = 100073, Warning, "This comment silences nothing: {0}";
         DataFilesFoundByPattern = 100088, Note, "This path isn't a constant, so the executable embeds every file that it may name. These aren't code: {0}";
         UnembeddedFileRead = 100098, Warning, "This reads \"{0}\", but the executable has no file at that path. Embed it with --asset {0}";
+        EmbeddedFileUnreachable = 100087, Warning, "This reads \"{0}\", which is in the executable, but this path doesn't lead there: a path made from import.meta climbs at most one folder above the root of the executable. Make it from __dirname";
 
 
     }
@@ -93,6 +94,17 @@ diagnostic_codes! {
         EntryPointIsExternal = 100162, Error, "The entry point \"{0}\" cannot be marked as external";
         FileIsNotAProgram = 100163, Error, "\"{0}\" is loaded as JavaScript, because nothing says what else it is, and it isn't JavaScript: {1}";
         DataFileIsRefused = 100164, Error, "\"{0}\" could not be parsed as {1}: {2}";
+        FileEmbeddedImplicitly = 100166, Note, "The executable embeds \"{0}\" because this reads it";
+        WorkerFileFoundByName = 100167, Note, "The executable holds \"{0}\", which this names, because a Worker may start from it";
+        WorkerFilesFoundByName = 100168, Note, "The build can't tell which file each Worker starts from, so the executable holds these files, which the program names: {0}";
+        WorkerFileIsRefused = 100169, Warning, "\"{0}\" is only compiled because a Worker may start from it, and it can't be: {1}. A Worker that loads it fails";
+        PackageJsonEmbeddedImplicitly = 100170, Note, "The executable embeds \"{0}\" because this reads a path that isn't known at build time";
+        NearerPackageJsonEmbedded = 100171, Note, "The executable embeds \"{0}\" because a search for the nearest package.json would otherwise find \"{1}\"";
+        NamedPathNotEmbedded = 100172, Warning, "This passes on \"{0}\", but the executable has nothing at that path once it's moved. Embed it with --asset {0}, or ship it and find it through process.execPath";
+        PathNeededOnDisk = 100173, Warning, "This looks for \"{0}\" on the disk, and the executable has nothing there once it's moved. Ship it and find it through process.execPath";
+        SearchMissesPackageJson = 100174, Warning, "This hands on \"{0}\", and the executable doesn't hold the package.json that a search from there finds first. Once it's moved, the search finds another one or none";
+        FolderListedInPart = 100175, Warning, "This hands on \"{0}\" to code that may list it, and the executable holds some of its files alone. Once it's moved, the list is shorter. Embed the folder with --asset {0}";
+        FileBehindAssetSymlink = 100165, Warning, "This reads \"{0}\", but the executable has no file at that path: --asset follows no links inside a folder. Embed it with --asset {1}";
     }
     Link 100200..=100299 {
         ExportNotFound = 100200, Error, "No matching export in \"{0}\" for import \"{1}\"";

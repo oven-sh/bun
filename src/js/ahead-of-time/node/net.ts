@@ -193,7 +193,7 @@ declare global {
       prototype: any;
     }
 
-    interface Socket extends Duplex {
+    interface Socket extends Duplex, HttpSocket {
       bytesRead: number;
       connecting: boolean;
       timeout: number;

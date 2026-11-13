@@ -6,5 +6,5 @@
 # -- end of source
 # The front of the loop asks for the byte array or for what the class below it makes, and the turns read the length and the elements of either without asking again.
 # RUN(WALK): walk f1 mechanisms=all
-# WALK: = IsPristine {{*}}builtinClass=Uint8Array aspects=[NamesKeptBelow]
+# WALK: = IsPristine {{*}}builtinClass=Uint8Array aspects=[InheritedNamesKept]
 # WALK: = GetTypedArrayElement {{*}}isInsideView

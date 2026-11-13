@@ -261,7 +261,7 @@ static void recordRefusedChange(JSC::JSGlobalObject* globalObject, const String&
 {
     JSC::CallFrame* callFrame = globalObject->vm().topCallFrame;
     // The loader starts a module from no frame, and what is said of a file that runs names no place.
-    bool namesPlace = !refusal.startsWith("Ran from source "_s) && !refusal.startsWith("Kept the run of "_s);
+    bool namesPlace = !refusal.startsWith("Ran from source "_s) && !refusal.startsWith("Kept the run of "_s) && !refusal.startsWith("Ran more often "_s);
     if (!callFrame && namesPlace)
         return;
     BunString sourceURL = Bun::BunStringEmpty;
@@ -311,6 +311,12 @@ void recordFileRunFromSource(JSC::JSGlobalObject* globalObject, const String& pa
 {
     if (listsRefusedChanges)
         recordRefusedChange(globalObject, makeString("Ran from source '"_s, path, "': "_s, why));
+}
+
+void recordRepeatedFileRun(JSC::JSGlobalObject* globalObject, const String& path, ASCIILiteral why)
+{
+    if (listsRefusedChanges)
+        recordRefusedChange(globalObject, makeString("Ran more often '"_s, path, "': "_s, why));
 }
 
 bool recordAddonLoadedFromDisk(JSC::JSGlobalObject* globalObject, const String& path)
@@ -363,7 +369,7 @@ static void appendCompiledFrame(StringBuilder& text, const JSC::AOT::Image& imag
     if (JSC::AOT::builtinOfFunctionInFrames(frame.function))
         return;
     auto position = JSC::AOT::positionOf(frame);
-    String place = position && position->source ? makeString(JSC::AOT::sourceURLOf(position->source), ':', position->lineColumn.line, ':', position->lineColumn.column) : String();
+    String place = position && position->source ? makeString(JSC::AOT::displayPathOf(*position), ':', position->lineColumn.line, ':', position->lineColumn.column) : String();
     if (JSC::AOT::FunctionDescription(frame.function).codeType() == JSC::ModuleCode) {
         text.append("    at "_s, place, '\n');
         return;

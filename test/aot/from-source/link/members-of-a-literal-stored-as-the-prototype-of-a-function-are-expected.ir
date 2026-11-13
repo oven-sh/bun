@@ -1,8 +1,8 @@
 # `Tally.prototype = { raise: function (v) { .. }, get paces() { .. } }`: the body makes the literal, fills it under written names and does nothing else with it but store it under `prototype`.
 # So the summary knows it as what a read of that `prototype` gives: a value under a name is a store on the prototype object, a getter or a setter a definition there, as a descriptor that is written in the body lays one.
-# If a getter cost the literal that, no row would list what it holds, and no method beside the getter would be expected.
-# NO PROOF: an accessor runs code at lookups that no flow need see, so the store still lets the function and its layout go. The record of the class expects the functions, and the run time looks at the object that `prototype` holds where the first object is made.
-# A name that is written again behind the store expects nothing, be it a second function, a descriptor or a value.
+# If a getter cost the literal that, no row would list what it holds, and no method beside the getter would be known.
+# The closures of the getters and setters are in sight, so the function and its layout stay, and a method that is written once is proven.
+# A name that is written again behind the store is not. Of two functions the one that is stored last is expected; of a descriptor or a value nothing is.
 # f1 = Tally, f2 = Twice, f3 = raise, f4 = lower, f5 = paces, f6 and f7 = level, f11 = k
 # -- source: main.js
 # function Tally() { this.sum = 0; this.steps = 0; }
@@ -21,26 +21,27 @@
 # new Twice().k();
 # -- end of source
 # RUN(SCAN): summary f0
+# SCAN: Define a{{*}}"paces" <- Unknown accessor-as-written getter=f5
+# SCAN: Define a{{*}}"level" <- Unknown accessor-as-written getter=f6 setter=f7
 # SCAN: Define a{{*}}"raise" <- Closure f3
-# SCAN: DefinesByDescriptor a{{*}}"paces" other=Closure f5 getter
-# RUN(GOES): summary f0
-# GOES-NOT: made-for-it
+# SCAN: made-for-it
+# SCAN: made-for-it
 # RUN(RAISE): link members mechanisms=all
-# RAISE: on-prototype L0 "raise" expected=f3
+# RAISE: on-prototype L0 "raise" function=f3
 # RUN(LOWER): link members mechanisms=all
-# LOWER: on-prototype L0 "lower" expected=f4
+# LOWER: on-prototype L0 "lower" function=f4
 # RUN(PACES): link members mechanisms=all
 # PACES: on-prototype L0 "paces" getter=f5
 # PACES-NOT: "paces" getter=f5 setter=
 # RUN(LEVEL): link members mechanisms=all
 # LEVEL: on-prototype L0 "level" getter=f6 setter=f7
 # RUN(KEPT): link members mechanisms=all
-# KEPT: on-prototype L1 "k" expected=f11
+# KEPT: on-prototype L1 "k" function=f11
 # RUN(AGAIN): link members mechanisms=all
-# AGAIN-NOT: "m" expected=
+# AGAIN: on-prototype L1 "m" expected=f12
+# AGAIN-NOT: "m" function=
 # AGAIN-NOT: "g" getter=
 # AGAIN-NOT: "h" getter=
-# RUN(UNPROVEN): link members layouts mechanisms=all
-# UNPROVEN-NOT: on-prototype {{*}}function=
-# UNPROVEN: layout L0 {{*}}changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
-# UNPROVEN: layout L1 {{*}}changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# RUN(STAYS): link layouts mechanisms=all
+# STAYS: layout L0 {{*}}changes=[] stays-with-compiled-code
+# STAYS: layout L1 {{*}}changes=[] stays-with-compiled-code

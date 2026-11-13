@@ -11,8 +11,8 @@
 // # f5 = least, the method
 // # RUN(MOVES): loops f5:Body mechanisms=all
 // # REQUIRES(MOVES): x86_64 as-written
-// # The body stands behind a `continue`: what it asks of the eight lists is asked in front beside one more copy of the loop: that copy has 11 moves, the copy beside it 14.
-// # MOVES: moves 11,
+// # The body stands behind a `continue`: what it asks of the eight lists is asked in front beside one more copy of the loop: that copy has 8 moves, the copy beside it 14.
+// # MOVES: moves 8,
 // # MOVES: moves 14,
 // # RUN: run-in-shell $SHELL
 // # CHECK: 15 of 15 of 15

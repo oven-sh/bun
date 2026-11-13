@@ -9,9 +9,9 @@
 # RUN(HEADS): walk f1 mechanisms=all
 # HEADS-LABEL: code f1:Body
 # HEADS: ({{*}}: number|string @JSValue, {{*}}) isInLoop=true isLoopHead=true:
-# HEADS: ({{*}}: int|whole @Double, {{*}}) isInLoop=true isLoopHead=true:
+# HEADS: ({{*}}: int[0, {{*}}] @Int64, {{*}}) isInLoop=true isLoopHead=true:
 # HEADS-NOT: AreMembersUnchanged
-# HEADS: = Add {{*}} form=Numbers
+# HEADS: = Add {{*}} form=Integers
 # Code that nobody has seen calls run, so its own body runs. Where the accessor has been replaced the guard fails in front, and the sum is what the other copy makes of it.
 # RUN(ANSWERS): run-in-shell globalThis.publish = (Meter, run) => { print(run(12)); print(run(12)); };
 # ANSWERS: 60

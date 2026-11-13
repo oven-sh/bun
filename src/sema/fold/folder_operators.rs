@@ -50,7 +50,13 @@ impl<'s> Folder<'_, 's> {
             | ExprKind::AsConst(expr)
             | ExprKind::NonNull(expr)
             | ExprKind::Instantiation { expr, .. } => self.fold_cast(e, expr),
-            ExprKind::Ident(name) => self.fold_ident(e, name),
+            ExprKind::Ident(name) => {
+                let folded = self.fold_ident(e, name);
+                if matches!(folded.value, Value::Unknown) {
+                    self.note_read_of_own_object(e);
+                }
+                folded
+            }
             ExprKind::Dot { obj, chain, .. } | ExprKind::Index { obj, chain, .. } => {
                 let short_circuited = match chain {
                     Chain::No => None,
@@ -58,7 +64,13 @@ impl<'s> Folder<'_, 's> {
                 };
                 match short_circuited {
                     Some(folded) => folded,
-                    None => self.fold_member(e, chain),
+                    None => {
+                        let folded = self.fold_member(e, chain);
+                        if chain == Chain::No && matches!(folded.value, Value::Unknown) {
+                            self.note_read_of_own_object(e);
+                        }
+                        folded
+                    }
                 }
             }
             ExprKind::ImportMeta => self.fold_import_meta(e),
@@ -121,6 +133,11 @@ impl<'s> Folder<'_, 's> {
             return Folded::constant(Constant::String(type_name));
         }
         if op == UnOp::Typeof
+            && let Some(type_name) = self.type_of_own_object(operand)
+        {
+            return Folded::constant(Constant::String(type_name));
+        }
+        if op == UnOp::Typeof
             && let Some(kind) = self.find_runtime_value_kind(operand)
         {
             let type_name = Constant::String(match kind {
@@ -131,7 +148,9 @@ impl<'s> Folder<'_, 's> {
             return Folded::new(Value::from(type_name), self.folded(operand).effects);
         }
         let type_of_literal = match self.hir[operand].kind {
-            ExprKind::Fn(_) => Some(known::function),
+            ExprKind::Fn(function) if !self.hir.is_evaluated_function(function) => {
+                Some(known::function)
+            }
             ExprKind::Regex { .. } => Some(known::object),
             _ => None,
         };
@@ -193,6 +212,8 @@ impl<'s> Folder<'_, 's> {
                 };
                 self.fold_logical(e, operator, left, right)
             }
+            // A copy of a factory is called.
+            BinOp::Comma if self.hir.copied_factory_of(e).is_some() => self.folded(right),
             BinOp::Comma => {
                 self.copy_condition(e, right);
                 let right = self.folded(right);
@@ -404,7 +425,7 @@ impl<'s> Folder<'_, 's> {
         let callee = hir.skip_type_assertions(call.callee);
         hir.ids(call.args).next() == Some(argument)
             && matches!(hir[callee].kind, ExprKind::Ident(known::RegExp))
-            && matches!(self.bound.binding(callee), Binding::Free)
+            && self.bound.static_binding(callee) == Some(Binding::Free)
     }
 
     fn fold_conditional(&mut self, e: ExprId, test: ExprId, branches: Branches) -> Folded {

@@ -1,5 +1,3 @@
-use std::mem::take;
-
 use rustc_hash::FxHashMap;
 
 use super::FileLowering;
@@ -10,6 +8,7 @@ use crate::ir::{
     BlockId, DeclaredType, Edge, FunctionBuilder, FunctionId, FunctionKey, Handler, Type, TypeId,
     ValueId,
 };
+use crate::lower::appended_pieces::AppendedPiece;
 use crate::lower::captures;
 use crate::lower::class::Birth;
 use crate::lower::control::ControlState;
@@ -17,6 +16,17 @@ use crate::lower::convert;
 use crate::lower::generator::CoroutineState;
 use crate::lower::object::ListsInside;
 use crate::lower::scope::ScopeState;
+use crate::lower::self_tail_calls::SelfTailLoop;
+use crate::lower::super_calls::CheckOfClass;
+
+/// The `require` of a site that a call of createRequire made. It requires the module, not the module object of the file.
+#[derive(Clone, Copy)]
+pub(in crate::lower) enum CreatedRequire {
+    Variable(bun_sema::hir::ExprId),
+    /// The callee makes it. `Value` as soon as the callee is evaluated.
+    Callee,
+    Value(ValueId),
+}
 
 pub(crate) struct FunctionLowering<'f, 'a, 'c, 'p, 's> {
     pub(crate) file: &'f mut FileLowering<'a, 'c, 'p, 's>,
@@ -35,9 +45,21 @@ pub(crate) struct FunctionLowering<'f, 'a, 'c, 'p, 's> {
     pub(in crate::lower) lists_inside_literals:
         std::cell::RefCell<FxHashMap<bun_sema::hir::ExprId, ListsInside>>,
     pub(in crate::lower) birth: Option<Birth>,
+    pub(in crate::lower) statements_lowered_at_super_call:
+        smallvec::SmallVec<[bun_sema::hir::StmtId; 8]>,
     pub(in crate::lower) counted_expression: Option<u32>,
     pub(in crate::lower) does_file_name_library_modules: Option<bool>,
-    pub(in crate::lower) made_require_of_site: Option<bun_sema::hir::ExprId>,
+    pub(in crate::lower) created_require_of_site: Option<CreatedRequire>,
+    pub(in crate::lower) destructured_position: Option<u32>,
+    pub(in crate::lower) step_before_test: Option<bun_sema::hir::ExprId>,
+    /// From the outermost on.
+    pub(in crate::lower) loose_loops: Vec<crate::lower::statement::LooseLoop>,
+    pub(in crate::lower) self_tail_loop: Option<SelfTailLoop>,
+    pub(in crate::lower) suspending_arm: Option<super::super::statement::SuspendingArm>,
+    pub(in crate::lower) check_of_class: Option<CheckOfClass>,
+    /// Variables declared by `var type = typeof value` in the statement lists around the current statement, and before it.
+    pub(in crate::lower) typeof_variables: smallvec::SmallVec<[bun_sema::bind::SymbolId; 4]>,
+    pub(in crate::lower) appended_pieces: smallvec::SmallVec<[AppendedPiece; 1]>,
     handler: Option<Handler>,
     position: u32,
     nesting_depth: u32,
@@ -45,6 +67,7 @@ pub(crate) struct FunctionLowering<'f, 'a, 'c, 'p, 's> {
 }
 
 impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
+    #[inline(always)]
     pub(crate) fn begin(
         file: &'f mut FileLowering<'a, 'c, 'p, 's>,
         function: FunctionId,
@@ -53,7 +76,8 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
         let key = file.function_key(function);
         let position = header.position;
         let returned = header.results.first().copied();
-        let builder = FunctionBuilder::new(header, take(&mut file.scratch));
+        let scratch = file.task.scratch.take().unwrap_or_default();
+        let builder = FunctionBuilder::new(header, scratch);
         let mut lowering = FunctionLowering {
             file,
             builder,
@@ -70,9 +94,18 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
             only_argument_of_construction: None,
             lists_inside_literals: Default::default(),
             birth: None,
+            statements_lowered_at_super_call: smallvec::SmallVec::new(),
             counted_expression: None,
             does_file_name_library_modules: None,
-            made_require_of_site: None,
+            created_require_of_site: None,
+            destructured_position: None,
+            step_before_test: None,
+            loose_loops: Vec::new(),
+            self_tail_loop: None,
+            suspending_arm: None,
+            check_of_class: None,
+            typeof_variables: smallvec::SmallVec::new(),
+            appended_pieces: smallvec::SmallVec::new(),
             handler: None,
             position,
             nesting_depth: 0,
@@ -83,6 +116,7 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
         lowering
     }
 
+    #[inline(always)]
     pub(crate) fn finish(self) {
         debug_assert!(self.handler.is_none(), "every handler was left");
         debug_assert_eq!(self.nesting_depth, 0, "every nesting level was left");
@@ -93,12 +127,13 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
             ..
         } = self;
         let (finished, scratch) = builder.finish();
-        file.scratch = scratch;
+        file.task.scratch = Some(scratch);
         file.fragment.define_function(function, finished);
     }
 
     #[inline]
     pub(crate) fn set_position(&mut self, position: u32) {
+        let position = self.file.hir.written_position(position);
         self.position = position;
         self.builder.set_position(Some(position));
     }

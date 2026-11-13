@@ -15,6 +15,7 @@ use bun_core::{String as BunString, StringPointer, ZStr};
 use bun_exe_format::mapped_file::FileBytes;
 use bun_exe_format::{macho as bun_macho, pe as bun_pe};
 use bun_options_types::bundle_enums::{Format, WindowsOptions};
+pub use bun_options_types::standalone_path::is_bun_standalone_file_path;
 #[cfg(not(windows))]
 use bun_paths::SEP_STR;
 use bun_paths::fs as bun_fs;
@@ -101,20 +102,6 @@ impl Default for RuntimeOptions {
     }
 }
 
-// We never want to hit the filesystem for these files
-// We use the `/$bunfs/` prefix to indicate that it's a virtual path
-// It is `/$bunfs/` because:
-//
-// - `$` makes it unlikely to collide with a real path
-// - `/$bunfs/` is 8 characters which is fast to compare for 64-bit CPUs
-#[cfg(not(windows))]
-pub const BASE_PATH: &str = "/$bunfs/";
-// Special case for windows because of file URLs being invalid
-// if they do not have a drive letter. B drive because 'bun' but
-// also because it's more unlikely to collide with a real path.
-#[cfg(windows)]
-pub const BASE_PATH: &str = "B:\\~BUN\\";
-
 // Rust cannot const-concat with a runtime enum branch nor across a `const fn`
 // boundary, so the two call-site combinations are materialized directly with
 // `const_format::concatcp!`.
@@ -184,24 +171,6 @@ pub fn target_base_public_path(
     }
 }
 
-pub(crate) fn is_bun_standalone_file_path_canonicalized(str_: &[u8]) -> bool {
-    str_.starts_with(BASE_PATH.as_bytes())
-        || (cfg!(windows) && str_.starts_with(BASE_PUBLIC_PATH.as_bytes()))
-}
-
-pub fn is_bun_standalone_file_path(str_: &[u8]) -> bool {
-    #[cfg(windows)]
-    {
-        // On Windows, remove NT path prefixes before checking
-        let canonicalized = strings::paths::without_nt_prefix::<u8>(str_);
-        return is_bun_standalone_file_path_canonicalized(canonicalized);
-    }
-    #[cfg(not(windows))]
-    {
-        is_bun_standalone_file_path_canonicalized(str_)
-    }
-}
-
 impl StandaloneModuleGraph {
     // by normalized file path
     pub fn find(&mut self, name: &[u8]) -> Option<&mut File> {
@@ -218,21 +187,44 @@ impl StandaloneModuleGraph {
         let name = normalize_file_key(name, &mut buf);
         self.files
             .get(name)
-            .or_else(|| self.files.get(&self.key_of_asset_named_at_root(name)?))
+            .or_else(|| self.files.get(&self.root_asset_key(name)?))
             .or_else(|| self.files.get(&self.key_of_file_above_root(name)?))
     }
 
     pub fn find_ref(&self, name: &[u8]) -> Option<&File> {
+        // What the program has written is on the disk: `find_written_file`.
+        if compiled_program::find_written_file(name).is_some() {
+            return None;
+        }
+        self.find_embedded_file(name)
+    }
+
+    /// `find_ref`, also for a file that was written on the disk.
+    fn find_embedded_file(&self, name: &[u8]) -> Option<&File> {
         if !is_bun_standalone_file_path(name) {
             return self.find_at_source_path(name);
         }
         self.lookup_file(name)
+            .filter(|file| !compiled_program::is_removed_by_program(file.name))
+            .filter(|file| !self.has_file_vanished(file.name))
     }
 
-    /// What a program reads as data: not the file of a compiled entry point, which is in the graph for its name alone.
+    /// What a program reads as data: not the file of a compiled entry point or a file that the program only asks about, which are in the graph for their names alone.
     pub fn find_data(&self, name: &[u8]) -> Option<&File> {
-        let file = self.find_ref(name)?;
-        (!self.is_file_of_compiled_entry_point(file)).then_some(file)
+        self.find_ref(name).filter(|file| self.has_data(file))
+    }
+
+    /// What a program loads as a library. What the program itself has written is on the disk: `find_written_code`. What another process has written there is not trusted, so the embedded file is loaded.
+    pub fn find_library(&self, name: &[u8]) -> Option<&File> {
+        if compiled_program::find_written_code(name).is_some() {
+            return None;
+        }
+        self.find_embedded_file(name)
+            .filter(|file| self.has_data(file))
+    }
+
+    fn has_data(&self, file: &File) -> bool {
+        !self.is_file_of_compiled_entry_point(file) && !self.has_no_file_contents(file)
     }
 
     pub fn contains_file(&self, name: &[u8]) -> bool {
@@ -296,9 +288,14 @@ impl StandaloneModuleGraph {
         let found = self.directory_key(name, &mut buf)?;
         let mut listed = self.list_folder(found, recursive);
         let others = self.find_folders_named_alike(name, found);
-        for folder in others.iter().flat_map(|it| &it.1) {
+        let (shared, folders) = others.unwrap_or_default();
+        for folder in &folders {
             let more = self.list_folder(folder, recursive);
-            let is_new = |entry: &(Box<[u8]>, bool)| !listed.iter().any(|it| it.0 == entry.0);
+            let is_new = |entry: &(Box<[u8]>, bool)| {
+                let below = |folder: &[u8]| [folder, b"/", &entry.0[..]].concat();
+                !listed.iter().any(|it| it.0 == entry.0)
+                    && self.is_named_at_root(&below(&shared), &below(folder))
+            };
             let more: Vec<_> = more.into_iter().filter(is_new).collect();
             listed.extend(more);
         }
@@ -307,7 +304,18 @@ impl StandaloneModuleGraph {
                 listed.push(entry);
             }
         }
+        if !is_bun_standalone_file_path(name) {
+            let name = strings::without_trailing_slash(name);
+            listed.retain(|(below, is_folder)| {
+                self.holds_at_source_path(&[name, b"/", below].concat(), *is_folder)
+            });
+        }
         Some(listed)
+    }
+
+    /// Whoever walks a folder holds its path for as long as the process lives.
+    pub fn keep_folder_path(path: &[u8]) -> &'static [u8] {
+        keep_key_of_directory_with_code_alone(strings::without_trailing_slash(path))
     }
 
     pub(crate) fn list_folder(&self, name: &[u8], recursive: bool) -> Vec<(Box<[u8]>, bool)> {
@@ -338,13 +346,35 @@ impl StandaloneModuleGraph {
             })
         };
         for (index, key) in self.files.keys().iter().enumerate() {
-            if !is_compiled_entry_point(index) {
+            let is_removed = || {
+                compiled_program::is_removed_by_program(key)
+                    && compiled_program::find_written_file(key).is_none()
+            };
+            if !is_compiled_entry_point(index) && !is_removed() && !self.has_file_vanished(key) {
                 push(key, false);
             }
         }
         for key in self.dirs.keys() {
-            push(key, true);
+            if key.starts_with(name)
+                && !compiled_program::is_removed_by_program(key)
+                && !self.has_folder_vanished(key)
+            {
+                push(key, true);
+            }
         }
+        let mut push_with_folders = |key: &[u8]| {
+            let mut end = prefix.len();
+            while recursive
+                && key.starts_with(&prefix)
+                && let Some(length) = strings::index_of_char(&key[end..], b'/')
+            {
+                end += length as usize;
+                push(&key[..end], true);
+                end += 1;
+            }
+            push(key, false);
+        };
+        compiled_program::for_each_written_file(name, &mut push_with_folders);
         if let Some(program) = &self.compiled_program {
             let mut source_path: Vec<u8> = Vec::new();
             for entry_point in program.entry_points_in_directory(name) {
@@ -381,7 +411,7 @@ impl StandaloneModuleGraph {
             return self.files.get_mut(name);
         }
         let key = self
-            .key_of_asset_named_at_root(name)
+            .root_asset_key(name)
             .or_else(|| self.key_of_file_above_root(name))?;
         self.files.get_mut(&key)
     }
@@ -403,7 +433,22 @@ fn keep_key_of_directory_with_code_alone(key: &[u8]) -> &'static [u8] {
 #[cfg(windows)]
 pub(crate) fn normalize_file_key<'a>(name: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
     let input = strings::paths::without_nt_prefix::<u8>(name);
-    path::resolve_path::platform_to_posix_buf::<u8>(input, buf)
+    let length = path::resolve_path::platform_to_posix_buf::<u8>(input, buf).len();
+    let length = normalize_windows_key(&mut buf[..length]);
+    &buf[..length]
+}
+
+/// Keys have an uppercase drive letter and no trailing separator. Returns the new length.
+#[cfg(any(windows, test))]
+pub(crate) fn normalize_windows_key(key: &mut [u8]) -> usize {
+    if let [drive, b':', ..] = key {
+        drive.make_ascii_uppercase();
+    }
+    let mut length = key.len();
+    while length > 3 && key[length - 1] == b'/' {
+        length -= 1;
+    }
+    length
 }
 
 // SAFETY: the graph is the process-global INSTANCE singleton (set once at
@@ -444,7 +489,8 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
         self.files.values().get(file as usize).map(|file| file.name)
     }
     fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&'static [u8]> {
-        self.lookup_file(name).map(|f| f.name)
+        let file = self.lookup_file(name)?;
+        (!self.has_no_file_contents(file)).then_some(file.name)
     }
 
     fn base_public_path_with_default_suffix(&self) -> &'static [u8] {
@@ -1775,6 +1821,9 @@ pub(crate) fn to_bytes(
                 has_entry_point |= is_entry_point(output_file);
 
                 string_builder.count_z(bytes);
+                if bytes.len() >= bun_sys::private_copy::MIN_MAPPED_BYTES {
+                    string_builder.cap += bun_sys::private_copy::ALIGNMENT - 1;
+                }
                 if is_stored_as_string(output_file) {
                     // UTF-16 worst case: 2 bytes per byte, padding, 2-byte NUL.
                     string_builder.cap += bytes.len() + 3;
@@ -2094,7 +2143,11 @@ pub(crate) fn to_bytes(
             (module.contents, module.encoding, hash) =
                 encode_text_module(&mut string_builder, output_file.value.as_slice());
         } else {
-            module.contents = string_builder.append_count_z(output_file.value.as_slice());
+            let bytes = output_file.value.as_slice();
+            if bytes.len() >= bun_sys::private_copy::MIN_MAPPED_BYTES {
+                align_next_append(&mut string_builder, bun_sys::private_copy::ALIGNMENT);
+            }
+            module.contents = string_builder.append_count_z(bytes);
         }
         // `Flags::HAS_SOURCE_HASHES`: JSC's SourceCodeKey hash, so a launch from bytecode never reads the source text.
         if !output_file.loader.is_javascript_like() {
@@ -3786,6 +3839,14 @@ fn append_shared_bytecode(
         module_info_string_table_ptr,
         prelinked_module_graph_ptr,
     )
+}
+
+/// What is appended next starts at a multiple of `alignment` once mapped. The section data begins 8 bytes after a page-aligned address (the length header).
+fn align_next_append(string_builder: &mut bun_core::StringBuilder, alignment: usize) {
+    let padding = (string_builder.len + size_of::<u64>()).next_multiple_of(alignment)
+        - (string_builder.len + size_of::<u64>());
+    string_builder.writable()[..padding].fill(0);
+    string_builder.len += padding;
 }
 
 /// JSC reads cached bytecode in place and expects its start 128-byte aligned once mapped. The section data begins

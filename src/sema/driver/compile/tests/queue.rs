@@ -39,7 +39,7 @@ fn run_pass_over<'s>(
         to_check,
         &FileWork {
             requested,
-            after_file: Some(after_file),
+            after_file: Some(&|checker, file, _| after_file(checker, file)),
             after_commit: &|_| {},
             frees_tree: &|_| options.frees_trees,
             is_last_pass: &|| false,
@@ -180,7 +180,7 @@ fn is_tree_of_last_file_gone(is_last_pass: bool) -> bool {
             to_check,
             &FileWork {
                 requested: &|_| Requested::All,
-                after_file: Some(&|_, file| {
+                after_file: Some(&|_, file, _| {
                     let mut committed = committed.lock();
                     while file == last && *committed + 1 < all {
                         has_committed.wait_guarded(&mut committed);

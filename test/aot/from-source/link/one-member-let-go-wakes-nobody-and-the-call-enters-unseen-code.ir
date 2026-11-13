@@ -25,9 +25,9 @@
 # RUN(CLOSED): closure mechanisms=all
 # CLOSED-NOT: climbs
 # RUN(DEAF): closure testing=IgnoreDormantMemberUpdates mechanisms=all
-# DEAF: newest first: {{*}} climbs from nothing to primitives=0xc3ff unseen
-# DEAF: oldest first: {{*}} climbs from nothing to primitives=0xc3ff unseen
-# DEAF: scattered: {{*}} climbs from nothing to primitives=0xc3ff unseen
+# DEAF: newest first: {{*}} climbs from nothing to primitives=0xcbff unseen
+# DEAF: oldest first: {{*}} climbs from nothing to primitives=0xcbff unseen
+# DEAF: scattered: {{*}} climbs from nothing to primitives=0xcbff unseen
 
 module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
 module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)

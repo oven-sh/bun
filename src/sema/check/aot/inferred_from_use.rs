@@ -1,17 +1,25 @@
-use super::answers::{CheckedType, ClassRef, GaveUp, MemberLookup, QueryLimit};
+use super::answers::{
+    CheckedType, ClassDeclaration, ClassMemberSource, ClassRef, FunctionRef, GaveUp, MemberLookup,
+    MemberName, ObjectMemberKind, QueryLimit,
+};
 use super::builtin_types::BuiltinClassIndex;
+use super::class_stores::{BindingStoreKind, StoreForm, ThisOwner, find_stored_function};
 use super::prototype_links::{NamedValue, PrototypeOperation};
 use super::queries::{GivenProduct, Queries};
 use super::type_identity::ObjectOrigin;
 use super::type_shape::ShapeKind;
 use crate::atom::{Atom, known};
-use crate::bind::{Binding, Bound, Decl, FnOwner, Parent, PatParent, StoreKind, SymbolId};
+use crate::bind::{
+    Binding, BindingInitializer, Bound, CodeUnit, Decl, FnOwner, Parent, PatParent, StoreKind,
+    SymbolId,
+};
 use crate::check::root_declaration;
 use crate::check::shape::PropertyHolder;
+use crate::check::shared_indexes::{ReadsOfFields, SharedIndexes};
 use crate::hir::{
     self, BinOp, CallId, Chain, ClassId, ExprFlags, ExprId, ExprKind, ExprTag, Flags, FnBody, FnId,
-    FnKind, MemberKey, ParamId, PatId, PatKind, PropId, PropKey, PropKind, StmtId, StmtKind, UnOp,
-    VarKind,
+    FnKind, MemberKey, MemberKind, ParamId, PatId, PatKind, PropId, PropKey, PropKind, StmtId,
+    StmtKind, UnOp, VarKind,
 };
 use crate::program::{FileId, FileRole};
 use crate::session::vec_from_iter_in;
@@ -21,11 +29,12 @@ use crate::types::{
 use crate::util::{FxHashMap, FxHashSet};
 use bun_sort_by_number::{SortByNumber, number_of_pair};
 use smallvec::SmallVec;
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
+use std::sync::Arc;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub(super) enum Subject {
+pub(in crate::check) enum Subject {
     Binding(SymbolId),
     Pattern(PatId),
     This(FnId),
@@ -1660,6 +1669,14 @@ fn has_written_type(hir: &hir::File<'_>, bound: &Bound<'_>, name: PatId) -> bool
     root_declaration(bound, name).has_type_annotation(hir)
 }
 
+fn is_variable_or_parameter(bound: &Bound<'_>, symbol: SymbolId) -> bool {
+    let declarations = bound.symbol(symbol).decls;
+    !declarations.is_empty()
+        && declarations
+            .iter()
+            .all(|it| matches!(it, Decl::Var(_) | Decl::Param(_)))
+}
+
 fn is_untyped_variable(hir: &hir::File<'_>, bound: &Bound<'_>, symbol: SymbolId) -> bool {
     let declarations = bound.symbol(symbol).decls;
     !declarations.is_empty()
@@ -1868,6 +1885,42 @@ fn find_enclosing_sum(hir: &hir::File<'_>, bound: &Bound<'_>, operand: ExprId) -
     is_sum.then_some(parent)
 }
 
+/// `list[i] | 0` and `~~list[i]` cut a number of any kind. They do not say that the list holds whole numbers.
+fn is_truncated_element(hir: &hir::File<'_>, bound: &Bound<'_>, value: ExprId) -> bool {
+    let find_parent = |value: ExprId| match bound.parent_of_expr(value) {
+        Parent::Expr(parent) => parent.some(),
+        _ => None,
+    };
+    if !matches!(hir[value].kind, ExprKind::Index { .. }) {
+        return false;
+    }
+    let Some(parent) = find_parent(value) else {
+        return false;
+    };
+    match hir[parent].kind {
+        ExprKind::Binary {
+            op: BinOp::BitOr | BinOp::Shr,
+            left,
+            right,
+        } => {
+            left == value
+                && matches!(hir[right].kind, ExprKind::Number(index) if hir.numbers[index as usize] == 0.0)
+        }
+        ExprKind::Unary {
+            op: UnOp::BitNot, ..
+        } => find_parent(parent).is_some_and(|outer| {
+            matches!(
+                hir[outer].kind,
+                ExprKind::Unary {
+                    op: UnOp::BitNot,
+                    ..
+                }
+            )
+        }),
+        _ => false,
+    }
+}
+
 fn is_used_as_int32(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
@@ -1924,6 +1977,48 @@ fn find_name_of_function(
     }
 }
 
+/// `key` of `{ key: expression }`, and whether the literal is stored as a prototype.
+fn find_name_in_literal(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    expression: ExprId,
+) -> Option<(Atom, bool)> {
+    let Parent::Prop(property) = bound.parent_of_expr(expression) else {
+        return None;
+    };
+    let (PropKind::Method | PropKind::Init, PropKey::Name(name)) =
+        (hir[property].kind, hir[property].key)
+    else {
+        return None;
+    };
+    let literal = bound.prop_owner[property.idx()];
+    let stored_under = find_name_stored_under(hir, bound, literal);
+    Some((name, stored_under == Some(known::prototype)))
+}
+
+/// `key` of `object.key = expression`.
+fn find_name_stored_under(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    expression: ExprId,
+) -> Option<Atom> {
+    let Parent::Expr(store) = bound.parent_of_expr(expression) else {
+        return None;
+    };
+    let ExprKind::Assign {
+        op: None,
+        target,
+        value,
+    } = hir[store.some()?].kind
+    else {
+        return None;
+    };
+    match hir.member_key(target) {
+        Some((_, MemberKey::Name(name))) if value == expression => Some(name),
+        Some(_) | None => None,
+    }
+}
+
 fn find_argument_of_call(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
@@ -1935,6 +2030,11 @@ fn find_argument_of_call(
         return None;
     };
     let call = call.some()?;
+    if let Some((object, MemberKey::Name(known::call))) = hir.member_key(call)
+        && object == callee
+    {
+        return find_argument_of_call(hir, bound, first_spread_arguments, call, index + 1);
+    }
     let ExprKind::Call(site) = hir[call].kind else {
         return None;
     };
@@ -1971,12 +2071,135 @@ struct CallWithReceiver {
 
 type TypeParts = SmallVec<[TypeId; 4]>;
 
+/// The functions that a file lays under names, and its calls by name.
+#[derive(Default)]
+pub(super) struct MethodsByName {
+    functions: FxHashMap<Atom, BearersOfName>,
+    /// The same within one function: a bundle holds modules, and two of them may hold one library.
+    functions_within: FxHashMap<(Atom, FnId), BearersOfName>,
+    names: FxHashMap<FnId, Atom>,
+    callees: FxHashMap<FnId, Vec<ExprId>>,
+    /// The methods of literals that are no prototypes, and the calls under their names.
+    names_in_literals: FxHashMap<FnId, Atom>,
+    callees_by_name: FxHashMap<Atom, Vec<ExprId>>,
+}
+
+/// The only function under a name, and the only one of each number of parameters.
+#[derive(Default)]
+struct BearersOfName {
+    only: Option<FnId>,
+    are_several: bool,
+    by_length: SmallVec<[(usize, Option<FnId>); 1]>,
+}
+
+impl BearersOfName {
+    fn add(&mut self, function: FnId, length: usize) {
+        self.are_several |= self.only.is_some();
+        self.only = Some(function);
+        match self
+            .by_length
+            .iter_mut()
+            .find(|(other, _)| *other == length)
+        {
+            Some((_, bearer)) => *bearer = None,
+            None => self.by_length.push((length, Some(function))),
+        }
+    }
+
+    fn find(&self, length: usize) -> Option<FnId> {
+        if !self.are_several {
+            return self.only;
+        }
+        let same = self.by_length.iter().find(|(other, _)| *other == length);
+        same.and_then(|&(_, bearer)| bearer)
+    }
+}
+
+impl MethodsByName {
+    /// The one function that bears the name in the nearest scope around the call in which any does.
+    fn find_nearest(
+        &self,
+        bound: &Bound<'_>,
+        name: Atom,
+        length: usize,
+        around: Option<FnId>,
+    ) -> Option<FnId> {
+        let mut scope = around?;
+        while scope != FnId::NONE {
+            if let Some(nearest) = self.functions_within.get(&(name, scope)) {
+                return nearest.find(length);
+            }
+            scope = bound.fns[scope.idx()].enclosing;
+        }
+        self.functions.get(&name)?.find(length)
+    }
+}
+
+/// What the calls in the file of a function pass to one of its parameters.
 pub(super) struct ArgumentsGiven {
     pub(super) written: SmallVec<[ExprId; 4]>,
+    /// The function is exported, or mentioned where it is not called.
     others_may_call: bool,
+    are_calls_by_name: bool,
 }
+/// The classes and constructor functions of a file that declare a member.
+#[derive(Default)]
+pub(super) struct ClassesWithMember {
+    /// Those that declare it on their prototype, and whether as a method.
+    on_prototype: SmallVec<[(ClassDeclaration, bool); 2]>,
+    in_instances: SmallVec<[ClassDeclaration; 2]>,
+    is_builtin_name: Cell<Option<bool>>,
+}
+
+impl ClassesWithMember {
+    fn count(&self) -> usize {
+        self.on_prototype.len() + self.in_instances.len()
+    }
+
+    fn may_be_declared_by(&self, class: ClassDeclaration, member: &Member) -> bool {
+        let found = self
+            .on_prototype
+            .binary_search_by_key(&class, |entry| entry.0);
+        found.is_ok_and(|at| self.on_prototype[at].1 == member.is_called())
+            || self.in_instances.binary_search(&class).is_ok()
+    }
+}
+
+#[derive(Default)]
+pub(super) struct MembersOfClasses {
+    by_name: FxHashMap<Atom, ClassesWithMember>,
+    /// The literals with a property under a name that a prototype has.
+    literals: OnceCell<FxHashMap<Atom, Vec<ExprId>>>,
+}
+
+impl MembersOfClasses {
+    fn add_to_prototype(&mut self, name: Atom, class: ClassDeclaration, is_method: bool) {
+        let listed = &mut self.by_name.entry(name).or_default().on_prototype;
+        match listed.last_mut() {
+            Some(entry) if entry.0 == class => entry.1 |= is_method,
+            _ => listed.push((class, is_method)),
+        }
+    }
+
+    fn add_to_instances(&mut self, name: Atom, class: ClassDeclaration) {
+        self.by_name
+            .entry(name)
+            .or_default()
+            .in_instances
+            .push(class);
+    }
+}
+
+enum BaseClass {
+    None,
+    InFile(ClassDeclaration),
+    Elsewhere,
+}
+
 type ContentsOfLiteral = (FileId, SmallVec<[(Atom, PropFlags, TypeId); 4]>);
 type ReturnedExpressions = SmallVec<[(ExprId, TypeId); 4]>;
+/// The values that the functions of a class store into the fields of its instances.
+pub(super) type ValuesByName = FxHashMap<Atom, SmallVec<[ExprId; 2]>>;
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     fn are_positions_only_expected(&self, of: FileId) -> bool {
@@ -2054,7 +2277,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     pub(super) fn infer_binding_type(&mut self, pattern: PatId, checked: TypeId) -> TypeId {
         let (hir, bound) = (self.hir(), self.bound());
         let is_untyped_name = matches!(hir[pattern].kind, PatKind::Ident(_))
-            && !has_written_type(hir, bound, pattern)
+            && (self.c.is_any(checked) || !has_written_type(hir, bound, pattern))
             && self.are_positions_only_expected(self.file);
         let Some(symbol) = find_initialized_symbol(bound, pattern).filter(|_| is_untyped_name)
         else {
@@ -2172,6 +2395,93 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         classes
     }
 
+    pub fn classes_stored_in_variable(&mut self, heritage: ExprId, most: usize) -> Vec<ClassRef> {
+        let Some(symbol) = self.find_variable_through_constants(heritage) else {
+            return Vec::new();
+        };
+        let mut classes: Vec<ClassRef> = Vec::new();
+        for value in self.find_stored_values(symbol) {
+            let Ok(ty) = self.expression_type(value) else {
+                continue;
+            };
+            if let Ok(ShapeKind::ClassConstructor(class)) =
+                self.type_shape(ty).map(|shape| shape.kind)
+                && !classes.contains(&class)
+            {
+                classes.push(class);
+            }
+            if classes.len() > most {
+                return Vec::new();
+            }
+        }
+        classes
+    }
+
+    pub fn only_class_stored_in_variable(&mut self, heritage: ExprId) -> Option<ClassRef> {
+        let hir = self.hir();
+        let symbol = self.find_variable_through_constants(heritage)?;
+        let mut only: Option<ClassRef> = None;
+        for value in self.find_stored_values(symbol) {
+            let class = match hir[value].kind {
+                ExprKind::Object(_) | ExprKind::Null => continue,
+                _ => {
+                    let ty = self.expression_type(value).ok()?;
+                    match self.type_shape(ty).ok()?.kind {
+                        ShapeKind::ClassConstructor(class) => class,
+                        _ => return None,
+                    }
+                }
+            };
+            if only.is_some_and(|only| only != class) {
+                return None;
+            }
+            only = Some(class);
+        }
+        only
+    }
+
+    fn find_variable_through_constants(&self, name: ExprId) -> Option<SymbolId> {
+        let (hir, bound) = (self.hir(), self.bound());
+        let mut followed: SmallVec<[SymbolId; 4]> = SmallVec::new();
+        let mut name = name;
+        loop {
+            let (ExprKind::Ident(_), Binding::Symbol(symbol)) =
+                (hir[name].kind, bound.binding(name))
+            else {
+                return None;
+            };
+            if followed.contains(&symbol) || !is_untyped_variable(hir, bound, symbol) {
+                return None;
+            }
+            followed.push(symbol);
+            match self
+                .find_initializer_of_constant(symbol)
+                .map(|it| (it, hir[it].kind))
+            {
+                Some((initializer, ExprKind::Ident(_))) => name = initializer,
+                Some(_) | None => return Some(symbol),
+            }
+        }
+    }
+
+    fn find_stored_values(&mut self, symbol: SymbolId) -> SmallVec<[ExprId; 2]> {
+        let (hir, bound) = (self.hir(), self.bound());
+        let mut stored: SmallVec<[ExprId; 2]> = SmallVec::new();
+        for declaration in bound.symbol(symbol).decls {
+            if let Decl::Var(pattern) = *declaration
+                && let PatParent::Var(variable) = bound.pat_parent[pattern.idx()]
+            {
+                stored.extend(hir[variable].init.some());
+            }
+        }
+        for &(_, reference) in references_to(self.references_to_bindings(), symbol) {
+            if let Use::Stored { op: None, value } = find_use(hir, bound, reference) {
+                stored.push(value);
+            }
+        }
+        stored
+    }
+
     fn find_arguments_in_sight(&mut self, parameter: ParamId) -> SmallVec<[ExprId; 2]> {
         let (hir, bound) = (self.hir(), self.bound());
         let function = bound.param_fn[parameter.idx()];
@@ -2223,6 +2533,115 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         self.inferred_type(Subject::Field(position))
     }
 
+    pub(super) fn find_type_stored_later(
+        &mut self,
+        class: ClassDeclaration,
+        field: Atom,
+    ) -> CheckedType {
+        if !self.are_positions_only_expected(self.file) {
+            return Ok(TypeId::ANY);
+        }
+        let by_name = self.values_stored_by_name(class);
+        let values = by_name.get(&field).map_or(&[][..], |values| &values[..]);
+        let mut found: SmallVec<[TypeId; 4]> = SmallVec::new();
+        for &value in values {
+            let Ok(ty) = self.expression_type(value) else {
+                continue;
+            };
+            if !self.c.is_any(ty) && !self.is_null_or_undefined_alone(ty) && !found.contains(&ty) {
+                found.push(ty);
+            }
+        }
+        match found.is_empty() {
+            true => Ok(TypeId::ANY),
+            false => self.union_of(&found),
+        }
+    }
+
+    fn values_stored_by_name(&mut self, class: ClassDeclaration) -> Rc<ValuesByName> {
+        if let Some(by_name) = self.memo.values_stored_by_name.get(&class) {
+            return Rc::clone(by_name);
+        }
+        let (hir, bound) = (self.hir(), self.bound());
+        let index = self.store_index(self.file);
+        let mut owners: SmallVec<[ThisOwner; 8]> = SmallVec::new();
+        match class {
+            ClassDeclaration::Class(class) => owners.push(ThisOwner::Instance(class.class)),
+            ClassDeclaration::Function(FunctionRef { function, .. }) => {
+                owners.push(ThisOwner::Function(function));
+                let constructor = bound.declared_symbol(Decl::Fn(function)).some();
+                let stores = constructor.map_or(&[][..], |symbol| index.binding_stores_of(symbol));
+                let methods = stores
+                    .iter()
+                    .filter(|store| matches!(store.kind, BindingStoreKind::Prototype(_)))
+                    .filter_map(|store| find_stored_function(hir, bound, store.value));
+                owners.extend(methods.map(ThisOwner::Function));
+            }
+        }
+        let mut by_name = ValuesByName::default();
+        for owner in owners {
+            for store in index.this_stores_of(owner) {
+                if store.form == StoreForm::Plain
+                    && let Some(value) = store.value.some()
+                {
+                    by_name.entry(store.name).or_default().push(value);
+                }
+            }
+        }
+        let by_name = Rc::new(by_name);
+        self.memo
+            .values_stored_by_name
+            .insert(class, Rc::clone(&by_name));
+        by_name
+    }
+
+    /// Whether the elements of an object of the type are numbers or bigints, as those of typed arrays are.
+    fn holds_numeric_elements(&mut self, ty: TypeId) -> bool {
+        let Some(members) = self.c.members_for_index_infos(ty) else {
+            return false;
+        };
+        let element = self.c.applicable_index_info(&members, TypeId::NUMBER);
+        element.is_some_and(|element| {
+            element.value == TypeId::NUMBER || element.value == TypeId::BIGINT
+        })
+    }
+
+    /// By the name of a field: the one typed array that is stored into it, none if they differ.
+    pub(super) fn typed_arrays_in_fields(&mut self) -> Rc<FxHashMap<Atom, Option<TypeId>>> {
+        if let Some(found) = &self.memo.typed_arrays_in_fields {
+            return Rc::clone(found);
+        }
+        let mut found: FxHashMap<Atom, Option<TypeId>> = FxHashMap::default();
+        if self.are_positions_only_expected(self.file) {
+            let hir = self.hir();
+            for store in self.store_index(self.file).all_this_stores() {
+                let Some(value) = store
+                    .value
+                    .some()
+                    .filter(|_| store.form == StoreForm::Plain)
+                else {
+                    continue;
+                };
+                if !matches!(hir[value].kind, ExprKind::New(_)) {
+                    continue;
+                }
+                let Ok(ty) = self.expression_type(value) else {
+                    continue;
+                };
+                if !self.holds_numeric_elements(ty) {
+                    continue;
+                }
+                let held = found.entry(store.name).or_insert(Some(ty));
+                if *held != Some(ty) {
+                    *held = None;
+                }
+            }
+        }
+        let found = Rc::new(found);
+        self.memo.typed_arrays_in_fields = Some(Rc::clone(&found));
+        found
+    }
+
     pub(super) fn infer_this_type(&mut self, of: FileId, function: FnId) -> TypeId {
         match self.find_this_subject(of, function) {
             Some(subject) => self.inferred_type(subject),
@@ -2251,7 +2670,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     pub(super) fn find_subject_of_expression(
-        &self,
+        &mut self,
         expression: ExprId,
         checked: TypeId,
     ) -> Option<Subject> {
@@ -2288,7 +2707,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
         let (hir, bound) = (self.hir(), self.bound());
         let node = hir[parameter];
-        if node.ty.is_some() {
+        if node.ty.is_some() && !self.c.is_any(checked) {
             return None;
         }
         match hir[node.pat].kind {
@@ -2333,7 +2752,37 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         (has_own_this && is_untyped).then_some(Subject::This(function))
     }
 
-    fn find_result_subject(&self, of: FileId, function: FnId) -> Option<Subject> {
+    /// `@param {AcornToken} token` where nothing declares AcornToken.
+    fn is_variable_written_as_any(&mut self, symbol: SymbolId) -> bool {
+        let bound = self.bound();
+        if !is_variable_or_parameter(bound, symbol) || !self.are_positions_only_expected(self.file)
+        {
+            return false;
+        }
+        bound
+            .symbol(symbol)
+            .decls
+            .iter()
+            .all(|&declaration| match declaration {
+                Decl::Var(name) | Decl::Param(name) => {
+                    let checked = self.checked_binding_type(name);
+                    checked.is_ok_and(|ty| self.c.is_any(ty))
+                }
+                _ => false,
+            })
+    }
+
+    /// `@returns {EsprimaToken}` where nothing declares EsprimaToken.
+    fn is_result_written_as_any(&mut self, function: FnId) -> bool {
+        let file = self.file;
+        let written = self.ask(|queries| {
+            let ty = queries.c.return_type_of_fn(file, function);
+            queries.resolved(ty)
+        });
+        self.are_positions_only_expected(file) && written.is_ok_and(|ty| self.c.is_any(ty))
+    }
+
+    fn find_result_subject(&mut self, of: FileId, function: FnId) -> Option<Subject> {
         if of != self.file {
             return None;
         }
@@ -2350,8 +2799,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             | FnKind::IndexSignature => false,
         };
         let wraps_the_value = node.flags.intersects(Flags::ASYNC | Flags::GENERATOR);
-        (returns_a_value && !wraps_the_value && node.ret.is_none())
-            .then_some(Subject::Result(function))
+        (returns_a_value
+            && !wraps_the_value
+            && (node.ret.is_none() || self.is_result_written_as_any(function)))
+        .then_some(Subject::Result(function))
     }
 
     fn find_result_subject_of_call(&mut self, call: ExprId) -> Option<Subject> {
@@ -2362,7 +2813,15 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         self.find_result_subject(declaration.file, declaration.function)
     }
 
-    fn find_referenced_subject(&self, expression: ExprId) -> Option<Subject> {
+    fn find_named_call_result_subject(&mut self, call: ExprId) -> Option<Subject> {
+        let ExprKind::Call(site) = self.hir()[call].kind else {
+            return None;
+        };
+        let method = self.find_method_by_name(self.hir()[site].callee)?;
+        self.find_result_subject(self.file, method)
+    }
+
+    fn find_referenced_subject(&mut self, expression: ExprId) -> Option<Subject> {
         let (hir, bound) = (self.hir(), self.bound());
         if matches!(hir[expression].kind, ExprKind::This) {
             return match self.c.this_container(self.file, expression) {
@@ -2374,7 +2833,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return None;
         }
         match bound.binding(expression) {
-            Binding::Symbol(symbol) if is_untyped_variable(hir, bound, symbol) => {
+            Binding::Symbol(symbol)
+                if is_untyped_variable(hir, bound, symbol)
+                    || self.is_variable_written_as_any(symbol) =>
+            {
                 Some(Subject::Binding(symbol))
             }
             Binding::Symbol(_) | Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => {
@@ -2383,7 +2845,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    fn find_number_subject(&self, expression: ExprId, checked: TypeId) -> Option<Subject> {
+    fn find_number_subject(&mut self, expression: ExprId, checked: TypeId) -> Option<Subject> {
         if checked != TypeId::NUMBER {
             return None;
         }
@@ -2422,6 +2884,59 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             Some(&TypeState::Known(known)) => known,
             _ => first_answer,
         }
+    }
+
+    pub fn note_functions_inferred(&mut self) {
+        self.memo.functions_inferred = Some(Vec::new());
+    }
+
+    /// The functions about whose results and parameters something has been inferred since the last call, one by one.
+    pub fn take_functions_inferred(&mut self) -> Vec<FnId> {
+        self.memo
+            .functions_inferred
+            .as_mut()
+            .map(std::mem::take)
+            .unwrap_or_default()
+    }
+
+    pub fn forget_functions_inferred(&mut self) {
+        self.memo.functions_inferred = None;
+    }
+
+    #[cold]
+    fn note_function_inferred(&mut self, subject: Subject) {
+        let function = match subject {
+            Subject::Result(function) | Subject::This(function) => Some(function),
+            Subject::Binding(symbol) => match *self.bound().symbol(symbol).decls {
+                [Decl::Param(_)] => self.bound().symbol_scope(symbol).some().and_then(|scope| {
+                    match self.bound().code_unit(scope) {
+                        CodeUnit::Function(function) => Some(function),
+                        CodeUnit::File | CodeUnit::FieldInitializer(_) => None,
+                    }
+                }),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let (Some(noted), Some(function)) = (&mut self.memo.functions_inferred, function) {
+            noted.push(function);
+        }
+    }
+
+    /// The checkers of the parts of the file know what this one has inferred.
+    pub fn share_inferred_types(&self, indexes: &SharedIndexes<'s>) {
+        let inferred = self.memo.inferred_types.iter();
+        let known = inferred.filter_map(|(&subject, &state)| match state {
+            TypeState::Known(known) => Some((subject, known)),
+            _ => None,
+        });
+        let _ = indexes.inferred_types.set(known.collect());
+    }
+
+    pub fn take_over_inferred_types(&mut self, indexes: &SharedIndexes<'s>) {
+        let known = indexes.inferred_types.get().into_iter().flatten();
+        let known = known.map(|&(subject, known)| (subject, TypeState::Known(known)));
+        self.memo.inferred_types.extend(known);
     }
 
     fn inferred_type_with_new_allowance(&mut self, subject: Subject) -> TypeId {
@@ -2590,6 +3105,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         } else {
             let known = TypeState::Known(inferred);
             self.memo.inferred_types.insert(subject, known);
+            if self.memo.functions_inferred.is_some() {
+                self.note_function_inferred(subject);
+            }
             let in_progress = &self.memo.types_in_progress;
             if in_progress.in_cycles.len() > first_in_cycle && in_progress.remaining_types != 0 {
                 self.infer_types_of_cycle_again(first_in_cycle);
@@ -2717,6 +3235,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 let receiver = self.find_untyped_receiver_of_method_call(expression);
                 asked_for.extend(receiver.map(Subject::Expression));
                 asked_for.extend(self.find_result_subject_of_call(expression));
+                asked_for.extend(self.find_named_call_result_subject(expression));
             }
             Subject::Result(function) => {
                 for (returned, checked) in self.find_returned_expressions(function) {
@@ -2739,6 +3258,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             if let Some(initializer) = self.find_initializer_of_constant(symbol) {
                 let receiver = self.find_untyped_receiver_of_method_call(initializer);
                 asked_for.extend(receiver.map(Subject::Expression));
+                asked_for.extend(self.find_named_call_result_subject(initializer));
             }
             return;
         };
@@ -2797,6 +3317,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             };
         }
         let (given, others_may_call) = self.compute_type_from_arguments(name);
+        if !self.c.is_any(given) && self.is_passed_only_by_name(name) {
+            return given;
+        }
+        // A record is one layout by its names. Where others may call and the uses name every member of what is given, the
+        // record of the uses is that layout, and says what the members are used as.
         let is_named_whole = others_may_call
             && (self.c.members(given))
                 .is_some_and(|members| members.shape().props.len() == usage.members.len());
@@ -2809,6 +3334,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             true => given,
             false => used_as,
         }
+    }
+
+    fn is_passed_only_by_name(&mut self, name: PatId) -> bool {
+        self.find_arguments_given(name)
+            .is_some_and(|given| given.are_calls_by_name)
     }
 
     fn find_type_a_constant_is_made_with(&mut self, symbol: SymbolId) -> Option<TypeId> {
@@ -2828,9 +3358,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let PatParent::Var(variable) = bound.pat_parent[name.idx()] else {
             return None;
         };
-        match hir[variable].kind {
-            VarKind::Const => hir[variable].init.some(),
-            _ => None,
+        let holds_initializer_alone =
+            hir[variable].kind == VarKind::Const || bound.is_stable_binding(symbol);
+        match holds_initializer_alone {
+            true => hir[variable].init.some(),
+            false => None,
         }
     }
 
@@ -2844,7 +3376,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return None;
         }
         let index = hir[function].params.position_of(parameter.idx())?;
-        let callee = find_name_of_function(hir, bound, function)?;
+        let Some(callee) = find_name_of_function(hir, bound, function) else {
+            return self.find_arguments_given_by_name(function, index);
+        };
         let references = references_to(self.references_to_bindings(), callee);
         let is_exported = self.is_exported(callee);
         let first_spreads = &mut self.memo.first_spread_arguments;
@@ -2856,7 +3390,232 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         (!written.is_empty()).then_some(ArgumentsGiven {
             written,
             others_may_call,
+            are_calls_by_name: false,
         })
+    }
+
+    fn find_arguments_given_by_name(
+        &mut self,
+        function: FnId,
+        index: usize,
+    ) -> Option<ArgumentsGiven> {
+        if !self.are_positions_only_expected(self.file) {
+            return None;
+        }
+        let methods = self.methods_by_name();
+        let (hir, bound) = (self.hir(), self.bound());
+        let first_spreads = &mut self.memo.first_spread_arguments;
+        let Some(callees) = methods.callees.get(&function) else {
+            let made = self.find_instance_handed_by_name(&methods, function, index)?;
+            return Some(ArgumentsGiven {
+                written: SmallVec::from_slice(&[made]),
+                others_may_call: true,
+                are_calls_by_name: true,
+            });
+        };
+        let arguments = callees
+            .iter()
+            .filter_map(|&callee| find_argument_of_call(hir, bound, first_spreads, callee, index));
+        let written: SmallVec<[ExprId; 4]> = arguments.collect();
+        (!written.is_empty()).then_some(ArgumentsGiven {
+            written,
+            others_may_call: true,
+            are_calls_by_name: true,
+        })
+    }
+
+    /// `options.onToken(new Token(this))`: a method of a literal may be called by its name, and is handed what is made in place.
+    /// A bundle may hold one class twice: the nearer answers.
+    fn find_instance_handed_by_name(
+        &mut self,
+        methods: &MethodsByName,
+        function: FnId,
+        index: usize,
+    ) -> Option<ExprId> {
+        let name = methods.names_in_literals.get(&function)?;
+        let (hir, bound) = (self.hir(), self.bound());
+        let here = hir[function].start;
+        let mut class_name: Option<Atom> = None;
+        let mut nearest: Option<(u32, ExprId)> = None;
+        for &callee in methods.callees_by_name.get(name)? {
+            let first_spreads = &mut self.memo.first_spread_arguments;
+            let argument = find_argument_of_call(hir, bound, first_spreads, callee, index);
+            let Some(argument) = argument.and_then(|argument| argument.some()) else {
+                continue;
+            };
+            let ExprKind::New(site) = hir[argument].kind else {
+                continue;
+            };
+            let ExprKind::Ident(constructor) = hir[hir[site].callee].kind else {
+                continue;
+            };
+            if class_name.is_some_and(|other| other != constructor) {
+                return None;
+            }
+            class_name = Some(constructor);
+            let distance = hir[argument].pos.abs_diff(here);
+            if nearest.is_none_or(|(other, _)| distance < other) {
+                nearest = Some((distance, argument));
+            }
+        }
+        nearest.map(|(_, argument)| argument)
+    }
+
+    fn methods_by_name(&mut self) -> Rc<MethodsByName> {
+        if let Some(found) = &self.memo.methods_by_name {
+            return Rc::clone(found);
+        }
+        let (file, hir, bound) = (self.file, self.hir(), self.bound());
+        let mut methods = MethodsByName::default();
+        for number in 0..bound.fns.len() {
+            let function = FnId(number as u32);
+            let name = match bound.fns[number].owner {
+                FnOwner::Member(member) if hir[function].kind == FnKind::Method => {
+                    match hir[member].key {
+                        PropKey::Name(name) => Some(name),
+                        PropKey::None | PropKey::Private(_) | PropKey::Computed(_) => None,
+                    }
+                }
+                FnOwner::Expr(expression) => match find_name_in_literal(hir, bound, expression) {
+                    Some((name, true)) => Some(name),
+                    Some((name, false)) => {
+                        methods.names_in_literals.insert(function, name);
+                        None
+                    }
+                    None => find_name_stored_under(hir, bound, expression),
+                },
+                FnOwner::None | FnOwner::Stmt(_) | FnOwner::Member(_) | FnOwner::Type(_) => None,
+            };
+            if let Some(name) = name {
+                methods.names.insert(function, name);
+                let length = hir[function].params.len();
+                methods
+                    .functions
+                    .entry(name)
+                    .or_default()
+                    .add(function, length);
+            }
+        }
+        for (&function, &name) in &methods.names {
+            if !methods.functions[&name].are_several {
+                continue;
+            }
+            let length = hir[function].params.len();
+            let mut scope = bound.fns[function.idx()].enclosing;
+            while scope != FnId::NONE {
+                let within = methods.functions_within.entry((name, scope)).or_default();
+                within.add(function, length);
+                scope = bound.fns[scope.idx()].enclosing;
+            }
+        }
+        for &name in methods.names_in_literals.values() {
+            methods.callees_by_name.entry(name).or_default();
+        }
+        let expressions = self.c.exprs_by_kind(file);
+        for &call in expressions.of(ExprTag::Call) {
+            let ExprKind::Call(site) = hir[call].kind else {
+                continue;
+            };
+            let callee = hir[site].callee;
+            let Some((_, MemberKey::Name(name))) = hir.member_key(callee) else {
+                continue;
+            };
+            if let Some(callees) = methods.callees_by_name.get_mut(&name) {
+                callees.push(callee);
+            }
+            let bearer = match methods.functions.get(&name) {
+                Some(bearers) if !bearers.are_several => bearers.only,
+                Some(_) => {
+                    let around = self.c.enclosing_fn_of_expr(file, call);
+                    methods.find_nearest(bound, name, hir[site].args.len(), around)
+                }
+                None => None,
+            };
+            if let Some(bearer) = bearer {
+                methods.callees.entry(bearer).or_default().push(callee);
+            }
+        }
+        let methods = Rc::new(methods);
+        self.memo.methods_by_name = Some(Rc::clone(&methods));
+        methods
+    }
+
+    /// What the one method that bears the name returns, where nothing is known of the receiver.
+    fn find_named_method_result(&mut self, callee: ExprId) -> Option<TypeId> {
+        let method = self.find_method_by_name(callee)?;
+        let subject = self.find_result_subject(self.file, method)?;
+        let result = self.inferred_type(subject);
+        let is_named = self.is_instance_of_class(result) || self.c.array_element(result).is_some();
+        is_named.then_some(result)
+    }
+
+    fn find_method_by_name(&mut self, callee: ExprId) -> Option<FnId> {
+        if !self.are_positions_only_expected(self.file) {
+            return None;
+        }
+        let Some((_, MemberKey::Name(name))) = self.hir().member_key(callee) else {
+            return None;
+        };
+        self.find_untyped_receiver(callee)?;
+        let methods = self.methods_by_name();
+        let bearers = methods.functions.get(&name)?;
+        if !bearers.are_several {
+            return bearers.only;
+        }
+        let length = match self.bound().parent_of_expr(callee) {
+            Parent::Expr(call) => match self.hir()[call.some()?].kind {
+                ExprKind::Call(site) => self.hir()[site].args.len(),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        let around = self.c.enclosing_fn_of_expr(self.file, callee);
+        methods.find_nearest(self.bound(), name, length, around)
+    }
+
+    /// The class of which those calls whose operand is known hand an instance.
+    fn find_class_passed_by_name(&mut self, arguments: &[ExprId]) -> TypeId {
+        let mut only = TypeId::ANY;
+        for argument in arguments.iter().filter_map(|argument| argument.some()) {
+            let Ok(given) = self.predicted_expression_type(argument) else {
+                continue;
+            };
+            if self.c.is_any(given) || self.is_null_or_undefined_alone(given) {
+                continue;
+            }
+            if self.is_instance_of_class(given) {
+                if only != TypeId::ANY && only != given {
+                    return TypeId::ANY;
+                }
+                only = given;
+            } else if self.c.flags(given) & crate::types::tf::OBJECT == 0 {
+                return TypeId::ANY;
+            }
+        }
+        only
+    }
+
+    fn is_instance_of_class(&mut self, ty: TypeId) -> bool {
+        matches!(
+            self.type_shape(ty).map(|shape| shape.kind),
+            Ok(ShapeKind::Class(_) | ShapeKind::ConstructorFunctionInstance(_))
+        )
+    }
+
+    /// What says the type of the parameter is an instance that calls hand it, and not its uses.
+    pub fn is_handed_instance(&mut self, parameter: ParamId) -> bool {
+        let name = self.hir()[parameter].pat;
+        if !self.are_positions_only_expected(self.file) {
+            return false;
+        }
+        let Ok(expected) = self.binding_type(name) else {
+            return false;
+        };
+        if !self.is_instance_of_class(expected) {
+            return false;
+        }
+        let handed = self.ask(|queries| Ok(queries.compute_type_from_arguments(name).0));
+        handed == Ok(expected)
     }
 
     pub fn is_given_by_written_calls_alone(&mut self, name: PatId) -> bool {
@@ -2869,6 +3628,15 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return (TypeId::ANY, true);
         };
         let others_may_call = given.others_may_call;
+        if given.are_calls_by_name {
+            return (self.find_class_passed_by_name(&given.written), true);
+        }
+        if given.written.len() > 1 && self.are_positions_only_expected(self.file) {
+            let class = self.find_class_passed_by_name(&given.written);
+            if class != TypeId::ANY {
+                return (class, true);
+            }
+        }
         let handed = self.compute_type_of_arguments(given.written);
         match others_may_call && self.c.is_union(handed) {
             true => (TypeId::ANY, true),
@@ -3240,6 +4008,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         };
         let callee = hir[site].callee;
         hir.member_key(callee)?;
+        let found = self.find_inferred_receiver_method_result(callee);
+        found.or_else(|| self.find_named_method_result(callee))
+    }
+
+    fn find_inferred_receiver_method_result(&mut self, callee: ExprId) -> Option<TypeId> {
         let method = self.find_type_in_inferred_receiver(callee)?;
         let mut result = None;
         for &signature in self.c.signatures(method, false).iter() {
@@ -3282,11 +4055,24 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    fn references_to_bindings(&mut self) -> &'c [(SymbolId, ExprId)] {
+    pub fn references_of_binding(&mut self, symbol: SymbolId) -> &'c [(SymbolId, ExprId)] {
+        references_to(self.references_to_bindings(), symbol)
+    }
+
+    pub(super) fn references_to_bindings(&mut self) -> &'c [(SymbolId, ExprId)] {
         if let Some(references) = self.memo.reference_index.to_bindings {
             return references;
         }
-        let references = self.compute_references_to_bindings();
+        let references = match self.c.indexes_of_parts(self.file) {
+            Some(indexes) => *indexes.references_to_bindings.get_or_init(|| {
+                let references = self.compute_references_to_bindings();
+                self.c.arena.alloc_slice_copy(&references)
+            }),
+            None => {
+                let references = self.compute_references_to_bindings();
+                self.list(&references)
+            }
+        };
         self.memo.reference_index.to_bindings = Some(references);
         references
     }
@@ -3303,41 +4089,120 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 
     #[inline(never)]
     fn reads_of_field_off_this(&mut self, class: ClassId, field: Atom) -> Vec<ExprId> {
-        if self.memo.reads_of_fields_off_this.is_none() {
-            let (file, hir, bound) = (self.file, self.hir(), self.bound());
-            let mut reads: FxHashMap<(ClassId, Atom), Vec<ExprId>> = FxHashMap::default();
-            for &(function, reference) in self.references_to_this() {
-                let FnOwner::Member(member) = bound.fns[function.idx()].owner else {
-                    continue;
-                };
-                if hir[member].flags.contains(Flags::STATIC) {
-                    continue;
-                }
-                let Some(owner) = self.c.class_of_member_fn(file, function) else {
-                    continue;
-                };
-                if let Use::Member { access, name, .. } = find_use(hir, bound, reference) {
-                    reads.entry((owner, name)).or_default().push(access);
-                }
-            }
-            self.memo.reads_of_fields_off_this = Some(reads);
-        }
+        self.find_this_field_reads();
         let reads = self.memo.reads_of_fields_off_this.as_ref();
         reads
             .and_then(|reads| reads.get(&(class, field)).cloned())
             .unwrap_or_default()
     }
 
+    pub(super) fn find_this_field_reads(&mut self) {
+        if self.memo.reads_of_fields_off_this.is_none() {
+            let reads = match self.c.indexes_of_parts(self.file) {
+                Some(indexes) => {
+                    let reads = &indexes.reads_of_fields_off_this;
+                    Arc::clone(reads.get_or_init(|| Arc::new(self.compute_reads_of_fields())))
+                }
+                None => Arc::new(self.compute_reads_of_fields()),
+            };
+            self.memo.reads_of_fields_off_this = Some(reads);
+        }
+    }
+
+    fn compute_reads_of_fields(&mut self) -> ReadsOfFields {
+        let (file, hir, bound) = (self.file, self.hir(), self.bound());
+        let mut reads = ReadsOfFields::default();
+        for &(function, reference) in self.references_to_this() {
+            let FnOwner::Member(member) = bound.fns[function.idx()].owner else {
+                continue;
+            };
+            if hir[member].flags.contains(Flags::STATIC) {
+                continue;
+            }
+            let Some(owner) = self.c.class_of_member_fn(file, function) else {
+                continue;
+            };
+            if let Use::Member { access, name, .. } = find_use(hir, bound, reference) {
+                reads.entry((owner, name)).or_default().push(access);
+            }
+        }
+        reads
+    }
+
+    /// The names that the text of a class reads and stores off its objects, but for what the class defines and what is only called.
+    pub fn names_used_off_instances(&mut self, class: ClassDeclaration) -> Vec<Atom> {
+        let (file, hir, bound) = (self.file, self.hir(), self.bound());
+        let Some(shape) = self.shape_of(class) else {
+            return Vec::new();
+        };
+        let mut methods: SmallVec<[FnId; 8]> = SmallVec::new();
+        if let ClassDeclaration::Function(constructor) = class {
+            methods.push(constructor.function);
+            for member in shape.members.iter().filter(|member| !member.is_static) {
+                if let ClassMemberSource::PrototypeStore(store) = member.source {
+                    let value = match hir[store].kind {
+                        ExprKind::Assign { value, .. } => value,
+                        _ => store,
+                    };
+                    methods.extend(find_stored_function(hir, bound, value));
+                }
+            }
+        }
+        let is_of_class = |queries: &Self, function: FnId| match class {
+            ClassDeclaration::Function(_) => methods.contains(&function),
+            ClassDeclaration::Class(class) => match bound.fns[function.idx()].owner {
+                FnOwner::Member(member) => {
+                    !hir[member].flags.contains(Flags::STATIC)
+                        && queries.c.class_of_member_fn(file, function) == Some(class.class)
+                }
+                _ => false,
+            },
+        };
+        let is_own = |name: Atom| {
+            let name = MemberName::String(name);
+            (shape.members.iter()).any(|member| !member.is_static && member.name == name)
+                || shape.names_stored_in_prototype.contains(&name)
+        };
+        let is_only_called = |access: ExprId| match bound.parent_of_expr(access) {
+            Parent::Expr(parent) if parent.is_some() => {
+                matches!(hir[parent].kind, ExprKind::Call(site) if hir[site].callee == access)
+            }
+            _ => false,
+        };
+        let mut names = Vec::new();
+        for &(function, reference) in self.references_to_this() {
+            if is_of_class(self, function)
+                && let Use::Member { access, name, .. } = find_use(hir, bound, reference)
+                && !is_only_called(access)
+                && !is_own(name)
+            {
+                names.push(name);
+            }
+        }
+        names.sort_unstable_by_key(|name| name.0);
+        names.dedup();
+        names
+    }
+
     fn references_to_this(&mut self) -> &'c [(FnId, ExprId)] {
         if let Some(references) = self.memo.reference_index.to_this {
             return references;
         }
-        let references = self.compute_references_to_this();
+        let references = match self.c.indexes_of_parts(self.file) {
+            Some(indexes) => *indexes.references_to_this.get_or_init(|| {
+                let references = self.compute_references_to_this();
+                self.c.arena.alloc_slice_copy(&references)
+            }),
+            None => {
+                let references = self.compute_references_to_this();
+                self.list(&references)
+            }
+        };
         self.memo.reference_index.to_this = Some(references);
         references
     }
 
-    fn compute_references_to_bindings(&mut self) -> &'c [(SymbolId, ExprId)] {
+    fn compute_references_to_bindings(&mut self) -> Vec<(SymbolId, ExprId)> {
         let (file, hir, bound) = (self.file, self.hir(), self.bound());
         let expressions = self.c.exprs_by_kind(file);
         let mut to_bindings = Vec::with_capacity(expressions.of(ExprTag::Ident).len());
@@ -3357,10 +4222,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if !to_bindings.is_sorted_by_key(|&(symbol, reference)| number_of(symbol.0, reference)) {
             to_bindings.sort_by_u64(|&(symbol, reference)| number_of(symbol.0, reference));
         }
-        self.list(&to_bindings)
+        to_bindings
     }
 
-    fn compute_references_to_this(&mut self) -> &'c [(FnId, ExprId)] {
+    fn compute_references_to_this(&mut self) -> Vec<(FnId, ExprId)> {
         let (file, hir) = (self.file, self.hir());
         let expressions = self.c.exprs_by_kind(file);
         let mut to_this = Vec::new();
@@ -3373,7 +4238,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
         let number_of = |owner: u32, reference: ExprId| number_of_pair(owner, hir[reference].pos);
         to_this.sort_by_u64(|&(function, reference)| number_of(function.0, reference));
-        self.list(&to_this)
+        to_this
     }
 
     fn usage_of(&mut self, walk: &mut Walk, subject: Subject) -> Option<Rc<Usage>> {
@@ -3756,7 +4621,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             Use::Int32 => {
                 usage.facts |= self.number_fact_of_operand(value);
                 let given = self.find_product_given_to(value);
-                if !given.is_given {
+                if !given.is_given && !is_truncated_element(self.hir(), self.bound(), value) {
                     usage.facts |= Facts::INT32;
                 }
                 if given.ran_out_of_terms {
@@ -3793,13 +4658,14 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if hir[site].callee != access {
             return;
         }
+        let given = hir.ids(hir[site].args).count();
         for (index, argument) in hir.ids(hir[site].args).enumerate() {
             let callback = match hir[argument].kind {
                 ExprKind::Fn(callback) => callback,
                 ExprKind::Spread(_) => break,
                 _ => continue,
             };
-            let taking_elements = self.find_parameters_taking_elements(method, index);
+            let taking_elements = self.find_parameters_taking_elements(method, index, given);
             for (position, parameter) in hir[callback].params.iter().enumerate().take(8) {
                 if taking_elements & (1 << position) == 0 {
                     continue;
@@ -3824,12 +4690,17 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    fn find_parameters_taking_elements(&mut self, method: Atom, index: usize) -> u8 {
-        if let Some(&known) = self.memo.parameters_taking_elements.get(&(method, index)) {
+    /// The parameters of the callback that take elements in every overload that fits the number of arguments.
+    fn find_parameters_taking_elements(&mut self, method: Atom, index: usize, given: usize) -> u8 {
+        if let Some(&known) = self
+            .memo
+            .parameters_taking_elements
+            .get(&(method, index, given))
+        {
             return known;
         }
         let list = self.c.array_of(TypeId::NEVER);
-        let mut taking_elements = 0;
+        let mut taking_elements = None;
         let signatures = match self.c.type_of_property(list, method) {
             Some(method) => self.c.signatures(method, false),
             None => Default::default(),
@@ -3839,21 +4710,29 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             let Some(callback) = find_parameter(&parameters, index) else {
                 continue;
             };
+            let required = parameters.iter().rposition(|it| !it.optional && !it.rest);
+            if required.is_some_and(|last| last >= given) {
+                continue;
+            }
+            let mut taking_here = 0;
             let callback = self.without_nullish(callback.ty).unwrap_or(callback.ty);
             for &signature in self.c.signatures(callback, false).iter() {
                 let parameters = self.c.sig_params(signature);
                 for (position, parameter) in parameters.iter().enumerate().take(8) {
                     if parameter.ty == TypeId::NEVER && !parameter.rest {
-                        taking_elements |= 1 << position;
+                        taking_here |= 1 << position;
                     }
                 }
             }
+            *taking_elements.get_or_insert(taking_here) &= taking_here;
         }
+        let taking_elements = taking_elements.unwrap_or_default();
         let known = &mut self.memo.parameters_taking_elements;
-        known.insert((method, index), taking_elements);
+        known.insert((method, index, given), taking_elements);
         taking_elements
     }
 
+    /// `changed |= flag` where `changed` is a boolean, `whole *= factor` where `whole` is a big integer.
     fn is_combined_into_what_is_no_number(&mut self, value: ExprId) -> bool {
         let Parent::Expr(parent) = self.bound().parent_of_expr(value) else {
             return false;
@@ -4182,6 +5061,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 Ok(None) | Err(_) => return,
             },
         };
+        if index == 0 && self.is_loop_helper(signature) {
+            usage.facts |= Facts::REQUIRED;
+            usage.elements_mut();
+            return;
+        }
         let parameters = self.c.sig_params(signature);
         let Some(parameter) = find_parameter(&parameters, index) else {
             return;
@@ -4199,6 +5083,55 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if !usage.facts.contains(Facts::NUMBER_AT_EVERY_VALUE) {
             usage.facts = (usage.facts - number_facts) | known_here;
         }
+    }
+
+    /// `var t = "undefined" != typeof Symbol && r[Symbol.iterator] || r["@@iterator"];`, where `r` is the first parameter
+    fn is_loop_helper(&mut self, signature: SigId) -> bool {
+        let Some((file, function, _)) = self.c.sig_decl(signature) else {
+            return false;
+        };
+        self.reads_iterator_first(self.c.hir(file), function) == Some(true)
+    }
+
+    fn reads_iterator_first(&self, hir: &hir::File<'_>, function: FnId) -> Option<bool> {
+        let FnBody::Block(statements) = hir[function].body else {
+            return None;
+        };
+        let StmtKind::Var(declarations) = hir[hir.ids(statements).next()?].kind else {
+            return None;
+        };
+        let initializer = hir[declarations.iter().next()?].init.some()?;
+        let ExprKind::Binary {
+            op: BinOp::Or,
+            left,
+            ..
+        } = hir[initializer].kind
+        else {
+            return None;
+        };
+        let ExprKind::Binary {
+            op: BinOp::And,
+            right: read,
+            ..
+        } = hir[left].kind
+        else {
+            return None;
+        };
+        let (list, MemberKey::Computed(key)) = hir.member_key(read)? else {
+            return None;
+        };
+        let (holder, MemberKey::Name(name)) = hir.member_key(key)? else {
+            return None;
+        };
+        let parameter = hir[hir[function].params.iter().next()?].pat;
+        let (PatKind::Ident(parameter), ExprKind::Ident(list), ExprKind::Ident(holder)) =
+            (hir[parameter].kind, hir[list].kind, hir[holder].kind)
+        else {
+            return None;
+        };
+        let is_iterator =
+            self.atom_bytes(holder) == b"Symbol" && self.atom_bytes(name) == b"iterator";
+        Some(list == parameter && is_iterator)
     }
 
     fn add_uses_of_receiver(&mut self, walk: &mut Walk, signature: SigId, usage: &mut Usage) {
@@ -4355,18 +5288,335 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             usage.members.any(Member::is_called) && self.has_every_member(function, &usage.members);
         let can_be_builtin = can_be_array || can_be_string || can_be_function;
         match fitting[..] {
-            [] if can_be_builtin => {}
+            [] if can_be_builtin => {
+                // `t = list; t.call(r)`: what is called off a list is no method of lists.
+                let is_function_at_times = can_be_function
+                    && !can_be_array
+                    && !can_be_string
+                    && parts.iter().any(|&part| !self.c.is_nullish(part));
+                let known_parts = parts.clone();
+                let mut known_parts = known_parts.into_iter();
+                if is_function_at_times
+                    && !known_parts.any(|part| self.has_every_member(part, &usage.members))
+                {
+                    parts.push(function);
+                }
+            }
             [] => {
                 let known_parts = parts.clone();
                 let mut known_parts = known_parts.into_iter();
                 if !known_parts.any(|part| self.has_every_member(part, &usage.members)) {
-                    parts.push(self.object_type_of(&usage.members));
+                    match self.find_class_with_every_member(&usage.members) {
+                        Some(instance) => parts.push(instance),
+                        None => parts.push(self.object_type_of(&usage.members)),
+                    }
                 }
             }
             [only] => parts.push(only),
             _ if is_decided => {}
             _ => parts.extend_from_slice(&fitting),
         }
+    }
+
+    fn members_of_classes(&mut self) -> Rc<MembersOfClasses> {
+        if let Some(found) = &self.memo.members_of_classes {
+            return Rc::clone(found);
+        }
+        let classes = Rc::new(self.collect_members_of_classes());
+        self.memo.members_of_classes = Some(Rc::clone(&classes));
+        classes
+    }
+
+    fn collect_members_of_classes(&mut self) -> MembersOfClasses {
+        let (file, hir, bound) = (self.file, self.hir(), self.bound());
+        let mut classes = MembersOfClasses::default();
+        let mut properties: Vec<(Atom, ClassDeclaration)> = Vec::new();
+        for class in (0..hir.classes.len() as u32).map(ClassId) {
+            let declared = ClassDeclaration::Class(ClassRef { file, class });
+            for member in hir[class].members.iter().map(|member| &hir[member]) {
+                let PropKey::Name(name) = member.key else {
+                    continue;
+                };
+                if member.flags.contains(Flags::STATIC) {
+                    continue;
+                }
+                match member.kind {
+                    MemberKind::Method => classes.add_to_prototype(name, declared, true),
+                    MemberKind::Getter | MemberKind::Setter => {
+                        classes.add_to_prototype(name, declared, false);
+                    }
+                    MemberKind::Property => properties.push((name, declared)),
+                    _ => {}
+                }
+            }
+        }
+        let stores_into_prototypes = match bound.runtime.is_computed() {
+            true => self.c.written_stores(file).all_binding_stores(),
+            false => &[],
+        };
+        let mut constructors_of_methods: FxHashMap<FnId, SmallVec<[FnId; 1]>> =
+            FxHashMap::default();
+        for store in stores_into_prototypes {
+            let BindingStoreKind::Prototype(kind) = store.kind else {
+                continue;
+            };
+            let function = match bound.binding_initializer(hir, store.symbol) {
+                BindingInitializer::Function(function) => function,
+                BindingInitializer::Expression(value) => match hir[value].kind {
+                    ExprKind::Fn(function) => function,
+                    _ => continue,
+                },
+                BindingInitializer::Class(class) => {
+                    let declared = ClassDeclaration::Class(ClassRef { file, class });
+                    properties.push((store.name, declared));
+                    continue;
+                }
+                _ => continue,
+            };
+            if bound.is_stable_beside_evals(store.symbol) {
+                let declared = ClassDeclaration::Function(FunctionRef { file, function });
+                let is_method = kind == ObjectMemberKind::Method;
+                classes.add_to_prototype(store.name, declared, is_method);
+                if let Some(method) = find_stored_function(hir, bound, store.value) {
+                    let constructors = constructors_of_methods.entry(method).or_default();
+                    if constructors.last() != Some(&function) {
+                        constructors.push(function);
+                    }
+                }
+            }
+        }
+        if classes.by_name.is_empty() {
+            return classes;
+        }
+        for (name, class) in properties {
+            classes.add_to_instances(name, class);
+        }
+        for store in self.store_index(file).all_this_stores() {
+            match store.owner {
+                ThisOwner::Instance(class) => {
+                    let declared = ClassDeclaration::Class(ClassRef { file, class });
+                    classes.add_to_instances(store.name, declared);
+                }
+                ThisOwner::Function(function) => {
+                    let constructors = constructors_of_methods.get(&function);
+                    for &function in constructors.map_or(&[function][..], |known| &known[..]) {
+                        let declared = ClassDeclaration::Function(FunctionRef { file, function });
+                        classes.add_to_instances(store.name, declared);
+                    }
+                }
+                ThisOwner::Static(_) => {}
+            }
+        }
+        for listed in classes.by_name.values_mut() {
+            listed.on_prototype.sort_unstable();
+            listed.on_prototype.dedup_by_key(|entry| entry.0);
+            listed.in_instances.sort_unstable();
+            listed.in_instances.dedup();
+        }
+        classes
+    }
+
+    fn is_name_of_builtin(&mut self, name: Atom, listed: &ClassesWithMember) -> bool {
+        if let Some(known) = listed.is_builtin_name.get() {
+            return known;
+        }
+        let array = self.c.array_of(TypeId::ANY);
+        let mut types: SmallVec<[TypeId; 11]> =
+            SmallVec::from_slice(&[array, TypeId::STRING, TypeId::NUMBER]);
+        for name in [
+            known::Object,
+            known::Function,
+            known::Map,
+            known::Set,
+            known::WeakMap,
+            known::Promise,
+            known::RegExp,
+            known::Error,
+        ] {
+            types.push(self.c.global_ref(name, &[]));
+        }
+        let mut types = types.into_iter();
+        let is_builtin = types.any(|it| self.c.get_property_of_type(it, name).is_some());
+        listed.is_builtin_name.set(Some(is_builtin));
+        is_builtin
+    }
+
+    fn base_in_file(&self, class: ClassDeclaration) -> BaseClass {
+        let ClassDeclaration::Class(ClassRef { file, class }) = class else {
+            return BaseClass::None;
+        };
+        let (hir, bound) = (self.hir(), self.bound());
+        let Some(heritage) = hir[class].extends.some() else {
+            return BaseClass::None;
+        };
+        let ExprKind::Ident(_) = hir[heritage].kind else {
+            return BaseClass::Elsewhere;
+        };
+        match bound.binding(heritage) {
+            Binding::Symbol(symbol) => match bound.binding_initializer(hir, symbol) {
+                BindingInitializer::Class(class) => {
+                    BaseClass::InFile(ClassDeclaration::Class(ClassRef { file, class }))
+                }
+                BindingInitializer::Expression(value) => match hir[value].kind {
+                    ExprKind::Class(class) => {
+                        BaseClass::InFile(ClassDeclaration::Class(ClassRef { file, class }))
+                    }
+                    _ => BaseClass::Elsewhere,
+                },
+                _ => BaseClass::Elsewhere,
+            },
+            Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => BaseClass::Elsewhere,
+        }
+    }
+
+    fn extends_in_file(&self, below: ClassDeclaration, above: ClassDeclaration) -> bool {
+        let mut current = below;
+        for _ in 0..self.hir().classes.len() {
+            match self.base_in_file(current) {
+                BaseClass::InFile(base) if base == above => return true,
+                BaseClass::InFile(base) => current = base,
+                BaseClass::None | BaseClass::Elsewhere => return false,
+            }
+        }
+        false
+    }
+
+    /// Whether the members that the file writes leave it open that the instances of a class have them all.
+    fn may_have_every_member(
+        &mut self,
+        classes: &MembersOfClasses,
+        class: ClassDeclaration,
+        members: &Members,
+    ) -> bool {
+        let mut chain: SmallVec<[ClassDeclaration; 4]> = SmallVec::from_slice(&[class]);
+        let ends_in_file = loop {
+            match self.base_in_file(chain[chain.len() - 1]) {
+                BaseClass::None => break true,
+                BaseClass::InFile(above) if chain.len() <= self.hir().classes.len() => {
+                    chain.push(above)
+                }
+                BaseClass::InFile(_) | BaseClass::Elsewhere => break false,
+            }
+        };
+        !members.any(|member| {
+            let is_declared = classes.by_name.get(&member.name).is_some_and(|listed| {
+                let mut chain = chain.iter();
+                chain.any(|&class| listed.may_be_declared_by(class, member))
+            });
+            !is_declared && ends_in_file && {
+                let object = self.c.global_ref(known::Object, &[]);
+                self.c.get_property_of_type(object, member.name).is_none()
+            }
+        })
+    }
+
+    fn literals_by_name<'l>(
+        &self,
+        classes: &'l MembersOfClasses,
+    ) -> &'l FxHashMap<Atom, Vec<ExprId>> {
+        classes.literals.get_or_init(|| {
+            let (hir, bound) = (self.hir(), self.bound());
+            let mut literals: FxHashMap<Atom, Vec<ExprId>> = FxHashMap::default();
+            for property in (0..hir.props.len() as u32).map(PropId) {
+                let literal = bound.prop_owner[property.idx()];
+                if literal.is_some()
+                    && matches!(hir[literal].kind, ExprKind::Object(_))
+                    && let PropKey::Name(name) = hir[property].key
+                    && let Some(listed) = classes.by_name.get(&name)
+                    && !listed.on_prototype.is_empty()
+                {
+                    literals.entry(name).or_default().push(literal);
+                }
+            }
+            literals
+        })
+    }
+
+    /// The one class of the file whose instances answer every name, some of them by their prototype. A literal under all the names leaves it open.
+    fn find_class_with_every_member(&mut self, members: &Members) -> Option<TypeId> {
+        if !self.are_positions_only_expected(self.file) {
+            return None;
+        }
+        let classes = self.members_of_classes();
+        if classes.by_name.is_empty() {
+            return None;
+        }
+        let mut fewest: Option<(Atom, &ClassesWithMember)> = None;
+        members.any(|member| {
+            if let Some(listed) = classes.by_name.get(&member.name)
+                && !listed.on_prototype.is_empty()
+                && fewest.is_none_or(|(_, fewest)| listed.count() < fewest.count())
+                && !self.is_name_of_builtin(member.name, listed)
+            {
+                fewest = Some((member.name, listed));
+            }
+            false
+        });
+        let (rarest, fewest) = fewest?;
+        let mut candidates: SmallVec<[ClassDeclaration; 4]> = SmallVec::new();
+        let declared_on_prototype = fewest.on_prototype.iter().map(|entry| entry.0);
+        let in_instances_alone = fewest.in_instances.iter().copied().filter(|class| {
+            let on_prototype = &fewest.on_prototype;
+            on_prototype
+                .binary_search_by_key(class, |entry| entry.0)
+                .is_err()
+        });
+        let mut tops = 0;
+        for class in declared_on_prototype.chain(in_instances_alone) {
+            if !self.may_have_every_member(&classes, class, members) {
+                continue;
+            }
+            candidates.push(class);
+            tops += usize::from(matches!(self.base_in_file(class), BaseClass::None));
+            if tops > 1 {
+                return None;
+            }
+        }
+        if candidates.is_empty() {
+            return None;
+        }
+        candidates.sort_unstable();
+        let hir = self.hir();
+        let has_every_name = |&literal: &ExprId| match hir[literal].kind {
+            ExprKind::Object(properties) => !members.any(|member| {
+                let mut keys = properties.iter().map(|property| hir[property].key);
+                !keys.any(|key| key == PropKey::Name(member.name))
+            }),
+            _ => false,
+        };
+        let literals = self.literals_by_name(&classes).get(&rarest);
+        if literals.is_some_and(|literals| literals.iter().any(has_every_name)) {
+            return None;
+        }
+        let mut topmost: Option<(ClassDeclaration, TypeId)> = None;
+        for class in candidates {
+            let instance = match class {
+                ClassDeclaration::Class(ClassRef { file, class }) => {
+                    let symbol = self.bound().class_symbol[class.idx()].some();
+                    symbol.map(|symbol| self.c.declared_type(self.files().sym(file, symbol)))
+                }
+                ClassDeclaration::Function(FunctionRef { file, function }) => {
+                    self.c.instance_type_of_function(file, function)
+                }
+            };
+            let Some(instance) = instance else {
+                continue;
+            };
+            if !self.has_every_member(instance, members) {
+                continue;
+            }
+            match topmost {
+                None => topmost = Some((class, instance)),
+                Some((found, above)) if above == instance || self.extends_in_file(class, found) => {
+                }
+                Some((found, _)) if self.extends_in_file(found, class) => {
+                    topmost = Some((class, instance));
+                }
+                Some(_) => return None,
+            }
+        }
+        let (_, found) = topmost?;
+        Some(found)
     }
 
     fn has_every_member(&mut self, receiver: TypeId, members: &Members) -> bool {

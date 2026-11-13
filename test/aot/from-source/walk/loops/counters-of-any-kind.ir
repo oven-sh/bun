@@ -1,0 +1,18 @@
+# f3 = add
+# -- source: main.ts
+# class Inner { tree: any[] = []; }
+# class Holder { inner = new Inner(); constructor(readonly name: string) { }
+#   add(start: any, end: any): unknown { let sum: any = 0; for (let k = start; k < end; k++) sum += this.inner.tree[k]; return sum; } }
+# const holder = new Holder("h"); for (const one of JSON.parse("[1,2,4,8]") as any[]) holder.inner.tree.push(one);
+# const starts = JSON.parse('[0,2,-1,0.5,"1",null]') as any[];
+# const seen = { calls: 0, valueOf() { this.calls++; holder.inner.tree = [16, 32]; return 0; } };
+# print(...starts.map(start => holder.add(start, 4)), holder.add(1n, 3n), holder.add(seen, 2), seen.calls, holder.add(0, 2));
+# -- end of source
+# A counter that enters as anything is asked for an int32 from 0 up in front of the loop. The copy for that reads the field in front too, and asks its list there.
+# RUN: walk f3 mechanisms=all
+# CHECK: testedType=int[0, 2147483647]
+# CHECK: = IsPristine
+# CHECK: int[0, 2147483647] @Int32) isInLoop=true isLoopHead=true
+# CHECK: = GetArrayElement {{*}} level=Proven
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 15 12 NaN NaN 14 NaN 6 NaN 2 48

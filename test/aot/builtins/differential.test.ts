@@ -362,7 +362,7 @@ const wrongEntries: WrongEntry[] = [
   },
   {
     title: "a native function of the library that defines nothing of one operand on the other",
-    path: "native:NewCppFunction:BunCompiledModules.cpp:jsFunctionDefineOwnPropertiesLeftOut",
+    path: "native:NewCppFunction:BunCompiledModules.cpp:jsFunctionDefineMissingProperties",
     mode: "Call",
     column: "parameters[0].uses",
     applyTo: overload => ({ ...overload, propertyActions: [] }),

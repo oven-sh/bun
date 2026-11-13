@@ -3,9 +3,9 @@
 # The name is the class's own all the same: whoever stores under it stands in the text of the class, and Link has followed every one of them: field L0.1 proven=number writers-known.
 # A read that finds nothing throws, so what it answers is of the type that is proven of the field. Before, it was anything, and the increment behind it was generic.
 # RUN: walk f2:Body mechanisms=all
-# CHECK: number @JSValue = PrivateGet
-# CHECK: = Increment {{*}}form=Numbers
-# CHECK: number @JSValue = PrivateGet
+# CHECK: int[0, 9007199254740992] @JSValue = PrivateGet
+# CHECK: = Increment {{*}}form=CheckedIntegers
+# CHECK: int[0, 9007199254740992] @JSValue = PrivateGet
 
 layout L0 kind=Instance name="Counter" module=m0 position=6 constructor=f1 fields=[{key=#"class brand"@L0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"#n"@L0 declared={type=number} flags=[IsRequired, IsPrivate]}] flags=[HasHeritage] ownFieldCount=2
 # layout L3 kind=Closure

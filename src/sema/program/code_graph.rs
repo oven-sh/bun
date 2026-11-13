@@ -42,6 +42,7 @@ pub enum CodeAnswer<'s> {
     NotFound(CodeFailure),
 }
 
+// A program has one for every import site.
 const _: () = assert!(size_of::<CodeAnswer<'static>>() == 16);
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]

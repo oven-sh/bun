@@ -29,7 +29,7 @@
 # const list: number[] = [];
 # for (let i = 0; i < 10; i++) list.push(i & 7);
 # (globalThis as any).kept = list;
-# console.log(total(list), less(list), inner([list, list]), halves(4));
+# console.log(total(list), less(list), inner([list, list]), halves(JSON.parse("4")));
 # -- end of source
 # LoopInvariants is withheld in the runs on f1 and f3: with it a row of tests stands in front of a loop that leaves its list alone, and behind it the read names the storage and the sum is raw
 # RUN(TOTAL): walk f1 mechanisms=all-Inlining-LoopInvariants

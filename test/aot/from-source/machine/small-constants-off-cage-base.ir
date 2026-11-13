@@ -1,0 +1,14 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function nothing(): unknown { return null; }
+# function small(flag: boolean): number { return flag ? -128 : 127; }
+# function large(flag: boolean): number { return flag ? -129 : 128; }
+# print([nothing(), small(true), small(false), large(true), large(false)].map(String).join());
+# -- end of source
+# The base of the cell cage has a low half of zeros. So on x86-64 a constant of eight bits is a lea of four bytes off its register, not a move of five.
+# REQUIRES: x86_64
+# RUN: bytes f1 mechanisms=all-Inlining
+# CHECK: unit f1:Body
+# CHECK-NEXT: size=5 frame=none
+# RUN(SHELL): run-in-shell mechanisms=all-Inlining
+# SHELL: null,-128,127,-129,128

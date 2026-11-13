@@ -7,6 +7,8 @@ mod statements;
 mod tests;
 mod walker;
 
+use std::cell::OnceCell;
+
 use bun_sema::bind::{Binding, Bound, ScopeId, SymbolId};
 use bun_sema::fold::{Decisions, TreeNode};
 use bun_sema::hir::{self, ClassId, ExprId, FnId, MemberId, StmtId};
@@ -110,6 +112,7 @@ pub(super) struct ScopeWalk {
     pub(super) use_counts: Vec<u8>,
     pub(super) function_references: Vec<(WalkedFunctionId, FnId)>,
     pub(super) calls_by_name: Vec<(ExprId, FnId)>,
+    pub(super) functions_calling_themselves: Vec<FnId>,
     pub(super) made_at_first_read: Vec<(SymbolId, FnId)>,
     pub(super) functions_laid_in_literals: Vec<FnId>,
     pub(super) created_at_each_read: Vec<SymbolId>,
@@ -195,6 +198,8 @@ struct Walker<'x, 's> {
     is_commonjs: bool,
     file_scope: ScopeId,
     inner_module_parameters: Vec<SymbolId>,
+    /// The table of bodies of a bundle, which are walked as modules. `NONE` in other files.
+    literal_of_bodies: ExprId,
     jsx_uses: Vec<(ExprId, Binding)>,
     metadata_uses: Vec<(ClassId, Binding)>,
     class_decorators: Vec<(ClassId, ExprId)>,
@@ -202,6 +207,7 @@ struct Walker<'x, 's> {
     pending_stores: Vec<SymbolId>,
     unconditional_calls_of_super: FxHashSet<ExprId>,
     fields_evaluated_in_constructors: FxHashSet<MemberId>,
+    places_of_this_super_and_return: OnceCell<Vec<u32>>,
     clock: u32,
     number_walked: u32,
     is_only_called_or_tested: Vec<bool>,

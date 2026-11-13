@@ -1,11 +1,14 @@
-# `const url = new URL(line); line += ..; url.searchParams.get("k0")`: a URL that is never made is made after all where a value has to be decoded, of the operands as they are written. A name of a text in a builder is bound to the builder again by then, which has grown: such a URL is made where it is written.
+# `const url = new URL(line); line += ..; url.searchParams.get("k0")`: a URL that is never made is made after all where a value has to be decoded, of the operands as they are written. A name of a text in a builder is bound to the builder again by then, which has grown: such a URL is made where it is written. A text that every iteration passes is in no builder.
 # f1 = gather
 # -- source: url-made-of-a-text-that-grows-is-made.js
-# function gather(count) { let line = "http://a.example/p?a=0"; let seen = 0; for (let i = 0; i < count; i++) { const url = new URL(line); line += "&k" + i + "=%2" + i; seen += url.searchParams.get("a").length + url.pathname.length; } return line + "/" + seen; }
+# function gather(count) { let line = "http://a.example/p?a=0"; let seen = 0; for (let i = 0; i < count; i++) { if (i !== 1) { const url = new URL(line); line += "&k" + i + "=%2" + i; seen += url.searchParams.get("a").length + url.pathname.length; } } return line + "/" + seen; }
 # let last = ""; for (let turn = 0; turn < 30; turn++) last = gather(3);
 # print(last);
 # -- end of source
 # RUN(FORM): walk f1 mechanisms=all
 # FORM-LABEL: code f1:Body
-# FORM: StringBuilderBegin
-# FORM: StringBuilderToString
+# No text is in a builder here: each turn passes the whole text to the URL.
+# FORM-NOT: StringBuilderBegin
+# FORM: CallBuiltin {{*}}overload=CompilerHelpersScanPlainURL
+# FORM: CallBuiltin {{*}}overload=URL/1
+# FORM-NOT: StringBuilderBegin

@@ -7,7 +7,7 @@
 # say(String(Object.is(last([hidden()], hidden()), -0))); say(String(Object.is(last([hidden()], hidden()), 0))); say(String(last([hidden()], hidden()))); say(String(last([hidden()], hidden())));
 # -- end of source
 # RUN: walk f1 mechanisms=all
-# CHECK: = TypeTest {{*}}testedType=int[-2147483648, 4294967295]
+# CHECK: = TypeTest {{*}}testedType=int[-562949953421312, 562949953421312]
 # RUN(COUNT): compile Int32OrUint32GuardsHoisted mechanisms=all
 # COUNT: statistic Int32OrUint32GuardsHoisted 1
 # RUN(SHELL): run-in-shell const all = [-0, 0, 0, 0, -0, 1, 4294967295, 0]; let at = 0; globalThis.hidden = () => all[at++]; globalThis.say = (x) => print(String(x));

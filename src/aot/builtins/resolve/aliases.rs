@@ -1,3 +1,4 @@
+use super::module_cache::name_of_module_cache;
 use super::resolver::{AliasSource, ExprState, HolderKind, ResolvedValue, Resolver};
 use super::{BuiltinPath, ResolveInput};
 use crate::builtins::table::{self, BuiltinFlags, BuiltinId, BuiltinKind, Scope};
@@ -66,6 +67,8 @@ impl Resolver<'_, '_> {
         }
     }
 
+    /// `var a; (a = process) === null || a === void 0 ? void 0 : a.env`: what `process?.env` is compiled down to.
+    /// A variable that is declared without a value and stored to at one place holds that value or `undefined`.
     fn find_only_value_stored_to(&self, symbol: SymbolId) -> Option<ExprId> {
         let (hir, bound) = (self.input.hir, self.input.bound);
         if bound.binding_stability(symbol) != BindingStability::Stored
@@ -95,6 +98,8 @@ impl Resolver<'_, '_> {
             && !self.is_stable(symbol)
     }
 
+    /// Only a namespace of the realm is followed through a store: `process`, `Bun`, `console`, `Math`. Not the global
+    /// object, nothing of the test runner, neither table of the loader.
     pub(super) fn is_followed_through_a_store(&self, value: ResolvedValue) -> bool {
         let id = value.path.id;
         let entry = table::entry(table::canonical_id(id));
@@ -212,6 +217,9 @@ impl Resolver<'_, '_> {
                 initializer,
                 members,
             } => {
+                if let Some(cache) = self.find_extracted_module_cache(source) {
+                    return Some(cache.stored());
+                }
                 let mut value = match self.value_of(*initializer) {
                     Some(value) => value,
                     None => self.find_object_only_held_by(*initializer)?,
@@ -221,6 +229,23 @@ impl Resolver<'_, '_> {
                 }
                 Some(value.stored())
             }
+        }
+    }
+
+    fn find_extracted_module_cache(&self, source: &AliasSource) -> Option<ResolvedValue> {
+        match source {
+            AliasSource::Initializer {
+                initializer,
+                members,
+            } => match members[..] {
+                [name]
+                    if name == name_of_module_cache() && self.value_of(*initializer).is_none() =>
+                {
+                    self.find_created_require_cache(*initializer)
+                }
+                _ => None,
+            },
+            AliasSource::Known(_) => None,
         }
     }
 
@@ -258,6 +283,7 @@ impl Resolver<'_, '_> {
                 held.filter(|held| {
                     table::canonical_id(held.path.id) == BuiltinId::ModuleObject
                         || is_prototype_object(held.path.id)
+                        || super::module_cache::is_module_cache(held.path.id)
                 })
             }
             _ => self.find_module_object_behind_tests(initializer),
@@ -272,7 +298,8 @@ impl Resolver<'_, '_> {
     fn is_source_of_object_only_held(&self, source: &AliasSource) -> bool {
         match source {
             AliasSource::Initializer { initializer, .. } => {
-                self.find_object_only_held_by(*initializer).is_some()
+                self.find_extracted_module_cache(source).is_some()
+                    || self.find_object_only_held_by(*initializer).is_some()
             }
             AliasSource::Known(_) => false,
         }

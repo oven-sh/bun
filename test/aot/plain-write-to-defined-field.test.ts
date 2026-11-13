@@ -62,5 +62,8 @@ describe.skipIf(!!unsupported)("a plain write to a field planned as defined", ()
         expect(stopped.stderr).toContain(message);
         expect(stopped.exitCode).toBe(1);
       }
+      const hardened = await build("hardened", "--aot-harden=proof-checks", `--aot-testing=${fault}`);
+      expect(hardened.stderr).toContain(message);
+      expect(hardened.exitCode).toBe(1);
     }));
 });

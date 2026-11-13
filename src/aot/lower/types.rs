@@ -108,6 +108,28 @@ impl FileLowering<'_, '_, '_, '_> {
         (contents != TypeTable::NEVER).then_some(contents)
     }
 
+    /// The numbers that the checker infers for an array literal without a written type.
+    fn inferred_literal_contents(&mut self, literal: ExprId) -> TypeId {
+        if !self.is_checked() {
+            return TypeTable::ANYTHING;
+        }
+        let Ok(list) = self.queries.expression_type(literal) else {
+            return TypeTable::ANYTHING;
+        };
+        let Some(element) = self.find_array_element_type(list) else {
+            return TypeTable::ANYTHING;
+        };
+        match self.queries.type_shape(element).map(|shape| shape.kind) {
+            Ok(ShapeKind::Number) => TypeTable::NUMBER,
+            _ => TypeTable::ANYTHING,
+        }
+    }
+
+    pub(in crate::lower) fn literal_holds_inferred_numbers(&mut self, literal: ExprId) -> bool {
+        matches!(self.hir[literal].kind, ExprKind::Array(_))
+            && self.inferred_literal_contents(literal) == TypeTable::NUMBER
+    }
+
     pub(crate) fn array_literal_contents(&mut self, literal: ExprId) -> TypeId {
         debug_assert!(
             matches!(
@@ -117,7 +139,7 @@ impl FileLowering<'_, '_, '_, '_> {
             "an array literal or `new Array()` was expected"
         );
         let Ok(Some(container)) = self.queries.contextual_type(literal) else {
-            return TypeTable::ANYTHING;
+            return self.inferred_literal_contents(literal);
         };
         match self.find_array_element_type(container) {
             Some(element) => self.map_type_at(element).ty,

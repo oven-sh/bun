@@ -6,9 +6,9 @@
 # -- end of source
 # f1 = alsoRead
 # RUN(WALK): walk f1 mechanisms=all
-# WALK: number @JSValue = Add {{*}}form=Numbers
+# WALK: number @Double = Add {{*}}form=Numbers
 # RUN(UNDONE): compile LoopVisitsUndone SpeculationsEmitted mechanisms=all
 # UNDONE-NOT: statistic LoopVisitsUndone 0
-# UNDONE: statistic SpeculationsEmitted 7
+# UNDONE: statistic SpeculationsEmitted 12
 # RUN(ANSWERS): run-in-shell mechanisms=all
 # ANSWERS: 168.5

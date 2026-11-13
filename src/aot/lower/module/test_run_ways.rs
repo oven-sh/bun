@@ -2,6 +2,7 @@ use bun_sema::atom::{Atom, known};
 use bun_sema::program::{FileId, Sym};
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use super::imports::RequestedImport;
 use crate::builtins::RuntimeModule;
 use crate::ir::generated::{ImportPhase, ModuleKind};
 use crate::ir::{BlockId, Edge, TypeTable, ValueId, VariableKey};
@@ -18,7 +19,7 @@ pub(crate) enum BoundBy {
     Call,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub(super) enum AskedBy {
     Statement,
     Name,
@@ -33,6 +34,8 @@ pub(super) enum Step {
         asked_by: AskedBy,
         asked_from: Option<FileId>,
         behind: usize,
+        /// The stars of the file lead back to a file that asks it.
+        is_on_cycle: bool,
     },
     ModuleWithoutTable {
         module: ModuleRef,
@@ -43,13 +46,35 @@ pub(super) enum Step {
     FileItself {
         file: FileId,
         name: Atom,
+        ends_way: bool,
     },
     Declaration,
+    /// A declaration that the import is not bound to.
+    OtherDeclaration {
+        file: FileId,
+        name: Atom,
+    },
+}
+
+/// Whether the file or one of its mocks may have the name.
+fn may_have_name(modules: &ModuleGraph, file: FileId, name: Atom) -> bool {
+    let is_dynamic = |request: &ModuleRequest| request.is_dynamic_star_export;
+    let Some(of_mocks) = modules.names_of_mocks(file) else {
+        return true;
+    };
+    modules.kind(file) == ModuleKind::CommonJs
+        || modules.requests(file).iter().any(is_dynamic)
+        || of_mocks.contains(&name)
+        || modules.is_installed_by_spy(name)
+        || modules.exports(file).iter().any(|it| it.name == name)
+        || modules.names_handed_on(file).iter().any(|it| it.0 == name)
+        || modules.names_from_stars(file).contains(&name)
 }
 
 #[derive(Default)]
 struct PlacesOfStars {
     asked_for_every_name: Vec<u32>,
+    mocked: Vec<u32>,
     asked_for_name: FxHashMap<Atom, Vec<u32>>,
 }
 
@@ -58,7 +83,8 @@ impl PlacesOfStars {
         let is_dynamic = |request: &ModuleRequest| request.is_dynamic_star_export;
         let next = match target {
             ModuleRef::File(next)
-                if !modules.holds_mock_in_variable(next)
+                if (!modules.holds_mock_in_variable(next)
+                    || modules.names_of_mocks(next).is_some())
                     && modules.kind(next) != ModuleKind::CommonJs
                     && !modules.requests(next).iter().any(is_dynamic) =>
             {
@@ -66,10 +92,15 @@ impl PlacesOfStars {
             }
             _ => return self.asked_for_every_name.push(place),
         };
+        if modules.holds_mock_in_variable(next) {
+            self.mocked.push(place);
+        }
+        let of_mocks = modules.names_of_mocks(next).unwrap_or_default();
         let listed = modules.exports(next).iter().map(|it| it.name);
         let handed_on = modules.names_handed_on(next).iter().map(|it| it.0);
         let from_stars = modules.names_from_stars(next).iter().copied();
-        for name in listed.chain(handed_on).chain(from_stars) {
+        let of_mocks = of_mocks.iter().copied();
+        for name in listed.chain(handed_on).chain(from_stars).chain(of_mocks) {
             let places = self.asked_for_name.entry(name).or_default();
             if places.last() != Some(&place) {
                 places.push(place);
@@ -77,13 +108,18 @@ impl PlacesOfStars {
         }
     }
 
-    fn of(&self, name: Atom) -> Vec<u32> {
+    fn of(&self, modules: &ModuleGraph, name: Atom) -> Vec<u32> {
         let for_name = self
             .asked_for_name
             .get(&name)
             .map_or(&[][..], |places| places);
-        let mut places = [&self.asked_for_every_name[..], for_name].concat();
+        let mocked = match modules.is_installed_by_spy(name) {
+            true => &self.mocked[..],
+            false => &[],
+        };
+        let mut places = [&self.asked_for_every_name[..], for_name, mocked].concat();
         places.sort_unstable();
+        places.dedup();
         places
     }
 }
@@ -187,26 +223,49 @@ impl KeptBetweenWays {
             }
             StarsAsWritten { stars, places }
         });
-        let places = written.places.of(name).into_iter();
+        let places = written.places.of(modules, name).into_iter();
         places.map(|place| written.stars[place as usize]).collect()
     }
+}
+
+/// One request for a name. The importer is kept only for a file that is left out, because that file requests names on its importer's behalf.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+struct Request {
+    file: FileId,
+    name: Atom,
+    asked_by: AskedBy,
+    importer: Option<FileId>,
+}
+
+/// The result of a request, valid wherever the innermost station that enclosed the request encloses the next one too.
+#[derive(Copy, Clone)]
+struct Answer {
+    is_found: bool,
+    enclosing_station: Option<usize>,
+}
+
+#[derive(Copy, Clone)]
+struct EmittedFile {
+    has_inner_station: bool,
+    is_found: bool,
 }
 
 struct WayToDeclaration<'a> {
     modules: &'a ModuleGraph,
     kept: Option<&'a mut KeptBetweenWays>,
     station_of_writer: Option<(FileId, Atom)>,
-    names_of_path: Vec<Atom>,
     way_to_writer: Option<Vec<(FileId, Atom)>>,
     asking_file: Option<FileId>,
     declared_in: Option<FileId>,
     steps: Vec<Step>,
-    path: Vec<FileId>,
+    path: Vec<(FileId, Atom)>,
     names_on_path: FxHashSet<(FileId, Atom)>,
-    answers_to_stars: FxHashMap<(FileId, Atom), (bool, Option<usize>)>,
+    answers: FxHashMap<Request, Answer>,
     rings_met: usize,
+    /// The first place on the path that a request led back to.
+    outermost_ring: usize,
     stations_on_path: Vec<usize>,
-    stations_written_out: FxHashMap<(FileId, Atom), bool>,
+    emitted_files: FxHashMap<(FileId, Atom), EmittedFile>,
     count_of_stations: usize,
 }
 
@@ -221,19 +280,25 @@ impl<'a> WayToDeclaration<'a> {
             modules,
             kept,
             station_of_writer: None,
-            names_of_path: Vec::new(),
             way_to_writer: None,
             asking_file,
             declared_in,
             steps: Vec::new(),
             path: Vec::new(),
             names_on_path: FxHashSet::default(),
-            answers_to_stars: FxHashMap::default(),
+            answers: FxHashMap::default(),
             rings_met: 0,
+            outermost_ring: usize::MAX,
             stations_on_path: Vec::new(),
-            stations_written_out: FxHashMap::default(),
+            emitted_files: FxHashMap::default(),
             count_of_stations: 0,
         }
+    }
+
+    /// The innermost file on the path that is not left out.
+    fn last_file_on_path(&self) -> Option<FileId> {
+        let mut files = self.path.iter().rev().map(|&(file, _)| file);
+        files.find(|&file| !self.modules.is_left_out(ModuleRef::File(file)))
     }
 
     fn ask(&mut self, file: FileId, name: Atom, asked_by: AskedBy) -> bool {
@@ -242,10 +307,13 @@ impl<'a> WayToDeclaration<'a> {
         }
         if self.names_on_path.contains(&(file, name)) {
             self.rings_met += 1;
+            let place = (self.path.iter()).position(|&on_path| on_path == (file, name));
+            self.outermost_ring = self.outermost_ring.min(place.unwrap_or(usize::MAX));
             return false;
         }
-        let is_station =
-            Some(file) != self.asking_file && self.modules.holds_mock_in_variable(file);
+        let is_station = Some(file) != self.asking_file
+            && self.modules.holds_mock_in_variable(file)
+            && (asked_by != AskedBy::Star || may_have_name(self.modules, file, name));
         if let Some(sought) = self.station_of_writer {
             let kept = self
                 .kept
@@ -254,48 +322,73 @@ impl<'a> WayToDeclaration<'a> {
             let told = kept
                 .filter(|&&(station, _)| station == sought)
                 .map(|&(_, writer)| writer);
-            let stays = |&&on_path: &&FileId| !self.modules.is_left_out(ModuleRef::File(on_path));
-            let asking = (is_station && (file, name) == sought)
-                .then(|| self.path.iter().rev().find(stays).copied());
+            let asking = (is_station && (file, name) == sought).then(|| self.last_file_on_path());
             if let Some(asked_from) = told.map(Some).or(asking) {
-                let names = self.names_of_path.iter().copied();
-                self.way_to_writer = Some(self.path.iter().copied().zip(names).collect());
+                self.way_to_writer = Some(self.path.clone());
                 self.steps.push(Step::Station {
                     file: sought.0,
                     name: sought.1,
                     asked_by,
                     asked_from,
                     behind: 0,
+                    is_on_cycle: false,
                 });
                 return true;
             }
         }
-        let is_kept = asked_by == AskedBy::Star && !is_station;
-        if is_kept
-            && let Some(&(answer, below)) = self.answers_to_stars.get(&(file, name))
-            && below.is_none_or(|station| self.stations_on_path.binary_search(&station).is_ok())
-        {
-            return answer;
+        let asked_from = self.last_file_on_path();
+        let is_left_out = self.modules.is_left_out(ModuleRef::File(file));
+        let request = Request {
+            file,
+            name,
+            asked_by,
+            importer: asked_from.filter(|_| asked_by == AskedBy::Name && is_left_out),
+        };
+        // A mock that lacks the name skips the steps of its file only where a star names the file, so only such a file must be asked again.
+        let is_answer_reused = asked_by == AskedBy::Name || !is_station;
+        if is_answer_reused && let Some(is_found) = self.find_answer(request) {
+            if is_station && !is_found {
+                let behind = self.steps.len() + 1;
+                self.count_of_stations += 1;
+                self.steps.push(Step::Station {
+                    file,
+                    name,
+                    asked_by,
+                    asked_from,
+                    behind,
+                    is_on_cycle: false,
+                });
+            }
+            return is_found;
         }
-        let below = self.stations_on_path.last().copied();
-        let stays = |&&on_path: &&FileId| !self.modules.is_left_out(ModuleRef::File(on_path));
-        let asked_from = self.path.iter().rev().find(stays).copied();
-        let holds_station_behind = self.stations_written_out.get(&(file, name));
-        if is_station && asked_by == AskedBy::Star && holds_station_behind == Some(&true) {
-            let behind = self.steps.len() + 2;
-            self.count_of_stations += 1;
-            self.steps.push(Step::Station {
+        let enclosing_station = self.stations_on_path.last().copied();
+        let may_use_namespace =
+            asked_by == AskedBy::Name && !is_left_out || asked_by == AskedBy::Star && is_station;
+        if may_use_namespace
+            && let Some(&emitted) = self.emitted_files.get(&(file, name))
+            && emitted.has_inner_station
+        {
+            if is_station {
+                let behind = self.steps.len() + 2;
+                self.count_of_stations += 1;
+                self.steps.push(Step::Station {
+                    file,
+                    name,
+                    asked_by,
+                    asked_from,
+                    behind,
+                    is_on_cycle: false,
+                });
+            }
+            let ends_way = asked_by == AskedBy::Name && emitted.is_found;
+            self.steps.push(Step::FileItself {
                 file,
                 name,
-                asked_by,
-                asked_from,
-                behind,
+                ends_way,
             });
-            self.steps.push(Step::FileItself { file, name });
-            return false;
+            return ends_way;
         }
-        self.path.push(file);
-        self.names_of_path.push(name);
+        self.path.push((file, name));
         self.names_on_path.insert((file, name));
         let station = self.steps.len();
         let count_of_stations = self.count_of_stations;
@@ -308,8 +401,11 @@ impl<'a> WayToDeclaration<'a> {
                 asked_by,
                 asked_from,
                 behind: 0,
+                is_on_cycle: false,
             });
         }
+        let place_on_path = self.path.len() - 1;
+        let outermost_ring = core::mem::replace(&mut self.outermost_ring, usize::MAX);
         let is_named = asked_by != AskedBy::Star || (is_station && self.declared_in == Some(file));
         let is_found = match asked_by == AskedBy::Star && self.lacks_table(file, name) {
             true => {
@@ -326,21 +422,39 @@ impl<'a> WayToDeclaration<'a> {
         let end = self.steps.len();
         if is_station {
             self.stations_on_path.pop();
-            let holds_station_behind = self.count_of_stations > count_of_stations + 1;
-            self.stations_written_out
-                .insert((file, name), holds_station_behind);
         }
-        if is_station && let Some(Step::Station { behind, .. }) = self.steps.get_mut(station) {
+        let emitted = EmittedFile {
+            has_inner_station: self.count_of_stations > count_of_stations + usize::from(is_station),
+            is_found,
+        };
+        self.emitted_files.insert((file, name), emitted);
+        if is_station
+            && let Some(Step::Station {
+                behind,
+                is_on_cycle,
+                ..
+            }) = self.steps.get_mut(station)
+        {
             *behind = end;
+            *is_on_cycle = self.outermost_ring < place_on_path;
         }
+        self.outermost_ring = self.outermost_ring.min(outermost_ring);
         self.path.pop();
-        self.names_of_path.pop();
         self.names_on_path.remove(&(file, name));
-        if is_kept {
-            self.answers_to_stars
-                .insert((file, name), (is_found, below));
+        if is_answer_reused {
+            let answer = Answer {
+                is_found,
+                enclosing_station,
+            };
+            self.answers.insert(request, answer);
         }
         is_found && !(is_station && asked_by == AskedBy::Star)
+    }
+
+    fn find_answer(&self, request: Request) -> Option<bool> {
+        let answer = self.answers.get(&request)?;
+        let is_on_path = |station| self.stations_on_path.binary_search(&station).is_ok();
+        (answer.enclosing_station.is_none_or(is_on_path)).then_some(answer.is_found)
     }
 
     fn find_listed(&mut self, file: FileId, name: Atom) -> Option<ModuleExport> {
@@ -425,27 +539,25 @@ impl<'a> WayToDeclaration<'a> {
         }
     }
 
+    /// The read without mocks reads what the import is bound to. A way that has left the files behind that binding, past a mock that lacks the name, ends at another declaration: the run is asked for it.
     fn end_at_declaration(&mut self, file: FileId, name: Atom) -> bool {
-        let is_of_binding = (self.declared_in).is_none_or(|end| self.path.contains(&end));
+        let is_of_binding = (self.declared_in)
+            .is_none_or(|end| self.path.iter().any(|&(on_path, _)| on_path == end));
         self.steps.push(match is_of_binding {
             true => Step::Declaration,
-            false => Step::ModuleWithoutTable {
-                module: ModuleRef::File(file),
-                name,
-                is_behind_its_mock: false,
-                holder_of_star_to_built_in: None,
-            },
+            false => Step::OtherDeclaration { file, name },
         });
         true
     }
 
     fn ask_stars_that_bring(&mut self, file: FileId, name: Atom) -> Option<bool> {
+        let modules = self.modules;
         if let Some(kept) = self.kept.as_deref_mut() {
-            let stars = kept.stars_that_bring(self.modules, file);
+            let stars = kept.stars_that_bring(modules, file);
             if stars.has_dynamic_star {
                 return Some(self.ask_stars_as_written(file, name));
             }
-            let mut places = stars.places.of(name).into_iter();
+            let mut places = stars.places.of(modules, name).into_iter();
             let rings_met = self.rings_met;
             let named = self.modules.files_named_by_stars(file);
             let is_found = places.any(|place| self.ask(named[place as usize], name, AskedBy::Star));
@@ -481,8 +593,7 @@ impl<'a> WayToDeclaration<'a> {
             return false;
         }
         let modules = self.modules;
-        let stays = |&&on_path: &&FileId| !modules.is_left_out(ModuleRef::File(on_path));
-        let holder = self.path.iter().rev().find(stays).copied();
+        let holder = self.last_file_on_path();
         let holder = holder.or(self.asking_file).unwrap_or(file);
         if let Some(kept) = self.kept.as_deref_mut() {
             let stars = kept.find_stars_as_written(modules, file, name);
@@ -593,6 +704,12 @@ pub(super) fn has_station(steps: &[Step]) -> bool {
         .any(|step| matches!(step, Step::Station { .. }))
 }
 
+/// Whether the import is bound to what the steps lead to.
+fn ends_at_binding(steps: &[Step]) -> bool {
+    let is_other = |step: &Step| matches!(step, Step::OtherDeclaration { .. });
+    !has_station(steps) && !steps.iter().any(is_other)
+}
+
 fn has_declaration(steps: &[Step]) -> bool {
     let ends_way = |step: &Step| {
         matches!(
@@ -676,10 +793,12 @@ pub(super) fn find_way_of_read(
                 asked_by,
                 asked_from,
                 behind,
+                is_on_cycle,
             } => Step::Station {
                 file,
                 name,
                 asked_from,
+                is_on_cycle,
                 asked_by: match asked_by {
                     AskedBy::Statement if asked.is_some_and(|asked| asked.0 != file) => {
                         AskedBy::Name
@@ -688,7 +807,10 @@ pub(super) fn find_way_of_read(
                 },
                 behind: behind + first,
             },
-            Step::ModuleWithoutTable { .. } | Step::FileItself { .. } | Step::Declaration => step,
+            Step::ModuleWithoutTable { .. }
+            | Step::FileItself { .. }
+            | Step::Declaration
+            | Step::OtherDeclaration { .. } => step,
         }));
     }
     steps
@@ -761,13 +883,39 @@ fn find_file_that_names_built_in(
 pub(super) fn emit_behind_stations(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     binding: ImportBinding,
-    asked: Option<(FileId, Atom)>,
-    handed_on_by: Option<FileId>,
+    requested_import: RequestedImport<'_>,
     bound_by: BoundBy,
     read_off: &mut dyn FnMut(&mut FunctionLowering<'_, '_, '_, '_, '_>, ValueId, Atom) -> ValueId,
     read_without_mock: &mut dyn FnMut(&mut FunctionLowering<'_, '_, '_, '_, '_>) -> ValueId,
 ) -> ValueId {
+    let RequestedImport {
+        request: asked,
+        passed_by: handed_on_by,
+        holders,
+    } = requested_import;
     let modules = lowering.file.inputs.modules;
+    let belongs_to_other_importer = handed_on_by.is_some() && holders.is_empty();
+    let reads_links = bound_by == BoundBy::Statement
+        && !belongs_to_other_importer
+        && modules.has_instances(lowering.file.file);
+    let find_path_to_holder = |holder: FileId| {
+        let (file, name) = asked?;
+        let path = modules.find_path_to_holder(file, name, holder)?;
+        Some([holders, &path].concat())
+    };
+    let own_file = lowering.file.file;
+    let find_linked_built_in = |holder: FileId, module: ModuleRef| match module {
+        ModuleRef::Runtime(built_in) if reads_links && modules.is_named_by_mock(module) => {
+            let path = match holder == own_file {
+                true => Some(Vec::new()),
+                false => find_path_to_holder(holder),
+            };
+            let fields = modules.instance_layout(holder)?;
+            fields.field_of_mock(module)?;
+            Some((built_in, path?))
+        }
+        _ => None,
+    };
     let reading_file = lowering.file.module_id();
     let reader_through = |holder| match bound_by {
         BoundBy::Statement => reading_file,
@@ -778,7 +926,7 @@ pub(super) fn emit_behind_stations(
         find_way_of_read(modules, Some(kept), lowering.file.file, binding, asked)
     };
     let runtime_station = find_mocked_built_in_behind(modules, lowering.file.file, binding);
-    if !has_station(&steps) && runtime_station.is_none() {
+    if ends_at_binding(&steps) && runtime_station.is_none() {
         return read_without_mock(lowering);
     }
     let is_brought_by_star = steps.iter().any(|step| {
@@ -833,7 +981,7 @@ pub(super) fn emit_behind_stations(
         end_of_question
     });
     match runtime_station {
-        Some((module, _)) if is_asked_only_of_built_in => {
+        Some((module, _)) if is_asked_only_of_built_in && !reads_links => {
             let key = VariableKey::MockOfRuntimeModule(module);
             let variable = lowering.file.ensure_variable(key);
             let word = lowering.builder.get_module_variable(variable);
@@ -877,29 +1025,56 @@ pub(super) fn emit_behind_stations(
             } if is_way_left || !is_behind_its_mock => {
                 Some((module, name, is_behind_its_mock, holder_of_star_to_built_in))
             }
-            Step::FileItself { file, name } => Some((ModuleRef::File(file), name, true, None)),
+            Step::FileItself { file, name, .. } => Some((ModuleRef::File(file), name, true, None)),
+            Step::OtherDeclaration { file, name } => {
+                Some((ModuleRef::File(file), name, false, None))
+            }
             _ => None,
         };
         if let Some((module, name, is_behind_its_mock, holder_of_star_to_built_in)) = asked_of_run {
+            let requested_module = module;
+            let linked_file = match module {
+                ModuleRef::File(file) if reads_links && modules.has_instances(file) => Some(file),
+                _ => None,
+            };
             let module = modules.facade(module).unwrap_or(module);
             let module = lowering.file.fragment.declare_module(module);
             let phase = ImportPhase::Evaluation;
             let object = match holder_of_star_to_built_in {
+                Some(holder)
+                    if let Some((built_in, path)) =
+                        find_linked_built_in(holder, requested_module) =>
+                {
+                    lowering.emit_built_in_namespace(&path, built_in)
+                }
                 Some(holder) => {
                     let holder = (lowering.file.fragment).declare_module(ModuleRef::File(holder));
                     let reader = reader_through(holder);
                     lowering.builder.namespace_seen_by(module, holder, reader)
                 }
-                None => {
-                    (lowering.builder).module_namespace(module, phase, is_behind_its_mock, false)
-                }
+                None => match linked_file.and_then(find_path_to_holder) {
+                    Some(path) => {
+                        let target = *path.last().expect("a path has a last file");
+                        lowering.emit_linked_namespace(target, phase, &path)
+                    }
+                    None => (lowering.builder).module_namespace(
+                        module,
+                        phase,
+                        is_behind_its_mock,
+                        false,
+                    ),
+                },
             };
             let key = lowering.file.name_key(name);
             let has = lowering.emit_has(object, PropertyName::Constant(key));
             let has = lowering.split_on_truthiness(has);
             lowering.builder.switch_to(has.not_taken);
-            let next = block_at(lowering, &mut blocks, index + 1);
-            lowering.jump(next);
+            let lacking = match step {
+                Step::FileItself { ends_way: true, .. } => nothing,
+                _ => index + 1,
+            };
+            let lacking = block_at(lowering, &mut blocks, lacking);
+            lowering.jump(lacking);
             lowering.builder.switch_to(has.taken);
             if let Some(end_of_question) = question {
                 let end = lowering.builder.read_variable(end_of_question);
@@ -920,6 +1095,7 @@ pub(super) fn emit_behind_stations(
             asked_by,
             asked_from,
             behind,
+            is_on_cycle,
         } = step
         else {
             if let Some(end_of_question) = question {
@@ -949,26 +1125,45 @@ pub(super) fn emit_behind_stations(
             lowering.jump(declaration);
             continue;
         };
-        let variable = lowering.file.ensure_variable(VariableKey::MockOf(file));
-        let mock = lowering.builder.get_module_variable(variable);
-        let split = lowering.split_on_type(mock, TypeTable::ABSENT);
-        lowering.builder.switch_to(split.taken);
-        let next = block_at(lowering, &mut blocks, index + 1);
-        lowering.jump(next);
-        lowering.builder.switch_to(split.not_taken);
         let mocked = (lowering.file.fragment).declare_module(ModuleRef::File(file));
+        let path = match asked_from {
+            _ if !reads_links => None,
+            Some(holder) => find_path_to_holder(holder),
+            None => Some(holders.to_vec()),
+        };
+        let by_link = path.and_then(|path| lowering.split_on_mock(&path, ModuleRef::File(file)));
+        if by_link.is_none() {
+            let variable = lowering.file.ensure_variable(VariableKey::MockOf(file));
+            let mock = lowering.builder.get_module_variable(variable);
+            let split = lowering.split_on_type(mock, TypeTable::ABSENT);
+            lowering.builder.switch_to(split.taken);
+            let next = block_at(lowering, &mut blocks, index + 1);
+            lowering.jump(next);
+            lowering.builder.switch_to(split.not_taken);
+        }
+        let next = block_at(lowering, &mut blocks, index + 1);
         let importer = match asked_from.or(handed_on_by) {
             Some(importer) => (lowering.file.fragment).declare_module(ModuleRef::File(importer)),
             None => lowering.file.module_id(),
         };
         let reader = reader_through(importer);
-        let sees_mock = lowering
-            .builder
-            .sees_mock_of(mocked, importer, reader, false);
-        let asks_mock = lowering.create_block();
-        (lowering.builder).branch(sees_mock, Edge::to(asks_mock), Edge::to(next));
-        lowering.continue_in(asks_mock);
-        let mock = lowering.builder.mock_seen_by(mocked, importer, reader);
+        let mock = match &by_link {
+            Some(split) => {
+                lowering.continue_in(split.unmocked);
+                lowering.jump(next);
+                lowering.continue_in(split.mocked);
+                split.exports
+            }
+            None => {
+                let sees_mock = lowering
+                    .builder
+                    .sees_mock_of(mocked, importer, reader, false);
+                let asks_mock = lowering.create_block();
+                (lowering.builder).branch(sees_mock, Edge::to(asks_mock), Edge::to(next));
+                lowering.continue_in(asks_mock);
+                lowering.builder.mock_seen_by(mocked, importer, reader)
+            }
+        };
         if asked_by != AskedBy::Statement {
             let key = lowering.file.name_key(name);
             let has = lowering.emit_has(mock, PropertyName::Constant(key));
@@ -980,12 +1175,24 @@ pub(super) fn emit_behind_stations(
                 AskedBy::Name | AskedBy::Statement => nothing,
             };
             let lacking = block_at(lowering, &mut blocks, lacking);
+            let word = by_link.as_ref().map(|split| split.word);
+            let word = word.filter(|_| asked_by == AskedBy::Star);
+            if let Some(word) = word {
+                let is_listed = lowering.builder.has_name_in_mock(word, key, true);
+                let nothing = block_at(lowering, &mut blocks, nothing);
+                let asks_steps = lowering.create_block();
+                (lowering.builder).branch(is_listed, Edge::to(nothing), Edge::to(asks_steps));
+                lowering.continue_in(asks_steps);
+            }
             let has_steps_of_its_own = asked_by == AskedBy::Star && behind > index + 1;
             match end_of_question.filter(|_| has_steps_of_its_own) {
                 Some(end_of_question) => {
-                    let keeps_names = lowering
-                        .builder
-                        .sees_mock_of(mocked, importer, reader, true);
+                    let keeps_names = match &by_link {
+                        Some(split) => lowering.builder.keeps_original_names(split.word),
+                        None => lowering
+                            .builder
+                            .sees_mock_of(mocked, importer, reader, true),
+                    };
                     let asks_original = lowering.create_block();
                     (lowering.builder).branch(
                         keeps_names,
@@ -1005,6 +1212,13 @@ pub(super) fn emit_behind_stations(
                 None => lowering.jump(lacking),
             }
             lowering.builder.switch_to(has.taken);
+            // A spy adds the name to the mock of an import that no star provides.
+            if let Some(word) = word.filter(|_| !modules.is_installed_by_spy(name)) {
+                let is_listed = lowering.builder.has_name_in_mock(word, key, is_on_cycle);
+                let reads_mock = lowering.create_block();
+                (lowering.builder).branch(is_listed, Edge::to(reads_mock), Edge::to(lacking));
+                lowering.continue_in(reads_mock);
+            }
         }
         let answered = read_off(lowering, mock, name);
         lowering.builder.write_variable(result, answered);
@@ -1018,7 +1232,43 @@ pub(super) fn emit_behind_stations(
     }
     if let Some(block) = blocks[declaration] {
         lowering.continue_in(block);
-        if let Some((module, name)) = runtime_station {
+        let by_word = runtime_station
+            .filter(|_| reads_links)
+            .and_then(|(module, name)| {
+                let built_in = ModuleRef::Runtime(module);
+                let path = match asked {
+                    Some((file, name)) => {
+                        let rest = modules.find_module_holders(file, name, built_in)?;
+                        find_linked_built_in(*rest.last()?, built_in)?.1
+                    }
+                    None => holders.to_vec(),
+                };
+                let split = lowering.split_on_mock(&path, built_in)?;
+                Some((split, name, !path.is_empty()))
+            });
+        if let Some((split, name, is_handed_on)) = by_word {
+            lowering.continue_in(split.mocked);
+            if is_brought_by_star {
+                let undefined = lowering.builder.undefined();
+                lowering.builder.write_variable(result, undefined);
+                lowering.jump(join);
+            } else {
+                if is_handed_on {
+                    let key = lowering.file.name_key(name);
+                    let has = lowering.emit_has(split.exports, PropertyName::Constant(key));
+                    let has = lowering.split_on_truthiness(has);
+                    lowering.builder.switch_to(has.not_taken);
+                    let undefined = lowering.builder.undefined();
+                    lowering.builder.write_variable(result, undefined);
+                    lowering.jump(join);
+                    lowering.builder.switch_to(has.taken);
+                }
+                let answered = read_off(lowering, split.exports, name);
+                lowering.builder.write_variable(result, answered);
+                lowering.jump(join);
+            }
+            lowering.continue_in(split.unmocked);
+        } else if let Some((module, name)) = runtime_station {
             let key = VariableKey::MockOfRuntimeModule(module);
             let variable = lowering.file.ensure_variable(key);
             let word = lowering.builder.get_module_variable(variable);

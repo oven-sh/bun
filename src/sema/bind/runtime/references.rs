@@ -22,7 +22,7 @@ use crate::hir::*;
 
 pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &RuntimeScopes) {
     let (hir, idents, options, atoms) = (input.hir, input.idents, input.options, input.atoms);
-    let arguments_variables = find_arguments_variables(hir, input.bound, scopes);
+    let arguments_variables = find_arguments_variables(hir, input.bound, scopes, atoms);
     for &(_, binding) in &arguments_variables {
         if let Binding::Arguments(CodeUnit::Function(function)) = binding {
             input.bound.runtime.function_flags[function.idx()] |=
@@ -40,7 +40,9 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
             hir,
             bound,
             scopes,
+            atoms,
             dynamic,
+            global_code: hir.global_code(),
         },
         idents,
         options,
@@ -58,11 +60,13 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
         mentions_own_name: Vec::new(),
         has_direct_eval: Vec::new(),
         import_meta_may_be_modified: false,
+        writes_import_meta_path: false,
         has_import_meta: false,
     };
     pass.resolve_idents();
     pass.collect_eval_scopes();
     pass.resolve_hoisted_vars();
+    pass.resolve_vars_of_scripts();
     let initialized_bindings = &mut pass.references.initialized_bindings;
     initialized_bindings.extend(arguments_variables);
     pass.find_redeclared_commonjs_variables();
@@ -85,6 +89,7 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
         mentions_own_name,
         has_direct_eval,
         import_meta_may_be_modified,
+        writes_import_meta_path,
         has_import_meta,
         ..
     } = pass;
@@ -101,7 +106,10 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
         )
     };
     let mut named = references.ident_bindings.iter();
-    bound.runtime.may_name_own_require = has_import_meta || named.any(names_require_or_own_path);
+    let mut redeclared = references.redeclared_commonjs_variables.iter();
+    bound.runtime.may_name_own_require = has_import_meta
+        || named.any(names_require_or_own_path)
+        || redeclared.any(|it| it.1 == CommonJsVariable::Require);
     let names_own_path = |&(_, binding): &(ExprId, Binding)| {
         matches!(
             binding,
@@ -114,6 +122,7 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
     exported_block_bindings.record(&mut bound.runtime.declarations);
     bound.runtime.depends_on_sloppy_mode |= has_sloppy_eval;
     bound.runtime.import_meta_may_be_modified = import_meta_may_be_modified;
+    bound.runtime.writes_import_meta_path = writes_import_meta_path;
     bound.ids.extend(eval_symbol_ids);
     for unit in uses_arguments {
         match unit {
@@ -145,6 +154,7 @@ fn find_arguments_variables(
     hir: &File<'_>,
     bound: &BoundBuilder,
     scopes: &RuntimeScopes,
+    atoms: &dyn Intern,
 ) -> Vec<(PatId, Binding)> {
     let name = known::arguments;
     let mut variables = Vec::new();
@@ -155,7 +165,9 @@ fn find_arguments_variables(
         hir,
         bound,
         scopes,
+        atoms,
         dynamic: DynamicScopes::default(),
+        global_code: hir.global_code(),
     };
     for scope in bound.scopes.iter() {
         let Some(local) = bound.find_in_table(scope.locals, name) else {
@@ -194,6 +206,7 @@ pub(super) struct ReferencePass<'a, 's> {
     pub(super) mentions_own_name: Vec<FnId>,
     pub(super) has_direct_eval: Vec<FnId>,
     pub(super) import_meta_may_be_modified: bool,
+    pub(super) writes_import_meta_path: bool,
     pub(super) has_import_meta: bool,
 }
 
@@ -236,6 +249,7 @@ impl ReferencePass<'_, '_> {
                 members: &[],
             };
             if found.binding == Binding::Free
+                && !hir.is_in_known_evaluation(hir[ident].pos)
                 && let Some(in_place) = self.names_in_place.iter().find(|it| it.path == written)
                 && let Some(at_hand) = self.find_name_in_place(scope, in_place, hir[ident].pos)
             {
@@ -284,7 +298,10 @@ impl ReferencePass<'_, '_> {
             if dynamic_scope.is_some() && self.lookup.find_container(found.binding).is_some() {
                 dynamic_scope = self.lookup.find_with_inside(scope, found.scope);
             }
-            if self.lookup.is_behind_eval_variables(&found, hir[ident].pos) {
+            if self
+                .lookup
+                .is_behind_eval_variables(&found, name, hir[ident].pos)
+            {
                 insert_bit(
                     &mut self.references.idents_behind_eval_variables,
                     ident.idx(),
@@ -337,12 +354,35 @@ impl ReferencePass<'_, '_> {
         }
     }
 
+    /// The variables of a script are properties of the global object.
+    fn resolve_vars_of_scripts(&mut self) {
+        let (hir, bound) = (self.lookup.hir, self.lookup.bound);
+        let mut codes = self.lookup.global_code.iter();
+        if codes.all(|it| it.1 != GlobalCode::Script) {
+            return;
+        }
+        for (index, decl) in hir.var_decls.iter().enumerate() {
+            let stmt = bound.var_stmt[index];
+            if decl.kind != VarKind::Var
+                || stmt.is_none()
+                || !hir.is_in_known_evaluation(decl.loc.pos)
+            {
+                continue;
+            }
+            let scope = bound.stmt_scope[stmt.idx()];
+            for_each_name(hir, decl.pat, |pat, name| {
+                if self.lookup.find_binding(scope, name) == Binding::Free {
+                    let bindings = &mut self.references.initialized_bindings;
+                    bindings.push((pat, Binding::Free));
+                }
+            });
+        }
+    }
+
     fn declared_var_symbol(&self, pat: PatId) -> SymbolId {
         let bound = self.lookup.bound;
         let symbol = bound.declared_pattern_symbol(pat).some();
-        symbol.map_or(SymbolId::NONE, |s| {
-            bound.export_symbol_of_value_symbol_if_exported(s)
-        })
+        symbol.map_or(SymbolId::NONE, |s| bound.exported_value(s))
     }
 
     fn find_redeclared_commonjs_variables(&mut self) {
@@ -355,7 +395,7 @@ impl ReferencePass<'_, '_> {
                 && self.lookup.scopes.is_scope_binding(bound, local)
                 && self.lookup.is_var(local)
             {
-                let symbol = bound.export_symbol_of_value_symbol_if_exported(local);
+                let symbol = bound.exported_value(local);
                 self.references
                     .redeclared_commonjs_variables
                     .push((symbol, variable));

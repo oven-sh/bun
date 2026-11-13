@@ -10,4 +10,5 @@
 # ANSWERS: 13
 # RUN(LOOP): walk f2 mechanisms=all
 # LOOP-LABEL: code f2:Body
-# LOOP: = CallDirect {{*}} function=f1
+# LOOP: frame 1 callee=f1
+# LOOP-NOT: = CallDirect {{*}} function=f1

@@ -147,6 +147,24 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         split.not_taken_value
     }
 
+    fn jump_if_taken_narrowing(
+        &mut self,
+        split: Split,
+        local: Option<SymbolId>,
+        value: ValueId,
+        on_taken: BlockId,
+    ) -> ValueId {
+        let Some(local) = local else {
+            return self.jump_if_taken(split, on_taken);
+        };
+        self.builder.switch_to(split.taken);
+        self.narrow_local(local, value, split.taken_value);
+        self.jump(on_taken);
+        self.builder.switch_to(split.not_taken);
+        self.narrow_local(local, value, split.not_taken_value);
+        split.not_taken_value
+    }
+
     fn finish_split(&mut self, split: Split, on_taken: BlockId, on_not_taken: BlockId) {
         self.jump_if_taken(split, on_taken);
         self.jump(on_not_taken);
@@ -166,6 +184,21 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.switch_to(split.not_taken);
         self.narrow_local(local, value, split.not_taken_value);
         self.jump(on_not_taken);
+    }
+
+    fn finish_split_of_truthy_local(
+        &mut self,
+        split: Split,
+        local: SymbolId,
+        value: ValueId,
+        on_truthy: BlockId,
+        on_falsy: BlockId,
+    ) {
+        self.builder.switch_to(split.taken);
+        self.narrow_local(local, value, split.taken_value);
+        self.jump(on_truthy);
+        self.builder.switch_to(split.not_taken);
+        self.jump(on_falsy);
     }
 
     fn narrow_local(&mut self, local: SymbolId, value: ValueId, left: ValueId) {
@@ -225,17 +258,26 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let Some((&last, leading)) = operands.split_last() else {
                     unreachable!("a logical condition has a left operand");
                 };
+                let late = self
+                    .suspending_arm
+                    .and_then(|arm| arm.late_continue)
+                    .filter(|late| late.test == expression);
+                let target_of_true = |lowering: &Self, operand: ExprId| match late {
+                    Some(late) if !lowering.reads_only_variables(operand) => late.block,
+                    _ => if_true,
+                };
                 for &operand in leading {
                     let next = self.create_block();
                     let (on_true, on_false) = if op == BinOp::And {
                         (next, if_false)
                     } else {
-                        (if_true, next)
+                        (target_of_true(self, operand), next)
                     };
                     self.lower_condition(operand, on_true, on_false);
                     self.continue_in(next);
                 }
-                self.lower_condition(last, if_true, if_false);
+                let on_true = target_of_true(self, last);
+                self.lower_condition(last, on_true, if_false);
             }
             ExprKind::Binary {
                 op: BinOp::Nullish,
@@ -291,9 +333,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let value = self.lower_expression(expression);
         let field = self.find_field_of_union(expression);
         self.set_position(self.file.hir[expression].pos);
+        let local = scope::find_tested_local(self, expression);
+        let local = local.filter(|&local| self.read_local(local) == value);
         let split = self.split_on_truthiness(value);
         let Some(field) = field else {
-            return self.finish_split(split, if_true, if_false);
+            return match local {
+                Some(local) => {
+                    self.finish_split_of_truthy_local(split, local, value, if_true, if_false)
+                }
+                None => self.finish_split(split, if_true, if_false),
+            };
         };
         let edges = [
             (split.taken, split.taken_value, if_true),
@@ -340,8 +389,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             } => {
                 let (passed, failed) = order_targets(is_negated, if_true, if_false);
                 let value = self.lower_typeof_operand(operand);
+                let local = scope::find_tested_local(self, operand);
+                let local = local.filter(|&local| self.read_local(local) == value);
                 self.set_position(self.file.hir[expression].pos);
-                self.jump_by_typeof(value, &[(known::object, passed)], failed);
+                self.jump_by_typeof(value, local, &[(known::object, passed)], failed);
             }
             LeafTest::Comparison { op, left, right } => {
                 self.lower_comparison(op, left, right, if_true, if_false);
@@ -360,6 +411,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(in crate::lower) fn jump_by_typeof(
         &mut self,
         value: ValueId,
+        local: Option<SymbolId>,
         cases: &[(Atom, BlockId)],
         otherwise: BlockId,
     ) {
@@ -368,11 +420,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if let Some(on_object) = find_target(known::object) {
             let on_function = find_target(known::function).unwrap_or(otherwise);
             let split = self.split_on_type(remaining, TypeTable::FUNCTION);
-            remaining = self.jump_if_taken(split, on_function);
+            remaining = self.jump_if_taken_narrowing(split, local, value, on_function);
             let types = &mut self.file.fragment.types;
             let object_or_null = types.union(TypeTable::OBJECT, TypeTable::NULL);
             let split = self.split_on_type(remaining, object_or_null);
-            remaining = self.jump_if_taken(split, on_object);
+            remaining = self.jump_if_taken_narrowing(split, local, value, on_object);
         }
         let mut seen: SmallVec<[Atom; 8]> = SmallVec::new();
         for &(name, target) in cases {
@@ -385,7 +437,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
             seen.push(name);
             let split = self.split_on_type(remaining, tested);
-            remaining = self.jump_if_taken(split, target);
+            remaining = self.jump_if_taken_narrowing(split, local, value, target);
         }
         self.jump(otherwise);
     }
@@ -403,6 +455,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let right_value = self.lower_expression(right);
         let left_field = left_field.filter(|&field| self.is_holder_unchanged(field));
         let right_field = self.find_compared_field(op, right, left);
+        self.set_position(self.file.hir[left].pos);
         let (test, is_negated) = operator::emit_comparison(self, op, left_value, right_value);
         let (on_taken, on_not_taken) = order_targets(is_negated, if_true, if_false);
         let fields = [left_field, right_field];
@@ -503,7 +556,11 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn collect_logical_operands(&self, expression: ExprId, op: BinOp) -> SmallVec<[ExprId; 8]> {
+    pub(in crate::lower) fn collect_logical_operands(
+        &self,
+        expression: ExprId,
+        op: BinOp,
+    ) -> SmallVec<[ExprId; 8]> {
         let mut operands = SmallVec::new();
         let mut current = expression;
         while let ExprKind::Binary {

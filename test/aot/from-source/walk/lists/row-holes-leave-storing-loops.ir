@@ -1,0 +1,22 @@
+# In a loop that stores into rows, a row of exact Int32 storage is read with a guard for its holes: the element is an int32, and so is the sum that is stored.
+# -- source: main.ts
+# const grid: number[][] = [];
+# for (let y = 0; y < 6; y++) { const row: number[] = []; for (let x = 0; x < 6; x++) row.push(x * y & 7); grid.push(row); }
+# function run(grid: number[][], rows: number, columns: number): void {
+#   for (let y = 1; y < rows; y++) {
+#     for (let x = 1; x < columns; x++) grid[y]![x] = (grid[y]![x]! + 1) & 255;
+#   }
+# }
+# run(grid, 6, 6);
+# print(grid.join("|"));
+# -- end of source
+# f1 = run
+# RUN(UPDATE): walk f1 mechanisms=all
+# UPDATE-LABEL: code f1:Body
+# UPDATE: = IsElementPresent {{*}}arrayStorage=Int32
+# UPDATE: = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds, isPresent]
+# UPDATE: = Add {{*}} form=Integers
+# UPDATE: = PutContiguousIndex {{*}}hasNumericStorage]
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 0,0,0,0,0,0|0,2,3,4,5,6|0,3,5,7,1,3|0,4,7,2,5,8|0,5,1,5,1,5|0,6,3,8,5,2
+# ANSWERS-NEXT: exited with 0

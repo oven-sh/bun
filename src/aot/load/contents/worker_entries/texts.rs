@@ -79,6 +79,7 @@ fn find_folder(path: &[u8]) -> Option<&[u8]> {
 }
 
 impl ContentsScan<'_, '_> {
+    /// Returns true if every value that the Worker can start from is code that the build knows.
     pub(super) fn add_code_given_to_worker(
         &mut self,
         argument: ExprId,
@@ -90,14 +91,14 @@ impl ContentsScan<'_, '_> {
             (urls.len(), texts.len())
         };
         let start = count(&self.found);
-        let mut is_put_together = self.add_code_made_of_known_paths(argument, options, name);
+        let mut is_known = self.add_code_made_of_known_paths(argument, options, name);
         let end = count(&self.found);
         let Err(levels_that_mount_may_have) = (self.input.find_path_at_run_time)(None) else {
-            return is_put_together;
+            return is_known;
         };
         for levels in levels_that_mount_may_have {
             self.levels_above_root = Some(levels);
-            is_put_together |= self.add_code_made_of_known_paths(argument, options, name);
+            is_known |= self.add_code_made_of_known_paths(argument, options, name);
             let found = &mut self.found;
             let urls = found.urls_with_code.split_off(end.0).into_iter();
             let urls = urls.filter(|url| !found.urls_with_code[start.0..].contains(url));
@@ -109,7 +110,7 @@ impl ContentsScan<'_, '_> {
             found.code_by_levels_above_root.extend(texts);
         }
         self.levels_above_root = None;
-        is_put_together
+        is_known
     }
 
     fn add_code_made_of_known_paths(
@@ -130,7 +131,7 @@ impl ContentsScan<'_, '_> {
                 _ => None,
             })
             .collect();
-        let mut is_put_together = true;
+        let mut is_known = true;
         if !is_constant {
             for value in self.find_values_given(argument) {
                 let behind_object_url = match is_evaluated {
@@ -143,7 +144,7 @@ impl ContentsScan<'_, '_> {
                 } else if let Some(text) = self.find_text(value, &mut Vec::new()) {
                     texts.push(atoms.intern(&text));
                 } else {
-                    is_put_together = false;
+                    is_known = false;
                 }
             }
         }
@@ -152,9 +153,11 @@ impl ContentsScan<'_, '_> {
                 self.found.texts_behind_object_urls.push((text, None));
             } else if is_url_with_text(atoms.bytes(text)) {
                 self.found.urls_with_code.push(text);
+            } else {
+                is_known = false;
             }
         }
-        is_put_together
+        is_known
     }
 
     pub(super) fn is_told_to_evaluate(&self, options: ExprId) -> bool {
@@ -240,37 +243,58 @@ impl ContentsScan<'_, '_> {
         }
     }
 
-    fn find_text(&self, expression: ExprId, names: &mut Vec<SymbolId>) -> Option<Vec<u8>> {
+    pub(super) fn find_text(
+        &self,
+        mut expression: ExprId,
+        names: &mut Vec<SymbolId>,
+    ) -> Option<Vec<u8>> {
         let &FinishedFile {
             hir,
             analysis,
             atoms,
             ..
         } = self.request;
-        let expression = hir.skip_type_assertions(expression);
-        match analysis.decisions.constant(hir, expression) {
-            FoldedValue::Constant(constant) | FoldedValue::ConstantOutsideDeadZone(constant) => {
-                return match constant {
-                    Constant::String(text) => Some(atoms.bytes(text).to_vec()),
-                    Constant::Number(number) => Some(number_to_string(number)),
-                    Constant::Boolean(value) => Some(value.to_string().into_bytes()),
-                    Constant::Null => Some(b"null".to_vec()),
-                    Constant::Undefined => Some(b"undefined".to_vec()),
-                    Constant::BigInt(_) => None,
-                };
+        let mut right_operands = Vec::new();
+        let mut text = loop {
+            expression = hir.skip_type_assertions(expression);
+            match analysis.decisions.constant(hir, expression) {
+                FoldedValue::Constant(constant)
+                | FoldedValue::ConstantOutsideDeadZone(constant) => {
+                    break match constant {
+                        Constant::String(text) => atoms.bytes(text).to_vec(),
+                        Constant::Number(number) => number_to_string(number),
+                        Constant::Boolean(value) => value.to_string().into_bytes(),
+                        Constant::Null => b"null".to_vec(),
+                        Constant::Undefined => b"undefined".to_vec(),
+                        Constant::BigInt(_) => return None,
+                    };
+                }
+                FoldedValue::Unknown => {}
             }
-            FoldedValue::Unknown => {}
-        }
-        match hir[expression].kind {
-            ExprKind::Binary {
+            let ExprKind::Binary {
                 op: BinOp::Add,
                 left,
                 right,
-            } => {
-                let mut text = self.find_text(left, names)?;
-                text.append(&mut self.find_text(right, names)?);
-                Some(text)
-            }
+            } = hir[expression].kind
+            else {
+                break self.find_text_of_operand(expression, names)?;
+            };
+            right_operands.push(right);
+            expression = left;
+        };
+        while let Some(right) = right_operands.pop() {
+            text.append(&mut self.find_text(right, names)?);
+        }
+        Some(text)
+    }
+
+    fn find_text_of_operand(
+        &self,
+        expression: ExprId,
+        names: &mut Vec<SymbolId>,
+    ) -> Option<Vec<u8>> {
+        let &FinishedFile { hir, atoms, .. } = self.request;
+        match hir[expression].kind {
             ExprKind::Template { exprs } => {
                 let mut written = hir.ids(hir.template_texts(exprs));
                 let mut text = atoms.bytes(written.next()?).to_vec();
@@ -537,8 +561,17 @@ impl ContentsScan<'_, '_> {
     fn find_texts_behind_object_url(&self, url: ExprId) -> Option<(Vec<Vec<u8>>, Option<Atom>)> {
         let hir = self.request.hir;
         let known = worker_builtins();
-        let ExprKind::Call(call) = hir[self.find_value_under_name(url)].kind else {
-            return None;
+        let call = match hir[self.find_value_under_name(url)].kind {
+            ExprKind::Call(call) => call,
+            ExprKind::New(call) if self.find_constructor_called(call) == Some(Constructor::Url) => {
+                let mut arguments = hir.ids(hir[call].args);
+                let written = arguments.next().filter(|_| arguments.next().is_none())?;
+                let ExprKind::Call(call) = hir[self.find_value_under_name(written)].kind else {
+                    return None;
+                };
+                call
+            }
+            _ => return None,
         };
         if self.find_builtin_named(hir[call].callee)? != known.object_url_maker? {
             return None;

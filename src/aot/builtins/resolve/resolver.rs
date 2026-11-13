@@ -3,9 +3,10 @@ use super::mentions::expose_in;
 use super::unnamed_uses::SyntaxOutsideExpressions;
 use super::written_members::find_what_opens_where_handed_on;
 use super::{
-    BuiltinPath, CommonJsBuiltins, EvaluatedText, GLOBALS_LEFT_ALONE, KeyOfModuleCache,
-    LOADED_BELOW_VITEST, LOADED_BY_WORKER, ModuleObjectMention, ResolveInput, Resolved,
-    ResolvedBuiltins, SourceDialect, SpyCall, WhereMoreIsHandedOn, WhereTestsLayNamesAbove,
+    BuiltinPath, CommonJsBuiltins, EvaluatedText, ExposedReceivers, GLOBALS_LEFT_ALONE,
+    KeyOfModuleCache, LOADED_BELOW_VITEST, LOADED_BY_WORKER, ModuleObjectMention, ResolveInput,
+    Resolved, ResolvedBuiltins, SourceDialect, SpyCall, WhereMoreIsHandedOn,
+    WhereTestsLayNamesAbove,
 };
 use crate::builtins::runtime_uses::{
     ENTRIES_LEADING_TO_HOOK_OF_INSTANCEOF, Mentions, RuntimeUses, SyntaxWithHelpers, is_evaluator,
@@ -102,6 +103,62 @@ impl ExprState {
     }
 }
 
+/// The states of the expressions from `first` on.
+struct ExprStates {
+    first: u32,
+    codes: Vec<u32>,
+    /// The codes from `FIRST_FOUND` on are places in this list.
+    found: Vec<ExprState>,
+}
+
+const UNVISITED: u32 = 0;
+const IN_PROGRESS: u32 = 1;
+const NOT_EVALUATED: u32 = 2;
+const UNRESOLVED: u32 = 3;
+const FIRST_FOUND: u32 = 4;
+
+impl ExprStates {
+    fn new(exprs: Range<u32>) -> ExprStates {
+        ExprStates {
+            first: exprs.start,
+            codes: vec![UNVISITED; exprs.len()],
+            found: Vec::new(),
+        }
+    }
+
+    fn ids(&self) -> Range<u32> {
+        self.first..self.first + self.codes.len() as u32
+    }
+
+    #[inline]
+    fn code(&self, expr: ExprId) -> u32 {
+        let code = self.codes.get(expr.0.wrapping_sub(self.first) as usize);
+        code.copied().unwrap_or(NOT_EVALUATED)
+    }
+
+    #[inline]
+    fn get(&self, expr: ExprId) -> ExprState {
+        match self.code(expr) {
+            UNVISITED => ExprState::Unvisited,
+            IN_PROGRESS => ExprState::InProgress,
+            NOT_EVALUATED => ExprState::NotEvaluated,
+            UNRESOLVED => ExprState::Unresolved,
+            found => self.found[(found - FIRST_FOUND) as usize],
+        }
+    }
+
+    #[inline]
+    fn set_code(&mut self, expr: ExprId, code: u32) {
+        self.codes[(expr.0 - self.first) as usize] = code;
+    }
+
+    fn set_found(&mut self, expr: ExprId, state: ExprState) {
+        debug_assert!(state.is_found());
+        self.set_code(expr, FIRST_FOUND + self.found.len() as u32);
+        self.found.push(state);
+    }
+}
+
 enum Step {
     Dependency(ExprId),
     State(ExprState),
@@ -126,6 +183,7 @@ pub struct FileFacts {
     syntax_outside_expressions: OnceLock<SyntaxOutsideExpressions>,
 }
 
+/// Each place of the file that names a variable, as (the variable, the expression), in ascending order.
 fn list_names_by_variable(input: &ResolveInput<'_, '_>) -> Vec<(u32, u32)> {
     let (hir, bound) = (input.hir, input.bound);
     let names = (0..hir.exprs.len() as u32).map(ExprId);
@@ -213,6 +271,7 @@ impl FileFacts {
 #[derive(Default)]
 pub(super) struct ResolverOutput {
     pub(super) mentioned: Vec<BuiltinId>,
+    pub(super) mentions_text_evaluator_indirectly: bool,
     pub(super) called_with_other_texts: Vec<BuiltinId>,
     pub(super) called_without_other_code: Vec<BuiltinId>,
     pub(super) called: Vec<BuiltinId>,
@@ -220,6 +279,7 @@ pub(super) struct ResolverOutput {
     pub(super) exposed: Vec<BuiltinId>,
     pub(super) handed_to_hooks_of_instanceof: Vec<BuiltinId>,
     pub(super) names_asked_for_that_are_not_listed: Vec<(BuiltinId, Atom)>,
+    pub(super) imported_replacements: Vec<(BuiltinId, ExprId)>,
     pub(super) reads_name_leading_to_hook_of_instanceof: bool,
     pub(super) linked_functions: Vec<RuntimeFunction>,
     pub(super) evaluated_texts: Vec<EvaluatedText>,
@@ -242,6 +302,7 @@ pub(super) struct ResolverOutput {
     pub(super) entries_deleted_from_module_cache: Vec<ExprId>,
     pub(super) entries_stored_in_module_cache: Vec<ExprId>,
     pub(super) places_that_hand_module_cache_on: Vec<ExprId>,
+    pub(super) passed_module_caches: Vec<ExprId>,
     pub(super) keys_of_entries_handed_on: Vec<KeyOfModuleCache>,
     pub(super) loses_sight_of_module_cache: bool,
     pub(super) hands_module_cache_on: bool,
@@ -250,6 +311,7 @@ pub(super) struct ResolverOutput {
     pub(super) reads_by_unknown_key: bool,
     pub(super) may_call_evaluator: bool,
     pub(super) global_object_may_be_looked_through: bool,
+    pub(super) aliases_global_object: bool,
     pub(super) syntax: SyntaxWithHelpers,
     pub(super) may_hand_values_to_natives: bool,
 }
@@ -269,8 +331,7 @@ pub(super) struct FunctionsReadingThis {
 
 pub(super) struct Resolver<'a, 's> {
     pub(super) input: &'a ResolveInput<'a, 's>,
-    states: Vec<ExprState>,
-    first_state: u32,
+    states: ExprStates,
     pub(super) facts: Option<&'a FileFacts>,
     has_seen_declarations: bool,
     pub(super) aliases: FxHashMap<SymbolId, AliasSource>,
@@ -282,6 +343,8 @@ pub(super) struct Resolver<'a, 's> {
     pub(super) may_hold_made_require: bool,
     pub(super) hooks_of_instanceof_supposed: Cell<HooksOfInstanceof>,
     pub(super) functions_reading_this: OnceCell<FunctionsReadingThis>,
+    pub(super) exposes_spy_receivers: OnceCell<bool>,
+    pub(super) imported_spy_implementations: OnceCell<Vec<ExprId>>,
     pub(super) output: ResolverOutput,
     within: Option<&'a [Range<u32>]>,
     named_outside: OnceCell<FxHashSet<SymbolId>>,
@@ -292,6 +355,8 @@ pub(super) struct Resolver<'a, 's> {
     known_sets: RefCell<KnownSets<'a, 's>>,
     evaluated: Range<u32>,
     pub(super) computed: Vec<ExprId>,
+    /// The reads of a member named `constructor` in `computed`.
+    pub(super) constructor_reads: Vec<ExprId>,
     calls: Vec<ExprId>,
     pub(super) written_patterns: Vec<ExprId>,
     pub(super) found_or_this: Vec<ExprId>,
@@ -329,6 +394,11 @@ fn sorted_unique<T: Ord>(mut list: Vec<T>) -> Box<[T]> {
     list.shared_sort_unstable();
     list.dedup();
     list.into_boxed_slice()
+}
+
+pub(super) fn evaluates_text(id: BuiltinId) -> bool {
+    let evaluates_text = table::BuiltinFlags::EVALUATES_TEXT;
+    table::has_flag(id, evaluates_text) || table::has_flag(table::canonical_id(id), evaluates_text)
 }
 
 pub(super) fn is_of_loader(id: BuiltinId) -> bool {
@@ -392,7 +462,8 @@ pub(super) fn count_states(
     ranges: &[Range<u32>],
     facts: &FileFacts,
 ) -> usize {
-    Resolver::new(input, Some(ranges), Some(facts)).states.len()
+    let resolver = Resolver::new(input, Some(ranges), Some(facts));
+    resolver.states.ids().len()
 }
 
 fn binding_of_defined_root(input: &ResolveInput<'_, '_>, expression: ExprId) -> Binding {
@@ -428,8 +499,7 @@ impl<'a, 's> Resolver<'a, 's> {
                 input.decisions,
                 input.atoms,
             )),
-            states: vec![ExprState::Unvisited; evaluated.len()],
-            first_state: evaluated.start,
+            states: ExprStates::new(evaluated.clone()),
             evaluated,
             aliases: FxHashMap::default(),
             exported_symbols: FxHashSet::default(),
@@ -444,8 +514,11 @@ impl<'a, 's> Resolver<'a, 's> {
                     .any(|it| it.1 == RuntimeModule::NodeModule),
             hooks_of_instanceof_supposed: Cell::new(HooksOfInstanceof::OnWhatIsNoBuiltin),
             functions_reading_this: OnceCell::new(),
+            exposes_spy_receivers: OnceCell::new(),
+            imported_spy_implementations: OnceCell::new(),
             output: ResolverOutput::default(),
             computed: Vec::new(),
+            constructor_reads: Vec::new(),
             calls: Vec::new(),
             written_patterns: Vec::new(),
             found_or_this: Vec::new(),
@@ -459,14 +532,18 @@ impl<'a, 's> Resolver<'a, 's> {
 
     #[inline]
     pub(super) fn state(&self, expr: ExprId) -> ExprState {
-        let state = self
-            .states
-            .get(expr.0.wrapping_sub(self.first_state) as usize);
-        state.copied().unwrap_or(ExprState::NotEvaluated)
+        self.states.get(expr)
     }
 
+    #[inline]
     fn set_state(&mut self, expr: ExprId, state: ExprState) {
-        self.states[(expr.0 - self.first_state) as usize] = state;
+        match state {
+            ExprState::Unresolved => self.states.set_code(expr, UNRESOLVED),
+            ExprState::NotEvaluated => self.states.set_code(expr, NOT_EVALUATED),
+            ExprState::Unvisited => self.states.set_code(expr, UNVISITED),
+            ExprState::InProgress => self.states.set_code(expr, IN_PROGRESS),
+            found => self.states.set_found(expr, found),
+        }
     }
 
     pub(super) fn is_exported(&self, symbol: SymbolId) -> bool {
@@ -480,7 +557,7 @@ impl<'a, 's> Resolver<'a, 's> {
 
     pub(super) fn add_declared_aliases_of_part(&mut self, facts: &FileFacts) {
         self.has_seen_declarations = true;
-        let ids = self.first_state..self.first_state + self.states.len() as u32;
+        let ids = self.states.ids();
         let by_initializer = entries_within(&facts.aliases_by_initializer, ids);
         let ranges = self.within.unwrap_or_default().iter();
         let by_position =
@@ -506,6 +583,9 @@ impl<'a, 's> Resolver<'a, 's> {
         }
     }
 
+    /// `const steps = Symbol.iterator; list[steps]`: the value that a computed key is taken for, where it is a well-known symbol. The wire holds a read under a computed key there, and the engine
+    /// follows the one symbol to it through names that are filled once. A `var` holds `undefined` until it is filled, and a mock of a test run replaces what a module exports: the engine meets
+    /// more than one value in such a key and takes it for a key that nobody knows. So must the load.
     pub(super) fn symbol_that_key_is(
         &self,
         key: ExprId,
@@ -561,7 +641,7 @@ impl<'a, 's> Resolver<'a, 's> {
     }
 
     fn is_unvisited(&self, expr: ExprId) -> bool {
-        matches!(self.state(expr), ExprState::Unvisited)
+        self.states.code(expr) == UNVISITED
     }
 
     pub(super) fn ranges(&self) -> Option<&'a [Range<u32>]> {
@@ -580,6 +660,8 @@ impl<'a, 's> Resolver<'a, 's> {
         }
     }
 
+    /// Every place of the file that names `variable`, in the order of the file's expressions. The list is made at the first question,
+    /// of what this resolver was handed and of nothing that is kept from one resolver to the next.
     pub(super) fn names_of(&self, variable: SymbolId) -> impl Iterator<Item = ExprId> + use<'_> {
         let names_by_variable = self
             .names_by_variable
@@ -641,7 +723,7 @@ impl<'a, 's> Resolver<'a, 's> {
             }
             let is_in_type_query = type_query_operands.first() == Some(&expr);
             if is_in_type_query || !self.is_evaluated(expr) {
-                self.set_state(expr, ExprState::NotEvaluated);
+                self.states.set_code(expr, NOT_EVALUATED);
                 continue;
             }
             if evaluated.is_empty() {
@@ -652,36 +734,47 @@ impl<'a, 's> Resolver<'a, 's> {
             if matches!(kind, ExprKind::Call(_) | ExprKind::New(_)) {
                 self.calls.push(expr);
             }
-            let state = match input.decisions.decision(expr) {
+            match input.decisions.decision(expr) {
                 Decision::Unknown
                     if can_stand_for_builtin(kind)
                         || (input.runs_tests && matches!(kind, ExprKind::Cond { .. })) =>
                 {
                     self.computed.push(expr);
-                    ExprState::Unvisited
+                    let reads_constructor = match kind {
+                        ExprKind::Dot { name, .. } => name == known::constructor,
+                        ExprKind::Index { .. } => matches!(
+                            input.hir.member_key(expr),
+                            Some((_, MemberKey::Name(known::constructor)))
+                        ),
+                        _ => false,
+                    };
+                    if reads_constructor {
+                        self.constructor_reads.push(expr);
+                    }
                 }
                 Decision::Unknown
                 | Decision::Constant(_)
                 | Decision::Data(_)
-                | Decision::DeferredData => ExprState::Unresolved,
-                Decision::GlobalPath(path)
-                    if binding_of_defined_root(input, expr) != Binding::Free =>
-                {
-                    self.note_names_of_path(path);
-                    ExprState::Unresolved
+                | Decision::DeferredData => {
+                    if matches!(kind, ExprKind::This) {
+                        self.found_or_this.push(expr);
+                    }
+                    self.states.set_code(expr, UNRESOLVED);
                 }
                 Decision::GlobalPath(path) => {
-                    let state = self.resolve_global_path(path);
+                    let state = match binding_of_defined_root(input, expr) {
+                        Binding::Free => self.resolve_global_path(path),
+                        _ => ExprState::Unresolved,
+                    };
+                    if state.is_found() || matches!(kind, ExprKind::This) {
+                        self.found_or_this.push(expr);
+                    }
                     if !state.is_found() {
                         self.note_names_of_path(path);
                     }
-                    state
+                    self.set_state(expr, state);
                 }
-            };
-            if state.is_found() || matches!(kind, ExprKind::This) {
-                self.found_or_this.push(expr);
             }
-            self.set_state(expr, state);
         }
         self.evaluated = evaluated;
     }
@@ -690,11 +783,38 @@ impl<'a, 's> Resolver<'a, 's> {
         &self.calls
     }
 
+    /// A bit for each variable, set where it has an alias.
+    fn mark_aliases(&self) -> Vec<u64> {
+        let mut marked = vec![0u64; self.input.bound.symbols.len().div_ceil(64)];
+        for symbol in self.aliases.keys() {
+            marked[symbol.0 as usize / 64] |= 1 << (symbol.0 % 64);
+        }
+        marked
+    }
+
     fn resolve_exprs(&mut self) {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        // A part of a file has few expressions, and may have many variables around it.
+        let aliases = self.within.is_none().then(|| self.mark_aliases());
+        let is_name_without_alias = |expr: ExprId| {
+            let Some(aliases) = &aliases else {
+                return false;
+            };
+            matches!(hir[expr].kind, ExprKind::Ident(_))
+                && matches!(
+                    bound.binding(expr),
+                    Binding::Symbol(symbol)
+                        if aliases[symbol.0 as usize / 64] >> (symbol.0 % 64) & 1 == 0
+                )
+        };
         for index in 0..self.computed.len() {
             let expr = self.computed[index];
-            if self.is_unvisited(expr) {
-                self.resolve(expr);
+            if !self.is_unvisited(expr) {
+                continue;
+            }
+            match is_name_without_alias(expr) {
+                true => self.states.set_code(expr, UNRESOLVED),
+                false => self.resolve(expr),
             }
         }
         self.found_or_this.sort_unstable();
@@ -705,7 +825,7 @@ impl<'a, 's> Resolver<'a, 's> {
         loop {
             match self.take_step(expr) {
                 Step::Dependency(dependency) => {
-                    self.set_state(expr, ExprState::InProgress);
+                    self.states.set_code(expr, IN_PROGRESS);
                     self.work_stack.push(expr);
                     expr = dependency;
                 }
@@ -754,7 +874,30 @@ impl<'a, 's> Resolver<'a, 's> {
         self.is_unvisited(operand).then_some(operand)
     }
 
-    fn asks_who_loads(&self, test: ExprId) -> bool {
+    fn asks_who_loads(&self, mut test: ExprId) -> bool {
+        let hir = self.input.hir;
+        loop {
+            test = match hir[test].kind {
+                ExprKind::Binary {
+                    op: BinOp::Or,
+                    left,
+                    right,
+                } if self.asks_who_loads(right) => left,
+                ExprKind::Binary {
+                    op: BinOp::BitAnd,
+                    left,
+                    ..
+                } => left,
+                ExprKind::Unary {
+                    op: UnOp::Not,
+                    operand,
+                } => operand,
+                _ => return self.is_loader_check_store(test),
+            };
+        }
+    }
+
+    fn is_loader_check_store(&self, test: ExprId) -> bool {
         let (hir, atoms) = (self.input.hir, self.input.atoms);
         match hir[test].kind {
             ExprKind::Assign {
@@ -764,20 +907,6 @@ impl<'a, 's> Resolver<'a, 's> {
             } => {
                 matches!(hir[target].kind, ExprKind::Ident(name) if [LOADED_BY_WORKER, LOADED_BELOW_VITEST, GLOBALS_LEFT_ALONE].contains(&atoms.bytes(name)))
             }
-            ExprKind::Binary {
-                op: BinOp::Or,
-                left,
-                right,
-            } => self.asks_who_loads(left) && self.asks_who_loads(right),
-            ExprKind::Binary {
-                op: BinOp::BitAnd,
-                left,
-                ..
-            } => self.asks_who_loads(left),
-            ExprKind::Unary {
-                op: UnOp::Not,
-                operand,
-            } => self.asks_who_loads(operand),
             _ => false,
         }
     }
@@ -840,22 +969,23 @@ impl<'a, 's> Resolver<'a, 's> {
     fn finish(self) -> ResolvedBuiltins {
         let symbols = self.collect_symbol_paths();
         let names_in_patterns = self.collect_paths_read_by_patterns();
+        let may_call_unnamed_evaluator = self.may_read_function_constructor();
         let (input, mut output) = (self.input, self.output);
         output
             .mentioned
             .extend(symbols.iter().map(|entry| entry.1.id));
-        let mut called_with_other_texts = output.called_with_other_texts;
-        called_with_other_texts.retain(|id| !output.mentioned.contains(id));
-        let mut called_without_other_code = output.called_without_other_code;
-        called_without_other_code
-            .retain(|id| !output.mentioned.contains(id) && !called_with_other_texts.contains(id));
-        output.mentioned.extend_from_slice(&called_with_other_texts);
-        output
-            .mentioned
-            .extend_from_slice(&called_without_other_code);
-        let called_with_other_texts = sorted_unique(called_with_other_texts);
-        let called_without_other_code = sorted_unique(called_without_other_code);
-        let mentioned = sorted_unique(output.mentioned);
+        let mut mentioned = sorted_unique(output.mentioned).into_vec();
+        let mut called_with_other_texts = sorted_unique(output.called_with_other_texts).into_vec();
+        called_with_other_texts.retain(|id| mentioned.binary_search(id).is_err());
+        let mut called_without_other_code =
+            sorted_unique(output.called_without_other_code).into_vec();
+        called_without_other_code.retain(|id| {
+            mentioned.binary_search(id).is_err()
+                && called_with_other_texts.binary_search(id).is_err()
+        });
+        mentioned.extend_from_slice(&called_with_other_texts);
+        mentioned.extend_from_slice(&called_without_other_code);
+        let mentioned = sorted_unique(mentioned);
         let exposed = sorted_unique(output.exposed);
         let mentions = Mentions {
             mentioned: &mentioned,
@@ -867,6 +997,7 @@ impl<'a, 's> Resolver<'a, 's> {
             reads_by_unknown_key: output.reads_by_unknown_key,
             may_call_evaluator: output.may_call_evaluator,
             global_object_may_be_looked_through: output.global_object_may_be_looked_through,
+            aliases_global_object: output.aliases_global_object,
             syntax: output.syntax,
             may_hand_values_to_natives: output.may_hand_values_to_natives,
             called: &output.called,
@@ -928,6 +1059,22 @@ impl<'a, 's> Resolver<'a, 's> {
                 stores_loader_functions,
             })
         });
+        let imported_replacements = &output.imported_replacements;
+        let exposed_receivers = (!imported_replacements.is_empty()).then(|| {
+            let receivers = imported_replacements.iter().map(|replaced| replaced.0);
+            let receivers = sorted_unique(receivers.collect());
+            let (replaced_members, opened_holders, stores_loader_functions) =
+                find_what_opens_where_handed_on(&receivers);
+            let asked_for = names_asked_for.iter().map(|asked| asked.0);
+            let others = asked_for.chain(handed_to_hooks.iter().copied());
+            let handed_on: Vec<BuiltinId> = receivers.iter().copied().chain(others).collect();
+            Box::new(ExposedReceivers {
+                held: hold_where_handed_on(&sorted_unique(handed_on)),
+                replaced_members: sorted_unique(replaced_members),
+                opened_holders: sorted_unique(opened_holders),
+                stores_loader_functions,
+            })
+        });
         let can_list_symbols_of_objects = input.dialect == SourceDialect::Program
             && (input.runs_tests
                 || output.reads_name_leading_to_hook_of_instanceof
@@ -939,6 +1086,10 @@ impl<'a, 's> Resolver<'a, 's> {
                     || mentioned
                         .iter()
                         .any(|&id| is_evaluator(table::canonical_id(id)))));
+        // A proxy that the program lays above what stands above `process` answers every name, and needs to spell none.
+        // Whatever is called, constructed or goes out of sight stands in this list, by whichever road; what is only asked about does not.
+        let source_evaluator_escapes = output.mentions_text_evaluator_indirectly
+            || (output.called.iter().chain(handed_to_hooks)).any(|&id| evaluates_text(id));
         let may_make_proxy = input.dialect == SourceDialect::Program
             && (output.called.iter().chain(handed_to_hooks))
                 .any(|&id| table::root_of(id) == BuiltinId::Proxy);
@@ -952,7 +1103,7 @@ impl<'a, 's> Resolver<'a, 's> {
         let mut expr_bits = vec![0u64; input.hir.exprs.len().div_ceil(64)];
         let mut exprs_with_side_effects = Vec::new();
         for &expr in &self.found_or_this {
-            let resolved = match self.states[(expr.0 - self.first_state) as usize] {
+            let resolved = match self.states.get(expr) {
                 ExprState::Builtin(ResolvedValue {
                     path,
                     kind: HolderKind::Object,
@@ -989,6 +1140,7 @@ impl<'a, 's> Resolver<'a, 's> {
             evaluated_texts: output.evaluated_texts.into_boxed_slice(),
             module_object_mentions: output.module_object_mentions.into_boxed_slice(),
             may_store_path_of_main_module: output.may_store_path_of_main_module,
+            exposes_global_object: exposed.contains(&BuiltinId::GlobalThis),
             stores_with_module_exports: output.stores_with_module_exports.into_boxed_slice(),
             replaced_members: sorted_unique(output.replaced_members),
             opened_holders: sorted_unique(output.opened_holders),
@@ -1006,6 +1158,8 @@ impl<'a, 's> Resolver<'a, 's> {
             tables_of_loaders_written: output.tables_of_loaders_written.into_boxed_slice(),
             unlocked: OnceLock::new(),
             mentioned,
+            source_evaluator_escapes,
+            may_call_unnamed_evaluator,
             #[cfg(test)]
             exposed,
             uses,
@@ -1015,6 +1169,9 @@ impl<'a, 's> Resolver<'a, 's> {
             hooks_of_instanceof_may_exist: OnceLock::new(),
             where_tests_lay_names_above,
             tests_lay_names_above: OnceLock::new(),
+            imported_replacements: output.imported_replacements.into_boxed_slice(),
+            exposed_receivers,
+            are_receivers_exposed: OnceLock::new(),
             can_come_by_hook_of_instanceof,
             keys_of_entries_handed_on: output.keys_of_entries_handed_on.into_boxed_slice(),
             entries_deleted_from_module_cache: output
@@ -1026,6 +1183,7 @@ impl<'a, 's> Resolver<'a, 's> {
             places_that_hand_module_cache_on: output
                 .places_that_hand_module_cache_on
                 .into_boxed_slice(),
+            passed_module_caches: output.passed_module_caches.into_boxed_slice(),
             keys_taken_out_of_module_cache: output
                 .keys_taken_out_of_module_cache
                 .into_boxed_slice(),

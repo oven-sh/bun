@@ -1,0 +1,33 @@
+# -- source: main.js
+# function even(n) { return n === 0 ? true : odd(n - 1); }
+# function odd(n) { return n === 0 ? false : even(n - 1); }
+# function down(x, d) { return d === 0 ? x : lower(x - 1, d - 1); }
+# function lower(x, d) { return d === 0 ? x : down(x - 1, d - 1); }
+# function up(n) { return n === 7 ? true : higher(n + 1); }
+# function higher(n) { return n === 7 ? false : up(n + 1); }
+# print(even(1000), odd(77), down(5, 8), down(2147483650, 4), down(-2147483648, 3), down(-9007199254740992, 3), down(9007199254740992, 1));
+# print(up(-200), up(-2147483650 + 2147483600), higher(6.5 - 2.5));
+# -- end of source
+# LIBRARY: own
+# A step down from a count that is not zero is a count: nothing is asked (f1). Any other step of an exact integer round a cycle of calls is guarded in a specialized version of the body, and the generic version behind it takes what is no int32: the second step of a round asks nothing (f5).
+# RUN: walk f1 mechanisms=all
+# CHECK: code f1:Body
+# CHECK-NEXT: frame 0
+# CHECK: b0(v0: int[0, 2147483647] @Int32
+# CHECK: Sub {{*}} form=Integers
+# CHECK: StrictEq
+# CHECK: Sub {{*}} form=Integers
+# CHECK: CallDirect {{*}} function=f1
+# RUN(COUNTS): walk f1 mechanisms=all
+# COUNTS-NOT: form=CheckedIntegers
+# RUN(GUARDED): walk f5 mechanisms=all
+# GUARDED: code f5:Body
+# GUARDED: TypeTest v0 testedType=int[-1, 2147483646]
+# GUARDED: Add {{*}} form=Integers
+# GUARDED: StrictEq
+# GUARDED: Add {{*}} form=Integers
+# GUARDED: form=CheckedIntegers
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: true true -3 2147483646 -2147483651 -9007199254740992 9007199254740991
+# ANSWERS-NEXT: false false true
+# ANSWERS-NEXT: exited with 0

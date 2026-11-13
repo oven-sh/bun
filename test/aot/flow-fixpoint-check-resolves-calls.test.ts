@@ -1,6 +1,6 @@
 // --aot-check=FlowFixpoint applies every rule of Link's flow analysis once more to the solved sets and reports anything that still grows.
 // An update to a call only queues the call, and types that widen where objects merge are folded in later. The check must resolve the queued calls and count what the fold widens.
-// The injected fault, --aot-testing=IgnoreEscapeAfterUnknownCall, makes a super() call that already calls unknown code ignore the update that its new.target became unknown.
+// The injected fault, --aot-testing=IgnoreEscapeAfterUnknownCall, makes a super() call ignore the update that its new.target became unknown.
 // Neither program has a shared call with dormant members, so nothing else reruns the flow. In the second program no class has a field, so types widen only where objects merge.
 import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";

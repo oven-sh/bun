@@ -134,6 +134,9 @@ console.log(Math.min(...list), list.join(), list.length);
 // What an iteration reads of them is hoisted: it is read once, in the preheader.
 // Each program stays within memory that is still there: it reads no element, or it reads one at its old location, and it stores nothing.
 const asInFront = "--aot-testing=AssumeInvariantArrayStorage";
+// What --aot-harden=proof-checks lays into the program. The name also runs the compiler's verifier, which refuses some injected faults before there is a program to stop.
+const runTimeProofChecks =
+  "--aot-testing=CheckProofsAtRunTime,DisableFrameCells,CheckHoistedCallsAtRunTime,CheckResultFreshnessAtRunTime";
 const movedInTurns = [
   [
     "the length of a list that the turns shorten",
@@ -392,14 +395,19 @@ strip(all[5], "rank");
 console.log(shelf[at[0]](all));
 `;
 
-// The same for a slot that holds a 32-bit reference. `goesWrong`: without the hardening, the injected fault shows in what the program prints or in how it exits.
+// The same for a slot that holds a 32-bit reference.
 const takesAway = `const strip: (o: object, k: string) => boolean = (Reflect as any)[JSON.parse('"deleteProperty"')];
 const at: number[] = JSON.parse("[0, 1]");
 class Badge { text: string; constructor(text: string) { this.text = text; } }
 `;
-const readsReferenceTakenAway = {
+interface ReferenceTakenAway {
+  printsFirst: string;
+  source: string;
+  isEmptyAsUndefined?: boolean;
+}
+
+const readsReferenceTakenAway: Record<string, ReferenceTakenAway> = {
   "which some members of a union have": {
-    goesWrong: true,
     printsFirst: "64\n",
     source: `${takesAway}interface Core { mark: number }
 interface Bare { kind: number; size: number }
@@ -414,7 +422,6 @@ console.log(shelf[at[0]](rows));
 `,
   },
   "which may be null": {
-    goesWrong: true,
     printsFirst: "true false true\n",
     source: `${takesAway}class Member {
   rank: number; active: boolean; name: string; badge: Badge; before: Member | null; score: number; done: boolean;
@@ -429,8 +436,8 @@ console.log(shelf[at[0]](hurt));
 `,
   },
   "which is asked for its truth": {
-    goesWrong: false,
     printsFirst: "friend badge\n",
+    isEmptyAsUndefined: true,
     source: `${takesAway}class Member {
   rank: number; active: boolean; name: string; badge: Badge; friend: Member | undefined; score: number; done: boolean;
   constructor(i: number) { this.rank = i & 7; this.active = (i & 1) === 1; this.name = "m" + i; this.badge = new Badge("b" + i); this.friend = undefined; this.score = i & 3; this.done = false; }
@@ -535,7 +542,7 @@ describe.concurrent("--aot-harden=proof-checks", () => {
     "stops the program at %s, taken to be as in front of the loop",
     async (_, source) => {
       using folder = tempDir("aot-harden", { "program.ts": source });
-      await build(String(folder), ["--aot-harden=proof-checks", asInFront]);
+      await build(String(folder), [runTimeProofChecks, asInFront]);
       const { stdout, stderr, exitCode } = await runBuilt(String(folder));
       expect(stderr).toMatch(stopAtWhatWasReadInFront);
       expect(stdout).toBe("");
@@ -543,6 +550,13 @@ describe.concurrent("--aot-harden=proof-checks", () => {
     },
     120_000,
   );
+
+  test("refuses the build where the verifier sees the fault", async () => {
+    using folder = tempDir("aot-harden", { "program.ts": movedInTurns[1][1] });
+    const refused = await spawned(commandLine(["--aot-harden=proof-checks", asInFront]), String(folder));
+    expect(refused.stderr).toContain("OpcodeNotInForm");
+    expect(refused.exitCode).toBe(1);
+  }, 120_000);
 
   test("stops the program at a position that the library vouches for and that is false", async () => {
     using folder = tempDir("aot-harden", { "program.ts": sortedInPlace });
@@ -617,7 +631,7 @@ const storesByAnotherListsLength = [
   "a-store-by-another-lists-length-into-fractions.cjs",
   "a-store-by-another-lists-length-into-whole-numbers.cjs",
 ].flatMap(name =>
-  ["--aot-harden=proof-checks", "--aot-harden=ignore-told-ranges", "--aot-testing=CheckBoundsInEmittersOnly"].map(
+  [runTimeProofChecks, "--aot-harden=ignore-told-ranges", "--aot-testing=CheckBoundsInEmittersOnly"].map(
     word => [name, word] as const,
   ),
 );
@@ -636,6 +650,18 @@ describe.concurrent("a ground that is handed over unproven", () => {
       const { stderr, exitCode } = await runBuilt(String(folder));
       expect(stderr).toMatch(/^bun: internal AOT error: .+ check failed at \S+:\d+:\d+/m);
       expect(exitCode).not.toBe(0);
+    },
+    120_000,
+  );
+
+  test.each(storesByAnotherListsLength.filter(row => row[1] === runTimeProofChecks))(
+    "%s is refused at the build under --aot-harden=proof-checks",
+    async name => {
+      using folder = tempDir("aot-harden", { "program.cjs": readFileSync(join(storedBelowSums, name), "utf8") });
+      const flags = ["--aot-harden=proof-checks", unprovenGround, "program.cjs", "--outfile", "built"];
+      const refused = await spawned([bunExe(), "build", "--compile", "--aot", ...flags], String(folder));
+      expect(refused.stderr).toContain("OpcodeNotInForm");
+      expect(refused.exitCode).toBe(1);
     },
     120_000,
   );
@@ -799,7 +825,7 @@ describe.concurrent("--aot-harden=ignore-told-ranges", () => {
 
   test.each(Object.entries(readsReferenceTakenAway))(
     "proof-checks stops the program by name where a slot that is told filled has lost a reference %s",
-    async (_, { goesWrong, printsFirst, source }) => {
+    async (_, { printsFirst, source, isEmptyAsUndefined }) => {
       using sound = tempDir("aot-harden", { "program.ts": source });
       await build(String(sound), ["--aot-harden=proof-checks"]);
       const expected = await runPlain(String(sound));
@@ -808,7 +834,10 @@ describe.concurrent("--aot-harden=ignore-told-ranges", () => {
 
       using unhardened = tempDir("aot-harden", { "program.ts": source });
       await build(String(unhardened), [passesOverMarks]);
-      expect((await runBuilt(String(unhardened))).stdout !== expected.stdout).toBe(goesWrong);
+      const unhardenedRun = await runBuilt(String(unhardened));
+      // An empty slot is as false as undefined.
+      if (isEmptyAsUndefined) expect(unhardenedRun).toEqual(expected);
+      else expect(unhardenedRun.stdout).not.toBe(expected.stdout);
 
       using hardened = tempDir("aot-harden", { "program.ts": source });
       await build(String(hardened), ["--aot-harden=proof-checks", passesOverMarks]);
@@ -924,6 +953,7 @@ describe.concurrent("compile.aotHarden", () => {
         "--aot-testing=DisableFrameCells",
         "--aot-testing=CheckHoistedCallsAtRunTime",
         "--aot-testing=CheckResultFreshnessAtRunTime",
+        "--aot-check=VerifyEachStage",
       ],
     ],
     [

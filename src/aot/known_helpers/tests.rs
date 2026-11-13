@@ -189,6 +189,26 @@ fn a_helper_that_replaces_the_exports_of_its_file_too_is_an_ordinary_function() 
     assert_eq!(shapes_in("/a.cjs", &replace_each(TYPEOF, &changes)), []);
 }
 
+const EXTENDS: &str = r#"function _extends() {
+  return _extends = Object.assign ? Object.assign.bind() : function (n) {
+    for (var e = 1; e < arguments.length; e++) {
+      var t = arguments[e];
+      for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]);
+    }
+    return n;
+  }, _extends.apply(null, arguments);
+}"#;
+
+#[test]
+fn extends_becomes_object_assign() {
+    let known = [Shape::AssignReplacesItself];
+    assert_eq!(shapes_in("/a.mjs", EXTENDS), known);
+    assert_eq!(
+        shapes_in("/a.mjs", &EXTENDS.replace("bind()", "bind(null, {})")),
+        []
+    );
+}
+
 fn tree_of(function: &str) -> Vec<u8> {
     with_file("/a.cjs", &format!("var written = {function};"), |input| {
         let hir = input.hir;
@@ -199,6 +219,7 @@ fn tree_of(function: &str) -> Vec<u8> {
             file: input,
             max_bytes: usize::MAX,
             is_outer_name: &|_| false,
+            known: None,
         };
         let canonical = canonical_function(&canonical_input, written);
         canonical.expect("every part of the function is read").bytes

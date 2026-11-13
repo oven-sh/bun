@@ -186,6 +186,8 @@ impl<S: Storage> FileIn<S> {
                 .any(|statement| self.is_erased_statement(statement))
     }
 
+    /// `IsExternalModule`, asked for a `declare module "m"` or a `declare global` at the top of the file. A script for its
+    /// project declares the modules that it names, though a build runs the file as a module.
     pub fn is_module_for(&self, name: ModuleName) -> bool {
         self.has_module_syntax && !self.declares_as_script(name)
     }
@@ -205,10 +207,23 @@ impl<S: Storage> FileIn<S> {
 }
 
 impl File<'_> {
+    /// `Function` makes sloppy functions in strict code too.
+    pub fn makes_sloppy_functions(&self) -> bool {
+        self.known_evaluations
+            .iter()
+            .any(|it| it.is_in_global_scope)
+    }
+
     pub fn set_strict(&mut self) {
         self.is_strict = true;
+        let evaluations = &self.known_evaluations[..];
+        let is_made_by_function = |start: u32| {
+            let count = evaluations.partition_point(|it| it.start <= start);
+            let evaluation = evaluations[..count].last();
+            evaluation.is_some_and(|it| it.is_in_global_scope && start < it.end)
+        };
         for function in self.fns.iter_mut() {
-            function.is_strict = true;
+            function.is_strict |= !is_made_by_function(function.start);
         }
     }
 

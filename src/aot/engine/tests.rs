@@ -49,6 +49,7 @@ fn request_for(options: &AotOptions, thread_count: NonZeroUsize) -> EngineReques
         identity: IDENTITY,
         image_form: None,
         thread_count,
+        lists_inlined_strings: false,
     }
 }
 
@@ -68,7 +69,9 @@ fn expected_record(change: impl FnOnce(&mut CompileOptions)) -> CompileOptions {
     let mut record = CompileOptions {
         executable_identity: IDENTITY.0,
         thread_count: 7,
-        excluded_code: ExcludedCode::CODE_OUTSIDE_IMAGE | ExcludedCode::LIBRARY_TEXT,
+        excluded_code: ExcludedCode::CODE_OUTSIDE_IMAGE
+            | ExcludedCode::LIBRARY_TEXT
+            | ExcludedCode::UNLISTED_GLOBALS,
         ..zeroed()
     };
     record.target.reference_width = ReferenceWidth::Narrow;
@@ -136,7 +139,10 @@ fn options_fill_record() {
     );
     assert_eq!(
         filled_record(|options| options.omits_builtin_modules = true),
-        expected_record(|record| record.excluded_code = ExcludedCode::CODE_OUTSIDE_IMAGE)
+        expected_record(|record| {
+            record.excluded_code =
+                ExcludedCode::CODE_OUTSIDE_IMAGE | ExcludedCode::UNLISTED_GLOBALS;
+        })
     );
     assert_eq!(
         filled_record(|options| {
@@ -159,7 +165,9 @@ fn options_fill_record() {
     );
     assert_eq!(
         filled_record(|options| options.loads_code_from_disk = true),
-        expected_record(|record| record.excluded_code = ExcludedCode::LIBRARY_TEXT)
+        expected_record(|record| {
+            record.excluded_code = ExcludedCode::LIBRARY_TEXT | ExcludedCode::UNLISTED_GLOBALS;
+        })
     );
     assert_eq!(
         filled_record(|options| options.embeds_function_source = false),
@@ -324,6 +332,16 @@ fn thread_count_saturates() {
 #[test]
 fn default_options_ask_for_no_report() {
     assert_eq!(reports_of(&AotOptions::default()), ReportSet::default());
+}
+
+#[test]
+fn metafile_lists_inlined_strings() {
+    let options = AotOptions::default();
+    let mut request = request_for(&options, NonZeroUsize::MIN);
+    request.lists_inlined_strings = true;
+    let mut record = default_record();
+    fill_record(&mut record, &request);
+    assert_eq!(record.reports, ReportSet::INLINED_STRINGS);
 }
 
 #[test]

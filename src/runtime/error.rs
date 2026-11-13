@@ -68,8 +68,6 @@ pub enum Error {
     UnrecognizedCommand,
     #[error("MissingShell")]
     MissingShell,
-    #[error("NotFound")]
-    NotFound,
     #[error("EmptyKey")]
     EmptyKey,
     #[error("FormatFailed")]
@@ -371,7 +369,6 @@ impl Error {
             Self::HTTPError => "HTTPError",
             Self::UnrecognizedCommand => "UnrecognizedCommand",
             Self::MissingShell => "MissingShell",
-            Self::NotFound => "NotFound",
             Self::EmptyKey => "EmptyKey",
             Self::FormatFailed => "FormatFailed",
             Self::SelfExePathFailed => "SelfExePathFailed",

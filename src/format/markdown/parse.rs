@@ -82,15 +82,10 @@ pub(crate) fn parse(
     Some(root)
 }
 
-/// `is_plain` means CommonMark with strikethrough, footnotes and task lists, and nothing else: no tables, math, Liquid,
+/// Parses CommonMark with strikethrough, footnotes and task lists, and nothing else: no tables, math, Liquid,
 /// wiki links or autolink literals.
-pub(crate) fn parse_content(text: &[u8], tree: &mut Tree, is_plain: bool) -> Option<NodeId> {
-    let syntax = if is_plain {
-        Syntax::Plain
-    } else {
-        Syntax::Markdown
-    };
-    parse_lines(text, tree, syntax, 0)
+pub(crate) fn parse_content(text: &[u8], tree: &mut Tree) -> Option<NodeId> {
+    parse_lines(text, tree, Syntax::Plain, 0)
 }
 
 fn is_space(byte: u8) -> bool {

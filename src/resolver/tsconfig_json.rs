@@ -550,8 +550,7 @@ impl TSConfigJSON {
                 }
             }
 
-            // Parse "jsxImportSource". An empty string means the default package, as in TypeScript
-            // (`jsxImportSource || "react"`), and still overrides a value from an extended config.
+            // "jsxImportSource": "" keeps the react defaults but still overrides an extended config's value.
             if let Some(jsx_prop) = jsx_import_source_v {
                 if let Some(str) = jsx_prop.as_str() {
                     if !str.is_empty() {

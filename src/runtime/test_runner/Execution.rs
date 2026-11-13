@@ -110,6 +110,8 @@ pub(crate) struct ConcurrentGroup {
     pub(crate) failure_skip_to: usize,
     /// Like `ExecutionSequence::pending_matchers`, for matchers whose calling sequence isn't known.
     pub(crate) pending_matchers: u32,
+    /// A test with no timeout was running when one of `pending_matchers` was called, so they have no deadline.
+    pub(crate) pending_matchers_have_no_deadline: bool,
 }
 
 impl ConcurrentGroup {
@@ -122,6 +124,7 @@ impl ConcurrentGroup {
             failure_skip_to: next_index,
             next_sequence_index: 0,
             pending_matchers: 0,
+            pending_matchers_have_no_deadline: false,
         }
     }
 
@@ -215,6 +218,14 @@ impl ExecutionSequence {
     fn waits_for_matchers(&mut self) -> bool {
         self.callback_done = self.pending_matchers > 0 && !self.maybe_skip;
         self.callback_done
+    }
+
+    /// The callback of its test has started, and the test has not ended.
+    pub(crate) fn runs_test_with_no_timeout(&self) -> bool {
+        self.executing
+            && self.active_entry == self.test_entry
+            // SAFETY: arena-owned entry, alive for the lifetime of BunTest which owns Execution
+            && self.test_entry.is_some_and(|entry| unsafe { entry.as_ref() }.timeout == 0)
     }
 
     fn entry_mode(&self) -> ScopeMode {
@@ -453,7 +464,10 @@ impl Execution {
                     // SAFETY: arena-owned entry, alive for lifetime of BunTest
                     let entry = unsafe { entry.as_ref() };
                     let now = Timespec::now_force_real_time();
-                    if entry.timespec.order(&now) == core::cmp::Ordering::Less {
+                    // A stale file timer can fire while an unlimited entry is active.
+                    if !entry.timespec.eql(&Timespec::EPOCH)
+                        && entry.timespec.order(&now) == core::cmp::Ordering::Less
+                    {
                         // SAFETY: bun_vm() returns the live per-thread VM.
                         let kill_count = global_this.bun_vm().as_mut().auto_killer.kill();
                         if kill_count.processes > 0 {
@@ -1028,12 +1042,16 @@ fn step_group(
         let group = unsafe { &mut *group_ptr.as_ptr() };
         if group.pending_matchers > 0 {
             // Any test in the group may have called them, so wait until the latest test deadline.
-            let timeout = this.sequences[group.sequence_start..group.sequence_end]
-                .iter()
-                .filter_map(|sequence| sequence.test_entry)
-                // SAFETY: arena-owned entry
-                .map(|entry| unsafe { entry.as_ref() }.timespec)
-                .fold(Timespec::EPOCH, |latest, timespec| if timespec.order(&latest).is_gt() { timespec } else { latest });
+            let timeout = if group.pending_matchers_have_no_deadline {
+                Timespec::EPOCH
+            } else {
+                this.sequences[group.sequence_start..group.sequence_end]
+                    .iter()
+                    .filter_map(|sequence| sequence.test_entry)
+                    // SAFETY: arena-owned entry
+                    .map(|entry| unsafe { entry.as_ref() }.timespec)
+                    .fold(Timespec::EPOCH, |latest, timespec| if timespec.order(&latest).is_gt() { timespec } else { latest })
+            };
             if timeout.eql(&Timespec::EPOCH) || timeout.order(now).is_gt() {
                 return Ok(StepResult::Waiting { timeout });
             }

@@ -2333,6 +2333,15 @@ pub(crate) enum HookTag {
     AroundAll,
 }
 
+/// Like Vitest's timeouts, anything that isn't a positive finite number becomes 0, which means none.
+pub(crate) fn timeout_ms(number: f64) -> u32 {
+    if number > 0.0 && number < f64::from(u32::MAX) {
+        (number as u32).max(1)
+    } else {
+        0
+    }
+}
+
 #[derive(Copy, Clone, Default)]
 pub(crate) struct ExecutionEntryCfg {
     /// 0 = unlimited timeout

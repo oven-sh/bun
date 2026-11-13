@@ -1019,7 +1019,7 @@ pub(crate) fn parse_arguments<'a>(
         }
     };
 
-    let timeout_option_ms: Option<u32> = timeout_option.map(|timeout| timeout as u32);
+    let timeout_option_ms: Option<u32> = timeout_option.map(bun_test::timeout_ms);
     result.options.inherited = InheritedOptions {
         timeout: timeout_option_ms.or(cfg.inherited.timeout),
         retry: result.options.retry.or(cfg.inherited.retry),

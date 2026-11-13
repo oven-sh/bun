@@ -203,10 +203,10 @@ struct SearchEnv {
 impl SearchEnv {
     fn load(interp: &Interpreter, cmd: NodeId) -> Self {
         let shell = Builtin::shell(interp, cmd);
-        // `EnvMap::get` refs the returned string; balance it.
+        // `get_exported` refs the returned string; balance it.
         let path_env = shell
-            .export_env
-            .get(EnvStr::init_slice(b"PATH"))
+            .vars
+            .get_exported(EnvStr::init_slice(b"PATH"))
             .map(|s| {
                 let v = s.slice().to_vec();
                 s.deref();

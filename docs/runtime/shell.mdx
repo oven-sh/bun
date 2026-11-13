@@ -327,6 +327,26 @@ const foo = "bar123; rm -rf /tmp";
 await $`FOO=${foo} bun -e 'console.log(process.env.FOO)'`; // bar123; rm -rf /tmp\n
 ```
 
+A variable from the environment is exported, and so is each name you pass to `export`. A child process receives the current value of every exported variable. A plain assignment to any other name stays in the shell:
+
+```js
+import { $ } from "bun";
+
+// FOO gets the export attribute and keeps its value
+await $`FOO=foo; export FOO; bun -e 'console.log(process.env.FOO)'`; // foo\n
+
+// NODE_ENV comes from the environment, so the new value reaches `bun`
+await $`NODE_ENV=production; bun -e 'console.log(process.env.NODE_ENV)'`.env({
+  ...process.env,
+  NODE_ENV: "development",
+}); // production\n
+
+// BAR is not exported
+await $`BAR=bar; bun -e 'console.log(process.env.BAR)'`; // undefined\n
+```
+
+On Windows, variable names are ASCII-case-insensitive, as in `process.env`: `PATH`, `Path` and `path` are one variable, so an assignment under any spelling changes what child processes receive.
+
 ### Changing the environment variables
 
 By default, all commands use `process.env` as their environment variables.
@@ -466,6 +486,7 @@ For cross-platform compatibility, Bun Shell implements a set of builtin commands
 - `rm`: remove files and directories
 - `echo`: print text
 - `pwd`: print the working directory
+- `export`: export variables to child processes
 - `bun`: run bun in bun
 - `cat`
 - `touch`

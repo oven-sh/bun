@@ -2,7 +2,7 @@
 //! no effect on the environment of the shell, so we can skip them.
 
 use crate::shell::ast;
-use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, log};
+use crate::shell::interpreter::{EnvMap, Interpreter, Node, NodeId, ShellExecEnv, log};
 use crate::shell::states::base::Base;
 use crate::shell::states::expansion::Expansion;
 use crate::shell::yield_::Yield;
@@ -128,12 +128,22 @@ impl Assigns {
             merged
         };
 
+        let name = EnvStr::init_slice(label);
         let value_ref = EnvStr::init_ref_counted(value.into_boxed_slice());
-        interp.as_assigns_mut(this).base.shell_mut().assign_var(
-            EnvStr::init_slice(label),
-            value_ref,
-            ctx,
-        );
+        // Both arms ref `value_ref`.
+        match ctx {
+            AssignCtx::Cmd => {
+                let cmd = interp.as_assigns(this).base.parent;
+                let prefixes = &mut interp.as_cmd_mut(cmd).prefix_env;
+                prefixes
+                    .get_or_insert_with(|| Box::new(EnvMap::init()))
+                    .insert(name, value_ref);
+            }
+            AssignCtx::Shell => {
+                let shell = interp.as_assigns_mut(this).base.shell_mut();
+                shell.vars.set(name, value_ref);
+            }
+        }
         value_ref.deref();
 
         Yield::Next(this)

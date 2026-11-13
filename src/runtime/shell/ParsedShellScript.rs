@@ -8,7 +8,7 @@ use bun_jsc::{
     JsResult, MarkedArgumentBuffer,
 };
 
-use super::env_map::EnvMap;
+use super::env_map::VarTable;
 use super::interpreter::ShellArgs;
 use super::shell_body::shell_cmd_from_js;
 use super::{EnvStr, Interpreter};
@@ -17,7 +17,7 @@ pub(crate) use crate::generated_bindgen::parsed_shell_script::js_ParsedShellScri
 
 pub(crate) struct ParsedShellScript {
     pub args: JsCell<Option<Box<ShellArgs>>>,
-    pub(crate) export_env: JsCell<Option<EnvMap>>,
+    pub(crate) export_env: JsCell<Option<VarTable>>,
     pub(crate) quiet: Cell<bool>,
     pub(crate) cwd: JsCell<Option<BunString>>,
     /// Read-only after construction (set once before the JS wrapper exists).
@@ -56,7 +56,7 @@ impl ParsedShellScript {
     }
 
     // Returns a tuple; callers destructure it.
-    pub(crate) fn take(&self) -> (Box<ShellArgs>, bool, Option<BunString>, Option<EnvMap>) {
+    pub(crate) fn take(&self) -> (Box<ShellArgs>, bool, Option<BunString>, Option<VarTable>) {
         let args = self.args.replace(None).expect("args already taken");
         let quiet = self.quiet.get();
         let cwd = self.cwd.replace(None);
@@ -91,7 +91,7 @@ impl ParsedShellScript {
         )?;
         // `defer object_iter.deinit()` — handled by Drop.
 
-        let mut env = EnvMap::init();
+        let mut env = VarTable::init();
         // errdefer env.deinit() — Drop on early-return handles this.
         env.ensure_total_capacity(object_iter.len);
 
@@ -109,11 +109,11 @@ impl ParsedShellScript {
             let keyref = EnvStr::init_ref_counted(keyslice);
             let valueref = EnvStr::init_ref_counted(slice);
 
-            env.insert(keyref, valueref);
+            env.export(keyref, Some(valueref));
             keyref.deref();
             valueref.deref();
         }
-        // Dropping the previous Option<EnvMap> deinits it.
+        // Dropping the previous Option<VarTable> deinits it.
         self.export_env.set(Some(env));
         Ok(())
     }

@@ -624,10 +624,11 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     cb: HotAccept;
     key: Id;
   };
-  const toReload = new Set<HMRModule>();
+  /** Every module that this update evaluates again, with the self-accept callback of the body it replaces. */
+  const toReload = new Map<HMRModule, HotAcceptFunction | null>();
   const toAccept: ToAccept[] = [];
   let failures: Set<Id> | null = null;
-  const toDispose: HMRModule[] = [];
+  const toDispose = new Set<HMRModule>();
 
   // Discover all HMR boundaries
   outer: for (const key of Object.keys(modules)) {
@@ -642,7 +643,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     const existing = registry.get(key);
     if (!existing) continue;
 
-    toReload.add(existing);
+    toReload.set(existing, existing.selfAccept);
 
     // Discover all HMR boundaries
     const visited = new Set<HMRModule>();
@@ -655,21 +656,21 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
       // Stop propagation if the module is self-accepting
       let hadSelfAccept = true;
       if (mod.selfAccept) {
-        toReload.add(mod);
+        toReload.set(mod, mod.selfAccept);
         visited.add(mod);
         hadSelfAccept = false;
         if (mod.onDispose) {
-          toDispose.push(mod);
+          toDispose.add(mod);
         }
       }
       // Modules that mutate data are implied to handle updates via reusing their `data` property
       else if (Object.keys(mod.data).length > 0) {
         mod.selfAccept ??= implicitAcceptFunction;
-        toReload.add(mod);
+        toReload.set(mod, mod.selfAccept);
         visited.add(mod);
         hadSelfAccept = false;
         if (mod.onDispose) {
-          toDispose.push(mod);
+          toDispose.add(mod);
         }
       }
 
@@ -744,7 +745,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
   }
 
   // Dispose all modules
-  if (toDispose.length > 0) {
+  if (toDispose.size > 0) {
     const disposePromises: Promise<void>[] = [];
     for (const mod of toDispose) {
       mod.state = State.Stale;
@@ -761,11 +762,46 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     }
   }
 
+  // Load a module after the modules of the update that it imports, so that it
+  // evaluates against their new bodies. The edges are those of the previous
+  // generation, which also cover require(). A cycle keeps the order of the
+  // walk: the changed module before its importers.
+  const blockers = new Map<HMRModule, number>();
+  for (const mod of toReload.keys()) blockers.set(mod, 0);
+  for (const mod of toReload.keys()) {
+    for (const importer of mod.importers) {
+      const count = blockers.get(importer);
+      if (count !== undefined) blockers.set(importer, count + 1);
+    }
+  }
+  const order: HMRModule[] = [];
+  for (const [mod, count] of blockers) {
+    if (count === 0) order.push(mod);
+  }
+  for (let i = 0; i < toReload.size; i++) {
+    if (i === order.length) {
+      // Every module left waits on another one: a cycle. Take the first of the walk.
+      for (const [mod, count] of blockers) {
+        if (count > 0) {
+          blockers.set(mod, 0);
+          order.push(mod);
+          break;
+        }
+      }
+    }
+    for (const importer of order[i].importers) {
+      const count = blockers.get(importer);
+      if (count !== undefined && count > 0) {
+        blockers.set(importer, count - 1);
+        if (count === 1) order.push(importer);
+      }
+    }
+  }
+
   // Reload all modules
   const promises: Promise<HMRModule>[] = [];
-  for (const mod of toReload) {
+  for (const mod of order) {
     mod.state = State.Stale;
-    const selfAccept = mod.selfAccept;
     mod.selfAccept = null;
     mod.depAccepts = null;
 
@@ -777,29 +813,25 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
       promises.push(Promise.reject(e));
       continue;
     }
-    if (modOrPromise === mod) {
-      if (selfAccept) {
-        selfAccept(getEsmExports(mod));
-      }
-    } else {
+    if (modOrPromise !== mod) {
       DEBUG.ASSERT(modOrPromise instanceof Promise);
-      promises.push(
-        (modOrPromise as Promise<HMRModule>).then(mod => {
-          if (selfAccept) {
-            selfAccept(getEsmExports(mod));
-          }
-          return mod;
-        }),
-      );
+      promises.push(modOrPromise as Promise<HMRModule>);
     }
   }
   if (promises.length > 0) {
     await Promise.all(promises);
   }
-  for (const mod of toReload) {
+  for (const mod of toReload.keys()) {
     const { selfAccept } = mod;
     if (selfAccept && selfAccept !== implicitAcceptFunction) continue;
     patchImporters(mod);
+  }
+  // The self-accept callbacks run once every body of the update has run. A
+  // module of a cycle that waits on top-level await can still be pending here.
+  for (const [mod, selfAccept] of toReload) {
+    if (selfAccept && mod.state === State.Loaded) {
+      selfAccept(getEsmExports(mod));
+    }
   }
 
   // Call all accept callbacks

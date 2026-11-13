@@ -691,3 +691,123 @@ devTest("dev.write resolves only after the new module body has run", {
     expect(await c.js`globalThis.marker`).toBe("updated");
   },
 });
+// A batched hot update evaluates every changed module once, and an importer
+// that evaluates before its changed dependencies gets their new bodies, not
+// the ones of the previous generation (#48871). The walk adds the accepting
+// importer (entry.js) to the update as soon as it reaches the first changed
+// module, so the chunk order only perturbs where the other modules land.
+const batchedGraph = {
+  "context.js": `
+    (window.evaluated ??= {}).context = (window.evaluated.context ?? 0) + 1;
+    export default { version: 0 };
+  `,
+  "field.js": `
+    import context from "./context.js";
+    (window.evaluated ??= {}).field = (window.evaluated.field ?? 0) + 1;
+    export default { context };
+  `,
+  "form.js": `
+    import context from "./context.js";
+    import field from "./field.js";
+    (window.evaluated ??= {}).form = (window.evaluated.form ?? 0) + 1;
+    export default { get context() { return context; }, Item: field };
+  `,
+  "entry.js": `
+    import Form from "./form.js";
+    (window.evaluated ??= {}).entry = (window.evaluated.entry ?? 0) + 1;
+    window.inspect = () => ({
+      provider: Form.context.version,
+      field: Form.Item.context.version,
+      same: Form.context === Form.Item.context,
+    });
+    console.log(JSON.stringify(window.inspect()));
+    import.meta.hot.accept();
+  `,
+};
+// With `fieldAccepts`, field.js is a second accepting module of the update. Its
+// callback gets the namespace of the body that the importer evaluated on demand.
+const fieldAccept = `import.meta.hot.accept(m => console.log("field " + m.default.context.version));\n`;
+for (const fieldAccepts of [false, true]) {
+  for (const order of [
+    ["entry.js", "form.js", "field.js", "context.js"],
+    ["context.js", "field.js", "form.js", "entry.js"],
+  ]) {
+    const files = { ...batchedGraph };
+    if (fieldAccepts) files["field.js"] += fieldAccept;
+    devTest(
+      `a batched update evaluates changed dependencies before their importer (${order[0]} first${fieldAccepts ? ", field.js accepts" : ""})`,
+      {
+        files: { "index.html": emptyHtmlFile({ scripts: ["entry.js"] }), ...files },
+        async test(dev) {
+          await using c = await dev.client("/");
+          await c.expectMessage('{"provider":0,"field":0,"same":true}');
+          {
+            await using _batch = await dev.batchChanges();
+            for (const file of order) {
+              await dev.write(file, files[file].replace("version: 0", "version: 1") + "// edited\n");
+            }
+          }
+          // The new entry body runs against the new bodies of its dependencies.
+          if (fieldAccepts) {
+            await c.expectMessage('{"provider":1,"field":1,"same":true}', "field 1");
+          } else {
+            await c.expectMessage('{"provider":1,"field":1,"same":true}');
+          }
+          expect(await c.js<string>`JSON.stringify(window.inspect())`).toBe('{"provider":1,"field":1,"same":true}');
+          expect(await c.js<string>`JSON.stringify(window.evaluated)`).toBe(
+            '{"context":2,"field":2,"form":2,"entry":2}',
+          );
+        },
+      },
+    );
+  }
+}
+// The accepting importer loads first and pulls the saved module in below it,
+// as on a first load, so in an import cycle its body sees the new generation.
+devTest("a save of a module in a cycle with its accepting importer runs the importer against the new body", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["b.ts"] }),
+    "b.ts": `
+      import { x } from "./x";
+      console.log("b sees x=" + x);
+      import.meta.hot.accept();
+    `,
+    "x.ts": `
+      import { b } from "./b";
+      export const x = 1;
+      export const useB = () => b;
+      console.log("x ran");
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("x ran", "b sees x=1");
+    await dev.patch("x.ts", { find: "x = 1", replace: "x = 2" });
+    await c.expectMessage("x ran", "b sees x=2");
+  },
+});
+devTest("a boundary reached from two changed modules is disposed of once", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { a } from "./a";
+      import { b } from "./b";
+      console.log("index " + a + b);
+      import.meta.hot.dispose(() => console.log("dispose"));
+      import.meta.hot.accept();
+    `,
+    "a.ts": `export const a = 1;`,
+    "b.ts": `export const b = 1;`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index 11");
+    {
+      await using _batch = await dev.batchChanges();
+      await dev.write("a.ts", `export const a = 2;`);
+      await dev.write("b.ts", `export const b = 2;`);
+    }
+    // Without the dedupe the second pass throws "onDispose is not iterable" and the page reloads.
+    await c.expectMessage("dispose", "index 22");
+  },
+});

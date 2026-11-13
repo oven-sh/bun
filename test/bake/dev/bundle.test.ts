@@ -1639,6 +1639,45 @@ devTest("a route whose import throws on load throws that error again on the next
     await dev.fetch("/sync-import").equals("sync-import: fixed");
   },
 });
+// Server side of #48871: the route module is the first of the batch, and its
+// new body must see the new bodies of the modules it imports.
+const batchedRouteGraph = {
+  "context.ts": `export default { version: 0 };`,
+  "field.ts": `
+    import context from "./context.ts";
+    export default { context };
+  `,
+  "form.ts": `
+    import context from "./context.ts";
+    import field from "./field.ts";
+    export default { get context() { return context; }, Item: field };
+  `,
+  "routes/index.ts": `
+    import Form from "../form.ts";
+    const state = {
+      provider: Form.context.version,
+      field: Form.Item.context.version,
+      same: Form.context === Form.Item.context,
+    };
+    export default function () {
+      return new Response(JSON.stringify(state));
+    }
+  `,
+};
+devTest("a batched save evaluates a route's changed imports before the route", {
+  framework: minimalFramework,
+  files: batchedRouteGraph,
+  async test(dev) {
+    await dev.fetch("/").equals('{"provider":0,"field":0,"same":true}');
+    {
+      await using _batch = await dev.batchChanges();
+      for (const file of ["routes/index.ts", "form.ts", "field.ts", "context.ts"]) {
+        await dev.write(file, batchedRouteGraph[file].replace("version: 0", "version: 1") + "// edited\n");
+      }
+    }
+    await dev.fetch("/").equals('{"provider":1,"field":1,"same":true}');
+  },
+});
 devTest("a route module that throws when a save reloads it is reported and recovers", {
   framework: minimalFramework,
   files: {

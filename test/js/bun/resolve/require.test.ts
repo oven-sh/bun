@@ -370,6 +370,33 @@ describe("require(specifier)", () => {
       expect(await run(files, "-r", "preload.cjs", "entry.cjs")).toEqual(prints("1,true,true 1,true,true"));
     });
 
+    it.concurrent(
+      "is the module that the entry load runs, after a preload required the file and deleted its key",
+      async () => {
+        // The load of the entry point runs the file again. Node prints "load 1: false,false false,false" for the module
+        // that the preload required: it has no main module then. Bun knows the file as the entry point whoever loads it.
+        const files = {
+          "preload.cjs": `
+          require("./entry.cjs");
+          delete require.cache[require.resolve("./entry.cjs")];
+        `,
+          "entry.cjs": `
+          globalThis.loads = (globalThis.loads ?? 0) + 1;
+          const load = globalThis.loads;
+          const ask = () => [require.main === module, process.mainModule === module].join();
+          const atLoad = ask();
+          setImmediate(() => {
+            ${purge}
+            console.log("load " + load + ":", atLoad, ask());
+          });
+        `,
+        };
+        expect(await run(files, "-r", "preload.cjs", "entry.cjs")).toEqual(
+          prints("load 1: true,true false,false\nload 2: true,true true,true"),
+        );
+      },
+    );
+
     it.concurrent("is the entry point while an onLoad plugin runs it inside its own load", async () => {
       const files = {
         "preload.cjs": `

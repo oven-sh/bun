@@ -268,7 +268,7 @@ declare module "vitest" {
     fn<T extends Procedure | Constructable = Procedure>(implementation?: T): Mock<T>;
     /**
      * Replaces a method, getter or setter on `object` with a mock that still calls the original. Under a `"get"` or
-     * `"set"` spy, a plain property still reads its value, where in Vitest it reads `undefined`.
+     * `"set"` spy, a plain property keeps its value, where in Vitest it reads `undefined`.
      *
      * @example
      * ```ts

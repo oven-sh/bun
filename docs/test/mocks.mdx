@@ -266,7 +266,7 @@ test("spy on a getter", () => {
 });
 ```
 
-This also works on plain properties, such as `spyOn(process, "platform", "get")`, and on accessors inherited from a class. A plain property still reads its value under a `"set"` spy.
+This also works on plain properties, such as `spyOn(process, "platform", "get")`, and on accessors inherited from a class. Under a `"get"` or `"set"` spy, a plain property keeps its value: a read returns the value, and a write stores it if the property is writable. `mockRestore()` puts back the value from before the spy.
 
 ### Classes
 
@@ -807,7 +807,7 @@ test("lazy import", async () => {
 - A factory that uses `importOriginal` is called after the original module is evaluated, not before, so after the factories that don't use it. A factory that declares the parameter counts as using it, so the original is evaluated even if the factory never calls it.
 - `export * from` a mocked module re-exports the original's export names if the factory uses `importOriginal`. Names the factory adds aren't re-exported, and names it leaves out are re-exported as `undefined`.
 - If two files import each other and both have hoisted calls, they wait on each other and the run fails with an error that names both files. Keep the hoisted calls in only one of them.
-- A plain property still reads its value under a `"get"` or `"set"` spy. In Vitest the property reads `undefined` while the spy is on it.
+- A `"get"` or `"set"` spy on a plain property keeps the property's value. A read returns it, and a write stores it if the property is writable. In Vitest the property reads `undefined` while the spy is on it, and a write under a `"get"` spy throws.
 
 ## Implementation Details
 

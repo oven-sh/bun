@@ -393,7 +393,8 @@ declare module "bun:test" {
   export function spyOn<T extends object, K extends keyof T>(obj: T, property: K, accessType: "get"): Mock<() => T[K]>;
   /**
    * Create a spy on a property's setter. The spy calls the original setter until you give it another implementation.
-   * A plain property still reads its value under the spy.
+   * For a plain property, the original setter stores the value if the property is writable, and the property still
+   * reads its value.
    */
   export function spyOn<T extends object, K extends keyof T>(
     obj: T,

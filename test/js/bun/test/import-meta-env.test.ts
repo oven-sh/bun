@@ -815,6 +815,7 @@ describe("import.meta.env in a test file", () => {
             expect([env[name], process.env[name]]).toEqual(["original", "original"]);
             env[name] = "written";
             expect(spied.mock.calls).toEqual([["written"]]);
+            expect([env[name], process.env[name]]).toEqual(["written", "written"]);
           } else {
             spied.mockReturnValue("mocked");
             expect([env[name], process.env[name]]).toEqual(["mocked", "mocked"]);

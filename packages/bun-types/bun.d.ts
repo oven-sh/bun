@@ -7815,6 +7815,12 @@ declare module "bun" {
    * @category HTTP & Networking
    */
   function connect<Data = undefined>(options: UnixSocketOptions<Data>): Promise<Socket<Data>>;
+  /**
+   * Create a client from an already-connected socket file descriptor
+   *
+   * @category HTTP & Networking
+   */
+  function connect<Data = undefined>(options: FdSocketOptions<Data>): Promise<Socket<Data>>;
 
   /**
    * Create a TCP server that listens on a port

@@ -45,7 +45,7 @@ export const neverCalled: ReadonlyMap<RegExp, string> = new Map([
   [/^process\.(exit|reallyExit|abort|kill|_kill|execve|dlopen|_debugProcess|_debugEnd)$/, "it ends, replaces or signals a process"],
   [/^process\.(umask|setuid|setgid|seteuid|setegid|setgroups|initgroups|_startProfilerIdleNotifier|_stopProfilerIdleNotifier|setUncaughtExceptionCaptureCallback)$/, "it changes the state of the process"],
   [/^process\.(stdin|openStdin)\b/, "it takes over a standard stream"],
-  [/^Bun\.(sleepSync|spawn|spawnSync|openInEditor|serve|listen|connect|udpSocket|build|\$|plugin|generateHeapSnapshot|shrink)$/, "it blocks, starts a process or opens a socket"],
+  [/^Bun\.(sleepSync|spawn|spawnSync|openInEditor|serve|listen|connect|udpSocket|build|\$|plugin|generateHeapSnapshot|shrink)$|^native:Bindgen:udp_socket\.bind\.ts:dgramCreateSocket$|^%NativeFunctions%\.Udp_socketBindTsDgramCreateSocket$/, "it blocks, starts a process or opens a socket"],
   [/^Atomics\.wait$/, "it blocks the thread"],
   [/^%AsyncFromSyncIterator%\.prototype\.(next|return|throw)$/, "no program can hold it or the object that it works on: the engine alone calls it, behind `for await` and `yield*` over an iterator that is not async, and native code takes `this` on trust"],
   [/^%NodeJSFS%\.prototype\.(close|ftruncate)(Sync|Cb)?$|^native:Bindgen:(udp_socket\.bind\.ts:dgram(Close|Adopt|Bind|Listen)Fd|node_cluster_binding\.bind\.ts:clusterCloseHandle)$|^%NativeFunctions%\.(Udp_socketBindTsDgram(Close|Adopt|Bind|Listen)Fd|Node_cluster_bindingBindTsClusterCloseHandle)$/, "it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too"],

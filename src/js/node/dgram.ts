@@ -144,6 +144,7 @@ function isInt32(value): value is number {
 // COMPILING HOST's <errno.h> value, so on Windows it reports -9/-22/-105
 // where Node/libuv report the synthetic -4083/-4071/-4081.
 const UV_EBADF = process.platform === "win32" ? -4083 : -9;
+const UV_EBUSY = process.platform === "win32" ? -4082 : -16;
 const UV_EEXIST = process.platform === "win32" ? -4075 : -17;
 const UV_EINVAL = process.platform === "win32" ? -4071 : -22;
 // Unlike the codes above, ECANCELED's number differs across the POSIX
@@ -155,6 +156,12 @@ const UV_ECANCELED: number = $bindgen("node_util_binding.bind.ts", "ecanceledErr
 // request is counted until its callback runs. Only Node's own tests use it.
 const kNoTrySend = Array.prototype.indexOf.$call(process.execArgv, "--test-udp-no-try-send") !== -1;
 
+// Makes the tick queue now. A queue that a promise job makes is drained right after that job (#34115), which would emit 'listening' ahead of the jobs that bind() left behind.
+void process.nextTick;
+
+const createSocketFn = $bindgen("udp_socket.bind.ts", "dgramCreateSocket") as (
+  options: object,
+) => $Node.UDPSocketHandle | undefined;
 const getFdFn = $bindgen("udp_socket.bind.ts", "getFd") as (socket: $Node.UDPSocketHandle) => number;
 // Read-only query of the process-wide DGRAM_FDS registry the native layer
 // already maintains, so bind({ fd }) can synchronously report EEXIST like
@@ -196,6 +203,15 @@ function lookup4(lookup: LookupFunction, address: string | null | undefined, cal
 
 function lookup6(lookup: LookupFunction, address: string | null | undefined, callback: LookupCallback) {
   return lookup(address || "::1", 6, callback);
+}
+
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/dgram.js#L32-L43
+function defaultLookup(address: string, family: number, callback: LookupCallback) {
+  if (isIP(address) === family) {
+    process.nextTick(callback, null, address, family);
+    return;
+  }
+  return (require("node:dns") as { lookup: LookupFunction }).lookup(address, family, callback);
 }
 
 type LookupCallback = (err: Error | null, ip: string) => void;
@@ -329,7 +345,7 @@ interface UDPHandle {
 
 function newHandle(type: string, lookup: LookupFunction | undefined) {
   if (lookup === undefined) {
-    lookup = require("node:dns").lookup as LookupFunction;
+    lookup = defaultLookup;
   } else {
     validateFunction(lookup, "lookup");
   }
@@ -726,6 +742,8 @@ Socket.prototype.bind = function (this: $Node.DgramSocket, port_, address_ /* , 
     if (type !== "UDP") {
       throw $ERR_INVALID_FD_TYPE(type);
     }
+    // uv_udp_open() refuses a handle that has a socket before it looks at the descriptor: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/udp.c#L984-L989
+    if (state.handle!.socket) throw new ErrnoException(UV_EBUSY, "open");
     // Query the native registry so bind({ fd }) throws synchronously like
     // uv_udp_open (startBunSocket routes the same failure to emit('error')).
     if (isFdAdoptedFn(fd)) {
@@ -803,6 +821,15 @@ Socket.prototype.bind = function (this: $Node.DgramSocket, port_, address_ /* , 
       return;
     }
 
+    // A `lookup` that calls back again finds the handle bound: bind(2) answers EINVAL, libuv on Windows answers 0 (deps/uv/src/win/udp.c#L200-L201).
+    const { socket } = state.handle;
+    if (socket) {
+      if (process.platform === "win32") return startListening(this, state, socket);
+      state.bindState = BIND_STATE_UNBOUND;
+      this.emit("error", new ExceptionWithHostPort(UV_EINVAL, "bind", ip, port));
+      return;
+    }
+
     startBunSocket(this, state, { hostname: ip, port: port || 0, flags });
   });
 
@@ -841,7 +868,7 @@ function bindServerHandle(self: $Node.DgramSocket, options: object, errCb: (err:
       return closeWrap.$apply(this, arguments);
     };
     state.sharedHandle = handle!;
-    // Set before the async adoption so a close() racing it cannot free the fd; releaseSharedHandle() undoes it on failure.
+    // The socket that adopts the fd closes it; releaseSharedHandle() undoes this when the adoption fails.
     handle!.adopted = true;
     startBunSocket(self, state, { fd: handle!.sharedFd ?? handle!.fd }, handle!);
   });
@@ -853,7 +880,7 @@ function releaseSharedHandle(state: DgramState, handle: SharedHandle) {
   handle.close();
 }
 
-// Creates the underlying Bun.udpSocket for `self` and completes the bind:
+// Creates the native socket for `self` and completes the bind before it returns:
 // either from a resolved hostname/port or by adopting an existing descriptor
 // (`{ fd }`). Mirrors what Node's startListening() makes observable before
 // 'listening' fires.
@@ -863,6 +890,7 @@ function startBunSocket(
   createOptions: { fd: number | undefined } | { hostname: string; port: number; flags: number },
   sharedHandle?: SharedHandle,
 ) {
+  let socket: $Node.UDPSocketHandle | undefined;
   try {
     const udpOptions: any = {
       ...createOptions,
@@ -911,44 +939,37 @@ function startBunSocket(
     };
     // Private name: a cluster-shared descriptor is read one datagram at a time so workers share the load.
     if (sharedHandle) $putByIdDirectPrivate(udpOptions, "sharedFd", true);
-    (Bun.udpSocket(udpOptions) as Promise<$Node.UDPSocketHandle>).$then(
-      (socket: $Node.UDPSocketHandle) => {
-        if (!state.handle) {
-          // Closed while the bind was in flight.
-          socket.close();
-          return;
-        }
-        if (state.unrefOnBind) {
-          socket.unref();
-          state.unrefOnBind = false;
-        }
-        state.handle.socket = socket;
-        state.receiving = true;
-        state.bindState = BIND_STATE_BOUND;
-
-        // Node applies these in startListening(), before 'listening' fires.
-        const { recvBufferSize, sendBufferSize } = state;
-        try {
-          if (recvBufferSize) bufferSize(self, recvBufferSize, RECV_BUFFER);
-          if (sendBufferSize) bufferSize(self, sendBufferSize, SEND_BUFFER);
-        } catch (err) {
-          self.emit("error", err);
-          return;
-        }
-
-        self.emit("listening");
-      },
-      err => {
-        state.bindState = BIND_STATE_UNBOUND;
-        if (sharedHandle) releaseSharedHandle(state, sharedHandle);
-        self.emit("error", err);
-      },
-    );
+    socket = createSocketFn(udpOptions);
   } catch (err) {
     state.bindState = BIND_STATE_UNBOUND;
     if (sharedHandle) releaseSharedHandle(state, sharedHandle);
     self.emit("error", err);
+    return;
   }
+  if (socket === undefined) return; // The Bun.ModuleGraph of the caller is disposed: nothing was opened.
+  if (!state.handle) {
+    // The `valueOf()` of a port closed this socket while the native call read it.
+    socket.close();
+    return;
+  }
+  startListening(self, state, socket);
+}
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/dgram.js#L195-L211
+function startListening(self: $Node.DgramSocket, state: DgramState, socket: $Node.UDPSocketHandle) {
+  if (state.unrefOnBind) {
+    socket.unref();
+    state.unrefOnBind = false;
+  }
+  state.handle!.socket = socket;
+  state.receiving = true;
+  state.bindState = BIND_STATE_BOUND;
+
+  const { recvBufferSize, sendBufferSize } = state;
+  if (recvBufferSize) bufferSize(self, recvBufferSize, RECV_BUFFER);
+  if (sendBufferSize) bufferSize(self, sendBufferSize, SEND_BUFFER);
+
+  self.emit("listening");
 }
 
 Socket.prototype.connect = function (this: $Node.DgramSocket, port, address, callback) {

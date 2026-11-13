@@ -1,4 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import { datagramSocketOptions } from "../../codegen/builtins/host/socket-options.ts";
 import * as table from "../../codegen/builtins/lib.ts";
 
 export default b.module({ rustPath: "crate::socket::udp_socket" });
@@ -62,6 +63,15 @@ export const udpSocket = b.fn({
   args: { options: b.any },
   returns: b.any,
   rustPath: "crate::socket::udp_socket::UDPSocket::udp_socket",
+});
+/** `Bun.udpSocket()` for node:dgram: the socket itself and no promise, or `undefined` when the `Bun.ModuleGraph` of the caller is disposed. */
+export const dgramCreateSocket = b.fn({
+  ...js,
+  runsOnlyOperandCode: true,
+  args: { options: b.any },
+  returns: b.any.returning("UDPSocket", "undefined"),
+  uses: { options: datagramSocketOptions },
+  rustPath: "crate::socket::udp_socket::UDPSocket::dgram_create_socket",
 });
 
 export const connect = b.fn({

@@ -349,6 +349,7 @@ export default b.declarations(
       "Float64Array",
     ],
     "Bun.udpSocket",
+    ...nativeBindings("Bindgen", "udp_socket.bind.ts", "dgramCreateSocket"),
   ),
   extendAll(
     ["Udp"],

@@ -552,7 +552,7 @@ impl UDPSocket {
     /// Recover `&UDPSocket` from the uws user-data slot. Centralises the
     /// `unsafe { &*(*socket).user().cast() }` back-ref deref shared by every
     /// `extern "C"` callback below — the user pointer was set to the
-    /// `UDPSocket` in [`udp_socket`] via
+    /// `UDPSocket` in [`create`](Self::create) via
     /// `uws::udp::Socket::create(.., user_data = this_ptr)` and remains live
     /// until `on_close` (uws guarantees no callback after close). All mutated
     /// fields are `Cell`/`JsCell`, so a shared borrow is sufficient (R-2).
@@ -566,14 +566,29 @@ impl UDPSocket {
     }
 
     pub(crate) fn udp_socket(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
-        bun_output::scoped_log!(UdpSocket, "udpSocket");
         let cx = &cx.js_thread();
-        let options = options.to_js();
+        Ok(match Self::create(cx, options.to_js())? {
+            Some(socket) => bun_jsc::JSPromise::resolved_promise_value(cx.global(), socket),
+            None => bun_jsc::JSPromise::create(cx.global()).to_js(),
+        })
+    }
+
+    pub(crate) fn dgram_create_socket(
+        cx: &mut JsScope<'_>,
+        options: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
+        Ok(Self::create(&cx.js_thread(), options.to_js())?.unwrap_or(JSValue::UNDEFINED))
+    }
+
+    // Not inlined: one copy of the body behind `Bun.udpSocket()` and node:dgram's `dgramCreateSocket`.
+    #[inline(never)]
+    fn create(cx: &bun_jsc::JsThread<'_>, options: JSValue) -> JsResult<Option<JSValue>> {
+        bun_output::scoped_log!(UdpSocket, "udpSocket");
 
         // What script of a disposed `Bun.ModuleGraph` opens is closed at once and reports nothing.
         // A socket that is closed from the queue can send before that: it is not bound at all.
         if cx.context().is_stopped() {
-            return Ok(bun_jsc::JSPromise::create(cx.global()).to_js());
+            return Ok(None);
         }
 
         let this_value = Self {
@@ -742,6 +757,10 @@ impl UDPSocket {
             return Err(cx.global().throw(format_args!("Failed to bind socket")));
         }
 
+        if let Some(fd) = this.config.get().fd {
+            crate::ipc::socket_took_received_fd(bun_sys::Fd::from_uv(fd));
+        }
+
         // Register this socket's live descriptor (adopted or freshly created)
         // so a later adoption of the same number fails with EEXIST; a wrap
         // that carried it here may still read its address, but must not close
@@ -784,10 +803,7 @@ impl UDPSocket {
         scopeguard::ScopeGuard::into_inner(guard);
 
         this.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
-        Ok(bun_jsc::JSPromise::resolved_promise_value(
-            cx.global(),
-            js_value,
-        ))
+        Ok(Some(js_value))
     }
 
     pub(crate) fn call_error_handler(&self, this_value_: JSValue, err: JSValue) {

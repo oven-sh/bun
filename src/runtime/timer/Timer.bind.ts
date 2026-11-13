@@ -13,6 +13,9 @@ const answersTimer = { this: [table.returned] };
 // The handle of the native timer holds the wrapper again. Only the firing takes it out, as `this` of the callback of that timer, which the entry that stored the callback says.
 const keepsTimer = { this: [table.returned, table.storedIn(table.nativeCell("Timeout.wrapper"))] };
 
+// As a method of Node's class: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/timers.js#L215 (Timeout), #L746 (Immediate)
+const classMethod = { configurable: true, enumerable: false } as const;
+
 const chainable = {
   returns: b.self,
   passThis: true,
@@ -20,10 +23,10 @@ const chainable = {
   invalidThis: "undefined",
   uses: answersTimer,
 } as const;
-const ref = { ...chainable, rustName: "do_ref" } as const;
-const unref = { ...chainable, rustName: "do_unref" } as const;
+const ref = { ...chainable, ...classMethod, rustName: "do_ref" } as const;
+const unref = { ...chainable, ...classMethod, rustName: "do_unref" } as const;
 const destroyed = { getter: b.bool, pure: true } as const;
-const hasRef = { returns: b.bool, invalidThis: "undefined", uses: inspectsTimer } as const;
+const hasRef = { ...classMethod, returns: b.bool, invalidThis: "undefined", uses: inspectsTimer } as const;
 const dispose = { capability: "js", invalidThis: "undefined", name: "", uses: inspectsTimer } as const;
 const toPrimitive = { returns: b.u64, throws: true, invalidThis: "undefined", name: "", uses: inspectsTimer } as const;
 
@@ -40,10 +43,11 @@ export const Timeout = b.class({
     _idleTimeout: { setter: true, internalField: "idleTimeout" },
     _onTimeout: { getter: b.any, setter: { capability: "js" }, passThis: true },
     _repeat: { setter: true, internalField: "repeat" },
-    close: { ...chainable, capability: "js" },
+    // Node assigns it to the prototype, which leaves it enumerable: https://github.com/nodejs/node/blob/v26.12.1/lib/timers.js#L186
+    close: { ...chainable, capability: "js", configurable: true },
     hasRef,
     ref,
-    refresh: { ...chainable, capability: "js", uses: keepsTimer },
+    refresh: { ...chainable, ...classMethod, capability: "js", uses: keepsTimer },
     unref,
     "@@dispose": dispose,
     "@@toPrimitive": toPrimitive,

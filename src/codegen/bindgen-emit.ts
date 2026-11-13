@@ -1452,12 +1452,15 @@ function cppSourceForClass(type: ClassType, guards: Guards): string {
   const row = (key: string, attributes: string, value: string) =>
     `    { ${asciiLiteral(key)}, static_cast<unsigned>(${attributes}), JSC::NoIntrinsic, { ${value} } },`;
   const privateSymbol = (fn: FunctionDefinition) => (fn.signatures[0] as Method).privateSymbol;
-  const methodRow = (fn: FunctionDefinition) =>
-    row(
+  const methodRow = (fn: FunctionDefinition) => {
+    // Every overload says the same of the property.
+    const { configurable, enumerable } = fn.signatures[0] as Method;
+    return row(
       fn.name,
-      `JSC::PropertyAttribute::Function${type.writable ? "" : " | JSC::PropertyAttribute::ReadOnly"}${attributes()}`,
+      `JSC::PropertyAttribute::Function${type.writable ? "" : " | JSC::PropertyAttribute::ReadOnly"}${attributes(configurable, enumerable)}`,
       `JSC::HashTableValue::NativeFunctionType, ${pointer(isStaticFunction(fn), fn.name, methodHostFunctionName(type, fn))}, ${fn.length}`,
     );
+  };
   // DOMAttribute has JSC check that the receiver is an instance. A static getter ignores it, and a forBind getter's is a bound function.
   const getterRow = (getter: Getter | InternalFieldAccessor) => {
     const assignable = getter.hasSetter || (getter instanceof Getter && getter.writable);

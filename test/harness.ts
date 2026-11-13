@@ -16,7 +16,7 @@ import os from "node:os";
 import { dirname, isAbsolute, join, sep } from "path";
 import { locksEnvironment } from "./aot/hardened";
 import { ownTemporaryFolder } from "./aot/harness/temporary-folders";
-import "./aot/harness/without-installing-packages";
+import { temporaryFolderThatInstalls } from "./aot/harness/without-installing-packages";
 
 export const BREAKING_CHANGES_BUN_1_2 = false;
 
@@ -772,6 +772,16 @@ export function tempDir(
 ): string & DisposableString & AsyncDisposable {
   const base = tempDirWithFiles(basename, filesOrAbsolutePathToCopyFolderFrom);
 
+  return new DisposableString(base) as string & DisposableString & AsyncDisposable;
+}
+
+/** `tempDir`, but with no node_modules folder above it. Auto-install is off in the other temporary folders. */
+export function autoInstallTempDir(
+  basename: string,
+  filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string,
+): string & DisposableString & AsyncDisposable {
+  const base = ownTemporaryFolder(fs.mkdtempSync(join(temporaryFolderThatInstalls(), basename + "_")));
+  makeTreeSync(base, filesOrAbsolutePathToCopyFolderFrom);
   return new DisposableString(base) as string & DisposableString & AsyncDisposable;
 }
 

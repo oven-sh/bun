@@ -260,9 +260,8 @@ impl ResponseLike for bun_uws::AnyResponse {
 /// `DevServer.HmrSocket` — per-WebSocket state. Method bodies (open/close/
 /// message handlers) live in [`hmr_socket`].
 pub(crate) struct HmrSocket {
-    /// BACKREF: owned by `dev.active_websocket_connections`; destroyed via
-    /// `remove` + `heap::take` in `on_close`.
-    pub(crate) dev: bun_ptr::BackRef<DevServer, bun_ptr::Mut>,
+    /// Null once `Drop for DevServer` has released this socket, which it then closes.
+    pub(crate) dev: *mut DevServer,
     pub(crate) underlying: Option<bun_uws::AnyWebSocket>,
     pub(crate) subscriptions: crate::bake::dev_server::HmrTopicBits,
     /// By telling DevServer the active route, this enables receiving detailed

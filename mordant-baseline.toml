@@ -160,7 +160,6 @@
 "error_collapsed_to_bool:src/runtime/ffi/ffi_body.rs" = 1
 "field_valid_only_when:src/runtime/node/zlib/NativeZlib.rs" = 1
 "field_valid_only_when:src/runtime/shell/builtin/rm.rs" = 1
-"field_valid_only_when:src/runtime/socket/udp_socket.rs" = 1
 "freed_while_borrowed:src/runtime/api/bun/subprocess/SubprocessPipeReader.rs" = 2
 "freed_while_borrowed:src/runtime/node/node_fs.rs" = 1
 "freed_while_borrowed:src/runtime/webcore/blob/copy_file.rs" = 2

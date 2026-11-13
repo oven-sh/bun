@@ -232,7 +232,7 @@ function Sign-Artifact {
     # so the signed archive's entry layout matches the original: forward-slash
     # paths and a directory entry. Compress-Archive writes backslash separators,
     # which violates the ZIP spec and triggers warnings in non-Windows unzip.
-    & cmake -E tar cf $ZipName --format=zip $extractDir
+    & cmake -E tar cfv $ZipName --format=zip $extractDir
     if ($LASTEXITCODE -ne 0) {
         throw "cmake -E tar failed for $ZipName"
     }

@@ -2015,11 +2015,32 @@ describe.concurrent("bun fmt", () => {
       expect(result.exitCode).toBe(0);
     });
 
+    // An opener and a closer of which one can do both do not pair if their runs add up to a multiple of 3 (CommonMark's
+    // rule of 3). CommonMark goes by the runs as written. micromark, Prettier's parser, goes by what is left of them
+    // after the pairs before. Each row is the text and what both Bun and Prettier 3.9.9 print, which a second run keeps.
+    test.each([
+      ["_*a *b** c_\n", "_*a *b** c_\n"],
+      ["**a *b** c*\n", "_*a *b** c_\n"],
+      ["_*a *b** c_ and **a *b** c*\n", "_*a *b** c_ and _*a *b** c_\n"],
+      // The `*` after `c` looks at `*****` again once `**` has taken two stars from it, although the `*` after `a`
+      // found nothing there.
+      ["_x*****a* b** c* e_\n", "_x*****a\\* b** c* e_\n"],
+      // An escaped star and the marker of a block quote are not part of a run.
+      ["x *b\\**.\n", "x _b\\*_.\n"],
+      [">**(a)* x\n", "> *_(a)_ x\n"],
+    ])("the rule of 3 counts what is left of a run: %j", async (before, after) => {
+      expect(rendered(after)).toBe(rendered(before));
+      const result = await format({ "a.md": before, "b.md": after }, [], { reads: ["a.md", "b.md"] });
+      expect(result.files).toEqual({ "a.md": after, "b.md": after });
+      expect(result.exitCode).toBe(0);
+    });
+
     // Known issue: for these Bun prints what Prettier 3.9.9 prints, and a CommonMark parser reads that output
     // differently. All are emphasis nested three deep, or runs of `*` and `_` that are text inside an emphasis. Telling
     // them apart from `*foo_bar*`, where `_foo_bar_` is correct, requires the delimiter run rules.
     test.each([
       ["**a****a**\n", "**a\\****a**\n"],
+      ["__x ***a** b**c d* e__\n", "**x _**a** b\\**c d_ e**\n"],
       ["*b **a*b*** c*\n", "*b \\**a*b*** c*\n"],
       ["*b _a_*b* c*\n", "*b *a**b* c*\n"],
       ["*b _*a*_ c*\n", "*b _*a*\\_ c*\n"],
@@ -2410,12 +2431,41 @@ describe.concurrent("bun fmt", () => {
         ["**a*(*) x\n", "**a*(*) x\n", "_*a*(_) x\n"],
         ["**a*{{*: x\n", "**a*{{*: x\n", "_*a*{{_: x\n"],
         ["*a**(*) x\n", "*a**(*) x\n", "_a_*(*) x\n"],
+        ["a***b* c*\n", "a***b* c*\n", "a**_b_ c*\n"],
+        ["**a*(*)**b* x\n", "**a*(*)**b* x\n", "_*a*(_)*_b_ x\n"],
         // Nothing here for the star to pair with, and Prettier is right.
         ["**a* b\n", "*_a_ b\n", null],
         ["**a* b * c\n", "*_a_ b * c\n", null],
         ["****a*\n", "***_a_\n", null],
       ])("%j", async (before, after, byPrettier) => {
         expect(after).not.toBe(byPrettier);
+        expect(rendered(after)).toBe(rendered(before));
+        const result = await format({ "a.md": before, "b.md": after }, [], { reads: ["a.md", "b.md"] });
+        expect(result.files).toEqual({ "a.md": after, "b.md": after });
+        expect(result.exitCode).toBe(0);
+      });
+    });
+
+    describe("a run that CommonMark's rule of 3 refuses as written", () => {
+      // Each row is the text, Bun's output and Prettier 3.9.9's output. To micromark what is left of a run counts for
+      // the rule of 3, so it pairs runs that CommonMark does not, and the other way round, and Prettier prints what it
+      // pairs. Every run of such a pair, every run that shares a pair with one and every run next to one keeps its
+      // marker, so that CommonMark reads the text as before.
+      test.each([
+        ["__a_(_) x\n", "__a_(_) x\n", "_*a*(_) x\n"],
+        ["*a****a**\n", "*a****a**\n", "_a_***a**\n"],
+        ["*bax****c**\n", "*bax****c**\n", "_bax_***c**\n"],
+        // The `*` next to the kept `__` would join it as `_`.
+        ["*__a_(_) x*\n", "*__a_(_) x*\n", "_**a*(*) x_\n"],
+        // CommonMark pairs `****` and `***` as written. To micromark the `*` left of `***` is 1 against 2.
+        ["x****a***b* c\n", "x****a***b* c\n", "x****a**_b_ c\n"],
+        // CommonMark pairs the `*` before `)` with the first `*`, so the emphasis around a kept one keeps its marker.
+        ["*x **a*(*)d*\n", "*x **a*(*)d*\n", "_x **a*(*)d_\n"],
+        // The `_` emphasis at the start of the kept one would join its marker.
+        ["*_b_ **a*(*)d*\n", "*_b_ **a*(*)d*\n", "_*b* **a*(*)d_\n"],
+      ])("%j", async (before, after, byPrettier) => {
+        expect(after).not.toBe(byPrettier);
+        expect(rendered(byPrettier)).not.toBe(rendered(before));
         expect(rendered(after)).toBe(rendered(before));
         const result = await format({ "a.md": before, "b.md": after }, [], { reads: ["a.md", "b.md"] });
         expect(result.files).toEqual({ "a.md": after, "b.md": after });

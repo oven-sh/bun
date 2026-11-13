@@ -356,6 +356,92 @@ it.if(isWindows)("import() of a missing file at the drive root rejects", async (
   await expect(import(`${drive}///doesnotexist.ts`)).rejects.toThrow();
 });
 
+// A lookup that fails drops the cached listing of the folder, and is tried again only when the
+// folder was listed. Another thread can drop the listing first: the watcher thread of `bun --hot`
+// does, and here a Worker does.
+it("finds a module that is written and looked up at once when a Worker dropped the listing of its folder first", async () => {
+  using dir = tempDir("resolve-listing-dropped-first", {
+    "gen/first.js": "export const v = 0;\n",
+    "main.js": `import fs from "node:fs";
+import { createRequire } from "node:module";
+import path from "node:path";
+import { Worker, isMainThread, workerData } from "node:worker_threads";
+
+const require = createRequire(import.meta.url);
+const here = import.meta.dir;
+
+if (isMainThread) {
+  // [0] counts the modules that this thread wrote, [1] is set when the Worker runs, [2] is the count that the Worker last answered.
+  const gate = new Int32Array(new SharedArrayBuffer(12));
+  new Worker(import.meta.path, { workerData: gate });
+  // This thread never goes back to the event loop, so no error event of the Worker reaches it. Each wait for the Worker has a limit.
+  const stopped = what => {
+    console.error("the Worker stopped before its " + what + " lookup");
+    process.exit(1);
+  };
+  if (Atomics.wait(gate, 1, 0, 5000) === "timed-out") stopped("first");
+
+  // More folders to look in, which do not exist, keep one lookup at work while the Worker drops the listing.
+  const paths = [here, ...Array.from({ length: 192 }, (_, i) => path.join(here, "nowhere", String(i)))];
+  const missed = [];
+  for (let i = 0; i < 200; i++) {
+    // The folder is listed before the write.
+    require.resolve("./gen/first.js");
+    const name = "./gen/gen" + i + ".js";
+    fs.writeFileSync(path.join(here, name), "export const v = 1;\\n");
+    Atomics.add(gate, 0, 1);
+    Atomics.notify(gate, 0);
+    try {
+      // A lookup that finds another file is a miss too.
+      if (fs.realpathSync(require.resolve(name, { paths })) !== fs.realpathSync(path.join(here, name))) missed.push(name);
+    } catch {
+      missed.push(name);
+    }
+  }
+  // One more count: the Worker answers it only if it still runs.
+  const last = Atomics.add(gate, 0, 1) + 1;
+  Atomics.notify(gate, 0);
+  for (let answered = Atomics.load(gate, 2); answered < last; answered = Atomics.load(gate, 2)) {
+    if (Atomics.wait(gate, 2, answered, 5000) === "timed-out") stopped("last");
+  }
+  console.log(JSON.stringify(missed));
+  process.exit(0);
+} else {
+  const gate = workerData;
+  // This lookup fails in the folder "gen", and drops its listing. The first lookup of a thread is slow.
+  const lookUp = () => {
+    try {
+      require.resolve("gen/missing");
+    } catch {}
+  };
+  lookUp();
+  Atomics.store(gate, 1, 1);
+  Atomics.notify(gate, 1);
+  for (let seen = 0; ; ) {
+    Atomics.wait(gate, 0, seen);
+    // The count is read before the lookup, so a module that is written during the lookup starts one more.
+    seen = Atomics.load(gate, 0);
+    lookUp();
+    Atomics.store(gate, 2, seen);
+    Atomics.notify(gate, 2);
+  }
+}
+`,
+  });
+  await using proc = Bun.spawn({
+    // The package name that fails must not go to the registry.
+    cmd: [bunExe(), "--no-install", "main.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "[]\n", stderr: "", exitCode: 0 });
+  // The program waits up to 5 s for its Worker, two times. The limit of the test is above that, so the program reports a Worker that stopped.
+}, 20_000);
+
 describe("NODE_PATH test", () => {
   const prepareTest = () => {
     const tempDir = tempDirWithFiles("node_path", {

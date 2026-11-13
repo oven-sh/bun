@@ -3400,6 +3400,24 @@ describe("a store on the global object of a context", () => {
     Object.defineProperty(later.global, "counter", data(2));
     const counted = runInContext("counter += 40; for (var i = 0; i < 1e4; i++) counter++; counter", later.sandbox);
     expect([counted, later.sandbox.counter]).toEqual([10042, 10042]);
+
+    // A trap of the contextified object declares the variable during the definition. The variable takes the value too.
+    let declareOnce: (() => void) | null = () => runInContext("var fromATrap = 1", declares);
+    const declares = createContext(
+      new Proxy(
+        {},
+        {
+          defineProperty(target, key, descriptor) {
+            const declare = declareOnce;
+            declareOnce = null;
+            declare?.();
+            return Reflect.defineProperty(target, key, descriptor);
+          },
+        },
+      ),
+    );
+    Object.defineProperty(runInContext("this", declares), "fromATrap", data(2));
+    expect(runInContext("fromATrap", declares)).toBe(2);
   });
 
   // Node.js reads every global name through the contextified object, and this Proxy answers `undefined` for a name that its target refused. Here the script reads its variable, which took the value. Main dropped the store.

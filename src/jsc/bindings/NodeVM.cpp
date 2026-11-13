@@ -1612,7 +1612,8 @@ bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globa
     if (!did)
         RELEASE_AND_RETURN(scope, defineOnGlobalAfterRefusal(thisObject, globalObject, contextifiedObject, propertyName, descriptor, isOwned, current, shouldThrow));
 
-    if (onGlobal) {
+    // Only an exotic contextified object runs a script during the definition (a Proxy trap, the conversion of a value by a typed array), and that script can declare a variable of this name.
+    if (onGlobal || (TypeInfo::overridesGetOwnPropertySlot(contextifiedObject->inlineTypeFlags()) && isVariableOfGlobal(thisObject, propertyName))) {
         followDefinitionOnGlobal(thisObject, globalObject, propertyName, descriptor);
         RETURN_IF_EXCEPTION(scope, false);
     }

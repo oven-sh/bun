@@ -54,46 +54,46 @@ const CONDITIONS: On = On::new().exprs(&[ExprTag::Dot, ExprTag::Index]).enter(
         .stmts(&[StmtTag::If, StmtTag::DoWhile, StmtTag::For, StmtTag::While]),
 );
 
-const ALWAYS_FALSY: Message =
-    Message::new("alwaysFalsy", "Unnecessary conditional, value is always falsy.");
-const ALWAYS_FALSY_FUNC: Message = Message::new(
+const ALWAYS_FALSY: &Message =
+    &Message::new("alwaysFalsy", "Unnecessary conditional, value is always falsy.");
+const ALWAYS_FALSY_FUNC: &Message = &Message::new(
     "alwaysFalsyFunc",
     "This callback should return a conditional, but return is always falsy.",
 );
-const ALWAYS_NULLISH: Message = Message::new(
+const ALWAYS_NULLISH: &Message = &Message::new(
     "alwaysNullish",
     "Unnecessary conditional, left-hand side of `??` operator is always `null` or `undefined`.",
 );
-const ALWAYS_TRUTHY: Message =
-    Message::new("alwaysTruthy", "Unnecessary conditional, value is always truthy.");
-const ALWAYS_TRUTHY_FUNC: Message = Message::new(
+const ALWAYS_TRUTHY: &Message =
+    &Message::new("alwaysTruthy", "Unnecessary conditional, value is always truthy.");
+const ALWAYS_TRUTHY_FUNC: &Message = &Message::new(
     "alwaysTruthyFunc",
     "This callback should return a conditional, but return is always truthy.",
 );
-const COMPARISON_BETWEEN_LITERAL_TYPES: Message = Message::new(
+const COMPARISON_BETWEEN_LITERAL_TYPES: &Message = &Message::new(
     "comparisonBetweenLiteralTypes",
     "Unnecessary conditional, comparison is always {{trueOrFalse}}, since `{{left}} {{operator}} {{right}}` is {{trueOrFalse}}.",
 );
-const NEVER: Message = Message::new("never", "Unnecessary conditional, value is `never`.");
-const NEVER_NULLISH: Message = Message::new(
+const NEVER: &Message = &Message::new("never", "Unnecessary conditional, value is `never`.");
+const NEVER_NULLISH: &Message = &Message::new(
     "neverNullish",
     "Unnecessary conditional, expected left-hand side of `??` operator to be possibly null or undefined.",
 );
-const NEVER_OPTIONAL_CHAIN: Message = Message::new(
+const NEVER_OPTIONAL_CHAIN: &Message = &Message::new(
     "neverOptionalChain",
     "Unnecessary optional chain on a non-nullish value.",
 );
-const NO_OVERLAP_BOOLEAN_EXPRESSION: Message = Message::new(
+const NO_OVERLAP_BOOLEAN_EXPRESSION: &Message = &Message::new(
     "noOverlapBooleanExpression",
     "Unnecessary conditional, the types have no overlap.",
 );
-const NO_STRICT_NULL_CHECK: Message = Message::new(
+const NO_STRICT_NULL_CHECK: &Message = &Message::new(
     "noStrictNullCheck",
     "This rule requires the `strictNullChecks` compiler option to be turned on to function correctly.",
 );
-const SUGGEST_REMOVE_OPTIONAL_CHAIN: Message =
-    Message::new("suggestRemoveOptionalChain", "Remove unnecessary optional chain");
-const TYPE_GUARD_ALREADY_IS_TYPE: Message = Message::new(
+const SUGGEST_REMOVE_OPTIONAL_CHAIN: &Message =
+    &Message::new("suggestRemoveOptionalChain", "Remove unnecessary optional chain");
+const TYPE_GUARD_ALREADY_IS_TYPE: &Message = &Message::new(
     "typeGuardAlreadyIsType",
     "Unnecessary conditional, expression already has the type being checked by the {{typeGuardOrAssertionFunction}}.",
 );

@@ -1,0 +1,13 @@
+# where a built-in throws, the engine goes over the frames of the calls that are open, and each call of a function of the program leaves frames. Whatever the rehearsal asks the engine to run costs it
+# allowance: one operation a call that is open. 120,000 throws 100 calls deep end the run in front of the pattern behind them; the same 120,000 throws one call deep do not.
+# A hundred calls and no more: a build with a sanitizer has fatter frames, and the engine's own check of the stack sends a call back from about 170 of them.
+# The texts are printed in the order of their characters: /deep120000/ would stand in front of /flat120000/.
+# -- source: the-frames-that-the-engine-goes-over-draw-on-the-allowance.ts
+# function throws(turns: number): number { let done = 0; for (let i = 0; i < turns; i++) { try { JSON.parse("{"); } catch {} done++; } return done; }
+# function deep(depth: number, turns: number): number { return depth > 0 ? deep(depth - 1, turns) + 0 : throws(turns); }
+# new RegExp("flat" + throws(120000));
+# new RegExp("deep" + deep(100, 120000));
+# -- end of source
+# RUN: regexp-texts mechanisms=all
+# CHECK-NOT: text /deep120000/
+# CHECK: text /flat120000/

@@ -1,0 +1,14 @@
+# f1 = Machine
+# f2 = add
+# f3 = run
+# -- source: main.mjs
+# function Machine() { this.at = 0; this.sum = 0; }
+# const table = [function (m) { m.sum = m.sum + m.at | 0; m.at = m.at - 1 | 0; }];
+# Machine.prototype.run = function (turns) { for (let turn = 0; turn < turns; turn++) table[turn % table.length](this); };
+# const machine = new Machine(); globalThis.unseen = [machine, table]; machine.run((0, eval)("3"));
+# print(machine.at, machine.sum);
+# -- end of source
+# A function that a list holds, where a loop calls elements, asks its slots for numbers.
+# RUN: walk f2 mechanisms=all
+# CHECK: GetSlot {{*}}key="sum"
+# CHECK-NEXT: TypeTest {{*}} testedType=i32

@@ -8,10 +8,41 @@ use css::media_query::{MediaCondition, MediaFeature, MediaFeatureId, MediaList, 
 use bun_alloc::{Arena as Bump, ArenaPtr};
 use bun_collections::ArrayHashMap;
 
+/// The declarations of a rule that is generated next to the style rule in hand.
+#[derive(Default)]
+pub struct StagedDeclarations {
+    declarations: Vec<css::Property>,
+    important_declarations: Vec<css::Property>,
+}
+
+impl StagedDeclarations {
+    fn list(&mut self, important: bool) -> &mut Vec<css::Property> {
+        if important {
+            &mut self.important_declarations
+        } else {
+            &mut self.declarations
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.declarations.is_empty() && self.important_declarations.is_empty()
+    }
+
+    fn clear(&mut self) {
+        self.declarations.clear();
+        self.important_declarations.clear();
+    }
+
+    pub(crate) fn append(&mut self, other: &mut Self) {
+        self.declarations.append(&mut other.declarations);
+        self.important_declarations
+            .append(&mut other.important_declarations);
+    }
+}
+
 pub struct SupportsEntry {
     pub(crate) condition: css::SupportsCondition,
-    pub(crate) declarations: Vec<css::Property>,
-    pub(crate) important_declarations: Vec<css::Property>,
+    pub(crate) declarations: StagedDeclarations,
 }
 
 // No explicit deinit — all fields own their storage and drop automatically.
@@ -30,9 +61,9 @@ pub struct PropertyHandlerContext<'a> {
     pub(crate) targets: css::targets::Targets,
     pub(crate) is_important: bool,
     pub(crate) supports: Vec<SupportsEntry>,
-    pub(crate) ltr: Vec<css::Property>,
-    pub(crate) rtl: Vec<css::Property>,
-    pub(crate) dark: Vec<css::Property>,
+    pub(crate) ltr: StagedDeclarations,
+    pub(crate) rtl: StagedDeclarations,
+    pub(crate) dark: StagedDeclarations,
     pub(crate) context: DeclarationContext,
     pub(crate) unused_symbols: &'a ArrayHashMap<Box<[u8]>, ()>,
 }
@@ -48,9 +79,9 @@ impl<'a> PropertyHandlerContext<'a> {
             targets: *targets,
             is_important: false,
             supports: Vec::new(),
-            ltr: Vec::new(),
-            rtl: Vec::new(),
-            dark: Vec::new(),
+            ltr: StagedDeclarations::default(),
+            rtl: StagedDeclarations::default(),
+            dark: StagedDeclarations::default(),
             context: DeclarationContext::None,
             unused_symbols,
         }
@@ -62,21 +93,29 @@ impl<'a> PropertyHandlerContext<'a> {
             targets: self.targets,
             is_important: false,
             supports: Vec::new(),
-            ltr: Vec::new(),
-            rtl: Vec::new(),
-            dark: Vec::new(),
+            ltr: StagedDeclarations::default(),
+            rtl: StagedDeclarations::default(),
+            dark: StagedDeclarations::default(),
             context,
             unused_symbols: self.unused_symbols,
         }
     }
 
     pub(crate) fn add_dark_rule(&mut self, property: css::Property) {
-        self.dark.push(property);
+        self.dark.list(self.is_important).push(property);
     }
 
     pub(crate) fn add_logical_rule(&mut self, ltr: css::Property, rtl: css::Property) {
-        self.ltr.push(ltr);
-        self.rtl.push(rtl);
+        self.ltr.list(self.is_important).push(ltr);
+        self.rtl.list(self.is_important).push(rtl);
+    }
+
+    /// Whether `get_supports_rules` or `get_additional_rules` would build a rule.
+    pub(crate) fn has_staged_rules(&self) -> bool {
+        !(self.supports.is_empty()
+            && self.ltr.is_empty()
+            && self.rtl.is_empty()
+            && self.dark.is_empty())
     }
 
     pub(crate) fn should_compile_logical(&self, feature: css::compat::Feature) -> bool {
@@ -116,32 +155,52 @@ impl<'a> PropertyHandlerContext<'a> {
         bun_alloc::vec_from_iter_in(list.iter().map(|p| p.deep_clone(bump)), bump)
     }
 
+    /// A style rule for the staged declarations, or with no selectors a nested declarations rule.
+    fn staged_rule<T>(
+        &self,
+        selectors: Option<css::SelectorList>,
+        staged: &StagedDeclarations,
+        loc: css::Location,
+    ) -> css::CssRule<T> {
+        let declarations = css::DeclarationBlock {
+            declarations: self.clone_decls(&staged.declarations),
+            important_declarations: self.clone_decls(&staged.important_declarations),
+        };
+        match selectors {
+            Some(selectors) => css::CssRule::Style(css::StyleRule {
+                selectors,
+                vendor_prefix: css::VendorPrefix::NONE,
+                declarations,
+                rules: css::CssRuleList::default(),
+                loc,
+            }),
+            None => {
+                css::CssRule::NestedDeclarations(css::NestedDeclarationsRule { declarations, loc })
+            }
+        }
+    }
+
     pub(crate) fn get_supports_rules<T>(
         &self,
-        style_rule: &css::StyleRule<T>,
+        selectors: Option<&css::SelectorList>,
+        loc: css::Location,
     ) -> Vec<css::CssRule<T>> {
-        if self.supports.is_empty() {
-            return Vec::new();
-        }
-
         let mut dest: Vec<css::CssRule<T>> = Vec::with_capacity(self.supports.len());
 
         for entry in &self.supports {
+            if entry.declarations.is_empty() {
+                continue;
+            }
             dest.push(css::CssRule::Supports(css::SupportsRule {
                 condition: entry.condition.deep_clone(self.arena),
                 rules: css::CssRuleList {
-                    v: vec![css::CssRule::Style(css::StyleRule {
-                        selectors: style_rule.selectors.deep_clone(),
-                        vendor_prefix: css::VendorPrefix::NONE,
-                        declarations: css::DeclarationBlock {
-                            declarations: self.clone_decls(&entry.declarations),
-                            important_declarations: self.clone_decls(&entry.important_declarations),
-                        },
-                        rules: css::CssRuleList::default(),
-                        loc: style_rule.loc,
-                    })],
+                    v: vec![self.staged_rule(
+                        selectors.map(|list| list.deep_clone()),
+                        &entry.declarations,
+                        loc,
+                    )],
                 },
-                loc: style_rule.loc,
+                loc,
             }));
         }
 
@@ -150,17 +209,30 @@ impl<'a> PropertyHandlerContext<'a> {
 
     pub(crate) fn get_additional_rules<T>(
         &self,
-        style_rule: &css::StyleRule<T>,
+        selectors: &css::SelectorList,
+        loc: css::Location,
     ) -> Vec<css::CssRule<T>> {
         // TODO: :dir/:lang raises the specificity of the selector. Use :where to lower it?
         let mut dest: Vec<css::CssRule<T>> = Vec::new();
+        self.get_logical_rules(selectors, loc, &mut dest);
+        self.get_dark_rule(Some(selectors), loc, &mut dest);
+        dest
+    }
 
+    /// The `:dir(ltr)` and `:dir(rtl)` rules for the staged logical properties.
+    pub(crate) fn get_logical_rules<T>(
+        &self,
+        selectors: &css::SelectorList,
+        loc: css::Location,
+        dest: &mut Vec<css::CssRule<T>>,
+    ) {
         if !self.ltr.is_empty() {
             self.get_additional_rules_helper(
                 css::selector::parser::Direction::Ltr,
                 &self.ltr,
-                style_rule,
-                &mut dest,
+                selectors,
+                loc,
+                dest,
             );
         }
 
@@ -168,11 +240,20 @@ impl<'a> PropertyHandlerContext<'a> {
             self.get_additional_rules_helper(
                 css::selector::parser::Direction::Rtl,
                 &self.rtl,
-                style_rule,
-                &mut dest,
+                selectors,
+                loc,
+                dest,
             );
         }
+    }
 
+    /// The `prefers-color-scheme: dark` rule for the staged `color-scheme` variables.
+    pub(crate) fn get_dark_rule<T>(
+        &self,
+        selectors: Option<&css::SelectorList>,
+        loc: css::Location,
+        dest: &mut Vec<css::CssRule<T>>,
+    ) {
         if !self.dark.is_empty() {
             dest.push(css::CssRule::Media(MediaRule {
                 query: MediaList {
@@ -200,58 +281,34 @@ impl<'a> PropertyHandlerContext<'a> {
                         list
                     },
                 },
-                rules: {
-                    let mut list: css::CssRuleList<T> = css::CssRuleList::default();
-
-                    list.v.push(css::CssRule::Style(css::StyleRule {
-                        selectors: style_rule.selectors.deep_clone(),
-                        vendor_prefix: css::VendorPrefix::NONE,
-                        declarations: css::DeclarationBlock {
-                            declarations: self.clone_decls(&self.dark),
-                            important_declarations: css::DeclarationList::new_in(
-                                self.bump_static(),
-                            ),
-                        },
-                        rules: css::CssRuleList::default(),
-                        loc: style_rule.loc,
-                    }));
-
-                    list
+                rules: css::CssRuleList {
+                    v: vec![self.staged_rule(
+                        selectors.map(|list| list.deep_clone()),
+                        &self.dark,
+                        loc,
+                    )],
                 },
-                loc: style_rule.loc,
+                loc,
             }));
         }
-
-        dest
     }
 
-    // Takes the Direction value and a borrow of the decls Vec directly.
-    pub(crate) fn get_additional_rules_helper<T>(
+    fn get_additional_rules_helper<T>(
         &self,
         dir: css::selector::parser::Direction,
-        decls: &[css::Property],
-        sty: &css::StyleRule<T>,
+        decls: &StagedDeclarations,
+        selectors: &css::SelectorList,
+        loc: css::Location,
         dest: &mut Vec<css::CssRule<T>>,
     ) {
-        let mut selectors = sty.selectors.deep_clone();
+        let mut selectors = selectors.deep_clone();
         for selector in selectors.v.slice_mut() {
             selector.append(css::Component::NonTsPseudoClass(css::PseudoClass::Dir {
                 direction: dir,
             }));
         }
 
-        let rule = css::StyleRule {
-            selectors,
-            vendor_prefix: css::VendorPrefix::NONE,
-            declarations: css::DeclarationBlock {
-                declarations: self.clone_decls(decls),
-                important_declarations: css::DeclarationList::new_in(self.bump_static()),
-            },
-            rules: css::CssRuleList::default(),
-            loc: sty.loc,
-        };
-
-        dest.push(css::CssRule::Style(rule));
+        dest.push(self.staged_rule(Some(selectors), decls, loc));
     }
 }
 
@@ -286,24 +343,28 @@ impl<'a> PropertyHandlerContext<'a> {
         };
 
         if let Some(entry) = found {
-            if self.is_important {
-                entry.important_declarations.push(property);
-            } else {
-                entry.declarations.push(property);
-            }
+            entry.declarations.list(self.is_important).push(property);
         } else {
-            let mut important_declarations: Vec<css::Property> = Vec::new();
-            let mut declarations: Vec<css::Property> = Vec::new();
-            if self.is_important {
-                important_declarations.push(property);
-            } else {
-                declarations.push(property);
-            }
+            let mut declarations = StagedDeclarations::default();
+            declarations.list(self.is_important).push(property);
             self.supports.push(SupportsEntry {
                 condition,
                 declarations,
-                important_declarations,
             });
+        }
+    }
+
+    /// The `@supports` copies print after the rule, so they would beat a later declaration.
+    pub(crate) fn remove_conditional_property(&mut self, property_id: css::PropertyId) {
+        // No context: a merged rule, minified again while the next rule's copies are staged.
+        if self.context != DeclarationContext::StyleRule {
+            return;
+        }
+        for entry in &mut self.supports {
+            entry
+                .declarations
+                .list(self.is_important)
+                .retain(|copy| copy.property_id() != property_id);
         }
     }
 
@@ -318,6 +379,7 @@ impl<'a> PropertyHandlerContext<'a> {
             return;
         }
 
+        self.remove_conditional_property(unparsed.property_id);
         let fallbacks = unparsed.value.get_fallbacks(bump, &self.targets);
         // `SmallList`
         // has no `IntoIterator`, so spill to a Vec to preserve P3-before-LAB order.

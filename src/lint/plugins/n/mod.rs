@@ -47,15 +47,15 @@ fn versions_to_string(versions: &[[u8; 3]]) -> String {
 /// Its infos are indices into [`data::INFOS`].
 type Member = table::Member<data::Builtin>;
 
-pub(crate) const NOT_EXPERIMENTAL_TILL: Message = Message::new(
+pub(crate) const NOT_EXPERIMENTAL_TILL: &Message = &Message::new(
     "not-experimental-till",
     "The '{{name}}' is not an experimental feature until Node.js {{experimental}}. The configured version range is '{{version}}'.",
 );
-pub(crate) const NOT_SUPPORTED_TILL: Message = Message::new(
+pub(crate) const NOT_SUPPORTED_TILL: &Message = &Message::new(
     "not-supported-till",
     "The '{{name}}' is still an experimental feature and is not supported until Node.js {{supported}}. The configured version range is '{{version}}'.",
 );
-pub(crate) const NOT_SUPPORTED_YET: Message = Message::new(
+pub(crate) const NOT_SUPPORTED_YET: &Message = &Message::new(
     "not-supported-yet",
     "The '{{name}}' is still an experimental feature The configured version range is '{{version}}'.",
 );
@@ -113,7 +113,7 @@ fn is_in_range(feature: &[[u8; 3]], requested: &Range) -> bool {
 pub(crate) struct Unsupported {
     version: Range,
     /// The message for each entry of [`data::INFOS`], if it's reported.
-    message: Vec<Option<Message>>,
+    message: Vec<Option<&'static Message>>,
 }
 
 impl Unsupported {
@@ -144,7 +144,7 @@ impl Unsupported {
     }
 
     /// The message for a reference with this info.
-    fn message_of(&self, info: u16) -> Option<Message> {
+    fn message_of(&self, info: u16) -> Option<&'static Message> {
         self.message.get(usize::from(info)).copied().flatten()
     }
 

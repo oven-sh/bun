@@ -1,0 +1,19 @@
+# -- source: main.ts
+# declare function sink(...values: unknown[]): void;
+# function inside(code: number): boolean {
+#   let low = 0, high = 20;
+#   while (low < high) { const middle = (low + high) >> 1; if (middle * 40 < code) low = middle + 1; else high = middle; }
+#   return low > 3;
+# }
+# function count(list: number[]): number {
+#   let n = 0;
+#   for (let i = 0; i < list.length; i++) { const x = list[i]!; if (x > 200 && inside(x)) n++; n += x; }
+#   return n;
+# }
+# sink(count);
+# -- end of source
+# f2 = count
+# Nothing proves that `code` is a number, so its comparison may convert an object. The call hands over a number: it leaves the list as it was tested in front of the loop.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = HasArrayStorage

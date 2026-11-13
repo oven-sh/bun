@@ -1,0 +1,159 @@
+mod body;
+mod facades;
+mod imports;
+mod left_out;
+mod library;
+mod library_functions;
+mod loads;
+mod runtime_value;
+#[cfg(test)]
+mod test_run_tests;
+mod test_run_ways;
+mod throwing;
+
+use bun_sema::atom::Atom;
+use bun_sema::bind::{Decl, Parent, ScopeId, ScopeKind, SymbolId};
+use bun_sema::check::aot::FunctionRef;
+use bun_sema::hir::{self, StmtId};
+use bun_sema::program::{FileId, Files};
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::{OnceCell, RefCell};
+
+use super::commonjs::{CommonJsState, PathComparison};
+use super::context::{FileInputs, SourceKind};
+use super::data::DataState;
+use super::scope::NamesOfFileForEvals;
+use super::{FileLowering, FunctionLowering};
+use crate::builtins::id::{BuiltinId, RuntimeFunction};
+use crate::ir::{DataId, FunctionId, StringId, ValueId};
+use crate::load::Sources;
+use crate::modules::{ImportBinding, KnownMemberValues};
+
+pub(in crate::lower) use self::body::finish_body;
+pub(crate) use self::loads::{has_settled_type, lower_import_call};
+pub(crate) use self::test_run_ways::{KeptBetweenWays, find_file_that_asks_mock};
+pub use left_out::LeftOutDeclarations;
+pub use library::collect_library_functions;
+pub(in crate::lower) use library::{LibraryFunctionForm, library_function_form};
+pub use throwing::lower_file_that_throws;
+
+#[derive(Default)]
+pub(crate) struct ModuleState {
+    pub(in crate::lower) data: DataState,
+    pub(in crate::lower) commonjs: CommonJsState,
+    pub(in crate::lower) path_comparisons: Vec<PathComparison>,
+    pub(in crate::lower) known_member_values: KnownMemberValues,
+    pub(in crate::lower) imports_replaceable_variable: OnceCell<bool>,
+    pub(in crate::lower) names_of_file_for_evals: Option<NamesOfFileForEvals>,
+    pub(in crate::lower) names_of_file_by_text: OnceCell<FxHashMap<Atom, SymbolId>>,
+    pub(in crate::lower) kept_between_ways: RefCell<KeptBetweenWays>,
+}
+
+#[derive(Default, Clone)]
+pub struct LibraryFunctions {
+    linked_functions: FxHashMap<RuntimeFunction, FunctionRef>,
+    left_out_functions: FxHashSet<FunctionRef>,
+    left_out_declarations: LeftOutDeclarations,
+}
+
+impl LibraryFunctions {
+    pub fn compute(
+        files: &Files<'_>,
+        file_inputs: &[Option<FileInputs<'_>>],
+        sources: &Sources,
+    ) -> LibraryFunctions {
+        let linked = library_functions::collect_linked_functions(files, file_inputs, sources);
+        LibraryFunctions {
+            linked_functions: linked,
+            ..LibraryFunctions::default()
+        }
+    }
+
+    pub fn leave_out(&mut self, functions: FxHashSet<FunctionRef>) {
+        self.left_out_functions = functions;
+    }
+
+    pub(crate) fn is_left_out(&self, function: FunctionRef) -> bool {
+        self.left_out_functions.contains(&function)
+    }
+
+    pub fn leave_out_declarations(&mut self, declarations: LeftOutDeclarations) {
+        self.left_out_declarations = declarations;
+    }
+
+    pub(crate) fn left_out_declarations(&self) -> &LeftOutDeclarations {
+        &self.left_out_declarations
+    }
+
+    pub(crate) fn find(&self, function: RuntimeFunction) -> Option<FunctionRef> {
+        self.linked_functions.get(&function).copied()
+    }
+}
+
+#[derive(Copy, Clone, Default, Debug)]
+pub(crate) struct ModuleRoots {
+    body: Option<FunctionId>,
+    data: Option<DataId>,
+}
+
+pub(in crate::lower) fn file_scope(file: &FileLowering<'_, '_, '_, '_>) -> ScopeId {
+    let scope = file.bound.scope_of_declaration(file.hir, Decl::File);
+    debug_assert!(matches!(
+        file.bound.scopes[scope.idx()].kind,
+        ScopeKind::File
+    ));
+    scope
+}
+
+pub(in crate::lower) fn is_moved_to_file_start(
+    file: &FileLowering<'_, '_, '_, '_>,
+    statement: StmtId,
+) -> bool {
+    file.source == SourceKind::Program
+        && file.bound.parent_of_stmt(statement) == Parent::File
+        && hir::is_moved_to_file_start(file.hir, statement)
+}
+
+impl FileLowering<'_, '_, '_, '_> {
+    pub(crate) fn declare_module_roots(&mut self) -> ModuleRoots {
+        match self.source {
+            SourceKind::Program | SourceKind::RuntimeModule(_) => body::declare_module_body(self),
+            SourceKind::RuntimeFunctions => {
+                library::declare_library_functions(self);
+                ModuleRoots::default()
+            }
+        }
+    }
+}
+
+pub(crate) fn emit_import_binding_asked(
+    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+    binding: ImportBinding,
+    name: StringId,
+    asked: Option<(FileId, Atom)>,
+) -> ValueId {
+    imports::emit_import_binding_asked(lowering, binding, name, None, asked)
+}
+
+pub(crate) fn emit_binding_asked_by_call(
+    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+    binding: ImportBinding,
+    name: StringId,
+    asked: Option<(FileId, Atom)>,
+) -> ValueId {
+    imports::emit_binding_asked_by_call(lowering, binding, name, asked)
+}
+
+pub(crate) fn emit_import_binding(
+    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+    binding: ImportBinding,
+    name: StringId,
+) -> ValueId {
+    imports::emit_import_binding(lowering, binding, name, None)
+}
+
+impl FunctionLowering<'_, '_, '_, '_, '_> {
+    pub(crate) fn lower_import_meta(&mut self) -> ValueId {
+        self.emit_module_builtin(BuiltinId::ImportMeta)
+    }
+}

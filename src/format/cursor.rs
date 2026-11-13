@@ -1502,6 +1502,7 @@ impl CursorRegion {
     }
 
     /// Call before writing the node at `span`, after its leading comments.
+    #[inline(never)]
     pub(crate) fn enter(&self, span: Span, f: &mut Formatter<'_>) {
         if span.start == self.node.span.start && self.node.ends_at(span.end) {
             f.write_element(FormatElement::Cursor(CursorMark::RegionStart));
@@ -1512,6 +1513,7 @@ impl CursorRegion {
     }
 
     /// Call after writing the node at `span`, before its trailing comments.
+    #[inline(never)]
     pub(crate) fn exit(&self, span: Span, f: &mut Formatter<'_>) {
         if span.start == self.node.span.start && self.node.ends_at(span.end) {
             f.write_element(FormatElement::Cursor(CursorMark::RegionEnd));

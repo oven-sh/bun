@@ -72,13 +72,8 @@ impl ArrayBufferSink {
         streams::result::Writable::Owned(len as u64)
     }
 
-    pub(crate) fn write_utf16(&mut self, data: &streams::Result) -> streams::result::Writable {
-        let bytes = data.slice();
-        // The caller guarantees the byte slice is u16-aligned and has even
-        // length when the stream encoding is UTF-16. bytemuck checks both at
-        // runtime.
-        let utf16: &[u16] = bytemuck::cast_slice(bytes);
-        let len = match self.bytes.write_utf16(utf16) {
+    pub(crate) fn write_utf16(&mut self, text: &[u16]) -> streams::result::Writable {
+        let len = match self.bytes.write_utf16(text) {
             Ok(len) => len,
             Err(_) => return streams::result::Writable::Err(syscall::Error::oom()),
         };

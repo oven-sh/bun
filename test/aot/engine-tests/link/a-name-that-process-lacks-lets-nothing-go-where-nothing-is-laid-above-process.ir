@@ -1,0 +1,25 @@
+# Nothing of the program stands above the native prototype of `process` until the native function of node:events is called. In a program that never calls it a name that `process` lacks
+# finds nothing, whatever else native code is handed: `process` stays in sight. A name that the native prototype has is answered below the link, whoever stands above.
+#   process.madeUp;  process.on;  console.log({});
+# RUN: link lookups mechanisms=all
+# CHECK: lookup native-code-may-hold-objects
+# RUN(STAYS): link lookups mechanisms=all
+# STAYS-NOT: lookup let-go Process
+# STAYS-NOT: lookup at-unseen Process
+
+layout L0 module=m0 fields=[]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="madeUp"
+    v2 = PropGet v0 key="on"
+    v3 = NewObject layout=L0 fields=[]
+    v4 = Builtin builtin=Console
+    v5 = PropGet v4 key="log"
+    v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v7 = Call v6, v4, v3 calleeKey="log" calleeName="console.log"
+    v8 = Undefined
+    Return v8
+}

@@ -643,14 +643,7 @@ fn run_tasks_erased(
                 name,
                 is_extended_manifest,
             } => {
-                // reshaped for borrowck — capture the name's slice
-                // pointer (`StringOrTinyString` is self-referential and not
-                // `Clone`) so the loop body can read `name` after the
-                // `&mut task.callback` borrow ends.
-                // SAFETY: `name` lives in `task.callback` which outlives this
-                // match arm (the task is only `put` back to the pool by a later
-                // resolve-task pass, never inside this loop iteration).
-                let name = unsafe { bun_ptr::detach_lifetime(name.slice()) };
+                let name = name.slice();
                 let is_extended_manifest = *is_extended_manifest;
                 name_progress(manager, name, DOWNLOAD);
 
@@ -699,10 +692,9 @@ fn run_tasks_erased(
 
                     // Try once more, because the full document was only requested for `libc`.
                     if is_extended_manifest && manager.options.minimum_release_age_ms.is_none() {
-                        task.retry_with_abbreviated_manifest(
-                            manager.scope_for_package_name(name),
-                            !manager.is_network_task_required(task.task_id),
-                        )?;
+                        let scope = manager.scope_for_package_name(name);
+                        let is_optional = !manager.is_network_task_required(task.task_id);
+                        task.retry_with_abbreviated_manifest(scope, is_optional)?;
                         enqueue::enqueue_network_task(manager, task_ptr);
                         continue;
                     }
@@ -866,7 +858,9 @@ fn run_tasks_erased(
                     // The HTTP request was cached
                     if let Some(mut manifest) = loaded_manifest.take() {
                         // If we requested extended manifest but we somehow got an abbreviated one, this is a bug
-                        debug_assert!(!is_extended_manifest || manifest.pkg.has_extended_manifest);
+                        debug_assert!(
+                            !is_extended_manifest || manifest.pkg.has_extended_manifest()
+                        );
 
                         manifest.pkg.public_max_age =
                             npm::Registry::manifest_expiry(&response.headers);
@@ -946,8 +940,7 @@ fn run_tasks_erased(
                 // `task.callback`; the body also calls `&mut self` methods on
                 // `task` (`reset_streaming_for_retry`,
                 // `discard_unused_streaming_state`) which only touch disjoint
-                // fields. Detach via raw pointer (mirroring the
-                // `PackageManifest` arm above) so those calls don't overlap.
+                // fields. Detach via raw pointer so those calls don't overlap.
                 let extract_ptr: *mut ExtractTarball = extract;
                 // SAFETY: `extract` lives in `task.callback`, which outlives
                 // this match arm; the methods called on `task` below never
@@ -1190,8 +1183,7 @@ fn run_tasks_erased(
                 if task.status == Task::Status::Fail {
                     let log_mark = manager.log_mut().msgs.len();
                     if holds_log {
-                        task.log.append_to_with_recycled(manager.log_mut(), false);
-                        task.log.reset();
+                        task.log.append_to(manager.log_mut());
                     }
                     let req = task.request_package_manifest();
                     let name = req.name.slice();
@@ -1297,10 +1289,7 @@ fn run_tasks_erased(
                 };
                 let dependency_id = tarball.dependency_id;
                 let mut package_id = manager.lockfile.buffers.resolutions[dependency_id as usize];
-                // SAFETY: `tarball` borrows `task.request` which is reborrowed
-                // `&mut` below; the backing `StringOrTinyString` lives in the
-                // pooled `Task` for the whole iteration and is not mutated.
-                let alias = unsafe { bun_ptr::detach_lifetime(tarball.name.slice()) };
+                let alias = tarball.name.slice();
                 let resolution = &tarball.resolution;
 
                 if task.status == Task::Status::Fail {
@@ -1964,7 +1953,7 @@ pub fn is_bunx_tree(dir: &[u8]) -> bool {
 }
 
 fn is_bunx_install() -> bool {
-    is_bunx_tree(crate::bun_fs::FileSystem::instance().top_level_dir())
+    is_bunx_tree(crate::bun_fs::FileSystem::get().top_level_dir())
 }
 
 /// The error that a command returns when a request failed before it linked or saved anything.
@@ -2094,7 +2083,6 @@ pub fn generate_network_task_for_tarball<'a>(
     is_required: bool,
     dependency_id: DependencyID,
     package: &Package,
-    authorization: Authorization,
 ) -> Result<Option<&'a mut NetworkTask>, ForTarballError> {
     // Only reached when the tarball is not already extracted in the cache.
     if this.options.offline == Options::OfflineMode::Offline {
@@ -2148,7 +2136,22 @@ pub fn generate_network_task_for_tarball<'a>(
     let network_task = unsafe { &mut *net_ptr };
 
     let pkg_name = this.lockfile.str(&package.name);
-    let scope = this.scope_for_package_name(pkg_name);
+    let (scope, authorization) = match package.resolution.tag {
+        bun_install::ResolutionTag::Npm => (
+            this.scope_for_package_name(pkg_name),
+            Authorization::AllowAuthorization,
+        ),
+        // One download serves every name that the URL is listed under, so the name picks no scope.
+        bun_install::ResolutionTag::RemoteTarball
+            if this.lockfile.is_tarball_url_of_project(url) =>
+        {
+            (&this.options.scope, Authorization::AllowAuthorization)
+        }
+        _ => (
+            this.scope_for_package_name(pkg_name),
+            Authorization::NoAuthorization,
+        ),
+    };
 
     let extract_tarball = ExtractTarball {
         // BACKREF — `this_backref` is non-null (just derived from `&mut *this`)
@@ -2204,15 +2207,10 @@ pub fn generate_network_task_for_tarball<'a>(
         };
         let extract_task = enqueue::create_extract_task_for_streaming(this, tarball_ref, net_ptr);
         // SAFETY: `net_ptr` is the unique handle to the freshly-vended pool slot
-        // (see `write_init` above); `TarballStream::init` returns a fresh
-        // `heap::alloc` which we reclaim ownership of exactly once here.
+        // (see `write_init` above).
         unsafe {
             (*net_ptr).streaming_extract_task = extract_task;
-            (*net_ptr).tarball_stream = Some(bun_core::heap::take(TarballStream::init(
-                extract_task,
-                net_ptr,
-                this,
-            )));
+            (*net_ptr).tarball_stream = Some(TarballStream::init(extract_task, net_ptr, this));
         }
     }
 

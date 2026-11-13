@@ -1,0 +1,20 @@
+# `x[a] = (x[a] + x[b]) >>> 0` on lists of words past 31 bits: they lie as doubles, Link says "whole numbers", and each read asks the double whether it is one: EqualOrUnordered(x, trunc(x)).
+# What must hold is laid as Check(not it). The inverse of EqualOrUnordered is the one comparison that the machine layer has no opcode for, so the Check had nothing to fuse with: the answer was made a Boolean, negated,
+# tested and branched on: seven instructions. The Check keeps the comparison itself and fails when it is zero: three. The same Check: its stop lies behind the code of the function, and nothing branches or meets for it.
+# f1 = quarter
+# -- source: a-whole-number-out-of-a-list-of-doubles-is-asked-for-by-one-rounding-and-one-comparison.ts
+# declare function print(...values: unknown[]): void;
+# const rows: number[][] = []; for (let i = 0; i < 8; i++) rows.push([4294967295, i + 2147483648, i, 7]);
+# function quarter(x: number[], a: number, b: number): void { x[a] = (x[a]! + x[b]!) >>> 0; x[b] = (x[b]! ^ x[a]!) >>> 0; x[a] = (x[a]! + x[b]!) >>> 0; x[b] = ((x[b]! << 7) ^ x[a]!) >>> 0; }
+# function turns(n: number): number { return Date.now() > 0 ? n : 0; }
+# function fold(t: number): number { let s = t & 1; for (let i = 0; i < turns(32); i++) { const x = rows[i & 7]!; quarter(x, i & 1, 2 + (t & 1)); s += x[0]! & 15; } return s; }
+# print(fold(turns(0)), fold(turns(1)), fold(turns(2)));
+# print(rows[0]![0], rows[0]![1], rows[3]![2], rows[7]![3]);
+# -- end of source
+# RUN: emit f1:Body mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK: = EqualOrUnordered(
+# CHECK: = Check({{*}}FailsWhenPredicateIsZero
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 368 353 304
+# ANSWERS-NEXT: 1504054272 2147483648 796475627 3579330439

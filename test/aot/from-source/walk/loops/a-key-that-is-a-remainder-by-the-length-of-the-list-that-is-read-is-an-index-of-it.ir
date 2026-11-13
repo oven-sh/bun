@@ -1,0 +1,19 @@
+# `corners[(i + 1) % corners.length]`: the next element round the ring. A remainder by the length of the very list that is read is an index of it, so the look ahead of the loop takes the list among those
+# that are tested in front, as it does for `corners[i]`. What hangs on that, step by step: the list is asked in front for its storage and whether it is as born; no read of the turn can run other code;
+# so the variables of the file (frame, place) cannot change in the loop and are read in front of it; so the helper, which reads elements of what stands in front, is copied into the loop (frame 1).
+# f1 = roundTheRing
+# -- source: a-key-that-is-a-remainder-by-the-length-of-the-list-that-is-read-is-an-index-of-it.cjs
+# var kit = Object.freeze({ __proto__: null, place: function place(out, a, m) { var x = a[0], y = a[1], z = a[2], w = m[3] * x + m[7] * y + m[11] * z + m[15]; w = w || 1.0; out[0] = (m[0] * x + m[4] * y + m[8] * z + m[12]) / w; out[1] = (m[1] * x + m[5] * y + m[9] * z + m[13]) / w; out[2] = (m[2] * x + m[6] * y + m[10] * z + m[14]) / w; return out; } });
+# var corners = JSON.parse("[[1,2,3],[4,5,6],[7,8,9],[2,4,8],[3,9,27]]"), frame = new Float32Array(16), out = new Float32Array(3);
+# frame[0] = frame[5] = frame[10] = frame[15] = 1; frame[12] = 2;
+# const place = kit.place;
+# function roundTheRing(corners) { var s = 0; for (var i = 0; i < corners.length; i++) { place(out, corners[(i + 1) % corners.length], frame); s += out[0]; } return s; }
+# globalThis.kept = roundTheRing(corners);
+# -- end of source
+# RUN(WALK): walk f1 mechanisms=all
+# WALK-LABEL: code f1:Body
+# WALK: frame 0 callee=f1
+# WALK: frame 1 callee=
+# WALK: = IsPristine {{*}}builtinClass=Array aspects=[Storage, Names]
+# WALK: = HasArrayStorage
+# WALK: = Mul

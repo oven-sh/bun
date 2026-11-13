@@ -5,8 +5,8 @@ use bun_lint::rule::Plugin;
 /// Enforces that all `next/script` components with inline content or `dangerouslySetInnerHTML` must have an `id` prop.
 pub struct InlineScriptId;
 
-const INLINE_SCRIPT_ID: Message =
-    Message::new("", "`next/script` components with inline content must specify an `id` attribute.");
+const INLINE_SCRIPT_ID: &Message =
+    &Message::new("", "`next/script` components with inline content must specify an `id` attribute.");
 
 impl Rule for InlineScriptId {
     const META: Meta = Meta::oxlint(Plugin::Nextjs, "inline-script-id", Kind::Problem);

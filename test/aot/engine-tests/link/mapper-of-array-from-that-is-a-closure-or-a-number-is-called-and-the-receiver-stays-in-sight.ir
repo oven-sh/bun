@@ -1,0 +1,49 @@
+# Array.from(<a list>, JSON.parse(text) ? item => item : 5)
+# The mapper is a closure on one way and a number on the other. The row for a function may take the call, so the closure is called; the row for what is neither undefined nor a function takes the rest for
+# sure, so the walk over the rows ends there: the receiver stays in sight and nothing below `Array` comes along.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+# CHECK: function f2 unreached
+# CHECK-NOT: function f3 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/engine/ArrayConstructor.ts" displayPath="/$bun/js/engine/ArrayConstructor.ts" flags=[IsLibrary]
+module m2 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ArrayPrototypeFlatMap function=f2
+runtimefunction id=ArrayConstructorFrom function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=JSON
+    v1 = PropGet v0 key="parse"
+    v2 = Convert v1 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v3 = String string="1"
+    v4 = Call v2, v0, v3 calleeKey="parse" calleeName="JSON.parse"
+    v5 = ToBoolean v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v6 = NewClosure function=f3
+    Jump -> next b3(v6)
+  b2():
+    v7 = Integer integer=5
+    Jump -> next b3(v7)
+  b3(v8):
+    v9 = NewArray contents=anything
+    v10 = Builtin builtin=Array [isNotReadFromHolder]
+    v11 = Builtin builtin=ArrayFrom [isNotReadFromHolder]
+    v12 = Call v11, v10, v9, v8 calleeName="Array.from"
+    Return v12
+}
+function f1 name="from" module=m1 kind=Method role=Library flags=[HasExplicitName] length=1 enclosingRuntimeFunction=ArrayConstructorFrom thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="flatMap" module=m2 kind=Method role=Library flags=[HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeFlatMap thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 module=m0 kind=Arrow thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

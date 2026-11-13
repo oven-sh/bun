@@ -1,0 +1,19 @@
+# -- source: native-code-enters-by-value-with-what-the-entry-asks-for.ts
+# declare function print(...values: unknown[]): void;
+# class Box { n = 21; }
+# function reads(box: Box) { return box.n * 2; }
+# print(new Map<Box, number>().getOrInsertComputed(new Box(), reads));
+# print("went on");
+# -- end of source
+# f1 = reads
+# THE GREEN CONTROL OF a-false-proof-of-a-parameter-is-stopped-at-the-entry-by-value-in-every-build.ir. Every caller of `reads` is known, and Link has proven its parameter an object of one layout: a boxed word, which has every form.
+# Native code enters by value. AN ENTRY THAT HAS TO ASK IS NO ENTRY THAT ONLY MOVES: it is a unit of its own, asks for the type, and a right program passes.
+# RUN(ASKS): walk f1:GenericCallEntry mechanisms=all
+# ASKS-LABEL: code f1:GenericCallEntry
+# ASKS: [[passes]]: boolean {{*}} = TypeTest [[given]] testedType=undefined|L0
+# ASKS: CheckProof [[given]] checkedType=never
+# ASKS-NEXT: Unreachable
+# RUN: run-in-shell mechanisms=all
+# CHECK: 42
+# CHECK-NEXT: went on
+# CHECK-NEXT: exited with 0

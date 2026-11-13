@@ -1,0 +1,19 @@
+# `for (j = 1; j < arguments.length; j++) s += arguments[j]` in a function of three parameters: the index names parameters and what lies behind them. Each parameter is asked for by its position, the rest is read out of the list behind the parameters, and the object is never made.
+# f1 = fromOne, f2 = fromZeroOfFive
+# -- source: arguments-read-under-an-index-that-names-parameters-are-never-made.js
+# function fromOne(a, b, c) { var s = 0; for (var j = 1; j < arguments.length; j++) s += arguments[j]; return s; }
+# function fromZeroOfFive(a, b, c, d, e) { var s = 0; for (var j = 0; j < arguments.length; j++) s += arguments[j]; return s; }
+# sink(fromOne, fromZeroOfFive);
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# CHECK: = StrictEq {{*}} form=Integers
+# CHECK: = StrictEq {{*}} form=Integers
+# CHECK: = GetArrayElement {{*}} level=Proven
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: Arguments
+# RUN(MANY): walk f2 mechanisms=all
+# More parameters than are asked one by one: the object is made.
+# MANY-LABEL: code f2:Body
+# MANY: = CreateUnmappedArguments

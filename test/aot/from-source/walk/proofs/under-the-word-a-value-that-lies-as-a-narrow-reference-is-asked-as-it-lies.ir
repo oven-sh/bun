@@ -1,0 +1,26 @@
+# -- source: under-the-word-a-value-that-lies-as-a-narrow-reference-is-asked-as-it-lies.ts
+# declare function print(...values: unknown[]): void;
+# class Badge { text: string; constructor(text: string) { this.text = text; } }
+# class Member { rank: number; active: boolean; name: string; badge: Badge; friend: Member | undefined; next: Member | undefined; last: string; score: number; done: boolean; constructor(i: number) { this.rank = i & 7; this.active = (i & 1) === 1; this.name = "m" + i; this.badge = new Badge("b" + i); this.friend = undefined; this.next = undefined; this.last = "l" + i; this.score = i & 3; this.done = false; } }
+# function textOf(member: Member): string { return member.badge.text; }
+# const shelf: any[] = [textOf, (i: number) => new Member(i)];
+# const at: number[] = JSON.parse("[0, 1]");
+# print(shelf[at[0]](shelf[at[1]](2)));
+# -- end of source
+# f1 = textOf. The slot of `badge` holds a reference of 32 bits, and the read gives it as it lies. Where proofs are checked at run time (testing=CheckProofsAtRunTime, which --aot-harden=proof-checks
+# stands for) a value was asked only where it lay boxed, as a cell, as a number or as a truth value: one that lay as a narrow reference was asked by nobody. Now it is asked as it lies: the word is a
+# reference to a cell, or a marker that the checked type has; else the program stops by name. Only then is it decoded and the cell looked at. As users build, nothing is asked.
+# RUN(ASKED): walk f1 mechanisms=all testing=CheckProofsAtRunTime
+# ASKED: [[read]]: L0 @Cell32 = GetSlot {{*}}key="badge"
+# ASKED-NEXT: = CheckProof [[read]] checkedType=L0 {{*}}source=Field
+# RUN(UNASKED): walk f1 mechanisms=all
+# UNASKED: @Cell32 = GetSlot {{*}}key="badge"
+# UNASKED-NOT: source=Field
+# RUN(HELD): emit f1:Body mechanisms=all testing=CheckProofsAtRunTime
+# HELD: Int32 @[[asked]] = AboveEqual(
+# HELD-NEXT: = Branch(@[[asked]],{{*}}rare
+# RUN(PLAIN): emit f1:Body mechanisms=all
+# PLAIN-NOT: = AboveEqual(
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# RIGHT: b2
+# RIGHT-NEXT: exited with 0

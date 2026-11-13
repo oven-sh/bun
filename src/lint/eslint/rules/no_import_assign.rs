@@ -4,9 +4,9 @@ use bun_lint::semantic::DeclarationKinds;
 /// Disallow assigning to imported bindings.
 pub struct NoImportAssign;
 
-const READONLY: Message = Message::new("readonly", "'{{name}}' is read-only.");
-const READONLY_MEMBER: Message =
-    Message::new("readonlyMember", "The members of '{{name}}' are read-only.");
+const READONLY: &Message = &Message::new("readonly", "'{{name}}' is read-only.");
+const READONLY_MEMBER: &Message =
+    &Message::new("readonlyMember", "The members of '{{name}}' are read-only.");
 
 /// ESLint's `isOperandOfMutationUnaryOperator`.
 fn is_operand_of_mutation_unary_operator(e: Expr) -> bool {

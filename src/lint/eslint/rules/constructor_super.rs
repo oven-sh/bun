@@ -7,11 +7,11 @@ use smallvec::SmallVec;
 /// Require `super()` calls in constructors.
 pub struct ConstructorSuper;
 
-const MISSING_SOME: Message =
-    Message::new("missingSome", "Lacked a call of 'super()' in some code paths.");
-const MISSING_ALL: Message = Message::new("missingAll", "Expected to call 'super()'.");
-const DUPLICATE: Message = Message::new("duplicate", "Unexpected duplicate 'super()'.");
-const BAD_SUPER: Message = Message::new(
+const MISSING_SOME: &Message =
+    &Message::new("missingSome", "Lacked a call of 'super()' in some code paths.");
+const MISSING_ALL: &Message = &Message::new("missingAll", "Expected to call 'super()'.");
+const DUPLICATE: &Message = &Message::new("duplicate", "Unexpected duplicate 'super()'.");
+const BAD_SUPER: &Message = &Message::new(
     "badSuper",
     "Unexpected 'super()' because 'super' is not a constructor.",
 );

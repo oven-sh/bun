@@ -1,0 +1,15 @@
+# -- source: main.ts
+# declare function sink(...values: unknown[]): void;
+# let total = 0;
+# for (const letter of JSON.parse('"ab"')) total += letter.length;
+# sink(total);
+# -- end of source
+# f1 = stepOverText
+# Nothing is known of what the loop goes over, so it calls the compiler's own library, which makes of a text an object with the text, the place in it and `next`. The two lie under private names of the
+# library's own, of the kind that only JavaScript reads and writes: each step asks once whether it was handed that object and then reads two slots. Under a private name of the engine a read never
+# takes that road: two calls of a stub for every letter.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetSlot {{*}}key=@#"steppedText"
+# CHECK: = GetSlot {{*}}key=@#"nextPosition"
+# CHECK: = PutSlot {{*}}key=@#"nextPosition"

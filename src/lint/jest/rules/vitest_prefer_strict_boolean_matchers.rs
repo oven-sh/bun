@@ -5,8 +5,8 @@ use bun_lint::prelude::*;
 /// Enforce using `toBe(true)` and `toBe(false)` over matchers that coerce types to boolean.
 pub struct PreferStrictBooleanMatchers<const RUNNER: u8 = { jest::VITEST }>;
 
-const PREFER_STRICT_BOOLEAN_MATCHERS: Message = Message::new("", "Use `toBe({{value}})` instead of `{{matcher_name}}`.");
-const USE: Message = Message::new("", "Use `{{code}}`");
+const PREFER_STRICT_BOOLEAN_MATCHERS: &Message = &Message::new("", "Use `toBe({{value}})` instead of `{{matcher_name}}`.");
+const USE: &Message = &Message::new("", "Use `{{code}}`");
 
 impl<const RUNNER: u8> Rule for PreferStrictBooleanMatchers<RUNNER> {
     const META: Meta = jest::meta_with_risky_fix(RUNNER, "prefer-strict-boolean-matchers", Kind::Suggestion);

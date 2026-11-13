@@ -1,0 +1,28 @@
+# -- source: moved-elements-are-told-apart.js
+# const table = {
+#   reverse(data) {
+#     for (let i = 0, j = data.length - 1; i < j; i++, j--) {
+#       const kept = data[i];
+#       data[i] = data[j];
+#       data[j] = kept;
+#     }
+#     return Array.from(data).join();
+#   },
+# };
+# const name = JSON.parse('"reverse"');
+# print(table[name]([1, 2, 300]));
+# print(table[name](new Uint8Array([4, 5])));
+# print(table[name]([0.5, 2, 3.5]));
+# print(table[name](["a", 1, null, {}.x]));
+# print(table[name]([1, , 3, 4]));
+# -- end of source
+# RUN: compile ArrayOrUint8ArrayLoopsVersioned mechanisms=all
+# CHECK: statistic ArrayOrUint8ArrayLoopsVersioned 1
+# RUN(SHELL): run-in-shell mechanisms=all
+# SHELL: 300,2,1
+# SHELL-NEXT: 5,4
+# SHELL-NEXT: 3.5,2,0.5
+# SHELL-NEXT: ,,1,a
+# SHELL-NEXT: 4,3,,1
+# SHELL-NEXT: exited with 0
+# SHELL-NEXT: the source prints the same

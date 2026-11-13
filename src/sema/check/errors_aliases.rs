@@ -12,12 +12,13 @@
 //! Comment directives: `Directives` determines which directive suppresses a diagnostic, `expected_errors` creates the
 //! TS2578 for each `@ts-expect-error`, and `Program::finish_file` drops those whose directive was used.
 
+use super::aot::DiagnosticSubject;
 use super::errors_operators::language_version;
 use super::explain::NOWHERE;
 use super::sink::{NO_DIRECTIVE, held};
 use super::*;
 use crate::bind::{ClassOwner, Decl, Parent, PatParent, SymbolId};
-use crate::program::{TypeOnlyDeclaration, source_file_may_be_emitted};
+use crate::program::{ReadingNoTrees, TypeOnlyDeclaration, source_file_may_be_emitted};
 use crate::resolve::{
     ModuleKind, Options, ScriptTarget, file_extension_is, get_relative_path_from_directory,
     has_ts_implementation_extension, is_declaration_file_name, join, path_is_relative,
@@ -238,12 +239,12 @@ impl Checker<'_, '_> {
     pub(super) fn mark_property_aliases_referenced(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `importElisionEnabled`. Under `GetIsolatedModules` it returns before it requests a type.
-        if !self.emits_js_file(file) || self.p.files.options.isolated_modules {
+        if !self.emits_js_file(file) || self.module_options(file).isolated_modules {
             return;
         }
         let index = self.exprs_by_kind(file);
         let mut lefts: Vec<ExprId> = (index.of(ExprTag::Dot).iter())
-            .filter_map(|&e| match hir[e].kind {
+            .filter_map(|&e| match hir.checked_kind(e) {
                 ExprKind::Dot { obj, .. }
                     if matches!(hir[obj].kind, ExprKind::Ident(_))
                         && !is_parenthesized(hir, obj)
@@ -312,7 +313,7 @@ impl Checker<'_, '_> {
     pub(super) fn inline_const_enums(&mut self, file: FileId) {
         self.cached_by_emit.clear();
         let (files, hir, bound) = (self.files(), self.hir(file), self.bound(file));
-        let (options, module) = (&files.options, files.module(file));
+        let (options, module) = (self.module_options(file), files.module(file));
         // `emitJSFile`, `sourceFileMayBeEmitted`, `GetIsolatedModules`
         if options.no_emit
             || options.emit_declaration_only
@@ -333,7 +334,7 @@ impl Checker<'_, '_> {
             .filter(|&e| !bound.is_unchecked(e.idx()) && !bound.is_in_type_query(e))
             // `visitPropertyAccessExpression` of the class fields transformer, which runs earlier, has turned `a.#b`
             // into a helper call.
-            .filter(|&e| match hir[e].kind {
+            .filter(|&e| match hir.checked_kind(e) {
                 ExprKind::Dot { name, .. } => {
                     !(transforms_private_elements
                         && self.atoms().is_private_name(name)
@@ -412,39 +413,13 @@ impl Checker<'_, '_> {
     /// `checkExternalModuleExports` or for an alias in a file that has been checked.
     fn are_exports_of_module_resolved_no_later_than(&self, module: Sym, file: FileId) -> bool {
         let files = self.files();
-        let checked = files
-            .order
-            .iter()
-            .take(files.rank_of_file(file) as usize + 1);
         self.are_module_exports_checked(module, file)
-            || checked.copied().any(|other| {
+            || files.files_with_alias_from_exports_of(module).any(|other| {
+                let _reading = ReadingNoTrees::begin();
                 // A leaf's data is freed after its task.
                 (other == file || !files.module(other).is_leaf)
                     && self.is_checked_no_later_than(other, file)
-                    && self.has_alias_from_exports_of_module(other, module)
             })
-    }
-
-    /// True if the target of an alias in `file` is looked up in `getExportsOfModule(module)`, either by
-    /// `getExternalModuleMember` or by `resolveESModuleSymbol` for `import * as ns`.
-    fn has_alias_from_exports_of_module(&self, file: FileId, module: Sym) -> bool {
-        let (files, hir) = (self.files(), self.hir(file));
-        let aliases = self.bound(file).symbols.with_flags(SymFlags::ALIAS);
-        aliases.flat_map(|symbol| symbol.decls.iter()).any(|&decl| {
-            let specifier = match decl {
-                Decl::ImportNamespace(import) => {
-                    let import = &hir[import];
-                    Some((import.spec, files.mode_of_import(file, import.mode)))
-                }
-                // `{ default as d }` is another syntax for the default import, except in a binding pattern.
-                _ => (files.external_module_member_of(file, decl))
-                    .filter(|it| it.2 != known::default || matches!(decl, Decl::Require(_)))
-                    .map(|it| (it.0, it.1)),
-            };
-            specifier.is_some_and(|(spec, mode)| {
-                files.module_of_specifier_as(file, spec, mode) == Some(module)
-            })
-        })
     }
 
     // ───────────────────────────── alias declarations ─────────────────────────────
@@ -506,7 +481,7 @@ impl Checker<'_, '_> {
             return;
         };
         let files = self.files();
-        let (hir, bound, options) = (self.hir(file), self.bound(file), &files.options);
+        let (hir, bound, options) = (self.hir(file), self.bound(file), self.module_options(file));
         // `getTargetOfImportEqualsDeclaration`
         if let Decl::ImportEquals(x) = decl
             && let ImportEqualsTarget::Entity(names) = hir[x].target
@@ -785,7 +760,7 @@ impl Checker<'_, '_> {
     fn aliases_imports_hiding_global_values(&mut self, file: FileId) {
         let files = self.files();
         let (hir, bound) = (self.hir(file), self.bound(file));
-        if !files.options.isolated_modules_reported {
+        if !self.module_options(file).isolated_modules_reported {
             return;
         }
         for &(e, scope) in &bound.alias_idents {
@@ -824,7 +799,7 @@ impl Checker<'_, '_> {
         let (files, bound) = (self.files(), self.bound(file));
         let name = files.symbol(result).name;
         // `compilerOptions.isolatedModules` itself, not `GetIsolatedModules`. `isInExternalModule`, `isGlobal`
-        if !files.options.isolated_modules_reported
+        if !self.module_options(file).isolated_modules_reported
             || !files.module(file).is_module()
             || !meaning.contains(SymFlags::VALUE)
             || files.global(name, meaning) != Some(result)
@@ -859,7 +834,7 @@ impl Checker<'_, '_> {
     fn aliases_decorator_metadata(&mut self, file: FileId) {
         let files = self.files();
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let options = &files.options;
+        let options = self.module_options(file);
         // `canCollectSymbolAliasAccessibilityData`, `GetIsolatedModules`, `GetEmitModuleKind`
         if !options.emit_decorator_metadata
             || options.verbatim_module_syntax
@@ -1097,7 +1072,7 @@ impl Checker<'_, '_> {
         module_not_found_error: Option<u32>,
     ) -> bool {
         let files = self.files();
-        let (options, importing) = (&files.options, files.module(file));
+        let (options, importing) = (self.module_options(file), files.module(file));
         let SpecifierUse {
             spec,
             pos: start,
@@ -1324,7 +1299,8 @@ impl Checker<'_, '_> {
         } else if site.is_for_augmentation {
             self.error_at(at, 2664, &[Arg::Atom(spec)]);
         } else if is_side_effect {
-            self.error_at(at, 2882, &[Arg::Atom(spec)]);
+            self.error_at(at, 2882, &[Arg::Atom(spec)]).subject =
+                DiagnosticSubject::ModuleSpecifier(spec);
         // `getCannotResolveModuleNameErrorForSpecificModule`: only for a string literal, not for a template.
         } else if crate::resolve::is_node_core_module(text)
             && self.hir(file).text.get(start as usize) != Some(&b'`')
@@ -1334,7 +1310,8 @@ impl Checker<'_, '_> {
             let code = if uses_wildcard_types { 2580 } else { 2591 };
             self.error_at(at, code, &[Arg::Atom(spec)]);
         } else {
-            self.error_at(at, 2307, &[Arg::Atom(spec)]);
+            self.error_at(at, 2307, &[Arg::Atom(spec)]).subject =
+                DiagnosticSubject::ModuleSpecifier(spec);
         }
         false
     }
@@ -1419,7 +1396,7 @@ impl Checker<'_, '_> {
             }
             // `checkImportMetaProperty`
             kind @ (ExprKind::ImportMeta | ExprKind::Missing) => {
-                let module = files.options.module;
+                let module = self.module_options(file).module;
                 let code = if module.is_node() {
                     if files.module(file).is_esm {
                         return;
@@ -1443,7 +1420,10 @@ impl Checker<'_, '_> {
             ExprKind::NewTarget(_) => {
                 let node = self.hir(file).node(e);
                 if self.hir(file).get_new_target_container(node).is_none() {
-                    self.error(file, e, 17013, &[Arg::Bytes(b"new.target")]);
+                    let is_early_error = self.is_new_target_outside_function(file, e);
+                    self.error(file, e, 17013, &[Arg::Bytes(b"new.target")])
+                        .class =
+                        DiagnosticClass::early_error_if(is_early_error, DiagnosticClass::Semantic);
                 }
             }
             _ => {}

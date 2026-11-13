@@ -277,6 +277,7 @@ enum RegisterState {
 // `maybe_finished` (via `CronJobBase`) may free `this`.
 bun_io::impl_buffered_reader_parent! {
     CronRegister for CronRegisterJob;
+    feature = Cron;
     has_on_read_chunk = false;
     // SAFETY: `this` is the live heap job registered via `set_parent`.
     on_reader_done  = |this| <Self as CronJobBase>::on_reader_done(ThisPtr::new(this));
@@ -979,6 +980,7 @@ enum RemoveState {
 // `maybe_finished` (via `CronJobBase`) may free `this`.
 bun_io::impl_buffered_reader_parent! {
     CronRemove for CronRemoveJob;
+    feature = Cron;
     has_on_read_chunk = false;
     // SAFETY: `this` is the live heap job registered via `set_parent`.
     on_reader_done  = |this| <Self as CronJobBase>::on_reader_done(ThisPtr::new(this));
@@ -1406,12 +1408,7 @@ impl CronJob {
     fn tick_settled(this: ThisPtr<Self>) {
         this.tick_cell.set(JSValue::ZERO);
         this.maybe_downgrade();
-        // SAFETY: `this` is live: the claim being released is a ref on it.
-        unsafe {
-            <Self as bun_ptr::CellRefCounted>::deref_nn(core::ptr::NonNull::new_unchecked(
-                this.as_ptr(),
-            ))
-        };
+        <Self as bun_ptr::CellRefCounted>::deref_nn(bun_ptr::BackRef::from(this).into());
     }
 
     /// The tick's promise will not settle on this VM (it is going): take the claim back, so the

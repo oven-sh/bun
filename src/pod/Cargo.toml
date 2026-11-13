@@ -1,0 +1,23 @@
+[package]
+name = "bun_pod"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+# Off for the freestanding `bun-shim-impl.exe`, which is built with `core` alone.
+[features]
+alloc = []
+
+# `#![no_std]`, no `#[no_mangle]`: `bun-shim-impl.exe` links this crate. The two
+# dependencies below are here only because the orphan rule puts
+# `impl Zeroable for <foreign type>` in this crate.
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+bun_windows_sys.workspace = true

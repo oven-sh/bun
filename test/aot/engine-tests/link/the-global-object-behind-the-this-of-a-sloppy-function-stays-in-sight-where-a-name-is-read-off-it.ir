@@ -1,0 +1,21 @@
+# const whole = (function () { return this; })(); whole.process
+# A control of the-global-object-behind-the-this-of-a-sloppy-function-is-let-go-where-a-formatter-prints-it.ir: a written name is looked up in the table: nothing is let go.
+# RUN: link lookups
+# CHECK: lookup read Process
+# CHECK-NOT: lookup let-go GlobalThis
+
+module m0 path="main.cjs" displayPath="main.cjs" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    v2 = PropGet v1 key="process"
+    v3 = TypeOf v2
+    Return v3
+}
+function f1 module=m0 flags=[IsSloppy, HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToThis v0
+    Return v1
+}

@@ -16,7 +16,19 @@ const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const SymbolHasInstance = Symbol.hasInstance;
 const PromiseResolve = Promise.$resolve.bind(Promise);
 const PromiseReject = Promise.$reject.bind(Promise);
-const PromisePrototypeThen = (promise, onFulfilled, onRejected) => promise.then(onFulfilled, onRejected);
+const PromisePrototypeThen = (
+  promise: Promise<unknown>,
+  onFulfilled: (value: unknown) => unknown,
+  onRejected: (error: unknown) => unknown,
+) => promise.then(onFulfilled, onRejected);
+
+type ChannelName = string | symbol;
+type Subscription = (message: unknown, name: ChannelName) => void;
+type Transform = (data: unknown) => unknown;
+type Store = InstanceType<$BunModules["node:async_hooks"]["AsyncLocalStorage"]>;
+type Traced = (...args: any[]) => unknown;
+/** One object: `markActive` and `maybeMarkInactive` move it from one prototype to the other. */
+type AnyChannel = Channel | ActiveChannel;
 
 // TODO: https://github.com/nodejs/node/blob/fb47afc335ef78a8cef7eac52b8ee7f045300696/src/node_util.h#L13
 class WeakReference<T extends WeakKey> extends WeakRef<T> {
@@ -42,44 +54,44 @@ class WeakRefMap extends SafeMap {
     this.delete(key);
   });
 
-  set(key, value) {
+  set(key: ChannelName, value: AnyChannel) {
     this.#finalizers.register(value, key);
     return super.set(key, new WeakReference(value));
   }
 
-  get(key) {
-    return super.get(key)?.get();
+  get(key: ChannelName) {
+    return (super.get(key) as WeakReference<AnyChannel> | undefined)?.get();
   }
 
-  incRef(key) {
-    return super.get(key)?.incRef();
+  incRef(key: ChannelName) {
+    return (super.get(key) as WeakReference<AnyChannel> | undefined)?.incRef();
   }
 
-  decRef(key) {
-    return super.get(key)?.decRef();
+  decRef(key: ChannelName) {
+    return (super.get(key) as WeakReference<AnyChannel> | undefined)?.decRef();
   }
 }
 
-function markActive(channel) {
+function markActive(channel: AnyChannel) {
   ObjectSetPrototypeOf.$call(null, channel, ActiveChannel.prototype);
   channel._subscribers = [];
   channel._stores = new SafeMap();
 }
 
-function maybeMarkInactive(channel) {
+function maybeMarkInactive(channel: AnyChannel) {
   // When there are no more active subscribers or bound, restore to fast prototype.
-  if (!channel._subscribers.length && !channel._stores.size) {
+  if (!channel._subscribers!.length && !channel._stores!.size) {
     ObjectSetPrototypeOf.$call(null, channel, Channel.prototype);
     channel._subscribers = undefined;
     channel._stores = undefined;
   }
 }
 
-function defaultTransform(data) {
+function defaultTransform(data: unknown) {
   return data;
 }
 
-function wrapStoreRun(store, data, next, transform = defaultTransform) {
+function wrapStoreRun(store: Store, data: unknown, next: () => unknown, transform: Transform = defaultTransform) {
   return () => {
     let context;
     try {
@@ -94,11 +106,11 @@ function wrapStoreRun(store, data, next, transform = defaultTransform) {
 }
 
 class ActiveChannel {
-  _subscribers;
-  name;
-  _stores;
+  _subscribers: Subscription[] | undefined;
+  name!: ChannelName;
+  _stores: Map<Store, Transform | undefined> | undefined;
 
-  subscribe(subscription) {
+  subscribe(subscription: Subscription) {
     validateFunction(subscription, "subscription");
 
     this._subscribers = ArrayPrototypeSlice.$call(this._subscribers);
@@ -106,7 +118,7 @@ class ActiveChannel {
     channels.incRef(this.name);
   }
 
-  unsubscribe(subscription) {
+  unsubscribe(subscription: Subscription) {
     const index = ArrayPrototypeIndexOf.$call(this._subscribers, subscription);
     if (index === -1) return false;
 
@@ -120,18 +132,18 @@ class ActiveChannel {
     return true;
   }
 
-  bindStore(store, transform) {
-    const replacing = this._stores.has(store);
+  bindStore(store: Store, transform?: Transform) {
+    const replacing = this._stores!.has(store);
     if (!replacing) channels.incRef(this.name);
-    this._stores.set(store, transform);
+    this._stores!.set(store, transform);
   }
 
-  unbindStore(store) {
-    if (!this._stores.has(store)) {
+  unbindStore(store: Store) {
+    if (!this._stores!.has(store)) {
       return false;
     }
 
-    this._stores.delete(store);
+    this._stores!.delete(store);
 
     channels.decRef(this.name);
     maybeMarkInactive(this);
@@ -143,11 +155,11 @@ class ActiveChannel {
     return true;
   }
 
-  publish(data) {
+  publish(data: unknown) {
     const subscribers = this._subscribers;
     for (let i = 0; i < (subscribers?.length || 0); i++) {
       try {
-        const onMessage = subscribers[i];
+        const onMessage = subscribers![i];
         onMessage(data, this.name);
       } catch (err) {
         process.nextTick(() => reportError(err));
@@ -155,13 +167,13 @@ class ActiveChannel {
     }
   }
 
-  runStores(data, fn, thisArg, ...args) {
-    let run = () => {
+  runStores(data: unknown, fn: Traced, thisArg?: unknown, ...args: unknown[]) {
+    let run = (): unknown => {
       this.publish(data);
       return fn.$apply(thisArg, args);
     };
 
-    for (const entry of this._stores.entries()) {
+    for (const entry of this._stores!.entries()) {
       const store = entry[0];
       const transform = entry[1];
       run = wrapStoreRun(store, data, run, transform);
@@ -172,11 +184,11 @@ class ActiveChannel {
 }
 
 class Channel {
-  _subscribers;
-  _stores;
-  name;
+  _subscribers: Subscription[] | undefined;
+  _stores: Map<Store, Transform | undefined> | undefined;
+  name: ChannelName;
 
-  constructor(name) {
+  constructor(name: ChannelName) {
     this._subscribers = undefined;
     this._stores = undefined;
     this.name = name;
@@ -184,12 +196,12 @@ class Channel {
     channels.set(name, this);
   }
 
-  static [SymbolHasInstance](instance) {
+  static [SymbolHasInstance](instance: unknown) {
     const prototype = ObjectGetPrototypeOf.$call(null, instance);
     return prototype === Channel.prototype || prototype === ActiveChannel.prototype;
   }
 
-  subscribe(subscription) {
+  subscribe(subscription: Subscription) {
     markActive(this);
     this.subscribe(subscription);
   }
@@ -198,7 +210,7 @@ class Channel {
     return false;
   }
 
-  bindStore(store, transform) {
+  bindStore(store: Store, transform?: Transform) {
     markActive(this);
     this.bindStore(store, transform);
   }
@@ -213,14 +225,14 @@ class Channel {
 
   publish() {}
 
-  runStores(data, fn, thisArg, ...args) {
+  runStores(data: unknown, fn: Traced, thisArg?: unknown, ...args: unknown[]) {
     return fn.$apply(thisArg, args);
   }
 }
 
 const channels = new WeakRefMap();
 
-function channel(name) {
+function channel(name: ChannelName): AnyChannel {
   const channel = channels.get(name);
   if (channel) return channel;
 
@@ -231,24 +243,26 @@ function channel(name) {
   return new Channel(name);
 }
 
-function subscribe(name, subscription) {
+function subscribe(name: ChannelName, subscription: Subscription) {
   return channel(name).subscribe(subscription);
 }
 
-function unsubscribe(name, subscription) {
+function unsubscribe(name: ChannelName, subscription: Subscription) {
   return channel(name).unsubscribe(subscription);
 }
 
-function hasSubscribers(name) {
+function hasSubscribers(name: ChannelName) {
   const channel = channels.get(name);
   if (!channel) return false;
 
   return channel.hasSubscribers;
 }
 
-const traceEvents = ["start", "end", "asyncStart", "asyncEnd", "error"];
+const traceEvents = ["start", "end", "asyncStart", "asyncEnd", "error"] as const;
+type TraceHandlers = Partial<Record<(typeof traceEvents)[number], Subscription>>;
+type TraceChannels = Record<(typeof traceEvents)[number], AnyChannel>;
 
-function assertChannel(value, name) {
+function assertChannel(value: unknown, name: string) {
   if (!(value instanceof Channel)) {
     throw $ERR_INVALID_ARG_TYPE(name, ["Channel"], value);
   }
@@ -260,13 +274,13 @@ interface TraceContext {
 }
 
 class TracingChannel {
-  start;
-  end;
-  asyncStart;
-  asyncEnd;
-  error;
+  start: AnyChannel;
+  end: AnyChannel;
+  asyncStart: AnyChannel;
+  asyncEnd: AnyChannel;
+  error: AnyChannel;
 
-  constructor(nameOrChannels) {
+  constructor(nameOrChannels: string | TraceChannels) {
     if (typeof nameOrChannels === "string") {
       this.start = channel(`tracing:${nameOrChannels}:start`);
       this.end = channel(`tracing:${nameOrChannels}:end`);
@@ -292,7 +306,7 @@ class TracingChannel {
     }
   }
 
-  subscribe(handlers) {
+  subscribe(handlers: TraceHandlers) {
     for (const name of traceEvents) {
       if (!handlers[name]) continue;
 
@@ -300,7 +314,7 @@ class TracingChannel {
     }
   }
 
-  unsubscribe(handlers) {
+  unsubscribe(handlers: TraceHandlers) {
     let done = true;
 
     for (const name of traceEvents) {
@@ -314,7 +328,7 @@ class TracingChannel {
     return done;
   }
 
-  traceSync(fn, context: TraceContext = {}, thisArg, ...args) {
+  traceSync(fn: Traced, context: TraceContext = {}, thisArg?: unknown, ...args: unknown[]) {
     const { start, end, error } = this;
 
     return start.runStores(context, () => {
@@ -332,10 +346,10 @@ class TracingChannel {
     });
   }
 
-  tracePromise(fn, context: TraceContext = {}, thisArg, ...args) {
+  tracePromise(fn: Traced, context: TraceContext = {}, thisArg?: unknown, ...args: unknown[]) {
     const { start, end, asyncStart, asyncEnd, error } = this;
 
-    function reject(err) {
+    function reject(err: unknown) {
       context.error = err;
       error.publish(context);
       asyncStart.publish(context);
@@ -344,7 +358,7 @@ class TracingChannel {
       return PromiseReject(err);
     }
 
-    function resolve(result) {
+    function resolve(result: unknown) {
       context.result = result;
       asyncStart.publish(context);
       // TODO: Is there a way to have asyncEnd _after_ the continuation?
@@ -359,7 +373,7 @@ class TracingChannel {
         if (!(promise instanceof Promise)) {
           promise = PromiseResolve(promise);
         }
-        return PromisePrototypeThen(promise, resolve, reject);
+        return PromisePrototypeThen(promise as Promise<unknown>, resolve, reject);
       } catch (err) {
         context.error = err;
         error.publish(context);
@@ -370,10 +384,10 @@ class TracingChannel {
     });
   }
 
-  traceCallback(fn, position = -1, context: TraceContext = {}, thisArg, ...args) {
+  traceCallback(fn: Traced, position = -1, context: TraceContext = {}, thisArg?: unknown, ...args: unknown[]) {
     const { start, end, asyncStart, asyncEnd, error } = this;
 
-    function wrappedCallback(err, res) {
+    function wrappedCallback(this: unknown, err: unknown, res: unknown) {
       if (err) {
         context.error = err;
         error.publish(context);
@@ -393,7 +407,7 @@ class TracingChannel {
       });
     }
 
-    const callback = ArrayPrototypeAt.$call(args, position);
+    const callback: Traced | undefined = ArrayPrototypeAt.$call(args, position);
     validateFunction(callback, "callback");
     ArrayPrototypeSplice.$call(args, position, 1, wrappedCallback);
 
@@ -411,7 +425,7 @@ class TracingChannel {
   }
 }
 
-function tracingChannel(nameOrChannels) {
+function tracingChannel(nameOrChannels: string | TraceChannels) {
   return new TracingChannel(nameOrChannels);
 }
 

@@ -23,8 +23,8 @@ use smallvec::SmallVec;
 pub(crate) mod no_focused_tests {
     use super::*;
 
-    const NO_FOCUSED_TESTS: Message = Message::new("", "Unexpected focused test.");
-    const REMOVE_FOCUS: Message = Message::new("", "Remove focus from test.");
+    const NO_FOCUSED_TESTS: &Message = &Message::new("", "Unexpected focused test.");
+    const REMOVE_FOCUS: &Message = &Message::new("", "Remove focus from test.");
 
     pub(crate) fn run<'a>(possible_jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
         let Some(jest_fn_call) = parse_general_jest_fn_call(ctx.file, possible_jest_node) else {
@@ -70,10 +70,10 @@ pub(crate) mod no_focused_tests {
 pub(crate) mod no_disabled_tests {
     use super::*;
 
-    const MISSING_FUNCTION: Message = Message::new("", "Test is missing function argument");
-    const PENDING: Message = Message::new("", "Call to pending()");
-    const DISABLED_SUITE: Message = Message::new("", "Disabled test suite");
-    const DISABLED_TEST: Message = Message::new("", "Disabled test");
+    const MISSING_FUNCTION: &Message = &Message::new("", "Test is missing function argument");
+    const PENDING: &Message = &Message::new("", "Call to pending()");
+    const DISABLED_SUITE: &Message = &Message::new("", "Disabled test suite");
+    const DISABLED_TEST: &Message = &Message::new("", "Disabled test");
 
     pub(crate) fn run<'a>(possible_jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
         let node = possible_jest_node.node;
@@ -133,15 +133,15 @@ pub(crate) mod no_disabled_tests {
 pub(crate) mod valid_describe_callback {
     use super::*;
 
-    const NAME_AND_CALLBACK: Message =
-        Message::new("", "Describe requires name and callback arguments");
-    const SECOND_ARGUMENT_MUST_BE_FUNCTION: Message =
-        Message::new("", "Second argument must be a function");
-    const NO_ASYNC_DESCRIBE_CALLBACK: Message = Message::new("", "No async describe callback");
-    const UNEXPECTED_DESCRIBE_ARGUMENT: Message =
-        Message::new("", "Unexpected argument(s) in describe callback");
-    const UNEXPECTED_RETURN_IN_DESCRIBE: Message =
-        Message::new("", "Unexpected return statement in describe callback");
+    const NAME_AND_CALLBACK: &Message =
+        &Message::new("", "Describe requires name and callback arguments");
+    const SECOND_ARGUMENT_MUST_BE_FUNCTION: &Message =
+        &Message::new("", "Second argument must be a function");
+    const NO_ASYNC_DESCRIBE_CALLBACK: &Message = &Message::new("", "No async describe callback");
+    const UNEXPECTED_DESCRIBE_ARGUMENT: &Message =
+        &Message::new("", "Unexpected argument(s) in describe callback");
+    const UNEXPECTED_RETURN_IN_DESCRIBE: &Message =
+        &Message::new("", "Unexpected return statement in describe callback");
 
     /// In Vitest and Bun the callback can be `async`, and options can come before it. Bun also awaits the callback's
     /// result, accepts options after it, and doesn't need a title.
@@ -231,16 +231,16 @@ pub(crate) mod valid_describe_callback {
 pub(crate) mod valid_title {
     use super::*;
 
-    const TITLE_MUST_BE_STRING: Message = Message::new("", "Title must be a string");
-    const EMPTY_TITLE: Message = Message::new("", "Should not have an empty title");
-    const DUPLICATE_PREFIX: Message = Message::new("", "Should not have duplicate prefix");
-    const ACCIDENTAL_SPACE: Message =
-        Message::new("", "Should not have leading or trailing spaces");
-    const DISALLOWED_WORD: Message = Message::new("", "{{word}} is not allowed in test title");
+    const TITLE_MUST_BE_STRING: &Message = &Message::new("", "Title must be a string");
+    const EMPTY_TITLE: &Message = &Message::new("", "Should not have an empty title");
+    const DUPLICATE_PREFIX: &Message = &Message::new("", "Should not have duplicate prefix");
+    const ACCIDENTAL_SPACE: &Message =
+        &Message::new("", "Should not have leading or trailing spaces");
+    const DISALLOWED_WORD: &Message = &Message::new("", "{{word}} is not allowed in test title");
     /// For a `mustMatch` or `mustNotMatch` that's configured with its own message.
-    const CONFIGURED: Message = Message::new("", "{{message}}");
-    const MUST_MATCH: Message = Message::new("", "{{name}} should match {{pattern}}");
-    const MUST_NOT_MATCH: Message = Message::new("", "{{name}} should not match {{pattern}}");
+    const CONFIGURED: &Message = &Message::new("", "{{message}}");
+    const MUST_MATCH: &Message = &Message::new("", "{{name}} should match {{pattern}}");
+    const MUST_NOT_MATCH: &Message = &Message::new("", "{{name}} should not match {{pattern}}");
 
     struct CompiledMatcherAndMessage {
         regex: Regex,
@@ -536,8 +536,8 @@ pub(crate) mod valid_title {
 pub(crate) mod consistent_test_it {
     use super::*;
 
-    const CONSISTENT_METHOD: Message =
-        Message::new("", "Enforce `test` and `it` usage conventions");
+    const CONSISTENT_METHOD: &Message =
+        &Message::new("", "Enforce `test` and `it` usage conventions");
 
     #[derive(Copy, Clone)]
     pub(crate) struct ConsistentTestItConfig {
@@ -661,8 +661,8 @@ pub(crate) mod consistent_test_it {
 pub(crate) mod max_nested_describe {
     use super::*;
 
-    const EXCEEDED_MAX_DEPTH: Message =
-        Message::new("", "Enforces a maximum depth to nested describe calls.");
+    const EXCEEDED_MAX_DEPTH: &Message =
+        &Message::new("", "Enforces a maximum depth to nested describe calls.");
 
     pub(crate) fn run_once<'a>(max: u32, ctx: &Ctx<'a, '_>) {
         let mut active_describes: Vec<Span> = Vec::new();
@@ -694,8 +694,8 @@ pub(crate) mod max_nested_describe {
 pub(crate) mod no_commented_out_tests {
     use super::*;
 
-    const NO_COMMENTED_OUT_TESTS: Message =
-        Message::new("", "Some tests appear to be inside comments.");
+    const NO_COMMENTED_OUT_TESTS: &Message =
+        &Message::new("", "Some tests appear to be inside comments.");
 
     /// Strips the leading bytes of `rest` that match `is_skipped`.
     fn skip(rest: &[u8], is_skipped: impl Fn(u8) -> bool) -> &[u8] {
@@ -774,7 +774,8 @@ pub(crate) mod no_commented_out_tests {
 pub(crate) mod no_conditional_in_test {
     use super::*;
 
-    const NO_CONDITIONAL_IN_TEST: Message = Message::new("", "Avoid having conditionals in tests.");
+    const NO_CONDITIONAL_IN_TEST: &Message =
+        &Message::new("", "Avoid having conditionals in tests.");
 
     pub(crate) fn run_once<'a>(ctx: &Ctx<'a, '_>) {
         let file = ctx.file;
@@ -807,11 +808,11 @@ pub(crate) mod no_conditional_in_test {
 pub(crate) mod no_identical_title {
     use super::*;
 
-    const DESCRIBE_REPEAT: Message = Message::new(
+    const DESCRIBE_REPEAT: &Message = &Message::new(
         "",
         "Describe block title is used multiple times in the same describe block.",
     );
-    const TEST_REPEAT: Message = Message::new(
+    const TEST_REPEAT: &Message = &Message::new(
         "",
         "Test title is used multiple times in the same describe block.",
     );
@@ -928,7 +929,7 @@ pub(crate) mod no_identical_title {
 pub(crate) mod no_test_prefixes {
     use super::*;
 
-    const NO_TEST_PREFIXES: Message = Message::new("", "Use `{{preferred_node_name}}` instead.");
+    const NO_TEST_PREFIXES: &Message = &Message::new("", "Use `{{preferred_node_name}}` instead.");
 
     type Names<'a> = SmallVec<[&'a [u8]; 4]>;
 
@@ -1023,10 +1024,10 @@ pub(crate) mod no_test_prefixes {
 pub(crate) mod no_test_return_statement {
     use super::*;
 
-    const NO_TEST_RETURN_STATEMENT: Message =
-        Message::new("", "Jest tests should not return a value");
-    const NO_TEST_RETURN_STATEMENT_IN_BUN: Message =
-        Message::new("", "Tests should not return a value");
+    const NO_TEST_RETURN_STATEMENT: &Message =
+        &Message::new("", "Jest tests should not return a value");
+    const NO_TEST_RETURN_STATEMENT_IN_BUN: &Message =
+        &Message::new("", "Tests should not return a value");
 
     pub(crate) fn run_once<'a>(ctx: &Ctx<'a, '_>) {
         for return_stmt in ctx.file.stmts_of_kind(StmtTag::Return) {
@@ -1100,8 +1101,8 @@ pub(crate) mod no_test_return_statement {
 pub(crate) mod prefer_each {
     use super::*;
 
-    const USE_PREFER_EACH: Message =
-        Message::new("", "Enforce using `each` rather than manual loops");
+    const USE_PREFER_EACH: &Message =
+        &Message::new("", "Enforce using `each` rather than manual loops");
 
     pub(crate) fn should_run(file: &File) -> bool {
         mentions_jest_method(file) && file.has_stmts([StmtTag::For, StmtTag::ForIn, StmtTag::ForOf])
@@ -1193,7 +1194,7 @@ pub(crate) mod prefer_each {
 pub(crate) mod prefer_lowercase_title {
     use super::*;
 
-    const PREFER_LOWERCASE_TITLE: Message = Message::new("", "Enforce lowercase test names");
+    const PREFER_LOWERCASE_TITLE: &Message = &Message::new("", "Enforce lowercase test names");
 
     pub(crate) struct PreferLowercaseTitleConfig {
         allowed_prefixes: Vec<String>,
@@ -1297,7 +1298,7 @@ pub(crate) mod prefer_lowercase_title {
 pub(crate) mod prefer_todo {
     use super::*;
 
-    const PREFER_TODO: Message = Message::new("", "Suggest using `test.todo`.");
+    const PREFER_TODO: &Message = &Message::new("", "Suggest using `test.todo`.");
 
     pub(crate) fn run<'a>(possible_jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
         let node = possible_jest_node.node;
@@ -1378,7 +1379,7 @@ pub(crate) mod prefer_todo {
 pub(crate) mod require_top_level_describe {
     use super::*;
 
-    const REQUIRE_TOP_LEVEL_DESCRIBE: Message = Message::new(
+    const REQUIRE_TOP_LEVEL_DESCRIBE: &Message = &Message::new(
         "",
         "Require test cases and hooks to be inside a `describe` block",
     );
@@ -1441,8 +1442,8 @@ pub(crate) mod require_top_level_describe {
 pub(crate) mod padding_around_blocks {
     use super::*;
 
-    const PADDING_AROUND_JEST_BLOCK: Message =
-        Message::new("", "Missing padding before {{name}} block");
+    const PADDING_AROUND_JEST_BLOCK: &Message =
+        &Message::new("", "Missing padding before {{name}} block");
 
     /// `is_for_tests` checks `it` and `test`. Otherwise `afterAll` is checked.
     pub(crate) fn run<'a>(ctx: &Ctx<'a, '_>, is_for_tests: bool) {

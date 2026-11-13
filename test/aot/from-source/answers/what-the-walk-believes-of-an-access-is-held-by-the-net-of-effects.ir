@@ -1,0 +1,14 @@
+# -- source: main.js
+# const s = (value) => String(globalThis.nothingOfThisName ?? value);
+# function byKey(record, name) { return record[name]; }
+# print(byKey({ up: 1, down: 2 }, s("up")) + byKey({ up: 3, down: 4 }, s("down")));
+# -- end of source
+# The row of ElemGet is unknown code. What the walk believes of the one in byKey() hangs on its operands' types: a plain record and a text: it runs no code of the program. The net holds the operation to that belief:
+# it is the one operation of the function that is held to run no other code and whose operands are hashed.
+# RUN: run-in-shell testing=CheckEffectsAtRunTime mechanisms=all-Inlining
+# CHECK: 5
+# CHECK-NEXT: exited with 0
+# RUN(WALK): walk f1:Body mechanisms=all-Inlining
+# WALK: = ElemGet {{*}}traits=[mayThrow, mayCollect, mayTouchMemory]
+# RUN(EMIT): emit f1:Body testing=CheckEffectsAtRunTime mechanisms=all-Inlining
+# EMIT: Writes:{JSCell_header, JSObject_butterfly, AOTSlimClosure_word, AOTObject_shapeWord}|Reads:Top

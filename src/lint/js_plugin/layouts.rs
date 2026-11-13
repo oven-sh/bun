@@ -6,6 +6,7 @@
 //!   converter computes the range itself, `range` comes right after `type`. See [`alternates`].
 //! - oxlint: `type`, the fields in the order of oxc's structs, `start`, `end`, `range`, `parent`. `loc` is inherited. A
 //!   JavaScript file has the same nodes as a TypeScript file, with `null` for whatever is absent.
+//! - Without an ESLint or oxlint config: typescript-estree's, with `start` and `end` before `range`.
 //!
 //! The orders were read off the nodes that espree 11, typescript-estree 8.71.1 and oxlint 1.87 produce for 63,000
 //! files.
@@ -114,18 +115,25 @@ enum Layout {
     /// an `Identifier`'s decorators, `?` and type, or a call's type arguments. `ast.rs` doesn't write these. See
     /// [`ast::shortens_nodes`].
     OxlintJavaScript,
+    /// typescript-estree's nodes with `start` and `end`, for a file with no ESLint or oxlint config to match.
+    TypeScriptWithStartEnd,
 }
 
 impl Layout {
-    const ALL: [Layout; 4] = [
+    const ALL: [Layout; 5] = [
         Layout::TypeScript,
         Layout::Espree,
         Layout::Oxlint,
         Layout::OxlintJavaScript,
+        Layout::TypeScriptWithStartEnd,
     ];
 
     fn is_espree(self) -> bool {
         self == Layout::Espree
+    }
+
+    fn is_typescript(self) -> bool {
+        matches!(self, Layout::TypeScript | Layout::TypeScriptWithStartEnd)
     }
 
     fn is_oxlint(self) -> bool {
@@ -134,7 +142,7 @@ impl Layout {
 
     fn exceptions(self) -> &'static [u8] {
         match self {
-            Layout::TypeScript => TYPESCRIPT,
+            Layout::TypeScript | Layout::TypeScriptWithStartEnd => TYPESCRIPT,
             Layout::Espree => ESPREE,
             Layout::Oxlint | Layout::OxlintJavaScript => OXLINT,
         }
@@ -208,7 +216,7 @@ fn fields_in_order(
     }
     let mut names = shown.to_vec();
     names.retain(|it| !hidden.contains(it));
-    if layout == Layout::TypeScript {
+    if layout.is_typescript() {
         sort::sort_by_cached_key(&mut names, |it| it.to_ascii_lowercase());
         names.extend_from_slice(hidden);
     }
@@ -359,6 +367,16 @@ pub(super) fn write(out: &mut Vec<u8>) {
                     &[TYPE_PROPERTY],
                     &[RANGE_PROPERTY, LOC_PROPERTY, PARENT_PROPERTY],
                 ),
+                Layout::TypeScriptWithStartEnd => (
+                    &[TYPE_PROPERTY],
+                    &[
+                        START_PROPERTY,
+                        END_PROPERTY,
+                        RANGE_PROPERTY,
+                        LOC_PROPERTY,
+                        PARENT_PROPERTY,
+                    ],
+                ),
                 Layout::Oxlint | Layout::OxlintJavaScript => (
                     &[TYPE_PROPERTY],
                     &[
@@ -371,24 +389,28 @@ pub(super) fn write(out: &mut Vec<u8>) {
             };
             let properties: Vec<Property> =
                 [outer_properties.0, &middle[..], outer_properties.1].concat();
-            let alternate: Vec<Property> = match (layout, node_type) {
-                (Layout::TypeScript, NodeType::TSModuleDeclaration) => {
+            // `range` where the converter puts it, and `start` and `end` before it.
+            let range: &[Property] = match layout {
+                Layout::TypeScriptWithStartEnd => &[START_PROPERTY, END_PROPERTY, RANGE_PROPERTY],
+                _ => &[RANGE_PROPERTY],
+            };
+            let alternate: Vec<Property> = match (layout.is_typescript(), node_type) {
+                (true, NodeType::TSModuleDeclaration) => {
                     let order = b"kind,body,declare,global,id";
                     let middle = fields_in_order(layout, Some(order), &fields, &hidden, &shown);
                     [outer_properties.0, &middle[..], outer_properties.1].concat()
                 }
                 // `convertTypeAnnotation` and `convertTSTypeParametersToTypeParametersDeclaration` compute both.
-                (
-                    Layout::TypeScript,
-                    NodeType::TSTypeAnnotation | NodeType::TSTypeParameterDeclaration,
-                ) => [
-                    &[TYPE_PROPERTY, LOC_PROPERTY, RANGE_PROPERTY],
+                (true, NodeType::TSTypeAnnotation | NodeType::TSTypeParameterDeclaration) => [
+                    &[TYPE_PROPERTY, LOC_PROPERTY],
+                    range,
                     &middle[..],
                     &[PARENT_PROPERTY],
                 ]
                 .concat(),
-                (Layout::TypeScript, _) => [
-                    &[TYPE_PROPERTY, RANGE_PROPERTY],
+                (true, _) => [
+                    &[TYPE_PROPERTY],
+                    range,
                     &middle[..],
                     &[LOC_PROPERTY, PARENT_PROPERTY],
                 ]

@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 /// Disallows calling new on static `Promise` methods.
 pub struct NoNewStatics;
 
-const STATIC_PROMISE: Message = Message::new("", "Do not use `new` on `Promise.{{static_name}}`");
+const STATIC_PROMISE: &Message = &Message::new("", "Do not use `new` on `Promise.{{static_name}}`");
 
 impl Rule for NoNewStatics {
     const META: Meta = Meta::oxlint(Plugin::Promise, "no-new-statics", Kind::Problem).fixable(Fixable::Code);

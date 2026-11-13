@@ -1,0 +1,13 @@
+A hoisted vi.mock() in a test file that imports another file with empty braces.
+#### a.test.ts
+import { test, vi } from "vitest";
+import {} from "./side";
+vi.mock("./mod", () => { console.log("| CASE factory"); return { who: "mock" }; });
+test("t", () => { console.log("| CASE in the test"); });
+#### mod.ts
+console.log("| CASE load mod");
+export const who: string = "real";
+#### side.ts
+import { who } from "./mod";
+console.log("| CASE load side", who);
+export const captured: string = who;

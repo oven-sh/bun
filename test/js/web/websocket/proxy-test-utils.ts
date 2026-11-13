@@ -412,7 +412,8 @@ export async function startRenegotiatingWssServer(when: "before the 101" | "afte
             socket.on("error", () => {});
             const renegotiate = then =>
               socket.renegotiate({ rejectUnauthorized: false }, err => (err ? socket.destroy(err) : then()));
-            const send = payload => socket.write(Buffer.concat([Buffer.from([0x81, payload.length]), Buffer.from(payload)]));
+            const send = (payload, sent) =>
+              socket.write(Buffer.concat([Buffer.from([0x81, payload.length]), Buffer.from(payload)]), sent);
             const closeOnNextFrame = () => socket.once("data", () => socket.end(Buffer.from([0x88, 0x02, 0x03, 0xe8])));
             const greet = () => {
               send("after renegotiation");
@@ -442,8 +443,10 @@ export async function startRenegotiatingWssServer(when: "before the 101" | "afte
                 renegotiate(answer);
               } else if (process.env.WHEN === "behind a message") {
                 socket.once("data", () => {
-                  send("renegotiating");
-                  renegotiate(greetThenEcho);
+                  // From the write's callback: renegotiate() arms the request at once, so a frame that is still
+                  // queued behind the 101 (on Windows that write can be in flight here) would leave after the
+                  // HelloRequest. A BoringSSL client takes no application data during the new handshake.
+                  send("renegotiating", () => renegotiate(greetThenEcho));
                 });
                 answer();
               } else {

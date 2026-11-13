@@ -1,0 +1,13 @@
+# The string of the outer loop is read in front of the inner one in each outer iteration, also where the other string is empty. So what the inner loop asks is no condition on it: a rope that is not flattened there would be the empty string,
+# and the read would go past its end.
+# -- source: reads-of-strings-in-front-of-loops-that-may-not-begin.ts
+# function pairs(a: string, b: string): number { let n = 0; for (let i = 0; i < a.length; i++) for (let j = 0; j < b.length; j++) if (a.charCodeAt(i) === b.charCodeAt(j)) n++; return n; }
+# const size = process.argv.length;
+# console.log(pairs("abc" + size, "bc" + size), pairs("ab".repeat(size) + size + "c", ""));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: [[begins]]: boolean @Boolean = Less
+# CHECK: = FlattenString {{*}}, [[begins]] traits
+# CHECK: = FlattenString {{*}}, [[begins]] traits
+# CHECK: isLoopHead=true:

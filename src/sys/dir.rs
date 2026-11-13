@@ -132,12 +132,12 @@ impl Dir {
             parent_dir: Fd,
             iter: dir_iterator::WrappedIterator,
         }
-        // Ensure every still-open iterator dir is closed on early return.
-        let mut stack = scopeguard::guard(Vec::<StackItem>::with_capacity(16), |mut s| {
-            for item in s.drain(..) {
-                let _ = close(item.iter.dir());
+        impl Drop for StackItem {
+            fn drop(&mut self) {
+                let _ = close(self.iter.dir());
             }
-        });
+        }
+        let mut stack = Vec::<StackItem>::with_capacity(16);
         stack.push(StackItem {
             name: sub_path.to_vec(),
             parent_dir: self.fd,
@@ -203,13 +203,9 @@ impl Dir {
 
             // Reached the end of the directory entries — exhausted; remove the
             // directory itself. On Windows we must close before removing.
-            let dir_fd = top.iter.dir();
             let parent_dir = top.parent_dir;
             let name = core::mem::take(&mut top.name);
-            // Pop before closing so the cleanup guard doesn't double-close on
-            // an error from `unlinkat_a`.
-            stack.pop();
-            let _ = close(dir_fd);
+            stack.truncate(stack.len() - 1);
 
             let mut need_to_retry = false;
             match unlinkat_a(parent_dir, &name, AT_REMOVEDIR) {
@@ -254,7 +250,6 @@ impl Dir {
                 continue 'process_stack;
             }
         }
-        scopeguard::ScopeGuard::into_inner(stack);
         Ok(())
     }
 

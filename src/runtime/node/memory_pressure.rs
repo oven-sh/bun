@@ -128,9 +128,9 @@ mod posix {
     fn own_cgroup_pressure_path(buf: &mut [u8]) -> Option<&bun_core::ZStr> {
         use bun_sys::O;
         let fd = bun_sys::open(bun_core::zstr!("/proc/self/cgroup"), O::RDONLY, 0).ok()?;
+        let _close = bun_sys::CloseOnDrop::new(fd);
         let mut read = [0u8; 256];
         let n = bun_sys::read(fd, &mut read).unwrap_or(0);
-        let _ = bun_sys::close(fd);
         for line in bun_core::strings::split(&read[..n], b"\n") {
             let Some(rest) = line.strip_prefix(b"0::") else {
                 continue;

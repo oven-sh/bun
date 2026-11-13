@@ -3,7 +3,7 @@
 // 36 over whole numbers: every pin was met, and no count of calls could see it.
 // A row that is not met yet stands in gap(), with what it takes today: it is measured at every run and is red once it is met.
 import { join } from "path";
-import { describeTwins, type Row } from "./twins";
+import { describeTwins, type CountedRow, type Row } from "./twins";
 
 const rows: Row[] = [
   ["map.ts", "map over whole numbers", "map over fractions", 1.5],
@@ -34,7 +34,6 @@ const rows: Row[] = [
   ["a-keyed-store.js", "counts in a map", "counts in an object", 1.5],
   ["a-keyed-store.js", "counts in a map", "counts by a step", 1.5],
   ["a-keyed-store.js", "counts in an object", "under a key of two parts", 2],
-  ["a-keyed-store.js", "under a key of two parts", "under a key that a helper makes", 1.4],
   ["a-list-filled-to-a-bound.ts", "seventeen values", "nine values", 0.8],
   ["methods-that-a-helper-stores.js", "methods written in the literal", "methods that a helper stores", 1.3],
   [
@@ -45,4 +44,9 @@ const rows: Row[] = [
   ],
 ];
 
-describeTwins("everyday-twins", join(import.meta.dir, "everyday-twins"), rows, () => "main.ts");
+const counted: CountedRow[] = [
+  // It was allowed 1.3 times the instructions of a key of two parts in place: 250 of 193, 303 of 233 on arm64. That takes 170 and 198 since the key is looked up in line, where this takes 230 and 263.
+  ["a-keyed-store.js", "under a key that a helper makes", process.arch === "arm64" ? 275 : 240],
+];
+
+describeTwins("everyday-twins", join(import.meta.dir, "everyday-twins"), rows, () => "main.ts", counted);

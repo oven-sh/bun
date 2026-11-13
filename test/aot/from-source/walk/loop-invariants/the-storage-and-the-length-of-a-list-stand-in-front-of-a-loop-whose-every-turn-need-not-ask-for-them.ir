@@ -10,6 +10,12 @@
 # -- end of source
 # By its text the body of a loop of three turns does not stand on every way through a turn of the loop around it, and neither does a read under a condition: so the storage and the length of the lists
 # read there were loaded anew at each read, though nothing in the turns writes them. The two are loads that never fail of what is a list by its own type: they stand in front.
-# REQUIRES(SHELL): as-written
+# REQUIRES: as-written
+# RUN: compile KnownInductionsUsed mechanisms=all
+# blur() is a nest four deep: the loop over x, inside the typed copy of the loop over y, holds a loop that holds a loop: its other copy buys the innermost loop alone: 27 inductions became 15 with one loop fewer built twice.
+# In pack() a hole of `best` is read as NaN: no test of its own asks for the length in front of the read: 14.
+# `best`, stored into under a test, is asked before the loop over `c`, so that loop is built twice: 8,477 > 7,358 instructions: 24.
+# `weights[i]` is read before the loop over `c`, beside its stores into `best`: 26. pack() has versions more, 4,792 > 3,156 instructions: 32.
+# CHECK: statistic KnownInductionsUsed 32
 # RUN(SHELL): run-in-shell globalThis.sink = answers => print(answers.join(" "));
 # SHELL: 44901 559.5 0 41.5 11 0.5

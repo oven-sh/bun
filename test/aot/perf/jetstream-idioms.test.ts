@@ -2,7 +2,7 @@
 // A row that is not met yet is in gap(), with what it takes today: it is measured at every run and is red once it is met.
 import { join } from "path";
 import { gap } from "../supported";
-import { describeTwins, type Row } from "./twins";
+import { describeTwins, type CountedRow, type Row } from "./twins";
 
 const rows: Row[] = [
   ["inheritance.cjs", "a class that extends", "no parent", 1.5],
@@ -10,6 +10,7 @@ const rows: Row[] = [
   ["inheritance.cjs", "a class that extends", "Babel", 1.5],
   ["inheritance.cjs", "a class that extends", "TypeScript", 1.5],
   ["inheritance.cjs", "a class that extends", "an instance of the parent", 1.5],
+  // It takes 46 instructions, 44 where 2.4 times was written: the test of its class asks once more whether a value that a check has passed is an object.
   gap("2.6 times", ["inheritance.cjs", "a class that extends", "util.inherits", 1.5]),
   ["inheritance.cjs", "a class that extends", "__proto__ in a literal", 1.5],
   ["inheritance.cjs", "a class that extends", "__proto__ assigned", 1.5],
@@ -64,7 +65,6 @@ const rows: Row[] = [
   ["generators.ts", "the same elements by index", "for-of", 1.5],
   ["generators.ts", "the same elements by index", "next() by hand", 1.8],
   ["statics.ts", "a field of a literal read", "a static field read", 1],
-  ["statics.ts", "a field of a literal written", "a static field written", 2.6],
   gap("3.3 times", ["statics.ts", "a counter in a literal", "a counter in a private static field", 1.5]),
   // Its twin takes 7 instructions, 11 where 1.6 was written: 17 over 7, 17 over 11 then.
   ["statics.ts", "a counter in a literal", "a counter on a function", 2.8],
@@ -83,4 +83,9 @@ const rows: Row[] = [
   ["variables.ts", "an element of an array", "an entry of a Map", 7.5],
 ];
 
-describeTwins("jetstream-idioms", join(import.meta.dir, "jetstream-idioms"), rows, file => file);
+const counted: CountedRow[] = [
+  // It takes 8 instructions, as it did when 1.7 times those of a field of a literal were written: 5.25 then, 3.25 since that field holds integers.
+  ["statics.ts", "a static field written", 8.5],
+];
+
+describeTwins("jetstream-idioms", join(import.meta.dir, "jetstream-idioms"), rows, file => file, counted);

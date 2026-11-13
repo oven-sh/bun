@@ -1055,14 +1055,23 @@ rules = { "import/no-unassigned-import" = ["error", { allow = ["src/client/*.css
       "node_modules/icons-pkg/dist/default.js": "export const icons = 1;\n",
       "src/index.ts": `import Check from "icons-pkg/icons/check";\nimport X from "icons-pkg/icons/x";\nexport const icons = [Check(), X()];\n`,
       "src/root.ts": `import { icons } from "icons-pkg";\nimport { icons as again } from "icons-pkg";\nexport const both = [icons, again];\n`,
+      // A package whose `import` target has no declaration file next to it, while its `require` target has one.
+      "node_modules/dual-pkg/package.json": JSON.stringify({
+        name: "dual-pkg",
+        exports: { ".": { import: "./dist/index.mjs", require: "./dist/index.js" } },
+      }),
+      "node_modules/dual-pkg/dist/index.mjs": "export {};\n",
+      "node_modules/dual-pkg/dist/index.js": "module.exports = {};\n",
+      "node_modules/dual-pkg/dist/index.d.ts": "export {};\n",
+      "other/dual.ts": `import "dual-pkg";\nimport "dual-pkg";\n`,
     });
     const duplicates = ["src/index.ts:1 import/no-duplicates", "src/index.ts:2 import/no-duplicates"];
     const rootDuplicates = ["src/root.ts:1 import/no-duplicates", "src/root.ts:2 import/no-duplicates"];
     const setting = (conditions: string) =>
       `[lint.settings]\n"import/resolver" = { typescript = { conditionNames = ${conditions} } }\n`;
-    /** What the reports of `-f unix` say the imports of `icons-pkg` resolve to, sorted. */
+    /** What the reports of `-f unix` say the imports of the packages resolve to, sorted. */
     const resolvedPaths = (stdout: string) =>
-      [...stdout.replaceAll("\\", "/").matchAll(/node_modules\/icons-pkg\/(\S+)' imported/g)].map(it => it[1]).sort();
+      [...stdout.replaceAll("\\", "/").matchAll(/node_modules\/(\S+)' imported/g)].map(it => it[1]).sort();
 
     test("by default, every wildcard entry resolves to the shared types, as with eslint-import-resolver-typescript", async () => {
       expect(await lintIn(".", files(""), ["src"])).toMatchObject({ found: [...duplicates, ...rootDuplicates] });
@@ -1079,10 +1088,10 @@ rules = { "import/no-unassigned-import" = ["error", { allow = ["src/client/*.css
     });
 
     test("the first key of `exports` that is listed wins, and `default` always matches", async () => {
-      const resolved = async (conditions: string) => {
+      const resolved = async (conditions: string, file = "src/root.ts") => {
         using dir = tempDir("bun-lint", files(setting(conditions)));
         await using proc = spawn({
-          cmd: [bunExe(), "lint", "-f", "unix", "src/root.ts"],
+          cmd: [bunExe(), "lint", "-f", "unix", file],
           env,
           cwd: String(dir),
           stdin: "ignore",
@@ -1092,9 +1101,15 @@ rules = { "import/no-unassigned-import" = ["error", { allow = ["src/client/*.css
         const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         return { paths: resolvedPaths(stdout), exitCode };
       };
-      expect(await resolved(`["import", "node"]`)).toEqual({ paths: ["dist/node.js", "dist/node.js"], exitCode: 1 });
-      expect(await resolved(`["import"]`)).toEqual({ paths: ["dist/import.js", "dist/import.js"], exitCode: 1 });
-      expect(await resolved(`[]`)).toEqual({ paths: ["dist/default.js", "dist/default.js"], exitCode: 1 });
+      const icons = (path: string) => ({ paths: [`icons-pkg/${path}`, `icons-pkg/${path}`], exitCode: 1 });
+      expect(await resolved(`["import", "node"]`)).toEqual(icons("dist/node.js"));
+      expect(await resolved(`["import"]`)).toEqual(icons("dist/import.js"));
+      expect(await resolved(`[]`)).toEqual(icons("dist/default.js"));
+      // The first key's file wins over the second key's declaration file.
+      expect(await resolved(`["import", "require", "default"]`, "other/dual.ts")).toEqual({
+        paths: ["dual-pkg/dist/index.mjs", "dual-pkg/dist/index.mjs"],
+        exitCode: 1,
+      });
     });
 
     test("files with different lists share a tsconfig.json, in either order", async () => {
@@ -1115,10 +1130,10 @@ rules = { "import/no-unassigned-import" = ["error", { allow = ["src/client/*.css
         });
         const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         expect(resolvedPaths(stdout)).toEqual([
-          "dist/default.js",
-          "dist/default.js",
-          "dist/icon.d.mts",
-          "dist/icon.d.mts",
+          "icons-pkg/dist/default.js",
+          "icons-pkg/dist/default.js",
+          "icons-pkg/dist/icon.d.mts",
+          "icons-pkg/dist/icon.d.mts",
         ]);
         expect(exitCode).toBe(1);
       }

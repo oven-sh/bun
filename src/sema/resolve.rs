@@ -3267,6 +3267,9 @@ impl<'h> Resolver<'h> {
         }
         // Otherwise as in `node_modules`: a full pass for types first, then a pass for the other
         // kinds of file.
+        if self.options.condition_names.is_some() {
+            return self.exports(dir, exports, &key, look);
+        }
         match self.exports(dir, exports, &key, look.for_types()) {
             Found::No => self.exports(dir, exports, &key, look.for_the_rest()),
             found => found,
@@ -4100,6 +4103,10 @@ impl<'h> Resolver<'h> {
     /// JavaScript in a nearer one. A specifier that the search for types finds explicitly
     /// unresolved isn't searched for again.
     fn node_modules(&self, spec: &[u8], from_dir: &[u8], look: Look) -> Found {
+        // With `condition_names`, the first key of `exports` that matches wins, whatever kind of file it names.
+        if self.options.condition_names.is_some() {
+            return self.node_modules_once(spec, from_dir, look);
+        }
         if look.typescript || look.declarations {
             if look.tracer.is_some() {
                 look.trace(6417, &[Arg::Bytes(&look.for_types().extensions())]);

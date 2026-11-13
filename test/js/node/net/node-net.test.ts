@@ -2247,50 +2247,55 @@ describe("Socket fd adoption", () => {
   // The hana-client flow: `net.Socket({ fd, readable: true })` (no `new`),
   // unref()'d right away so an idle pipe never holds the process open, ref()'d
   // while native work is outstanding so the completion byte is waited for.
+  // One child holds both sockets: the process must stay up until the ref()'d
+  // one has read its byte and closed, and exit then even though the unref()'d
+  // one is still open and idle.
   it.concurrent.skipIf(fifoReadsUnsupported)(
     "an adopted readable fd keeps the loop alive while ref()'d and releases it when unref()'d",
     async () => {
-      const dir = tmpdirSync();
-      const script = (mode: "ref" | "unref") => /* js */ `
+      using dir = tempDir("fd-adoption-ref-unref", {});
+      for (const mode of ["ref", "unref"]) execFileSync("mkfifo", [join(String(dir), `${mode}.fifo`)]);
+      const script = /* js */ `
         const fs = require("node:fs");
         const net = require("node:net");
-        const path = ${JSON.stringify(join(dir, `${mode}.fifo`))};
-        const rfd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
-        const wfd = fs.openSync(path, "w");
-        const events = [];
-        const socket = net.Socket({ fd: rfd, readable: true });
-        socket.unref();
-        socket.on("data", chunk => events.push("data:" + chunk));
-        socket.on("end", () => events.push("end"));
-        socket.on("close", () => events.push("close"));
-        socket.on("error", err => events.push("error:" + err.code));
+        const dir = ${JSON.stringify(String(dir))};
+        const events = { ref: [], unref: [] };
+        const open = mode => {
+          const path = dir + "/" + mode + ".fifo";
+          const rfd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+          const wfd = fs.openSync(path, "w");
+          const socket = net.Socket({ fd: rfd, readable: true });
+          socket.unref();
+          socket.on("data", chunk => events[mode].push("data:" + chunk));
+          socket.on("end", () => events[mode].push("end"));
+          socket.on("close", () => events[mode].push("close"));
+          socket.on("error", err => events[mode].push("error:" + err.code));
+          return { socket, wfd };
+        };
+        open("unref");
+        const ref = open("ref");
+        ref.socket.ref();
         process.on("exit", () => console.log(JSON.stringify(events)));
-        if (${JSON.stringify(mode)} === "ref") {
-          socket.ref();
-          // Nothing but the socket keeps the loop alive after this runs.
-          setImmediate(() => {
-            fs.writeSync(wfd, "x");
-            fs.closeSync(wfd);
-          });
-        }
-      `;
-      const run = async (mode: "ref" | "unref") => {
-        execFileSync("mkfifo", [join(dir, `${mode}.fifo`)]);
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "-e", script(mode)],
-          env: bunEnv,
-          stdout: "pipe",
-          stderr: "pipe",
+        // Nothing but the ref()'d socket keeps the loop alive after this runs.
+        setImmediate(() => {
+          fs.writeSync(ref.wfd, "x");
+          fs.closeSync(ref.wfd);
         });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        return { events: stdout.trim(), stderr: stderr.trim(), exitCode };
-      };
-      const [ref, unref] = await Promise.all([run("ref"), run("unref")]);
-      expect({ ref, unref }).toEqual({
-        ref: { events: JSON.stringify(["data:x", "end", "close"]), stderr: "", exitCode: 0 },
-        unref: { events: "[]", stderr: "", exitCode: 0 },
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ events: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
+        events: JSON.stringify({ ref: ["data:x", "end", "close"], unref: [] }),
+        stderr: "",
+        exitCode: 0,
       });
     },
+    30_000,
   );
 
   // Loop liveness of an adopted pipe fd follows libuv's stream rules: the
@@ -2302,13 +2307,13 @@ describe("Socket fd adoption", () => {
   it.concurrent.skipIf(fifoReadsUnsupported)(
     "an unref()'d adopted fd keeps the loop alive only while a write is pending",
     async () => {
-      const dir = tmpdirSync();
-      execFileSync("mkfifo", [join(dir, "pending-write.fifo")]);
+      using dir = tempDir("fd-adoption-pending-write", {});
+      execFileSync("mkfifo", [join(String(dir), "pending-write.fifo")]);
       const size = 256 * 1024;
       const script = /* js */ `
         const fs = require("node:fs");
         const net = require("node:net");
-        const path = ${JSON.stringify(join(dir, "pending-write.fifo"))};
+        const path = ${JSON.stringify(join(String(dir), "pending-write.fifo"))};
         const rfd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
         const wfd = fs.openSync(path, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
         const errors = [];
@@ -2352,6 +2357,7 @@ describe("Socket fd adoption", () => {
         exitCode: 0,
       });
     },
+    30_000,
   );
 
   // A write the kernel took right away leaves nothing pending: an unref()'d
@@ -2359,12 +2365,12 @@ describe("Socket fd adoption", () => {
   it.concurrent.skipIf(fifoReadsUnsupported)(
     "an unref()'d adopted fd lets the process exit once a small write is flushed",
     async () => {
-      const dir = tmpdirSync();
-      execFileSync("mkfifo", [join(dir, "small-write.fifo")]);
+      using dir = tempDir("fd-adoption-small-write", {});
+      execFileSync("mkfifo", [join(String(dir), "small-write.fifo")]);
       const script = /* js */ `
         const fs = require("node:fs");
         const net = require("node:net");
-        const path = ${JSON.stringify(join(dir, "small-write.fifo"))};
+        const path = ${JSON.stringify(join(String(dir), "small-write.fifo"))};
         const rfd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
         const wfd = fs.openSync(path, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
         const writer = new net.Socket({ fd: wfd, readable: true, writable: true });
@@ -2395,6 +2401,7 @@ describe("Socket fd adoption", () => {
         exitCode: 0,
       });
     },
+    30_000,
   );
 
   // `destroy()` drops what the kernel has not taken (libuv cancels the queued
@@ -2403,12 +2410,12 @@ describe("Socket fd adoption", () => {
   it.concurrent.skipIf(fifoReadsUnsupported)(
     "an unref()'d adopted fd lets the process exit when destroy() drops a pending write",
     async () => {
-      const dir = tmpdirSync();
-      execFileSync("mkfifo", [join(dir, "destroy-pending.fifo")]);
+      using dir = tempDir("fd-adoption-destroy-pending", {});
+      execFileSync("mkfifo", [join(String(dir), "destroy-pending.fifo")]);
       const script = /* js */ `
         const fs = require("node:fs");
         const net = require("node:net");
-        const path = ${JSON.stringify(join(dir, "destroy-pending.fifo"))};
+        const path = ${JSON.stringify(join(String(dir), "destroy-pending.fifo"))};
         // The read end stays open and is never read: the write below cannot drain.
         const rfd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
         const wfd = fs.openSync(path, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
@@ -2434,19 +2441,20 @@ describe("Socket fd adoption", () => {
         exitCode: 0,
       });
     },
+    30_000,
   );
 
   // Runs in a child so the count starts from zero.
   it.concurrent.skipIf(fifoReadsUnsupported)(
     "releases the native pipe context once the socket has closed",
     async () => {
-      const dir = tmpdirSync();
-      for (const name of ["a.fifo", "b.fifo"]) execFileSync("mkfifo", [join(dir, name)]);
+      using dir = tempDir("fd-adoption-live-count", {});
+      for (const name of ["a.fifo", "b.fifo"]) execFileSync("mkfifo", [join(String(dir), name)]);
       const script = /* js */ `
       const fs = require("node:fs");
       const net = require("node:net");
       const { posixPipeInternals } = require("bun:internal-for-testing");
-      const dir = ${JSON.stringify(dir)};
+      const dir = ${JSON.stringify(String(dir))};
       function openFifo(name) {
         const path = dir + "/" + name;
         const rfd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
@@ -2524,6 +2532,7 @@ describe("Socket fd adoption", () => {
         exitCode: 0,
       });
     },
+    30_000,
   );
 
   // The adopted fd is owned, not borrowed (node: uv_pipe_open + uv_close):

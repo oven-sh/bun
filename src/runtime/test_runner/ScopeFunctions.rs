@@ -187,12 +187,15 @@ impl ScopeFunctions {
         if self.mode == Mode::Describe {
             return Err(global.throw(format_args!("{} cannot be called on {}", signature, self)));
         }
-        let mut active_scope: *const DescribeScope = core::ptr::null();
+        let mut scope: *const DescribeScope = core::ptr::null();
         let mut is_top_level = true;
         if let Some(buntest) = bun_test::clone_active_strong() {
             if buntest.phase == bun_test::Phase::Collection {
-                active_scope = buntest.collection.active_scope.as_ptr();
-                is_top_level = core::ptr::eq(active_scope, &raw const *buntest.collection.root_scope);
+                let root_scope = &raw const *buntest.collection.root_scope;
+                let active_scope: *const DescribeScope = buntest.collection.active_scope.as_ptr();
+                is_top_level = core::ptr::eq(active_scope, root_scope);
+                // A `test` made after collection can only register tests in a later file, so `extend()` copies the file's overrides only here.
+                scope = if is_override { active_scope } else { root_scope };
             } else if is_override {
                 return Err(global.throw(format_args!(
                     "Cannot call {} inside a test. Call it inside describe() instead.",
@@ -200,7 +203,7 @@ impl ScopeFunctions {
                 )));
             }
         }
-        TestFixtures::define(global, arguments, signature, self.fixtures, active_scope, is_top_level, is_override)
+        TestFixtures::define(global, arguments, signature, self.fixtures, scope, is_top_level, is_override)
     }
 
     fn hook(&self, global: &JSGlobalObject, tag: GenericHookTag) -> JsResult<JSValue> {

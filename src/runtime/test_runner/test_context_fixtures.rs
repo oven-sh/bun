@@ -178,6 +178,7 @@ impl TestFixtures {
     }
 
     /// `test.override()` mutates `parent` for `active_scope` only, or for every file in a preload or without a scope.
+    /// `test.extend()` starts from what `parent` has in `active_scope`.
     #[optimize(size)]
     pub(crate) fn define(
         global: &JSGlobalObject,
@@ -194,8 +195,7 @@ impl TestFixtures {
         }
         let mut definitions = parent_fixtures.map_or_else(Vec::new, |parent| parent.definitions.get().clone());
         let mut registrations = match parent_fixtures {
-            Some(parent) if is_override => parent.registrations_in(Some(active_scope.cast_mut()).filter(|scope| !scope.is_null())),
-            Some(parent) => parent.registrations.get().clone(),
+            Some(parent) => parent.registrations_in(Some(active_scope.cast_mut()).filter(|scope| !scope.is_null())),
             None => Vec::new(),
         };
         let values = JSValue::create_empty_array(global, 0)?;

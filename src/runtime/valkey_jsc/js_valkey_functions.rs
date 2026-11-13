@@ -884,6 +884,12 @@ impl JSValkeyClient {
         )
     }
 
+    fn is_field(global: &JSGlobalObject, value: JSValue) -> bool {
+        value.is_string()
+            || value.as_array_buffer(global).is_some()
+            || value.as_class_ref::<crate::webcore::Blob>().is_some()
+    }
+
     /// `hmget`, `hset` and `hmset` send an array or object of fields as the whole call, so fields after it would be dropped.
     #[cold]
     #[inline(never)]
@@ -893,15 +899,10 @@ impl JSValkeyClient {
         rest: &[JSValue],
         is_fields: fn(JSValue) -> bool,
     ) -> bool {
-        let is_field = |value: &JSValue| {
-            value.is_string()
-                || value.as_array_buffer(global).is_some()
-                || value.as_class_ref::<crate::webcore::Blob>().is_some()
-        };
         // An iterator adds (key, collection): an index and the array, a key and the `Map` or object, the value again and the `Set`.
         if let [key, collection] = rest
             && collection.is_object()
-            && !is_field(collection)
+            && !Self::is_field(global, *collection)
         {
             let is_key = if collection.is_array() {
                 key.is_number()
@@ -912,7 +913,8 @@ impl JSValkeyClient {
                 return false;
             }
         }
-        rest.first().is_some_and(|value| is_fields(*value)) || rest.iter().any(is_field)
+        rest.first().is_some_and(|value| is_fields(*value))
+            || rest.iter().any(|value| Self::is_field(global, *value))
     }
 
     // Implement hmget (get multiple values from hash)
@@ -1052,20 +1054,18 @@ impl JSValkeyClient {
         fields: JSValue,
         rest: &[JSValue],
     ) -> JsResult<()> {
-        if !Self::rest_holds_field(global, fields, rest, |value| {
-            value.is_object() && !value.is_callable()
-        }) {
-            return Ok(());
-        }
-        // A buffer or a `Blob` in the place of the field is read as an object of fields (#41640).
-        if fields.as_array_buffer(global).is_some()
-            || fields.as_class_ref::<crate::webcore::Blob>().is_some()
-        {
+        // A `String` object, a buffer or a `Blob` before another argument is a field, and the object branch would read it as an object of fields (#41640).
+        if Self::is_field(global, fields) {
             return Err(global.throw_invalid_argument_type(command, "field", "string"));
         }
-        Err(global.throw_invalid_arguments(format_args!(
-            "{command} takes its fields as one object or array, or as separate arguments, not both"
-        )))
+        if Self::rest_holds_field(global, fields, rest, |value| {
+            value.is_object() && !value.is_callable()
+        }) {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "{command} takes its fields as one object or array, or as separate arguments, not both"
+            )));
+        }
+        Ok(())
     }
 
     fn hset_impl(

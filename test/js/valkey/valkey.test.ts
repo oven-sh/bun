@@ -7789,10 +7789,12 @@ describe("RedisClient command encoding", () => {
     ['hmset("h", ["a", "1"], "b", "2")', c => c.hmset("h", ["a", "1"], "b", "2"), hsetForms("HMSET")],
     ['hmset("h", ["a", "1"], { b: 2 })', c => c.hmset("h", ["a", "1"], { b: 2 }), hsetForms("HMSET")],
     ['hmset("h", ["a", "1"], null, "b", "2")', c => c.hmset("h", ["a", "1"], null, "b", "2"), hsetForms("HMSET")],
-    // A buffer or a Blob in the place of the field is read as an object of fields, and its value was dropped.
+    // A buffer, a Blob or a String object before another argument is a field. It was read as an object of fields.
     ['hset("h", Buffer.from("ab"), "v")', c => c.hset("h", Buffer.from("ab"), "v"), notAString("HSET")],
     ['hset("h", new Blob(["ab"]), "v")', c => c.hset("h", new Blob(["ab"]), "v"), notAString("HSET")],
     ['hmset("h", new Uint8Array([97]), "v")', c => c.hmset("h", new Uint8Array([97]), "v"), notAString("HMSET")],
+    ['hset("h", new String("f"), "v")', c => c.hset("h", new String("f"), "v"), notAString("HSET")],
+    ['hset("h", Buffer.from("f"), 1)', c => c.hset("h", Buffer.from("f"), 1), notAString("HSET")],
   ])("%s throws and writes nothing", async (_call, invoke, message) => {
     const received = await recordCommands(async (client: any) => {
       // toThrow() also passes for a returned promise that rejects. The refusal has to be synchronous.

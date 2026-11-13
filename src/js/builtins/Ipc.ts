@@ -84,11 +84,8 @@ export function parseHandle(target: $Bindgen.Subprocess | null, serialized: $Nod
       const { UDP } = require("internal/dgram");
       const wrap = new UDP();
       const err = wrap.open(fd);
-      if (err) {
-        // The wrap only owns the descriptor on success; don't leak it.
-        require("node:fs").closeSync(fd);
-        throw new Error(`failed to open received dgram handle: ${err}`);
-      }
+      // The caller closes the descriptor of a parse that throws.
+      if (err) throw new Error(`failed to open received dgram handle: ${err}`);
       process.nextTick(emit, target, serialized.msg, wrap);
       return;
     }

@@ -1664,6 +1664,330 @@ describe("Socket fd adoption", () => {
       fs.closeSync(fd);
     }
   });
+
+  // `readable: true` adopts the fd natively (the POSIX pipe transport behind
+  // InternalSocket::Pipe): reads and writes are asynchronous, the fd is closed
+  // once the socket has closed. @sap/hana-client wraps its completion pipe's
+  // read end exactly this way.
+  it.skipIf(isWindows)(
+    "readable: true reads asynchronously from an adopted FIFO fd and closes it on 'close'",
+    async () => {
+      const { rfd, wfd } = openFifo("readable.fifo");
+      const socket = new Socket({ fd: rfd, readable: true });
+      const events: string[] = [];
+      socket.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
+      socket.on("end", () => events.push("end"));
+      const closed = once(socket, "close");
+
+      const first = once(socket, "data");
+      fs.writeSync(wfd, "ping");
+      events.push(`data:${(await first)[0]}`);
+      expect({ events, destroyed: socket.destroyed, fd: fstatCode(rfd) }).toEqual({
+        events: ["data:ping"],
+        destroyed: false,
+        fd: "open",
+      });
+
+      const second = once(socket, "data");
+      fs.writeSync(wfd, "pong");
+      events.push(`data:${(await second)[0]}`);
+      // EOF from the write end closing: 'end', then allowHalfOpen=false destroys.
+      fs.closeSync(wfd);
+      await closed;
+      expect({ events, destroyed: socket.destroyed, fd: fstatCode(rfd) }).toEqual({
+        events: ["data:ping", "data:pong", "end", "close"],
+        destroyed: true,
+        fd: "EBADF",
+      });
+    },
+  );
+
+  // A write larger than the pipe buffer can only complete once a reader drains
+  // it; a synchronous write(2) there would block the thread (or fail with
+  // EAGAIN on a non-blocking end). Both ends are adopted sockets.
+  it.skipIf(isWindows)(
+    "readable: true writes asynchronously: a write larger than the pipe buffer completes once drained",
+    async () => {
+      const path = join(tmpdirSync(), "async-write.fifo");
+      execFileSync("mkfifo", [path]);
+      const rfd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+      const wfd = fs.openSync(path, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+      const size = 256 * 1024;
+      const payload = Buffer.alloc(size, "z");
+
+      const reader = new Socket({ fd: rfd, readable: true });
+      const writer = new Socket({ fd: wfd, readable: true, writable: true });
+      const errors: string[] = [];
+      reader.on("error", err => errors.push(`reader:${(err as NodeJS.ErrnoException).code}`));
+      writer.on("error", err => errors.push(`writer:${(err as NodeJS.ErrnoException).code}`));
+
+      let received = 0;
+      let chunks = 0;
+      const drained = Promise.withResolvers<void>();
+      reader.on("data", (chunk: Buffer) => {
+        received += chunk.length;
+        chunks++;
+        if (received >= size) drained.resolve();
+      });
+      const readerEnded = once(reader, "end");
+      const readerClosed = once(reader, "close");
+
+      const written = new Promise<string | undefined>(resolve =>
+        writer.write(payload, err => resolve((err as NodeJS.ErrnoException | null)?.code)),
+      );
+      // The callback can only fire once the reader has taken most of the payload
+      // (a sync write(2) on this non-blocking end fails with EAGAIN instead).
+      expect(await written).toBeUndefined();
+      await drained.promise;
+      expect({ received, multipleChunks: chunks > 1, bytesWritten: writer.bytesWritten }).toEqual({
+        received: size,
+        multipleChunks: true,
+        bytesWritten: size,
+      });
+
+      // Shutting down the writer's fd is the reader's EOF.
+      const writerClosed = once(writer, "close");
+      writer.end();
+      await readerEnded;
+      await readerClosed;
+      writer.destroy();
+      await writerClosed;
+      expect({ errors, fds: [fstatCode(rfd), fstatCode(wfd)] }).toEqual({ errors: [], fds: ["EBADF", "EBADF"] });
+    },
+  );
+
+  it.skipIf(isWindows)("net.connect({ fd }) over a FIFO read end reads and closes the fd on 'close'", async () => {
+    const { rfd, wfd } = openFifo("connect.fifo");
+    const events: string[] = [];
+    const socket = connect({ fd: rfd });
+    socket.on("end", () => events.push("end"));
+    socket.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
+    const closed = once(socket, "close");
+
+    const data = once(socket, "data");
+    fs.writeSync(wfd, "ping");
+    events.push(`data:${(await data)[0]}`);
+    expect(fstatCode(rfd)).toBe("open");
+    fs.closeSync(wfd);
+    await closed;
+    expect({ events, fd: fstatCode(rfd) }).toEqual({ events: ["data:ping", "end", "close"], fd: "EBADF" });
+  });
+
+  it.skipIf(isWindows)(
+    "Bun.connect({ fd }) over a FIFO read end delivers data and end, then closes the fd",
+    async () => {
+      const { rfd, wfd } = openFifo("bun-connect.fifo");
+      const events: string[] = [];
+      const gotData = Promise.withResolvers<void>();
+      const ended = Promise.withResolvers<void>();
+      const closed = Promise.withResolvers<void>();
+      const socket = await Bun.connect({
+        fd: rfd,
+        socket: {
+          open() {
+            events.push("open");
+          },
+          data(_socket, chunk) {
+            events.push(`data:${chunk}`);
+            gotData.resolve();
+          },
+          end() {
+            events.push("end");
+            ended.resolve();
+          },
+          error(_socket, err) {
+            events.push(`error:${(err as NodeJS.ErrnoException).code}`);
+          },
+          connectError(_socket, err) {
+            events.push(`connectError:${(err as NodeJS.ErrnoException).code}`);
+          },
+          close() {
+            events.push("close");
+            closed.resolve();
+          },
+        },
+      });
+      fs.writeSync(wfd, "ping");
+      await gotData.promise;
+      expect(fstatCode(rfd)).toBe("open");
+      fs.closeSync(wfd);
+      await ended.promise;
+      // A no-op if the pipe already closed itself after EOF.
+      socket.end();
+      await closed.promise;
+      expect({ events, fd: fstatCode(rfd) }).toEqual({ events: ["open", "data:ping", "end", "close"], fd: "EBADF" });
+    },
+  );
+
+  // Classification happens once, natively: a regular file is neither a socket
+  // nor a pipe, and the failure is reported the way a failed connect is.
+  it.skipIf(isWindows)("connect({ fd }) on a regular-file fd fails with ENOTSOCK", async () => {
+    const fd = fs.openSync(join(tmpdirSync(), "regular.txt"), "w+");
+    try {
+      let connectError: string | undefined;
+      const rejected = await Bun.connect({
+        fd,
+        socket: {
+          data() {},
+          connectError(_socket, err) {
+            connectError = (err as NodeJS.ErrnoException).code;
+          },
+        },
+      }).then(
+        () => "resolved",
+        err => err.code,
+      );
+
+      const socket = connect({ fd });
+      const [err] = await once(socket, "error");
+      expect({ rejected, connectError, netError: err.code, destroyed: socket.destroyed }).toEqual({
+        rejected: "ENOTSOCK",
+        connectError: "ENOTSOCK",
+        netError: "ENOTSOCK",
+        destroyed: true,
+      });
+    } finally {
+      try {
+        fs.closeSync(fd);
+      } catch {}
+    }
+  });
+
+  // The hana-client flow: `net.Socket({ fd, readable: true })` (no `new`),
+  // unref()'d right away so an idle pipe never holds the process open, ref()'d
+  // while native work is outstanding so the completion byte is waited for.
+  it.skipIf(isWindows)(
+    "an adopted readable fd keeps the loop alive while ref()'d and releases it when unref()'d",
+    async () => {
+      const dir = tmpdirSync();
+      const script = (mode: "ref" | "unref") => /* js */ `
+      const fs = require("node:fs");
+      const net = require("node:net");
+      const path = ${JSON.stringify(join(dir, `${mode}.fifo`))};
+      const rfd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+      const wfd = fs.openSync(path, "w");
+      const events = [];
+      const socket = net.Socket({ fd: rfd, readable: true });
+      socket.unref();
+      socket.on("data", chunk => events.push("data:" + chunk));
+      socket.on("end", () => events.push("end"));
+      socket.on("close", () => events.push("close"));
+      socket.on("error", err => events.push("error:" + err.code));
+      process.on("exit", () => console.log(JSON.stringify(events)));
+      if (${JSON.stringify(mode)} === "ref") {
+        socket.ref();
+        // Nothing but the socket keeps the loop alive after this runs.
+        setImmediate(() => {
+          fs.writeSync(wfd, "x");
+          fs.closeSync(wfd);
+        });
+      }
+    `;
+      const run = async (mode: "ref" | "unref") => {
+        execFileSync("mkfifo", [join(dir, `${mode}.fifo`)]);
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", script(mode)],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { events: stdout.trim(), stderr: stderr.trim(), exitCode };
+      };
+      const [ref, unref] = await Promise.all([run("ref"), run("unref")]);
+      expect({ ref, unref }).toEqual({
+        ref: { events: JSON.stringify(["data:x", "end", "close"]), stderr: "", exitCode: 0 },
+        unref: { events: "[]", stderr: "", exitCode: 0 },
+      });
+    },
+  );
+
+  // Runs in a child so the count starts from zero.
+  it.skipIf(isWindows)("releases the native pipe context once the socket has closed", async () => {
+    const dir = tmpdirSync();
+    for (const name of ["a.fifo", "b.fifo"]) execFileSync("mkfifo", [join(dir, name)]);
+    const script = /* js */ `
+      const fs = require("node:fs");
+      const net = require("node:net");
+      const { posixPipeInternals } = require("bun:internal-for-testing");
+      const dir = ${JSON.stringify(dir)};
+      function openFifo(name) {
+        const path = dir + "/" + name;
+        const rfd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+        const wfd = fs.openSync(path, "w");
+        return { rfd, wfd };
+      }
+      const a = openFifo("a.fifo");
+      const b = openFifo("b.fifo");
+      const before = posixPipeInternals.liveCount();
+
+      const events = [];
+      const nodeSocket = new net.Socket({ fd: a.rfd, readable: true });
+      const nodeClosed = new Promise(resolve => nodeSocket.on("close", () => (events.push("node:close"), resolve())));
+      nodeSocket.on("data", chunk => events.push("node:data:" + chunk));
+      nodeSocket.on("error", err => events.push("node:error:" + err.code));
+
+      const bunClosed = Promise.withResolvers();
+      const bunData = Promise.withResolvers();
+      const bunSocket = await Bun.connect({
+        fd: b.rfd,
+        socket: {
+          data(_socket, chunk) {
+            events.push("bun:data:" + chunk);
+            bunData.resolve();
+          },
+          end(socket) {
+            events.push("bun:end");
+            // A no-op if the pipe already closed itself after EOF.
+            socket.end();
+          },
+          error(_socket, err) {
+            events.push("bun:error:" + err.code);
+          },
+          close() {
+            events.push("bun:close");
+            bunClosed.resolve();
+          },
+        },
+      });
+      const nodeData = new Promise(resolve => nodeSocket.once("data", resolve));
+      fs.writeSync(a.wfd, "1");
+      fs.writeSync(b.wfd, "2");
+      await nodeData;
+      await bunData.promise;
+      const whileOpen = posixPipeInternals.liveCount() - before;
+
+      fs.closeSync(a.wfd);
+      fs.closeSync(b.wfd);
+      await nodeClosed;
+      await bunClosed.promise;
+
+      // Finalizing the handles must not touch a socket its context already released.
+      Bun.gc(true);
+      // A context frees itself from a task it queues once its pipe has closed.
+      for (let i = 0; i < 100 && posixPipeInternals.liveCount() > 0; i++) {
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      console.log(JSON.stringify({ events: events.sort(), before, whileOpen, after: posixPipeInternals.liveCount() }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ report: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
+      report: JSON.stringify({
+        events: ["bun:close", "bun:data:2", "bun:end", "node:close", "node:data:1"],
+        before: 0,
+        whileOpen: 2,
+        after: 0,
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 describe.concurrent("socket that already sent FIN and is paused with unread data", () => {

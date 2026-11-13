@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
 import { copyFileSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 
@@ -536,6 +536,476 @@ it("test.todo doesnt cause exit code 1", () => {
 
   const err = stderr!.toString();
   expect(exitCode).toBe(0);
+});
+
+describe("a callback that ends after its timeout without a yield", () => {
+  // Each late callback passes its timeout inside one call, so the runner gets control back only after the callback
+  // ended: Bun.sleepSync() blocks, and Bun.spawnSync() and tick() wait inside the call.
+  async function runFixture(name: string, source: string, args: string[] = []) {
+    using dir = tempDir("late-" + name, { "late.test.js": source, "package.json": "{}" });
+    await using proc = spawn({
+      cmd: [bunExe(), "test", ...args, "late.test.js"],
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    // Errors, test lines, the note under a test line, what a fixture reports with "ran:", and the counts.
+    const lines = stderr
+      .split(/\r?\n/)
+      .filter(line => /^(error: |\((pass|fail|todo)\) |  \^ \S|ran: | +\d+ (pass|fail|todo)$)/.test(line));
+    const junit = Bun.file(join(String(dir), "junit.xml"));
+    return {
+      lines: normalizeBunSnapshot(lines.join("\n")),
+      junit: (await junit.exists()) ? await junit.text() : "",
+      exitCode,
+    };
+  }
+
+  // Bun.build() waits for an async plugin setup() inside the call, with the main event loop running. So the
+  // timeout timer of the test can run under the test callback.
+  const tick = /*js*/ `
+    function tick(ms) {
+      try {
+        Bun.build({
+          entrypoints: ["./none.ts"],
+          plugins: [{ name: "tick", setup: () => new Promise((_, reject) => setTimeout(() => reject(new Error("stop")), ms)) }],
+        });
+      } catch {}
+    }
+  `;
+
+  test.concurrent("keeps its own result when it threw", async () => {
+    const { lines, junit, exitCode } = await runFixture(
+      "throw",
+      /*js*/ `
+        import { afterAll, afterEach, beforeAll, beforeEach, describe, onTestFinished, test } from "bun:test";
+        ${tick}
+
+        test("throws", () => {
+          Bun.sleepSync(30);
+          throw new Error("thrown by the test");
+        }, 10);
+        test("rejects", async () => {
+          await 0;
+          Bun.sleepSync(30);
+          throw new Error("rejected by the test");
+        }, 10);
+        test("returns a rejected promise", () => {
+          Bun.sleepSync(30);
+          return Promise.reject(new Error("rejected promise"));
+        }, 10);
+        test("returns an object whose then getter throws", () => {
+          Bun.sleepSync(30);
+          return {
+            get then() {
+              throw new Error("thrown by the then getter");
+            },
+          };
+        }, 10);
+        test("returns a thenable that rejects", () => {
+          Bun.sleepSync(30);
+          return {
+            then(_, reject) {
+              reject(new Error("rejected by the thenable"));
+            },
+          };
+        }, 10);
+        test("returns a thenable whose then() throws", () => {
+          Bun.sleepSync(30);
+          return {
+            then() {
+              throw new Error("thrown by then()");
+            },
+          };
+        }, 10);
+        test("calls done(error)", done => {
+          Bun.sleepSync(30);
+          done(new Error("passed to done"));
+        }, 10);
+        test("calls done(error) from a microtask", done => {
+          Bun.sleepSync(30);
+          queueMicrotask(() => done(new Error("passed to done from a microtask")));
+        }, 10);
+        test("calls done(error) from an async callback", async done => {
+          Bun.sleepSync(30);
+          done(new Error("passed to done by an async callback"));
+        }, 10);
+        test("calls done(error) and returns a thenable", done => {
+          Bun.sleepSync(30);
+          done(new Error("passed to done before the thenable"));
+          return {
+            then(resolve) {
+              resolve();
+            },
+          };
+        }, 10);
+        test("throws after done()", done => {
+          done();
+          Bun.sleepSync(30);
+          throw new Error("thrown after done()");
+        }, 10);
+        test.failing("test.failing throws", () => {
+          Bun.sleepSync(30);
+          throw new Error("the expected failure");
+        }, 10);
+        test.failing("test.failing returns a thenable that rejects", () => {
+          Bun.sleepSync(30);
+          return {
+            then(_, reject) {
+              reject(new Error("the expected failure"));
+            },
+          };
+        }, 10);
+        test.failing("test.failing with retry throws", () => {
+          Bun.sleepSync(30);
+          throw new Error("the expected failure");
+        }, { timeout: 10, retry: 1 });
+        test.todo("test.todo throws", () => {
+          Bun.sleepSync(30);
+          throw new Error("thrown by the todo test");
+        }, 10);
+        test.concurrent("test.concurrent throws", () => {
+          Bun.sleepSync(30);
+          throw new Error("thrown by the concurrent test");
+        }, 10);
+        test.concurrent("its sibling", () => {});
+        describe("beforeAll throws", () => {
+          beforeAll(() => {
+            Bun.sleepSync(30);
+            throw new Error("thrown by beforeAll");
+          }, 10);
+          test("test", () => {});
+        });
+        describe("beforeEach throws", () => {
+          beforeEach(() => {
+            Bun.sleepSync(30);
+            throw new Error("thrown by beforeEach");
+          }, 10);
+          test("test", () => {});
+        });
+        describe("afterEach throws", () => {
+          afterEach(() => {
+            Bun.sleepSync(30);
+            throw new Error("thrown by afterEach");
+          }, 10);
+          test("test", () => {});
+          test("a test that threw in time", () => {
+            throw new Error("thrown in time");
+          });
+        });
+        describe("afterAll throws", () => {
+          afterAll(() => {
+            Bun.sleepSync(30);
+            throw new Error("thrown by afterAll");
+          }, 10);
+          test("test", () => {});
+        });
+        test("onTestFinished throws", () => {
+          onTestFinished(() => {
+            Bun.sleepSync(30);
+            throw new Error("thrown by onTestFinished");
+          }, 10);
+        });
+
+        // The error of a hook cannot fail a test whose body already failed as expected, so these two do not fail.
+        describe("a hook throws in time after the body failed as expected late", () => {
+          afterEach(() => {
+            throw new Error("thrown by afterEach in time");
+          });
+          test.failing("test.failing", () => {
+            Bun.sleepSync(30);
+            throw new Error("the expected failure");
+          }, 10);
+          test.todo("test.todo", () => {
+            Bun.sleepSync(30);
+            throw new Error("thrown by the todo test");
+          }, 10);
+        });
+
+        // The timeout timer runs inside tick(), and bun has no process to kill for it.
+        test("throws after the timeout timer ran under it", () => {
+          Bun.sleepSync(30);
+          tick(1);
+          throw new Error("thrown after the timer ran");
+        }, 10);
+      `,
+      ["--todo", "--reporter=junit", "--reporter-outfile=junit.xml"],
+    );
+    expect(lines).toMatchInlineSnapshot(`
+      "error: thrown by the test
+      (fail) throws
+      error: rejected by the test
+      (fail) rejects
+      error: rejected promise
+      (fail) returns a rejected promise
+      error: thrown by the then getter
+      (fail) returns an object whose then getter throws
+      error: rejected by the thenable
+      (fail) returns a thenable that rejects
+      error: thrown by then()
+      (fail) returns a thenable whose then() throws
+      error: passed to done
+      (fail) calls done(error)
+      error: passed to done from a microtask
+      (fail) calls done(error) from a microtask
+      error: passed to done by an async callback
+      (fail) calls done(error) from an async callback
+      error: passed to done before the thenable
+      (fail) calls done(error) and returns a thenable
+      error: thrown after done()
+      (fail) throws after done()
+      (pass) test.failing throws
+      (pass) test.failing returns a thenable that rejects
+      (pass) test.failing with retry throws
+      error: thrown by the todo test
+      (todo) test.todo throws
+      error: thrown by the concurrent test
+      (fail) test.concurrent throws
+      (pass) its sibling
+      error: thrown by beforeAll
+      (fail) beforeAll throws > (unnamed)
+      error: thrown by beforeEach
+      (fail) beforeEach throws > test
+      error: thrown by afterEach
+      (fail) afterEach throws > test
+      error: thrown in time
+      error: thrown by afterEach
+      (fail) afterEach throws > a test that threw in time
+      (pass) afterAll throws > test
+      error: thrown by afterAll
+      (fail) afterAll throws > (unnamed)
+      error: thrown by onTestFinished
+      (fail) onTestFinished throws
+      error: thrown by afterEach in time
+      (pass) a hook throws in time after the body failed as expected late > test.failing
+      error: thrown by the todo test
+      error: thrown by afterEach in time
+      (todo) a hook throws in time after the body failed as expected late > test.todo
+      error: thrown after the timer ran
+      (fail) throws after the timeout timer ran under it
+       6 pass
+       2 todo
+       19 fail"
+    `);
+    expect(junit).toContain('<failure type="Error" message="thrown by the test">');
+    expect(junit).not.toContain("TimeoutError");
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("is timed out when it returned, or when its error could not fail the test", async () => {
+    const { lines, exitCode } = await runFixture(
+      "returned",
+      /*js*/ `
+        import { afterEach, beforeEach, describe, expect, onTestFinished, test } from "bun:test";
+
+        test("returns", () => {
+          Bun.sleepSync(30);
+        }, 10);
+        test("resolves", async () => {
+          await 0;
+          Bun.sleepSync(30);
+        }, 10);
+        test.failing("test.failing returns", () => {
+          Bun.sleepSync(30);
+        }, 10);
+        test("calls done()", done => {
+          Bun.sleepSync(30);
+          done();
+        }, 10);
+        test("returns after expect.soft() failed", () => {
+          expect.soft(1).toBe(2);
+          Bun.sleepSync(30);
+        }, 10);
+        test("returns after a stray rejection", () => {
+          Promise.reject(new Error("stray rejection"));
+          Bun.sleepSync(30);
+        }, 10);
+
+        // The timeout is longer in the next four, because their failure has to come before the timeout.
+        test("calls done(error) in time and returns late", done => {
+          done(new Error("passed to done in time"));
+          Bun.sleepSync(300);
+        }, 250);
+        test.failing("test.failing calls done(error) in time and returns late", done => {
+          done(new Error("the expected failure"));
+          Bun.sleepSync(300);
+        }, 250);
+
+        // The matcher waits for the promise, fails in a microtask, and the test does not await it.
+        function failsUnawaited() {
+          const { promise, resolve } = Promise.withResolvers();
+          expect(promise).resolves.toBe(2);
+          resolve(1);
+        }
+        test("returns after a matcher it did not await failed", async () => {
+          failsUnawaited();
+          for (let i = 0; i < 8; i++) await 0;
+          Bun.sleepSync(300);
+        }, 250);
+        test.failing("test.failing returns after a matcher it did not await failed", async () => {
+          failsUnawaited();
+          for (let i = 0; i < 8; i++) await 0;
+          Bun.sleepSync(300);
+        }, 250);
+
+        describe("afterEach returns late after a test that threw in time", () => {
+          afterEach(() => {
+            Bun.sleepSync(30);
+          }, 10);
+          // bun skips the hooks behind a hook that timed out, so this one does not run.
+          afterEach(() => {
+            console.error("ran: the afterEach behind the late one");
+          });
+          test("test", () => {
+            throw new Error("thrown in time");
+          });
+          test.failing("test.failing", () => {
+            throw new Error("the expected failure");
+          });
+        });
+
+        // The error of done(error) in a hook does not fail the test that the hook runs for.
+        describe("beforeEach calls done(error)", () => {
+          beforeEach(done => {
+            Bun.sleepSync(30);
+            done(new Error("passed to done by beforeEach"));
+          }, 10);
+          test("test", () => {});
+        });
+
+        // The error of a hook cannot fail a test whose body already failed as expected.
+        describe("a hook throws after the body failed as expected in time", () => {
+          describe("afterEach", () => {
+            afterEach(() => {
+              Bun.sleepSync(30);
+              throw new Error("thrown by afterEach");
+            }, 10);
+            test.failing("test.failing", () => {
+              throw new Error("the expected failure");
+            });
+            test.todo("test.todo", () => {
+              throw new Error("thrown by the todo test");
+            });
+          });
+          test.failing("onTestFinished, test.failing", () => {
+            onTestFinished(() => {
+              Bun.sleepSync(30);
+              throw new Error("thrown by onTestFinished");
+            }, 10);
+            throw new Error("the expected failure");
+          });
+        });
+      `,
+      ["--todo"],
+    );
+    expect(lines).toMatchInlineSnapshot(`
+      "(fail) returns
+        ^ this test timed out after 10ms.
+      (fail) resolves
+        ^ this test timed out after 10ms.
+      (fail) test.failing returns
+        ^ this test timed out after 10ms.
+      (fail) calls done()
+        ^ this test timed out after 10ms, before its done callback was called. If a done callback was not intended, remove the last parameter from the test callback function
+      error: expect(received).toBe(expected)
+      (fail) returns after expect.soft() failed
+        ^ this test timed out after 10ms.
+      error: stray rejection
+      (fail) returns after a stray rejection
+        ^ this test timed out after 10ms.
+      error: passed to done in time
+      (fail) calls done(error) in time and returns late
+        ^ this test timed out after 250ms, before its done callback was called. If a done callback was not intended, remove the last parameter from the test callback function
+      (fail) test.failing calls done(error) in time and returns late
+        ^ this test timed out after 250ms, before its done callback was called. If a done callback was not intended, remove the last parameter from the test callback function
+      error: expect(received).toBe(expected)
+      (fail) returns after a matcher it did not await failed
+        ^ this test timed out after 250ms.
+      (fail) test.failing returns after a matcher it did not await failed
+        ^ this test timed out after 250ms.
+      error: thrown in time
+      (fail) afterEach returns late after a test that threw in time > test
+        ^ a beforeEach/afterEach hook timed out for this test.
+      (fail) afterEach returns late after a test that threw in time > test.failing
+        ^ a beforeEach/afterEach hook timed out for this test.
+      error: passed to done by beforeEach
+      (fail) beforeEach calls done(error) > test
+        ^ a beforeEach/afterEach hook timed out before its done callback was called. If a done callback was not intended, remove the last parameter from the hook callback function
+      error: thrown by afterEach
+      (fail) a hook throws after the body failed as expected in time > afterEach > test.failing
+        ^ a beforeEach/afterEach hook timed out for this test.
+      error: thrown by the todo test
+      error: thrown by afterEach
+      (fail) a hook throws after the body failed as expected in time > afterEach > test.todo
+        ^ a beforeEach/afterEach hook timed out for this test.
+      error: thrown by onTestFinished
+      (fail) a hook throws after the body failed as expected in time > onTestFinished, test.failing
+        ^ a beforeEach/afterEach hook timed out for this test.
+       0 pass
+       16 fail"
+    `);
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("is timed out when bun killed a process for its timeout before it threw", async () => {
+    const { lines, exitCode } = await runFixture(
+      "killed",
+      /*js*/ `
+        import { test } from "bun:test";
+        ${tick}
+        const cmd = [process.execPath, "-e", "setTimeout(() => {}, 60_000)"];
+
+        // This test is the first one, so the timer of the file is set to its deadline. The timer runs inside
+        // tick(), and bun kills the child there.
+        test("throws after bun killed the process it spawned", () => {
+          Bun.spawn({ cmd, stdio: ["ignore", "ignore", "ignore"] });
+          tick(100);
+          throw new Error("thrown after bun killed the child");
+        }, 50);
+
+        // Bun.spawnSync() kills its child when the timeout passes, and the test throws because of that.
+        const child = () => Bun.spawnSync({ cmd });
+        test("throws after Bun.spawnSync outlived the timeout", () => {
+          if (child().exitCode !== 0) throw new Error("the child did not exit with 0");
+        }, 100);
+        test.failing("test.failing throws after Bun.spawnSync outlived the timeout", () => {
+          if (child().exitCode !== 0) throw new Error("the child did not exit with 0");
+        }, 100);
+        test.failing("test.failing rejects after Bun.spawnSync outlived the timeout", async () => {
+          await 0;
+          if (child().exitCode !== 0) throw new Error("the child did not exit with 0");
+        }, 100);
+        test.concurrent("test.concurrent throws after Bun.spawnSync outlived the timeout", () => {
+          if (child().exitCode !== 0) throw new Error("the child of the concurrent test did not exit with 0");
+        }, 100);
+        test.concurrent.failing("test.concurrent.failing throws after Bun.spawnSync outlived the timeout", () => {
+          if (child().exitCode !== 0) throw new Error("the child did not exit with 0");
+        }, 100);
+      `,
+    );
+    expect(lines).toMatchInlineSnapshot(`
+      "error: thrown after bun killed the child
+      (fail) throws after bun killed the process it spawned
+        ^ this test timed out after 50ms.
+      error: the child did not exit with 0
+      (fail) throws after Bun.spawnSync outlived the timeout
+        ^ this test timed out after 100ms.
+      (fail) test.failing throws after Bun.spawnSync outlived the timeout
+        ^ this test timed out after 100ms.
+      (fail) test.failing rejects after Bun.spawnSync outlived the timeout
+        ^ this test timed out after 100ms.
+      error: the child of the concurrent test did not exit with 0
+      (fail) test.concurrent throws after Bun.spawnSync outlived the timeout
+        ^ this test timed out after 100ms.
+      (fail) test.concurrent.failing throws after Bun.spawnSync outlived the timeout
+        ^ this test timed out after 100ms.
+       0 pass
+       6 fail"
+    `);
+    expect(exitCode).toBe(1);
+  });
 });
 
 it("test timeouts when expected", () => {

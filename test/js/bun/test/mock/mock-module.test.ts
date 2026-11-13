@@ -2637,10 +2637,10 @@ describe.concurrent("a name that import and require() resolve to two files", () 
             expect([require("dual").which, (await import("dual")).which]).toEqual(["mock", "build.module()"]);
             delete require.cache[require.resolve("dual")];
             expect(require("dual").which).toBe("mock");
-            jest.unmock("dual");
+            jest.unmock(require.resolve("dual"));
             expect([require("dual").which, (await import("dual")).which]).toEqual(["real cjs", "build.module()"]);
           });
-          test("also where require() has loaded the mock", async () => {
+          test("also where require() has loaded the mock, which jest.unmock() of the name ends", async () => {
             mock.module("dual/sub", () => ({ which: "mock" }));
             const required = require("dual/sub");
             virtual(Bun.resolveSync("dual/sub", import.meta.dir));

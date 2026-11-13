@@ -6980,7 +6980,8 @@ test.concurrent.each(isolationFlags)(
   "a factory imports a partly mocked module whose original imports a mocked one, after any number of ticks %j",
   async args => {
     const files: Record<string, string> = {};
-    const ticks = 16;
+    // Sixteen files take a debug build 3 s with --isolate=modules. `bun bd test` has five children under way and gives each test 5 s.
+    const ticks = isDebug ? 4 : 16;
     for (let i = 0; i < ticks; i++) {
       files[`${i}/unit.ts`] = `export const unit = "real";`;
       files[`${i}/token.ts`] = `

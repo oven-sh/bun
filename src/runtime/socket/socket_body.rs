@@ -929,7 +929,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         });
         handlers
             .vm
-            .event_loop_mut()
+            .event_loop()
             .enqueue_task(jsc::Task::init(bun_core::heap::into_raw(task)));
     }
 
@@ -2252,9 +2252,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // recurse, and `onClose` derefs the +1 we took at creation.
         let _pair_scope = this.twin.with_mut(|t| t.take()).map(|raw| {
             // No tick checkpoint between the twin's close handler and this socket's own.
-            // SAFETY: the VM owns its event loop for the life of the process.
-            let scope =
-                unsafe { jsc::event_loop::EventLoop::enter_scope(handlers.vm.event_loop()) };
+            let scope = handlers.vm.enter_event_loop_scope();
             // `on_close` consumes the twin's +1 via its `CloseTeardown`, so
             // hand over the raw pointer rather than letting `RefPtr::drop`
             // release it a second time. This frame is the twin's trampoline for

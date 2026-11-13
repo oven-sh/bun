@@ -247,7 +247,7 @@ impl WindowsNamedPipe {
     fn queue_free(this: *mut Self) {
         // SAFETY: the count just reached zero; `this` is live until the task runs.
         unsafe { (*this).vm }
-            .event_loop_mut()
+            .event_loop()
             .enqueue_task(bun_jsc::Task::init(this));
     }
 

@@ -592,7 +592,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         if self.is_async() {
             return Ok(());
         }
-        server.vm().as_mut().event_loop_mut().drain_microtasks()
+        server.vm().event_loop().drain_microtasks()
     }
 
     /// Runs `on_abort` itself (may free `self`) if a nested event loop run already closed the socket.
@@ -2062,7 +2062,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
             .server()
             .vm()
             .as_mut()
-            .event_loop_mut()
+            .event_loop()
             .deferred_tasks
             .post_task(ctx, Self::on_deferred_head_commit);
         if !already_posted {

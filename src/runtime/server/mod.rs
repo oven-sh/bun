@@ -1407,7 +1407,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // A drain may still be queued for it.
             server
                 .vm()
-                .event_loop_ref()
+                .event_loop()
                 .deferred_tasks
                 .unregister_task(core::ptr::NonNull::new(h2a.cast::<c_void>()));
             // SAFETY: live h2::App handle owned by this server; detaches from `app`.
@@ -1952,7 +1952,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 bun_opaque::opaque_deref_mut(app.cast::<uws_sys::h2::App>()).drain()
             }
             jsc::VirtualMachine::get()
-                .event_loop_ref()
+                .event_loop()
                 .deferred_tasks
                 .post_task(core::ptr::NonNull::new(app), drain);
         }
@@ -2325,7 +2325,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if vm.aggressive_garbage_collection == jsc::virtual_machine::GCLevel::Aggressive {
             vm.auto_garbage_collect();
         } else {
-            vm.event_loop_ref().perform_gc();
+            vm.event_loop().perform_gc();
         }
     }
 }
@@ -3313,7 +3313,7 @@ impl<const SSL: bool, const DEBUG: bool> ServerDeinitTask<SSL, DEBUG> {
         if vm.uws_loop_ref().internal_loop_data.is_ticking() {
             // A listener turned the event loop, and the app's handler that called it goes on afterwards.
             return vm
-                .event_loop_mut()
+                .event_loop()
                 .enqueue_task_for_outermost_tick(bun_event_loop::Task::init(this));
         }
         NewServer::<SSL, DEBUG>::deinit(this.cast());

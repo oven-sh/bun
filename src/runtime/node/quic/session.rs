@@ -1161,8 +1161,8 @@ impl QuicSession {
                     return Ok(());
                 };
                 if let Some(wakeup) = stream.take_wakeup() {
-                    let vm = global.bun_vm().as_mut();
-                    vm.event_loop_ref().run_callback(
+                    let vm = global.bun_vm();
+                    vm.event_loop().run_callback(
                         bun_event_loop::ContextId::NONE,
                         wakeup.get(),
                         global,

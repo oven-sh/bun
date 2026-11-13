@@ -1073,16 +1073,14 @@ fn spawn_maybe_sync(
     // For is_sync, use the isolated loop's `event_loop` (created by
     // `SpawnSyncEventLoop::init`) so stdio readers/writers register on it
     // instead of the main loop.
-    let event_loop: *mut jsc::event_loop::EventLoop = match &sync_loop {
-        // `SpawnSyncEventLoop.event_loop` is type-erased to `*mut ()`
-        // (bun_event_loop is below bun_jsc).
-        Some(sync_loop) => sync_loop
-            .event_loop_ptr()
-            .cast::<jsc::event_loop::EventLoop>(),
-        None => jsc_vm.event_loop(),
+    let event_loop_ptr = match &sync_loop {
+        Some(sync_loop) => sync_loop.event_loop_ptr(),
+        None => jsc_vm.event_loop_ptr(),
     };
+    // SAFETY: both erase a `jsc::EventLoop` that the VM owns (bun_event_loop is below bun_jsc).
+    let event_loop = unsafe { &*event_loop_ptr.cast::<jsc::event_loop::EventLoop>() };
 
-    let loop_handle = EventLoopHandle::init(event_loop.cast::<()>());
+    let loop_handle = EventLoopHandle::init(event_loop_ptr);
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     let cgroup_dir = match &cgroup {
@@ -1358,8 +1356,7 @@ fn spawn_maybe_sync(
 
     match Writable::init(
         &mut stdio[0],
-        // SAFETY: event_loop points to the live JSC EventLoop for this thread.
-        unsafe { &*event_loop },
+        event_loop,
         subprocess,
         spawned_stdin,
         &mut promise_for_stream,
@@ -1429,11 +1426,9 @@ fn spawn_maybe_sync(
         }
     }
 
-    // event_loop points to the live JSC EventLoop for this thread.
-    let event_loop_nn = NonNull::new(event_loop).expect("event_loop is null");
     subprocess.stdout.set(Readable::init(
         core::mem::replace(&mut stdio[1], Stdio::Ignore),
-        event_loop_nn,
+        event_loop,
         subprocess_nn,
         spawned_stdout,
         subprocess.stdout_maxbuf.get(),
@@ -1441,7 +1436,7 @@ fn spawn_maybe_sync(
     ));
     subprocess.stderr.set(Readable::init(
         core::mem::replace(&mut stdio[2], Stdio::Ignore),
-        event_loop_nn,
+        event_loop,
         subprocess_nn,
         spawned_stderr,
         subprocess.stderr_maxbuf.get(),
@@ -1669,7 +1664,7 @@ fn spawn_maybe_sync(
         // Note: pass `subprocess_nn` (the `NonNull<Subprocess<'static>>`
         // captured above) instead of the live `&mut subprocess`, which would
         // alias with the `&mut subprocess.stdout` borrow held by `pipe`.
-        Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !is_sync && lazy);
+        Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop, !is_sync && lazy);
         if (is_sync || !lazy) && matches!(subprocess.stdout.get(), Readable::Pipe(_)) {
             if let Readable::Pipe(pipe) = subprocess.stdout.get() {
                 Readable::pipe_reader_mut(pipe).read_all();
@@ -1679,7 +1674,7 @@ fn spawn_maybe_sync(
 
     if let Readable::Pipe(pipe) = subprocess.stderr.get() {
         // Note: see stdout arm above — avoid aliased &mut.
-        Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !is_sync && lazy);
+        Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop, !is_sync && lazy);
 
         if (is_sync || !lazy) && matches!(subprocess.stderr.get(), Readable::Pipe(_)) {
             if let Readable::Pipe(pipe) = subprocess.stderr.get() {

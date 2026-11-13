@@ -409,10 +409,9 @@ impl IPCInstance {
 
     /// Dispatches a decoded IPC message (and optional handle) to the JS `process` listeners.
     pub(crate) fn handle_ipc_message(message: &DecodedIPCMessage, handle: JSValue) -> JsResult<()> {
-        // SAFETY: VM singleton + its event loop are process-lifetime.
-        let vm = bun_jsc::virtual_machine::VirtualMachine::get().as_mut();
+        let vm = bun_jsc::virtual_machine::VirtualMachine::get();
         let global_this = vm.global();
-        let event_loop = vm.event_loop_mut();
+        let event_loop = vm.event_loop();
 
         match *message {
             DecodedIPCMessage::Version(v) => {
@@ -442,7 +441,7 @@ impl IPCInstance {
         bun_core::scoped_log!(IPC, "IPCInstance#handleIPCClose");
         // SAFETY: VM singleton is process-lifetime.
         let vm = bun_jsc::virtual_machine::VirtualMachine::get().as_mut();
-        let event_loop = vm.event_loop_mut();
+        let event_loop = vm.event_loop();
         crate::jsc_hooks::ipc_child_singleton_deinit();
         event_loop.enter();
         // On the next tick, so that it comes after the callbacks of the messages that never went out.
@@ -485,7 +484,7 @@ pub(crate) fn get_ipc_instance(
     };
     bun_core::scoped_log!(IPC, "getIPCInstance {:?}", fd);
 
-    vm.event_loop_mut().ensure_waker();
+    vm.event_loop().ensure_waker();
 
     #[cfg(not(windows))]
     let data = {

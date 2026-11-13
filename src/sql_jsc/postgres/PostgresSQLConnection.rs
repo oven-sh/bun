@@ -194,8 +194,8 @@ impl PostgresSQLConnection {
     }
 
     #[inline]
-    fn event_loop(&self) -> &'static mut crate::jsc::EventLoop {
-        VirtualMachine::get().event_loop_mut()
+    fn event_loop(&self) -> &'static crate::jsc::EventLoop {
+        VirtualMachine::get().event_loop()
     }
 
     #[inline]

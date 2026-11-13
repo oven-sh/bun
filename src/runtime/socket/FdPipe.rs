@@ -96,7 +96,7 @@ impl FdPipe {
     fn enqueue(&self) {
         if !self.is_queued.replace(true) {
             VirtualMachine::get()
-                .event_loop_mut()
+                .event_loop()
                 .enqueue_task(bun_jsc::Task::init(core::ptr::from_ref(self).cast_mut()));
         }
     }

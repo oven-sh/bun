@@ -264,9 +264,7 @@ impl JSValkeyClient {
         let mut iter = callbacks.array_iterator(global_object)?;
         while let Some(callback) = iter.next()? {
             debug_assert!(callback.is_callable());
-            // `event_loop_mut()` is the safe accessor for the VM-owned
-            // event-loop self-pointer (see `VirtualMachine::event_loop_mut`).
-            vm.event_loop_mut().run_callback(
+            vm.event_loop().run_callback(
                 self.context,
                 callback,
                 global_object,
@@ -1089,10 +1087,7 @@ impl JSValkeyClient {
             ctx: self.ref_guard(),
             what,
         }));
-        // SAFETY: VM-owned event loop pointer; uniquely accessed on the JS thread.
-        unsafe {
-            (*self.vm().event_loop()).enqueue_task(task);
-        }
+        self.vm().event_loop().enqueue_task(task);
     }
 
     pub(crate) fn on_reconnect_timer(&self) -> JsResult<()> {

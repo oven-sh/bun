@@ -477,7 +477,7 @@ impl UpgradedDuplex {
         // An entry that is already in the queue runs the updated `task_event`.
         if !self.queued.replace(true) {
             self.vm
-                .event_loop_mut()
+                .event_loop()
                 .enqueue_task(bun_jsc::Task::init(std::ptr::from_ref(self).cast_mut()));
         }
     }

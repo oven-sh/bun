@@ -641,7 +641,7 @@ impl ServePlugins {
             dev_server: None,
         };
 
-        global.bun_vm().event_loop_mut().enter();
+        global.bun_vm().event_loop().enter();
         let result = jsc::host_fn::from_js_host_call(global, || {
             match &self.state {
                 ServePluginsState::Pending { plugin, .. } => plugin.as_ref(),
@@ -649,7 +649,7 @@ impl ServePlugins {
             }
             .load_and_resolve_plugins_for_serve(plugin_js_array, bunfig_folder_bunstr)
         })?;
-        global.bun_vm().event_loop_mut().exit();
+        global.bun_vm().event_loop().exit();
 
         // handle the case where js synchronously throws an error
         if let Some(e) = global.try_take_exception() {
@@ -1125,9 +1125,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
             let error_code_value = JSValue::js_number(error_code as f64);
             let raw_packet_value = ArrayBuffer::create_buffer(&global, raw_packet)?;
-            // SAFETY: event_loop() returns a live raw pointer tied to the global.
-            let _scope =
-                unsafe { jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
+            let _scope = global.bun_vm().enter_event_loop_scope();
             callback.call(
                 &global,
                 JSValue::UNDEFINED,
@@ -1143,9 +1141,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return Ok(());
         }
         let global = self.global();
-        // SAFETY: event_loop() returns a live raw pointer tied to the global.
-        let _scope =
-            unsafe { jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
+        let _scope = global.bun_vm().enter_event_loop_scope();
         jsc::from_js_host_call(&global, || {
             Bun__getOrCreateNodeHTTPServerSocket(
                 SSL,

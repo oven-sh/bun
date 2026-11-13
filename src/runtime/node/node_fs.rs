@@ -1472,7 +1472,7 @@ mod _async_tasks {
                         let task_ptr: *mut Self = task;
                         task.global_object()
                             .bun_vm()
-                            .event_loop_mut()
+                            .event_loop()
                             .enqueue_task(bun_jsc::Task::init(task_ptr));
                         return task.completion.value();
                     }
@@ -1603,7 +1603,7 @@ mod _async_tasks {
                         let task_ptr: *mut Self = task;
                         task.global_object()
                             .bun_vm()
-                            .event_loop_mut()
+                            .event_loop()
                             .enqueue_task(bun_jsc::Task::init(task_ptr));
                         return task.completion.value();
                     }
@@ -1669,7 +1669,7 @@ mod _async_tasks {
             let this_ptr: *mut Self = this;
             this.global_object()
                 .bun_vm()
-                .event_loop_mut()
+                .event_loop()
                 .enqueue_task(bun_jsc::Task::init(this_ptr));
         }
 
@@ -1690,7 +1690,7 @@ mod _async_tasks {
             let this_ptr: *mut Self = this;
             this.global_object()
                 .bun_vm()
-                .event_loop_mut()
+                .event_loop()
                 .enqueue_task(bun_jsc::Task::init(this_ptr));
         }
 
@@ -2158,7 +2158,7 @@ mod _async_tasks {
         }
 
         fn call(global: &JSGlobalObject, callback: JSValue, arguments: &[JSValue]) {
-            global.bun_vm().event_loop_mut().run_callback(
+            global.bun_vm().event_loop().run_callback(
                 bun_event_loop::ContextId::NONE,
                 callback,
                 global,
@@ -2526,7 +2526,7 @@ mod _async_tasks {
             Self::schedule_new(
                 promise,
                 cp_args,
-                EventLoopHandle::init(vm.event_loop.cast()),
+                EventLoopHandle::init(vm.event_loop_ptr()),
                 bun_jsc::ConcurrentPoster::Js(vm.ticket()),
                 tracker,
                 cx.context().id(),

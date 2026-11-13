@@ -457,11 +457,9 @@ impl Pending {
         let clone = Box::new(core::mem::take(self));
         // `mem::take` resets `state`/`result`/`future` via `Default`;
         // no reader observes `future` after this.
-        // VM event loop is a singleton; temporary `&mut` is the sole borrow
-        // for the duration of `enqueue_task` (no re-entry into Rust).
         // `Task::from_boxed` owns the `Box → *mut` leak; the matching
         // `heap::take` lives in `run_from_js_thread` (the dispatch arm).
-        vm.event_loop_ref()
+        vm.event_loop()
             .enqueue_task(bun_event_loop::Task::from_boxed(clone));
     }
 
@@ -593,13 +591,7 @@ impl StreamResult {
         promise: *mut JSPromise,
         cx: &bun_jsc::JsThread<'_>,
     ) {
-        // dropped (only used for read-only `event_loop()`) before any re-entrant call.
         let vm = cx.vm();
-        // A long-lived `&mut EventLoop` / `&mut JSPromise` held across
-        // re-entrant resolve/reject would alias any
-        // `&mut` the re-entered JS path materializes through `vm.event_loop()` or the
-        // same promise. `event_loop_ref()` is the audited safe accessor that forms a
-        // fresh temporary `&mut EventLoop` per call so no two `&mut` are live at once.
         // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
         // Adopt the caller's outstanding protect(); Drop unprotects on all paths.
         let _unprotect = jsc::js_value::Protected::adopt(JSPromise::opaque_ref(promise).to_js());

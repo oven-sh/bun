@@ -363,15 +363,12 @@ impl FileReader {
             }
         }
 
-        // `bun_vm()` returns a raw `*mut VirtualMachine` (never null for a Bun
-        // global); deref to call `event_loop()`.
         {
             let global = self.parent_const().global_this();
             // `bun_vm()` is the live thread-local VM; `event_loop()` is its
             // per-thread `jsc::EventLoop`.
-            self.event_loop.set(EventLoopHandle::init(
-                global.bun_vm().as_mut().event_loop().cast::<()>(),
-            ));
+            self.event_loop
+                .set(EventLoopHandle::init(global.bun_vm().event_loop_ptr()));
         }
 
         if was_lazy {

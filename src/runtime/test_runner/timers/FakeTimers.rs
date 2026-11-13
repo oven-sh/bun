@@ -1372,9 +1372,7 @@ impl FakeTimers {
             return Ok(());
         };
         // Holds back the microtask drain until the whole advance is done, like sinon's `tick()`.
-        // SAFETY: the live event loop of the per-thread VM.
-        let _entered =
-            unsafe { bun_jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
+        let _entered = global.bun_vm().enter_event_loop_scope();
         let installs = this.installs();
         let advanced = advance(global, f64::from(delta));
         if matches!(advanced, Err(Stop::Ticks(_))) {
@@ -1662,9 +1660,7 @@ pub(crate) fn on_test_file_end(global: &JSGlobalObject) {
     let mocked =
         this.active.get() || !bun_jsc::cpp::Bun__FakeTimers__overriddenDateNow(global).is_nan();
     if mocked && !this.from_preload.get() {
-        // SAFETY: the live event loop of the per-thread VM.
-        let _entered =
-            unsafe { bun_jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
+        let _entered = global.bun_vm().enter_event_loop_scope();
         // Dropping the drives leaves their `…Async` promises pending, like anything else still pending at file end.
         drop(FakeTimers::uninstall(global, Restore::WhereStillInstalled));
     }

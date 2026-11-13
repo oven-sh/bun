@@ -142,7 +142,7 @@ extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
     if global_this.has_exception() {
         return;
     }
-    let event_loop = VirtualMachine::get().event_loop_mut();
+    let event_loop = VirtualMachine::get().event_loop();
     event_loop.enter();
     let result = callback.call(global_this, this_value, &[this_value]);
     if let Err(err) = result {
@@ -259,7 +259,7 @@ extern "C" fn on_data(
             None => BunString::clone_utf8(span),
         };
 
-        let loop_ = VirtualMachine::get().event_loop_mut();
+        let loop_ = VirtualMachine::get().event_loop();
         loop_.enter();
 
         let flags = JSValue::create_empty_object(global_this, 2);
@@ -820,7 +820,7 @@ impl UDPSocket {
 
         // A top-level call from the UDP socket callbacks: what `error` itself
         // throws is reported.
-        vm.event_loop_mut().run_callback(
+        vm.event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             callback,
             global_this,

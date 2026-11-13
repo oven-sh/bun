@@ -930,10 +930,8 @@ impl FetchTasklet {
                 // This run delivered the bytes. The next task fails the body and owns this thread's ref.
                 this.result.fail = Some(fail);
                 this.result.has_more = false;
-                // SAFETY: `vm.event_loop()` is the live JS-thread loop.
-                unsafe {
-                    (*vm.event_loop()).enqueue_task(Task::init(std::ptr::from_mut(this)));
-                }
+                vm.event_loop()
+                    .enqueue_task(Task::init(std::ptr::from_mut(this)));
             }
             this.mutex.unlock();
             // if we are not done we wait until the next call
@@ -973,10 +971,7 @@ impl FetchTasklet {
             // right below anyway.
             //
             // Drain ONLY the JSC microtask queue, NOT Bun's `EventLoop::drain_microtasks`:
-            // `on_progress_update` is itself running inside `tick_queue_with_count`,
-            // which already holds `&mut EventLoop`. Re-entering via
-            // `(*vm.event_loop()).drain_microtasks()` was an aliased `&mut EventLoop`
-            // (UB) and additionally ran `release_weak_refs` + `deferred_tasks.run()`,
+            // that additionally runs `release_weak_refs` + `deferred_tasks.run()`,
             // which is observable in `fetch-leak-test-fixture-5.js`'s post-batch
             // `heapStats().Promise` count for the streaming-body cases when a fast
             // loopback coalesces `can_stream` and `metadata` into one callback —
@@ -1173,15 +1168,12 @@ impl FetchTasklet {
             success,
             context: self.context,
         });
-        // SAFETY: `vm.event_loop()` is the live JS-thread loop.
-        unsafe {
-            (*vm.event_loop()).enqueue_task(Task::from_boxed(holder));
-            if self.is_waiting_body {
-                self.ref_();
-                (*vm.event_loop()).enqueue_task(Task::init(
-                    std::ptr::from_mut(self).cast::<FetchTaskletDelivered>(),
-                ));
-            }
+        vm.event_loop().enqueue_task(Task::from_boxed(holder));
+        if self.is_waiting_body {
+            self.ref_();
+            vm.event_loop().enqueue_task(Task::init(
+                std::ptr::from_mut(self).cast::<FetchTaskletDelivered>(),
+            ));
         }
 
         dispatch_cleanup(self);

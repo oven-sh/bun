@@ -356,7 +356,7 @@ impl Listener {
                         .into_boxed_slice(),
                 );
 
-                vm.event_loop_ref().ensure_waker();
+                vm.event_loop().ensure_waker();
 
                 let default_data = socket_config.default_data;
                 let context = cx.context().id();
@@ -435,7 +435,7 @@ impl Listener {
             }
         }
 
-        vm.event_loop_ref().ensure_waker();
+        vm.event_loop().ensure_waker();
 
         // Make the object up front so the embedded `group` has its final
         // address before we hand it to listen() (it's linked into the loop's
@@ -872,7 +872,7 @@ impl Listener {
         let ssl_enabled = socket_config.ssl.is_some();
         let default_data = socket_config.default_data;
 
-        vm.event_loop_ref().ensure_waker();
+        vm.event_loop().ensure_waker();
 
         let connection: UnixOrHost = if let Some(fd) = socket_config.fd {
             UnixOrHost::Fd(fd)

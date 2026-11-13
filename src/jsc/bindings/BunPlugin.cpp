@@ -1846,9 +1846,11 @@ __attribute__((minsize)) static JSC::JSPromise* importOriginalModule(Zig::Global
     constexpr bool isCompiledESModule = false;
     UNUSED_PARAM(hasAlreadyWaited);
 #endif
-    // What the mock has kept of its module object in require.cache is the file at requireCacheKey().
+    // What the mock has kept of its module object in require.cache is the file at requireCacheKey(). Of an ES module that require() had loaded, that is its namespace object.
+    // With two paths the mock patches no ES module under its require path, so there the namespace object is the original.
     if (!exports && mock->originalCommonJSExports && !isCompiledESModule && requireCacheKey(globalObject, mock) == pathOfOriginal) {
-        exports = esmExportsOfCommonJSExports(globalObject, mock->originalCommonJSExports.get());
+        JSValue kept = mock->originalCommonJSExports.get();
+        exports = !loadsFileOfImport && kept.inherits<JSC::JSModuleNamespaceObject>() ? withoutUninitializedExports(globalObject, asObject(kept)) : esmExportsOfCommonJSExports(globalObject, kept);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
     // The original that is loaded below may load that file, itself or through other files of its package.
@@ -2058,11 +2060,32 @@ static JSValue requireOriginalModule(Zig::GlobalObject* globalObject, JSModuleMo
     // and what it has kept of its ES module is the file that an import loads.
     bool loadsFileOfImport = !mock->requireKey || path != mock->requireKey->tryGetValue().data;
     JSString* pathOfOriginal = loadsFileOfImport ? mock->importKey.get() : mock->requireKey.get();
-    if (JSValue exports = requireCacheKey(globalObject, mock) == pathOfOriginal ? mock->originalCommonJSExports.get() : JSValue(); exports && !exports.inherits<JSC::JSModuleNamespaceObject>())
-        return exports;
+    bool isFileAtRequireCacheKey = requireCacheKey(globalObject, mock) == pathOfOriginal;
+    JSValue kept = isFileAtRequireCacheKey ? mock->originalCommonJSExports.get() : JSValue();
+    if (kept && !kept.inherits<JSC::JSModuleNamespaceObject>())
+        return kept;
+    // Of an ES module that require() had loaded, what is kept is its namespace object. With two paths the mock patches no ES module under its require path, so there it is the original.
+    if (kept && !loadsFileOfImport)
+        RELEASE_AND_RETURN(scope, withoutUninitializedExports(globalObject, asObject(kept)));
     if (loadsFileOfImport) {
         JSObject* exports = esmExportsBeforePatches(globalObject, mock);
         RETURN_IF_EXCEPTION(scope, {});
+        // With two paths the mock has its own module object under the other path, and has left the one under this path as it was. What the loader made of a CommonJS module
+        // has `module.exports` for its default export, unless the module has `__esModule` and a default of its own. A module object that still has that value is the file
+        // as require() loads it. With any other value the file is loaded again below.
+        if (exports && !isFileAtRequireCacheKey) {
+            String importPath = pathOfOriginal->tryGetValue().data;
+            auto* moduleObject = loadedCommonJSModule(globalObject, importPath);
+            RETURN_IF_EXCEPTION(scope, {});
+            auto* entry = moduleObject ? Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(vm, importPath)) : nullptr;
+            if (auto* record = entry ? entry->record() : nullptr; record && !record->hasLiveExports() && !record->inherits<JSC::CyclicModuleRecord>()) {
+                JSValue moduleExports = moduleObject->exportsObject();
+                RETURN_IF_EXCEPTION(scope, {});
+                if (moduleExports == exports->getDirect(vm, vm.propertyNames->defaultKeyword))
+                    return moduleExports;
+                exports = nullptr;
+            }
+        }
         if (exports)
             return exports;
 #if ENABLE(AOT)

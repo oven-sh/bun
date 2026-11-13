@@ -895,6 +895,330 @@ describe("junit reporter", () => {
     expect([serial.exitCode, parallel.exitCode]).toEqual([1, 1]);
   });
 
+  // A file with two parse errors fails to load with an AggregateError of two BuildMessages. Bun.build(), Promise.any()
+  // of failed imports and user code make the same shape, with one member or many.
+  // Not concurrent: with a debug build each takes under a second alone, and several seconds beside the others.
+  describe("an AggregateError of build and resolve errors", () => {
+    const passes = `import { test } from "bun:test";\ntest("passes", () => {});`;
+    const twoErrors = `const = ;`;
+    const twoErrorsFailure = {
+      type: "BuildMessage",
+      message: 'Expected identifier but found "="',
+      text: [
+        "1 | const = ;",
+        "          ^",
+        'error: Expected identifier but found "="',
+        "",
+        "1 | const = ;",
+        "          ^",
+        "error: This constant must be initialized",
+      ],
+    };
+    const missing = { type: "ResolveMessage", message: "Cannot find module './nowhere'" };
+    const cannotFind = "error: Cannot find module './nowhere'";
+
+    // Runs `bun test` on `files`, once for each list of arguments in `runs`. For each run, `cases` has, for each
+    // file, each <testcase>: its name and, for each failure element, the attributes and the lines of its text, without
+    // the locations. `counted` is the N of the console's "N errors", and `stderr` is the console.
+    async function reports(files, runs, env = {}) {
+      await using tmpDir = tempDir("junit-aggregate", { "package.json": "{}", ...files });
+      // A ResolveMessage names the importer by its path.
+      const withoutImporter = text => text.replace(/ from '[^']*'$/, "");
+      const summarize = ({ $, _ = "" }) => ({
+        ...$,
+        ...($.message !== undefined && { message: withoutImporter($.message) }),
+        text: _.split("\n")
+          .slice(0, -1)
+          .filter(line => !/^ +at /.test(line))
+          .map(withoutImporter),
+      });
+      return await Promise.all(
+        runs.map(async (args, run) => {
+          const junitPath = join(tmpDir, `junit-${run}.xml`);
+          await using proc = spawn([bunExe(), "test", ...args, "--reporter=junit", "--reporter-outfile", junitPath], {
+            cwd: tmpDir,
+            env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1", ...env },
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          const xml = filterJunitXmlOutput(await file(junitPath).text());
+          const { testsuites } = await new Promise((resolve, reject) => {
+            xml2js.parseString(xml, { strict: true }, (err, r) => (err ? reject(err) : resolve(r)));
+          });
+          const cases = {};
+          for (const suite of testsuites.testsuite ?? []) {
+            cases[suite.$.name] = (suite.testcase ?? []).map(({ $, ...elements }) => ({
+              name: $.name,
+              ...Object.fromEntries(
+                Object.entries(elements).map(([element, failures]) => [element, failures.map(summarize)]),
+              ),
+            }));
+          }
+          return { xml, cases, stderr, counted: Number(/^ *(\d+) errors?$/m.exec(stderr)?.[1] ?? 0), exitCode };
+        }),
+      );
+    }
+
+    const unhandled = (...failure) => ({ name: "(unhandled error)", failure });
+    const unexpected = {
+      type: "BuildMessage",
+      message: "Unexpected ;",
+      text: ["1 | const half = ;", "                 ^", "error: Unexpected ;"],
+    };
+
+    it("is one failed test case with every error when a file doesn't parse", async () => {
+      const files = {
+        "two-errors.test.js": twoErrors,
+        "warning-first.test.js": `--> a legacy comment\nconst half;`,
+        "import.test.js": `import "./imported.js";`,
+        "imported.js": twoErrors,
+        // The second file gets the BuildMessage of the first, which prints once.
+        "shared-a.test.js": `import "./shared.js";`,
+        "shared-b.test.js": `import "./shared.js";`,
+        "shared.js": `const half = ;`,
+        "passes.test.js": passes,
+      };
+      const [serial, parallel] = await reports(files, [[], ["--parallel=2"]]);
+
+      expect(serial.cases).toEqual({
+        "two-errors.test.js": [unhandled(twoErrorsFailure)],
+        "warning-first.test.js": [
+          unhandled({
+            type: "BuildMessage",
+            message: 'The constant "half" must be initialized',
+            text: [
+              "1 | --> a legacy comment",
+              "    ^",
+              'warn: Treating "-->" as the start of a legacy HTML single-line comment',
+              "",
+              "2 | const half;",
+              "          ^",
+              'error: The constant "half" must be initialized',
+            ],
+          }),
+        ],
+        "import.test.js": [unhandled(twoErrorsFailure)],
+        "shared-a.test.js": [unhandled(unexpected)],
+        "shared-b.test.js": [unhandled(unexpected)],
+        "passes.test.js": [{ name: "passes" }],
+      });
+      expect(serial.xml).toContain("two-errors.test.js:1:7");
+      expect({ counted: serial.counted, exitCode: serial.exitCode }).toEqual({ counted: 5, exitCode: 1 });
+      expect({ xml: parallel.xml, counted: parallel.counted, exitCode: parallel.exitCode }).toEqual({
+        xml: serial.xml,
+        counted: 5,
+        exitCode: 1,
+      });
+    });
+
+    it("is one failed test case with every error when a rejection or reportError() has it", async () => {
+      const files = {
+        "build.test.js": `await Bun.build({ entrypoints: [import.meta.dir + "/half.js"] });`,
+        "half.js": `const half = ;`,
+        "transpiler.test.js": `await new Bun.Transpiler().transform(${JSON.stringify(twoErrors)});`,
+        "any.test.js": `await Promise.any([import("./nowhere"), import("./nowhere-too")]);`,
+        "nested.test.js": `
+          const missing = await import("./nowhere").catch(error => error);
+          throw new AggregateError([new AggregateError([missing], "inner"), new TypeError("after")], "outer");
+        `,
+        "no-message.test.js": `
+          const missing = await import("./nowhere").catch(error => error);
+          throw new AggregateError([new TypeError(), missing], "outer");
+        `,
+        "no-name.test.js": `
+          const missing = await import("./nowhere").catch(error => error);
+          const error = new Error();
+          error.name = "";
+          throw new AggregateError([error, missing], "outer");
+        `,
+        "describe.test.js": `
+          import { describe } from "bun:test";
+          describe("group", async () => {
+            await Promise.any([import("./nowhere")]);
+          });
+        `,
+        // The second report prints nothing, because a ResolveMessage prints once.
+        "twice.test.js": `
+          const missing = await import("./nowhere").catch(error => error);
+          const aggregate = new AggregateError([missing], "twice");
+          reportError(aggregate);
+          reportError(aggregate);
+        `,
+        // The error that the getter reports is printed, and recorded, inside the print of the AggregateError.
+        "reentrant.test.js": `
+          const aggregate = new AggregateError([], "outer");
+          Object.defineProperty(aggregate, "errors", {
+            get() {
+              reportError(new TypeError("inner"));
+              return [new RangeError("member")];
+            },
+          });
+          throw aggregate;
+        `,
+      };
+      const [{ cases, counted, exitCode }] = await reports(files, [[]]);
+
+      expect(cases).toEqual({
+        "build.test.js": [unhandled(unexpected)],
+        "transpiler.test.js": [unhandled(twoErrorsFailure)],
+        "any.test.js": [unhandled({ ...missing, text: [cannotFind, "", "error: Cannot find module './nowhere-too'"] })],
+        // An Error among the errors gives the type and message. The text has every error.
+        "nested.test.js": [
+          unhandled({ type: "TypeError", message: "after", text: [cannotFind, "", "TypeError: after"] }),
+        ],
+        // The ResolveMessage does not fill in what the Error leaves empty.
+        "no-message.test.js": [unhandled({ type: "TypeError", text: ["TypeError", "", cannotFind] })],
+        "no-name.test.js": [unhandled({ type: "Error", text: ["error", "", cannotFind] })],
+        "describe.test.js": [unhandled({ ...missing, text: [cannotFind] })],
+        "twice.test.js": [unhandled({ ...missing, text: [cannotFind] }), unhandled({ ...missing, text: [cannotFind] })],
+        "reentrant.test.js": [
+          unhandled({ type: "TypeError", message: "inner", text: ["TypeError: inner"] }),
+          unhandled({ type: "RangeError", message: "member", text: ["RangeError: member"] }),
+        ],
+      });
+      expect({ counted, exitCode }).toEqual({ counted: 11, exitCode: 1 });
+    });
+
+    it("from a preload, fails every test file", async () => {
+      const files = { "two.js": twoErrors, "a.test.js": passes, "b.test.js": passes };
+      const [{ cases, counted, exitCode }] = await reports(files, [["--preload", "./two.js"]]);
+      expect(cases).toEqual({
+        "a.test.js": [unhandled(twoErrorsFailure)],
+        "b.test.js": [unhandled(twoErrorsFailure)],
+      });
+      expect({ counted, exitCode }).toEqual({ counted: 2, exitCode: 1 });
+    });
+
+    it("is in the report that --bail writes", async () => {
+      const [{ cases, exitCode }] = await reports({ "a.test.js": twoErrors, "b.test.js": passes }, [["--bail=1"]]);
+      expect(cases).toEqual({ "a.test.js": [unhandled(twoErrorsFailure)] });
+      expect(exitCode).toBe(1);
+    });
+
+    it("inside a test, gives the failure its type, message and every error", async () => {
+      const files = {
+        "two.js": twoErrors,
+        "half.js": `const half = ;`,
+        "in-test.test.js": `
+          import { test } from "bun:test";
+          const missing = await import("./nowhere").catch(error => error);
+          const aggregate = new AggregateError([missing], "aggregate");
+          test("the test function rejects", async () => {
+            await import("./two.js");
+          });
+          test("the test function awaits a failed build", async () => {
+            await Bun.build({ entrypoints: [import.meta.dir + "/half.js"] });
+          });
+          test("done(error)", done => {
+            done(aggregate);
+          });
+          test("an uncaught error", () => {
+            reportError(aggregate);
+          });
+          let attempts = 0;
+          test("passes on the second attempt", async () => {
+            if (attempts++ === 0) throw aggregate;
+          }, { retry: 1 });
+          test("fails on every attempt", async () => {
+            throw aggregate;
+          }, { retry: 1 });
+          test("rejects with a ResolveMessage and an Error", async () => {
+            throw new AggregateError([missing, new TypeError("after")], "both");
+          });
+        `,
+        "hook.test.js": `
+          import { beforeEach, test } from "bun:test";
+          beforeEach(async () => {
+            await Promise.any([import("./nowhere")]);
+          });
+          test("after a hook", () => {});
+        `,
+        "hook-two.js": twoErrors,
+        "first-error.test.js": `
+          import { afterEach, test } from "bun:test";
+          afterEach(() => {
+            throw new TypeError("later");
+          });
+          test("rejects before a hook throws", async () => {
+            await import("./hook-two.js");
+          });
+        `,
+        "empty-message.test.js": `
+          import { afterEach, test } from "bun:test";
+          afterEach(async () => {
+            await import("./nowhere");
+          });
+          test("throws before a hook rejects", () => {
+            throw new Error();
+          });
+        `,
+      };
+      const [{ cases, counted, exitCode }] = await reports(files, [[]]);
+
+      const aggregate = { ...missing, text: [cannotFind] };
+      expect(cases).toEqual({
+        "in-test.test.js": [
+          { name: "the test function rejects", failure: [twoErrorsFailure] },
+          { name: "the test function awaits a failed build", failure: [unexpected] },
+          { name: "done(error)", failure: [aggregate] },
+          { name: "an uncaught error", failure: [{ ...aggregate, uncaught: "true" }] },
+          { name: "passes on the second attempt", flakyFailure: [aggregate] },
+          { name: "fails on every attempt", failure: [aggregate], rerunFailure: [aggregate] },
+          {
+            name: "rejects with a ResolveMessage and an Error",
+            failure: [{ type: "TypeError", message: "after", text: [cannotFind, "", "TypeError: after"] }],
+          },
+        ],
+        "hook.test.js": [{ name: "after a hook", failure: [{ ...missing, text: [cannotFind] }] }],
+        // The first error names the failure. The error of the hook is in the text after it.
+        "first-error.test.js": [
+          {
+            name: "rejects before a hook throws",
+            failure: [{ ...twoErrorsFailure, text: [...twoErrorsFailure.text, "", "TypeError: later"] }],
+          },
+        ],
+        // The ResolveMessage of the hook does not fill in the message that the Error left empty.
+        "empty-message.test.js": [
+          { name: "throws before a hook rejects", failure: [{ type: "Error", text: ["Error", "", cannotFind] }] },
+        ],
+      });
+      expect({ counted, exitCode }).toEqual({ counted: 0, exitCode: 1 });
+    });
+
+    it("is a failed test case even when the printer has no stack left to print the error", async () => {
+      const files = {
+        // The innermost call that still has stack for it reports the error.
+        "deep.test.js": `
+          import { test } from "bun:test";
+          let reported = false;
+          function deep() {
+            try {
+              deep();
+            } catch {
+              if (!reported) {
+                reportError(new TypeError("deep"));
+                reported = true;
+              }
+            }
+          }
+          deep();
+          test("runs", () => {});
+        `,
+      };
+      // Without JSC's own limit of 5 MB, JS takes the stack of the thread down to JSC's reserve. The printer asks for
+      // at least that much, some frames further, so it prints nothing.
+      const env = { BUN_JSC_maxPerThreadStackUsage: String(2 ** 30) };
+      const [{ xml, cases, stderr, counted, exitCode }] = await reports(files, [[]], env);
+      expect(stderr).toMatch(/# Unhandled error between tests\n-+\n-+\n/);
+      expect(cases["deep.test.js"]).toEqual([unhandled({ type: "Error", text: [] }), { name: "runs" }]);
+      expect(xml).toContain(
+        '<testsuite name="deep.test.js" file="deep.test.js" tests="2" assertions="0" failures="1" skipped="0">',
+      );
+      expect({ counted, exitCode }).toEqual({ counted: 1, exitCode: 1 });
+    });
+  });
+
   it("creates the folder of --reporter-outfile", async () => {
     await using tmpDir = tempDir("junit-outfile-folder", {
       "package.json": "{}",

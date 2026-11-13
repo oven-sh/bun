@@ -12,7 +12,7 @@ use bun_core::{EncodedSlice, strings};
 use bun_core::{pretty_error, pretty_errorln};
 use bun_dotenv as DotEnv;
 use bun_jsc::event_loop::TopLevelWaitError;
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::virtual_machine::{PrintedError, VirtualMachine};
 use bun_jsc::{self as jsc};
 use bun_options_types::aot_options::ReplacedByTests;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
@@ -1068,7 +1068,12 @@ impl TestFailure {
     /// Fold in a `ZigException` that `print_error_instance_body` has already
     /// populated. A test can throw more than once (body, then `afterEach`);
     /// the first name/message win and every stack is appended.
-    pub(crate) fn record(slot: &mut Option<TestFailure>, exception: &jsc::ZigException<'_>) {
+    /// With `names_failure` false the name and message stay as they are.
+    fn record(
+        slot: &mut Option<TestFailure>,
+        exception: &jsc::ZigException<'_>,
+        names_failure: bool,
+    ) {
         let failure = slot.get_or_insert_default();
         let name = exception.name.to_utf8();
         let raw_message = exception.message.to_utf8();
@@ -1078,14 +1083,14 @@ impl TestFailure {
         let is_assertion = strings::has_prefix_comptime(&message, b"expect(")
             && (name.slice().is_empty() || strings::eql(name.slice(), b"Error"));
 
-        if failure.name.is_empty() {
+        if names_failure && failure.name.is_empty() {
             if is_assertion {
                 failure.name.extend_from_slice(b"AssertionError");
             } else {
                 failure.name.extend_from_slice(name.slice());
             }
         }
-        if failure.message.is_empty() {
+        if names_failure && failure.message.is_empty() {
             failure.message.extend_from_slice(&message);
         }
 
@@ -1143,22 +1148,19 @@ impl TestFailure {
         }
     }
 
-    /// A module that can't be found or parsed throws one of these two. They are printed as log messages, with no `ZigException`.
+    /// A `ResolveMessage` or a `BuildMessage` is printed as a log message, with no `ZigException`.
     #[optimize(size)]
-    pub(crate) fn record_log_message(slot: &mut Option<TestFailure>, thrown: jsc::JSValue) {
-        let (name, msg): (&[u8], _) =
-            if let Some(error) = thrown.as_class_ref::<jsc::ResolveMessage>() {
-                (b"ResolveMessage", &error.msg)
-            } else if let Some(error) = thrown.as_class_ref::<jsc::BuildMessage>() {
-                (b"BuildMessage", &error.msg)
-            } else {
-                return;
-            };
+    fn record_log_message(
+        slot: &mut Option<TestFailure>,
+        class: &[u8],
+        msg: &bun_ast::Msg,
+        names_failure: bool,
+    ) {
         let failure = slot.get_or_insert_default();
-        if failure.name.is_empty() {
-            failure.name.extend_from_slice(name);
+        if names_failure && failure.name.is_empty() {
+            failure.name.extend_from_slice(class);
         }
-        if failure.message.is_empty() {
+        if names_failure && failure.message.is_empty() {
             failure.message.extend_from_slice(&msg.data.text);
         }
         if !failure.body.is_empty() {
@@ -1167,15 +1169,86 @@ impl TestFailure {
         let _ = msg.write_format::<false>(&mut bun_io::AsFmt::new(&mut failure.body));
         failure.body.push(b'\n');
     }
+}
 
-    /// VirtualMachine::on_print_error_zig_exception thunk.
+/// Which error of one report names the failure: an exception before a build or resolve error, and that before a warning.
+#[derive(Clone, Copy, PartialEq, PartialOrd)]
+enum Headline {
+    Warning,
+    LogError,
+    Exception,
+}
+
+/// What the error printer writes to while `BunTest::on_uncaught_exception` prints one error.
+pub(crate) struct FailureCapture {
+    /// The running sequence's `failure` or a local of `on_uncaught_exception`.
+    slot: *mut Option<TestFailure>,
+    /// The highest rank among the errors of this report so far.
+    headline: Option<Headline>,
+}
+
+impl FailureCapture {
+    /// Safety: `slot` outlives the capture, and no reference to it is held while the error printer runs.
+    pub(crate) unsafe fn new(slot: *mut Option<TestFailure>) -> Self {
+        Self {
+            slot,
+            headline: None,
+        }
+    }
+
+    /// The error was an uncaught exception or an unhandled rejection while a test was running.
+    pub(crate) fn mark_uncaught(&self) {
+        // SAFETY: per `new`. The error printer has returned.
+        if let Some(failure) = unsafe { &mut *self.slot } {
+            failure.uncaught = true;
+        }
+    }
+
+    /// `VirtualMachine::on_print_error` thunk.
     #[optimize(size)]
-    pub(crate) fn record_cb(ctx: *mut core::ffi::c_void, exception: &jsc::ZigException<'_>) {
-        // SAFETY: `ctx` was set to an `&mut Option<TestFailure>` by
-        // `on_uncaught_exception` for the duration of a single
-        // `run_error_handler` call; single-threaded, no other borrow live.
-        let slot = unsafe { &mut *ctx.cast::<Option<TestFailure>>() };
-        TestFailure::record(slot, exception);
+    pub(crate) fn record_cb(ctx: *mut core::ffi::c_void, printed: PrintedError<'_, '_>) {
+        // SAFETY: `ctx` is the capture that `on_uncaught_exception` installed for this print; nothing else borrows it.
+        let this = unsafe { &mut *ctx.cast::<FailureCapture>() };
+        // SAFETY: per `new`. This call runs no JS, so the `&mut` ends before a nested report writes the same slot.
+        let slot = unsafe { &mut *this.slot };
+        let rank = match printed {
+            PrintedError::Exception(_) => Headline::Exception,
+            PrintedError::BuildMessage(msg) | PrintedError::ResolveMessage(msg) => {
+                if msg.kind == bun_ast::Kind::Err {
+                    Headline::LogError
+                } else {
+                    Headline::Warning
+                }
+            }
+        };
+        let failure = slot.get_or_insert_default();
+        // A name or message that an earlier report gave is never replaced.
+        let held = *this.headline.get_or_insert(
+            if failure.name.is_empty() && failure.message.is_empty() {
+                rank
+            } else {
+                Headline::Exception
+            },
+        );
+        let names_failure = if held < rank {
+            failure.name.clear();
+            failure.message.clear();
+            this.headline = Some(rank);
+            true
+        } else {
+            held == rank
+        };
+        match printed {
+            PrintedError::Exception(exception) => {
+                TestFailure::record(slot, exception, names_failure)
+            }
+            PrintedError::BuildMessage(msg) => {
+                TestFailure::record_log_message(slot, b"BuildMessage", msg, names_failure)
+            }
+            PrintedError::ResolveMessage(msg) => {
+                TestFailure::record_log_message(slot, b"ResolveMessage", msg, names_failure)
+            }
+        }
     }
 }
 
@@ -2096,7 +2169,12 @@ impl CommandLineReporter {
     }
 
     /// An error outside of any test fails the run, so structured reporters get it as a failed test case of its file.
-    pub(crate) fn record_unhandled_error(&mut self, file_id: jest::FileId, failure: TestFailure) {
+    /// `failure` is `None` when the error printer reported nothing of the error.
+    pub(crate) fn record_unhandled_error(
+        &mut self,
+        file_id: jest::FileId,
+        failure: Option<TestFailure>,
+    ) {
         let Some(runner) = jest::Jest::runner() else {
             return;
         };
@@ -2108,7 +2186,7 @@ impl CommandLineReporter {
             assertions: 0,
             elapsed_ns: 0,
             line_number: 0,
-            failure: Some(failure),
+            failure,
             earlier_failures: Vec::new(),
         };
         if let Some(idx) = self.worker_ipc_file_idx {

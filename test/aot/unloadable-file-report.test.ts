@@ -17,6 +17,8 @@ const passes = {
 
 const cases = {
   "a syntax error": { ...passes, "b.test.js": `const broken = ;\n` },
+  // The loader says both in one AggregateError.
+  "two syntax errors": { ...passes, "b.test.js": `const = ;\n` },
   "an import of a name that the file doesn't export": {
     ...passes,
     "b.test.js": `import { test } from "bun:test";\nimport { nope } from "./dep.js";\ntest("never", () => void nope);\n`,

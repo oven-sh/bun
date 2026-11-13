@@ -783,6 +783,19 @@ impl BunxCommand {
         Ok(())
     }
 
+    /// Moves the `node_modules/.bin` entries that `path` has in front of `inherited` to the end.
+    fn path_with_bin_dirs_last(path: &[u8], inherited: &[u8]) -> Vec<u8> {
+        let added = path.strip_suffix(inherited).unwrap_or_default();
+        let bin = [SEP, b"node_modules", SEP, b".bin"].concat();
+        let (bin_dirs, mut entries): (Vec<&[u8]>, Vec<&[u8]>) =
+            strings::tokenize(added, &[DELIMITER]).partition(|entry| entry.ends_with(&bin));
+        if !inherited.is_empty() {
+            entries.push(inherited);
+        }
+        entries.extend(bin_dirs);
+        entries.join(&DELIMITER)
+    }
+
     fn which_in_cache<'a>(
         buf: &'a mut bun_paths::PathBuffer,
         bunx_cache_dir: &[u8],
@@ -954,10 +967,11 @@ impl BunxCommand {
         )?;
 
         let force_using_bun = ctx.debug.run_in_bun;
+        let mut inherited_path: Vec<u8> = Vec::new();
         Run::configure_path_for_run(
             root_dir_info,
             this_transpiler,
-            None,
+            Some(&mut inherited_path),
             root_dir_info.abs_path,
             force_using_bun,
         )?;
@@ -985,11 +999,18 @@ impl BunxCommand {
             .get(b"BUN_WHICH_IGNORE_CWD")
             .unwrap_or(b"")
             .to_vec();
-        if !ignore_cwd.is_empty() {
-            env_loader.map.remove(b"BUN_WHICH_IGNORE_CWD");
-        }
 
-        let path: Vec<u8> = env_loader.get(b"PATH").unwrap().to_vec();
+        let search_path: Vec<u8> = env_loader.get(b"PATH").unwrap().to_vec();
+
+        // Set by the shim that `bun install` writes, which has ordered the PATH of its scripts.
+        let path: Vec<u8> = if env_loader.has(b"BUN_INTERNAL_BUNX_KEEP_PATH_ORDER") {
+            let path = Self::path_with_bin_dirs_last(&search_path, &inherited_path);
+            env_loader.map.put(b"PATH", &path)?;
+            env_loader.map.remove(b"BUN_INTERNAL_BUNX_KEEP_PATH_ORDER");
+            path
+        } else {
+            search_path.clone()
+        };
 
         let display_version: &[u8] = if update_request.version.literal.is_empty() {
             b"latest"
@@ -1065,11 +1086,11 @@ impl BunxCommand {
         bun_output::scoped_log!(bunx, "install_param: {}", BStr::new(&install_param));
 
         let path_for_bin_dirs: Vec<u8> = if ignore_cwd.is_empty() {
-            path.clone()
+            search_path
         } else {
             // Without the cwd passed through BUN_WHICH_IGNORE_CWD: a temp node-gyp script must not find itself.
-            let mut new_path: Vec<u8> = Vec::with_capacity(path.len());
-            for (i, segment) in strings::tokenize(&path, &[DELIMITER]).enumerate() {
+            let mut new_path: Vec<u8> = Vec::with_capacity(search_path.len());
+            for (i, segment) in strings::tokenize(&search_path, &[DELIMITER]).enumerate() {
                 if !strings::eql_long(
                     strings::without_trailing_slash(segment),
                     strings::without_trailing_slash(&ignore_cwd),

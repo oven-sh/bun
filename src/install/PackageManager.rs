@@ -1455,12 +1455,12 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     };
 
     #[cfg(windows)]
-    const CONTENT: &str = "if not defined npm_config_node_gyp (\n  bun x --silent node-gyp %*\n) else (\n  node \"%npm_config_node_gyp%\" %*\n)\n";
+    const CONTENT: &str = "if not defined npm_config_node_gyp (\n  setlocal\n  set BUN_INTERNAL_BUNX_KEEP_PATH_ORDER=1\n  bun x --silent node-gyp %*\n) else (\n  node \"%npm_config_node_gyp%\" %*\n)\n";
     #[cfg(all(not(windows), not(target_os = "android")))]
     const CONTENT: &str = concat!(
         "#!/bin/sh\n",
         "if [ \"x$npm_config_node_gyp\" = \"x\" ]; then\n",
-        "  bun x --silent node-gyp $@\n",
+        "  BUN_INTERNAL_BUNX_KEEP_PATH_ORDER=1 bun x --silent node-gyp $@\n",
         "else\n",
         "  \"$npm_config_node_gyp\" $@\n",
         "fi\n"
@@ -1469,7 +1469,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     const CONTENT: &str = concat!(
         "#!/system/bin/sh\n",
         "if [ \"x$npm_config_node_gyp\" = \"x\" ]; then\n",
-        "  bun x --silent node-gyp $@\n",
+        "  BUN_INTERNAL_BUNX_KEEP_PATH_ORDER=1 bun x --silent node-gyp $@\n",
         "else\n",
         "  \"$npm_config_node_gyp\" $@\n",
         "fi\n"
@@ -1496,9 +1496,16 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     let existing_path = manager.env().get(b"PATH").unwrap_or(b"");
     let mut path_var: Vec<u8> =
         Vec::with_capacity(existing_path.len() + 1 + node_gyp_abs_dir.len());
-    path_var.extend_from_slice(existing_path);
-    if !existing_path.is_empty() && existing_path[existing_path.len() - 1] != DELIMITER {
-        path_var.push(DELIMITER);
+    // It replaces the one of an install that runs this one.
+    let outer_dir = (manager.env().get(b"BUN_WHICH_IGNORE_CWD")).filter(|dir| !dir.is_empty());
+    for entry in strings::split(existing_path, &[DELIMITER]) {
+        if Some(entry) != outer_dir {
+            path_var.extend_from_slice(entry);
+            path_var.push(DELIMITER);
+        }
+    }
+    if existing_path.last().is_none_or(|&last| last == DELIMITER) {
+        path_var.pop();
     }
     path_var.extend_from_slice(&node_gyp_abs_dir);
     manager.env_mut().map.put(b"PATH", &path_var)?;

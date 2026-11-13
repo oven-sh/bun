@@ -2018,29 +2018,33 @@ pub fn find_bin_conflicts(
         owner == package_id
             || (rows.begin()..rows.end()).any(|row| resolutions[row as usize] == owner)
     };
-    let owners: Vec<StringHashMap<PackageID>> = (ancestors.iter().enumerate())
+    let names: Vec<BinNames> = (ancestors.iter().enumerate())
         .map(|(i, &id)| {
-            let mut owners = bin_owners(lockfile, direct_packages, id, package_id);
+            let mut names = bin_names(lockfile, direct_packages, id, package_id, is_own);
             // The package that a tree is nested in may link its dependencies into the tree's `.bin`.
             if Some(id) != nested_id && !lockfile.is_importer_tree_id(id) {
                 let parent_id = resolutions[trees[id as usize].dependency_id as usize];
                 for bins in dependency_bins(lockfile, parent_id, &ancestors[i..]) {
                     if !is_own(bins.package_id) {
                         for name in &bins.names {
-                            bun_core::handle_oom(owners.put(name, bins.package_id));
+                            names.put_other(name);
                         }
                     }
                 }
             }
-            owners
+            names
         })
         .collect();
 
     conflicts.retain_mut(|conflict| {
         conflict.names.retain(|name| {
-            (owners.iter())
-                .find_map(|owners| owners.get(&**name).copied())
-                .is_some_and(|owner| !is_own(owner))
+            let folded = fold_case(name);
+            (names.iter())
+                .find_map(|names| {
+                    (names.other.contains_key(folded.as_slice()).then_some(true))
+                        .or_else(|| names.own.contains_key(&**name).then_some(false))
+                })
+                .unwrap_or(false)
         });
         !conflict.names.is_empty()
     });
@@ -2109,20 +2113,42 @@ fn dependency_bins(
     result
 }
 
-/// The package other than `excluded` that is first in `LinkOrder` for each name in a tree's `.bin`.
-fn bin_owners(
+/// The same for names that are one file on a case-insensitive volume.
+fn fold_case(name: &[u8]) -> Vec<u8> {
+    match core::str::from_utf8(name) {
+        Ok(name) => name.to_uppercase().to_lowercase().into_bytes(),
+        Err(_) => name.to_ascii_lowercase(),
+    }
+}
+
+#[derive(Default)]
+struct BinNames {
+    own: StringHashMap<()>,
+    /// Keyed by `fold_case`.
+    other: StringHashMap<()>,
+}
+
+impl BinNames {
+    fn put_other(&mut self, name: &[u8]) {
+        bun_core::handle_oom(self.other.put(&fold_case(name), ()));
+    }
+}
+
+/// The names that packages other than `excluded` link in a tree's `.bin`.
+fn bin_names(
     lockfile: &Lockfile,
     direct_packages: &DynamicBitSet,
     tree_id: tree::Id,
     excluded: PackageID,
-) -> StringHashMap<PackageID> {
+    is_own: impl Fn(PackageID) -> bool,
+) -> BinNames {
     let buffers = &lockfile.buffers;
     let string_buf = buffers.string_bytes.as_slice();
-    let mut owners: StringHashMap<PackageID> = StringHashMap::default();
+    let mut names = BinNames::default();
     let Some(node_modules) =
         crate::package_installer::abs_node_modules_path(lockfile, string_buf, tree_id)
     else {
-        return owners;
+        return names;
     };
     let bins = lockfile.packages.items_bin();
     let package_resolutions = lockfile.packages.items_resolution();
@@ -2144,15 +2170,20 @@ fn bin_owners(
     })
     .collect();
     packages.sort_by_key(|&(order, ..)| order);
+    let mut seen: StringHashMap<()> = StringHashMap::default();
     for (_, package_id, alias) in packages {
         for_each_bin_name(lockfile, package_id, *alias, node_modules.slice(), |name| {
-            let entry = bun_core::handle_oom(owners.get_or_put(name));
-            if !entry.found_existing {
-                *entry.value_ptr = package_id;
+            if bun_core::handle_oom(seen.get_or_put(name)).found_existing {
+                return;
+            }
+            if is_own(package_id) {
+                bun_core::handle_oom(names.own.put(name, ()));
+            } else {
+                names.put_other(name);
             }
         });
     }
-    owners
+    names
 }
 
 /// Only the names in `directories.bin` are read from disk.

@@ -362,12 +362,23 @@ impl PackageManager {
         if list.is_dependency {
             append_path_without_ancestor_bins(&mut env_path, &original_path, cwd)?;
         }
-        crate::bin::link_conflicting_bins(
-            &self.lockfile,
-            &list.bin_conflicts,
-            cwd,
-            env_path.slice(),
-        )?;
+        if !list.bin_conflicts.is_empty() {
+            // The shim is a command of its own only if it is configured with one to run.
+            let shim_dir = (script_env.get(b"BUN_WHICH_IGNORE_CWD"))
+                .filter(|_| (script_env.get(b"npm_config_node_gyp")).is_none_or(<[u8]>::is_empty));
+            let mut commands_path = EnvPath::init_capacity(env_path.slice().len())?;
+            for entry in strings::split(env_path.slice(), &[bun_paths::DELIMITER]) {
+                if Some(entry) != shim_dir {
+                    commands_path.append(entry)?;
+                }
+            }
+            crate::bin::link_conflicting_bins(
+                &self.lockfile,
+                &list.bin_conflicts,
+                cwd,
+                commands_path.slice(),
+            )?;
+        }
         let mut inherited_path = list.is_dependency.then_some(env_path.slice());
         let store_entry = bun_paths::path_literal!("/node_modules/.bun/").as_bytes();
 

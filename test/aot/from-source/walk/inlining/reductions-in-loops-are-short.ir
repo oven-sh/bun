@@ -1,0 +1,9 @@
+# -- source: reductions-in-loops-are-short.ts
+# declare function sink(value: unknown): void;
+# const list = [1, 9, 3, 4, 5];
+# function greatest(turns: number) { let n = 0; for (let k = 0; k < turns; k++) n += list.reduce((a, b) => (a > b ? a : b)); return n; }
+# sink(greatest(1000));
+# -- end of source
+# reduce() of numbers in a loop is copied from the short text of chains.
+# RUN: compile CallbackChainsFused mechanisms=all
+# CHECK: statistic CallbackChainsFused 2

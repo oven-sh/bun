@@ -2915,7 +2915,9 @@ impl TestCommand {
             vm.auto_killer.enabled = true;
         }
         vm.test_isolation_state.shares_global = run_compiled::test_files_share_global(ctx);
-        crate::jsc_hooks::timer_all_mut().zero_delay_is_due_when_idle = true;
+        crate::jsc_hooks::timer_all()
+            .zero_delay_is_due_when_idle
+            .set(true);
 
         if ctx.test_options.coverage.enabled {
             vm.transpiler.options.code_coverage = true;
@@ -3786,15 +3788,15 @@ impl TestCommand {
     }
 
     fn run_event_loop_for_watch(vm: &mut VirtualMachine) {
-        vm.event_loop_ref().tick_possibly_forever();
+        vm.event_loop().tick_possibly_forever();
 
         loop {
             while vm.is_event_loop_alive() {
                 vm.tick();
-                vm.event_loop_ref().auto_tick_active();
+                vm.event_loop().auto_tick_active();
             }
 
-            vm.event_loop_ref().tick_possibly_forever();
+            vm.event_loop().tick_possibly_forever();
         }
     }
 
@@ -3870,7 +3872,7 @@ impl TestCommand {
         // No MimallocArena is wired through `vm.arena` on this serial run
         // path; the parallel worker path in runner.rs does wire one.
         // Reintroduce here if it shows up in profiles.
-        vm_.event_loop_ref().ensure_waker();
+        vm_.event_loop().ensure_waker();
         vm_.run_with_api_lock_mut(|vm| {
             Context {
                 reporter: reporter_,
@@ -3942,7 +3944,7 @@ impl TestCommand {
         let timeout = jest::Jest::runner().map_or(0, |runner| runner.default_timeout_ms);
         let real_time = bun::TimespecMockMode::ForceRealTime;
         let deadline = bun::Timespec::ms_from_now(real_time, timeout.into());
-        let waited = vm.event_loop_ref().wait_at_top_level(|| {
+        let waited = vm.event_loop().wait_at_top_level(|| {
             !bun_jsc::cpp::JSMock__hasModulesToEvict(global)
                 || (timeout != 0 && bun::Timespec::now(real_time).greater(&deadline))
         });
@@ -4085,11 +4087,11 @@ impl TestCommand {
             if jsc::JSInternalPromise::opaque_mut(promise).status()
                 != jsc::js_promise::Status::Rejected
             {
-                vm.event_loop_ref().tick();
+                vm.event_loop().tick();
 
                 // Tests start after top-level mock.module() calls with a pending factory have patched their module.
                 let patched = vm
-                    .event_loop_ref()
+                    .event_loop()
                     .wait_at_top_level(|| !bun_jsc::cpp::JSMock__hasPendingModulePatches(global));
                 if patched == Err(TopLevelWaitError::NothingLeft) {
                     // As in Vitest, a vi.mock() or vi.doMock() factory may wait for something a test does.
@@ -4133,7 +4135,7 @@ impl TestCommand {
                 bun_test::BunTest::run(&buntest_strong, vm.global())?;
 
                 // Process event loop while bun_test tests are running
-                vm.event_loop_ref().tick();
+                vm.event_loop().tick();
 
                 let mut prev_unhandled_count = vm.unhandled_error_counter;
                 while buntest.phase != bun_test::Phase::Done {
@@ -4149,7 +4151,7 @@ impl TestCommand {
                         buntest.wants_wakeup = false;
                         vm.wakeup();
                     }
-                    if buntest.timer.state != crate::timer::EventLoopTimerState::ACTIVE
+                    if buntest.timer.state.get() != crate::timer::EventLoopTimerState::ACTIVE
                         && !vm.has_work_left()
                     {
                         let (what, waits_for) = Self::what_runner_waits_for(buntest);
@@ -4157,7 +4159,7 @@ impl TestCommand {
                             global, what, file_path,
                         ));
                         vm.unhandled_rejection(global, p.result(global.vm()), p.to_js());
-                        vm.event_loop_ref().tick();
+                        vm.event_loop().tick();
                         // The error ends a describe() or a test. Anything else stays stuck, so abandon the file.
                         if waits_for.is_none()
                             || waits_for == Self::what_runner_waits_for(buntest).1
@@ -4166,11 +4168,11 @@ impl TestCommand {
                         }
                         continue;
                     }
-                    vm.event_loop_ref().auto_tick_asleep();
+                    vm.event_loop().auto_tick_asleep();
                     if buntest.phase == bun_test::Phase::Done {
                         break;
                     }
-                    vm.event_loop_ref().tick();
+                    vm.event_loop().tick();
 
                     while prev_unhandled_count < vm.unhandled_error_counter {
                         let _ = vm.global().handle_rejected_promises();
@@ -4183,7 +4185,7 @@ impl TestCommand {
                 if bun_jsc::cpp::JSMock__hasHeldImports(global) {
                     bun_jsc::cpp::JSMock__releaseHeldImports(global);
                     let _ = vm
-                        .event_loop_ref()
+                        .event_loop()
                         .wait_at_top_level(|| !bun_jsc::cpp::JSMock__hasHeldImports(global));
                     while prev_unhandled_count < vm.unhandled_error_counter {
                         let _ = vm.global().handle_rejected_promises();
@@ -4191,9 +4193,7 @@ impl TestCommand {
                     }
                 }
 
-                let el = vm.event_loop();
-                // SAFETY: el is the VM-owned event loop; vm is passed back as *mut.
-                unsafe { (*el).tick_immediate_tasks(vm) };
+                vm.event_loop().tick_immediate_tasks();
 
                 // Node parity: a node test file exits only when its loop drains.
                 // on_before_exit() drains and dispatches 'beforeExit' like `bun run`;

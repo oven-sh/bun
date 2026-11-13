@@ -12,7 +12,7 @@ use bun_sema::program::Sym;
 use super::{FunctionLowering, parameters};
 use crate::builtins::id::BuiltinId;
 use crate::diagnostic_codes::Code;
-use crate::ir::generated::{ECMAMode, ModuleKind};
+use crate::ir::generated::{BlockFrequency, ECMAMode, ModuleKind};
 use crate::ir::{BlockId, FunctionKey, PropertyKeyId, StringId, TypeTable, ValueId, VariableKey};
 
 pub(in crate::lower) use self::key::find_function_name;
@@ -139,10 +139,21 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         value: ValueId,
         mode: ECMAMode,
     ) {
+        self.emit_set_inside(object, name, value, mode, None);
+    }
+
+    pub(crate) fn emit_set_inside(
+        &mut self,
+        object: ValueId,
+        name: PropertyName,
+        value: ValueId,
+        mode: ECMAMode,
+        function: Option<BuiltinId>,
+    ) {
         match self.resolve_access(name) {
             PropertyName::Constant(key) => {
                 self.file.fragment.note_write(key);
-                self.builder.prop_set(object, key, mode, value, false)
+                (self.builder).prop_set(object, key, mode, value, function, false)
             }
             PropertyName::Computed(property) => {
                 self.builder.elem_set(object, property, mode, value)
@@ -262,6 +273,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let result_on_answer = self.builder.create_variable(None);
         let join = self.create_block();
         let split = self.split_on_type(answer, TypeTable::ABSENT);
+        self.builder
+            .set_frequency(split.taken, BlockFrequency::Unlikely);
         self.builder.switch_to(split.taken);
         let (base, property) = match base {
             Some(base) => (base, self.lower_member_key(key)),

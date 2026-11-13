@@ -72,15 +72,15 @@ pub(crate) fn generate_code_for_lazy_export(
 
             let symbols: &SymbolList<'_> = &this.graph.ast.items_symbols()[source_index as usize];
 
-            struct Graph<'a> {
+            struct Graph<'a, 'bump> {
                 all_import_records: &'a [bun_ast::import_record::List<'a>],
                 // `BundledAst.css` SoA column.
-                all_css_asts: &'a [crate::bundled_ast::CssCol],
+                all_css_asts: &'a [crate::bundled_ast::CssCol<'bump>],
                 all_sources: &'a [Source<'a>],
             }
 
-            impl ComposesGraph for Graph<'_> {
-                fn stylesheet(&self, idx: IndexInt) -> Option<&BundlerStyleSheet> {
+            impl<'bump> ComposesGraph<'bump> for Graph<'_, 'bump> {
+                fn stylesheet(&self, idx: IndexInt) -> Option<&BundlerStyleSheet<'bump>> {
                     self.all_css_asts[idx as usize].as_deref()
                 }
 

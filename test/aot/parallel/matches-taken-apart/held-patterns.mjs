@@ -1,4 +1,5 @@
 // The exec of a pattern that a capture or a constant holds, in a loop: its result is only tested and read at a few places, and lastIndex is read behind it. Beside them: objects that lose a writable lastIndex, that are compiled anew, that have a method of their own, and another name of the same object. What is printed is what plain Bun prints.
+// STATISTIC: RegExpMatchAllocationsElided >= 4
 const unseen = x => [x][JSON.parse("0")];
 const log = [];
 const say = (...parts) => log.push(parts.map(p => (typeof p === "string" ? JSON.stringify(p) : Object.is(p, -0) ? "-0" : String(p))).join(" "));

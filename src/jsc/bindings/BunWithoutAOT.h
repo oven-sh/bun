@@ -48,6 +48,7 @@ inline void setESModuleMarker(JSCell*, bool) {}
 
 inline void lockBuiltinsWithoutImage() {}
 inline ASCIILiteral rejectedEvaluationMessage() { return ""_s; }
+inline void disallowEvaluation(JSGlobalObject*) {}
 inline void hostDidCreateRealm(JSGlobalObject*) {}
 inline void hostDidCreateStructure(JSGlobalObject*, Structure*) {}
 inline void hostDidCreateConstructor(JSGlobalObject*, JSObject*) {}

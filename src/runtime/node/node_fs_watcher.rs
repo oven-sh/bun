@@ -441,12 +441,11 @@ impl FSWatchTaskWindows {
             event: Event::Abort,
         }));
 
-        // `ctx` is the live owning `ParentRef<FSWatcher>` (BACKREF); `vm()` →
-        // `event_loop_mut()` is the audited safe `&mut EventLoop` accessor.
+        // `ctx` is the live owning `ParentRef<FSWatcher>` (BACKREF).
         // Ownership of `task` transfers to the queue (drained on the same thread).
         ctx.expect("FSWatchTask.ctx unset")
             .vm()
-            .event_loop_mut()
+            .event_loop()
             .enqueue_task(Task::init(task));
     }
 
@@ -578,10 +577,8 @@ impl FSWatcher {
             ctx: this.current_task.get().ctx,
             event,
         }));
-        // `vm()` is the BACKREF accessor; `event_loop_mut()` is the audited
-        // safe `&mut EventLoop` accessor. Ownership of `task` transfers to the
-        // queue.
-        this.vm().event_loop_mut().enqueue_task(Task::init(task));
+        // Ownership of `task` transfers to the queue.
+        this.vm().event_loop().enqueue_task(Task::init(task));
     }
 
     #[cfg(windows)]
@@ -818,7 +815,7 @@ impl FSWatcher {
                 ];
                 // Reported here rather than returned: the watcher still closes
                 // (and emits 'close') below whatever the listener did.
-                global_this.bun_vm().event_loop_mut().run_callback(
+                global_this.bun_vm().event_loop().run_callback(
                     bun_event_loop::ContextId::NONE,
                     listener,
                     &global_this,
@@ -849,7 +846,7 @@ impl FSWatcher {
                 let err_js = err.to_js(&global_object);
                 let args = [EventType::Error.to_js(&global_object), err_js];
                 // As `emit_abort`: reported here so the close below still runs.
-                global_object.bun_vm().event_loop_mut().run_callback(
+                global_object.bun_vm().event_loop().run_callback(
                     bun_event_loop::ContextId::NONE,
                     listener,
                     &global_object,
@@ -923,7 +920,7 @@ fn emit_js<const EVENT_TYPE: EventType>(
     filename: JSValue,
 ) {
     let args = [EVENT_TYPE.to_js(global_object), filename];
-    global_object.bun_vm().event_loop_mut().run_callback(
+    global_object.bun_vm().event_loop().run_callback(
         bun_event_loop::ContextId::NONE,
         listener,
         global_object,
@@ -993,7 +990,7 @@ impl FSWatcher {
                     // the watcher, and a throwing 'close' listener is uncaught in
                     // Node too (it emits on the next tick).
                     let global = self.global_this;
-                    global.bun_vm().event_loop_mut().run_callback(
+                    global.bun_vm().event_loop().run_callback(
                         bun_event_loop::ContextId::NONE,
                         listener,
                         &global,

@@ -331,8 +331,8 @@ pub struct VirtualMachine {
     /// `performance.timeOrigin + performance.now()` tracks the fake `Date.now()`.
     pub overridden_time_origin: Option<f64>,
     pub(crate) macro_event_loop: EventLoop,
-    pub regular_event_loop: EventLoop,
-    pub event_loop: *mut EventLoop, // BORROW_FIELD — points at sibling regular_event_loop/macro_event_loop
+    pub(crate) regular_event_loop: EventLoop,
+    event_loop: *const EventLoop, // BORROW_FIELD — points at sibling regular_event_loop/macro_event_loop
 
     pub(crate) ref_strings: crate::ref_string::Map,
     pub(crate) ref_strings_mutex: bun_threading::Mutex,
@@ -393,7 +393,7 @@ pub struct VirtualMachine {
 
     /// `Cell` so [`EventLoop`] (a value field of this struct) can flip the flag
     /// through `vm_ref()` (`&VirtualMachine`) without forming an overlapping
-    /// `&mut VirtualMachine` while `&mut EventLoop` is live. Zero-valid
+    /// `&mut VirtualMachine` while `&EventLoop` is live. Zero-valid
     /// (`Cell<bool>` is `repr(transparent)` over `bool`).
     pub is_inside_deferred_task_queue: core::cell::Cell<bool>,
     /// When true, drainMicrotasksWithGlobal is suppressed. `Cell` for the same
@@ -1075,39 +1075,17 @@ impl VirtualMachine {
         JSGlobalObject::opaque_ref(self.global)
     }
 
-    /// Returns a raw `*EventLoop` (no aliasing guarantee). Returning `&mut`
-    /// here would let two overlapping callers (e.g. a JS callback re-entering
-    /// `vm.event_loop()` from inside `tick()`) mint aliased `&mut EventLoop` to
-    /// the same allocation — UB per PORTING.md §Forbidden. Callers form a
-    /// short-lived `&mut *p` at the use site instead, mirroring [`Self::get`].
+    /// The active event loop: `regular_event_loop`, or `macro_event_loop` while a macro runs.
     #[inline(always)]
-    pub fn event_loop(&self) -> *mut EventLoop {
-        // self-pointer to regular_event_loop or macro_event_loop
-        self.event_loop
-    }
-
-    /// Safe `&mut EventLoop` accessor — the [`JsCell`] escape hatch applied to
-    /// the active event loop. `event_loop` is a self-pointer into either
-    /// `regular_event_loop` or `macro_event_loop` (both owned by this VM), so it
-    /// is live for the VM lifetime. Same single-JS-thread soundness contract as
-    /// [`Self::as_mut`]; keep the borrow short and do not hold across reentrant
-    /// JS calls. Prefer this over `unsafe { &mut *vm.event_loop() }` at call
-    /// sites.
-    #[inline(always)]
-    #[allow(clippy::mut_from_ref)]
-    pub fn event_loop_mut(&self) -> &mut EventLoop {
-        // SAFETY: `event_loop` points at a sibling field of this VM; non-null
-        // after `init()`; JS thread only (`VirtualMachine` is `!Sync`).
-        unsafe { &mut *self.event_loop }
-    }
-
-    /// Safe `&EventLoop` accessor — shared variant of [`Self::event_loop_mut`].
-    /// Prefer when only reading event-loop fields (queue lengths, pending
-    /// refs) to avoid minting an unnecessary `&mut`.
-    #[inline(always)]
-    pub fn event_loop_shared(&self) -> &EventLoop {
-        // SAFETY: see `event_loop_mut`.
+    pub fn event_loop(&self) -> &EventLoop {
+        // SAFETY: `event_loop` points at a sibling field of this VM from `init()` on.
         unsafe { &*self.event_loop }
+    }
+
+    /// [`Self::event_loop`] type-erased, for the handles of the crates that cannot name it.
+    #[inline(always)]
+    pub fn event_loop_ptr(&self) -> *mut () {
+        self.event_loop.cast_mut().cast()
     }
 
     /// A clone of this VM's uncounted [`crate::VmHandle`] — what something
@@ -1481,26 +1459,15 @@ impl VirtualMachine {
     /// land on the loop that was current when their work started.
     #[inline]
     pub fn current_loop_kind(&self) -> crate::LoopKind {
-        if core::ptr::eq(
-            self.event_loop.cast_const(),
-            &raw const self.regular_event_loop,
-        ) {
+        if core::ptr::eq(self.event_loop, &raw const self.regular_event_loop) {
             crate::LoopKind::Regular
         } else {
             debug_assert!(core::ptr::eq(
-                self.event_loop.cast_const(),
+                self.event_loop,
                 &raw const self.macro_event_loop
             ));
             crate::LoopKind::Macro
         }
-    }
-
-    /// Alias for [`Self::event_loop_mut`]. Kept for callers migrated on the
-    /// `runtime-hostfn-safe` branch; both names funnel into the single audited
-    /// `unsafe` deref above.
-    #[inline(always)]
-    pub fn event_loop_ref(&self) -> &mut EventLoop {
-        self.event_loop_mut()
     }
 
     /// Let the main VM's heap take the executable's initial module graph without collecting: everything allocated
@@ -1566,7 +1533,7 @@ impl VirtualMachine {
     /// [`crate::hot_reloader::HotReloaderCtx::install_bun_watcher`] (separate
     /// `Box` heap allocation), or null when hot reload is disabled.
     ///
-    /// NOTE: unlike `event_loop_mut`, the pointee is **not** JS-thread-only —
+    /// NOTE: unlike `event_loop`, the pointee is **not** JS-thread-only —
     /// the inner `Box<Watcher>` is held as `&mut Watcher` for the lifetime of
     /// the spawned file-watcher thread (`Watcher::thread_main`), and
     /// `RuntimeTranspilerStore` reads it from transpiler workers. The pointee
@@ -1600,13 +1567,10 @@ impl VirtualMachine {
         let _ = Box::into_raw(w);
     }
 
-    /// `event_loop().enter()` now, `.exit()` on drop. Safe wrapper over
-    /// [`EventLoop::enter_scope`] for the common `vm.event_loop()` case.
+    /// `event_loop().enter()` now, `.exit()` on drop.
     #[inline]
-    pub fn enter_event_loop_scope(&self) -> crate::event_loop::EventLoopEnterGuard {
-        // SAFETY: `self.event_loop` is the live VM-owned event-loop pointer and
-        // remains valid for the VM (and thus the guard's) lifetime.
-        unsafe { EventLoop::enter_scope(self.event_loop) }
+    pub fn enter_event_loop_scope(&self) -> crate::event_loop::EventLoopEnterGuard<'_> {
+        self.event_loop().enter_scope()
     }
 
     /// `event_loop().enter()` now, `.exit_without_checkpoint()` on drop, for a
@@ -1615,9 +1579,8 @@ impl VirtualMachine {
     #[inline]
     pub fn enter_event_loop_scope_without_checkpoint(
         &self,
-    ) -> crate::event_loop::EventLoopEnterNoCheckpointGuard {
-        // SAFETY: as `enter_event_loop_scope`.
-        unsafe { EventLoop::enter_scope_without_checkpoint(self.event_loop) }
+    ) -> crate::event_loop::EventLoopEnterNoCheckpointGuard<'_> {
+        self.event_loop().enter_scope_without_checkpoint()
     }
 
     /// Safe shared-reference accessor for the process-lifetime dotenv loader
@@ -1836,16 +1799,15 @@ impl VirtualMachine {
     }
 
     fn has_queued_work_excluding_immediates(&self) -> bool {
-        let el = self.event_loop_shared();
+        let el = self.event_loop();
         self.active_tasks > 0
             || el.has_pending_tasks()
-            || !el.yield_tasks.is_empty()
+            || el.has_yield_tasks()
             || el.has_pending_refs()
     }
 
     fn has_immediates(&self) -> bool {
-        let el = self.event_loop_shared();
-        !el.immediate_tasks.is_empty() || !el.next_immediate_tasks.is_empty()
+        self.event_loop().immediate_task_count() > 0
     }
 
     pub fn is_event_loop_alive_excluding_immediates(&self) -> bool {
@@ -1914,8 +1876,8 @@ impl VirtualMachine {
             .is_some_and(|h| h.is_active() || h.has_active_io_handles())
     }
 
-    pub fn wakeup(&mut self) {
-        self.event_loop_mut().wakeup();
+    pub fn wakeup(&self) {
+        self.event_loop().wakeup();
     }
 
     pub fn on_quiet_unhandled_rejection_handler_capture_value(
@@ -1996,10 +1958,7 @@ impl VirtualMachine {
     pub(crate) fn enable_macro_mode(&mut self) {
         if !self.has_enabled_macro_mode {
             self.has_enabled_macro_mode = true;
-            self.macro_event_loop = EventLoop::default();
-            self.macro_event_loop.virtual_machine = NonNull::new(std::ptr::from_mut(self));
-            self.macro_event_loop.global = NonNull::new(self.global);
-            self.macro_event_loop.concurrent_tasks = Default::default();
+            self.macro_event_loop.global.set(NonNull::new(self.global));
         }
         // Idempotent; outside the `has_enabled_macro_mode` guard because
         // `__bun_macro_context_deinit` runs per-job (RuntimeTranspilerStore
@@ -2018,7 +1977,7 @@ impl VirtualMachine {
             .fs
             .use_alternate_source_cache = true;
         self.macro_mode = true;
-        self.event_loop = &raw mut self.macro_event_loop;
+        self.event_loop = &raw const self.macro_event_loop;
         bun_analytics::features::macros.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         self.transpiler_store.enabled = false;
     }
@@ -2031,22 +1990,21 @@ impl VirtualMachine {
             .fs
             .use_alternate_source_cache = false;
         self.macro_mode = false;
-        self.event_loop = &raw mut self.regular_event_loop;
+        self.event_loop = &raw const self.regular_event_loop;
         self.transpiler_store.enabled = true;
     }
 
     pub fn enqueue_task(&self, task: bun_event_loop::Task) {
-        // accessed here (no overlapping `&mut EventLoop`).
-        self.event_loop_mut().enqueue_task(task);
+        self.event_loop().enqueue_task(task);
     }
 
     pub fn tick(&self) {
-        self.event_loop_mut().tick();
+        self.event_loop().tick();
     }
 
     #[inline(always)]
     pub fn drain_microtasks(&self) {
-        let _ = self.event_loop_mut().drain_microtasks();
+        let _ = self.event_loop().drain_microtasks();
     }
 
     /// Acquires the JSC API lock for the duration of `f()`.
@@ -2434,7 +2392,7 @@ impl VirtualMachine {
         // process.exit() never reaches drain_microtasks; flush AutoFlusher sinks here.
         if !self.is_inside_deferred_task_queue.get() {
             self.is_inside_deferred_task_queue.set(true);
-            self.event_loop_mut().deferred_tasks.run();
+            self.event_loop().deferred_tasks.run();
             self.is_inside_deferred_task_queue.set(false);
         }
 
@@ -2638,7 +2596,7 @@ impl VirtualMachine {
 
         // ---- B. release ------------------------------------------------------
         #[cfg(windows)]
-        if let Some(t) = vm.event_loop_mut().forever_timer.take() {
+        if let Some(t) = vm.event_loop().forever_timer.take() {
             // SAFETY: live usockets timer from `hold_forever_poll`; closed like
             // any us_timer (freed by its close callback when the loop turns).
             unsafe { uws::Timer::close::<true>(t.as_ptr()) };
@@ -2716,11 +2674,8 @@ impl VirtualMachine {
         if let Some(worker) = vm.worker_ref() {
             worker.will_wait_for_nothing_more();
         }
-        // SAFETY: fn contract (statement-scoped exclusive access).
-        unsafe {
-            (*this).regular_event_loop.release_without_global();
-            (*this).macro_event_loop.release_without_global();
-        }
+        vm.regular_event_loop.release_without_global();
+        vm.macro_event_loop.release_without_global();
         match kind {
             Teardown::Worker => WebWorker__teardownJSCVM(vm.global()),
             Teardown::MainThreadExit => {
@@ -2744,7 +2699,7 @@ impl VirtualMachine {
             // Whatever B/C unref'd through the concurrent counter, folded now:
             // on Windows it shares `active_handles` with libuv and a residue
             // would keep the loop close below spinning.
-            vm.event_loop_mut().apply_concurrent_ref_delta();
+            vm.event_loop().apply_concurrent_ref_delta();
             // SAFETY: fn contract (statement-scoped exclusive access).
             if let Some(rare) = unsafe { (*this).rare_data.as_deref_mut() } {
                 rare.detach_socket_groups_from_loop();
@@ -3024,18 +2979,16 @@ pub struct RuntimeHooks {
     /// [`VirtualMachine::run_error_handler`].
     pub print_exception:
         fn(vm: &mut VirtualMachine, value: JSValue, exception_list: Option<&mut ExceptionList>),
-    /// `vm.timer.insert(&mut event_loop_timer)` — `Timer::All` lives in
+    /// `vm.timer.insert(&event_loop_timer)` — `Timer::All` lives in
     /// `bun_runtime::RuntimeState` (b2-cycle); low-tier callers
     /// (`AbortSignal::Timeout`) reach it through this slot.
     pub timer_insert: unsafe fn(
-        vm: *mut VirtualMachine,
-        timer: *mut bun_event_loop::EventLoopTimer::EventLoopTimer,
+        vm: &VirtualMachine,
+        timer: *const bun_event_loop::EventLoopTimer::EventLoopTimer,
     ),
-    /// `vm.timer.remove(&mut event_loop_timer)` — see `timer_insert`.
-    pub timer_remove: unsafe fn(
-        vm: *mut VirtualMachine,
-        timer: *mut bun_event_loop::EventLoopTimer::EventLoopTimer,
-    ),
+    /// `vm.timer.remove(&event_loop_timer)` — see `timer_insert`.
+    pub timer_remove:
+        fn(vm: &VirtualMachine, timer: &bun_event_loop::EventLoopTimer::EventLoopTimer),
     /// `FakeTimers::min_delay_ms()` of the calling thread's VM. A slot for the same reason as `timer_insert`.
     pub timer_min_delay_ms: fn() -> u32,
     /// `FakeTimers::abort_signal_timeout_clock()` of the calling thread's VM.
@@ -3270,29 +3223,24 @@ impl VirtualMachine {
     /// # Safety
     /// `timer` must point at a live `EventLoopTimer` not currently linked into
     /// the heap; caller must be on the JS thread.
+    /// While linked it stays in the container `tag` names; only the heap writes links and states.
     #[inline]
     pub unsafe fn timer_insert(
-        vm: *mut Self,
-        timer: *mut bun_event_loop::EventLoopTimer::EventLoopTimer,
+        &self,
+        timer: *const bun_event_loop::EventLoopTimer::EventLoopTimer,
     ) {
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
-        // SAFETY: per fn contract; `vm` is the live per-thread VM.
-        unsafe { (hooks.timer_insert)(vm, timer) }
+        // SAFETY: per fn contract.
+        unsafe { (hooks.timer_insert)(self, timer) }
     }
 
-    /// `vm.timer.remove(timer)` — see [`Self::timer_insert`].
-    ///
-    /// # Safety
-    /// `timer` must point at a live `EventLoopTimer` currently linked into the
-    /// heap (state == ACTIVE); caller must be on the JS thread.
+    /// `vm.timer.remove(timer)` if `timer` is armed — see [`Self::timer_insert`].
     #[inline]
-    pub unsafe fn timer_remove(
-        vm: *mut Self,
-        timer: *mut bun_event_loop::EventLoopTimer::EventLoopTimer,
-    ) {
-        let hooks = runtime_hooks().expect("RuntimeHooks not installed");
-        // SAFETY: per fn contract; `vm` is the live per-thread VM.
-        unsafe { (hooks.timer_remove)(vm, timer) }
+    pub fn timer_remove(&self, timer: &bun_event_loop::EventLoopTimer::EventLoopTimer) {
+        if timer.state.get() == bun_event_loop::EventLoopTimer::State::ACTIVE {
+            let hooks = runtime_hooks().expect("RuntimeHooks not installed");
+            (hooks.timer_remove)(self, timer)
+        }
     }
 
     /// The shortest delay, in milliseconds, a timer armed now can have: 1 while `jest.useFakeTimers()` runs a timer's callback.
@@ -3504,7 +3452,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).origin).write(Default::default());
             addr_of_mut!((*vm).ref_strings).write(Default::default());
             addr_of_mut!((*vm).modules).write(Default::default());
-            addr_of_mut!((*vm).macro_event_loop).write(EventLoop::default());
+            addr_of_mut!((*vm).macro_event_loop).write(EventLoop::new(NonNull::new_unchecked(vm)));
             addr_of_mut!((*vm).proxy_env_storage).write(Default::default());
             addr_of_mut!((*vm).gc_controller).write(Default::default());
             addr_of_mut!((*vm).channel_ref).write(Default::default());
@@ -3527,10 +3475,9 @@ impl VirtualMachine {
                 .write(crate::runtime_transpiler_store::RuntimeTranspilerStore::init());
 
             // Event-loop wiring (self-pointers).
-            addr_of_mut!((*vm).regular_event_loop).write(EventLoop::default());
             let regular = addr_of_mut!((*vm).regular_event_loop);
-            (*regular).virtual_machine = NonNull::new(vm);
-            let _ = (*regular).tasks.ensure_unused_capacity(64);
+            regular.write(EventLoop::new(NonNull::new_unchecked(vm)));
+            let _ = (*regular).tasks.get_mut().ensure_unused_capacity(64);
             addr_of_mut!((*vm).event_loop).write(regular);
 
             addr_of_mut!((*vm).source_mappings).write(SavedSourceMap::default());
@@ -3589,7 +3536,7 @@ impl VirtualMachine {
             (*vm).root_context.bind(crate::ContextId::from_raw(
                 Zig__GlobalObject__contextIdentifier(&*global),
             ));
-            (*vm).regular_event_loop.global = NonNull::new(global);
+            (*vm).regular_event_loop.global.set(NonNull::new(global));
             let jsc_vm = (*global).vm_ptr();
             (*vm).jsc_vm = jsc_vm;
             jsc_vm
@@ -3663,8 +3610,8 @@ impl VirtualMachine {
     /// `promise` settles. Thin forwarder; body lives in
     /// [`crate::event_loop::EventLoop::wait_for_promise`].
     #[inline]
-    pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
-        self.event_loop_mut().wait_for_promise(promise)
+    pub fn wait_for_promise(&self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
+        self.event_loop().wait_for_promise(promise)
     }
 
     /// `eventLoop().autoTick()` — dispatched through the runtime hook
@@ -3676,7 +3623,7 @@ impl VirtualMachine {
             unsafe { (hooks.auto_tick)(self) };
         } else {
             // No high tier (unit tests) — fall back to a non-blocking tick.
-            self.event_loop_mut().tick();
+            self.event_loop().tick();
         }
     }
 
@@ -3694,7 +3641,7 @@ impl VirtualMachine {
         } else {
             // No high-tier hook (unit tests) — drain JS tasks only so callers
             // observe forward progress without blocking on the I/O loop.
-            self.event_loop_mut().tick();
+            self.event_loop().tick();
         }
     }
 
@@ -3928,7 +3875,7 @@ impl VirtualMachine {
                 if crate::JSPromise::status_ptr(p) != crate::js_promise::Status::Pending {
                     break;
                 }
-                self.event_loop_mut().tick();
+                self.event_loop().tick();
                 let Some(p) = self.pending_internal_promise() else {
                     break;
                 };
@@ -4753,7 +4700,7 @@ impl VirtualMachine {
         if owner.is_cell()
             && Bun__ModuleGraph__handleUnhandledRejection(global_object, reason, owner)
         {
-            let _ = self.event_loop_mut().drain_microtasks();
+            let _ = self.event_loop().drain_microtasks();
             return;
         }
 
@@ -4761,7 +4708,7 @@ impl VirtualMachine {
             if self.is_running_vitest_entry
                 && Bun__handleUnhandledRejection(global_object, reason, promise) > 0
             {
-                let _ = self.event_loop_mut().drain_microtasks();
+                let _ = self.event_loop().drain_microtasks();
                 return;
             }
             self.unhandled_error_counter += 1;
@@ -4771,7 +4718,7 @@ impl VirtualMachine {
 
         // Each arm drains microtasks on exit — hoisted into a closure.
         let drain = |this: &mut Self| {
-            let _ = this.event_loop_mut().drain_microtasks();
+            let _ = this.event_loop().drain_microtasks();
         };
         // Wrapper over the `Bun__handleUnhandledRejection` FFI call (returns
         // whether a JS handler claimed it). Captures `global_object` / `reason`
@@ -4842,7 +4789,7 @@ impl VirtualMachine {
                 // continue to default handler — but RETURN if this drain
                 // errors (the VM is dead; don't bump the counter or invoke the
                 // handler).
-                if self.event_loop_mut().drain_microtasks().is_err() {
+                if self.event_loop().drain_microtasks().is_err() {
                     return;
                 }
             }
@@ -5137,14 +5084,14 @@ impl VirtualMachine {
     /// `*mut bun_runtime::timer::ImmediateObject` — see
     /// [`crate::event_loop::RunImmediateFn`].
     #[inline]
-    pub fn enqueue_immediate_task(&mut self, task: *mut ()) {
-        self.event_loop_mut().enqueue_immediate_task(task);
+    pub fn enqueue_immediate_task(&self, task: *mut ()) {
+        self.event_loop().enqueue_immediate_task(task);
     }
 
     /// Ticks the event loop until no tasks keep it alive.
     pub fn wait_for_tasks(&mut self) {
         while self.is_event_loop_alive() {
-            self.event_loop_mut().tick();
+            self.event_loop().tick();
             if self.is_event_loop_alive() {
                 self.auto_tick();
             }
@@ -5252,7 +5199,10 @@ impl VirtualMachine {
         let new_global = BakeCreateProdGlobal(vm_ref.console.cast());
         vm_ref.global = new_global;
         VMHolder::set_cached_global_object(Some(new_global));
-        vm_ref.regular_event_loop.global = NonNull::new(new_global);
+        vm_ref
+            .regular_event_loop
+            .global
+            .set(NonNull::new(new_global));
         // `new_global` is freshly created and live for VM lifetime; safe
         // ZST-handle deref. `vm_ptr()` returns the FFI `*mut VM` directly
         // (no `&VM` reborrow).
@@ -5260,7 +5210,7 @@ impl VirtualMachine {
         // SAFETY: per-thread uws loop is live.
         let uws_loop = unsafe { &*uws::Loop::get() };
         uws_loop.internal_loop_data.jsc_vm.set(vm_ref.jsc_vm.cast());
-        vm_ref.event_loop_mut().ensure_waker();
+        vm_ref.event_loop().ensure_waker();
         if opts.smol {
             // SAFETY: process-global written once at startup.
             IS_SMOL_MODE.store(true, core::sync::atomic::Ordering::Relaxed);
@@ -6223,7 +6173,7 @@ impl VirtualMachine {
             Bun__Process__resetArgv(self.global());
         }
 
-        self.event_loop_mut().ensure_waker();
+        self.event_loop().ensure_waker();
 
         let _ = self.ensure_debugger(true);
 
@@ -6273,7 +6223,7 @@ impl VirtualMachine {
         entry_path: &[u8],
     ) -> crate::CrateResult<*mut JSInternalPromise> {
         let promise = self.reload_entry_point(Some(entry_path))?;
-        self.event_loop_mut()
+        self.event_loop()
             .wait_for_worker_entry_evaluation(jsc::AnyPromise::Internal(promise));
         if let Some(worker) = self.worker_ref() {
             if worker.has_requested_terminate() {
@@ -6289,7 +6239,7 @@ impl VirtualMachine {
         module: core::fmt::Arguments<'_>,
     ) -> Option<*mut JSInternalPromise> {
         // pending_internal_promise can change if hot module reloading is enabled
-        let waited = self.event_loop_mut().wait_at_top_level(|| {
+        let waited = self.event_loop().wait_at_top_level(|| {
             self.pending_internal_promise().is_none_or(|promise| {
                 crate::JSPromise::status_ptr(promise) != crate::js_promise::Status::Pending
             })
@@ -6476,7 +6426,7 @@ impl VirtualMachine {
             let _ = self.set_process_cwd(z);
         }
 
-        let _ = self.event_loop_mut().drain_microtasks();
+        let _ = self.event_loop().drain_microtasks();
 
         // The finished file's close handlers run, and may dial again.
         self.close_test_file_sockets();
@@ -6490,7 +6440,7 @@ impl VirtualMachine {
                 rare.node_quic_callbacks.deinit();
             }
         }
-        let _ = self.event_loop_mut().drain_microtasks();
+        let _ = self.event_loop().drain_microtasks();
 
         let _ = self.auto_killer.kill();
         self.auto_killer.clear();
@@ -6573,8 +6523,8 @@ impl VirtualMachine {
         );
         self.global = new_global;
         VMHolder::set_cached_global_object(Some(new_global));
-        self.regular_event_loop.global = NonNull::new(new_global);
-        self.macro_event_loop.global = NonNull::new(new_global);
+        self.regular_event_loop.global.set(NonNull::new(new_global));
+        self.macro_event_loop.global.set(NonNull::new(new_global));
         if let Some(rare) = self.rare_data.as_deref_mut() {
             for hook in rare.cleanup_hooks.iter_mut() {
                 if hook.global_this == old_global {

@@ -65,7 +65,7 @@ fn vm_mut<'a>() -> &'a mut VirtualMachine {
     VirtualMachine::get_mut()
 }
 
-use crate::jsc_hooks::timer_all_mut as timer_all;
+use crate::jsc_hooks::timer_all;
 
 // ============================================================================
 // CronJobBase — shared base for CronRegisterJob and CronRemoveJob
@@ -140,7 +140,7 @@ trait CronJobBase: Sized + bun_ptr::AnyRefCounted {
         let owner = this.owner().take().expect("cron job finished twice");
         this.poll().with_mut(|p| p.unref(bun_io::js_vm_ctx()));
         let global = this.global();
-        let ev = VirtualMachine::get().event_loop_mut();
+        let ev = VirtualMachine::get().event_loop();
         ev.enter();
         if let Some(msg) = this.err_msg().replace(None) {
             let err = EncodedSlice::utf8(&msg).to_error_instance(&global);
@@ -821,7 +821,7 @@ pub(crate) fn register_os_job(
         exit_status: JsCell::new(None),
         err_msg: JsCell::new(None),
         tmp_path: JsCell::new(None),
-        event_loop_handle: EventLoopHandle::init(vm_mut().event_loop().cast::<()>()),
+        event_loop_handle: EventLoopHandle::init(vm_mut().event_loop_ptr()),
     });
     job.poll.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
     let promise_value = job.promise.get().value();
@@ -1259,7 +1259,7 @@ pub(crate) fn remove(cx: &mut JsScope<'_>, title: &[u8]) -> JsResult<JSValue> {
         exit_status: JsCell::new(None),
         err_msg: JsCell::new(None),
         tmp_path: JsCell::new(None),
-        event_loop_handle: EventLoopHandle::init(vm_mut().event_loop().cast::<()>()),
+        event_loop_handle: EventLoopHandle::init(vm_mut().event_loop_ptr()),
     });
     job.poll.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
     let promise_value = job.promise.get().value();
@@ -1324,10 +1324,7 @@ pub(crate) struct CronJob {
     /// `ThisPtr`-taking paths that may release refs.
     self_ref: Cell<BackRef<CronJob, bun_ptr::Root>>,
     // pub: `bun_core::from_field_ptr!(CronJob, event_loop_timer)` needs `offset_of!` visibility.
-    // `JsCell` is `#[repr(transparent)]`, so the byte offset of the inner
-    // `EventLoopTimer` is identical and the dispatch.rs `owner!` macro works
-    // unchanged.
-    pub(crate) event_loop_timer: JsCell<EventLoopTimer>,
+    pub(crate) event_loop_timer: EventLoopTimer,
     // LIFETIMES.tsv: JSC_BORROW → GlobalRef. Read-only after construction.
     global: GlobalRef,
     // Read-only after construction.
@@ -1440,8 +1437,8 @@ impl CronJob {
     /// Idempotent — every step checks its own state.
     fn stop_internal(&self, _vm: &VirtualMachine) {
         self.stopped.set(true);
-        if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
-            timer_all().remove(self.event_loop_timer.as_ptr());
+        if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
+            timer_all().remove(&self.event_loop_timer);
         }
         self.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
         self.abort_handle.leave();
@@ -1566,12 +1563,7 @@ impl CronJob {
         let Some(next_time) = this.compute_next_timespec() else {
             return Self::finish_deferred_stop(this, vm);
         };
-        timer_all().update(
-            this.event_loop_timer
-                .as_ptr()
-                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>(),
-            &next_time,
-        );
+        timer_all().update(&raw const this.event_loop_timer, &next_time);
     }
 
     /// The tick's callback runs here as a top-level call (what it throws
@@ -1585,8 +1577,7 @@ impl CronJob {
         // `stop()`/`ref()`/`unref()` on this same wrapper; a `noalias`
         // `&mut Self` here would be Stacked-Borrows UB. All mutation is
         // interior (`Cell`/`JsCell`).
-        this.event_loop_timer
-            .with_mut(|t| t.state = EventLoopTimerState::FIRED);
+        this.event_loop_timer.state.set(EventLoopTimerState::FIRED);
 
         if this.stopped.get() {
             return;
@@ -1609,8 +1600,6 @@ impl CronJob {
             return;
         }
 
-        // `enter()` now, `exit()` on drop; holds the raw pointer (not `&mut`)
-        // so re-entrant JS can re-borrow.
         let _ev_guard = vm.enter_event_loop_scope();
         // The tick and what follows from it (the reactions on the promise it returns, what they
         // report) are the script's that scheduled the job.
@@ -1621,13 +1610,9 @@ impl CronJob {
         // job is re-armed, so an `uncaughtException` handler's `stop()` is
         // observed by `schedule_next`), and does not stop the job — as with a
         // rejected tick.
-        let result = vm.event_loop_mut().run_callback_with_result(
-            this.context,
-            cb,
-            &this.global,
-            js_this,
-            &[],
-        );
+        let result =
+            vm.event_loop()
+                .run_callback_with_result(this.context, cb, &this.global, js_this, &[]);
         this.in_fire.set(false);
 
         // terminate() may have arrived while the callback was running; bail out
@@ -1734,7 +1719,7 @@ impl CronJob {
         let job = RefPtr::new(CronJob {
             ref_count: Cell::new(1),
             self_ref: Cell::new(BackRef::dangling()),
-            event_loop_timer: JsCell::new(EventLoopTimer::init_paused(EventLoopTimerTag::CronJob)),
+            event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::CronJob),
             global: GlobalRef::from(global),
             parsed,
             tz,
@@ -1779,12 +1764,7 @@ impl CronJob {
         job.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         // SAFETY: heap-allocated (`RefPtr`); `stop_internal` leaves the context before the job is released.
         unsafe { bun_jsc::AbortHandle::arm_owner(job.as_ptr(), cx.context()) };
-        timer_all().update(
-            job.event_loop_timer
-                .as_ptr()
-                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>(),
-            &next_time,
-        );
+        timer_all().update(&raw const job.event_loop_timer, &next_time);
 
         Ok(js_value)
     }
@@ -2077,7 +2057,7 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
         argv0: resolved_argv0,
         #[cfg(windows)]
         windows: spawn::WindowsOptions {
-            loop_: EventLoopHandle::init(vm_mut().event_loop().cast::<()>()),
+            loop_: EventLoopHandle::init(vm_mut().event_loop_ptr()),
             ..Default::default()
         },
         ..SpawnOptions::default()
@@ -2173,7 +2153,7 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
         }
     }
 
-    let ev_handle = EventLoopHandle::init(vm_mut().event_loop().cast::<()>());
+    let ev_handle = EventLoopHandle::init(vm_mut().event_loop_ptr());
     Ok(spawned.to_process_handle(ev_handle))
 }
 

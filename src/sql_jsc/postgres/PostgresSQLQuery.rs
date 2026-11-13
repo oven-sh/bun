@@ -252,7 +252,7 @@ impl PostgresSQLQuery {
         let Some(function) = vm.sql_state().postgresql_context.on_query_reject_fn.get() else {
             return;
         };
-        let event_loop = vm.event_loop_mut();
+        let event_loop = vm.event_loop();
         event_loop.run_callback(
             bun_event_loop::ContextId::NONE,
             function,
@@ -333,7 +333,7 @@ impl PostgresSQLQuery {
         let Some(function) = vm.sql_state().postgresql_context.on_query_resolve_fn.get() else {
             return;
         };
-        let event_loop = vm.event_loop_mut();
+        let event_loop = vm.event_loop();
 
         event_loop.run_callback(
             bun_event_loop::ContextId::NONE,

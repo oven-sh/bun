@@ -224,6 +224,8 @@ pub struct EvalScope {
     pub file_symbols: IdList<SymbolId>,
     pub constructor_symbols: IdList<SymbolId>,
     pub is_sloppy: bool,
+    /// It sees no name of the file.
+    pub is_in_global_code: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]

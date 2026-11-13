@@ -68,11 +68,11 @@ impl Checker<'_, '_> {
             if !is_kept_import(&decl) {
                 continue;
             }
+            let Some(&first) = first_of_the_file.get(&sym) else {
+                continue;
+            };
             let (start, end) = self.get_error_range_for_node(file, hir.node(decl));
-            if first_of_the_file
-                .get(&sym)
-                .is_some_and(|&first| first < start)
-            {
+            if first < start {
                 self.early_error_at((file, start, end), 2440, &[Arg::Sym(sym)]);
             }
         }

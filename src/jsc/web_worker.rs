@@ -120,7 +120,7 @@ pub struct WebWorker {
     /// What the thread is handed, until one has started; then null.
     thread_start: Cell<*mut ThreadStart>,
     /// On the parent's loop while the worker waits for room.
-    pub room_timer: JsCell<EventLoopTimer>,
+    pub room_timer: EventLoopTimer,
     /// How many times `room_timer` has found the thread of a sibling returning and no room yet.
     room_timer_rounds: Cell<u8>,
 
@@ -568,7 +568,7 @@ impl WebWorker {
             parent_poll_ref: JsCell::new(KeepAlive::init()),
             join_handle: JsCell::new(None),
             thread_start: Cell::new(core::ptr::null_mut()),
-            room_timer: JsCell::new(EventLoopTimer::init_paused(TimerTag::WorkerWaitsForRoom)),
+            room_timer: EventLoopTimer::init_paused(TimerTag::WorkerWaitsForRoom),
             room_timer_rounds: Cell::new(0),
             status: Cell::new(Status::Start),
             arena: JsCell::new(None),
@@ -749,22 +749,16 @@ impl WebWorker {
     }
 
     fn arm_room_timer(&self) {
-        let timer = self.room_timer.as_ptr();
+        self.room_timer
+            .next
+            .set(Timespec::now(TimespecMockMode::ForceRealTime).add_ms(ROOM_TIMER_MS));
         // SAFETY: parent thread; the node is unlinked, and the parent's list of children keeps `self` while it is linked.
-        unsafe {
-            (*timer).next = Timespec::now(TimespecMockMode::ForceRealTime).add_ms(ROOM_TIMER_MS);
-            VirtualMachine::timer_insert(self.parent, timer);
-        }
+        unsafe { (*self.parent).timer_insert(&raw const self.room_timer) };
     }
 
     fn disarm_room_timer(&self) {
-        let timer = self.room_timer.as_ptr();
-        // SAFETY: parent thread; an active node is linked into the parent's heap.
-        unsafe {
-            if (*timer).state == TimerState::ACTIVE {
-                VirtualMachine::timer_remove(self.parent, timer);
-            }
-        }
+        // SAFETY: parent thread; `parent` outlives its children (it joins them).
+        unsafe { &*self.parent }.timer_remove(&self.room_timer);
     }
 
     /// `Tag::WorkerWaitsForRoom` fire body. The worker takes what room there is, or gets 'error'.
@@ -773,8 +767,7 @@ impl WebWorker {
     /// # Safety
     /// `self` waits for room, and `parent` is its parent.
     pub unsafe fn on_room_timer(&self, parent: &VirtualMachine) {
-        self.room_timer
-            .with_mut(|timer| timer.state = TimerState::FIRED);
+        self.room_timer.state.set(TimerState::FIRED);
         if parent.is_shutting_down() || !parent.script_allowed() {
             return;
         }
@@ -1272,7 +1265,7 @@ impl WebWorker {
 
         // don't run the GC if we don't actually need to
         if vm.standalone_module_graph.is_none()
-            && (vm.is_event_loop_alive() || vm.event_loop_mut().tick_concurrent_with_count() > 0)
+            && (vm.is_event_loop_alive() || vm.event_loop().tick_concurrent_with_count() > 0)
         {
             vm.global().vm().release_weak_refs();
             // `Arena = bumpalo::Bump` has no collect; global mimalloc

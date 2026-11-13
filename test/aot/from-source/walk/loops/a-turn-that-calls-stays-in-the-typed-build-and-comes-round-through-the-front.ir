@@ -26,19 +26,26 @@
 # (globalThis as any).readers = [reader];
 # print(reader.readQuoted(), reader.seen());
 # -- end of source
-# Most turns of the loop run no other code; the turn that meets an escape calls, and comes round. The loop is built twice. The call stands IN the typed build: its way comes round through the front of quiet turns,
-# which reads `end` anew and asks it for an int32 again; where that fails the loop goes on in its other build. `at`, which every turn reads and stores, is a parameter of the head and of the front.
+# Most turns of the loop run no other code; the turn that meets an escape calls, and comes round. The loop is built twice. What the call does stands IN the typed build, copied: its way comes round through the head.
+# `at`, which every turn reads and stores, and `escapes`, which the copied call stores, are parameters of the head. `end` and `text`, which no turn stores, are read and asked once, in front.
 # RUN: walk f4 mechanisms=all
 # CHECK: [[entry]](v{{*}}) frequency=Rare:
-# CHECK: [[head]]({{*}}i32 @Int32) isInLoop=true isLoopHead=true:
-# CHECK: [[front]]({{*}}i32 @Int32) isInLoop=true isLoopHead=true:
-# CHECK: = GetEnvironmentField
-# CHECK: = TypeTest
+# CHECK: [[head]]({{*}}, {{*}}: int[0, 9007199254740992] @Int64) isInLoop=true isLoopHead=true:
+# CHECK-NOT: GetEnvironmentField {{*}}field=1
 # CHECK: [[leaves]]() frequency=Rare isInLoop=true:
 # CHECK-NEXT: Jump -> next [[entry]](
+# CHECK-NOT: GetEnvironmentField {{*}}field=1
 # CHECK: Jump -> next [[head]](
-# CHECK: = CallDirect {{*}}function=f3
-# CHECK: Jump -> next [[front]](
+# CHECK-NOT: GetEnvironmentField
+# CHECK: PutEnvironmentField {{*}}field=1
+# CHECK-NOT: GetEnvironmentField
+# CHECK: Jump -> next [[head]](
+# CHECK-NOT: = CallDirect
+# CHECK-NOT: GetEnvironmentField
+# CHECK: PutEnvironmentField {{*}}field=3
+# CHECK-NOT: = CallDirect
+# CHECK-NOT: GetEnvironmentField
+# CHECK: Jump -> next [[head]](
 # No quiet turn appends to `result`: every append stands in a turn that leaves the loop or calls. So the text lies in no string builder, which would forbid the second build.
 # RUN(TEXT): walk f4 mechanisms=all
 # TEXT-NOT: StringBuilder

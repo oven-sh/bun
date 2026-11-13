@@ -302,11 +302,11 @@ export const pins = {
   },
   muslSysroot: { alpineRelease },
   windowsSysroot: {
-    xwin: "0.9.0",
+    xwin: "0.10.0",
     // The .sha256 beside each file of the release.
     xwinSha256: {
-      x64: "31e1033f30608ba6b821d17f1461042bd54c23424813c9b4e9ae15b6d32fa4cd",
-      aarch64: "41466ca41e16fe7fc1b82a67babc7c3811021bf32de354b90b34d8c4edb153e2",
+      x64: "d870eb4b2f390878af6da1ccd3cf321d22fcb72720984853b4be732ae597fc88",
+      aarch64: "6d56d28537a86f37aa3d041318898f25ee3100c6b6ec332ad873c28faf37be23",
     },
     sdk: "10.0.26100",
     crt: "14.44.17.14",

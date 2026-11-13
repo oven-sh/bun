@@ -1,0 +1,12 @@
+# the program evaluates a text and loads machine code by a call of its own: both are what code in sight does, so both are listed, each at its place. What the text may find besides is not
+# -- source: a-loader-that-the-program-calls-stays-a-cause-beside-text.ts
+# declare const input: any;
+# new Function(input);
+# process.dlopen({ exports: {} }, input);
+# -- end of source
+# RUN: causes
+# CHECK: cause EvaluatesText Function at f0
+# CHECK: machine-code ProcessDlopen at f0
+# RUN(NEVER): causes
+# NEVER-NOT: nowhere
+# NEVER-NOT: cause RunsUnseenCode

@@ -1,0 +1,26 @@
+# -- source: main.js
+# function Point(x, y) { this.x = x; this.y = y; }
+# function one(x) { var made = new Point(x, 1); last = made; return made.x + made.y; }
+# var last;
+# publish(Point);
+# print(one(1));
+# print(one(2));
+# print(report());
+# -- end of source
+# f2 = one
+# The allocation in one() lists `x` and `y`, behind a look at the guards that say that stores under the two names pass what stands above. The look stands ahead of the object, so no object of Point need have been made,
+# and a word of several guards leaves out the names of a class whose guards have not begun. So the guards begin in front of the look.
+# RUN(LOOK): walk f2 mechanisms=all
+# LOOK: = BeginMemberGuards layout=L0
+# LOOK-NEXT: = AreMembersUnchanged conditions=[{kind=MemberPassedByStores layout=L0 key="x"}, {kind=MemberPassedByStores layout=L0 key="y"}]
+# RUN: run-in-shell globalThis.hits = 0; globalThis.publish = () => { }; globalThis.report = () => globalThis.hits;
+# CHECK: 2
+# CHECK-NEXT: 3
+# CHECK-NEXT: 0
+# CHECK-NEXT: exited with 0
+# In the run SETTER the first store of the first object finds a setter above it.
+# RUN(SETTER): run-in-shell globalThis.hits = 0; globalThis.publish = (Point) => { Object.defineProperty(Point.prototype, "x", { get() { return 7; }, set(value) { globalThis.hits++; }, configurable: true }); }; globalThis.report = () => globalThis.hits;
+# SETTER: 8
+# SETTER-NEXT: 8
+# SETTER-NEXT: 2
+# SETTER-NEXT: exited with 0

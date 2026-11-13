@@ -1,0 +1,25 @@
+# -- source: main.js
+# function Made(a) { this.a = a; this.b = 2; }
+# Made.prototype.area = function () { return this.a + this.b; };
+# function turn(i) { return new Made(i & 7).area(); }
+# function run(turns) { var sum = 0; for (var i = 0; i < turns; i++) sum = (sum + turn(i)) | 0; return sum; }
+# print(run(10));
+# print(run(0));
+# print(run(3));
+# -- end of source
+# The guards of a constructor function begin with its first object. Here that object is made in a function that the loop calls in each turn, and the typed build of the loop leaves it unbuilt: nobody
+# would begin the guards, the test in the first turn would fail, and the typed build would be left for good. So they are begun, and asked, in front of the loop.
+# RUN(BEGUN): walk f3 mechanisms=all
+# BEGUN: BeginMemberGuards layout=L0
+# BEGUN: AreMembersUnchanged conditions=[{layout=L0 key="area"}]
+# BEGUN: isLoopHead=true
+# RUN: run-in-shell
+# CHECK: 49
+# CHECK-NEXT: 0
+# CHECK-NEXT: 9
+# CHECK-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime
+# CHECKED: 49
+# CHECKED-NEXT: 0
+# CHECKED-NEXT: 9
+# CHECKED-NEXT: exited with 0

@@ -909,9 +909,7 @@ it.each([
   };
   await line("first load");
   // What is left on the stack can keep it alive, and differs with where a collection starts from.
-  writeFileSync(
-    join(String(dir), "main.js"),
-    `
+  const second = `
       globalThis.kept = [];
       require("fs").readFile(__filename, () => {
         Bun.gc(true);
@@ -928,10 +926,11 @@ it.each([
           });
         });
       });
-    `,
-  );
+    `;
+  writeFileSync(join(String(dir), "main.js"), second);
   await line("collected");
-  writeFileSync(join(String(dir), "main.js"), `console.log("third load"); process.exit(0);`);
+  // writeFileSync() cuts a longer file off behind the write: a load in between would read the rest of the second text.
+  writeFileSync(join(String(dir), "main.js"), `console.log("third load"); process.exit(0);`.padEnd(second.length));
   await line("third load");
   const stderr = (await runner.stderr.text()).split("\n").filter(line => line && !line.startsWith("DEBUG: "));
   expect({ stdout: stdout.split("\n"), stderr }).toEqual({

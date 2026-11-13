@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// This rule applies when an array method is called on the arguments object itself.
 pub struct BadArrayMethodOnArguments;
 
-const BAD_ARRAY_METHOD_ON_ARGUMENTS: Message = Message::new("", "Bad array method on `arguments`.");
+const BAD_ARRAY_METHOD_ON_ARGUMENTS: &Message = &Message::new("", "Bad array method on `arguments`.");
 
 impl Rule for BadArrayMethodOnArguments {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "bad-array-method-on-arguments", Kind::Problem);

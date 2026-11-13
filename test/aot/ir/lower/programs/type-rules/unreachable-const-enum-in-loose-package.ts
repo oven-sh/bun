@@ -1,0 +1,22 @@
+// RUN: lower
+// OPTIONS: builtin-modules
+// STATISTIC: SourceFilesChecked = 2
+
+// FILE: main.ts
+// A package whose own tsconfig.json turns isolatedModules off erases its const enums, so a const enum after a return is not unreachable code there, whatever the program's tsconfig.json says.
+import { first } from "./inner/late.ts";
+console.log(first());
+
+// FILE: inner/late.ts
+export function first(): number { return 1; const enum Late { A } }
+
+// FILE: inner/tsconfig.json
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "isolatedModules": false
+  }
+}
+
+// FILE: tsconfig.json
+{ "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true, "allowUnreachableCode": false, "isolatedModules": true }, "files": [] }

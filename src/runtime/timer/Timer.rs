@@ -15,8 +15,9 @@ use bun_jsc::{JSGlobalObject, JSValue, JsClass as _, JsResult, StringJsc as _};
 use bun_uws::Loop as UwsLoop;
 
 use super::{
-    All, CountdownOverflowBehavior, DateHeaderTimer, EventLoopTimer, EventLoopTimerState,
-    EventLoopTimerTag, ImmediateObject, Kind, TimeoutObject, TimeoutWarning, TimerObjectInternals,
+    All, Clock, CountdownOverflowBehavior, DateHeaderTimer, EventLoopTimer, EventLoopTimerState,
+    EventLoopTimerTag, FakeTimers, ImmediateObject, Kind, TimeoutObject, TimeoutWarning,
+    TimerObjectInternals,
 };
 use crate::jsc_hooks::timer_all_mut;
 
@@ -25,28 +26,20 @@ use crate::jsc_hooks::timer_all_mut;
 // ════════════════════════════════════════════════════════════════════════════
 
 impl All {
-    /// # Safety
-    /// `vm` must point to the live per-thread `VirtualMachine`.
-    // Forwards `vm` to `DateHeaderTimer::enable` without dereferencing it here;
-    // the raw pointer is intentional (avoids aliased-`&mut` across the
-    // jsc/runtime crate cycle — see DateHeaderTimer.rs).
     pub(crate) fn update_date_header_timer_if_necessary(
         &mut self,
         loop_: &UwsLoop,
-        vm: *mut VirtualMachine,
+        vm: &VirtualMachine,
     ) {
         if loop_.should_enable_date_header_timer() {
             // `is_date_timer_active()` is private to mod.rs; inline.
             if self.date_header_timer.event_loop_timer.state != EventLoopTimerState::ACTIVE {
-                // SAFETY: caller contract guarantees `vm` is valid.
-                unsafe {
-                    self.date_header_timer.enable(
-                        vm,
-                        // Be careful to avoid adding extra calls to bun.timespec.now()
-                        // when it's not needed.
-                        &Timespec::now(TimespecMockMode::ForceRealTime),
-                    );
-                }
+                self.date_header_timer.enable(
+                    vm,
+                    // Be careful to avoid adding extra calls to bun.timespec.now()
+                    // when it's not needed.
+                    &Timespec::now(TimespecMockMode::ForceRealTime),
+                );
             }
         } else {
             // don't un-schedule it here.
@@ -70,13 +63,10 @@ impl All {
                     ))
                 } else {
                     // -Infinity is handled by TimeoutNegativeWarning
-                    BunString::ascii(
-                        const_format::concatcp!(
-                            "Infinity does not fit into a 32-bit signed integer",
-                            SUFFIX
-                        )
-                        .as_bytes(),
-                    )
+                    BunString::static_(const_format::concatcp!(
+                        "Infinity does not fit into a 32-bit signed integer",
+                        SUFFIX
+                    ))
                 }
             }
             TimeoutWarning::TimeoutNegativeWarning => {
@@ -85,15 +75,15 @@ impl All {
                         "{countdown} is a negative number{SUFFIX}"
                     ))
                 } else {
-                    BunString::ascii(
-                        const_format::concatcp!("-Infinity is a negative number", SUFFIX)
-                            .as_bytes(),
-                    )
+                    BunString::static_(const_format::concatcp!(
+                        "-Infinity is a negative number",
+                        SUFFIX
+                    ))
                 }
             }
             TimeoutWarning::TimeoutNaNWarning => {
                 debug_assert!(countdown.is_nan());
-                BunString::ascii(const_format::concatcp!("NaN is not a number", SUFFIX).as_bytes())
+                BunString::static_(const_format::concatcp!("NaN is not a number", SUFFIX))
             }
         };
         let warning_type_string =
@@ -115,6 +105,7 @@ impl All {
         global_this: &JSGlobalObject,
         countdown: JSValue,
         overflow_behavior: CountdownOverflowBehavior,
+        minimum_ms: u32,
         warn: bool,
     ) -> JsResult<u32> {
         // Both match arms below enforce the [0, i32::MAX] range (Clamp
@@ -160,7 +151,8 @@ impl All {
                             )?;
                         }
                     }
-                    1
+                    let is_too_long = countdown_double > i32::MAX as f64;
+                    if is_too_long { 1 } else { minimum_ms }
                 } else {
                     countdown_double as u32
                 }
@@ -187,6 +179,7 @@ impl All {
             cx.global(),
             countdown,
             CountdownOverflowBehavior::Clamp,
+            0,
             true,
         )?;
         let wrapped_promise = promise.with_async_context_if_needed(cx.global());
@@ -197,6 +190,7 @@ impl All {
             countdown_int,
             wrapped_promise,
             JSValue::UNDEFINED,
+            all.fake_timers.set_timeout_clock(),
         ))
     }
 
@@ -204,6 +198,7 @@ impl All {
         cx: &bun_jsc::JsThread<'_>,
         callback: JSValue,
         arguments: JSValue,
+        clock: Clock,
     ) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         debug_assert!(!callback.is_empty() && !arguments.is_empty());
@@ -211,7 +206,13 @@ impl All {
         let id = all.next_id();
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
-        Ok(ImmediateObject::init(cx, id, wrapped_callback, arguments))
+        Ok(ImmediateObject::init(
+            cx,
+            id,
+            wrapped_callback,
+            arguments,
+            all.fake_timers.clock_while_active(clock),
+        ))
     }
 
     pub(crate) fn set_timeout(
@@ -219,6 +220,7 @@ impl All {
         callback: JSValue,
         arguments: JSValue,
         countdown: JSValue,
+        clock: Clock,
     ) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         debug_assert!(!callback.is_empty() && !arguments.is_empty() && !countdown.is_empty());
@@ -230,16 +232,30 @@ impl All {
             cx.global(),
             countdown,
             CountdownOverflowBehavior::OneMs,
+            0,
             true,
         )?;
-        Ok(TimeoutObject::init(
+        let clock = all.fake_timers.clock_while_active(clock);
+        // As in @sinonjs/fake-timers, a fake timer without a delay is due now. See `FakeTimers::min_delay_ms()`.
+        let may_be_zero = clock == Clock::Fake || all.zero_delay_is_due_when_idle;
+        let countdown_int = countdown_int.max(u32::from(!may_be_zero));
+        let is_due_when_idle = clock == Clock::Real && countdown_int == 0;
+        let timeout = TimeoutObject::init(
             cx,
             id,
             Kind::SetTimeout,
-            countdown_int,
+            if is_due_when_idle { 1 } else { countdown_int },
             wrapped_callback,
             arguments,
-        ))
+            clock,
+        );
+        if is_due_when_idle {
+            let object =
+                TimeoutObject::from_js(timeout).expect("TimeoutObject::init returns its wrapper");
+            // SAFETY: the wrapper is pinned by the heap that holds the timer.
+            unsafe { (*object).event_loop_timer.is_due_when_idle = true };
+        }
+        Ok(timeout)
     }
 
     pub(crate) fn set_interval(
@@ -247,6 +263,7 @@ impl All {
         callback: JSValue,
         arguments: JSValue,
         countdown: JSValue,
+        clock: Clock,
     ) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         debug_assert!(!callback.is_empty() && !arguments.is_empty() && !countdown.is_empty());
@@ -254,10 +271,12 @@ impl All {
         let id = all.next_id();
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
+        // Never 0, on either clock: it would be due again at the time it fired, so advancing the fake clock wouldn't end.
         let countdown_int = all.js_value_to_countdown(
             cx.global(),
             countdown,
             CountdownOverflowBehavior::OneMs,
+            1,
             true,
         )?;
         Ok(TimeoutObject::init(
@@ -267,6 +286,7 @@ impl All {
             countdown_int,
             wrapped_callback,
             arguments,
+            all.fake_timers.clock_while_active(clock),
         ))
     }
 
@@ -320,7 +340,7 @@ impl All {
         let context = global_this.bun_vm().context_of_caller();
         let all = timer_all_mut();
 
-        let timer: Option<*mut TimerObjectInternals> = 'brk: {
+        let timer: &TimerObjectInternals = 'brk: {
             if timer_id_value.is_number() {
                 // Node.js looks the id up by value (`knownTimersById[id]`): a double holding an
                 // integer names the same timer as the int32. Anything else clears nothing.
@@ -332,10 +352,10 @@ impl All {
                     return Ok(());
                 };
                 // SAFETY: t is a valid TimeoutObject pointer
-                break 'brk Some(unsafe { core::ptr::addr_of_mut!((*t).internals) });
+                break 'brk unsafe { &(*t).internals };
             } else if timer_id_value.is_string_literal() {
                 // Primitive string only (JSType::String) — boxed `new String(..)`
-                // must fall through to `from_js` below and be a no-op, matching
+                // must fall through to the downcasts below and be a no-op, matching
                 // Node.js array-index semantics.
                 let string = timer_id_value.to_bun_string(global_this)?;
                 // Custom parseInt logic. I've done this because Node.js is very strict about string
@@ -392,33 +412,29 @@ impl All {
                     return Ok(());
                 };
                 // SAFETY: t is a valid TimeoutObject pointer
-                break 'brk Some(unsafe { core::ptr::addr_of_mut!((*t).internals) });
+                break 'brk unsafe { &(*t).internals };
             }
 
-            if let Some(timeout) = TimeoutObject::from_js(timer_id_value) {
+            if let Some(timeout) = timer_id_value.as_class_ref::<TimeoutObject>() {
                 // clearImmediate should be a noop if anything other than an Immediate is passed to it.
                 if kind != Kind::SetImmediate {
-                    // SAFETY: `timeout` is a valid TimeoutObject pointer
-                    break 'brk Some(unsafe { core::ptr::addr_of_mut!((*timeout).internals) });
+                    break 'brk &timeout.internals;
                 } else {
                     return Ok(());
                 }
-            } else if let Some(immediate) = ImmediateObject::from_js(timer_id_value) {
+            } else if let Some(immediate) = timer_id_value.as_class_ref::<ImmediateObject>() {
                 // setImmediate can only be cleared by clearImmediate, not by clearTimeout or clearInterval.
                 if kind == Kind::SetImmediate {
-                    // SAFETY: `immediate` is a valid ImmediateObject pointer
-                    break 'brk Some(unsafe { core::ptr::addr_of_mut!((*immediate).internals) });
+                    break 'brk &immediate.internals;
                 } else {
                     return Ok(());
                 }
             } else {
-                break 'brk None;
+                return Ok(());
             }
         };
 
-        let Some(timer) = timer else { return Ok(()) };
-        // SAFETY: timer points to a live TimerObjectInternals
-        unsafe { (*timer).cancel(vm) };
+        timer.cancel(vm);
         Ok(())
     }
 
@@ -452,11 +468,7 @@ impl DateHeaderTimer {
     /// 1. If the timer was recently updated (< 1 second ago), just reschedule it
     /// 2. If the timer is stale (> 1 second since last update), update the date
     ///    immediately and reschedule
-    ///
-    /// # Safety
-    /// `vm` must point to the live per-thread `VirtualMachine`; its `uws_loop()`
-    /// must outlive this call.
-    unsafe fn enable(&mut self, vm: *mut VirtualMachine, now: &Timespec) {
+    fn enable(&mut self, vm: &VirtualMachine, now: &Timespec) {
         debug_assert!(self.event_loop_timer.state != EventLoopTimerState::ACTIVE);
 
         // `EventLoopTimer.next` is the lower-tier `ElTimespec` stub
@@ -471,9 +483,7 @@ impl DateHeaderTimer {
         if elapsed >= 1000 {
             // Update the date immediately since it's stale
             // updateDate() is an expensive function.
-            // SAFETY: `vm` is the live per-thread VM; `uws_loop()` returns its
-            // owned uws loop, which outlives this call.
-            unsafe { (*(*vm).uws_loop()).update_date() };
+            vm.uws_loop_ref().update_date();
 
             let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
             // SAFETY: single JS thread; nothing `All::update` touches overlaps
@@ -507,7 +517,17 @@ pub(crate) fn set_immediate_export(
     arguments: JSValue,
 ) -> JsResult<JSValue> {
     let context = global.bun_vm().context_of_caller();
-    All::set_immediate(&global.js_thread(context), callback, arguments)
+    All::set_immediate(&global.js_thread(context), callback, arguments, Clock::Real)
+}
+
+// HOST_EXPORT(Bun__FakeTimers__setImmediate, c)
+pub(crate) fn fake_set_immediate_export(
+    global: &JSGlobalObject,
+    callback: JSValue,
+    arguments: JSValue,
+) -> JsResult<JSValue> {
+    let context = global.bun_vm().context_of_caller();
+    All::set_immediate(&global.js_thread(context), callback, arguments, Clock::Fake)
 }
 
 // HOST_EXPORT(Bun__Timer__sleep, c)
@@ -528,7 +548,30 @@ pub(crate) fn set_timeout_export(
     countdown: JSValue,
 ) -> JsResult<JSValue> {
     let context = global.bun_vm().context_of_caller();
-    All::set_timeout(&global.js_thread(context), callback, arguments, countdown)
+    All::set_timeout(
+        &global.js_thread(context),
+        callback,
+        arguments,
+        countdown,
+        Clock::Real,
+    )
+}
+
+// HOST_EXPORT(Bun__FakeTimers__setTimeout, c)
+pub(crate) fn fake_set_timeout_export(
+    global: &JSGlobalObject,
+    callback: JSValue,
+    arguments: JSValue,
+    countdown: JSValue,
+) -> JsResult<JSValue> {
+    let context = global.bun_vm().context_of_caller();
+    All::set_timeout(
+        &global.js_thread(context),
+        callback,
+        arguments,
+        countdown,
+        Clock::Fake,
+    )
 }
 
 // HOST_EXPORT(Bun__Timer__setInterval, c)
@@ -539,7 +582,106 @@ pub(crate) fn set_interval_export(
     countdown: JSValue,
 ) -> JsResult<JSValue> {
     let context = global.bun_vm().context_of_caller();
-    All::set_interval(&global.js_thread(context), callback, arguments, countdown)
+    All::set_interval(
+        &global.js_thread(context),
+        callback,
+        arguments,
+        countdown,
+        Clock::Real,
+    )
+}
+
+// HOST_EXPORT(Bun__FakeTimers__setInterval, c)
+pub(crate) fn fake_set_interval_export(
+    global: &JSGlobalObject,
+    callback: JSValue,
+    arguments: JSValue,
+    countdown: JSValue,
+) -> JsResult<JSValue> {
+    let context = global.bun_vm().context_of_caller();
+    All::set_interval(
+        &global.js_thread(context),
+        callback,
+        arguments,
+        countdown,
+        Clock::Fake,
+    )
+}
+
+// HOST_EXPORT(Bun__FakeTimers__requestAnimationFrame, c)
+pub(crate) fn fake_request_animation_frame_export(
+    global: &JSGlobalObject,
+    function: JSValue,
+    callback: JSValue,
+) -> JsResult<JSValue> {
+    const NS_PER_MS: u64 = bun_core::time::NS_PER_MS as u64;
+    let vm = global.bun_vm();
+    let all = timer_all_mut();
+    let id = all.last_id;
+    all.last_id = all.last_id.wrapping_add(1);
+
+    let clock = if all.fake_timers.is_installed(function) {
+        Clock::Fake
+    } else {
+        Clock::Real
+    };
+    let now_ns = match clock {
+        Clock::Fake => all.fake_timers.now().ns(),
+        Clock::Real => bun_jsc::virtual_machine_exports::read_origin_timer(vm),
+    };
+    let to_next_frame = FakeTimers::FRAME_MS - (now_ns / NS_PER_MS) % FakeTimers::FRAME_MS;
+    let timeout = TimeoutObject::init(
+        &global.js_thread(vm.context_of_caller()),
+        id,
+        Kind::SetTimeout,
+        to_next_frame as u32,
+        callback.with_async_context_if_needed(global),
+        JSValue::js_number((now_ns + to_next_frame * NS_PER_MS) as f64 / NS_PER_MS as f64),
+        clock,
+    );
+    let timeout = TimeoutObject::from_js(timeout).expect("TimeoutObject::init returns its wrapper");
+    // SAFETY: the wrapper is pinned by the heap that holds the timer.
+    unsafe { (*timeout).internals.to_primitive() }.map(JSValue::js_number_from_uint64)
+}
+
+// HOST_EXPORT(Bun__FakeTimers__queueTick, c)
+pub(crate) fn fake_queue_tick_export(
+    global: &JSGlobalObject,
+    callback: JSValue,
+    arguments: JSValue,
+) {
+    timer_all_mut()
+        .fake_timers
+        .queue_tick(global, callback, arguments);
+}
+
+// HOST_EXPORT(Bun__FakeTimers__isInstalled, c)
+pub(crate) fn fake_timers_is_installed_export(function: JSValue) -> bool {
+    timer_all_mut().fake_timers.is_installed(function)
+}
+
+// HOST_EXPORT(Bun__FakeTimers__fakes, c)
+pub(crate) fn fake_timers_fakes_export(api: u8) -> bool {
+    timer_all_mut().fake_timers.fakes_api(api)
+}
+
+// HOST_EXPORT(Bun__FakeTimers__runStep, c)
+pub(crate) fn fake_timers_run_step_export(global: &JSGlobalObject, id: u32) {
+    if let Err(err) = FakeTimers::run_step(global, id) {
+        let _ = bun_jsc::task::report_error_or_terminate(global, err);
+    }
+}
+
+// HOST_EXPORT(Bun__readHRTime, c)
+pub(crate) fn read_hrtime_export(vm: &VirtualMachine) -> u64 {
+    // SAFETY: a VM that runs script has its `RuntimeState`; JS thread; field read only.
+    let fake = unsafe {
+        (*crate::jsc_hooks::runtime_state_of(core::ptr::from_ref(vm).cast_mut()))
+            .timer
+            .fake_timers
+            .hrtime()
+    };
+    fake.unwrap_or_else(|| vm.origin_timer.elapsed().as_nanos() as u64)
 }
 
 // HOST_EXPORT(Bun__Timer__clearImmediate, c)

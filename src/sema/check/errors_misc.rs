@@ -30,8 +30,29 @@ impl Checker<'_, '_> {
             ExprKind::Binary { op, .. } => Some(Some(op)),
             _ => Some(None),
         };
-        let grandparent = hir.parent(hir.node(e));
-        let mixed = if hir.kind(grandparent) == Kind::BinaryExpression {
+        // Without `||` or `&&` beside it there's nothing to report.
+        let is_logical = |x: ExprId| {
+            matches!(
+                hir[x].kind,
+                ExprKind::Binary {
+                    op: BinOp::Or | BinOp::And,
+                    ..
+                }
+            )
+        };
+        let may_be_operand_of_logical = match self.bound(file).parent_of_expr(e) {
+            Parent::None => true,
+            Parent::Expr(above) => is_logical(above),
+            _ => false,
+        };
+        let may_be_mixed = may_be_operand_of_logical || is_logical(left) || is_logical(right);
+        let grandparent = match may_be_mixed {
+            true => hir.parent(hir.node(e)),
+            false => Node::NONE,
+        };
+        let mixed = if !may_be_mixed {
+            None
+        } else if hir.kind(grandparent) == Kind::BinaryExpression {
             match hir.data(grandparent) {
                 NodeData::Expr(outer) => match hir[outer].kind {
                     ExprKind::Binary {
@@ -58,7 +79,7 @@ impl Checker<'_, '_> {
                 self.start_of(file, mixed),
                 self.end_of_expr(file, mixed),
             );
-            self.grammar_error_at(at, 5076, &[Arg::Text(first), Arg::Text(second)]);
+            self.early_grammar_error_at(at, 5076, &[Arg::Text(first), Arg::Text(second)]);
         }
         // `checkNullishCoalesceOperandLeft`
         let left_target = self.skip_outer_expressions(file, left);
@@ -240,7 +261,7 @@ impl Checker<'_, '_> {
             | ExprKind::BigInt(_)
             | ExprKind::Class(_)
             | ExprKind::Object(_)
-            | ExprKind::Regex => ALWAYS,
+            | ExprKind::Regex { .. } => ALWAYS,
             // Not a fragment.
             ExprKind::Jsx(j) if hir[j].tag.is_some() => ALWAYS,
             ExprKind::Unary { op: UnOp::Void, .. } | ExprKind::Null => NEVER,
@@ -264,7 +285,7 @@ impl Checker<'_, '_> {
     fn syntactic_nullishness(&self, file: FileId, e: ExprId) -> u8 {
         let hir = self.hir(file);
         let e = self.skip_outer_expressions(file, e);
-        match hir[e].kind {
+        match hir.checked_kind(e) {
             ExprKind::Await(_)
             | ExprKind::Call(_)
             | ExprKind::ImportCall { .. }
@@ -327,7 +348,7 @@ impl Checker<'_, '_> {
             ExprKind::Missing if !is_parenthesized(self.hir(file), operand) => start,
             _ => self.error_end_inside_parentheses(file, operand),
         };
-        let (obj, name) = match hir[operand].kind {
+        let (obj, name) = match hir.checked_kind(operand) {
             ExprKind::Dot { obj, name, .. } => (obj, Some(name)),
             // `getPropertyNameFromIndex`: the single property name that the index expression's type represents.
             ExprKind::Index { obj, index, .. } => {
@@ -341,17 +362,17 @@ impl Checker<'_, '_> {
             }
         };
         let Some(name) = name else { return };
-        let is_private =
-            self.atoms().is_private_name(name) && matches!(hir[operand].kind, ExprKind::Dot { .. });
+        let is_private = self.atoms().is_private_name(name)
+            && matches!(hir.checked_kind(operand), ExprKind::Dot { .. });
         if is_private {
-            self.error_at((file, start, end), 18011, &[]);
+            self.early_error_at((file, start, end), 18011, &[]);
         }
         let object = self.type_of_expr(file, obj);
         if self.is_any(object) {
             return;
         }
         // `checkNonNullType(getOptionalExpressionType(..))`
-        let object = match hir[operand].kind {
+        let object = match hir.checked_kind(operand) {
             ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. }
                 if chain == Chain::Start =>
             {
@@ -361,7 +382,7 @@ impl Checker<'_, '_> {
         };
         // `getIndexedAccessTypeOrUndefined`: the index expression then represents any string, and no property is looked
         // up.
-        if matches!(hir[operand].kind, ExprKind::Index { .. })
+        if matches!(hir.checked_kind(operand), ExprKind::Index { .. })
             && self.is_string_index_signature_only(object)
         {
             return;
@@ -379,14 +400,14 @@ impl Checker<'_, '_> {
         }
         // `checkDeleteExpressionMustBeOptional`
         let ty = self.type_of_prop(prop, mapper);
-        if !self.p.files.options.strict_null_checks
+        if !self.reports_null_checks(file)
             || self.is_any(ty)
             || ty == TypeId::UNKNOWN
             || ty.is_never()
         {
             return;
         }
-        let is_optional = if self.p.files.options.exact_optional_property_types {
+        let is_optional = if self.module_options(file).exact_optional_property_types {
             prop.flags.contains(PropFlags::OPTIONAL)
         } else {
             self.is_possibly_undefined(ty)

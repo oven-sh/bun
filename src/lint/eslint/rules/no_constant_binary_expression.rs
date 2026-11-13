@@ -13,23 +13,23 @@ pub struct NoConstantBinaryExpression {
     allow_literal_toggle: bool,
 }
 
-const CONSTANT_BINARY_OPERAND: Message = Message::new(
+const CONSTANT_BINARY_OPERAND: &Message = &Message::new(
     "constantBinaryOperand",
     "Unexpected constant binary expression. Compares constantly with the {{otherSide}}-hand side of the `{{operator}}`.",
 );
-const CONSTANT_SHORT_CIRCUIT: Message = Message::new(
+const CONSTANT_SHORT_CIRCUIT: &Message = &Message::new(
     "constantShortCircuit",
     "Unexpected constant {{property}} on the left-hand side of a `{{operator}}` expression.",
 );
-const ALWAYS_NEW: Message = Message::new(
+const ALWAYS_NEW: &Message = &Message::new(
     "alwaysNew",
     "Unexpected comparison to newly constructed object. These two values can never be equal.",
 );
-const BOTH_ALWAYS_NEW: Message = Message::new(
+const BOTH_ALWAYS_NEW: &Message = &Message::new(
     "bothAlwaysNew",
     "Unexpected comparison of two newly constructed objects. These two values can never be equal.",
 );
-const CONSTANT_RELATIONAL_COMPARISON: Message = Message::new(
+const CONSTANT_RELATIONAL_COMPARISON: &Message = &Message::new(
     "constantRelationalComparison",
     "Unexpected constant relational comparison. Both sides of the `{{operator}}` are literal values.",
 );

@@ -34,9 +34,9 @@ pub struct UpdateRequest {
     pub(crate) is_aliased: bool,
     pub failed: bool,
     /// This must be cloned to handle when the AST store resets.
-    /// ARENA-owned (AST `Expr.Data` store) — raw pointer per LIFETIMES.tsv;
+    /// ARENA-owned (AST `Expr.Data` store);
     /// only valid while the store that allocated it is alive.
-    pub(crate) e_string: Option<*mut js_ast::E::String>,
+    pub(crate) e_string: Option<bun_ast::StoreRef<js_ast::E::String>>,
 }
 
 impl Default for UpdateRequest {

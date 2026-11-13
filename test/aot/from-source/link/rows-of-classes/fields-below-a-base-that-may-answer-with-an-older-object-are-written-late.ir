@@ -1,0 +1,13 @@
+# The constructor of the base may answer with an object that it has kept, so the class below lays its fields on an object that is older than the construction: the fields of such a layout count as written late, and that is told at their declarations.
+# What is gathered at the declarations passes by the fields that a layout takes whole from its base only where the base carries the same mark. Here the class below carries it and the base does not.
+# -- source: the-base-may-answer-with-an-older-object.ts
+# let kept: Base | undefined;
+# class Base { a = 1; b = 2; constructor() { if (kept) return kept; kept = this; } }
+# class Below extends Base { c = 3; }
+# console.log(new Base().a, new Below().c, new Below().b);
+# -- end of source
+# RUN: link fields mechanisms=all
+# CHECK: field L0.0 "a" proven=int[0, 2147483647] writers-known filled
+# CHECK: field L0.1 "b" proven=int[0, 2147483647] writers-known filled
+# CHECK: field L1.1 "a" proven=int[0, 2147483647] writers-known filled
+# CHECK: field L1.2 "b" proven=int[0, 2147483647] writers-known filled

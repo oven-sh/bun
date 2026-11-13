@@ -112,6 +112,24 @@ impl YarnCommands {
     }
 }
 
+/// Removes the `node_modules/.bin` entries from a `PATH`.
+pub fn strip_bin_dirs(path: &[u8]) -> Vec<u8> {
+    let mut result = Vec::with_capacity(path.len());
+    for entry in bun_core::strings::split(path, &[bun_paths::DELIMITER]) {
+        let dir = bun_core::strings::without_trailing_slash(entry);
+        let is_bin_dir = bun_paths::basename(dir) == b".bin"
+            && bun_paths::dirname(dir)
+                .is_some_and(|parent| bun_paths::basename(parent) == b"node_modules");
+        if !is_bin_dir {
+            if !result.is_empty() {
+                result.push(bun_paths::DELIMITER);
+            }
+            result.extend_from_slice(entry);
+        }
+    }
+    result
+}
+
 /// Look for invocations of any: `yarn run` / `yarn $cmd` / `pnpm run` /
 /// `pnpm dlx` / `pnpx` / `npm run` / `npx` and replace them with `bun run`
 /// / `bun x` so that lifecycle scripts re-enter Bun instead of spawning
@@ -515,7 +533,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         self.maybe_finished();
     }
 
+    #[inline(never)]
     fn maybe_finished(&mut self) {
+        bun_removable_features::removable_definition!(Install, Self::maybe_finished);
         if !self.has_called_process_exit || self.remaining_fds != 0 {
             return;
         }
@@ -1055,7 +1075,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             }
             Status::Signaled(signal) => {
                 self.print_output();
-                let signal_code = bun_sys::SignalCode::from(signal);
+                let signal_code = bun_sys::SignalCode(signal);
 
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> <b>{}<r> script from \"<b>{}<r>\" terminated by {}<r>",

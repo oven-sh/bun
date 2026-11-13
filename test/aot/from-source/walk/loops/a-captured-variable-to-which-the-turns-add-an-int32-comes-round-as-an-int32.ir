@@ -1,0 +1,28 @@
+# -- source: a-captured-variable-to-which-the-turns-add-an-int32-comes-round-as-an-int32.ts
+# declare function sink(value: unknown): void;
+# function createScanner(text: string) {
+#   let pos = 0; const end = text.length;
+#   const size = (ch: number) => ch >= 100 ? 2 : 1;
+#   function scan(): number { let seen = 0; while (pos < end) { const ch = text.charCodeAt(pos); seen += ch; pos += size(ch); } return seen; }
+#   function all(): number { let sum = 0; for (let round = 0; round < 3; round++) { pos = round; sum += scan(); } return sum; }
+#   return { all, getPos: () => pos };
+# }
+# const scanner = createScanner("ab cd  ef".repeat(3));
+# sink(scanner.all() + scanner.getPos());
+# -- end of source
+# Every turn adds to `pos` what `size` gives, 1 or 2 by the walk of the turns. So `pos` is asked for an int32 once, in front of the loop, and comes round as one; where the sum may have left the int32s it is asked
+# again on the way round, and the failing side is the other copy of the loop. Held to a number alone it went through doubles: the index of `charCodeAt` was made an integer again in every turn.
+# f2 = scan
+# OPTIONS: check=Validate
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: [[read]]: {{*}} = GetEnvironmentField {{*}}field=1
+# CHECK: TypeTest [[read]] testedType=i32
+# CHECK: [[pos]]: i32 @Int32) isInLoop=true isLoopHead=true
+# CHECK-NOT: GetEnvironmentField
+# CHECK-NOT: ToIntegerOrInfinity
+# CHECK: Less [[pos]], {{*}}form=Integers
+# CHECK-NOT: ToIntegerOrInfinity
+# CHECK: GetStringCodeUnit
+# CHECK: Add {{*}}form=Integers
+# CHECK: PutEnvironmentField {{*}}field=1

@@ -5,8 +5,8 @@ use bun_lint::rule::Plugin;
 /// Disallows the use of `Function.prototype.apply()` and suggests using `Reflect.apply()` instead.
 pub struct PreferReflectApply;
 
-const PREFER_REFLECT_APPLY: Message = Message::new("", "Prefer `Reflect.apply()` over `Function#apply()`.");
-const LESS_VERBOSE: Message = Message::new("", "`Reflect.apply()` is less verbose and easier to understand.");
+const PREFER_REFLECT_APPLY: &Message = &Message::new("", "Prefer `Reflect.apply()` over `Function#apply()`.");
+const LESS_VERBOSE: &Message = &Message::new("", "`Reflect.apply()` is less verbose and easier to understand.");
 
 /// `(this, [..])`, `(null, arguments)`
 fn is_apply_signature(first: Expr, second: Expr) -> bool {

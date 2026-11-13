@@ -21,6 +21,7 @@
 #pragma once
 
 #include "DOMFormData.h"
+#include "JSDOMIterator.h"
 #include "JSDOMWrapper.h"
 
 namespace WebCore {
@@ -75,5 +76,10 @@ template<> struct JSDOMWrapperConverterTraits<DOMFormData> {
     using WrapperClass = JSDOMFormData;
     using ToWrappedReturnType = DOMFormData*;
 };
+
+struct DOMFormDataIteratorTraits;
+using DOMFormDataIteratorBase = JSDOMIteratorBase<JSDOMFormData, DOMFormDataIteratorTraits>;
+template<> const JSC::ClassInfo DOMFormDataIteratorBase::s_info;
+JSC::JSObject* domFormDataIteratorPrototype(JSDOMGlobalObject&);
 
 } // namespace WebCore

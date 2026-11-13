@@ -21,6 +21,19 @@ const {
   validateOneOf,
 } = require("internal/validators");
 
+type AnyFunction = (this: unknown, ...args: unknown[]) => unknown;
+type Done = (error?: unknown) => void;
+type Register = (name: string, fn: (done: Done) => void | Promise<unknown>, options?: object) => void;
+type RegisterSuite = (name: string, fn: () => unknown, options?: object) => void;
+
+/** What this module uses of `bun:test`. */
+interface BunTest {
+  test: Register & { todo: Register; skip: Register };
+  describe: RegisterSuite & { todo: RegisterSuite; skip: RegisterSuite };
+  beforeAll(fn: (done: Done) => void): void;
+  afterAll(fn: (done: Done) => void): void;
+}
+
 const kDefaultName = "<anonymous>";
 const kRootName = "<root>";
 const kDefaultFunction = () => {};
@@ -60,7 +73,7 @@ function getTestsStreamClass() {
   const { Readable } = require("node:stream");
   // Mirrors node lib/internal/test_runner/tests_stream.js: a plain-array
   // buffer plus one public method per event type delegating to #emit.
-  return class TestsStream extends (Readable as typeof import("node:stream").Readable) {
+  return class TestsStream extends Readable {
     #buffer: unknown[] = [];
     #canPush = true;
 
@@ -245,7 +258,7 @@ function validateRunOptions(options: Record<string, unknown>) {
       testTagFilters = null;
     } else {
       emitTagsExperimentalWarning();
-      testTagFilters = testTagFilters.map((value: unknown, i: number) =>
+      testTagFilters = (testTagFilters as unknown[]).map((value: unknown, i: number) =>
         validateAndCanonicalizeTagFilter(value, `options.testTagFilters[${i}]`),
       );
       testTagFilterExpressions = testTagFilters;
@@ -375,7 +388,7 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
   await Promise.resolve();
 
   try {
-    if (typeof opts.setup === "function") await opts.setup(reporter);
+    if (typeof opts.setup === "function") await (opts.setup as (reporter: TestsStream) => unknown)(reporter);
 
     const files = opts.files ?? [];
     let i = 0;
@@ -680,8 +693,18 @@ function nestingOf(node: TestNode) {
   return depth;
 }
 
+interface SerializedRunError {
+  __proto__: null;
+  message: string;
+  stack: string | undefined;
+  code: string | undefined;
+  failureType?: string;
+  name: string;
+  cause?: SerializedRunError;
+}
+
 // Errors cross the process boundary as plain JSON; the parent rebuilds an Error.
-function serializeRunError(error: unknown, depth = 0) {
+function serializeRunError(error: unknown, depth = 0): SerializedRunError {
   if (Error.isError(error)) {
     const cause = (error as { cause?: unknown }).cause;
     return {
@@ -843,7 +866,7 @@ class MockFunctionContext {
       const isConstruct = target !== undefined;
       try {
         result = !isConstruct
-          ? (implementation as Function).$apply(thisArg, args)
+          ? (implementation as AnyFunction).$apply(thisArg, args)
           : Reflect.construct(implementation as Function, args, target as Function);
         return result;
       } catch (e) {
@@ -1355,7 +1378,7 @@ function buildContextAssert(node: TestNode, ctx: TestContext) {
   const add = (name: string, method: Function) => {
     const wrapper = function (...args: unknown[]) {
       plan?.count();
-      return method.$apply(ctx, args);
+      return (method as AnyFunction).$apply(ctx, args);
     };
     // @ts-ignore
     Object.defineProperty(wrapper, "name", { __proto__: null, value: name, configurable: true });
@@ -1633,11 +1656,11 @@ class TestNode {
 
 // Bumped by the runner's enter_file. Bound privately rather than read off the
 // bun:test module object, which is public API.
-const fileGeneration = $bindgen("jest.bind.ts", "fileGeneration");
+const fileGeneration: () => number = $bindgen("jest.bind.ts", "fileGeneration");
 // Overrides the running bun:test sequence result: `false` → skip, `true` → todo.
 // `done` binds the intended sequence so a late call after the bun:test watchdog
 // moved on cannot write onto the currently-running test.
-const markCurrentResult = $bindgen("jest.bind.ts", "nodeTestMarkResult");
+const markCurrentResult: (todo: boolean, done: Done) => void = $bindgen("jest.bind.ts", "nodeTestMarkResult");
 
 let rootNode: TestNode | undefined;
 let rootGeneration = -1;
@@ -1807,7 +1830,7 @@ class TestContext {
 
       const poll = async () => {
         try {
-          const result = await (condition as Function)();
+          const result = await (condition as () => unknown)();
           if (timedOut) return;
           realClearTimeout(timer);
           resolve(result);
@@ -2117,7 +2140,7 @@ function invokeWithDoneCallback(fn: Function, arg: unknown) {
       if (err) reject(err);
       else resolve();
     };
-    const result = fn(arg, done);
+    const result = (fn as (arg: unknown, done: Done) => unknown)(arg, done);
     returned = true;
     if ($isPromise(result)) {
       // Node fails the test but still awaits the returned promise, so hooks
@@ -2140,7 +2163,7 @@ function invokeTestFn(fn: Function, arg: unknown) {
   if (fn.length === 2) {
     return invokeWithDoneCallback(fn, arg);
   }
-  return fn(arg);
+  return (fn as (arg: unknown) => unknown)(arg);
 }
 
 // A single timeout armed once per test and raced against both the body and
@@ -2170,7 +2193,7 @@ function awaitWithTimeout(run: () => unknown, timeout: number | undefined) {
   return raceWithTimeoutAndSignal(run, timeout, undefined);
 }
 
-let addAbortListener;
+let addAbortListener: $BunModules["internal/abort_listener"]["addAbortListener"] | undefined;
 
 async function raceWithTimeoutAndSignal(
   run: () => unknown,
@@ -2178,7 +2201,7 @@ async function raceWithTimeoutAndSignal(
   signal: AbortSignal | undefined,
 ): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let abortListener;
+  let abortListener: Disposable | undefined;
   try {
     const racers: unknown[] = [];
     if (typeof timeout === "number" && Number.isFinite(timeout)) {
@@ -2195,7 +2218,7 @@ async function raceWithTimeoutAndSignal(
       addAbortListener ??= require("internal/abort_listener").addAbortListener;
       racers.push(
         new Promise<never>((_, reject) => {
-          abortListener = addAbortListener(signal, () => reject(signal.reason));
+          abortListener = addAbortListener!(signal, () => reject(signal.reason));
         }),
       );
     }
@@ -2505,7 +2528,7 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
 // Registration with bun:test
 // -----------------------------------------------------------------------------
 
-function bunTest() {
+function bunTest(): BunTest {
   return jest(Bun.main);
 }
 
@@ -2695,7 +2718,7 @@ function addSuite(
     // (Node's Suite.run awaits buildPromise before iterating subtests). The
     // callback has not returned yet so its promise does not exist; seed the
     // chain through a gate the callback's settlement opens.
-    const gate = Promise.withResolvers<unknown>();
+    const gate = Promise.withResolvers<void>();
     suite.subtestChain = runningNode.subtestChain.then(() => gate.promise);
     // Build the suite eagerly (Node also runs describe callbacks immediately),
     // collecting children onto the suite's own subtest chain.
@@ -2710,7 +2733,7 @@ function addSuite(
     if (build != null && typeof (build as PromiseLike<unknown>).then === "function") {
       // Attach a handler now: the real await happens when the suite's turn
       // comes, which can be many ticks later (no unhandled rejection).
-      (build as Promise<unknown>).then(gate.resolve, gate.resolve);
+      (build as Promise<void>).then(gate.resolve, gate.resolve);
     } else {
       gate.resolve();
       build = undefined;
@@ -2739,7 +2762,7 @@ function addSuite(
 
   const passOptions = bunTestOptions(options);
 
-  let register: Function = describe;
+  let register: RegisterSuite = describe;
   if (effectiveMode === "skip") register = describe.skip;
   else if (effectiveMode === "todo") {
     suiteNode.todoFlag = true;

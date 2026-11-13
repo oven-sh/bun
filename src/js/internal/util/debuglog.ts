@@ -6,12 +6,12 @@ const kMinute = 60 * kSecond;
 const kHour = 60 * kMinute;
 
 const StringPrototypePadStart = String.prototype.padStart;
-const StringPrototypeSplit = String.prototype.split;
+const StringPrototypeSplit: (this: string, separator: string, limit?: number) => string[] = String.prototype.split;
 const NumberPrototypeToFixed = Number.prototype.toFixed;
 const MathFloor = Math.floor;
 const NumberCtor = Number;
 
-function pad(value) {
+function pad(value: string | number) {
   return StringPrototypePadStart.$call(`${value}`, 2, "0");
 }
 

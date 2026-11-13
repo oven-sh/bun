@@ -1,0 +1,17 @@
+# -- source: main.mjs
+# class State { constructor(src) { this.src = src; this.pos = 0; this.max = src.length; } }
+# export function count(s) { let n = 0; for (let i = s.pos; i < s.max; i++) if (s.src[i] === ";") n++; return n; }
+# globalThis.kept = [State, count];
+# const state = new State(JSON.parse('"a;b;;c"'));
+# print(count(state)); state.max = "3"; print(count(state)); state.max = { valueOf() { return 4; } }; print(count(state));
+# -- end of source
+# The bound is read anew in every iteration: nothing tells that it is a number, and the relation may run other code, which the typed version is left at. It is asked for a number,
+# so it is read and rounded before the loop. If the typed version contains other code anyway, the bound is not read.
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: TypeTest {{*}}testedType=number
+# CHECK: IntegerBound {{*}}comparison=Less
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 3
+# ANSWERS-NEXT: 1
+# ANSWERS-NEXT: 2

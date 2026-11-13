@@ -1279,6 +1279,9 @@ fn merge_pre_and_post_emit_errors(pre: Report, mut post: Report) -> Report {
         source_line: 0,
         related: Vec::new(),
         project: 0,
+        class: bun_sema::check::aot::DiagnosticClass::Semantic,
+        subject: bun_sema::check::aot::DiagnosticSubject::None,
+        file: None,
     };
     let (longer, mut shorter) = match before > after {
         true => (pre.diagnostics, post.diagnostics),
@@ -1355,6 +1358,8 @@ pub struct Setup<'a> {
     pub traces: bool,
     /// `PlanOptions::discards_first_visits`. The baselines are the same.
     pub discards_first_visits: bool,
+    /// `Request::order`. The baselines are the same.
+    pub order: u32,
     pub threads: usize,
     /// Run only every n-th test, ordered by path. 1 runs all of them.
     pub every: usize,
@@ -1792,7 +1797,7 @@ fn run_one(
             threads: 1,
             libs: bun_sema_driver::Libs::Directory(setup.lib_dir.as_bytes()),
             progress: None,
-            order: 1,
+            order: setup.order,
             plan_options: bun_sema_driver::PlanOptions {
                 discards_first_visits: setup.discards_first_visits,
                 ..Default::default()
@@ -2492,6 +2497,10 @@ pub fn run_from_command_line(args: &[&[u8]]) -> bool {
         declarations: args.iter().any(|it| it == "--declarations"),
         traces: args.iter().any(|it| it == "--traces"),
         discards_first_visits: args.iter().any(|it| it == "--discard-first-visits"),
+        order: match args.iter().any(|it| it == "--last-file-first") {
+            true => u32::MAX,
+            false => 1,
+        },
         threads: number("threads").unwrap_or(8),
         every: number("every").unwrap_or(1),
         first: number("first").unwrap_or(0),

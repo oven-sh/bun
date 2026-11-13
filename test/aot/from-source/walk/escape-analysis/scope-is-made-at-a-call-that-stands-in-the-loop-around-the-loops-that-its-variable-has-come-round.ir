@@ -1,0 +1,30 @@
+# -- source: scope-is-made-at-a-call-that-stands-in-the-loop-around-the-loops-that-its-variable-has-come-round.js
+# function sum(list, rounds) { let total = 0; for (let r = 0; r < rounds; r++) list.forEach(x => { total += x; }); return total; }
+# function each(list, f) { for (let i = 0; i < list.length; i++) f(list[i], i); }
+# function sumWith(list, rounds) { let total = 0; for (let r = 0; r < rounds; r++) each(list, x => { total += x; }); return total; }
+# const whole = [], halves = [], holes = [1, , 3];
+# for (let i = 0; i < 12; i++) { whole.push(i); halves.push(i + 0.5); }
+# let out = 0;
+# for (let k = 0; k < 5; k++) out += sum(whole, 3) + sum(halves, 3) + sum(holes, 3) + sumWith(whole, 3) + sumWith(halves, 3) + sumWith([k, "a"], 2).length;
+# print(out);
+# -- end of source
+# `total` is declared in front of a loop, and in that loop `forEach`, or a function of the program, is handed an arrow that adds to it.
+# f1 = each, f2 = sum, f3 = sumWith. sum: the fast loops of `forEach` and the arrow are copied into the turn, and `total` comes round them and round the loop around as a parameter. Behind the fast loops stands the call of the rest of
+# `forEach` with the arrow: in the loop around, on a way that is not rare. A scope is made there out of what the state holds, lent and read back, as where the call stands in no loop that the variable comes
+# round. It was refused: the first scope was lent, the variable stayed in memory, and every turn of the fast loops read it, boxed it and stored it. The loop around is built twice: each call makes its scope.
+# sumWith: `each` and the arrow are copied into the typed copy of the loop; its closed copy calls `each` and lent the first scope, so that the typed copy kept the store of every turn.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: isInLoop=true isLoopHead=true:
+# CHECK: [[copy]]: {{*}} = NewObject {{*}}fields=[0]
+# CHECK: = NewClosure [[copy]] {{*}}loan=ToFunctionEntered
+# CHECK: = CallDirect
+# CHECK: = GetEnvironmentField [[copy]]
+# RUN(STORES): walk f2 mechanisms=all
+# STORES-NOT: PutEnvironmentField
+# RUN(HELPER): walk f3 mechanisms=all
+# HELPER-LABEL: code f3:Body
+# HELPER-NOT: PutEnvironmentField
+# The lists of fractions and with a hole go the way of the call in every turn of the loop around.
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: the source prints the same

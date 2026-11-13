@@ -1,0 +1,14 @@
+# -- source: main.js
+# function small(k) { const levels = [['or'], ['and'], ['==', '<', '>'], ['+', '-'], ['*', '/']]; levels[2].push('!='); return levels[k % 5].length; }
+# function large(k) { const levels = [['or', 'nor'], ['and', 'nand'], ['==', '<', '>'], ['+', '-'], ['*', '/', '%']]; levels[2].push('!='); return levels[k % 5].length; }
+# const go = { small, large }[JSON.parse('"small"')];
+# console.log(go(1));
+# -- end of source
+# Fifteen nodes, lists and leaves alone: one record, which the walk lays out in line: six lists with storage of their own, none born copy-on-write: a push converts nothing.
+# RUN(SMALL): walk f1 mechanisms=all
+# SMALL-COUNT-6: = NewArray
+# RUN(NONE): walk f1 mechanisms=all
+# NONE-NOT: encoding=CopyOnWriteArray
+# Eighteen nodes: over what the walk lays out in line: born level by level, the inner lists copy-on-write.
+# RUN(LARGE): walk f2 mechanisms=all
+# LARGE-COUNT-5: = Data {{*}}encoding=CopyOnWriteArray

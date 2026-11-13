@@ -1,0 +1,2098 @@
+use super::alias_mentions::AliasMentions;
+use super::answers::{
+    CallTarget, CheckedMember, CheckedType, ClassDeclaration, ClassMember, ClassMemberSource,
+    ClassParent, ClassRef, ClassShape, EnumConstant, FunctionRef, GaveUp, IndexSignature,
+    ListedMember, MemberForm, MemberLookup, MemberName, MemberTypedOtherwise, MethodsAbove,
+    ObjectMember, ObjectMemberKind, PositionTypes, QueryLimit, QueryLimits, QueryStatistics,
+    SignatureShape, WrittenParameter, WrittenType,
+};
+use super::builtin_types::BuiltinTypeSymbols;
+use super::declared_signatures::DeclaredSignatures;
+use super::inferred_from_use::{
+    MembersByName, PartsRemembered, ReferenceIndex, Subject, TypeState, TypesInProgress, Usage,
+    UsageState,
+};
+use super::kept_answers::{
+    GaveUpAnswers, KeptFact, KeptMemo, ObjectAnswers, ObjectRow, TypeAnswers, TypeQuestion, TypeRow,
+};
+use super::prototype_links::NamedValues;
+use super::trust::Trust;
+use super::type_identity::{ObjectOrigin, TypeIdentity};
+use super::type_shape::{BuiltinShape, PrimitiveKinds, TypeShape};
+use crate::atom::{Atom, known};
+use crate::bind::{BindingKind, Bound, Decl, Parent, SymbolId};
+use crate::check::jsx::{JsxName, JsxReferenceKind};
+use crate::check::print::to_valid_utf8;
+use crate::check::relate::{RecursionId, Relation};
+use crate::check::shared_indexes::{ReadsOfFields, SharedIndexes};
+use crate::check::{Checker, ContextFlags, Requested, WORK_TRAP_DISARMED};
+use crate::hir::{self, EnumMemberId, ExprId, ExprKind, FnId, ParamId, PatId, TypeNodeId};
+use crate::program::{FileId, FileRole, Files, Sym};
+use crate::session::Arena;
+use crate::types::{EnumValue, SigId, TypeData, TypeId, tf};
+use crate::util::{FxHashMap, FxHashSet};
+use smallvec::{SmallVec, smallvec};
+use std::cell::RefCell;
+use std::hash::Hash;
+use std::rc::Rc;
+use std::sync::Arc;
+
+const MAX_RELATION_ENTRIES: i32 = 20_000;
+
+#[derive(Copy, Clone)]
+pub struct QueryInputs<'c> {
+    pub roles: &'c [FileRole],
+    pub checked_elsewhere: &'c [FileId],
+    pub builtin_types: &'c BuiltinTypeSymbols,
+    pub named_values: &'c dyn NamedValues,
+    pub alias_mentions: Option<&'c AliasMentions>,
+    pub max_inference_nodes: u64,
+    pub limits: QueryLimits,
+}
+
+pub struct Queries<'c, 'p, 's> {
+    pub(super) c: &'c mut Checker<'p, 's>,
+    pub(super) file: FileId,
+    pub(super) arena: &'c Arena,
+    pub(super) inputs: QueryInputs<'c>,
+    pub(super) memo: Memo<'c>,
+    pub(super) kept: KeptMemo<'c>,
+    pub(super) statistics: QueryStatistics,
+    closed_cycles_before: u32,
+    union_members_compared_before: u64,
+    depth: u32,
+    stack_base_of_task: usize,
+    flow_analysis_disabled_around: Vec<(u32, Vec<FileId>)>,
+    unstable_answers: u64,
+    has_met_inferred_member: bool,
+    flow_analysis_was_disabled: Vec<FileId>,
+    had_run_out_of_stack: bool,
+    pub(super) infers_nothing_from_use: bool,
+    answers_nothing: bool,
+    pub(super) lacks_stack: bool,
+}
+
+#[derive(Clone, Copy, Default)]
+struct PlaceInRow {
+    depth: u32,
+    has_form: bool,
+}
+
+/// The least depth of a class that has the field, in any row.
+#[derive(Clone, Copy)]
+struct HighestPlaces {
+    made_at_birth: u32,
+    any: u32,
+    has_form: bool,
+}
+
+fn is_accessor(kind: ObjectMemberKind) -> bool {
+    matches!(
+        kind,
+        ObjectMemberKind::Getter | ObjectMemberKind::Setter | ObjectMemberKind::GetterAndSetter
+    )
+}
+
+#[derive(Default)]
+pub(super) struct Memo<'c> {
+    gave_up: GaveUpAnswers,
+    nesting_sizes: FxHashMap<TypeId, usize>,
+    members: FxHashMap<TypeId, Result<&'c [ObjectMember], GaveUp>>,
+    most_recent_checked_members: [Option<(TypeId, Vec<CheckedMember>)>; 2],
+    pub(super) names_typed_by_this: FxHashMap<Sym, (&'c [Atom], usize)>,
+    pub(super) methods_typed_by_this: FxHashMap<Sym, &'c [Atom]>,
+    pub(super) classes_compared_with_an_heir: FxHashSet<Sym>,
+    signature_results: FxHashMap<SigId, CheckedType>,
+    signatures: FxHashMap<SigId, SignatureShape<'c>>,
+    function_signatures: FxHashMap<FunctionRef, SignatureShape<'c>>,
+    classes: FxHashMap<ClassDeclaration, Option<&'c ClassShape<'c>>>,
+    classes_with_accessor_at_or_above: FxHashMap<ClassDeclaration, bool>,
+    names_of_accessors: FxHashSet<MemberName>,
+    pub(super) names_of_fields_asked_about: FxHashMap<u32, (crate::hir::ClassId, Atom)>,
+    pub(super) reads_of_fields_off_this: Option<Arc<ReadsOfFields>>,
+    pub(super) typed_arrays_in_fields: Option<Rc<FxHashMap<Atom, Option<TypeId>>>>,
+    pub(super) values_stored_by_name:
+        FxHashMap<ClassDeclaration, Rc<super::inferred_from_use::ValuesByName>>,
+    inherited_accessors: FxHashMap<(ClassDeclaration, MemberName), bool>,
+    places_of_classes: FxHashMap<ClassDeclaration, PlaceInRow>,
+    highest_places_of_fields: FxHashMap<MemberName, HighestPlaces>,
+    nearest_fields_above:
+        FxHashMap<(ClassDeclaration, MemberName), Option<(ClassDeclaration, PositionTypes)>>,
+    forms_given_at_or_above: FxHashMap<(ClassDeclaration, MemberName), Option<MemberForm>>,
+    own_constructor_function_shapes: FxHashMap<FunctionRef, Option<&'c ClassShape<'c>>>,
+    variables: FxHashMap<Sym, WrittenType>,
+    pub(super) member_trusts: FxHashMap<usize, Trust>,
+    member_accesses: FxHashMap<ExprId, Result<MemberLookup, GaveUp>>,
+    resolved_calls: FxHashMap<ExprId, Result<Option<CallTarget>, GaveUp>>,
+    only_declarations_called: FxHashMap<ExprId, Result<Option<FunctionRef>, GaveUp>>,
+    written_parameters: FxHashMap<FunctionRef, &'c [WrittenParameter]>,
+    written_results: FxHashMap<FunctionRef, WrittenType>,
+    contextual_types: FxHashMap<ExprId, Result<Option<TypeId>, GaveUp>>,
+    literal_contexts: FxHashMap<ExprId, Option<TypeId>>,
+    pub(super) unwritten_forms: FxHashMap<(FileId, TypeNodeId), GaveUp>,
+    pub(super) alias_forms: FxHashMap<Sym, AliasForm>,
+    pub(super) reference_index: ReferenceIndex<'c>,
+    pub(super) first_spread_arguments: FxHashMap<ExprId, u32>,
+    pub(super) methods_by_name: Option<Rc<super::inferred_from_use::MethodsByName>>,
+    pub(super) members_of_classes: Option<Rc<super::inferred_from_use::MembersOfClasses>>,
+    pub(super) exported_symbols: Option<FxHashSet<Sym>>,
+    pub(super) parameters_taking_elements: FxHashMap<(Atom, usize, usize), u8>,
+    pub(super) usages: FxHashMap<Subject, UsageState>,
+    pub(super) usages_that_lacked_stack: Vec<Subject>,
+    pub(super) inferred_types: FxHashMap<Subject, TypeState>,
+    /// The functions about whose results and parameters something has been inferred since `note_functions_inferred`.
+    pub(super) functions_inferred: Option<Vec<FnId>>,
+    pub(super) types_of_parts: FxHashMap<*const Usage, (Rc<Usage>, TypeId)>,
+    pub(super) parts_remembered: Rc<RefCell<PartsRemembered>>,
+    pub(super) members_found: FxHashMap<(TypeId, *const MembersByName), (Rc<MembersByName>, bool)>,
+    pub(super) unions_without_nullish: FxHashMap<TypeId, TypeId>,
+    pub(super) types_in_progress: TypesInProgress,
+    pub(super) sums_used_as_int32: FxHashMap<ExprId, bool>,
+    pub(super) symbols_given_products: FxHashMap<SymbolId, GivenProduct>,
+    pub(super) evaluated_for_some_values_only: FxHashMap<ExprId, bool>,
+    pub(super) declared_signatures: Option<Rc<DeclaredSignatures>>,
+}
+
+#[derive(Copy, Clone)]
+pub(super) struct GivenProduct {
+    pub(super) is_given: bool,
+    pub(super) ran_out_of_terms: bool,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(super) enum AliasForm {
+    InProgress,
+    Computed(Result<TypeId, GaveUp>),
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(super) enum AliasScan {
+    InProgress,
+    MentionsUntrustedAlias,
+    MentionsNone,
+}
+
+impl<'p, 's> Checker<'p, 's> {
+    pub fn with_queries<R>(
+        &mut self,
+        file: FileId,
+        inputs: &QueryInputs<'_>,
+        then: impl FnOnce(&mut Queries<'_, 'p, 's>) -> R,
+    ) -> R {
+        debug_assert!(
+            self.is_type_checked && self.task.file == Some(file) && self.stack.is_empty()
+        );
+        let read_types_alone = std::mem::replace(&mut self.reads_types_alone, true);
+        if self.bound(file).has_loop_types_that_depend_on_order
+            && !self.has_checked_source_file(file)
+        {
+            self.check_source_file_silently(file);
+        }
+        self.class_members_by_name.is_on = true;
+        let answered_lowering = std::mem::replace(&mut self.answers_lowering, true);
+        let (memo_of_checker, arena) = self.aot_answers.take();
+        let closed_cycles_before = self.closed_cycle_count();
+        let union_members_compared_before = self.union_members_compared();
+        let flow_analysis_was_disabled = std::mem::take(&mut self.flow_analysis_disabled);
+        let had_run_out_of_stack = self.ran_out_of_stack.get();
+        let mut queries = Queries {
+            c: self,
+            file,
+            arena: &arena,
+            inputs: *inputs,
+            memo: Memo::default(),
+            kept: memo_of_checker,
+            statistics: QueryStatistics::default(),
+            closed_cycles_before,
+            union_members_compared_before,
+            depth: 0,
+            stack_base_of_task: 0,
+            flow_analysis_disabled_around: Vec::new(),
+            unstable_answers: 0,
+            has_met_inferred_member: false,
+            flow_analysis_was_disabled,
+            had_run_out_of_stack,
+            infers_nothing_from_use: false,
+            answers_nothing: false,
+            lacks_stack: false,
+        };
+        let answer = then(&mut queries);
+        let memo_of_checker = std::mem::take(&mut queries.kept);
+        drop(queries);
+        // SAFETY: `Queries::arena`, which is that arena, is the only source of its references.
+        let memo_of_checker = unsafe { memo_of_checker.outliving_its_borrow() };
+        self.aot_answers.put_back(memo_of_checker, arena);
+        self.answers_lowering = answered_lowering;
+        self.reads_types_alone = read_types_alone;
+        answer
+    }
+
+    pub(super) fn count_limits_hit(&self) -> u64 {
+        self.cuts() + self.instantiation_limit_hits
+    }
+
+    fn has_checked_source_file(&self, file: FileId) -> bool {
+        match self.expected {
+            Requested::All | Requested::Types => self.reports_semantic_errors(file),
+            Requested::Syntactic | Requested::EarlyErrors | Requested::Declaration => false,
+        }
+    }
+}
+
+impl Drop for Queries<'_, '_, '_> {
+    fn drop(&mut self) {
+        self.c.class_members_by_name.is_on = false;
+        self.c.flow_analysis_disabled = std::mem::take(&mut self.flow_analysis_was_disabled);
+        self.c.ran_out_of_stack.set(self.had_run_out_of_stack);
+        self.c.rechecked_exprs.clear();
+        self.c.rechecked_members.clear();
+        self.c.rejected_expressions.clear();
+        self.c.work_trap = WORK_TRAP_DISARMED;
+    }
+}
+
+impl<'c, 'p, 's> Queries<'c, 'p, 's> {
+    pub fn is_discarded(&self) -> bool {
+        self.c.was_discarded()
+    }
+
+    pub fn note_idle(&mut self) {
+        debug_assert!(self.depth == 0);
+        self.lacks_stack = false;
+        self.forget_usages_that_lacked_stack();
+        self.c.idle_between_statements();
+    }
+
+    pub fn note_idle_between_statements(&mut self) {
+        debug_assert!(self.depth == 0);
+        self.c.idle_between_statements();
+        if self.c.was_discarded() {
+            self.answer_nothing_from_now_on();
+        }
+    }
+
+    pub fn answer_nothing_from_now_on(&mut self) {
+        self.answers_nothing = true;
+        self.infers_nothing_from_use = true;
+    }
+
+    pub fn answers_only_what_is_known(&self) -> bool {
+        self.answers_nothing || self.lacks_stack
+    }
+
+    #[inline]
+    fn forget_what_a_question_leaves(&mut self) {
+        self.c.rejected_expressions.clear();
+        self.c.work_trap = WORK_TRAP_DISARMED;
+    }
+
+    #[inline(never)]
+    fn begin_question(&mut self) -> (u64, bool) {
+        self.forget_what_a_question_leaves();
+        if !self.c.flow_analysis_disabled.is_empty() {
+            self.set_flow_analysis_disabled_aside();
+        }
+        if self.depth == 0 {
+            self.stack_base_of_task = self.c.begin_stack_of_question();
+        }
+        self.depth += 1;
+        (
+            self.c.instantiation_limit_hits,
+            self.c.ran_out_of_stack.replace(false),
+        )
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn set_flow_analysis_disabled_aside(&mut self) {
+        let disabled = std::mem::take(&mut self.c.flow_analysis_disabled);
+        self.flow_analysis_disabled_around
+            .push((self.depth, disabled));
+    }
+
+    #[inline(never)]
+    fn end_question(&mut self, limit_hits: u64, had_run_out_of_stack: bool) -> Option<GaveUp> {
+        self.depth -= 1;
+        if self.depth == 0 {
+            self.c.end_stack_of_question(self.stack_base_of_task);
+            self.statistics.asked += 1;
+        }
+        if self.c.leaves_depth_limit_unreported && self.c.instantiation_limit_hits != limit_hits {
+            self.unstable_answers += 1;
+        }
+        self.forget_what_a_question_leaves();
+        let ran_out_of_stack = (self.c.ran_out_of_stack).replace(had_run_out_of_stack);
+        self.lacks_stack |= ran_out_of_stack;
+        let is_flow_analysis_disabled = !self.c.flow_analysis_disabled.is_empty();
+        if is_flow_analysis_disabled || !self.flow_analysis_disabled_around.is_empty() {
+            self.put_flow_analysis_disabled_back();
+        }
+        if ran_out_of_stack {
+            Some(GaveUp::OutOfStack)
+        } else if is_flow_analysis_disabled {
+            Some(GaveUp::FlowAnalysisDisabled)
+        } else {
+            None
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn put_flow_analysis_disabled_back(&mut self) {
+        let depth = self.depth;
+        let around = (self.flow_analysis_disabled_around).pop_if(|around| around.0 == depth);
+        self.c.flow_analysis_disabled = around.map_or_else(Vec::new, |around| around.1);
+    }
+
+    // Each of its callers has an instance of its own. The units that a crate is divided into for the code generator would keep the two apart.
+    #[inline]
+    pub(super) fn ask<T>(
+        &mut self,
+        compute: impl FnOnce(&mut Self) -> Result<T, GaveUp>,
+    ) -> Result<T, GaveUp> {
+        debug_assert!(self.c.stack.is_empty());
+        if self.answers_nothing || self.lacks_stack {
+            return Err(self.refuse_question());
+        }
+        let (limit_hits, had_run_out_of_stack) = self.begin_question();
+        let computed = compute(self);
+        let answer = match self.end_question(limit_hits, had_run_out_of_stack) {
+            Some(reason) => Err(reason),
+            None => computed,
+        };
+        if let Err(reason) = answer {
+            self.note_gave_up(reason, self.depth == 0);
+        }
+        answer
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn refuse_question(&mut self) -> GaveUp {
+        let reason = match self.answers_nothing {
+            true => GaveUp::Unresolved,
+            false => GaveUp::OutOfStack,
+        };
+        self.note_gave_up(reason, self.depth == 0);
+        reason
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn note_gave_up(&mut self, reason: GaveUp, is_outermost: bool) {
+        if !reason.is_function_of_key() {
+            self.unstable_answers += 1;
+        }
+        let counts = match is_outermost {
+            true => &mut self.statistics.gave_up,
+            false => &mut self.statistics.members_gave_up,
+        };
+        counts[reason as usize] += 1;
+    }
+
+    pub(super) fn ask_written(
+        &mut self,
+        compute: impl FnOnce(&mut Self) -> WrittenType,
+    ) -> WrittenType {
+        let asked = self.ask(|queries| match compute(queries) {
+            WrittenType::Written(ty) => Ok(Some(ty)),
+            WrittenType::Unwritten => Ok(None),
+            WrittenType::GaveUp(reason) => Err(reason),
+        });
+        match asked {
+            Ok(Some(ty)) => WrittenType::Written(ty),
+            Ok(None) => WrittenType::Unwritten,
+            Err(reason) => WrittenType::GaveUp(reason),
+        }
+    }
+
+    fn ask_expression<T>(
+        &mut self,
+        expression: ExprId,
+        compute: impl FnOnce(&mut Self) -> Result<T, GaveUp>,
+    ) -> Result<T, GaveUp> {
+        self.ask(|queries| {
+            queries.require_live_expression(expression)?;
+            compute(queries)
+        })
+    }
+
+    fn memoized<K: Copy + Eq + Hash, T: Copy>(
+        &mut self,
+        key: K,
+        table: for<'m> fn(&'m mut Memo<'c>) -> &'m mut FxHashMap<K, Result<T, GaveUp>>,
+        compute: impl FnOnce(&mut Self) -> Result<T, GaveUp>,
+    ) -> Result<T, GaveUp> {
+        if let Some(&stored) = table(&mut self.memo).get(&key) {
+            return self.answer_as_known(stored);
+        }
+        let unstable_answers = self.unstable_answers;
+        let answer = self.ask(compute);
+        if self.unstable_answers == unstable_answers {
+            table(&mut self.memo).insert(key, answer);
+        }
+        answer
+    }
+
+    #[inline]
+    fn answer_as_known<T>(&mut self, stored: Result<T, GaveUp>) -> Result<T, GaveUp> {
+        match stored {
+            Ok(known) => {
+                self.note_answer_is_known();
+                Ok(known)
+            }
+            Err(reason) => Err(self.give_up_as_known(reason)),
+        }
+    }
+
+    #[inline]
+    fn note_answer_is_known(&mut self) {
+        match self.depth {
+            0 => self.statistics.asked += 1,
+            _ => self.forget_what_a_question_leaves(),
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn give_up_as_known(&mut self, reason: GaveUp) -> GaveUp {
+        let asked = self.ask(|_| Err::<(), GaveUp>(reason));
+        asked.err().unwrap_or(reason)
+    }
+
+    pub(super) fn note_inferred_member(&mut self) {
+        self.has_met_inferred_member = true;
+    }
+
+    fn noting_inferred_members<T>(&mut self, compute: impl FnOnce(&mut Self) -> T) -> (T, bool) {
+        let had_met = std::mem::replace(&mut self.has_met_inferred_member, false);
+        let computed = compute(self);
+        let has_met = self.has_met_inferred_member;
+        self.has_met_inferred_member |= had_met;
+        (computed, has_met)
+    }
+
+    fn find_gave_up(&self, ty: TypeId, question: TypeQuestion) -> Option<GaveUp> {
+        match self.memo.gave_up.is_empty() {
+            true => None,
+            false => self.memo.gave_up.get(&(ty, question)).copied(),
+        }
+    }
+
+    fn kept_about_type<T: Copy>(
+        &mut self,
+        ty: TypeId,
+        question: TypeQuestion,
+        slot: for<'m> fn(&'m mut TypeAnswers<'c>) -> &'m mut Option<T>,
+        compute: impl FnOnce(&mut Self) -> Result<T, GaveUp>,
+    ) -> Result<T, GaveUp> {
+        let row = self.kept.type_row(ty);
+        if let Some(known) = *slot(self.kept.type_at(row)) {
+            return self.answer_as_known(Ok(known));
+        }
+        self.ask_about_type(ty, row, question, slot, compute)
+    }
+
+    fn ask_about_type<T: Copy>(
+        &mut self,
+        ty: TypeId,
+        row: TypeRow,
+        question: TypeQuestion,
+        slot: for<'m> fn(&'m mut TypeAnswers<'c>) -> &'m mut Option<T>,
+        compute: impl FnOnce(&mut Self) -> Result<T, GaveUp>,
+    ) -> Result<T, GaveUp> {
+        if let Some(reason) = self.find_gave_up(ty, question) {
+            return self.answer_as_known(Err(reason));
+        }
+        let unstable_answers = self.unstable_answers;
+        let answer = self.ask(compute);
+        if self.unstable_answers == unstable_answers {
+            match answer {
+                Ok(known) => *slot(self.kept.type_to_change(row)) = Some(known),
+                Err(reason) => drop(self.memo.gave_up.insert((ty, question), reason)),
+            }
+        }
+        answer
+    }
+
+    fn kept_about_object_type<T: Copy>(
+        &mut self,
+        ty: TypeId,
+        question: TypeQuestion,
+        slot: for<'m> fn(&'m mut ObjectAnswers<'c>) -> &'m mut Option<T>,
+        compute: impl FnOnce(&mut Self) -> Result<T, GaveUp>,
+    ) -> Result<T, GaveUp> {
+        let row = self.kept.object_row(ty);
+        if let Some(known) = *slot(self.kept.object_at(row)) {
+            return self.answer_as_known(Ok(known));
+        }
+        if let Some(reason) = self.find_gave_up(ty, question) {
+            return self.answer_as_known(Err(reason));
+        }
+        let unstable_answers = self.unstable_answers;
+        let answer = self.ask(compute);
+        if self.unstable_answers == unstable_answers {
+            match answer {
+                Ok(known) => *slot(self.kept.object_to_change(row)) = Some(known),
+                Err(reason) => drop(self.memo.gave_up.insert((ty, question), reason)),
+            }
+        }
+        answer
+    }
+
+    pub(super) fn find_known_identity(&self, ty: TypeId) -> Option<TypeIdentity> {
+        self.kept.find_type(ty)?.identity
+    }
+
+    pub(super) fn remember_identity(
+        &mut self,
+        ty: TypeId,
+        identity: TypeIdentity,
+        unstable_answers: u64,
+    ) {
+        if self.unstable_answers == unstable_answers {
+            let row = self.kept.type_row(ty);
+            self.kept.type_to_change(row).identity = Some(identity);
+        }
+    }
+
+    #[inline]
+    pub fn count_unstable_answers(&self) -> u64 {
+        self.unstable_answers
+    }
+
+    pub fn find_kept_fact(&self, ty: TypeId, fact: KeptFact) -> Option<bool> {
+        let bits = self.kept.find_type(ty)?.facts >> (fact as u8 * 2);
+        (bits & 1 != 0).then_some(bits & 2 != 0)
+    }
+
+    pub fn keep_fact(
+        &mut self,
+        ty: TypeId,
+        fact: KeptFact,
+        holds: bool,
+        unstable_answers: u64,
+    ) -> bool {
+        if self.unstable_answers != unstable_answers {
+            return false;
+        }
+        let row = self.kept.type_row(ty);
+        self.kept.type_to_change(row).facts |= (1 | u8::from(holds) << 1) << (fact as u8 * 2);
+        true
+    }
+
+    fn memoized_record<K: Copy + Eq + Hash, T: Copy>(
+        &mut self,
+        key: K,
+        table: for<'m> fn(&'m mut Memo<'c>) -> &'m mut FxHashMap<K, T>,
+        compute: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        if self.depth == 0 {
+            self.statistics.asked += 1;
+        }
+        if let Some(&stored) = table(&mut self.memo).get(&key) {
+            return stored;
+        }
+        let unstable_answers = self.unstable_answers;
+        self.depth += 1;
+        let record = compute(self);
+        self.depth -= 1;
+        if self.unstable_answers == unstable_answers {
+            table(&mut self.memo).insert(key, record);
+        }
+        record
+    }
+
+    pub fn file(&self) -> FileId {
+        self.file
+    }
+
+    #[inline]
+    pub fn files(&self) -> &'p Files<'s> {
+        self.c.files()
+    }
+
+    pub fn hir(&self) -> &'p hir::File<'s> {
+        self.c.hir(self.file)
+    }
+
+    pub fn bound(&self) -> &'p Bound<'s> {
+        self.c.bound(self.file)
+    }
+
+    pub fn atom_bytes(&self, atom: Atom) -> &'p [u8] {
+        self.c.atoms().bytes(atom)
+    }
+
+    pub fn role(&self, file: FileId) -> FileRole {
+        let role = self.inputs.roles.get(file.idx()).copied();
+        role.unwrap_or(FileRole::TypesOnly)
+    }
+
+    #[inline]
+    pub fn is_stack_low(&self) -> bool {
+        self.c.is_stack_low()
+    }
+
+    pub(super) fn limit(&self, limit: QueryLimit) -> u64 {
+        self.inputs.limits.get(limit)
+    }
+
+    pub(super) fn note_walk_ended_by(&mut self, limit: QueryLimit) {
+        let hits = &mut self.statistics.limit_hits[limit as usize];
+        *hits = hits.saturating_add(1);
+    }
+
+    pub fn statistics(&self) -> QueryStatistics {
+        QueryStatistics {
+            closed_cycles: self
+                .c
+                .closed_cycle_count()
+                .wrapping_sub(self.closed_cycles_before)
+                .wrapping_add(self.statistics.closed_cycles),
+            union_members_compared: self.c.union_members_compared()
+                - self.union_members_compared_before
+                + self.statistics.union_members_compared,
+            ..self.statistics
+        }
+    }
+
+    /// Adds what the questions about another part of the file counted.
+    pub fn add_statistics_of_part(&mut self, of_part: &QueryStatistics) {
+        self.statistics.add(of_part);
+    }
+
+    /// The checkers of the other parts of the file share what is found out about all of it.
+    pub fn begin_sharing_indexes(&mut self) -> Arc<SharedIndexes<'s>> {
+        self.c.begin_sharing_indexes(self.file)
+    }
+
+    /// Goes through the file for one of the `SharedIndexes::COUNT` indexes. Several threads make several of them.
+    pub fn make_shared_index(&mut self, number: usize) {
+        let file = self.file;
+        let Some(indexes) = self.c.indexes_of_parts(file) else {
+            return;
+        };
+        match number {
+            0 => {
+                self.c.shared_narrowing_index(file, &indexes.flow);
+            }
+            1 => {
+                self.c.shared_index_of_runs(file, &indexes.flow);
+            }
+            2 => {
+                self.c.shared_index_of_dominators(file, &indexes.flow);
+            }
+            3 => {
+                self.references_to_bindings();
+            }
+            4 => self.find_this_field_reads(),
+            5 => {
+                self.prototype_links(file);
+            }
+            _ => self.share_store_index(&indexes),
+        }
+    }
+
+    pub fn end_sharing_indexes(&mut self) {
+        self.c.end_sharing_indexes();
+    }
+
+    /// Discards the visit, as a part of it was.
+    pub fn discard(&mut self) {
+        self.c.discard_until_recheck();
+    }
+
+    pub fn canonical_symbol(&self, file: FileId, symbol: SymbolId) -> Sym {
+        let bound = self.c.bound(file);
+        let is_variable_beside_declaration =
+            bound.is_appended_symbol(symbol) && bound.binding_kind(symbol) == BindingKind::Var;
+        if !is_variable_beside_declaration && let [decl] = bound.symbol(symbol).decls {
+            let own = bound.symbol_of_declaration(*decl);
+            if own.is_some() {
+                return self.files().sym(file, own);
+            }
+        }
+        self.files().sym(file, bound.exported_value(symbol))
+    }
+
+    #[inline]
+    pub fn class_of_binding(&self, symbol: Sym) -> Option<ClassRef> {
+        self.compute_class_of_binding(symbol)
+    }
+
+    pub fn expression_type(&mut self, expression: ExprId) -> CheckedType {
+        if self.depth == 0 && !self.answers_nothing && !self.lacks_stack {
+            self.require_live_expression(expression)?;
+            if let Some(ty) = self.type_left_by_check(expression) {
+                return self.resolved(ty);
+            }
+        }
+        self.ask_expression(expression, |queries| {
+            let file = queries.file;
+            let ty = queries.c.type_of_expr(file, expression);
+            queries.resolved(ty)
+        })
+    }
+
+    pub fn predicted_expression_type(&mut self, expression: ExprId) -> CheckedType {
+        let checked = self.expression_type(expression)?;
+        self.ask(|queries| Ok(queries.infer_expression_type(expression, checked)))
+    }
+
+    pub fn contextual_type(&mut self, expression: ExprId) -> Result<Option<TypeId>, GaveUp> {
+        self.memoized(
+            expression,
+            |memo| &mut memo.contextual_types,
+            |queries| {
+                queries.require_live_expression(expression)?;
+                queries.compute_contextual_type(expression, false)
+            },
+        )
+    }
+
+    pub fn contextual_type_of_settled_value(
+        &mut self,
+        expression: ExprId,
+    ) -> Result<Option<TypeId>, GaveUp> {
+        self.ask_expression(expression, |queries| {
+            queries.compute_contextual_type(expression, true)
+        })
+    }
+
+    pub fn is_written_under_type_variable(&mut self, expression: ExprId) -> Result<bool, GaveUp> {
+        self.ask_expression(expression, |queries| {
+            let file = queries.file;
+            let outer = queries.c.begin_recheck();
+            let is_pushed = queries.push_enclosing_literal_context(expression);
+            let plain = queries
+                .c
+                .contextual_type(file, expression, ContextFlags::empty());
+            if is_pushed {
+                queries.c.pop_contextual_type();
+            }
+            queries.c.end_recheck(outer);
+            let Some(plain) = plain else {
+                return Ok(false);
+            };
+            let plain = queries.without_nullish(plain)?;
+            Ok(queries.c.flags(plain) & tf::INSTANTIABLE != 0)
+        })
+    }
+
+    fn compute_contextual_type(
+        &mut self,
+        expression: ExprId,
+        is_settled: bool,
+    ) -> Result<Option<TypeId>, GaveUp> {
+        let file = self.file;
+        let outer = self.c.begin_recheck();
+        let is_pushed = self.push_enclosing_literal_context(expression);
+        let plain = self
+            .c
+            .contextual_type(file, expression, ContextFlags::empty());
+        let apparent = plain.and_then(|plain| {
+            if is_pushed {
+                self.c
+                    .push_contextual_type(file, expression, Some(plain), true);
+            }
+            let apparent =
+                self.c
+                    .apparent_type_of_contextual_type(file, expression, ContextFlags::empty());
+            if is_pushed {
+                self.c.pop_contextual_type();
+            }
+            apparent
+        });
+        if is_pushed {
+            self.c.pop_contextual_type();
+        }
+        self.c.end_recheck(outer);
+        let (Some(mut plain), Some(mut apparent)) = (plain, apparent) else {
+            return Ok(None);
+        };
+        if is_settled {
+            plain = self.c.awaited(plain);
+            apparent = self.c.awaited(apparent);
+        }
+        let plain = self.without_nullish(plain)?;
+        let apparent = self.without_nullish(apparent)?;
+        if plain == TypeId::NEVER || apparent == TypeId::NEVER {
+            return Ok(None);
+        }
+        if self
+            .c
+            .every_type(plain, |c, member| c.flags(member) & tf::PRIMITIVE != 0)
+        {
+            return Ok(Some(plain));
+        }
+        Ok((!self.c.is_union(apparent)).then_some(apparent))
+    }
+
+    fn enclosing_literal(&self, expression: ExprId) -> Option<ExprId> {
+        let (hir, bound) = (self.hir(), self.bound());
+        let literal = match bound.parent_of_expr(expression) {
+            Parent::Prop(property) => bound.prop_owner[property.idx()],
+            Parent::Expr(outer) => outer,
+            _ => return None,
+        };
+        let literal = literal.some()?;
+        matches!(hir[literal].kind, ExprKind::Object(_) | ExprKind::Array(_)).then_some(literal)
+    }
+
+    fn push_enclosing_literal_context(&mut self, expression: ExprId) -> bool {
+        let Some(literal) = self.enclosing_literal(expression) else {
+            return false;
+        };
+        let Some(expected) = self.literal_context(literal) else {
+            return false;
+        };
+        self.c
+            .push_contextual_type(self.file, literal, expected, true);
+        true
+    }
+
+    fn literal_context(&mut self, literal: ExprId) -> Option<Option<TypeId>> {
+        if let Some(&known) = self.memo.literal_contexts.get(&literal) {
+            return Some(known);
+        }
+        if self.c.is_stack_low() || !self.c.flow_analysis_disabled.is_empty() {
+            return None;
+        }
+        let is_pushed = self.push_enclosing_literal_context(literal);
+        let expected =
+            self.c
+                .contextual_type_or_unresolved(self.file, literal, ContextFlags::empty());
+        if is_pushed {
+            self.c.pop_contextual_type();
+        }
+        let is_final = self.c.flow_analysis_disabled.is_empty()
+            && !self.c.ran_out_of_stack.get()
+            && expected != Some(TypeId::UNRESOLVED);
+        if !is_final {
+            return None;
+        }
+        self.memo.literal_contexts.insert(literal, expected);
+        Some(expected)
+    }
+
+    pub fn jsx_attributes_type(&mut self, element: ExprId) -> Result<Option<TypeId>, GaveUp> {
+        self.ask_expression(element, |queries| {
+            queries.compute_jsx_attributes_type(element)
+        })
+    }
+
+    fn compute_jsx_attributes_type(&mut self, element: ExprId) -> Result<Option<TypeId>, GaveUp> {
+        let Some(declared) = self.find_jsx_props_type(element)? else {
+            return Ok(None);
+        };
+        let declared = self.without_nullish(declared)?;
+        if declared == TypeId::NEVER {
+            return Ok(None);
+        }
+        let file = self.file;
+        let outer = self.c.begin_recheck();
+        let matching = self
+            .c
+            .discriminate_by_jsx_attributes(file, element, declared);
+        self.c.end_recheck(outer);
+        self.resolved(matching).map(Some)
+    }
+
+    fn find_jsx_props_type(&mut self, element: ExprId) -> Result<Option<TypeId>, GaveUp> {
+        let (file, hir) = (self.file, self.hir());
+        let ExprKind::Jsx(jsx) = hir[element].kind else {
+            return Ok(None);
+        };
+        let Some(tag) = hir[jsx].tag.some() else {
+            return Ok(None);
+        };
+        let location = self.c.jsx_opening_like(file, element);
+        if let Some(name) = self.c.jsx_intrinsic_tag_name(file, tag) {
+            return Ok(self.c.jsx_intrinsic_attributes(file, location, name));
+        }
+        let found = self.c.resolved_signature(file, element);
+        let Some(signature) = found.sig else {
+            return self.resolved(found.ret).map(|_| None);
+        };
+        let properties_name = match self.c.jsx_reference_kind(file, tag) {
+            JsxReferenceKind::Component => {
+                self.c
+                    .jsx_name_from_container(file, location, known::ElementAttributesProperty)
+            }
+            JsxReferenceKind::Function | JsxReferenceKind::Mixed => JsxName::Missing,
+        };
+        Ok(match properties_name {
+            JsxName::Missing => Some(
+                self.c
+                    .type_of_first_parameter_with_fallback(signature, TypeId::UNKNOWN),
+            ),
+            JsxName::Empty => Some(self.c.sig_return(signature)),
+            JsxName::Name(name) => self.c.jsx_props_from_member(signature, name),
+        })
+    }
+
+    pub fn without_nullish(&mut self, ty: TypeId) -> CheckedType {
+        let ty = self.resolved(ty)?;
+        if !self.c.is_union(ty) {
+            return Ok(match self.c.is_nullish(ty) {
+                true => TypeId::NEVER,
+                false => ty,
+            });
+        }
+        let is_union_of_many = self.c.parts(ty).len() > 8;
+        if is_union_of_many && let Some(&known) = self.memo.unions_without_nullish.get(&ty) {
+            return Ok(known);
+        }
+        let growth = match is_union_of_many {
+            true => self.c.growth_of(ty),
+            false => None,
+        };
+        let grown = growth.and_then(|growth| {
+            let so_far = *self.memo.unions_without_nullish.get(&growth.from)?;
+            let keeps_added = !self.c.is_nullish(growth.added);
+            self.c.filter_grown_union(ty, growth, so_far, keeps_added)
+        });
+        let filtered = match grown {
+            Some(filtered) => filtered,
+            None => self.c.filter(ty, |c, member| !c.is_nullish(member)),
+        };
+        if is_union_of_many {
+            self.memo.unions_without_nullish.insert(ty, filtered);
+        }
+        Ok(filtered)
+    }
+
+    pub fn union_of(&mut self, members: &[TypeId]) -> CheckedType {
+        for &member in members {
+            self.resolved(member)?;
+        }
+        Ok(self.c.union(members))
+    }
+
+    pub fn is_assignable(&mut self, source: TypeId, target: TypeId) -> Result<bool, GaveUp> {
+        self.ask(|queries| {
+            let source = queries.resolved(source)?;
+            let target = queries.resolved(target)?;
+            let checker = &mut *queries.c;
+            let limits_hit = checker.count_limits_hit();
+            checker.relation_entries_for_query = Some(MAX_RELATION_ENTRIES);
+            let answer =
+                checker.try_is_type_related_to(source, target, Relation::Assignable, false);
+            checker.relation_entries_for_query = None;
+            if checker.count_limits_hit() != limits_hit {
+                return Err(GaveUp::ErrorType);
+            }
+            answer.map_err(|_| GaveUp::Unresolved)
+        })
+    }
+
+    pub fn can_be_asserted(&mut self, source: TypeId, target: TypeId) -> Result<bool, GaveUp> {
+        self.ask(|queries| {
+            let source = queries.resolved(source)?;
+            let target = queries.resolved(target)?;
+            let mut is_comparable = |from, to| {
+                queries
+                    .c
+                    .try_is_type_related_to(from, to, Relation::Comparable, false)
+                    .map_err(|_| GaveUp::Unresolved)
+            };
+            Ok(is_comparable(target, source)? || is_comparable(source, target)?)
+        })
+    }
+
+    pub fn member_access(&mut self, access: ExprId) -> Result<MemberLookup, GaveUp> {
+        self.memoized(
+            access,
+            |memo| &mut memo.member_accesses,
+            |queries| {
+                queries.require_live_expression(access)?;
+                queries.compute_member_access(access)
+            },
+        )
+    }
+
+    pub fn resolved_call(&mut self, call: ExprId) -> Result<Option<CallTarget>, GaveUp> {
+        self.memoized(
+            call,
+            |memo| &mut memo.resolved_calls,
+            |queries| {
+                queries.require_live_expression(call)?;
+                queries.compute_resolved_call(call)
+            },
+        )
+    }
+
+    pub fn only_declaration_called(&mut self, call: ExprId) -> Option<FunctionRef> {
+        let found = self.memoized(
+            call,
+            |memo| &mut memo.only_declarations_called,
+            |queries| {
+                queries.require_live_expression(call)?;
+                Ok(queries.compute_only_declaration_called(call))
+            },
+        );
+        found.ok().flatten()
+    }
+
+    pub fn is_int32_written(&self) -> bool {
+        self.c.p.aot_symbols().is_int32_written()
+    }
+
+    pub fn written_parameters(&mut self, function: FunctionRef) -> &'c [WrittenParameter] {
+        if let Some(&known) = self.memo.written_parameters.get(&function) {
+            return known;
+        }
+        let unstable_answers = self.unstable_answers;
+        let parameters = self.compute_written_parameters(function);
+        if self.unstable_answers == unstable_answers {
+            self.memo.written_parameters.insert(function, parameters);
+        }
+        parameters
+    }
+
+    pub fn written_result(&mut self, function: FunctionRef) -> WrittenType {
+        if let Some(&known) = self.memo.written_results.get(&function) {
+            return known;
+        }
+        let unstable_answers = self.unstable_answers;
+        let annotation = self.c.hir(function.file)[function.function].ret;
+        let written =
+            self.ask_written(|queries| queries.compute_written_type(function.file, annotation));
+        if self.unstable_answers == unstable_answers {
+            self.memo.written_results.insert(function, written);
+        }
+        written
+    }
+
+    pub fn constant_enum_access(&mut self, access: ExprId) -> Result<Option<EnumValue>, GaveUp> {
+        self.ask_expression(access, |queries| {
+            queries.compute_constant_enum_access(access)
+        })
+    }
+
+    pub fn accessed_enum_member(&mut self, access: ExprId) -> Result<Option<EnumMemberId>, GaveUp> {
+        self.ask_expression(access, |queries| {
+            Ok(queries.compute_accessed_enum_member(access))
+        })
+    }
+
+    pub fn enum_member_value(
+        &mut self,
+        member: EnumMemberId,
+    ) -> Result<Option<EnumConstant>, GaveUp> {
+        self.ask(|queries| Ok(queries.compute_enum_constant(queries.file, member)))
+    }
+
+    pub fn written_type(&mut self, node: TypeNodeId) -> WrittenType {
+        self.ask_written(|queries| queries.compute_written_type(queries.file, node))
+    }
+
+    pub fn parameter_type(&mut self, parameter: ParamId) -> CheckedType {
+        self.ask(|queries| {
+            let file = queries.file;
+            let function = queries.bound().param_fn[parameter.idx()];
+            let is_this_parameter =
+                function != FnId::NONE && queries.c.hir(file)[function].this_param == parameter;
+            let ty = match is_this_parameter {
+                true => queries.c.type_of_this_parameter(file, function),
+                false => queries.c.type_of_param(file, parameter),
+            };
+            let ty = queries.resolved(ty)?;
+            Ok(queries.infer_parameter_type(file, parameter, ty))
+        })
+    }
+
+    pub fn binding_type(&mut self, pattern: PatId) -> CheckedType {
+        self.ask(|queries| {
+            let ty = queries.c.type_of_pat(queries.file, pattern);
+            let ty = queries.resolved(ty)?;
+            Ok(queries.infer_binding_type(pattern, ty))
+        })
+    }
+
+    /// Whether a variable with a value of unknown type is expected to have the type that its uses suggest.
+    /// The uses are asked first: they stand in the text around the name. What the checker says of a value that is read off
+    /// another may hang on everything in front of it.
+    pub fn what_uses_of_field_say(
+        &mut self,
+        shape: &ClassShape<'_>,
+        member: &ClassMember,
+    ) -> CheckedType {
+        let (ClassDeclaration::Class(class), MemberName::String(field)) =
+            (shape.declaration, member.name)
+        else {
+            return Ok(TypeId::ANY);
+        };
+        if class.file != self.file {
+            return Ok(TypeId::ANY);
+        }
+        let position = match member.source {
+            ClassMemberSource::ThisStore(store) => self.hir()[store].pos,
+            ClassMemberSource::Member(node) => self.hir()[node].name_pos,
+            ClassMemberSource::ParameterProperty(_)
+            | ClassMemberSource::PrototypeStore(_)
+            | ClassMemberSource::StaticStore(_) => return Ok(TypeId::ANY),
+        };
+        let said = self.ask(|queries| Ok(queries.infer_field_type(class, field, position)))?;
+        let int32 = self.c.p.aot_symbols().int32_alias();
+        let int32 = int32.map(|alias| self.c.declared_type(alias));
+        let mut names_list = false;
+        let mut holds_numbers_alone = true;
+        for &part in self.c.parts(said) {
+            if !self.c.is_array(part) {
+                if self.c.flags(part) & tf::OBJECT != 0 {
+                    return Ok(TypeId::ANY);
+                }
+                continue;
+            }
+            names_list = true;
+            let element = self.c.array_element(part);
+            holds_numbers_alone &= element.is_some_and(|element| {
+                self.c.every_type(element, |c, held| {
+                    c.is_number_like(held) || Some(held) == int32
+                })
+            });
+        }
+        if !(names_list && holds_numbers_alone) {
+            return Ok(said);
+        }
+        match self.ask(|queries| Ok(queries.are_names_alone_read_off_field(class, field)))? {
+            true => Ok(said),
+            false => Ok(TypeId::ANY),
+        }
+    }
+
+    /// What the stores in other functions of a class say of a field.
+    pub fn type_from_later_field_stores(
+        &mut self,
+        shape: &ClassShape<'_>,
+        member: &ClassMember,
+    ) -> CheckedType {
+        match (self.can_ask_about_field(shape, member), member.name) {
+            (true, MemberName::String(field)) => {
+                self.find_type_stored_later(shape.declaration, field)
+            }
+            _ => Ok(TypeId::ANY),
+        }
+    }
+
+    /// The typed array that classes of the file store into their fields of the same name.
+    pub fn typed_array_in_named_fields(
+        &mut self,
+        shape: &ClassShape<'_>,
+        member: &ClassMember,
+    ) -> CheckedType {
+        match (self.can_ask_about_field(shape, member), member.name) {
+            (true, MemberName::String(field)) => {
+                let found = self.typed_arrays_in_fields().get(&field).copied().flatten();
+                Ok(found.unwrap_or(TypeId::ANY))
+            }
+            _ => Ok(TypeId::ANY),
+        }
+    }
+
+    fn can_ask_about_field(&self, shape: &ClassShape<'_>, member: &ClassMember) -> bool {
+        let is_stored = matches!(
+            member.source,
+            ClassMemberSource::ThisStore(_) | ClassMemberSource::Member(_)
+        );
+        is_stored && !member.is_static && shape.declaration.file() == self.file
+    }
+
+    pub fn uses_say_what_read_is(&mut self, pattern: PatId, is_element: bool) -> bool {
+        if let crate::bind::Binding::Symbol(symbol) = self.bound().initialized_binding(pattern)
+            && self.references_of_binding(symbol).is_empty()
+        {
+            return false;
+        }
+        let checked = self.ask(|queries| {
+            let ty = queries.c.type_of_pat(queries.file, pattern);
+            queries.resolved(ty)
+        });
+        if !checked.is_ok_and(|ty| self.c.is_any(ty)) {
+            return false;
+        }
+        let Ok(said) = self.ask(|queries| Ok(queries.infer_binding_type(pattern, TypeId::ANY)))
+        else {
+            return false;
+        };
+        if self.c.is_any(said) {
+            return false;
+        }
+        // `pixels[i] * weight` and `pixels.length` fit an array of numbers and a typed array: a loop guards in its preheader.
+        let is_list_of_numbers = |c: &Checker<'_, '_>, part: TypeId| c.is_array(part);
+        if self.c.some_type(said, is_list_of_numbers) {
+            let mut holds_numbers_alone = true;
+            for &part in self.c.parts(said) {
+                if self.c.is_array(part) {
+                    let element = self.c.array_element(part);
+                    holds_numbers_alone &= element.is_some_and(|element| {
+                        self.c.every_type(element, |c, held| c.is_number_like(held))
+                    });
+                }
+            }
+            if holds_numbers_alone {
+                return false;
+            }
+        }
+        // An operator checks an element that it uses as a number itself.
+        let is_primitive = self
+            .c
+            .every_type(said, |c, part| c.flags(part) & tf::PRIMITIVE != 0);
+        if is_primitive && is_element {
+            return false;
+        }
+        // The names that are read off a value make a record that no object of the program may be.
+        let names_record = self.c.some_type(said, |c, part| {
+            c.flags(part) & tf::OBJECT != 0 && !c.is_array(part)
+        });
+        !names_record
+    }
+
+    pub fn uses_say_list_of_lists(&mut self, pattern: PatId) -> bool {
+        let known = self.c.indexes_of_parts(self.file).and_then(|indexes| {
+            let answers = indexes.lists_of_lists.get()?;
+            answers.get(&pattern).copied()
+        });
+        known.unwrap_or_else(|| self.compute_uses_imply_nested_list(pattern))
+    }
+
+    fn compute_uses_imply_nested_list(&mut self, pattern: PatId) -> bool {
+        let checked = self.ask(|queries| {
+            let ty = queries.c.type_of_pat(queries.file, pattern);
+            queries.resolved(ty)
+        });
+        if !checked.is_ok_and(|ty| self.c.is_any(ty)) {
+            return false;
+        }
+        let Ok(said) = self.ask(|queries| Ok(queries.infer_binding_type(pattern, TypeId::ANY)))
+        else {
+            return false;
+        };
+        let mut names_list = false;
+        let mut rows_may_be_texts = false;
+        for &part in self.c.parts(said) {
+            if self.c.flags(part) & tf::NULLABLE != 0 {
+                continue;
+            }
+            let Some(element) = self.c.array_element(part) else {
+                return false;
+            };
+            let holds_lists_alone = self.c.some_type(element, |c, held| c.is_array(held))
+                && self.c.every_type(element, |c, held| {
+                    c.is_array(held) || c.flags(held) & (tf::NULLABLE | tf::STRING_LIKE) != 0
+                });
+            if !holds_lists_alone {
+                return false;
+            }
+            rows_may_be_texts |= self
+                .c
+                .some_type(element, |c, held| c.flags(held) & tf::STRING_LIKE != 0);
+            names_list = true;
+        }
+        if !names_list {
+            return false;
+        }
+        if rows_may_be_texts {
+            let Ok(true) = self.ask(|queries| Ok(queries.is_read_under_numbers_alone(pattern)))
+            else {
+                return false;
+            };
+        }
+        true
+    }
+
+    pub fn return_type(&mut self, function: FnId) -> CheckedType {
+        self.ask(|queries| {
+            let ty = queries.c.return_type_of_fn(queries.file, function);
+            let ty = queries.resolved(ty)?;
+            Ok(queries.infer_result_type(queries.file, function, ty))
+        })
+    }
+
+    pub fn written_variable_type(&mut self, symbol: Sym) -> WrittenType {
+        if let Some(&known) = self.kept.variables.get(&symbol) {
+            if self.depth == 0 {
+                self.statistics.asked += 1;
+            }
+            return known;
+        }
+        if self.depth == 0 {
+            self.statistics.asked += 1;
+        }
+        if let Some(&stored) = self.memo.variables.get(&symbol) {
+            return stored;
+        }
+        let unstable_answers = self.unstable_answers;
+        self.depth += 1;
+        let written = self.compute_written_variable_type(symbol);
+        self.depth -= 1;
+        let is_answer = !matches!(written, WrittenType::GaveUp(_));
+        if self.unstable_answers != unstable_answers {
+            if is_answer && self.memo.variables.remove(&symbol).is_some() {
+                self.kept.variables.insert(symbol, written);
+            }
+        } else if is_answer {
+            self.kept.variables.insert(symbol, written);
+        } else {
+            self.memo.variables.insert(symbol, written);
+        }
+        written
+    }
+
+    pub fn function_signature(&mut self, function: FunctionRef) -> SignatureShape<'c> {
+        self.memoized_signature(
+            function,
+            Some(function.file),
+            |memo| &mut memo.function_signatures,
+            |kept| &mut kept.function_signatures,
+            |queries| queries.compute_function_signature(function),
+        )
+    }
+
+    pub fn function_result(&mut self, function: FunctionRef) -> CheckedType {
+        self.compute_function_result(function)
+    }
+
+    pub fn signature(&mut self, signature: SigId) -> SignatureShape<'c> {
+        self.memoized_signature(
+            signature,
+            self.find_file_of_signature(signature),
+            |memo| &mut memo.signatures,
+            |kept| &mut kept.signatures,
+            |queries| queries.compute_signature(signature),
+        )
+    }
+
+    pub fn signature_result(&mut self, signature: SigId) -> CheckedType {
+        if self.depth == 0 {
+            self.statistics.asked += 1;
+        }
+        if let Some(known) = self.memo.signatures.get(&signature) {
+            return known.result.checked;
+        }
+        if let Some(&known) = self.memo.signature_results.get(&signature) {
+            return known;
+        }
+        let holds_everywhere_else = self.find_file_of_signature(signature) != Some(self.file);
+        if holds_everywhere_else {
+            if let Some(known) = self.kept.signatures.get(&signature) {
+                return known.result.checked;
+            }
+            if let Some(&known) = self.kept.signature_results.get(&signature) {
+                return Ok(known);
+            }
+        }
+        let unstable_answers = self.unstable_answers;
+        self.depth += 1;
+        let result = self.compute_signature_result(signature);
+        self.depth -= 1;
+        if self.unstable_answers == unstable_answers {
+            match result {
+                Ok(known) if holds_everywhere_else => {
+                    self.kept.signature_results.insert(signature, known);
+                }
+                Ok(_) | Err(_) => drop(self.memo.signature_results.insert(signature, result)),
+            }
+        }
+        result
+    }
+
+    fn memoized_signature<K: Copy + Eq + Hash>(
+        &mut self,
+        key: K,
+        file_of_parameters: Option<FileId>,
+        table: for<'m> fn(&'m mut Memo<'c>) -> &'m mut FxHashMap<K, SignatureShape<'c>>,
+        kept: for<'m> fn(&'m mut KeptMemo<'c>) -> &'m mut FxHashMap<K, SignatureShape<'c>>,
+        compute: impl FnOnce(&mut Self) -> SignatureShape<'c>,
+    ) -> SignatureShape<'c> {
+        let holds_everywhere_else = file_of_parameters != Some(self.file);
+        if holds_everywhere_else && let Some(&known) = kept(&mut self.kept).get(&key) {
+            if self.depth == 0 {
+                self.statistics.asked += 1;
+            }
+            return known;
+        }
+        let was_known = !holds_everywhere_else || table(&mut self.memo).contains_key(&key);
+        let shape = self.memoized_record(key, table, compute);
+        if !was_known && table(&mut self.memo).remove(&key).is_some() {
+            kept(&mut self.kept).insert(key, shape);
+        }
+        shape
+    }
+
+    pub fn has_accessor_at_or_above(&mut self, declaration: ClassDeclaration) -> bool {
+        let mut chain = Vec::new();
+        let mut seen: FxHashSet<ClassDeclaration> = FxHashSet::default();
+        let mut current = Some(declaration);
+        let mut has_accessor = false;
+        while let Some(class) = current {
+            if let Some(&known) = self.memo.classes_with_accessor_at_or_above.get(&class) {
+                has_accessor = known;
+                break;
+            }
+            if !seen.insert(class) {
+                has_accessor = true;
+                break;
+            }
+            chain.push(class);
+            current = self.declared_parent(class);
+        }
+        for &class in chain.iter().rev() {
+            let members = self.shape_of(class).map_or(&[][..], |shape| shape.members);
+            for entry in members
+                .iter()
+                .filter(|entry| !entry.is_static && is_accessor(entry.kind))
+            {
+                has_accessor = true;
+                self.memo.names_of_accessors.insert(entry.name);
+            }
+            self.memo
+                .classes_with_accessor_at_or_above
+                .insert(class, has_accessor);
+        }
+        has_accessor
+    }
+
+    pub(super) fn shape_of(&mut self, class: ClassDeclaration) -> Option<&'c ClassShape<'c>> {
+        match class {
+            ClassDeclaration::Class(class) => Some(self.class_shape(class)),
+            ClassDeclaration::Function(function) => self.constructor_function_shape(function),
+        }
+    }
+
+    fn declared_parent(&mut self, class: ClassDeclaration) -> Option<ClassDeclaration> {
+        let parent = match class {
+            ClassDeclaration::Class(class) => self.class_parent(class),
+            ClassDeclaration::Function(function) => self.constructor_function_parent(function),
+        };
+        match parent {
+            Some(ClassParent::Declared(above)) => Some(above),
+            Some(ClassParent::Library(_)) | None => None,
+        }
+    }
+
+    fn find_accessor_in(
+        &self,
+        shape: &ClassShape<'_>,
+        name: MemberName,
+        is_above: bool,
+    ) -> Option<bool> {
+        if shape.has_computed_instance_name {
+            return Some(false);
+        }
+        let file = self.c.hir(shape.declaration.file());
+        let named = |entry: &&ClassMember| !entry.is_static && entry.name == name;
+        for entry in shape.members.iter().filter(named) {
+            match (entry.kind, entry.source) {
+                (kind, _) if is_accessor(kind) => {
+                    if is_above {
+                        return Some(true);
+                    }
+                }
+                (ObjectMemberKind::Field, ClassMemberSource::Member(node))
+                    if file[node]
+                        .flags
+                        .intersects(hir::Flags::AMBIENT | hir::Flags::ABSTRACT) => {}
+                (ObjectMemberKind::Field, ClassMemberSource::ThisStore(_)) => {}
+                _ => return Some(false),
+            }
+        }
+        shape
+            .names_stored_in_prototype
+            .contains(&name)
+            .then_some(false)
+    }
+
+    fn find_place_in_row(&mut self, declaration: ClassDeclaration) -> PlaceInRow {
+        let mut chain = Vec::new();
+        let mut seen: FxHashSet<ClassDeclaration> = FxHashSet::default();
+        let mut current = Some(declaration);
+        let mut above = None;
+        while let Some(class) = current {
+            if let Some(&known) = self.memo.places_of_classes.get(&class) {
+                above = Some(known);
+                break;
+            }
+            if self.shape_of(class).is_none() || !seen.insert(class) {
+                break;
+            }
+            chain.push(class);
+            current = self.declared_parent(class);
+        }
+        for &class in chain.iter().rev() {
+            let mut place =
+                above.map_or_else(PlaceInRow::default, |above: PlaceInRow| PlaceInRow {
+                    depth: above.depth + 1,
+                    ..above
+                });
+            let members = self.shape_of(class).map_or(&[][..], |shape| shape.members);
+            for entry in members
+                .iter()
+                .filter(|entry| !entry.is_static && entry.kind == ObjectMemberKind::Field)
+            {
+                let has_form = entry.form != MemberForm::default();
+                place.has_form |= has_form;
+                let highest = self
+                    .memo
+                    .highest_places_of_fields
+                    .entry(entry.name)
+                    .or_insert(HighestPlaces {
+                        made_at_birth: u32::MAX,
+                        any: u32::MAX,
+                        has_form,
+                    });
+                highest.any = highest.any.min(place.depth);
+                if entry.is_made_at_birth {
+                    highest.made_at_birth = highest.made_at_birth.min(place.depth);
+                }
+                highest.has_form |= has_form;
+            }
+            self.memo.places_of_classes.insert(class, place);
+            above = Some(place);
+        }
+        above.unwrap_or_default()
+    }
+
+    pub fn find_form_given_above(
+        &mut self,
+        shape: &ClassShape<'_>,
+        name: MemberName,
+    ) -> Option<MemberForm> {
+        let place = self.find_place_in_row(shape.declaration);
+        let highest = match self.memo.highest_places_of_fields.get(&name) {
+            Some(&highest) if place.has_form && highest.has_form => highest,
+            _ => return None,
+        };
+        if let ClassDeclaration::Function(function) = shape.declaration {
+            let is_that_name = |entry: &&ClassMember| !entry.is_static && entry.name == name;
+            let own = shape.members.iter().find(is_that_name);
+            if own.is_some_and(|entry| !self.passes_this_on_in_front_of(function, entry.source)) {
+                return None;
+            }
+        }
+        let mut chain = Vec::new();
+        let mut current = self.declared_parent(shape.declaration);
+        let mut found = None;
+        for _ in highest.made_at_birth..place.depth {
+            let Some(class) = current else {
+                break;
+            };
+            if let Some(&known) = self.memo.forms_given_at_or_above.get(&(class, name)) {
+                found = known;
+                break;
+            }
+            chain.push(class);
+            current = self.declared_parent(class);
+        }
+        for &class in chain.iter().rev() {
+            if found.is_none() {
+                let members = self.shape_of(class).map_or(&[][..], |shape| shape.members);
+                let makes_that_field = |entry: &&ClassMember| {
+                    !entry.is_static
+                        && entry.kind == ObjectMemberKind::Field
+                        && entry.name == name
+                        && entry.is_made_at_birth
+                };
+                found = members
+                    .iter()
+                    .find(makes_that_field)
+                    .map(|entry| entry.form);
+            }
+            self.memo
+                .forms_given_at_or_above
+                .insert((class, name), found);
+        }
+        found
+    }
+
+    /// The nearest class above that has the field, with the field's types there.
+    pub fn nearest_field_above(
+        &mut self,
+        declaration: ClassDeclaration,
+        name: MemberName,
+    ) -> Option<(ClassDeclaration, PositionTypes)> {
+        let depth = self.find_place_in_row(declaration).depth;
+        let highest = self.memo.highest_places_of_fields.get(&name)?.any;
+        if highest >= depth {
+            return None;
+        }
+        if let Some(&known) = self.memo.nearest_fields_above.get(&(declaration, name)) {
+            return known;
+        }
+        let mut current = self.declared_parent(declaration);
+        let mut found = None;
+        for _ in highest..depth {
+            let Some(class) = current else {
+                break;
+            };
+            let members = self.shape_of(class).map_or(&[][..], |shape| shape.members);
+            let named = members.iter().find(|entry| {
+                !entry.is_static && entry.kind == ObjectMemberKind::Field && entry.name == name
+            });
+            if let Some(entry) = named {
+                found = Some((class, entry.types));
+                break;
+            }
+            current = self.declared_parent(class);
+        }
+        self.memo
+            .nearest_fields_above
+            .insert((declaration, name), found);
+        found
+    }
+
+    pub fn inherits_accessor(&mut self, shape: &ClassShape<'_>, name: MemberName) -> bool {
+        if !matches!(name, MemberName::String(_))
+            || !self.has_accessor_at_or_above(shape.declaration)
+            || !self.memo.names_of_accessors.contains(&name)
+        {
+            return false;
+        }
+        if let Some(found) = self.find_accessor_in(shape, name, false) {
+            return found;
+        }
+        let mut silent = Vec::new();
+        let mut seen: FxHashSet<ClassDeclaration> = FxHashSet::default();
+        seen.insert(shape.declaration);
+        let mut current = self.declared_parent(shape.declaration);
+        let found = loop {
+            let Some(class) = current else { break false };
+            if !seen.insert(class) {
+                return false;
+            }
+            if let Some(&known) = self.memo.inherited_accessors.get(&(class, name)) {
+                break known;
+            }
+            silent.push(class);
+            let Some(above) = self.shape_of(class) else {
+                break false;
+            };
+            if let Some(found) = self.find_accessor_in(above, name, true) {
+                break found;
+            }
+            current = self.declared_parent(class);
+        };
+        for class in silent {
+            self.memo.inherited_accessors.insert((class, name), found);
+        }
+        found
+    }
+
+    pub fn class_shape(&mut self, class: ClassRef) -> &'c ClassShape<'c> {
+        let shape = self.memoized_record(
+            ClassDeclaration::Class(class),
+            |memo| &mut memo.classes,
+            |queries| Some(queries.compute_class_shape(class)),
+        );
+        shape.expect("a class has a shape")
+    }
+
+    pub fn constructor_function_shape(
+        &mut self,
+        function: FunctionRef,
+    ) -> Option<&'c ClassShape<'c>> {
+        self.memoized_record(
+            ClassDeclaration::Function(function),
+            |memo| &mut memo.classes,
+            |queries| queries.complete_constructor_function_shape(function),
+        )
+    }
+
+    pub(super) fn own_constructor_function_shape(
+        &mut self,
+        function: FunctionRef,
+    ) -> Option<&'c ClassShape<'c>> {
+        self.memoized_record(
+            function,
+            |memo| &mut memo.own_constructor_function_shapes,
+            |queries| queries.compute_constructor_function_shape(function),
+        )
+    }
+
+    pub fn type_shape(&mut self, ty: TypeId) -> Result<TypeShape<'c>, GaveUp> {
+        let row = self.kept.type_row(ty);
+        if let Some(known) = self.kept.type_at(row).shape {
+            self.note_answer_is_known();
+            return Ok(known);
+        }
+        self.ask_for_type_shape(ty, row)
+    }
+
+    #[inline(never)]
+    fn ask_for_type_shape(&mut self, ty: TypeId, row: TypeRow) -> Result<TypeShape<'c>, GaveUp> {
+        self.ask_about_type(
+            ty,
+            row,
+            TypeQuestion::Shape,
+            |answers| &mut answers.shape,
+            |queries| queries.compute_type_shape(ty),
+        )
+    }
+
+    pub fn accepted_primitives(&mut self, object_type: TypeId) -> Result<PrimitiveKinds, GaveUp> {
+        self.kept_about_object_type(
+            object_type,
+            TypeQuestion::Primitives,
+            |answers| &mut answers.primitives,
+            |queries| queries.compute_accepted_primitives(object_type),
+        )
+    }
+
+    pub(super) fn builtin_base(&mut self, ty: TypeId) -> Result<Option<TypeShape<'c>>, GaveUp> {
+        self.kept_about_object_type(
+            ty,
+            TypeQuestion::BuiltinBase,
+            |answers| &mut answers.builtin_base,
+            |queries| queries.compute_builtin_base(ty),
+        )
+    }
+
+    pub fn accepted_builtins(&mut self, object_type: TypeId) -> Result<&'c [BuiltinShape], GaveUp> {
+        self.kept_about_object_type(
+            object_type,
+            TypeQuestion::AcceptedBuiltins,
+            |answers| &mut answers.accepted_builtins,
+            |queries| queries.compute_accepted_builtins(object_type),
+        )
+    }
+
+    pub fn accepted_class_constructors(
+        &mut self,
+        object_type: TypeId,
+    ) -> Result<&'c [ClassRef], GaveUp> {
+        self.kept_about_object_type(
+            object_type,
+            TypeQuestion::AcceptedClassConstructors,
+            |answers| &mut answers.accepted_class_constructors,
+            |queries| queries.compute_accepted_class_constructors(object_type),
+        )
+    }
+
+    pub fn object_members(&mut self, object_type: TypeId) -> Result<&'c [ObjectMember], GaveUp> {
+        let row = self.kept.object_row(object_type);
+        if let Some(known) = self.kept.object_at(row).members {
+            return self.answer_as_known(Ok(known));
+        }
+        if let Some(&stored) = self.memo.members.get(&object_type) {
+            return self.answer_as_known(stored);
+        }
+        let unstable_answers = self.unstable_answers;
+        let (answer, has_inferred_member) = self.noting_inferred_members(|queries| {
+            queries.ask(|queries| queries.compute_object_members(object_type))
+        });
+        if self.unstable_answers == unstable_answers {
+            match answer {
+                Ok(known) if !has_inferred_member => {
+                    self.kept.object_to_change(row).members = Some(known);
+                }
+                Ok(_) | Err(_) => drop(self.memo.members.insert(object_type, answer)),
+            }
+        }
+        answer
+    }
+
+    pub fn members_typed_otherwise(
+        &mut self,
+        object_type: TypeId,
+        base: TypeId,
+    ) -> Result<(Vec<MemberTypedOtherwise>, Option<MethodsAbove>), GaveUp> {
+        let unstable_answers = self.unstable_answers;
+        let by_names =
+            self.ask(|queries| queries.compute_members_typed_otherwise(object_type, base));
+        if let Some((found, methods)) = by_names? {
+            return Ok((
+                found,
+                methods.filter(|_| self.unstable_answers == unstable_answers),
+            ));
+        }
+        let (in_base, base_is_kept) = self.checked_members_for_now(base)?;
+        let (members, is_kept) = self.checked_members_for_now(object_type)?;
+        let mut types: FxHashMap<Atom, TypeId> = FxHashMap::default();
+        types.reserve(members.len());
+        for member in &members {
+            if let (MemberName::String(name), Ok(checked)) = (member.name, member.checked) {
+                types.insert(name, checked);
+            }
+        }
+        let mut found = Vec::new();
+        for member in &in_base {
+            if let (MemberName::String(name), Ok(in_base)) = (member.name, member.checked)
+                && let Some(&checked) = types.get(&name)
+                && checked != in_base
+            {
+                found.push(MemberTypedOtherwise {
+                    kind_in_base: member.kind,
+                    checked,
+                    in_base,
+                    is_method_above: false,
+                });
+            }
+        }
+        self.memo.most_recent_checked_members = [
+            is_kept.then_some((object_type, members)),
+            base_is_kept.then_some((base, in_base)),
+        ];
+        Ok((found, None))
+    }
+
+    pub fn note_methods_followed(&mut self, methods: MethodsAbove) {
+        let compared = &mut self.memo.classes_compared_with_an_heir;
+        compared.insert(methods.class);
+    }
+
+    fn checked_members_for_now(
+        &mut self,
+        object_type: TypeId,
+    ) -> Result<(Vec<CheckedMember>, bool), GaveUp> {
+        for recent in &mut self.memo.most_recent_checked_members {
+            if let Some((_, members)) = recent.take_if(|it| it.0 == object_type) {
+                return Ok((members, true));
+            }
+        }
+        let unstable_answers = self.unstable_answers;
+        let members = self.ask(|queries| queries.compute_checked_members_for_now(object_type))?;
+        Ok((members, self.unstable_answers == unstable_answers))
+    }
+
+    pub fn find_checked_member(
+        &mut self,
+        receiver: TypeId,
+        name: Atom,
+    ) -> Result<Option<CheckedMember>, GaveUp> {
+        self.ask(|queries| queries.compute_find_checked_member(receiver, name))
+    }
+
+    pub fn listed_members(&mut self, object_type: TypeId) -> Result<&'c [ListedMember], GaveUp> {
+        self.kept_about_object_type(
+            object_type,
+            TypeQuestion::ListedMembers,
+            |answers| &mut answers.listed_members,
+            |queries| queries.compute_listed_members(object_type),
+        )
+    }
+
+    pub fn expressions_by_kind(&mut self, file: FileId) -> Arc<hir::ExprsByKind> {
+        self.c.exprs_by_kind(file)
+    }
+
+    pub fn creation_places(&mut self, object_type: TypeId) -> Vec<u32> {
+        let places = self.ask(|queries| queries.compute_creation_places(object_type));
+        places.unwrap_or_default()
+    }
+
+    pub fn listed_member_types(
+        &mut self,
+        object_type: TypeId,
+        member: ListedMember,
+    ) -> PositionTypes {
+        let row = self.kept.object_row(object_type);
+        if let Some(known) = self.kept.find_member_types(row, member) {
+            return PositionTypes {
+                written: self.written_as_known(known.written),
+                checked: self.answer_as_known(known.checked),
+            };
+        }
+        let unstable_answers = self.unstable_answers;
+        let (types, is_inferred) = self.noting_inferred_members(|queries| {
+            queries.compute_listed_member_types(object_type, member)
+        });
+        let is_answer = !matches!(types.written, WrittenType::GaveUp(_)) && types.checked.is_ok();
+        if is_answer && !is_inferred && self.unstable_answers == unstable_answers {
+            self.keep_member_types(object_type, row, member, types);
+        }
+        types
+    }
+
+    pub fn keeps_listed_member_types(&mut self, object_type: TypeId, member: ListedMember) -> bool {
+        let row = self.kept.object_row(object_type);
+        self.kept.find_member_types(row, member).is_some()
+    }
+
+    fn written_as_known(&mut self, written: WrittenType) -> WrittenType {
+        debug_assert!(!matches!(written, WrittenType::GaveUp(_)));
+        if self.depth == 0 {
+            self.statistics.asked += 1;
+            return written;
+        }
+        self.ask_written(|_| written)
+    }
+
+    fn keep_member_types(
+        &mut self,
+        object_type: TypeId,
+        row: ObjectRow,
+        member: ListedMember,
+        types: PositionTypes,
+    ) {
+        if !self.kept.has_room_for_member_types(row) {
+            let declared = self.resolve_object_type(object_type);
+            let count = self
+                .c
+                .members(declared)
+                .map_or(0, |members| members.shape().props.len());
+            self.kept.make_room_for_member_types(row, count as u32);
+        }
+        self.kept.keep_member_types(row, member, types);
+    }
+
+    pub fn index_signatures(
+        &mut self,
+        object_type: TypeId,
+    ) -> Result<&'c [IndexSignature], GaveUp> {
+        self.kept_about_object_type(
+            object_type,
+            TypeQuestion::IndexSignatures,
+            |answers| &mut answers.index_signatures,
+            |queries| queries.compute_index_signatures(object_type),
+        )
+    }
+
+    pub fn find_member(&mut self, receiver: TypeId, name: Atom) -> Result<MemberLookup, GaveUp> {
+        self.ask(|queries| queries.compute_find_member(receiver, name))
+    }
+
+    pub fn awaited_type(&mut self, ty: TypeId) -> CheckedType {
+        self.kept_about_type(
+            ty,
+            TypeQuestion::Awaited,
+            |answers| &mut answers.awaited,
+            |queries| {
+                let ty = queries.resolved(ty)?;
+                let awaited = queries.c.awaited(ty);
+                queries.resolved(awaited)
+            },
+        )
+    }
+
+    pub fn type_identity(&mut self, ty: TypeId) -> Result<TypeIdentity, GaveUp> {
+        self.kept_about_type(
+            ty,
+            TypeQuestion::Identity,
+            |answers| &mut answers.identity,
+            |queries| queries.compute_type_identity(ty),
+        )
+    }
+
+    pub fn has_other_optional_members_than_mapped_type(&mut self, object_type: TypeId) -> bool {
+        self.c
+            .has_other_optional_members_than_mapped_type(object_type)
+    }
+
+    #[inline]
+    pub fn object_origin(&mut self, object_type: TypeId) -> ObjectOrigin {
+        self.compute_object_origin(object_type)
+    }
+
+    pub fn grows_along(&mut self, path: &[TypeId]) -> bool {
+        const MAX_DEPTH: usize = 4;
+        let Some(&ty) = path.last() else {
+            return false;
+        };
+        let family = self.family_of(ty);
+        let is_kin = |&on_path: &TypeId| self.family_of(on_path) == family;
+        let kin: SmallVec<[TypeId; 8]> = path.iter().copied().filter(is_kin).collect();
+        if kin.len() < MAX_DEPTH {
+            return false;
+        }
+        let types = self.c.types();
+        let sizes = &mut self.memo.nesting_sizes;
+        let mut size_of = |ty: TypeId| {
+            let size = sizes.entry(ty);
+            *size.or_insert_with(|| types.nesting_size(ty))
+        };
+        let mut lowest_ends_of_rows: SmallVec<[TypeId; MAX_DEPTH]> = SmallVec::new();
+        for on_path in kin {
+            let mut ends = lowest_ends_of_rows.iter_mut();
+            let not_less = ends.find(|end| {
+                let by_height = types.nesting_order(**end, on_path);
+                let order = by_height.then_with(|| size_of(**end).cmp(&size_of(on_path)));
+                order.is_ge()
+            });
+            match not_less {
+                Some(end) => *end = on_path,
+                None => lowest_ends_of_rows.push(on_path),
+            }
+            if lowest_ends_of_rows.len() == MAX_DEPTH {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn family_of(&self, ty: TypeId) -> SmallVec<[RecursionId; 2]> {
+        let TypeData::Intersection(sides) = self.c.data(ty) else {
+            return smallvec![self.c.recursion_identity_of_family(ty)];
+        };
+        let families = sides
+            .iter()
+            .map(|&side| self.c.recursion_identity_of_family(side));
+        let mut families: SmallVec<[RecursionId; 2]> = families.collect();
+        families.sort_unstable();
+        families.dedup();
+        families
+    }
+
+    pub fn listed_member_hangs_on_type_arguments(
+        &mut self,
+        object_type: TypeId,
+        member: ListedMember,
+    ) -> bool {
+        self.compute_listed_member_hangs_on_type_arguments(object_type, member)
+    }
+
+    pub fn type_text(&mut self, ty: TypeId) -> Vec<u8> {
+        to_valid_utf8(self.c.type_to_string(ty))
+    }
+
+    pub fn type_name_site(&mut self, ty: TypeId) -> Option<(FileId, u32)> {
+        let ObjectOrigin::Symbol(symbol) = self.object_origin(ty) else {
+            return None;
+        };
+        self.find_first_type_name(symbol)
+    }
+
+    fn find_first_type_name(&self, symbol: Sym) -> Option<(FileId, u32)> {
+        let declarations = self.files().decls_of(symbol);
+        let names = declarations.iter().filter_map(|&(file, decl)| {
+            let hir = self.c.hir(file);
+            let position = match decl {
+                Decl::Interface(id) => hir[id].name_pos,
+                Decl::Alias(id) => hir[id].name_pos,
+                Decl::Class(id) => hir[id].name_pos,
+                _ => return None,
+            };
+            Some((file, position))
+        });
+        names.min()
+    }
+}
+
+impl<'c, 'p, 's> Queries<'c, 'p, 's> {
+    pub(super) fn list<T: Copy>(&self, items: &[T]) -> &'c [T] {
+        match items.is_empty() {
+            true => &[],
+            false => self.arena.alloc_slice_copy(items),
+        }
+    }
+
+    pub(super) fn resolved(&self, ty: TypeId) -> CheckedType {
+        if ty == TypeId::UNRESOLVED {
+            return Err(GaveUp::Unresolved);
+        }
+        if self.c.is_error_type(ty) {
+            return Err(GaveUp::ErrorType);
+        }
+        Ok(ty)
+    }
+
+    #[inline]
+    pub(super) fn require_live_expression(&self, expression: ExprId) -> Result<(), GaveUp> {
+        let is_unreached = self.bound().parent_of_expr(expression) == Parent::None;
+        match is_unreached || self.c.is_dead_expression(self.file, expression) {
+            true => Err(GaveUp::UnreachedNode),
+            false => Ok(()),
+        }
+    }
+}

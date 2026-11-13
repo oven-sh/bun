@@ -1,0 +1,13 @@
+# The descriptor defines a getter: what the getter returns stays in sight, as the value of a read-only descriptor does. L0 = what it returns.
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 changes=[] stays-with-compiled-code
+# -- source: what-a-getter-of-a-written-descriptor-answers-with-goes-out-of-sight.js
+# function make(kind) {
+#   const made = {}, held = { kind, seen: 0 };
+#   Object.defineProperty(made, "inner", { get() { return held; }, enumerable: false });
+#   made.inner.run = payload => { made.inner.seen++; return payload.value + 1; };
+#   return made;
+# }
+# const one = make("first");
+# console.log(one.inner.run({ value: 1 }), one.inner.seen);
+# -- end of source

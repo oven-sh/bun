@@ -1,0 +1,4 @@
+// The same lines; some rows are views, one is a text, one is missing: each inner loop asks its own row in front.
+class Matrix { constructor(modules) { this.size = modules.length; this.modules = modules; } runs() { const { size, modules } = this; let score = 0; const line = get => { let run = 1; for (let i = 1; i <= size; i++) { if (i < size && get(i) === get(i - 1)) { run++; continue; } if (run >= 3) score += run - 2; run = 1; } }; for (let i = 0; i < size; i++) { line(k => modules[i][k]); line(k => modules[k][i]); } return score; } }
+const rows = JSON.parse("[[1,1,1,1,0,0],[0,1,1,1,1,0],[0,0,0,0,1,1],[1,0,1,0,1,0],[1,1,1,1,1,1],[0,0,0,1,1,1]]");
+const mixed = rows.map((row, r) => r === 1 ? Uint8Array.from(row) : r === 3 ? row.join("") : r === 4 ? Float64Array.from(row) : row); console.log(new Matrix(mixed).runs()); mixed[2] = undefined; try { console.log(new Matrix(mixed).runs()); } catch (error) { console.log(error instanceof TypeError); }

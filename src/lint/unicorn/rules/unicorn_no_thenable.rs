@@ -6,9 +6,9 @@ use std::cell::OnceCell;
 /// Disallow defining a `then` property.
 pub struct NoThenable;
 
-const OBJECT: Message = Message::new("", "Do not add `then` to an object.");
-const EXPORT: Message = Message::new("", "Do not export `then`.");
-const CLASS: Message = Message::new("", "Do not add `then` to a class.");
+const OBJECT: &Message = &Message::new("", "Do not add `then` to an object.");
+const EXPORT: &Message = &Message::new("", "Do not export `then`.");
+const CLASS: &Message = &Message::new("", "Do not add `then` to a class.");
 
 pub struct State<'a> {
     /// The name `then`.

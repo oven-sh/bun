@@ -17,8 +17,8 @@ use smallvec::SmallVec;
 /// Enforce ES5 or ES6 class for returning value in render function
 pub struct RequireRenderReturn;
 
-const NO_RENDER_RETURN: Message = Message::new("noRenderReturn", "Your render method should have a return statement");
-const REQUIRE_RENDER_RETURN: Message = Message::new("", "Your `render` method should have a `return` statement.");
+const NO_RENDER_RETURN: &Message = &Message::new("noRenderReturn", "Your render method should have a return statement");
+const REQUIRE_RENDER_RETURN: &Message = &Message::new("", "Your `render` method should have a `return` statement.");
 
 impl Rule for RequireRenderReturn {
     const META: Meta = Meta::plugin(Plugin::React, "require-render-return", Kind::None).recommended();

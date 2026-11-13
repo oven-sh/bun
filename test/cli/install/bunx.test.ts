@@ -82,6 +82,8 @@ type FixturePackage = {
   bin?: Record<string, string>;
   dependencies?: Record<string, string>;
   optionalDependencies?: Record<string, string>;
+  os?: string[];
+  cpu?: string[];
   scripts?: Record<string, string>;
   deprecated?: string;
   /** How long ago the version was published. Years, unless given. */
@@ -89,6 +91,9 @@ type FixturePackage = {
   /** Contents of the package besides its generated package.json. */
   files: Record<string, string>;
 };
+
+/** What makes a package a platform package, on every platform that runs these tests. */
+const anyPlatform = { os: ["darwin", "linux", "win32"], cpu: ["arm64", "x64"] };
 
 /** A bin script that prints `<label>` followed by the arguments it was invoked with. */
 function echoBin(label: string): string {
@@ -2794,29 +2799,90 @@ describe("a package in node_modules", () => {
     });
   });
 
-  // The install links the bin of a package with native builds into an optional dependency that has an `os` and a
-  // `cpu`. This one has neither, so the entry in .bin is its own bin.
-  it.concurrent.todoIf(isWindows)(
-    "after an install, a package whose optional dependency got the entry in .bin",
-    async () => {
-      using registry = await localRegistry(fixturePackage("aaa-first", "1.0.0", "tool"), {
+  // The install links the bin of a package into an optional dependency only if the package is in `nativeDependencies`
+  // or in the built-in list. This package is in neither, so the entry in .bin is the bin of the dependency itself.
+  it.concurrent.todoIf(isWindows).each<[string, Pick<FixturePackage, "os" | "cpu">]>([
+    ["for every platform", {}],
+    ["with an os and a cpu", anyPlatform],
+  ])("after an install, a package whose optional dependency %s got the entry in .bin", async (_, platform) => {
+    using registry = await localRegistry(
+      { ...fixturePackage("aaa-first", "1.0.0", "tool"), ...platform },
+      {
         ...fixturePackage("zzz-last", "1.0.0", "tool", echoBin("zzz-last 1.0.0")),
         optionalDependencies: { "aaa-first": "1.0.0" },
-      });
+      },
+    );
+    using box = sandbox(registry, {
+      cwd: {
+        "package.json": JSON.stringify({ name: "app", dependencies: { "aaa-first": "1.0.0", "zzz-last": "1.0.0" } }),
+      },
+    });
+    expect(await box.run(["--linker=hoisted"], { bunx: [bunExe(), "install"] })).toMatchObject({ exitCode: 0 });
+    expect(join(box.cwd, "node_modules", ".bin", "tool")).toBeValidBin(join("..", "aaa-first", "cli.js"));
+
+    expect(await box.run(["zzz-last", "arg"])).toEqual({
+      stdout: "zzz-last 1.0.0 arg\n",
+      stderr: "",
+      exitCode: 0,
+      requests: [],
+    });
+
+    // The file of the package cannot run. The bin of its own dependency can.
+    chmodSync(join(box.cwd, "node_modules", "zzz-last", "cli.js"), 0o644);
+    expect(await box.run(["zzz-last", "arg"])).toEqual({
+      stdout: "tool 1.0.0 arg\n",
+      stderr: "",
+      exitCode: 0,
+      requests: [],
+    });
+  });
+
+  // The entry in .bin is below a folder with the name of an optional dependency, which has a package.json. But that
+  // folder is above the project, and the entry is the bin of another package.
+  it.concurrent.todoIf(isWindows)(
+    "after an install, a package that cannot run below a package with the name of its optional dependency",
+    async () => {
+      using registry = await localRegistry(
+        fixturePackage("aaa-first", "1.0.0", "tool"),
+        { name: "other-dep", version: "1.0.0", files: { "index.js": "" } },
+        { ...fixturePackage("zzz-last", "1.0.0", "tool"), optionalDependencies: { "other-dep": "1.0.0" } },
+      );
+      const app = { name: "app", dependencies: { "aaa-first": "1.0.0", "zzz-last": "1.0.0" } };
       using box = sandbox(registry, {
         cwd: {
-          "package.json": JSON.stringify({ name: "app", dependencies: { "aaa-first": "1.0.0", "zzz-last": "1.0.0" } }),
+          "other-dep": {
+            "package.json": JSON.stringify({ name: "other-dep" }),
+            app: { "package.json": JSON.stringify(app) },
+          },
         },
       });
-      expect(await box.run(["--linker=hoisted"], { bunx: [bunExe(), "install"] })).toMatchObject({ exitCode: 0 });
-      expect(join(box.cwd, "node_modules", ".bin", "tool")).toBeValidBin(join("..", "aaa-first", "cli.js"));
+      const cwd = join(box.cwd, "other-dep", "app");
+      expect(await box.run(["--linker=hoisted"], { bunx: [bunExe(), "install"], cwd })).toMatchObject({ exitCode: 0 });
+      expect(join(cwd, "node_modules", ".bin", "tool")).toBeValidBin(join("..", "aaa-first", "cli.js"));
 
-      expect(await box.run(["zzz-last", "arg"])).toEqual({
-        stdout: "zzz-last 1.0.0 arg\n",
-        stderr: "",
-        exitCode: 0,
+      chmodSync(join(cwd, "node_modules", "zzz-last", "cli.js"), 0o644);
+      expect(await box.run(["zzz-last", "arg"], { cwd })).toEqual({
+        stdout: "",
+        stderr: expect.stringMatching(/^error: .*\/node_modules\/zzz-last\/cli\.js is not executable\n$/),
+        exitCode: 126,
         requests: [],
       });
+    },
+  );
+
+  // `@aaa/first` is not the optional dependency `first`.
+  it.concurrent.todoIf(isWindows)(
+    "after an install, a package that cannot run, and a scoped package with the name of its optional dependency",
+    async () => {
+      using registry = await localRegistry(
+        fixturePackage("@aaa/first", "1.0.0", "tool"),
+        { name: "first", version: "1.0.0", files: { "index.js": "" } },
+        { ...fixturePackage("zzz-last", "1.0.0", "tool"), optionalDependencies: { first: "1.0.0" } },
+      );
+      const app = { name: "app", dependencies: { "@aaa/first": "1.0.0", "zzz-last": "1.0.0" } };
+      using box = sandbox(registry, { cwd: { "package.json": JSON.stringify(app) } });
+      expect(await box.run(["--linker=hoisted"], { bunx: [bunExe(), "install"] })).toMatchObject({ exitCode: 0 });
+      expect(join(box.cwd, "node_modules", ".bin", "tool")).toBeValidBin(join("..", "@aaa", "first", "cli.js"));
 
       chmodSync(join(box.cwd, "node_modules", "zzz-last", "cli.js"), 0o644);
       expect(await box.run(["zzz-last", "arg"])).toEqual({
@@ -2825,6 +2891,73 @@ describe("a package in node_modules", () => {
         exitCode: 126,
         requests: [],
       });
+    },
+  );
+
+  // esbuild is in the built-in list, which `nativeDependencies` replaces.
+  it.concurrent.todoIf(isWindows).each([
+    [undefined, "esbuild-platform"],
+    [[], "esbuild"],
+  ])("after an install, esbuild in a project with nativeDependencies %p", async (nativeDependencies, ran) => {
+    using registry = await localRegistry(
+      { name: "esbuild-platform", version: "1.0.0", ...anyPlatform, files: { "cli.js": echoBin("esbuild-platform") } },
+      {
+        ...fixturePackage("esbuild", "1.0.0", "esbuild", echoBin("esbuild")),
+        optionalDependencies: { "esbuild-platform": "1.0.0" },
+      },
+    );
+    const app = { name: "app", dependencies: { esbuild: "1.0.0" }, nativeDependencies };
+    using box = sandbox(registry, { cwd: { "package.json": JSON.stringify(app) } });
+    expect(await box.run(["--linker=hoisted"], { bunx: [bunExe(), "install"] })).toMatchObject({ exitCode: 0 });
+    expect(join(box.cwd, "node_modules", ".bin", "esbuild")).toBeValidBin(join("..", ran, "cli.js"));
+
+    chmodSync(join(box.cwd, "node_modules", "esbuild", "cli.js"), 0o755);
+    expect(await box.run(["-p", "esbuild", "esbuild", "arg"])).toEqual({
+      stdout: `${ran} arg\n`,
+      stderr: "",
+      exitCode: 0,
+      requests: [],
+    });
+  });
+
+  // `other-dep` comes before the platform package in the dependencies, and is the name of a folder above the project
+  // too. `nativeDependencies` has the name of the package, which is not the name of its folder under an alias.
+  it.concurrent.todoIf(isWindows).each([
+    ["mytool", "optionalDependencies", "1.0.0"],
+    ["my-alias", "optionalDependencies", "npm:mytool@1.0.0"],
+    ["mytool", "dependencies", "1.0.0"],
+  ])(
+    "after an install, the native dependency %s with %s below a folder with the name of one of them",
+    async (name, kind, version) => {
+      using registry = await localRegistry(
+        { name: "other-dep", version: "1.0.0", files: { "index.js": "" } },
+        {
+          name: "mytool-native",
+          version: "1.0.0",
+          ...anyPlatform,
+          files: { "cli.js": echoBin("mytool-native 1.0.0") },
+        },
+        {
+          ...fixturePackage("mytool", "1.0.0", "mytool-cmd", echoBin("the stub of mytool")),
+          [kind]: { "other-dep": "1.0.0", "mytool-native": "1.0.0" },
+        },
+      );
+      const app = { name: "app", dependencies: { [name]: version }, nativeDependencies: ["mytool"] };
+      using box = sandbox(registry, { cwd: { "other-dep": { app: { "package.json": JSON.stringify(app) } } } });
+      const cwd = join(box.cwd, "other-dep", "app");
+      expect(await box.run(["--linker=hoisted"], { bunx: [bunExe(), "install"], cwd })).toMatchObject({ exitCode: 0 });
+      expect(join(cwd, "node_modules", ".bin", "mytool-cmd")).toBeValidBin(join("..", "mytool-native", "cli.js"));
+
+      for (const mode of [0o644, 0o755]) {
+        chmodSync(join(cwd, "node_modules", name, "cli.js"), mode);
+        expect({ mode, ...(await box.run([name, "arg"], { cwd })) }).toEqual({
+          mode,
+          stdout: "mytool-native 1.0.0 arg\n",
+          stderr: "",
+          exitCode: 0,
+          requests: [],
+        });
+      }
     },
   );
 

@@ -6,9 +6,9 @@ pub struct NoEmpty {
     allow_empty_catch: bool,
 }
 
-const UNEXPECTED: Message = Message::new("unexpected", "Empty {{type}} statement.");
-const SUGGEST_COMMENT: Message =
-    Message::new("suggestComment", "Add comment inside empty {{type}} statement.");
+const UNEXPECTED: &Message = &Message::new("unexpected", "Empty {{type}} statement.");
+const SUGGEST_COMMENT: &Message =
+    &Message::new("suggestComment", "Add comment inside empty {{type}} statement.");
 
 impl NoEmpty {
     /// `braces` is a `{ }` with no statements or cases, so it can only contain whitespace and comments. `removed`

@@ -1722,7 +1722,7 @@ fn check_link_entries(manager: &mut PackageManager, lockfile: &Lockfile, store: 
         } else if bun_paths::is_absolute(target) {
             0
         } else {
-            crate::bun_fs::FileSystem::instance().top_level_dir().len() + 1
+            crate::bun_fs::FileSystem::get().top_level_dir().len() + 1
         };
         if base_len + target.len() >= bun_paths::MAX_PATH_BYTES {
             Output::err(

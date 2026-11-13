@@ -1,0 +1,16 @@
+# f1 = adder
+# -- source: closure-that-captures-one-value.ts
+# function adder(step: number): (value: number) => number {
+#   return (value) => value + step;
+# }
+# declare const input: any;
+# const first = adder(+input);
+# const second = adder(+input);
+# (globalThis as any).answer = [first, second, first(+input) + second(+input)];
+# -- end of source
+# The compiler before this one: 5 instructions, 1 of them patches.
+# When the bound was taken: steps: operations 15, patches 2, moves 2, unlikely or rare 0.
+# RUN(X64): steps most:17 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 17

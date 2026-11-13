@@ -1,0 +1,10 @@
+import { spyOn } from "bun:test";
+import * as own from "../src/spies/own";
+import * as both from "../src/spies/barrel-of-barrels";
+import { callsOwn } from "../src/spies/own";
+import { callsAdd } from "pkg-esm";
+import { seenBySrc } from "../src/spies/uses";
+import { say } from "../src/spies/say";
+const all = () => [own.own(), callsOwn(), own.arrow(), both.own(), both.add(1, 2), callsAdd(1, 2), seenBySrc()];
+say("55", "an export of the application", () => { const before = all(); const spies = [spyOn(own, "own").mockImplementation(() => "spied own"), spyOn(own, "arrow").mockImplementation(() => "spied arrow")]; const during = all(); spies.forEach(s => s.mockRestore()); return [before, during, all()]; });
+say("55", "a barrel of barrels", () => { const before = all(); const spies = [spyOn(both, "own").mockImplementation(() => "through two"), spyOn(both, "add").mockImplementation(() => 600)]; const during = all(); spies.forEach(s => s.mockRestore()); return [before, during, all()]; });

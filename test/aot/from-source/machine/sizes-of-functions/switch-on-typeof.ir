@@ -1,0 +1,18 @@
+# f1 = rank
+# -- source: switch-on-typeof.ts
+# function rank(value: string | number | boolean): number {
+#   switch (typeof value) {
+#     case "string": return value.length;
+#     case "number": return value;
+#     default: return value ? 1 : 0;
+#   }
+# }
+# declare const input: any;
+# (globalThis as any).answer = rank(input > 1 ? String(input) : input ? +input : !input);
+# -- end of source
+# The compiler before this one: 23 instructions, 1 of them patches.
+# When the bound was taken: steps: operations 22, patches 1, moves 3, unlikely or rare 2. The length is read in line and a raw number goes back: with a read by name and a boxed result it was 18.
+# RUN(X64): steps most:25 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 25

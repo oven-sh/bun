@@ -101,11 +101,8 @@ impl<'a> ProcessHandle<'a> {
             // Get the envp with the PATH configured
             // There's probably a more optimal way to do this where you have a Vec shared
             // instead of creating a new one for each process
-            let env_ptr = state.env;
-            // The guard below borrows `env_ptr`.
-            let env_of_script = env_ptr;
-            // SAFETY: state.env is the process-lifetime DotEnv loader (Transpiler::env).
-            let env = unsafe { &mut *env_ptr };
+            // SAFETY: state.env is the process-lifetime DotEnv loader (Transpiler::env); nothing else reaches it before the guard drops.
+            let env = unsafe { &mut *state.env };
             // Copy to owned — `original_path` borrows env.map which is
             // mutated by put() below.
             let original_path: Box<[u8]> = env.map.get(b"PATH").unwrap_or(b"").into();
@@ -113,13 +110,11 @@ impl<'a> ProcessHandle<'a> {
             // Restores PATH unconditionally at block exit (success OR error).
             // Keep the guard armed for the whole block so `?` early-returns also
             // restore.
-            scopeguard::defer! {
-                // SAFETY: env_ptr valid for the run loop lifetime (see above).
-                let _ = unsafe { (*env_ptr).map.put(b"PATH", &original_path) };
-            }
-            // SAFETY: see above; reborrow through raw ptr to avoid overlapping &mut with guard.
+            let mut env = scopeguard::guard(env, |env| {
+                let _ = env.map.put(b"PATH", &original_path);
+            });
             let envp = crate::cli::script_or_command::with_package_script(
-                unsafe { &mut *env_of_script },
+                &mut env,
                 &handle.config.script_name,
                 bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
                     &handle.config.package_json_path,
@@ -135,7 +130,7 @@ impl<'a> ProcessHandle<'a> {
                     envp.as_ptr().cast::<*const c_char>(),
                 )
             }??;
-            // `_guard` drops here (or on `?` above), restoring PATH.
+            // `env` drops here (or on `?` above), restoring PATH.
         };
         #[cfg(unix)]
         let (stdout_fd, stderr_fd) = (spawned.stdout, spawned.stderr);
@@ -302,6 +297,7 @@ impl<'a> ProcessHandle<'a> {
 // fields touched here). `state` backref valid for the lifetime of the run loop.
 bun_io::impl_buffered_reader_parent! {
     FilterRunHandle for ProcessHandle<'a>;
+    feature = Tools;
     has_on_read_chunk = true;
     on_read_chunk   = |this, chunk, has_more| (*this).on_read_chunk(&chunk, has_more);
     on_reader_done  = |this| (*this).on_reader_done();

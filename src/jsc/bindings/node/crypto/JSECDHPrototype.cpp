@@ -294,6 +294,8 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncSetPrivateKey, (JSC::JSGlobalObject * gl
         return {};
     }
 
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
+
     // Create a BN from the buffer
     auto keySpan = bufferValue->span();
     ncrypto::BignumPointer privateKey(static_cast<const unsigned char*>(keySpan.data()), keySpan.size());

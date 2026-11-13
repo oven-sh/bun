@@ -6,7 +6,7 @@ pub struct NoUnusedExpressions {
     config: Config,
 }
 
-const UNUSED_EXPRESSION: Message = Message::new(
+const UNUSED_EXPRESSION: &Message = &Message::new(
     "unusedExpression",
     "Expected an assignment or function call and instead saw an expression.",
 );

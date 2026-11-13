@@ -1,0 +1,40 @@
+# -- source: main.js
+# function Inner(n) { this.n = n; }
+# function Holder(n) { this.inner = new Inner(n); }
+# function fillFirst(holder, i) { holder.inner.late = i; holder.inner.later = i + 1; }
+# function fillOther(holder, i) { holder.inner.later = i + 1; holder.inner.late = i; }
+# function fillOne(holder, i) { holder.inner.late = i; }
+# function drop(holder) { delete holder.inner.late; }
+# function show(holder) { const inner = holder.inner; return Object.keys(inner).join() + " " + JSON.stringify(inner) + " " + JSON.stringify({ ...inner }) + " " + ("late" in inner) + " " + inner.late + " " + inner.later; }
+# function attempt(work) { try { work(); return "done"; } catch (error) { return error.constructor.name; } }
+# register(fillFirst, fillOther, fillOne, drop);
+# var a = new Holder(1); fillers[0](a, 1); print(show(a));
+# var b = new Holder(2); fillers[1](b, 2); print(show(b));
+# var c = new Holder(3); fillers[2](c, 3); print(show(c));
+# var d = new Holder(4); print(show(d));
+# var e = new Holder(5); fillers[0](e, 5); fillers[3](e); print(show(e)); fillers[2](e, 6); print(show(e));
+# var f = new Holder(7); Object.freeze(f.inner); print(attempt(() => fillers[0](f, 7)) + " " + show(f));
+# var g = new Holder(8); Object.preventExtensions(g.inner); print(attempt(() => fillers[1](g, 8)) + " " + show(g));
+# var h = new Holder(9); fillers[2](h, 9); Object.freeze(h.inner); print(attempt(() => fillers[0](h, 10)) + " " + show(h));
+# var k = new Holder(11); fillers[2](k, 11); Object.preventExtensions(k.inner); print(attempt(() => fillers[2](k, 12)) + " " + attempt(() => fillers[0](k, 13)) + " " + show(k));
+# var names = []; for (var name in a.inner) names.push(name); print(names.join());
+# print(Object.getOwnPropertyNames(b.inner).join() + " " + JSON.stringify(Object.getOwnPropertyDescriptor(a.inner, "late")) + " " + Object.entries(c.inner).join("|"));
+# -- end of source
+# Names that get room in an Inner because they are stored through what `inner` is expected to hold: laid in one order and in the other, one alone, none, deleted and laid again, on a frozen object and on one that takes no more:
+# the order of the keys, JSON, spread, `in`, for-in, the descriptor and the errors are as plain.
+# RUN(HELD): link held fields mechanisms=all
+# HELD: "late" appended
+# RUN(ANSWERS): run-in-shell globalThis.register = (...all) => { globalThis.fillers = all; };
+# ANSWERS: n,late,later {"n":1,"late":1,"later":2} {"n":1,"late":1,"later":2} true 1 2
+# ANSWERS-NEXT: n,later,late {"n":2,"later":3,"late":2} {"n":2,"later":3,"late":2} true 2 3
+# ANSWERS-NEXT: n,late {"n":3,"late":3} {"n":3,"late":3} true 3 undefined
+# ANSWERS-NEXT: n {"n":4} {"n":4} false undefined undefined
+# ANSWERS-NEXT: n,later {"n":5,"later":6} {"n":5,"later":6} false undefined 6
+# ANSWERS-NEXT: n,later,late {"n":5,"later":6,"late":6} {"n":5,"later":6,"late":6} true 6 6
+# ANSWERS-NEXT: TypeError n {"n":7} {"n":7} false undefined undefined
+# ANSWERS-NEXT: TypeError n {"n":8} {"n":8} false undefined undefined
+# ANSWERS-NEXT: TypeError n,late {"n":9,"late":9} {"n":9,"late":9} true 9 undefined
+# ANSWERS-NEXT: done TypeError n,late {"n":11,"late":13} {"n":11,"late":13} true 13 undefined
+# ANSWERS-NEXT: n,late,later
+# ANSWERS-NEXT: n,later,late {"value":1,"writable":true,"enumerable":true,"configurable":true} n,3|late,3
+# ANSWERS-NEXT: exited with 0

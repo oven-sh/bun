@@ -12,8 +12,7 @@ use bun_install::lockfile::{
     tree,
 };
 use bun_install::package_manager_real::{
-    PackageJSONEditor, ProgressStrings, ROOT_PACKAGE_JSON_PATH, package_json_write_back,
-    update_lockfile_if_needed,
+    PackageJSONEditor, ProgressStrings, package_json_write_back, update_lockfile_if_needed,
 };
 use bun_install::{
     self as install, DEFAULT_TRUSTED_DEPENDENCIES_LIST, DependencyID, LifecycleScriptSubprocess,
@@ -60,6 +59,8 @@ enum Action {
 struct Blocked {
     dep_id: DependencyID,
     package_id: PackageID,
+    /// The id in the install tree, for a hoisted package.
+    tree_id: Option<tree::Id>,
     /// Scripts run deepest first, like during an install.
     depth: usize,
     scripts_list: ScriptsList,
@@ -100,7 +101,7 @@ impl Blocked {
 
         let mut scripts = packages.items_scripts()[package_id];
         // Pass `true` to get the scripts that will run once the package is trusted.
-        match scripts.get_list(log, lockfile, folder, alias, resolution, true) {
+        match scripts.get_list(log, folder, alias, resolution, true) {
             Ok(list) => Ok(list.filter(|list| list.total > 0)),
             Err(bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT)) => Ok(None),
             Err(e) => Err(e.into()),
@@ -152,6 +153,7 @@ impl Blocked {
             blocked.push(Blocked {
                 dep_id: folder.dep_id,
                 package_id: folder.pkg_id,
+                tree_id: None,
                 depth: folder.depth,
                 scripts_list,
                 in_global_store: !is_link
@@ -201,6 +203,7 @@ impl Blocked {
                     blocked.push(Blocked {
                         dep_id,
                         package_id,
+                        tree_id: Some(node_modules.tree_id),
                         depth: node_modules.depth,
                         scripts_list,
                         in_global_store: false,
@@ -210,6 +213,28 @@ impl Blocked {
             }
         }
         Ok(blocked)
+    }
+
+    fn find_bin_conflicts(pm: &mut PackageManager, blocked: &mut [Blocked]) -> crate::Result<()> {
+        if blocked.iter().all(|info| info.tree_id.is_none()) {
+            return Ok(());
+        }
+        bun_install::prune::with_install_tree(pm, |pm| {
+            let direct_packages = bun_install::bin::LinkOrder::direct_packages(&pm.lockfile)?;
+            for info in blocked {
+                if let Some(tree_id) = info.tree_id
+                    && info.action == Action::Run
+                {
+                    info.scripts_list.bin_conflicts = bun_install::bin::find_bin_conflicts(
+                        &pm.lockfile,
+                        &direct_packages,
+                        tree_id,
+                        info.dep_id,
+                    );
+                }
+            }
+            Ok(())
+        })?
     }
 
     /// (dependency name, the name `trustedDependencies` knows the package by)
@@ -277,18 +302,12 @@ impl UntrustedCommand {
         );
         Output::flush();
 
-        // `load_lockfile` mutably borrows `pm.lockfile`, so `pm` is reached through `pm_raw` while it lives.
-        let pm_raw: *mut PackageManager = pm;
         let log_level = pm.options.log_level;
-        let configured_linker = pm.options.node_linker;
         let load_lockfile = pm.load_lockfile_from_cwd::<true>();
         PackageManagerCommand::handle_load_lockfile_errors_for(&load_lockfile, log_level, "list");
-        let linker = load_lockfile.node_linker(configured_linker);
-        // SAFETY: `update_lockfile_if_needed` never dereferences the lockfile through `load_lockfile`.
-        unsafe { update_lockfile_if_needed(&mut *pm_raw, &load_lockfile)? };
+        let linker = load_lockfile.node_linker(&pm.lockfile, pm.options.node_linker);
+        update_lockfile_if_needed(pm, &load_lockfile)?;
 
-        // SAFETY: `load_lockfile` is not used past this point.
-        let pm: &mut PackageManager = unsafe { &mut *pm_raw };
         read_trusted_dependencies(pm);
 
         let blocked = Blocked::find_all(pm, linker)?;
@@ -425,26 +444,19 @@ impl TrustCommand {
             Global::crash();
         }
 
-        // `load_lockfile` lives until `save_to_disk`. See `UntrustedCommand::exec`.
-        let pm_raw: *mut PackageManager = pm;
         let log_level = pm.options.log_level;
         let dry_run = pm.options.dry_run;
-        let configured_linker = pm.options.node_linker;
         let max_concurrent = pm.options.max_concurrent_lifecycle_scripts;
         let load_lockfile = pm.load_lockfile_from_cwd::<true>();
         PackageManagerCommand::handle_load_lockfile_errors_for(&load_lockfile, log_level, "trust");
-        let linker = load_lockfile.node_linker(configured_linker);
-        // SAFETY: `update_lockfile_if_needed` never dereferences the lockfile through `load_lockfile`.
-        unsafe { update_lockfile_if_needed(&mut *pm_raw, &load_lockfile)? };
-        // SAFETY: `pm_raw` singleton; `load_lockfile` is not dereferenced while this runs.
-        let recorded = read_trusted_dependencies(unsafe { &mut *pm_raw });
+        let linker = load_lockfile.node_linker(&pm.lockfile, pm.options.node_linker);
+        update_lockfile_if_needed(pm, &load_lockfile)?;
+        let recorded = read_trusted_dependencies(pm);
 
-        // SAFETY: `pm_raw` singleton; `load_lockfile` is not dereferenced while this runs.
-        let mut blocked = Blocked::find_all(unsafe { &mut *pm_raw }, linker)?;
+        let mut blocked = Blocked::find_all(pm, linker)?;
         bun_collections::index_sort::sort_slice_by(&mut blocked, |a, b| b.depth.cmp(&a.depth));
 
-        // SAFETY: `pm_raw` singleton; read-only `lockfile` borrow until the scripts have run.
-        let lockfile: &Lockfile = unsafe { &*(*pm_raw).lockfile };
+        let lockfile: &Lockfile = &pm.lockfile;
 
         let mut package_names_to_add: StringArrayHashMap<()> = StringArrayHashMap::new();
         // alias given on the command line -> the name its package is trusted under
@@ -492,9 +504,10 @@ impl TrustCommand {
             return Ok(());
         }
 
+        Blocked::find_bin_conflicts(pm, &mut blocked)?;
+
         // Opened before any script runs: a script whose trust cannot be recorded must not run.
-        // SAFETY: `ROOT_PACKAGE_JSON_PATH` is set during `PackageManager::init` and immutable thereafter.
-        let root_package_json_path = unsafe { ROOT_PACKAGE_JSON_PATH.read() };
+        let root_package_json_path = pm.root_package_json_path;
         let (cwd, flags) = (bun_sys::Fd::cwd(), bun_sys::O::RDWR | bun_sys::O::CLOEXEC);
         let root_file = match bun_sys::File::openat(cwd, root_package_json_path, flags, 0) {
             Ok(file) => file,
@@ -515,15 +528,13 @@ impl TrustCommand {
         let show_progress = log_level.show_progress();
 
         if show_progress {
-            // SAFETY: `pm_raw` singleton; `Node::start` returns an owned `Node` with raw backrefs into `pm.progress`.
-            unsafe {
-                (*pm_raw).progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-                scripts_node = (*pm_raw)
-                    .progress
-                    .start(b"", 0)
-                    .start(ProgressStrings::script(), scripts_count);
-                (*pm_raw).scripts_node = Some(NonNull::from(&mut scripts_node));
-            }
+            pm.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
+            // `Node::start` returns an owned `Node` with raw backrefs into `pm.progress`.
+            scripts_node = pm
+                .progress
+                .start(b"", 0)
+                .start(ProgressStrings::script(), scripts_count);
+            pm.scripts_node = Some(NonNull::from(&mut scripts_node));
         }
 
         for same_depth in blocked.chunk_by(|a, b| a.depth == b.depth) {
@@ -544,58 +555,41 @@ impl TrustCommand {
                         );
                     }
 
-                    // SAFETY: `pm_raw` singleton.
-                    unsafe { (*pm_raw).sleep() };
+                    pm.sleep();
                 }
 
                 let output_in_foreground = false;
                 let optional = false;
-                // SAFETY: `pm_raw` singleton; `ctx` is the CLI `&mut ContextData`.
-                unsafe {
-                    (*pm_raw).spawn_package_lifecycle_scripts(
-                        &mut *ctx,
-                        info.scripts_list.clone(),
-                        optional,
-                        output_in_foreground,
-                        None,
-                    )?;
-                }
+                pm.spawn_package_lifecycle_scripts(
+                    &mut *ctx,
+                    info.scripts_list.clone(),
+                    optional,
+                    output_in_foreground,
+                    None,
+                )?;
 
                 if show_progress {
-                    // SAFETY: `pm_raw` singleton.
-                    if let Some(sn) = unsafe { (*pm_raw).scripts_node } {
+                    if let Some(sn) = pm.scripts_node {
                         // SAFETY: points at our stack-local `scripts_node`.
                         unsafe { sn.as_ptr().as_mut().unwrap().activate() };
                     }
-                    // SAFETY: `pm_raw` singleton.
-                    unsafe { (*pm_raw).progress.refresh() };
+                    pm.progress.refresh();
                 }
             }
 
-            // SAFETY: `pm_raw` singleton.
-            while unsafe {
-                (*pm_raw)
-                    .pending_lifecycle_script_tasks
-                    .load(Ordering::Relaxed)
-            } > 0
-            {
-                // SAFETY: `pm_raw` singleton.
-                unsafe { (*pm_raw).sleep() };
+            while pm.pending_lifecycle_script_tasks.load(Ordering::Relaxed) > 0 {
+                pm.sleep();
             }
         }
 
         if show_progress {
-            // SAFETY: `pm_raw` singleton.
-            unsafe {
-                (*pm_raw).progress.root.end();
-                (*pm_raw).progress = Progress::Progress::default();
-                (*pm_raw).scripts_node = None;
-            }
+            pm.progress.root.end();
+            pm.progress = Progress::Progress::default();
+            pm.scripts_node = None;
         }
 
         // A migration's package.json edits must hit disk before the re-read below.
-        // SAFETY: `pm_raw` singleton; `load_lockfile` only borrows the boxed lockfile.
-        unsafe { package_json_write_back::write_migrated(&mut *pm_raw) };
+        package_json_write_back::write_migrated(pm);
 
         let package_json_contents = root_file.read_to_end().map_err(crate::Error::from)?;
 
@@ -632,6 +626,7 @@ impl TrustCommand {
 
         Output::print(format_args!("\n"));
 
+        let lockfile: &Lockfile = &pm.lockfile;
         for info in &blocked {
             match info.action {
                 Action::Skip => total_skipped_packages += 1,
@@ -663,12 +658,8 @@ impl TrustCommand {
         )?;
 
         if total_scripts_ran > 0 {
-            // SAFETY: `save_to_disk` reads `load_lockfile` only for `save_format()` (scalar fields).
-            unsafe {
-                let lf: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
-                (*lf).trusted_dependencies = Some(ran);
-                (*lf).save_to_disk(&load_lockfile, &(*pm_raw).options);
-            }
+            pm.lockfile.trusted_dependencies = Some(ran);
+            pm.lockfile.save_to_disk(&load_lockfile, &pm.options);
         }
 
         let mut buffer_writer = bun_js_printer::BufferWriter::init();

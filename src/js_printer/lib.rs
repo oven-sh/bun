@@ -1595,8 +1595,6 @@ enum ClauseItemAs {
 pub(crate) mod __gated_printer {
     use super::*;
     use bun_ast::ImportRecordTag;
-    use bun_ptr::BackRef;
-    use js_ast::Symbol;
     use js_ast::binding::{Binding, Data as BindingData};
     use js_ast::expr::{Data as ExprData, Expr};
     use js_ast::op::{Level, Op as OpInfo};
@@ -2250,7 +2248,7 @@ pub(crate) mod __gated_printer {
                         // a parameter or an earlier `var` gets its own ref, linked
                         // to the existing symbol, so `n` in `var n = n.next` and
                         // the `n` it reads are two refs for one variable.
-                        let symbols = self.renamer.symbols();
+                        let symbols = self.symbols();
                         let target_ref = symbols.follow(target_id.ref_);
 
                         if !self.is_stable_destructuring_target(*target_id, target_ref)
@@ -2640,8 +2638,8 @@ pub(crate) mod __gated_printer {
         }
 
         #[inline]
-        fn symbols(&self) -> &js_ast::symbol::Map {
-            self.renamer.symbols()
+        fn symbols(&self) -> &'a js_ast::symbol::Map {
+            self.renamer.symbols
         }
 
         #[inline]
@@ -4274,11 +4272,7 @@ pub(crate) mod __gated_printer {
                     } else {
                         e.ref_
                     };
-                    // reshaped for borrowck — `get_const` borrows self;
-                    // capture as `BackRef` so the `&self` borrow is dropped before the
-                    // `&mut self` print calls below. Symbol table is arena-backed and
-                    // outlives the print pass (BackRef invariant).
-                    let symbol = BackRef::<Symbol>::new(self.symbols().get_const(ref_).unwrap());
+                    let symbol = self.symbols().get_const(ref_).unwrap();
 
                     if symbol.import_item_status == js_ast::ImportItemStatus::Missing {
                         self.print_undefined(expr.loc, level);
@@ -4631,10 +4625,7 @@ pub(crate) mod __gated_printer {
             else {
                 return;
             };
-            // `commonjs_named_exports` keys borrow `'a` (Options<'a>); capture
-            // as `BackRef<[u8]>` so the `&self` borrow is dropped before the
-            // `&mut self` print calls below.
-            let key = BackRef::<[u8]>::new(&exports.keys()[idx][..]);
+            let key: &[u8] = &exports.keys()[idx];
             let value = &exports.values()[idx];
             let (binding, needs_decl) = (value.loc_ref.ref_, value.needs_decl);
             let call_needs_this = is_call_target
@@ -4657,7 +4648,6 @@ pub(crate) mod __gated_printer {
                 self.print_symbol(self.options.commonjs_named_exports_ref);
             }
 
-            let key: &[u8] = key.get();
             if lexer::is_identifier(key) {
                 self.print(b".");
                 self.print(key);
@@ -5671,12 +5661,7 @@ pub(crate) mod __gated_printer {
                             let item = array[i];
 
                             if !item.original_name.slice().is_empty() {
-                                // reshaped for borrowck — detach symbol from
-                                // `&self` via `BackRef` (arena-backed; outlives the print pass).
-                                let symbol = self
-                                    .symbols()
-                                    .get_const(item.name.ref_)
-                                    .map(BackRef::<Symbol>::new);
+                                let symbol = self.symbols().get_const(item.name.ref_);
                                 if let Some(symbol) = symbol {
                                     if let Some(namespace) = &symbol.namespace_alias {
                                         if namespace.was_originally_property_access {
@@ -7672,7 +7657,6 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     bun_crash_handler::scoped_action!(bun_crash_handler::Action::Print(source.path.text));
 
     // Declared out here so that what `renamer` borrows outlives the branch that makes it.
-    let no_op_renamer;
     let mut minify_renamer;
     // `Scope` isn't `Copy` here and the only
     // consumer (`compute_reserved_names_for_scope`) walks `members`/`generated`/
@@ -7707,9 +7691,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
 
         rename::compute_reserved_names_for_scope(module_scope, &symbols, &mut reserved_names);
         minify_renamer =
-            rename::MinifyRenamer::init(symbols, &tree.nested_scope_slot_counts, reserved_names)?;
-        // `symbols` is owned here (transpiler path) — let Drop free it.
-        minify_renamer.owns_symbols = true;
+            rename::MinifyRenamer::init(&tree.nested_scope_slot_counts, reserved_names)?;
 
         let mut top_level_symbols = rename::StableSymbolCountArray::new();
 
@@ -7721,6 +7703,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
 
         if uses_exports_ref {
             minify_renamer.accumulate_symbol_use_count(
+                &symbols,
                 &mut top_level_symbols,
                 exports_ref,
                 1,
@@ -7729,6 +7712,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         }
         if uses_module_ref {
             minify_renamer.accumulate_symbol_use_count(
+                &symbols,
                 &mut top_level_symbols,
                 module_ref,
                 1,
@@ -7738,12 +7722,14 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
 
         for part in parts.iter() {
             minify_renamer.accumulate_symbol_use_counts(
+                &symbols,
                 &mut top_level_symbols,
                 &part.symbol_uses,
                 &stable_source_indices,
             )?;
             for declared_ref in part.declared_symbols.refs() {
                 minify_renamer.accumulate_symbol_use_count(
+                    &symbols,
                     &mut top_level_symbols,
                     *declared_ref,
                     1,
@@ -7754,15 +7740,14 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
 
         top_level_symbols.sort_unstable_by(rename::StableSymbolCount::less_than);
 
-        minify_renamer.allocate_top_level_symbol_slots(&top_level_symbols)?;
+        minify_renamer.allocate_top_level_symbol_slots(&symbols, &top_level_symbols)?;
         // `None` if the JS parser did not build `tree`: an empty file, a data loader.
         let char_freq = tree.char_freq.as_deref().copied().unwrap_or_default();
         minify_renamer.assign_names_by_frequency(&char_freq.compile())?;
 
-        rename::Renamer::MinifyRenamer(&minify_renamer)
+        minify_renamer.to_renamer(&symbols)
     } else {
-        no_op_renamer = rename::NoOpRenamer::init(symbols, source);
-        no_op_renamer.to_renamer()
+        rename::Renamer::no_op(&symbols, source)
     };
 
     // `is_bun_platform = ascii_only` for printAst.
@@ -7900,7 +7885,7 @@ pub fn print_json<W: WriterTrait>(
     // The printer only needs default-empty `import_records` and `symbols` for
     // the no-op renamer; construct them directly without an `Ast`.
     let bump = bun_alloc::Arena::new();
-    let no_op = rename::NoOpRenamer::init(js_ast::symbol::Map::init_list(vec![Vec::new()]), source);
+    let symbols = js_ast::symbol::Map::init_list(vec![Vec::new()]);
 
     let full_opts = Options {
         indent: opts.indent,
@@ -7913,7 +7898,7 @@ pub fn print_json<W: WriterTrait>(
         &bump,
         &[], // ast.import_records.slice()
         full_opts,
-        no_op.to_renamer(),
+        rename::Renamer::no_op(&symbols, source),
         SourceMap::chunk::Builder::default(), // undefined
     );
     printer.binary_expression_stack = Vec::new();

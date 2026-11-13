@@ -446,6 +446,18 @@ const groups: { name: string; rule: string; config: Files; cases: Record<string,
         prints: ["mock"],
         dangerously: ["runs dep.js", "mock"],
       },
+      // A declaration that is gone when the file runs leaves the global `vi`.
+      "an import from @effect/vitest, and a declared vi": {
+        file: "greet.test.ts",
+        text:
+          "declare namespace vi {\n  function mock(path: string, factory: () => unknown): void;\n}\n" +
+          'import { vitest, test } from "@effect/vitest";\n' +
+          importGreet +
+          mock("vi") +
+          greets(),
+        prints: ["mock"],
+        dangerously: ["runs dep.js", "mock"],
+      },
       // One fix renames the import and the calls on it. A file with only one of the two renamed runs differently.
       "an import from @effect/vitest with a mock, and the global vi": {
         text:
@@ -471,6 +483,24 @@ const groups: { name: string; rule: string; config: Files; cases: Record<string,
           'test("greets", () => {\n  console.log(TAG, require("./dep.js").greet());\n});\n',
         prints: ["mock"],
         dangerously: ["runs dep.js", "real"],
+      },
+      // The same for a name from `require()`, and for a call that is no module mock call on an import.
+      "a call on a name from require() in a function that has another vi": {
+        text:
+          'const { vitest, test } = require("vitest");\n' +
+          'function register(vi) {\n  vitest.doMock("./dep.js", () => ({ greet: () => "mock" }));\n}\n' +
+          "register({ doMock() {} });\n" +
+          'test("greets", () => {\n  console.log(TAG, require("./dep.js").greet());\n});\n',
+        prints: ["mock"],
+        dangerously: ["runs dep.js", "real"],
+      },
+      "a spy on an import that has another vi": {
+        text:
+          'import { test as vi, vitest } from "vitest";\n' +
+          importGreet +
+          'const spy = vitest.fn(greet);\nvi("greets", () => {\n  console.log(TAG, spy());\n});\n',
+        prints: ["runs dep.js", "real"],
+        dangerously: ["runs dep.js"],
       },
       // The call is on a parameter. The fix of the import doesn't rename it, and its own fix would move it to the `vi`
       // that the import then declares.
@@ -670,7 +700,8 @@ type Result = {
   isReported?: boolean;
 };
 const results = new Map<string, Record<Step, Result>>();
-let exitCodeAsWritten: number | undefined;
+/** The exit code of `bun test` in each step. */
+const exitCodes: Partial<Record<Step, number>> = {};
 
 // Each step has a copy of all the cases. A copy is linted in one run per rule and tested in one run of `bun test`: a
 // process per case and step would be some 300 of them.
@@ -725,7 +756,7 @@ beforeAll(async () => {
   };
 
   const all = await Promise.all((Object.keys(steps) as Step[]).map(resultsOf));
-  exitCodeAsWritten = all.find(it => it[0] === "as written")?.[2];
+  for (const [step, , exitCode] of all) exitCodes[step] = exitCode;
   for (const it of cases) {
     results.set(
       it.tag,
@@ -734,8 +765,12 @@ beforeAll(async () => {
   }
 }, longLimit);
 
-test("every case passes as written", () => {
-  expect(exitCodeAsWritten).toBe(0);
+// A file that `--fix-dangerously` changes can fail.
+test("every case passes as written and after --fix", () => {
+  expect({ "as written": exitCodes["as written"], "--fix": exitCodes["--fix"] }).toEqual({
+    "as written": 0,
+    "--fix": 0,
+  });
 });
 
 for (const group of groups) {

@@ -47,7 +47,7 @@ impl Rule for ConsistentVitestVi {
             cx.report(object.outer_span(), CONSISTENT_VITEST_VI)
                 .data("function", function)
                 .data("opposite", self.opposite)
-                .fix_where_safe(|| has_import() || !self.changes_module_mock_call(name), |fixer| (!has_import()).then(|| fixer.replace(name.span(), function)));
+                .fix_where_safe(|| has_import() || !self.changes_call(file, name), |fixer| (!has_import()).then(|| fixer.replace(name.span(), function)));
         }
     }
 }
@@ -136,46 +136,47 @@ impl ConsistentVitestVi {
         }
     }
 
-    /// True if the new name changes what runs: a use of the name is then on another `function`, or `bun test` treats a module mock call in another way: see [`bun_test`].
+    /// True if a scope between a use in `at` and `home`, where the name is declared, declares `function`, like a parameter of that name: the use is then on that one. A name that nothing declares is at the top of the file.
+    fn is_captured<'a>(&self, at: Scope<'a>, home: Option<Scope<'a>>) -> bool {
+        let function = self.function.as_bytes();
+        let mut between = at.chain().take_while(|it| Some(*it) != home && !matches!(it.node(), Node::File(_)));
+        between.any(|it| it.get_bytes(function).is_some())
+    }
+
+    /// True if the new name changes what runs: a use of the name is then on another `function`, or on one that `bun test` doesn't treat as it treats the name: see [`bun_test`].
     #[cold]
     fn changes_uses<'a>(&self, file: &'a File<'a>, import: Import<'a>) -> bool {
         let (function, opposite) = (self.function.as_bytes(), self.opposite.as_bytes());
-        let declares = import_entries_of(import).any(|it| it.local_name().bytes() == function);
+        let (declares, declares_known) = (import_entries_of(import).any(|it| it.local_name().bytes() == function), self.declares_known(import));
         // The import then declares `function`, which takes the calls on the global of that name.
-        if !declares && !self.declares_known(import) && bun_test::global_has_module_mock_call(file, function) {
+        if !declares && !declares_known && bun_test::global_has_module_mock_call(file, function) {
             return true;
-        }
-        // A file that has no other `function` and no module mock call on the name needs none of its names resolved.
-        let name = file.find_name(self.opposite);
-        let is_mock = |it: Expr<'a>| it.as_ident() == name && bun_test::is_object_of_module_mock_call(it, opposite);
-        if file.find_name(self.function).is_none() && !file.exprs_of_kind(ExprTag::Ident).any(is_mock) {
-            return false;
         }
         let Some(declared) = self.declared(import) else {
             return false;
         };
-        let (scope, before) = (declared.scope(), bun_test::is_known(opposite, Some(declared)));
+        let (home, before) = (declared.scope(), bun_test::is_known(opposite, Some(declared)));
         declared.references().any(|it| {
-            // A scope between the import and the use declares `function`, like a parameter of that name: the use is then on that one.
-            let is_captured = it.scope().chain().take_while(|it| *it != scope).any(|it| it.get_bytes(function).is_some());
-            // Where nothing declares `function`, the use is then on what the import declares.
+            // Where nothing declares `function`, the use is then on what the import declares. Another `function` of the import, like `test as vi`, is another thing.
             let after = match it.scope().resolve_bytes(function) {
-                None => self.declares_known(import),
+                None => declares_known,
                 declared => bun_test::is_known(function, declared),
             };
-            is_captured || before != after && it.expr().is_some_and(is_mock)
+            before != after || self.is_captured(it.scope(), Some(home))
         })
     }
 
-    /// True if `name` and the `function` that replaces it are of different kinds for `bun test`, which changes what it does with the call.
+    /// True if the new name changes what runs: the call is then on another `function`, or `bun test` treats a module mock call in another way: see [`bun_test`].
     #[cold]
-    fn changes_module_mock_call(&self, name: Expr<'_>) -> bool {
+    fn changes_call<'a>(&self, file: &'a File<'a>, name: Expr<'a>) -> bool {
         let function = self.function.as_bytes();
-        // The rule doesn't resolve the file's names for any other call.
-        if !bun_test::is_object_of_module_mock_call(name, function) {
+        let is_mock = bun_test::is_object_of_module_mock_call(name, function);
+        // The rule resolves the file's names for a module mock call and in a file that has a `function` only.
+        if !is_mock && file.find_name(self.function).is_none() {
             return false;
         }
-        let replacement = Node::Expr(name).scope().resolve_bytes(function);
-        bun_test::is_known(self.opposite.as_bytes(), name.symbol()) != bun_test::is_known(function, replacement)
+        let (scope, declared) = (Node::Expr(name).scope(), name.symbol());
+        let changes_kind = || bun_test::is_known(self.opposite.as_bytes(), declared) != bun_test::is_known(function, scope.resolve_bytes(function));
+        self.is_captured(scope, declared.map(Symbol::scope)) || is_mock && changes_kind()
     }
 }

@@ -63,13 +63,16 @@ pub fn is_known_import(source: &[u8], imported: &[u8]) -> bool {
     is_test_module(source) && is_mock_api(imported)
 }
 
-/// True for a declaration that is gone when the file runs: `declare const vi: Vi`, a type, a type-only import.
+/// True for a declaration that is gone when the file runs: one under `declare`, like `declare const vi: Vi`, a type, a type-only import.
 fn is_erased(declaration: Declaration<'_>) -> bool {
     match declaration {
         Declaration::Var(pattern) => {
             matches!(pattern.parent(), Node::VarDecl(it) if it.flags().contains(Flags::AMBIENT))
         }
         Declaration::Fn(function) => !function.has_body(),
+        Declaration::Class(class) => class.flags().contains(Flags::AMBIENT),
+        Declaration::Enum(it) => it.flags().contains(Flags::AMBIENT),
+        Declaration::Module(it) => it.stmt().flags().contains(Flags::AMBIENT),
         Declaration::Interface(_) | Declaration::TypeAlias(_) | Declaration::TypeParam(_) => true,
         Declaration::ImportSpec(specifier) => {
             specifier.is_type_only() || specifier.import().is_type_only()
@@ -171,10 +174,21 @@ pub fn has_module_mock_call<'a>(
     Api::of(export).is_some_and(|it| has_call(references, it))
 }
 
-/// True if the global `name` is the [object of a module mock call](is_object_of_module_mock_call).
+/// True if the global `name` is the [object of a module mock call](is_object_of_module_mock_call). A name whose declarations are all [gone when the file runs](is_erased) is the global.
 #[cold]
 pub fn global_has_module_mock_call<'a>(file: &'a File<'a>, name: &[u8]) -> bool {
-    has_module_mock_call(file.unresolved_references_to(name), name)
+    let global = std::str::from_utf8(name)
+        .ok()
+        .and_then(|it| file.find_name(it));
+    let (Some(api), Some(global)) = (Api::of(name), global) else {
+        return false;
+    };
+    let is_object = |it: &Expr<'a>| it.as_ident() == Some(global) && is_object_of(*it, api);
+    let mut objects = file.exprs_of_kind(ExprTag::Ident).filter(is_object);
+    objects.any(|it| {
+        it.symbol()
+            .is_none_or(|it| it.declarations().all(is_erased))
+    })
 }
 
 /// True if `bun test` treats a call on `symbol` in another way once a fix removes its declaration, which makes the name a global.

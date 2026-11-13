@@ -1699,16 +1699,10 @@ impl JSValkeyClient {
             );
         };
 
-        // Get the subscription context
-        if !self._subscription_ctx.get().is_subscriber {
-            return Ok(JSPromise::resolved_promise_value(
-                global,
-                JSValue::UNDEFINED,
-            ));
-        }
-
-        // Two arguments means .unsubscribe(channel, listener) is invoked.
-        if let &[_, listener_cb] = args_view {
+        // Two arguments, or a function in the second place, means .unsubscribe(channel, listener) is invoked.
+        if let &[_, listener_cb, ref rest @ ..] = args_view
+            && (rest.is_empty() || listener_cb.is_callable())
+        {
             // In this case, the first argument is a channel string and the second
             // argument is the handler to remove.
             if !channel_or_many.is_string() {
@@ -1723,6 +1717,12 @@ impl JSValkeyClient {
                     "listener",
                     "function",
                 ));
+            }
+
+            if !rest.iter().all(|arg| arg.is_undefined_or_null()) {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "unsubscribe does not accept arguments after the listener"
+                )));
             }
 
             // Populate the redis_channels list with the single channel to

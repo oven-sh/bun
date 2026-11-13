@@ -1,4 +1,4 @@
-import { randomUUIDv7, RedisClient, spawn } from "bun";
+import { randomUUIDv7, RedisClient, spawn, type Socket } from "bun";
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { bunExe, bunRun } from "harness";
 import { join } from "node:path";
@@ -7278,6 +7278,43 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         expect(messageCount1).toBe(2);
         expect(messageCount2).toBe(1);
       });
+
+      test("unsubscribing one listener with an argument after it", async () => {
+        const channel = testChannel();
+        // The types declare neither call.
+        const subscriber: any = createClient(connectionType);
+        try {
+          await subscriber.connect();
+
+          const counter = awaitableCounter();
+          const received: string[] = [];
+          const listener1 = (message: string) => {
+            received.push(`listener1:${message}`);
+            counter.increment();
+          };
+          const listener2 = (message: string) => {
+            received.push(`listener2:${message}`);
+            counter.increment();
+          };
+          await subscriber.subscribe(channel, listener1);
+          await subscriber.subscribe(channel, listener2);
+
+          expect(() => subscriber.unsubscribe(channel, listener1, listener2)).toThrow(
+            "unsubscribe does not accept arguments after the listener",
+          );
+          expect(await ctx.redis.publish(channel, "first")).toBe(1);
+          await counter.untilValue(2);
+
+          // An undefined after the listener is an omitted argument: only listener1 goes.
+          await subscriber.unsubscribe(channel, listener1, undefined);
+          expect(await ctx.redis.publish(channel, "second")).toBe(1);
+          await counter.untilValue(3);
+
+          expect(received).toEqual(["listener1:first", "listener2:first", "listener2:second"]);
+        } finally {
+          subscriber.close();
+        }
+      });
     });
 
     describe("duplicate()", () => {
@@ -7408,6 +7445,183 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
     });
   });
 }
+
+describe("RedisClient unsubscribe(channel, listener)", () => {
+  type Peer = { pending: Buffer; channels: Set<string> };
+  const bulk = (s: string) => `$${Buffer.byteLength(s)}\r\n${s}\r\n`;
+  const afterListener = "unsubscribe does not accept arguments after the listener";
+
+  /**
+   * An in-process RESP3 server. It records every command after HELLO, acks
+   * SUBSCRIBE and UNSUBSCRIBE with push frames, and `publish()` delivers a
+   * message to each connection subscribed to the channel.
+   */
+  function pubSubServer() {
+    const commands: string[][] = [];
+    const peers = new Set<Socket<Peer>>();
+    const reply = ({ channels }: Peer, [name, ...args]: string[]) => {
+      switch (name) {
+        case "HELLO":
+          return `%1\r\n${bulk("proto")}:3\r\n`;
+        case "SUBSCRIBE":
+          return args
+            .map(channel => `>3\r\n${bulk("subscribe")}${bulk(channel)}:${channels.add(channel).size}\r\n`)
+            .join("");
+        case "UNSUBSCRIBE":
+          return args
+            .map(channel => {
+              channels.delete(channel);
+              return `>3\r\n${bulk("unsubscribe")}${bulk(channel)}:${channels.size}\r\n`;
+            })
+            .join("");
+        default:
+          return "+OK\r\n";
+      }
+    };
+    const server = Bun.listen<Peer>({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.data = { pending: Buffer.alloc(0), channels: new Set() };
+          peers.add(socket);
+        },
+        close(socket) {
+          peers.delete(socket);
+        },
+        error() {},
+        data(socket, chunk) {
+          let pending = Buffer.concat([socket.data.pending, chunk]);
+          // A command is `*<argc>\r\n`, then argc frames of `$<length>\r\n<bytes>\r\n`.
+          parse: for (;;) {
+            const headerEnd = pending.indexOf("\r\n");
+            if (pending[0] !== 0x2a || headerEnd < 0) break;
+            const argv: string[] = [];
+            let at = headerEnd + 2;
+            for (let argc = parseInt(pending.toString("latin1", 1, headerEnd), 10); argc > 0; argc--) {
+              const lengthEnd = pending.indexOf("\r\n", at);
+              if (lengthEnd < 0) break parse;
+              const end = lengthEnd + 2 + parseInt(pending.toString("latin1", at + 1, lengthEnd), 10);
+              if (pending.length < end + 2) break parse;
+              argv.push(pending.toString("utf8", lengthEnd + 2, end));
+              at = end + 2;
+            }
+            pending = pending.subarray(at);
+            if (argv[0] !== "HELLO") commands.push(argv);
+            socket.write(reply(socket.data, argv));
+          }
+          socket.data.pending = pending;
+        },
+      },
+    });
+    return {
+      url: `redis://127.0.0.1:${server.port}`,
+      commands,
+      publish(channel: string, message: string) {
+        for (const peer of peers) {
+          if (peer.data.channels.has(channel)) peer.write(`>3\r\n${bulk("message")}${bulk(channel)}${bulk(message)}`);
+        }
+      },
+      [Symbol.dispose]: () => server.stop(true),
+    };
+  }
+
+  /** Two listeners on "ch". `delivered` resolves when the second one, the last to be called, has a message. */
+  async function subscribeTwo(client: any) {
+    const received: string[] = [];
+    const { promise: delivered, resolve: onDelivered } = Promise.withResolvers<void>();
+    const first = (message: string) => void received.push(`first:${message}`);
+    const second = (message: string) => (received.push(`second:${message}`), onDelivered());
+    await client.subscribe("ch", first);
+    await client.subscribe("ch", second);
+    return { received, delivered, first, second };
+  }
+
+  test.each([undefined, null])("%p after the listener is an omitted argument", async omitted => {
+    using server = pubSubServer();
+    const client: any = new RedisClient(server.url, { autoReconnect: false });
+    try {
+      const { received, delivered, first } = await subscribeTwo(client);
+
+      expect(await client.unsubscribe("ch", first, omitted)).toBeUndefined();
+
+      // The server has seen everything the client wrote before this round trip.
+      await client.subscribe("sync", () => {});
+      expect(server.commands).toEqual([
+        ["SUBSCRIBE", "ch"],
+        ["SUBSCRIBE", "ch"],
+        ["SUBSCRIBE", "sync"],
+      ]);
+      server.publish("ch", "hello");
+      await delivered;
+      expect(received).toEqual(["second:hello"]);
+    } finally {
+      client.close();
+    }
+  });
+
+  test("any other argument after the listener throws, and no listener is removed", async () => {
+    using server = pubSubServer();
+    const client: any = new RedisClient(server.url, { autoReconnect: false });
+    try {
+      const { received, delivered, first, second } = await subscribeTwo(client);
+
+      for (const [refused, message] of [
+        [() => client.unsubscribe("ch", first, second), afterListener],
+        [() => client.unsubscribe("ch", first, undefined, second), afterListener],
+        [() => client.unsubscribe("ch", first, 0), afterListener],
+        [() => client.unsubscribe("ch", first, ""), afterListener],
+        [() => client.unsubscribe("ch", first, false), afterListener],
+        // node-redis: unsubscribe(channel, listener, bufferMode)
+        [() => client.unsubscribe("ch", first, true), afterListener],
+        // forEach() passes (listener, index, array), and (listener, listener, set) for a Set.
+        [() => [first, second].forEach(client.unsubscribe.bind(client, "ch")), afterListener],
+        [() => new Set([first]).forEach(client.unsubscribe.bind(client, "ch")), afterListener],
+        [() => client.unsubscribe(["ch"], first, undefined), "Expected channel to be a string for 'unsubscribe'."],
+      ] as const) {
+        let thrown: unknown;
+        try {
+          refused();
+        } catch (error) {
+          thrown = error;
+        }
+        expect(thrown).toMatchObject({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message });
+      }
+
+      // The server has seen everything the client wrote before this round trip.
+      await client.subscribe("sync", () => {});
+      expect(server.commands).toEqual([
+        ["SUBSCRIBE", "ch"],
+        ["SUBSCRIBE", "ch"],
+        ["SUBSCRIBE", "sync"],
+      ]);
+      server.publish("ch", "hello");
+      await delivered;
+      expect(received).toEqual(["first:hello", "second:hello"]);
+    } finally {
+      client.close();
+    }
+  });
+
+  test("map() over channels still unsubscribes each channel", async () => {
+    using server = pubSubServer();
+    const client = new RedisClient(server.url, { autoReconnect: false });
+    try {
+      for (const channel of ["a", "b", "keep"]) await client.subscribe(channel, () => {});
+      // map() passes (channel, index, array). The index is no listener, so each call is unsubscribe(channel).
+      await Promise.all(["a", "b"].map(client.unsubscribe, client));
+      expect(server.commands).toEqual([
+        ["SUBSCRIBE", "a"],
+        ["SUBSCRIBE", "b"],
+        ["SUBSCRIBE", "keep"],
+        ["UNSUBSCRIBE", "a"],
+        ["UNSUBSCRIBE", "b"],
+      ]);
+    } finally {
+      client.close();
+    }
+  });
+});
 
 describe("RedisClient URL parsing", () => {
   test.each(["/notadb", "/5abc", "/-2", "/5/6", "/4294967296", "/99999999999999999999"])(

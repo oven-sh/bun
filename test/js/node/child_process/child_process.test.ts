@@ -1999,6 +1999,50 @@ describe("spawn().unref() with piped stdio", () => {
     });
   });
 
+  // From #44590: the stream is read here, so the parent waits for it until the one unref().
+  it.each(["stdout", "stderr"])("%s.ref() twice on a stream that is read needs one unref()", async name => {
+    expect(
+      await runAndKill(
+        `undefined`,
+        `process.stdout.write("ready"); process.stdin.resume()`,
+        `
+          c.stderr.resume();
+          c.stdout.once("data", () => {
+            c.${name}.ref();
+            c.${name}.ref();
+            c.stdout.unref();
+            c.stderr.unref();
+          });
+        `,
+      ),
+    ).toEqual({
+      stderr: "",
+      exitCode: 0,
+      childExitCode: null,
+    });
+  });
+
+  it("stream.ref() and stream.unref() return the stream, before and after it closes", async () => {
+    const c = spawn(bunExe(), ["-e", "process.stdin.resume()"], { env: bunEnv });
+    const streams = [c.stdout, c.stderr] as unknown as net.Socket[];
+    const closed = once(c, "close");
+    try {
+      for (const stream of streams) {
+        expect(stream.ref()).toBe(stream);
+        expect(stream.unref()).toBe(stream);
+        expect(stream.unref()).toBe(stream);
+        expect(stream.ref()).toBe(stream);
+      }
+    } finally {
+      c.kill();
+      await closed;
+    }
+    for (const stream of streams) {
+      expect(stream.ref()).toBe(stream);
+      expect(stream.unref()).toBe(stream);
+    }
+  });
+
   it("keeps the parent alive when a script replaced setImmediate before node:child_process loads", async () => {
     // unref() queues its reads with the runtime's own setImmediate, which a script cannot replace.
     expect(

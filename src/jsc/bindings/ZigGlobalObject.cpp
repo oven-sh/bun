@@ -4187,8 +4187,13 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
 #endif
 
     // JSC asks this way about the key of a top-level load (JSModuleLoader::loadModule), which is resolved already.
-    if (!useImportMap)
-        RELEASE_AND_RETURN(scope, key.toPropertyKey(globalObject));
+    if (!useImportMap) {
+        Identifier resolvedKey = key.toPropertyKey(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (globalObject->onLoadPlugins.hasMockBehindScript) [[unlikely]]
+            Bun::didResolveModuleBesideMocksBehindScript(globalObject, resolvedKey.string(), true);
+        return resolvedKey;
+    }
 
     WTF::String keyString;
     if (key.isString()) {
@@ -4274,9 +4279,10 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     // Only module mocks need these, and only the end of a test file is sure to clear them.
     if (isImportCall && globalObject->m_lazyTestModuleObject.isInitialized()) [[unlikely]] {
         globalObject->onLoadPlugins.keyOfImportCall = resolved;
-        if (globalObject->onLoadPlugins.loadRoots.add(resolved).isNewEntry)
-            globalObject->onLoadPlugins.hasNewLoad = true;
+        globalObject->onLoadPlugins.loadRoots.add(resolved);
     }
+    if (globalObject->onLoadPlugins.hasMockBehindScript) [[unlikely]]
+        Bun::didResolveModuleBesideMocksBehindScript(globalObject, resolved, !isImportStatement);
     if (Bun::hasCompiledModules()) [[unlikely]] {
         Bun::willResolveImport(globalObject, resolved, referrer);
         RETURN_IF_EXCEPTION(scope, {});
@@ -4447,6 +4453,10 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     if (moduleKey.endsWith(".node"_s)) {
         return rejectedInternalPromise(globalObject, createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of import."_s));
     }
+
+    // What the mocks' turn scheduler knows of an earlier fetch of the module doesn't hold for this one.
+    if (auto& fetchesSeenPending = static_cast<Zig::GlobalObject*>(globalObject)->onLoadPlugins.fetchesSeenPending; !fetchesSeenPending.isEmpty()) [[unlikely]]
+        fetchesSeenPending.remove(moduleKey);
 
     if (Bun::hasCompiledModules() && !Bun::moduleGraphOfLoader(globalObject, loader)) [[unlikely]] {
         // The loader keeps parameters of the type alone for an import() without attributes, and fetches with them where a require() takes over a load in flight.

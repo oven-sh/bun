@@ -638,6 +638,7 @@ static String keyOfFetch(JSArray* fetch)
 static void didUnblockFetch(Zig::GlobalObject* globalObject, JSArray* fetch)
 {
     globalObject->onLoadPlugins.fetchesBlockedOnFactories.removeFirst(keyOfFetch(fetch));
+    rankWaitingModuleMocksSoon(globalObject);
 }
 
 // The factories that a fetch calls may release the module being fetched.

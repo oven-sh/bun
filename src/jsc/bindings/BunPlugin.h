@@ -131,15 +131,25 @@ public:
             String load;
         };
         Vector<ModuleMockWithTurn> moduleMocksWithTurn = {};
-        // The reactions that rankWaitingModuleMocks() leaves behind carry the number it had then, and do nothing if it has moved on.
+        // The reaction that rankWaitingModuleMocks() leaves behind carries the number it had then, and does nothing if it has moved on.
         unsigned timesRanked = 0;
-        // How many loads it found that were still being fetched. The end of each ranks again.
-        unsigned loadsBeingFetched = 0;
-        // A load has been asked for that it doesn't know of.
-        bool hasNewLoad = false;
+        // It left that reaction, for steps that the loader takes by itself, and the reaction has yet to rank again.
+        bool willRankAgain = false;
         bool willGiveTurns = false;
         // Something has happened that the ranks don't know of: a mock or a factory asks for a module, or a module has left the registry.
         bool ranksAreStale = false;
+        // The fetches that wait for script (a callback of onLoad() or build.module()) with the loads of the last ranking that wait for them,
+        // and for each of those loads how many fetches it waits for. See didAnswerModuleFetch().
+        WTF::UncheckedKeyHashMap<String, Vector<unsigned, 1>> loadsBehindFetches = {};
+        Vector<unsigned> fetchesAheadOfLoads = {};
+        // The fetches that the last ranking found pending while no file was being read, and those that a callback has taken since, less those answered.
+        WTF::UncheckedKeyHashSet<String> fetchesSeenPending = {};
+        // The last ranking left a mock to a load that waits for script. These are its module and the modules that import it, through unfinished ones.
+        // Another load may come to import one of them, so moduleLoaderResolve() ranks again when it resolves to one.
+        WTF::UncheckedKeyHashSet<String> modulesAboveMocksBehindScript = {};
+        bool hasMockBehindScript = false;
+        // The last ranking found that every load waits for script. Until another load starts, a mock that a fetch asks for is below those loads.
+        bool everyLoadIsBehindScript = false;
         WTF::UncheckedKeyHashSet<String> modulesGivenTimeToRequestImports = {};
         // The first module of each load that import() or a factory started, oldest first.
         WTF::ListHashSet<String> loadRoots = {};
@@ -197,6 +207,12 @@ public:
             runningModuleMocks.clear();
             waitingModuleMocks.clear();
             moduleMocksWithTurn.clear();
+            loadsBehindFetches.clear();
+            fetchesAheadOfLoads.clear();
+            fetchesSeenPending.clear();
+            modulesAboveMocksBehindScript.clear();
+            hasMockBehindScript = false;
+            everyLoadIsBehindScript = false;
             modulesGivenTimeToRequestImports.clear();
             loadRoots.clear();
             loadRootsDuringFactories.clear();
@@ -372,6 +388,14 @@ bool moduleMockImportsByKey(Zig::GlobalObject*, const String& key);
 String keyOfImportWhileModuleMocksRun(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
 String packageImportKey(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
 bool isModuleMockWaitingForFactory(Zig::GlobalObject*, const String& key);
+// A callback of onLoad() or build.module() has returned a promise for the fetch of `key`, so the fetch waits for script.
+void didLeaveModuleFetchToScript(Zig::GlobalObject*, const String& key);
+// That callback has given its answer. The mocks of a load that waited only for such answers get their turns.
+void didAnswerModuleFetch(Zig::GlobalObject*, const String& key);
+// A fetch that waited for a factory goes on, so the mocks below it may have their turns.
+void rankWaitingModuleMocksSoon(Zig::GlobalObject*);
+// An import has been resolved to `key` while hasMockBehindScript. `startsLoad`: by import() or for a load of the runtime, not by an import statement.
+void didResolveModuleBesideMocksBehindScript(Zig::GlobalObject*, const String& key, bool startsLoad);
 JSC::JSObject* objectHoldingExportOfModuleMock(JSC::JSGlobalObject*, JSC::JSModuleNamespaceObject*, const JSC::Identifier& name);
 #if ENABLE(AOT)
 // The same for the namespace object of a compiled module. Null for any other object.

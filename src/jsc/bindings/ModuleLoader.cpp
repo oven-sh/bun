@@ -561,6 +561,8 @@ static JSValue handleVirtualModuleResult(
             pendingModule->internalField(PendingVirtualModuleResult::TypeAttribute).set(vm, pendingModule, jsString(vm, fetch.typeAttribute->toWTFString()));
         if (fetch.graph)
             pendingModule->internalField(PendingVirtualModuleResult::ModuleGraph).set(vm, pendingModule, fetch.graph);
+        if (!moduleMock)
+            Bun::didLeaveModuleFetchToScript(globalObject, specifierString);
         if (fetch.onLoad.path) {
             waitForOnLoad(globalObject, pendingModule, promise, fetch.onLoad);
             RETURN_IF_EXCEPTION(scope, {});
@@ -1601,6 +1603,15 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionEvictIsolationSourceProviderCache, (JSC::JSGl
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+// The registry key of the fetch that `pendingModule` settles. The fetch of a module mock waits for its factory, not for a plugin: null.
+static String keyOfAnsweredFetch(PendingVirtualModuleResult* pendingModule)
+{
+    JSValue key = pendingModule->internalField(0).get();
+    if (!key.isString() || pendingModule->internalField(PendingVirtualModuleResult::ModuleMock).get())
+        return String();
+    return asString(key)->tryGetValue().data;
+}
+
 BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1614,11 +1625,13 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObje
         return JSValue::encode(jsUndefined());
 
     JSC::JSPromise* promise = pendingModule->internalPromise();
+    String answered = keyOfAnsweredFetch(pendingModule);
     pendingModule->internalField(0).set(vm, pendingModule, JSC::jsUndefined());
     pendingModule->internalField(1).set(vm, pendingModule, JSC::jsUndefined());
     pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());
     if (scope.exception()) [[unlikely]] {
         promise->rejectWithCaughtException(vm, scope);
+        Bun::didAnswerModuleFetch(static_cast<Zig::GlobalObject*>(globalObject), answered);
         return JSValue::encode(jsUndefined());
     }
     scope.release();
@@ -1626,6 +1639,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObje
         promise->pipeFrom(vm, fetching);
     else
         promise->fulfill(vm, result);
+    Bun::didAnswerModuleFetch(static_cast<Zig::GlobalObject*>(globalObject), answered);
     return JSValue::encode(jsUndefined());
 }
 
@@ -1636,12 +1650,14 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultReject, (JSC::JSGlobalObjec
     PendingVirtualModuleResult* pendingModule = dynamicDowncast<PendingVirtualModuleResult>(callFrame->argument(1));
     if (!pendingModule) [[unlikely]]
         return JSValue::encode(jsUndefined());
+    String answered = keyOfAnsweredFetch(pendingModule);
     pendingModule->internalField(0).set(vm, pendingModule, JSC::jsUndefined());
     pendingModule->internalField(1).set(vm, pendingModule, JSC::jsUndefined());
     JSC::JSPromise* promise = pendingModule->internalPromise();
 
     pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());
     promise->reject(vm, reason);
+    Bun::didAnswerModuleFetch(static_cast<Zig::GlobalObject*>(globalObject), answered);
 
     return JSValue::encode(jsUndefined());
 }

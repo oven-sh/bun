@@ -6275,6 +6275,367 @@ describe.concurrent("a factory doesn't wait for an onLoad() callback in an unrel
     );
   });
 
+  // The callback for slow.js never answers. The factory of a preload's mock is called when a load first asks for its module.
+  const neverAnswered = {
+    ...files,
+    "j.js": `export const x = "real";`,
+    "other.js": `import { x } from "./j.js"; export const seen = x;`,
+    "holds-builtin.js": `import "node:path"; import "./slow.js";`,
+    "user-of-builtin.js": `import "node:path"; import { x } from "./k.js"; export const seen = x;`,
+    "preload.js": `
+      import { mock } from "bun:test";
+      globalThis.asked = Promise.withResolvers();
+      globalThis.events = [];
+      Bun.plugin({
+        name: "never",
+        setup(build) {
+          build.onLoad({ filter: /slow\\.js$/ }, () => (globalThis.asked.resolve(), new Promise(() => {})));
+        },
+      });
+      mock.module("./k.js", () => (globalThis.events.push("factory k"), { x: "mock k" }));
+      mock.module("./j.js", () => (globalThis.events.push("factory j"), { x: "mock j" }));
+    `,
+  };
+  // With callbacks that answer at once, that answer when the test lets them, and one of build.module() that never answers.
+  const answered = {
+    ...neverAnswered,
+    "at-once.js": ``,
+    "signal.js": ``,
+    "gated.js": ``,
+    "mid.js": `import { x } from "./k.js"; import "./signal.js"; export const seen = x;`,
+    "holds-mid.js": `import "./mid.js"; import "./slow.js";`,
+    "through-mid.js": `export { seen } from "./mid.js";`,
+    "preload.js": `${neverAnswered["preload.js"]}
+      globalThis.waits = Promise.withResolvers();
+      globalThis.gate = Promise.withResolvers();
+      Bun.plugin({
+        name: "answers",
+        setup(build) {
+          build.onLoad({ filter: /gated\\.js$/ }, async () => {
+            globalThis.asked.resolve();
+            await globalThis.gate.promise;
+            globalThis.events.push("answer");
+            return { contents: "export const s = 'gated';", loader: "js" };
+          });
+          // Its mock waits for a turn before the file of a module that is imported beside it has been read.
+          build.onLoad({ filter: /at-once\\.js$/ }, () => ({ contents: ${JSON.stringify(files["user.js"])}, loader: "js" }));
+          // The loader has asked for the module before it, so the mock of that module waits for a turn.
+          build.onLoad({ filter: /signal\\.js$/ }, () => (globalThis.waits.resolve(), { contents: "", loader: "js" }));
+          build.module("virtual:slow", () => (globalThis.asked.resolve(), new Promise(() => {})));
+        },
+      });
+    `,
+  };
+  const importsStatically = `
+    import { expect, test } from "bun:test";
+    import { seen } from "./other.js";
+    test("its mock is loaded all the same", () => expect(seen).toBe("mock j"));
+  `;
+
+  test.each(isolationFlags)(
+    "a fetch that never settles in one file doesn't block a mock that the next file imports statically %j",
+    async args => {
+      await expectFixturesToPass(
+        {
+          ...neverAnswered,
+          "a.test.js": `
+            import { expect, test } from "bun:test";
+            test("a factory is called while the fetch is pending", async () => {
+              void import("./slow.js");
+              await globalThis.asked.promise;
+              expect((await import("./k.js")).x).toBe("mock k");
+            });
+          `,
+          "b.test.js": importsStatically,
+        },
+        2,
+        [...args, "--preload", "./preload.js", "./a.test.js", "./b.test.js"],
+      );
+    },
+  );
+
+  test.each(isolationFlags)(
+    "a fetch that never settles in a preload doesn't block a mock that the first file imports statically %j",
+    async args => {
+      await expectFixturesToPass(
+        {
+          ...neverAnswered,
+          "preload.js": `${neverAnswered["preload.js"]}
+            void import("./slow.js");
+            await globalThis.asked.promise;
+            await import("./k.js");
+          `,
+          "b.test.js": importsStatically,
+        },
+        1,
+        [...args, "--preload", "./preload.js", "./b.test.js"],
+      );
+    },
+  );
+
+  test("nor a mock that waits below the load of that fetch, which the first file imports too", async () => {
+    await expectFixturesToPass(
+      {
+        ...answered,
+        "preload.js": `${answered["preload.js"]}
+          void import("./holds-mid.js");
+          await Promise.all([globalThis.asked.promise, globalThis.waits.promise]);
+        `,
+        "first.test.js": `
+          import { expect, test } from "bun:test";
+          import { seen } from "./through-mid.js";
+          import { seen as direct } from "./mid.js";
+          test("its mock is loaded all the same", () => expect([seen, direct]).toEqual(["mock k", "mock k"]));
+        `,
+      },
+      1,
+      ["--preload", "./preload.js", "./first.test.js"],
+    );
+  });
+
+  test("nor a mock of the next file, whose imports share a built-in module with the load of that fetch", async () => {
+    await expectFixturesToPass(
+      {
+        ...neverAnswered,
+        "a.test.js": `
+          import { test } from "bun:test";
+          test("leaves a fetch that never settles", async () => {
+            void import("./holds-builtin.js");
+            await globalThis.asked.promise;
+          });
+        `,
+        "b.test.js": `
+          import { expect, test } from "bun:test";
+          import { seen } from "./user-of-builtin.js";
+          test("its mock is loaded all the same", () => expect(seen).toBe("mock k"));
+        `,
+      },
+      2,
+      ["--preload", "./preload.js", "./a.test.js", "./b.test.js"],
+    );
+  });
+
+  // One test file for each way in which a factory waited for the callback. --isolate gives each of them mocks whose factories have not been called.
+  async function expectEachToPass(shapes: Record<string, string>, modules: Record<string, string> = {}) {
+    const imports = `
+      import { expect, jest, mock, test, vi } from "bun:test";
+      import { writeFileSync } from "node:fs";
+      import { join } from "node:path";
+    `;
+    await expectFixturesToPass(
+      {
+        ...answered,
+        ...modules,
+        ...Object.fromEntries(Object.entries(shapes).map(([name, shape]) => [`${name}.test.js`, imports + shape])),
+        // A file of its own for each test that needs one to be read: the runtime keeps what it has read.
+        ...Object.fromEntries(Object.keys(shapes).map(name => [`plain-${name}.js`, `export const plain = true;`])),
+      },
+      Object.keys(shapes).length,
+      ["--isolate", "--preload", "./preload.js"],
+    );
+  }
+
+  test("it is called beside a callback that never answers, when the files that were being read are read", async () => {
+    await expectEachToPass(
+      {
+        "read-beside": `
+          test("for a load whose file was being read when the fetch was found", async () => {
+            void import("./slow.js");
+            await globalThis.asked.promise;
+            const other = import("./other.js"), k = import("./k.js");
+            expect([(await k).x, (await other).seen]).toEqual(["mock k", "mock j"]);
+          });
+        `,
+        "waits": `
+          test("for a mock that already waits while a file of another load is read", async () => {
+            void import("./slow.js");
+            await globalThis.asked.promise;
+            const user = import("./at-once.js"), plain = import("./plain-waits.js");
+            expect([(await user).seen, (await plain).plain]).toEqual(["mock k", true]);
+          });
+        `,
+        "one-load": `
+          test("while a file is read below the module that the fetch is below", async () => {
+            void import("./slow-and-plain.js");
+            await globalThis.asked.promise;
+            expect((await import("./at-once.js")).seen).toBe("mock k");
+          });
+        `,
+        "takes-original": `
+          test("for a mock that takes the original, while a file that its importer asked for is read", async () => {
+            vi.doMock("./k.js", async importOriginal => ({ ...(await importOriginal()), y: "mock" }));
+            void import("./slow.js");
+            await globalThis.asked.promise;
+            expect([(await import("./reads-then-k.js")).seen, (await globalThis.read).plain]).toEqual([["real", "mock"], true]);
+          });
+        `,
+      },
+      {
+        "slow-and-plain.js": `import "./slow.js"; import "./plain-one-load.js";`,
+        "starts-read.js": `globalThis.read = import("./plain-takes-original.js");`,
+        "reads-then-k.js": `import "./starts-read.js"; import { x, y } from "./k.js"; export const seen = [x, y];`,
+      },
+    );
+  });
+
+  test("it is called beside a callback that never answers", async () => {
+    await expectEachToPass(
+      {
+        "virtual": `
+          test("beside a callback of build.module()", async () => {
+            void import("virtual:slow");
+            await globalThis.asked.promise;
+            expect((await import("./at-once.js")).seen).toBe("mock k");
+          });
+        `,
+        "cleared": `
+          test("beside the callback of a plugin that Bun.plugin.clearAll() has removed", async () => {
+            void import("./unrelated.js");
+            await globalThis.asked.promise;
+            Bun.plugin.clearAll();
+            mock.module("./k.js", () => ({ x: "mock again" }));
+            void import("./unrelated.js");
+            expect((await import("./user.js")).seen).toBe("mock again");
+          });
+        `,
+        "again": `
+          test("for a module that is imported again after it left require.cache", async () => {
+            const path = join(import.meta.dir, "written.js");
+            writeFileSync(path, 'export { x } from "./k.js";');
+            void import("./slow.js");
+            await globalThis.asked.promise;
+            expect((await import("./written.js")).x).toBe("mock k");
+            delete require.cache[path];
+            writeFileSync(path, 'export { x } from "./j.js";');
+            expect((await import("./written.js")).x).toBe("mock j");
+          });
+        `,
+        "kinds": `
+          vi.mock("./m1.js", () => ({ x: "vi.mock" }));
+          jest.mock("./m2.js", () => ({ x: "jest.mock" }));
+          test("for the mocks of vi.mock(), jest.mock(), vi.doMock() and jest.doMock()", async () => {
+            vi.doMock("./m3.js", () => ({ x: "vi.doMock" }));
+            jest.doMock("./m4.js", () => ({ x: "jest.doMock" }));
+            void import("./slow.js");
+            await globalThis.asked.promise;
+            const users = [1, 2, 3, 4].map(i => import("./uses-m" + i + ".js")), k = import("./k.js");
+            expect([(await k).x, ...(await Promise.all(users)).map(user => user.seen)]).toEqual(["mock k", "vi.mock", "jest.mock", "vi.doMock", "jest.doMock"]);
+          });
+        `,
+      },
+      {
+        ...Object.fromEntries([1, 2, 3, 4].map(i => [`m${i}.js`, `export const x = "real";`])),
+        ...Object.fromEntries(
+          [1, 2, 3, 4].map(i => [`uses-m${i}.js`, `import { x } from "./m${i}.js"; export const seen = x;`]),
+        ),
+      },
+    );
+  });
+
+  test("it is called for a load that shares modules with the load of the callback", async () => {
+    await expectEachToPass(
+      {
+        "shared": `
+          test("a module", async () => {
+            void import("./holds-shared.js");
+            await globalThis.asked.promise;
+            expect((await import("./user-of-shared.js")).seen).toBe("mock k");
+          });
+        `,
+        "builtin": `
+          test("a built-in module", async () => {
+            void import("./holds-builtin.js");
+            await globalThis.asked.promise;
+            expect((await import("./user-of-builtin.js")).seen).toBe("mock k");
+          });
+        `,
+        "waits-below": `
+          test("the module of the mock, which already waits below that load", async () => {
+            void import("./holds-mid.js");
+            await Promise.all([globalThis.asked.promise, globalThis.waits.promise]);
+            expect([(await import("./through-mid.js")).seen, (await import("./mid.js")).seen]).toEqual(["mock k", "mock k"]);
+          });
+        `,
+      },
+      {
+        "shared.js": `export const shared = true;`,
+        "holds-shared.js": `import "./shared.js"; import "./slow.js";`,
+        "user-of-shared.js": `import "./shared.js"; import { x } from "./k.js"; export const seen = x;`,
+      },
+    );
+  });
+
+  test("it is called before a callback that answers later", async () => {
+    await expectEachToPass(
+      {
+        "later": `
+          test("once the test has the mock", async () => {
+            const gated = import("./gated.js");
+            await globalThis.asked.promise;
+            const user = import("./at-once.js"), plain = import("./plain-later.js");
+            expect([(await user).seen, (await plain).plain]).toEqual(["mock k", true]);
+            globalThis.gate.resolve();
+            expect((await gated).s).toBe("gated");
+          });
+        `,
+        "two-loads": `
+          test("for another load, which reads a file and has a mock of its own", async () => {
+            const user = import("./at-once.js"), held = import("./gated-and-plain.js");
+            expect((await user).seen).toBe("mock k");
+            globalThis.gate.resolve();
+            expect([(await held).x, globalThis.events]).toEqual(["mock j", ["factory k", "answer", "factory j"]]);
+          });
+        `,
+        "copy": `
+          test("of build.module(), and the factory gets its own copy of the module", async () => {
+            const started = Promise.withResolvers(), gate = Promise.withResolvers();
+            let calls = 0;
+            Bun.plugin({
+              name: "virtual",
+              setup(build) {
+                build.module("virtual:gated", async () => (calls++, started.resolve(), await gate.promise, { exports: { value: 42 }, loader: "object" }));
+              },
+            });
+            const other = import("./uses-virtual.js");
+            await started.promise;
+            vi.doMock("./k.js", async () => {
+              const virtual = import("virtual:gated");
+              gate.resolve();
+              return { x: "mock, made with " + (await virtual).value };
+            });
+            expect((await import("./user.js")).seen).toBe("mock, made with 42");
+            expect([(await other).value, calls]).toEqual([42, 2]);
+          });
+        `,
+      },
+      {
+        "behind-gate.js": `import "./gated.js"; export { x } from "./j.js";`,
+        "gated-and-plain.js": `export { x } from "./behind-gate.js"; import "./plain-two-loads.js";`,
+        "uses-virtual.js": `export { value } from "virtual:gated";`,
+      },
+    );
+  });
+
+  test("the mock of a load still waits for the callback of that load", async () => {
+    await expectFixturesToPass(
+      {
+        ...answered,
+        "own.js": `import { x } from "./k.js"; import { s } from "./gated.js"; export const both = [x, s];`,
+        "own.test.js": `
+          import { expect, test } from "bun:test";
+          test("the factory is called after the answer", async () => {
+            const own = import("./own.js");
+            await globalThis.asked.promise;
+            globalThis.gate.resolve();
+            expect([(await own).both, globalThis.events]).toEqual([["mock k", "gated"], ["answer", "factory k"]]);
+          });
+        `,
+      },
+      1,
+      ["--preload", "./preload.js", "./own.test.js"],
+    );
+  });
+
   test("a module that the factory shares with the importers of the mock stays linked to the mock", async () => {
     await expectFixturesToPass(
       {

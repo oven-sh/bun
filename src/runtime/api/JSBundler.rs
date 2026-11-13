@@ -2068,10 +2068,8 @@ pub(crate) mod js_bundler {
                             .js_poster
                             .as_ref()
                             .expect("JS-owned bundle has a poster");
-                        if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
-                            // Owning JS VM torn down mid-bundle: the notify never runs.
-                            bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct);
-                        }
+                        // Refused: the VM was torn down mid-bundle, the notify never runs.
+                        let _ = poster.post(ct);
                     }
                     bun_event_loop::AnyEventLoop::Mini(mini) => {
                         mini.enqueue_task_concurrent_with_extra_ctx::<Load, BundleV2<'static>>(

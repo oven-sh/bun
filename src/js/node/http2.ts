@@ -2937,6 +2937,12 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         const chunk = Buffer.concat(chunks || []);
         if (session[kTimeout]) session[kTimeout].refresh();
         const endStream = isFinalWrite(this, batchLength);
+        // Empty writes acknowledge the Writable callback without consuming an HTTP/2
+        // DATA frame. Keep the final write: it must still carry END_STREAM.
+        if (batchLength === 0 && !endStream) {
+          session[kDeferWriteCallback](callback);
+          return;
+        }
         const status = native.writeStream(this.#id, chunk, undefined, endStream, callback, true);
         if (status & kWriteFlushedWithoutCallback) session[kDeferWriteCallback](callback);
         if (endStream) {
@@ -2984,6 +2990,10 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         }
         if (session[kTimeout]) session[kTimeout].refresh();
         const endStream = isFinalWrite(this, chunk.length);
+        if (wireChunk.length === 0 && !endStream) {
+          session[kDeferWriteCallback](callback);
+          return;
+        }
         const status = native.writeStream(this.#id, wireChunk, wireEncoding, endStream, callback, true);
         if (status & kWriteFlushedWithoutCallback) session[kDeferWriteCallback](callback);
         if (endStream) {

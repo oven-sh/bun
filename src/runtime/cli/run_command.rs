@@ -102,6 +102,8 @@ enum BootMain {
     File {
         path: Box<[u8]>,
         loader: Option<Loader>,
+        /// See [`RunCommand::watch_command`].
+        watch_command: Option<Box<[u8]>>,
     },
     /// `bun bake`: `src/js/internal/bake.ts` serves the app in the working directory. There is no
     /// entry module.
@@ -970,21 +972,38 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
     /// `VirtualMachine::init`,
     /// hand off CLI state, then enter `Run::start` under the JSC API lock.
+    /// `watch_command`: see [`Self::watch_command`].
     pub(crate) fn boot(
         ctx: &mut ContextData,
         entry_path: Box<[u8]>,
         loader: Option<Loader>,
+        watch_command: Option<Box<[u8]>>,
     ) -> crate::Result<()> {
         Self::boot_main(
             ctx,
             BootMain::File {
                 path: entry_path,
                 loader,
+                watch_command,
             },
         )
     }
 
-    fn boot_main(ctx: &mut ContextData, main: BootMain) -> crate::Result<()> {
+    /// The command that the status lines of `bun <file> --watch` name: `script` as typed, then
+    /// `ctx.passthrough`. `None` when the run is not watched.
+    pub(crate) fn watch_command(ctx: &ContextData, script: &[u8]) -> Option<Box<[u8]>> {
+        if ctx.debug.hot_reload != cli::command::HotReload::Watch {
+            return None;
+        }
+        let mut joined = script.to_vec();
+        for arg in &ctx.passthrough {
+            joined.push(b' ');
+            joined.extend_from_slice(arg);
+        }
+        Some(joined.into_boxed_slice())
+    }
+
+    fn boot_main(ctx: &mut ContextData, mut main: BootMain) -> crate::Result<()> {
         if !ctx.debug.loaded_bunfig {
             arguments::load_config_path(
                 CommandTag::RunCommand,
@@ -1019,7 +1038,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let watches = ctx.debug.hot_reload != cli::command::HotReload::None;
         if is_checked && !watches {
             // `bun bake` always watches, so it checks in `Run::start`.
-            let BootMain::File { path, loader } = &main else {
+            let BootMain::File { path, loader, .. } = &main else {
                 unreachable!("bun bake always watches")
             };
             let has_type_errors = !Self::check_main(ctx, path, *loader, &ctx.passthrough, None);
@@ -1027,6 +1046,15 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 Global::exit(1);
             }
         }
+
+        // Before `run_compiled::start`: the compile stage of `--aot` restarts the process too.
+        // After the bunfig load: `[run] silent` is read there.
+        let watch_status = match &mut main {
+            BootMain::File { watch_command, .. } if !ctx.debug.silent => watch_command
+                .take()
+                .map(|command| crate::cli::watch_status::WatchStatus::install(&command)),
+            _ => None,
+        };
 
         if crate::cli::run_compiled::is_requested(ctx) {
             let BootMain::File { path, .. } = main else {
@@ -1038,7 +1066,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             };
             let mut entry_points = vec![path];
             entry_points.extend(ctx.preloads.iter().cloned());
-            crate::cli::run_compiled::start(ctx, entry_points, 0);
+            crate::cli::run_compiled::start(ctx, entry_points, 0, watch_status.as_ref());
         }
         crate::cli::run_compiled::read_no_environment_file_again(ctx);
 
@@ -1084,7 +1112,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `vm.main` is a BACKREF into these bytes and the runner never returns,
         // so the allocation is process-lifetime by construction.
         let (entry, loader): (Option<&'static [u8]>, Option<Loader>) = match main {
-            BootMain::File { path, loader } => (Some(Box::leak(path)), loader),
+            BootMain::File { path, loader, .. } => (Some(Box::leak(path)), loader),
             BootMain::Bake => (None, None),
         };
         // What `Run::start` passes to `vm.load_entry_point`; `mut` because the
@@ -1210,6 +1238,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 Some(_) => Unchecked::Main(loader),
                 None => Unchecked::Project,
             }),
+            watch_status,
         }
         .start()
     }
@@ -1344,6 +1373,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             vm,
             entry_path: Some(entry),
             unchecked: None,
+            watch_status: None,
         }
         .start()
     }
@@ -1397,6 +1427,8 @@ pub(crate) struct Run<'a> {
     /// `--check` under `--watch`: what to type check before the program runs. With errors the
     /// program is not run, and the process waits for a change.
     unchecked: Option<Unchecked>,
+    /// The status lines of `bun <file> --watch`.
+    watch_status: Option<crate::cli::watch_status::WatchStatus>,
 }
 
 /// What `Run::start` type checks under `--check --watch`.
@@ -1454,6 +1486,7 @@ impl Run<'_> {
             vm,
             entry_path: mut entry,
             unchecked,
+            mut watch_status,
         } = self;
         let global = vm.global();
         let _api_lock = global.vm().get_api_lock();
@@ -1666,6 +1699,21 @@ impl Run<'_> {
                 }
                 vm.on_before_exit();
                 vm.report_exception_in_hot_reloaded_module_if_needed();
+                // Once per process: a restart is a new process.
+                if let Some(status) = &watch_status
+                    && vm.watch_run_has_ended()
+                {
+                    // As the non-watch path does before it exits. Its listener can queue more work.
+                    let _ = global.handle_rejected_promises();
+                    if vm.watch_run_has_ended() {
+                        status.print_idle(
+                            has_type_errors
+                                || vm.unhandled_error_counter > 0
+                                || vm.exit_handler.exit_code != 0,
+                        );
+                        watch_status = None;
+                    }
+                }
                 // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
                 // accessed here. Watcher arm keeps the process alive across
                 // reloads.
@@ -1847,7 +1895,13 @@ fn print_unhandled_version_note(vm: &mut VirtualMachine) {
 impl RunCommand {
     /// Duplicate `path` to a process-lifetime buffer, boot the VM, and on
     /// failure print the formatted error + `exit(1)`.
-    fn boot_and_handle_error(ctx: &mut ContextData, path: &[u8], loader: Option<Loader>) -> bool {
+    /// `typed` is the script as the user typed it, for [`Self::watch_command`].
+    fn boot_and_handle_error(
+        ctx: &mut ContextData,
+        path: &[u8],
+        loader: Option<Loader>,
+        typed: &[u8],
+    ) -> bool {
         if matches!(
             loader.or_else(|| Self::default_loader_for(path)),
             Some(Loader::Md)
@@ -1864,7 +1918,8 @@ impl RunCommand {
         // owned copy by value.
         let owned: Box<[u8]> = path.to_vec().into_boxed_slice();
 
-        if let Err(err) = Self::boot(ctx, owned, loader) {
+        let watch_command = Self::watch_command(ctx, typed);
+        if let Err(err) = Self::boot(ctx, owned, loader, watch_command) {
             Self::boot_failed_exit(ctx, paths::basename(path), &err);
         }
         true
@@ -2711,7 +2766,12 @@ impl RunCommand {
                     // borrowck — `boot_and_handle_error` takes
                     // `&mut ctx`; copy `path.text` out of the resolver borrow.
                     let text: Box<[u8]> = path.text.to_vec().into_boxed_slice();
-                    return Ok(Self::boot_and_handle_error(ctx, &text, Some(loader)));
+                    return Ok(Self::boot_and_handle_error(
+                        ctx,
+                        &text,
+                        Some(loader),
+                        target_name,
+                    ));
                 } else {
                     bun_core::scoped_log!(
                         RUN_LOG,
@@ -2732,6 +2792,7 @@ impl RunCommand {
                         ctx,
                         target_name,
                         Some(Loader::Html),
+                        target_name,
                     ));
                 }
             }
@@ -3063,7 +3124,7 @@ impl RunCommand {
         };
         let _ = bun_sys::close(fd);
 
-        Self::boot_and_handle_error(ctx, &absolute_script_path, None)
+        Self::boot_and_handle_error(ctx, &absolute_script_path, None, target)
     }
 
     /// `bun run -` — read script from stdin into `ctx.runtime_options.eval`
@@ -3096,6 +3157,7 @@ impl RunCommand {
         entry_point_buf[cwd_len..cwd_len + STDIN_TRIGGER.len()].copy_from_slice(STDIN_TRIGGER);
         let entry_path = &entry_point_buf[..cwd_len + STDIN_TRIGGER.len()];
 
+        let watch_command = Self::watch_command(ctx, b"-");
         // Prepend "-" to `ctx.passthrough` so `process.argv[1]` matches
         // Node's `node -` semantics.
         let mut passthrough_list: Vec<Box<[u8]>> = Vec::with_capacity(ctx.passthrough.len() + 1);
@@ -3109,7 +3171,7 @@ impl RunCommand {
         // `basename(target_name)` (= "-"), not `basename(entry_path)`
         // (= "[stdin]"), in the error message.
         let owned: Box<[u8]> = entry_path.to_vec().into_boxed_slice();
-        if let Err(err) = Self::boot(ctx, owned, None) {
+        if let Err(err) = Self::boot(ctx, owned, None, watch_command) {
             Self::boot_failed_exit(ctx, b"-", &err);
         }
         Ok(true)
@@ -3158,7 +3220,8 @@ impl RunCommand {
         let entry: Box<[u8]> = entry_point_buf[..cwd_len + EVAL_TRIGGER.len()]
             .to_vec()
             .into_boxed_slice();
-        Self::boot(ctx, entry, None)
+        // Node refuses `--watch` with `--eval`. There is no script to name, so no status lines.
+        Self::boot(ctx, entry, None, None)
     }
 
     /// `node` argv0 emulation. Port of `execAsIfNode`.
@@ -3193,7 +3256,7 @@ impl RunCommand {
             let entry: Box<[u8]> = entry_point_buf[..cwd_len + EVAL_TRIGGER.len()]
                 .to_vec()
                 .into_boxed_slice();
-            return Self::boot(ctx, entry, None);
+            return Self::boot(ctx, entry, None, None);
         }
 
         if ctx.positionals.is_empty() {
@@ -3210,6 +3273,7 @@ impl RunCommand {
         // borrowck — `boot_and_handle_error` takes `&mut ctx`, so
         // dupe the positional out before the call.
         let filename: Box<[u8]> = ctx.positionals[0].clone();
+        let watch_command = Self::watch_command(ctx, &filename);
 
         let normalized: Box<[u8]> = if paths::is_absolute(&filename) {
             filename
@@ -3234,7 +3298,7 @@ impl RunCommand {
         // `Global::configure_allocator` and (b) uses the
         // `Output.err(err, "Failed to run script \"...\"")` form.
         let basename: Box<[u8]> = paths::basename(&normalized).to_vec().into_boxed_slice();
-        if let Err(err) = Self::boot(ctx, normalized, None) {
+        if let Err(err) = Self::boot(ctx, normalized, None, watch_command) {
             Self::exec_as_if_node_boot_failed(ctx, &basename, err);
         }
         Ok(())
@@ -4218,7 +4282,8 @@ impl BunXFastPath {
             ::core::slice::from_raw_parts_mut(raw.cast::<u8>(), bun_paths::PATH_MAX_WIDE * 2)
         };
         let utf8 = strings::convert_utf16_to_utf8_in_buffer(out_buf, wpath);
-        if let Err(err) = RunCommand::boot(ctx, utf8.to_vec().into_boxed_slice(), None) {
+        // The shim launches the JS of a bin. What the user typed is not known here.
+        if let Err(err) = RunCommand::boot(ctx, utf8.to_vec().into_boxed_slice(), None, None) {
             // SAFETY: `ctx.log` was set in `create_context_data`.
             let _ = unsafe { &mut *ctx.log }.print(std::ptr::from_mut(Output::error_writer()));
             Output::err(

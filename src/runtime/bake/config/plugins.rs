@@ -55,7 +55,7 @@ pub(crate) fn is_restart() -> bool {
 /// When the restart fails, `reload_process` prints why and this exits 1: the kill signal handlers
 /// have run and the signal dispositions are reset, so the server cannot go on.
 pub(crate) fn restart_process(cx: &mut JsScope<'_>) {
-    cx.global().bun_vm().as_mut().restart_process(true);
+    cx.global().bun_vm().as_mut().restart_process(true, false);
     // Not `process.exit()`: during a restart it tries the restart again, and panics when it fails.
     bun_core::Output::flush();
     bun_core::Global::exit(1);

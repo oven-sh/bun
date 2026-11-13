@@ -277,12 +277,13 @@ pub static WATCH_CHANGED_TRIGGER_FILE: std::sync::OnceLock<&'static ZStr> =
     std::sync::OnceLock::new();
 
 fn record_changed_path(path: &[u8]) {
-    let Some(set) = WATCH_CHANGED_PATHS.get() else {
-        return;
-    };
     if path.is_empty() {
         return;
     }
+    bun_core::set_watch_change_trigger(path);
+    let Some(set) = WATCH_CHANGED_PATHS.get() else {
+        return;
+    };
     bun_core::handle_oom(set.get_mut().insert(path));
 }
 
@@ -558,6 +559,7 @@ where
                 bun_core::reload_process(
                     CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed),
                     false,
+                    true,
                 );
             });
             unreachable!();
@@ -625,6 +627,7 @@ fn arm_watch_reload_grace_timer() {
             bun_core::reload_process(
                 CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed),
                 false,
+                true,
             );
         });
         unreachable!();

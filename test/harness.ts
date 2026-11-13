@@ -1761,6 +1761,34 @@ export function writeShebangScript(path: string, program: string, data: string) 
   }
 }
 
+/**
+ * A status line that `bun <file> --watch` prints to stdout between the runs of the script:
+ * `Change detected in '/x.ts'`, `Restarting 'x.ts'`, `Completed running 'x.ts'. Waiting for file
+ * changes before restarting...` or `Failed running ...`.
+ */
+export const WATCH_STATUS_LINE = /^(Change detected in|Restarting|Completed running|Failed running) /;
+
+/** The `Change detected in` line of `bun <file> --watch` for `path`, quoted as `util.inspect` quotes it. */
+export function watchChangeLine(path: string) {
+  // The quote that the path does not have, as node's `strEscape` picks it. Paths have no control characters.
+  const quote = !path.includes("'")
+    ? "'"
+    : !path.includes('"')
+      ? '"'
+      : !path.includes("`") && !path.includes("${")
+        ? "`"
+        : "'";
+  const escaped = path.replaceAll("\\", "\\\\").replaceAll(quote, "\\" + quote);
+  return `Change detected in ${quote}${escaped}${quote}`;
+}
+
+/** The lines of a stdout stream of `bun <file> --watch`, without its status lines. */
+export async function* scriptLines(stream: AsyncIterable<NodeJS.TypedArray | ArrayBufferLike>) {
+  for await (const line of forEachLine(stream)) {
+    if (!WATCH_STATUS_LINE.test(line)) yield line;
+  }
+}
+
 export async function* forEachLine(iter: AsyncIterable<NodeJS.TypedArray | ArrayBufferLike>) {
   var decoder = new (require("string_decoder").StringDecoder)("utf8");
   var str = "";

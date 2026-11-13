@@ -34,6 +34,17 @@ bun --watch --check index.tsx
 
 In `--watch` mode, Bun keeps track of all imported files and watches them for changes. When a file changes, Bun restarts the process with the same CLI arguments and environment variables as the initial run. If Bun crashes, `--watch` attempts to restart the process.
 
+When you run a file with `--watch`, Bun prints a status line to stdout at each step, with the same wording as Node.js:
+
+```txt
+Completed running 'index.tsx'. Waiting for file changes before restarting...
+Change detected in '/home/me/app/index.tsx'
+Restarting 'index.tsx'
+Failed running 'index.tsx'. Waiting for file changes before restarting...
+```
+
+A run is `Completed` when nothing is left to run and the exit code is 0. It is `Failed` when the exit code is not 0, when an uncaught exception or an unhandled rejection ended it, or when `--check` found type errors. While a server or a timer keeps the run alive, nothing is printed. After an uncaught exception, a timer no longer counts (except on Windows): only an open handle such as a server does. `Change detected in` names the file whose change restarts the process. It and `Restarting` follow the terminal clear, so they stay on screen. When the script has a handler for the kill signal, the handler's output comes first, then `Restarting`. `--silent` turns these lines off. `bun test --watch`, `bun build --watch`, `--hot` and `--eval` do not print them.
+
 <Note>
 
 **⚡️ Reloads are fast.** The filesystem watchers you're probably used to have several layers of libraries wrapping the native APIs or, worse, rely on polling.

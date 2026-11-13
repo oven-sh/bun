@@ -1310,7 +1310,7 @@ mod draft {
 
                     bun_removable_features::removable_body!(HotReload, Abort, {
                         IS_RELOADING_PROCESS.store(true, Ordering::Relaxed);
-                        bun_core::reload_process(false, true);
+                        bun_core::reload_process(false, true, false);
                     });
                 }
             }

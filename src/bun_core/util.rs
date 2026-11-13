@@ -4205,10 +4205,134 @@ pub fn replace_restart_arguments(replace: impl Fn(&[u8]) -> Option<&'static [u8]
     });
 }
 
+static WATCH_RESTART_BANNER: Once<Box<[u8]>> = Once::new();
+static WATCH_CHANGE_TRIGGER: Once<Box<[u8]>> = Once::new();
+
+/// The `Restarting` line of `bun <file> --watch`, which `reload_process` prints when its caller
+/// announces the restart.
+pub fn set_watch_restart_banner(line: Box<[u8]>) {
+    WATCH_RESTART_BANNER.get_or_init(|| line);
+}
+
+/// The file whose change restarts the process. The first one is kept: the restart follows it.
+/// `reload_process` names it before the `Restarting` line, as node does.
+pub fn set_watch_change_trigger(path: &[u8]) {
+    if WATCH_RESTART_BANNER.get().is_none() || WATCH_CHANGE_TRIGGER.get().is_some() {
+        return;
+    }
+    WATCH_CHANGE_TRIGGER.get_or_init(|| path.to_vec().into_boxed_slice());
+}
+
+/// Quotes `s` as `strEscape` of node's `lib/internal/util/inspect.js` does.
+pub fn node_inspect_quote(s: &[u8]) -> Vec<u8> {
+    let has_single = crate::strings::contains_char(s, b'\'');
+    let has_double = crate::strings::contains_char(s, b'"');
+    let has_backtick = crate::strings::contains_char(s, b'`') || crate::strings::contains(s, b"${");
+    let quote = if !has_single {
+        b'\''
+    } else if !has_double {
+        b'"'
+    } else if !has_backtick {
+        b'`'
+    } else {
+        b'\''
+    };
+    let mut out = Vec::with_capacity(s.len() + 2);
+    out.push(quote);
+    let mut i = 0;
+    while i < s.len() {
+        let b = s[i];
+        i += 1;
+        match b {
+            b'\\' => out.extend_from_slice(b"\\\\"),
+            0x08 => out.extend_from_slice(b"\\b"),
+            b'\t' => out.extend_from_slice(b"\\t"),
+            b'\n' => out.extend_from_slice(b"\\n"),
+            0x0c => out.extend_from_slice(b"\\f"),
+            b'\r' => out.extend_from_slice(b"\\r"),
+            b if b == quote => {
+                out.push(b'\\');
+                out.push(b);
+            }
+            // U+0080 to U+009F are the two bytes C2 80 to C2 9F.
+            0xc2 if matches!(s.get(i), Some(0x80..=0x9f)) => {
+                push_hex_escape(&mut out, s[i]);
+                i += 1;
+            }
+            0x00..=0x1f | 0x7f => push_hex_escape(&mut out, b),
+            b => out.push(b),
+        }
+    }
+    out.push(quote);
+    out
+}
+
+fn push_hex_escape(out: &mut Vec<u8>, code: u8) {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    out.extend_from_slice(b"\\x");
+    out.push(HEX[(code >> 4) as usize]);
+    out.push(HEX[(code & 0xf) as usize]);
+}
+
+/// A stdout that nothing reads must not hold the restart: the wait for room is bounded to 200 ms
+/// in all, and each write is no more than the room `POLLOUT` promises on a pipe, blocking or not.
+/// The rest of the line is dropped then. A write to a slow file, or after another writer took
+/// the room, can still wait on the kernel. A device that `poll` does not support is written
+/// without a wait.
+#[cfg(unix)]
+fn write_watch_status_line(mut bytes: &[u8]) {
+    const BUDGET_MS: u128 = 200;
+    // The least `POLLOUT` means on a pipe: `PIPE_BUF` of macOS. Linux promises a page.
+    const CHUNK: usize = 512;
+    let start = std::time::Instant::now();
+    while !bytes.is_empty() {
+        let left = BUDGET_MS.saturating_sub(start.elapsed().as_millis());
+        if left == 0 {
+            return;
+        }
+        let mut polls = [libc::pollfd {
+            fd: 1,
+            events: libc::POLLOUT,
+            revents: 0,
+        }];
+        // SAFETY: `polls` is a valid one-element array.
+        let ready = unsafe { libc::poll(polls.as_mut_ptr(), 1, left as i32) };
+        if ready < 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
+            continue;
+        }
+        if ready < 0 || (ready > 0 && polls[0].revents & libc::POLLNVAL != 0) {
+            // SAFETY: `bytes` is a live slice, and `write` reads at most `bytes.len()` of it.
+            unsafe { libc::write(1, bytes.as_ptr().cast(), bytes.len()) };
+            return;
+        }
+        if ready == 0 || polls[0].revents & libc::POLLOUT == 0 {
+            return;
+        }
+        let len = bytes.len().min(CHUNK);
+        // SAFETY: `bytes` is a live slice, and `write` reads at most `len` of it.
+        let written = unsafe { libc::write(1, bytes.as_ptr().cast(), len) };
+        if written > 0 {
+            bytes = &bytes[written as usize..];
+            continue;
+        }
+        match std::io::Error::last_os_error().raw_os_error() {
+            Some(libc::EINTR | libc::EAGAIN) if written < 0 => {}
+            _ => return,
+        }
+    }
+}
+
+#[cfg(windows)]
+fn write_watch_status_line(bytes: &[u8]) {
+    crate::output::print_bytes(bytes);
+    crate::output::flush();
+}
+
 /// Port of `bun.reloadProcess`. `may_return == true` → returns on failure; `false` → exits with 1.
+/// `announce_restart` prints the line of `set_watch_restart_banner`.
 /// `on_before_reload_process_posix` clears CLOEXEC on stdio/IPC and resets caught signal
 /// dispositions on all POSIX; the close_range sweep is Linux/BSD only.
-pub fn reload_process(clear_terminal: bool, may_return: bool) {
+pub fn reload_process(clear_terminal: bool, may_return: bool, announce_restart: bool) {
     // Exactly one thread may perform the reload: the JS thread and the watcher's grace-window
     // fallback can both reach here, and concurrent execve prep crashes on musl. The swap elects a
     // winner; a loser parks or returns. A thread that already owns the reload may re-enter.
@@ -4230,6 +4354,25 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         crate::output::flush();
         crate::output::disable_buffering();
         crate::output::reset_terminal_all();
+    }
+    // After the clear, which would erase it. Only the elected thread gets here: once per restart.
+    if announce_restart && let Some(line) = WATCH_RESTART_BANNER.get() {
+        crate::output::flush();
+        if let Some(path) = WATCH_CHANGE_TRIGGER.get() {
+            let [c, r] = if crate::output::enable_ansi_colors_stdout() {
+                ["\x1b[34m", "\x1b[39m"]
+            } else {
+                ["", ""]
+            };
+            let mut change = Vec::new();
+            change.extend_from_slice(c.as_bytes());
+            change.extend_from_slice(b"Change detected in ");
+            change.extend_from_slice(&node_inspect_quote(path));
+            change.extend_from_slice(r.as_bytes());
+            change.push(b'\n');
+            write_watch_status_line(&change);
+        }
+        write_watch_status_line(line);
     }
     crate::output::stdio::restore();
 

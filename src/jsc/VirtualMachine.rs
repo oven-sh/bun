@@ -1864,6 +1864,20 @@ impl VirtualMachine {
             || self.has_immediates()
     }
 
+    /// Whether a `--watch` run has ended: nothing is left that can run JS. After an uncaught error
+    /// the loop fires no timer, so the loop ref of the timers does not count then.
+    pub fn watch_run_has_ended(&self) -> bool {
+        if self.unhandled_error_counter == 0 {
+            return !self.is_event_loop_alive_despite_errors();
+        }
+        if self.has_queued_work_excluding_immediates() || self.has_immediates() {
+            return false;
+        }
+        let timers =
+            runtime_hooks().map_or_else(TimersLeft::default, |hooks| (hooks.timers_left)());
+        !self.has_handles(timers.holds_loop_ref) && !self.has_handles_off_the_loop()
+    }
+
     /// Unlike `is_event_loop_alive`, also counts unref'd handles and timers, since they can still run JS.
     pub fn has_work_left(&self) -> bool {
         // Must be read before the queues: the waiter thread posts a child's exit, then stops counting the child.
@@ -1902,7 +1916,11 @@ impl VirtualMachine {
         let disarmed = rare
             .and_then(|rare| rare.file_polls.as_deref())
             .map_or(0, bun_io::Store::disarmed_count);
-        let fires_nothing = i32::from(timers_hold_loop_ref) + i32::from(has_coordinator) + disarmed;
+        // The poll that `tick_possibly_forever` holds so that the loop parks fires nothing either.
+        let fires_nothing = i32::from(timers_hold_loop_ref)
+            + i32::from(has_coordinator)
+            + disarmed
+            + i32::from(self.event_loop_shared().holds_forever_poll);
         self.platform_loop_opt()
             .is_some_and(|h| h.num_polls.get() > fires_nothing)
     }
@@ -4986,8 +5004,8 @@ impl VirtualMachine {
     /// Starts the process again with the same arguments, as `--watch` does on a change. Emits the
     /// `--watch-kill-signal` JS handlers first, like node. On Windows, this needs the watcher-manager
     /// parent (`bun_sys::windows::become_watcher_manager`). Returns only when the restart failed and
-    /// `may_return` is true; the error is printed.
-    pub fn restart_process(&mut self, may_return: bool) {
+    /// `may_return` is true; the error is printed. `announce_restart`: see `bun_core::reload_process`.
+    pub fn restart_process(&mut self, may_return: bool, announce_restart: bool) {
         crate::posix_signal_handle::emit_watch_kill_signal_before_reload(self.global());
         let should_clear_terminal = !self
             .env_loader()
@@ -4997,7 +5015,7 @@ impl VirtualMachine {
         crate::node_compile_cache::persist_now();
         bun_core::Output::flush();
         bun_removable_features::removable_body!(HotReload, Abort, {
-            bun_core::reload_process(should_clear_terminal, may_return);
+            bun_core::reload_process(should_clear_terminal, may_return, announce_restart);
         });
     }
 
@@ -5006,7 +5024,7 @@ impl VirtualMachine {
         if self.hot_reload == HotReload::Watch {
             // Watch reload replaces the process: never defer on a pending
             // entry promise (node restarts regardless of child state).
-            self.restart_process(false);
+            self.restart_process(false, true);
             unreachable!("reload_process returns only when may_return is true");
         }
 

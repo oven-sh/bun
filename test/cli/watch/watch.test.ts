@@ -1,7 +1,19 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
-import { afterEach, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBroken, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { afterEach, describe, expect, it } from "bun:test";
+import {
+  bunEnv,
+  bunExe,
+  forEachLine,
+  isBroken,
+  isLinux,
+  isMacOS,
+  isWindows,
+  scriptLines,
+  tempDir,
+  tmpdirSync,
+  watchChangeLine,
+} from "harness";
 import {
   copyFileSync,
   readdirSync,
@@ -56,10 +68,9 @@ for (const dir of ["dir", "©️"]) {
         stdin: "ignore",
       });
 
-      for await (const line of watchee.stdout as ReadableStream<Uint8Array>) {
+      for await (const line of scriptLines(watchee.stdout as ReadableStream<Uint8Array>)) {
         if (i == 10) break;
-        var str = new TextDecoder().decode(line);
-        expect(str).toContain(`${i} ${cwd}`);
+        expect(line).toContain(`${i} ${cwd}`);
         i++;
         await updateFile(i);
       }
@@ -68,6 +79,324 @@ for (const dir of ["dir", "©️"]) {
     10000,
   );
 }
+
+// Node's watch mode reports the end of a run and each restart on stdout
+// (lib/internal/main/watch_mode.js). Without these lines, a piped `bun --watch` log of a
+// program that fails to load reads as a crash loop, and a healthy restart is silent.
+describe("--watch status lines", () => {
+  // On Windows, a restart goes through the watcher manager, which the first test of this file marks as broken in CI.
+  const restarts = it.todoIf(isBroken && isWindows);
+  const completed = (command: string) => `Completed running ${command}. Waiting for file changes before restarting...`;
+  const failed = (command: string) => `Failed running ${command}. Waiting for file changes before restarting...`;
+  // Before `dir` is disposed: a live process holds the folder on Windows.
+  const stop = async () => {
+    watchee.kill("SIGKILL");
+    await watchee.exited;
+  };
+
+  // Reads the stdout lines. `next(count)` returns the next `count` lines; the test saves a file
+  // only after the line that says the run ended, so the order of the lines is fixed.
+  function lineReader(stream: ReadableStream<Uint8Array>) {
+    const lines = forEachLine(stream);
+    return async (count: number) => {
+      const read: string[] = [];
+      while (read.length < count) {
+        const { value, done } = await lines.next();
+        if (done) throw new Error(`stdout ended after ${JSON.stringify(read)}`);
+        read.push(value);
+      }
+      return read;
+    };
+  }
+
+  restarts("says when a run fails, when it restarts, and when it completes", async () => {
+    using dir = tempDir("watch-status-lines", {
+      "entry.mjs": `import { b } from "./dep.mjs"; console.log("loaded", b);`,
+      "dep.mjs": `export const a = 1;`,
+    });
+    const cwd = String(dir);
+    watchee = spawn({
+      cwd,
+      cmd: [bunExe(), "--watch", "--no-clear-screen", "entry.mjs"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const stderr = watchee.stderr!.text();
+    const next = lineReader(watchee.stdout as ReadableStream<Uint8Array>);
+    // The watcher names the file by the path it watches, which is the real path.
+    const changed = watchChangeLine(realpathSync(join(cwd, "dep.mjs")));
+
+    expect(await next(1)).toEqual([failed("'entry.mjs'")]);
+
+    await Bun.write(join(cwd, "dep.mjs"), `export const a = 2;`);
+    expect(await next(3)).toEqual([changed, "Restarting 'entry.mjs'", failed("'entry.mjs'")]);
+
+    await Bun.write(join(cwd, "dep.mjs"), `export const a = 3; export const b = 4;`);
+    expect(await next(4)).toEqual([changed, "Restarting 'entry.mjs'", "loaded 4", completed("'entry.mjs'")]);
+
+    await stop();
+    expect((await stderr).split("SyntaxError: Export named 'b' not found").length - 1).toBe(2);
+  });
+
+  it.each([[[]], [["run"]]])(
+    "names the script and its arguments as typed, quoted like util.inspect (bun %j)",
+    async prefix => {
+      using dir = tempDir("watch-status-command", {
+        "src/it's.mjs": `console.log(process.argv.slice(2).join("|"));`,
+      });
+      watchee = spawn({
+        cwd: String(dir),
+        cmd: [bunExe(), ...prefix, "--watch", "--no-clear-screen", "./src/it's.mjs", "--flag", "two words"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+        stdin: "ignore",
+      });
+      const next = lineReader(watchee.stdout as ReadableStream<Uint8Array>);
+      expect(await next(2)).toEqual(["--flag|two words", completed(`"./src/it's.mjs --flag two words"`)]);
+      await stop();
+    },
+  );
+
+  // The quoting of `util.inspect`: the quote that the text does not have, and the escapes of node's `strEscape`.
+  it.skipIf(isWindows).each([
+    ["p.mjs", ["x\\y", "a\tb", "\x7f", "\u0085", "\x0b"], String.raw`'p.mjs x\\y a\tb \x7F \x85 \x0B'`],
+    ['it\'s "q".mjs', [], '`it\'s "q".mjs`'],
+    ['it\'s "q" `t`.mjs', [], String.raw`'it\'s "q" ` + "`t`" + ".mjs'"],
+  ])("quotes the command %j %j like util.inspect", async (script, args, quoted) => {
+    using dir = tempDir("watch-status-quoting", { [script]: `console.log("ran");` });
+    watchee = spawn({
+      cwd: String(dir),
+      cmd: [bunExe(), "--watch", "--no-clear-screen", script, ...args],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const next = lineReader(watchee.stdout as ReadableStream<Uint8Array>);
+    expect(await next(2)).toEqual(["ran", completed(quoted)]);
+    await stop();
+  });
+
+  it("names the script of stdin as node does", async () => {
+    watchee = spawn({
+      cmd: [bunExe(), "--watch", "--no-clear-screen", "-", "q"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: new Blob([`console.log(process.argv.slice(2).join("|"));`]),
+    });
+    const next = lineReader(watchee.stdout as ReadableStream<Uint8Array>);
+    expect(await next(2)).toEqual(["q", completed("'- q'")]);
+  });
+
+  const failedRuns = {
+    "code.mjs": `process.exitCode = 3;`,
+    "reject.mjs": `Promise.reject(new Error("nope"));`,
+    "timer-throw.mjs": `setInterval(() => {}, 1000); throw new Error("boom");`,
+    "timer-reject.mjs": `setInterval(() => {}, 1000); await Promise.reject(new Error("db down"));`,
+  };
+  async function expectFailedRun(dir: string, script: string, error: string) {
+    watchee = spawn({
+      cwd: dir,
+      cmd: [bunExe(), "--watch", "--no-clear-screen", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const next = lineReader(watchee.stdout as ReadableStream<Uint8Array>);
+    expect(await next(1)).toEqual([failed(`'${script}'`)]);
+    await stop();
+    if (error) expect(await watchee.stderr!.text()).toContain(error);
+  }
+
+  it("reports a non-zero exit code and an unhandled rejection as a failed run", async () => {
+    using dir = tempDir("watch-status-failed", failedRuns);
+    await expectFailedRun(String(dir), "code.mjs", "");
+    await expectFailedRun(String(dir), "reject.mjs", "nope");
+  });
+
+  // After an uncaught error the loop fires no timer, so a pending timer does not keep the run
+  // alive. On Windows libuv still fires it, and the run goes on.
+  it.skipIf(isWindows)("reports a run that an uncaught error ended while a timer was pending", async () => {
+    using dir = tempDir("watch-status-failed-timer", failedRuns);
+    await expectFailedRun(String(dir), "timer-throw.mjs", "boom");
+    await expectFailedRun(String(dir), "timer-reject.mjs", "db down");
+  });
+
+  // A handle that nothing waits for (an unref'd child) does not keep the run alive either, once
+  // it is gone.
+  it.skipIf(isWindows)("reports a run that an uncaught error ended while an unref'd child ran", async () => {
+    using dir = tempDir("watch-status-failed-unref", {
+      "child.mjs": `const child = Bun.spawn(["sleep", "0.5"], { stdout: "pipe" });
+child.unref();
+throw new Error("boom");`,
+    });
+    await expectFailedRun(String(dir), "child.mjs", "boom");
+  });
+
+  // A `--watch-kill-signal` listener makes the restart go through the JS thread instead of the
+  // watcher thread. Either way the line prints once per restart.
+  // Bun prints `Restarting` after the listeners ran. Node prints it before it sends the signal.
+  it.skipIf(isWindows)("prints Restarting once per restart when a kill-signal listener runs", async () => {
+    using dir = tempDir("watch-status-sigterm", {
+      "server.mjs": `process.on("SIGTERM", () => console.log("bye"));
+console.log("up");
+setInterval(() => {}, 1000);`,
+    });
+    const cwd = String(dir);
+    watchee = spawn({
+      cwd,
+      cmd: [bunExe(), "--watch", "--no-clear-screen", "server.mjs"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const next = lineReader(watchee.stdout as ReadableStream<Uint8Array>);
+    expect(await next(1)).toEqual(["up"]);
+    for (let i = 1; i <= 3; i++) {
+      await Bun.write(
+        join(cwd, "server.mjs"),
+        (await Bun.file(join(cwd, "server.mjs")).text()) +
+          `
+// ${i}`,
+      );
+      expect(await next(4)).toEqual([
+        "bye",
+        watchChangeLine(realpathSync(join(cwd, "server.mjs"))),
+        "Restarting 'server.mjs'",
+        "up",
+      ]);
+    }
+    await stop();
+  });
+
+  it("keeps a server that survives an uncaught exception running, with no status line", async () => {
+    using dir = tempDir("watch-status-server", {
+      "server.mjs": `const server = Bun.serve({
+  port: 0,
+  fetch() {
+    console.log("served");
+    return new Response("ok");
+  },
+});
+console.log(server.port);
+setTimeout(() => { throw new Error("boom"); }, 0);`,
+    });
+    watchee = spawn({
+      cwd: String(dir),
+      cmd: [bunExe(), "--watch", "--no-clear-screen", "server.mjs"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const stdout = stdoutWaiter(watchee as Subprocess<"ignore", "pipe", any>);
+    await stdout.waitFor("\n");
+    const port = Number(stdout.output().trim());
+    const stderr = forEachLine(watchee.stderr as ReadableStream<Uint8Array>);
+    for await (const line of stderr) {
+      if (line.includes("boom")) break;
+    }
+    // The run has not ended: the server still answers, so no line says it failed. The line of
+    // the second request bounds the check: a status line would come before it.
+    expect(await (await fetch(`http://127.0.0.1:${port}/`)).text()).toBe("ok");
+    expect(await (await fetch(`http://127.0.0.1:${port}/`)).text()).toBe("ok");
+    await stdout.waitFor("served\nserved\n");
+    expect(stdout.output()).toBe(`${port}\nserved\nserved\n`);
+    await stop();
+  });
+
+  restarts("prints none of the lines under --hot", async () => {
+    using dir = tempDir("watch-status-hot", {
+      "script.mjs": `console.log("ran");`,
+    });
+    watchee = spawn({
+      cwd: String(dir),
+      cmd: [bunExe(), "--hot", "--no-clear-screen", "script.mjs"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const { waitFor, output } = stdoutWaiter(watchee as Subprocess<"ignore", "pipe", any>);
+    await waitFor("ran\n");
+    await Bun.write(join(String(dir), "script.mjs"), `console.log("ran again");`);
+    await waitFor("ran again\n");
+    expect(output()).toBe("ran\nran again\n");
+    await stop();
+  });
+
+  // `--silent` keeps bun's own lines off stdout. Node refuses `--watch` with `--eval`: there is no
+  // script to name, so bun prints no status line there.
+  restarts.each([
+    ["--silent", ["--silent", "script.mjs"]],
+    ["--eval", ["-e", `import "./dep.mjs"; console.log(process.env.RUN);`, "arg"]],
+  ])("prints none of the lines with %s", async (_, args) => {
+    using dir = tempDir("watch-status-silent", {
+      "dep.mjs": `export const a = 1;`,
+      "script.mjs": `import "./dep.mjs"; console.log(process.env.RUN);`,
+    });
+    watchee = spawn({
+      cwd: String(dir),
+      cmd: [bunExe(), "--watch", "--no-clear-screen", ...args],
+      env: { ...bunEnv, RUN: "ran" },
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const { waitFor, output } = stdoutWaiter(watchee as Subprocess<"ignore", "pipe", any>);
+    await waitFor("ran\n");
+    await Bun.write(join(String(dir), "dep.mjs"), `export const a = 2;`);
+    await waitFor("ran\nran\n");
+    expect(output()).toBe("ran\nran\n");
+    await stop();
+  });
+
+  // A full stdout pipe must not hold the restart: node's watcher does not wait on its stdout either.
+  it.skipIf(isWindows)("restarts when nothing reads stdout", async () => {
+    using dir = tempDir("watch-status-full-pipe", {
+      "app.mjs": `console.error("started", process.pid);
+process.stdout.write(Buffer.alloc(200_000, "x").toString() + "\\n");`,
+    });
+    // `sleep` never reads, so the pipe fills and fd 1 of the watched process blocks. A pipe of
+    // `Bun.spawn` would not: its parent reads it into memory without a bound. The watched
+    // process keeps its pid across the restart; the test kills it by that pid, and `sleep` ends
+    // on its own.
+    watchee = spawn({
+      cwd: String(dir),
+      cmd: ["sh", "-c", `"$0" --watch --no-clear-screen app.mjs | sleep 15`, bunExe()],
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const stderr = forEachLine(watchee.stderr as ReadableStream<Uint8Array>);
+    // Not `for await`: a `return` out of it would close the stream.
+    const started = async () => {
+      for (;;) {
+        const { value, done } = await stderr.next();
+        if (done) throw new Error("stderr ended");
+        if (value.startsWith("started ")) return Number(value.slice("started ".length));
+      }
+    };
+    const pid = await started();
+    try {
+      await Bun.write(
+        join(String(dir), "app.mjs"),
+        (await Bun.file(join(String(dir), "app.mjs")).text()) + "\n// touched",
+      );
+      expect(await started()).toBe(pid);
+    } finally {
+      process.kill(pid, "SIGKILL");
+      await stop();
+    }
+  });
+});
 
 afterEach(async () => {
   // SIGKILL, not the default SIGTERM: the wedge fixtures below register a
@@ -396,7 +725,7 @@ it("--watch forces a restart when the kill-signal listener thread is stuck in sy
     stderr: "inherit",
   });
 
-  const { waitFor, release } = stdoutWaiter(watchee);
+  const { waitFor, release, output } = stdoutWaiter(watchee);
 
   await waitFor("iter first");
   await Bun.write(
@@ -406,6 +735,8 @@ it("--watch forces a restart when the kill-signal listener thread is stuck in sy
      process.exit(0);`,
   );
   await waitFor("iter second");
+  // The grace thread printed the line, once.
+  expect(output().split("Restarting 'busy.js'\n").length - 1).toBe(1);
 
   release();
   watchee.kill("SIGKILL");
@@ -437,7 +768,7 @@ it("--watch forces a restart when the kill-signal handler itself never returns",
     stderr: "inherit",
   });
 
-  const { waitFor, release } = stdoutWaiter(watchee);
+  const { waitFor, release, output } = stdoutWaiter(watchee);
 
   await waitFor("iter first");
   await Bun.write(
@@ -446,6 +777,7 @@ it("--watch forces a restart when the kill-signal handler itself never returns",
      process.exit(0);`,
   );
   await waitFor("iter second");
+  expect(output().split("Restarting 'busy.js'\n").length - 1).toBe(1);
 
   release();
   watchee.kill("SIGKILL");
@@ -500,6 +832,11 @@ it("--watch forced restart clears the terminal when colors are enabled", async (
   expect(output()).toContain(clearScreen);
   const [beforeReload, afterReload] = output().split(clearScreen);
   expect(beforeReload).toContain("iter first");
+  // The blue `Change detected` and green `Restarting` lines follow the clear, so they stay on the screen.
+  expect(afterReload).toStartWith(
+    `\x1b[34m${watchChangeLine(realpathSync(join(String(dir), "busy.js")))}\x1b[39m\n` +
+      "\x1b[32mRestarting 'busy.js'\x1b[39m\n",
+  );
   expect(afterReload).toContain("iter second");
   expect(await stderr).toContain(clearScreen);
 }, 30000);

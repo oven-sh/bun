@@ -27,8 +27,9 @@ async function checkedIn(root: string) {
   const errors: Record<string, string[]> = {};
   const types: Record<string, string[]> = {};
   const shown = [...checked.stdout.matchAll(/^(.+?)(\(\d+,\d+\)): error (TS\d+): (.*)$/gm)];
-  // A run with no error at a place has no error: it prints none, and it does not fail.
+  // `bun check` exits with 1 for an error and with 0 for none. A run with no error at a place has none to print.
   if (shown.length === 0) expect(checked).toEqual({ stdout: "", stderr: expect.any(String), exitCode: 0 });
+  else expect(checked.exitCode).toBe(1);
   for (const [, file, at, code, said] of shown) {
     const path = file.replaceAll("\\", "/");
     const type = /^Type '(.*)' is not assignable to type 'never'\.$/.exec(said)?.[1];

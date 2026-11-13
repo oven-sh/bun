@@ -1198,12 +1198,7 @@ where
         }
     }
 
-    pub(crate) fn render_default_error(
-        &self,
-        log: &bun_ast::Log,
-        exceptions: &[jsc::exception_list::JsException],
-        message: &[u8],
-    ) {
+    pub(crate) fn render_default_error(&self, problems: &jsc::ExceptionList, message: &[u8]) {
         if !self.flags.has_written_status() {
             self.flags.set_has_written_status(true);
             if let Some(resp) = self.resp.get() {
@@ -1222,8 +1217,7 @@ where
         let bb = DevErrorPage {
             message,
             cwd: bun_resolver::fs::FileSystem::get().top_level_dir(),
-            exceptions,
-            log: Some(log),
+            problems,
         }
         .render();
         let try_end_ok = match self.resp.get() {
@@ -3024,7 +3018,7 @@ where
             return false;
         }
 
-        let mut exception_list: jsc::ExceptionList = Vec::new();
+        let mut exception_list = jsc::ExceptionList::default();
         server
             .vm()
             .as_mut()
@@ -3033,8 +3027,7 @@ where
         let bb = DevErrorPage {
             message: b"Stream error during server-side rendering",
             cwd: bun_resolver::fs::FileSystem::get().top_level_dir(),
-            exceptions: &exception_list,
-            log: None,
+            problems: &exception_list,
         }
         .render();
 
@@ -3637,28 +3630,25 @@ where
         // the single audited `&mut VirtualMachine` accessor.
         let vm = server.vm().as_mut();
         if DEBUG_MODE {
-            let mut exception_list: jsc::ExceptionList = Vec::new();
+            let mut exception_list = jsc::ExceptionList::default();
             let prev_exception_list = vm.on_unhandled_rejection_exception_list;
             vm.on_unhandled_rejection_exception_list = Some(NonNull::from(&mut exception_list));
             report_unhandled_error(vm, global_this, value);
             vm.on_unhandled_rejection_exception_list = prev_exception_list;
 
-            let log = vm.log_mut().unwrap();
             bun_core::pretty_errorln!(
                 "<r><red>{:?}<r> - <b>{}<r> failed",
                 self.method,
                 self.ensure_pathname()
             );
             let msg = format!("{:?} - {} failed", self.method, self.ensure_pathname());
-            self.render_default_error(log, &exception_list, msg.as_bytes());
-            log.reset();
+            self.render_default_error(&exception_list, msg.as_bytes());
             return;
         }
         if status != 404 {
             report_unhandled_error(vm, global_this, value);
         }
         self.render_production_error(status);
-        vm.log_mut().unwrap().reset();
     }
 
     pub(crate) fn run_error_handler_with_status_code_dont_check_responded(

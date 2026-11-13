@@ -49,6 +49,34 @@ let statusLineReceivedResolve: (() => void) | undefined;
 // the test observes any resulting rejection before declaring success.
 const cancelRan = Promise.withResolvers<void>();
 
+// Failures that are a BuildMessage or a ResolveMessage. Neither is an Error
+// with a stack: the dev error page lists them as build errors.
+const throwBuildMessage = () => void new Bun.Transpiler().transformSync("export const oops = ;");
+const throwResolveMessage = () => void Bun.resolveSync("./does-not-exist.ts", import.meta.dir);
+function throwBothMessages() {
+  const errors: unknown[] = [];
+  for (const fail of [throwBuildMessage, throwResolveMessage]) {
+    try {
+      fail();
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  throw new AggregateError(errors, "two messages");
+}
+
+// Errors only after a chunk has already been flushed to the client.
+function midStream(fail: () => void): ReadableStream {
+  return new ReadableStream({
+    async pull(c) {
+      const reached = chunkReachedClient();
+      c.enqueue("chunk-a");
+      await reached;
+      fail();
+    },
+  });
+}
+
 const sources: Record<string, () => ReadableStream> = {
   // Already errored by the time Bun.serve starts rendering the body.
   "pull-throw": () =>
@@ -101,16 +129,13 @@ const sources: Record<string, () => ReadableStream> = {
         c.error(new Error("boom"));
       },
     }),
-  // Errors only after a chunk has already been flushed to the client.
   "mid-stream-reject": () =>
-    new ReadableStream({
-      async pull(c) {
-        const reached = chunkReachedClient();
-        c.enqueue("chunk-a");
-        await reached;
-        throw new Error("boom");
-      },
+    midStream(() => {
+      throw new Error("boom");
     }),
+  "mid-stream-build-message": () => midStream(throwBuildMessage),
+  "mid-stream-resolve-message": () => midStream(throwResolveMessage),
+  "mid-stream-both-messages": () => midStream(throwBothMessages),
   // The client aborts the download mid-stream, which makes Bun cancel the body
   // stream; the source's cancel() then throws. That rejection belongs to a
   // promise Bun created internally and must not surface as unhandledRejection.
@@ -236,6 +261,7 @@ const nativeBodies: Record<string, () => Response | Promise<Response>> = {
       await Bun.sleep(0);
       throw new Error("boom");
     }),
+  "rewriter-mid-stream-build-message": () => rewriterResponse(throwBuildMessage),
   // `return fetch(...)` whose upstream dies once its first chunk has made it
   // through to our client.
   "proxied-fetch-mid-stream": async () => {

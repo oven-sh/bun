@@ -1078,6 +1078,12 @@ describe.concurrent("bun test --isolate", () => {
     const context = `globalThis.context = vm.createContext({ kept }); vm.runInContext("1", context);`;
     const bareContext = `globalThis.bareContext = vm.createContext(vm.constants.DONT_CONTEXTIFY); bareContext.kept = kept;`;
     const channel = `new ShadowRealm().evaluate('globalThis.channel = new BroadcastChannel("kept"); channel.onmessage = () => {}; 0');`;
+    const spyUnderFakeTimers = `
+      const spy = vi.spyOn(globalThis, "setInterval");
+      vi.useFakeTimers();
+      spy.mockRestore();
+      vi.useRealTimers();
+    `;
 
     describe.each([
       ["nothing", ""],
@@ -1086,12 +1092,14 @@ describe.concurrent("bun test --isolate", () => {
       ["a node:vm context without a sandbox", bareContext],
       ["a BroadcastChannel in a ShadowRealm", channel],
       ["all of them", shadowRealm + context + bareContext + channel],
+      // Fake timers keep a record of what the spy replaced, with the global in it, in a weak map by the fake.
+      ["a spy that is restored under fake timers", spyUnderFakeTimers],
     ])("that makes %s", (_, make) => {
       test.each([3, 12, 48])("%d files", async count => {
         const files: Record<string, string> = {};
         for (let file = 0; file < count; file++) {
           files[`${String(file).padStart(2, "0")}.test.ts`] = `
-            import { test } from "bun:test";
+            import { test, vi } from "bun:test";
             import vm from "node:vm";
             globalThis.kept = Array.from({ length: 100 }, () => new URLSearchParams());
             test("makes it", () => {

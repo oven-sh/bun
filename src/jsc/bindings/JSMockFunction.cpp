@@ -27,6 +27,7 @@
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/JSMapInlines.h>
+#include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/ArrayConstructor.h>
 #include <JavaScriptCore/ObjectPrototypeInlines.h>
 #include <JavaScriptCore/RegExpPrototype.h>
@@ -864,6 +865,16 @@ public:
     void didInstall(JSObject* target, const Identifier& key, JSValue original, unsigned attributes);
 
     bool isRestoredSpy() const { return isSpy && !m_spyTarget; }
+
+    // What restoring the spy puts back on `target[key]`, if the spy is on that property now. `original` is empty if it deletes the property.
+    bool replacedOn(JSObject* target, UniquedStringImpl* key, JSValue& original, unsigned& attributes) const
+    {
+        if (m_spyTarget.get() != target || m_spyIdentifier.impl() != key || (m_spyAttributes & (SpyAttributeESModuleNamespace | SpyAttributeOpaque)))
+            return false;
+        original = m_spyOriginal.get();
+        attributes = m_spyAttributes & ~SpyAttributeAccessor;
+        return true;
+    }
 
     // Puts the spied-on property back as it was; that can throw (a module namespace export, an indexed slot).
     void clearSpy(JSGlobalObject* globalObject, bool shouldReset = true)
@@ -2869,6 +2880,79 @@ extern "C" bool JSMock__isRestoredSpy(JSC::EncodedJSValue value)
 {
     auto* mock = dynamicDowncast<JSMockFunction>(JSValue::decode(value));
     return mock && mock->isRestoredSpy();
+}
+
+// For fake timers, which take the place of a spy: what the spy `value` replaced on `owner[name]`, as a record for JSMock__putSpyRecord(). Empty if `value` is no spy on that property.
+extern "C" JSC::EncodedJSValue JSMock__spyRecord(Zig::GlobalObject* globalObject, JSC::EncodedJSValue value, JSC::EncodedJSValue encodedOwner, const BunString* name)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto* spy = dynamicDowncast<JSMockFunction>(JSValue::decode(value));
+    JSValue owner = JSValue::decode(encodedOwner);
+    JSValue original;
+    unsigned attributes = 0;
+    if (!spy || !owner || !owner.isObject() || !spy->replacedOn(asObject(owner), Identifier::fromString(vm, name->toWTFString(BunString::ZeroCopy)).impl(), original, attributes))
+        return {};
+    auto* structure = globalObject->internalFieldTupleStructure();
+    // (owner, (storage, attributes)). The attributes are null where the spy replaced no property.
+    auto* replaced = InternalFieldTuple::create(vm, structure, original ? original : jsUndefined(), original ? jsNumber(attributes) : jsNull());
+    return JSValue::encode(InternalFieldTuple::create(vm, structure, owner, replaced));
+}
+
+// The storage and the attributes in a record of JSMock__spyRecord(), if the record is for `owner`. A test can put another object where the owner of `Date.now` is read.
+static InternalFieldTuple* replacedIn(JSValue record, JSValue owner)
+{
+    auto* fields = record ? dynamicDowncast<InternalFieldTuple>(record) : nullptr;
+    if (!fields || fields->getInternalField(0) != owner)
+        return nullptr;
+    return dynamicDowncast<InternalFieldTuple>(fields->getInternalField(1));
+}
+
+// The value in a record of JSMock__spyRecord(), or empty if the spy replaced an accessor or no property.
+extern "C" JSC::EncodedJSValue JSMock__valueOfSpyRecord(JSC::EncodedJSValue record, JSC::EncodedJSValue owner)
+{
+    auto* replaced = replacedIn(JSValue::decode(record), JSValue::decode(owner));
+    if (!replaced)
+        return {};
+    JSValue attributes = replaced->getInternalField(1);
+    if (attributes.isNull() || (attributes.asInt32() & PropertyAttribute::Accessor))
+        return {};
+    return JSValue::encode(replaced->getInternalField(0));
+}
+
+static bool isRestoredSpyOfAccessor(JSObject* half)
+{
+    if (auto* bound = half ? dynamicDowncast<JSBoundFunction>(half) : nullptr)
+        half = bound->boundThis().getObject();
+    auto* mock = half ? dynamicDowncast<JSMockFunction>(half) : nullptr;
+    return mock && mock->isRestoredSpy();
+}
+
+// Puts what a record of JSMock__spyRecord() has on `owner[name]`, if `expected` is there now. Runs no JS: the reads and stores are direct.
+extern "C" void JSMock__putSpyRecord(Zig::GlobalObject* globalObject, JSC::EncodedJSValue encodedOwner, const BunString* name, JSC::EncodedJSValue expected, JSC::EncodedJSValue record)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue ownerValue = JSValue::decode(encodedOwner);
+    auto* replaced = replacedIn(JSValue::decode(record), ownerValue);
+    if (!replaced)
+        return;
+    auto* owner = asObject(ownerValue);
+    auto key = Identifier::fromString(vm, name->toWTFString(BunString::ZeroCopy));
+    if (owner->getDirect(vm, key) != JSValue::decode(expected))
+        return;
+    JSValue storage = replaced->getInternalField(0);
+    JSValue attributes = replaced->getInternalField(1);
+    if (!attributes.isNull() && (attributes.asInt32() & PropertyAttribute::Accessor)) {
+        // The accessor of a spy on the getter or the setter that is restored too would read undefined. The property keeps what it has.
+        auto* accessor = uncheckedDowncast<GetterSetter>(storage);
+        if (isRestoredSpyOfAccessor(accessor->getter()) || isRestoredSpyOfAccessor(accessor->setter()))
+            return;
+    }
+    scope.release();
+    if (attributes.isNull())
+        JSCell::deleteProperty(owner, globalObject, key);
+    else
+        putOwnPropertyStorage(globalObject, owner, key, storage, attributes.asInt32(), false);
 }
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))

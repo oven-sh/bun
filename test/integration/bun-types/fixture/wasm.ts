@@ -1,3 +1,5 @@
+import { expectType } from "./utilities";
+
 async () => {
   // Fetch and compile a WebAssembly module
   const response = await fetch("module.wasm");
@@ -32,6 +34,20 @@ async () => {
   // Interact with WebAssembly memory
   const uint8Array = new Uint8Array(memory.buffer);
   uint8Array[0] = 1; // Modify memory
+
+  // A resizable buffer of the memory, and back to a fixed-length one. Each call returns what `buffer` then holds.
+  const growableMemory = new WebAssembly.Memory({ initial: 1, maximum: 2 });
+  const resizable = growableMemory.toResizableBuffer();
+  expectType(resizable).is<ArrayBuffer>();
+  resizable.resize(131072);
+  expectType(growableMemory.toFixedLengthBuffer()).is<typeof growableMemory.buffer>();
+  new Uint8Array(growableMemory.toFixedLengthBuffer()) satisfies Uint8Array<ArrayBuffer>;
+  // `Bun.WebAssembly.Memory` is Bun's own declaration. lib.dom does not override it.
+  const ofBun: Bun.WebAssembly.Memory = growableMemory;
+  expectType(ofBun.toResizableBuffer()).is<ArrayBuffer>();
+  expectType(ofBun.toFixedLengthBuffer()).is<ArrayBuffer>();
+  // @ts-expect-error - a module cannot import an object that only has `buffer` and `grow` (LinkError at run time)
+  WebAssembly.instantiate(module, { env: { memory: { buffer: new ArrayBuffer(65536), grow: (d: number) => d } } });
 
   // Use the WebAssembly Table
   table.set(0, instance.exports.exportedTableFunction);

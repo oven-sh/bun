@@ -828,6 +828,65 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  // tsc cannot check what the JSDoc of these two methods in wasm.d.ts says about
+  // the buffers. This check ties those sentences to the running binary.
+  describe("WebAssembly.Memory", () => {
+    test("toFixedLengthBuffer() and toResizableBuffer() do what their JSDoc says", () => {
+      const page = 65536;
+      const memory = new WebAssembly.Memory({ initial: 1, maximum: 3 });
+      const fixed = memory.buffer;
+
+      // `buffer` is already fixed-length: the call returns it and detaches nothing.
+      expect(memory.toFixedLengthBuffer()).toBe(fixed);
+      expect(fixed.detached).toBe(false);
+
+      // A resizable ArrayBuffer becomes `buffer`, and the call detaches the fixed-length buffer.
+      const resizable = memory.toResizableBuffer();
+      expect(resizable).toBeInstanceOf(ArrayBuffer);
+      expect(resizable.resizable).toBe(true);
+      expect(memory.buffer).toBe(resizable);
+      expect(fixed.detached).toBe(true);
+
+      // `buffer` is already resizable: the call returns it and detaches nothing.
+      expect(memory.toResizableBuffer()).toBe(resizable);
+      expect(resizable.detached).toBe(false);
+
+      // grow() does not detach the resizable buffer, and its byteLength follows the memory.
+      memory.grow(1);
+      expect(resizable.detached).toBe(false);
+      expect(resizable.byteLength).toBe(2 * page);
+
+      // resize() to a larger multiple of 65536 grows the memory.
+      resizable.resize(3 * page);
+      expect(memory.grow(0)).toBe(3);
+      expect(memory.buffer).toBe(resizable);
+
+      // A fixed-length ArrayBuffer becomes `buffer`, and the call detaches the resizable buffer.
+      const fixedAgain = memory.toFixedLengthBuffer();
+      expect(fixedAgain).toBeInstanceOf(ArrayBuffer);
+      expect(fixedAgain.resizable).toBe(false);
+      expect(memory.buffer).toBe(fixedAgain);
+      expect(resizable.detached).toBe(true);
+
+      // A shared memory returns a SharedArrayBuffer, which the declared type does not say.
+      const shared = new WebAssembly.Memory({ initial: 1, maximum: 2, shared: true });
+      const sharedFixed = shared.toFixedLengthBuffer() as unknown as SharedArrayBuffer;
+      expect(sharedFixed).toBeInstanceOf(SharedArrayBuffer);
+      expect(sharedFixed.growable).toBe(false);
+
+      const sharedGrowable = shared.toResizableBuffer() as unknown as SharedArrayBuffer;
+      expect(sharedGrowable).toBeInstanceOf(SharedArrayBuffer);
+      expect(sharedGrowable.growable).toBe(true);
+      expect(shared.buffer as unknown).toBe(sharedGrowable);
+
+      // Neither call detaches a buffer of a shared memory: each earlier buffer still reads the memory.
+      new Uint8Array(sharedGrowable)[0] = 7;
+      expect(new Uint8Array(sharedFixed)[0]).toBe(7);
+      shared.toFixedLengthBuffer();
+      expect(new Uint8Array(sharedGrowable)[0]).toBe(7);
+    });
+  });
+
   // Runs on debug builds too, same as the Bun.mmap block above.
   describe("TextDecoder", () => {
     test("accepts the encoding labels the runtime supports", async () => {

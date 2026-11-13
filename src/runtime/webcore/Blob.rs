@@ -432,14 +432,7 @@ impl BlobExt for Blob {
             let promise_value = handler.promise.value();
             promise_value.ensure_still_alive();
 
-            read_file::ReadFileUV::start::<Handler<F>>(
-                cx.global().bun_vm().event_loop(),
-                cx.context(),
-                self.store().expect("infallible: store present").clone(),
-                self.offset.get(),
-                self.size.get(),
-                handler,
-            );
+            read_file::ReadFileUV::start(self, read_file::ReadFileCompletionFns::of(handler), cx);
             return promise_value;
         }
 
@@ -602,14 +595,7 @@ impl BlobExt for Blob {
     ) {
         #[cfg(windows)]
         {
-            return read_file::ReadFileUV::start_with_ctx(
-                cx.global().bun_vm().event_loop(),
-                cx.context(),
-                self.store().expect("infallible: store present").clone(),
-                self.offset.get(),
-                self.size.get(),
-                read_file::ReadFileCompletionFns::of(ctx),
-            );
+            read_file::ReadFileUV::start(self, read_file::ReadFileCompletionFns::of(ctx), cx);
         }
         #[cfg(not(windows))]
         {

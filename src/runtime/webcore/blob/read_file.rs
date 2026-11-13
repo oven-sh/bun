@@ -1008,36 +1008,14 @@ impl FileCloser for ReadFileUV {
 
 #[cfg(windows)]
 impl ReadFileUV {
-    /// Typed entry: `C` supplies run/cancel for the erased completion.
-    pub(crate) fn start<C: ReadFileCompletion + 'static>(
-        event_loop: &'static EventLoop,
-        context: &bun_jsc::ScriptExecutionContext,
-        store: RefPtr<Store>,
-        off: SizeType,
-        max_len: SizeType,
-        handler: Box<C>,
-    ) {
-        Self::start_with_ctx(
-            event_loop,
-            context,
-            store,
-            off,
-            max_len,
-            ReadFileCompletionFns::of(handler),
-        )
-    }
-
-    /// Raw entry — caller already has the type-erased `(fn, *anyopaque)` pair
-    /// Shares the body with `start`.
-    pub(crate) fn start_with_ctx(
-        event_loop: &'static EventLoop,
-        context: &bun_jsc::ScriptExecutionContext,
-        store: RefPtr<Store>,
-        off: SizeType,
-        max_len: SizeType,
+    pub(crate) fn start(
+        blob: &Blob,
         completion: ReadFileCompletionFns,
+        cx: &bun_jsc::JsThread<'_>,
     ) {
         log!("ReadFileUV.start");
+        let event_loop = cx.global().bun_vm().event_loop();
+        let store = blob.store().expect("infallible: store present").clone();
         let file_store = store.data.as_file().clone();
         let this = Box::new(ReadFileUV {
             // Projected through the helper to avoid materializing a
@@ -1047,8 +1025,8 @@ impl ReadFileUV {
             file_store,
             byte_store: ByteStore::default(),
             store, // store.ref() — Arc clone owned here
-            offset: off,
-            max_length: max_len,
+            offset: blob.offset.get(),
+            max_length: blob.size.get(),
             total_size: MAX_SIZE,
             opened_fd: Fd::INVALID,
             read_len: 0,
@@ -1060,7 +1038,7 @@ impl ReadFileUV {
             errno: None,
             completion: Some(completion),
             is_regular_file: false,
-            context: context.id(),
+            context: cx.context().id(),
             req: bun_core::ffi::zeroed(),
             open_callback: Self::on_file_open,
         });

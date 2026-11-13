@@ -579,12 +579,8 @@ impl<'a> Resolver<'a> {
     ///
     /// `opts` and `log` are supplied by the caller (the worker projects a
     /// fresh `BundleOptions` subset and arena-allocates its own `Log`).
-    ///
-    /// # Safety
-    /// `env_loader()` returns `&'a Loader` and the caller picks `'a`: the
-    /// loader that `from.env_loader` points to must outlive `'a`.
-    pub unsafe fn for_worker(
-        from: &Resolver<'_>,
+    pub fn for_worker(
+        from: &Resolver<'a>,
         log: NonNull<bun_ast::Log>,
         mut opts: options::BundleOptions,
     ) -> Resolver<'a> {

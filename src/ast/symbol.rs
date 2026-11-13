@@ -629,8 +629,6 @@ impl Map {
     // Takes ownership of `list` and boxes it into a one-element NestedList.
     // PERF: one extra allocation — profile if needed (single caller is the
     // printer one-shot, cold).
-    // OWNERSHIP: returned `Map` is *owned*; the `Vec<List>` allocated here leaks if a
-    // consumer parks it in `ManuallyDrop` (e.g. renamer.rs `MinifyRenamer.symbols`).
     pub fn init_with_one_list(list: Vec<Symbol>) -> Map {
         Self::init_list(vec![list])
     }

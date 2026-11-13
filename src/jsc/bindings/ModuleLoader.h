@@ -115,6 +115,14 @@ JSC::JSObject* appendNativeModuleExports(Zig::GlobalObject*, uint32_t registryID
 
 JSC::JSObject* createAsyncModuleRequiredError(JSC::JSGlobalObject*, const WTF::String& specifier);
 
+// Calls `extension`, a function stored in `require.extensions`, to load `target`.
+void evaluateCommonJSCustomExtension(
+    Zig::GlobalObject* globalObject,
+    JSCommonJSModule* target,
+    String filename,
+    JSValue filenameValue,
+    JSValue extension);
+
 JSValue fetchCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSCommonJSModule* moduleObject,

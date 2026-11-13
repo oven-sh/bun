@@ -142,6 +142,11 @@ extern "C" void NodeModuleModule__onRequireExtensionModify(
     BunLoaderType loader,
     JSC::JSValue value);
 
+extern "C" bool Bun__hasStoredExtensionHandler(Zig::GlobalObject* globalObject)
+{
+    return globalObject->hasStoredExtensionHandler;
+}
+
 extern "C" void NodeModuleModule__onRequireExtensionModifyNonFunction(
     Zig::GlobalObject* globalObject,
     const BunString* key);
@@ -173,6 +178,8 @@ void onAssign(Zig::GlobalObject* globalObject, JSC::PropertyName propertyName, J
             loader = BunLoaderTypeTS;
         }
     }
+    if (loader == BunLoaderTypeNone)
+        globalObject->hasStoredExtensionHandler = true;
     NodeModuleModule__onRequireExtensionModify(globalObject, &ext, loader, value);
 }
 
@@ -248,6 +255,18 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
         if (hasRun)
             return JSC::JSValue::encode(jsUndefined());
     }
+    // A loader of ES modules fetched the file, and the function stored for the file hands the module to this loader:
+    // `sourceCode` is the file's text, transpiled for the fetch.
+    JSValue ownFilename = mod->filename();
+    bool hasFetchedText = mod->extensionsLoad == JSCommonJSModule::ExtensionsLoad::InHandler && !mod->sourceCode.isNull()
+        && loaderType != BunLoaderTypeJSON && ownFilename.isString() && asString(ownFilename)->tryGetValue().data == specifierWtfString;
+    // An overridden `_compile` or wrapper gets its text from a new transpile, which takes the place of this one.
+    if (hasFetchedText && !mod->m_overriddenCompile && !global->hasOverriddenModuleWrapper) {
+        mod->evaluateFetchedSource(global);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSC::JSValue::encode(jsUndefined());
+    }
+    JSC::SourceCode fetchedText = hasFetchedText ? std::exchange(mod->sourceCode, {}) : JSC::SourceCode();
     BunString specifierBunString = Bun::toString(specifierWtfString);
     BunString empty = BunStringEmpty;
     JSC::VM& vm = globalObject->vm();
@@ -268,6 +287,18 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
         scope);
     RETURN_IF_EXCEPTION(scope, {});
     if (result == jsNumber(-1)) {
+        // The loader of ES modules is fetching this file as a CommonJS module, so it cannot load it as an ES module now.
+        if (hasFetchedText) [[unlikely]] {
+            mod->sourceCode = WTF::move(fetchedText);
+            mod->evaluateFetchedSource(global);
+            RETURN_IF_EXCEPTION(scope, {});
+            return JSC::JSValue::encode(jsUndefined());
+        }
+        // The loader of ES modules has the text of the entry point, and runs it when it imports the file.
+        if (mod->extensionsLoad == JSCommonJSModule::ExtensionsLoad::InHandlerForEntryPoint) [[unlikely]] {
+            mod->extensionsLoad = JSCommonJSModule::ExtensionsLoad::LeftToESModuleLoader;
+            return JSC::JSValue::encode(jsUndefined());
+        }
         // ESM
         JSC::JSFunction* requireESM = global->requireESMFromHijackedExtension();
         JSC::MarkedArgumentBuffer args;

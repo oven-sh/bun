@@ -3004,6 +3004,10 @@ pub struct RuntimeHooks {
     /// (resolver failures / `ModuleNotFound`).
     pub load_preloads:
         unsafe fn(vm: *mut VirtualMachine) -> crate::CrateResult<*mut JSInternalPromise>,
+    /// Whether the entry point or preload at `path` loads through a function of
+    /// `require.extensions`. The rule reads the loaders and the package type, which `bun_runtime`
+    /// knows.
+    pub is_loaded_by_extension_handler: unsafe fn(vm: *mut VirtualMachine, path: &[u8]) -> bool,
     /// `ensureDebugger(block_until_connected)` — no-op when no debugger.
     pub ensure_debugger: unsafe fn(vm: *mut VirtualMachine, block_until_connected: bool),
     /// `eventLoop().autoTick()` — needs `Timer::All` for the timeout calc.
@@ -3357,6 +3361,11 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         argv1: JSValue,
     ) -> JSValue;
+    safe fn Bun__loadFileByExtensionHandler(
+        global: &JSGlobalObject,
+        path: &bun_core::String,
+        is_main: bool,
+    ) -> bool;
     safe fn JSC__JSInternalPromise__resolvedPromise(
         global: &JSGlobalObject,
         value: JSValue,
@@ -3861,6 +3870,16 @@ impl VirtualMachine {
         // Preloads (evaluated above, synchronously) are not the entry: only
         // module evaluations from here on mark the entry graph as executing.
         self.entry_evaluation_started = false;
+        if self.commonjs_custom_extensions.len() > 0
+            && self.main_entry_point == MainEntryPoint::File
+            && self.standalone_module_graph.is_none()
+            && !self.transpiler.options.disable_transpilation
+            && let Some(main) = self.main
+            && let Some(rejected) = self.load_by_extension_handler(main.slice(), true)?
+        {
+            self.set_pending_internal_promise(Some(rejected));
+            return Ok(rejected);
+        }
         let builtin = match self.main_entry_point {
             MainEntryPoint::File | MainEntryPoint::Compiled | MainEntryPoint::OutsideExecutable => {
                 None
@@ -3908,6 +3927,58 @@ impl VirtualMachine {
 
         self.set_pending_internal_promise(Some(promise));
         Ok(promise)
+    }
+
+    /// Node's CommonJS loader loads the entry point and each `-r` preload, so a function stored
+    /// in `require.extensions` gets those files. Here such a file loads as `require()` loads a
+    /// file, before the ES module loader imports it. Returns the rejected promise of a file that
+    /// threw. `is_main`: the entry point, not a preload.
+    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/run_main.js#L144
+    #[cold]
+    pub fn load_by_extension_handler(
+        &mut self,
+        path: &[u8],
+        is_main: bool,
+    ) -> crate::CrateResult<Option<*mut JSInternalPromise>> {
+        let Some(hooks) = runtime_hooks() else {
+            return Ok(None);
+        };
+        // A stop was requested (worker terminate()/exit) while a preload ran: load nothing more.
+        if !self.script_allowed() {
+            return Ok(None);
+        }
+        // SAFETY: hook contract.
+        if !unsafe { (hooks.is_loaded_by_extension_handler)(self, path) } {
+            return Ok(None);
+        }
+        // The transpiler sets this when it reads the main file. Here the function reads it.
+        let had_loaded = self.has_loaded;
+        self.has_loaded |= is_main;
+        self.add_to_watcher_if_needed(path);
+        let global = self.global();
+        let key = bun_core::StringView::from_bytes(path);
+        match jsc::from_js_host_call_generic(global, || {
+            Bun__loadFileByExtensionHandler(global, &key, is_main)
+        }) {
+            Ok(true) => Ok(None),
+            // A preload has loaded the file: the import that follows finds it, as before.
+            Ok(false) => {
+                self.has_loaded = had_loaded;
+                Ok(None)
+            }
+            Err(err) => {
+                if is_main {
+                    // As in Node, what a CommonJS entry point throws is an uncaught exception.
+                    self.entry_point_result.evaluated_as_cjs = true;
+                }
+                let rejected =
+                    crate::JSPromise::rejected_promise_with_caught_exception(global, err)?;
+                // Whoever loads the file reports its promise, so it is not for the rejection
+                // tracker as well.
+                rejected.set_handled();
+                Ok(Some(core::ptr::from_mut(rejected).cast()))
+            }
+        }
     }
 
     /// `loadEntryPoint(entry_path)` — `reload_entry_point` + spin until the
@@ -6188,6 +6259,13 @@ impl VirtualMachine {
     #[unsafe(export_name = "Bun__VM__isMainModule")]
     pub extern "C" fn is_main_module(&self, key: &bun_core::String) -> bool {
         self.main().is_some_and(|main| key.eql_utf8(main))
+    }
+
+    /// Drops the source map that the transpiler saved for the file at `path`: a function of
+    /// `require.extensions` compiles other text for the file.
+    #[unsafe(export_name = "Bun__VM__removeTranspiledSourceMap")]
+    pub extern "C" fn remove_transpiled_source_map(&mut self, path: &bun_core::String) {
+        self.source_mappings.remove_mappings(&path.to_utf8());
     }
 
     /// Whether `bun test` transpiles `key` as an entry point when it's loaded now.

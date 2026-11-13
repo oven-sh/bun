@@ -166,7 +166,19 @@ public:
     void setExportsObject(JSC::JSValue exportsObject);
     JSValue filename() { return m_filename.get(); }
 
-    bool load(JSC::VM& vm, Zig::GlobalObject* globalObject);
+    // Runs a module that a loader made and has not run: a file that a loader of ES modules fetched, and a module
+    // that require() finds in the require cache before that loader ran it.
+    bool load(JSC::VM& vm, Zig::GlobalObject* globalObject)
+    {
+        return hasEvaluated || loadUnevaluated(vm, globalObject);
+    }
+    bool loadUnevaluated(JSC::VM&, Zig::GlobalObject*);
+    // The part of load() that a function stored in `require.extensions` does. Returns whether one loaded the module, or is loading it.
+    bool loadByExtensionHandler(JSC::VM&, Zig::GlobalObject*);
+    // Runs `sourceCode`, which a loader of ES modules left for load(). A throw leaves the module in the require cache, as the default loader of require() does.
+    void evaluateFetchedSource(Zig::GlobalObject*);
+    // Drops `sourceCode` and the source map of it: a function stored in `require.extensions` loads the module another way.
+    void discardFetchedSource(Zig::GlobalObject*);
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
@@ -183,6 +195,21 @@ public:
 
     bool hasEvaluated = false;
 
+    // Where the module is on its way through a function stored in `require.extensions`. require() asks for that function
+    // before it reads the file, so its modules stay at None.
+    enum class ExtensionsLoad : uint8_t {
+        None,
+        // A loader of ES modules fetched the file: load() hands the module to the function stored for the file, if there is one.
+        Pending,
+        // That function is running. `sourceCode` is what Bun transpiled for the fetch: the default loader runs it.
+        InHandler,
+        // The function is running for the entry point or a preload, before a loader of ES modules fetches the file.
+        InHandlerForEntryPoint,
+        // The default loader found that such a file is an ES module, and left it to the loader of ES modules.
+        LeftToESModuleLoader,
+    };
+    ExtensionsLoad extensionsLoad { ExtensionsLoad::None };
+
     JSCommonJSModule(JSC::VM& vm, JSC::Structure* structure, JSC::JSString* id, JSC::JSValue filename, JSC::JSString* dirname)
         : Base(vm, structure)
         , m_id(id, JSC::WriteBarrierEarlyInit)
@@ -191,6 +218,9 @@ public:
     {
     }
 };
+
+// `extensionsLoad` lies in the padding behind `hasEvaluated`. A field that grows the cell grows every CommonJS module.
+static_assert(sizeof(JSCommonJSModule) == 160);
 
 JSC::Structure* createCommonJSModuleStructure(
     Zig::GlobalObject* globalObject);
@@ -202,6 +232,14 @@ JSC::JSValue createRequireCacheObject(JSC::JSGlobalObject*, JSC::JSMap* requireM
 // Returns `graph`'s `require.cache` object, created on first use, or the global object's if `graph` is null.
 JSC::JSValue requireCacheOf(Zig::GlobalObject*, JSModuleGraph* graph, JSCommonJSModule* owner);
 
+// Whether JSCommonJSModule::load() asks `require.extensions` for a module that a loader of ES modules made, as require() does for
+// a file. A producer whose text is not the source text of the file at the key (a plugin, an executable, a file that Bun built)
+// passes NotAsked.
+enum class ExtensionHandler : bool {
+    Asked,
+    NotAsked,
+};
+
 // `graph`: the Bun.ModuleGraph whose loader is importing the file (the module goes in
 // its require cache), or null for the global object's loader.
 std::optional<JSC::SourceCode> createCommonJSModule(
@@ -209,14 +247,16 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     JSModuleGraph* graph,
     JSC::JSString* specifierValue,
     ResolvedSource& source,
-    bool isBuiltIn);
+    bool isBuiltIn,
+    ExtensionHandler = ExtensionHandler::Asked);
 
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSModuleGraph* graph,
     JSC::JSString* specifierValue,
     Ref<JSC::SourceProvider>&& provider,
-    bool ignoreESModuleAnnotation);
+    bool ignoreESModuleAnnotation,
+    ExtensionHandler = ExtensionHandler::Asked);
 
 inline std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
@@ -226,6 +266,13 @@ inline std::optional<JSC::SourceCode> createCommonJSModule(
 {
     return createCommonJSModule(globalObject, graph, specifierValue, source, false);
 }
+
+// For a file that a loader of ES modules fetched and Bun could not transpile: when `require.extensions` holds a function for the
+// file, the source of a module that load() hands to that function. Else nothing, and the fetch fails as it did.
+std::optional<JSC::SourceCode> createCommonJSModuleForExtensionHandler(
+    Zig::GlobalObject* globalObject,
+    JSModuleGraph* graph,
+    JSC::JSString* specifierValue);
 
 class RequireResolveFunctionPrototype final : public JSC::JSNonFinalObject {
 public:

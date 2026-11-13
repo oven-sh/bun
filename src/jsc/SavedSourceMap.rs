@@ -141,6 +141,32 @@ impl SavedSourceMap {
         }
         self.unlock();
     }
+
+    /// Drops the map that the runtime transpiler saved for `path`, when the text it
+    /// printed for the file will not run. A registered provider's entry stays.
+    pub fn remove_mappings(&mut self, path: &[u8]) {
+        self.lock();
+        let key = hash(path);
+        if let Some(&ptr) = self.map.get(&key) {
+            let old_value = Value::from(Some(ptr));
+            let is_of_transpiler = if let Some(parsed) = old_value.get::<ParsedSourceMap>() {
+                // `get_with_content` wrapped the transpiler's blob.
+                // SAFETY: `parsed` was stored by us and is live while in the table.
+                unsafe { (*parsed).underlying_provider }
+                    .provider()
+                    .is_none()
+            } else {
+                old_value.get::<InternalSourceMap>().is_some()
+            };
+            if is_of_transpiler {
+                self.map.remove(&key);
+                // SAFETY: `old_value` was stored by us; the table's ownership of
+                // it ends here.
+                unsafe { Self::release_value(old_value) };
+            }
+        }
+        self.unlock();
+    }
 }
 
 // Keys are

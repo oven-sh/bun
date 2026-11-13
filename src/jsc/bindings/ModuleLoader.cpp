@@ -599,6 +599,24 @@ extern "C" void Bun__onFulfillAsyncModule(
     Bun::JSModuleGraph* graph = moduleLoader ? Bun::moduleGraphOfLoader(globalObject, uncheckedDowncast<JSC::JSModuleLoader>(moduleLoader)) : nullptr;
 
     if (!res->success) {
+        // As in fetchESMSourceCode.
+        if (globalObject->hasStoredExtensionHandler) [[unlikely]] {
+            auto* key = Bun::toJS(globalObject, *specifier);
+            auto created = scope.exception() ? std::nullopt : Bun::createCommonJSModuleForExtensionHandler(globalObject, graph, key);
+            if (auto* exception = scope.exception()) [[unlikely]] {
+                if (!vm.isTerminationException(exception)) {
+                    (void)scope.tryClearException();
+                    promise->reject(vm, exception);
+                    scope.assertNoExceptionExceptTermination();
+                }
+                return;
+            }
+            if (created.has_value()) {
+                promise->fulfill(vm, JSSourceCode::create(vm, WTF::move(created.value())));
+                scope.assertNoExceptionExceptTermination();
+                return;
+            }
+        }
         RELEASE_AND_RETURN(scope, promise->reject(vm, JSValue::decode(res->result.err)));
     }
 
@@ -1279,7 +1297,7 @@ static JSValue fetchESMSourceCode(
 
         // This can happen if it's a `bun build --compile`'d CommonJS file
         if (res->result.value.isCommonJSModule) {
-            auto created = Bun::createCommonJSModule(globalObject, graph, specifierJS, res->result.value);
+            auto created = Bun::createCommonJSModule(globalObject, graph, specifierJS, res->result.value, false, Bun::ExtensionHandler::NotAsked);
             EXCEPTION_ASSERT(created.has_value() == !scope.exception());
             if (created.has_value()) {
                 RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(created.value()))));
@@ -1379,7 +1397,7 @@ static JSValue fetchESMSourceCode(
             // affects CJS evaluation, so don't serve a cached Program-type provider
             // when one is active in this global — fall through to re-transpile.
             if (!globalObject->hasOverriddenModuleWrapper) {
-                auto created = Bun::createCommonJSModule(globalObject, graph, specifierJS, Ref(*cached), cached->m_tag == ResolvedSourceTagPackageJSONTypeModule);
+                auto created = Bun::createCommonJSModule(globalObject, graph, specifierJS, Ref(*cached), cached->m_tag == ResolvedSourceTagPackageJSONTypeModule, pluginContents || cached->m_alreadyBundled ? Bun::ExtensionHandler::NotAsked : Bun::ExtensionHandler::Asked);
                 EXCEPTION_ASSERT(created.has_value() == !scope.exception());
                 if (created.has_value()) {
                     RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(created.value()))));
@@ -1412,9 +1430,10 @@ static JSValue fetchESMSourceCode(
 
     if (res->success && res->result.value.isCommonJSModule) {
         auto provider = commonJSProviderOfPluginContents(globalObject, specifier->toWTFString(BunString::ZeroCopy), typeAttribute, pluginContents, res->result.value);
+        // A plugin's text is not the file's, and a `type` attribute names the loader: neither is for a function of `require.extensions`.
         auto created = provider
-            ? Bun::createCommonJSModule(globalObject, graph, specifierJS, provider.releaseNonNull(), res->result.value.tag == ResolvedSourceTagPackageJSONTypeModule)
-            : Bun::createCommonJSModule(globalObject, graph, specifierJS, res->result.value);
+            ? Bun::createCommonJSModule(globalObject, graph, specifierJS, provider.releaseNonNull(), res->result.value.tag == ResolvedSourceTagPackageJSONTypeModule, Bun::ExtensionHandler::NotAsked)
+            : Bun::createCommonJSModule(globalObject, graph, specifierJS, res->result.value, false, pluginContents || typeAttribute ? Bun::ExtensionHandler::NotAsked : Bun::ExtensionHandler::Asked);
         EXCEPTION_ASSERT(created.has_value() == !scope.exception());
         if (created.has_value()) {
             RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(created.value()))));
@@ -1431,6 +1450,12 @@ static JSValue fetchESMSourceCode(
     }
 
     if (!res->success) {
+        // Bun could not transpile the file. A function stored in `require.extensions` for the file loads it, as for require().
+        if (globalObject->hasStoredExtensionHandler && !pluginContents && !typeAttribute) [[unlikely]] {
+            auto created = Bun::createCommonJSModuleForExtensionHandler(globalObject, graph, specifierJS);
+            if (created.has_value() || scope.exception())
+                RELEASE_AND_RETURN(scope, rejectOrResolve(created.has_value() ? JSSourceCode::create(vm, WTF::move(created.value())) : nullptr));
+        }
         throwException(scope, res->result.err, globalObject);
         auto* exception = scope.exception();
         (void)scope.tryClearException();

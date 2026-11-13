@@ -900,6 +900,14 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
                 (*vm).transpiler.options.test_file_imports_vitest =
                     crate::test_runner::jest::compiled_entry_point_imports_vitest(path_text);
             }
+            // An earlier preload stored a function in `require.extensions`: as in Node, it gets this one.
+            // SAFETY: per fn contract.
+            if unsafe { (*vm).commonjs_custom_extensions.len() > 0 }
+                && let Some(rejected) =
+                    unsafe { (*vm).load_by_extension_handler(path_text, false) }?
+            {
+                return Ok(rejected);
+            }
             bun_core::StringView::from_bytes(path_text)
         };
         // Note: use `import_ptr` (not `import`) so the `*mut` we store in
@@ -1591,6 +1599,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     deinit_runtime_state,
     generate_entry_point,
     load_preloads,
+    is_loaded_by_extension_handler,
     ensure_debugger,
     auto_tick,
     auto_tick_active,
@@ -4307,6 +4316,87 @@ pub(crate) extern "C" fn Bun__isESModuleByExtensionOrPackageType(
     // SAFETY: `bun_vm_ptr()` is the live per-thread VM.
     let package_json = unsafe { package_json_of(global.bun_vm_ptr(), &path) };
     module_type_of(&path, package_json) == ModuleType::Esm
+}
+
+/// The function that `require.extensions` holds for the file at `path`, where `require()` would
+/// call it: the rule of the two lookups in [`transpile_file`], for a file that reaches its loader
+/// another way (an import, the entry point). `None`: Bun's loader loads the file. As in Node, no
+/// function is asked for an ES module by its name.
+///
+/// # Safety
+/// `jsc_vm` is the live per-thread VM.
+unsafe fn extension_handler_for_file(jsc_vm: *mut VirtualMachine, path: &[u8]) -> Option<JSValue> {
+    use bun_jsc::node_module_module::{CustomLoader, find_longest_registered_extension};
+    unsafe extern "C" {
+        safe fn Bun__hasStoredExtensionHandler(global: &JSGlobalObject) -> bool;
+    }
+    let fs_path = Fs::Path::init(path);
+    let handler = {
+        // SAFETY: per fn contract.
+        let vm = unsafe { &*jsc_vm };
+        // The table outlives a global object of `bun test --isolate`: until this one stores a
+        // function, none is asked.
+        if vm.commonjs_custom_extensions.len() == 0
+            || !Bun__hasStoredExtensionHandler(vm.global())
+            || !bun_paths::is_absolute(path)
+        {
+            return None;
+        }
+        // `bun test` gives a file the names of the test runner when it transpiles the file.
+        if vm.transpiler.options.rewrite_jest_for_tests {
+            return None;
+        }
+        // Once an extension that Bun has a loader for is stored, `require()` asks for every file.
+        // Until then it asks for a file that no loader of Bun takes.
+        if vm.has_mutated_built_in_extensions == 0
+            && (fs_path.name().ext.is_empty()
+                || loader_for_path(&fs_path, &vm.transpiler.options.loaders).is_some())
+        {
+            return None;
+        }
+        let CustomLoader::Custom(handler) = find_longest_registered_extension(vm, path)? else {
+            return None;
+        };
+        handler.get()
+    };
+    // SAFETY: per fn contract.
+    if module_type_of(&fs_path, unsafe { package_json_of(jsc_vm, &fs_path) }) == ModuleType::Esm {
+        return None;
+    }
+    Some(handler)
+}
+
+/// Whether the entry point or preload at `path` loads through a function of `require.extensions`,
+/// before anything reads the file. A file that Bun built does not: its text is a module wrapper,
+/// which `module._compile` would wrap again. (For an import, the fetch has seen the pragma.)
+///
+/// # Safety
+/// `jsc_vm` is the live per-thread VM.
+unsafe fn is_loaded_by_extension_handler(jsc_vm: *mut VirtualMachine, path: &[u8]) -> bool {
+    // SAFETY: per fn contract.
+    if unsafe { extension_handler_for_file(jsc_vm, path) }.is_none() {
+        return false;
+    }
+    let mut head = [0u8; 512];
+    let Ok(len) = bun_sys::File::openat(bun_sys::Fd::cwd(), path, bun_sys::O::RDONLY, 0)
+        .and_then(|file| file.read(&mut head))
+    else {
+        return true;
+    };
+    let head = &head[..len];
+    let head = head.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(head);
+    bun_js_parser::Parser::has_bun_pragma(head, head.starts_with(b"#!")).is_none()
+}
+
+/// C++ entry point for [`extension_handler_for_file`]. Empty: Bun's loader loads the file.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__extensionHandlerForFile(
+    global: &JSGlobalObject,
+    path: &bun_core::String,
+) -> JSValue {
+    let path = path.to_utf8();
+    // SAFETY: `bun_vm_ptr()` is the live per-thread VM.
+    unsafe { extension_handler_for_file(global.bun_vm_ptr(), path.slice()) }.unwrap_or_default()
 }
 
 thread_local! {

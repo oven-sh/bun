@@ -415,8 +415,11 @@ declare module "bun" {
     ): Promise<string[] | undefined>;
     $globScanSync(options?: Parameters<Glob["$globScan"]>[0]): string[] | undefined;
     match(path: string): boolean;
-    /** `match` as Node's `path.matchesGlob` and `fs.watch` `ignore` match: minimatch with the options Node passes. */
-    $globMatchNode(path: string): boolean;
+    /**
+     * `match` as Node's `path.matchesGlob` and `fs.watch` `ignore` match: minimatch with the options Node passes.
+     * `windows` is minimatch's `platform: "win32"`.
+     */
+    $globMatchNode(path: string, windows: boolean): boolean;
     // src/js/builtins/Glob.ts
     scan(options?: Parameters<Glob["$globScan"]>[0]): AsyncIterableIterator<string>;
     scanSync(options?: Parameters<Glob["$globScan"]>[0]): IterableIterator<string>;

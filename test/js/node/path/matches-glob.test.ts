@@ -206,6 +206,45 @@ describe("path.matchesGlob(path, glob) matches as minimatch does for Node", () =
     });
   });
 
+  describe("the rest of minimatch's `optimizationLevel: 2` and of its reading of a pattern", () => {
+    it.each([
+      // line break
+      ["//server/share/file.txt", "//server/share/*.txt", true],
+      ["/", "", false],
+      ["a/..", "", false],
+      ["./", "", false],
+      ["a/b", "src/../**", false],
+      [".x", "src/../**", false],
+      ["a/b", "a/[.]/b", false],
+      ["a/./b", "a/[.]/b", false],
+      ["x(y/z", "x(y/./z", true],
+      ["x(y/./z", "x(y/./z", true],
+      ["a/b/c", "a/b/../../**/c", false],
+      ["a" + "/".repeat(5000) + "b", "a/b", true],
+      ["src/a.js", "src\\*.js", true],
+      ["a/b", "{a,b}/../b", false],
+      ["a/c", "{a,b/..}/c", true],
+    ])("path '%s' and pattern '%s' answer %p", (pathname, glob, expected) => {
+      expect(path.posix.matchesGlob(pathname, glob)).toBe(expected);
+      expect(path.win32.matchesGlob(pathname, glob)).toBe(expected);
+    });
+  });
+
+  // For the win32 flavour only, `\\` in the path is a separator, and a drive letter stays in front of `..`.
+  it.each([
+    // line break
+    ["a\\b", "a/b", true, false],
+    ["sub\\file.tmp", "sub/*.tmp", true, false],
+    ["\\\\server\\share\\file.txt", "\\\\server\\share\\*.txt", true, false],
+    ["C:/../file", "file", false, true],
+    ["C:/../file", "C:/file", false, false],
+    ["C:/a/../file", "C:/file", true, true],
+    ["c:/x/../../y", "y", false, true],
+  ])("path '%s' and pattern '%s' answer %p for win32 and %p for posix", (pathname, glob, win32, posix) => {
+    expect(path.win32.matchesGlob(pathname, glob)).toBe(win32);
+    expect(path.posix.matchesGlob(pathname, glob)).toBe(posix);
+  });
+
   it.each([
     // line break
     ["a\\.d\\two.css", "**\\*.css", false],

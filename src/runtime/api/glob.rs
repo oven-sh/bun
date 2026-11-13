@@ -18,8 +18,8 @@ pub(crate) struct Glob {
     /// An ASCII pattern is the JavaScript string's own buffer, not a copy.
     pattern: bun_core::Utf8Bytes<'static>,
     shape: bun_glob::matcher::Shape,
-    /// The pattern as minimatch reads it for Node, made at the first [`Glob::match_node`].
-    node: OnceCell<Box<Minimatch>>,
+    /// The pattern as minimatch reads it for Node, made at the first [`Glob::match_node`]: posix, then win32.
+    node: [OnceCell<Box<Minimatch>>; 2],
 }
 
 pub(crate) enum ScanError<'a> {
@@ -459,7 +459,7 @@ impl Glob {
         Glob {
             shape: bun_glob::matcher::Shape::of(pattern.slice()),
             pattern,
-            node: OnceCell::new(),
+            node: [OnceCell::new(), OnceCell::new()],
         }
     }
 
@@ -474,10 +474,11 @@ impl Glob {
     }
 
     /// `match` as Node's `path.matchesGlob` and the `ignore` of `fs.watch` match: minimatch with the options Node
-    /// passes. `*` and `**` don't match a name that starts with `.`, a leading `!` and `#` are characters, and `.` and
-    /// `x/..` segments of the path collapse. `str` uses `/` as its separator.
-    pub(crate) fn match_node<'a>(&self, str: &'a [u8]) -> bool {
-        self.node
+    /// passes. `*` and `**` don't match a name that starts with `.`, a leading `!` and `#` are characters, `\` in the
+    /// pattern is a separator, and `.` and `x/..` segments of the path collapse. `str` uses `/` as its separator.
+    /// `windows` is minimatch's `platform: "win32"`: `path.win32`, and `fs.watch` on Windows.
+    pub(crate) fn match_node<'a>(&self, str: &'a [u8], windows: bool) -> bool {
+        self.node[usize::from(windows)]
             .get_or_init(|| {
                 Box::new(Minimatch::with(
                     self.pattern.slice(),
@@ -485,6 +486,8 @@ impl Glob {
                         nonegate: true,
                         nocomment: true,
                         optimization_level_2: true,
+                        windows_paths_no_escape: true,
+                        is_windows: windows,
                         ..MinimatchOptions::default()
                     },
                 ))

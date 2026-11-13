@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/path.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 dcdde3319f079d1ba65647f6759c4b9efb738e97e76eed7e31ce7f52d5d429aa.
+// Written against that file with the SHA-256 565d986625b3f48ecf00cb36f2062be340002df6aca03a1dd27038706151000e.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:path"
@@ -91,8 +91,7 @@ posix.posix = posix;
 type Glob = import("bun").Glob;
 
 // the most-recently used glob is memoized in case `matchesGlob` is called in a
-// loop with the same pattern. Node reads `\` in the pattern as `/` for both flavours (minimatch's
-// `windowsPathsNoEscape`), so the memo can be shared by them.
+// loop with the same pattern. The glob matches for both flavours, so they share the memo.
 let prevGlob: Glob | undefined;
 let prevPattern: string | undefined;
 // What validateString() of internal/validators does. That module would keep node:url and util.inspect in every executable that imports node:path.
@@ -108,7 +107,6 @@ function matchesGlob(isWindows: boolean, path: string, pattern: string) {
   let glob: Glob;
 
   validateString(path, "path");
-  if (isWindows) path = path.replaceAll("\\", "/");
 
   if (prevGlob) {
     $assert(prevPattern !== undefined);
@@ -116,16 +114,16 @@ function matchesGlob(isWindows: boolean, path: string, pattern: string) {
       glob = prevGlob;
     } else {
       validateString(pattern, "pattern");
-      glob = prevGlob = new Bun.Glob(pattern.replaceAll("\\", "/"));
+      glob = prevGlob = new Bun.Glob(pattern);
       prevPattern = pattern;
     }
   } else {
     validateString(pattern, "pattern");
-    glob = prevGlob = new Bun.Glob(pattern.replaceAll("\\", "/"));
+    glob = prevGlob = new Bun.Glob(pattern);
     prevPattern = pattern;
   }
 
-  return glob.$globMatchNode(path);
+  return glob.$globMatchNode(path, isWindows);
 }
 
 posix.matchesGlob = matchesGlob.bind(null, false);

@@ -216,7 +216,7 @@ impl Pattern {
         };
         Pattern {
             matcher: bun_glob::Pattern::with_dots(
-                &crate::glob::from_minimatch(&normalized[bangs..], false),
+                &crate::glob::from_minimatch(&normalized[bangs..], &crate::glob::MINIMATCH_3),
                 bun_glob::Dots::SkipTraversal,
             ),
             is_negated: bangs > 0,

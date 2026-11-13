@@ -82,8 +82,7 @@ posix.posix = posix;
 type Glob = import("bun").Glob;
 
 // the most-recently used glob is memoized in case `matchesGlob` is called in a
-// loop with the same pattern. Node reads `\` in the pattern as `/` for both flavours (minimatch's
-// `windowsPathsNoEscape`), so the memo can be shared by them.
+// loop with the same pattern. The glob matches for both flavours, so they share the memo.
 let prevGlob: Glob | undefined;
 let prevPattern: string | undefined;
 function matchesGlob(isWindows: boolean, path: string, pattern: string) {
@@ -91,7 +90,6 @@ function matchesGlob(isWindows: boolean, path: string, pattern: string) {
   let glob: Glob;
 
   validateString(path, "path");
-  if (isWindows) path = path.replaceAll("\\", "/");
 
   if (prevGlob) {
     $assert(prevPattern !== undefined);
@@ -99,16 +97,16 @@ function matchesGlob(isWindows: boolean, path: string, pattern: string) {
       glob = prevGlob;
     } else {
       validateString(pattern, "pattern");
-      glob = prevGlob = new Bun.Glob(pattern.replaceAll("\\", "/"));
+      glob = prevGlob = new Bun.Glob(pattern);
       prevPattern = pattern;
     }
   } else {
     validateString(pattern, "pattern");
-    glob = prevGlob = new Bun.Glob(pattern.replaceAll("\\", "/"));
+    glob = prevGlob = new Bun.Glob(pattern);
     prevPattern = pattern;
   }
 
-  return glob.$globMatchNode(path);
+  return glob.$globMatchNode(path, isWindows);
 }
 
 posix.matchesGlob = matchesGlob.bind(null, false);

@@ -1058,9 +1058,12 @@ describe("fs.watch", () => {
     fs.mkdirSync(root);
     const { promise, resolve, reject } = Promise.withResolvers<void>();
     const watcher = fs.watch(root, { ignore: "*" });
+    // Each round writes `visible` before `.env`. The second `.env` event comes after a `visible` write that
+    // followed the first, so an event for `visible` cannot hide behind the resolve.
+    let envEvents = 0;
     watcher.on("change", (event, filename) => {
-      if (filename === ".env") resolve();
-      else reject(new Error(`${event} ${filename} was not ignored`));
+      if (filename !== ".env") reject(new Error(`${event} ${filename} was not ignored`));
+      else if (++envEvents === 2) resolve();
     });
     watcher.on("error", reject);
     const interval = repeat(() => {

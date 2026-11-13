@@ -27,9 +27,9 @@ export const Glob = b.class({
       args: { str: b.string.utf8 },
       returns: b.bool,
     },
-    // `match` as Node's `path.matchesGlob` matches: minimatch with the options Node passes.
+    // `match` as Node's `path.matchesGlob` matches: minimatch with the options Node passes. `windows` is `path.win32`.
     __matchNode: {
-      args: { str: b.string.utf8 },
+      args: { str: b.string.utf8, windows: b.bool },
       returns: b.bool,
       privateSymbol: "globMatchNode",
     },

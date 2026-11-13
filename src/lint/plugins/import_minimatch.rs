@@ -1,6 +1,6 @@
 //! minimatch as eslint-plugin-import's rules call it.
 
-use bun_lint::glob::{Minimatch, MinimatchOptions};
+use bun_lint::glob::{MINIMATCH_3, Minimatch, MinimatchOptions};
 use bun_lint::options::{Json, Object};
 use bun_lint::paths;
 use std::sync::OnceLock;
@@ -26,8 +26,7 @@ impl Glob {
             match_base: is_set("matchBase"),
             nocase: is_set("nocase"),
             noext: is_set("noext"),
-            is_version_3: true,
-            optimization_level_2: false,
+            ..MINIMATCH_3
         };
         let pattern = group.str("pattern").unwrap_or_default();
         Glob(Minimatch::with(pattern.as_bytes(), options))

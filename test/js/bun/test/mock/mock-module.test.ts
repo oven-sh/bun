@@ -3245,9 +3245,16 @@ describe.concurrent("a name that import and require() resolve to two files", () 
                 expect(await withActual(name)).toEqual(real);
               });
             `,
-            "4.test.js": preloaded,
+            "4.test.js": `
+              ${preloaded}
+              test.each(pairs)("a mock of the path that an import resolves %s to takes that path alone", async name => {
+                mock.module(Bun.resolveSync(name, import.meta.dir), () => ({ which: "by import path" }));
+                expect(await both(name)).toEqual(["preload by path", "by import path"]);
+              });
+            `,
+            "5.test.js": preloaded,
           },
-          21,
+          26,
           ["--preload", "./preload.js", ...args],
         );
       },

@@ -7839,6 +7839,9 @@ describe("RedisClient command encoding", () => {
       new Map([["user", { d: 4 }]]).forEach(client.hset.bind(client, "h"));
       await client.hset("h", { e: 5 }, "user", { user: { e: 5 } });
       new Set([["f", "6"]]).forEach(client.hmset.bind(client, "h"));
+      // The key of a Map can be a buffer or an object.
+      new Map([[Buffer.from("id"), ["f8"]]]).forEach(client.hmget.bind(client, "h"));
+      new Map([[{ id: 1 }, { g: 7 }]]).forEach(client.hset.bind(client, "h"));
       await client.ping();
     });
     expect(received).toEqual([
@@ -7867,6 +7870,8 @@ describe("RedisClient command encoding", () => {
       ["HSET", "h", "d", "4"],
       ["HSET", "h", "e", "5"],
       ["HMSET", "h", "f", "6"],
+      ["HMGET", "h", "f8"],
+      ["HSET", "h", "g", "7"],
       ["PING"],
     ]);
   });

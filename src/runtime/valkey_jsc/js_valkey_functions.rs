@@ -905,7 +905,7 @@ impl JSValkeyClient {
             && collection.is_object()
             && !collection.is_array()
             && !Self::is_field(global, *collection)
-            && (!key.is_object() || *key == fields)
+            && (!key.is_object() || *key == fields || collection.js_type() == jsc::JSType::Map)
         {
             return false;
         }

@@ -2944,6 +2944,39 @@ describe.concurrent("a name that import and require() resolve to two files", () 
         expect(globalThis.loaded.slice(start)).toEqual(names.flatMap(([name]) => [name + " esm", name + " cjs"]));
       });
     `;
+    // The same for a CommonJS file that an import has run and an ES module that require() has run when their names
+    // are mocked. The original of each is the file as it was loaded. Of the CommonJS file that is the function that
+    // it exports for jest.requireActual(), and the object that an import makes of that function for vi.importActual().
+    // Of the ES module it is the namespace object that require() got, for both. Neither file runs a second time.
+    const asLoaded = (mock: string) => `
+      import { expect, jest, mock, test, vi } from "bun:test";
+      const start = (globalThis.loaded ?? []).length;
+      // A CommonJS file that an import of its name loads, and an ES module that require() of its name loads.
+      const importFile = Bun.resolveSync("two-cjs", import.meta.dir);
+      const requireFile = require.resolve("two-esm");
+      await import("two-cjs");
+      const required = require("two-esm");
+      ${mock && `for (const name of ["two-cjs", "two-esm"]) ${mock}(name, () => ({ which: "mock" }));`}
+      // Of what each function loads: its type, its keys, and which file it is.
+      const originals = async specifier =>
+        [jest.requireActual(specifier), jest.createMockFromModule(specifier), await vi.importActual(specifier)].map(module => [typeof module, Object.keys(module).sort().join(), module.which]);
+      test("each file by a specifier that names it, as it was loaded", async () => {
+        // The function, an automock of it, and what an import makes of the function.
+        expect(await originals(importFile)).toEqual([
+          ["function", "which", "import file"],
+          ["function", "which", "import file"],
+          ["object", "default,length,name,prototype,which", "import file"],
+        ]);
+        // The namespace object, an automock of it, and the namespace object.
+        expect(await originals(requireFile)).toEqual([
+          ["object", "default,fn,which", "real b"],
+          ["object", "default,fn,which", "real b"],
+          ["object", "default,fn,which", "real b"],
+        ]);
+        expect([jest.requireActual(requireFile) === required, (await vi.importActual(requireFile)) === required]).toEqual([true, true]);
+        expect(globalThis.loaded.slice(start)).toEqual(["import file", "b"]);
+      });
+    `;
     // Each file of this package has a subpath of its own.
     const pkg = {
       "node_modules/pkg/package.json": JSON.stringify({
@@ -2953,10 +2986,29 @@ describe.concurrent("a name that import and require() resolve to two files", () 
       "node_modules/pkg/esm.mjs": esm("pkg"),
       "node_modules/pkg/cjs.cjs": cjs("pkg"),
     };
+    // The packages of asLoaded(): an import of "two-cjs" loads a CommonJS file, and require() of "two-esm" loads an ES
+    // module. The CommonJS files export a function: what an import makes of it has another type and other keys.
+    const otherForm = {
+      "node_modules/two-cjs/package.json": JSON.stringify({
+        name: "two-cjs",
+        exports: { ".": { import: "./for-import.cjs", require: "./for-require.cjs" } },
+      }),
+      "node_modules/two-cjs/for-import.cjs": `(globalThis.loaded ??= []).push("import file"); module.exports = function real() { return "import file"; }; module.exports.which = "import file";`,
+      "node_modules/two-cjs/for-require.cjs": `(globalThis.loaded ??= []).push("require file"); module.exports = function real() { return "require file"; }; module.exports.which = "require file";`,
+      "node_modules/two-esm/package.json": JSON.stringify({
+        name: "two-esm",
+        exports: { ".": { import: "./a.mjs", default: "./b.mjs" } },
+      }),
+      "node_modules/two-esm/a.mjs": `(globalThis.loaded ??= []).push("a"); export const which = "real a"; export const fn = () => "real a"; export default { which };`,
+      "node_modules/two-esm/b.mjs": `(globalThis.loaded ??= []).push("b"); export const which = "real b"; export const fn = () => "real b"; export default { which };`,
+    };
     // Each of these test files has a folder with files of its own: without --isolate the next test file gets the
     // modules that this one has loaded.
     const inFolder = (folder: string, testFile: string, text: string) =>
-      Object.entries({ ...files, ...pkg, [testFile]: text }).map(([name, file]) => [`${folder}/${name}`, file]);
+      Object.entries({ ...files, ...pkg, ...otherForm, [testFile]: text }).map(([name, file]) => [
+        `${folder}/${name}`,
+        file,
+      ]);
     // Without --isolate the test files share globalThis.loaded and the modules. Of the two names that automock.test.js
     // mocks, actual.test.js has run three files by then, and none of them runs again.
     const [loaded, ran] =
@@ -3022,6 +3074,9 @@ describe.concurrent("a name that import and require() resolve to two files", () 
           ...inFolder("jest.doMock", "by-path.test.js", byPath("jest.doMock", "mock", "mock")),
           ...inFolder("vi.doMock", "by-path.test.js", byPath("vi.doMock", "real cjs", "mock")),
           ...inFolder("ran-before", "by-path.test.js", byPath("mock.module", "mock", "mock", true)),
+          ...inFolder("as-loaded/no-mock", "as-loaded.test.js", asLoaded("")),
+          ...inFolder("as-loaded/mock.module", "as-loaded.test.js", asLoaded("mock.module")),
+          ...inFolder("as-loaded/jest.doMock", "as-loaded.test.js", asLoaded("jest.doMock")),
           ...inFolder(
             "pending",
             "pending.test.js",
@@ -3045,7 +3100,7 @@ describe.concurrent("a name that import and require() resolve to two files", () 
           ),
         ]),
       },
-      37,
+      40,
       args,
     );
   });

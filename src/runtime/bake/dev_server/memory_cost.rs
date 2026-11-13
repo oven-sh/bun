@@ -231,7 +231,6 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     // All entries are owned by the bundler arena, not DevServer, except for the request lists
     // .current_bundle
     if let Some(bundle) = &dev.current_bundle {
-        // `SinglyLinkedList::len()` is an O(N) walk; only the node count matters.
         other_bytes += bundle.requests.iter().count() * size_of::<deferred_request::Node>();
         other_bytes += memory_cost_array_list(&bundle.script_requests);
         other_bytes += bundle.script_requests.len() * size_of::<DeferredScriptRequest>();

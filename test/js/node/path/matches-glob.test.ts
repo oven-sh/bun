@@ -230,9 +230,16 @@ describe("path.matchesGlob(path, glob) matches as minimatch does for Node", () =
     });
   });
 
-  // For the win32 flavour only, `\\` in the path is a separator, and a drive letter stays in front of `..`.
+  // For the win32 flavour only, `\\` in the path is a separator, a drive letter stays in front of `..`, and the
+  // drive letters of the path and the pattern compare without case.
   it.each([
     // line break
+    ["c:/src/app.js", "C:/src/*.js", true, false],
+    ["C:/file", "c:/file", true, false],
+    ["//?/c:/file", "C:/*", true, false],
+    ["//?/c:/file", "//?/C:/*", true, false],
+    ["c:", "C:", true, false],
+    ["c:x", "C:*", false, false],
     ["a\\b", "a/b", true, false],
     ["sub\\file.tmp", "sub/*.tmp", true, false],
     ["\\\\server\\share\\file.txt", "\\\\server\\share\\*.txt", true, false],

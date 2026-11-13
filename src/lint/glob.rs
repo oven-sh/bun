@@ -217,6 +217,61 @@ pub struct Minimatch {
     collapses_dots: bool,
     /// `platform: "win32"` is set.
     is_windows: bool,
+    /// The drive the pattern starts with, in upper case.
+    drive: Drive,
+}
+
+/// minimatch's win32 rule for the drive letters of the pattern and the path: they are compared without case, and a
+/// `//?/` in front of one of them only is ignored.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Drive {
+    None,
+    /// `C:`
+    Bare,
+    /// `//?/C:`
+    Unc,
+}
+
+impl Drive {
+    fn of(text: &[u8]) -> Drive {
+        let is_bare = |text: &[u8]| {
+            matches!(text, [letter, b':', ..] if letter.is_ascii_alphabetic())
+                && text.get(2).is_none_or(|it| *it == b'/')
+        };
+        match text.strip_prefix(b"//?/") {
+            _ if is_bare(text) => Drive::Bare,
+            Some(rest) if is_bare(rest) => Drive::Unc,
+            _ => Drive::None,
+        }
+    }
+
+    /// Where the letter is.
+    fn letter_at(self) -> Option<usize> {
+        match self {
+            Drive::None => None,
+            Drive::Bare => Some(0),
+            Drive::Unc => Some(4),
+        }
+    }
+}
+
+/// The path with its drive letter in upper case, without a `//?/` that `pattern_drive` doesn't have. Minimatch slices
+/// the pattern instead when only the pattern has the `//?/`. That isn't done here.
+fn fold_drive(path: Cow<'_, [u8]>, pattern_drive: Drive) -> Cow<'_, [u8]> {
+    let drive = Drive::of(&path);
+    let Some(letter) = drive.letter_at() else {
+        return path;
+    };
+    let skip = match (drive, pattern_drive) {
+        (Drive::Unc, Drive::Bare) => 4,
+        _ => 0,
+    };
+    if skip == 0 && path[letter].is_ascii_uppercase() {
+        return path;
+    }
+    let mut folded = path[skip..].to_vec();
+    folded[letter - skip].make_ascii_uppercase();
+    Cow::Owned(folded)
 }
 
 /// Escapes every `(` that isn't escaped yet, so that none of `?(` `*(` `+(` `@(` `!(` starts a group.
@@ -349,6 +404,13 @@ impl Minimatch {
             true => 0,
             false => source.iter().take_while(|it| **it == b'!').count(),
         };
+        let drive = match options.is_windows {
+            true => Drive::of(&source[bangs..]),
+            false => Drive::None,
+        };
+        if let Some(letter) = drive.letter_at() {
+            source[bangs + letter].make_ascii_uppercase();
+        }
         let pattern = &source[bangs..];
         let is_empty = pattern.is_empty();
         let collapsed = match options.optimization_level_2 {
@@ -379,6 +441,7 @@ impl Minimatch {
             is_empty,
             collapses_dots: options.optimization_level_2,
             is_windows: options.is_windows,
+            drive,
         }
     }
 
@@ -406,6 +469,10 @@ impl Minimatch {
         let path = match self.collapses_dots {
             true => collapse_dots_in(&path, Side::Path, self.is_windows),
             false => path,
+        };
+        let path = match self.drive {
+            Drive::None => path,
+            drive => fold_drive(path, drive),
         };
         let path = match self.folds_case {
             true => Cow::Owned(path.to_ascii_lowercase()),

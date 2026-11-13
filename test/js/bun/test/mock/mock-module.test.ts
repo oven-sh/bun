@@ -3066,6 +3066,81 @@ describe.concurrent("a name that import and require() resolve to two files", () 
     );
   });
 
+  test.each(isolationFlags)("a mock gives a test file the same whichever test file ran before it %j", async args => {
+    // An import of the name loads esm.mjs, and require() loads cjs.cjs.
+    // Its importer is an ES module that imports the name, and its requirer a CommonJS module that requires it.
+    const dualPackage = (name: string) => ({
+      [`node_modules/${name}/package.json`]: JSON.stringify({
+        name,
+        exports: { import: "./esm.mjs", require: "./cjs.cjs" },
+      }),
+      [`node_modules/${name}/esm.mjs`]: esm(name),
+      [`node_modules/${name}/cjs.cjs`]: cjs(name),
+      [`${name}.importer.mjs`]: `import { which } from "${name}"; (globalThis.loaded ??= []).push("importer of ${name}"); export const read = () => which;`,
+      [`${name}.requirer.cjs`]: `(globalThis.loaded ??= []).push("requirer of ${name}"); const required = require("${name}"); exports.read = () => required.which;`,
+    });
+    // A test file and the two names that it mocks. Before its mocks it loads the CommonJS file of by-require-<n> with
+    // the requirer of that name, and the ES module of by-import-<n> with the importer of that name. A mock leaves these
+    // as they are. The importer of the first name and the requirer of the second are loaded for this test file, and get
+    // the mock.
+    const testFile = (path: string, mock: string, n: number) => ({
+      ...dualPackage(`by-require-${n}`),
+      ...dualPackage(`by-import-${n}`),
+      [path]: `
+        import { expect, jest, mock, test } from "bun:test";
+        const start = (globalThis.loaded ?? []).length;
+        // How often a file has run since this test file began.
+        const ran = file => globalThis.loaded.slice(start).filter(name => name === file).length;
+        const required = require("by-require-${n}");
+        const requirer = require("./by-require-${n}.requirer.cjs");
+        const imported = await import("by-import-${n}");
+        const importer = await import("./by-import-${n}.importer.mjs");
+        test("a mock of the name whose CommonJS file this test file has loaded", async () => {
+          ${mock}("by-require-${n}", () => ({ which: "mock" }));
+          expect([require("by-require-${n}").which, (await import("by-require-${n}")).which]).toEqual(["mock", "mock"]);
+          expect(require("./by-require-${n}.requirer.cjs")).toBe(requirer);
+          expect([requirer.read(), (await import("./by-require-${n}.importer.mjs")).read()]).toEqual(["real cjs", "mock"]);
+          jest.unmock("by-require-${n}");
+          expect(require("by-require-${n}")).toBe(required);
+          expect([required.which, (await import("by-require-${n}")).which]).toEqual(["real cjs", "real esm"]);
+          expect([ran("by-require-${n} cjs"), ran("requirer of by-require-${n}"), ran("importer of by-require-${n}")]).toEqual([1, 1, 1]);
+        });
+        test("a mock of the name whose ES module this test file has loaded", async () => {
+          ${mock}("by-import-${n}", () => ({ which: "mock" }));
+          expect([imported.which, require("by-import-${n}").which]).toEqual(["mock", "mock"]);
+          expect(await import("./by-import-${n}.importer.mjs")).toBe(importer);
+          expect([importer.read(), require("./by-import-${n}.requirer.cjs").read()]).toEqual(["mock", "mock"]);
+          jest.unmock("by-import-${n}");
+          expect(await import("by-import-${n}")).toBe(imported);
+          expect([imported.which, require("by-import-${n}").which]).toEqual(["real esm", "real cjs"]);
+          expect([ran("by-import-${n} esm"), ran("importer of by-import-${n}"), ran("requirer of by-import-${n}")]).toEqual([1, 1, 1]);
+        });
+      `,
+    });
+    await expectFixturesToPass(
+      {
+        "package.json": JSON.stringify({ name: "project" }),
+        // Nothing has loaded a file of their names when these two run.
+        ...testFile("1.jest.doMock.test.js", "jest.doMock", 1),
+        ...testFile("1.mock.module.test.js", "mock.module", 2),
+        // The test file before these two has loaded the other file of each of their names: the ES module through the
+        // importer, and the CommonJS file through the requirer.
+        "2.test.js": `
+          import { expect, test } from "bun:test";
+          test.each([3, 4])("an earlier test file loads the other file of each name that ends in %d", async n => {
+            const importer = await import("./by-require-" + n + ".importer.mjs");
+            const requirer = require("./by-import-" + n + ".requirer.cjs");
+            expect([importer.read(), requirer.read()]).toEqual(["real esm", "real cjs"]);
+          });
+        `,
+        ...testFile("3.jest.doMock.test.js", "jest.doMock", 3),
+        ...testFile("3.mock.module.test.js", "mock.module", 4),
+      },
+      10,
+      args,
+    );
+  });
+
   test("a mock of the name and a mock of the path that require() resolves it to", async () => {
     const file = (first: string, second: string, mocked: string[], unmocked: string[]) => `
       import { expect, jest, mock, test } from "bun:test";

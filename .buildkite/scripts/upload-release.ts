@@ -250,14 +250,47 @@ async function uploadCanary(): Promise<void> {
 }
 
 interface Comparison {
-  commits: { author: { login: string; type: string } | null }[];
+  aheadBy: number;
+  headTarget: {
+    history: { nodes: { author: { user: { login: string } | null } | null }[]; pageInfo: { endCursor: string } };
+  };
+}
+
+/** The REST comparison builds the diff too, which can time out, and `compare.commits` stops at 1000. */
+async function listAuthors(tag: string, commit: string): Promise<string[]> {
+  const [owner, name] = repository.split("/");
+  const query = `query($owner: String!, $name: String!, $tag: String!, $commit: String!, $after: String) {
+    repository(owner: $owner, name: $name) { ref(qualifiedName: $tag) { compare(headRef: $commit) {
+      aheadBy
+      headTarget { ... on Commit { history(first: 100, after: $after) {
+        nodes { author { user { login } } }
+        pageInfo { endCursor }
+      } } }
+    } } }
+  }`;
+  const authors: (string | undefined)[] = [];
+  let after: string | undefined;
+  while (true) {
+    const { data, errors } = await github<{
+      data: { repository: { ref: { compare: Comparison } } };
+      errors?: { message: string }[];
+    }>("POST", "graphql", { query, variables: { owner, name, tag: `refs/tags/${tag}`, commit, after } });
+    if (errors) {
+      throw new Error(`Failed to list the commits since ${tag}: ${errors.map(({ message }) => message).join(", ")}`);
+    }
+    const { aheadBy, headTarget } = data.repository.ref.compare;
+    authors.push(...headTarget.history.nodes.map(({ author }) => author?.user?.login));
+    if (authors.length >= aheadBy) {
+      // Pull requests are squashed, so the commits since the tag come first.
+      return authors.slice(0, aheadBy).filter(login => login !== undefined);
+    }
+    after = headTarget.history.pageInfo.endCursor;
+  }
 }
 
 async function getReleaseNotes(version: string, previousTag: string, commit: string): Promise<string> {
   // From commits, because GitHub's generated notes find no pull request behind a cherry-picked commit.
-  const path = `repos/${repository}/compare/${previousTag}...${commit}`;
-  const commits = await githubPages(path, ({ commits }: Comparison) => commits);
-  const logins = commits.flatMap(({ author }) => (author?.type === "User" ? [author.login] : []));
+  const logins = (await listAuthors(previousTag, commit)).filter(login => !login.endsWith("[bot]"));
   const contributors = [...new Set(logins)].sort((a, b) => (a.toLowerCase() < b.toLowerCase() ? -1 : 1));
 
   return `To install Bun v${version}

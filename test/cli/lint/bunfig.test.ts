@@ -1064,6 +1064,15 @@ rules = { "import/no-unassigned-import" = ["error", { allow = ["src/client/*.css
       "node_modules/dual-pkg/dist/index.js": "module.exports = {};\n",
       "node_modules/dual-pkg/dist/index.d.ts": "export {};\n",
       "other/dual.ts": `import "dual-pkg";\nimport "dual-pkg";\n`,
+      // A package that ships JavaScript only, with its types in `@types`.
+      "node_modules/untyped-pkg/package.json": JSON.stringify({ name: "untyped-pkg", main: "index.js" }),
+      "node_modules/untyped-pkg/index.js": "module.exports = {};\n",
+      "node_modules/@types/untyped-pkg/package.json": JSON.stringify({
+        name: "@types/untyped-pkg",
+        types: "index.d.ts",
+      }),
+      "node_modules/@types/untyped-pkg/index.d.ts": "export {};\n",
+      "other/untyped.ts": `import "untyped-pkg";\nimport "untyped-pkg";\n`,
     });
     const duplicates = ["src/index.ts:1 import/no-duplicates", "src/index.ts:2 import/no-duplicates"];
     const rootDuplicates = ["src/root.ts:1 import/no-duplicates", "src/root.ts:2 import/no-duplicates"];
@@ -1108,6 +1117,11 @@ rules = { "import/no-unassigned-import" = ["error", { allow = ["src/client/*.css
       // The first key's file wins over the second key's declaration file.
       expect(await resolved(`["import", "require", "default"]`, "other/dual.ts")).toEqual({
         paths: ["dual-pkg/dist/index.mjs", "dual-pkg/dist/index.mjs"],
+        exitCode: 1,
+      });
+      // JavaScript loses to the package's `@types`.
+      expect(await resolved(`["import", "default"]`, "other/untyped.ts")).toEqual({
+        paths: ["@types/untyped-pkg/index.d.ts", "@types/untyped-pkg/index.d.ts"],
         exitCode: 1,
       });
     });

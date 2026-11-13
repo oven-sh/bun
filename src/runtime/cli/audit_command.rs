@@ -668,7 +668,7 @@ fn send_audit_request(
     .into_bytes();
 
     let mut response_buf = MutableString::init(1024)?;
-    let mut req = pm.registry_request(
+    let req = pm.registry_request(
         http::Method::POST,
         URL::parse(&url_str),
         headers.entries,
@@ -678,7 +678,7 @@ fn send_audit_request(
     // A registry URL that is not http(s) is a configuration error, not a registry without an audit endpoint.
     let mut is_fatal = registry.is_default;
     // This POST is safe to retry, because it changes nothing on the registry.
-    let reason = match pm.send_with_retries(&mut req, &mut response_buf) {
+    let reason = match pm.send_with_retries(req, &mut response_buf) {
         Ok(res) if res.status_code() >= 400 => SkipReason::Status(res.status_code()),
         Ok(_) => {
             let response = response_buf.list.as_slice();

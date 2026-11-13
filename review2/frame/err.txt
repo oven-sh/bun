@@ -1,0 +1,13 @@
+file:///tmp/frame/r1b.mjs:5
+c.stdout.on("data", () => { n++; console.log("data", n); throw new Error("boom"); });
+                                                         ^
+
+Error: boom
+    at Socket.<anonymous> (file:///tmp/frame/r1b.mjs:5:64)
+    at Socket.emit (node:events:509:20)
+    at addChunk (node:internal/streams/readable:568:12)
+    at readableAddChunkPushByteMode (node:internal/streams/readable:519:3)
+    at Readable.push (node:internal/streams/readable:399:5)
+    at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
+
+Node.js v26.3.0

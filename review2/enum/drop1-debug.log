@@ -1,0 +1,33 @@
+[filereader] setFlowing(true) was=false
+[filereader] onReadChunk() = 262144 (progress)
+[filereader] setFlowing(true) was=false
+data 1 262144
+[filereader] onReadChunk() = 233152 (progress)
+data 2 233152
+21 |   child.stdout.on("data", chunk => {
+22 |     n++;
+23 |     console.log("data", n, chunk.length);
+24 |     // let the child refill the socket, so the read loop that is running has a next chunk
+25 |     busy(Number(process.env.BUSY || 50));
+26 |     if (n === 2) throw new Error("boom");
+                                            ^
+error: boom
+      at <anonymous> (/tmp/enum/drop1.cjs:26:40)
+      at emit (node:events:154:22)
+      at addChunk (internal:streams/readable:400:16)
+      at readableAddChunkPushByteMode (internal:streams/readable:366:11)
+      at onRead (internal:streams/native-readable:191:20)
+[filereader] onReadChunk() = 225600 (progress)
+data 3 225600
+[filereader] onReadChunk() = 233152 (progress)
+data 4 233152
+[filereader] onReadChunk() = 225600 (progress)
+data 5 225600
+[filereader] onReadChunk() = 233152 (progress)
+data 6 233152
+[filereader] onReadChunk() = 160064 (progress)
+data 7 160064
+[filereader] onReaderDone()
+end
+
+Bun v1.4.4-debug+367d939d9 (Linux x64)

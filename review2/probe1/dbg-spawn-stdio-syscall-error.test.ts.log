@@ -1,0 +1,30 @@
+bun test v1.4.4 (367d939d9)
+
+test/js/bun/spawn/spawn-stdio-syscall-error.test.ts:
+(pass) subprocess stdio syscall errors > stdout read error on the eager read during spawn > Bun.spawn: stdout.text() rejects and exited settles [591.35ms]
+(pass) subprocess stdio syscall errors > stdout read error on the eager read during spawn > Bun.spawn: Bun.write(file, stdout) rejects and exited settles [674.08ms]
+(pass) subprocess stdio syscall errors > stdout read error on the eager read during spawn > Bun.spawn: the stream read rejects and exited settles [730.78ms]
+(pass) subprocess stdio syscall errors > stdout read error on the eager read during spawn > spawnSync: the lost output is reported as an error [795.09ms]
+(pass) subprocess stdio syscall errors > stdout read error on a read after the consumer attached > Bun.spawn: the stream read rejects and exited settles [389.81ms]
+(pass) subprocess stdio syscall errors > stdout read error on a read after the consumer attached > Bun.spawn: stdout.text() rejects and exited settles [393.72ms]
+(pass) subprocess stdio syscall errors > stdout read error on a read after the consumer attached > Bun.spawn: Bun.write(file, stdout) rejects and exited settles [512.77ms]
+(pass) subprocess stdio syscall errors > stdout read error on the eager read during spawn > node:child_process: stdout emits 'error' before 'close' [1211.64ms]
+(pass) subprocess stdio syscall errors > stdout read error on a read after the consumer attached > spawnSync: the lost output is reported as an error [501.88ms]
+(pass) subprocess stdio syscall errors > stdout read error on a read after the consumer attached > node:child_process: stdout emits 'error' before 'close' [988.88ms]
+(pass) subprocess stdio syscall errors > stdout read error after bytes in the same poll-driven read > Bun.spawn, lazy: the stream yields the bytes read before the error, then rejects [386.38ms]
+(pass) subprocess stdio syscall errors > stdout read error after bytes in the same poll-driven read > node:child_process: stdout emits the bytes read before the error, then 'error' [722.99ms]
+(pass) subprocess stdio syscall errors > node:child_process: stdout delivers every byte read before the error [882.62ms]
+(pass) subprocess stdio syscall errors > stdout read error after bytes in the same poll-driven read > node:child_process: a 'readable' consumer reads those bytes, then gets 'error' [907.48ms]
+(pass) subprocess stdio syscall errors > stdout read error after bytes in the same poll-driven read > Bun.spawn: the stream yields the chunk read before the error, then rejects [518.07ms]
+(pass) subprocess stdio syscall errors > stdout read error after bytes in the same poll-driven read > node:child_process: stdout emits the chunk read before the error, then 'error' [1211.10ms]
+(pass) subprocess stdio syscall errors > stdout read error after bytes in the same poll-driven read > node:child_process: a 'data' listener that throws on that chunk still gets 'error' [1211.48ms]
+(pass) subprocess stdio syscall errors > stdout read error after bytes in the same poll-driven read > node:child_process: a fatal throw from 'data' on that chunk is not followed by 'error' [1275.21ms]
+(pass) subprocess stdio syscall errors > stdout read error after bytes in the same poll-driven read > node:child_process: a paused stream gets that chunk from resume(), then 'error' [1139.03ms]
+(pass) subprocess stdio syscall errors > node:child_process: a reader its stream stopped reads no more after the child hung up [1036.69ms]
+(pass) subprocess stdio syscall errors > stdin ReadableStream write error on the first write > Bun.spawn: the stream is cancelled with the error as the reason [405.34ms]
+(pass) subprocess stdio syscall errors > stdin ReadableStream write error on a later write > Bun.spawn: the stream is cancelled with the error as the reason [340.72ms]
+
+ 22 pass
+ 0 fail
+ 22 expect() calls
+Ran 22 tests across 1 file. [6.28s]

@@ -1,0 +1,5 @@
+(fail) spawn still works with more than 10240 fds open [72.54ms]
+(fail) spawn still works with more than 10240 fds open [72.54ms]
+ 124 pass
+ 4 skip
+ 1 fail

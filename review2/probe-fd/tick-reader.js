@@ -1,0 +1,21 @@
+const { spawn } = require("node:child_process");
+const fd = +process.argv[2];
+const writer = `let k = 0; process.stdin.on("data", () => require("fs").writeSync(${fd}, String(++k)));`;
+const child = spawn(process.execPath, ["-e", writer], { stdio: ["pipe", "pipe", "inherit", "pipe"] });
+const s = child.stdio[fd];
+const order = [];
+let n = 0;
+s.once("resume", () => child.stdin.write("go\n"));
+s.on("data", chunk => {
+  const k = ++n;
+  order.push("d" + k + "=" + chunk);
+  let left = 2;
+  const done = () => { if (--left > 0) return; if (k < 3) child.stdin.write("go\n"); else child.stdin.end(); };
+  process.nextTick(() => { order.push("t" + k); done(); });
+  Promise.resolve().then(() => { order.push("j" + k); done(); });
+});
+s.on("end", () => order.push("end"));
+if (fd !== 1) child.stdout.resume();
+let code;
+child.on("close", c => { code = c; });
+process.on("exit", () => console.log(order.join(" ") + " close=" + code));

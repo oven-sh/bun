@@ -1,0 +1,599 @@
++        FileReaderReadStart,      // webcore::file_reader::Source (starts its reader for the read callback)
++        /// `false` from `on_read_chunk` with the reader paused ends the read loop even on a pipe that hung up, which the loop otherwise reads to its end whatever `on_read_chunk` returns. A `pause()` with `true` returned does not end it. For a parent that hands each chunk on as it is read, and so has nowhere to keep one that comes after it stopped the reader.
++        const PAUSE_ENDS_READ_LOOP     = 1 << 12;
++    /// Paused by a parent that set `PAUSE_ENDS_READ_LOOP`.
++    fn is_stopped(&self) -> bool {
++        self.flags
++            .contains(PosixFlags::IS_PAUSED | PosixFlags::PAUSE_ENDS_READ_LOOP)
++    }
++
++            // SAFETY: caller contract; borrow ends at `;`.
++            if streaming && !keep_going && (!received_hup || unsafe { (*this).is_stopped() }) {
++        let _ = self.try_unpause();
++    }
++
++    /// `unpause()` that returns the error of a read it could not start. The reader is left unpaused with nothing in flight, so the caller ends it with that error (`on_error`).
++    pub fn try_unpause(&mut self) -> sys::Result<()> {
++            return sys::Result::Ok(());
++        self.start_reading()
++const kReading = Symbol("reading");
++const kUnread = Symbol("unread");
++  /** Handle mode: the source's reader is started. */
++  [kReading]?: boolean;
++  /** Handle mode, until the first `_read()`: what the source read ahead of it. */
++  [kUnread]?: Unread;
++interface Unread {
++  chunks: Buffer[];
++  bytes: number;
++  /** `null`: the source ended. An error: it failed. */
++  end: Error | null | undefined;
++  /** What `ref()` and `unref()` asked for. */
++  ref: boolean;
++}
++
++  setReadCallback?: (callback: ReadCallback) => boolean;
++// A source in handle mode calls it with each chunk, with the error when a read failed, with neither at the end. `false` stops its reader until `setFlowing(true)`.
++type ReadCallback = (chunk: Buffer | null | undefined, error?: Error) => boolean | void;
++
++// `handleMode` (child stdio): the source calls back with each chunk it reads, as a libuv handle does in Node, and `_read()` only starts it.
++function constructNativeReadable(
++  readableStream: ReadableStream,
++  options: $Node.ReadableOptions,
++  handleMode: boolean = false,
++): NativeReadable {
++  if (handleMode && registerReadCallback(stream, bunNativePtr)) {
++    // The source reads from here on, as a libuv handle does in Node. Unlike there, what it reads before anything reads the stream does not hold the process, as on the pull path, which reads nothing until then.
++    bunNativePtr!.updateRef(false);
++    stream[kUnread] = { chunks: [], bytes: 0, end: undefined, ref: true };
++    stream[kReading] = true;
++    stream._read = readStart;
++  }
++
++        handleResult(this, result, chunk, this[kCloseState][0]);
++    handleResult(this, result, chunk, this[kCloseState][0]);
++  }
++}
++
++// setReadCallback is read off the class of `ptr`, not off `ptr`: a source whose class has none would answer with what a program put on Object.prototype.
++function registerReadCallback(stream: NativeReadable, ptr: NativePtr | undefined): boolean {
++  if (!$isObject(ptr)) return false;
++  const proto = $getPrototypeOf(ptr) as NativePtr | null;
++  if (proto === null) return false;
++  const setReadCallback = $getByIdDirect(proto, "setReadCallback");
++  if (!$isCallable(setReadCallback)) return false;
++  const callback: ReadCallback = (chunk, error) => onRead(stream, chunk, error);
++  return setReadCallback.$call(ptr, callback);
++}
++
++// Handle mode's `_read()`, as net.Socket's: it starts the reader unless it is started. Chunks come through onRead() on later turns of the event loop.
++function readStart(this: NativeReadable) {
++  $debug(`[${this.debugId}] readStart${this[kReading] ? ", is already reading" : ""}`);
++  const unread = this[kUnread];
++  if (unread !== undefined && !takeUnread(this, unread)) return;
++  if (this[kReading]) return;
++  this[kReading] = true;
++  this.$bunNativePtr!.setFlowing!(true);
++}
++
++// The first `_read()`: something reads the stream. It takes what the source read ahead, inside `_read()` as on the pull path, and the source holds the process from here on unless the stream is unref'd. `false`: that fills the buffer, or it is all there is.
++function takeUnread(stream: NativeReadable, unread: Unread): boolean {
++  stream[kUnread] = undefined;
++  const { chunks, end } = unread;
++  let more = true;
++  for (let i = 0; i < chunks.length; i++) more = stream.push(chunks[i]);
++  if (end === undefined) {
++    if (unread.ref) stream.$bunNativePtr!.updateRef(true);
++    return more;
++  if (end === null) stream.push(null);
++  else stream.destroy(end);
++  return false;
++// The source calls this from the event loop: what a 'data' listener throws goes to it, and the listener's ticks and promise jobs run before the next call.
++function onRead(stream: NativeReadable, chunk: Buffer | null | undefined, error?: Error) {
++  const unread = stream[kUnread];
++  if (unread !== undefined) {
++    // Not push(): the Readable would then call `_read()` itself, with nothing reading the stream.
++    if (!chunk) {
++      unread.end = error ?? null;
++      return;
++    }
++    unread.chunks.push(chunk);
++    // As push() answers.
++    if ((unread.bytes += chunk.byteLength) < stream._readableState.highWaterMark) return true;
++    stream[kReading] = false;
++    return false;
++  }
++  if (chunk) {
++    if (stream.push(chunk)) return true;
++    // The source stops its reader for this `false`: the next `_read()` has to start it again.
++    stream[kReading] = false;
++    return false;
++  }
++  if (error) stream.destroy(error);
++  else stream.push(null);
++}
++
++// Only handleNumberResult advances kRemainingChunk, before push(): a listener can pull again or throw.
++    handleNumberResult(stream, result, chunk, isClosed);
++    handleArrayBufferViewResult(stream, result, isClosed);
++    stream[kRemainingChunk] = slice.byteLength < chunk!.byteLength ? chunk!.subarray(result) : undefined;
++function handleArrayBufferViewResult(stream: NativeReadable, result: ArrayBufferView, isClosed: boolean) {
++  this[kUnread] = undefined;
++// A pulling `_read()` pushes synchronously, so flow() stays one chunk ahead of the 'data' listener. Node's async sources do not. In handle mode only a pause leaves chunks here.
++    setRef(this, ptr, true);
++    setRef(this, ptr, false);
++// Until something reads a stream in handle mode, the answer waits for takeUnread().
++function setRef(stream: NativeReadable, ptr: NativePtr, value: boolean) {
++  const unread = stream[kUnread];
++  if (unread !== undefined) unread.ref = value;
++  else ptr.updateRef(value);
++}
++
++      const stdout = this.#stdout,
++        stderr = this.#stderr;
++
++      // A stream that is already built is drained below all the same: 'close' waits for it.
++        if (stdout === undefined && this.#stdioOptions[1] === "pipe") this.#stdioOptions[1] = "destroyed";
++        if (stderr === undefined && this.#stdioOptions[2] === "pipe") this.#stdioOptions[2] = "destroyed";
++              true,
++      // stdout and stderr are built now in any case: built after the child exited they wrap bytes already read.
++      for (let item of hasSocketsToEagerlyLoad ? this.stdio! : [this.stdout, this.stderr]) {
++        item?.ref?.();
++    /**
++     * `callback(chunk)` for each read, where `false` stops the reader until `setFlowing(true)`, which also starts it;
++     * `callback(null)` at the end; `callback(undefined, error)` for a read error. The source is not pulled from then
++     * on. `false`: nothing changed, and the source keeps being pulled.
++     */
++    setReadCallback(callback: (chunk: Buffer | null | undefined, error?: Error) => unknown): boolean;
++#include "config.h"
++
++#include "AsyncContextFrame.h"
++#include "ModuleGraph.h"
++#include "ZigGlobalObject.h"
++#include <JavaScriptCore/InternalFieldTuple.h>
++
++namespace Bun {
++
++using namespace JSC;
++
++static void setAsyncContextFromEventLoop(JSGlobalObject* globalObject, JSValue asyncContext)
++{
++    globalObject->m_asyncContextData.get()->putInternalField(globalObject->vm(), 0, asyncContext);
++    if (auto* zigGlobalObject = dynamicDowncast<Zig::GlobalObject>(globalObject))
++        noteEnteredFromEventLoop(zigGlobalObject, asyncContext);
++}
++
++// FileReader::call_read_callback (FileReader.rs): Bun__JSValue__call leaves the async context of a stored callback before it returns, and what the callback threw is reported after that. Entered around both, the report is made inside that context, as Bun__JSTimeout__call makes a timer's. Returns the async context to put back, or the empty value when `callback` carries none.
++extern "C" EncodedJSValue Bun__enterAsyncContextOfCallback(JSGlobalObject* globalObject, EncodedJSValue callback)
++{
++    auto* frame = dynamicDowncast<AsyncContextFrame>(JSValue::decode(callback));
++    if (!frame)
++        return JSValue::encode(JSValue());
++    JSValue previous = globalObject->m_asyncContextData.get()->getInternalField(0);
++    setAsyncContextFromEventLoop(globalObject, frame->context.get());
++    return JSValue::encode(previous ? previous : jsUndefined());
++}
++
++extern "C" void Bun__leaveAsyncContextOfCallback(JSGlobalObject* globalObject, EncodedJSValue previous)
++{
++    setAsyncContextFromEventLoop(globalObject, JSValue::decode(previous));
++}
++
++} // namespace Bun
++/// What became of the call [`EventLoop::run_callback_then`] was asked to make.
++pub enum CallbackOutcome {
++    Returned(JSValue),
++    /// Reported as uncaught.
++    Threw,
++    /// Not called (an exception is pending, or `JSValue::call` answered `undefined` and the VM is stopping, the entered context is stopped or the callback is of a retired test realm), or the VM's termination landed in the call. Not seen, and so `Returned(undefined)`: a call dropped only because the callback's own async context names a disposed `Bun.ModuleGraph`.
++    Stopped,
++}
++
++    /// As [`run_callback`](Self::run_callback), but `after_call` is told the outcome ahead of the checkpoint, which follows every call, also inside a task. For a dispatcher the loop calls (a poll, a uv callback, a task), never a host function: the checkpoint runs at any depth, so there it would run in the middle of the calling script's frame.
++    pub fn run_callback_then<R>(
++        &mut self,
++        context: crate::ContextId,
++        callback: JSValue,
++        global_object: &JSGlobalObject,
++        this_value: JSValue,
++        arguments: &[JSValue],
++        after_call: impl FnOnce(CallbackOutcome) -> R,
++    ) -> R {
++        let EnterJs::Entered(_context) = Self::enter_js(context, global_object) else {
++            return after_call(CallbackOutcome::Stopped);
++        };
++        // R-2 noalias mitigation — see `run_callback` above.
++        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
++        // SAFETY: `this` is the unique live `EventLoop`; short-lived `&mut`.
++        unsafe { (*this).enter() };
++        let outcome = match callback.call(global_object, this_value, arguments) {
++            // `call` answers `undefined` for a callback it did not call.
++            Ok(value)
++                if value.is_undefined() && callback.call_may_have_been_dropped(global_object) =>
++            {
++                CallbackOutcome::Stopped
++            }
++            Ok(value) => CallbackOutcome::Returned(value),
++            Err(err) => match crate::task::report_error_or_terminate(global_object, err) {
++                Ok(()) => CallbackOutcome::Threw,
++                Err(Stopped) => CallbackOutcome::Stopped,
++            },
++        };
++        let result = after_call(outcome);
++        let this: *mut Self = core::hint::black_box(this);
++        // SAFETY: as above.
++        unsafe {
++            // `exit()` checkpoints only at the outermost level, which a task's frame is not: `tick()` holds the count.
++            if !(*this).vm_ref().is_inside_deferred_task_queue.get() {
++                let _ = (*this).drain_microtasks();
++            }
++            // Held until here, as in `exit()`: a callback that the checkpoint's script dispatches must not checkpoint mid-frame.
++            (*this).exit_without_checkpoint();
++        }
++        result
++    }
++
++use crate::webcore::file_reader::Source as FileReaderSource;
++        // Only the stdio of `node:child_process` has a read callback.
++        task_tag::FileReaderReadStart => feature_arm!([Spawn], |source: FileReaderSource| {
++            // SAFETY: the queued pointer is the source, with the ref the task owns.
++            unsafe { FileReaderSource::run_read_start(source) };
++        }),
++    task_tag::COUNT == 87,
++        task_tag::FileReaderReadStart => release_in!([Spawn], FileReaderSource),
++use crate::generated_bindgen::readable_stream::js_FileInternalReadableStreamSource as js;
++use crate::webcore::jsc::bindgen::{Callable, JsLocal, JsScope, JsWrapper};
++    /// A read error that arrived with no pending pull. The next `on_pull` returns it. In handle mode: one held for the next read start, because the read callback has the reader stopped. A failure while `arming` is here only until `read_chunk_into_callback` takes it back.
++    /// Handle mode, for the stdio of `node:child_process`: each read completion calls the function in the wrapper's `readCallback` slot from the event loop. No pull is parked, nothing is read inline, and `flowing` says whether the reader is started.
++    pub(crate) read_callback: Cell<bool>,
++    /// The task that starts the reader in handle mode is in the queue.
++    pub(crate) read_start_queued: Cell<bool>,
++    /// Handle mode is arming the poll with a chunk in hand: a failure it reports now is delivered after that chunk.
++    pub(crate) arming: Cell<bool>,
++    /// Handle mode: the read callback threw on this turn of the event loop. See `wait_for_next_turn`.
++    pub(crate) waits_for_next_turn: Cell<bool>,
++            read_callback: Cell::new(false),
++            read_start_queued: Cell::new(false),
++            arming: Cell::new(false),
++            waits_for_next_turn: Cell::new(false),
++    /// ReadCallbackAsyncContext.cpp: makes the async context that `callback` carries current and returns the one to put back, or the empty value when it carries none.
++    safe fn Bun__enterAsyncContextOfCallback(
++        global: &jsc::JSGlobalObject,
++        callback: JSValue,
++    ) -> JSValue;
++    safe fn Bun__leaveAsyncContextOfCallback(global: &jsc::JSGlobalObject, previous: JSValue);
++        // Handle mode reads nothing here: `set_flowing(true)` starts the reader.
++        if self.read_callback.get() {
++            return streams::Start::Ready;
++        }
++
++        // A cancelled source calls nobody, not even for the end its reader reports when it is closed below.
++        let _ = self.take_read_callback();
++        } else if self.waiting_for_on_reader_done.replace(false) {
++            // The reader is closed and this comes from inside its last delivery, ahead of the release in `on_reader_done`. `done` means the across-read ref is released, which `wrapper_finalized` relies on if that script ends the process.
++            // SAFETY: see `parent()`; the wrapper's ref keeps the count > 0.
++            unsafe { Source::decrement_count(self.parent()) };
++        } else if self.read_callback.get() {
++            self.read_chunk_into_callback(chunk, state)
++    /// Whether `Source::set_read_callback` can take this source: a live pipe that nothing has read from or attached to. Every read of it completes on the event loop, and it holds nothing that a read would not bring. Bytes, an end or an error that are already here (`from_bytes_then_error`, a reader `Bun.spawn` could not leave lazy) have no read completion to reach the callback with, so such a source keeps the pull path.
++    fn can_enter_handle_mode(&self) -> bool {
++        if self.started.get()
++            || self.done.get()
++            || self.read_error.get().is_some()
++            || self.sink.get().is_some()
++            || self.pending.get().state == streams::PendingState::Pending
++            || !matches!(self.lazy.get(), Lazy::None)
++            || !self.buffered.get().is_empty()
++        {
++            return false;
++        }
++        let reader = self.reader();
++        #[cfg(unix)]
++        let reads_on_the_loop = reader
++            .flags
++            .contains(bun_io::pipe_reader::PosixFlags::POLLABLE);
++        #[cfg(windows)]
++        let reads_on_the_loop = reader.source.is_some();
++        reads_on_the_loop && !reader.is_done() && reader.buffer().is_empty()
++    }
++
++    /// `on_start`'s setup without its read, then the first read start. Node asks for that one when it builds the stream (`this.read(0)` in `net.Socket`'s constructor, https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L491-L502): what the child writes is read before anything reads the stream, up to its `highWaterMark`, and a `read()` in the child's 'exit' returns it. Whether the reader holds the process meanwhile is the stream's to say (`update_ref`).
++    fn enter_handle_mode(&self) {
++        self.read_callback.set(true);
++        self.flowing.set(false);
++        // The callback takes each chunk as it is read, so when it stops the reader no read may follow, not even to drain a pipe that hung up.
++        #[cfg(unix)]
++        self.reader()
++            .flags
++            .insert(bun_io::pipe_reader::PosixFlags::PAUSE_ENDS_READ_LOOP);
++        let started = self.on_start();
++        debug_assert!(matches!(started, streams::Start::Ready));
++        // A reader `Bun.spawn` could not leave lazy is waiting for bytes already.
++        self.reader().pause();
++        self.set_flowing(true);
++    }
++
++    /// Handle mode's read start. `set_flowing(true)` has JS on the stack, so a task starts the reader: what the pipe holds by then comes on the next turn of the event loop, ahead of what the loop polls for, the child's exit included. `after_yield`: not in this turn's drain of the task queue, but once the loop has polled again (`EventLoop::yield_tasks`).
++    fn queue_read_start(&self, after_yield: bool) {
++        if self.read_start_queued.replace(true) {
++            return;
++        }
++        // SAFETY: see `parent()`. The task owns the ref.
++        let source = unsafe { RefPtr::init_ref(self.parent()) }.into_raw();
++        let task = bun_event_loop::Task::init(source);
++        let event_loop = self.parent_const().global_this().bun_vm().event_loop_mut();
++        if after_yield {
++            event_loop.enqueue_task_after_yield(task);
++        } else {
++            event_loop.enqueue_task(task);
++        }
++    }
++
++    /// The read callback threw, and the exception is reported. Node runs nothing more if that was fatal. Here the loop then stops turning, unless something else keeps it going (`--hot`, an immediate, a pending top-level `await`, `bun test`). So the source delivers nothing more on this turn and goes on at the loop's next one: a run that ends calls no listener again and reports no end, and one that goes on loses nothing.
++    fn wait_for_next_turn(&self) {
++        // The call for the end or for an error threw: nothing is left to deliver.
++        if !self.read_callback.get() {
++            return;
++        }
++        self.waits_for_next_turn.set(true);
++        self.reader().pause();
++        self.queue_read_start(true);
++    }
++
++    /// The task of `queue_read_start`.
++    fn start_reader(&self) {
++        self.read_start_queued.set(false);
++        let waited = self.waits_for_next_turn.replace(false);
++        if !self.read_callback.get() || !self.flowing.get() {
++            return;
++        }
++        // Held because the callback had the reader stopped, or had thrown. It asks for more only now, as a pull would.
++        if let Some(err) = self.read_error.replace(None) {
++            return self.end_read_callback(Some(err));
++        }
++        // There is no fd left to read. After a throw this is the end that came on that turn. Otherwise a tick of the event loop nested in the call for the last chunk ran this ahead of the end, or of the failure to arm, which that call's frame reports.
++        if self.reader().is_done() {
++            if waited {
++                self.end_read_callback(None);
++            }
++            return;
++        }
++        #[cfg(unix)]
++        {
++            self.reader().unpause();
++            // A read loop that was running when `_read()` asked has armed the poll again.
++            if !self.reader().has_pending_read() {
++                // SAFETY: the reader cell is live for `self`'s lifetime; `read` is the raw re-entrancy-safe entry (its dispatch runs user JS).
++                unsafe { IOReader::read(self.reader.get()) };
++            }
++        }
++        // Windows reads nothing here: libuv delivers with its next completions, in their order, so a child's exit that is already queued comes first.
++        #[cfg(windows)]
++        if let Err(err) = self.reader().try_unpause() {
++            // SAFETY: the reader cell is live for `self`'s lifetime; `on_error` is the raw entry (it reaches `on_reader_error`).
++            unsafe { IOReader::on_error(self.reader.get(), err) };
++        }
++    }
++
++    /// `on_read_chunk` in handle mode. `false` ends this read loop: the callback stopped the reader or cancelled the source, or this was the last chunk. The ref the reader holds on its parent for the read (`ref_` above) keeps `self` past whatever the call does to the source.
++    fn read_chunk_into_callback(&self, chunk: Chunk<'_>, state: ReadState) -> bool {
++        // Pipes may return 0-byte reads short of EOF.
++        if chunk.is_empty() {
++            return self.flowing.get();
++        }
++        // After a `Drained` chunk, which only the POSIX reader reports, the read loop waits for more with no read in between. Start that wait before the call, not after the read loop: what the child writes while the listeners run, and its exit after that, then reach the event loop in that order. On a socket, which a child's stdio is there, any other chunk is followed by another read, or by the end or the error that came with it.
++        let arm_error = if state != ReadState::Drained || self.reader().has_pending_read() {
++            None
++        } else {
++            self.arming.set(true);
++            self.reader().watch();
++            self.arming.set(false);
++            // Taken back from `read_error` (`on_reader_error` put it there): a read start in a tick of the event loop nested in the call below must not report it before that call returns.
++            self.read_error.replace(None)
++        };
++        let parent = self.parent_const();
++        let registered =
++            parent.this_jsvalue.get().try_get().and_then(|this_value| {
++                Some((this_value, js::read_callback_get_cached(this_value)?))
++            });
++        let Some((this_value, callback)) = registered else {
++            parent.cancel();
++            return false;
++        };
++        let buffer = match chunk_into_buffer(parent.global_this(), chunk) {
++            Ok(buffer) => buffer,
++            Err(err) => {
++                self.fail_read_callback(err);
++                return false;
++            }
++        };
++        self.call_read_callback(this_value, callback, &[buffer]);
++        let stopped = !self.flowing.get() || self.waits_for_next_turn.get();
++        // The failure to arm, after its chunk. A reader the callback stopped, or threw in, keeps it for the next read start.
++        if let Some(err) = arm_error {
++            if stopped {
++                self.read_error.set(Some(err));
++            } else {
++                self.end_read_callback(Some(err));
++            }
++        }
++        // `false` from the callback stopped the reader, and so did a throw. A `destroy()` in it cancelled the source and closed the fd the io caller captured.
++        !stopped && self.read_callback.get() && !self.done.get() && !self.reader().is_done()
++    }
++
++    /// No `Buffer` could be made for a chunk: out of memory, or the VM is stopping. The source stops: a stream that went on without these bytes would be wrong. Out of memory ends the stream with that error, as it rejects a pull.
++    #[cold]
++    fn fail_read_callback(&self, err: jsc::JsError) {
++        let parent = self.parent_const();
++        let error = parent.global_this().take_error(err);
++        if error.is_termination_exception() {
++            crate::dispatch::fold(Err(err));
++            return parent.cancel();
++        }
++        // Taken first: a cancelled source calls nobody.
++        let registered = self.take_read_callback();
++        parent.cancel();
++        if let Some((this_value, callback)) = registered {
++            self.call_read_callback(this_value, callback, &[JSValue::UNDEFINED, error]);
++        }
++    }
++
++    /// The source ended. The callback hears of `err`, else of the end, in a call of its own, and is dropped.
++    fn end_read_callback(&self, err: Option<sys::Error>) {
++        let Some((this_value, callback)) = self.take_read_callback() else {
++            return;
++        };
++        let Some(err) = err else {
++            return self.call_read_callback(this_value, callback, &[JSValue::NULL]);
++        };
++        let err = err.to_js(self.parent_const().global_this());
++        self.call_read_callback(this_value, callback, &[JSValue::UNDEFINED, err]);
++    }
++
++    /// Leaves handle mode. The wrapper and the callback, if there is still one to call. The callback lives only in the wrapper's slot: it closes over the stream, which holds the wrapper, and a `Strong` to it would root that cycle.
++    fn take_read_callback(&self) -> Option<(JSValue, JSValue)> {
++        if !self.read_callback.replace(false) {
++            return None;
++        }
++        let parent = self.parent_const();
++        let this_value = parent.this_jsvalue.get().try_get()?;
++        let callback = js::read_callback_take_cached(this_value, parent.global_this())?;
++        Some((this_value, callback))
++    }
++
++    /// Calls the read callback from the event loop: the ticks and promise jobs it queued run before the next call, as after a libuv read callback in Node. What the call asked for takes effect before that checkpoint, where a `_read()` starts the reader again.
++    fn call_read_callback(&self, this_value: JSValue, callback: JSValue, args: &[JSValue]) {
++        use jsc::event_loop::CallbackOutcome;
++        let parent = self.parent_const();
++        let global = parent.global_this();
++        let vm = global.bun_vm();
++        // The callback carries the context it was registered in (`with_async_context_if_needed`), and the call leaves it before it returns. What the callback threw is reported after that, so the context is entered here as well: an 'uncaughtException' listener sees the `AsyncLocalStorage` store of the spawn, as in Node and as after a timer.
++        let previous = Bun__enterAsyncContextOfCallback(global, callback);
++        // Left once the outcome is known, which is ahead of the checkpoint.
++        let leave_context = |outcome: CallbackOutcome| {
++            if !previous.is_empty() {
++                Bun__leaveAsyncContextOfCallback(global, previous);
++            }
++            outcome
++        };
++        vm.event_loop_mut().run_callback_then(
++            jsc::ContextId::NONE,
++            callback,
++            global,
++            this_value,
++            args,
++            |outcome| match leave_context(outcome) {
++                // `push()` returned false: the reader stops until the next `set_flowing(true)`. The `false` that `on_read_chunk` then returns is not enough: Windows' reader ignores it, and so does a POSIX read loop on a pipe that hung up, unless the reader is paused as well (`PAUSE_ENDS_READ_LOOP`).
++                CallbackOutcome::Returned(more) if more == JSValue::FALSE => {
++                    self.flowing.set(false);
++                    self.reader().pause();
++                }
++                CallbackOutcome::Returned(_) => {}
++                CallbackOutcome::Threw => self.wait_for_next_turn(),
++                // The VM is stopping: nothing more comes out of this source.
++                CallbackOutcome::Stopped => parent.cancel(),
++            },
++        );
++    }
++
++        } else if self.read_callback.get() {
++            // After a throw the end waits for the next turn too: `start_reader` reports it.
++            if !self.waits_for_next_turn.get() {
++                self.end_read_callback(None);
++            }
++        let mut for_read_callback = None;
++        } else if self.read_callback.get() {
++            if self.flowing.get() && !self.arming.get() && !self.waits_for_next_turn.get() {
++                for_read_callback = Some(err);
++            } else {
++                // The callback stopped the reader, threw, or has yet to get the chunk in hand: it is told at the next read start, or after that chunk.
++                self.read_error.set(Some(err));
++            }
++
++        // The read callback hears of the error with the reader released and closed: a `cancel()` from that call has nothing left to do.
++        if let Some(err) = for_read_callback {
++            self.end_read_callback(Some(err));
++        }
++            if self.read_callback.get() {
++                // A read loop that is running goes on and arms the poll itself; the task starts a reader that is idle.
++                #[cfg(unix)]
++                self.reader().unpause();
++                return self.queue_read_start(false);
++            }
++        // The read callback went with the wrapper.
++        self.read_callback.set(false);
++
++    /// `setReadCallback` in `ReadableStream.bind.ts`. `false`: nothing changed, and the source keeps being pulled from.
++    pub fn set_read_callback(
++        &self,
++        this_value: JsWrapper<'_, Self>,
++        cx: &mut JsScope<'_>,
++        callback: JsLocal<'_, Callable>,
++    ) -> bool {
++        if self.cancelled.get() || !self.context.can_enter_handle_mode() {
++            return false;
++        }
++        let cx = cx.js_thread();
++        let global = cx.global();
++        self.global_this.set(Some(bun_ptr::BackRef::new(global)));
++        self.reader_context.set(Some(cx.context().id()));
++        // `node:child_process` registers at spawn: listeners see the `AsyncLocalStorage` store of the spawn, as in Node. What was read before a listener was attached is emitted from the stream's buffer by `resume()`, in the store of that call, also as in Node.
++        js::read_callback_set_cached(
++            this_value.to_js(),
++            global,
++            callback.to_js().with_async_context_if_needed(global),
++        );
++        self.context.enter_handle_mode();
++        true
++    }
++
++    /// # Safety
++    /// `this` is a source `FileReader::queue_read_start` queued, with the ref it took.
++    pub(crate) unsafe fn run_read_start(this: *mut Self) {
++        // SAFETY: the task's ref, released when this returns.
++        let source = unsafe { RefPtr::from_raw(this) };
++        source.context.start_reader();
++    }
++}
++
++// `FileReader::queue_read_start` queues the source itself, with a ref.
++impl bun_event_loop::Taskable for Source {
++    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FileReaderReadStart;
++
++    unsafe fn release_unrun(this: *mut Self) {
++        // SAFETY: the task's ref.
++        unsafe { Source::decrement_count(this) };
++    }
++
++    /// The read callback carries the context it was registered in (`with_async_context_if_needed`).
++    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
++        bun_event_loop::ContextId::NONE
++    }
++}
++
++/// A Node `Buffer` that owns `chunk`'s bytes and shares them with no other chunk. The allocation of a `Chunk::Buffer` or `Chunk::Owned` that is at least half full becomes the `Buffer`'s, with no copy. The loop's scratch, and a short read in a large allocation, are copied once into a `Buffer` of their length.
++fn chunk_into_buffer(global: &jsc::JSGlobalObject, chunk: Chunk<'_>) -> jsc::JsResult<JSValue> {
++    // Never an empty chunk's allocation: `JSValue::create_buffer` frees nothing behind an empty slice.
++    let half_full = |bytes: &Vec<u8>| !bytes.is_empty() && bytes.len() >= bytes.capacity() / 2;
++    let adopt = match &chunk {
++        Chunk::Scratch(_) => false,
++        Chunk::Buffer(bytes) => half_full(bytes),
++        Chunk::Owned(bytes) => half_full(bytes),
++    };
++    if !adopt {
++        return jsc::ArrayBuffer::create_buffer(global, &chunk);
++    }
++    // The allocation is JSC's from here, on `Err` too: `MarkedArrayBuffer_deallocator` is the global allocator's free (libc's under ASAN). Shrinking it to the bytes first (`into_boxed_slice()`) would move them.
++    let mut bytes = mem::ManuallyDrop::new(chunk.take());
++    JSValue::create_buffer(global, bytes.as_mut_slice())
++  /**
++   * `lockedStream` is the stream `ReadableStream__lockNative` locked, which `NewSource::end_locked_stream` closes or errors.
++   * `readCallback` is the function `setReadCallback` was given.
++   */
++  internalFields: [...internalFields, "lockedStream", "readCallback"],
++    /**
++     * Handle mode, for the stdio of `node:child_process`. The source is not pulled from then on: each read completion
++     * calls `callback(chunk)` from the event loop, and `false` from it stops the reader until `setFlowing(true)`, which
++     * also starts it. The end is `callback(null)`, a read error `callback(undefined, error)`.
++     * `false`: nothing changed, and the source keeps being pulled.
++     */
++    setReadCallback: { args: { callback: b.callable }, returns: b.bool, capability: "js", passThis: true },

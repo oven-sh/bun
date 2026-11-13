@@ -1,0 +1,11 @@
+const { spawn } = require("node:child_process");
+const c = spawn("sh", ["-c", "echo hi; echo err >&2"]);
+const ev = [];
+let errAtOutClose = null, err = "";
+c.stdout.on("data", d => ev.push("out:data"));
+c.stderr.on("data", d => { err += d; ev.push("err:data"); });
+c.stdout.on("end", () => ev.push("out:end"));
+c.stderr.on("end", () => ev.push("err:end"));
+c.stdout.on("close", () => { errAtOutClose = err.length; ev.push("out:close"); });
+c.stderr.on("close", () => ev.push("err:close"));
+c.on("close", () => console.log(ev.join(" "), "| stderr bytes at stdout close:", errAtOutClose));

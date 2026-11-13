@@ -1,0 +1,1 @@
+SYSC total=25302 read=36 recvfrom=1000 epoll_ctl=2002 epoll_pwait2=250 futex=6729 mmap=42 munmap=7 madvise=677 pread64=2 close=2290

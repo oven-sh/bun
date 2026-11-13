@@ -1,0 +1,16 @@
+const { spawn } = require("child_process");
+const log = [];
+const c = spawn("sh", ["-c", "printf out; printf err >&2"]);
+c.on("spawn", () => log.push("spawn"));
+c.stdout.on("data", d => log.push("stdout:data"));
+c.stdout.on("end", () => log.push("stdout:end"));
+c.stdout.on("close", () => log.push("stdout:close"));
+c.stderr.on("data", d => log.push("stderr:data"));
+c.stderr.on("end", () => log.push("stderr:end"));
+c.stderr.on("close", () => log.push("stderr:close"));
+c.stdin.on("close", () => log.push("stdin:close"));
+c.on("exit", () => log.push("exit"));
+c.on("close", () => { log.push("close"); console.log(log.join(" ")); });
+setImmediate(() => log.push("immediate1"));
+setTimeout(() => log.push("timeout0"), 0);
+process.nextTick(() => log.push("tick"));

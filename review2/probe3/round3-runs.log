@@ -1,0 +1,103 @@
+### binaries
+/tmp/refute-life/bun-1.3.13 => 1.3.13+bf2e2cecf
+/usr/local/bin/bun => 1.4.2+744846f84
+/tmp/rel/bun-base => 1.4.4-canary.1+dbcb23530
+/tmp/rel/bun-arm => 1.4.4-canary.1+8ad649daf
+node => v26.3.0
+
+### 1. once-loop.mjs gapless (await once(child.stdout,'data') loop over head -c 3000000): bytes lost
+/tmp/refute-life/bun-1.3.13  {"mode":"gapless","bytes":3000000,"lost":0,"rounds":19}
+/usr/local/bin/bun           {"mode":"gapless","bytes":2027520,"lost":972480,"rounds":14}
+/tmp/rel/bun-base            {"mode":"gapless","bytes":1105920,"lost":1894080,"rounds":7}
+/tmp/rel/bun-arm             {"mode":"gapless","bytes":3000000,"lost":0,"rounds":17}
+node                         {"mode":"gapless","bytes":3000000,"lost":0,"rounds":82}
+/tmp/refute-life/bun-1.3.13  {"mode":"gapless","bytes":3000000,"lost":0,"rounds":30}
+/usr/local/bin/bun           {"mode":"gapless","bytes":2348736,"lost":651264,"rounds":34}
+/tmp/rel/bun-base            {"mode":"gapless","bytes":1277952,"lost":1722048,"rounds":23}
+/tmp/rel/bun-arm             {"mode":"gapless","bytes":3000000,"lost":0,"rounds":42}
+node                         {"mode":"gapless","bytes":3000000,"lost":0,"rounds":48}
+/tmp/refute-life/bun-1.3.13  {"mode":"gapless","bytes":3000000,"lost":0,"rounds":30}
+/usr/local/bin/bun           {"mode":"gapless","bytes":2488000,"lost":512000,"rounds":37}
+/tmp/rel/bun-base            {"mode":"gapless","bytes":753664,"lost":2246336,"rounds":25}
+/tmp/rel/bun-arm             {"mode":"gapless","bytes":3000000,"lost":0,"rounds":18}
+node                         {"mode":"gapless","bytes":3000000,"lost":0,"rounds":83}
+
+### 2. once-variants.mjs (listener re-attached from microtask | tick) on child.stdout
+/tmp/refute-life/bun-1.3.13  {"how":"microtask","lost":0}
+/usr/local/bin/bun           {"how":"microtask","lost":557056}
+/tmp/rel/bun-base            {"how":"microtask","lost":503808}
+/tmp/rel/bun-arm             {"how":"microtask","lost":0}
+node                         {"how":"microtask","lost":0}
+/tmp/refute-life/bun-1.3.13  {"how":"tick","lost":0}
+/usr/local/bin/bun           {"how":"tick","lost":253952}
+/tmp/rel/bun-base            {"how":"tick","lost":991232}
+/tmp/rel/bun-arm             {"how":"tick","lost":0}
+node                         {"how":"tick","lost":0}
+
+### 3. once-fromweb.mjs: Readable.fromWeb(Bun.spawn().stdout) and Readable.fromWeb(Bun.file().stream())
+/tmp/refute-life/bun-1.3.13  {"which":"fromweb","lost":0}
+/usr/local/bin/bun           {"which":"fromweb","lost":911040}
+/tmp/rel/bun-base            {"which":"fromweb","lost":425984}
+/tmp/rel/bun-arm             {"which":"fromweb","lost":143360}
+/tmp/refute-life/bun-1.3.13  {"which":"file","lost":2737856}
+/usr/local/bin/bun           {"which":"file","lost":2934464}
+/tmp/rel/bun-base            {"which":"file","lost":2934464}
+/tmp/rel/bun-arm             {"which":"file","lost":2934464}
+{"which":"fromWeb(blob.stream())","runtime":"node v26.3.0","lost":0}
+
+### 4. once-loop-fd3.mjs (stdio[3], net.Socket over the fd)
+/usr/local/bin/bun           {"via":"stdio[3]","bytes":3000000,"lost":0,"rounds":32}
+/tmp/rel/bun-base            {"via":"stdio[3]","bytes":3000000,"lost":0,"rounds":18}
+/tmp/rel/bun-arm             {"via":"stdio[3]","bytes":3000000,"lost":0,"rounds":15}
+node                         {"via":"stdio[3]","bytes":3000000,"lost":0,"rounds":59}
+
+### 5. late-throw2.cjs: 'data' listener that throws (handled) on chunks read ahead of it
+A) 5 chunks then exit; listener attached in 'exit'; throws on all
+  bun-base  exit attach data:12345 U end close:0
+  bun-arm   exit attach data:1 U data:2 U
+  node      exit attach data:1 U
+C) same; throws on the first 2
+  bun-base  exit attach data:12345 U end close:0
+  bun-arm   exit attach data:1 U data:2 U
+  node      exit attach data:1 U
+D) 4 chunks, attach at 300 ms while the child runs, 2 more chunks, exit; throws on all
+  bun-base  attach data:1234 U data:5 unhandledRejection exit
+  bun-arm   attach data:1 U data:2 U data:3 U data:4 U exit
+  node      attach data:1 U data:2 U data:3 U exit
+A on stdio[3]
+  bun-base  exit attach close:0 data:1 U
+  bun-arm   exit attach close:0 data:1 U
+  node      exit attach data:1 U
+pause-throw.cjs (pause, 5 chunks pile up, resume; throws on all)
+  bun-base  resume data:1 U data:2 U data:3 U exit
+  bun-arm   resume data:1 U data:2 U data:3 U exit
+  node      resume data:1 U data:2 U data:3 U exit
+
+### 6. starve2.cjs WORK=10 SIZE=60000000: 5 ms interval while a 'data' listener takes 10 ms per chunk
+  stdout   bun-base  {"chunks":583,"stream_ms":5988,"interval_ticks_5ms":9,"longest_timer_gap_ms":3410,"immediates":34235}
+  stdout   bun-arm   {"chunks":334,"stream_ms":3455,"interval_ticks_5ms":6,"longest_timer_gap_ms":1949,"immediates":27299}
+  stdout   node      {"chunks":1085,"stream_ms":11054,"interval_ticks_5ms":541,"longest_timer_gap_ms":51,"immediates":4605}
+  stdio[3] bun-base  {"ctor":"Socket","chunks":331,"maxChunk":524288,"stream_ms":3413,"interval_ticks_5ms":329,"longest_timer_gap_ms":20}
+  stdio[3] bun-arm   {"ctor":"Socket","chunks":331,"maxChunk":524288,"stream_ms":3423,"interval_ticks_5ms":329,"longest_timer_gap_ms":21}
+  stdio[3] node      {"ctor":"Socket","chunks":1085,"maxChunk":65536,"stream_ms":11100,"interval_ticks_5ms":559,"longest_timer_gap_ms":50}
+
+### 7. unread-exit2.cjs: nobody reads stdout, parent waits for 'exit' (6 runs each)
+  bun-base  head -c 300000 /dev/zero                                             6 BLOCKED 
+  bun-base  head -c 70000 /dev/zero; sleep 0.05; head -c 230000 /dev/zero        6 BLOCKED 
+  bun-arm   head -c 300000 /dev/zero                                             6 exit 
+  bun-arm   head -c 70000 /dev/zero; sleep 0.05; head -c 230000 /dev/zero        6 BLOCKED 
+  node      head -c 300000 /dev/zero                                             6 BLOCKED 
+  node      head -c 70000 /dev/zero; sleep 0.05; head -c 230000 /dev/zero        6 BLOCKED 
+
+### 8. ur2.cjs (only an 'unhandledRejection' handler) and ur.cjs with --unhandled-rejections
+  bun-base  handler-only: data a;logged unhandledRejection: boom;still alive after 1 s; status 0
+  bun-arm   handler-only: data a;3 | process.on("unhandledRejection", e => console.log("logged unhandledRejection:", e.message));; status 1
+  node      handler-only: data a; status 1
+  bun-base  --unhandled-rejections=warn  data a;still alive after 1 s; status 0
+  bun-arm   --unhandled-rejections=warn  data a;1 | // No 'uncaughtException' handler. A server-like process (kept alive by a timer) whose child 'data' listener throws once.;error: boom; status 1
+  bun-base  --unhandled-rejections=none  data a;still alive after 1 s; status 0
+  bun-arm   --unhandled-rejections=none  data a;1 | // No 'uncaughtException' handler. A server-like process (kept alive by a timer) whose child 'data' listener throws once.;error: boom; status 1
+
+### 9. proto-leak.mjs (Object.prototype.setFlowing / setReadCallback defined by the program)
+  bun-base: fromWeb(Blob) data: hello leaked: [["[object BlobInternalReadableStreamSource]","Object",true],["[object BlobInternalReadableStreamSource]","Object",true]]
+  bun-arm: fromWeb(Blob) data: hello leaked: [["[object BlobInternalReadableStreamSource]","Object",true],["[object BlobInternalReadableStreamSource]","Object",true]]

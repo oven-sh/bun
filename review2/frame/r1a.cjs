@@ -1,0 +1,11 @@
+const { spawn } = require("child_process");
+const c = spawn("sh", ["-c", "printf hi; sleep 0.3; printf there"]);
+let n = 0;
+const mode = process.argv[2];
+if (mode === "interval") setInterval(() => {}, 20);
+if (mode === "immediate") (function loop() { setImmediate(loop); })();
+if (mode === "immediate-once") setImmediate(() => {});
+c.stdout.on("data", () => { n++; console.log("data", n); if (mode === "immediate-in-listener") setImmediate(() => {}); throw new Error("boom"); });
+c.stdout.on("end", () => console.log("end"));
+c.on("exit", code => console.log("child exit", code));
+c.on("close", code => { console.log("child close", code); process.exit(code); });

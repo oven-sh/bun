@@ -1,0 +1,183 @@
+bun test v1.4.4 (367d939d9)
+
+test/js/node/child_process/child_process.test.ts:
+(pass) ChildProcess.spawn() > should emit `spawn` on spawn [190.14ms]
+(pass) ChildProcess.spawn() > should emit `exit` when killed [85.58ms]
+(pass) ChildProcess.spawn() > kill() on a running process returns true and sets .killed [75.11ms]
+(pass) ChildProcess.spawn() > kill() after the process has exited returns false and does not set .killed [139.75ms]
+(pass) ChildProcess.spawn() > kill() after the process was killed returns false but .killed stays true [21.88ms]
+(pass) fork() IPC > routes a NODE_-prefixed cmd from parent to the child's internalMessage [340.92ms]
+(pass) fork() IPC > inherits a closed stdin as /dev/null, so disconnect() still reaches the child [1032.93ms]
+(pass) spawn() > should spawn a process [18.45ms]
+(pass) spawn() > should ignore options.encoding "not-a-real-encoding" like Node does [346.56ms]
+(pass) spawn() > should ignore options.encoding "utf8" like Node does [412.08ms]
+(pass) spawn() > should ignore options.encoding "buffer" like Node does [451.69ms]
+{
+  tmpdir: "/tmp/bun.test.kzTfPB",
+}
+(pass) spawn() > should use cwd from options to search for executables [403.25ms]
+(pass) spawn() > should disallow invalid filename [6.03ms]
+(pass) spawn() > should allow stdout to be read via Node stream.Readable `data` events [128.22ms]
+(pass) spawn() > should allow stdout to be read via .read() API [130.01ms]
+(pass) spawn() > should accept stdio option with 'ignore' for no stdio fds [29.30ms]
+(pass) spawn() > stdin for non-pipe stdio[0] stays null after exit > spawn stdio[0]=ignore [280.85ms]
+(pass) spawn() > stdin for non-pipe stdio[0] stays null after exit > spawn stdio[0]=inherit [245.51ms]
+(pass) spawn() > stdin for non-pipe stdio[0] stays null after exit > spawn stdio[0]=fd 0 [241.72ms]
+(pass) spawn() > stdin for non-pipe stdio[0] stays null after exit > fork() default stdio [244.34ms]
+(pass) spawn() > stdin for non-pipe stdio[0] stays null after exit > stdio[0]='pipe' still yields a destroyed Writable after exit [274.65ms]
+(pass) spawn() > should allow us to set cwd [210.16ms]
+(pass) spawn() > cwd can be a URL of another implementation [348.49ms]
+(pass) spawn() > should allow us to write to stdin [868.46ms]
+(pass) spawn() > stdin.end(cb) and 'finish' wait for the backlog to drain [866.50ms]
+(pass) spawn() > should allow us to timeout hanging processes [31.04ms]
+(pass) spawn() > should allow us to set env [2609.87ms]
+(pass) spawn() > should allow explicit setting of argv0 [99.22ms]
+(pass) spawn() > should allow us to spawn in the default shell [28.82ms]
+(pass) spawn() > should allow us to spawn in a specified shell [19.97ms]
+(pass) spawn() > should spawn a process synchronously [15.14ms]
+(pass) spawn() > stdio > ignore [16.88ms]
+(pass) spawn() > stdio > inherit [19.14ms]
+(pass) spawn() > stdio > pipe [31.63ms]
+(pass) spawn() > stdio > overlapped [43.47ms]
+(pass) spawn() > stdio > accepts another subprocess's stdin as a stdio target [122.56ms]
+(todo) spawn() > stdio > a child inheriting another subprocess's stdin survives a large write
+1.4.4-debug
+(pass) spawn() > stdio > overlapped string shorthand behaves like pipe [1030.10ms]
+(pass) spawn() > stdio > overlapped string shorthand works with spawnSync [205.57ms]
+(pass) spawn() > stdio > a socket as a stdio entry > rejects a tls.TLSSocket [473.77ms]
+(pass) spawn() > stdio > a socket as a stdio entry > accepts a net.Socket [213.46ms]
+(pass) spawn() > stdin write failure (EPIPE) emits 'error' and destroys even with a write callback [674.87ms]
+(pass) spawn() > stdin write to a child that exits before draining it fails with EPIPE [516.21ms]
+(pass) execFile() > should execute a file [162.20ms]
+(pass) exec() > should execute a command in a shell [17.48ms]
+(pass) exec() > should return an object w/ stdout and stderr when promisified [25.00ms]
+(pass) spawnSync() > should spawn a process synchronously [16.66ms]
+(pass) spawnSync() > detached: true starts the child in a new process group [20.16ms]
+(pass) spawnSync() > drains piped stdio to EOF after the direct child exits [311.91ms]
+(pass) execFileSync() > should execute a file synchronously [133.02ms]
+(pass) execFileSync() > should allow us to pass input to the command [62.61ms]
+(skip) execFileSync() > runs a .com executable by absolute path or bare name
+(pass) execSync() > should execute a command in the shell synchronously [158.84ms]
+(pass) should call close and exit before process exits [1201.94ms]
+(pass) it accepts stdio passthrough [6415.94ms]
+(pass) spawnSync correctly reports signal codes [254.03ms]
+(pass) exit signals are named with the OS's own numbering > spawnSync({ killSignal: SIGUSR1 }) reports that signal [12.41ms]
+(pass) exit signals are named with the OS's own numbering > spawnSync({ killSignal: SIGUSR2 }) reports that signal [6.40ms]
+(pass) exit signals are named with the OS's own numbering > spawnSync({ killSignal: SIGSTKFLT }) reports that signal [5.55ms]
+(pass) exit signals are named with the OS's own numbering > child.kill(SIGUSR1) exits with that signal [66.37ms]
+(pass) an exit signal with no name is reported as node reports it > spawnSync: signal after signal 40 [10.01ms]
+(pass) an exit signal with no name is reported as node reports it > spawnSync: signal after signal 64 [9.86ms]
+(pass) exit signals are named with the OS's own numbering > child.kill(SIGUSR2) exits with that signal [75.28ms]
+(pass) exit signals are named with the OS's own numbering > child.kill(SIGSTKFLT) exits with that signal [70.66ms]
+(pass) an exit signal with no name is reported as node reports it > spawn: 'exit' and 'close' after signal 40 [42.71ms]
+(pass) an exit signal with no name is reported as node reports it > spawn: 'exit' and 'close' after signal 64 [35.44ms]
+(pass) spawnSync(does-not-exist) [8.43ms]
+(pass) spawn with an fd number at Darwin OPEN_MAX in stdio reports EBADF [12.57ms]
+1172 | 
+1173 |   let result: any;
+1174 |   try {
+1175 |     result = JSON.parse(stdout);
+1176 |   } catch {
+1177 |     throw new Error(`child did not produce a result; stdout: ${JSON.stringify(stdout)} stderr: ${stderr}`);
+                     ^
+error: child did not produce a result; stdout: "\nFATAL: bun-debug failed to load bundled version of \"internal:async_context_frame\" at \"/workspace/bun/build/debug/js/internal/async_context_frame.js\" (was it deleted?)\nPlease re-compile Bun to continue.\n\n" stderr: 
+      at <anonymous> (/workspace/bun/test/js/node/child_process/child_process.test.ts:1177:15)
+(fail) spawn still works with more than 10240 fds open [545.25ms]
+killed 2 dangling processes
+(fail) extra stdio pipes are not double-closed on GC [5015.25ms]
+  ^ this test timed out after 5000ms.
+(skip) extra stdio 'pipe' sockets deliver data and GC of the ChildProcess closes nothing else
+(pass) stdio[i] = 'ignore' for i >= 3 leaves the fd closed in the child [84.05ms]
+(pass) uid/gid options > spawnSync applies uid/gid and drops supplementary groups [26.09ms]
+(pass) uid/gid options > spawn applies uid/gid (async) [43.26ms]
+(skip) uid/gid options > spawn with a uid the process cannot set throws EPERM synchronously
+(pass) uid/gid options > spawn reports EPERM after dropping privileges [505.95ms]
+(skip) uid/gid options > spawn with uid/gid fails with ENOTSUP on Windows
+(pass) stdout pipe backpressure > blocks the child until a reader attaches and delivers every byte [1035.40ms]
+(pass) stdout pipe backpressure > still drains a paused stdout to 'close' after the child exits [19.23ms]
+(pass) emits 'close' when an unread stdio pipe closed without any data [1149.00ms]
+(pass) child.stdout.pause() after flowing stops native reads and blocks the child [2447.40ms]
+(pass) spawn/execFile({signal}) does not leak abort listeners on spawn failure > spawn ENOENT [2432.45ms]
+(pass) spawn/execFile({signal}) does not leak abort listeners on spawn failure > spawn with nonexistent cwd [1554.91ms]
+(pass) spawn/execFile({signal}) does not leak abort listeners on spawn failure > execFile ENOENT [1032.04ms]
+(fail) child.stdout.destroy() inside a 'data' listener stops 'data' and 'end' [5331.18ms]
+  ^ this test timed out after 5000ms.
+(fail) child.stderr.destroy() inside a 'data' listener stops 'data' and 'end' [5307.10ms]
+  ^ this test timed out after 5000ms.
+(fail) execFile() maxBuffer against a fast writer > truncates at exactly maxBuffer (encoding: buffer) [5293.12ms]
+  ^ this test timed out after 5000ms.
+(fail) execFile() maxBuffer against a fast writer > truncates at exactly maxBuffer (encoding: utf8) [5198.93ms]
+  ^ this test timed out after 5000ms.
+(pass) spawn/execFile({signal}) does not leak abort listeners on spawn failure > successful spawn (control) [1739.79ms]
+(pass) spawn/execFile({signal}) does not leak abort listeners on spawn failure > abort() after a failed spawn still cleans up and is a no-op kill [20.77ms]
+(pass) a tail and an EOF that arrive while a 'data' listener runs > child.stdout delivers a head over half the scratch and a tail read to EOF [1321.33ms]
+(pass) a tail and an EOF that arrive while a 'data' listener runs > Readable.fromWeb(Bun.spawn().stdout) delivers a head over half the scratch and a tail read to EOF [1153.61ms]
+(pass) throw from a child stdio 'data' listener with no 'uncaughtException' handler > does not reach 'close', where a program would exit with the child's code [1243.06ms]
+(pass) throw from a child stdio 'data' listener with no 'uncaughtException' handler > is fatal with only an 'unhandledRejection' handler [1297.75ms]
+(pass) throw from a child stdio 'data' listener with no 'uncaughtException' handler > is fatal [1402.26ms]
+(pass) throw from a child stdio 'data' listener with no 'uncaughtException' handler > calls the listener once when the child writes without gaps [1614.61ms]
+(pass) throw from a child stdio 'data' listener is an uncaughtException and the stream still ends [1974.92ms]
+(pass) a 'data' listener that throws while the child writes without gaps > child.stdout, 3 throws, 'unhandledRejection' handler: false [1367.14ms]
+(pass) a 'data' listener that throws while the child writes without gaps > child.stdout, Infinity throws, 'unhandledRejection' handler: false [1433.45ms]
+(pass) a 'data' listener that throws while the child writes without gaps > child.stderr, Infinity throws, 'unhandledRejection' handler: true [1362.47ms]
+(pass) child stdio 'data' comes from the read callback > order > a chunk and the EOF that are already in the pipe wait for the listener's tick and promise job [1461.21ms]
+(pass) a child stdio 'data' listener that throws keeps the chunk from the listeners after it [1623.89ms]
+(pass) child stdio 'data' comes from the read callback > per chunk the stream queues one tick, and makes no promise and no Buffer but the chunk > with a writer that waits for the reader (child.stdout) [1514.80ms]
+(pass) child stdio 'data' comes from the read callback > order > a listener's tick runs before its promise job [1875.22ms]
+(pass) child stdio 'data' comes from the read callback > order > a listener that removes itself and comes back from a promise job misses no chunk [1988.30ms]
+(pass) child stdio 'data' comes from the read callback > per chunk the stream queues one tick, and makes no promise and no Buffer but the chunk > with a writer that never pauses (child.stderr) [1024.72ms]
+(pass) child stdio 'data' comes from the read callback > a listener attached late > read() in 'exit' returns what the child wrote before it exited (stdio: ["ignore","pipe","pipe"], stdout) [1623.79ms]
+(pass) child stdio 'data' comes from the read callback > a listener attached late > in 'exit' gets what the child wrote before it exited (stdio: ["ignore","pipe","pipe"]) [1818.35ms]
+(pass) child stdio 'data' comes from the read callback > a listener attached late > read() in 'exit' returns what the child wrote before it exited (stdio: ["ignore","pipe"], stdout) [1773.83ms]
+(pass) child stdio 'data' comes from the read callback > a listener attached late > in 'exit' gets what the child wrote before it exited (stdio: ["ignore","pipe"]) [1831.02ms]
+(pass) child stdio 'data' comes from the read callback > a listener attached late > read() in 'exit' returns what the child wrote before it exited (stdio: ["ignore","pipe","pipe"], stderr) [1931.98ms]
+(pass) child stdio 'data' comes from the read callback > a listener attached late > read() in 'exit' returns what the child wrote before it exited (stdio: ["ignore","pipe"], stderr) [1432.44ms]
+(pass) child stdio 'data' comes from the read callback > a listener attached late > while the child is writing more than the pipe holds gets every byte [1153.23ms]
+(pass) child stdio 'data' comes from the read callback > pause() inside a 'data' listener, then resume() on a later turn [1194.79ms]
+(pass) child stdio 'data' comes from the read callback > child.stderr.destroy() inside 'data' call 1 ends 'data', skips 'end' and lets the child exit [3687.78ms]
+(pass) child stdio 'data' comes from the read callback > stdout and stderr of a 2-entry stdio array > a throwing 'data' listener on each is an uncaughtException on each [3903.23ms]
+(pass) child stdio 'data' comes from the read callback > a 'data' listener that throws on the chunk resume() hands over does not stop the stream [4088.54ms]
+(pass) child stdio 'data' comes from the read callback > child.stdout.destroy() inside 'data' call 3 ends 'data', skips 'end' and lets the child exit [4136.80ms]
+(pass) child stdio 'data' comes from the read callback > child.stdout.destroy() inside 'data' call 1 ends 'data', skips 'end' and lets the child exit [4746.64ms]
+(pass) child stdio 'data' comes from the read callback > stdout and stderr of a 2-entry stdio array > so is one from listeners attached in 'exit' [1633.96ms]
+(pass) child stdio 'data' comes from the read callback > consumers that read from the buffer > for await gets every byte in order [1331.69ms]
+(pass) child stdio 'data' comes from the read callback > consumers that read from the buffer > read() gets every byte in order [1318.26ms]
+(pass) child stdio 'data' comes from the read callback > consumers that read from the buffer > read(1000) gets every byte in order [1684.70ms]
+(pass) child stdio 'data' comes from the read callback > an unref'd child whose stdout and stderr nothing reads does not hold the process [2344.28ms]
+(pass) child stdio 'data' comes from the read callback > consumers that read from the buffer > read() in the process's 'exit' returns what a running child has written to a stdout nothing has read [2692.43ms]
+(pass) child stdio 'data' comes from the read callback > an unref'd child with unref'd pipes does not hold the process while its stdout is being read [4102.30ms]
+(pass) child stdio 'data' comes from the read callback > consumers that read from the buffer > leaving a for await loop destroys the stream and lets the child exit [4638.52ms]
+(pass) child stdio 'data' comes from the read callback > setEncoding() joins a character whose bytes come in two chunks [4662.67ms]
+(pass) child stdio 'data' comes from the read callback > with captureRejections an async 'data' listener that rejects destroys the stream [2510.80ms]
+(pass) child stdio 'data' comes from the read callback > under --hot a throwing 'data' listener with no 'uncaughtException' handler does not stop the stream [1364.23ms]
+
+4 tests skipped:
+(skip) execFileSync() > runs a .com executable by absolute path or bare name
+(skip) extra stdio 'pipe' sockets deliver data and GC of the ChildProcess closes nothing else
+(skip) uid/gid options > spawn with a uid the process cannot set throws EPERM synchronously
+(skip) uid/gid options > spawn with uid/gid fails with ENOTSUP on Windows
+
+
+1 tests todo:
+(todo) spawn() > stdio > a child inheriting another subprocess's stdin survives a large write
+
+
+6 tests failed:
+(fail) spawn still works with more than 10240 fds open [545.25ms]
+(fail) extra stdio pipes are not double-closed on GC [5015.25ms]
+  ^ this test timed out after 5000ms.
+(fail) child.stdout.destroy() inside a 'data' listener stops 'data' and 'end' [5331.18ms]
+  ^ this test timed out after 5000ms.
+(fail) child.stderr.destroy() inside a 'data' listener stops 'data' and 'end' [5307.10ms]
+  ^ this test timed out after 5000ms.
+(fail) execFile() maxBuffer against a fast writer > truncates at exactly maxBuffer (encoding: buffer) [5293.12ms]
+  ^ this test timed out after 5000ms.
+(fail) execFile() maxBuffer against a fast writer > truncates at exactly maxBuffer (encoding: utf8) [5198.93ms]
+  ^ this test timed out after 5000ms.
+
+ 119 pass
+ 4 skip
+ 1 todo
+ 6 fail
+ 237 expect() calls
+Ran 130 tests across 1 file. [75.83s]

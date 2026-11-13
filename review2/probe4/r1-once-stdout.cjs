@@ -1,0 +1,10 @@
+const { spawn } = require("node:child_process");
+const c = spawn("sh", ["-c", "head -c 4194304 /dev/zero"], { stdio: ["ignore", "pipe", "ignore"] });
+let calls = 0; const seen = [];
+const s = c.stdout;
+s.on("data", () => { calls++; throw new Error("data-throw-fatal"); });
+s.on("end", () => seen.push("end"));
+s.on("close", () => seen.push("close"));
+c.on("exit", () => seen.push("child-exit"));
+c.on("close", () => seen.push("child-close"));
+process.on("exit", code => console.log(JSON.stringify({ code, calls, seen })));

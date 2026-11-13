@@ -1,0 +1,13 @@
+a 'data' listener that throws while the child writes without gaps > child.stderr, Infinity throws, 'unhandledRejection' handler: true
+a 'data' listener that throws while the child writes without gaps > child.stdout, 3 throws, 'unhandledRejection' handler: false
+a 'data' listener that throws while the child writes without gaps > child.stdout, Infinity throws, 'unhandledRejection' handler: false
+a child stdio 'data' listener that throws keeps the chunk from the listeners after it
+child stdio 'data' comes from the read callback > order > a chunk and the EOF that are already in the pipe wait for the listener's tick and promise job
+child stdio 'data' comes from the read callback > order > a listener's tick runs before its promise job
+child stdio 'data' comes from the read callback > per chunk the stream queues one tick, and makes no promise and no Buffer but the chunk > with a writer that never pauses (child.stderr)
+child stdio 'data' comes from the read callback > per chunk the stream queues one tick, and makes no promise and no Buffer but the chunk > with a writer that waits for the reader (child.stdout)
+child stdio 'data' comes from the read callback > stdout and stderr of a 2-entry stdio array > a throwing 'data' listener on each is an uncaughtException on each
+child stdio 'data' comes from the read callback > under --hot a throwing 'data' listener with no 'uncaughtException' handler does not stop the stream
+throw from a child stdio 'data' listener is an uncaughtException and the stream still ends
+throw from a child stdio 'data' listener with no 'uncaughtException' handler > calls the listener once when the child writes without gaps
+throw from a child stdio 'data' listener with no 'uncaughtException' handler > is fatal with only an 'unhandledRejection' handler

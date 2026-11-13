@@ -1,0 +1,7 @@
+child exit 0 null
+err attach data
+err data#1 a3b3c3
+err end
+child close 0 null
+err close
+process exit 0

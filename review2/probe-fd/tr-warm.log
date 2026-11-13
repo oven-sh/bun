@@ -1,0 +1,766 @@
+    0.00 main close(fd=3) = 0
+    0.23 main read(fd=3, len=832) = 832
+    3.51 main close(fd=3) = 0
+    4.68 main read(fd=3, len=832) = 832
+    9.74 main close(fd=3) = 0
+   23.08 main read(fd=3, len=63) = 8
+   23.71 main close(fd=3) = 0
+   23.99 main read(fd=3, len=63) = 23
+   24.03 main close(fd=3) = 0
+   24.11 main read(fd=3, len=63) = 2
+   24.14 main close(fd=3) = 0
+   32.03 main close(fd=1023) = 0
+   35.43 main close(fd=3) = 0
+   35.89 main read(fd=3, len=1024) = 5
+   35.94 main close(fd=3) = 0
+   36.52 main read(fd=3, len=1024) = 5
+   36.55 main close(fd=3) = 0
+   36.69 main read(fd=3, len=1023) = 5
+   36.73 main close(fd=3) = 0
+   46.20 main close(fd=3) = 0
+   47.02 main close(fd=4) = 0
+   47.83 main close(fd=5) = 0
+   54.45 main epoll_ctl(op=ADD fd=4 ev=0x1 data=0x47cdc3c0300) = 0
+   54.95 main epoll_ctl(op=MOD fd=4 ev=0x80000001 data=0x47cdc3c0300) = 0
+   57.43 main read(fd=5, len=4096) = 114
+   61.87 main read(fd=5, len=4096) = 60
+   62.61 main close(fd=5) = 0
+   64.58 main read(fd=5, len=1023) = 5
+   65.19 main close(fd=5) = 0
+   87.83 main read(fd=5, len=1024) = 36
+   88.34 main close(fd=5) = 0
+   92.18 main read(fd=5, len=16384) = 881
+   92.21 main read(fd=5, len=15503) = 0
+   92.89 main close(fd=5) = 0
+   97.09 main read(fd=5, len=1024) = 36
+   97.12 main close(fd=5) = 0
+   99.61 main socketpair() = 0 [5, 6]
+   99.88 main socketpair() = 0 [7, 8]
+  100.83 main fork-like(nr=58) = 14107
+  100.89 main pidfd_open(pid=14107) = 9
+  100.91 main close(fd=6) = 0
+  100.94 main close(fd=8) = 0
+  101.15 main epoll_ctl(op=ADD fd=9 ev=0x11 data=0x800047cdd5a1800) = 0
+  101.88 main <SIGCHLD delivered>
+  109.61 main fork-like(nr=435) = 14109
+  117.56 main fork-like(nr=435) = 14110
+  124.34 main read(fd=6, len=1024) = 36
+  125.41 main close(fd=6) = 0
+  127.22 main epoll_ctl(op=ADD fd=7 ev=0x5 data=0x47cdc472df0) = 0
+  127.52 thr  fork-like(nr=435) = 14112
+  135.33 main fork-like(nr=435) = 14113
+  140.22 main fork-like(nr=435) = 14114
+  140.99 main fork-like(nr=435) = 14115
+  151.21 main fork-like(nr=435) = 14116
+  157.91 main fork-like(nr=435) = 14117
+  161.45 main fork-like(nr=435) = 14119
+  167.37 main fork-like(nr=435) = 14120
+  188.46 main fork-like(nr=435) = 14125
+  321.20 main read(fd=6, len=1024) = 37
+  321.76 main close(fd=6) = 0
+  323.78 main read(fd=6, len=1024) = 37
+  324.70 main close(fd=6) = 0
+  325.64 main epoll_wait(pwait2) = 2 [{ev=0x1 data=0x800047cdd5a1800} {ev=0x15 data=0x47cdc472df0}]
+  326.27 main wait4(pid=14107, opts=0x1) = 14107
+  327.38 main epoll_ctl(op=DEL fd=9 ev=0x0 data=0x0) = 0
+  328.19 main close(fd=9) = 0
+  331.24 main recvfrom(fd=5, len=262144) = 0
+  338.67 main fork-like(nr=435) = 14140
+  342.44 main epoll_ctl(op=MOD fd=7 ev=0x1 data=0x47cdc472df0) = 0
+  343.21 main recvfrom(fd=7, len=524288) = 3000
+  344.10 main recvfrom(fd=7, len=524288) = 0
+  345.11 main epoll_ctl(op=DEL fd=7 ev=0x1 data=0x0) = 0
+  352.87 main close(fd=7) = 0
+run 1: exit:read()=null close push(3000) push(null)
+  365.06 main write(fd=1) "run 1: exit:read()=null close push(3000) push(null)|"
+  399.10 main socketpair() = 0 [6, 7]
+  406.31 thr  fork-like(nr=435) = 14147
+  413.30 thr  close(fd=5) = 0
+  435.36 main socketpair() = 0 [5, 8]
+  445.03 main fork-like(nr=58) = 14149
+  467.95 thr  <SIGCHLD delivered>
+  468.35 main pidfd_open(pid=14149) = 9
+  473.78 main close(fd=7) = 0
+  477.69 main close(fd=8) = 0
+  480.47 main epoll_ctl(op=ADD fd=9 ev=0x11 data=0x800047cdd5a1828) = 0
+  482.37 main epoll_ctl(op=ADD fd=5 ev=0x5 data=0x47cdc475710) = 0
+  499.26 main epoll_wait(pwait2) = 2 [{ev=0x1 data=0x800047cdd5a1828} {ev=0x15 data=0x47cdc475710}]
+  506.55 main wait4(pid=14149, opts=0x1) = 14149
+  509.52 main epoll_ctl(op=DEL fd=9 ev=0x0 data=0x0) = 0
+  513.63 main close(fd=9) = 0
+  516.30 main recvfrom(fd=6, len=262144) = 0
+  521.93 thr  close(fd=6) = 0
+  522.94 main epoll_ctl(op=MOD fd=5 ev=0x1 data=0x47cdc475710) = 0
+  523.43 main recvfrom(fd=5, len=524288) = 3000
+  524.36 main recvfrom(fd=5, len=524288) = 0
+  524.99 main epoll_ctl(op=DEL fd=5 ev=0x1 data=0x0) = 0
+  535.49 main close(fd=5) = 0
+  544.53 main epoll_wait(pwait2) = 0 []
+run 2: exit:read()=null close push(3000) push(null)
+  544.80 main write(fd=1) "run 2: exit:read()=null close push(3000) push(null)|"
+  561.79 main socketpair() = 0 [5, 6]
+  564.73 main socketpair() = 0 [7, 8]
+  567.94 main fork-like(nr=58) = 14170
+  569.61 main pidfd_open(pid=14170) = 9
+  569.88 main <SIGCHLD delivered>
+  570.79 main close(fd=6) = 0
+  571.36 main close(fd=8) = 0
+  572.50 main epoll_ctl(op=ADD fd=9 ev=0x11 data=0x800047cdd5a1800) = 0
+  573.29 main epoll_ctl(op=ADD fd=7 ev=0x5 data=0x47cdc4756a0) = 0
+  576.42 main epoll_wait(pwait2) = 2 [{ev=0x1 data=0x800047cdd5a1800} {ev=0x15 data=0x47cdc4756a0}]
+  577.00 main wait4(pid=14170, opts=0x1) = 14170
+  578.97 main epoll_ctl(op=DEL fd=9 ev=0x0 data=0x0) = 0
+  579.58 main close(fd=9) = 0
+  580.20 main recvfrom(fd=5, len=262144) = 0
+  584.73 main epoll_ctl(op=MOD fd=7 ev=0x1 data=0x47cdc4756a0) = 0
+  585.29 main recvfrom(fd=7, len=524288) = 3000
+  585.82 main recvfrom(fd=7, len=524288) = 0
+  586.56 main epoll_ctl(op=DEL fd=7 ev=0x1 data=0x0) = 0
+  587.11 main close(fd=7) = 0
+  588.67 thr  close(fd=5) = 0
+  595.19 main epoll_wait(pwait2) = 0 []
+  636.12 main epoll_wait(pwait2) = 0 []
+run 3: exit:read()=null close push(3000) push(null)
+  642.20 main write(fd=1) "run 3: exit:read()=null close push(3000) push(null)|"
+  650.56 main socketpair() = 0 [5, 6]
+  651.10 main socketpair() = 0 [7, 8]
+  653.86 main fork-like(nr=58) = 14174
+  654.22 main pidfd_open(pid=14174) = 9
+  654.37 main close(fd=6) = 0
+  654.56 main close(fd=8) = 0
+  654.90 main epoll_ctl(op=ADD fd=9 ev=0x11 data=0x800047cdd5a1800) = 0
+  657.46 main <SIGCHLD delivered>
+  658.25 main fork-like(nr=435) = 14177
+  670.28 main epoll_ctl(op=ADD fd=7 ev=0x5 data=0x47cdc470fc0) = 0
+  691.23 main epoll_wait(pwait2) = 2 [{ev=0x1 data=0x800047cdd5a1800} {ev=0x15 data=0x47cdc470fc0}]
+  693.02 main wait4(pid=14174, opts=0x1) = 14174
+  701.13 main epoll_ctl(op=DEL fd=9 ev=0x0 data=0x0) = 0
+  701.83 main close(fd=9) = 0
+  702.85 main recvfrom(fd=5, len=262144) = 0
+  709.80 main epoll_ctl(op=MOD fd=7 ev=0x1 data=0x47cdc470fc0) = 0
+  711.59 main recvfrom(fd=7, len=524288) = 3000
+  712.57 main recvfrom(fd=7, len=524288) = 0
+  713.29 main epoll_ctl(op=DEL fd=7 ev=0x1 data=0x0) = 0
+  713.99 main close(fd=7) = 0
+  716.86 thr  close(fd=5) = 0
+  751.53 main epoll_wait(pwait2) = 0 []
+run 4: exit:read()=null close push(3000) push(null)
+  752.26 main write(fd=1) "run 4: exit:read()=null close push(3000) push(null)|"
+  756.04 main socketpair() = 0 [5, 6]
+  758.73 main socketpair() = 0 [7, 8]
+  762.38 main fork-like(nr=58) = 14182
+  763.43 main pidfd_open(pid=14182) = 9
+  764.19 main close(fd=6) = 0
+  764.66 main close(fd=8) = 0
+  765.87 main epoll_ctl(op=ADD fd=9 ev=0x11 data=0x800047cdd5a1800) = 0
+  769.01 main epoll_ctl(op=ADD fd=7 ev=0x5 data=0x47cdc470fc0) = 0
+  769.08 main <SIGCHLD delivered>
+  771.66 main epoll_wait(pwait2) = 2 [{ev=0x15 data=0x47cdc470fc0} {ev=0x1 data=0x800047cdd5a1800}]
+  775.95 main epoll_ctl(op=MOD fd=7 ev=0x1 data=0x47cdc470fc0) = 0
+  776.21 main recvfrom(fd=7, len=524288) = 3000
+  776.46 main recvfrom(fd=7, len=524288) = 0
+  776.63 main epoll_ctl(op=DEL fd=7 ev=0x1 data=0x0) = 0
+  777.80 main close(fd=7) = 0
+  778.24 main wait4(pid=14182, opts=0x1) = 14182
+  778.75 main epoll_ctl(op=DEL fd=9 ev=0x0 data=0x0) = 0
+  779.23 main close(fd=9) = 0
+  780.53 main recvfrom(fd=5, len=262144) = 0
+  792.92 thr  close(fd=5) = 0
+  833.79 main epoll_wait(pwait2) = 0 []
+run 5: push(3000) push(null) exit:read()=3000 close
+  836.53 main write(fd=1) "run 5: push(3000) push(null) exit:read()=3000 close|"
+  845.23 main socketpair() = 0 [5, 6]
+  845.32 main socketpair() = 0 [7, 8]
+  845.93 main fork-like(nr=58) = 14190
+  845.97 main pidfd_open(pid=14190) = 9
+  846.00 main close(fd=6) = 0
+  846.02 main close(fd=8) = 0
+  846.07 main epoll_ctl(op=ADD fd=9 ev=0x11 data=0x800047cdd5a1800) = 0
+  846.33 main epoll_ctl(op=ADD fd=7 ev=0x5 data=0x47cdc470fc0) = 0
+  846.64 main fork-like(nr=435) = 14192
+  846.80 main epoll_wait(pwait2) = 1 [{ev=0x4 data=0x47cdc470fc0}]
+  846.85 main epoll_ctl(op=MOD fd=7 ev=0x1 data=0x47cdc470fc0) = 0
+  847.86 main epoll_wait(pwait2) = 1 [{ev=0x1 data=0x47cdc470fc0}]
+  848.57 main recvfrom(fd=7, len=524288) = 3000
+  848.74 main <SIGCHLD delivered>
+  849.20 main epoll_wait(pwait2) = 2 [{ev=0x11 data=0x47cdc470fc0} {ev=0x1 data=0x800047cdd5a1800}]
+  849.90 main recvfrom(fd=7, len=524288) = 0
+  850.54 main epoll_ctl(op=DEL fd=7 ev=0x1 data=0x0) = 0
+  850.87 main close(fd=7) = 0
+  851.38 main wait4(pid=14190, opts=0x1) = 14190
+  852.76 main epoll_ctl(op=DEL fd=9 ev=0x0 data=0x0) = 0
+  853.20 main close(fd=9) = 0
+  853.81 main recvfrom(fd=5, len=262144) = 0
+  855.74 thr  close(fd=5) = 0
+  907.25 main epoll_wait(pwait2) = 0 []
+run 6: push(3000) push(null) exit:read()=3000 close
+  907.54 main write(fd=1) "run 6: push(3000) push(null) exit:read()=3000 close|"
+  912.87 main socketpair() = 0 [5, 6]
+  914.44 main socketpair() = 0 [7, 8]
+  918.37 main fork-like(nr=58) = 14204
+  918.70 main pidfd_open(pid=14204) = 9
+  918.83 main close(fd=6) = 0
+  918.95 main close(fd=8) = 0
+  921.08 main <SIGCHLD delivered>
+  921.16 main epoll_ctl(op=ADD fd=9 ev=0x11 data=0x800047cdd5a1800) = 0
+  921.49 main epoll_ctl(op=ADD fd=7 ev=0x5 data=0x47cdc476350) = 0
+  921.80 main epoll_wait(pwait2) = 2 [{ev=0x1 data=0x800047cdd5a1800} {ev=0x15 data=0x47cdc476350}]
+  921.89 main wait4(pid=14204, opts=0x1) = 14204
+  921.92 main epoll_ctl(op=DEL fd=9 ev=0x0 data=0x0) = 0
+  921.96 main close(fd=9) = 0
+  922.10 main recvfrom(fd=5, len=262144) = 0
+  924.30 main epoll_ctl(op=MOD fd=7 ev=0x1 data=0x47cdc476350) = 0
+  924.36 main recvfrom(fd=7, len=524288) = 3000
+  924.75 thr  close(fd=5) = 0
+  925.16 main recvfrom(fd=7, len=524288) = 0
+  925.27 main epoll_ctl(op=DEL fd=7 ev=0x1 data=0x0) = 0
+  925.31 main close(fd=7) = 0
+  982.30 main epoll_wait(pwait2) = 0 []
+run 7: exit:read()=null close push(3000) push(null)
+  982.65 main write(fd=1) "run 7: exit:read()=null close push(3000) push(null)|"
+  984.70 main socketpair() = 0 [5, 6]
+  986.08 main socketpair() = 0 [7, 8]
+  989.34 main fork-like(nr=58) = 14208
+  989.77 main pidfd_open(pid=14208) = 9
+  990.07 main close(fd=6) = 0
+  990.15 main <SIGCHLD delivered>
+  990.29 main close(fd=8) = 0
+  993.21 main epoll_ctl(op=ADD fd=9 ev=0x11 data=0x800047cdd5a1800) = 0
+  994.21 main epoll_ctl(op=ADD fd=7 ev=0x5 data=0x47cdc476350) = 0
+ 1000.57 main epoll_wait(pwait2) = 2 [{ev=0x1 data=0x800047cdd5a1800} {ev=0x15 data=0x47cdc476350}]
+ 1001.38 main wait4(pid=14208, opts=0x1) = 14208
+ 1002.11 main epoll_ctl(op=DEL fd=9 ev=0x0 data=0x0) = 0
+ 1002.93 main close(fd=9) = 0
+ 1003.68 main recvfrom(fd=5, len=262144) = 0
+ 1005.57 main epoll_ctl(op=MOD fd=7 ev=0x1 data=0x47cdc476350) = 0
+ 1006.84 main recvfrom(fd=7, len=524288) = 3000
+ 1007.10 main recvfrom(fd=7, len=524288) = 0
+ 1007.29 main epoll_ctl(op=DEL fd=7 ev=0x1 data=0x0) = 0
+ 1007.46 main close(fd=7) = 0
+ 1013.63 thr  close(fd=5) = 0
+ 1061.37 main epoll_wait(pwait2) = 0 []
+run 8: exit:read()=null close push(3000) push(null)
+ 1061.91 main write(fd=1) "run 8: exit:read()=null close push(3000) push(null)|"
+ 1078.85 main socketpair() = 0 [5, 6]
+ 1079.29 main socketpair() = 0 [7, 8]
+ 1083.58 main fork-like(nr=58) = 14216
+ 1083.71 thr  <SIGCHLD delivered>
+ 1084.00 main pidfd_open(pid=14216) = 9
+ 1084.14 main close(fd=6) = 0
+ 1084.27 main close(fd=8) = 0
+ 1084.57 main epoll_ctl(op=ADD fd=9 ev=0x11 data=0x800047cdd5a1800) = 0
+ 1085.07 main read(fd=6, len=1024) = 37
+ 1086.73 main close(fd=6) = 0
+ 1105.51 main epoll_ctl(op=ADD fd=7 ev=0x5 data=0x47cdc476820) = 0
+ 1117.93 main epoll_wait(pwait2) = 2 [{ev=0x1 data=0x800047cdd5a1800} {ev=0x15 data=0x47cdc476820}]
+ 1122.12 main wait4(pid=14216, opts=0x1) = 14216
+ 1122.30 main epoll_ctl(op=DEL fd=9 ev=0x0 data=0x0) = 0
+ 1123.10 main close(fd=9) = 0
+ 1125.26 main recvfrom(fd=5, len=262144) = 0
+ 1130.85 thr  close(fd=5) = 0
+ 1130.90 main epoll_ctl(op=MOD fd=7 ev=0x1 data=0x47cdc476820) = 0
+ 1130.99 main recvfrom(fd=7, len=524288) = 3000
+ 1131.17 main recvfrom(fd=7, len=524288) = 0
+ 1131.28 main epoll_ctl(op=DEL fd=7 ev=0x1 data=0x0) = 0
+ 1131.34 main close(fd=7) = 0
+ 1151.88 main read(fd=5, len=1024) = 38
+ 1152.35 main close(fd=5) = 0
+ 1187.79 main epoll_wait(pwait2) = 0 []
+run 9: exit:read()=null close push(3000) push(null)
+ 1189.87 main write(fd=1) "run 9: exit:read()=null close push(3000) push(null)|"
+ 1210.33 main socketpair() = 0 [5, 6]
+ 1210.78 main socketpair() = 0 [7, 8]
+ 1218.64 main fork-like(nr=58) = 14232
+ 1221.88 main <SIGCHLD delivered>
+ 1222.70 main pidfd_open(pid=14232) = 9
+ 1223.38 main close(fd=6) = 0
+ 1224.64 main close(fd=8) = 0
+ 1230.79 main epoll_ctl(op=ADD fd=9 ev=0x11 data=0x800047cdd5a1800) = 0
+ 1231.96 main epoll_ctl(op=ADD fd=7 ev=0x5 data=0x47cdc477620) = 0
+ 1235.71 main epoll_wait(pwait2) = 2 [{ev=0x1 data=0x800047cdd5a1800} {ev=0x15 data=0x47cdc477620}]
+ 1236.44 main wait4(pid=14232, opts=0x1) = 14232
+ 1236.56 main epoll_ctl(op=DEL fd=9 ev=0x0 data=0x0) = 0
+ 1236.68 main close(fd=9) = 0
+ 1236.89 main recvfrom(fd=5, len=262144) = 0
+ 1237.54 thr  close(fd=5) = 0
+ 1237.94 main epoll_ctl(op=MOD fd=7 ev=0x1 data=0x47cdc477620) = 0
+ 1238.25 main recvfrom(fd=7, len=524288) = 3000
+ 1239.46 main recvfrom(fd=7, len=524288) = 0
+ 1239.74 main epoll_ctl(op=DEL fd=7 ev=0x1 data=0x0) = 0
+ 1240.04 main close(fd=7) = 0
+ 1250.58 main epoll_wait(pwait2) = 0 []
+ 1294.60 main epoll_wait(pwait2) = 0 []
+run 10: exit:read()=null close push(3000) push(null)
+ 1294.87 main write(fd=1) "run 10: exit:read()=null close push(3000) push(null)|"
+ 1296.61 main socketpair() = 0 [5, 6]
+ 1297.02 main socketpair() = 0 [7, 8]
+ 1299.04 main fork-like(nr=58) = 14238
+ 1302.84 main pidfd_open(pid=14238) = 9
+ 1302.92 main <SIGCHLD delivered>
+ 1303.83 main close(fd=6) = 0
+ 1304.99 main close(fd=8) = 0
+ 1306.00 main epoll_ctl(op=ADD fd=9 ev=0x11 data=0x800047cdd5a1800) = 0
+ 1306.83 main epoll_ctl(op=ADD fd=7 ev=0x5 data=0x47cdc477e00) = 0
+ 1312.94 main epoll_wait(pwait2) = 2 [{ev=0x1 data=0x800047cdd5a1800} {ev=0x15 data=0x47cdc477e00}]
+ 1314.71 main wait4(pid=14238, opts=0x1) = 14238
+ 1316.50 main epoll_ctl(op=DEL fd=9 ev=0x0 data=0x0) = 0
+ 1317.37 main close(fd=9) = 0
+ 1318.19 main recvfrom(fd=5, len=262144) = 0
+ 1319.99 main epoll_ctl(op=MOD fd=7 ev=0x1 data=0x47cdc477e00) = 0
+ 1320.47 main recvfrom(fd=7, len=524288) = 3000
+ 1321.10 main recvfrom(fd=7, len=524288) = 0
+ 1321.65 main epoll_ctl(op=DEL fd=7 ev=0x1 data=0x0) = 0
+ 1322.20 main close(fd=7) = 0
+ 1323.30 thr  close(fd=5) = 0
+ 1372.24 main epoll_wait(pwait2) = 0 []
+run 11: exit:read()=null close push(3000) push(null)
+ 1373.31 main write(fd=1) "run 11: exit:read()=null close push(3000) push(null)|"
+ 1376.43 main socketpair() = 0 [5, 6]
+ 1377.11 main socketpair() = 0 [7, 8]
+ 1380.01 main fork-like(nr=58) = 14242
+ 1380.29 main pidfd_open(pid=14242) = 9
+ 1380.43 main close(fd=6) = 0
+ 1381.18 main <SIGCHLD delivered>
+ 1381.40 main close(fd=8) = 0
+ 1381.66 main epoll_ctl(op=ADD fd=9 ev=0x11 data=0x800047cdd5a1800) = 0
+ 1417.59 main epoll_ctl(op=ADD fd=7 ev=0x5 data=0x47cdc478110) = 0
+ 1429.69 main epoll_wait(pwait2) = 2 [{ev=0x1 data=0x800047cdd5a1800} {ev=0x15 data=0x47cdc478110}]
+ 1429.97 main wait4(pid=14242, opts=0x1) = 14242
+ 1430.04 main epoll_ctl(op=DEL fd=9 ev=0x0 data=0x0) = 0
+ 1430.08 main close(fd=9) = 0
+ 1430.34 main recvfrom(fd=5, len=262144) = 0
+ 1430.40 thr  close(fd=5) = 0
+ 1431.34 main epoll_ctl(op=MOD fd=7 ev=0x1 data=0x47cdc478110) = 0
+ 1431.81 main recvfrom(fd=7, len=524288) = 3000
+ 1432.33 main recvfrom(fd=7, len=524288) = 0
+ 1432.87 main epoll_ctl(op=DEL fd=7 ev=0x1 data=0x0) = 0
+ 1433.36 main close(fd=7) = 0
+ 1479.21 main epoll_wait(pwait2) = 0 []
+run 12: exit:read()=null close push(3000) push(null)
+ 1479.48 main write(fd=1) "run 12: exit:read()=null close push(3000) push(null)|"
+ 1482.29 main socketpair() = 0 [5, 6]
+ 1482.80 main socketpair() = 0 [7, 8]
+ 1486.84 main fork-like(nr=58) = 14250
+ 1487.13 main pidfd_open(pid=14250) = 9
+ 1487.25 main close(fd=6) = 0
+ 1487.36 main close(fd=8) = 0
+ 1487.61 main epoll_ctl(op=ADD fd=9 ev=0x11 data=0x800047cdd5a1800) = 0
+ 1488.08 main epoll_ctl(op=ADD fd=7 ev=0x5 data=0x47cdc479300) = 0
+ 1488.83 main epoll_wait(pwait2) = 1 [{ev=0x4 data=0x47cdc479300}]
+ 1489.09 main epoll_ctl(op=MOD fd=7 ev=0x1 data=0x47cdc479300) = 0
+ 1490.08 main epoll_wait(pwait2) = 1 [{ev=0x1 data=0x47cdc479300}]
+ 1490.22 main recvfrom(fd=7, len=524288) = 3000
+ 1491.07 main epoll_wait(pwait2) = 2 [{ev=0x11 data=0x47cdc479300} {ev=0x1 data=0x800047cdd5a1800}]
+ 1491.20 main <SIGCHLD delivered>
+ 1491.35 main recvfrom(fd=7, len=524288) = 0
+ 1491.60 main epoll_ctl(op=DEL fd=7 ev=0x1 data=0x0) = 0
+ 1491.74 main close(fd=7) = 0
+ 1491.88 main wait4(pid=14250, opts=0x1) = 14250
+ 1492.02 main epoll_ctl(op=DEL fd=9 ev=0x0 data=0x0) = 0
+ 1492.14 main close(fd=9) = 0
+ 1492.42 main recvfrom(fd=5, len=262144) = 0
+ 1493.24 thr  close(fd=5) = 0
+ 1554.01 main epoll_wait(pwait2) = 0 []
+run 13: push(3000) push(null) exit:read()=3000 close
+ 1555.15 main write(fd=1) "run 13: push(3000) push(null) exit:read()=3000 close|"
+ 1563.48 main socketpair() = 0 [5, 6]
+ 1565.24 main socketpair() = 0 [7, 8]
+ 1575.62 main fork-like(nr=58) = 14258
+ 1577.06 main pidfd_open(pid=14258) = 9
+ 1577.91 main close(fd=6) = 0
+ 1579.57 main close(fd=8) = 0
+ 1588.91 main epoll_ctl(op=ADD fd=9 ev=0x11 data=0x800047cdd5a1800) = 0
+ 1589.24 main <SIGCHLD delivered>
+ 1592.23 main epoll_ctl(op=ADD fd=7 ev=0x5 data=0x47cdc47af00) = 0
+ 1602.96 main epoll_wait(pwait2) = 2 [{ev=0x1 data=0x800047cdd5a1800} {ev=0x15 data=0x47cdc47af00}]
+ 1604.13 main wait4(pid=14258, opts=0x1) = 14258
+ 1604.36 main epoll_ctl(op=DEL fd=9 ev=0x0 data=0x0) = 0
+ 1606.08 main close(fd=9) = 0
+ 1606.93 main recvfrom(fd=5, len=262144) = 0
+ 1618.96 main epoll_ctl(op=MOD fd=7 ev=0x1 data=0x47cdc47af00) = 0
+ 1621.02 thr  close(fd=5) = 0
+ 1624.07 main recvfrom(fd=7, len=524288) = 3000
+ 1624.27 main recvfrom(fd=7, len=524288) = 0
+ 1624.31 main epoll_ctl(op=DEL fd=7 ev=0x1 data=0x0) = 0
+ 1624.33 main close(fd=7) = 0
+ 1662.87 main epoll_wait(pwait2) = 0 []
+run 14: exit:read()=null close push(3000) push(null)
+ 1662.99 main write(fd=1) "run 14: exit:read()=null close push(3000) push(null)|"
+ 1663.33 main socketpair() = 0 [5, 6]
+ 1663.36 main socketpair() = 0 [7, 8]
+ 1663.60 main fork-like(nr=58) = 14281
+ 1663.62 main pidfd_open(pid=14281) = 9
+ 1663.63 main close(fd=6) = 0
+ 1663.64 main close(fd=8) = 0
+ 1663.66 main epoll_ctl(op=ADD fd=9 ev=0x11 data=0x800047cdd5a1800) = 0
+ 1663.85 main epoll_ctl(op=ADD fd=7 ev=0x5 data=0x47cdc47af00) = 0
+ 1664.02 main epoll_wait(pwait2) = 1 [{ev=0x4 data=0x47cdc47af00}]
+ 1664.04 main epoll_ctl(op=MOD fd=7 ev=0x1 data=0x47cdc47af00) = 0
+ 1669.47 main epoll_wait(pwait2) = 1 [{ev=0x1 data=0x47cdc47af00}]
+ 1669.52 main recvfrom(fd=7, len=524288) = 3000
+ 1670.08 main epoll_wait(pwait2) = 2 [{ev=0x11 data=0x47cdc47af00} {ev=0x1 data=0x800047cdd5a1800}]
+ 1670.10 main <SIGCHLD delivered>
+ 1670.11 main recvfrom(fd=7, len=524288) = 0
+ 1670.15 main epoll_ctl(op=DEL fd=7 ev=0x1 data=0x0) = 0
+ 1670.17 main close(fd=7) = 0
+ 1670.20 main wait4(pid=14281, opts=0x1) = 14281
+ 1670.21 main epoll_ctl(op=DEL fd=9 ev=0x0 data=0x0) = 0
+ 1670.22 main close(fd=9) = 0
+ 1670.30 main recvfrom(fd=5, len=262144) = 0
+ 1670.34 thr  close(fd=5) = 0
+ 1724.12 main epoll_wait(pwait2) = 0 []
+run 15: push(3000) push(null) exit:read()=3000 close
+ 1724.77 main write(fd=1) "run 15: push(3000) push(null) exit:read()=3000 close|"
+ 1730.56 main socketpair() = 0 [5, 6]
+ 1733.14 main socketpair() = 0 [7, 8]
+ 1735.49 main fork-like(nr=58) = 14285
+ 1736.46 main <SIGCHLD delivered>
+ 1737.44 main pidfd_open(pid=14285) = 9
+ 1737.93 main close(fd=6) = 0
+ 1738.70 main close(fd=8) = 0
+ 1739.72 main epoll_ctl(op=ADD fd=9 ev=0x11 data=0x800047cdd5a1800) = 0
+ 1740.73 main epoll_ctl(op=ADD fd=7 ev=0x5 data=0x47cdc47afe0) = 0
+ 1744.73 main epoll_wait(pwait2) = 2 [{ev=0x1 data=0x800047cdd5a1800} {ev=0x15 data=0x47cdc47afe0}]
+ 1745.49 main wait4(pid=14285, opts=0x1) = 14285
+ 1746.19 main epoll_ctl(op=DEL fd=9 ev=0x0 data=0x0) = 0
+ 1746.87 main close(fd=9) = 0
+ 1747.49 main recvfrom(fd=5, len=262144) = 0
+ 1749.54 thr  close(fd=5) = 0
+ 1753.12 main epoll_ctl(op=MOD fd=7 ev=0x1 data=0x47cdc47afe0) = 0
+ 1756.49 main recvfrom(fd=7, len=524288) = 3000
+ 1757.13 main recvfrom(fd=7, len=524288) = 0
+ 1758.29 main epoll_ctl(op=DEL fd=7 ev=0x1 data=0x0) = 0
+ 1759.72 main close(fd=7) = 0
+ 1805.34 main epoll_wait(pwait2) = 0 []
+run 16: exit:read()=null close push(3000) push(null)
+ 1806.54 main write(fd=1) "run 16: exit:read()=null close push(3000) push(null)|"
+ 1808.89 main socketpair() = 0 [5, 6]
+ 1809.28 main socketpair() = 0 [7, 8]
+ 1809.93 main fork-like(nr=58) = 14288
+ 1810.20 main pidfd_open(pid=14288) = 9
+ 1810.32 main close(fd=6) = 0
+ 1811.02 main close(fd=8) = 0
+ 1811.16 main epoll_ctl(op=ADD fd=9 ev=0x11 data=0x800047cdd5a1800) = 0
+ 1812.14 thr  <SIGCHLD delivered>
+ 1826.52 main epoll_ctl(op=ADD fd=7 ev=0x5 data=0x47cdc47b050) = 0
+ 1836.89 main epoll_wait(pwait2) = 2 [{ev=0x1 data=0x800047cdd5a1800} {ev=0x15 data=0x47cdc47b050}]
+ 1837.05 main wait4(pid=14288, opts=0x1) = 14288
+ 1837.16 main epoll_ctl(op=DEL fd=9 ev=0x0 data=0x0) = 0
+ 1837.28 main close(fd=9) = 0
+ 1840.00 main recvfrom(fd=5, len=262144) = 0
+ 1846.40 main epoll_ctl(op=MOD fd=7 ev=0x1 data=0x47cdc47b050) = 0
+ 1850.01 main recvfrom(fd=7, len=524288) = 3000
+ 1851.71 main recvfrom(fd=7, len=524288) = 0
+ 1852.19 thr  close(fd=5) = 0
+ 1854.94 main epoll_ctl(op=DEL fd=7 ev=0x1 data=0x0) = 0
+ 1867.67 main close(fd=7) = 0
+ 1898.84 main epoll_wait(pwait2) = 0 []
+run 17: exit:read()=null close push(3000) push(null)
+ 1900.92 main write(fd=1) "run 17: exit:read()=null close push(3000) push(null)|"
+ 1903.01 main socketpair() = 0 [5, 6]
+ 1903.37 main socketpair() = 0 [7, 8]
+ 1905.49 main fork-like(nr=58) = 14295
+ 1905.56 thr  <SIGCHLD delivered>
+ 1905.91 main pidfd_open(pid=14295) = 9
+ 1906.05 main close(fd=6) = 0
+ 1906.16 main close(fd=8) = 0
+ 1906.40 main epoll_ctl(op=ADD fd=9 ev=0x11 data=0x800047cdd5a1800) = 0
+ 1907.08 main epoll_ctl(op=ADD fd=7 ev=0x5 data=0x47cdc47cf60) = 0
+ 1911.12 main epoll_wait(pwait2) = 2 [{ev=0x1 data=0x800047cdd5a1800} {ev=0x15 data=0x47cdc47cf60}]
+ 1912.23 main wait4(pid=14295, opts=0x1) = 14295
+ 1912.36 main epoll_ctl(op=DEL fd=9 ev=0x0 data=0x0) = 0
+ 1912.50 main close(fd=9) = 0
+ 1912.73 main recvfrom(fd=5, len=262144) = 0
+ 1913.30 main epoll_ctl(op=MOD fd=7 ev=0x1 data=0x47cdc47cf60) = 0
+ 1913.44 main recvfrom(fd=7, len=524288) = 3000
+ 1913.63 main recvfrom(fd=7, len=524288) = 0
+ 1914.09 thr  close(fd=5) = 0
+ 1914.28 main epoll_ctl(op=DEL fd=7 ev=0x1 data=0x0) = 0
+ 1914.43 main close(fd=7) = 0
+ 1976.00 main epoll_wait(pwait2) = 0 []
+run 18: exit:read()=null close push(3000) push(null)
+ 1981.11 main write(fd=1) "run 18: exit:read()=null close push(3000) push(null)|"
+ 1984.30 main socketpair() = 0 [5, 6]
+ 1988.06 main socketpair() = 0 [7, 8]
+ 1990.04 main fork-like(nr=58) = 14299
+ 1990.23 main <SIGCHLD delivered>
+ 1990.35 main pidfd_open(pid=14299) = 9
+ 1990.50 main close(fd=6) = 0
+ 1990.65 main close(fd=8) = 0
+ 1992.13 main epoll_ctl(op=ADD fd=9 ev=0x11 data=0x800047cdd5a1800) = 0
+ 1993.08 main epoll_ctl(op=ADD fd=7 ev=0x5 data=0x47cdc47efc0) = 0
+ 2002.80 main epoll_wait(pwait2) = 2 [{ev=0x1 data=0x800047cdd5a1800} {ev=0x15 data=0x47cdc47efc0}]
+ 2002.97 main wait4(pid=14299, opts=0x1) = 14299
+ 2003.11 main epoll_ctl(op=DEL fd=9 ev=0x0 data=0x0) = 0
+ 2003.25 main close(fd=9) = 0
+ 2007.83 main recvfrom(fd=5, len=262144) = 0
+ 2026.02 main epoll_ctl(op=MOD fd=7 ev=0x1 data=0x47cdc47efc0) = 0
+ 2031.51 main recvfrom(fd=7, len=524288) = 3000
+ 2032.57 main recvfrom(fd=7, len=524288) = 0
+ 2033.03 thr  close(fd=5) = 0
+ 2033.57 main epoll_ctl(op=DEL fd=7 ev=0x1 data=0x0) = 0
+ 2034.31 main close(fd=7) = 0
+ 2060.06 main epoll_wait(pwait2) = 0 []
+run 19: exit:read()=null close push(3000) push(null)
+ 2060.63 main write(fd=1) "run 19: exit:read()=null close push(3000) push(null)|"
+ 2063.10 main socketpair() = 0 [5, 6]
+ 2063.29 main socketpair() = 0 [7, 8]
+ 2065.38 main fork-like(nr=58) = 14305
+ 2065.65 main pidfd_open(pid=14305) = 9
+ 2065.77 main close(fd=6) = 0
+ 2065.90 main close(fd=8) = 0
+ 2066.17 main epoll_ctl(op=ADD fd=9 ev=0x11 data=0x800047cdd5a1800) = 0
+ 2067.49 main epoll_ctl(op=ADD fd=7 ev=0x5 data=0x47cdc47f650) = 0
+ 2073.70 main epoll_wait(pwait2) = 2 [{ev=0x15 data=0x47cdc47f650} {ev=0x1 data=0x800047cdd5a1800}]
+ 2074.79 main epoll_ctl(op=MOD fd=7 ev=0x1 data=0x47cdc47f650) = 0
+ 2075.34 main recvfrom(fd=7, len=524288) = 3000
+ 2076.59 main recvfrom(fd=7, len=524288) = 0
+ 2076.62 thr  <SIGCHLD delivered>
+ 2076.88 main epoll_ctl(op=DEL fd=7 ev=0x1 data=0x0) = 0
+ 2077.03 main close(fd=7) = 0
+ 2077.81 main wait4(pid=14305, opts=0x1) = 14305
+ 2077.95 main epoll_ctl(op=DEL fd=9 ev=0x0 data=0x0) = 0
+ 2078.10 main close(fd=9) = 0
+ 2078.34 main recvfrom(fd=5, len=262144) = 0
+ 2080.48 thr  close(fd=5) = 0
+ 2132.45 main epoll_wait(pwait2) = 0 []
+ 2157.01 main read(fd=5, len=1024) = 38
+ 2157.07 main close(fd=5) = 0
+ 2159.30 main epoll_wait(pwait2) = 0 []
+run 20: push(3000) push(null) exit:read()=3000 close
+ 2160.20 main write(fd=1) "run 20: push(3000) push(null) exit:read()=3000 close|"
+ 2169.38 main socketpair() = 0 [5, 6]
+ 2171.69 main socketpair() = 0 [7, 8]
+ 2174.46 main fork-like(nr=58) = 14315
+ 2174.62 main pidfd_open(pid=14315) = 9
+ 2174.67 main close(fd=6) = 0
+ 2174.72 main close(fd=8) = 0
+ 2174.88 main epoll_ctl(op=ADD fd=9 ev=0x11 data=0x800047cdd5a1800) = 0
+ 2177.02 main epoll_ctl(op=ADD fd=7 ev=0x5 data=0x47cdc47f6c0) = 0
+ 2181.45 main epoll_wait(pwait2) = 1 [{ev=0x5 data=0x47cdc47f6c0}]
+ 2182.73 main <SIGCHLD delivered>
+ 2183.80 main epoll_ctl(op=MOD fd=7 ev=0x1 data=0x47cdc47f6c0) = 0
+ 2184.40 main recvfrom(fd=7, len=524288) = 3000
+ 2197.27 main epoll_wait(pwait2) = 2 [{ev=0x11 data=0x47cdc47f6c0} {ev=0x1 data=0x800047cdd5a1800}]
+ 2197.33 main recvfrom(fd=7, len=524288) = 0
+ 2197.37 main epoll_ctl(op=DEL fd=7 ev=0x1 data=0x0) = 0
+ 2197.39 main close(fd=7) = 0
+ 2197.42 main wait4(pid=14315, opts=0x1) = 14315
+ 2197.43 main epoll_ctl(op=DEL fd=9 ev=0x0 data=0x0) = 0
+ 2197.44 main close(fd=9) = 0
+ 2197.54 main recvfrom(fd=5, len=262144) = 0
+ 2199.94 thr  close(fd=5) = 0
+ 2234.81 main epoll_wait(pwait2) = 0 []
+ 2240.69 main epoll_wait(pwait2) = 0 []
+run 21: push(3000) push(null) exit:read()=3000 close
+ 2240.92 main write(fd=1) "run 21: push(3000) push(null) exit:read()=3000 close|"
+ 2247.60 main socketpair() = 0 [5, 6]
+ 2248.22 main socketpair() = 0 [7, 8]
+ 2249.31 main fork-like(nr=58) = 14325
+ 2249.36 main pidfd_open(pid=14325) = 9
+ 2249.37 main close(fd=6) = 0
+ 2249.38 main close(fd=8) = 0
+ 2249.41 main epoll_ctl(op=ADD fd=9 ev=0x11 data=0x800047cdd5a1800) = 0
+ 2249.64 main epoll_ctl(op=ADD fd=7 ev=0x5 data=0x47cdc47f730) = 0
+ 2249.84 main epoll_wait(pwait2) = 1 [{ev=0x4 data=0x47cdc47f730}]
+ 2249.86 main epoll_ctl(op=MOD fd=7 ev=0x1 data=0x47cdc47f730) = 0
+ 2251.84 main epoll_wait(pwait2) = 1 [{ev=0x11 data=0x47cdc47f730}]
+ 2251.96 main recvfrom(fd=7, len=524288) = 3000
+ 2254.01 main <SIGCHLD delivered>
+ 2254.46 main recvfrom(fd=7, len=524288) = 0
+ 2254.52 main epoll_ctl(op=DEL fd=7 ev=0x1 data=0x0) = 0
+ 2254.54 main close(fd=7) = 0
+ 2254.57 main epoll_wait(pwait2) = 1 [{ev=0x1 data=0x800047cdd5a1800}]
+ 2254.59 main wait4(pid=14325, opts=0x1) = 14325
+ 2254.60 main epoll_ctl(op=DEL fd=9 ev=0x0 data=0x0) = 0
+ 2254.60 main close(fd=9) = 0
+ 2254.68 main recvfrom(fd=5, len=262144) = 0
+ 2255.58 thr  close(fd=5) = 0
+ 2310.41 main epoll_wait(pwait2) = 0 []
+run 22: push(3000) push(null) exit:read()=3000 close
+ 2310.71 main write(fd=1) "run 22: push(3000) push(null) exit:read()=3000 close|"
+ 2312.82 main socketpair() = 0 [5, 6]
+ 2313.25 main socketpair() = 0 [7, 8]
+ 2317.59 main fork-like(nr=58) = 14332
+ 2322.56 thr  <SIGCHLD delivered>
+ 2322.72 main pidfd_open(pid=14332) = 9
+ 2324.36 main close(fd=6) = 0
+ 2324.56 main close(fd=8) = 0
+ 2324.74 main epoll_ctl(op=ADD fd=9 ev=0x11 data=0x800047cdd5a1800) = 0
+ 2325.02 main epoll_ctl(op=ADD fd=7 ev=0x5 data=0x47cdc47f730) = 0
+ 2326.24 main epoll_wait(pwait2) = 2 [{ev=0x1 data=0x800047cdd5a1800} {ev=0x15 data=0x47cdc47f730}]
+ 2327.73 main wait4(pid=14332, opts=0x1) = 14332
+ 2327.86 main epoll_ctl(op=DEL fd=9 ev=0x0 data=0x0) = 0
+ 2328.12 main close(fd=9) = 0
+ 2328.24 main recvfrom(fd=5, len=262144) = 0
+ 2328.66 main epoll_ctl(op=MOD fd=7 ev=0x1 data=0x47cdc47f730) = 0
+ 2328.80 main recvfrom(fd=7, len=524288) = 3000
+ 2328.91 main recvfrom(fd=7, len=524288) = 0
+ 2329.01 main epoll_ctl(op=DEL fd=7 ev=0x1 data=0x0) = 0
+ 2329.09 main close(fd=7) = 0
+ 2329.22 thr  close(fd=5) = 0
+ 2389.44 main epoll_wait(pwait2) = 0 []
+run 23: exit:read()=null close push(3000) push(null)
+ 2390.86 main write(fd=1) "run 23: exit:read()=null close push(3000) push(null)|"
+ 2392.74 main socketpair() = 0 [5, 6]
+ 2394.25 main socketpair() = 0 [7, 8]
+ 2395.97 main fork-like(nr=58) = 14340
+ 2397.06 main pidfd_open(pid=14340) = 9
+ 2397.32 main close(fd=6) = 0
+ 2397.47 main close(fd=8) = 0
+ 2397.85 main epoll_ctl(op=ADD fd=9 ev=0x11 data=0x800047cdd5a1800) = 0
+ 2403.22 thr  <SIGCHLD delivered>
+ 2404.17 main epoll_ctl(op=ADD fd=7 ev=0x5 data=0x47cdc47f6c0) = 0
+ 2406.60 main epoll_wait(pwait2) = 2 [{ev=0x1 data=0x800047cdd5a1800} {ev=0x15 data=0x47cdc47f6c0}]
+ 2409.45 main wait4(pid=14340, opts=0x1) = 14340
+ 2410.19 main epoll_ctl(op=DEL fd=9 ev=0x0 data=0x0) = 0
+ 2410.32 main close(fd=9) = 0
+ 2410.63 main recvfrom(fd=5, len=262144) = 0
+ 2411.00 thr  close(fd=5) = 0
+ 2411.18 main epoll_ctl(op=MOD fd=7 ev=0x1 data=0x47cdc47f6c0) = 0
+ 2411.44 main recvfrom(fd=7, len=524288) = 3000
+ 2416.22 main recvfrom(fd=7, len=524288) = 0
+ 2416.56 main epoll_ctl(op=DEL fd=7 ev=0x1 data=0x0) = 0
+ 2416.78 main close(fd=7) = 0
+ 2466.17 main epoll_wait(pwait2) = 0 []
+run 24: exit:read()=null close push(3000) push(null)
+ 2469.39 main write(fd=1) "run 24: exit:read()=null close push(3000) push(null)|"
+ 2472.60 main socketpair() = 0 [5, 6]
+ 2472.99 main socketpair() = 0 [7, 8]
+ 2476.71 main fork-like(nr=58) = 14349
+ 2476.97 main pidfd_open(pid=14349) = 9
+ 2477.11 main close(fd=6) = 0
+ 2477.23 main close(fd=8) = 0
+ 2478.36 main epoll_ctl(op=ADD fd=9 ev=0x11 data=0x800047cdd5a1800) = 0
+ 2479.41 main epoll_ctl(op=ADD fd=7 ev=0x5 data=0x47cdc47f730) = 0
+ 2487.11 main epoll_wait(pwait2) = 2 [{ev=0x15 data=0x47cdc47f730} {ev=0x1 data=0x800047cdd5a1800}]
+ 2490.92 thr  <SIGCHLD delivered>
+ 2501.07 main epoll_ctl(op=MOD fd=7 ev=0x1 data=0x47cdc47f730) = 0
+ 2522.77 main recvfrom(fd=7, len=524288) = 3000
+ 2523.67 main recvfrom(fd=7, len=524288) = 0
+ 2524.35 main epoll_ctl(op=DEL fd=7 ev=0x1 data=0x0) = 0
+ 2524.64 main close(fd=7) = 0
+ 2524.93 main wait4(pid=14349, opts=0x1) = 14349
+ 2525.23 main epoll_ctl(op=DEL fd=9 ev=0x0 data=0x0) = 0
+ 2530.03 main close(fd=9) = 0
+ 2530.32 main recvfrom(fd=5, len=262144) = 0
+ 2533.69 thr  close(fd=5) = 0
+ 2542.23 main epoll_wait(pwait2) = 0 []
+run 25: push(3000) push(null) exit:read()=3000 close
+ 2542.47 main write(fd=1) "run 25: push(3000) push(null) exit:read()=3000 close|"
+ 2555.97 main socketpair() = 0 [5, 6]
+ 2556.40 main socketpair() = 0 [7, 8]
+ 2558.23 main fork-like(nr=58) = 14358
+ 2559.07 main pidfd_open(pid=14358) = 9
+ 2559.45 main close(fd=6) = 0
+ 2559.52 main <SIGCHLD delivered>
+ 2559.65 main close(fd=8) = 0
+ 2559.93 main epoll_ctl(op=ADD fd=9 ev=0x11 data=0x800047cdd5a1800) = 0
+ 2565.20 main epoll_ctl(op=ADD fd=7 ev=0x5 data=0x47cdc47fce0) = 0
+ 2573.13 main epoll_wait(pwait2) = 2 [{ev=0x1 data=0x800047cdd5a1800} {ev=0x15 data=0x47cdc47fce0}]
+ 2573.34 main wait4(pid=14358, opts=0x1) = 14358
+ 2573.48 main epoll_ctl(op=DEL fd=9 ev=0x0 data=0x0) = 0
+ 2573.63 main close(fd=9) = 0
+ 2573.84 main recvfrom(fd=5, len=262144) = 0
+ 2583.70 main epoll_ctl(op=MOD fd=7 ev=0x1 data=0x47cdc47fce0) = 0
+ 2584.63 main recvfrom(fd=7, len=524288) = 3000
+ 2585.53 main recvfrom(fd=7, len=524288) = 0
+ 2588.26 main epoll_ctl(op=DEL fd=7 ev=0x1 data=0x0) = 0
+ 2592.78 main close(fd=7) = 0
+ 2600.79 thr  close(fd=5) = 0
+ 2635.93 main epoll_wait(pwait2) = 0 []
+run 26: exit:read()=null close push(3000) push(null)
+ 2642.70 main write(fd=1) "run 26: exit:read()=null close push(3000) push(null)|"
+ 2664.02 main socketpair() = 0 [5, 6]
+ 2666.21 main socketpair() = 0 [7, 8]
+ 2679.36 main fork-like(nr=58) = 14365
+ 2685.10 main <SIGCHLD delivered>
+ 2685.68 main pidfd_open(pid=14365) = 9
+ 2686.21 main close(fd=6) = 0
+ 2689.74 main close(fd=8) = 0
+ 2691.02 main epoll_ctl(op=ADD fd=9 ev=0x11 data=0x800047cdd5a1800) = 0
+ 2693.58 main epoll_ctl(op=ADD fd=7 ev=0x5 data=0x47cdc47f730) = 0
+ 2699.34 main epoll_wait(pwait2) = 2 [{ev=0x1 data=0x800047cdd5a1800} {ev=0x15 data=0x47cdc47f730}]
+ 2699.82 main wait4(pid=14365, opts=0x1) = 14365
+ 2700.33 main epoll_ctl(op=DEL fd=9 ev=0x0 data=0x0) = 0
+ 2700.82 main close(fd=9) = 0
+ 2701.44 main recvfrom(fd=5, len=262144) = 0
+ 2702.67 main epoll_ctl(op=MOD fd=7 ev=0x1 data=0x47cdc47f730) = 0
+ 2713.84 main recvfrom(fd=7, len=524288) = 3000
+ 2714.99 main recvfrom(fd=7, len=524288) = 0
+ 2715.67 main epoll_ctl(op=DEL fd=7 ev=0x1 data=0x0) = 0
+ 2716.56 main close(fd=7) = 0
+ 2719.33 thr  close(fd=5) = 0
+ 2757.72 main epoll_wait(pwait2) = 0 []
+run 27: exit:read()=null close push(3000) push(null)
+ 2759.63 main write(fd=1) "run 27: exit:read()=null close push(3000) push(null)|"
+ 2761.40 main socketpair() = 0 [5, 6]
+ 2762.11 main socketpair() = 0 [7, 8]
+ 2769.11 main fork-like(nr=58) = 14369
+ 2769.17 main pidfd_open(pid=14369) = 9
+ 2769.18 main close(fd=6) = 0
+ 2769.18 main close(fd=8) = 0
+ 2769.22 main epoll_ctl(op=ADD fd=9 ev=0x11 data=0x800047cdd5a1800) = 0
+ 2769.49 main epoll_ctl(op=ADD fd=7 ev=0x5 data=0x47cdc47f730) = 0
+ 2769.61 main epoll_wait(pwait2) = 1 [{ev=0x4 data=0x47cdc47f730}]
+ 2769.63 main epoll_ctl(op=MOD fd=7 ev=0x1 data=0x47cdc47f730) = 0
+ 2770.74 main epoll_wait(pwait2) = 1 [{ev=0x11 data=0x47cdc47f730}]
+ 2779.00 main recvfrom(fd=7, len=524288) = 3000
+ 2780.15 main <SIGCHLD delivered>
+ 2789.55 main recvfrom(fd=7, len=524288) = 0
+ 2792.90 main epoll_ctl(op=DEL fd=7 ev=0x1 data=0x0) = 0
+ 2794.19 main close(fd=7) = 0
+ 2814.57 main epoll_wait(pwait2) = 1 [{ev=0x1 data=0x800047cdd5a1800}]
+ 2852.11 main wait4(pid=14369, opts=0x1) = 14369
+ 2852.46 main epoll_ctl(op=DEL fd=9 ev=0x0 data=0x0) = 0
+ 2852.96 main close(fd=9) = 0
+ 2873.06 main recvfrom(fd=5, len=262144) = 0
+run 28: push(3000) push(null) exit:read()=3000 close
+ 2882.27 main write(fd=1) "run 28: push(3000) push(null) exit:read()=3000 close|"
+ 2884.24 thr  close(fd=5) = 0
+ 2888.16 main socketpair() = 0 [5, 6]
+ 2889.41 main socketpair() = 0 [7, 8]
+ 2892.59 main fork-like(nr=58) = 14378
+ 2892.82 main pidfd_open(pid=14378) = 9
+ 2892.94 main close(fd=6) = 0
+ 2893.11 main close(fd=8) = 0
+ 2893.35 main epoll_ctl(op=ADD fd=9 ev=0x11 data=0x800047cdd5a1828) = 0
+ 2894.99 main epoll_ctl(op=ADD fd=7 ev=0x5 data=0x47ce2182610) = 0
+ 2897.48 main <SIGCHLD delivered>
+ 2898.73 main epoll_wait(pwait2) = 2 [{ev=0x15 data=0x47ce2182610} {ev=0x1 data=0x800047cdd5a1828}]
+ 2899.00 main epoll_ctl(op=MOD fd=7 ev=0x1 data=0x47ce2182610) = 0
+ 2899.12 main recvfrom(fd=7, len=524288) = 3000
+ 2899.29 main recvfrom(fd=7, len=524288) = 0
+ 2899.43 main epoll_ctl(op=DEL fd=7 ev=0x1 data=0x0) = 0
+ 2899.55 main close(fd=7) = 0
+ 2899.68 main wait4(pid=14378, opts=0x1) = 14378
+ 2899.80 main epoll_ctl(op=DEL fd=9 ev=0x0 data=0x0) = 0
+ 2899.91 main close(fd=9) = 0
+ 2900.10 main recvfrom(fd=5, len=262144) = 0
+ 2913.83 thr  close(fd=5) = 0
+ 2960.17 main epoll_wait(pwait2) = 0 []
+run 29: push(3000) push(null) exit:read()=3000 close
+ 2960.42 main write(fd=1) "run 29: push(3000) push(null) exit:read()=3000 close|"
+ 2962.73 main socketpair() = 0 [5, 6]
+ 2963.77 main socketpair() = 0 [7, 8]
+ 2980.89 main fork-like(nr=58) = 14388
+ 2981.30 main pidfd_open(pid=14388) = 9
+ 2981.42 main close(fd=6) = 0
+ 2981.54 main close(fd=8) = 0
+ 2981.79 main epoll_ctl(op=ADD fd=9 ev=0x11 data=0x800047cdd5a1800) = 0
+ 2982.33 main epoll_ctl(op=ADD fd=7 ev=0x5 data=0x47ce2182610) = 0
+ 2987.95 main epoll_wait(pwait2) = 2 [{ev=0x15 data=0x47ce2182610} {ev=0x1 data=0x800047cdd5a1800}]
+ 2988.29 main <SIGCHLD delivered>
+ 2990.20 main epoll_ctl(op=MOD fd=7 ev=0x1 data=0x47ce2182610) = 0
+ 2991.16 main recvfrom(fd=7, len=524288) = 3000
+ 2992.19 main recvfrom(fd=7, len=524288) = 0
+ 2993.42 main epoll_ctl(op=DEL fd=7 ev=0x1 data=0x0) = 0
+ 2995.16 main close(fd=7) = 0
+ 2995.49 main wait4(pid=14388, opts=0x1) = 14388
+ 2995.61 main epoll_ctl(op=DEL fd=9 ev=0x0 data=0x0) = 0
+ 2995.73 main close(fd=9) = 0
+ 2995.93 main recvfrom(fd=5, len=262144) = 0
+ 2996.39 thr  close(fd=5) = 0
+ 3045.60 main epoll_wait(pwait2) = 0 []
+run 30: push(3000) push(null) exit:read()=3000 close
+ 3045.87 main write(fd=1) "run 30: push(3000) push(null) exit:read()=3000 close|"

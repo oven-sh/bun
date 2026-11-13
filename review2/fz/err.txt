@@ -1,0 +1,15 @@
+2 | // The child writes three chunks 30 ms apart and stays alive. The 'data' listener throws on every call.
+3 | const { spawn } = require("node:child_process");
+4 | const c = spawn("/tmp/fz/w", ["oA:3", "s:30", "oB:3", "s:30", "oC:3", "s:400", "x:0"], { stdio: ["ignore", "pipe", "ignore"] });
+5 | let n = 0;
+6 | c.stdout.pause();
+7 | c.stdout.on("data", d => { console.log("data", ++n, String(d)); throw new Error("boom " + n); });
+                                                                                               ^
+error: boom 1
+      at <anonymous> (/tmp/fz/rep/pausedspawn.cjs:7:92)
+      at emit (node:events:100:22)
+      at <anonymous> (internal:streams/readable:382:45)
+      at flow (internal:streams/readable:617:57)
+      at resume_ (internal:streams/readable:604:70)
+
+Bun v1.4.4-canary.1+dbcb23530 (Linux x64)

@@ -1,0 +1,41 @@
+   30793 32230M epoll_ctl(ADD, fd5(anon_inode:[eventfd]), ev=0x1) = 0
+   30845 32230M epoll_ctl(MOD, fd5(anon_inode:[eventfd]), ev=0x80000001) = 0
+   68048 32230M vfork = 32257
+   70022 32230M clone = 32259
+   70046 32230M write(fd7(anon_inode:[eventfd])) = 8
+   70479 32259  clone = 32260
+   70503 32259  wait4(32257, flags=0x1) = 0
+   70512 32259  read(fd7(anon_inode:[eventfd])) = 8
+   70528 32259  wait4(32257, flags=0x1) = 0
+   70534 32259  read(fd7(anon_inode:[eventfd])) = -11
+   92350 32230M clone = 32263
+   93415 32230M clone = 32267
+  105253 32230M recv(fd6(socket:[6428278])) = -11
+  105308 32230M epoll_ctl(ADD, fd6(socket:[6428278]), ev=0x40000011) = 0
+  105382 32230M recv(fd8(socket:[6428280])) = -11
+  105403 32230M epoll_ctl(ADD, fd8(socket:[6428280]), ev=0x40000011) = 0
+  105900 32230M clone = 32273
+  106002 32230M clone = 32274
+  106071 32230M clone = 32275
+  106127 32230M clone = 32276
+  106183 32230M clone = 32277
+  106238 32230M clone = 32278
+  106292 32230M clone = 32279
+  108946 32230M clone = 32281
+  130329 32276  SIGNAL 17 (Child exited)
+  130619 32276  write(fd7(anon_inode:[eventfd])) = 8
+  130647 32276  sigreturn
+  131246 32259  poll = 1
+  131713 32259  wait4(32257, flags=0x1) = 32257
+  131861 32259  write(fd5(anon_inode:[eventfd])) = 8
+  133901 32259  read(fd7(anon_inode:[eventfd])) = 8
+  136571 32259  read(fd7(anon_inode:[eventfd])) = -11
+  146484 32230M epoll_wait ENTER
+  146713 32230M epoll_wait = 3 [fd6(socket:[6428278])ev=0x11, fd8(socket:[6428280])ev=0x11, fd5(anon_inode:[eventfd])ev=0x1]
+  153477 32230M recv(fd6(socket:[6428278])) = 3000
+  156563 32230M recv(fd6(socket:[6428278])) = 0
+  156599 32230M epoll_ctl(DEL, fd6(socket:[6428278]), ev=0x0) = 0
+  156703 32230M clone = 32297
+  164184 32230M recv(fd8(socket:[6428280])) = 0
+  164221 32230M epoll_ctl(DEL, fd8(socket:[6428280]), ev=0x0) = 0
+  164560 32230M write(fd1, "{"read":null,"code":0} ") = 23

@@ -1,0 +1,12 @@
+const { spawn } = require("node:child_process");
+const slot = Number(process.argv[2]);
+const cmd = slot === 1 ? "echo hi" : "echo hi >&3";
+const c = spawn("sh", ["-c", cmd], { stdio: ["ignore", "pipe", "ignore", "pipe"] });
+const s = slot === 1 ? c.stdout : c.stdio[3];
+const ev = [];
+s.on("data", () => ev.push("data"));
+s.on("end", () => ev.push("end"));
+c.on("exit", () => ev.push("exit"));
+c.on("close", () => { ev.push("close"); console.log(ev.join(",")); });
+(slot === 1 ? c.stdio[3] : c.stdout).resume();
+setTimeout(() => { console.log("TIMEOUT " + ev.join(",")); process.exit(2); }, 3000).unref();

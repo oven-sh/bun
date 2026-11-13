@@ -1,0 +1,132 @@
+bun test v1.4.4 (367d939d9)
+
+js/node/child_process/child_process.test.ts:
+(pass) ChildProcess.spawn() > should emit `spawn` on spawn [158.65ms]
+(pass) ChildProcess.spawn() > should emit `exit` when killed [67.89ms]
+(pass) ChildProcess.spawn() > kill() on a running process returns true and sets .killed [60.21ms]
+(pass) ChildProcess.spawn() > kill() after the process has exited returns false and does not set .killed [159.94ms]
+(pass) ChildProcess.spawn() > kill() after the process was killed returns false but .killed stays true [15.94ms]
+(pass) fork() IPC > routes a NODE_-prefixed cmd from parent to the child's internalMessage [291.14ms]
+(pass) fork() IPC > inherits a closed stdin as /dev/null, so disconnect() still reaches the child [867.48ms]
+(pass) spawn() > should spawn a process [20.42ms]
+(pass) spawn() > should ignore options.encoding "buffer" like Node does [329.47ms]
+(pass) spawn() > should ignore options.encoding "utf8" like Node does [387.89ms]
+(pass) spawn() > should ignore options.encoding "not-a-real-encoding" like Node does [418.66ms]
+{
+  tmpdir: "/tmp/bun.test.vdHOam",
+}
+(pass) spawn() > should use cwd from options to search for executables [400.45ms]
+(pass) spawn() > should disallow invalid filename [6.36ms]
+(pass) spawn() > should allow stdout to be read via Node stream.Readable `data` events [129.61ms]
+(pass) spawn() > should allow stdout to be read via .read() API [166.46ms]
+(pass) spawn() > should accept stdio option with 'ignore' for no stdio fds [41.50ms]
+(pass) spawn() > stdin for non-pipe stdio[0] stays null after exit > spawn stdio[0]=ignore [357.46ms]
+(pass) spawn() > stdin for non-pipe stdio[0] stays null after exit > spawn stdio[0]=inherit [239.10ms]
+(pass) spawn() > stdin for non-pipe stdio[0] stays null after exit > spawn stdio[0]=fd 0 [222.71ms]
+(pass) spawn() > stdin for non-pipe stdio[0] stays null after exit > fork() default stdio [244.22ms]
+(pass) spawn() > stdin for non-pipe stdio[0] stays null after exit > stdio[0]='pipe' still yields a destroyed Writable after exit [269.94ms]
+(pass) spawn() > should allow us to set cwd [213.74ms]
+(pass) spawn() > cwd can be a URL of another implementation [276.05ms]
+(pass) spawn() > should allow us to write to stdin [797.93ms]
+(pass) spawn() > stdin.end(cb) and 'finish' wait for the backlog to drain [820.56ms]
+(pass) spawn() > should allow us to timeout hanging processes [40.17ms]
+(pass) spawn() > should allow us to set env [2987.65ms]
+(pass) spawn() > should allow explicit setting of argv0 [140.59ms]
+(pass) spawn() > should allow us to spawn in the default shell [25.12ms]
+(pass) spawn() > should allow us to spawn in a specified shell [19.08ms]
+(pass) spawn() > should spawn a process synchronously [17.42ms]
+(pass) spawn() > stdio > ignore [14.13ms]
+(pass) spawn() > stdio > inherit [22.57ms]
+(pass) spawn() > stdio > pipe [28.59ms]
+(pass) spawn() > stdio > overlapped [42.52ms]
+(pass) spawn() > stdio > accepts another subprocess's stdin as a stdio target [83.79ms]
+(todo) spawn() > stdio > a child inheriting another subprocess's stdin survives a large write
+1.4.4-debug
+(pass) spawn() > stdio > overlapped string shorthand behaves like pipe [889.47ms]
+(pass) spawn() > stdio > overlapped string shorthand works with spawnSync [253.92ms]
+(pass) spawn() > stdio > a socket as a stdio entry > rejects a tls.TLSSocket [411.53ms]
+(pass) spawn() > stdio > a socket as a stdio entry > accepts a net.Socket [205.52ms]
+(pass) spawn() > stdin write failure (EPIPE) emits 'error' and destroys even with a write callback [608.02ms]
+(pass) spawn() > stdin write to a child that exits before draining it fails with EPIPE [355.38ms]
+(pass) execFile() > should execute a file [162.60ms]
+(pass) exec() > should execute a command in a shell [21.92ms]
+(pass) exec() > should return an object w/ stdout and stderr when promisified [27.80ms]
+(pass) spawnSync() > should spawn a process synchronously [10.16ms]
+(pass) spawnSync() > detached: true starts the child in a new process group [27.74ms]
+(pass) spawnSync() > drains piped stdio to EOF after the direct child exits [316.40ms]
+(pass) execFileSync() > should execute a file synchronously [96.85ms]
+(pass) execFileSync() > should allow us to pass input to the command [51.99ms]
+(skip) execFileSync() > runs a .com executable by absolute path or bare name
+(pass) execSync() > should execute a command in the shell synchronously [139.72ms]
+(pass) should call close and exit before process exits [1085.30ms]
+(pass) it accepts stdio passthrough [4642.66ms]
+(pass) spawnSync correctly reports signal codes [234.10ms]
+(pass) exit signals are named with the OS's own numbering > spawnSync({ killSignal: SIGUSR1 }) reports that signal [10.63ms]
+(pass) exit signals are named with the OS's own numbering > spawnSync({ killSignal: SIGUSR2 }) reports that signal [6.57ms]
+(pass) exit signals are named with the OS's own numbering > spawnSync({ killSignal: SIGSTKFLT }) reports that signal [6.01ms]
+(pass) exit signals are named with the OS's own numbering > child.kill(SIGUSR1) exits with that signal [61.90ms]
+(pass) an exit signal with no name is reported as node reports it > spawnSync: signal after signal 40 [10.04ms]
+(pass) an exit signal with no name is reported as node reports it > spawnSync: signal after signal 64 [6.11ms]
+(pass) exit signals are named with the OS's own numbering > child.kill(SIGUSR2) exits with that signal [68.30ms]
+(pass) exit signals are named with the OS's own numbering > child.kill(SIGSTKFLT) exits with that signal [64.76ms]
+(pass) an exit signal with no name is reported as node reports it > spawn: 'exit' and 'close' after signal 40 [38.16ms]
+(pass) an exit signal with no name is reported as node reports it > spawn: 'exit' and 'close' after signal 64 [30.29ms]
+(pass) spawnSync(does-not-exist) [9.62ms]
+(pass) spawn with an fd number at Darwin OPEN_MAX in stdio reports EBADF [14.19ms]
+1172 | 
+1173 |   let result: any;
+1174 |   try {
+1175 |     result = JSON.parse(stdout);
+1176 |   } catch {
+1177 |     throw new Error(`child did not produce a result; stdout: ${JSON.stringify(stdout)} stderr: ${stderr}`);
+                     ^
+error: child did not produce a result; stdout: "\nFATAL: bun-debug failed to load bundled version of \"internal:async_context_frame\" at \"/workspace/bun/build/debug/js/internal/async_context_frame.js\" (was it deleted?)\nPlease re-compile Bun to continue.\n\n" stderr: 
+      at <anonymous> (/tmp/probe1/old/js/node/child_process/child_process.test.ts:1177:15)
+(fail) spawn still works with more than 10240 fds open [582.15ms]
+killed 2 dangling processes
+(fail) extra stdio pipes are not double-closed on GC [5019.24ms]
+  ^ this test timed out after 5000ms.
+(skip) extra stdio 'pipe' sockets deliver data and GC of the ChildProcess closes nothing else
+(pass) stdio[i] = 'ignore' for i >= 3 leaves the fd closed in the child [51.25ms]
+(pass) uid/gid options > spawnSync applies uid/gid and drops supplementary groups [19.89ms]
+(pass) uid/gid options > spawn applies uid/gid (async) [38.52ms]
+(skip) uid/gid options > spawn with a uid the process cannot set throws EPERM synchronously
+(pass) uid/gid options > spawn reports EPERM after dropping privileges [428.75ms]
+(skip) uid/gid options > spawn with uid/gid fails with ENOTSUP on Windows
+(pass) stdout pipe backpressure > blocks the child until a reader attaches and delivers every byte [1033.83ms]
+(pass) stdout pipe backpressure > still drains a paused stdout to 'close' after the child exits [14.96ms]
+(pass) emits 'close' when an unread stdio pipe closed without any data [927.94ms]
+(pass) child.stdout.pause() after flowing stops native reads and blocks the child [2092.06ms]
+(pass) spawn/execFile({signal}) does not leak abort listeners on spawn failure > spawn ENOENT [1025.80ms]
+(pass) spawn/execFile({signal}) does not leak abort listeners on spawn failure > spawn with nonexistent cwd [718.38ms]
+(pass) spawn/execFile({signal}) does not leak abort listeners on spawn failure > execFile ENOENT [777.92ms]
+(pass) execFile() maxBuffer against a fast writer > truncates at exactly maxBuffer (encoding: buffer) [3140.44ms]
+(pass) execFile() maxBuffer against a fast writer > truncates at exactly maxBuffer (encoding: utf8) [3023.56ms]
+(pass) child.stdout.destroy() inside a 'data' listener stops 'data' and 'end' [3184.78ms]
+(pass) child.stderr.destroy() inside a 'data' listener stops 'data' and 'end' [3181.26ms]
+(pass) spawn/execFile({signal}) does not leak abort listeners on spawn failure > successful spawn (control) [1399.71ms]
+(pass) spawn/execFile({signal}) does not leak abort listeners on spawn failure > abort() after a failed spawn still cleans up and is a no-op kill [17.31ms]
+(pass) child.stdout pull nested in a 'data' event > delivers a tail read to EOF that does not fit the pull buffer [941.08ms]
+
+4 tests skipped:
+(skip) execFileSync() > runs a .com executable by absolute path or bare name
+(skip) extra stdio 'pipe' sockets deliver data and GC of the ChildProcess closes nothing else
+(skip) uid/gid options > spawn with a uid the process cannot set throws EPERM synchronously
+(skip) uid/gid options > spawn with uid/gid fails with ENOTSUP on Windows
+
+
+1 tests todo:
+(todo) spawn() > stdio > a child inheriting another subprocess's stdin survives a large write
+
+
+2 tests failed:
+(fail) spawn still works with more than 10240 fds open [582.15ms]
+(fail) extra stdio pipes are not double-closed on GC [5019.24ms]
+  ^ this test timed out after 5000ms.
+
+ 84 pass
+ 4 skip
+ 1 todo
+ 2 fail
+ 198 expect() calls
+Ran 91 tests across 1 file. [36.58s]

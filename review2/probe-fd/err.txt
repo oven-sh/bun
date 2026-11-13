@@ -1,0 +1,13 @@
+/tmp/probe-fd/r1/tcp.cjs:11
+  c.on("data", () => { console.log("data"); throw new Error("data-throw-fatal"); });
+                                            ^
+
+Error: data-throw-fatal
+    at Socket.<anonymous> (/tmp/probe-fd/r1/tcp.cjs:11:51)
+    at Socket.emit (node:events:509:20)
+    at addChunk (node:internal/streams/readable:568:12)
+    at readableAddChunkPushByteMode (node:internal/streams/readable:519:3)
+    at Readable.push (node:internal/streams/readable:399:5)
+    at TCP.onStreamRead (node:internal/stream_base_commons:189:23)
+
+Node.js v26.3.0

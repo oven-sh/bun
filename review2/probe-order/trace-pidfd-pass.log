@@ -1,0 +1,34 @@
+   31011 4151M epoll_ctl(ADD, fd5(anon_inode:[eventfd]), ev=0x1) = 0
+   31072 4151M epoll_ctl(MOD, fd5(anon_inode:[eventfd]), ev=0x80000001) = 0
+   54217 4151M vfork = 4152
+   63894 4151M pidfd_open(4152) = 10
+   64638 4151M epoll_ctl(ADD, fd10(anon_inode:[pidfd]), ev=0x11) = 0
+   68435 4151M clone = 4153
+   71131 4151M clone = 4155
+   72789 4151M recv(fd6(socket:[6741275])) = 3000
+   72829 4151M recv(fd6(socket:[6741275])) = -11
+   72875 4151M epoll_ctl(ADD, fd6(socket:[6741275]), ev=0x40000011) = 0
+   73235 4151M epoll_ctl(MOD, fd6(socket:[6741275]), ev=0x40000011) = 0
+   73292 4151M recv(fd8(socket:[6741277])) = -11
+   73331 4151M epoll_ctl(ADD, fd8(socket:[6741277]), ev=0x40000011) = 0
+   85813 4151M SIGNAL 17 (Child exited)
+   89263 4153  clone = 4157
+  102457 4151M clone = 4158
+  107868 4151M clone = 4159
+  113870 4151M clone = 4160
+  116667 4151M clone = 4161
+  117060 4151M clone = 4162
+  118033 4151M clone = 4163
+  120096 4151M clone = 4164
+  135982 4151M clone = 4165
+  254409 4151M epoll_wait ENTER
+  254805 4151M epoll_wait = 3 [fd6(socket:[6741275])ev=0x11, fd8(socket:[6741277])ev=0x11, fd10(anon_inode:[pidfd])ev=0x1]
+  255761 4151M recv(fd6(socket:[6741275])) = 0
+  256581 4151M epoll_ctl(DEL, fd6(socket:[6741275]), ev=0x0) = 0
+  260523 4151M clone = 4166
+  262504 4151M recv(fd8(socket:[6741277])) = 0
+  262636 4151M epoll_ctl(DEL, fd8(socket:[6741277]), ev=0x0) = 0
+  262801 4151M wait4(4152, flags=0x1) = 4152
+  262923 4151M epoll_ctl(DEL, fd10(anon_inode:[pidfd]), ev=0x0) = 0
+  265216 4166  clone = 4167
+  265348 4151M write(fd1, "{"read":3000,"code":0} ") = 23

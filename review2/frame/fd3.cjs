@@ -1,0 +1,10 @@
+const { spawn } = require("child_process");
+const child = spawn("sh", ["-c", "for i in 1 2 3 4 5; do printf 'xxxxxxxxxx\\n' >&3; sleep 0.03; done"], { stdio: ["ignore", "pipe", "pipe", "pipe"] });
+let calls = 0;
+process.on("uncaughtException", e => console.log("uncaughtException:", e.message));
+process.on("unhandledRejection", e => console.log("unhandledRejection:", e && e.message));
+const s = child.stdio[3];
+console.log("stdio[3] is", s.constructor.name, "| stdout is", child.stdout.constructor.name);
+s.on("data", d => { calls++; if (calls === 1) throw new Error("boom"); });
+s.on("end", () => console.log("end calls=" + calls));
+child.on("close", (c) => console.log("close", c));

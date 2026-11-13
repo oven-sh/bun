@@ -474,46 +474,11 @@ impl DevServer {
             let mut entry_points = EntryPointList::empty();
 
             let (is_reload, timer) = if let Some(event) = self.next_bundle.reload_event.take() {
-                'brk: {
-                    // SAFETY: `event` points into `*self.watcher_atomics` (its
-                    // own heap allocation); the slot is exclusively owned by
-                    // this thread until recycled below.
-                    let reload_event_timer = unsafe { (*event).timer };
-
-                    let self_ptr: *mut DevServer = self;
-                    let mut current: *mut HotReloadEvent = event;
-                    loop {
-                        // SAFETY: `self_ptr` is `self`; `*current` lives in
-                        // `*self.watcher_atomics` (a separate heap allocation),
-                        // disjoint from the graph/watcher fields
-                        // `process_file_list` mutates. Both exclusive borrows
-                        // end with this call.
-                        unsafe {
-                            HotReloadEvent::process_file_list(
-                                &mut *current,
-                                &mut *self_ptr,
-                                &mut entry_points,
-                            )
-                        };
-                        // SAFETY: `current` points into `*self.watcher_atomics`;
-                        // `recycle_event_from_dev_server` only reads/swaps that
-                        // slot and returns the next exclusively-owned one (a
-                        // slot in `self.watcher_atomics.events[..]`).
-                        let Some(next) = (unsafe {
-                            WatcherAtomics::recycle_event_from_dev_server(
-                                self.watcher_atomics.as_ptr(),
-                                current,
-                            )
-                        }) else {
-                            break;
-                        };
-                        current = next;
-                        // SAFETY: `current` is the freshly acquired exclusive slot.
-                        #[cfg(debug_assertions)]
-                        debug_assert!(unsafe { (*current).debug_mutex.try_lock() });
-                    }
-
-                    break 'brk (true, reload_event_timer);
+                // SAFETY: `HotReloadEvent::run` left `event` here without recycling it.
+                unsafe {
+                    let timer = (*event).timer;
+                    self.process_reload_events(event, &mut entry_points);
+                    (true, timer)
                 }
             } else {
                 (false, Instant::now())

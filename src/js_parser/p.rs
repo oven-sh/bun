@@ -178,6 +178,7 @@ pub(crate) struct ParserSnapshot<'a> {
     symbols_len: usize,
     allocated_names_len: usize,
     import_records_len: usize,
+    parsed_direct_eval_scopes_len: usize,
 }
 
 pub(crate) type NeedsJSXType = bool;
@@ -460,6 +461,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Functions the compiler outlined from a function that isn't at the top level. `visit_stmts` puts them after the
     /// statement it is visiting.
     pub(crate) react_compiler_outlined_from_nested: Vec<Stmt>,
+    /// The scopes that `mark_parsed_direct_eval` marked, for `restore_parser_snapshot`.
+    parsed_direct_eval_scopes: Vec<js_ast::StoreRef<Scope>>,
+    /// Functions of case clauses that stay lowered, because an earlier declaration of their name was dropped.
+    pub(crate) case_fns_declared_twice: Vec<Ref>,
 
     /// only applicable when `.options.features.server_components` is
     /// configured to wrap exports. populated before visit pass starts.
@@ -3439,14 +3444,42 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.options.bundle || self.options.features.minify_identifiers
     }
 
+    /// Marks the scopes around a call that is spelled `eval(..)`, before the visit can say whether it is a direct eval.
+    #[cold]
+    pub(crate) fn mark_parsed_direct_eval(&mut self) {
+        let mut scope = Some(self.current_scope);
+        while let Some(mut s) = scope {
+            if s.parsed_direct_eval {
+                break;
+            }
+            s.parsed_direct_eval = true;
+            self.parsed_direct_eval_scopes.push(s);
+            scope = s.parent;
+        }
+    }
+
     /// Whether a plain function of a case clause stays a declaration: the engine creates it at the switch entry.
-    pub(crate) fn keeps_case_clause_function(&self) -> bool {
+    pub(crate) fn keeps_case_clause_function(&self, name: Ref) -> bool {
         // Sloppy output makes it a `var` of the enclosing function too, which only a renamer can name apart.
         if !self.will_use_renamer() {
             return false;
         }
-        // The Fast Refresh statements of a function have to run before its first call.
-        if self.options.features.react_fast_refresh {
+        // Fast Refresh puts statements behind a declaration, and the React Compiler replaces the body around it.
+        if self.options.features.react_fast_refresh
+            || self.options.features.react_compiler != js_ast::runtime::ReactCompilerMode::Disabled
+        {
+            return false;
+        }
+        // As a `var`, `arguments` would replace the arguments object.
+        if self.symbols[name.inner_index() as usize]
+            .original_name
+            .slice()
+            == b"arguments"
+        {
+            return false;
+        }
+        // A `with` in the switch can read the function by its name, so the name cannot change.
+        if self.current_scope().contains_with || self.case_fns_declared_twice.contains(&name) {
             return false;
         }
         let mut scope = self.current_scope_ref();
@@ -3454,7 +3487,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             scope = scope.parent.unwrap();
         }
         // A direct eval there forbids a new name, and the text that it evaluates can read the `var`.
-        !scope.parsed_direct_eval
+        !scope.parsed_direct_eval && !self.defines_eval()
+    }
+
+    /// Whether a define gives `eval` another name, which the parser cannot see at a call.
+    fn defines_eval(&self) -> bool {
+        let is_eval = |data: &crate::defines::DefineData| {
+            data.original_name.as_deref() == Some(b"eval".as_slice())
+        };
+        self.define.identifiers.values().any(is_eval)
+            || (self.define.dots.values()).any(|dots| dots.iter().any(|dot| is_eval(&dot.data)))
+    }
+
+    /// Whether a direct eval stands behind a case clause that the visit flushes now, for a function with a `var` twin.
+    pub(crate) fn case_clause_eval_is_ahead(&self, name: Ref) -> bool {
+        self.current_scope().parsed_direct_eval
+            && self
+                .hoisted_ref_for_sloppy_mode_block_fn
+                .contains_key(&name)
     }
 
     fn hoist_symbols(&mut self, mut scope: js_ast::StoreRef<js_ast::Scope>) {
@@ -8283,6 +8333,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             symbols_len: self.symbols.len(),
             allocated_names_len: self.allocated_names.len(),
             import_records_len: self.import_records.len(),
+            parsed_direct_eval_scopes_len: self.parsed_direct_eval_scopes.len(),
         }
     }
 
@@ -8340,6 +8391,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         self.allocated_names.truncate(snapshot.allocated_names_len);
         self.import_records.truncate(snapshot.import_records_len);
+        while self.parsed_direct_eval_scopes.len() > snapshot.parsed_direct_eval_scopes_len {
+            if let Some(mut scope) = self.parsed_direct_eval_scopes.pop() {
+                scope.parsed_direct_eval = false;
+            }
+        }
     }
 
     /// When not transpiling we dont use the renamer, so our solution is to generate really
@@ -9816,6 +9872,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             react_compiler_result: None,
             react_compiler_may_replace_body: false,
             react_compiler_outlined_from_nested: Vec::new(),
+            parsed_direct_eval_scopes: Vec::new(),
+            case_fns_declared_twice: Vec::new(),
             server_components_wrap_ref: Ref::NONE,
             jest: Jest::default(),
             imported_mock_apis: Default::default(),

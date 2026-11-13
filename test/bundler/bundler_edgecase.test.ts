@@ -4658,6 +4658,116 @@ describe("bundler", () => {
     target: "bun",
     run: { stdout: '["function","q","undefined","undefined","q","undefined","function"]' },
   });
+  // These keep the `let` at the head of their clause, because a declaration
+  // would not be safe: a name that the switch declares twice (the `var` of
+  // sloppy code is assigned at the dropped declaration too), a function named
+  // `arguments` (its `var` would replace the arguments object), and a function
+  // that a `with` in the switch reads (it cannot get another name).
+  itBundled("edgecase/SwitchCaseFunctionDeclarationStaysALet", {
+    files: {
+      "/entry.cjs": /* js */ `
+        function declaredTwice(leave) {
+          switch (1) { case 1: function g() { return 1; } if (leave) break; function g() { return 2; } }
+          return typeof g;
+        }
+        function namedArguments() {
+          switch (1) { case 1: function arguments() {} }
+          return typeof arguments;
+        }
+        var obj = { g: "property" };
+        globalThis.g = "global";
+        function readInWith() {
+          const seen = [];
+          { switch (1) { case 1: with (obj) { seen.push(g); } function g() { return "fn"; } } }
+          seen.push(typeof g === "string" ? g : typeof g);
+          return seen;
+        }
+        console.log(JSON.stringify([declaredTwice(true), declaredTwice(false), namedArguments(), readInWith()]));
+      `,
+    },
+    format: "cjs",
+    target: "bun",
+    run: { stdout: '["function","function","function",["property","function"]]' },
+  });
+  // A define can give \`eval\` another name, which the parser cannot see at the
+  // call. Then the function is a \`let\` as before.
+  itBundled("edgecase/SwitchCaseFunctionDeclarationDefinedEval", {
+    files: {
+      "/entry.cjs": /* js */ `
+        function inClause(v) {
+          switch (v) { case 1: function q() { return "q"; } myEval(""); break; case 2: try { return q(); } catch (e) { return e.constructor.name; } }
+          return typeof q;
+        }
+        function behind(v) {
+          switch (v) { case 1: function q() { return "q"; } break; }
+          return myEval("typeof q");
+        }
+        console.log(JSON.stringify([inClause(1), inClause(3), behind(1), behind(3)]));
+      `,
+    },
+    define: { myEval: "eval" },
+    format: "cjs",
+    target: "bun",
+    run: { stdout: '["function","undefined","function","undefined"]' },
+  });
+  // A direct eval in a later clause of a module: the function is a \`let\` of the
+  // switch block, and nothing of it shows behind the switch.
+  for (const format of ["cjs", "iife"] as const) {
+    itBundled(`edgecase/SwitchCaseFunctionDeclarationLaterEvalInModule${format === "cjs" ? "Cjs" : "Iife"}`, {
+      files: {
+        "/entry.mjs": /* js */ `
+          function later(v) {
+            switch (v) { case 1: function q() {} break; case 2: eval(""); break; }
+            return typeof q;
+          }
+          console.log(JSON.stringify([later(1), later(2), later(3)]));
+          export {};
+        `,
+      },
+      format,
+      target: "bun",
+      run: { stdout: '["undefined","undefined","undefined"]' },
+    });
+  }
+  // A \`const\` in front of the function that a later clause reads: the removal
+  // of inlined constants must not take it when the function stays a declaration.
+  itBundled("edgecase/SwitchCaseFunctionDeclarationLeadingConst", {
+    files: {
+      "/entry.cjs": /* js */ `
+        function lead(v) {
+          switch (v) { case 1: const n = "C"; function g() { return 1; } g(); case 2: return n; }
+        }
+        console.log(lead(1));
+      `,
+    },
+    bundling: false,
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    run: { stdout: "C" },
+  });
+  // Two modules with a function of the same name in a top-level switch: each
+  // gets a name of its own at the top level of the bundle.
+  itBundled("edgecase/SwitchCaseFunctionDeclarationTopLevelOfTwoModules", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import { a } from "./a.mjs";
+        import { b } from "./b.mjs";
+        console.log(JSON.stringify([a, b]));
+      `,
+      "/a.mjs": /* js */ `
+        export let a;
+        switch (globalThis.notSet ?? 2) { case 1: function helper() { return "a"; } break; case 2: a = helper(); }
+      `,
+      "/b.mjs": /* js */ `
+        export let b;
+        switch (globalThis.notSet ?? 2) { case 1: function helper() { return "b"; } break; case 2: b = helper(); }
+      `,
+    },
+    format: "cjs",
+    target: "bun",
+    run: { stdout: '["a","b"]' },
+  });
   // A direct eval of the enclosing function outside the switch: the text that it
   // evaluates would read the `var` that sloppy output gives a declaration. So
   // the function is a `let` of the switch block there, as before.
@@ -4793,57 +4903,8 @@ describe("bundler", () => {
     reactFastRefresh: true,
     run: { stdout: '["comp1","first1second1"]' },
   });
-  // The React Compiler outlines a callback of a component into a function that
-  // goes after the component. In a case clause that is inside the switch block,
-  // where the callback can still read the bindings of the block. Node runs the
-  // bundle: Bun would transpile this sloppy script once more.
-  itBundled("edgecase/SwitchCaseFunctionDeclarationReactCompiler", {
-    files: {
-      "/entry.jsx": /* jsx */ `
-        import { useState } from "react";
-        function declaredFirst(kind) {
-          switch (kind) {
-            case "declared":
-              const suffix = "!";
-              function Item({ label }) {
-                const [n] = useState(1);
-                return <button onClick={() => "clicked" + suffix} data-label={label + n} />;
-              }
-              return Item;
-          }
-        }
-        function declaredLater(kind) {
-          switch (kind) {
-            case "other":
-              return Row;
-            case "declared":
-              function Row({ label }) {
-                const [n] = useState(2);
-                return <button onClick={() => "row"} data-label={label + n} />;
-              }
-          }
-        }
-        const item = declaredFirst("declared")({ label: "x" });
-        const row = declaredLater("other")({ label: "y" });
-        console.log(item.props["data-label"], item.props.onClick(), row.props["data-label"], row.props.onClick());
-      `,
-      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
-      "/node_modules/react/index.js": `exports.useState = value => [value, () => {}];`,
-      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
-      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
-      "/node_modules/react/compiler-runtime.js": `exports.c = size => new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));`,
-    },
-    reactCompiler: true,
-    target: "browser",
-    backend: "cli",
-    onAfterBundle(api) {
-      // Both callbacks are outlined: the components name them.
-      expect(api.readFile("/out.js").match(/onClick: _temp\d*,/g)).toHaveLength(2);
-    },
-    run: { runtime: "node", stdout: "x1 clicked! y2 row" },
-  });
-  // The switch stands in a component. It is printed as it is written, so the
-  // compiler still takes the component.
+  // With the React Compiler the function is a `let` at the head of its clause
+  // as before, and the compiler still takes the component.
   itBundled("edgecase/SwitchCaseFunctionDeclarationInReactCompilerComponent", {
     files: {
       "/entry.jsx": /* jsx */ `

@@ -354,7 +354,7 @@ pub struct Scope {
     // Set on a "with" scope and every scope that encloses it, for compute_reserved_names_for_scope.
     pub contains_with: bool,
 
-    // Set by the parser up the scope chain for a call spelled as a direct eval. The visit sets the flag above.
+    // Set by the parser up the scope chain for a call spelled `eval(..)`: a superset of `contains_direct_eval` before the visit.
     pub parsed_direct_eval: bool,
 
     // This is to help forbid "arguments" inside class body scopes

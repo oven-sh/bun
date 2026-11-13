@@ -6210,20 +6210,26 @@ describe("function declarations in switch case clauses", () => {
       "function t(s) {\n  switch (s) {\n    case 1:\n      function c() {}\n      break;\n    case 2:\n      c();\n  }\n}\n",
     );
 
-    // The last declaration of a name is the value of the binding. The parser
-    // drops the ones before it, so strict text does not see two.
+    // A name that the switch declares twice stays a `let`: sloppy code assigns
+    // the `var` at the dropped declaration too, which the head of the clause does.
     expect(
       renamed.transformSync(
         "function f(v) { switch (v) { case 1: function g() { return 1 } break; case 2: function g() { return 2 } return g(); } return g; }",
       ),
     ).toBe(
-      "function e(r) {\n  switch (r) {\n    case 1:\n      break;\n    case 2:\n      function n() {\n        return 2;\n      }\n      var t = n;\n      return n();\n  }\n  return t;\n}\n",
+      "function e(r) {\n  switch (r) {\n    case 1:\n      break;\n    case 2:\n      let n = function() {\n        return 2;\n      };\n      var t = n;\n      return n();\n  }\n  return t;\n}\n",
     );
 
     // A `let` of the name between the switch and the function stops the `var`
     // of sloppy code. The text must not declare one.
     expect(renamed.transformSync("function f() { { let g = 1; { switch (1) { case 1: function g() {} } } } }")).toBe(
       "function t() {\n  {\n    let n = 1;\n    {\n      switch (1) {\n        case 1:\n          function c() {}\n      }\n    }\n  }\n}\n",
+    );
+    // The parameter has the name too, but it is not the `var` of the function.
+    expect(
+      renamed.transformSync("function t(f) { { let f = 1; { switch (1) { case 1: function f() {} } } } return f; }"),
+    ).toBe(
+      "function f(t) {\n  {\n    let c = 1;\n    {\n      switch (1) {\n        case 1:\n          function n() {}\n      }\n    }\n  }\n  return t;\n}\n",
     );
   });
 
@@ -6251,12 +6257,17 @@ describe("function declarations in switch case clauses", () => {
   it("is lowered as in any other block where no renamer runs", () => {
     const lowered =
       "function f(v) {\n  switch (v) {\n    case 1:\n      let g = function() {};\n      break;\n    case 2:\n      g();\n  }\n}\n";
-    expect(js.transformSync("function f(v) { switch (v) { case 1: function g() {} break; case 2: g(); } }")).toBe(
-      lowered,
-    );
     expect(
       js.transformSync('function f(v) { "use strict"; switch (v) { case 1: function g() {} break; case 2: g(); } }'),
     ).toBe(lowered);
+    // Also with a direct eval in a later clause, which only matters to a renamer.
+    expect(
+      js.transformSync(
+        'function f(v) { "use strict"; switch (v) { case 1: function g() {} break; case 2: eval(""); g(); } }',
+      ),
+    ).toBe(
+      'function f(v) {\n  switch (v) {\n    case 1:\n      let g = function() {};\n      break;\n    case 2:\n      eval("");\n      g();\n  }\n}\n',
+    );
     // A block in a clause is not the clause.
     expect(renamed.transformSync("function f(v) { switch (v) { case 1: { function g() {} g(); } } }")).toBe(
       "function f(n) {\n  switch (n) {\n    case 1: {\n      let c = function() {};\n      var i = c;\n      c();\n    }\n  }\n}\n",
@@ -6382,6 +6393,14 @@ describe("function declarations in switch case clauses", () => {
     twoOfOneName: {
       body: `function f(v) { switch (v) { case 1: return g(); case 2: function g() { return "first" } case 3: function g() { return "second" } } } return f(1);`,
       sloppy: "second",
+      declaredTwice: true,
+    },
+    // Annex B assigns the `var` of sloppy code where the declaration stands.
+    varAssignedAtTheDeclaration: {
+      body: `function p(c) { switch (1) { case 1: if (c) break; function g() {} } return typeof g; } return [p(true), p(false)];`,
+      strict: ["undefined", "undefined"],
+      sloppy: ["undefined", "function"],
+      readsOutside: true,
     },
     labelledAndLoop: {
       body: `const r = []; outer: for (const x of [1, 2, 3]) { inner: switch (x) { case 1: function g() { return "L" } continue outer; case 2: r.push(g()); break inner; case 3: r.push(g() + "!"); break outer; } r.push("after" + x); } return r;`,
@@ -6479,13 +6498,16 @@ describe("function declarations in switch case clauses", () => {
       for (const [name, row] of Object.entries(rows)) {
         if (row.printsName) continue;
         if (strictSource && !("strict" in row)) continue;
+        // These stay a `let` at the head of their clause: a function of strict
+        // code whose enclosing function calls eval, and a name declared twice.
+        if ((row.directEval && strictSource) || row.declaredTwice) continue;
         const text = transpiler.transformSync(
           `globalThis.__switchCaseRow = function () { ${strictSource ? '"use strict";' : ""} ${row.body} };`,
         );
         for (const strictText of [false, true]) {
-          // A direct eval forbids a second name, so the engine decides by the
-          // strictness of the text, as for a direct eval in any other block.
-          if (row.directEval && strictText === !strictSource) continue;
+          // A direct eval forbids a second name. In sloppy code the engine then
+          // decides by the strictness of the text, as for any other block.
+          if (row.directEval && strictText) continue;
           const cell = `${name} as ${strictText ? "strict" : "sloppy"} text`;
           got[cell] = run(text, strictText);
           want[cell] = strictSource || !("sloppy" in row) ? row.strict : row.sloppy;
@@ -6551,7 +6573,8 @@ describe("function declarations in switch case clauses", () => {
   // text, under the name that the source gave it.
   it.todo("bun run of a sloppy file (the declaration can stay there, as in any sloppy block)");
   it.todo("bun run of a module (the loader has to say that the text runs strict)");
-  it.todo("in a function that calls eval directly");
+  it.todo("in strict code of a function that calls eval directly, and for a name that the switch declares twice");
+  it.todo("with the React Compiler (it replaces the body around the declaration)");
   it.todo("with React Fast Refresh (the signature statements have to run before the first call)");
 });
 

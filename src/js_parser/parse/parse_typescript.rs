@@ -165,6 +165,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 T::TOpenParen => {
                     let args = p.parse_call_args()?;
+                    if let bun_ast::ExprData::EIdentifier(callee) = &expr.data
+                        && p.load_name_from_ref(callee.ref_) == b"eval"
+                    {
+                        p.mark_parsed_direct_eval();
+                    }
                     expr = p.new_expr(
                         E::Call {
                             target: expr,

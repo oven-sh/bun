@@ -1,0 +1,1485 @@
+diff --git a/src/bundler/Graph.rs b/src/bundler/Graph.rs
+index 54d55a890dc..6b9cee7d1f1 100644
+--- a/src/bundler/Graph.rs
++++ b/src/bundler/Graph.rs
+@@ -152,7 +152,7 @@ bitflags::bitflags! {
+         const IS_EXPORT_STAR_TARGET = 1 << 1;
+         /// `source.contents` is what an `onLoad` plugin returned, not what is in the file.
+         const IS_LOADED_BY_PLUGIN = 1 << 2;
+-        /// TypeScript that was parsed with `useDefineForClassFields: false`: a class field is a store in the constructor.
++        /// TypeScript parsed with `useDefineForClassFields: false`: a class field is a store in the constructor.
+         const ASSIGNS_CLASS_FIELDS = 1 << 3;
+     }
+ }
+diff --git a/src/runtime/api/js_bundle_completion_task.rs b/src/runtime/api/js_bundle_completion_task.rs
+index 5e040a1fa6a..7f37928bd0e 100644
+--- a/src/runtime/api/js_bundle_completion_task.rs
++++ b/src/runtime/api/js_bundle_completion_task.rs
+@@ -302,6 +302,15 @@ fn check_types_and_emit_declarations(
+     })
+ }
+ 
++fn check_types_and_emit_only_declarations(
++    checked: options::TypeChecked<'_, '_>,
++    log: &mut bun_ast::Log,
++) -> bool {
++    bun_removable_features::removable_body!(Check, Abort, {
++        crate::cli::check_command::check_and_emit_only_declarations(checked, log)
++    })
++}
++
+ fn write_declarations(outdir: &[u8], output_files: &mut [OutputFile]) -> bun_bundler::Result<()> {
+     let directory = Dir::cwd().make_open_path(outdir, bun_sys::OpenDirOptions::default())?;
+     for file in output_files.iter_mut() {
+@@ -1226,6 +1235,10 @@ impl CompletionStruct for JSBundleCompletionTask {
+             if drops_source_maps {
+                 transpiler.options.source_map = options::SourceMapOption::External;
+             }
++            if !writes_typed_files {
++                transpiler.options.type_check =
++                    Some(check_types_and_emit_only_declarations as options::TypeCheck);
++            }
+             self.declarations = Some(DeclarationOutputs {
+                 loaders: bun_core::UnwrapOrOom::unwrap_or_oom(transpiler.options.loaders.clone()),
+                 typed_files_skipped_for,
+diff --git a/src/runtime/cli/build_command.rs b/src/runtime/cli/build_command.rs
+index 17c0cfaa0df..d8682c97b67 100644
+--- a/src/runtime/cli/build_command.rs
++++ b/src/runtime/cli/build_command.rs
+@@ -206,8 +206,10 @@ impl BuildCommand {
+         let writes_typed_files = ctx.bundler_options.dts
+             && has_typescript_entry_point
+             && skips_typed_files_for.is_none();
+-        let type_check: Option<options::TypeCheck> = if ctx.bundler_options.dts {
++        let type_check: Option<options::TypeCheck> = if writes_typed_files {
+             Some(crate::cli::check_command::check_and_emit_declarations)
++        } else if ctx.bundler_options.dts {
++            Some(crate::cli::check_command::check_and_emit_only_declarations)
+         } else if ctx.bundler_options.check {
+             Some(crate::cli::check_command::check_for_build_command)
+         } else {
+diff --git a/src/runtime/cli/check_command.rs b/src/runtime/cli/check_command.rs
+index 4569db2c0b9..ac2fc754ede 100644
+--- a/src/runtime/cli/check_command.rs
++++ b/src/runtime/cli/check_command.rs
+@@ -26,7 +26,8 @@ mod declarations;
+ mod typed_files;
+ 
+ pub(crate) use declarations::{
+-    DeclarationFile, check_and_emit_declarations, take_declaration_files, take_module_types,
++    DeclarationFile, check_and_emit_declarations, check_and_emit_only_declarations,
++    take_declaration_files, take_module_types,
+ };
+ pub(crate) use typed_files::{
+     CompilerOptions, TypedFilesRequest, WrittenJavaScript, typed_files_for_build,
+diff --git a/src/runtime/cli/check_command/declarations.rs b/src/runtime/cli/check_command/declarations.rs
+index b30ca8b53fd..90289f95fbb 100644
+--- a/src/runtime/cli/check_command/declarations.rs
++++ b/src/runtime/cli/check_command/declarations.rs
+@@ -40,6 +40,18 @@ pub(crate) fn take_module_types() -> Vec<ModuleTypes> {
+ }
+ 
+ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
++    check_and_emit(checked, log, true)
++}
++
++/// `check_and_emit_declarations` for a build that writes no typed files: nothing reads `take_module_types` then.
++pub(crate) fn check_and_emit_only_declarations(
++    checked: TypeChecked,
++    log: &mut bun_ast::Log,
++) -> bool {
++    check_and_emit(checked, log, false)
++}
++
++fn check_and_emit(checked: TypeChecked, log: &mut bun_ast::Log, notes_module_types: bool) -> bool {
+     let TypeChecked {
+         cwd,
+         tsconfig,
+@@ -60,6 +72,7 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
+     });
+     // The sources whose class fields the bundle assigns in the constructor, as the checker names them.
+     let mut assigning: Vec<Vec<u8>> = assigns_class_fields
++        .filter(|_| notes_module_types)
+         .map(|path| from_native(join_abs_string::<Auto>(cwd, &[path])))
+         .collect();
+     let provided = Provided {
+@@ -94,7 +107,9 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
+                 .binary_search_by(|path| path[..].cmp(source))
+                 .is_ok()
+         };
+-        module_types.note(checker, file, assigns_class_fields);
++        if notes_module_types {
++            module_types.note(checker, file, assigns_class_fields);
++        }
+         let text = checker.emit_declaration_file(file);
+         let source = checker.p.files.module(file).file_name();
+         let mut emitted = emitted.lock();
+diff --git a/src/sema/check/errors_declaration_emit.rs b/src/sema/check/errors_declaration_emit.rs
+index 4a738e86f78..8763be066a0 100644
+--- a/src/sema/check/errors_declaration_emit.rs
++++ b/src/sema/check/errors_declaration_emit.rs
+@@ -1011,7 +1011,7 @@ impl<'p, 's> Checker<'p, 's> {
+ 
+     /// `IsTypeSymbolAccessible`
+     pub(super) fn is_type_symbol_accessible_at(&mut self, symbol: Sym, at: Enclosing) -> bool {
+-        self.is_any_symbol_accessible(&[symbol], at, symbol, Meaning::Type, false)
++        self.is_any_symbol_accessible(&[symbol], at, symbol, Meaning::Type, false, false)
+             .is_some_and(|access| access.is_accessible())
+     }
+ }
+@@ -2529,7 +2529,7 @@ impl<'p, 's> Checker<'p, 's> {
+         best
+     }
+ 
+-    /// `IsAnySymbolAccessible`. `paints` is `shouldComputeAliasesToMakeVisible`.
++    /// `IsAnySymbolAccessible`. `paints` is `shouldComputeAliasesToMakeVisible`. `by_name`: see `is_symbol_named_at`.
+     fn is_any_symbol_accessible(
+         &mut self,
+         symbols: &[Sym],
+@@ -2537,6 +2537,7 @@ impl<'p, 's> Checker<'p, 's> {
+         initial: Sym,
+         meaning: Meaning,
+         paints: bool,
++        by_name: bool,
+     ) -> Option<Access> {
+         if self.is_stack_low() {
+             return None;
+@@ -2547,12 +2548,18 @@ impl<'p, 's> Checker<'p, 's> {
+             let chain = self.accessible_symbol_chain(symbol, at, meaning);
+             if let Some(&first) = chain.first() {
+                 had_accessible_chain = Some(symbol);
++                if by_name {
++                    return Some(Access::accessible(Vec::new()));
++                }
+                 if let Some(aliases) = self.has_visible_declarations(first, paints) {
+                     return Some(Access::accessible(aliases));
+                 }
+             }
+             // A module symbol, under any meaning, can be emitted as an `import` type.
+             if self.is_external_module_symbol(symbol) {
++                if by_name {
++                    continue;
++                }
+                 if paints {
+                     early_module_bail = true;
+                     continue;
+@@ -2566,7 +2573,7 @@ impl<'p, 's> Checker<'p, 's> {
+                 meaning
+             };
+             let parent_access =
+-                self.is_any_symbol_accessible(&containers, at, initial, next, paints);
++                self.is_any_symbol_accessible(&containers, at, initial, next, paints, by_name);
+             if parent_access.is_some() {
+                 return parent_access;
+             }
+@@ -2596,8 +2603,8 @@ impl<'p, 's> Checker<'p, 's> {
+         meaning: Meaning,
+         paints: bool,
+     ) -> Access {
+-        if let Some(result) = self.is_any_symbol_accessible(&[symbol], at, symbol, meaning, paints)
+-        {
++        let found = self.is_any_symbol_accessible(&[symbol], at, symbol, meaning, paints, false);
++        if let Some(result) = found {
+             return result;
+         }
+         self.inaccessible(symbol, at, meaning)
+@@ -2634,37 +2641,8 @@ impl<'p, 's> Checker<'p, 's> {
+         at: Enclosing,
+         meaning: Meaning,
+     ) -> bool {
+-        self.is_any_symbol_named_at(&[symbol], at, symbol, meaning)
+-    }
+-
+-    fn is_any_symbol_named_at(
+-        &mut self,
+-        symbols: &[Sym],
+-        at: Enclosing,
+-        initial: Sym,
+-        meaning: Meaning,
+-    ) -> bool {
+-        if self.is_stack_low() {
+-            return false;
+-        }
+-        for &symbol in symbols {
+-            if !self.accessible_symbol_chain(symbol, at, meaning).is_empty() {
+-                return true;
+-            }
+-            if self.is_external_module_symbol(symbol) {
+-                continue;
+-            }
+-            let containers = self.containers_of_symbol(symbol, at, meaning);
+-            let next = if initial == symbol {
+-                meaning.left()
+-            } else {
+-                meaning
+-            };
+-            if self.is_any_symbol_named_at(&containers, at, initial, next) {
+-                return true;
+-            }
+-        }
+-        false
++        self.is_any_symbol_accessible(&[symbol], at, symbol, meaning, false, true)
++            .is_some_and(|access| access.is_accessible())
+     }
+ 
+     /// `DeclarationEmit::literal_const_type` for a node of `file`.
+diff --git a/src/sema/check/print.rs b/src/sema/check/print.rs
+index 88a0deaf9cd..1733e40f8f9 100644
+--- a/src/sema/check/print.rs
++++ b/src/sema/check/print.rs
+@@ -38,8 +38,8 @@ pub(super) const MULTILINE_OBJECT_LITERALS: u32 = 1 << 13;
+ const FORBID_INDEXED_ACCESS_SYMBOL_REFERENCES: u32 = 1 << 14;
+ pub(super) const WRITE_TYPE_PARAMETERS_IN_QUALIFIED_NAME: u32 = 1 << 15;
+ pub(super) const WRITE_ARRAY_AS_GENERIC_TYPE: u32 = 1 << 16;
+-/// Not a flag of the node builder: `ELIDED` stands for a part that is left out, in a text for no declaration file too.
+-pub(super) const MARK_ELISIONS: u32 = 1 << 17;
++/// Not a flag of the node builder: the print of `Checker::stated_type_text`, which has a length and a cache of its own.
++pub(super) const STATED: u32 = 1 << 17;
+ /// The flags that `typeToString` passes to `typeToStringEx`.
+ pub(super) const TYPE_TO_STRING: u32 =
+     ALLOW_UNIQUE_ES_SYMBOL_TYPE | USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE;
+@@ -55,8 +55,10 @@ pub(super) const IGNORE_ERRORS: u32 =
+     ALLOW_ANONYMOUS_IDENTIFIER | ALLOW_NODE_MODULES_RELATIVE_PATHS | ALLOW_THIS_IN_OBJECT_LITERAL;
+ const DEFAULT_MAXIMUM_TRUNCATION_LENGTH: usize = 160;
+ const NO_TRUNCATION_MAXIMUM_TRUNCATION_LENGTH: usize = 1_000_000;
++/// The length of a text of `Checker::stated_type_text`. The printer counts less than it writes, so the text counts too.
++const STATED_MAXIMUM_TRUNCATION_LENGTH: usize = 4_000;
+ /// `any` with the synthetic leading comment of `createElidedInformationPlaceholder`.
+-pub(super) const ELIDED: &[u8] = b"/*elided*/ any";
++const ELIDED: &[u8] = b"/*elided*/ any";
+ 
+ /// `ast.TypePrecedence`
+ const CONDITIONAL: u8 = 0;
+@@ -414,6 +416,36 @@ impl<'p, 's> Checker<'p, 's> {
+         )
+     }
+ 
++    /// `serialize_type_for_declaration` under `STATED`. `None`: the text has `any` for a part, or is cut at its length.
++    pub(super) fn stated_type_text(
++        &mut self,
++        file: FileId,
++        declaration: hir::Node,
++        ty: TypeId,
++        enclosing_declaration: Enclosing,
++        flags: u32,
++        tracker: &mut dyn SymbolTracker<'p>,
++    ) -> Option<Vec<u8>> {
++        with_printer(
++            self,
++            Some(enclosing_declaration),
++            Some(tracker),
++            flags | STATED,
++            |printer| {
++                let ty = printer.c.widen_literal(ty);
++                let options = node_reuse::SerializeTypeOptions {
++                    try_reuse: true,
++                    is_optional_reverse_mapped: false,
++                };
++                let node = printer.serialize_type_for_declaration(file, declaration, ty, options);
++                let is_whole = !printer.has_elision
++                    && !printer.truncating
++                    && node.text.len() <= STATED_MAXIMUM_TRUNCATION_LENGTH;
++                is_whole.then_some(node.text)
++            },
++        )
++    }
++
+     /// `NodeBuilder.SerializeReturnTypeForSignature`
+     pub(super) fn serialize_return_type_for_signature(
+         &mut self,
+@@ -677,6 +709,7 @@ fn with_printer<'p, T>(
+             container_pos: usize::MAX,
+             approximate_length: 0,
+             truncating: false,
++            has_elision: false,
+             visited_types: Vec::new(),
+             symbol_depth: Vec::new(),
+             infer_type_parameters: Vec::new(),
+@@ -1127,6 +1160,7 @@ struct SerializedTypeEntry {
+     /// `Printer::indent` where it was created.
+     indent: Option<usize>,
+     truncating: bool,
++    has_elision: bool,
+     added_length: usize,
+     tracked_symbols: Vec<TrackedSymbolArgs>,
+ }
+@@ -1148,6 +1182,8 @@ struct TypeVisit {
+     /// The previous value of `Printer::symbol_depth` for `identity`.
+     depth: u32,
+     previous_tracked_symbols: Vec<TrackedSymbolArgs>,
++    /// `Printer::has_elision` of what was printed before this type.
++    had_elision: bool,
+     start_length: usize,
+ }
+ 
+@@ -1181,6 +1217,8 @@ struct Printer<'c, 'p, 's> {
+     container_pos: usize,
+     approximate_length: usize,
+     truncating: bool,
++    /// `elided_information_placeholder` stands for a part of what is printed. The text does not say so on one line.
++    has_elision: bool,
+     visited_types: Vec<TypeId>,
+     symbol_depth: Vec<(Identity, u32)>,
+     infer_type_parameters: Vec<TypeId>,
+@@ -1580,7 +1618,9 @@ impl<'p, 's> Printer<'_, 'p, 's> {
+         if self.truncating {
+             return true;
+         }
+-        let maximum = if self.flags & NO_TRUNCATION != 0 {
++        let maximum = if self.flags & STATED != 0 {
++            STATED_MAXIMUM_TRUNCATION_LENGTH
++        } else if self.flags & NO_TRUNCATION != 0 {
+             NO_TRUNCATION_MAXIMUM_TRUNCATION_LENGTH
+         } else {
+             DEFAULT_MAXIMUM_TRUNCATION_LENGTH
+@@ -1597,8 +1637,11 @@ impl<'p, 's> Printer<'_, 'p, 's> {
+                 ..Node::simple(b"...")
+             };
+         }
+-        let is_marked = self.indent.is_some() || self.flags & MARK_ELISIONS != 0;
+-        Node::simple(if is_marked { ELIDED } else { &b"any"[..] })
++        Node::simple(if self.indent.is_some() {
++            ELIDED
++        } else {
++            &b"any"[..]
++        })
+     }
+ 
+     /// `... n more ...`
+@@ -1613,6 +1656,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
+     /// `createElidedInformationPlaceholder`
+     fn elided_information_placeholder(&mut self) -> Node {
+         self.approximate_length += 3;
++        self.has_elision = true;
+         self.elision()
+     }
+ 
+@@ -1952,6 +1996,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
+                 self.track(tracked);
+             }
+             self.truncating |= cached.truncating;
++            self.has_elision |= cached.has_elision;
+             self.approximate_length += cached.added_length;
+             let node = cached.node.deep_clone();
+             return ControlFlow::Break(match (cached.indent, self.indent) {
+@@ -1983,6 +2028,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
+             key,
+             depth,
+             previous_tracked_symbols: std::mem::take(&mut self.tracked_symbols),
++            had_elision: std::mem::take(&mut self.has_elision),
+             start_length: self.approximate_length,
+         })
+     }
+@@ -1995,11 +2041,14 @@ impl<'p, 's> Printer<'_, 'p, 's> {
+             key,
+             depth,
+             previous_tracked_symbols,
++            had_elision,
+             start_length,
+         } = visit;
+         let added_length = self.approximate_length.saturating_sub(start_length);
+         let tracked_symbols =
+             std::mem::replace(&mut self.tracked_symbols, previous_tracked_symbols);
++        let has_elision = self.has_elision;
++        self.has_elision |= had_elision;
+         if let Some(key) = key
+             && !self.reported_diagnostic
+             && !self.encountered_error
+@@ -2008,6 +2057,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
+                 node: node.clone(),
+                 indent: self.indent,
+                 truncating: self.truncating,
++                has_elision,
+                 added_length,
+                 tracked_symbols,
+             };
+diff --git a/src/sema/check/services/symbols.rs b/src/sema/check/services/symbols.rs
+index 216330e7d39..9f093b6b460 100644
+--- a/src/sema/check/services/symbols.rs
++++ b/src/sema/check/services/symbols.rs
+@@ -737,6 +737,10 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
+                 let exported = files.symbol(sym).export_symbol.some()?;
+                 Some(self.symbol(files.sym(sym.file, exported)))
+             }
++            (SymbolOp::Parent, Key::Symbol(sym)) => {
++                let parent = files.parent_of_symbol(sym)?;
++                Some(self.symbol(parent))
++            }
+             _ => None,
+         }
+     }
+diff --git a/src/sema/check/services/types.rs b/src/sema/check/services/types.rs
+index 6846557ef7e..f974b252393 100644
+--- a/src/sema/check/services/types.rs
++++ b/src/sema/check/services/types.rs
+@@ -1,6 +1,6 @@
+ //! Queries about a type.
+ 
+-use super::super::enclosing_declaration::Enclosing;
++use super::super::enclosing_declaration::{Enclosing, or_file_scope};
+ use super::super::errors_declaration_emit::Meaning;
+ use super::super::print::{self, SymbolTracker};
+ use super::*;
+@@ -475,12 +475,31 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
+         print::to_valid_utf8(print::type_to_string_with(self.c, ty, enclosing, flags))
+     }
+ 
+-    /// `ensureType` for a class member or a parameter with no annotation, a private one too. `None`: no text states it.
++    /// `ensureType` for a class member or a parameter with no annotation, a private one too. `None`: it has no type.
+     pub fn stated_type(&mut self, node: NodeRef) -> Option<StatedType> {
+         let (hir, at) = self.valid(node)?;
+         let file = node.file;
+-        let enclosing = Enclosing::at_scope(file, self.scope_at(node)?);
+-        let mut tracker = NamedWhereStated { is_refused: false };
++        let (mut class, mut member) = (at, None);
++        while class.is_some()
++            && !matches!(
++                hir.kind(class),
++                Kind::ClassDeclaration | Kind::ClassExpression
++            )
++        {
++            if let NodeData::Member(found) = hir.data(class) {
++                member = Some(found);
++            }
++            class = hir.parent(class);
++        }
++        // A parameter property is a member of the class. In its constructor, a default would add `undefined` to it.
++        let scope = match (hir.data(at), member) {
++            (NodeData::Param(_), Some(constructor)) => {
++                or_file_scope(self.c.bound(file).member_scope[constructor.idx()])
++            }
++            _ => self.scope_at(node)?,
++        };
++        let enclosing = Enclosing::at_scope(file, scope);
++        let mut tracker = NamedWhereStated::default();
+         let value = self.c.literal_const_type(file, at).and_then(|literal| {
+             Some(match *self.c.data(literal) {
+                 TypeData::EnumLit { member, .. } | TypeData::Enum { symbol: member, .. } => {
+@@ -494,58 +513,55 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
+                 _ => self.c.literal_const_value(literal, enclosing),
+             })
+         });
+-        if let Some(text) = value {
+-            return (!tracker.is_refused).then_some(StatedType {
+-                text,
+-                is_value: true,
+-            });
+-        }
+-        let ty = self.c.iso_type_of_declared(file, at)?;
+-        if self.c.is_error_type(ty) {
+-            return None;
+-        }
+-        // `getNonMissingTypeOfSymbol`: the `?` of a member says that it can be absent.
+-        let is_optional = hir.flags(at).contains(Flags::OPTIONAL);
+-        let ty = self.c.remove_missing_type(ty, is_optional);
+-        // `Infinity` is the name of a value: no type is written for a literal that is not finite.
+-        let ty = self.c.map_type(ty, |c, part| match *c.data(part) {
+-            TypeData::NumberLit { bits, .. } if !f64::from_bits(bits).is_finite() => TypeId::NUMBER,
+-            _ => part,
+-        });
+-        let mut class = at;
+-        while class.is_some()
+-            && !matches!(
+-                hir.kind(class),
+-                Kind::ClassDeclaration | Kind::ClassExpression
+-            )
+-        {
+-            class = hir.parent(class);
+-        }
+-        let mut flags = (print::DECLARATION_EMIT_NODE_BUILDER_FLAGS | print::MARK_ELISIONS)
+-            & !print::MULTILINE_OBJECT_LITERALS;
+-        if class.is_some() && hir.kind(class) == Kind::ClassExpression {
+-            flags &= !print::WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL;
++        let is_value = value.is_some();
++        let text = match value {
++            Some(text) => Some(text),
++            None => {
++                let ty = self.c.iso_type_of_declared(file, at)?;
++                if self.c.is_error_type(ty) {
++                    return None;
++                }
++                // `getNonMissingTypeOfSymbol`: the `?` of a member says that it can be absent.
++                let is_optional = hir.flags(at).contains(Flags::OPTIONAL);
++                let ty = self.c.remove_missing_type(ty, is_optional);
++                // `Infinity` is the name of a value: no type is written for a literal that is not finite.
++                let ty = self.c.map_type(ty, |c, part| match *c.data(part) {
++                    TypeData::NumberLit { bits, .. } if !f64::from_bits(bits).is_finite() => {
++                        TypeId::NUMBER
++                    }
++                    _ => part,
++                });
++                let mut flags =
++                    print::DECLARATION_EMIT_NODE_BUILDER_FLAGS & !print::MULTILINE_OBJECT_LITERALS;
++                if class.is_some() && hir.kind(class) == Kind::ClassExpression {
++                    flags &= !print::WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL;
++                }
++                (self.c)
++                    .stated_type_text(file, at, ty, enclosing, flags, &mut tracker)
++                    .map(print::to_valid_utf8)
++            }
++        };
++        let mut names: Vec<SymbolRef> = Vec::with_capacity(tracker.named.len());
++        for symbol in tracker.named {
++            let symbol = self.symbol(symbol);
++            if !names.contains(&symbol) {
++                names.push(symbol);
++            }
+         }
+-        let text = (self.c).serialize_type_for_declaration(
+-            file,
+-            Some(at),
+-            ty,
+-            enclosing,
+-            flags,
+-            &mut tracker,
+-        );
+-        // `any` in the place of a part that the printer left out is not the type.
+-        let is_whole = !bun_core::strings::contains(&text, print::ELIDED);
+-        (!tracker.is_refused && is_whole).then(|| StatedType {
+-            text: print::to_valid_utf8(text),
+-            is_value: false,
++        Some(StatedType {
++            is_refused: tracker.is_refused || text.is_none(),
++            text: text.unwrap_or_default(),
++            is_value,
++            names,
+         })
+     }
+ }
+ 
+ /// Refuses a text that names a symbol where that symbol has no name.
++#[derive(Default)]
+ struct NamedWhereStated {
+     is_refused: bool,
++    named: Vec<Sym>,
+ }
+ 
+ impl<'p> SymbolTracker<'p> for NamedWhereStated {
+@@ -562,6 +578,7 @@ impl<'p> SymbolTracker<'p> for NamedWhereStated {
+             None => false,
+         };
+         self.is_refused |= !is_named;
++        self.named.push(symbol);
+         !is_named
+     }
+ 
+diff --git a/src/sema/check/services/vocabulary.rs b/src/sema/check/services/vocabulary.rs
+index 5e3e06a2a41..63af1bb77a5 100644
+--- a/src/sema/check/services/vocabulary.rs
++++ b/src/sema/check/services/vocabulary.rs
+@@ -521,6 +521,8 @@ pub enum SymbolOp {
+     ExportSymbol,
+     /// `getMergedSymbol`
+     Merged,
++    /// `getParentOfSymbol`
++    Parent,
+ }
+ 
+ /// A list of symbols that belongs to a symbol.
+@@ -550,6 +552,10 @@ pub struct StatedType {
+     /// The type as a declaration beside the member writes it: `Map<string, Item>`. Or its value: `"circle"`, `Unit.Px`.
+     pub text: Vec<u8>,
+     pub is_value: bool,
++    /// No declaration there can have `text`: a symbol in it has no name there, or the printer left a part of it out.
++    pub is_refused: bool,
++    /// The symbols that the printer named in `text`.
++    pub names: Vec<SymbolRef>,
+ }
+ 
+ /// A type's components, where they aren't just a list of types.
+diff --git a/src/sema/driver/compile/tests/stated_members.rs b/src/sema/driver/compile/tests/stated_members.rs
+index a951857a8a1..0d94c59f5f6 100644
+--- a/src/sema/driver/compile/tests/stated_members.rs
++++ b/src/sema/driver/compile/tests/stated_members.rs
+@@ -1,46 +1,65 @@
+ use super::support::{GLOBAL_TYPES, check, with_program};
+-use crate::typed_files::{Named, Target, module_types};
++use crate::typed_files::{ModuleTypes, Named, Target, module_types};
+ use std::sync::Mutex;
+ 
+-/// Each stated member of main.ts: its name, `: ` and its type or ` = ` and its value, then what each name in that is.
+-fn stated_members(files: &[(&str, &str)], assigns_class_fields: bool) -> Vec<String> {
++fn word_at(text: &[u8], at: usize) -> String {
++    let is_in_word = |byte: &&u8| byte.is_ascii_alphanumeric() || **byte == b'#';
++    let length = text[at..].iter().take_while(is_in_word).count();
++    String::from_utf8(text[at..at + length].to_vec()).unwrap()
++}
++
++fn of_main<T: Send>(
++    files: &[(&str, &str)],
++    assigns_class_fields: bool,
++    show: impl Fn(&ModuleTypes) -> T + Sync,
++) -> T {
+     with_program(files, &["./main.ts"], 1, |program| {
+         let main = program.file("main.ts");
+-        let stated = Mutex::new(Vec::new());
++        let shown = Mutex::new(None);
+         check(program, &|checker, file| {
+-            if file != main {
+-                return;
++            if file == main {
++                let types = module_types(checker, file, assigns_class_fields).unwrap();
++                *shown.lock().unwrap() = Some(show(&types));
+             }
+-            let types = module_types(checker, file, assigns_class_fields).unwrap();
+-            let word_at = |text: &[u8], at: usize| {
+-                let is_in_word = |byte: &&u8| byte.is_ascii_alphanumeric() || **byte == b'#';
+-                let length = text[at..].iter().take_while(is_in_word).count();
+-                String::from_utf8(text[at..at + length].to_vec()).unwrap()
+-            };
+-            let shown = types.stated_members.iter().map(|member| {
+-                let text = String::from_utf8(member.text.to_vec()).unwrap();
+-                let names = member.names.iter().map(|(at, named)| {
+-                    let word = word_at(&member.text, *at as usize);
+-                    match named {
+-                        Named::Target(Target::Declaration { path, name }) => {
+-                            let path = String::from_utf8(path.to_vec()).unwrap();
+-                            let name = String::from_utf8(name.to_vec()).unwrap();
+-                            format!(" [{word} is {name} of {path}]")
+-                        }
+-                        Named::Target(Target::Module { .. }) => format!(" [{word} is a module]"),
+-                        Named::Global => format!(" [{word} is global]"),
+-                        Named::Local(at) => {
+-                            format!(" [{word} is {} below]", word_at(&types.text, *at as usize))
+-                        }
++        });
++        shown.into_inner().unwrap().unwrap()
++    })
++}
++
++/// The name of each member of main.ts that its stores in the bundle type in another way than the sources.
++fn members_with_other_stores(files: &[(&str, &str)]) -> Vec<String> {
++    of_main(files, true, |types| {
++        let keys = types.members_with_other_stores.iter();
++        keys.map(|&key| word_at(&types.text, key as usize))
++            .collect()
++    })
++}
++
++/// Each stated member of main.ts: its name, `: ` and its type or ` = ` and its value, then what each name in that is.
++fn stated_members(files: &[(&str, &str)], assigns_class_fields: bool) -> Vec<String> {
++    of_main(files, assigns_class_fields, |types| {
++        let shown = types.stated_members.iter().map(|member| {
++            let text = String::from_utf8(member.text.to_vec()).unwrap();
++            let names = member.names.iter().map(|(at, named)| {
++                let word = word_at(&member.text, *at as usize);
++                match named {
++                    Named::Target(Target::Declaration { path, name }) => {
++                        let path = String::from_utf8(path.to_vec()).unwrap();
++                        let name = String::from_utf8(name.to_vec()).unwrap();
++                        format!(" [{word} is {name} of {path}]")
++                    }
++                    Named::Target(Target::Module { .. }) => format!(" [{word} is a module]"),
++                    Named::Global => format!(" [{word} is global]"),
++                    Named::Local(at) => {
++                        format!(" [{word} is {} below]", word_at(&types.text, *at as usize))
+                     }
+-                });
+-                let separator = if member.is_value { " = " } else { ": " };
+-                let name = word_at(&types.text, member.key as usize);
+-                format!("{name}{separator}{text}{}", names.collect::<String>())
++                }
+             });
+-            *stated.lock().unwrap() = shown.collect();
++            let separator = if member.is_value { " = " } else { ": " };
++            let name = word_at(&types.text, member.key as usize);
++            format!("{name}{separator}{text}{}", names.collect::<String>())
+         });
+-        stated.into_inner().unwrap()
++        shown.collect()
+     })
+ }
+ 
+@@ -316,3 +335,102 @@ fn without_no_implicit_any_only_a_member_that_the_build_moves_is_stated() {
+     let expected = ["first: any", "label: any", "maybe: any"];
+     assert_eq!(stated_members(&files, true), expected);
+ }
++
++const LOUD: &str = "export function shout(): Uppercase<string> { return 'A' as Uppercase<string>; }
++";
++
++const NAMES: &str = "import { shout } from './loud';
++namespace Shapes {
++    export enum Kind { Circle, Square }
++    export class Item { size = 1; }
++    export interface Options { wide: boolean }
++    export namespace Inner { export interface Deep { d: number } export const v = 1; }
++}
++import Kind = Shapes.Kind;
++import Alias = Shapes.Item;
++enum Top { A, B }
++function make() {
++    enum Local { A, B }
++    class Near { n = 1; }
++    return class Box {
++        local = Local.A;
++        readonly fixed = Local.B;
++        near = new Near();
++    };
++}
++export class Holder {
++    readonly kind = Shapes.Kind.Circle;
++    plain = Shapes.Kind.Square;
++    item = new Shapes.Item();
++    options = { wide: true } as Shapes.Options;
++    deep = { d: 1 } as Shapes.Inner.Deep;
++    viaAlias = Kind.Circle;
++    readonly fixedAlias = Kind.Square;
++    aliased = new Alias();
++    space = Shapes;
++    top = Top.A;
++    readonly fixedTop = Top.B;
++    loud = shout();
++    made = make();
++    constructor(public first = 1, readonly name: string, public last = 'z') {}
++}
++";
++
++fn with_intrinsic_types(main: &str) -> [(&str, String); 3] {
++    let globals = format!("{GLOBAL_TYPES}type Uppercase<S extends string> = intrinsic;\n");
++    [
++        ("main.ts", main.to_string()),
++        ("loud.ts", LOUD.to_string()),
++        ("globals.d.ts", globals),
++    ]
++}
++
++#[test]
++fn a_name_that_the_typed_file_has_as_a_variable_states_no_member() {
++    let files = with_intrinsic_types(NAMES);
++    let files = files.each_ref().map(|file| (file.0, &file.1[..]));
++    // An enum below the top level and a value of a namespace are variables in the bundle. A type of a namespace is one.
++    let expected = [
++        "size: number",
++        "n: number",
++        "near: Near [Near is Near below]",
++        "options: Shapes.Options [Shapes is Shapes of /project/main.ts]",
++        "deep: Shapes.Inner.Deep [Shapes is Shapes of /project/main.ts]",
++        "top: Top [Top is Top of /project/main.ts]",
++        "fixedTop = Top.B [Top is Top of /project/main.ts]",
++        "loud: Uppercase<string> [Uppercase is global]",
++        "first: number",
++        "last: string",
++    ];
++    assert_eq!(stated_members(&files, true), expected);
++    let expected = [
++        "local",
++        "fixed",
++        "kind",
++        "plain",
++        "item",
++        "options",
++        "deep",
++        "viaAlias",
++        "fixedAlias",
++        "aliased",
++        "space",
++        "top",
++        "fixedTop",
++        "made",
++    ];
++    assert_eq!(members_with_other_stores(&files), expected);
++}
++
++#[test]
++fn a_word_that_the_printer_wrote_for_another_symbol_states_no_member() {
++    let shadowing = format!("type Uppercase<T> = T;\n{NAMES}");
++    let files = with_intrinsic_types(&shadowing);
++    let files = files.each_ref().map(|file| (file.0, &file.1[..]));
++    let stated = stated_members(&files, true);
++    assert!(stated.contains(&"last: string".to_string()), "{stated:?}");
++    assert!(
++        !stated.iter().any(|member| member.starts_with("loud")),
++        "{stated:?}"
++    );
++}
+diff --git a/src/sema/driver/typed_files.rs b/src/sema/driver/typed_files.rs
+index 849ab25c40b..cafc20a2332 100644
+--- a/src/sema/driver/typed_files.rs
++++ b/src/sema/driver/typed_files.rs
+@@ -1424,6 +1424,8 @@ struct Bundle<'a> {
+     entry_point: Option<&'a [u8]>,
+     /// As the typed files are checked. Only then has a member with no type the type of what the constructor stores.
+     no_implicit_any: bool,
++    /// The build writes more than this output. Another typed file can have the class that this one has a twin of.
++    has_other_outputs: bool,
+ }
+ 
+ struct Written<'a, 's> {
+@@ -2830,17 +2832,15 @@ fn link(
+     hoisted_statements.shared_sort();
+     hoisted_statements.dedup();
+     // A class or a function of another output has a twin here, which is another type than what the bundle stores.
+-    let is_declared_here = |target: &Target| {
++    let is_declared_here = |target: &Target, is_value: bool| {
+         let found = place_of(target).and_then(|(index, name)| {
+             let found = declared[index].get(&name[..])?;
+-            let is_twin = emitted_from.contains_key(&index);
+-            Some(
+-                !is_twin
+-                    && (found.bindings.is_empty()
+-                        || found.import.is_some()
+-                        || found.enum_statement.is_some()
+-                        || name_in_output(index, found).is_some_and(|_| index < mapped)),
+-            )
++            let is_twin = bundle.has_other_outputs && emitted_from.contains_key(&index);
++            // Only an enum that the typed file declares, or imports, has members for a declaration.
++            let is_enum = found.enum_statement.is_some() || found.import.is_some();
++            let is_type = found.bindings.is_empty()
++                || name_in_output(index, found).is_some_and(|_| index < mapped);
++            Some(!is_twin && (is_enum || (is_type && !is_value)))
+         });
+         found == Some(true)
+     };
+@@ -2855,7 +2855,7 @@ fn link(
+                 let name: Option<Vec<u8>> = match named {
+                     // A declaration that the typed file does not have yet stays out of it.
+                     Named::Target(target) => final_name(target)
+-                        .filter(|_| is_declared_here(target))
++                        .filter(|_| is_declared_here(target, member.is_value))
+                         .filter(|name| {
+                             &name[..] == word || !nested_names[index].contains(&name[..])
+                         })
+@@ -3109,6 +3109,7 @@ fn add_types(
+         optional_parameter_properties,
+         no_implicit_any: bundle.no_implicit_any,
+         stated_slots: FxHashSet::default(),
++        class_with_added_constructor: None,
+     };
+     transfer.copy_slots(&source_slots);
+     transfer.annotate_generated_code();
+@@ -3134,6 +3135,8 @@ struct Transfer<'t, 'a, 's> {
+     no_implicit_any: bool,
+     /// Where `copy_slots` wrote the type of a stated member, so that `copy_casts` writes none.
+     stated_slots: FxHashSet<u32>,
++    /// `TypedFilesError::ConstructorWithoutParameters::class`, for the first such class.
++    class_with_added_constructor: Option<Vec<u8>>,
+ }
+ 
+ impl<'a> Transfer<'_, 'a, '_> {
+@@ -3998,7 +4001,7 @@ impl<'a> Transfer<'_, 'a, '_> {
+             (self.javascript, self.output, self.mappings, self.modules);
+         let (output_file, insertions) = (output.file, &mut self.insertions);
+         let mut output_members: FxHashMap<(u32, u32), u32> = FxHashMap::default();
+-        let mut output_classes: FxHashMap<(u32, u32), u32> = FxHashMap::default();
++        let mut output_classes: FxHashMap<(u32, u32), (u32, &Class)> = FxHashMap::default();
+         let mut class_ends: FxHashMap<u32, u32> = FxHashMap::default();
+         for statement in output_file.stmts.iter() {
+             if let StmtKind::Class(class) = statement.kind {
+@@ -4015,7 +4018,7 @@ impl<'a> Transfer<'_, 'a, '_> {
+                 mappings.original(output.class_body_pos(class)),
+                 class_ends.get(&(index as u32)),
+             ) {
+-                output_classes.insert(original, end - 1);
++                output_classes.insert(original, (end - 1, class));
+             }
+             for member in class.members.iter().map(|member| &output_file[member]) {
+                 let key = output.member_key(member);
+@@ -4034,13 +4037,24 @@ impl<'a> Transfer<'_, 'a, '_> {
+             let Some(module) = module else { continue };
+             let (syntax, file) = (&module.syntax, module.syntax.file);
+             for class in file.classes.iter() {
+-                let Some(&close) =
++                let Some(&(close, in_output)) =
+                     output_classes.get(&(index as u32, syntax.class_body_pos(class)))
+                 else {
+                     continue;
+                 };
+                 let members: Vec<&Member> =
+                     class.members.iter().map(|member| &file[member]).collect();
++                // `constructor() { super(...arguments); }` of the build states no parameter of the base class.
++                let is_constructor = |member: &Member| member.kind == MemberKind::Constructor;
++                let adds_constructor = class.extends.is_some()
++                    && !members.iter().any(|member| is_constructor(member))
++                    && (in_output.members.iter())
++                        .any(|member| is_constructor(&output_file[member]));
++                if adds_constructor && self.class_with_added_constructor.is_none() {
++                    let name = class.name.is_some().then(|| syntax.word(class.name_pos));
++                    let class = name.map_or(b"a class".to_vec(), |name| [b"class ", name].concat());
++                    self.class_with_added_constructor = Some(class);
++                }
+                 let mut add = |place: usize, text: &[u8]| {
+                     let next = members[place..].iter().find_map(|next| {
+                         output_members
+@@ -4075,17 +4089,22 @@ impl<'a> Transfer<'_, 'a, '_> {
+                         add(place, &text);
+                     } else if member.kind == MemberKind::Property
+                         && !output_members.contains_key(&key)
++                        // The bundle keeps each private name, and `declare` allows none (TS18019).
++                        && !matches!(member.key, PropKey::Private(_))
+                     {
+-                        let is_assigned =
+-                            module.types.is_some_and(|types| types.assigns_class_fields);
++                        // The stores of an assigned member type it, unless they type it in another way.
++                        let is_typed_by_stores = is_typed_by_stores
++                            && module.types.is_some_and(|types| {
++                                let others = &types.members_with_other_stores;
++                                types.assigns_class_fields && others.binary_search(&key.1).is_err()
++                            });
+                         let stated = match self.linked.stated_members.get(&key) {
+                             _ if member.ty.is_some() => Some(Vec::new()),
+                             Some(stated) if stated.is_value => {
+                                 Some([b" = ", &stated.text[..]].concat())
+                             }
+                             Some(stated) => Some([b": ", &stated.text[..]].concat()),
+-                            None if is_assigned => is_typed_by_stores.then(Vec::new),
+-                            None => None,
++                            None => is_typed_by_stores.then(Vec::new),
+                         };
+                         if let Some(stated) = stated {
+                             let modifiers = file.modifier_list(member.modifiers);
+@@ -4140,6 +4159,9 @@ impl<'a> Transfer<'_, 'a, '_> {
+     }
+ 
+     fn finish(mut self) -> Result<TypedText, TypedFilesError> {
++        if let Some(class) = self.class_with_added_constructor.take() {
++            return Err(TypedFilesError::ConstructorWithoutParameters { class });
++        }
+         let (javascript, output, output_file) = (self.javascript, self.output, self.output.file);
+         self.hoisted.extend_from_slice(&self.linked.hoisted);
+         let is_directive = |statement: &Stmt| matches!(statement.kind, StmtKind::Expr(expr) if matches!(output_file[expr].kind, ExprKind::String(_)) && output.parentheses(expr).is_empty());
+@@ -4315,6 +4337,8 @@ pub struct ModuleTypes {
+     /// The build stores the class fields of the module in the constructor: a member has no value where it is declared.
+     pub assigns_class_fields: bool,
+     pub stated_members: Box<[StatedMember]>,
++    /// `StatedMember::key` of each member whose type names an enum or a namespace: its stores type it in another way.
++    pub members_with_other_stores: Box<[u32]>,
+     pub globals: Vec<u32>,
+     pub augmented_modules: Vec<(u32, Box<[u8]>)>,
+     pub locals: Vec<(u32, u32)>,
+@@ -4521,7 +4545,7 @@ fn stated_members(
+     file: FileId,
+     syntax: &Syntax<'_, '_>,
+     assigns_class_fields: bool,
+-) -> Box<[StatedMember]> {
++) -> (Box<[StatedMember]>, Box<[u32]>) {
+     let hir = syntax.file;
+     // Only `noImplicitAny` types a member by its stores.
+     let is_typed_by_stores = services.compiler_options().no_implicit_any;
+@@ -4529,7 +4553,7 @@ fn stated_members(
+         || hir.check_directive == Some(false)
+         || !(is_typed_by_stores || assigns_class_fields)
+     {
+-        return Box::default();
++        return Default::default();
+     }
+     let mut stated: Vec<(u32, NodeRef, StatedType, bool)> = Vec::new();
+     let mut state =
+@@ -4570,7 +4594,7 @@ fn stated_members(
+         }
+     }
+     if stated.is_empty() {
+-        return Box::default();
++        return Default::default();
+     }
+     // One text declares each type that can name something. A value that can is an enum member: a type behind `typeof`.
+     let mut text = Vec::new();
+@@ -4582,7 +4606,7 @@ fn stated_members(
+         }
+     };
+     for (_, _, found, _) in &stated {
+-        if has_only_keywords(&found.text) {
++        if found.is_refused || has_only_keywords(&found.text) {
+             spans.push((text.len() as u32, text.len() as u32));
+             continue;
+         }
+@@ -4617,32 +4641,56 @@ fn stated_members(
+         }
+     };
+     let mut members = Vec::with_capacity(stated.len());
++    let mut with_other_stores = Vec::new();
+     let spans = spans.into_iter().zip(heads);
+     for ((key, node, found, has_initializer), ((start, _), heads)) in stated.into_iter().zip(spans)
+     {
+-        let Some(heads) = heads else { continue };
+-        let count = heads.len();
+-        let mut names = Vec::with_capacity(count);
+-        for (at, meaning, is_whole_name) in heads {
+-            let word = &text[at as usize..token_end(&text, at as usize, false)];
+-            let Some(symbol) = services.resolve_name(node, word, meaning, false) else {
+-                break;
+-            };
+-            let merged = alias_merged_with_type(services, symbol).filter(|_| is_whole_name);
+-            let target = match merged {
+-                Some(merged) => target_declared_by(services, is_source, merged),
+-                None => target_of(services, is_source, symbol),
+-            };
+-            let named = match target {
+-                // `link` has the object of a namespace import, which is no name for a type.
+-                Some(Target::Module { .. }) => break,
+-                Some(target) => Some(Named::Target(target)),
+-                None => named_without_target(services, is_source, file, merged.unwrap_or(symbol)),
++        // Each symbol that the printer named, and each that holds one: its enum, its namespaces, its module.
++        let mut holders: Vec<SymbolRef> = Vec::new();
++        for &named in &found.names {
++            let aliased = services.symbol_op(SymbolOp::Aliased, named);
++            for mut symbol in [Some(named), aliased].into_iter().flatten() {
++                while !holders.contains(&symbol) {
++                    holders.push(symbol);
++                    match services.symbol_op(SymbolOp::Parent, symbol) {
++                        Some(parent) => symbol = parent,
++                        None => break,
++                    }
++                }
++            }
++        }
++        let mut has_other_stores = holders.iter().any(|&symbol| {
++            let flags = services.symbol_info(symbol).flags;
++            flags.intersects(SymbolFlags::ENUM | SymbolFlags::ENUM_MEMBER)
++                || is_namespace_of_sources(services, is_source, symbol)
++        });
++        let heads = heads.filter(|_| !found.is_refused);
++        let mut names = heads.is_some().then(Vec::new);
++        for (at, meaning, is_whole_name) in heads.into_iter().flatten() {
++            let word_end = token_end(&text, at as usize, false);
++            let head = Head {
++                word: &text[at as usize..word_end],
++                behind: &text[word_end..],
++                meaning,
++                is_whole_name,
++                is_in_value: found.is_value,
+             };
+-            let Some(named) = named else { break };
+-            names.push((at - start, named));
++            match named_by_head(services, is_source, node, &holders, &head) {
++                Ok(named) => {
++                    if let Some(names) = names.as_mut() {
++                        names.push((at - start, named));
++                    }
++                }
++                Err(is_namespace_object) => {
++                    has_other_stores |= is_namespace_object;
++                    names = None;
++                }
++            }
++        }
++        if has_other_stores && assigns_class_fields {
++            with_other_stores.push(key);
+         }
+-        if names.len() == count {
++        if let Some(names) = names {
+             members.push(StatedMember {
+                 key,
+                 text: found.text.into(),
+@@ -4652,7 +4700,106 @@ fn stated_members(
+             });
+         }
+     }
+-    members.into()
++    with_other_stores.sort_unstable();
++    (members.into(), with_other_stores.into())
++}
++
++/// The head of an entity name in a stated text, and what the text has behind it.
++struct Head<'a> {
++    word: &'a [u8],
++    behind: &'a [u8],
++    meaning: SymbolFlags,
++    is_whole_name: bool,
++    /// The text is the value of a `readonly` member: the member of an enum.
++    is_in_value: bool,
++}
++
++/// A namespace that a source declares. In the typed file its object is `any`, and only its types have names.
++fn is_namespace_of_sources(
++    services: &mut Services<'_, '_, '_>,
++    is_source: &dyn Fn(FileId) -> Option<Box<[u8]>>,
++    symbol: SymbolRef,
++) -> bool {
++    let is_namespace = (services.symbol_info(symbol).flags).intersects(SymbolFlags::MODULE);
++    let declarations = services.declarations(symbol);
++    is_namespace
++        && (declarations.iter()).any(|declaration| {
++            declaration.node != Node::FILE && is_source(declaration.file).is_some()
++        })
++}
++
++/// What `link` takes for `head`. `Err`: no typed file has that name, and `Err(true)`: it is the object of a module.
++fn named_by_head(
++    services: &mut Services<'_, '_, '_>,
++    is_source: &dyn Fn(FileId) -> Option<Box<[u8]>>,
++    node: NodeRef,
++    holders: &[SymbolRef],
++    head: &Head<'_>,
++) -> Result<Named, bool> {
++    // The printer writes these four with no symbol. The word is theirs where nothing else has it.
++    const WITHOUT_SYMBOL: [&[u8]; 4] = [b"Uppercase", b"Lowercase", b"Capitalize", b"Uncapitalize"];
++    let Some(symbol) = services.resolve_name(node, head.word, head.meaning, false) else {
++        return Err(false);
++    };
++    let exported = services.symbol_op(SymbolOp::ExportSymbol, symbol);
++    let exported = exported.unwrap_or(symbol);
++    let aliased = services.symbol_op(SymbolOp::Aliased, exported);
++    let real = aliased.unwrap_or(exported);
++    let flags = services.symbol_info(real).flags;
++    // A word that the printer wrote for another symbol than the one that it is where the member stands.
++    let is_global = |services: &mut Services<'_, '_, '_>| {
++        (services.resolve_name(node, head.word, head.meaning, true)).is_none()
++    };
++    let is_named_by_printer = [symbol, exported, real]
++        .iter()
++        .any(|form| holders.contains(form))
++        // The printer tells no one of a type parameter that it copies from the sources.
++        || flags.contains(SymbolFlags::TYPE_PARAMETER)
++        || (WITHOUT_SYMBOL.contains(&head.word) && is_global(services));
++    if !is_named_by_printer {
++        return Err(false);
++    }
++    let is_enum = flags.intersects(SymbolFlags::ENUM);
++    let is_namespace = is_namespace_of_sources(services, is_source, real);
++    if (head.is_in_value && !is_enum) || (head.meaning == SymbolFlags::VALUE && is_namespace) {
++        return Err(false);
++    }
++    // Of a namespace of the sources, the typed file has the types. A class or an enum in it is a value.
++    let values = SymbolFlags::VALUE.difference(SymbolFlags::VALUE_MODULE);
++    let (mut holder, mut behind) = (real, head.behind);
++    while is_namespace_of_sources(services, is_source, holder)
++        && let Some(rest) = behind.strip_prefix(b".")
++    {
++        let name = &rest[..token_end(rest, 0, false)];
++        let members = services.symbol_table(SymbolTable::ExportsOfModule, holder);
++        let member =
++            (members.iter().copied()).find(|&member| services.symbol_info(member).name == name);
++        let Some(member) = member else { break };
++        let member = (services.symbol_op(SymbolOp::Aliased, member)).unwrap_or(member);
++        if (services.symbol_info(member).flags).intersects(values) {
++            return Err(false);
++        }
++        (holder, behind) = (member, &rest[name.len()..]);
++    }
++    let merged = alias_merged_with_type(services, symbol).filter(|_| head.is_whole_name);
++    let target = match merged {
++        Some(merged) => target_declared_by(services, is_source, merged),
++        None => target_of(services, is_source, symbol),
++    };
++    // An enum below the top level is a variable in the bundle. So is a value that `import =` takes from a namespace.
++    let is_below_top_level = (services.declarations(real).first())
++        .is_some_and(|declaration| is_source(declaration.file).is_some())
++        && target_declared_by(services, is_source, real).is_none();
++    if is_below_top_level && (is_enum || (aliased.is_some() && flags.intersects(values))) {
++        return Err(false);
++    }
++    match target {
++        // `link` has the object of a namespace import, which is no name for a type.
++        Some(Target::Module { .. }) => Err(true),
++        Some(target) => Ok(Named::Target(target)),
++        None => named_without_target(services, is_source, node.file, merged.unwrap_or(symbol))
++            .ok_or(false),
++    }
+ }
+ 
+ /// For each of `spans`: where an entity name starts, its meaning, whether it is one word. `None`: `link` has no name.
+@@ -4917,7 +5064,7 @@ pub fn module_types(
+                 augmented_modules.push((statement.start, path));
+             }
+         }
+-        let stated_members =
++        let (stated_members, members_with_other_stores) =
+             stated_members(services, &is_source, file, &syntax, assigns_class_fields);
+         ModuleTypes {
+             path,
+@@ -4929,6 +5076,7 @@ pub fn module_types(
+             functions_returning_undefined,
+             assigns_class_fields,
+             stated_members,
++            members_with_other_stores,
+             globals,
+             augmented_modules,
+             locals,
+@@ -4958,6 +5106,10 @@ pub enum TypedFilesError {
+     NotNamedJavaScript {
+         path: Vec<u8>,
+     },
++    /// The build gives a derived class with no constructor one with no parameters. `class`: `class Name`, `a class`.
++    ConstructorWithoutParameters {
++        class: Vec<u8>,
++    },
+     InOutput {
+         path: Vec<u8>,
+         why: Box<TypedFilesError>,
+@@ -4988,6 +5140,11 @@ impl core::fmt::Display for TypedFilesError {
+             TypedFilesError::NotNamedJavaScript { path } => {
+                 write!(f, "{} is not named .js, .mjs or .cjs", BStr::new(path))
+             }
++            TypedFilesError::ConstructorWithoutParameters { class } => write!(
++                f,
++                "{} inherits its constructor in the sources, and the build gives it one with no parameters",
++                BStr::new(class)
++            ),
+             TypedFilesError::InOutput { path, why } => write!(f, "{}: {why}", BStr::new(path)),
+         }
+     }
+@@ -5066,6 +5223,7 @@ fn typed_outputs(
+             emitted_declarations,
+             entry_point: output.entry_point,
+             no_implicit_any,
++            has_other_outputs: outputs.len() > 1,
+         };
+         let typed =
+             add_types_by_source_map(output.path, output.javascript, output.source_map, &bundle)
+diff --git a/test/aot/typed-file-unannotated-members.test.ts b/test/aot/typed-file-unannotated-members.test.ts
+index 3e507984da8..7aca7ce0d12 100644
+--- a/test/aot/typed-file-unannotated-members.test.ts
++++ b/test/aot/typed-file-unannotated-members.test.ts
+@@ -405,6 +405,71 @@ const wrong: string = make();
+     errors: ["(3,7): TS2322"],
+     written: ["declare held;", "declare flag: Item2;"],
+   },
++  // A default does not add `undefined` to the member, also where a parameter with no default comes behind it.
++  "parameter-property-with-a-default-before-a-parameter-with-none": {
++    files: {
++      "index.ts": `export class Box {
++  constructor(public first = 1, readonly name: string, public last = "z") {}
++  double(): number { return this.first * 2; }
++}
++`,
++    },
++    caller: `import { Box } from "LIBRARY";
++const box = new Box(undefined, "n");
++const first: number = box.first;
++const last: string = box.last;
++const wrong: string = box.first;
++`,
++    reads: ['new Box(1, "n").first', 'new Box(1, "n").last'],
++    errors: ["(5,7): TS2322"],
++    written: ["declare public first: number;", "declare public last: string;"],
++  },
++  // The typed file declares the types of a namespace. Its object is a variable there.
++  "type-of-a-namespace": {
++    files: {
++      "index.ts": `export namespace Shapes {
++  export interface Options { wide: boolean }
++  export namespace Inner { export interface Deep { d: number } export const limit = 1; }
++}
++export class Holder {
++  options = { wide: true } as Shapes.Options;
++  deep = { d: Shapes.Inner.limit } as Shapes.Inner.Deep;
++  wide(): boolean { return this.options.wide && this.deep.d > 0; }
++}
++`,
++    },
++    caller: `import { Holder, Shapes } from "LIBRARY";
++const holder = new Holder();
++const options: Shapes.Options = holder.options;
++const d: number = holder.deep.d;
++const wrong: string = holder.options.wide;
++`,
++    reads: ["new Holder().options", "new Holder().deep"],
++    errors: ["(5,7): TS2322"],
++    written: ["declare options: Shapes.Options;", "declare deep: Shapes.Inner.Deep;"],
++  },
++  // other.ts has a class `Map` of its own, and index.js names no other `Map`. So the bundle does not rename that class.
++  "global-that-the-bundle-shadows": {
++    files: {
++      "index.ts": `import { Map as Own } from "./other";
++export class Box {
++  items = null as Map<string, number> | null;
++  own = new Own();
++  size(): number { return (this.items?.size ?? 0) + this.own.own; }
++}
++`,
++      "other.ts": `export class Map { own = 1; }\n`,
++    },
++    caller: `import { Box } from "LIBRARY";
++const box = new Box();
++const items: globalThis.Map<string, number> | null = box.items;
++const own: number = box.own.own;
++const wrong: number = box.items;
++`,
++    reads: ["new Box().items", "new Box().own"],
++    errors: ["(5,7): TS2322"],
++    written: ["declare items: globalThis.Map<string, number> | null;", "declare own: Map;"],
++  },
+   // A type printer writes `any` below ten levels and for a type inside itself. Such a text is not the type.
+   "type-that-the-printer-cuts-short": {
+     files: {
+@@ -412,29 +477,35 @@ const wrong: string = make();
+ export class Box {
+   list = cons(1, cons(2, cons(3, cons(4, cons(5, cons(6, cons(7, cons(8, cons(9, cons(10, cons(11, cons(12, "end"))))))))))));
+   api = { count: 0, add(n: number) { this.count += n; return this; } };
+-  next(): number { return this.api.add(1).add(1).count; }
++  pair = [this.api, this.api];
++  // More than the 4,000 characters that a stated type can have.
++  wide = { ${Array.from({ length: 400 }, (_, index) => `p${index}: ${index}`).join(", ")} };
++  next(): number { return this.api.add(1).add(1).count + this.pair.length + this.wide.p399; }
+ }
+ `,
+     },
+     caller: `import { Box } from "LIBRARY";
+ const box = new Box();
+ const end: string = box.list.rest.rest.rest.rest.rest.rest.rest.rest.rest.rest.rest.rest;
+-const count: number = box.api.add(1).add(2).add(3).count;
++const count: number = box.api.add(1).add(2).add(3).count + box.pair[0].add(1).count + box.wide.p399;
+ const wrong: number = box.list.rest.rest.rest.rest.rest.rest.rest.rest.rest.rest.rest.rest;
+ `,
+     reads: [
+       "new Box().list.rest.rest.rest.rest.rest.rest.rest.rest.rest.rest.rest.head",
+       "new Box().api.add(1).add(1).count",
++      "new Box().pair[0].add(1).count",
++      "new Box().wide.p399",
+     ],
+     errors: ["(5,7): TS2322"],
+-    written: ["declare list;", "declare api;"],
++    written: ["declare list;", "declare api;", "declare pair;", "declare wide;"],
+   },
+ };
+ 
+ const names = Object.keys(shapes);
+ const builds = [
+   { flags: [] as string[], built: names.slice(0, 6) },
+-  { flags: [] as string[], built: names.slice(6) },
++  { flags: [] as string[], built: names.slice(6, 12) },
++  { flags: [] as string[], built: names.slice(12) },
+   { flags: ["--minify-syntax", "--minify-whitespace"], built: names },
+ ].map(build => ({ ...build, title: [...build.flags, ...build.built].join(" ") }));
+ 
+@@ -619,7 +690,7 @@ export class Box {
+     });
+   });
+ 
+-  // The typed file of another output has the class. A second declaration of it here would be another type.
++  // The typed file of another output has the class. For `take`, this one declares a twin of it, which is another type.
+   test("--splitting: a field whose class is in another output takes its type from the constructor", async () => {
+     const reads = (library: string) => `import { Box } from "${library}";
+ const type0: never = new Box().item;
+@@ -644,6 +715,7 @@ export class Box {
+   n = 1;
+   get held() { return this.#held; }
+   set(unit: Unit): void { this.unit = unit; }
++  take(item: Item): void {}
+ }
+ `,
+       "src/other.ts": `import { Item, Unit } from "./shared";
+@@ -847,7 +919,131 @@ export class Box {
+     expect(typed).toContain("  public held: string | null;\n  readonly size: number;\n");
+   });
+ 
+-  // The bundle gives such a class `constructor() { super(...arguments); }`, which is TS2556 in a typed file.
++  // The build removed `Req` from index.js. For `handle`, index.aot.ts declares the class, and no other output has it.
++  test("a field takes the declaration of a class that the build removed from its one output", async () => {
++    const caller = (library: string) => `import { Server } from "${library}";
++const url: string | undefined = new Server().current?.url;
++const wrong: number = new Server().current;
++`;
++    using dir = tempDir("build-dts-assigned-fields-removed-class", {
++      ...project(assigned),
++      "src/req.ts": `export class Req {
++  url = "/";
++  private secret = "s";
++  path(): string { return this.url + this.secret; }
++}
++`,
++      "src/index.ts": `import { Req } from "./req";
++export class Server {
++  current = null as Req | null;
++  handle(req: Req): string { this.current = req; return req.path(); }
++}
++`,
++      "callers/of-the-sources.ts": caller("../src/index"),
++      "callers/of-the-typed-file.ts": caller("../out/index.aot"),
++    });
++    const build = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts");
++    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
++    expect(readFileSync(join(String(dir), "out/index.aot.ts"), "utf8")).toContain("  declare current: Req | null;\n");
++    const { errors } = await checkedIn(String(dir));
++    expect(errors).toEqual({
++      "callers/of-the-sources.ts": ["(3,7): TS2322"],
++      "callers/of-the-typed-file.ts": ["(3,7): TS2322"],
++    });
++  });
++
++  // The bundle has `"fast"` for `Mode.Fast`, and its source map has no place for the field. The field stays as it is.
++  test("a private field keeps its one declaration where the build cannot tell which field it is", async () => {
++    using dir = tempDir("build-dts-assigned-fields-private-enum", {
++      ...project(assigned),
++      "src/mode.ts": `export enum Mode { Fast = "fast", Slow = "slow" }\n`,
++      "src/index.ts": `import { Mode } from "./mode";
++export class Box {
++  #mode = Mode.Fast;
++  get mode() { return this.#mode; }
++}
++`,
++    });
++    const build = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts");
++    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
++    const typed = readFileSync(join(String(dir), "out/index.aot.ts"), "utf8");
++    expect(typed.match(/^.*#mode\b.*;$/gm)).toEqual(['    this.#mode = "fast" /* Fast */;', "  #mode;", "    return this.#mode;"]);
++  });
++
++  // What the stores of the bundle say of such a member is another type than the one of the sources: `"em"` is a
++  // string there, and the object of a namespace is `any`. With no name for the type, the member gets no declaration.
++  test.todoIf(isWindows).each([
++    [
++      "an enum behind a namespace import",
++      {
++        "src/unit.ts": `export enum Unit { Px = "px", Em = "em" }\n`,
++        "src/index.ts": `import * as u from "./unit";
++export class Box {
++  readonly fixed = u.Unit.Em;
++  label(): string { return this.fixed; }
++}
++`,
++      },
++      "index.aot.ts:4:10: TS2339: Property 'fixed' does not exist on type 'Box'.",
++    ],
++    [
++      "an enum of a namespace",
++      {
++        "src/index.ts": `export namespace Shapes {
++  export enum Kind { Circle = "circle", Square = "square" }
++}
++export class Holder {
++  kind = Shapes.Kind.Circle;
++  is(kind: Shapes.Kind): boolean { return this.kind === kind; }
++}
++`,
++      },
++      "index.aot.ts:13:10: TS2339: Property 'kind' does not exist on type 'Holder'.",
++    ],
++    [
++      "an enum of a function",
++      {
++        "src/index.ts": `export function make(): number {
++  enum Local { A = "a", B = "b" }
++  class Box {
++    readonly fixed = Local.B;
++    size(): number { return this.fixed.length; }
++  }
++  return new Box().size();
++}
++`,
++      },
++      "index.aot.ts:11:12: TS2339: Property 'fixed' does not exist on type 'Box'.",
++    ],
++  ])("a field whose type is %s leaves the typed files out", async (_, sources, first) => {
++    using dir = tempDir("build-dts-assigned-fields-other-stores", { ...project(assigned), ...sources });
++    const build = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts");
++    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({
++      stderr: `warn: the .aot.ts files that --aot compiles a package from are left out: they have type errors, the first at ${first}\n`,
++      exitCode: 0,
++    });
++  });
++
++  // The bundle gives such a class `constructor() { super(...arguments); }`. With that, `new HttpError("gone")` of the
++  // sources has an argument too many.
++  test.todoIf(isWindows)("a derived class with no constructor leaves the typed files out", async () => {
++    using dir = tempDir("build-dts-assigned-fields-derived-warning", {
++      ...project(assigned),
++      "src/index.ts": `export class HttpError extends Error {
++  status = 500;
++}
++`,
++    });
++    const build = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts");
++    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({
++      stderr:
++        "warn: the .aot.ts files that --aot compiles a package from are left out: index.js: class HttpError inherits its constructor in the sources, and the build gives it one with no parameters\n",
++      exitCode: 0,
++    });
++    expect(readdirSync(join(String(dir), "out")).sort()).toEqual(["index.d.ts", "index.js"]);
++  });
++
++  // The typed file needs the parameters of the base class at the constructor that the build adds.
+   test.todo("a derived class with no constructor keeps its typed file", async () => {
+     using dir = tempDir("build-dts-assigned-fields-derived", {
+       ...project(assigned),

@@ -1,0 +1,166 @@
+diff --git a/src/sema/driver/compile/tests/stated_members.rs b/src/sema/driver/compile/tests/stated_members.rs
+index 8fa38f2b4ea..752bacbf341 100644
+--- a/src/sema/driver/compile/tests/stated_members.rs
++++ b/src/sema/driver/compile/tests/stated_members.rs
+@@ -36,7 +36,15 @@ fn stated_members(files: &[(&str, &str)]) -> Vec<String> {
+                         let name = String::from_utf8(name.to_vec()).unwrap();
+                         format!(" [{word} is {name} of {path}]")
+                     }
+-                    Named::Target(Target::Module { .. }) => format!(" [{word} is a module]"),
++                    Named::ImportedType(Target::Declaration { path, name }) => {
++                        let path = String::from_utf8(path.to_vec()).unwrap();
++                        let name = String::from_utf8(name.to_vec()).unwrap();
++                        format!(" [{word} is the type that {path} imports as {name}]")
++                    }
++                    Named::Target(Target::Module { .. })
++                    | Named::ImportedType(Target::Module { .. }) => {
++                        format!(" [{word} is a module]")
++                    }
+                     Named::Global => format!(" [{word} is global]"),
+                     Named::Local(at) => {
+                         format!(" [{word} is {} below]", word_at(&types.text, *at as usize))
+@@ -175,6 +183,45 @@ export class Stated {
+     assert_eq!(stated_members(&files), expected);
+ }
+ 
++const PACKAGE_MANIFEST: &str =
++    r#"{ "name": "ext", "version": "1.0.0", "main": "index.js", "types": "index.d.ts" }"#;
++
++const PACKAGE_TYPES: &str = "export interface Request { url: string }
++export type Handler = (request: Request) => void;
++export declare namespace Shapes { interface Shape { s: number } }
++export declare class Emitter { on(name: string): this; }
++export interface Both { b: number }
++export declare const Both: Both;
++";
++
++#[test]
++fn an_import_of_what_no_source_declares_is_an_imported_type_where_it_is_a_type_alone() {
++    let main = "import type { Request, Handler, Shapes, Emitter, Both } from 'ext';
++export class Stated {
++    request = null as Request | null;
++    handlers = [] as Handler[];
++    shape = null as Shapes.Shape | null;
++    emitter = null as Emitter | null;
++    both = null as Both | null;
++}
++";
++    let files = [
++        ("main.ts", main),
++        ("node_modules/ext/package.json", PACKAGE_MANIFEST),
++        ("node_modules/ext/index.js", "export class Emitter {}\n"),
++        ("node_modules/ext/index.d.ts", PACKAGE_TYPES),
++    ];
++    // A class, and an interface that merges with a constant, can have a value in a bundle that holds the package.
++    let expected = [
++        "request: Request | null [Request is the type that /project/main.ts imports as Request]",
++        "handlers: Handler[] [Handler is the type that /project/main.ts imports as Handler]",
++        "shape: Shapes.Shape | null [Shapes is the type that /project/main.ts imports as Shapes]",
++        "emitter: Emitter | null [Emitter is Emitter of /project/main.ts]",
++        "both: Both | null [Both is Both of /project/main.ts]",
++    ];
++    assert_eq!(stated_members(&files), expected);
++}
++
+ const WITHOUT_VALUES: &str = "type Mode = 'fast' | 'slow';
+ enum Color { Red, Blue }
+ interface Named { name: string }
+diff --git a/src/sema/driver/typed_files.rs b/src/sema/driver/typed_files.rs
+index d5fd6a382db..4d4d3dbcaca 100644
+--- a/src/sema/driver/typed_files.rs
++++ b/src/sema/driver/typed_files.rs
+@@ -2053,7 +2053,8 @@ fn link(
+         taken.extend(heads.map(|name| module.syntax.word(name.pos()).to_vec()));
+         let stated = types.stated_members.iter();
+         let heads = stated.flat_map(|member| member.names.iter().map(move |name| (member, name)));
+-        let unresolved = heads.filter(|(_, name)| !matches!(name.2, Named::Target(_)));
++        let has_target = |named: &Named| matches!(named, Named::Target(_) | Named::ImportedType(_));
++        let unresolved = heads.filter(|(_, name)| !has_target(&name.2));
+         taken.extend(unresolved.map(|(member, name)| member.word(name).to_vec()));
+     }
+ 
+@@ -2152,13 +2153,17 @@ fn link(
+         // A stated type brings the types and the imports that it names with it. A value would come as a twin.
+         let stated = module.types.iter().flat_map(|types| &types.stated_members);
+         let named = stated.flat_map(|member| member.names.iter());
+-        queue.extend(named.filter_map(|name| {
+-            let Named::Target(Target::Declaration { path, name }) = &name.2 else {
++        queue.extend(named.filter_map(|named| {
++            let (Named::Target(target) | Named::ImportedType(target)) = &named.2 else {
++                return None;
++            };
++            let Target::Declaration { path, name } = target else {
+                 return None;
+             };
+             let index = *index_of.get(&path[..])?;
+             let found = declared[index].get(&name[..])?;
+-            let is_type = found.bindings.is_empty() && !found.is_ambient_value;
++            let is_type = found.bindings.is_empty() && !found.is_ambient_value
++                || matches!(named.2, Named::ImportedType(_));
+             (is_type || is_import_of_output(index, found)).then(|| (index, name.clone()))
+         }));
+     }
+@@ -2761,14 +2766,19 @@ fn link(
+     }
+ 
+     // A class or a function of another output has a twin here, which is another type than what the bundle stores.
+-    let is_declared_here = |target: &Target, is_value: bool| {
++    let is_declared_here = |named: &Named, is_value: bool| {
++        let (Named::Target(target) | Named::ImportedType(target)) = named else {
++            return false;
++        };
+         let found = place_of(target).and_then(|(index, name)| {
+             let found = declared[index].get(&name[..])?;
+             let is_twin = bundle.has_other_outputs && emitted_from.contains_key(&index);
+             // Only an enum that the typed file declares, or imports, has members for a declaration.
+             let is_enum = found.enum_statement.is_some() || is_import_of_output(index, found);
++            // A type alone has no twin: the typed file imports it whatever the bundle has of its package.
+             let is_type = found.bindings.is_empty()
+-                || name_in_output(index, found).is_some_and(|_| index < mapped);
++                || name_in_output(index, found).is_some_and(|_| index < mapped)
++                || matches!(named, Named::ImportedType(_)) && found.import.is_some();
+             Some(!is_twin && (is_enum || (is_type && !is_value)))
+         });
+         found == Some(true)
+@@ -2784,8 +2794,8 @@ fn link(
+                 let word = member.word(name);
+                 let name: Option<Vec<u8>> = match named {
+                     // No name yet: out. A binding below the top level has the name: `outer` has the one of the top.
+-                    Named::Target(target) => final_name(target)
+-                        .filter(|_| is_declared_here(target, member.is_value))
++                    Named::Target(target) | Named::ImportedType(target) => final_name(target)
++                        .filter(|_| is_declared_here(named, member.is_value))
+                         .and_then(|name| {
+                             // `import("..").Item` stands where the bare `Item` is another declaration.
+                             let is_bare = (*end - *at) as usize == word.len();
+@@ -4415,6 +4425,8 @@ pub enum Target {
+ pub enum Named {
+     /// As in `ModuleTypes::references`.
+     Target(Target),
++    /// An import of the module that is a type alone, of what no source declares. No bundle has a value of that name.
++    ImportedType(Target),
+     /// Declared outside the sources, as in `ModuleTypes::globals`.
+     Global,
+     /// Declared in the module below its top level. Where its name is, as in `ModuleTypes::locals`.
+@@ -4961,7 +4973,12 @@ fn named_by_head(
+     if is_below_top_level {
+         return Err(false);
+     }
++    let is_imported_type = merged.is_none()
++        && aliased.is_some()
++        && !flags.intersects(SymbolFlags::VALUE)
++        && target_declared_by(services, is_source, real).is_none();
+     match target {
++        Some(target) if is_imported_type => Ok(Named::ImportedType(target)),
+         Some(target) => Ok(Named::Target(target)),
+         // A namespace of the sources below the top level is a variable in the bundle.
+         None if is_namespace => Err(false),
+@@ -5182,7 +5199,7 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
+             None if is_head => match named_without_target(services, &is_source, file, symbol) {
+                 Some(Named::Global) => globals.push(at),
+                 Some(Named::Local(binding)) => locals.push((at, binding)),
+-                Some(Named::Target(_)) | None => {}
++                Some(Named::Target(_) | Named::ImportedType(_)) | None => {}
+             },
+             None => {}
+         };

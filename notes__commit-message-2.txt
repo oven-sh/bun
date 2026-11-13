@@ -1,0 +1,19 @@
+bun build --dts: write no value as a type at a field, and name the assigning files to the check in a list of their own
+
+A stated value is written only behind `declare`. At the slot of a field
+that the bundle has, `readonly #k = "a"` keeps the type of its store: an
+annotation `: "a"` does not widen where the sources do.
+
+Every slot that gets a stated type is recorded, so `#unit? = Unit.Px`
+has one type, and not a second one from the cast of its value.
+
+The bundler names the TypeScript files that it parsed with
+useDefineForClassFields off in a list of their own. A file that an
+onLoad plugin loads is not among the sources of the check, and lost the
+bit with its text.
+
+A stated type brings the types that it names into the typed file, as an
+annotation does.
+
+Tests: the path separator of the platform in three assertions, and the
+new test file in CI's lists of durations.

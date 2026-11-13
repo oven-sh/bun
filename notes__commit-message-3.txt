@@ -1,0 +1,8 @@
+bun build --dts: write no `!` behind `declare`, and a stated type at the kept field of a parameter property
+
+`declare ready!: boolean;` is TS1255 for a project that has the typed
+file as a source. The line has the name and the annotation only.
+
+Beside an `accessor` field the bundle keeps a field for a parameter
+property. The sources have an empty slot for such a parameter, and the
+stated type was not written there.

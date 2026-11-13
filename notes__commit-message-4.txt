@@ -1,0 +1,22 @@
+bun build --dts: state a member only with names that the typed file types as the sources do
+
+`Services::stated_type` states a parameter property in the scope of its
+class, so a default adds no `undefined`. It returns the symbols that the
+printer named, has at most 4,000 bytes, and reads from the printer whether
+a part of the type was left out.
+
+`stated_members` takes a name of the text only if it resolves, where the
+member stands, to one of those symbols or to what holds one. It refuses a
+name that is a variable in the bundle: an enum below the top level, a class
+or an enum of a namespace, the object of a namespace.
+
+A member whose type names an enum or a namespace gets no bare `declare`:
+its stores in the bundle type it in another way than the sources. A private
+name gets no `declare` line. A derived class with no constructor leaves the
+typed files out with a warning of its own.
+
+`link` refuses a twin from the emitted declarations only in a build with
+more than one output, and a stated type brings the import that it names.
+
+`is_symbol_named_at` is `is_any_symbol_accessible` with one more parameter.
+A build that writes no typed files makes no `ModuleTypes`.

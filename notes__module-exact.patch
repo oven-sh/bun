@@ -1,0 +1,273 @@
+diff --git a/src/sema/driver/typed_files.rs b/src/sema/driver/typed_files.rs
+index 9a64709469a..4d467cb193f 100644
+--- a/src/sema/driver/typed_files.rs
++++ b/src/sema/driver/typed_files.rs
+@@ -4657,10 +4657,11 @@ fn has_only_keywords(text: &[u8]) -> bool {
+ /// Each member of the module that a build parts from what types it, with the type that the check has for it.
+ fn stated_members(
+     services: &mut Services<'_, '_, '_>,
+-    is_source: &dyn Fn(FileId) -> Option<Box<[u8]>>,
++    sources: &[Option<Box<[u8]>>],
+     file: FileId,
+     syntax: &Syntax<'_, '_>,
+ ) -> Box<[StatedMember]> {
++    let is_source = &|file: FileId| sources.get(file.idx()).cloned().flatten();
+     let hir = syntax.file;
+     if hir.kind == FileKind::Declaration || hir.check_directive == Some(false) {
+         return Box::default();
+@@ -4773,14 +4774,21 @@ fn stated_members(
+         for at in heads.into_iter().flatten() {
+             let word_end = token_end(&text, at.at as usize, false);
+             let word = &text[at.at as usize..word_end];
+-            // `import("..").Name`, and `ns.Name` behind a namespace import: the declaration of that name.
+-            let of_module = |services: &mut Services<'_, '_, '_>, (from, to): (usize, usize)| {
+-                let name = (&text[from..to], &text[to..]);
+-                let named = named_by_module(services, is_source, &holders, name, found.is_value);
+-                named.map(|named| (to, named))
+-            };
+-            let named = match name_of_import_type(&text, at.at as usize) {
+-                Some(name) => of_module(services, name),
++            // `import("..").Name`, and `ns.Name` behind a namespace import: what that module exports as `Name`.
++            let exported =
++                |services: &mut Services<'_, '_, '_>, module, (from, to): (usize, usize)| {
++                    let name = (&text[from..to], &text[to..]);
++                    let (symbol, target) =
++                        exported_by_module(services, is_source, module, name, found.is_value)?;
++                    Some((to, symbol, Named::Target(target)))
++                };
++            let named = match parts_of_import_type(&text, at.at as usize) {
++                Some([(from, to), name]) => {
++                    module_of_specifier(services, sources, file, &text[from..to])
++                        .and_then(|module| exported(services, module, name))
++                        .filter(|(_, symbol, _)| holders.contains(symbol))
++                        .map(|(end, _, named)| (end, named))
++                }
+                 // The word is the type parameter only if nothing has that name where the member stands.
+                 None if at.is_bound => {
+                     let outside = services.resolve_name(node, word, at.meaning, false);
+@@ -4797,9 +4805,9 @@ fn stated_members(
+                     };
+                     match named_by_head(services, is_source, node, &holders, &head) {
+                         Ok(named) => Some((word_end, named)),
+-                        Err(true) if text[word_end..].starts_with(b".") => {
++                        Err(Some(module)) if text[word_end..].starts_with(b".") => {
+                             let name = (word_end + 1, token_end(&text, word_end + 1, false));
+-                            of_module(services, name)
++                            exported(services, module, name).map(|(end, _, named)| (end, named))
+                         }
+                         Err(_) => None,
+                     }
+@@ -4874,18 +4882,18 @@ fn is_namespace_of_sources(
+         })
+ }
+ 
+-/// What `link` takes for `head`. `Err`: no typed file has that name. `Err(true)`: the object of a namespace import.
++/// What `link` takes for `head`. `Err`: no typed file has that name. `Err(Some(module))`: a namespace import of it.
+ fn named_by_head(
+     services: &mut Services<'_, '_, '_>,
+     is_source: &dyn Fn(FileId) -> Option<Box<[u8]>>,
+     node: NodeRef,
+     holders: &[SymbolRef],
+     head: &Head<'_>,
+-) -> Result<Named, bool> {
++) -> Result<Named, Option<SymbolRef>> {
+     // The printer writes these four with no symbol. The word is theirs where nothing else has it.
+     const WITHOUT_SYMBOL: [&[u8]; 4] = [b"Uppercase", b"Lowercase", b"Capitalize", b"Uncapitalize"];
+     let Some(symbol) = services.resolve_name(node, head.word, head.meaning, false) else {
+-        return Err(false);
++        return Err(None);
+     };
+     let exported = services.symbol_op(SymbolOp::ExportSymbol, symbol);
+     let exported = exported.unwrap_or(symbol);
+@@ -4907,7 +4915,7 @@ fn named_by_head(
+         }
+     };
+     if !is_named_by_printer {
+-        return Err(false);
++        return Err(None);
+     }
+     let merged = alias_merged_with_type(services, symbol).filter(|_| head.is_whole_name);
+     let target = match merged {
+@@ -4916,7 +4924,7 @@ fn named_by_head(
+     };
+     // `link` has the object of a namespace import, which is no name. What stands behind it can have one.
+     if matches!(target, Some(Target::Module { .. })) {
+-        return Err(true);
++        return Err(Some(real));
+     }
+     let is_enum = flags.intersects(SymbolFlags::ENUM);
+     let is_namespace = is_namespace_of_sources(services, is_source, real);
+@@ -4926,7 +4934,7 @@ fn named_by_head(
+         false => head.meaning == SymbolFlags::VALUE && is_namespace,
+     };
+     if is_variable {
+-        return Err(false);
++        return Err(None);
+     }
+     // Of a namespace of the sources, the typed file has the types. A class or an enum in it is a value.
+     let values = SymbolFlags::VALUE.difference(SymbolFlags::VALUE_MODULE);
+@@ -4944,7 +4952,7 @@ fn named_by_head(
+         let is_of_enum = (services.symbol_info(holder).flags).intersects(SymbolFlags::ENUM);
+         let of_member = services.symbol_info(member).flags;
+         if of_member.intersects(values) && !(is_of_enum && of_member == SymbolFlags::ENUM_MEMBER) {
+-            return Err(false);
++            return Err(None);
+         }
+         (holder, behind) = (member, &rest[name.len()..]);
+     }
+@@ -4959,15 +4967,15 @@ fn named_by_head(
+         && declaration.is_some_and(|declaration| is_source(declaration.file).is_some())
+         && target_declared_by(services, is_source, real).is_none();
+     if is_below_top_level {
+-        return Err(false);
++        return Err(None);
+     }
+     match target {
+         Some(target) => Ok(Named::Target(target)),
+         // A namespace of the sources below the top level is a variable in the bundle.
+-        None if is_namespace => Err(false),
++        None if is_namespace => Err(None),
+         None => {
+             let named = merged.unwrap_or(symbol);
+-            let local = named_without_target(services, is_source, node.file, named).ok_or(false)?;
++            let local = named_without_target(services, is_source, node.file, named).ok_or(None)?;
+             // Another block of a namespace has its own function in the bundle: its names are not in scope here.
+             let is_in_scope = match (&local, declaration) {
+                 (Named::Local(_), Some(declaration)) => {
+@@ -4976,7 +4984,7 @@ fn named_by_head(
+                 }
+                 _ => true,
+             };
+-            is_in_scope.then_some(local).ok_or(false)
++            is_in_scope.then_some(local).ok_or(None)
+         }
+     }
+ }
+@@ -5093,57 +5101,78 @@ fn heads_of_stated(file: &File<'_>, spans: &[(u32, u32)]) -> Vec<Option<Vec<Head
+     heads
+ }
+ 
+-/// In a stated text with `import("..").Name` at `at`: where `Name` starts and ends.
+-fn name_of_import_type(text: &[u8], at: usize) -> Option<(usize, usize)> {
++/// In a stated text with `import("..").Name` at `at`: where the specifier starts and ends, then where `Name` does.
++fn parts_of_import_type(text: &[u8], at: usize) -> Option<[(usize, usize); 2]> {
+     let specifier = text.get(at..)?.strip_prefix(b"import(")?;
+     let quote = *specifier.first()?;
+     let close = 1 + bun_core::strings::index_of_char_usize(&specifier[1..], quote)?;
+     let name = specifier.get(close + 1..)?.strip_prefix(b").")?;
+-    let start = text.len() - name.len();
+-    Some((start, token_end(text, start, false)))
++    let (open, start) = (text.len() - specifier.len() + 1, text.len() - name.len());
++    Some([
++        (open, open + close - 1),
++        (start, token_end(text, start, false)),
++    ])
++}
++
++/// The path of a module, or a specifier of it, with no extension and no `/index`: what the two have in common.
++fn stem_of_module(path: &[u8]) -> &[u8] {
++    const EXTENSIONS: [&[u8]; 11] = [
++        b".d.ts", b".d.mts", b".d.cts", b".ts", b".tsx", b".mts", b".cts", b".js", b".jsx",
++        b".mjs", b".cjs",
++    ];
++    let mut stems = EXTENSIONS
++        .iter()
++        .filter_map(|extension| path.strip_suffix(*extension));
++    let stem = stems.next().unwrap_or(path);
++    stem.strip_suffix(b"/index").unwrap_or(stem)
++}
++
++/// The module that a relative `specifier` names in a text for a member of `importer`: the one source of that stem.
++fn module_of_specifier(
++    services: &mut Services<'_, '_, '_>,
++    sources: &[Option<Box<[u8]>>],
++    importer: FileId,
++    specifier: &[u8],
++) -> Option<SymbolRef> {
++    if !specifier.starts_with(b"./") && !specifier.starts_with(b"../") {
++        return None;
++    }
++    let directory = ancestors(sources.get(importer.idx())?.as_deref()?).nth(1)?;
++    let wanted = absolute(directory, stem_of_module(specifier));
++    let is_wanted = |path: &[u8]| {
++        let stem = stem_of_module(path);
++        stem == &wanted[..] || stem == &wanted[1..]
++    };
++    let mut found =
++        (sources.iter().enumerate()).filter(|(_, path)| path.as_deref().is_some_and(is_wanted));
++    let (file, _) = found.next().filter(|_| found.next().is_none())?;
++    services.symbol_at_location(NodeRef {
++        file: FileId(file as u32),
++        node: Node::FILE,
++    })
+ }
+ 
+-/// The declaration of the sources that `name` of a module is: the one of that name that the printer named.
+-fn named_by_module(
++/// What `module` exports as `name`, and the declaration of the sources that it is.
++fn exported_by_module(
+     services: &mut Services<'_, '_, '_>,
+     is_source: &dyn Fn(FileId) -> Option<Box<[u8]>>,
+-    holders: &[SymbolRef],
++    module: SymbolRef,
+     (name, behind): (&[u8], &[u8]),
+     is_in_value: bool,
+-) -> Option<Named> {
+-    let mut found: Option<Target> = None;
+-    for &holder in holders {
+-        // The printer names the module alone where it copies `ns.Name` from the sources.
+-        let of_module = |services: &mut Services<'_, '_, '_>| {
+-            let exported = services.symbol_table(SymbolTable::ExportsOfModule, holder);
+-            let mut exported = exported.iter().copied();
+-            let symbol = exported.find(|&symbol| services.symbol_info(symbol).name == name)?;
+-            Some((services.symbol_op(SymbolOp::Aliased, symbol)).unwrap_or(symbol))
+-        };
+-        let symbol = match services.symbol_info(holder) {
+-            info if info.name == name => holder,
+-            info if info.flags.intersects(SymbolFlags::MODULE) => match of_module(services) {
+-                Some(symbol) => symbol,
+-                None => continue,
+-            },
+-            _ => continue,
+-        };
+-        let info = services.symbol_info(symbol);
+-        // Only an enum has a name behind its own that the typed file has: a member. And a value is such a member.
+-        let is_enum = info.flags.intersects(SymbolFlags::ENUM);
+-        if !is_enum && (is_in_value || behind.starts_with(b".")) {
+-            return None;
+-        }
+-        let target = target_declared_by(services, is_source, symbol);
+-        let Some(target @ Target::Declaration { .. }) = target else {
+-            continue;
+-        };
+-        if found.as_ref().is_some_and(|known| *known != target) {
+-            return None;
+-        }
+-        found = Some(target);
++) -> Option<(SymbolRef, Target)> {
++    let exported = services.symbol_table(SymbolTable::ExportsOfModule, module);
++    let mut exported = exported.iter().copied();
++    let symbol = exported.find(|&symbol| services.symbol_info(symbol).name == name)?;
++    let symbol = (services.symbol_op(SymbolOp::Aliased, symbol)).unwrap_or(symbol);
++    // Only an enum has a name behind its own that the typed file has: a member. And a value is such a member.
++    let is_enum = (services.symbol_info(symbol).flags).intersects(SymbolFlags::ENUM);
++    if !is_enum && (is_in_value || behind.starts_with(b".")) {
++        return None;
++    }
++    match target_declared_by(services, is_source, symbol)? {
++        target @ Target::Declaration { .. } => Some((symbol, target)),
++        Target::Module { .. } => None,
+     }
+-    found.map(Named::Target)
+ }
+ 
+ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<ModuleTypes> {
+@@ -5341,7 +5370,7 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
+                 augmented_modules.push((statement.start, path));
+             }
+         }
+-        let stated_members = stated_members(services, &is_source, file, &syntax);
++        let stated_members = stated_members(services, &paths, file, &syntax);
+         let classes_of_bases_without_parameters =
+             classes_of_bases_without_parameters(services, file, &syntax);
+         ModuleTypes {

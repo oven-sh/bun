@@ -1,0 +1,29 @@
+bun build --dts: state an unannotated class member in .aot.ts with the checker's type
+
+A class member with no annotation has its type from its value or from
+the stores in the constructor. A build parts the member from both. With
+"useDefineForClassFields": false the parser moves the value into the
+constructor and the bundle has no field. --define can remove a store.
+The typed file then had no member (TS2339, and no .aot.ts file for the
+whole build), or a member of another type.
+
+module_types now states each such member: the text of the declaration
+printer for it (Services::stated_type), and what each name in that text
+is. A text in which the printer left a part out is not stated. link
+gives each name the name that the typed file has. It drops a text that
+names what the file does not declare, or declares only as a twin of a
+class of another output. copy_slots writes the type at a
+field of the bundle. copy_members declares a member that has no field:
+`declare n: number;`, or `declare readonly kind = "circle";` for a
+literal.
+
+The member notes of the commits before this one had only types that
+name nothing. They come from the same table now, so
+ModuleTypes::members, member_type, Written::noted_member and
+text_of_types_that_name_nothing are removed.
+
+The bundler hands one bit for each source to the check: the file was
+parsed with useDefineForClassFields: false. In such a module every
+property with no annotation is stated, and the writer looks at what the
+bundle has, so the table has no copy of the parser's rule for which
+fields it moves.

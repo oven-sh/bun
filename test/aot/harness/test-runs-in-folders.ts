@@ -1,5 +1,5 @@
 // For test-runs-in-folders-*.test.ts. Each folder two levels below parallel-test-runs/ is a project with test files: parallel-test-runs/<area>/<what it shows>/. It is copied out of the tree and run twice, by
-// `bun test` and by `bun test --aot`. What `bun test` prints is the specification: the lines that the tests print, how each test ends and the exit code must be equal.
+// `bun test` and by `bun test --aot`. What `bun test` prints is the specification: the lines that the tests print, how each test ends, what the run counts at its end and the exit code must be equal.
 // A project needs no expectation of its own. It prints what a wrong answer would change, or expects it in a test, which then fails in one run alone. A preload is named by a bunfig.toml in the folder.
 // The test files of a project end in _test, which `bun test` finds: scripts/runner.node.ts takes every name that holds ".test" for a test of the repository.
 // The packages of a project lie in a folder `installed`, which the copy has as `node_modules`: git ignores a folder of that name, and so does whatever carries this tree to another machine.
@@ -12,10 +12,11 @@
 // when they have ended. A compiled run has one answer, the one that `bun test` gives most often: it alone is run, and held to what the file says.
 // A file one-thread.txt in the folder says why plain Bun reads the files of the project on one thread: with threads, files complete in the order in which the threads finish.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { existsSync, readFileSync, readdirSync, renameSync } from "node:fs";
 import { basename, join } from "node:path";
 import { test } from "../supported";
+import { atLeastWhatTheRunnerGave } from "./default-timeout";
 import { run } from "./run";
 
 const root = join(import.meta.dir, "..", "parallel-test-runs");
@@ -83,7 +84,43 @@ function layPackages(folder: string) {
 // bunEnv drops each BUN_DEBUG_ variable of whoever runs this file.
 const wordsOfAll = process.env.AOT_TEST_RUN_WORDS ?? "";
 
-async function outcomeOf(dir: string, words: string, ...flags: string[]) {
+// What a case asks for, and what it gets: ../supported raises the limit where Bun has assertions. Undefined: the flag of the runner says it there, and this file cannot read the flag.
+const limitOfACase = 180_000;
+const limitThatACaseGets = atLeastWhatTheRunnerGave(limitOfACase, isASAN || isDebug);
+// A run that has not ended half a minute before its case does is killed, and the case fails with what the run wrote up to there: a case that passes its own limit shows nothing of its runs, and
+// `bun test` ends no child of a case that ran beside others. The time counts from where the case began: the run under under.txt starts when the other two have ended.
+// Where the flag of the runner says the limit a run has none, as before. `run` takes 0 for no limit, so a run that starts too late has a millisecond.
+const beforeTheCaseEnds = 30_000;
+const leftForARun = (caseBegan: number) =>
+  limitThatACaseGets === undefined
+    ? undefined
+    : Math.max(1, Math.round(limitThatACaseGets - beforeTheCaseEnds - (performance.now() - caseBegan)));
+// What `run` answers for a child that a signal ended: this much above the number of the signal. The limit ends a run with SIGKILL, which is 9.
+const endedBySignal = 128;
+
+// What `bun test` counts at the end of a run. The tests are there by how they ended, and three things that no line of a test says: the errors outside of tests, the calls of expect() and the files.
+const isCount = /^ *\d+ (pass|skip|todo|fail|errors?|expect\(\) calls)$|^Ran \d+ tests? across \d+ files?\. /;
+// The times differ from run to run.
+const withoutItsTime = (line: string) => line.replace(/ \[[\d.]+m?s\]$/, "");
+
+// What each run wrote to stderr, for the message of a failure: the lines that differ do not say why a build stopped or what a sanitizer found.
+// Each line is set in, so that none of them reads as a line of the run that shows them.
+const stderrOf = new WeakMap<object, string>();
+function saidBy(runs: Record<string, object>) {
+  const kept = 8192;
+  return Object.entries(runs)
+    .map(([command, outcome]) => {
+      const stderr = (stderrOf.get(outcome) ?? "").trim();
+      const shown =
+        stderr.length <= 4 * kept
+          ? stderr
+          : `${stderr.slice(0, kept)}\n[${stderr.length - 2 * kept} characters are left out here]\n${stderr.slice(-kept)}`;
+      return `\`${command}\` wrote to stderr:\n${shown.replace(/^(?=.)/gm, "    ")}`;
+    })
+    .join("\n");
+}
+
+async function outcomeOf(dir: string, words: string, caseBegan: number, ...flags: string[]) {
   layPackages(dir);
   // As users run it: whoever runs this file may have switched the thread off that reads the texts.
   const oneThread = !flags.includes("--aot") && existsSync(join(dir, "one-thread.txt")) ? "1" : "0";
@@ -93,18 +130,23 @@ async function outcomeOf(dir: string, words: string, ...flags: string[]) {
     BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: oneThread,
     BUN_DEBUG_TEST_AOT_WORDS: words,
   };
-  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags, ...testFilesIn(dir)], dir, env);
-  return {
+  const limit = leftForARun(caseBegan);
+  const started = performance.now();
+  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags, ...testFilesIn(dir)], dir, env, limit);
+  const lasted = performance.now() - started;
+  const lines = stderr.split("\n");
+  const outcome = {
     printed: stdout.split("\n").filter(line => line && !line.startsWith("bun test v")),
-    // The times differ from run to run.
-    tests: stderr
-      .split("\n")
-      .filter(line => /^\((pass|fail|skip|todo)\) /.test(line))
-      .map(line => line.replace(/ \[[\d.]+m?s\]$/, "")),
+    tests: lines.filter(line => /^\((pass|fail|skip|todo)\) /.test(line)).map(withoutItsTime),
+    counts: lines.filter(line => isCount.test(line)).map(withoutItsTime),
     exitCode,
     // A run that dies says why here, and nowhere else.
-    lastWords: exitCode > 1 ? stderr.split("\n").filter(Boolean).slice(-12) : [],
+    lastWords: exitCode > 1 ? lines.filter(Boolean).slice(-12) : [],
   };
+  const isKilledAtItsLimit = limit !== undefined && exitCode === endedBySignal + 9 && lasted >= limit;
+  const killed = `KILLED after ${Math.round(lasted / 1000)} s, ${beforeTheCaseEnds / 1000} s before the time limit of its case`;
+  stderrOf.set(outcome, isKilledAtItsLimit ? `${stderr}\n${killed}` : stderr);
+  return outcome;
 }
 
 /**
@@ -115,6 +157,7 @@ export function testRunsInFolders(part: number, parts: number) {
   const stretch = Math.ceil(projects.length / parts);
   for (const [area, project] of projects.slice((part - 1) * stretch, part * stretch)) {
     test(`${area}/${project}`, async () => {
+      const began = performance.now();
       // See the head of this file: such a folder stays behind where the tree is carried, and the project then runs without its packages.
       expect(literalPackagesIn(join(root, area, project)).slice(0, 3)).toEqual([]);
       // See the head of this file: the runner would run such a file where it lies, by itself and without the packages of its project, and here it would be no test file that is named in its order.
@@ -122,7 +165,10 @@ export function testRunsInFolders(part: number, parts: number) {
       const said = saidOf(join(root, area, project));
       if (said) {
         using dir = tempDir("aot-test-run-in-folder", join(root, area, project));
-        expect(await outcomeOf(String(dir), wordsOfAll, "--aot", ...flagsOf(join(root, area, project)))).toEqual(said);
+        const compiled = await outcomeOf(String(dir), wordsOfAll, began, "--aot", ...flagsOf(join(root, area, project)));
+        // The file says nothing of the counts.
+        const { printed, tests, exitCode, lastWords } = compiled;
+        expect({ printed, tests, exitCode, lastWords }, saidBy({ "bun test --aot": compiled })).toEqual(said);
         return;
       }
       // A folder for each run: a build leaves files beside what it reads.
@@ -130,24 +176,29 @@ export function testRunsInFolders(part: number, parts: number) {
       using compiledDir = tempDir("aot-test-run-in-folder", join(root, area, project));
       const flags = flagsOf(join(root, area, project));
       const [plain, compiled] = await Promise.all([
-        outcomeOf(String(plainDir), "", ...flags),
-        outcomeOf(String(compiledDir), wordsOfAll, "--aot", ...flags),
+        outcomeOf(String(plainDir), "", began, ...flags),
+        outcomeOf(String(compiledDir), wordsOfAll, began, "--aot", ...flags),
       ]);
       // Neither run is made again: where plain Bun has more than one answer the project fails, and what it races for is fixed in the project.
       const butForItsMark = markOf(join(root, area, project));
+      const bothSaid = saidBy({ "bun test --aot": compiled, "bun test": plain });
+      // Two runs that a signal ends alike, or that hang alike up to their limit, would agree.
+      expect(plain.exitCode, bothSaid).toBeLessThan(endedBySignal);
       // A run in which plain says nothing would pass for the wrong reason: it prints, or a test of it passes by what it expects.
-      expect(plain.printed.length + plain.tests.filter(line => line.startsWith("(pass) ")).length).toBeGreaterThan(0);
-      expect(plain.tests.length).toBeGreaterThan(0);
+      const saysOfPlain = plain.printed.length + plain.tests.filter(line => line.startsWith("(pass) ")).length;
+      expect(saysOfPlain, bothSaid).toBeGreaterThan(0);
+      expect(plain.tests.length, bothSaid).toBeGreaterThan(0);
       if (butForItsMark) {
-        expect(butForItsMark(compiled)).toEqual(butForItsMark(plain));
+        expect(butForItsMark(compiled), bothSaid).toEqual(butForItsMark(plain));
         expect(compiled, "the two runs agree: todo.txt goes out").not.toEqual(plain);
         return;
       }
-      expect(compiled).toEqual(plain);
+      expect(compiled, bothSaid).toEqual(plain);
       if (!existsSync(join(root, area, project, "under.txt"))) return;
       using checkedDir = tempDir("aot-test-run-in-folder", join(root, area, project));
       const words = readFileSync(join(root, area, project, "under.txt"), "utf8").trim();
-      expect(await outcomeOf(String(checkedDir), words, "--aot", ...flags)).toEqual(plain);
-    }, 180_000);
+      const checked = await outcomeOf(String(checkedDir), words, began, "--aot", ...flags);
+      expect(checked, saidBy({ [`bun test --aot, under ${words}`]: checked, "bun test": plain })).toEqual(plain);
+    }, limitOfACase);
   }
 }

@@ -759,9 +759,11 @@ static JSModuleMock* moduleMockAnsweringFor(Zig::GlobalObject* globalObject, con
 }
 
 // A mock answers for each path that its name resolves to. The later mock of a path has it.
+// With compiled code that is one path: see resolveModuleMockSpecifier().
 static void registerModuleMock(Zig::GlobalObject* globalObject, JSModuleMock* mock)
 {
     auto& plugins = globalObject->onLoadPlugins;
+    ASSERT(!globalObject->vm().hasCompiledCode() || !mock->requireKey);
     plugins.addModuleMock(globalObject->vm(), mock->importKey->tryGetValue().data, mock);
     if (!mock->requireKey)
         return;
@@ -2330,7 +2332,7 @@ static JSObject* exportsOfModuleMockWithoutFactory(Zig::GlobalObject* globalObje
         // A compiled CommonJS file has no module object in the loader's table.
         if (auto compiled = !globalObject->aotInstance() || commonJSModule ? std::nullopt : Bun::compiledModuleForPath(key); compiled && !JSC::AOT::isESModule(*compiled) && !JSC::AOT::isDataFile(*compiled) && !JSC::AOT::isNativeModule(*compiled)) {
             JSValue exports = JSC::AOT::moduleExports(globalObject, *compiled);
-            RELEASE_AND_RETURN(scope, Bun::JSCommonJSModule::create(globalObject, mock->keyForRequire(), exports, true, jsUndefined()));
+            RELEASE_AND_RETURN(scope, Bun::JSCommonJSModule::create(globalObject, mock->importKey.get(), exports, true, jsUndefined()));
         }
 #endif
         return commonJSModule ? commonJSModule : moduleNamespace.getObject();
@@ -2525,7 +2527,7 @@ __attribute__((minsize)) JSValue JSModuleMock::callFactory(Zig::GlobalObject* gl
             }
             JSValue mocked = Bun::mockObject(globalObject, before ? before : JSC::AOT::moduleExports(globalObject, *compiled), spy, true);
             RETURN_IF_EXCEPTION(scope, {});
-            RELEASE_AND_RETURN(scope, Bun::JSCommonJSModule::create(globalObject, keyForRequire(), mocked, true, jsUndefined()));
+            RELEASE_AND_RETURN(scope, Bun::JSCommonJSModule::create(globalObject, importKey.get(), mocked, true, jsUndefined()));
         }
     }
 #endif
@@ -4910,6 +4912,7 @@ static std::optional<JSC::AOT::ModuleAliasKind> otherNameOfFile(StringView name,
 
 // Returns true if importers can only reach the mock through resolveVirtualModule()'s relative lookup.
 // `specifier` becomes the path that an import of it resolves to. `requireKey`, where the caller asks for it, is set if require() resolves it to another file.
+// With compiled code (`bun test --aot`) it is never set, and the name is not resolved for require(): there a mock has one path, which the code under ENABLE(AOT) reads as `importKey`.
 __attribute__((minsize)) static bool resolveModuleMockSpecifier(Zig::GlobalObject* globalObject, JSC::CallFrame* callframe, JSC::JSString*& specifierString, WTF::String& specifier, JSC::JSString** requireKey, bool& exists)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -4967,7 +4970,7 @@ __attribute__((minsize)) static bool resolveModuleMockSpecifier(Zig::GlobalObjec
     // Not resolving is fine (mocking a module that does not exist yet); anything else thrown
     // while resolving (e.g. by an onResolve plugin) propagates.
     BunString forRequire = BunStringEmpty;
-    auto result = JSValue::decode(Bun__resolveForImportAndRequire(globalObject, JSValue::encode(specifierString), &from, requireKey ? &forRequire : nullptr));
+    auto result = JSValue::decode(Bun__resolveForImportAndRequire(globalObject, JSValue::encode(specifierString), &from, requireKey && !vm.hasCompiledCode() ? &forRequire : nullptr));
     String requirePath = forRequire.transferToWTFString();
     RETURN_IF_EXCEPTION(scope, false);
 
@@ -5039,6 +5042,7 @@ static ModuleMockSpecifier moduleMockSpecifierArgument(Zig::GlobalObject* global
 extern "C" JSC::EncodedJSValue Bun__Process__getCwd(JSC::JSGlobalObject*);
 
 // `specifier` is the path that the mocked name resolves to, for an import or for require(). `forRequire` says which, and the file of `__mocks__` is looked up the same way.
+// With compiled code both are those of an import, whatever `forRequire` says: see resolveModuleMockSpecifier().
 __attribute__((minsize)) static JSC::JSString* findManualModuleMock(Zig::GlobalObject* globalObject, const String& from, const String& written, const String& specifier, bool forRequire)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -5059,7 +5063,7 @@ __attribute__((minsize)) static JSC::JSString* findManualModuleMock(Zig::GlobalO
 
     BunString fromString = Bun::toString(from);
     BunString pathForRequire = BunStringEmpty;
-    JSValue resolved = JSValue::decode(Bun__resolveForImportAndRequire(globalObject, JSValue::encode(jsString(vm, candidate)), &fromString, forRequire ? &pathForRequire : nullptr));
+    JSValue resolved = JSValue::decode(Bun__resolveForImportAndRequire(globalObject, JSValue::encode(jsString(vm, candidate)), &fromString, forRequire && !vm.hasCompiledCode() ? &pathForRequire : nullptr));
     String requirePath = pathForRequire.transferToWTFString();
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (!resolved.isString())
@@ -6388,7 +6392,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
                 bool otherExists = false;
                 resolveModuleMockSpecifier(globalObject, callframe, otherString, other, nullptr, otherExists);
                 RETURN_IF_EXCEPTION(scope, {});
-                mock->importsOriginal |= other == specifier || (requireKey && other == requireKey->tryGetValue().data);
+                mock->importsOriginal |= other == specifier;
             }
         }
 #endif

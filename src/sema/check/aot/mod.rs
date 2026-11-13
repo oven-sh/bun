@@ -42,7 +42,7 @@ pub use answers::{
     ListedMember, MemberForm, MemberLookup, MemberName, MemberTypedOtherwise, MethodsAbove,
     ObjectMember, ObjectMemberKind, PositionTypes, QueryLimit, QueryLimits, QueryStatistics,
     SignatureParameter, SignatureShape, SymbolCreation, TypeArgument, TypeParameterRef,
-    WrittenParameter, WrittenType,
+    UnknownParent, WrittenParameter, WrittenType,
 };
 pub use builtin_types::{
     BuiltinClassIndex, BuiltinTypeClass, BuiltinTypePath, BuiltinTypeSymbols, BuiltinValueIndex,

@@ -1,5 +1,4 @@
 'use strict';
-// COUNTER: SlowPropertyAdditionsReplayed >= 1100
 const N = JSON.parse('[' + Array.from({ length: 160 }, (_, i) => '"n' + i + '"').join() + ']');
 const define = Object.defineProperty;
 function show(value) { return typeof value === 'function' ? 'fn' : typeof value === 'symbol' ? String(value) : typeof value === 'object' && value ? '{' + Reflect.ownKeys(value).map(String).join() + '}' : Object.is(value, -0) ? '-0' : String(value); }

@@ -2915,7 +2915,9 @@ impl TestCommand {
             vm.auto_killer.enabled = true;
         }
         vm.test_isolation_state.shares_global = run_compiled::test_files_share_global(ctx);
-        crate::jsc_hooks::timer_all_mut().zero_delay_is_due_when_idle = true;
+        crate::jsc_hooks::timer_all()
+            .zero_delay_is_due_when_idle
+            .set(true);
 
         if ctx.test_options.coverage.enabled {
             vm.transpiler.options.code_coverage = true;
@@ -4149,7 +4151,7 @@ impl TestCommand {
                         buntest.wants_wakeup = false;
                         vm.wakeup();
                     }
-                    if buntest.timer.state != crate::timer::EventLoopTimerState::ACTIVE
+                    if buntest.timer.state.get() != crate::timer::EventLoopTimerState::ACTIVE
                         && !vm.has_work_left()
                     {
                         let (what, waits_for) = Self::what_runner_waits_for(buntest);

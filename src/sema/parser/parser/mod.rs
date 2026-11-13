@@ -478,6 +478,8 @@ pub struct AppendedExpression {
     pub start: u32,
     pub end: u32,
     pub is_strict: bool,
+    /// `require` is a name of the global scope.
+    pub is_in_global_scope: bool,
 }
 
 /// `AppendedExpressionFilter(file, expressions_before, expression)`
@@ -537,8 +539,19 @@ pub(crate) fn run_appended(
         let parsed = parser.appended_expression();
         (scratch.stacks, scratch.declared) = (parser.s, parser.declared);
         file = parser.f;
+        if expression.is_in_global_scope {
+            let mut index = 0;
+            file.specifier_uses.retain(|it| {
+                index += 1;
+                index <= before.specifier_uses || it.kind != SpecifierKind::RequireCall
+            });
+        }
+        let allowed_syntax = match expression.is_in_global_scope {
+            true => RARE_SYNTAX_IN_APPENDED_TEXT | rare::DECLARATION_AS_BODY,
+            false => RARE_SYNTAX_IN_APPENDED_TEXT,
+        };
         let accepted = parsed.filter(|&expression| {
-            file.rare_syntax & !flags.0 & !RARE_SYNTAX_IN_APPENDED_TEXT == 0
+            file.rare_syntax & !flags.0 & !allowed_syntax == 0
                 && file.syntax_errors == flags.1
                 && file.has_room_for_handles()
                 && is_plain_javascript_since(&file, &before)

@@ -192,12 +192,17 @@ impl StandaloneModuleGraph {
     }
 
     pub fn find_ref(&self, name: &[u8]) -> Option<&File> {
-        if !is_bun_standalone_file_path(name) {
-            return self.find_at_source_path(name);
-        }
         // What the program has written is on the disk: `find_written_file`.
         if compiled_program::find_written_file(name).is_some() {
             return None;
+        }
+        self.find_embedded_file(name)
+    }
+
+    /// `find_ref`, also for a file that was written on the disk.
+    fn find_embedded_file(&self, name: &[u8]) -> Option<&File> {
+        if !is_bun_standalone_file_path(name) {
+            return self.find_at_source_path(name);
         }
         self.lookup_file(name)
             .filter(|file| !compiled_program::is_removed_by_program(file.name))
@@ -206,10 +211,20 @@ impl StandaloneModuleGraph {
 
     /// What a program reads as data: not the file of a compiled entry point or a file that the program only asks about, which are in the graph for their names alone.
     pub fn find_data(&self, name: &[u8]) -> Option<&File> {
-        let file = self.find_ref(name)?;
-        let is_named_alone =
-            self.is_file_of_compiled_entry_point(file) || self.has_no_file_contents(file);
-        (!is_named_alone).then_some(file)
+        self.find_ref(name).filter(|file| self.has_data(file))
+    }
+
+    /// What a program loads as a library. What the program itself has written is on the disk: `find_written_code`. What another process has written there is not trusted, so the embedded file is loaded.
+    pub fn find_library(&self, name: &[u8]) -> Option<&File> {
+        if compiled_program::find_written_code(name).is_some() {
+            return None;
+        }
+        self.find_embedded_file(name)
+            .filter(|file| self.has_data(file))
+    }
+
+    fn has_data(&self, file: &File) -> bool {
+        !self.is_file_of_compiled_entry_point(file) && !self.has_no_file_contents(file)
     }
 
     pub fn contains_file(&self, name: &[u8]) -> bool {

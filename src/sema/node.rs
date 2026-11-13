@@ -640,6 +640,23 @@ struct Children<'a, 's, const FOR_PARENTS: bool, V: FnMut(Node) -> bool + ?Sized
     visit: &'a mut V,
 }
 
+/// The kind of a member. `is_in_class` is called where that decides it.
+pub(crate) fn kind_of_member(kind: MemberKind, is_in_class: impl Fn() -> bool) -> Kind {
+    match kind {
+        MemberKind::Property if is_in_class() => Kind::PropertyDeclaration,
+        MemberKind::Property => Kind::PropertySignature,
+        MemberKind::Method if is_in_class() => Kind::MethodDeclaration,
+        MemberKind::Method => Kind::MethodSignature,
+        MemberKind::Getter => Kind::GetAccessor,
+        MemberKind::Setter => Kind::SetAccessor,
+        MemberKind::Constructor => Kind::Constructor,
+        MemberKind::CallSignature => Kind::CallSignature,
+        MemberKind::ConstructSignature => Kind::ConstructSignature,
+        MemberKind::IndexSignature => Kind::IndexSignature,
+        MemberKind::StaticBlock => Kind::ClassStaticBlockDeclaration,
+    }
+}
+
 struct OpenParts {
     top: Cell<Node>,
     below: RefCell<Vec<Node>>,
@@ -2104,20 +2121,8 @@ impl<'s> File<'s> {
             NodeData::Param(_) => Kind::Parameter,
             NodeData::TypeParam(_) => Kind::TypeParameter,
             NodeData::Member(m) => {
-                let is_in_class = self.class_of(self.parent(node)).is_some();
-                match self[m].kind {
-                    MemberKind::Property if is_in_class => Kind::PropertyDeclaration,
-                    MemberKind::Property => Kind::PropertySignature,
-                    MemberKind::Method if is_in_class => Kind::MethodDeclaration,
-                    MemberKind::Method => Kind::MethodSignature,
-                    MemberKind::Getter => Kind::GetAccessor,
-                    MemberKind::Setter => Kind::SetAccessor,
-                    MemberKind::Constructor => Kind::Constructor,
-                    MemberKind::CallSignature => Kind::CallSignature,
-                    MemberKind::ConstructSignature => Kind::ConstructSignature,
-                    MemberKind::IndexSignature => Kind::IndexSignature,
-                    MemberKind::StaticBlock => Kind::ClassStaticBlockDeclaration,
-                }
+                let is_in_class = || self.class_of(self.parent(node)).is_some();
+                kind_of_member(self[m].kind, is_in_class)
             }
             NodeData::Prop(p) => {
                 let is_attribute = self[p].name_kind == NameKind::Jsx;
@@ -3599,6 +3604,12 @@ impl File<'_> {
             node = self.parent(node);
         }
         false
+    }
+
+    /// `is_ambient(node.Parent)`. In most files nothing is ambient, so the parents aren't asked for.
+    pub fn is_parent_ambient(&self, node: Node) -> bool {
+        (self.kind == FileKind::Declaration || self.has_ambient_nodes())
+            && self.is_ambient(self.parent(node))
     }
 
     fn ambient_ranges_hold_every_ambient_node(&self) -> bool {

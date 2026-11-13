@@ -297,19 +297,16 @@ impl DevServer {
 }
 
 impl DevServer {
-    #[inline]
-    pub(super) fn timer_heap(&self) -> &mut crate::timer::All {
-        crate::jsc_hooks::timer_all_mut()
-    }
-
     pub(crate) fn emit_memory_visualizer_message_timer(timer: *mut EventLoopTimer) {
         // SAFETY: `timer` points to the `memory_visualizer_timer` field of a DevServer.
         let dev: &mut DevServer = unsafe { &mut *DevServer::from_timer_ptr(timer) };
         debug_assert!(dev.magic == Magic::Valid);
         dev.emit_memory_visualizer_message();
-        dev.memory_visualizer_timer.state = EventLoopTimerState::FIRED;
+        dev.memory_visualizer_timer
+            .state
+            .set(EventLoopTimerState::FIRED);
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1000);
-        dev.timer_heap().update(timer, &next);
+        crate::jsc_hooks::timer_all().update(timer, &next);
     }
 
     pub(crate) fn emit_memory_visualizer_message(&mut self) {

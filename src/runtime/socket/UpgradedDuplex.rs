@@ -24,7 +24,7 @@ use super::DuplexUpgradeContext;
 use super::ssl_wrapper::SSLWrapper;
 use crate::generated_bindgen::socket_body::js_TLSSocket;
 use crate::generated_bindgen::upgraded_duplex::{self as listeners, DuplexChunk};
-use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 bun_output::declare_scope!(UpgradedDuplex, visible);
 
@@ -47,7 +47,7 @@ pub(crate) struct UpgradedDuplex {
     pub on_end_callback: Cell<JSValue>,
     pub on_writable_callback: Cell<JSValue>,
     pub on_close_callback: Cell<JSValue>,
-    pub event_loop_timer: JsCell<EventLoopTimer>,
+    pub event_loop_timer: EventLoopTimer,
     pub current_timeout: Cell<u32>,
     /// Transport bytes that arrived before the TLS engine existed.
     ///
@@ -113,7 +113,7 @@ pub(crate) struct Handlers {
         fn(*mut (), &mut bun_boringssl_sys::SSL) -> bun_boringssl::ServerIdentity,
 }
 
-use crate::jsc_hooks::timer_all_mut as timer_all;
+use crate::jsc_hooks::timer_all;
 
 /// Lazily create-and-cache a JS host-function callback in `shadow`, mirrored
 /// into the owning `JSTLSSocket` wrapper's internal field (the GC
@@ -452,15 +452,12 @@ impl UpgradedDuplex {
     pub(crate) fn on_timeout(&self) {
         bun_output::scoped_log!(UpgradedDuplex, "onTimeout");
 
-        let has_been_cleared = self.event_loop_timer.get().state == EventLoopTimerState::CANCELLED
+        let has_been_cleared = self.event_loop_timer.state.get() == EventLoopTimerState::CANCELLED
             || self.vm.is_none_or(|vm| {
                 vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running
             });
 
-        self.event_loop_timer.with_mut(|t| {
-            t.state = EventLoopTimerState::FIRED;
-            t.heap = Default::default();
-        });
+        self.event_loop_timer.state.set(EventLoopTimerState::FIRED);
 
         if has_been_cleared {
             return;
@@ -489,9 +486,7 @@ impl UpgradedDuplex {
             on_end_callback: Cell::new(JSValue::ZERO),
             on_writable_callback: Cell::new(JSValue::ZERO),
             on_close_callback: Cell::new(JSValue::ZERO),
-            event_loop_timer: JsCell::new(EventLoopTimer::init_paused(
-                EventLoopTimerTag::UpgradedDuplex,
-            )),
+            event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::UpgradedDuplex),
             current_timeout: Cell::new(0),
             pending_data: JsCell::new(Vec::new()),
             pending_close: Cell::new(false),
@@ -701,8 +696,8 @@ impl UpgradedDuplex {
     }
 
     fn set_timeout_in_milliseconds(&self, ms: c_uint) {
-        if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
-            timer_all().remove(self.event_loop_timer.as_ptr());
+        if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
+            timer_all().remove(&self.event_loop_timer);
         }
         self.current_timeout.set(ms);
 
@@ -712,21 +707,10 @@ impl UpgradedDuplex {
         }
 
         // reschedule the timer
-        // Note: `EventLoopTimer.next` is the lower-tier `ElTimespec` stub;
-        // bridge from `bun_core::Timespec` until the lower tier switches.
         let next =
             bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, ms as i64);
-        self.event_loop_timer.with_mut(|t| {
-            t.next = ElTimespec {
-                sec: next.sec,
-                nsec: next.nsec,
-            };
-        });
-        timer_all().insert(
-            core::ptr::addr_of!(self.event_loop_timer)
-                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
-                .cast_mut(),
-        );
+        self.event_loop_timer.next.set(next);
+        timer_all().insert(&raw const self.event_loop_timer);
     }
 
     #[uws_callback(export = "UpgradedDuplex__set_timeout")]

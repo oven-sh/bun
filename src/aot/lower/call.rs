@@ -1,4 +1,5 @@
 mod array_makers;
+mod assignment_of_literals;
 mod assignment_to_new_object;
 mod callee;
 mod copied_factory;
@@ -6,6 +7,7 @@ mod evaluated_text;
 mod intrinsic;
 mod intrinsic_call;
 mod intrinsic_operation;
+mod prototype_makers;
 mod written_operands;
 
 use bun_sema::atom::known;
@@ -27,6 +29,7 @@ use crate::load::SourceKind;
 use crate::modules::ModuleRef;
 
 pub(in crate::lower) use self::intrinsic::lower_intrinsic_expression;
+pub(in crate::lower) use self::prototype_makers::PrototypeMakers;
 
 #[derive(Clone)]
 pub(crate) enum Arguments {
@@ -110,6 +113,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         call: ExprId,
         evaluation: Evaluation<'_>,
     ) -> ValueId {
+        if !self.loose_loops.is_empty()
+            && let Some(value) = self.try_lower_closing_call(call)
+        {
+            return value;
+        }
         let (hir, bound, builtins) = (self.file.hir, self.file.bound, self.file.builtins);
         let site = call_site(self.file, call);
         let exit = evaluation.chain_exit;
@@ -142,12 +150,21 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return value;
         }
         if let Some(function) = self.file.scopes.function_called_by_name(call) {
+            if let Some(value) = self.try_lower_private_state_call(call) {
+                return value;
+            }
+            if let Some(value) = self.try_lower_certain_helper(call) {
+                return value;
+            }
             return self.lower_call_of_declaration(call, site, function, evaluation.tail);
         }
         if let Some(value) = self.try_lower_export_definition(call) {
             return value;
         }
         if let Some(value) = self.try_lower_definition_of_getters(call) {
+            return value;
+        }
+        if let Some(value) = self.try_lower_copy_of_getters(call) {
             return value;
         }
         if let Some(value) = self.try_lower_known_call(call) {
@@ -235,6 +252,26 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let value = self.emit_call_with_expected_result(callee, arguments, options, expected);
         self.set_position(hir[call].pos);
         Some(self.claim_call_result(call, value))
+    }
+
+    pub(super) fn emit_call_of_declaration(
+        &mut self,
+        call: ExprId,
+        function: FnId,
+        arguments: Arguments,
+    ) -> ValueId {
+        let Arguments::Values(mut values) = arguments else {
+            unreachable!("a call with a spread argument reads its callee");
+        };
+        self.convert_arguments(call, &mut values);
+        let id = function::declare_source_function(self.file, function, None);
+        let arguments = EntryArguments {
+            this: None,
+            new_target: None,
+            parameters: &values,
+        };
+        let value = self.emit_direct_call(id, arguments);
+        self.claim_call_result(call, value)
     }
 
     fn lower_call_of_declaration(
@@ -589,6 +626,27 @@ pub(crate) fn emit_call(
     let callee = Callee::without_key(function, this, None);
     let arguments = Arguments::Values(SmallVec::from_slice(arguments));
     emit_call_of(lowering, callee, arguments)
+}
+
+/// The call of a function that the build made of a text that is evaluated. Stacks show `eval` in front of the caller.
+pub(in crate::lower) fn emit_call_by_eval(
+    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+    function: ValueId,
+    this: Option<ValueId>,
+) -> ValueId {
+    let called_builtin = Some(BuiltinId::Eval);
+    lowering.builder.call(
+        function,
+        this,
+        &[],
+        None,
+        None,
+        None,
+        called_builtin,
+        None,
+        false,
+        false,
+    )
 }
 
 pub(in crate::lower) fn emit_call_of(

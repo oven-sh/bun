@@ -1,5 +1,5 @@
 use super::namespace_members::find_outermost_type_assertion;
-use crate::builtins::ResolvedBuiltins;
+use crate::builtins::{Platforms, ResolvedBuiltins};
 use crate::ir::{InParallel, for_each_mut};
 use crate::known_helpers::{Helper, KnownFunction, KnownHelpers, Quiet, Shape};
 use crate::load::sources::parsed_source;
@@ -7,10 +7,10 @@ use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{
     Binding, BindingInitializer, Bound, CodeUnit, Decl, FunctionFlags, Parent, PatParent, SymbolId,
 };
-use bun_sema::fold::Decisions;
+use bun_sema::fold::{Constant, Decisions};
 use bun_sema::hir::{
-    self, CallId, Chain, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, MemberKey, NodeData, PatId,
-    PatKind, PropKey, PropKind, StmtId, StmtKind, UnOp, VarDeclId,
+    self, BinOp, CallId, Chain, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, MemberKey, NodeData,
+    PatId, PatKind, PropKey, PropKind, StmtId, StmtKind, UnOp, VarDeclId,
 };
 use bun_sema::module_format::ThisPositions;
 use bun_sema::program::{FileId, Files};
@@ -41,6 +41,38 @@ pub struct InnerModule {
     pub exports_parameter: Option<SymbolId>,
     pub module_parameter: Option<SymbolId>,
     pub require_parameter: Option<SymbolId>,
+    /// The body reads `this`: the exports that it begins with.
+    pub reads_this: bool,
+    /// The parameter for the exports where the body stores into it: a variable that begins with them.
+    pub exports_variable: Option<SymbolId>,
+    /// The parameter for the module's object where it escapes: a variable that begins with the object.
+    pub module_variable: Option<SymbolId>,
+    /// What the calls that require the module pass.
+    pub id: Option<Constant>,
+}
+
+/// The object that webpack's runtime creates for a module.
+#[derive(Copy, Clone)]
+pub struct ModuleObject {
+    pub literal: ExprId,
+    /// The variable in the literal that holds the module's name.
+    pub id: SymbolId,
+    /// The name that is set to true behind the body.
+    pub mark: Option<Atom>,
+    pub is_mark_strict: bool,
+}
+
+impl InnerModule {
+    /// The object of the exports has more names than `exports_parameter` and `module.exports`.
+    pub fn exposes_first_exports(&self) -> bool {
+        self.reads_this || self.exports_variable.is_some() || self.module_variable.is_some()
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum ThisOfBody {
+    Unknown,
+    Exports,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -57,6 +89,28 @@ struct RuntimeOfBundle {
     literal: ExprId,
     require: SymbolId,
     call: ExprId,
+    module_object: Option<ModuleObject>,
+}
+
+/// A module, by its body, and a name of its exports, or the exports as a whole.
+type ExportKey = (FnId, Option<Atom>);
+
+/// A function that a wrapper in another function than the file's runs at most once, and the variable that holds the wrapper's result.
+#[derive(Copy, Clone)]
+struct OnceCallback {
+    callback: FnId,
+    holder: Option<SymbolId>,
+}
+
+/// The parameters of the modules' bodies, and the names of the function that evaluates the bodies.
+type BodyParameters = FxHashMap<SymbolId, (Role, FnId)>;
+
+#[derive(Copy, Clone)]
+struct ExportStores {
+    last: ExprId,
+    position: u32,
+    is_last_in_body: bool,
+    is_only: bool,
 }
 
 #[derive(Default)]
@@ -69,6 +123,9 @@ struct FileModules {
     bootstrap: Option<RuntimeOfBundle>,
     helpers: Box<[(Atom, KnownFunction)]>,
     names_of_require: Box<[SymbolId]>,
+    once_callbacks: Box<[FnId]>,
+    stored_exports: FxHashMap<ExportKey, ExprId>,
+    nested_bodies: Box<[(SymbolId, FnId)]>,
 }
 
 #[derive(Default)]
@@ -121,6 +178,19 @@ struct Candidate {
     calls: Vec<ExprId>,
     requests: Vec<ExprId>,
     is_refused: bool,
+    exposes_module_object: bool,
+}
+
+impl Candidate {
+    fn accepted_module(&self) -> InnerModule {
+        let mut module = self.module;
+        if self.exposes_module_object {
+            module.module_variable = module.module_parameter.take();
+            let parameter = module.exports_parameter.take();
+            module.exports_variable = module.exports_variable.or(parameter);
+        }
+        module
+    }
 }
 
 struct Finder<'a, 's> {
@@ -239,6 +309,17 @@ impl Finder<'_, '_> {
         (is_plain && bound.is_stable_binding(symbol)).then_some(symbol)
     }
 
+    fn find_reassigned_parameter(&self, function: FnId, index: usize) -> Option<SymbolId> {
+        let (hir, bound) = (self.hir, self.bound);
+        let parameter = hir[hir[function].params.iter().nth(index)?];
+        let is_plain = matches!(hir[parameter.pat].kind, PatKind::Ident(_))
+            && parameter.default.is_none()
+            && !parameter.flags.contains(Flags::REST);
+        let symbol = bound.declared_symbol(Decl::Param(parameter.pat)).some()?;
+        let is_reassigned = !bound.is_stable_binding(symbol) && !bound.is_visible_to_eval(symbol);
+        (is_plain && is_reassigned).then_some(symbol)
+    }
+
     fn find_callback(&self, argument: ExprId, takes_literal: bool) -> Option<FnId> {
         let hir = self.hir;
         let argument = hir.skip_type_assertions(argument);
@@ -272,7 +353,11 @@ impl Finder<'_, '_> {
         }
     }
 
-    fn can_be_body(&self, callback: FnId, kind: InnerModuleKind) -> bool {
+    fn reads_this_of_call(&self, callback: FnId) -> bool {
+        self.hir[callback].kind != FnKind::Arrow && self.reads_own_this(callback)
+    }
+
+    fn can_be_body(&self, callback: FnId, kind: InnerModuleKind, this: ThisOfBody) -> bool {
         let (hir, bound) = (self.hir, self.bound);
         let record = hir[callback];
         let has_own_name = record.kind == FnKind::Expr && record.name != Atom::NONE;
@@ -283,7 +368,12 @@ impl Finder<'_, '_> {
             && !record.flags.intersects(Flags::ASYNC | Flags::GENERATOR)
             && record.this_param.is_none()
             && matches!(record.body, FnBody::Block(_));
-        if !is_plain || has_own_name || sees_its_call || self.reads_own_this(callback) {
+        let may_read_this = this == ThisOfBody::Exports && record.kind != FnKind::Arrow;
+        if !is_plain
+            || has_own_name
+            || sees_its_call
+            || (!may_read_this && self.reads_own_this(callback))
+        {
             return false;
         }
         if record.kind == FnKind::Arrow && bound.file_uses_arguments() {
@@ -339,7 +429,7 @@ impl Finder<'_, '_> {
             .certain_callee(self.files, self.file, site.callee)?;
         let shape = classify(known.shape)?;
         let callback = self.find_callback(hir.id_at(site.args, 0), shape.takes_literal)?;
-        if !self.can_be_body(callback, shape.kind) {
+        if !self.can_be_body(callback, shape.kind, ThisOfBody::Unknown) {
             return None;
         }
         let parameter_count = hir[callback].params.len();
@@ -369,12 +459,17 @@ impl Finder<'_, '_> {
                 exports_parameter,
                 module_parameter,
                 require_parameter: None,
+                reads_this: false,
+                exports_variable: None,
+                module_variable: None,
+                id: None,
             },
             defined_at: hir[call].end,
             sites: Vec::new(),
             calls: Vec::new(),
             requests: Vec::new(),
             is_refused: false,
+            exposes_module_object: false,
         })
     }
 
@@ -427,6 +522,81 @@ impl Finder<'_, '_> {
         self.by_callback
             .shared_sort_unstable_by_key(|entry| entry.0);
         self.by_symbol.shared_sort_unstable_by_key(|entry| entry.0);
+    }
+
+    /// The functions that calls of wrappers run at most once, wherever the calls are. A call creates a wrapper of its own.
+    fn find_once_callbacks(&self) -> Vec<OnceCallback> {
+        let hir = self.hir;
+        let mut callbacks = Vec::new();
+        let has_wrapper = self.helpers.file(self.file).is_some_and(|helpers| {
+            let mut functions = helpers.functions();
+            functions.any(|(_, known)| classify(known.shape).is_some())
+        });
+        if !has_wrapper {
+            return callbacks;
+        }
+        for expression in (0..hir.exprs.len() as u32).map(ExprId) {
+            let ExprKind::Call(call) = hir[expression].kind else {
+                continue;
+            };
+            let site = hir[call];
+            if site.chain != Chain::No || site.args.len() != 1 {
+                continue;
+            }
+            let shape = self
+                .helpers
+                .only_callee(self.files, self.file, site.callee)
+                .and_then(|known| classify(known.shape));
+            let callback = shape
+                .and_then(|shape| self.find_callback(hir.id_at(site.args, 0), shape.takes_literal));
+            if let Some(callback) = callback
+                && self.can_be_body(callback, InnerModuleKind::CommonJs, ThisOfBody::Unknown)
+            {
+                let holder = self.find_holder_of_wrapper(expression);
+                callbacks.push(OnceCallback { callback, holder });
+            }
+        }
+        callbacks.sort_unstable_by_key(|it| it.callback);
+        callbacks
+    }
+
+    fn find_holder_of_wrapper(&self, call: ExprId) -> Option<SymbolId> {
+        let (hir, bound) = (self.hir, self.bound);
+        let Parent::VarInit(declaration) = bound.parent_of_expr(call) else {
+            return None;
+        };
+        let pattern = hir[declaration].pat;
+        let holder = bound.declared_symbol(Decl::Var(pattern)).some()?;
+        let is_plain = matches!(hir[pattern].kind, PatKind::Ident(_))
+            && bound.is_stable_binding(holder)
+            && !bound.is_visible_to_eval(holder);
+        is_plain.then_some(holder)
+    }
+
+    fn collect_body_parameters(&self, nested: &[OnceCallback]) -> BodyParameters {
+        let mut parameters = BodyParameters::default();
+        for candidate in self.candidates.iter().filter(|it| !it.is_refused) {
+            let module = candidate.module;
+            let named = [
+                (module.exports_parameter, Role::ExportsParameter),
+                (module.module_parameter, Role::ModuleParameter),
+                (module.require_parameter, Role::Require),
+            ];
+            for (symbol, role) in named {
+                parameters.extend(symbol.map(|it| (it, (role, module.callback))));
+            }
+        }
+        for &OnceCallback { callback, .. } in nested {
+            let roles = [Role::ExportsParameter, Role::ModuleParameter];
+            for (index, role) in roles.into_iter().enumerate() {
+                let symbol = self.find_plain_parameter(callback, index);
+                parameters.extend(symbol.map(|it| (it, (role, callback))));
+            }
+        }
+        if let Some(bootstrap) = &self.bootstrap {
+            parameters.insert(bootstrap.require, (Role::Require, FnId::NONE));
+        }
+        parameters
     }
 
     fn candidate_of_callback(&self, function: FnId) -> Option<usize> {
@@ -615,8 +785,11 @@ impl Finder<'_, '_> {
                 }
                 Role::ExportsParameter => {}
                 Role::ModuleParameter => {
-                    let is_exports = self.is_exports_of(expression);
-                    self.candidates[index].is_refused |= !is_exports;
+                    if !self.is_exports_of(expression) {
+                        let can_escape = self.can_expose_module_object(index);
+                        self.candidates[index].exposes_module_object |= can_escape;
+                        self.candidates[index].is_refused |= !can_escape;
+                    }
                 }
             }
         }
@@ -670,6 +843,195 @@ impl Finder<'_, '_> {
         first_calls
     }
 
+    fn find_body_of_parameter(
+        &self,
+        parameters: &BodyParameters,
+        expression: ExprId,
+        sought: Role,
+    ) -> Option<FnId> {
+        let expression = self.hir.skip_type_assertions(expression);
+        let (ExprKind::Ident(_), Binding::Symbol(symbol)) =
+            (self.hir[expression].kind, self.bound.binding(expression))
+        else {
+            return None;
+        };
+        let &(role, body) = parameters.get(&symbol)?;
+        (role == sought).then_some(body)
+    }
+
+    /// The body whose exports `expression` reads: `exports`, `module.exports`.
+    fn find_owner_of_exports(
+        &self,
+        parameters: &BodyParameters,
+        expression: ExprId,
+    ) -> Option<FnId> {
+        let expression = self.hir.skip_type_assertions(expression);
+        match self.hir.member_key(expression) {
+            Some((module, MemberKey::Name(known::exports))) => {
+                self.find_body_of_parameter(parameters, module, Role::ModuleParameter)
+            }
+            Some(_) => None,
+            None => self.find_body_of_parameter(parameters, expression, Role::ExportsParameter),
+        }
+    }
+
+    /// A statement of the body evaluates the expression.
+    fn is_evaluated_by_body(&self, body: FnId, mut expression: ExprId) -> bool {
+        loop {
+            let statement = match self.bound.parent_of_expr(expression) {
+                Parent::Expr(outer) => match self.hir[outer].kind {
+                    ExprKind::Assign {
+                        op: None, value, ..
+                    } if value == expression => {
+                        expression = outer;
+                        continue;
+                    }
+                    ExprKind::Binary {
+                        op: BinOp::Comma, ..
+                    } => {
+                        expression = outer;
+                        continue;
+                    }
+                    _ => return false,
+                },
+                Parent::Stmt(statement) => statement,
+                Parent::VarInit(declaration) => self.bound.var_stmt[declaration.idx()],
+                _ => return false,
+            };
+            return statement
+                .some()
+                .is_some_and(|it| self.bound.parent_of_stmt(it) == Parent::FnBody(body));
+        }
+    }
+
+    /// `() => value`, `function () { return value; }`
+    fn find_value_of_getter(&self, getter: ExprId) -> Option<ExprId> {
+        let hir = self.hir;
+        let ExprKind::Fn(function) = hir[hir.skip_type_assertions(getter)].kind else {
+            return None;
+        };
+        match hir[function].body {
+            FnBody::Expr(value) => Some(value),
+            FnBody::Block(statements) if statements.len() == 1 => {
+                match hir[hir.id_at(statements, 0)].kind {
+                    StmtKind::Return(value) => value.some(),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// `__webpack_require__.d(exports, { Name: () => Name })`, `__webpack_require__.d(exports, "Name", function () { return Name; })`
+    fn collect_defined_exports(
+        &self,
+        parameters: &BodyParameters,
+        call: CallId,
+        found: &mut FxHashMap<ExportKey, ExprId>,
+    ) {
+        let hir = self.hir;
+        let site = hir[call];
+        if site.chain != Chain::No || !(2..=3).contains(&site.args.len()) {
+            return;
+        }
+        let Some((holder, MemberKey::Name(_))) =
+            hir.member_key(hir.skip_type_assertions(site.callee))
+        else {
+            return;
+        };
+        let exports = hir.id_at(site.args, 0);
+        let Some(body) = self.find_owner_of_exports(parameters, exports) else {
+            return;
+        };
+        let holder = self.find_body_of_parameter(parameters, holder, Role::Require);
+        if holder.is_none() {
+            return;
+        }
+        let second = hir.skip_type_assertions(hir.id_at(site.args, 1));
+        match hir[second].kind {
+            ExprKind::Object(properties) if site.args.len() == 2 => {
+                for property in properties.iter() {
+                    if let PropKey::Name(name) = hir.runtime_property_key(property)
+                        && matches!(hir[property].kind, PropKind::Init | PropKind::Method)
+                        && let Some(value) = self.find_value_of_getter(hir[property].value)
+                    {
+                        found.insert((body, Some(name)), value);
+                    }
+                }
+            }
+            ExprKind::String(name) if site.args.len() == 3 => {
+                if let Some(value) = self.find_value_of_getter(hir.id_at(site.args, 2)) {
+                    found.insert((body, Some(name)), value);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The last store of a name decides where a statement of the body makes it; another store decides where it is the only one.
+    fn collect_stored_exports(&self, nested: &[OnceCallback]) -> FxHashMap<ExportKey, ExprId> {
+        let hir = self.hir;
+        let mut found = FxHashMap::default();
+        let parameters = self.collect_body_parameters(nested);
+        if parameters.is_empty() {
+            return found;
+        }
+        let mut stores: FxHashMap<ExportKey, ExportStores> = FxHashMap::default();
+        for node in (0..hir.exprs.len() as u32).map(ExprId) {
+            match hir[node].kind {
+                ExprKind::Call(call) => self.collect_defined_exports(&parameters, call, &mut found),
+                ExprKind::Assign {
+                    op: None,
+                    target,
+                    value,
+                } => {
+                    let Some((object, MemberKey::Name(name))) = hir.member_key(target) else {
+                        continue;
+                    };
+                    let whole = match name {
+                        known::exports => {
+                            self.find_body_of_parameter(&parameters, object, Role::ModuleParameter)
+                        }
+                        _ => None,
+                    };
+                    let (body, name) = match whole {
+                        Some(body) => (body, None),
+                        None => match self.find_owner_of_exports(&parameters, object) {
+                            Some(body) => (body, Some(name)),
+                            None => continue,
+                        },
+                    };
+                    if self.decisions.is_dead_expr(target) {
+                        continue;
+                    }
+                    let mut store = ExportStores {
+                        last: value,
+                        position: hir[node].pos,
+                        is_last_in_body: self.is_evaluated_by_body(body, node),
+                        is_only: true,
+                    };
+                    stores
+                        .entry((body, name))
+                        .and_modify(|known| {
+                            store.is_only = false;
+                            known.is_only = false;
+                            if known.position < store.position {
+                                *known = store;
+                            }
+                        })
+                        .or_insert(store);
+                }
+                _ => {}
+            }
+        }
+        for (key, store) in stores {
+            if store.is_last_in_body || store.is_only {
+                found.insert(key, store.last);
+            }
+        }
+        found
+    }
+
     fn count_holders_by_statement(&self) -> FxHashMap<StmtId, usize> {
         let mut counts = FxHashMap::default();
         for candidate in self
@@ -695,6 +1057,7 @@ impl Finder<'_, '_> {
             candidate.is_refused |= first_call < candidate.defined_at;
         }
         self.refuse_bodies_naming_outer_scope();
+        self.find_ids_of_modules();
         let holders = self.count_holders_by_statement();
         for index in 0..self.candidates.len() {
             let statement = self.candidates[index].module.statement;
@@ -708,12 +1071,13 @@ impl Finder<'_, '_> {
         self.settle_bootstrap();
     }
 
-    fn finish(self) -> FileModules {
+    fn finish(self, once_callbacks: &[OnceCallback]) -> FileModules {
         let accepted = self
             .candidates
             .iter()
             .filter(|candidate| !candidate.is_refused);
-        let modules: Box<[InnerModule]> = accepted.clone().map(|it| it.module).collect();
+        let modules: Box<[InnerModule]> =
+            accepted.clone().map(Candidate::accepted_module).collect();
         let mut by_callback = Vec::with_capacity(modules.len());
         let mut calls = Vec::new();
         let mut requests = Vec::new();
@@ -725,8 +1089,13 @@ impl Finder<'_, '_> {
         by_callback.sort_unstable_by_key(|entry: &(FnId, u32)| entry.0);
         calls.sort_unstable_by_key(|entry: &(ExprId, u32)| entry.0);
         requests.sort_unstable_by_key(|entry: &(ExprId, u32)| entry.0);
+        let mut nested = once_callbacks.to_vec();
+        nested.retain(|it| find_by_key(&by_callback, it.callback, |entry| entry.0).is_none());
         FileModules {
             modules,
+            stored_exports: self.collect_stored_exports(&nested),
+            nested_bodies: list_nested_bodies(&nested),
+            once_callbacks: nested.iter().map(|it| it.callback).collect(),
             by_callback: by_callback.into_boxed_slice(),
             calls: calls.into_boxed_slice(),
             requests: requests.into_boxed_slice(),
@@ -737,9 +1106,81 @@ impl Finder<'_, '_> {
                 literal: it.literal,
                 require: it.require,
                 call: it.call,
+                module_object: it.module_object,
             }),
         }
     }
+}
+
+fn list_nested_bodies(nested: &[OnceCallback]) -> Box<[(SymbolId, FnId)]> {
+    let bodies = nested
+        .iter()
+        .filter_map(|it| Some((it.holder?, it.callback)));
+    let mut bodies: Vec<(SymbolId, FnId)> = bodies.collect();
+    bodies.sort_unstable();
+    bodies.into_boxed_slice()
+}
+
+impl<'a, 's> Finder<'a, 's> {
+    fn new(
+        files: &'a Files<'s>,
+        helpers: &'a KnownHelpers,
+        every_object_has: &'a (dyn Fn(Atom) -> bool + Sync),
+        replaced_builtins: &'a [u32],
+        file: FileId,
+    ) -> Option<Finder<'a, 's>> {
+        let (compiled, source) = (files.compiled(file)?, parsed_source(files, file)?);
+        Some(Finder {
+            files,
+            helpers,
+            file,
+            hir: files.hir(file),
+            bound: files.bound(file),
+            decisions: &compiled.analysis.decisions,
+            builtins: &source.builtins,
+            exported_symbols: FxHashSet::default(),
+            candidates: Vec::new(),
+            by_callback: Vec::new(),
+            by_symbol: Vec::new(),
+            names_super: false,
+            this_positions: OnceCell::new(),
+            bootstrap: None,
+            every_object_has,
+            replaced_builtins,
+        })
+    }
+}
+
+/// A bundle of browserify's that loads nothing from outside: its runtime calls the file's `require` for names that no body has, and has a body for each name.
+pub(super) fn is_closed_bundle(
+    files: &Files<'_>,
+    helpers: &KnownHelpers,
+    every_object_has: &(dyn Fn(Atom) -> bool + Sync),
+    replaced_builtins: &[u32],
+    file: FileId,
+    platform: Platforms,
+) -> bool {
+    let finder = Finder::new(files, helpers, every_object_has, replaced_builtins, file);
+    let Some(mut finder) = finder else {
+        return false;
+    };
+    let Some(mentions) = finder.find_mentions_of_require(platform) else {
+        return false;
+    };
+    finder.collect_exported_symbols();
+    finder.collect_candidates(helpers.has_functions(file));
+    let end_of_head = finder.find_end_of_head();
+    finder.read_mentions(end_of_head);
+    finder.refuse_misfits();
+    let Some(bootstrap) = &finder.bootstrap else {
+        return false;
+    };
+    let is_browserify = bootstrap.require.is_none() && bootstrap.call.is_some();
+    is_browserify
+        && mentions.iter().all(|&mention| {
+            let around = find_functions_around(finder.hir, finder.bound, mention);
+            around.is_some_and(|functions| functions.contains(&bootstrap.function))
+        })
 }
 
 fn find_in_file(
@@ -749,37 +1190,25 @@ fn find_in_file(
     replaced_builtins: &[u32],
     file: FileId,
 ) -> FileModules {
-    let compiled = files.compiled(file);
-    let (Some(compiled), Some(source)) = (compiled, parsed_source(files, file)) else {
+    let finder = Finder::new(files, helpers, every_object_has, replaced_builtins, file);
+    let Some(mut finder) = finder else {
         return FileModules::default();
-    };
-    let mut finder = Finder {
-        files,
-        helpers,
-        file,
-        hir: files.hir(file),
-        bound: files.bound(file),
-        decisions: &compiled.analysis.decisions,
-        builtins: &source.builtins,
-        exported_symbols: FxHashSet::default(),
-        candidates: Vec::new(),
-        by_callback: Vec::new(),
-        by_symbol: Vec::new(),
-        names_super: false,
-        this_positions: OnceCell::new(),
-        bootstrap: None,
-        every_object_has,
-        replaced_builtins,
     };
     finder.collect_exported_symbols();
     finder.collect_candidates(helpers.has_functions(file));
+    let once_callbacks = finder.find_once_callbacks();
     if finder.candidates.is_empty() {
-        return FileModules::default();
+        return FileModules {
+            stored_exports: finder.collect_stored_exports(&once_callbacks),
+            nested_bodies: list_nested_bodies(&once_callbacks),
+            once_callbacks: once_callbacks.iter().map(|it| it.callback).collect(),
+            ..FileModules::default()
+        };
     }
     let end_of_head = finder.find_end_of_head();
     finder.read_mentions(end_of_head);
     finder.refuse_misfits();
-    finder.finish()
+    finder.finish(&once_callbacks)
 }
 
 impl WrappedModules {
@@ -825,6 +1254,18 @@ impl WrappedModules {
         Some(&found.modules[index as usize])
     }
 
+    /// The value that the module with that body exports whole, or under `name`.
+    pub fn exported_value(&self, file: FileId, body: FnId, name: Option<Atom>) -> Option<ExprId> {
+        let found = self.files.get(file.idx())?;
+        found.stored_exports.get(&(body, name)).copied()
+    }
+
+    /// A wrapper that is no module of its own runs the function at most once for each closure of it.
+    pub fn runs_once_per_closure(&self, file: FileId, function: FnId) -> bool {
+        let found = self.files.get(file.idx());
+        found.is_some_and(|found| found.once_callbacks.binary_search(&function).is_ok())
+    }
+
     pub fn names_super(&self, file: FileId) -> bool {
         self.files
             .get(file.idx())
@@ -857,6 +1298,28 @@ impl WrappedModules {
         Some(&found.modules[index as usize])
     }
 
+    /// The body of the CommonJS module whose exports the call returns.
+    pub fn body_of_call(&self, files: &Files<'_>, file: FileId, call: ExprId) -> Option<FnId> {
+        if let Some(inner) = self.of_call(files, file, call) {
+            return (inner.kind == InnerModuleKind::CommonJs).then_some(inner.callback);
+        }
+        let found = self.files.get(file.idx())?;
+        if found.nested_bodies.is_empty() {
+            return None;
+        }
+        let (hir, bound) = (files.hir(file), files.bound(file));
+        let ExprKind::Call(site) = hir[hir.skip_type_assertions(call)].kind else {
+            return None;
+        };
+        let callee = hir.skip_type_assertions(hir[site].callee);
+        let (ExprKind::Ident(_), Binding::Symbol(symbol)) =
+            (hir[callee].kind, bound.binding(callee))
+        else {
+            return None;
+        };
+        find_by_key(&found.nested_bodies, symbol, |entry| entry.0).map(|entry| entry.1)
+    }
+
     pub fn enclosing(
         &self,
         files: &Files<'_>,
@@ -872,9 +1335,13 @@ impl WrappedModules {
     }
 
     /// The object literal that holds the bodies of the modules in a bundler's runtime.
-    pub fn is_literal_of_bodies(&self, file: FileId, expression: ExprId) -> bool {
+    pub fn literal_of_bodies(&self, file: FileId) -> Option<ExprId> {
         let bootstrap = self.files.get(file.idx()).and_then(|found| found.bootstrap);
-        bootstrap.is_some_and(|it| it.literal == expression)
+        bootstrap.map(|it| it.literal)
+    }
+
+    pub fn is_literal_of_bodies(&self, file: FileId, expression: ExprId) -> bool {
+        self.literal_of_bodies(file) == Some(expression)
     }
 
     /// The call that starts browserify's runtime: all that it does is evaluate its entry.
@@ -908,6 +1375,11 @@ impl WrappedModules {
         found.names_of_require.binary_search(&symbol).ok()?;
         let helper = found.helpers.iter().find(|helper| helper.0 == name)?;
         Some(&helper.1)
+    }
+
+    /// The object that webpack's runtime creates for a module whose body lets it escape.
+    pub fn module_object(&self, file: FileId) -> Option<ModuleObject> {
+        self.files.get(file.idx())?.bootstrap?.module_object
     }
 
     /// The function that evaluates the bodies in webpack's runtime.
@@ -1299,6 +1771,91 @@ require_(\"./a.js\");";
         assert_eq!(bodies_in(unminified), 1);
     }
 
+    fn bundle_of_one(body: &str, call: &str) -> String {
+        format!(
+            "var modules = ({{ \"./a.js\": ({body}) }});
+var cache = {{}};
+function require_(id) {{
+  var cached = cache[id];
+  if (cached !== undefined) {{ return cached.exports; }}
+  var module = cache[id] = {{ id: id, loaded: false, exports: {{}} }};
+  modules[id]{call};
+  module.loaded = true;
+  return module.exports;
+}}
+require_(\"./a.js\");"
+        )
+    }
+
+    #[test]
+    fn this_of_a_body_may_be_its_exports() {
+        let by_this = ".call(module.exports, module, module.exports, require_)";
+        let by_another = ".call(module, module, module.exports, require_)";
+        let plain = "(module, module.exports, require_)";
+        for (body, expected) in [
+            ("function (m, e, r) { this.a = 1; e.b = this; }", [1, 0, 0]),
+            ("function () { (() => { this.a = 1; })(); }", [1, 0, 0]),
+            (
+                "function (m, e) { e.f = function () { return this; }; }",
+                [1, 0, 1],
+            ),
+            ("(m, e) => { e.a = this; }", [0, 0, 0]),
+            (
+                "function (m, e) { e = m.exports = { a: 1 }; e.b = 2; }",
+                [1, 0, 1],
+            ),
+            ("(m, e) => { e = {}; }", [1, 0, 1]),
+            ("function (m, e) { this.a = arguments.length; }", [0, 0, 0]),
+            ("function (m, e) { this.a = new.target; }", [0, 0, 0]),
+        ] {
+            for (call, expected) in [by_this, by_another, plain].into_iter().zip(expected) {
+                assert_eq!(
+                    bodies_in(&bundle_of_one(body, call)),
+                    expected,
+                    "{body} {call}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_object_of_a_module_may_escape() {
+        for body in [
+            "(e, t, i) => { t.a = e.id; }",
+            "(e, t, i) => { e = i.nmd(e); t.a = 1; }",
+            "(e, t, i) => { globalThis.kept = e; return; }",
+            "function (e, t, i) { for (var k in e) t[k] = 1; }",
+            "(e, t, i) => { delete e.exports; }",
+        ] {
+            let main = webpack_bundle(body, "i.nmd = (e) => e; i(1);");
+            assert_eq!(bodies_in(&main), 2, "{body}");
+        }
+        let call = ".call(module.exports, module, module.exports, require_)";
+        for (body, expected) in [
+            ("(m) => { globalThis.kept = m; }", 1),
+            ("(m) => { m = null; }", 1),
+            ("(m) => { globalThis.kept = m; return; }", 0),
+            ("(m) => { with (globalThis) { kept = m; } }", 0),
+            ("(m) => { globalThis.kept = [m, arguments]; }", 0),
+        ] {
+            assert_eq!(bodies_in(&bundle_of_one(body, call)), expected, "{body}");
+        }
+        let body = "(m) => { globalThis.kept = m; }";
+        let main = bundle_of_one(body, call);
+        for (runtime, expected) in [
+            ("{ id: id, exports: {} }", 1),
+            ("{ exports: {}, id: id, loaded: !1, parent: null }", 1),
+            ("{ id: cache, loaded: false, exports: {} }", 0),
+            ("{ 0: 1, exports: {} }", 0),
+        ] {
+            let main = main.replace("{ id: id, loaded: false, exports: {} }", runtime);
+            assert_eq!(bodies_in(&main), expected, "{runtime}");
+        }
+        let numeric = main.replace("\"./a.js\"", "7");
+        assert_eq!(bodies_in(&numeric), 1);
+        assert_eq!(bodies_in(&format!("{numeric} require_(\"7\");")), 0);
+    }
+
     #[test]
     fn keeps_bodies_reachable_elsewhere() {
         let body = "(e, t, i) => { t.a = 1; }";
@@ -1330,7 +1887,6 @@ require_(\"./a.js\");";
             "(e, t, i) => { t.a = outer; }",
             "(e, t, i) => { i = null; }",
             "(e, t, i) => { t.a = i; }",
-            "(e, t, i) => { t.a = e.id; }",
             "async (e, t, i) => {}",
             "(e, t, i, more) => {}",
             "globalThis.body",

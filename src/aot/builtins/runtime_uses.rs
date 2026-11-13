@@ -535,6 +535,17 @@ impl Collector {
         }
     }
 
+    fn add_members_of_namespaces(&mut self) {
+        for &id in language_entries_with_code() {
+            let holder = table::entry(id).holder.map(table::canonical_id);
+            if holder.is_some_and(|holder| {
+                is_of_language(holder) && table::entry(holder).kind == BuiltinKind::Namespace
+            }) {
+                self.add_entry_called_without_other_code(id);
+            }
+        }
+    }
+
     fn add_what_is_written_in_place_of(&mut self, id: BuiltinId) {
         let id = table::canonical_id(id);
         let mut written = WRITTEN_IN_PLACE_OF.iter();
@@ -763,6 +774,7 @@ pub struct Mentions<'a> {
     pub reads_by_unknown_key: bool,
     pub may_call_evaluator: bool,
     pub global_object_may_be_looked_through: bool,
+    pub aliases_global_object: bool,
     pub syntax: SyntaxWithHelpers,
     pub may_hand_values_to_natives: bool,
     pub called: &'a [BuiltinId],
@@ -829,6 +841,7 @@ impl Collector {
             reads_by_unknown_key,
             may_call_evaluator,
             global_object_may_be_looked_through,
+            aliases_global_object,
             syntax,
             may_hand_values_to_natives,
             called,
@@ -844,6 +857,7 @@ impl Collector {
             && !reads_by_unknown_key
             && !may_call_evaluator
             && !global_object_may_be_looked_through
+            && !aliases_global_object
             && !may_hand_values_to_natives;
         if names_nothing {
             return None;
@@ -917,6 +931,9 @@ impl Collector {
             };
         } else if reads_by_unknown_key {
             collector.add_language();
+        }
+        if aliases_global_object {
+            collector.add_members_of_namespaces();
         }
         Some(collector)
     }

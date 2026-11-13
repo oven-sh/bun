@@ -6813,10 +6813,20 @@ impl NodeFS {
                 ..Default::default()
             });
         }
-        let len = prefix_slice.len().min(prefix_buf.len().saturating_sub(7));
-        prefix_buf[..len].copy_from_slice(&prefix_slice[..len]);
-        prefix_buf[len..len + 6].copy_from_slice(b"XXXXXX");
-        prefix_buf[len + 6] = 0;
+        const TEMPLATE_SUFFIX: [u8; 6] = [b'X'; 6];
+        let len = prefix_slice.len();
+        // Node appends the suffix to the whole prefix: https://github.com/nodejs/node/blob/v26.3.0/src/node_file.cc#L3360-L3364
+        if len > prefix_buf.len() - (TEMPLATE_SUFFIX.len() + 1) {
+            return Err(sys::Error {
+                errno: SystemErrno::ENAMETOOLONG as _,
+                syscall: sys::Tag::mkdtemp,
+                path: [prefix_slice, &TEMPLATE_SUFFIX].concat().into(),
+                ..Default::default()
+            });
+        }
+        prefix_buf[..len].copy_from_slice(prefix_slice);
+        prefix_buf[len..len + TEMPLATE_SUFFIX.len()].copy_from_slice(&TEMPLATE_SUFFIX);
+        prefix_buf[len + TEMPLATE_SUFFIX.len()] = 0;
 
         // The mkdtemp() function returns  a  pointer  to  the  modified  template
         // string  on  success, and NULL on failure, in which case errno is set to

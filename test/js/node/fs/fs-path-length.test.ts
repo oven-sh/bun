@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { isLinux, isMacOS, isPosix, isWindows, tempDir } from "harness";
+import { isLinux, isMacOS, isPosix, isWindows, MAX_PATH_BYTES, tempDir } from "harness";
 import fs from "node:fs";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 // On POSIX systems, MAX_PATH_BYTES is 4096.
@@ -340,5 +341,117 @@ describe("callback APIs report a path longer than MAX_PATH_BYTES through the cal
       expect.objectContaining({ code: "ENAMETOOLONG", path: tooLong }),
     );
     expect(() => fs.renameSync(other, tooLong)).toThrow(expect.objectContaining({ code: "ENAMETOOLONG" }));
+  });
+});
+
+// mkdtemp puts six characters and a NUL after its prefix, so its template fits a path buffer for a prefix of up to
+// MAX_PATH_BYTES - 7 bytes. Node gives mkdtemp(3) the whole template, and the system answers ENAMETOOLONG for a
+// longer one. A prefix of MAX_PATH_BYTES bytes or more is the parser's case above.
+describe("mkdtemp makes its directory from the whole prefix, or fails", () => {
+  // The six X at the end of a template, which mkdtemp(3) writes its own characters over.
+  const suffix = Buffer.alloc(6, "X").toString();
+  const longestPrefix = MAX_PATH_BYTES - suffix.length - 1;
+
+  /**
+   * A prefix of `bytes` UTF-8 bytes that ends in `name`, in a directory under `root`. The directory is names of
+   * about 100 bytes each, which a file: URL keeps as they are. `made()` lists what is in it.
+   */
+  function prefixOf(root: string, bytes: number, name = "mkdtemp-") {
+    let directory = root;
+    let room = bytes - Buffer.byteLength(root + path.sep + name);
+    while (room > 0) {
+      const level = room < 200 ? room : 100;
+      directory += path.sep + Buffer.alloc(level - 1, "d").toString();
+      room -= level;
+    }
+    const prefix = directory + path.sep + name;
+    expect(Buffer.byteLength(prefix)).toBe(bytes);
+    // No path on Windows is this long, so there the directory cannot exist and `made()` lists `root`.
+    if (!isWindows) fs.mkdirSync(directory, { recursive: true });
+    return { prefix, made: () => fs.readdirSync(isWindows ? root : directory) };
+  }
+
+  // The callback and promise forms of node report libuv's copy of the template as `path`, into which glibc has
+  // written its six characters. Bun stops before mkdtemp(3), so every form reports the template as it was given.
+  const tooLong = (prefix: string) => ({ code: "ENAMETOOLONG", syscall: "mkdtemp", path: prefix + suffix });
+
+  const forms: [string, (prefix: string) => Promise<string>][] = [
+    ["mkdtempSync", async prefix => fs.mkdtempSync(prefix)],
+    [
+      "mkdtemp",
+      prefix => {
+        const { promise, resolve, reject } = Promise.withResolvers<string>();
+        let returned = false;
+        fs.mkdtemp(prefix, (err, directory) => {
+          if (!returned) reject(new Error("the callback ran before fs.mkdtemp() returned"));
+          else if (err) reject(err);
+          else resolve(directory);
+        });
+        returned = true;
+        return promise;
+      },
+    ],
+    ["promises.mkdtemp", prefix => fs.promises.mkdtemp(prefix)],
+  ];
+
+  describe.each(forms)("fs.%s", (_, mkdtemp) => {
+    // No path on Windows is MAX_PATH_BYTES - 7 bytes long, so there is no directory to make this one in.
+    it.skipIf(isWindows)("makes the directory for the longest prefix that fits", async () => {
+      using root = tempDir("fs-mkdtemp-fits", {});
+      const { prefix, made } = prefixOf(String(root), longestPrefix);
+      const directory = await mkdtemp(prefix);
+      expect(made()).toEqual([expect.stringMatching(/^mkdtemp-[A-Za-z0-9]{6}$/)]);
+      expect(directory).toBe(prefix + made()[0].slice(-6));
+    });
+
+    it("fails with ENAMETOOLONG and makes nothing for a prefix that is one byte longer", async () => {
+      using root = tempDir("fs-mkdtemp-long", {});
+      const { prefix, made } = prefixOf(String(root), longestPrefix + 1);
+      await expect(mkdtemp(prefix)).rejects.toMatchObject(tooLong(prefix));
+      expect(made()).toEqual([]);
+    });
+  });
+
+  it.each([
+    ["a Buffer", (prefix: string) => Buffer.from(prefix)],
+    ["a file: URL", (prefix: string) => pathToFileURL(prefix)],
+  ])("counts the bytes of %s the same way", (_, as) => {
+    using root = tempDir("fs-mkdtemp-long", {});
+    const { prefix, made } = prefixOf(String(root), longestPrefix + 1);
+    expect(() => fs.mkdtempSync(as(prefix) as unknown as string)).toThrow(expect.objectContaining(tooLong(prefix)));
+    expect(made()).toEqual([]);
+  });
+
+  // The limit is in UTF-8 bytes. One byte too many used to cut the prefix inside its last character: the
+  // directory got a name that is not UTF-8, and the string returned for it named no directory.
+  describe("a prefix that ends in a two-byte character", () => {
+    it.skipIf(isWindows)("is used whole when its bytes fit", () => {
+      using root = tempDir("fs-mkdtemp-fits", {});
+      const { prefix, made } = prefixOf(String(root), longestPrefix, "mkdtemp-ø");
+      const directory = fs.mkdtempSync(prefix);
+      expect(made()).toEqual([expect.stringMatching(/^mkdtemp-ø[A-Za-z0-9]{6}$/)]);
+      expect(directory).toBe(prefix + made()[0].slice(-6));
+      expect(fs.statSync(directory).isDirectory()).toBe(true);
+    });
+
+    it("fails when its second byte does not fit", () => {
+      using root = tempDir("fs-mkdtemp-long", {});
+      const { prefix, made } = prefixOf(String(root), longestPrefix + 1, "mkdtemp-ø");
+      expect(prefix.length).toBeLessThanOrEqual(longestPrefix);
+      expect(() => fs.mkdtempSync(prefix)).toThrow(expect.objectContaining(tooLong(prefix)));
+      expect(made()).toEqual([]);
+    });
+  });
+
+  // Node checks the options before it issues the syscall that reports the length.
+  it("reports an encoding it does not know before the length", () => {
+    using root = tempDir("fs-mkdtemp-long", {});
+    const { prefix, made } = prefixOf(String(root), longestPrefix + 1);
+    const options = { encoding: "bogus" as BufferEncoding };
+    expect(() => fs.mkdtempSync(prefix, options)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
+    expect(() => fs.mkdtemp(prefix, options, () => {})).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
+    expect(made()).toEqual([]);
   });
 });

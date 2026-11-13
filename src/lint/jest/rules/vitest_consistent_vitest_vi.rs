@@ -5,6 +5,7 @@ use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::utils::{bun_test, ts_utils};
 use smallvec::SmallVec;
+use std::cell::OnceCell;
 
 /// This rule triggers an error when an unexpected Vitest accessor is used.
 pub struct ConsistentVitestVi {
@@ -66,8 +67,7 @@ impl Referent {
 impl Rule for ConsistentVitestVi {
     const META: Meta = Meta::oxlint(Plugin::Vitest, "consistent-vitest-vi", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Call]).stmts(&[StmtTag::Import]);
-    /// `opposite`, looked up in the file's names.
-    type State<'a> = Name<'a>;
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         match options.object(0).str("fn") {
@@ -76,8 +76,9 @@ impl Rule for ConsistentVitestVi {
         }
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<Name<'a>> {
-        file.find_name(self.opposite)
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
+        let opposite = file.find_name(self.opposite)?;
+        Some(State { opposite, assigned: OnceCell::new() })
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
@@ -89,14 +90,14 @@ impl Rule for ConsistentVitestVi {
     }
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let Some((object, name)) = self.renamed(cx.file(), cx.state, node) {
-            let (file, function) = (cx.file(), self.function);
+        if let Some((object, name)) = self.renamed(cx.file(), cx.state.opposite, node) {
+            let (file, function, state) = (cx.file(), self.function, &cx.state);
             // The fix of an import that declares the name renames its uses too, so that no file is renamed in part.
             let has_import = || self.renamed_import(file).is_some();
             cx.report(object.outer_span(), CONSISTENT_VITEST_VI)
                 .data("function", function)
                 .data("opposite", self.opposite)
-                .fix_where_safe(|| has_import() || !self.changes_call(file, name), |fixer| (!has_import()).then(|| fixer.replace(name.span(), function)));
+                .fix_where_safe(|| has_import() || !self.changes_call(file, state, name), |fixer| (!has_import()).then(|| fixer.replace(name.span(), function)));
         }
     }
 }
@@ -117,6 +118,42 @@ fn is_type_only(symbol: Option<Symbol<'_>>) -> bool {
 /// True if `reference` uses its name as a value. The `vitest` of `typeof vitest` in a type doesn't.
 fn is_value_use(reference: Reference<'_>) -> bool {
     reference.expr().is_some_and(|it| !it.is_in_type_query())
+}
+
+/// What the rule keeps for a file.
+pub struct State<'a> {
+    /// `opposite`, looked up in the file's names.
+    opposite: Name<'a>,
+    /// Whether the file assigns to `opposite` and to `function`, worked out for the first fix that asks.
+    assigned: OnceCell<[Assigned; 2]>,
+}
+
+/// Whether a file assigns to a name. Such a name can be anything at a call.
+#[derive(Copy, Clone, Default)]
+struct Assigned {
+    /// The file has the name outside of the object of a member, as an assignment does.
+    is_possible: bool,
+    /// The file assigns to the name where it is the global: nothing declares it there when the file runs.
+    is_to_global: bool,
+}
+
+impl Assigned {
+    fn of<'a>(file: &'a File<'a>, name: Option<Name<'a>>) -> Assigned {
+        let Some(name) = name else {
+            return Assigned::default();
+        };
+        let is_object = |it: Expr<'a>| matches!(it.parent(), Node::Expr(member) if member.object() == Some(it));
+        let mut targets = file.exprs_of_kind(ExprTag::Ident).filter(|it| it.as_ident() == Some(name) && !is_object(*it)).peekable();
+        let is_possible = targets.peek().is_some();
+        // Only for a file that can assign to the name does the rule resolve the file's references.
+        let is_to_global = targets.any(|it| it.reference().is_some_and(Reference::is_write) && jest::runtime_symbol(Node::Expr(it).scope(), name).is_none());
+        Assigned { is_possible, is_to_global }
+    }
+
+    /// True if the file assigns to what the name is at a call: `at_run_time`, or the global.
+    fn is_to(self, at_run_time: Option<Symbol<'_>>) -> bool {
+        self.is_possible && at_run_time.map_or(self.is_to_global, |it| it.has_modifying_references())
+    }
 }
 
 impl ConsistentVitestVi {
@@ -155,6 +192,10 @@ impl ConsistentVitestVi {
         let report = cx.report(span_of(&vitest_import), CONSISTENT_VITEST_VI);
         report.data("function", self.function).data("opposite", self.opposite).fix_where_safe(|| is_object && !self.changes_uses(file, import), |fixer| {
             let specifiers: SmallVec<[ImportEntry; 8]> = import_entries_of(import).collect();
+            // oxlint writes the entries as one list of names in braces, which is wrong text for an import that has the default or a namespace beside another entry. Such an import has no fix.
+            if specifiers.len() > 1 && specifiers.iter().any(|it| !matches!(it.import_name, ImportImportName::Name(_))) {
+                return None;
+            }
             let mut import_text = Vec::new();
             for specifier in specifiers.iter().filter(|it| !is_named(it, self.opposite)) {
                 import_text.extend_from_slice(if import_text.is_empty() { "" } else { ", " }.as_bytes());
@@ -220,6 +261,10 @@ impl ConsistentVitestVi {
         let Some(declared) = self.declared(import) else {
             return false;
         };
+        // A type or an interface of the name merges with the import. Its uses aren't uses of Vitest's object, and the fix renames every use.
+        if declared.declaration_count() > 1 {
+            return true;
+        }
         // Beside another declaration of `function`, the renamed import would declare the name a second time. A type or an interface merges with it.
         let (statement, here) = (Node::Stmt(import.stmt()), Node::Stmt(import.stmt()).scope().get_bytes(function));
         let is_second = |it: Declaration<'a>| it.parent() != Some(statement) && !matches!(it, Declaration::Interface(_) | Declaration::TypeAlias(_));
@@ -248,21 +293,25 @@ impl ConsistentVitestVi {
         })
     }
 
-    /// True if the new name changes what runs or what type checks: `name` or the `function` at the call isn't Vitest's object, the call is then on another `function` or on a type-only import, or `bun test` treats a module mock call in another way: see [`bun_test`].
+    /// True if the new name changes what runs or what type checks: `name` or the `function` at the call isn't Vitest's object or the file assigns to it, the call is then on another `function` or on a type-only import, or `bun test` treats a module mock call in another way: see [`bun_test`].
     #[cold]
-    fn changes_call<'a>(&self, file: &'a File<'a>, name: Expr<'a>) -> bool {
+    fn changes_call<'a>(&self, file: &'a File<'a>, state: &State<'a>, name: Expr<'a>) -> bool {
         let (function, scope) = (self.function.as_bytes(), Node::Expr(name).scope());
+        let names @ [_, function_name] = [name.as_ident(), file.find_name(self.function)];
         // What the two names are when the file runs. In a file without a `function`, that one is the global.
-        let old = name.as_ident().and_then(|it| jest::runtime_symbol(scope, it));
-        let new = file.find_name(self.function).and_then(|it| jest::runtime_symbol(scope, it));
+        let [old, new] = names.map(|it| it.and_then(|it| jest::runtime_symbol(scope, it)));
         let (from, to) = (Referent::of(old), Referent::of(new));
-        // A runner without globals has no `function` for a file that loads the name itself. A name that the file assigns to can be anything at the call.
-        if !from.is_helper() || !to.is_helper() || (from == Referent::Loaded && to == Referent::Global) || [old, new].iter().flatten().any(|it| it.has_modifying_references()) {
+        // A runner without globals has no `function` for a file that loads the name itself.
+        if !from.is_helper() || !to.is_helper() || (from == Referent::Loaded && to == Referent::Global) {
+            return true;
+        }
+        let [of_old, of_new] = *state.assigned.get_or_init(|| names.map(|it| Assigned::of(file, it)));
+        if of_old.is_to(old) || of_new.is_to(new) {
             return true;
         }
         let is_mock = bun_test::is_object_of_module_mock_call(name, function);
         // Past this point, the rule resolves the file's references for a module mock call and in a file that has a `function` only.
-        if !is_mock && file.find_name(self.function).is_none() {
+        if !is_mock && function_name.is_none() {
             return false;
         }
         let (declared, target) = (name.symbol(), scope.resolve_bytes(function));

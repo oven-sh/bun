@@ -671,6 +671,35 @@ test("terminate() of a running, idle worker resolves 1 like Node", async () => {
   expect(await worker.terminate()).toBe(1);
 });
 
+// A store to an own index accessor calls the accessor's setter from inside JavaScriptCore's array storage code,
+// which deferred termination across that call: terminate() never resolved while the setter looped or waited, and
+// process.exit() did not stop the setter. In a child: a worker that nothing can stop hangs its process.
+test("terminate() and process.exit() stop a worker inside the setter of an own index accessor", async () => {
+  const code = `
+    const { Worker } = require("node:worker_threads");
+    const run = (source) => new Promise((resolve, reject) => {
+      const messages = [];
+      const worker = new Worker('const { parentPort } = require("node:worker_threads");' + source, { eval: true });
+      worker.on("message", (message) => (message === "terminate" ? worker.terminate() : messages.push(message)));
+      worker.on("error", reject);
+      worker.on("exit", (exitCode) => resolve({ exitCode, messages }));
+    });
+    for (const result of await Promise.all([
+      run('({ set 0(v) { parentPort.postMessage("terminate"); for (;;) {} } })[0] = 1;'),
+      run('({ set 0(v) { parentPort.postMessage("terminate"); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0); } })[0] = 1;'),
+      run('({ set 0(v) { process.exit(3); parentPort.postMessage("ran after process.exit()"); } })[0] = 1; parentPort.postMessage("ran after the store");'),
+    ])) console.log(JSON.stringify(result));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim().split("\n"), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: ['{"exitCode":1,"messages":[]}', '{"exitCode":1,"messages":[]}', '{"exitCode":3,"messages":[]}'],
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
 describe("environmentData", () => {
   test("can pass a value to a child", async () => {
     setEnvironmentData("foo", new Map([["hello", "world"]]));

@@ -3651,6 +3651,107 @@ test.concurrent("timeout during a nested event-loop wait beneath the script", as
   expect(exitCode).toBe(0);
 });
 
+// A store to an own index accessor calls the accessor's setter from inside JavaScriptCore's array storage code,
+// which deferred termination across that call: nothing could end the setter, and none of these runs returned.
+// The last two forms were never under that deferral. The child is killed if it does not end by itself.
+test("timeout ends the setter that a store to an own index accessor calls", async () => {
+  const code = `
+    const vm = require("node:vm");
+    const sleepSync = (ms) => Bun.sleepSync(ms);
+    const endless = "{ set(v) { for (;;) {} }, configurable: true }";
+    for (const source of [
+      "Object.defineProperty({}, 0, " + endless + ")[0] = 1;",
+      "'use strict'; Object.defineProperty({}, 0, " + endless + ")[0] = 1;",
+      "Reflect.set(Object.defineProperty({}, 0, " + endless + "), 0, 1);",
+      "Object.assign(Object.defineProperty({}, 0, " + endless + "), [1]);",
+      "Object.defineProperty([1, 2, 3], 1, " + endless + ")[1] = 1;",
+      "Object.defineProperty([1, 2, 3], 1, " + endless + ").fill(7);",
+      "({ set 0(v) { for (;;) {} } })[0] = 1;",
+      // The timeout passes while the script is off-CPU, so the request is there before the store begins.
+      "const o = { set 0(v) { for (;;) {} } }; sleepSync(60); o[0] = 1;",
+      "Object.defineProperty({}, 'name', " + endless + ").name = 1;",
+      "Object.create(Object.defineProperty({}, 0, " + endless + "))[0] = 1;",
+    ]) {
+      try { vm.runInNewContext(source, { sleepSync }, { timeout: 20 }); console.log("finished"); }
+      catch (e) { console.log(e.code); }
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 20_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim().split("\n"), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: new Array(10).fill("ERR_SCRIPT_EXECUTION_TIMEOUT"),
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+}, 30_000);
+
+// The timeout of a run that the setter starts cuts that run short inside the setter. The inner script ends by itself
+// after two seconds: under the deferral it ran that long. The timeout was then reported all the same, or, where
+// assertions are on, VM::cancelTermination() asserted that no termination is deferred.
+test("a nested timeout fires inside the setter of an own index accessor", async () => {
+  const code = `
+    const vm = require("node:vm");
+    let ranToItsEnd = false;
+    const result = vm.runInNewContext(
+      'let inner; ({ set 0(v) { try { vm.runInNewContext("for (const end = Date.now() + 2000; Date.now() < end;) {} ranToItsEnd()", { ranToItsEnd }, { timeout: 20 }); } catch (e) { inner = e.code; } } })[0] = 1; "outer completed, inner " + inner',
+      { vm, ranToItsEnd: () => { ranToItsEnd = true; } }, { timeout: 60000 });
+    console.log(result + ", which ran to its end: " + ranToItsEnd);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 20_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "outer completed, inner ERR_SCRIPT_EXECUTION_TIMEOUT, which ran to its end: false\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+}, 30_000);
+
+// POSIX-only, like the SIGINT tests above. The setter sends the signal itself, so it is in its loop when the
+// interrupt is requested.
+test.skipIf(isWindows)(
+  "breakOnSigint interrupts the setter that a store to an own index accessor calls",
+  async () => {
+    const code = `
+    const vm = require("node:vm");
+    const interrupt = () => process.kill(process.pid, "SIGINT");
+    try { vm.runInNewContext("({ set 0(v) { interrupt(); for (;;) {} } })[0] = 1;", { interrupt }, { breakOnSigint: true }); console.log("finished"); }
+    catch (e) { console.log(e.code); }
+  `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 20_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "ERR_SCRIPT_EXECUTION_INTERRUPTED\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  },
+  30_000,
+);
+
 test("SourceTextModule applies lineOffset and columnOffset to reported positions the way Script does", async () => {
   const options = { lineOffset: 5, columnOffset: 10 };
   const position = (error: unknown) =>

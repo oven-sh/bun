@@ -1673,6 +1673,43 @@ static bool takesFileWithoutBodyAsOriginal(const JSModuleMock* mock, JSC::AOT::M
 uint32_t addToFactoryImportChains(Zig::GlobalObject*, JSC::AOT::ModuleID importer, JSC::AOT::ModuleID asked, JSC::AOT::LoadKind);
 #endif
 
+// With two paths, what the mock has kept of its module object in require.cache is the original of another file than the one an import loads.
+// The package's own files ask for that original by its key: a module object with the kept exports lies there, so that nothing runs the file a second time.
+// Like an original that was loaded from disk, it stays when the mock ends.
+__attribute__((minsize)) static void layKeptOriginalUnderItsKey(Zig::GlobalObject* globalObject, JSModuleMock* mock)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue exports = mock->originalCommonJSExports.get();
+    if (!exports || exports.inherits<JSC::JSModuleNamespaceObject>())
+        return;
+    JSString* path = requireCacheKey(globalObject, mock);
+    if (path == mock->importKey.get())
+        return;
+
+    String key = originalModuleKey(path->tryGetValue().data);
+    JSString* keyString = jsString(vm, key);
+    JSC::JSMap* requireMap = Bun::testFileRequireMap(globalObject);
+    JSValue standing = requireMap->get(globalObject, keyString);
+    RETURN_IF_EXCEPTION(scope, );
+    auto* standingModule = dynamicDowncast<Bun::JSCommonJSModule>(standing);
+    if (standingModule && standingModule->getDirect(vm, Bun::builtinNames(vm).exportsPublicName()) == exports)
+        return;
+    // What stands there was loaded from disk for an earlier mock, or holds what one had kept of a module object that has been loaded anew since. What is linked to it goes with it.
+    if (standingModule || Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(vm, key))) {
+        evictModulesAndTheirImporters(globalObject, Vector<String> { key });
+        RETURN_IF_EXCEPTION(scope, );
+    }
+
+    auto* module = Bun::JSCommonJSModule::create(globalObject, keyString, exports, true, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, );
+    requireMap->set(globalObject, keyString, module);
+    RETURN_IF_EXCEPTION(scope, );
+    // Booked as runVirtualModule() books a fetch: what a test file evicts of a preload's modules comes back when the file ends.
+    if (!mock->isFromPreload)
+        globalObject->onLoadPlugins.testFileOfModule.set(key, globalObject->onLoadPlugins.testFile);
+}
+
 // The original of one file of `mock`, as an import loads it. `path` is the path that the mock was looked up under.
 __attribute__((minsize)) static JSC::JSPromise* importOriginalModule(Zig::GlobalObject* globalObject, JSModuleMock* mock, const String& path, bool mayLoadOthersFirst = true, const String& from = String(), bool hasAlreadyWaited = false)
 {
@@ -1711,6 +1748,11 @@ __attribute__((minsize)) static JSC::JSPromise* importOriginalModule(Zig::Global
     // What the mock has kept of its module object in require.cache is the file at requireCacheKey().
     if (!exports && mock->originalCommonJSExports && !isCompiledESModule && requireCacheKey(globalObject, mock) == pathOfOriginal) {
         exports = esmExportsOfCommonJSExports(globalObject, mock->originalCommonJSExports.get());
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    // The original that is loaded below may load that file, itself or through other files of its package.
+    if (!exports) {
+        layKeptOriginalUnderItsKey(globalObject, mock);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
 #if ENABLE(AOT)
@@ -6288,6 +6330,10 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         formsWait = true;
     }
 #endif
+
+    // Ahead of the factory: it may require the name again, and the package's own files may ask for the file once the mock is registered.
+    layKeptOriginalUnderItsKey(globalObject, mock);
+    RETURN_IF_EXCEPTION(scope, {});
 
     JSC::JSPromise* pendingFactory = nullptr;
     // False once the factory itself has re-mocked or unmocked the module, which wins.

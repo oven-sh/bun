@@ -140,7 +140,7 @@ trait CronJobBase: Sized + bun_ptr::AnyRefCounted {
         let owner = this.owner().take().expect("cron job finished twice");
         this.poll().with_mut(|p| p.unref(bun_io::js_vm_ctx()));
         let global = this.global();
-        let ev = VirtualMachine::get().event_loop_mut();
+        let ev = VirtualMachine::get().event_loop();
         ev.enter();
         if let Some(msg) = this.err_msg().replace(None) {
             let err = EncodedSlice::utf8(&msg).to_error_instance(&global);
@@ -821,7 +821,7 @@ pub(crate) fn register_os_job(
         exit_status: JsCell::new(None),
         err_msg: JsCell::new(None),
         tmp_path: JsCell::new(None),
-        event_loop_handle: EventLoopHandle::init(vm_mut().event_loop().cast::<()>()),
+        event_loop_handle: EventLoopHandle::init(vm_mut().event_loop_ptr()),
     });
     job.poll.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
     let promise_value = job.promise.get().value();
@@ -1259,7 +1259,7 @@ pub(crate) fn remove(cx: &mut JsScope<'_>, title: &[u8]) -> JsResult<JSValue> {
         exit_status: JsCell::new(None),
         err_msg: JsCell::new(None),
         tmp_path: JsCell::new(None),
-        event_loop_handle: EventLoopHandle::init(vm_mut().event_loop().cast::<()>()),
+        event_loop_handle: EventLoopHandle::init(vm_mut().event_loop_ptr()),
     });
     job.poll.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
     let promise_value = job.promise.get().value();
@@ -1600,8 +1600,6 @@ impl CronJob {
             return;
         }
 
-        // `enter()` now, `exit()` on drop; holds the raw pointer (not `&mut`)
-        // so re-entrant JS can re-borrow.
         let _ev_guard = vm.enter_event_loop_scope();
         // The tick and what follows from it (the reactions on the promise it returns, what they
         // report) are the script's that scheduled the job.
@@ -1612,13 +1610,9 @@ impl CronJob {
         // job is re-armed, so an `uncaughtException` handler's `stop()` is
         // observed by `schedule_next`), and does not stop the job — as with a
         // rejected tick.
-        let result = vm.event_loop_mut().run_callback_with_result(
-            this.context,
-            cb,
-            &this.global,
-            js_this,
-            &[],
-        );
+        let result =
+            vm.event_loop()
+                .run_callback_with_result(this.context, cb, &this.global, js_this, &[]);
         this.in_fire.set(false);
 
         // terminate() may have arrived while the callback was running; bail out
@@ -2063,7 +2057,7 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
         argv0: resolved_argv0,
         #[cfg(windows)]
         windows: spawn::WindowsOptions {
-            loop_: EventLoopHandle::init(vm_mut().event_loop().cast::<()>()),
+            loop_: EventLoopHandle::init(vm_mut().event_loop_ptr()),
             ..Default::default()
         },
         ..SpawnOptions::default()
@@ -2159,7 +2153,7 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
         }
     }
 
-    let ev_handle = EventLoopHandle::init(vm_mut().event_loop().cast::<()>());
+    let ev_handle = EventLoopHandle::init(vm_mut().event_loop_ptr());
     Ok(spawned.to_process_handle(ev_handle))
 }
 

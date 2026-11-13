@@ -1008,18 +1008,14 @@ impl Subprocess<'_> {
 
         let mut did_update_has_pending_activity = false;
 
-        // Kept as raw `*mut` so the enter guard and the body can both call
-        // `&mut`-taking methods without tripping borrowck.
-        let event_loop = (*jsc_vm).event_loop();
+        let event_loop = jsc_vm.event_loop();
 
         // The exit is reported to the script that spawned the child.
         let _context = (*jsc_vm).enter_context(self.context);
         if !is_sync {
             if !this_jsvalue.is_empty() {
                 if let Some(promise) = js::exited_promise_take_cached(this_jsvalue, global_this) {
-                    // SAFETY: event_loop points into the live VM and outlives this scope.
-                    let _exit_guard =
-                        unsafe { bun_jsc::event_loop::EventLoop::enter_scope(event_loop) };
+                    let _exit_guard = event_loop.enter_scope();
 
                     if !did_update_has_pending_activity {
                         self.update_has_pending_activity();
@@ -1086,16 +1082,7 @@ impl Subprocess<'_> {
                         did_update_has_pending_activity = true;
                     }
 
-                    // SAFETY: event_loop points into the live VM.
-                    unsafe {
-                        (*event_loop).run_callback(
-                            self.context,
-                            callback,
-                            global_this,
-                            this_value,
-                            &args,
-                        )
-                    };
+                    event_loop.run_callback(self.context, callback, global_this, this_value, &args);
                 }
             }
         }
@@ -1342,18 +1329,13 @@ impl Subprocess<'_> {
                 if !this_jsvalue.is_empty() {
                     if let Some(cb) = js::ipc_callback_get_cached(this_jsvalue) {
                         let global_this = self.global_this();
-                        let event_loop = global_this.bun_vm().as_mut().event_loop();
-                        // SAFETY: `event_loop` is the live VM's owned event loop,
-                        // accessed on the single JS mutator thread.
-                        unsafe {
-                            (*event_loop).run_callback(
-                                self.context,
-                                cb,
-                                global_this,
-                                this_jsvalue,
-                                &[*data, this_jsvalue, handle],
-                            )
-                        };
+                        global_this.bun_vm().event_loop().run_callback(
+                            self.context,
+                            cb,
+                            global_this,
+                            this_jsvalue,
+                            &[*data, this_jsvalue, handle],
+                        );
                     }
                 }
             }
@@ -1384,18 +1366,13 @@ impl Subprocess<'_> {
             if let Some(callback) =
                 js::on_disconnect_callback_take_cached(this_jsvalue, global_this)
             {
-                let event_loop = global_this.bun_vm().as_mut().event_loop();
-                // SAFETY: `event_loop` is the live VM's owned event loop,
-                // accessed on the single JS mutator thread.
-                unsafe {
-                    (*event_loop).run_callback(
-                        self.context,
-                        callback,
-                        global_this,
-                        this_jsvalue,
-                        &[JSValue::TRUE],
-                    )
-                };
+                global_this.bun_vm().event_loop().run_callback(
+                    self.context,
+                    callback,
+                    global_this,
+                    this_jsvalue,
+                    &[JSValue::TRUE],
+                );
             }
         }
     }

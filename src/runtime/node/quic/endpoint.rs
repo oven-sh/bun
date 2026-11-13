@@ -1483,8 +1483,8 @@ impl QuicEndpoint {
             };
             let handle = session.handle();
             if let Some(callback) = callbacks::get(global, "onSessionNew") {
-                let vm = global.bun_vm().as_mut();
-                vm.event_loop_ref().run_callback(
+                let vm = global.bun_vm();
+                vm.event_loop().run_callback(
                     bun_event_loop::ContextId::NONE,
                     callback,
                     global,
@@ -2129,8 +2129,8 @@ impl QuicEndpoint {
     fn deliver_endpoint_close(&self, global: &JSGlobalObject, context: u8, status: c_int) {
         self.poll_ref.with_mut(|p| p.disable());
         if let Some(callback) = callbacks::get(global, "onEndpointClose") {
-            let vm = global.bun_vm().as_mut();
-            vm.event_loop_ref().run_callback(
+            let vm = global.bun_vm();
+            vm.event_loop().run_callback(
                 bun_event_loop::ContextId::NONE,
                 callback,
                 global,

@@ -617,7 +617,7 @@ where
         if self.is_async() {
             return Ok(());
         }
-        server.vm().as_mut().event_loop_mut().drain_microtasks()
+        server.vm().event_loop().drain_microtasks()
     }
 
     /// Runs `on_abort` itself (may free `self`) if a nested event loop run already closed the socket.

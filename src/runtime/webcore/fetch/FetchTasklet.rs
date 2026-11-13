@@ -946,10 +946,7 @@ impl FetchTasklet {
             // right below anyway.
             //
             // Drain ONLY the JSC microtask queue, NOT Bun's `EventLoop::drain_microtasks`:
-            // `on_progress_update` is itself running inside `tick_queue_with_count`,
-            // which already holds `&mut EventLoop`. Re-entering via
-            // `(*vm.event_loop()).drain_microtasks()` was an aliased `&mut EventLoop`
-            // (UB) and additionally ran `release_weak_refs` + `deferred_tasks.run()`,
+            // that additionally runs `release_weak_refs` + `deferred_tasks.run()`,
             // which is observable in `fetch-leak-test-fixture-5.js`'s post-batch
             // `heapStats().Promise` count for the streaming-body cases when a fast
             // loopback coalesces `can_stream` and `metadata` into one callback —
@@ -1144,10 +1141,7 @@ impl FetchTasklet {
             success,
             context: self.context,
         });
-        // SAFETY: `vm.event_loop()` is the live JS-thread loop.
-        unsafe {
-            (*vm.event_loop()).enqueue_task(Task::from_boxed(holder));
-        }
+        vm.event_loop().enqueue_task(Task::from_boxed(holder));
 
         dispatch_cleanup(self);
         cleanup(self);

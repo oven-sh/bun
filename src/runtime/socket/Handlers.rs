@@ -200,7 +200,7 @@ impl Handlers {
     pub(crate) fn enter(self: &Rc<Self>) -> Scope {
         self.mark_active();
         let context = self.vm.enter_context(self.context);
-        self.vm.event_loop_ref().enter();
+        self.vm.event_loop().enter();
         Scope {
             handlers: Rc::clone(self),
             _context: context,
@@ -287,7 +287,7 @@ impl Handlers {
             return Ok(());
         }
 
-        global_object.bun_vm().event_loop_mut().run_callback(
+        global_object.bun_vm().event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             on_error,
             &global_object,
@@ -431,7 +431,7 @@ impl Scope {
     /// `upgradeTLS` the socket, so the caller must observe the resulting
     /// `handlers` state before deciding whether to decrement.
     pub(crate) fn exit_event_loop(&self) {
-        self.handlers.vm.event_loop_ref().exit();
+        self.handlers.vm.event_loop().exit();
     }
 
     /// The `active_connections` half: decrements and, on reaching zero,

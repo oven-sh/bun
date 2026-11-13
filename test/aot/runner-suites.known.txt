@@ -82,6 +82,7 @@ test/cli/test/isolation.test.ts: the SourceProvider cache tells a test file that
 test/cli/test/test-changed.test.ts: bun test --changed --watch > editing one of several dirty test files reruns only that one
 test/cli/test/test-changed.test.ts: bun test --changed --watch > restarts and reruns only affected tests when a dependency changes
 test/cli/test/test-changed.test.ts: bun test --changed --watch > trigger file path handed to restarted runs has a 128-bit random hex suffix
+test/cli/test/test-environment.test.ts: test environment > without --isolate > another spelling of a window's options finds it even if a file leaves builtins patched
 test/cli/test/test-environment.test.ts: test environment > without --isolate > switching environments works even if a file leaves builtins patched
 test/cli/test/test-shard.test.ts: --timings > --parallel with --timings cuts chunks by duration and dispatches each chunk slowest-first
 test/cli/test/test-shard.test.ts: --timings > --shard with --timings cuts path-sorted files into runs of equal total time

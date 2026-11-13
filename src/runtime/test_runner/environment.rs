@@ -2,7 +2,7 @@
 
 use super::jest::Jest;
 use bun_core::lexer::end_of_run;
-use bun_core::{Output, Timespec, TimespecMockMode};
+use bun_core::{EncodedSlice, Output, Timespec, TimespecMockMode};
 use bun_core::strings;
 use bun_jsc::event_loop::TopLevelWaitError;
 use bun_jsc::virtual_machine::{VirtualMachine, runtime_hooks};
@@ -155,6 +155,14 @@ impl Environment {
         vm: &mut VirtualMachine,
         path: &[u8],
     ) -> crate::Result<Option<*mut JSInternalPromise>> {
+        // Vitest does `envOptions ? ... : null` with the parsed options.
+        if let Some(text) = self.options.as_deref() {
+            match is_falsy(vm, text) {
+                Ok(true) => self.options = None,
+                Ok(false) => {}
+                Err(err) => return rejected(vm, err).map(Some),
+            }
+        }
         let kind = match &self.comment {
             None => self.project,
             Some(Ok(kind)) => *kind,
@@ -213,6 +221,17 @@ impl Environment {
 
 pub(crate) fn is_in_preload() -> bool {
     VirtualMachine::get().is_in_preload
+}
+
+/// Whether options are JSON for a falsy value. What begins an object or an array never is, and what is not JSON is left for environment.ts to report.
+#[optimize(size)]
+fn is_falsy(vm: &VirtualMachine, options: &[u8]) -> JsResult<bool> {
+    if matches!(options.first(), Some(b'{' | b'[')) {
+        return Ok(false);
+    }
+    let text = EncodedSlice::from_bytes(options);
+    // SAFETY: `text` borrows `options` and lives until the call returns.
+    unsafe { bun_jsc::cpp::Bun__TestEnvironment__isFalsyJSON(vm.global(), &raw const text) }
 }
 
 fn rejected(vm: &VirtualMachine, err: JsError) -> crate::Result<*mut JSInternalPromise> {

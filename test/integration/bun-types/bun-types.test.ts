@@ -987,7 +987,7 @@ describe("@types/bun integration test", () => {
       return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode };
     }
 
-    test("read() keeps Bun's result type, and every default reader has readMany()", async () => {
+    test.concurrent("read() keeps Bun's result type, and every default reader has readMany()", async () => {
       expect(await checkReader("reader-lib-webworker-check", true)).toEqual({ stdout: "", stderr: "", exitCode: 0 });
     });
 
@@ -995,7 +995,7 @@ describe("@types/bun integration test", () => {
     // @types/node have errors there for other globals (Request, Response, Worker and more), so
     // this run cannot be clean. Those errors show that tsc checked the declarations. None of
     // the errors may be in the program, and none may name the reader.
-    test("no declaration error is about the reader", async () => {
+    test.concurrent("no declaration error is about the reader", async () => {
       const { stdout, stderr, exitCode } = await checkReader("reader-lib-webworker-declarations", false);
       const errors = stdout.split("\n").filter(line => line.includes(": error TS"));
       expect({

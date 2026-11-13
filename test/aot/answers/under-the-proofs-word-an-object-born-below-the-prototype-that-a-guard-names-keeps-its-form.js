@@ -4,7 +4,7 @@
 // # Under testing=CheckProofsAtRunTime, which --aot-harden=proof-checks stands for, the walk builds the same form, and beside it the conclusion is asked where the allocation stands:
 // # what the function holds under `prototype` now, read off the function itself, is the object that the table names; the allocation lists its two stores, and their guards are asked again right in front of it. The process stops by name where either is false.
 // # It used to build the construction as written there. That read is taken to write the guards, so every turn asked them anew, and a guard that was falsely remembered over a callee was never stale under the word.
-// # f6 = quiet, f8 = entered
+// # f6 = quiet, f8 = entered. The loops of Wide, lay and layAbove are too large to be copied into a loop: their bodies are entered by calls.
 // # In a plain build the guards stand in front of the typed turns, and nothing of the construction is left in them.
 // # RUN(PLAIN): walk f6 mechanisms=all
 // # PLAIN-LABEL: code f6:Body
@@ -18,13 +18,13 @@
 // # WORD: isInLoop=true isLoopHead=true
 // # WORD-NOT: = GetConstructPrototype
 // # WORD: [[members]]: boolean @Boolean = AreMembersUnchanged conditions=[{kind=MemberPassedByStores layout=L0 key="x"}, {kind=MemberPassedByStores layout=L0 key="y"}]
-// # WORD-NEXT: CheckProof [[members]] checkedType=true {{*}}source=WhatIsRemembered
+// # WORD-NEXT: CheckProof [[members]] checkedType=true {{*}}source=RememberedFact
 // # WORD: = NewObject {{*}}layout=L0 fields=[0, 1]
 // # WORD: = GetClassPrototype [[function]] layout=L0 traits
 // # WORD-NEXT: CheckProof {{*}}source=OtherOperation
 // # WORD-NEXT: = GetClassPrototype [[function]] layout=L0 [readsClassObjectItself]
 // # WORD: [[same]]: boolean @Boolean = StrictEq
-// # WORD-NEXT: CheckProof [[same]] checkedType=true {{*}}source=WhatIsRemembered
+// # WORD-NEXT: CheckProof [[same]] checkedType=true {{*}}source=RememberedFact
 // # WORD-NOT: = GetConstructPrototype
 // # The road on which the body is entered by a call and the allocation lists no store.
 // # RUN(ENTERED): walk f8 mechanisms=all testing=CheckProofsAtRunTime
@@ -38,8 +38,9 @@
 // # CHECKED: 12 of 12 of 12
 // # CHECKED-NEXT: exited with 0
 // # A lie: the guards in front of the loops are taken to hold, so the typed turns go on behind another object under `prototype`. Under the word the process stops by name.
-// # RUN(LIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,GuardsAndFactsAreTakenToHold $SHELL
-// # LIE: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it.
+// # RUN(LIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,AssumeGuardsAndFacts $SHELL
+// # LIE: bun: internal AOT error: redundancy elimination check failed
+// # LIE-NEXT: a load or check that the compiler removed as redundant gives a different result here
 // # LIE: crashed with
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
@@ -54,10 +55,10 @@ function Point(x, y) { this.x = x; this.y = y; }
 Point.prototype.sum = function () { return this.x + this.y; };
 function Pair(x, y) { this.x = x; this.y = y; }
 Pair.prototype.sum = function () { return this.x + this.y; };
-function Wide(x) { this.x = x; for (let k = 0; k < 2; k++) this.x = (this.x + k) | 0; }
+function Wide(x) { this.x = x; for (let k = 0; k < 2; k++) { this.x = (this.x + k) | 0; this.x = (this.x ^ 3) | 0; this.x = (this.x ^ 3) | 0; this.x = (this.x + 5) | 0; this.x = (this.x - 5) | 0; } }
 Wide.prototype.sum = function () { return this.x; };
-function lay(holder, laid) { let work = 0; for (let k = 0; k < 2; k++) work = (work + k) | 0; holder[hidden.prototype] = laid; return work; }
-function layAbove(holder) { let work = 0; for (let k = 0; k < 2; k++) work = (work + k) | 0; unseen(Object)[hidden.define](holder[hidden.prototype], hidden.x, { set(value) { seen++; }, get() { return 500; }, configurable: true }); return work; }
+function lay(holder, laid) { let work = 0; for (let k = 0; k < 2; k++) { work = (work + k) | 0; work = (work * 5 + 1) | 0; work = (work ^ 9) | 0; work = (work * 3 + k) | 0; work = (work ^ 5) | 0; work = (work - k) | 0; } holder[hidden.prototype] = laid; return work; }
+function layAbove(holder) { let work = 0; for (let k = 0; k < 2; k++) { work = (work + k) | 0; work = (work * 5 + 1) | 0; work = (work ^ 9) | 0; work = (work * 3 + k) | 0; work = (work ^ 5) | 0; work = (work - k) | 0; } unseen(Object)[hidden.define](holder[hidden.prototype], hidden.x, { set(value) { seen++; }, get() { return 500; }, configurable: true }); return work; }
 function quiet(list) { let total = 0; for (let i = 0; i < list.length; i++) { const p = new Point(list[i] | 0, 1); total = (total + p.sum()) | 0; } return total; }
 function pairs(list, again, above, holder, laid) { let total = 0; for (let i = 0; i < list.length; i++) { const p = new Pair(list[i] | 0, 1); total = (total + p.sum()) | 0; if (i === again) lay(holder, laid); if (i === above) layAbove(holder); } return total; }
 function entered(list) { let total = 0; for (let i = 0; i < list.length; i++) { const w = new Wide(list[i] | 0); total = (total + w.sum()) | 0; } return total; }

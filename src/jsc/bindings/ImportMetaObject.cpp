@@ -43,7 +43,9 @@
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
+#include <wtf/Scope.h>
 #include "BunCompiledModules.h"
+#include "CodeGenerationFromStrings.h"
 #include "JSCommonJSModule.h"
 #include "ModuleGraph.h"
 #include <JavaScriptCore/JSPromise.h>
@@ -215,10 +217,14 @@ static void throwIfResolvedFileIsRefused(JSC::JSGlobalObject* globalObject, JSC:
     auto resolved = resolvedPath.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, );
     if (auto module = Bun::compiledModuleForPath(resolved)) {
+        if (Bun::isModuleRefusedByName(resolved)) [[unlikely]] {
+            JSC::throwException(globalObject, scope, Bun::createCodeGenerationFromStringsError(globalObject));
+            return;
+        }
         WTF::String requesterPath = from.isString() ? from.toWTFString(globalObject) : WTF::String();
         RETURN_IF_EXCEPTION(scope, );
         // The asker chooses the words of the refusal alone.
-        JSC::AOT::ModuleRequesterScope asker(globalObject, Bun::requesterForImporter(requesterPath));
+        JSC::AOT::ModuleRequesterScope requesterScope(globalObject, Bun::requesterForImporter(requesterPath));
         scope.release();
         JSC::AOT::checkModuleAccess(globalObject, *module);
         return;
@@ -229,7 +235,7 @@ static void throwIfResolvedFileIsRefused(JSC::JSGlobalObject* globalObject, JSC:
     RETURN_IF_EXCEPTION(scope, );
     WTF::String importer = from.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, );
-    Bun::throwIfHeldUnderTypesAlone(defaultGlobalObject(globalObject), known.isNull() ? resolved : known, specifier, importer, true);
+    Bun::throwIfOnlyTyped(defaultGlobalObject(globalObject), known.isNull() ? resolved : known, specifier, importer, true);
     RETURN_IF_EXCEPTION(scope, );
     size_t query = resolved.find('?');
     StringView path = query == notFound ? StringView(resolved) : StringView(resolved).left(static_cast<unsigned>(query));
@@ -264,6 +270,14 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
         RETURN_IF_EXCEPTION(scope, {});
     }
 
+    std::optional<bool> previousResolution;
+    if (Bun::hasCompiledModules()) [[unlikely]]
+        previousResolution = Bun::willResolveName(lexicalGlobalObject, parentModule);
+    auto restoreResolution = makeScopeExit([&] {
+        if (previousResolution) [[unlikely]]
+            Bun::didResolveName(lexicalGlobalObject, *previousResolution);
+    });
+
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
         if (moduleName.isString()) {
             auto moduleString = moduleName.toWTFString(globalObject);
@@ -272,7 +286,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
             RETURN_IF_EXCEPTION(scope, {});
             if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(moduleString, fromString)) {
                 if (!isRequireDotResolve)
-                    resolvedString = Bun::keyOfImportByPackage(globalObject, resolvedString.value(), fromString, false);
+                    resolvedString = Bun::packageImportKey(globalObject, resolvedString.value(), fromString, false);
                 if (!isRequireDotResolve && !globalObject->onLoadPlugins.runningModuleMocks.isEmpty()) [[unlikely]]
                     return JSC::JSValue::encode(jsString(vm, Bun::keyOfImportWhileModuleMocksRun(globalObject, resolvedString.value(), fromString, false)));
                 if (moduleString == resolvedString.value())
@@ -419,7 +433,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
         RETURN_IF_EXCEPTION(scope, {});
         auto fromString = from.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        String given = Bun::keyOfImportByPackage(globalObject, key, fromString, false);
+        String given = Bun::packageImportKey(globalObject, key, fromString, false);
         if (!globalObject->onLoadPlugins.runningModuleMocks.isEmpty())
             given = Bun::keyOfImportWhileModuleMocksRun(globalObject, given, fromString, false);
         if (given != key)

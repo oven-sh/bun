@@ -221,6 +221,7 @@ fn default_lets_nothing_be_removed() {
         locales: UsedLocales::Unknown(None),
         starts_workers_from_unseen_code: true,
         names_bun_build: false,
+        can_reach_test_runner: true,
     };
     assert_eq!(features_of(&[use_of_word(ABSENT_WORD)]), expected);
 }
@@ -317,8 +318,43 @@ fn no_record_gives_empty_list_and_no_cause() {
         locales: listed(&[]),
         starts_workers_from_unseen_code: true,
         names_bun_build: false,
+        can_reach_test_runner: false,
     };
     assert_eq!(features_of(&[]), expected);
+}
+
+#[test]
+fn test_runner_is_reached_by_any_use_and_by_unseen_code() {
+    for kind in [
+        FeatureUseKind::Named,
+        FeatureUseKind::Unnamed,
+        FeatureUseKind::NamedAtRunTime,
+        FeatureUseKind::FoundByName,
+    ] {
+        let record = FeatureUseRecord {
+            kind,
+            ..use_of(Feature::Test)
+        };
+        assert!(features_of(&[record]).can_reach_test_runner, "{kind:?}");
+        let by = |builtin: BuiltinId| FeatureUseRecord {
+            builtin: builtin.to_wire(),
+            ..record
+        };
+        let of_function = features_of(&[by(BuiltinId::BunJest)]);
+        assert!(of_function.can_reach_test_runner, "{kind:?}");
+        let of_class = features_of(&[by(BuiltinId::ExpectAddEqualityTesters)]);
+        let is_named = matches!(kind, FeatureUseKind::Named | FeatureUseKind::FoundByName);
+        assert_eq!(of_class.can_reach_test_runner, is_named, "{kind:?}");
+    }
+    assert!(!features_of(&[use_of(Feature::Fetch)]).can_reach_test_runner);
+    for cause in [
+        EngineCause::EvaluatesText,
+        EngineCause::LoadsModuleByName,
+        EngineCause::RunsMachineCode,
+    ] {
+        let unseen = [unseen_code(cause)];
+        assert!(from_records(&[], &unseen, &[], &text_of).can_reach_test_runner);
+    }
 }
 
 #[test]
@@ -369,7 +405,7 @@ fn name_read_off_unknown_value_names_its_feature_and_not_bun_build() {
     let used = features_of(&[building]);
     assert!(used.names(Feature::Bundler));
     assert!(!used.names_bun_build);
-    for feature in features_kept_only_when_named().iter() {
+    for feature in features_retained_by_name().iter() {
         assert!(
             features_of(&[found_by_name(feature)]).names(feature),
             "{feature:?}"
@@ -389,6 +425,7 @@ fn result_with_image_gives_its_records() {
         locales: listed(&["de", "en-US"]),
         starts_workers_from_unseen_code: true,
         names_bun_build: false,
+        can_reach_test_runner: true,
     };
     assert_eq!(used_features_of_result(b"image"), expected);
 }

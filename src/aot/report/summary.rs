@@ -1,8 +1,10 @@
 use core::cmp::Reverse;
 
-use bun_options_types::aot_options::ExplainSet;
+use bun_options_types::aot_options::{AotOptions, ExplainSet};
 use bun_sema::util::SharedSort;
+use bun_trim::UnseenCodeCause;
 
+use super::build_rows::write_note_row;
 use super::format::{self, PathPrinter};
 use super::json::JsonWriter;
 use super::levels::{
@@ -16,72 +18,28 @@ use super::wording::{
     column_description, column_key, column_label, level_label, unseen_code_sentence,
 };
 use super::{ReportEntry, ReportInput};
-use crate::engine::AccessCountRecord;
+use crate::builtins::table;
+use crate::diagnostics::{SourcePosition, package_with_slow_code};
+use crate::engine::{AccessCountRecord, UnseenCodeRecord, builtin_of};
 use crate::ir::generated::AccessCost;
 use crate::ir::ids::ModuleId;
-use crate::statistics::{Stage, StatisticId, Statistics};
+use crate::statistics::{StatisticId, Statistics};
 
 const MAX_LISTED_FILES: usize = 5;
+const MAX_LISTED_PLACES: usize = 3;
 
-pub fn write_summary(input: &ReportInput<'_>, out: &mut Vec<u8>) {
+pub fn write_summary(input: &ReportInput<'_>, has_colors: bool, out: &mut Vec<u8>) {
     let options = input.options;
-    write_trim_causes(input, out);
-    write_developer_options(&options.option_words, out);
+    write_slow_code_in_packages(input, has_colors, out);
+    write_trim_causes(input, has_colors, out);
+    if !options.hardening_names.is_empty() {
+        let names = options.hardening_names.join(&b", "[..]);
+        write_note_row("harden", &[names], has_colors, out);
+    }
+    write_developer_words(options, out);
     if options.explain.contains(ExplainSet::TEXT) {
         write_access_lines(&compute_totals(input), out);
     }
-}
-
-pub(super) struct CompileSpeed {
-    pub(super) lines: u64,
-    pub(super) milliseconds: u64,
-    pub(super) lines_per_second: u64,
-}
-
-impl CompileSpeed {
-    pub(super) fn of(statistics: &Statistics) -> CompileSpeed {
-        let stages = Stage::ALL
-            .into_iter()
-            .filter(|stage| !matches!(stage, Stage::Any | Stage::RunTime));
-        let nanoseconds = stages
-            .map(|stage| statistics.get(stage.time()))
-            .fold(0, u64::saturating_add);
-        let lines = statistics.get(StatisticId::SourceLines);
-        let per_second = u128::from(lines) * 1_000_000_000 / u128::from(nanoseconds.max(1));
-        CompileSpeed {
-            lines,
-            milliseconds: nanoseconds / 1_000_000,
-            lines_per_second: per_second.min(u128::from(u64::MAX)) as u64,
-        }
-    }
-}
-
-pub fn write_untyped_note(statistics: &Statistics, out: &mut Vec<u8>) {
-    let demoted_files = statistics.get(StatisticId::SourceFilesDemoted);
-    if demoted_files > 0 {
-        format::write_counted(out, demoted_files, "file", "files");
-        out.extend_from_slice(b" compiled without types");
-    }
-    let speed = CompileSpeed::of(statistics);
-    if speed.lines == 0 || speed.milliseconds == 0 {
-        return;
-    }
-    if !out.is_empty() {
-        out.extend_from_slice(b", ");
-    }
-    out.extend_from_slice(b"compiled ");
-    format::write_counted(out, speed.lines, "line", "lines");
-    out.extend_from_slice(b" in ");
-    let hundredths = speed.milliseconds / 10;
-    format::write_count(out, hundredths / 100);
-    out.extend_from_slice(&[
-        b'.',
-        b'0' + (hundredths % 100 / 10) as u8,
-        b'0' + (hundredths % 10) as u8,
-    ]);
-    out.extend_from_slice(b" s (");
-    format::write_count(out, speed.lines_per_second);
-    out.extend_from_slice(b" lines/s)");
 }
 
 pub(super) fn collect_details(input: &ReportInput<'_>, out: &mut Vec<ReportEntry>) {
@@ -134,15 +92,29 @@ fn write_columns_line(out: &mut Vec<u8>, label: &str, costs: &CostCounts) {
     out.extend_from_slice(b")\n");
 }
 
-pub fn write_developer_options(option_words: &[Box<[u8]>], out: &mut Vec<u8>) {
-    if option_words.is_empty() {
+/// `--aot-harden` is a public flag, so the words that it stands for are not listed.
+fn write_developer_words(options: &AotOptions, out: &mut Vec<u8>) {
+    let words = options.option_words.iter();
+    let mut words = words
+        .filter(|word| !options.hardening_words.contains(word))
+        .peekable();
+    if words.peek().is_none() {
         return;
     }
     out.extend_from_slice(b"Built with developer options:");
-    for word in option_words {
+    for word in words {
         format::write_parts(out, &[b" --aot-", word]);
     }
     out.push(b'\n');
+}
+
+/// For the logs of `Bun.build()`.
+pub fn write_developer_options(options: &AotOptions, out: &mut Vec<u8>) {
+    if !options.hardening_names.is_empty() {
+        let names = options.hardening_names.join(&b", "[..]);
+        format::write_parts(out, &[b"Hardened with ", &names, b"\n"]);
+    }
+    write_developer_words(options, out);
 }
 
 fn write_access_lines(totals: &ProgramTotals, out: &mut Vec<u8>) {
@@ -156,24 +128,118 @@ fn write_access_lines(totals: &ProgramTotals, out: &mut Vec<u8>) {
     }
 }
 
-fn write_trim_causes(input: &ReportInput<'_>, out: &mut Vec<u8>) {
+fn write_slow_code_in_packages(input: &ReportInput<'_>, has_colors: bool, out: &mut Vec<u8>) {
+    if input.options.explain.contains(ExplainSet::TEXT) {
+        return;
+    }
+    let records = input.engine.user_diagnostics().iter();
+    let mut packages: Vec<&[u8]> = records
+        .filter_map(|record| package_with_slow_code(record, input.texts))
+        .collect();
+    packages.shared_sort_unstable();
+    let mut lines: Vec<Vec<u8>> = Vec::new();
+    for same_package in packages.chunk_by(|a, b| a == b) {
+        let count = same_package.len() as u64;
+        let mut line = Vec::new();
+        format::write_counted(
+            &mut line,
+            count,
+            "regular expression",
+            "regular expressions",
+        );
+        let verb: &[u8] = if count == 1 { b" is" } else { b" are" };
+        format::write_parts(&mut line, &[b" in ", same_package[0], verb]);
+        line.extend_from_slice(b" compiled at run time");
+        lines.push(line);
+    }
+    if let Some(last) = lines.last_mut() {
+        last.extend_from_slice(b" (--explain lists them)");
+    }
+    write_note_row("note", &lines, has_colors, out);
+}
+
+struct TrimCause {
+    sentence: &'static str,
+    places: Vec<SourcePosition>,
+    is_about_build: bool,
+}
+
+/// The program's text can't name a built-in like `%GeneratorFunction%`, so a record about one has no place to show.
+fn names_internal_builtin(record: &UnseenCodeRecord) -> bool {
+    builtin_of(record.builtin).is_some_and(|id| table::text_of(id).starts_with('%'))
+}
+
+fn collect_trim_causes(input: &ReportInput<'_>) -> Vec<TrimCause> {
+    let records = input.engine.unseen_code();
+    let mut positions = Positions::new(input, PathStyle::Posix);
+    let mut causes: Vec<TrimCause> = Vec::new();
+    for unseen in &input.used_features.causes {
+        let sentence = unseen_code_sentence(unseen.cause);
+        let index = match causes.iter().position(|cause| cause.sentence == sentence) {
+            Some(index) => index,
+            None => {
+                causes.push(TrimCause {
+                    sentence,
+                    places: Vec::new(),
+                    is_about_build: matches!(
+                        unseen.cause,
+                        UnseenCodeCause::ProgramNotCompiled
+                            | UnseenCodeCause::ReportMissing
+                            | UnseenCodeCause::FlowResultDisabled
+                            | UnseenCodeCause::OptionAdmitsCode
+                    ),
+                });
+                causes.len() - 1
+            }
+        };
+        let place = record_at(records, unseen.witness)
+            .filter(|record| !names_internal_builtin(record))
+            .and_then(|record| positions.resolve_location(record.witness.location));
+        causes[index].places.extend(place);
+    }
+    // Once one place lets in code that the compiler can't see, that code can reach every other way to load code.
+    // The engine lists each of those too. They have no place in the program, and they follow from the first.
+    let is_root = |cause: &TrimCause| cause.is_about_build || !cause.places.is_empty();
+    if causes.iter().any(is_root) {
+        causes.retain(is_root);
+    }
+    // What an eval() can do, it can do by loading code too. Each place is listed under the first reason that names it.
+    let mut listed: Vec<SourcePosition> = Vec::new();
+    causes.retain_mut(|cause| {
+        cause.places.shared_sort_unstable();
+        cause.places.dedup();
+        let had_places = !cause.places.is_empty();
+        cause.places.retain(|place| !listed.contains(place));
+        listed.extend_from_slice(&cause.places);
+        !had_places || !cause.places.is_empty()
+    });
+    causes
+}
+
+fn write_trim_causes(input: &ReportInput<'_>, has_colors: bool, out: &mut Vec<u8>) {
     if !input.options.trim.removes_unused {
         return;
     }
-    let records = input.engine.unseen_code();
-    let mut positions = Positions::new(input, PathStyle::Posix);
-    for unseen in &input.used_features.causes {
-        let position = record_at(records, unseen.witness)
-            .and_then(|record| positions.resolve_location(record.witness.location));
-        out.extend_from_slice(b"--trim kept APIs your code doesn't call because ");
-        out.extend_from_slice(unseen_code_sentence(unseen.cause).as_bytes());
-        if position.is_some() {
-            out.extend_from_slice(b" (");
-            write_shown_position(out, position.as_ref());
-            out.push(b')');
-        }
-        out.push(b'\n');
+    let causes = collect_trim_causes(input);
+    if causes.is_empty() {
+        return;
     }
+    let mut lines = vec![b"kept APIs your code doesn't call:".to_vec()];
+    for cause in &causes {
+        lines.push(cause.sentence.as_bytes().to_vec());
+        for place in cause.places.iter().take(MAX_LISTED_PLACES) {
+            let mut line = b"  ".to_vec();
+            write_shown_position(&mut line, Some(place));
+            lines.push(line);
+        }
+        if cause.places.len() > MAX_LISTED_PLACES {
+            let mut line = b"  and ".to_vec();
+            format::write_count(&mut line, (cause.places.len() - MAX_LISTED_PLACES) as u64);
+            line.extend_from_slice(b" more");
+            lines.push(line);
+        }
+    }
+    write_note_row("trim", &lines, has_colors, out);
 }
 
 fn details_text<'r>(

@@ -1,5 +1,5 @@
 "use strict";
-// STATISTIC: LoopsBuiltTwiceWhoseValuesHandlersOutsideRead >= 1
+// STATISTIC: LoopsVersionedUnderOuterHandlers >= 1
 // A block that leaves the loop stands under the same handler as the blocks that go round: it hands on what the copies have joined.
 const key = JSON.parse('"go"'), log = [];
 const counted = (values, name) => ({ [Symbol.iterator]() { let at = 0; return { next() { return at < values.length ? { done: false, value: values[at++] } : { done: true, value: undefined }; }, return() { log.push("closed " + name + " at " + at); return {}; } }; } });

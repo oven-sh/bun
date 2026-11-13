@@ -4,7 +4,7 @@ use smallvec::SmallVec;
 
 use super::{DecoratedKind, Decoration, DecorationGroup, StandardDecorationResult};
 use crate::builtins::id::BuiltinId;
-use crate::ir::{ClassSlot, PropertyKeyId, TypeTable, ValueId};
+use crate::ir::{BlockId, ClassSlot, PropertyKeyId, TypeTable, ValueId};
 use crate::lower::FunctionLowering;
 use crate::lower::class::{self, AccessorFunction, ClassEvaluation, ClassPlan, find_member_value};
 use crate::lower::layouts;
@@ -87,14 +87,64 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.emit_builtin_call(BuiltinId::CompilerHelpersRunInitializers, &arguments);
     }
 
-    pub(in crate::lower) fn get_initializer_list(
+    pub(in crate::lower) fn drop_empty_initializer_lists(&mut self, class: ClassId) {
+        let lists = self.get_class_slot(class, ClassSlot::DecoratorState);
+        let helper = BuiltinId::CompilerHelpersKeepInitializerLists;
+        let kept = self.emit_builtin_call(helper, &[lists]);
+        self.set_class_slot(class, ClassSlot::DecoratorState, kept);
+    }
+
+    /// A list is undefined where it was empty when the class was made, and so are the lists where all were.
+    fn split_on_initializers(
         &mut self,
         class: ClassId,
         initializers: u32,
+        join: BlockId,
+        unchanged: &[ValueId],
     ) -> ValueId {
-        let state = self.get_class_slot(class, ClassSlot::DecoratorState);
+        let lists = self.get_class_slot(class, ClassSlot::DecoratorState);
+        let split = self.split_on_type(lists, TypeTable::UNDEFINED);
+        self.builder.switch_to(split.taken);
+        self.jump_with(join, unchanged);
+        self.builder.switch_to(split.not_taken);
         let index = self.builder.integer(i64::from(initializers));
-        self.builder.elem_get(state, index)
+        let list = self.builder.elem_get(split.not_taken_value, index);
+        let split = self.split_on_type(list, TypeTable::UNDEFINED);
+        self.builder.switch_to(split.taken);
+        self.jump_with(join, unchanged);
+        self.builder.switch_to(split.not_taken);
+        split.not_taken_value
+    }
+
+    pub(in crate::lower) fn emit_listed_initializer_run(
+        &mut self,
+        class: ClassId,
+        initializers: u32,
+        receiver: ValueId,
+    ) {
+        let join = self.create_block();
+        let list = self.split_on_initializers(class, initializers, join, &[]);
+        self.emit_initializer_run(list, receiver);
+        self.jump_with(join, &[]);
+        self.continue_in(join);
+    }
+
+    pub(in crate::lower) fn emit_listed_value_initializer_run(
+        &mut self,
+        class: ClassId,
+        initializers: u32,
+        receiver: ValueId,
+        value: ValueId,
+    ) -> ValueId {
+        let join = self.create_block();
+        let result = self.builder.add_parameter(join, None);
+        let list = self.split_on_initializers(class, initializers, join, &[value]);
+        let arguments = [list, receiver, value];
+        let helper = BuiltinId::CompilerHelpersRunValueInitializers;
+        let initialized = self.emit_builtin_call(helper, &arguments);
+        self.jump_with(join, &[initialized]);
+        self.continue_in(join);
+        result
     }
 
     fn emit_empty_list(&mut self) -> ValueId {

@@ -112,6 +112,24 @@ impl YarnCommands {
     }
 }
 
+/// Removes the `node_modules/.bin` entries from a `PATH`.
+pub fn strip_bin_dirs(path: &[u8]) -> Vec<u8> {
+    let mut result = Vec::with_capacity(path.len());
+    for entry in bun_core::strings::split(path, &[bun_paths::DELIMITER]) {
+        let dir = bun_core::strings::without_trailing_slash(entry);
+        let is_bin_dir = bun_paths::basename(dir) == b".bin"
+            && bun_paths::dirname(dir)
+                .is_some_and(|parent| bun_paths::basename(parent) == b"node_modules");
+        if !is_bin_dir {
+            if !result.is_empty() {
+                result.push(bun_paths::DELIMITER);
+            }
+            result.extend_from_slice(entry);
+        }
+    }
+    result
+}
+
 /// Look for invocations of any: `yarn run` / `yarn $cmd` / `pnpm run` /
 /// `pnpm dlx` / `pnpx` / `npm run` / `npx` and replace them with `bun run`
 /// / `bun x` so that lifecycle scripts re-enter Bun instead of spawning
@@ -439,8 +457,8 @@ pub type List<'a> = io_heap::Intrusive<LifecycleScriptSubprocess<'a>, StartedAtC
 
 impl<'a> io_heap::HeapNode for LifecycleScriptSubprocess<'a> {
     #[inline]
-    fn heap(&mut self) -> &mut io_heap::IntrusiveField<Self> {
-        &mut self.heap
+    fn heap(&self) -> &io_heap::IntrusiveField<Self> {
+        &self.heap
     }
 }
 
@@ -552,29 +570,16 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         let _ = fd;
     }
 
-    /// # Safety
-    /// `this` must be a live `*mut Self` (allocation-rooted or derived from a
-    /// caller-held `&mut Self`). Only the `manager` and `heap` fields are
-    /// touched via raw-pointer projection — no whole-struct `&mut Self` is
-    /// materialized — so callers may hold disjoint shared borrows into other
-    /// fields across this call (see `spawn_next_script_inner`).
-    unsafe fn ensure_not_in_heap(this: *mut Self) {
-        // SAFETY: caller contract — `this` is non-null and live.
-        unsafe {
-            let manager: *mut PackageManager = (*this).manager.as_ptr();
-            let heap = core::ptr::addr_of_mut!((*this).heap);
-            // SAFETY: `manager` is non-null and outlives every subprocess (see
-            // `Self::manager`); the install loop is single-threaded here.
-            let active = &mut (*manager).active_lifecycle_scripts;
-            if !(*heap).child.is_null()
-                || !(*heap).next.is_null()
-                || !(*heap).prev.is_null()
-                || core::ptr::eq(active.root, this as *const _)
-            {
-                // SAFETY: `this` was inserted via `insert(this)` with allocation-
-                // rooted provenance; the heap holds no other live `&mut` to it here.
-                active.remove(this.cast::<LifecycleScriptSubprocess<'static>>());
-            }
+    fn ensure_not_in_heap(&self) {
+        let active = &self.manager().active_lifecycle_scripts;
+        let this = core::ptr::from_ref(self).cast::<LifecycleScriptSubprocess<'static>>();
+        if !self.heap.child().is_null()
+            || !self.heap.next().is_null()
+            || !self.heap.prev().is_null()
+            || core::ptr::eq(active.peek(), this)
+        {
+            // SAFETY: `self` is linked, and `active` is the only heap it is ever inserted into.
+            unsafe { active.remove(this.cast_mut()) };
         }
     }
 
@@ -620,7 +625,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     // Relaxed is enough, because it's only read and written on the main thread.
                     let _ = ALIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
                 }
-                Self::ensure_not_in_heap(this);
+                (*this).ensure_not_in_heap();
             }
         }
         result
@@ -646,9 +651,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             (*this).stdout.set_parent(this.cast::<c_void>());
             (*this).stderr.set_parent(this.cast::<c_void>());
 
-            // Raw-ptr receiver: touches only `heap`/`manager`, so the shared
-            // borrows `original_script`/`cwd` (into `(*this).scripts`) survive.
-            Self::ensure_not_in_heap(this);
+            (*this).ensure_not_in_heap();
 
             (*this).current_script_index = next_script_index;
             (*this).has_called_process_exit = false;
@@ -934,9 +937,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             let _ = ALIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
         }
 
-        // SAFETY: `self` is live; the raw-ptr receiver touches only disjoint
-        // fields (`heap`/`manager`) — see `ensure_not_in_heap` doc.
-        unsafe { Self::ensure_not_in_heap(std::ptr::from_mut::<Self>(self)) };
+        self.ensure_not_in_heap();
 
         match status {
             Status::Exited(exit) => {
@@ -1312,8 +1313,6 @@ bun_io::impl_buffered_reader_parent! {
 impl Drop for LifecycleScriptSubprocess<'_> {
     fn drop(&mut self) {
         self.reset_polls();
-        // SAFETY: `self` is live for the duration of `drop`; raw-ptr receiver
-        // touches only `heap`/`manager` (see `ensure_not_in_heap` doc).
-        unsafe { Self::ensure_not_in_heap(std::ptr::from_mut::<Self>(self)) };
+        self.ensure_not_in_heap();
     }
 }

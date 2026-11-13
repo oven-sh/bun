@@ -1,4 +1,4 @@
-// STATISTIC: LoopsWhoseTurnsAreLaidOut >= 1
+// STATISTIC: UnrolledLoopsEmitted >= 1
 // G is a constant of the file that JSON.parse gives. Its uses say a list of lists of numbers: the loops are typed as where the grid is handed in as a parameter.
 "use strict";
 const G = JSON.parse("[" + Array.from({ length: 10 }, (_, y) => "[" + Array.from({ length: 12 }, (_, x) => (x * 7 + y * 5) % 11).join() + "]").join() + "]");

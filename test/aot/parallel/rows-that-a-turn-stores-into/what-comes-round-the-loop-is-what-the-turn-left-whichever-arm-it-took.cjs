@@ -1,6 +1,6 @@
 // Variables are carried round the loop and read behind it; work is done behind the stores in the same turn; the turn goes on or ends there. Whichever arm a turn takes, and wherever the next turn runs, what comes round is what plain brings round.
-// STATISTIC: RowsAskedOnceWhereStretchesStoreIntoThem >= 4
-// STATISTIC: RestsOfStretchesThatMayRunAsWritten >= 3
+// STATISTIC: RowStoreRegionsGuarded >= 4
+// STATISTIC: PartialRegionFallbacksEmitted >= 2
 "use strict";
 function pushed(...values) { const row = []; for (const value of values) row.push(value); return row; }
 function rows() { return pushed(pushed(0.5, 1.5, 2.5, 3.5), pushed(4.5, 5.5, 6.5, 7.5), pushed(8.5, 9.5, 10.5, 11.5), pushed(12.5, 13.5, 14.5, 15.5)); }

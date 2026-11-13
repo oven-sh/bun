@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_sema::check::aot::{Effect, FileOrigin, effect_of};
 
 use super::int32_flows::write_int32_message;
@@ -14,10 +15,34 @@ use crate::report::{ModuleLocator, ModuleOrigin, SourceTexts};
 fn is_about_load_by_unknown_name(record: &UserDiagnosticRecord) -> bool {
     matches!(
         record.kind,
-        UserDiagnosticKind::CodeOutsideImageIsRefused
-            | UserDiagnosticKind::ModuleNamedAtRunTimeIsRefused
-            | UserDiagnosticKind::LoaderIsHeldByUnseenCode
+        UserDiagnosticKind::NonConstantImportPath
+            | UserDiagnosticKind::NonConstantModuleName
+            | UserDiagnosticKind::RequirePassedToUnseenCode
     )
+}
+
+pub(super) fn package_name_in(path: &[u8]) -> Option<&[u8]> {
+    const FOLDER: &[u8] = b"node_modules/";
+    let name = &path[strings::last_index_of(path, FOLDER)? + FOLDER.len()..];
+    let parts = if name.starts_with(b"@") { 2 } else { 1 };
+    let mut slashes = (0..name.len()).filter(|&index| name[index] == b'/');
+    Some(&name[..slashes.nth(parts - 1)?])
+}
+
+/// The package of a diagnostic that only says that code in a package is slower than it could be. Nothing fails, and the
+/// user can't edit the package. So the build counts these by package, and `--explain` lists them.
+pub(crate) fn package_with_slow_code<'t>(
+    record: &UserDiagnosticRecord,
+    texts: &'t SourceTexts,
+) -> Option<&'t [u8]> {
+    if record.kind != UserDiagnosticKind::RegExpPatternNotConstant {
+        return None;
+    }
+    let module = position_of(record.location)?.module;
+    match texts.origin(module) {
+        ModuleOrigin::Dependency => package_name_in(texts.path(module)),
+        ModuleOrigin::Program | ModuleOrigin::Runtime => None,
+    }
 }
 
 impl Diagnostics {
@@ -26,12 +51,16 @@ impl Diagnostics {
         result: &EngineResult,
         texts: &SourceTexts,
         runs_tests: bool,
+        lists_slow_code_in_packages: bool,
     ) {
         let mut locator = ModuleLocator::new(texts);
         for record in result
             .user_diagnostics()
             .iter()
             .filter(|record| !(runs_tests && is_about_load_by_unknown_name(record)))
+            .filter(|record| {
+                lists_slow_code_in_packages || package_with_slow_code(record, texts).is_none()
+            })
         {
             self.add_user_diagnostic(record, result.text(record.message), texts, &mut locator);
         }
@@ -59,9 +88,15 @@ impl Diagnostics {
         );
     }
 
-    pub(crate) fn add_worker_start_without_name(&mut self, witness: &Witness, texts: &SourceTexts) {
+    pub(crate) fn add_worker_start_without_name(
+        &mut self,
+        witness: &Witness,
+        names_left_out: &[u8],
+        texts: &SourceTexts,
+    ) {
         if witness.function_id().is_some() {
-            self.add_at_witness(Code::WorkerStartedFromUnknownValue, &[], witness, texts);
+            let code = Code::WorkerStartedFromUnknownValue;
+            self.add_at_witness(code, &[names_left_out], witness, texts);
         }
     }
 

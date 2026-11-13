@@ -3,6 +3,7 @@ mod resolve;
 
 use bun_sema::atom::Atom;
 use bun_sema::bind::{PrivateMembers, SymbolId};
+use bun_sema::check::aot::FunctionRef;
 use bun_sema::hir::{ClassId, ExprId, MemberId};
 use smallvec::{SmallVec, smallvec};
 
@@ -10,8 +11,8 @@ use super::known_call::PrivateStateAccess;
 use super::{FileLowering, FunctionLowering, call, layouts};
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::RuntimeErrorKind;
-use crate::ir::{BlockId, LayoutId, PrivateStatePart, TypeId, TypeTable, ValueId};
-use crate::known_helpers::{FilePrivateStates, PrivateStateKind};
+use crate::ir::{BlockId, Edge, LayoutId, PrivateStatePart, TypeId, TypeTable, ValueId};
+use crate::known_helpers::{FilePrivateStates, PrivateStateKind, StateOwner};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(in crate::lower) enum PrivateHolder {
@@ -82,7 +83,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.emit_guard(is_recorded, otherwise);
     }
 
-    fn emit_entry_of_collection(&mut self, access: PrivateStateAccess, value: Option<ValueId>) {
+    pub(in crate::lower) fn emit_entry_of_collection(
+        &mut self,
+        access: PrivateStateAccess,
+        value: Option<ValueId>,
+    ) {
         let method = match value {
             Some(_) => BuiltinId::WeakMapPrototypeSet,
             None => BuiltinId::WeakSetPrototypeAdd,
@@ -170,6 +175,56 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             .private_set(access.object, token, state.layout, state.field, value);
     }
 
+    /// Adds state to an object that has none, or lets the helper throw on the slow path.
+    pub(in crate::lower) fn emit_state_addition(
+        &mut self,
+        access: PrivateStateAccess,
+        value: Option<ValueId>,
+        slow_path: BlockId,
+    ) {
+        let Some(state) = self.file.resolve_state(access.state) else {
+            let never = self.builder.boolean(false);
+            self.emit_guard(never, slow_path);
+            return;
+        };
+        let fixed = self.file.inputs.fixed_builtins;
+        let (has, add) = match state.kind {
+            PrivateStateKind::Field => (
+                BuiltinId::WeakMapPrototypeHas,
+                BuiltinId::WeakMapPrototypeSet,
+            ),
+            PrivateStateKind::Brand => (
+                BuiltinId::WeakSetPrototypeHas,
+                BuiltinId::WeakSetPrototypeAdd,
+            ),
+        };
+        fixed.note(has);
+        fixed.note(add);
+        self.continue_if_recorded(access, slow_path);
+        let object = self.continue_if_type(access.object, TypeTable::OBJECT, slow_path);
+        let token = self.get_private_state_slot(access.state, PrivateStatePart::Token);
+        let has_entry = self
+            .builder
+            .private_has(object, token, state.layout, state.field);
+        let repeated = self.create_block();
+        let insert = self.create_block();
+        self.builder
+            .branch(has_entry, Edge::to(repeated), Edge::to(insert));
+
+        // The helper finds the entry in the collection and throws.
+        self.continue_in(repeated);
+        self.emit_entry_of_collection(access, value);
+        self.jump(slow_path);
+
+        self.continue_in(insert);
+        let stored = match value {
+            Some(value) => value,
+            None => self.builder.boolean(true),
+        };
+        self.builder
+            .private_define(object, token, state.layout, state.field, stored);
+    }
+
     pub(in crate::lower) fn emit_state_definition(
         &mut self,
         access: PrivateStateAccess,
@@ -210,7 +265,13 @@ fn find_states<'a>(file: &FileLowering<'a, '_, '_, '_>) -> Option<&'a FilePrivat
 impl FileLowering<'_, '_, '_, '_> {
     fn resolve_state(&mut self, state: SymbolId) -> Option<StateField> {
         let found = find_states(self)?.state(state)?;
-        let layout = self.own_class_layout(found.owner);
+        let layout = match found.owner {
+            StateOwner::Class(class) => self.own_class_layout(class),
+            StateOwner::Function(function) => {
+                let file = self.file;
+                self.constructor_function_layout(FunctionRef { file, function })?
+            }
+        };
         let name = self.bound.symbol(state).name;
         let key = layouts::private_key(self, layout, name);
         Some(StateField {
@@ -259,13 +320,14 @@ _Counter_x = new WeakMap(), _Counter_instances = new WeakSet(), _Counter_step = 
     fn lower(main: &str) -> Vec<LoweredFile> {
         let options = LoweringOptions {
             platform: host_platform(),
-            embeds_function_text: false,
-            reads_function_texts_back: false,
+            embeds_function_source: false,
+            reparses_function_sources: false,
             removable: Default::default(),
             minifies_identifiers: false,
             obfuscates: false,
             counts_executions: false,
             runs_tests: false,
+            divides_small_files: false,
         };
         let lowered = lower_program(&[("main.mjs", main), ("helpers.mjs", HELPERS)], options);
         lowered.into_iter().map(|(_, lowered)| lowered).collect()

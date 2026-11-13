@@ -1,5 +1,5 @@
 // Two constructors lay `works` at one place. The first lays it by a data descriptor, read-only and not configurable; the second stores whatever it is handed. A store in sight, of works like those that the first is held to, goes through a receiver that is the one or the other by a parameter: the second takes it and the first refuses it.
-// STATISTIC: FieldsHeldToWhatIsSeen >= 2
+// STATISTIC: FieldTypesEnforced >= 2
 // Under: --aot-testing=CheckProofsAtRunTime: what is proven is asked again at run time
 class Works { constructor(teeth) { this.teeth = teeth; this.turns = 1; } }
 function Clock(teeth) {

@@ -39,6 +39,13 @@ struct BodySize {
     word_count: usize,
 }
 
+enum PassedBy {
+    No,
+    /// The blocks passed by have no handler, and no other block goes to them any more.
+    ByEveryEdge,
+    BySomeEdges,
+}
+
 #[derive(Copy, Clone)]
 struct PendingLists<'a> {
     values: &'a [ValueId],
@@ -315,8 +322,13 @@ impl FinishScratch {
         lists: PendingLists<'_>,
     ) -> BodySize {
         self.reach_blocks(blocks, targets);
-        if self.pass_by_blocks(blocks, targets, lists) {
-            self.reach_blocks(blocks, targets);
+        match self.pass_by_blocks(blocks, targets, lists) {
+            PassedBy::No => {}
+            PassedBy::ByEveryEdge => {
+                let last_passed_by = &self.last_passed_by;
+                (self.order).retain(|block| last_passed_by[block.index()].is_none());
+            }
+            PassedBy::BySomeEdges => self.reach_blocks(blocks, targets),
         }
         let size = self.join_blocks(blocks, targets, values, lists);
 
@@ -357,7 +369,7 @@ impl FinishScratch {
         blocks: &[PendingBlock],
         targets: &mut [PendingTarget],
         lists: PendingLists<'_>,
-    ) -> bool {
+    ) -> PassedBy {
         let FinishScratch {
             order,
             incoming,
@@ -366,7 +378,7 @@ impl FinishScratch {
             ..
         } = self;
         if order.len() == 1 {
-            return false;
+            return PassedBy::No;
         }
         places.clear();
         places.resize(blocks.len(), 0);
@@ -388,6 +400,7 @@ impl FinishScratch {
         last_passed_by.clear();
         last_passed_by.resize(blocks.len(), None);
         let mut is_any_passed_by = false;
+        let mut is_any_handled = false;
         for id in order.iter().rev() {
             if *id == ENTRY_BLOCK {
                 continue;
@@ -423,10 +436,11 @@ impl FinishScratch {
             }
             last_passed_by[id.index()] = Some(last.unwrap_or(*id));
             is_any_passed_by = true;
+            is_any_handled |= block.handler.is_some();
         }
         incoming.clear();
         if !is_any_passed_by {
-            return false;
+            return PassedBy::No;
         }
 
         let end_of = |targets: &[PendingTarget], place: u32| {
@@ -467,7 +481,25 @@ impl FinishScratch {
             }
         }
         edges_that_end_at.clear();
-        is_any_moved
+        if !is_any_moved {
+            return PassedBy::No;
+        }
+        if is_any_handled {
+            return PassedBy::BySomeEdges;
+        }
+        for id in order.iter() {
+            if last_passed_by[id.index()].is_some() {
+                continue;
+            }
+            let mut is_any_entered = false;
+            for_each_successor(&blocks[id.index()], targets, |target| {
+                is_any_entered |= last_passed_by[target.index()].is_some();
+            });
+            if is_any_entered {
+                return PassedBy::BySomeEdges;
+            }
+        }
+        PassedBy::ByEveryEdge
     }
 
     fn join_blocks(
@@ -654,23 +686,32 @@ impl Encoder<'_> {
     }
 
     #[inline]
-    fn encode_value(&mut self, id: ValueId, written: Range<usize>) {
+    fn encode_value(&mut self, id: ValueId, mut written: Range<usize>) {
         debug_assert!(
             self.values[id.index()].next != IS_PARAMETER,
             "a block lists no parameter as a value"
         );
         self.number_value(id);
         let head = self.words[written.start];
-        debug_assert_eq!(
-            head & MARKS & !STANDS_IN_TAIL_POSITION,
-            0,
-            "no word for a written position follows the fields"
-        );
+        if head & WRITTEN_POSITION_FOLLOWS != 0 {
+            written.end -= 1;
+        }
         let opcode = Opcode::ALL.get((head & !MARKS) as usize).copied();
         let opcode = opcode.expect("an operation begins with its opcode");
-        self.number_operands(written, |words, visit| {
-            visit_value_fields(opcode, words, ValueHead::WORDS, visit)
-        });
+        let operands = self.operands_in(written);
+        let end = visit_value_fields(
+            opcode,
+            operands.words,
+            ValueHead::WORDS,
+            &mut |field, at| {
+                operands.number(field, at);
+            },
+        );
+        debug_assert_eq!(
+            end,
+            Some(operands.words.len()),
+            "the fields have their wire form"
+        );
     }
 
     #[inline]
@@ -687,9 +728,15 @@ impl Encoder<'_> {
             let start = self.words.len();
             let fields = words_in(self.lists.words, &terminator.fields);
             push_words(&mut self.words, fields);
-            self.number_operands(start..self.words.len(), |words, visit| {
-                visit_terminator_fields(kind, words, 0, visit)
+            let operands = self.operands_in(start..self.words.len());
+            let end = visit_terminator_fields(kind, operands.words, 0, &mut |field, at| {
+                operands.number(field, at);
             });
+            debug_assert_eq!(
+                end,
+                Some(operands.words.len()),
+                "the fields have their wire form"
+            );
         }
         for target in targets_of(block, self.targets) {
             self.encode_target(target);
@@ -729,21 +776,31 @@ impl Encoder<'_> {
     }
 
     #[inline]
-    fn number_operands(
-        &mut self,
-        written: Range<usize>,
-        visit_fields: impl FnOnce(&[Cell<u32>], &mut dyn FnMut(FieldWord, usize)) -> Option<usize>,
-    ) {
-        let (numbers, value_count) = (&*self.numbers, self.value_count);
-        let cells = Cell::from_mut(&mut self.words[written]).as_slice_of_cells();
-        let end = visit_fields(cells, &mut |field: FieldWord, at: usize| match field {
+    fn operands_in(&mut self, written: Range<usize>) -> Operands<'_> {
+        Operands {
+            numbers: self.numbers,
+            value_count: self.value_count,
+            words: Cell::from_mut(&mut self.words[written]).as_slice_of_cells(),
+        }
+    }
+}
+
+struct Operands<'a> {
+    numbers: &'a [u32],
+    value_count: u32,
+    words: &'a [Cell<u32>],
+}
+
+impl Operands<'_> {
+    #[inline(always)]
+    fn number(&self, field: FieldWord, at: usize) {
+        match field {
             FieldWord::Operand => {
-                let cell = &cells[at];
-                let pending = ValueId::from_word(cell.get());
-                cell.set(number_of(numbers, value_count, pending));
+                let word = &self.words[at];
+                let pending = ValueId::from_word(word.get());
+                word.set(number_of(self.numbers, self.value_count, pending));
             }
             FieldWord::Reference(_) => {}
-        });
-        debug_assert_eq!(end, Some(cells.len()), "the fields have their wire form");
+        }
     }
 }

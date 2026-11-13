@@ -224,7 +224,7 @@ fn leave_calls_of_test_run_to_loader(input: &BindInput<'_, '_>, scans: &mut Scan
 pub(super) fn leave_imports_of_test_files_to_loader(
     input: &BindInput<'_, '_>,
     scans: &mut Scans,
-    may_load_again: &dyn Fn(FileId) -> bool,
+    asks_loader: &dyn Fn(FileId, FileId) -> bool,
 ) {
     struct Statement {
         importer: FileId,
@@ -241,8 +241,10 @@ pub(super) fn leave_imports_of_test_files_to_loader(
         false => FxHashSet::default(),
     };
     leave_calls_of_test_run_to_loader(input, scans);
+    let entry_points = input.files.entry_points();
+    let test_files = &entry_points[..entry_points.len().min(input.written_entry_point_count)];
     let importers = match given_to_several_types.is_empty() {
-        true => input.files.entry_points(),
+        true => test_files,
         false => input.files.compiled_files(),
     };
     let mut statements = Vec::new();
@@ -250,8 +252,7 @@ pub(super) fn leave_imports_of_test_files_to_loader(
         let Some(scan) = scans.find(importer) else {
             continue;
         };
-        let is_test_file =
-            given_to_several_types.is_empty() || input.files.entry_points().contains(&importer);
+        let is_test_file = given_to_several_types.is_empty() || test_files.contains(&importer);
         let sites = input.files.analysis(importer).import_sites.iter();
         for (index, (site, answer)) in sites.zip(&scan.sites).enumerate() {
             let is_statement = matches!(site_form(site.kind), SiteForm::Declaration);
@@ -260,7 +261,7 @@ pub(super) fn leave_imports_of_test_files_to_loader(
                 ImportSpecifier::Constant(specifier),
                 &ScannedSite::Module(ModuleRef::File(target)),
             ) = (is_statement, site.specifier, answer)
-                && ((is_test_file && may_load_again(target))
+                && ((is_test_file && asks_loader(importer, target))
                     || given_to_several_types.contains(&target))
             {
                 let hir = input.files.hir(importer);
@@ -324,6 +325,38 @@ pub(super) fn leave_imports_of_test_files_to_loader(
         scan.externals
             .push((specifier, ExternalKind::UncompiledCode));
     }
+}
+
+pub(super) fn find_files_that_load_themselves(
+    input: &BindInput<'_, '_>,
+    scans: &Scans,
+) -> Vec<bool> {
+    let files = input.files;
+    let mut edges: Vec<Vec<u32>> = vec![Vec::new(); files.modules.len()];
+    for &file in files.compiled_files() {
+        let sites = files.analysis(file).import_sites.iter();
+        for (site, answer) in sites.zip(&scans.of(file).sites) {
+            let loads = matches!(
+                site.kind,
+                ImportSiteKind::JsxRuntime
+                    | ImportSiteKind::JsxPackage
+                    | ImportSiteKind::Import(_)
+                    | ImportSiteKind::ExportFrom(_)
+                    | ImportSiteKind::ExportStar(_)
+                    | ImportSiteKind::ImportEquals(_)
+                    | ImportSiteKind::Require(_)
+                    | ImportSiteKind::ImportMetaRequire(_)
+            );
+            if let (true, &ScannedSite::Module(ModuleRef::File(target))) = (loads, answer) {
+                edges[file.idx()].push(target.0);
+            }
+        }
+    }
+    let (component_of, components) = strongly_connected_components(&edges);
+    let lies_on_cycle = |(file, loaded): (usize, &Vec<u32>)| {
+        components[component_of[file] as usize].len() > 1 || loaded.contains(&(file as u32))
+    };
+    edges.iter().enumerate().map(lies_on_cycle).collect()
 }
 
 fn find_forms_given_to_several_types(

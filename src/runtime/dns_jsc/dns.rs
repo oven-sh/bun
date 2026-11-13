@@ -2316,7 +2316,7 @@ pub(crate) struct Resolver {
     options: bun_dns_resolver::Options,
 
     /// Set for the channel's next timeout.
-    pub(crate) event_loop_timer: JsCell<EventLoopTimer>,
+    pub(crate) event_loop_timer: EventLoopTimer,
 
     pub(crate) pending_host_cache: JsCell<PendingCache>,
 
@@ -2473,9 +2473,7 @@ impl Resolver {
             made_in,
             vm: bun_ptr::BackRef::new(vm),
             options,
-            event_loop_timer: JsCell::new(EventLoopTimer::init_paused(
-                EventLoopTimerTag::DNSResolver,
-            )),
+            event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::DNSResolver),
             pending_host_cache: JsCell::new(PendingCache::init()),
             abort_handle: bun_jsc::AbortHandle::for_owner::<Resolver>(),
         }
@@ -2507,11 +2505,7 @@ impl Resolver {
         let uws_loop = self.vm().uws_loop_ref();
         let deref_this = self.as_ctx_ptr();
         scopeguard::defer! {
-            // jsc/runtime crate cycle: low-tier `VirtualMachine.timer` is `()`;
-            // resolve via the high-tier `RuntimeState` hook.
-            let state = crate::jsc_hooks::runtime_state();
-            // SAFETY: `state` is the boxed per-thread `RuntimeState`; single-threaded JS heap.
-            unsafe { (*state).timer.increment_timer_ref(-1, uws_loop) };
+            crate::jsc_hooks::timer_all().increment_timer_ref(-1, uws_loop);
             // SAFETY: `deref_this` is the heap allocation from `init`; releases
             // `set_timer`'s ref. May be the final release; nothing touches
             // `*self` after this point.
@@ -2519,7 +2513,8 @@ impl Resolver {
         }
 
         self.event_loop_timer
-            .with_mut(|t| t.state = EventLoopTimerState::PENDING);
+            .state
+            .set(EventLoopTimerState::PENDING);
 
         self.with_open_channel(Channel::check_timeouts);
     }
@@ -2530,56 +2525,36 @@ impl Resolver {
             sec: time.sec,
             nsec: i64::from(time.usec) * 1000,
         };
-        let timer = self.event_loop_timer.get();
-        let is_active = timer.state == EventLoopTimerState::ACTIVE;
-        if is_active && (timer.next.sec, timer.next.nsec) == (next.sec, next.nsec) {
+        let is_active = self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE;
+        if is_active && self.event_loop_timer.next.get() == next {
             return;
         }
-        let state = crate::jsc_hooks::runtime_state();
+        let timers = crate::jsc_hooks::timer_all();
         if !is_active {
             self.ref_();
-            // SAFETY: `state` is the boxed per-thread `RuntimeState`; single-threaded JS heap.
-            unsafe {
-                (*state)
-                    .timer
-                    .increment_timer_ref(1, self.vm().uws_loop_ref())
-            };
+            timers.increment_timer_ref(1, self.vm().uws_loop_ref());
         }
-        // SAFETY: as above. Whole-struct provenance: `from_field_ptr!` recovers the container on fire.
-        unsafe {
-            (*state).timer.update(
-                core::ptr::addr_of!(self.event_loop_timer)
-                    .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
-                    .cast_mut(),
-                &next,
-            );
-        }
+        timers.update(&raw const self.event_loop_timer, &next);
     }
 
     fn remove_timer(&self) {
-        if self.event_loop_timer.get().state != EventLoopTimerState::ACTIVE {
+        if self.event_loop_timer.state.get() != EventLoopTimerState::ACTIVE {
             return;
         }
 
         // Normally checkTimeouts does this, so we have to be sure to do it ourself if we cancel the timer
         let this = self.as_ctx_ptr();
         scopeguard::defer! {
+            crate::jsc_hooks::timer_all().increment_timer_ref(-1, self.vm().uws_loop_ref());
             // SAFETY: `this` is the heap allocation from `init`. This releases
             // the ref taken by `set_timer`. Every caller holds at least one
             // other ref for the duration of this call (a `RefPtr` or the
             // global-resolver permanent pin), so this
             // `deref` cannot reach 0 while `&self` is live.
-            unsafe {
-                let uws_loop = (*this).vm().uws_loop_ref();
-                let state = crate::jsc_hooks::runtime_state();
-                (*state).timer.increment_timer_ref(-1, uws_loop);
-                Self::deref(this);
-            }
+            unsafe { Self::deref(this) };
         }
 
-        let state = crate::jsc_hooks::runtime_state();
-        // SAFETY: `state` is the boxed per-thread `RuntimeState`; single-threaded JS heap.
-        unsafe { (*state).timer.remove(self.event_loop_timer.as_ptr()) };
+        crate::jsc_hooks::timer_all().remove(&self.event_loop_timer);
     }
 
     // ───────────── pending-cache helpers ─────────────

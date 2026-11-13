@@ -9,6 +9,6 @@
 # element is an int32, and the sum is added in a 64-bit integer: a load, the test for the hole, an addition. It is taken over into the double where the turns end and behind every stretch of 2^20
 # turns, where the poll stands; there the double is asked again to lie within 2^52, so that every sum on the way is exact.
 # f1 = sum
-# RUN: compile LoopsLaidOutForOneKindOfStorage SumsOfElementsAddedAsIntegers mechanisms=all
-# CHECK: statistic LoopsLaidOutForOneKindOfStorage 2
-# CHECK: statistic SumsOfElementsAddedAsIntegers 1
+# RUN: compile UnrolledLoopsForIndexingType UnrolledLoopIntegerElementSums mechanisms=all
+# CHECK: statistic UnrolledLoopsForIndexingType 4
+# CHECK: statistic UnrolledLoopIntegerElementSums 1

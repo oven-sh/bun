@@ -7,7 +7,8 @@
 # Then it builds the stored program with the Bun under test (BUN_FUZZILLI_COUNTS_WITH), which writes no executable. With --explain=statistics and --explain=forms the build prints several hundred counters of the compiler:
 # how often each stage touched what it works on, how many calls were inlined, how many tests leave or rejoin, and at how many sites each operation was emitted in which form.
 # A bit of the map stands for a counter and the size class of how far the program moved it from where an empty program leaves it.
-# At the end it moves the program into BUN_FUZZILLI_COLLECTS_PROGRAMS, where run-batch.ts takes it, if the program set a bit that this process has not seen set, and one in eight of the others.
+# At the end it moves the program into BUN_FUZZILLI_COLLECTS_PROGRAMS, where run-batch.ts takes it, if the program set a bit that this process has not seen set,
+# and one in BUN_FUZZILLI_STORES_ONE_IN (8) of the others.
 import glob, mmap, os, re, shutil, signal, struct, subprocess, sys, time, zlib
 
 EDGES = 1 << 16
@@ -15,6 +16,7 @@ SIZE = 16 << 20
 environment = dict(os.environ)
 counts_with, spool = (environment[name] for name in ("BUN_FUZZILLI_COUNTS_WITH", "BUN_FUZZILLI_COLLECTS_PROGRAMS"))
 collector = environment.get("BUN_FUZZILLI_COLLECTOR")
+stores_one_in = int(environment.get("BUN_FUZZILLI_STORES_ONE_IN", "8"))
 assert collector or environment.get("BUN_FUZZILLI_PRINTS_VALUES") == "0", "only the Bun that collects adds the lines that print the variables of a program"
 staged = "%s-staged-%d" % (spool.rstrip("/"), os.getpid())
 work = "%s-work-%d" % (spool.rstrip("/"), os.getpid())
@@ -110,6 +112,6 @@ while True:
             edge = 1 + zlib.crc32(("%s %s%d" % (counter, "-" if moved < 0 else "+", abs(moved).bit_length())).encode()) % (EDGES - 1)
             bits[4 + (edge >> 3)] |= 1 << (edge & 7)
             if edge not in seen: seen.add(edge); is_new = True
-        if is_new or programs % 8 == 0: shutil.move(path, os.path.join(spool, name))
+        if is_new or programs % stores_one_in == 0: shutil.move(path, os.path.join(spool, name))
         else: os.remove(path)
     os.write(to_fuzzilli, reply)

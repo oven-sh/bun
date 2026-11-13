@@ -2,7 +2,7 @@
 # "use strict";
 # function add(a, b) { return (a + b) | 0; }
 # const born = { base: 1, get add() { return add; } };
-# const laid = { base: 1 };
+# const laid = (0, { base: 1 });
 # Object.defineProperty(laid, "add", { enumerable: true, get: function () { return add; } });
 # function called(t) { let s = 1; for (let i = 0; i < t; i++) s = laid.add(born.add(s, i), 1); return s; }
 # print(called(5));

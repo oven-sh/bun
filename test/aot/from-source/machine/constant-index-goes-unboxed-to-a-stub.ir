@@ -1,0 +1,17 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function cacheOf(size: any): any { const made = new Array(size).fill(Symbol.for("empty")); return JSON.parse("1") ? made : size; }
+# function read(seen: any, name: any): any {
+#   const cells = cacheOf(seen) as any[];
+#   let made: any;
+#   if (cells[0] !== name) { made = name + cells.length; cells[0] = name; cells[1] = made; } else made = cells[1];
+#   return made;
+# }
+# print(read(2, "a"), read(3, "b"), read(JSON.parse("4"), JSON.parse('"c"')));
+# -- end of source
+# An element under a constant index below 64 has a stub of its own, so the site passes no index.
+# RUN(BYTES): bytes f2 mechanisms=all-Inlining
+# BYTES-NOT: GetByValAtConstantIndex
+# BYTES: relocation {{*}} Call Stub GetByValAtKnownIndex count 0
+# RUN(SHELL): run-in-shell mechanisms=all-Inlining
+# SHELL: a2 b3 c4

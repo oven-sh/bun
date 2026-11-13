@@ -8,16 +8,16 @@
 # for (let t = 0; t < 9; t++) said = said * 3 + breaks(t, 1000 + t, 1 + t % 3).length + returns(t, 1000 + t, 1 + t % 2).length + born(t % 6, l).length;
 # print(said % 1000003);
 # -- end of source
-# A loop that its own text may leave at any turn says nothing of how far it fills its list: 25 places for a list of two were kept for as long as the list lived, and cost four times the fill. A list
-# born empty has the profile of its site, which has learned what its lists reach.
+# A loop that its own text may leave at any turn says nothing of how far it fills its list: 25 places for a list of two were kept for as long as the list lived, and cost four times the fill.
+# born() knows its count, and no iteration leaves it: its room is asked in front.
 # f1 = breaks, f2 = returns, f3 = born
-# RUN(COUNT): compile RoomAskedAsFarAsAProfileMayAsk mechanisms=all
-# COUNT: statistic RoomAskedAsFarAsAProfileMayAsk 0
+# RUN(COUNT): compile ClampedCapacitiesReserved mechanisms=all
+# COUNT: statistic ClampedCapacitiesReserved 0
 # RUN(BREAKS): walk f1 mechanisms=all
-# BREAKS-NOT: ReserveArrayRoom
+# BREAKS-NOT: ReserveArrayCapacity
 # RUN(RETURNS): walk f2 mechanisms=all
-# RETURNS-NOT: ReserveArrayRoom
+# RETURNS-NOT: ReserveArrayCapacity
 # RUN(BORN): walk f3 mechanisms=all
-# BORN-NOT: ReserveArrayRoom
+# BORN: ReserveArrayCapacity
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 50447

@@ -1,5 +1,5 @@
 // The list that map, filter, slice and concat give is walked, measured, read by index, handed on to the next method and written on.
-// STATISTIC: ResultsOfLibraryFunctionsHeldToRows >= 1
+// STATISTIC: LibraryResultsCheckedAgainstSignatures >= 1
 class Item { constructor(readonly weight: number, readonly name: string) {} heavy(): boolean { return this.weight > 2; } }
 function make(rows: { w: number; n: string }[]): Item[] { return rows.map(row => new Item(row.w, row.n)); }
 function weighed(rows: { w: number; n: string }[]): number { let sum = 0; for (const item of rows.map(row => new Item(row.w, row.n))) sum += item.weight; for (const item of rows.filter(row => row.w > 1)) sum += item.w; return sum; }

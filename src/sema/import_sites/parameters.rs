@@ -4,20 +4,16 @@ use crate::bind::{
 };
 use crate::fold::Decisions;
 use crate::hir::{
-    ExportSpecId, ExprId, ExprKind, File, Flags, FnId, FnKind, IdList, ImportEqualsId, NodeData,
-    PatId, PatKind, PropKey, StmtKind,
+    ExprId, ExprKind, File, Flags, FnId, FnKind, IdList, NodeData, PatId, PatKind, PropKey,
+    StmtKind,
 };
 use crate::util::FxHashMap;
 use smallvec::SmallVec;
 
 pub fn is_exported(hir: &File<'_>, bound: &Bound<'_>, symbol: SymbolId) -> bool {
-    let binding = Binding::Symbol(symbol);
     let mut declarations = bound.symbol(symbol).decls.iter();
-    let mut specifiers = (0..hir.export_specs.len() as u32).map(ExportSpecId);
-    let mut entity_names = (0..hir.import_equals.len() as u32).map(ImportEqualsId);
     declarations.any(|&it| bound.modifier_flags(hir, it).contains(Flags::EXPORT))
-        || specifiers.any(|it| bound.exported_binding(it) == binding)
-        || entity_names.any(|it| bound.entity_root_binding(it) == binding)
+        || bound.is_named_by_export(symbol)
 }
 
 type FindWritten<'a> = &'a dyn Fn(Atom) -> Vec<ExprId>;
@@ -115,11 +111,29 @@ pub fn find_parameter_named(
     bound: &Bound<'_>,
     mention: ExprId,
 ) -> Option<(FnId, usize)> {
-    let (function, place, path) = find_parameter_and_path_named(hir, bound, mention)?;
+    let (function, place, path) = find_parameter_key_path(hir, bound, mention)?;
     path.is_empty().then_some((function, place))
 }
 
-pub(super) fn find_parameter_and_path_named(
+/// Resolves `mention` to a parameter, or to a variable that object patterns in the parameter list bind. Returns the function, the parameter's index and the key path.
+pub(super) fn find_parameter_key_path(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    mention: ExprId,
+) -> Option<(FnId, usize, SmallVec<[Atom; 2]>)> {
+    let Binding::Symbol(parameter) = bound.binding(mention) else {
+        return None;
+    };
+    let found = find_parameter_place(hir, bound, mention)?;
+    let is_settled = matches!(
+        bound.binding_stability(parameter),
+        BindingStability::Stable | BindingStability::NotInitializedOnce
+    ) && bound.stores_to(parameter).is_empty();
+    is_settled.then_some(found)
+}
+
+/// As `find_parameter_key_path()`, also for a parameter that is assigned.
+pub(super) fn find_parameter_place(
     hir: &File<'_>,
     bound: &Bound<'_>,
     mention: ExprId,
@@ -150,16 +164,12 @@ pub(super) fn find_parameter_and_path_named(
     path.reverse();
     let function = bound.param_fn[id.idx()];
     let place = hir[function].params.iter().position(|it| it == id)?;
-    let is_settled = matches!(
-        bound.binding_stability(parameter),
-        BindingStability::Stable | BindingStability::NotInitializedOnce
-    ) && bound.stores_to(parameter).is_empty()
-        && !bound.is_visible_to_eval(parameter)
+    let is_plain = !bound.is_visible_to_eval(parameter)
         && bound
             .dynamic_lookup_scope(NodeData::Expr(mention))
             .is_none()
         && !hir[id].flags.contains(Flags::REST);
-    is_settled.then_some((function, place, path))
+    is_plain.then_some((function, place, path))
 }
 
 fn finds_itself(
@@ -183,7 +193,7 @@ fn finds_itself(
     written.any(|ident| bound.is_evaluated_ident(ident) && bound.binding(ident) == own_name)
 }
 
-fn find_name_of(
+pub(super) fn find_name_of(
     hir: &File<'_>,
     bound: &Bound<'_>,
     function: FnId,
@@ -230,7 +240,7 @@ pub(super) fn find_only_name_of(
     is_only_name.then_some(name)
 }
 
-fn find_arguments_where_written(
+pub(super) fn find_arguments_where_written(
     hir: &File<'_>,
     bound: &Bound<'_>,
     function: FnId,
@@ -272,20 +282,61 @@ pub fn find_values_passed_for(
     mention: ExprId,
     find_written: FindWritten<'_>,
 ) -> Option<SmallVec<[ExprId; 4]>> {
+    let place = find_parameter_key_path(hir, bound, mention)?;
     let (values, path, _) =
-        find_values_passed_for_pattern(hir, bound, decisions, mention, find_written, false)?;
+        find_values_passed_for_pattern(hir, bound, decisions, place, find_written, false)?;
     path.is_empty().then_some(values)
+}
+
+type ValuesPassed = (SmallVec<[ExprId; 4]>, SmallVec<[Atom; 2]>, bool);
+
+type ParameterPlace = (FnId, usize, SmallVec<[Atom; 2]>);
+
+/// What the call with `arguments` passes for a parameter, with the parameter's default.
+pub(super) fn find_values_passed_by_call(
+    hir: &File<'_>,
+    (function, index, path): ParameterPlace,
+    arguments: IdList<ExprId>,
+) -> Option<ValuesPassed> {
+    let default = hir[hir[function].params.iter().nth(index)?].default;
+    let mut passed = hir.ids(arguments).take(index + 1);
+    let is_spread = |it: ExprId| matches!(hir[it].kind, ExprKind::Spread(_));
+    if passed.clone().any(is_spread) {
+        return None;
+    }
+    let value = passed.nth(index);
+    let is_left_out = value.is_none() && default.is_none();
+    let values = default.some().into_iter().chain(value).collect();
+    Some((values, path, is_left_out))
 }
 
 pub(super) fn find_values_passed_for_pattern(
     hir: &File<'_>,
     bound: &Bound<'_>,
     decisions: &Decisions<'_>,
-    mention: ExprId,
+    (function, index, path): ParameterPlace,
     find_written: FindWritten<'_>,
     may_be_exported: bool,
-) -> Option<(SmallVec<[ExprId; 4]>, SmallVec<[Atom; 2]>, bool)> {
-    let (function, index, path) = find_parameter_and_path_named(hir, bound, mention)?;
+) -> Option<ValuesPassed> {
+    let Some(name) = find_only_name_of(hir, bound, function, find_written, may_be_exported) else {
+        let arguments = find_arguments_where_written(hir, bound, function, find_written)?;
+        return find_values_passed_by_call(hir, (function, index, path), arguments);
+    };
+    let place = (function, index);
+    let (values, is_left_out) =
+        find_values_passed_under_name(hir, bound, decisions, place, name, find_written)?;
+    Some((values, path, is_left_out))
+}
+
+/// What the calls of `name` pass for one parameter of its function, with the parameter's default, and whether a call leaves it out.
+pub(super) fn find_values_passed_under_name(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    decisions: &Decisions<'_>,
+    (function, index): (FnId, usize),
+    name: SymbolId,
+    find_written: FindWritten<'_>,
+) -> Option<(SmallVec<[ExprId; 4]>, bool)> {
     let id = hir[function].params.iter().nth(index)?;
     let is_spread = |it: ExprId| matches!(hir[it].kind, ExprKind::Spread(_));
     let has_default = hir[id].default.is_some();
@@ -294,17 +345,6 @@ pub(super) fn find_values_passed_for_pattern(
     if hir[id].default.is_some() {
         values.push(hir[id].default);
     }
-    let Some(name) = find_only_name_of(hir, bound, function, find_written, may_be_exported) else {
-        let arguments = find_arguments_where_written(hir, bound, function, find_written)?;
-        let mut passed = hir.ids(arguments).take(index + 1);
-        if passed.clone().any(is_spread) {
-            return None;
-        }
-        let value = passed.nth(index);
-        is_left_out |= value.is_none() && !has_default;
-        values.extend(value);
-        return Some((values, path, is_left_out));
-    };
     let text = bound.symbol(name).name;
     for callee in find_written(text) {
         let is_mention = bound.is_evaluated_ident(callee)
@@ -327,5 +367,5 @@ pub(super) fn find_values_passed_for_pattern(
         is_left_out |= value.is_none() && !has_default;
         values.extend(value);
     }
-    Some((values, path, is_left_out))
+    Some((values, is_left_out))
 }

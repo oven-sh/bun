@@ -640,6 +640,23 @@ struct Children<'a, 's, const FOR_PARENTS: bool, V: FnMut(Node) -> bool + ?Sized
     visit: &'a mut V,
 }
 
+/// The kind of a member. `is_in_class` is called where that decides it.
+pub(crate) fn kind_of_member(kind: MemberKind, is_in_class: impl Fn() -> bool) -> Kind {
+    match kind {
+        MemberKind::Property if is_in_class() => Kind::PropertyDeclaration,
+        MemberKind::Property => Kind::PropertySignature,
+        MemberKind::Method if is_in_class() => Kind::MethodDeclaration,
+        MemberKind::Method => Kind::MethodSignature,
+        MemberKind::Getter => Kind::GetAccessor,
+        MemberKind::Setter => Kind::SetAccessor,
+        MemberKind::Constructor => Kind::Constructor,
+        MemberKind::CallSignature => Kind::CallSignature,
+        MemberKind::ConstructSignature => Kind::ConstructSignature,
+        MemberKind::IndexSignature => Kind::IndexSignature,
+        MemberKind::StaticBlock => Kind::ClassStaticBlockDeclaration,
+    }
+}
+
 struct OpenParts {
     top: Cell<Node>,
     below: RefCell<Vec<Node>>,
@@ -1350,6 +1367,71 @@ impl<'s> File<'s> {
         }
     }
 
+    /// The nearest node above `node` that can hold a declaration. A walk of these skips the operators of a long expression and
+    /// the tests of a long `else if`.
+    pub fn nearest_holder(&self, node: Node) -> Node {
+        // Most are found in fewer steps than a table of the file is worth.
+        const STEPS_WITHOUT_TABLE: usize = 16;
+        let mut at = self.parent(node);
+        for _ in 0..STEPS_WITHOUT_TABLE {
+            if !self.holds_no_declaration(at) {
+                return at;
+            }
+            at = self.parent(at);
+        }
+        match self.holds_no_declaration(at) {
+            true => self.nearest_holders()[at.idx()],
+            false => at,
+        }
+    }
+
+    fn nearest_holders(&self) -> &[Node] {
+        (self.lazy.cells.nearest_holders).get_or_init(|| self.compute_nearest_holders())
+    }
+
+    fn compute_nearest_holders(&self) -> Box<[Node]> {
+        const UNKNOWN: Node = Node(u32::MAX - 1);
+        let rows = &self.parents().rows;
+        let mut holders = vec![UNKNOWN; rows.len()];
+        let mut below: Vec<usize> = Vec::new();
+        for start in 0..rows.len() {
+            let mut at = start;
+            let holder = loop {
+                if holders[at] != UNKNOWN {
+                    break holders[at];
+                }
+                below.push(at);
+                let parent = rows[at];
+                if !self.holds_no_declaration(parent) {
+                    break parent;
+                }
+                at = parent.idx();
+            };
+            for node in below.drain(..) {
+                holders[node] = holder;
+            }
+        }
+        holders.into()
+    }
+
+    fn holds_no_declaration(&self, node: Node) -> bool {
+        let is_declaration = |statement: StmtId| {
+            statement.is_some()
+                && matches!(
+                    self[statement].kind,
+                    StmtKind::Enum(_) | StmtKind::Module(_) | StmtKind::Fn(_) | StmtKind::Class(_)
+                )
+        };
+        match self.data(node) {
+            NodeData::Expr(_) | NodeData::Paren(_) => true,
+            NodeData::Stmt(statement) => match self[statement].kind {
+                StmtKind::If { yes, no, .. } => !is_declaration(yes) && !is_declaration(no),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
     /// How many HIR nodes the most deeply nested one has above it.
     pub fn deepest_nesting(&self) -> u32 {
         const UNKNOWN: u32 = u32::MAX;
@@ -2039,20 +2121,8 @@ impl<'s> File<'s> {
             NodeData::Param(_) => Kind::Parameter,
             NodeData::TypeParam(_) => Kind::TypeParameter,
             NodeData::Member(m) => {
-                let is_in_class = self.class_of(self.parent(node)).is_some();
-                match self[m].kind {
-                    MemberKind::Property if is_in_class => Kind::PropertyDeclaration,
-                    MemberKind::Property => Kind::PropertySignature,
-                    MemberKind::Method if is_in_class => Kind::MethodDeclaration,
-                    MemberKind::Method => Kind::MethodSignature,
-                    MemberKind::Getter => Kind::GetAccessor,
-                    MemberKind::Setter => Kind::SetAccessor,
-                    MemberKind::Constructor => Kind::Constructor,
-                    MemberKind::CallSignature => Kind::CallSignature,
-                    MemberKind::ConstructSignature => Kind::ConstructSignature,
-                    MemberKind::IndexSignature => Kind::IndexSignature,
-                    MemberKind::StaticBlock => Kind::ClassStaticBlockDeclaration,
-                }
+                let is_in_class = || self.class_of(self.parent(node)).is_some();
+                kind_of_member(self[m].kind, is_in_class)
             }
             NodeData::Prop(p) => {
                 let is_attribute = self[p].name_kind == NameKind::Jsx;
@@ -2963,8 +3033,22 @@ impl File<'_> {
             positions.dedup();
             let mut found = Vec::new();
             let mut children = Vec::new();
+            let count_before = |end: u32| positions.partition_point(|&position| position < end);
+            let written = match self.known_evaluations.is_empty() {
+                true => positions.len(),
+                false => count_before(self.written_text_end()),
+            };
             // Descend from the file, for each position at each level into the last child that doesn't start after it.
-            let mut entered = vec![(Node::FILE, 0..positions.len())];
+            let mut entered = vec![(Node::FILE, 0..written)];
+            // The texts follow the file, and their functions the arguments of calls in it.
+            for evaluation in self.known_evaluations.iter() {
+                let within = count_before(evaluation.start)..count_before(evaluation.end);
+                if !within.is_empty() {
+                    // In TypeScript, a type that is written nowhere is beside the function.
+                    let function = self.skip_type_assertions(evaluation.function);
+                    entered.push((self.node(function), within));
+                }
+            }
             while let Some((node, leading_here)) = entered.pop() {
                 children.clear();
                 self.for_each_child(node, &mut |child| {
@@ -3522,6 +3606,12 @@ impl File<'_> {
         false
     }
 
+    /// `is_ambient(node.Parent)`. In most files nothing is ambient, so the parents aren't asked for.
+    pub fn is_parent_ambient(&self, node: Node) -> bool {
+        (self.kind == FileKind::Declaration || self.has_ambient_nodes())
+            && self.is_ambient(self.parent(node))
+    }
+
     fn ambient_ranges_hold_every_ambient_node(&self) -> bool {
         let cell = &self.lazy.cells.ambient_ranges_hold_every_ambient_node;
         *cell.get_or_init(|| {
@@ -3564,6 +3654,12 @@ impl File<'_> {
         })
     }
 
+    pub(crate) fn is_evaluated_text(&self, node: Node) -> bool {
+        !self.known_evaluations.is_empty()
+            && self.is_in_known_evaluation(self.start(node))
+            && !self.is_in_known_evaluation(self.start(self.parent(node)))
+    }
+
     /// `node.Flags&NodeFlagsAwaitContext != 0`, as set by the parser's first pass. Returns `Err` if it's the context of
     /// the returned top-level statement, which `reparseTopLevelAwait` may reparse.
     pub fn await_context(&self, node: Node) -> Result<bool, Node> {
@@ -3581,6 +3677,9 @@ impl File<'_> {
         let is_await = modifier == Flags::ASYNC;
         let (mut below, mut above) = (node, self.parent(node));
         loop {
+            if self.is_evaluated_text(below) {
+                return Ok(false);
+            }
             let kind = self.kind(above);
             match kind {
                 Kind::SourceFile => return Err(below),

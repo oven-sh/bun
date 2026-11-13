@@ -59,7 +59,7 @@ describe.concurrent("a handler that prints texts of its request keeps no printer
 
   test("options that somebody else holds keep everything, as ever", async () => {
     const found = await keptBy(
-      `const options = { port: 0, fetch(request: Request) { console.log(request.method); return new Response("made up"); } };\n(globalThis as any).kept = options;\nconst server = Bun.serve(options);` +
+      `const options = { port: 0, fetch(request: Request) { console.log(request.method); return new Response("made up"); } };\nconst outside: any = JSON.parse("{}");\noutside.kept = options;\nconst server = Bun.serve(options);` +
         behind,
     );
     expect(found.exitCode).toBe(0);
@@ -105,7 +105,7 @@ describe.concurrent("an error that is printed beside a server keeps no printer o
     ["the server is printed", `console.log(server);`],
     [
       "the server has left, and an error is printed",
-      `(globalThis as any).kept = server;\nconsole.error(new Error("made up"));`,
+      `const outside: any = JSON.parse("{}");\noutside.kept = server;\nconsole.error(new Error("made up"));`,
     ],
     ["the error holds the server", `console.error(new Error("made up", { cause: server }));`],
   ])("%s: the printer of objects is kept", async (_, more) => {

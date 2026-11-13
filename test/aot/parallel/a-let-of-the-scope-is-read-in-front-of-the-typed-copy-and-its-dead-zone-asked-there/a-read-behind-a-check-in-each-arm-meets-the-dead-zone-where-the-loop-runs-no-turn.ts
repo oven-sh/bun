@@ -1,5 +1,5 @@
 // A read behind two checks, one in each arm, in a loop that has a typed copy: called in front of the let with no turn nothing is read; with a turn a ReferenceError. Laid in front WITH its word the program dies (SIGSEGV).
-// STATISTIC: FieldsOfScopesBehindTheirStoresReadInFrontOfTypedCopies >= 1
+// STATISTIC: CapturedVariableReadsHoisted >= 1
 const said: string[] = [];
 function tell(what: () => unknown) { try { said.push(String(what())); } catch (error: any) { said.push(error.constructor.name + ": " + error.message); } }
 const through = new Function("x", "return x");

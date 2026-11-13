@@ -68,7 +68,7 @@ impl FileScan<'_, '_> {
         });
         let mut required = graph.required_names(file).iter();
         let link_would_miss_name = !matches!(target, ModuleRef::External { .. })
-            && required.any(|it| it.module == target && !it.is_found_unless_mocked);
+            && required.any(|it| it.module == target && !self.has_found(it));
         (!is_asked_otherwise && !link_would_miss_name).then_some(target)
     }
 
@@ -99,7 +99,7 @@ impl FileScan<'_, '_> {
                 continue;
             }
             let last_position = hir[expression].end.saturating_sub(1);
-            let statement = self.region_below_body(self.region_of(last_position));
+            let statement = self.region_below_body(self.region_outside(last_position, None));
             if statement == TOP_LEVEL {
                 return None;
             }

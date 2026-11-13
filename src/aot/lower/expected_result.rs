@@ -3,10 +3,10 @@ use bun_sema::check::aot::{CallTarget, FunctionRef, WrittenType};
 use bun_sema::hir::{ExprId, ExprKind, FnBody};
 
 use super::{CheckerTypeId, FileLowering, FunctionLowering};
-use crate::builtins::id::BuiltinId;
+use crate::builtins::id::{BuiltinClass, BuiltinId, BuiltinName};
 use crate::builtins::{builtin_value_of, table};
 use crate::ir::generated::{ExpectedResult, ExpectedResultFlags, LimitId};
-use crate::ir::{ExpectedResultId, Primitives, TypeId, TypeTable};
+use crate::ir::{ExpectedResultId, LayoutId, Primitives, TypeId, TypeTable};
 
 impl FileLowering<'_, '_, '_, '_> {
     fn find_expected_result(&mut self, call: ExprId) -> Option<ExpectedResultId> {
@@ -34,7 +34,12 @@ impl FileLowering<'_, '_, '_, '_> {
         };
         let callee = self.skip_type_syntax(hir[id].callee);
         if self.builtins.builtin_of_expression(callee) != Some(BuiltinId::JSONParse) {
-            return None;
+            let flags =
+                ExpectedResultFlags::IS_MADE_BY_PARSER | ExpectedResultFlags::IS_ROWS_OF_QUERY;
+            return self
+                .parses_body(callee)
+                .then(|| self.add_result_written_over_parse(call, flags))
+                .flatten();
         }
         let mut arguments = hir.ids(hir[id].args);
         let (Some(text), None) = (arguments.next(), arguments.next()) else {
@@ -43,13 +48,54 @@ impl FileLowering<'_, '_, '_, '_> {
         if matches!(hir[text].kind, ExprKind::Spread(_)) {
             return None;
         }
+        self.add_result_written_over_parse(call, ExpectedResultFlags::IS_MADE_BY_PARSER)
+    }
+
+    fn parses_body(&mut self, callee: ExprId) -> bool {
+        let ExprKind::Dot {
+            obj: holder, name, ..
+        } = self.hir[callee].kind
+        else {
+            return false;
+        };
+        let Some(name) = self.inputs.builtin_names.get(name) else {
+            return false;
+        };
+        if !table::is_name_of_parser(name) {
+            return false;
+        }
+        let Ok(holder) = self.queries.expression_type(holder) else {
+            return false;
+        };
+        let holder = self.map_type_at(holder).ty;
+        let classes = self.fragment.types.get(holder).classes;
+        !classes.is_empty()
+            && classes
+                .iter()
+                .all(|part| is_body_parser(part.builtin_class, name))
+    }
+
+    fn add_result_written_over_parse(
+        &mut self,
+        call: ExprId,
+        flags: ExpectedResultFlags,
+    ) -> Option<ExpectedResultId> {
         let ty = self.find_type_written_over(call)?;
         let limit = LimitId::MaxExpectedResultLayouts;
-        let layouts = self.collect_reached_layouts(ty, limit)?;
+        let layouts = self.collect_reached_layouts(ty, limit, true)?;
+        if !self.holds_all_layouts_of(ty, &layouts) {
+            return None;
+        }
         self.note_what_is_built(ty, limit);
-        let flags = ExpectedResultFlags::IS_MADE_BY_PARSER;
         let expected = ExpectedResult { ty, layouts, flags };
         Some(self.fragment.add_expected_result(expected))
+    }
+
+    fn holds_all_layouts_of(&self, ty: TypeId, layouts: &[LayoutId]) -> bool {
+        let named = self.fragment.types.get(ty).layouts;
+        named
+            .iter()
+            .all(|layout| layouts.binary_search(layout).is_ok())
     }
 
     fn find_type_written_over(&mut self, mut value: ExprId) -> Option<TypeId> {
@@ -130,8 +176,11 @@ impl FileLowering<'_, '_, '_, '_> {
             return None;
         }
         let limit = LimitId::MaxExpectedResultLayouts;
-        let layouts = self.collect_reached_layouts(ty, limit)?;
         let is_made_by_parser = builtin.is_some_and(table::is_parser);
+        let layouts = self.collect_reached_layouts(ty, limit, is_made_by_parser)?;
+        if !self.holds_all_layouts_of(ty, &layouts) {
+            return None;
+        }
         let flags = match (answers_query, is_made_by_parser) {
             (true, _) => ExpectedResultFlags::IS_ROWS_OF_QUERY,
             (false, true) => ExpectedResultFlags::IS_MADE_BY_PARSER,
@@ -152,6 +201,17 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn find_expected_result(&mut self, call: ExprId) -> Option<ExpectedResultId> {
         self.file.find_expected_result(call)
     }
+}
+
+fn is_body_parser(class: BuiltinClass, name: BuiltinName) -> bool {
+    let Some(prototype) = table::class_data(class).prototype else {
+        return false;
+    };
+    let table::MemberLookup::Found(method) = table::member(prototype, name) else {
+        return false;
+    };
+    let method = table::canonical_id(method);
+    table::is_parser(method) && !table::answers_query(method)
 }
 
 fn has_body(file: &FileLowering<'_, '_, '_, '_>, declaration: FunctionRef) -> bool {

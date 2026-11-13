@@ -1,10 +1,10 @@
 # function make() { return () => {}; }  process.stdout.write("x"); process.on("exit", make())
-# Under check=FlowFindsNoLessFromMore the answers that no table shows are held as well: `on` lies above `process`, so the lookup passes `process` as in sight and takes the name for unlaid there.
+# Under check=FlowMonotonicity the answers that no table shows are held as well: `on` lies above `process`, so the lookup passes `process` as in sight and takes the name for unlaid there.
 # One result in 2048 is given more (seed 6), so the lookup stands in the run from more; it is asked of the flow of the program as it is, and it holds there. The count says that something was asked.
 # The red control: what-a-lookup-took-and-the-other-run-denies-is-stopped-by-name.ir.
 # LIBRARY: own
-# OPTIONS: testing=GiveLinkMore:6 check=FlowFindsNoLessFromMore
-# STATISTIC: AnswersOfLookupsAskedAgain >= 1
+# OPTIONS: testing=WidenFlowNodes:6 check=FlowMonotonicity
+# STATISTIC: BuiltinLookupAssumptionsRechecked >= 1
 # RUN: link functions mechanisms=all
 # CHECK: function f2 unreached
 

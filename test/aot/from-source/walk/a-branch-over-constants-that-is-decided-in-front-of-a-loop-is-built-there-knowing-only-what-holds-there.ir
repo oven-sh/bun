@@ -9,8 +9,8 @@
 # -- end of source
 # `x || "literal"` and `c ? 1 : 2` in every turn of a loop, decided by a truth that stands in front: the branch stood in the turn, so what met behind it was a value of the turn. Both arms make nothing but
 # constants: the branch is built in front, the arms and their meeting with it, and the turn goes on without a branch.
-# RUN: compile BranchesOverConstantsBuiltInFrontOfLoops mechanisms=all
-# CHECK: statistic BranchesOverConstantsBuiltInFrontOfLoops 3
+# RUN: compile ConstantDiamondsHoisted mechanisms=all
+# CHECK: statistic ConstantDiamondsHoisted 3
 
 module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
 module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)

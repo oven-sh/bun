@@ -9,15 +9,13 @@
 # function total(list: Row[]): number { let s = 0; for (let i = 0; i < list.length; i++) s += use(list[i]!); return s; }
 # sink(total(rows), total(written), total([...rows, ...written, ...rows]));
 # -- end of source
-# f1 = total, f2 = User
+# f1 = total, f2 = User, f5 = use
 # The end of a class's constructor is two blocks that hold a jump and a return: all its operations stand in its entry block. Where the guard of its copy fails in a loop, it is walked in line once more with the
-# parameter unknown: the reads by name at their sites, the birth typed as in the first walk; the copy around it is not left for a call.
+# parameter unknown: the reads by name at their sites. Nobody but the copy reads the object, so neither walk makes it: its fields are values. Where one of them is no text or number as its use asks, the helper around is called.
 # RUN: walk f1 mechanisms=all
-# CHECK: = NewObject layout=L0
-# CHECK: = NewObject layout=L0
-# CHECK: = PropGet {{*}}key="id"
-# CHECK: = PropGet {{*}}key="score"
-# CHECK: PutSlotOrAdd {{*}}key="id" receivers=[L0] level=Proven
-# RUN(STAYS): walk f1 mechanisms=all
-# STAYS: code f1:Body
-# STAYS-NOT: isNeverInlined
+# CHECK: = GetSlotOrUndefined {{*}}key="id" receivers=[L1] level=Proven
+# CHECK: = GetSlotOrUndefined {{*}}key="active" receivers=[L1] level=Proven
+# CHECK: = CallDirect {{*}}function=f5 [isNeverInlined]
+# RUN(MADE): walk f1 mechanisms=all
+# MADE: code f1:Body
+# MADE-NOT: = NewObject

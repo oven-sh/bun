@@ -43,8 +43,8 @@
 # of the turn that leaves. Ahead of the very first turn that is t's start, which the program never stored: where the counter that is handed over is the counter that entered, no turn has run and memory
 # is not touched. A text that stored there always was in the tree for thirteen minutes: the first line said `0 0.25 0.25`, the last `24.5 0.25` (the inner loop leaves in its first turn the second time
 # it is entered, and the wrong store overwrites a number that the program did store). No hardening word sees it: under them the turn is not laid out.
-# RUN(EVENT): compile StoresLeftOutOfTurnsLaidOut mechanisms=all
-# EVENT: statistic StoresLeftOutOfTurnsLaidOut 2
+# RUN(EVENT): compile UnrolledLoopStoresSunk mechanisms=all
+# EVENT: statistic UnrolledLoopStoresSunk 2
 # RUN(RIGHT): run-in-shell globalThis.unseen = (value) => value;
 # RIGHT: 0 0.25 5.5
 # RIGHT-NEXT: 1 1.75 1.75

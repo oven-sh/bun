@@ -19,4 +19,4 @@
 # RUN(PLAN): plan units mechanisms=all
 # PLAN: unit f1:GenericCallEntry -> f1:Body
 # PLAN-NOT: unit f1:ParameterGuard
-# PLAN: unit f2:ParameterGuard (JSValue, JSValue) -> (JSValue) tests (-, L0)
+# PLAN: unit f2:ParameterGuard (JSValue, JSValue) -> (Double) tests (-, L0)

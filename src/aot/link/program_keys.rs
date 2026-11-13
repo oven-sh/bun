@@ -29,7 +29,7 @@ pub enum ProgramModule {
         file: ProgramFile,
         callback: FnId,
     },
-    Face(ProgramFile),
+    Facade(ProgramFile),
     Check(ProgramFile),
     Runtime(RuntimeModule),
     External {
@@ -54,7 +54,7 @@ impl ProgramModule {
                 };
                 (file.project, module)
             }
-            ProgramModule::Face(file) => (file.project, ModuleRef::Face(file.file)),
+            ProgramModule::Facade(file) => (file.project, ModuleRef::Facade(file.file)),
             ProgramModule::Check(file) => (file.project, ModuleRef::Check(file.file)),
             ProgramModule::Runtime(_) | ProgramModule::External { .. } => return None,
         })
@@ -69,7 +69,7 @@ impl ProgramModule {
                 };
                 (file, FunctionKey::Source(callback))
             }
-            ProgramModule::Face(file) => (file, FunctionKey::FaceBody(file.file)),
+            ProgramModule::Facade(file) => (file, FunctionKey::FacadeBody(file.file)),
             ProgramModule::Check(file) => (file, FunctionKey::CheckBody(file.file)),
             ProgramModule::File(_) | ProgramModule::Runtime(_) | ProgramModule::External { .. } => {
                 return None;
@@ -174,7 +174,7 @@ impl KeyContext<'_> {
                 file: in_project(file),
                 callback,
             },
-            ModuleRef::Face(file) => ProgramModule::Face(in_project(file)),
+            ModuleRef::Facade(file) => ProgramModule::Facade(in_project(file)),
             ModuleRef::Check(file) => ProgramModule::Check(in_project(file)),
             ModuleRef::Runtime(module) => match self.runtime_sources.runtime_module_file(module) {
                 Some(file) => ProgramModule::File(ProgramFile {
@@ -200,7 +200,7 @@ fn order_in_file(module: ProgramModule) -> Option<(ProgramFile, u8, u32)> {
     match module {
         ProgramModule::File(file) => Some((file, 0, 0)),
         ProgramModule::Inner { file, callback } => Some((file, 1, callback.0)),
-        ProgramModule::Face(file) => Some((file, 2, 0)),
+        ProgramModule::Facade(file) => Some((file, 2, 0)),
         ProgramModule::Check(file) => Some((file, 3, 0)),
         ProgramModule::Runtime(_) | ProgramModule::External { .. } => None,
     }
@@ -298,7 +298,7 @@ impl OrderedKey for ProgramFunctionKey {
         let (variant, file, second) = match self.key {
             FunctionKey::ModuleBody(file) => (0, file, 0),
             FunctionKey::WrappedModuleBody(file) => (1, file, 0),
-            FunctionKey::FaceBody(file) => (2, file, 0),
+            FunctionKey::FacadeBody(file) => (2, file, 0),
             FunctionKey::CheckBody(file) => (3, file, 0),
             FunctionKey::Instantiation(file) => (4, file, 0),
             FunctionKey::Source(it) => (5, it.file, it.function.0),
@@ -310,6 +310,13 @@ impl OrderedKey for ProgramFunctionKey {
             FunctionKey::AccessorGetter { file, member } => (11, file, member.0),
             FunctionKey::AccessorSetter { file, member } => (12, file, member.0),
             FunctionKey::PrivateNameTest { file, member } => (13, file, member.0),
+            FunctionKey::ModuleRequest { file, call } => (14, file, call.0),
+            FunctionKey::CopiedGetter {
+                file,
+                helper,
+                getter,
+            } => return join_rank(self.project, 15, [file.0, helper.0, getter.0]),
+            FunctionKey::PrototypeMaker(it) => (16, it.file, it.id.0),
         };
         join_rank(self.project, variant, [file.0, second, 0])
     }
@@ -343,8 +350,10 @@ impl OrderedKey for ProgramLayoutKey {
                 members: TypeIdentity([first, _]),
             } => (0x400, [file.0, high(first), first as u32]),
             LayoutKey::CreatedObject { file, call } => (0x500, [file.0, call, 0]),
+            LayoutKey::PrototypeMaker(it) => (0x501, [it.file.0, it.id.0, 0]),
             LayoutKey::Container(it) => (0x600, [it.file.0, it.id.0, 0]),
             LayoutKey::Environment { file, environment } => (0x700, [file.0, environment, 0]),
+            LayoutKey::ModuleInstance(file) => (0x800, [file.0, 0, 0]),
         };
         join_rank(self.project, variant, words)
     }
@@ -377,6 +386,12 @@ impl OrderedKey for ProgramVariableKey {
             VariableKey::RequiresMadeForOwnFile(file) => (14, file.0, 0),
             VariableKey::RequiresMadeForOtherFolders(file) => (15, file.0, 0),
             VariableKey::RequiresMadeForPaths(file) => (16, file.0, 0),
+            VariableKey::InstanceOf(file) => (17, file.0, 0),
+            VariableKey::InstanceAllocator(file) => (18, file.0, 0),
+            VariableKey::HasSeveralInstances(file) => (19, file.0, 0),
+            VariableKey::EvaluationMark(file) => (20, file.0, 0),
+            VariableKey::AddedStatic(it) => (21, it.file.0, it.id.0),
+            VariableKey::PrototypeMaker(it) => (22, it.file.0, it.id.0),
         };
         join_rank(declared.project, variant, [first, second, 0])
     }

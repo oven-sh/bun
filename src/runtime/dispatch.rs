@@ -1233,8 +1233,7 @@ unsafe fn __bun_run_wtf_timer(timer: *mut (), vm: *mut bun_jsc::virtual_machine:
     // `*mut crate::timer::WTFTimer`, so the cast is the identity.
     let real = timer.cast::<crate::timer::WTFTimer>();
     // SAFETY: per fn contract — `real` is live until consumed; `vm` is the
-    // per-thread VM. `run` may re-enter `(*runtime_state()).timer.remove()`;
-    // no `&mut` held here.
+    // per-thread VM.
     unsafe { crate::timer::WTFTimer::run(real, vm) }
 }
 
@@ -1355,7 +1354,7 @@ pub(crate) unsafe fn __bun_fire_timer(
             timer_arm!(
                 GarbageCollectionController,
                 gc_repeating_timer,
-                |c, _now, vm| GarbageCollectionController::on_gc_repeating_timer(c, vm)
+                |c, _now, vm| (*c).on_gc_repeating_timer(&*vm)
             )
         }
         EventLoopTimerTag::FakeTimersTick => {
@@ -1364,7 +1363,7 @@ pub(crate) unsafe fn __bun_fire_timer(
         }
         EventLoopTimerTag::DateHeaderTimer => {
             timer_arm!(DateHeaderTimer, event_loop_timer, |c, _now, vm| (*c)
-                .run(&mut *vm))
+                .run(&*vm))
         }
         EventLoopTimerTag::EventLoopDelayMonitor => {
             feature_timer_arm!(
@@ -1611,7 +1610,7 @@ pub(crate) unsafe fn __bun_js_timer_epoch(
     // SAFETY: per fn contract — `t` is live in a `TimerHeap`. `_tag` kept for
     // the `extern "Rust"` ABI in `bun_event_loop`; helper re-reads `(*t).tag`
     // (same address the caller loaded it from — folds under LTO).
-    unsafe { crate::timer::js_timer_flags_ptr(t).map(|p| (*p.as_ptr()).epoch()) }
+    unsafe { crate::timer::js_timer_flags(t) }.map(|flags| flags.get().epoch())
 }
 
 /// `__bun_tick_queue_with_count` body — declared `extern "Rust"` in

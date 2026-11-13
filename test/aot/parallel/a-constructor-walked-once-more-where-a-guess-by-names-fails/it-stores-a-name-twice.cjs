@@ -1,4 +1,4 @@
-// STATISTIC: CopiesWalkedWhereTheirGuardsFail >= 1
+// STATISTIC: CallsInlinedAfterFailedGuards >= 1
 "use strict";
 // The second store overwrites the first.
 function Plate(from) { this.wide = from.wide; this.tall = from.tall; this.wide = from.tall; }

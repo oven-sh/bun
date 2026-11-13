@@ -121,6 +121,7 @@ pub(crate) fn describe_checker_queries(
         progress: None,
         left_out_bodies: None,
         discards_first_visits: false,
+        order: 1,
     };
 
     let loaded = match load_program(&session, &host, &request) {
@@ -137,6 +138,7 @@ pub(crate) fn describe_checker_queries(
         checked_elsewhere: &[],
         builtin_types: &builtin_types,
         named_values: &*named_values,
+        alias_mentions: None,
         max_inference_nodes: limits.get(LimitId::MaxInferenceNodes),
         limits: limits.for_queries(),
     };

@@ -1,11 +1,11 @@
-# A control of a-class-read-under-the-texts-of-a-list-that-one-loop-has-stays-closed.ir: the list has a name, and a text that nobody knows is pushed under it: the read may give the method, under an operator.
+# A control of a-class-read-under-the-texts-of-a-list-that-one-loop-has-stays-closed.ir: the list has a name, and a text that nobody knows is pushed under it: the read may give the class itself, and the global object keeps what it gives.
 # -- source: main.js
 # class Peg { constructor(x, y) { this.x = x; this.y = y; } sum() { return this.x + this.y; } }
 # const peg = new Peg(1, 2);
 # const keys = ["x", "y"];
 # keys.push(JSON.parse('"sum"'));
 # let total = 0;
-# for (const key of keys) total += peg[key];
+# for (const key of keys) { globalThis.found = peg[key]; total += peg.x; }
 # print(total + peg.sum());
 # -- end of source
 # RUN: link layouts mechanisms=all

@@ -339,7 +339,7 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
 #undef STRINGIFY_IMPL
 
     // A program that runs in place, as a test does, reads these two as plain Bun does.
-    if (!Bun::compiledModulesRunInPlaceOfFiles())
+    if (!Bun::runsCompiledModules())
         lockFoldedMembers(vm, globalObject, object, "process.versions"_s, { "node"_s, "bun"_s });
     return object;
 }
@@ -355,7 +355,7 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
     putDirectNamed(vm, release, "headersUrl"_s, jsOwnedString(vm, String("https://nodejs.org/download/release/v" REPORTED_NODEJS_VERSION "/node-v" REPORTED_NODEJS_VERSION "-headers.tar.gz"_s)));
 
     RETURN_IF_EXCEPTION(scope, {});
-    if (!Bun::compiledModulesRunInPlaceOfFiles())
+    if (!Bun::runsCompiledModules())
         lockFoldedMembers(vm, globalObject, release, "process.release"_s, { "name"_s });
     return release;
 }

@@ -1,8 +1,8 @@
 // The constructor lays `works` by a data descriptor, read-only and not configurable, and its slot is held to what is seen defined. Code out of a text tries eight roads that the language refuses on such a field, which one by a parameter or all. The field stays in its slot.
-// STATISTIC: FieldsHeldToWhatIsSeen >= 2
-// COUNTER: FieldsLeftSlotByStoreOfOtherType = 0
-// COUNTER: FieldsLeftSlotByRedefinition = 0
-// COUNTER: FieldsLeftSlotByDelete = 0
+// STATISTIC: FieldTypesEnforced >= 2
+// COUNTER: FieldsEvictedByTypeMismatch = 0
+// COUNTER: FieldsEvictedByRedefinition = 0
+// COUNTER: FieldsEvictedByDelete = 0
 // Under: --aot-testing=CheckProofsAtRunTime: what is proven is asked again at run time
 class Works { constructor(teeth) { this.teeth = teeth; this.turns = 1; } }
 let refusals = 0;

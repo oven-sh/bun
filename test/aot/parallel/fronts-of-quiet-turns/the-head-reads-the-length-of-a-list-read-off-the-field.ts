@@ -1,7 +1,8 @@
-// STATISTIC: FrontsOfQuietTurnsThatHoldReads >= 1
-// STATISTIC: LoudTurnsLedThroughFronts >= 1
+// STATISTIC: LoopReloadBlocksEmitted >= 1
+// STATISTIC: ReloadingBackEdgesEmitted >= 1
+const outside: any = JSON.parse("{}");
 class Box { constructor(public list: number[], public scale: number, public limit: number) {} }
-const unseen = (x: any) => { (globalThis as any).kept = x; return (globalThis as any).kept; };
+const unseen = (x: any) => { outside.kept = x; return outside.kept; };
 function sum(box: Box, grow: (at: number) => void): number {
   let total = 0;
   for (let i = 0; i < box.list.length; i++) {

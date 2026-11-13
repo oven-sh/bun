@@ -3,15 +3,15 @@
 # The name is the class's own all the same: whoever stores under it stands in the text of the class, and Link has followed every one of them: field L0.1 proven=number writers-known.
 # A read that finds nothing throws, so what it answers is of the type that is proven of the field. Before, it was anything, and the increment behind it was generic.
 # RUN: walk f2:Body mechanisms=all
-# CHECK: number @JSValue = PrivateGet
-# CHECK: = Increment {{*}}form=Numbers
-# CHECK: number @JSValue = PrivateGet
+# CHECK: int[0, 9007199254740992] @JSValue = PrivateGet
+# CHECK: = Increment {{*}}form=CheckedIntegers
+# CHECK: int[0, 9007199254740992] @JSValue = PrivateGet
 
 layout L0 kind=Instance name="Counter" module=m0 position=6 constructor=f1 fields=[{key=#"class brand"@L0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"#n"@L0 declared={type=number} flags=[IsRequired, IsPrivate]}] flags=[HasHeritage] ownFieldCount=2
 # layout L3 kind=Closure
 variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
 variable g1 module=m0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsImmutable]
-module m0 path="/$bunfs/root/main.ts" displayPath="main.ts" flags=[KeepsError] body=f0 positions={lineStarts=[0, 92, 123, 138, 200, 228] quotedTexts=[{position=61 start=60 end=67}, {position=79 start=69 end=76}, {position=112 end=11}, {position=184 start=20 end=32}, {position=192 start=20 end=34}, {position=200 start=34 end=45}, {position=208 start=34 end=60}, {position=212 start=46 end=59}] textOfQuotes="new Countertotal += counter.bump()console.log(String(total))this.#n++this.#n"} functionText="class Counter extends Map { #n = 0; bump() { this.#n++; return this.#n; } }\x0aconst counter = new Counter();\x0alet total = 0;\x0afor (let turn = 0; turn < 3; turn++) total += counter.bump();\x0aconsole.log(String(total));\x0a" namespaceLayout=L(m0)
+module m0 path="/$bunfs/root/main.ts" displayPath="main.ts" flags=[CachesEvaluationError] body=f0 positions={lineStarts=[0, 92, 123, 138, 200, 228] quotedSources=[{position=61 start=60 end=67}, {position=79 start=69 end=76}, {position=112 end=11}, {position=184 start=20 end=32}, {position=192 start=20 end=34}, {position=200 start=34 end=45}, {position=208 start=34 end=60}, {position=212 start=46 end=59}] quotedSourceText="new Countertotal += counter.bump()console.log(String(total))this.#n++this.#n"} functionSource="class Counter extends Map { #n = 0; bump() { this.#n++; return this.#n; } }\x0aconst counter = new Counter();\x0alet total = 0;\x0afor (let turn = 0; turn < 3; turn++) total += counter.bump();\x0aconsole.log(String(total));\x0a" namespaceLayout=L(m0)
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = Builtin builtin=Map @22
@@ -59,7 +59,7 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v38 = Undefined @200
     Return v38 @200
 }
-function f1 name="Counter" module=m0 position=6 text={end=75} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+function f1 name="Counter" module=m0 position=6 sourceRange={end=75} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
   b0(v0: function, v1: anything, v2: Array):
     v3 = GetSuperBase v0 @6
     v4 = SuperConstructList v3, v1, v2 layout=L0 @6
@@ -67,7 +67,7 @@ function f1 name="Counter" module=m0 position=6 text={end=75} kind=DerivedConstr
     v6 = CallDirect v5 function=f3 @6
     Return v5 @6
 }
-function f2 name="bump" module=m0 position=52 text={start=36 end=73} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f2 name="bump" module=m0 position=52 sourceRange={start=36 end=73} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: L0):
     v1 = GetModuleVariable variable=g1 @61
     v2 = PrivateGet v0, v1 layout=L0 field=1 @61

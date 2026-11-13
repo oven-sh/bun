@@ -7,11 +7,13 @@ mod closed_module;
 pub mod decorator_metadata;
 mod lint;
 mod parents;
+mod property_place;
 mod runtime;
 pub mod static_referent;
 
 pub use closed_module::specifiers_of_closed_module;
 pub use parents::{bind_for_format_in, try_bind_for_format_in};
+pub use property_place::{PropertyPlace, find_property_place};
 pub use runtime::{
     AnnexBFunction, Binding, BindingInitializer, BindingKind, BindingStability, CodeUnit,
     CommonJsVariable, EarlyRedeclaration, EvalScope, FunctionFlags, ImplicitReference,
@@ -1912,6 +1914,79 @@ impl<S: Storage> BoundIn<S> {
     pub fn parent_of_stmt(&self, s: StmtId) -> Parent {
         let parent = self.stmt_parent.get(s.idx()).copied();
         parent.unwrap_or_default().get()
+    }
+
+    /// True if `s` is the initializer of a `for` statement, or the left side of a `for`-`in` or `for`-`of` statement.
+    pub fn is_head_of_for(&self, hir: &File, s: StmtId) -> bool {
+        let Parent::Stmt(above) = self.parent_of_stmt(s) else {
+            return false;
+        };
+        matches!(
+            hir[above].kind,
+            StmtKind::For { init: head, .. }
+                | StmtKind::ForIn { left: head, .. }
+                | StmtKind::ForOf { left: head, .. } if head == s
+        )
+    }
+
+    /// Returns the statement that holds `e` if only expressions and a declarator are between them.
+    pub fn statement_of_expr(&self, mut e: ExprId) -> Option<StmtId> {
+        loop {
+            match self.parent_of_expr(e) {
+                Parent::Expr(above) => e = above,
+                Parent::Stmt(statement) => return statement.some(),
+                Parent::VarInit(declaration) => return self.var_stmt[declaration.idx()].some(),
+                _ => return None,
+            }
+        }
+    }
+
+    fn is_inside_expr(&self, hir: &File<'_>, inner: ExprId, outer: ExprId) -> bool {
+        if inner == outer || hir[inner].pos < hir[outer].pos || hir[inner].end > hir[outer].end {
+            return false;
+        }
+        let mut at = inner;
+        while let Parent::Expr(above) = self.parent_of_expr(at) {
+            if above == outer {
+                return true;
+            }
+            at = above;
+        }
+        false
+    }
+
+    /// Moves an assignment that is part of another one's value in front of it: `o.a = o.b = 0` creates `b` first.
+    pub fn move_inner_assignments_first<T>(
+        &self,
+        hir: &File<'_>,
+        items: Vec<T>,
+        assignment_of: impl Fn(&T) -> Option<ExprId>,
+    ) -> Vec<T> {
+        let is_part_of_expression = |item: &T| {
+            assignment_of(item).is_some_and(|assignment| {
+                matches!(self.parent_of_expr(assignment), Parent::Expr(_))
+            })
+        };
+        if !items.iter().any(is_part_of_expression) {
+            return items;
+        }
+        let mut ordered = Vec::with_capacity(items.len());
+        let mut enclosing: SmallVec<[(Option<ExprId>, T); 4]> = SmallVec::new();
+        for item in items {
+            let assignment = assignment_of(&item);
+            while let Some((outer, _)) = enclosing.last() {
+                let is_inside = matches!((*outer, assignment), (Some(outer), Some(inner)) if self.is_inside_expr(hir, inner, outer));
+                if is_inside {
+                    break;
+                }
+                ordered.extend(enclosing.pop().map(|(_, outer)| outer));
+            }
+            enclosing.push((assignment, item));
+        }
+        while let Some((_, outer)) = enclosing.pop() {
+            ordered.push(outer);
+        }
+        ordered
     }
 
     /// Returns `expr_symbol` for `e`, or `NONE` if `e` isn't an expression of this file.

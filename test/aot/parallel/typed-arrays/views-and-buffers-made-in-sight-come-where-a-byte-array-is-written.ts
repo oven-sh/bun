@@ -1,4 +1,3 @@
-// STATISTIC: ViewsThatTakeInstancesBelowForTheirLength = 4
 // Under: --aot-testing=CheckProofsAtRunTime --aot-check=Validate: where the length is believed by the note the weaker test is asked again
 // The callers of these functions are in sight and hand over what `new Uint8Array(n)` and `Buffer.alloc(n)` make: what is proven of the parameter is the two classes. They are one kind of view, and the second is
 // the class below the first: the loop has the front that it has where Uint8Array alone is known. A third class beside them, and two kinds of views, are as before.

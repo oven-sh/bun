@@ -335,11 +335,11 @@ fn es_module_record_has_body_and_requests() {
     ];
     assert_eq!(record.requests, expected_requests);
     let expected = Module {
-        flags: record.flags & ModuleFlags::KEEPS_ERROR,
+        flags: record.flags & ModuleFlags::CACHES_EVALUATION_ERROR,
         body: record.body,
         requests: record.requests.clone(),
         positions: record.positions.clone(),
-        function_text: record.function_text.clone(),
+        function_source: record.function_source.clone(),
         ..blank_record(record)
     };
     assert_eq!(*record, expected);
@@ -374,19 +374,19 @@ fn commonjs_record_has_body_and_requests_and_no_names_for_the_loader() {
     let exports = &program.variables[exports.index()];
     assert_eq!(exports.initialization, VariableInitialization::Undefined);
     let expected = Module {
-        flags: record.flags & ModuleFlags::KEEPS_ERROR,
+        flags: record.flags & ModuleFlags::CACHES_EVALUATION_ERROR,
         body: record.body,
         exports_variable: record.exports_variable,
         requests: record.requests.clone(),
         positions: record.positions.clone(),
-        function_text: record.function_text.clone(),
+        function_source: record.function_source.clone(),
         ..blank_record(record)
     };
     assert_eq!(*record, expected);
 }
 
 #[test]
-fn face_has_a_path_of_its_own_and_the_file_keeps_the_line_table() {
+fn facade_record_has_own_path() {
     let legacy = "exports.n = 1;\nexports.set = function () {\n  exports.n = 2;\n};\n";
     let program = link_program_without_bun_modules(&[
         (
@@ -397,34 +397,34 @@ fn face_has_a_path_of_its_own_and_the_file_keeps_the_line_table() {
     ]);
     let file = module_named(&program, "legacy.cjs");
     let display_path = program.modules[file.index()].display_path;
-    let is_face = |record: &Module| {
+    let is_facade = |record: &Module| {
         record.kind == ModuleKind::SourceText && record.display_path == display_path
     };
-    let face = program
+    let facade = program
         .modules
         .iter()
-        .position(is_face)
-        .expect("legacy.cjs has no face");
-    assert_eq!(face, file.index() + 1);
-    let record = &program.modules[face];
+        .position(is_facade)
+        .expect("legacy.cjs has no facade");
+    assert_eq!(facade, file.index() + 1);
+    let record = &program.modules[facade];
     assert_eq!(
         program.strings.get(record.path),
-        format!("#{face}").as_bytes()
+        format!("#{facade}").as_bytes()
     );
     assert!(record.positions.line_starts.is_empty());
-    assert!(record.function_text.is_empty());
+    assert!(record.function_source.is_empty());
     assert!(record.requests.iter().any(|request| request.target == file));
-    let body = record.body.expect("a face has a body");
+    let body = record.body.expect("a facade has a body");
     assert_eq!(program.functions[body.index()].module, file);
 
     let requests = &record_named(&program, "main.js").requests;
     assert!(
         requests
             .iter()
-            .any(|request| request.target == ModuleId::new(face))
+            .any(|request| request.target == ModuleId::new(facade))
     );
     assert!(requests.iter().all(|request| request.target != file));
-    let is_copy = |variable: &&generated::Variable| variable.module == ModuleId::new(face);
+    let is_copy = |variable: &&generated::Variable| variable.module == ModuleId::new(facade);
     let copies: Vec<&generated::Variable> = program.variables.iter().filter(is_copy).collect();
     let [copy] = copies.as_slice() else {
         panic!("only `n` is stored where a copy can be told from the variable");
@@ -462,7 +462,7 @@ fn native_bun_module_record_is_named_by_its_namespace() {
     assert_eq!(record.path, record.display_path);
     let expected = Module {
         kind: ModuleKind::Runtime,
-        flags: ModuleFlags::IS_HELD_UNDER_NAME_WITHOUT_PREFIX,
+        flags: ModuleFlags::REJECTS_REQUIRE_CACHE_OVERRIDE,
         runtime_module: Some(buffer),
         synthetic_exports: record.synthetic_exports.clone(),
         ..blank_record(record)
@@ -618,7 +618,7 @@ fn function_files_of_bun_have_only_positions() {
                 kind: ModuleKind::SourceText,
                 flags: ModuleFlags::IS_LIBRARY,
                 positions: record.positions.clone(),
-                function_text: record.function_text.clone(),
+                function_source: record.function_source.clone(),
                 ..blank_record(record)
             };
             assert_eq!(*record, expected);
@@ -689,9 +689,10 @@ fn top_level_await_is_flagged() {
 }
 
 fn files_left_out(package: &[(&str, &str)]) -> Vec<String> {
-    let main = "import 's';\nimport 's/lib/b.js';\nimport 's/lib/c.cjs';\nimport 's/esm/d.js';\nimport './local.js';\n";
+    let page = "import 's';\nimport 's/lib/b.js';\nimport 's/lib/c.cjs';\nimport 's/esm/d.js';\nimport './local.js';\n";
     let mut files = vec![
-        ("main.js", main),
+        ("main.js", "import './page.js';\n"),
+        ("page.js", page),
         ("local.js", "export {};\n"),
         ("node_modules/s/a.js", "export {};\n"),
         ("node_modules/s/lib/b.js", "export {};\n"),
@@ -760,7 +761,7 @@ fn application_may_declare_its_own_files() {
         ("node_modules/s/package.json", &manifest),
         (
             "package.json",
-            r#"{ "name": "application", "sideEffects": ["./main.js"] }"#,
+            r#"{ "name": "application", "sideEffects": ["./page.js"] }"#,
         ),
     ]);
     assert_eq!(left_out, ["local.js"]);
@@ -857,6 +858,7 @@ fn exports_are_sorted_by_code_units_not_by_string_id() {
             atoms,
             modules: &prepared.modules,
             functions: &prepared.functions,
+            layouts: &prepared.layouts,
             variables: &prepared.variables,
             definitions: &prepared.definitions,
             numbering: &numbering,
@@ -972,11 +974,11 @@ fn names_resolved_at_run_time_are_required() {
         export_name,
         specifier,
         drops_export_if_absent,
-        is_asked_for_by_star,
+        is_requested_by_star_export,
     } = *required;
     assert!(!may_be_absent);
     assert!(!drops_export_if_absent);
-    assert!(!is_asked_for_by_star);
+    assert!(!is_requested_by_star_export);
     assert_eq!((export_name, specifier), (None, None));
     assert_eq!(module, module_named(&program, "barrel.js"));
     assert_eq!(program.strings.get(name), b"x");
@@ -1068,6 +1070,19 @@ fn name_that_only_a_spy_names_is_listed_without_a_variable() {
     let spy = "import { spyOn } from 'bun:test';\nspyOn(path, 'resolve');\n";
     assert_eq!(find_resolve(spy), Some((None, true)));
     assert_eq!(find_resolve(""), None);
+}
+
+#[test]
+fn spied_native_module_is_replaceable() {
+    let may_be_mocked = |spy: &str| {
+        let main = format!("import * as buffer from 'node:buffer';\n{spy}console.log(buffer);\n");
+        let program = link_test_run(&[("main.test.js", main.as_str())]);
+        let record = runtime_record(&program, RuntimeModule::NodeBuffer);
+        record.flags.contains(ModuleFlags::MAY_BE_MOCKED)
+    };
+    let spy = "import { spyOn } from 'bun:test';\nspyOn(buffer, 'isUtf8');\n";
+    assert!(may_be_mocked(spy));
+    assert!(!may_be_mocked(""));
 }
 
 #[test]

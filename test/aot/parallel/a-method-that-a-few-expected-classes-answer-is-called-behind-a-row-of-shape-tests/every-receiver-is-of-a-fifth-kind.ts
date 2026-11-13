@@ -1,4 +1,4 @@
-// STATISTIC: MethodCallsOnExpectedReceiversToldApartByShape >= 2
+// STATISTIC: SpeculatedReceiversDispatchedByShape >= 1
 interface Spec { kind: string; a: number; b: number }
 interface Figure { area(): number; grow(by: number): void }
 class Disk implements Figure { constructor(private r: number) {} area(): number { return this.r * this.r * 3; } grow(by: number): void { this.r += by; } }

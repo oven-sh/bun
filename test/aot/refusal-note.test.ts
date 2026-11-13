@@ -184,11 +184,11 @@ test("passes behind the write", () => {});`,
   expect(compiled.shown.a).toEqual(underFailingTest("the write", said));
   expect(compiled.shown.b).toEqual(underFailingTest("the path", saidOfPath));
   expect(compiled.all).toContain("1 load of a compiled file by a computed path failed during this run");
-  expect(compiled.all).toContain("lib.js': the build saw no import() or require() of a computed path that can reach it, so it answers only to the paths the build saw.") // prettier-ignore
+  expect(compiled.all).toContain("lib.js': no import() or require() that the build saw can reach it by a dynamic path.") // prettier-ignore
   const ofPath = compiled.all.split("\n").filter(line => line.includes("lib.js'"));
   expect(ofPath.join("\n")).not.toMatch(/this executable|to bun compile/);
   expect(ofPath.join("\n")).toContain(
-    "unless you build it with this file as another entry point. Import the file by a constant path, or add --aot-allow-code-from-disk.",
+    "by a dynamic path. Import the file by a constant path, or add --aot-allow-code-from-disk.",
   );
   // The language refuses the write too.
   const plain = await linesOfTests(String(dir), []);

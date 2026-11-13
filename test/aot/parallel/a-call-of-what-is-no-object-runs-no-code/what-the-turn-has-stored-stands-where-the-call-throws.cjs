@@ -1,5 +1,4 @@
 'use strict';
-// STATISTIC: CallsOfWhatIsNoObjectThatRunNoCode >= 1
 // The throw leaves the loop and the function: what the turns have stored into the view is there, and the message names the member as it is written.
 function add(out, a, b) { out[0] = a[0] + b[0]; out[1] = a[1] + b[1]; return out; }
 const N = {}; N.add = add; if (process.argv.length > 99) N.gone = add;

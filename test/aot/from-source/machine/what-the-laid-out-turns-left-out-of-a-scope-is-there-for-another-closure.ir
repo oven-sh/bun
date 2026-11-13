@@ -42,8 +42,8 @@
 # -- end of source
 # Another closure over the same scope reads the variables behind the loop; a second scope of the same make() stays as it was. Behind no turn, fewer than eight, eight, five times eight and a rest; and
 # behind a laid-out turn that leaves by a break: at 0 no turn has run and `last` keeps its 5.5; from 1 on it holds what the turn in front stored.
-# RUN(EVENT): compile StoresLeftOutOfTurnsLaidOut mechanisms=all
-# EVENT: statistic StoresLeftOutOfTurnsLaidOut 2
+# RUN(EVENT): compile UnrolledLoopStoresSunk mechanisms=all
+# EVENT: statistic UnrolledLoopStoresSunk 2
 # RUN(RIGHT): run-in-shell globalThis.unseen = (value) => value;
 # RIGHT: 0 0 5.5 0 5.5
 # RIGHT-NEXT: 7 21 5.5 0 5.5

@@ -164,7 +164,7 @@ pub(crate) fn look_at_file_of_run(
     found.runs_unseen_code |= objects.evaluates_unknown_text;
     found.closed_holders_out_of_sight = objects.take_closed_holders();
     if let Some(texts) = texts {
-        (found.in_texts_written, found.in_texts_handed_on) = texts.finish();
+        (found.in_texts_written, found.in_texts_handed_on) = texts.finish(input.builtin_names);
     }
     names.finish(&mut found);
     found
@@ -180,16 +180,18 @@ pub(crate) enum WhoseFile {
 #[derive(Default)]
 pub(crate) struct RunContents {
     pub whose: Vec<WhoseFile>,
-    pub loads_compiled_files_alone: Vec<bool>,
+    pub rejects_uncompiled_code: Vec<bool>,
     pub spies_under_any_name: bool,
     pub names_spied: Vec<Atom>,
     pub modules_replaced_in_text: Vec<Atom>,
     pub exports_spied_in_text: Vec<(Atom, Atom)>,
     pub mocks_any_module: bool,
     pub loader_functions_answer_requires: bool,
+    pub preloads: Vec<FileId>,
     pub names_added: Vec<(BuiltinId, Atom)>,
     pub members_written_as_reads: Arc<[u32]>,
     pub loads: LoadsOfRun,
+    pub test_files: Vec<FileId>,
     pub counts: CountsOfScan,
 }
 
@@ -229,8 +231,8 @@ impl RunContents {
     pub(crate) fn plan_of_files(&self) -> TestRunPlan {
         let whose = self.whose.iter();
         TestRunPlan {
-            finds_builtins_read_only: whose.map(|&it| it == WhoseFile::OfProduct).collect(),
-            loads_compiled_files_alone: self.loads_compiled_files_alone.clone(),
+            has_read_only_builtins: whose.map(|&it| it == WhoseFile::OfProduct).collect(),
+            rejects_uncompiled_code: self.rejects_uncompiled_code.clone(),
             ..TestRunPlan::default()
         }
     }
@@ -310,12 +312,15 @@ pub(crate) fn fix_places_on_the_way(builtins: &ResolvedBuiltins, fixed: &FixedBu
 }
 
 pub(crate) fn runs_unseen_code(source: &ParsedSource) -> bool {
-    let names = &source.contents.names;
+    runs_unseen_code_without_require(source)
+        || source.contents.names.loads_by_unknown_path
+        || source.builtins.hands_on_loader_of_paths()
+}
+
+pub(crate) fn runs_unseen_code_without_require(source: &ParsedSource) -> bool {
     source.of_run.runs_unseen_code
         || source.of_run.loads.names_file_with_query.is_some()
-        || names.loads_by_unknown_path
-        || source.builtins.hands_on_loader_of_paths()
-        || !names.files_missing_at_build_at.is_empty()
+        || !source.contents.names.files_missing_at_build_at.is_empty()
         || source.contents.starts_worker_out_of_sight
 }
 
@@ -455,16 +460,19 @@ pub(crate) fn list_names_that_tests_may_add(
 
 pub(crate) fn collect_run_contents(
     input: RunInput<'_, '_>,
-    (whose, loads_compiled_files_alone): (Vec<WhoseFile>, Vec<bool>),
+    (whose, rejects_uncompiled_code): (Vec<WhoseFile>, Vec<bool>),
 ) -> RunContents {
     let started = Instant::now();
     let (files, atoms) = (input.files, &input.files.atoms);
     let texts_written = settle_texts_written(&input, &whose);
+    let listed = find_files_listed_by_runner(&input);
     let mut run = RunContents {
         whose,
-        loads_compiled_files_alone,
+        rejects_uncompiled_code,
         members_written_as_reads: list_members_written_as_reads(input.replaced_builtins),
+        preloads: listed.preloads,
         loads: collect_loads_of_run(files, input.options),
+        test_files: listed.test_files,
         ..RunContents::default()
     };
     let members = &run.members_written_as_reads;
@@ -579,10 +587,12 @@ pub(crate) fn collect_run_contents(
 
 #[derive(Default)]
 pub(crate) struct TestRunPlan {
-    pub finds_builtins_read_only: Vec<bool>,
-    pub loads_compiled_files_alone: Vec<bool>,
+    pub has_read_only_builtins: Vec<bool>,
+    pub rejects_uncompiled_code: Vec<bool>,
     pub is_changed_on_disk_by_run: Vec<bool>,
     pub may_be_evicted: Vec<bool>,
+    pub is_reloadable: Vec<bool>,
+    pub is_reloadable_commonjs: Vec<bool>,
 }
 
 impl TestRunPlan {
@@ -590,7 +600,7 @@ impl TestRunPlan {
         match module {
             ModuleRef::File(file)
             | ModuleRef::Inner { file, .. }
-            | ModuleRef::Face(file)
+            | ModuleRef::Facade(file)
             | ModuleRef::Check(file) => set.get(file.idx()).copied().unwrap_or(false),
             ModuleRef::Runtime(_) | ModuleRef::External { .. } => false,
         }
@@ -600,15 +610,20 @@ impl TestRunPlan {
 pub(crate) fn flags_of_module(graph: &ModuleGraph, module: ModuleRef) -> ModuleFlags {
     let plan = graph.test_run();
     let mut flags = ModuleFlags::default();
-    if TestRunPlan::has(&plan.finds_builtins_read_only, module) {
-        flags |= ModuleFlags::FINDS_BUILTINS_READ_ONLY;
+    if TestRunPlan::has(&plan.has_read_only_builtins, module) {
+        flags |= ModuleFlags::HAS_READ_ONLY_BUILTINS;
     }
-    if TestRunPlan::has(&plan.loads_compiled_files_alone, module) {
-        flags |= ModuleFlags::LOADS_COMPILED_FILES_ALONE;
+    if TestRunPlan::has(&plan.rejects_uncompiled_code, module) {
+        flags |= ModuleFlags::REJECTS_UNCOMPILED_CODE;
     }
     if TestRunPlan::has(&plan.is_changed_on_disk_by_run, module) && graph.is_code_of_program(module)
     {
         flags |= ModuleFlags::IS_CHANGED_ON_DISK_BY_RUN;
+    }
+    if matches!(module, ModuleRef::File(_))
+        && TestRunPlan::has(&plan.is_reloadable_commonjs, module)
+    {
+        flags |= ModuleFlags::IS_RELOADABLE;
     }
     flags
 }

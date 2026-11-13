@@ -1,7 +1,6 @@
 use super::mention_use::{MentionUse, lookup_passes_holder_linked_anew};
-use super::module_values::reads_what_wrapper_hands_in;
 use super::resolver::{ExprState, Resolver};
-use super::{SourceDialect, passes_every_assertion};
+use super::{SourceDialect, passes_every_assertion, reads_what_wrapper_hands_in};
 use crate::builtins::names::BuiltinNames;
 use crate::builtins::runtime_uses::{
     SyntaxWithHelpers, is_name_of_language_member_with_code, is_name_under_which_evaluator_hangs,
@@ -431,6 +430,22 @@ impl Resolver<'_, '_> {
                 }))
     }
 
+    pub(super) fn may_read_function_constructor(&self) -> bool {
+        let hir = self.input.hir;
+        let is_taken = |&read: &ExprId| {
+            let key = hir.member_key(read).map(|member| member.1);
+            matches!(key, Some(MemberKey::Name(known::constructor)))
+                && !matches!(
+                    self.classify_use(read),
+                    MentionUse::Holder | MentionUse::Inspected
+                )
+        };
+        let mut pattern_keys = hir.pat_props.iter().map(|property| property.key);
+        self.output.may_call_evaluator
+            || self.constructor_reads.iter().any(is_taken)
+            || pattern_keys.any(|key| key == PropKey::Name(known::constructor))
+    }
+
     fn note_text_taken_by_pattern(&mut self, name: Atom) {
         self.output.may_call_evaluator |= name == known::constructor;
         self.note_method_taken_off_value_nobody_knows(name);
@@ -544,9 +559,31 @@ impl Resolver<'_, '_> {
         })
     }
 
-    fn is_number_by_syntax(&self, value: ExprId, followed: u32) -> bool {
+    fn is_number_by_syntax(&self, mut value: ExprId, followed: u32) -> bool {
+        let hir = self.input.hir;
+        let is_of_program = self.input.dialect == SourceDialect::Program;
+        loop {
+            value = hir.skip_type_assertions(value);
+            let ExprKind::Binary { op, left, right } = hir[value].kind else {
+                return self.is_number_operand_by_syntax(value, followed);
+            };
+            value = match op {
+                BinOp::UShr => return true,
+                BinOp::Add => {
+                    if !self.is_number_by_syntax(right, followed) {
+                        return false;
+                    }
+                    left
+                }
+                _ if !makes_number(op) => return false,
+                _ if !is_of_program || self.is_number_by_syntax(right, followed) => return true,
+                _ => left,
+            };
+        }
+    }
+
+    fn is_number_operand_by_syntax(&self, value: ExprId, followed: u32) -> bool {
         let (hir, bound) = (self.input.hir, self.input.bound);
-        let value = hir.skip_type_assertions(value);
         let is_of_program = self.input.dialect == SourceDialect::Program;
         match hir[value].kind {
             ExprKind::Number(_) => true,
@@ -563,23 +600,6 @@ impl Resolver<'_, '_> {
                         | UnOp::PostDec
                 );
                 keeps_kind && (!is_of_program || self.is_number_by_syntax(operand, followed))
-            }
-            ExprKind::Binary {
-                op: BinOp::Add,
-                left,
-                right,
-            } => {
-                self.is_number_by_syntax(left, followed)
-                    && self.is_number_by_syntax(right, followed)
-            }
-            ExprKind::Binary {
-                op: BinOp::UShr, ..
-            } => true,
-            ExprKind::Binary { op, left, right } => {
-                makes_number(op)
-                    && (!is_of_program
-                        || self.is_number_by_syntax(left, followed)
-                        || self.is_number_by_syntax(right, followed))
             }
             ExprKind::Ident(_) => match bound.binding(value) {
                 Binding::Symbol(variable) => self.holds_numbers_alone(variable, followed),

@@ -1,3 +1,5 @@
+use core::cell::Cell;
+
 // LAYERING: re-export `bun_core::Timespec` so every embedder of
 // `EventLoopTimer.next` agrees on the type (was a local stub with the same
 // `{sec,nsec}` layout, which forced higher tiers — `bun_runtime`, `bun_sql_jsc`
@@ -5,11 +7,7 @@
 use Timespec as timespec;
 pub use bun_core::Timespec;
 
-// Re-export so higher tiers see the *same* type they pass to
-// `bun_io::heap::Intrusive<EventLoopTimer, _>` (a zero-sized local stub
-// would make the real pairing-heap unusable — orphan rule blocks
-// `impl HeapNode for EventLoopTimer` anywhere but here).
-pub use bun_io::heap::IntrusiveField;
+use bun_io::heap::IntrusiveField;
 
 const NS_PER_MS: i64 = bun_core::time::NS_PER_MS as i64;
 
@@ -46,17 +44,19 @@ unsafe extern "Rust" {
 }
 // ────────────────────────────────────────────────────────────────────────────
 
+// `repr(C)` keeps `next` at offset 0: its address is the node's.
+#[repr(C)]
 pub struct EventLoopTimer {
     /// The absolute time to fire this timer next.
-    pub next: timespec,
-    pub state: State,
-    pub tag: Tag,
+    pub next: Cell<timespec>,
     /// Internal heap fields.
     pub heap: IntrusiveField<EventLoopTimer>,
-    pub in_heap: InHeap,
+    pub tag: Tag,
+    pub state: Cell<State>,
+    pub in_heap: Cell<InHeap>,
     /// A `setTimeout()` without a delay in `bun test`. Its deadline is 1 ms away, as in Node, so its place among the
     /// timers is Node's. An event loop that would sleep until then runs it at once.
-    pub is_due_when_idle: bool,
+    pub is_due_when_idle: Cell<bool>,
 }
 
 // Duck-typed `.heap` field access for `bun_io::heap::Intrusive`. Implemented
@@ -64,14 +64,13 @@ pub struct EventLoopTimer {
 // `Intrusive<EventLoopTimer, _>` without hitting the orphan rule.
 impl bun_io::heap::HeapNode for EventLoopTimer {
     #[inline]
-    fn heap(&mut self) -> &mut IntrusiveField<Self> {
-        &mut self.heap
+    fn heap(&self) -> &IntrusiveField<Self> {
+        &self.heap
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Default)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub enum InHeap {
-    #[default]
     None,
     Regular,
     Fake,
@@ -80,17 +79,17 @@ pub enum InHeap {
 impl EventLoopTimer {
     pub fn init_paused(tag: Tag) -> Self {
         Self {
-            next: timespec::EPOCH,
-            state: State::PENDING,
+            next: Cell::new(timespec::EPOCH),
+            state: Cell::new(State::PENDING),
             tag,
             heap: IntrusiveField::default(),
-            in_heap: InHeap::None,
-            is_due_when_idle: false,
+            in_heap: Cell::new(InHeap::None),
+            is_due_when_idle: Cell::new(false),
         }
     }
 
     pub fn less(_: (), a: &Self, b: &Self) -> bool {
-        let sec_order = a.next.sec.cmp(&b.next.sec);
+        let sec_order = a.next.get().sec.cmp(&b.next.get().sec);
         if sec_order != core::cmp::Ordering::Equal {
             return sec_order == core::cmp::Ordering::Less;
         }
@@ -98,8 +97,8 @@ impl EventLoopTimer {
         // collapse sub-millisecond precision for JavaScript timers
         let maybe_a_epoch = a.js_timer_epoch();
         let maybe_b_epoch = b.js_timer_epoch();
-        let mut a_ns = a.next.nsec;
-        let mut b_ns = b.next.nsec;
+        let mut a_ns = a.next.get().nsec;
+        let mut b_ns = b.next.get().nsec;
         if maybe_a_epoch.is_some() {
             a_ns = NS_PER_MS * (a_ns / NS_PER_MS);
         }
@@ -161,14 +160,7 @@ impl EventLoopTimer {
     /// `bun_runtime::dispatch::__bun_fire_timer` (link-time extern). `vm` is
     /// the erased `*mut VirtualMachine`.
     ///
-    /// Deliberately takes `this: *mut Self`, NOT
-    /// `&mut self`. `__bun_fire_timer` dispatches via container_of into a
-    /// tier-6 timer object whose JS callback can re-enter and re-derive a
-    /// `&mut EventLoopTimer` to *this same node* (e.g. `clearTimeout()` →
-    /// `vm.timer.remove()` mutates `(*this).state`/`heap`). A live `&mut self`
-    /// across that FFI call lets LLVM `noalias` dead-store the re-entrant
-    /// write. Both callers (`drain_timers`, `get_timeout`) already hold a raw
-    /// `*mut EventLoopTimer` popped from the heap — pass it directly.
+    /// Takes a pointer because the handler recovers the container from it and may free it.
     ///
     /// The owner returns the exception its handler left pending as `Err` and
     /// never reports it itself; the drain loop that called `fire` folds it.
@@ -278,7 +270,7 @@ impl Tag {
 /// fields on owners defined elsewhere, so each owner exports a named thunk per
 /// slot. The input is `*const` (so `*mut` / `&mut` / `&` all coerce at the
 /// call site); the field may be a bare `EventLoopTimer` or any
-/// `#[repr(transparent)]` wrapper such as `JsCell<EventLoopTimer>`, and may be
+/// wrapper that starts with one, and may be
 /// a field of a field (`timers.timer`).
 ///
 /// ```ignore

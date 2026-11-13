@@ -1,9 +1,9 @@
-// `bun build --compile --aot` takes --aot-harden=<names>, and Bun.build takes the same names as compile.aotHarden. None is on unless it is asked for.
-// proof-checks: what the compiler has proven of a value is tested where the value arrives, and no cell lies in a frame or is handed back.
-// What an element is reached through is such a proof: each access reads where the storage lies, how long it is and of which kind, and stops where it was told otherwise.
-// ignore-told-ranges: the compiler tells no access that its position lies inside: each tests it where it stands, against the length that it reads there.
-// Each is tried against a lie that a word of --aot-testing plants in the compiler: with the name the process stops at the lie and says so. Without it nothing does,
-// but for what every build asks: no build believes unasked what comes out of code that the compiler does not see.
+// `bun build --compile --aot` takes --aot-harden=<names>, and Bun.build takes the same names as compile.aotHarden. None is on unless it is requested.
+// proof-checks: what the compiler has proven about a value is tested where the value arrives, and no cell lives in a frame or is given back for reuse.
+// How an element is reached is such a proof too: each access reads where the storage is, how long it is and what its indexing type is, and crashes if the compiler expected otherwise.
+// ignore-told-ranges: the compiler tells no access that its index is in bounds. Each access tests its index in place, against the length that it reads there.
+// Each name is tested against a fault that an --aot-testing switch injects into the compiler. With the name, the process crashes at the fault and says so.
+// Without the name nothing crashes, except at what every build checks: no build trusts unchecked what comes out of code that the compiler does not see.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -12,8 +12,8 @@ import { withoutCoreDump, withoutCrashReport } from "./harness/commands";
 import { run as spawned } from "./harness/run";
 import { describe, test } from "./supported";
 
-// The compiler takes whatever code that it does not see answers for undefined.
-const falseProof = "--aot-testing=UnseenCodeAnswersUndefined";
+// The compiler assumes that code that it does not see always returns undefined.
+const falseProof = "--aot-testing=AssumeUnknownCallsReturnUndefined";
 const program = `const unseen = new Function("return 7") as () => number;
 function kindOf(value: unknown): string {
   return typeof value;
@@ -33,10 +33,10 @@ console.log(kindOf(unseen()), sum);
 `;
 const printed = "number 18\n";
 const stopAtProof =
-  /^AOT: f\d+ at \d+:\d+: .+ is not of the type that the compiler has proven of it\. It is: number\./m;
+  /^bun: internal AOT error: type check failed at \S+:\d+:\d+.*\n  (expected .+, )?found (int32|double) in /m;
 
-// The compiler takes every index for one that lies inside its list. The store lands behind the last element, inside the room that the list has, and the length stays.
-const falseBound = "--aot-testing=PositionsAreTakenToLieInside";
+// The compiler assumes that every index is in bounds of its array. The store lands past the last element, within the array's capacity, and the length does not change.
+const falseBound = "--aot-testing=AssumeIndexesInBounds";
 const storeBehindTheEnd = `const list: number[] = [];
 for (let i = 0; i < 3; i++) list.push(i + 0.5);
 function put(at: number, value: number) {
@@ -45,27 +45,26 @@ function put(at: number, value: number) {
 put(Number(process.argv.length > 99 ? 0 : 4), 9.5);
 console.log(list.length);
 `;
-const stopAtBound = /^AOT: f\d+ at \d+:\d+: .+ is not of the type that the compiler has proven of it\./m;
-// The compiler takes every position that the library vouches for one further, where the room of the list reaches that far. The list has room for eight and a length of five:
-// what the sort of numbers in place reads and stores behind its end lies inside that room.
-const oneFurther = "--aot-testing=VouchedPositionsAreTakenOneFurther";
+const stopAtBound = /^bun: internal AOT error: .+ check failed at \S+:\d+:\d+/m;
+// The compiler moves every index that the library vouches for one position further, where the array's capacity reaches that far. The array has a capacity of eight and a length of five,
+// so what the in-place sort of numbers reads and stores past the array's end is within that capacity.
+const oneFurther = "--aot-testing=MisplaceUncheckedAccesses";
 const sortedInPlace = `const list: number[] = [];
 for (let i = 0; i < 8; i++) list.push(((i * 7) % 5) + 1);
 list.length = 5;
 list.sort((a, b) => a - b);
 console.log(list.join(), list.length);
 `;
-// The same for reads alone: what the first word reads is what it has stored one further, so it never meets a place that nothing was stored into.
-const readsFurther = "--aot-testing=VouchedReadsAreTakenOneFurther";
+// The same for reads alone. With the first switch, a read finds what a store has put one position further, so it never reaches a slot that nothing was stored into.
+const readsFurther = "--aot-testing=MisplaceUncheckedReads";
 const linesOfSort = readFileSync(
   join(import.meta.dir, "..", "..", "src", "aot", "prelude", "array-sort.ts"),
   "utf8",
 ).split("\n");
 const stopAtWhatIsVouchedFor = (place: string) =>
-  new RegExp(
-    `^AOT: f\\d+ at ${place}:\\d+: what memory holds where the compiler remembers another value is not of the type`,
-    "m",
-  );
+  new RegExp(`^bun: internal AOT error: redundancy elimination check failed at \\S+:${place}:\\d+`, "m");
+// A helper of the compiler has no file, so the report names the helper alone.
+const stopInSpreadHelper = /^bun: internal AOT error: redundancy elimination check failed in (max|min)OfList$/m;
 const stopInSortAt = (words: string) =>
   stopAtWhatIsVouchedFor(String(linesOfSort.findIndex(line => line.includes(words)) + 1));
 const underAComparator = (list: string) => `let calls = 0;
@@ -107,7 +106,7 @@ console.log(list.join(), list.length);
     "1,2,3,9,,, 7 true\n",
     stopInSortAt("const inserted: T = $getOwnContiguousIndex<T>(from, i);"),
   ],
-  // As built, the first of these two answers 5 under the lie, without a sound.
+  // In a default build with the fault injected, the first of these two silently gives 5.
   [
     "the most of a list of whole numbers that is spread",
     oneFurther,
@@ -117,7 +116,7 @@ list.length = 4;
 console.log(Math.max(...list), list.join(), list.length);
 `,
     "7 7,3,5,1 4\n",
-    stopAtWhatIsVouchedFor("1"),
+    stopInSpreadHelper,
   ],
   [
     "the least of a list of fractions that is spread",
@@ -128,12 +127,16 @@ list.length = 4;
 console.log(Math.min(...list), list.join(), list.length);
 `,
     "1.5 7.5,3.5,5.5,1.5 4\n",
-    stopAtWhatIsVouchedFor("1"),
+    stopInSpreadHelper,
   ],
 ];
-// The compiler takes the turns of a loop to leave the storage of lists and of views, and so their lengths, as they were in front of it: what a turn reads of them is read once, in front.
-// Each program stays inside memory that is still there: it reads no element, or it reads one where it lay before, and it stores nothing.
-const asInFront = "--aot-testing=StorageAndLengthsAreTakenToBeAsInFront";
+// The compiler assumes that the iterations of a loop leave the storage of arrays and of typed arrays, and so their lengths, as they were before the loop.
+// What an iteration reads of them is hoisted: it is read once, in the preheader.
+// Each program stays within memory that is still there: it reads no element, or it reads one at its old location, and it stores nothing.
+const asInFront = "--aot-testing=AssumeInvariantArrayStorage";
+// What --aot-harden=proof-checks lays into the program. The name also runs the compiler's verifier, which refuses some injected faults before there is a program to stop.
+const runTimeProofChecks =
+  "--aot-testing=CheckProofsAtRunTime,DisableFrameCells,CheckHoistedCallsAtRunTime,CheckResultFreshnessAtRunTime";
 const movedInTurns = [
   [
     "the length of a list that the turns shorten",
@@ -152,7 +155,7 @@ console.log(walk(list), list.length);
     "4 4\n",
     "8 0\n",
   ],
-  // The pushes are written out: under the lie a loop that goes by the length would never end.
+  // The pushes are written out one by one: with the fault injected, a loop that is bounded by the length would never end.
   [
     "the storage of a list that a turn's pushes move",
     `const turns: number = JSON.parse("4");
@@ -199,7 +202,7 @@ console.log(sum(view, turns), view.length);
     "1021 6\n",
     "136 6\n",
   ],
-  // The program keeps the buffer that took the bytes.
+  // The program keeps the buffer that received the bytes.
   [
     "the vector of a view whose buffer a turn hands away",
     `const turns: number = JSON.parse("16");
@@ -227,8 +230,7 @@ console.log(sum(view, turns), view.length, kept.length);
     "136 0 1\n",
   ],
 ] as const;
-const stopAtWhatWasReadInFront =
-  /^AOT: f\d+ at \d+:\d+: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it\./m;
+const stopAtWhatWasReadInFront = /^bun: internal AOT error: redundancy elimination check failed at \S+:\d+:\d+/m;
 
 const countedLoops = `function sum(values: Float64Array): number {
   let total = 0;
@@ -253,7 +255,7 @@ for (let turn = 0; turn < 100; turn++) total += sum(values) + sumOfList(list) + 
 console.log(total);
 `;
 
-// Short and long lists of each kind of storage: by insertion in place, and by runs in an array of the library's own.
+// Short and long arrays of each indexing type. They are sorted by insertion in place, and by runs in an array of the library's own.
 const sorts = `const integers: number[] = [];
 const fractions: number[] = [];
 const words: string[] = [];
@@ -275,7 +277,7 @@ console.log(few.join(), fewFractions.join(), integers[0], integers[299], fractio
 console.log(withGaps.length, 4 in withGaps, withGaps.join(), integers.toSorted((a, b) => b - a)[0], [].sort().length, [1].sort()[0]);
 `;
 
-// Accesses wider than a byte, and the three positions of a copy, at offsets of which the compiler knows that they are no less than nought.
+// Accesses wider than a byte, and the three positions of a copy, at offsets that the compiler knows are not negative.
 const offsetsIntoViews = `function sumOf(view: DataView): number {
   let total = 0;
   for (let i = 0; i < 15; i++) total += view.getInt32(i * 4, true);
@@ -305,7 +307,7 @@ for (let turn = 0; turn < 50; turn++) {
 console.log(total, other.toString("hex"));
 `;
 
-// Pieces of a text that are never made: the code units are parsed, converted, compared or appended out of the text itself.
+// Substrings that are never allocated: the code units are parsed, converted, compared or appended straight out of the string itself.
 const piecesOfTexts = `function parsed(text: string): number {
   let sum = 0;
   for (let i = 0; i < 8; i++) sum += parseInt(text.slice(i, i + 2), 10) + Number(text.substring(i + 1, i));
@@ -331,8 +333,8 @@ for (let turn = 0; turn < 30; turn++) sum += parsed(text) + found(text) + joined
 console.log(sum, joined(text, 12), joined("", 2), found("34"), parsed("7"));
 `;
 
-// The code generator answers `<` of two integers as `<=`: -1 passes `-1 < at`, behind which the compiler knows that `at` is no less than nought.
-const falseRange = "--aot-testing=EqualIntegersAreTakenToBeLess";
+// The code generator evaluates `<` of two integers as `<=`. So -1 passes `-1 < at`, after which the compiler knows that `at` is not negative.
+const falseRange = "--aot-testing=TreatEqualIntegersAsLess";
 const readsAtFalseRanges = {
   "a DataView": `function word(view: DataView, from: number): number {
   let sum = 0;
@@ -376,8 +378,8 @@ console.log(found("1234567890".repeat(process.argv.length > 99 ? 2 : 1), process
 `,
 };
 
-// A shape test that refuses objects that bear the mark passes them: a field that was taken away out of the compiler's sight is read as if its slot were filled.
-const passesOverMarks = "--aot-testing=MarkedObjectsAreTakenToBearNoMark";
+// A shape check that rejects marked objects accepts them instead. A field that was deleted out of the compiler's sight is then read as if its slot were filled.
+const passesOverMarks = "--aot-testing=IgnoreMarksInShapeChecks";
 const readsFieldTakenAway = `class Badge { text: string; constructor(text: string) { this.text = text; } }
 class Member {
   rank: number; active: boolean; name: string; badge: Badge; friend: Member | undefined; score: number; done: boolean;
@@ -393,14 +395,19 @@ strip(all[5], "rank");
 console.log(shelf[at[0]](all));
 `;
 
-// The same for a slot that holds a reference of 32 bits. `goesWrong`: without the hardening the lie shows in what the program prints or in how it ends.
+// The same for a slot that holds a 32-bit reference.
 const takesAway = `const strip: (o: object, k: string) => boolean = (Reflect as any)[JSON.parse('"deleteProperty"')];
 const at: number[] = JSON.parse("[0, 1]");
 class Badge { text: string; constructor(text: string) { this.text = text; } }
 `;
-const readsReferenceTakenAway = {
+interface ReferenceTakenAway {
+  printsFirst: string;
+  source: string;
+  isEmptyAsUndefined?: boolean;
+}
+
+const readsReferenceTakenAway: Record<string, ReferenceTakenAway> = {
   "which some members of a union have": {
-    goesWrong: true,
     printsFirst: "64\n",
     source: `${takesAway}interface Core { mark: number }
 interface Bare { kind: number; size: number }
@@ -415,7 +422,6 @@ console.log(shelf[at[0]](rows));
 `,
   },
   "which may be null": {
-    goesWrong: true,
     printsFirst: "true false true\n",
     source: `${takesAway}class Member {
   rank: number; active: boolean; name: string; badge: Badge; before: Member | null; score: number; done: boolean;
@@ -430,8 +436,8 @@ console.log(shelf[at[0]](hurt));
 `,
   },
   "which is asked for its truth": {
-    goesWrong: false,
     printsFirst: "friend badge\n",
+    isEmptyAsUndefined: true,
     source: `${takesAway}class Member {
   rank: number; active: boolean; name: string; badge: Badge; friend: Member | undefined; score: number; done: boolean;
   constructor(i: number) { this.rank = i & 7; this.active = (i & 1) === 1; this.name = "m" + i; this.badge = new Badge("b" + i); this.friend = undefined; this.score = i & 3; this.done = false; }
@@ -448,7 +454,7 @@ console.log(shelf[at[0]](hurt));
   },
 };
 
-// The name of the executable that --outfile built writes.
+// The name of the executable that `--outfile built` writes.
 const built = isWindows ? "built.exe" : "built";
 
 const commandLine = (flags: string[]) => [
@@ -474,7 +480,7 @@ const runBuilt = (cwd: string) =>
 
 const runPlain = (cwd: string) => spawned([bunExe(), "program.ts"], cwd, bunEnv);
 
-// Each name stands once among what --explain=statistics prints, whatever its number is.
+// Each name appears exactly once in what --explain=statistics prints, whatever its count is.
 async function countsOf(source: string, flags: string[]) {
   using folder = tempDir("aot-harden", { "program.ts": source });
   const said = await build(String(folder), ["--explain=statistics", ...flags]);
@@ -515,7 +521,7 @@ describe.concurrent("--aot-harden=proof-checks", () => {
   }, 120_000);
 
   test("leaves every cell to the collector", async () => {
-    // The scope of total() is handed back at its end and taken again by the next call.
+    // The scope of total() is given back when total() ends, and the next call reuses it.
     expect((await countsOf(program, [])).AllocateInFramesChanges).toBeGreaterThan(0);
     expect(await countsOf(program, ["--aot-harden=proof-checks"])).toMatchObject({
       AllocateInFramesChanges: 0,
@@ -536,7 +542,7 @@ describe.concurrent("--aot-harden=proof-checks", () => {
     "stops the program at %s, taken to be as in front of the loop",
     async (_, source) => {
       using folder = tempDir("aot-harden", { "program.ts": source });
-      await build(String(folder), ["--aot-harden=proof-checks", asInFront]);
+      await build(String(folder), [runTimeProofChecks, asInFront]);
       const { stdout, stderr, exitCode } = await runBuilt(String(folder));
       expect(stderr).toMatch(stopAtWhatWasReadInFront);
       expect(stdout).toBe("");
@@ -544,6 +550,13 @@ describe.concurrent("--aot-harden=proof-checks", () => {
     },
     120_000,
   );
+
+  test("refuses the build where the verifier sees the fault", async () => {
+    using folder = tempDir("aot-harden", { "program.ts": movedInTurns[1][1] });
+    const refused = await spawned(commandLine(["--aot-harden=proof-checks", asInFront]), String(folder));
+    expect(refused.stderr).toContain("OpcodeNotInForm");
+    expect(refused.exitCode).toBe(1);
+  }, 120_000);
 
   test("stops the program at a position that the library vouches for and that is false", async () => {
     using folder = tempDir("aot-harden", { "program.ts": sortedInPlace });
@@ -592,23 +605,33 @@ describe.concurrent("--aot-harden=proof-checks", () => {
     });
   }, 120_000);
 
-  test("says which words of the compiler it stands for", async () => {
+  test("the build names it as the flag does, and not as a developer option", async () => {
     using folder = tempDir("aot-harden", { "program.ts": program });
-    expect(await build(String(folder), ["--aot-harden=proof-checks"])).toContain(
-      "Built with developer options: --aot-testing=CheckProofsAtRunTime --aot-testing=KeepsCellsOutOfFrames\n",
+    const said = await build(String(folder), ["--aot-harden=proof-checks,ignore-told-ranges"]);
+    expect(said).toMatch(/^ +harden  proof-checks, ignore-told-ranges$/m);
+    expect(said).not.toContain("developer options");
+    expect(said).not.toContain("--aot-testing");
+  }, 120_000);
+
+  test("a developer option beside it is still listed", async () => {
+    using folder = tempDir("aot-harden", { "program.ts": program });
+    const flags = ["--aot-harden=proof-checks", "--aot-testing=CheckProofsAtRunTime", "--aot-check=Validate"];
+    expect((await build(String(folder), flags)).split("\n")).toContain(
+      "Built with developer options: --aot-check=Validate --aot-testing=CheckProofsAtRunTime",
     );
   }, 120_000);
 });
 
-// The compiler hands the ground of a position below a sum that has passed below a length over without its prover: the store by another list's length lands behind the end of its own list.
-// The lie is never run alone: it writes where nothing of the list lies.
-const unprovenGround = "--aot-testing=GroundsOfPositionsBelowSumsAreHandedOverUnproven";
+// An index can be in bounds on the grounds that it is below a sum that has tested below a length. The compiler passes those grounds on without running their prover,
+// so the store that is bounded by another array's length lands past the end of its own array.
+// The injected fault is never run on its own: it writes to memory that is no part of the array.
+const unprovenGround = "--aot-testing=SkipBoundsProof";
 const storedBelowSums = join(import.meta.dir, "parallel", "a-position-below-a-sum-that-has-passed-below-the-length");
 const storesByAnotherListsLength = [
   "a-store-by-another-lists-length-into-fractions.cjs",
   "a-store-by-another-lists-length-into-whole-numbers.cjs",
 ].flatMap(name =>
-  ["--aot-harden=proof-checks", "--aot-harden=ignore-told-ranges", "--aot-testing=EmittersAloneTestEveryPosition"].map(
+  [runTimeProofChecks, "--aot-harden=ignore-told-ranges", "--aot-testing=CheckBoundsInEmittersOnly"].map(
     word => [name, word] as const,
   ),
 );
@@ -625,8 +648,20 @@ describe.concurrent("a ground that is handed over unproven", () => {
       expect(built.stderr).not.toContain("error:");
       expect(built.exitCode).toBe(0);
       const { stderr, exitCode } = await runBuilt(String(folder));
-      expect(stderr).toMatch(/^AOT: f\d+ at \d+:\d+: /m);
+      expect(stderr).toMatch(/^bun: internal AOT error: .+ check failed at \S+:\d+:\d+/m);
       expect(exitCode).not.toBe(0);
+    },
+    120_000,
+  );
+
+  test.each(storesByAnotherListsLength.filter(row => row[1] === runTimeProofChecks))(
+    "%s is refused at the build under --aot-harden=proof-checks",
+    async name => {
+      using folder = tempDir("aot-harden", { "program.cjs": readFileSync(join(storedBelowSums, name), "utf8") });
+      const flags = ["--aot-harden=proof-checks", unprovenGround, "program.cjs", "--outfile", "built"];
+      const refused = await spawned([bunExe(), "build", "--compile", "--aot", ...flags], String(folder));
+      expect(refused.stderr).toContain("OpcodeNotInForm");
+      expect(refused.exitCode).toBe(1);
     },
     120_000,
   );
@@ -783,14 +818,14 @@ describe.concurrent("--aot-harden=ignore-told-ranges", () => {
     using hardened = tempDir("aot-harden", { "program.ts": readsFieldTakenAway });
     await build(String(hardened), ["--aot-harden=proof-checks", passesOverMarks]);
     const { stdout, stderr, exitCode } = await runBuilt(String(hardened));
-    expect(stderr).toContain("what a field holds is not of the type that the compiler has proven of it");
+    expect(stderr).toContain(" in a property");
     expect(stdout).toBe("28\n");
     expect(exitCode).not.toBe(0);
   }, 120_000);
 
   test.each(Object.entries(readsReferenceTakenAway))(
     "proof-checks stops the program by name where a slot that is told filled has lost a reference %s",
-    async (_, { goesWrong, printsFirst, source }) => {
+    async (_, { printsFirst, source, isEmptyAsUndefined }) => {
       using sound = tempDir("aot-harden", { "program.ts": source });
       await build(String(sound), ["--aot-harden=proof-checks"]);
       const expected = await runPlain(String(sound));
@@ -799,12 +834,15 @@ describe.concurrent("--aot-harden=ignore-told-ranges", () => {
 
       using unhardened = tempDir("aot-harden", { "program.ts": source });
       await build(String(unhardened), [passesOverMarks]);
-      expect((await runBuilt(String(unhardened))).stdout !== expected.stdout).toBe(goesWrong);
+      const unhardenedRun = await runBuilt(String(unhardened));
+      // An empty slot is as false as undefined.
+      if (isEmptyAsUndefined) expect(unhardenedRun).toEqual(expected);
+      else expect(unhardenedRun.stdout).not.toBe(expected.stdout);
 
       using hardened = tempDir("aot-harden", { "program.ts": source });
       await build(String(hardened), ["--aot-harden=proof-checks", passesOverMarks]);
       const { stdout, stderr, exitCode } = await runBuilt(String(hardened));
-      expect(stderr).toContain("what a field holds is not of the type that the compiler has proven of it");
+      expect(stderr).toContain(" in a property");
       expect(stdout).toBe(printsFirst);
       expect(exitCode).not.toBe(0);
     },
@@ -909,25 +947,34 @@ describe.concurrent("compile.aotHarden", () => {
     [
       "aotHarden",
       `aotHarden: ["proof-checks"]`,
-      ["--aot-testing=CheckProofsAtRunTime", "--aot-testing=KeepsCellsOutOfFrames"],
+      "Hardened with proof-checks",
+      [
+        "--aot-testing=CheckProofsAtRunTime",
+        "--aot-testing=DisableFrameCells",
+        "--aot-testing=CheckHoistedCallsAtRunTime",
+        "--aot-testing=CheckResultFreshnessAtRunTime",
+        "--aot-check=VerifyEachStage",
+      ],
     ],
-    ["aotTesting", `aotTesting: ["UnseenCodeAnswersUndefined"]`, ["--aot-testing=UnseenCodeAnswersUndefined"]],
+    [
+      "aotTesting",
+      `aotTesting: ["AssumeUnknownCallsReturnUndefined"]`,
+      "Built with developer options: --aot-testing=AssumeUnknownCallsReturnUndefined",
+      ["--aot-testing=AssumeUnknownCallsReturnUndefined"],
+    ],
   ])(
     "names in its logs and in the statistics what it built with: %s",
-    async (_, members, words) => {
+    async (_, members, note, words) => {
       using folder = tempDir("aot-harden", { "program.ts": program });
       writeFileSync(
         join(String(folder), "build.ts"),
         `const result = await Bun.build({ entrypoints: ["./program.ts"], compile: { outfile: "./built", aot: true, aotExplain: "statistics", ${members} } as any });
-for (const log of result.logs) if (/developer option/.test(log.message)) console.log(log.level + ": " + log.message);
+for (const log of result.logs) if (/developer option|^Hardened/.test(log.message)) console.log(log.level + ": " + log.message);
 `,
       );
       const { stdout, exitCode } = await spawned([bunExe(), "build.ts"], String(folder));
       expect({ lines: stdout.trimEnd().split("\n").sort(), exitCode }).toEqual({
-        lines: [
-          `note: Built with developer options: ${words.join(" ")}`,
-          ...words.map(word => `verbose: developer option ${word}`),
-        ].sort(),
+        lines: [`note: ${note}`, ...words.map(word => `verbose: developer option ${word}`)].sort(),
         exitCode: 0,
       });
     },

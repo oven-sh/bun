@@ -10,6 +10,7 @@
 // number written in the file, then with the bound. Where the bounds stand in a list written in the file that a loop walks, a compiler sees what kinds of bound come and may build the loop a second time for
 // them; where the bound comes out of data it sees nothing.
 import { mkdirSync, writeFileSync } from "fs";
+import { printThroughBranch } from "./print-through-branch.ts";
 
 // N is the bound. Every head ends for every bound here: where the relation never fails the counter stops at forty.
 const heads: [string, string][] = [
@@ -129,7 +130,7 @@ else if (process.argv[2] === "named") {
   for (let at = 0; at < all && laid < atMost; at++) {
     const program = write(at);
     if (!pattern.test(program.name)) continue;
-    writeFileSync(`${folder}/${pad(at)}-${program.name}`, program.text);
+    writeFileSync(`${folder}/${pad(at)}-${program.name}`, printThroughBranch(program.text, at, program.name));
     laid++;
   }
   console.log(laid);
@@ -139,7 +140,7 @@ else if (process.argv[2] === "named") {
   for (let step = 0; step < Math.min(count, all); step++) {
     const at = (from + step * stride) % all;
     const program = write(at);
-    writeFileSync(`${folder}/${pad(at)}-${program.name}`, program.text);
+    writeFileSync(`${folder}/${pad(at)}-${program.name}`, printThroughBranch(program.text, at, program.name));
   }
   console.log(Math.min(count, all));
 }

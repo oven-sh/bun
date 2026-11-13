@@ -9,7 +9,7 @@
 # function overRecord(start) { let total = start; for (let place = 0; place < marks.length; place++) { if (marks[place] < 100) continue; total = total + record[place]; } return total; }
 # print(tally([].length + 1), overRecord([].length + 1));
 # -- end of source
-# RUN(COUNT): compile ListsAskedForBesideListsInFrontOfLoops mechanisms=all
-# COUNT: statistic ListsAskedForBesideListsInFrontOfLoops 2
+# RUN(COUNT): compile ArraysGuardedBesideArrays mechanisms=all
+# COUNT: statistic ArraysGuardedBesideArrays 2
 # RUN(ANSWERS): run-in-shell mechanisms=all
 # ANSWERS: 214 214

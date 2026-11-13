@@ -13,8 +13,8 @@ use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, Bound, Decl, InitialState, Parent, SymbolId};
 use bun_sema::fold::{Constant, Decision, FoldedValue};
 use bun_sema::hir::{
-    self, BinOp, Chain, ExprId, ExprKind, MemberKey, NodeData, PatId, PatKind, PropKey, StmtKind,
-    UnOp, VarDeclId, VarKind,
+    self, BinOp, Chain, ExprId, ExprKind, MemberKey, NodeData, PatId, PatKind, PropKey, PropKind,
+    StmtKind, UnOp, VarDeclId, VarKind,
 };
 use bun_sema::program::Sym;
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
@@ -37,6 +37,7 @@ pub(super) enum StandsFor {
         module: ModuleRef,
         has_marker: bool,
         is_star: bool,
+        has_default_alone: bool,
     },
 }
 
@@ -71,6 +72,9 @@ impl FileBinder<'_, '_> {
             .unread_sites
             .shared_sort_unstable_by_key(|&(call, _)| call);
         imports
+            .destructured_holders
+            .shared_sort_unstable_by_key(|&(holder, _)| holder);
+        imports
             .accessed
             .shared_sort_unstable_by_key(|&(member, _)| member);
         imports
@@ -82,7 +86,7 @@ impl FileBinder<'_, '_> {
         let (hir, bound, context) = (self.hir, self.bound, self.context);
         if !hir.enums.is_empty()
             || !context.known_helpers.has_functions(self.file)
-            || context.modules.runs_again(self.file)
+            || context.modules.may_be_reevaluated(self.file)
         {
             return;
         }
@@ -323,8 +327,9 @@ impl FileBinder<'_, '_> {
             let is_resolved_at_run_time = bound
                 .dynamic_lookup_scope(NodeData::Expr(reference))
                 .is_some();
-            let is_value =
-                is_resolved_at_run_time || self.bind_member_path(reference, root.stands_for);
+            let is_value = is_resolved_at_run_time
+                || (!self.bind_destructured_holder(reference, root)
+                    && self.bind_member_path(reference, root.stands_for));
             if !is_value {
                 continue;
             }
@@ -341,6 +346,28 @@ impl FileBinder<'_, '_> {
                 self.imports.namespaces_handed_out.push(module);
             }
         }
+    }
+
+    /// `const { name } = holder`
+    fn bind_destructured_holder(&mut self, reference: ExprId, root: Root) -> bool {
+        let (hir, bound) = (self.hir, self.bound);
+        let is_answer = matches!(
+            root.stands_for,
+            StandsFor::Exports(_) | StandsFor::RequiredNamespace(_)
+        );
+        if root.holder.is_none() || !is_answer {
+            return false;
+        }
+        let initializer = find_outermost_type_assertion(hir, bound, reference);
+        let Parent::VarInit(declaration) = bound.parent_of_expr(initializer) else {
+            return false;
+        };
+        if !self.bind_pattern(hir[declaration].pat, root.stands_for) {
+            return false;
+        }
+        let destructured = (reference, (root.symbol, root.stands_for.module()));
+        self.imports.destructured_holders.push(destructured);
+        true
     }
 
     fn look_at_root(&mut self, root: Root, holders: &mut [Holder]) {
@@ -389,7 +416,7 @@ impl FileBinder<'_, '_> {
     fn is_dead_site(&self, site: &PlannedSite) -> bool {
         let decisions = &self.analysis.decisions;
         match site.key {
-            SiteKey::Call(call) => decisions.is_dead_expr(call),
+            SiteKey::Call(call) | SiteKey::Request(call) => decisions.is_dead_expr(call),
             SiteKey::ImportEquals(declaration) => {
                 decisions.is_dead_stmt(self.hir[declaration].stmt)
             }
@@ -411,7 +438,10 @@ impl FileBinder<'_, '_> {
             ),
             _ => (StandsFor::Exports(target), View::Exports(target)),
         };
-        let may_answer_another_object = context.evicted.is_stored_in_cache(target)
+        let has_instances = matches!(target, ModuleRef::File(file) if context.modules.may_be_reevaluated(file))
+            && context.modules.interop(target).kind == ModuleKind::SourceText;
+        let may_answer_another_object = has_instances
+            || context.evicted.is_stored_in_cache(target)
             || (context.order.is_code_of_program(target)
                 && (context.evicted.contains(target)
                     || context.mocked.contains(target)
@@ -428,6 +458,7 @@ impl FileBinder<'_, '_> {
         }
         let call = match site.key {
             SiteKey::Call(call) => call,
+            SiteKey::Request(_) => return self.look_at(answer),
             SiteKey::ImportEquals(declaration) => {
                 let symbol = self.bound.declared_symbol(Decl::ImportEquals(declaration));
                 let is_holder = symbol.is_some()
@@ -457,7 +488,11 @@ impl FileBinder<'_, '_> {
                     return self.imports.unread_sites.push((call, false));
                 }
             }
-            Parent::Stmt(statement) if matches!(hir[statement].kind, StmtKind::Expr(_)) => {
+            // The file may define a getter as `module.exports`, and `require()` runs it.
+            Parent::Stmt(statement)
+                if matches!(hir[statement].kind, StmtKind::Expr(_))
+                    && !self.context.tables.commonjs.is_replaced_late(site.target) =>
+            {
                 return self.imports.unread_sites.push((call, true));
             }
             _ => {}
@@ -500,7 +535,7 @@ impl FileBinder<'_, '_> {
             return None;
         }
         let helpers = context.known_helpers;
-        let known = helpers.certain_callee(context.files, self.file, call.callee)?;
+        let known = helpers.callee_returning_marked_value(context.files, self.file, call.callee)?;
         if !matches!(
             known.shape.helper(),
             Helper::ImportStar | Helper::ImportDefault
@@ -547,6 +582,7 @@ impl FileBinder<'_, '_> {
             module: site.target,
             has_marker: copy.has_marker,
             is_star: copy.passes_marked_answer_on,
+            has_default_alone: copy.wraps_unmarked_answer,
         };
         add_holder(roots, holders, symbol, call, view, stands_for, Some(copy));
         true
@@ -556,6 +592,33 @@ impl FileBinder<'_, '_> {
         let (hir, bound, context) = (self.hir, self.bound, self.context);
         let target = site.target;
         let required = find_outermost_type_assertion(hir, bound, required);
+        let copy = CopiedExports {
+            written: ExprId::NONE,
+            shows: ShownNames::Own,
+            passes_marked_answer_on: false,
+            wraps_unmarked_answer: false,
+            runs_once: site.position == SitePosition::InOrder,
+            is_of_ordinary_object: false,
+            has_marker: false,
+            passes_over_marker: false,
+            reads_own_default: false,
+            may_hold_answer: false,
+            is_looked_at: false,
+            is_called_through: false,
+        };
+        let wrapping = |written: ExprId| {
+            let is_marked = (context.marker)(target) == Some(true);
+            let exports_function = context.tables.commonjs.exports_function(target);
+            (exports_function && !is_marked).then_some(CopiedExports {
+                written,
+                wraps_unmarked_answer: true,
+                may_hold_answer: true,
+                ..copy
+            })
+        };
+        if let Some(written) = self.find_inline_wrapper(required) {
+            return wrapping(written);
+        }
         let written = parent_expression(bound, required)?;
         let ExprKind::Call(call) = hir[written].kind else {
             return None;
@@ -585,14 +648,8 @@ impl FileBinder<'_, '_> {
         let is_marked = self.is_commonjs(target) && (context.marker)(target) == Some(true);
         let copy = CopiedExports {
             written,
-            shows: ShownNames::Own,
-            passes_marked_answer_on: false,
-            runs_once: site.position == SitePosition::InOrder,
             is_of_ordinary_object: is_ordinary_object,
-            has_marker: false,
-            may_hold_answer: false,
-            is_looked_at: false,
-            is_called_through: false,
+            ..copy
         };
         let asks_for_marker_alone = match known.shape {
             HelperShape::ToEsModuleShowsUnmarkedValueAsDefault => true,
@@ -611,6 +668,12 @@ impl FileBinder<'_, '_> {
                     passes_marked_answer_on: true,
                     ..copy
                 });
+            }
+            HelperShape::ImportDefaultAnswersMarkedValueOrWrapsIt => {
+                return match call.args.len() {
+                    1 => wrapping(written),
+                    _ => None,
+                };
             }
             _ => return None,
         };
@@ -636,12 +699,81 @@ impl FileBinder<'_, '_> {
             && (asks_for_marker_alone || self.has_name_once_run(target, known::default));
         Some(CopiedExports {
             has_marker,
+            passes_over_marker,
+            reads_own_default: !asks_for_marker_alone,
             may_hold_answer: is_ordinary_object
                 && (asks_for_marker_alone
                     || passes_over_marker
                     || (context.marker)(target) == Some(false)),
             ..copy
         })
+    }
+
+    /// `(a = require("./a")) && a.__esModule ? a : { default: a }`, as minifiers write the helper in line.
+    fn find_inline_wrapper(&self, required: ExprId) -> Option<ExprId> {
+        let (hir, bound) = (self.hir, self.bound);
+        let assigned = parent_expression(bound, required)?;
+        let ExprKind::Assign {
+            op: None,
+            target,
+            value,
+        } = hir[assigned].kind
+        else {
+            return None;
+        };
+        let name = bound.binding(target);
+        let names_answer = |expression: ExprId| {
+            matches!(hir[expression].kind, ExprKind::Ident(_)) && bound.binding(expression) == name
+        };
+        if value != required
+            || !matches!(hir[target].kind, ExprKind::Ident(_))
+            || !matches!(name, Binding::Symbol(_))
+        {
+            return None;
+        }
+        let test = parent_expression(bound, assigned)?;
+        let written = parent_expression(bound, test)?;
+        let (
+            ExprKind::Binary {
+                op: BinOp::And,
+                left,
+                right,
+            },
+            ExprKind::Cond {
+                test: tested,
+                branches,
+            },
+        ) = (hir[test].kind, hir[written].kind)
+        else {
+            return None;
+        };
+        let branches = hir.branches(branches);
+        let (marked, key) = hir.member_key(right)?;
+        let is_plain = matches!(
+            hir[right].kind,
+            ExprKind::Dot {
+                chain: Chain::No,
+                ..
+            }
+        );
+        let ExprKind::Object(properties) = hir[branches.no].kind else {
+            return None;
+        };
+        let mut properties = properties.iter();
+        let (Some(wrapped), None) = (properties.next(), properties.next()) else {
+            return None;
+        };
+        let wrapped = hir[wrapped];
+        let is_wrapper = left == assigned
+            && tested == test
+            && is_plain
+            && key == MemberKey::Name(known::__esModule)
+            && names_answer(marked)
+            && names_answer(branches.yes)
+            && wrapped.key == PropKey::Name(known::default)
+            && wrapped.kind == PropKind::Init
+            && names_answer(wrapped.value);
+        is_wrapper.then_some(written)
     }
 
     fn binds_getters(&self, helper: &KnownFunction) -> bool {
@@ -777,7 +909,14 @@ impl FileBinder<'_, '_> {
             StandsFor::ImportedNamespace(_) if self.is_hidden_from_namespace(module, name) => {
                 return None;
             }
-            StandsFor::ImportedNamespace(_) => self.resolve_name(module, name),
+            StandsFor::ImportedNamespace(_) => match self.resolve_name(module, name) {
+                Ok((binding @ PendingBinding::Bound(ImportBinding::Variable(_)), Some(_)))
+                    if self.is_absent_from_mocks(module, name) =>
+                {
+                    Ok((binding, None))
+                }
+                resolved => resolved,
+            },
             StandsFor::RequiredNamespace(_) | StandsFor::Exports(_) | StandsFor::Copy { .. } => {
                 self.resolve_required_name(module, name)
             }
@@ -822,6 +961,10 @@ impl FileBinder<'_, '_> {
         }
         match stands_for {
             StandsFor::Copy {
+                has_default_alone: true,
+                ..
+            } if name != known::default => return None,
+            StandsFor::Copy {
                 has_marker: false,
                 is_star,
                 ..
@@ -853,6 +996,7 @@ impl FileBinder<'_, '_> {
         let is_imported = matches!(stands_for, StandsFor::ImportedNamespace(_));
         let accessed = AccessedModule {
             module,
+            name,
             is_imported,
         };
         self.imports.accessed.push((member, accessed));

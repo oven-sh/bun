@@ -4,9 +4,10 @@ use super::entry_parameters::EntryPosition;
 use super::finish::FinishScratch;
 use super::generated::{
     BlockFrequency, BlockRole, EntryParameter, Function, Opcode, STANDS_IN_TAIL_POSITION,
-    TerminatorKind, ValueHead, visit_terminator_fields, visit_value_fields,
+    TerminatorKind, ValueHead, WRITTEN_POSITION_FOLLOWS, visit_terminator_fields,
+    visit_value_fields,
 };
-use super::ids::{BlockId, Id, TypeId, ValueId, optional_id_to_word};
+use super::ids::{BlockId, Id, StringId, TypeId, ValueId, optional_id_to_word};
 use super::ssa::SsaState;
 
 pub(super) const MAX_SPARE_VALUES: usize = 1 << 16;
@@ -203,6 +204,12 @@ impl ListInArena {
 
     #[inline]
     pub(super) fn push<T: Copy>(&mut self, arena: &mut Vec<T>, item: T) {
+        if self.capacity == 0 {
+            self.start = arena.len() as u32;
+            (self.length, self.capacity) = (1, 2);
+            arena.extend_from_slice(&[item; 2]);
+            return;
+        }
         if self.length == self.capacity {
             self.move_to_end(arena, item);
         }
@@ -210,6 +217,7 @@ impl ListInArena {
         self.length += 1;
     }
 
+    #[cold]
     fn move_to_end<T: Copy>(&mut self, arena: &mut Vec<T>, filler: T) {
         let start = arena.len();
         for index in 0..self.len() {
@@ -318,6 +326,8 @@ pub struct FunctionBuilder {
     pub(super) listed_values: Vec<ValueId>,
     pub(super) current_block: BlockId,
     pub(super) position: Option<u32>,
+    construction_start: Option<u32>,
+    is_position_held: bool,
     stands_in_tail_position: bool,
     pub(super) ssa: SsaState,
     pub(super) finish_scratch: FinishScratch,
@@ -326,6 +336,7 @@ pub struct FunctionBuilder {
 }
 
 impl FunctionBuilder {
+    #[inline(always)]
     pub fn new(function: Function, scratch: BuilderScratch) -> FunctionBuilder {
         debug_assert!(function.body.code.is_empty());
         let mut builder = FunctionBuilder {
@@ -337,6 +348,8 @@ impl FunctionBuilder {
             listed_values: scratch.listed_values,
             current_block: ENTRY_BLOCK,
             position: None,
+            construction_start: None,
+            is_position_held: false,
             stands_in_tail_position: false,
             ssa: scratch.ssa,
             finish_scratch: scratch.finish,
@@ -522,7 +535,29 @@ impl FunctionBuilder {
 
     #[inline]
     pub fn set_position(&mut self, position: Option<u32>) {
-        self.position = position;
+        if !self.is_position_held {
+            self.position = position;
+        }
+    }
+
+    #[inline]
+    pub fn hold_position(&mut self, is_held: bool) {
+        self.is_position_held = is_held;
+    }
+
+    /// The position of the emitted operation identifies its site, also while the position is held.
+    pub fn emit_at_site<R>(&mut self, position: u32, emit: impl FnOnce(&mut Self) -> R) -> R {
+        let outer = self.position.replace(position);
+        let emitted = emit(self);
+        self.position = outer;
+        emitted
+    }
+
+    /// Where `new` stands, for the next operation, which is a construction. An uncaught error and a call site report there, as under `bun run`.
+    /// `Error.stack` reports at the operation's own position.
+    pub fn set_construction_start(&mut self, start: u32) {
+        let is_elsewhere = !self.is_position_held && self.position != Some(start);
+        self.construction_start = is_elsewhere.then_some(start);
     }
 
     #[inline]
@@ -548,16 +583,19 @@ impl FunctionBuilder {
             self.seal(block);
             self.switch_to(block);
         }
-        let mark = if self.stands_in_tail_position {
-            STANDS_IN_TAIL_POSITION
-        } else {
-            0
-        };
+        let mut marks = 0;
+        if self.stands_in_tail_position {
+            marks |= STANDS_IN_TAIL_POSITION;
+        }
+        let construction_start = self.construction_start.take();
+        if construction_start.is_some() {
+            marks |= WRITTEN_POSITION_FOLLOWS;
+        }
         let head = ValueHead {
-            opcode: opcode as u32 | mark,
+            opcode: opcode as u32 | marks,
             position: self.position,
         };
-        self.append_value(self.current_block, head, fields, false)
+        self.append_value(self.current_block, head, fields, construction_start, false)
     }
 
     pub fn place(&self) -> Place {
@@ -625,7 +663,7 @@ impl FunctionBuilder {
             opcode: opcode.to_wire(),
             position,
         };
-        self.append_value(block, head, fields, at_front)
+        self.append_value(block, head, fields, None, at_front)
     }
 
     #[inline]
@@ -634,12 +672,14 @@ impl FunctionBuilder {
         block: BlockId,
         head: ValueHead,
         fields: &[u32],
+        second_position: Option<u32>,
         at_front: bool,
     ) -> ValueId {
         let value = self.next_value_id();
         head.append_to(&mut PushedWords(&mut self.words));
         push_words(&mut self.words, fields);
-        let word_count = (ValueHead::WORDS + fields.len()) as u32;
+        push_words(&mut self.words, second_position.as_slice());
+        let word_count = (ValueHead::WORDS + fields.len() + second_position.iter().len()) as u32;
         let at = self.end_of_words() - word_count;
 
         let id = value.to_word();
@@ -674,9 +714,18 @@ impl FunctionBuilder {
             return None;
         }
         let head = self.words[pending.at as usize];
-        let opcode = Opcode::from_wire(head & !STANDS_IN_TAIL_POSITION);
+        let opcode =
+            Opcode::from_wire(head & !(STANDS_IN_TAIL_POSITION | WRITTEN_POSITION_FOLLOWS));
         debug_assert!(opcode.is_some(), "an operation begins with its opcode");
         opcode
+    }
+
+    pub fn constant_string(&self, value: ValueId) -> Option<StringId> {
+        if self.opcode_of(value) != Some(Opcode::String) {
+            return None;
+        }
+        let first_field = self.values[value.index()].at as usize + ValueHead::WORDS;
+        Some(StringId::from_word(self.words[first_field]))
     }
 
     pub fn terminate(&mut self, kind: TerminatorKind, fields: &[u32], edges: &[Edge<'_>]) {

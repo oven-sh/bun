@@ -1,5 +1,6 @@
 // A with round the loop: the name may belong to the object.
-// STATISTIC: FieldsOfScopesBehindTheirStoresReadInFrontOfTypedCopies = 0
+// None is hoisted here; one is in a function of the library that the image holds.
+// STATISTIC: CapturedVariableReadsHoisted <= 1
 const said = [];
 function tell(what) { try { said.push(String(what())); } catch (error) { said.push(error.constructor.name + ": " + error.message); } }
 function make() {

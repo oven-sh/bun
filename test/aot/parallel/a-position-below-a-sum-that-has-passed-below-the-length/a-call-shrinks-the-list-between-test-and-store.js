@@ -1,4 +1,4 @@
-// Under: --aot-testing=EmittersAloneTestEveryPosition: the walk and its proofs as users build, every position tested where it is used: a store that is told inside and is not stops by name.
+// Under: --aot-testing=CheckBoundsInEmittersOnly: the walk and its proofs as users build, every position tested where it is used: a store that is told inside and is not stops by name.
 "use strict";
 function say(word, value) { console.log("SAID " + word + " " + value); }
 const shrink = new Function("v", "i", "if (i === 3) v.length = 1;");

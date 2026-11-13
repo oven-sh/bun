@@ -17,7 +17,7 @@ const {
   defineProperty: ObjectDefineProperty,
 } = Object;
 const ArrayPrototypeSlice = Array.prototype.slice;
-type Key = string; // do we need to allow symbols?
+type Key = "readableHighWaterMark" | "writableHighWaterMark";
 type int32 = import("bun").int32;
 
 const kState = Symbol("kState");
@@ -51,7 +51,11 @@ let defaultHighWaterMarkBytes = process.platform === "win32" ? 16 * 1024 : 64 * 
 let defaultHighWaterMarkObjectMode = 16;
 
 function highWaterMarkFrom(options, isDuplex: boolean, duplexKey: Key): unknown {
-  return options.highWaterMark != null ? options.highWaterMark : isDuplex ? options[duplexKey] : null;
+  return options.highWaterMark != null ? options.highWaterMark : isDuplex ? markOfSide(options, duplexKey) : null;
+}
+
+function markOfSide(options, duplexKey: Key): unknown {
+  return duplexKey === "readableHighWaterMark" ? options.readableHighWaterMark : options.writableHighWaterMark;
 }
 
 function getDefaultHighWaterMark(objectMode: unknown = false): number {
@@ -80,6 +84,39 @@ function getHighWaterMark(state, options, duplexKey: Key, isDuplex: boolean): nu
   // Default value
   return getDefaultHighWaterMark(state.objectMode);
 }
+
+// getHighWaterMark() of a ReadableState and of a WritableState. A stack trace shows them under its name.
+const getReadableHighWaterMark = function getHighWaterMark(state: ReadableState, options, isDuplex: boolean): number {
+  const hwm = highWaterMarkFrom(options, isDuplex, "readableHighWaterMark");
+  if (hwm != null) {
+    if (!NumberIsInteger(hwm) || (hwm as number) < 0) {
+      const name = isDuplex ? "options.readableHighWaterMark" : "options.highWaterMark";
+      throw $ERR_INVALID_ARG_VALUE(name, hwm);
+    }
+    return MathFloor(hwm as number);
+  }
+
+  // Default value
+  return getDefaultHighWaterMark(
+    $findsDeclaredMember(state, "objectMode") ? (state[kState] & Flag.ObjectMode) !== 0 : state.objectMode,
+  );
+};
+
+const getWritableHighWaterMark = function getHighWaterMark(state: WritableState, options, isDuplex: boolean): number {
+  const hwm = highWaterMarkFrom(options, isDuplex, "writableHighWaterMark");
+  if (hwm != null) {
+    if (!NumberIsInteger(hwm) || (hwm as number) < 0) {
+      const name = isDuplex ? "options.writableHighWaterMark" : "options.highWaterMark";
+      throw $ERR_INVALID_ARG_VALUE(name, hwm);
+    }
+    return MathFloor(hwm as number);
+  }
+
+  // Default value
+  return getDefaultHighWaterMark(
+    $findsDeclaredMember(state, "objectMode") ? (state[kState] & Flag.ObjectMode) !== 0 : state.objectMode,
+  );
+};
 
 type WriteCallback = $Node.ErrorCallback;
 
@@ -170,6 +207,8 @@ interface Internals {
   emitData?: (stream: $Node.Readable, chunk: unknown) => void;
   /** Only in what was compiled ahead of time. */
   isPlainReadableAlone?: (stream: $Node.AnyStream) => boolean;
+  /** Compiled code only. Returns one of `Sides` of internal/streams/utils. Unless it is `Unknown`, inspecting the stream runs no user code. */
+  plainStreamSides?: (stream: unknown) => number;
   /** Only in what was compiled ahead of time. */
   isPlainUnfinishedResponse?: (stream: $Node.AnyStream) => boolean;
   /** Only in what was compiled ahead of time. */
@@ -403,9 +442,7 @@ function ReadableState(this: ReadableState, options?, stream?, isDuplex?) {
   if (isDuplex && options?.readableObjectMode) this[kState] |= Flag.ObjectMode;
 
   // The point at which it stops calling _read() to fill the buffer; 0 means never ahead of a read.
-  this.highWaterMark = options
-    ? getHighWaterMark(this, options, "readableHighWaterMark", isDuplex)
-    : getDefaultHighWaterMark(false);
+  this.highWaterMark = options ? getReadableHighWaterMark(this, options, isDuplex) : getDefaultHighWaterMark(false);
 
   this.buffer = [];
   this.bufferIndex = 0;
@@ -1122,6 +1159,11 @@ definePropertiesWhereBunRunDoes(WritableState.prototype, {
   },
 });
 
+// A separate function, so that the store does not shift the fields after it in the layout that the AOT compiler predicts.
+function storeDefaultEncoding(state: WritableState, defaultEncoding) {
+  state[kDefaultEncodingValue] = defaultEncoding;
+}
+
 function WritableState(this: WritableState, options?, stream?, isDuplex?) {
   // Bit map field to store WritableState more efficiently with 1 bit per field instead of a V8 slot per field.
   this[kState] = WritableFlag.Sync | Flag.Constructed | Flag.EmitClose | Flag.AutoDestroy;
@@ -1131,9 +1173,7 @@ function WritableState(this: WritableState, options?, stream?, isDuplex?) {
   if (isDuplex && options?.writableObjectMode) this[kState] |= Flag.ObjectMode;
 
   // The point at which write() starts returning false; 0 means always unless the buffer is flushed at once.
-  this.highWaterMark = options
-    ? getHighWaterMark(this, options, "writableHighWaterMark", isDuplex)
-    : getDefaultHighWaterMark(false);
+  this.highWaterMark = options ? getWritableHighWaterMark(this, options, isDuplex) : getDefaultHighWaterMark(false);
 
   if (!options || options.decodeStrings !== false) this[kState] |= WritableFlag.DecodeStrings;
 
@@ -1149,7 +1189,7 @@ function WritableState(this: WritableState, options?, stream?, isDuplex?) {
     this[kState] |= WritableFlag.DefaultUTF8Encoding;
   } else if (Buffer.isEncoding(defaultEncoding)) {
     this[kState] &= ~WritableFlag.DefaultUTF8Encoding;
-    this[kDefaultEncodingValue] = defaultEncoding;
+    storeDefaultEncoding(this, defaultEncoding);
   } else {
     throw $ERR_UNKNOWN_ENCODING(defaultEncoding);
   }

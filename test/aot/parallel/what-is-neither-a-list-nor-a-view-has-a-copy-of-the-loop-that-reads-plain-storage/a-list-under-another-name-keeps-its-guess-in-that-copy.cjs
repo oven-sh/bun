@@ -1,5 +1,5 @@
-// STATISTIC: ElementsReadInPlainStorageOfWhatIsNoList >= 1
-// STATISTIC: LoopsWithCopyForWhatIsNeitherListNorView >= 1
+// STATISTIC: OrdinaryObjectElementsReadDirectly >= 1
+// STATISTIC: OrdinaryObjectLoopsVersioned >= 1
 "use strict";
 // Two holders stand in one loop. Of the first nothing is known: it has failed every test in front and runs the copy for what is neither a list nor a view. The second is a list wherever the file calls.
 // In that copy the door against guesses at built-in classes is shut for the first alone: the second is asked for a list as everywhere, and once it is none.

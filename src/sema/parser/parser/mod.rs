@@ -27,7 +27,7 @@ use crate::{Options, Parsed, Rejected, Rejection, Scratch};
 use bun_sema::atom::{Atom, Intern, known};
 use bun_sema::hir::*;
 use bun_sema::util::SharedSort;
-pub(crate) use declared::Declared;
+pub(crate) use declared::{Declared, DeclaredNames};
 pub(crate) use recover::ListKind;
 pub use recover::keyword_suggestion;
 
@@ -361,32 +361,30 @@ pub(crate) fn run<'a>(
     let mut stacks = std::mem::take(&mut scratch.stacks);
     stacks.clear();
     let mut declared = std::mem::take(&mut scratch.declared);
-    declared.begin(
-        text.len(),
-        options.dialect.oxc_names,
-        options.dialect.oxc && options.is_javascript,
-        options.is_javascript,
-    );
+    let names = DeclaredNames {
+        are_collected: options.dialect.oxc_names,
+        need_table: options.dialect.oxc && options.is_javascript,
+        are_of_javascript: options.is_javascript,
+    };
+    declared.begin(text.len(), names);
     let stops = scratch.stops.find_again(text);
     let mut lx = Lexer::new(text, stops, atoms, &mut scratch.names);
     if let Some(part) = options.part {
         lx.start_at(part.from);
         lx.set_src(text.get(..part.until as usize).unwrap_or(text));
     }
-    lx.is_jsx = options.is_jsx;
+    set_language(&mut lx, &options);
     lx.recovers = options.recovers;
     lx.comments = std::mem::take(&mut file.comments);
     lx.attach_comments = options.attach_comments;
-    let is_ecmascript = options.dialect.ecmascript && options.is_javascript && !options.is_json;
-    lx.is_ecmascript = is_ecmascript;
+    let is_ecmascript = lx.is_ecmascript;
     lx.is_typescript_5 = options.dialect.typescript_5;
     lx.is_babel = options.dialect.babel;
     lx.is_oxc = options.dialect.oxc;
-    lx.is_script = (is_ecmascript || options.dialect.oxc) && options.dialect.script;
     lx.records_html_opens =
         options.dialect.oxc || is_ecmascript && options.dialect.module_or_script;
     let is_compiled_javascript = options.compiles && is_ecmascript;
-    lx.decodes_ill_formed_text = options.compiles || options.reads_as_bun_run;
+    lx.accepts_legacy_octal = options.accepts_legacy_octal;
     let is_flow = options.dialect.flow && options.is_javascript && !options.is_json;
     let is_general = options.recovers || jsdoc.wanted != 0 || is_flow;
 
@@ -412,6 +410,7 @@ pub(crate) fn run<'a>(
     };
     let (rejection, rejected_at) = (lx.rejection, lx.rejected_at);
     let (comment_directives, leading_comments) = (lx.comment_directives, lx.leading_comments);
+    let ignore_comments = lx.ignore_comments;
     f.comments = lx.comments;
     scratch.stacks = stacks;
     scratch.declared = declared;
@@ -431,6 +430,7 @@ pub(crate) fn run<'a>(
         return Err(Rejected::new(Rejection::TooLarge));
     }
     f.comment_directives = comment_directives;
+    f.ignore_comments = ignore_comments;
     if !options.ignores_pure_comments {
         pure_calls::mark_pure_calls(&mut f, text);
     }
@@ -465,7 +465,201 @@ pub(crate) fn run<'a>(
     })
 }
 
+fn set_language(lx: &mut Lexer<'_>, options: &Options) {
+    lx.is_jsx = options.is_jsx;
+    lx.is_ecmascript = options.dialect.ecmascript && options.is_javascript && !options.is_json;
+    lx.is_script = (lx.is_ecmascript || options.dialect.oxc) && options.dialect.script;
+    lx.decodes_ill_formed_text = options.compiles || options.reads_as_bun_run;
+}
+
+/// An expression of a script, at the end of the text of a file that is parsed already.
+#[derive(Copy, Clone)]
+pub struct AppendedExpression {
+    pub start: u32,
+    pub end: u32,
+    pub is_strict: bool,
+    /// `require` is a name of the global scope.
+    pub is_in_global_scope: bool,
+}
+
+/// `AppendedExpressionFilter(file, expressions_before, expression)`
+pub type AppendedExpressionFilter<'a> = dyn Fn(&FileBuilder, usize, ExprId) -> bool + 'a;
+
+/// Parses `expressions`, which are in `text`, and adds the nodes of those that `accepts` takes to `file`. An expression
+/// that isn't JavaScript adds none. Returns the first node of each and the expression.
+pub(crate) fn run_appended(
+    text: &[u8],
+    mut file: FileBuilder,
+    expressions: &[AppendedExpression],
+    atoms: &dyn Intern,
+    scratch: &mut Scratch,
+    accepts: &AppendedExpressionFilter<'_>,
+) -> (FileBuilder, Vec<Option<(ExprId, ExprId)>>) {
+    let options = Options {
+        is_jsx: true,
+        is_javascript: true,
+        await_is_a_name: true,
+        dialect: bun_sema::resolve::Dialect {
+            ecmascript: true,
+            script: true,
+            ..Default::default()
+        },
+        compiles: true,
+        reads_as_bun_run: true,
+        ignores_pure_comments: true,
+        ..Options::default()
+    };
+    if text.len() >= 1 << 30 {
+        return (file, vec![None; expressions.len()]);
+    }
+    scratch.names.use_interner(atoms);
+    scratch.stops.forget();
+    let stops = scratch.stops.find_again(text);
+    let mut found = Vec::with_capacity(expressions.len());
+    for &expression in expressions {
+        let (before, flags) = (file_lens(&file), (file.rare_syntax, file.syntax_errors));
+        let mut stacks = std::mem::take(&mut scratch.stacks);
+        stacks.clear();
+        let mut declared = std::mem::take(&mut scratch.declared);
+        let names = DeclaredNames {
+            are_collected: false,
+            need_table: false,
+            are_of_javascript: true,
+        };
+        declared.begin(text.len(), names);
+        let mut lx = Lexer::new(text, stops, atoms, &mut scratch.names);
+        lx.start_at(expression.start);
+        lx.set_src(text.get(..expression.end as usize).unwrap_or(text));
+        set_language(&mut lx, &options);
+        let jsdoc = jsdoc::State::new(&options, true, 0);
+        let mut parser = Parser::<false, false>::new(lx, file, stacks, declared, options, jsdoc);
+        if expression.is_strict {
+            parser.context |= ctx::STRICT;
+        }
+        let parsed = parser.appended_expression();
+        (scratch.stacks, scratch.declared) = (parser.s, parser.declared);
+        file = parser.f;
+        if expression.is_in_global_scope {
+            let mut index = 0;
+            file.specifier_uses.retain(|it| {
+                index += 1;
+                index <= before.specifier_uses || it.kind != SpecifierKind::RequireCall
+            });
+        }
+        let allowed_syntax = match expression.is_in_global_scope {
+            true => RARE_SYNTAX_IN_APPENDED_TEXT | rare::DECLARATION_AS_BODY,
+            false => RARE_SYNTAX_IN_APPENDED_TEXT,
+        };
+        let accepted = parsed.filter(|&expression| {
+            file.rare_syntax & !flags.0 & !allowed_syntax == 0
+                && file.syntax_errors == flags.1
+                && file.has_room_for_handles()
+                && is_plain_javascript_since(&file, &before)
+                && accepts(&file, before.exprs as usize, expression)
+        });
+        if accepted.is_none() {
+            truncate_file(&mut file, &before);
+            (file.rare_syntax, file.syntax_errors) = flags;
+        }
+        found.push(accepted.map(|expression| (ExprId(before.exprs), expression)));
+    }
+    scratch.stops.forget();
+    (file, found)
+}
+
+/// What an appended text may add to [`rare`](bun_sema::hir::rare): the checks for early errors read the whole file.
+const RARE_SYNTAX_IN_APPENDED_TEXT: u32 = rare::DELETES_A_NAME
+    | rare::DIRECTIVE_IN_FUNCTION
+    | rare::NEW_TARGET
+    | rare::ODD_JUMP
+    | rare::ODD_TARGET;
+
+/// Whether the nodes that follow `before` are JavaScript without classes, modules and tagged templates, which are one
+/// object for each time that the text is evaluated.
+fn is_plain_javascript_since(file: &FileBuilder, before: &FileLens) -> bool {
+    let lens = file_lens(file);
+    let grown = [
+        (lens.types, before.types),
+        (lens.type_params, before.type_params),
+        (lens.classes, before.classes),
+        (lens.interfaces, before.interfaces),
+        (lens.aliases, before.aliases),
+        (lens.enums, before.enums),
+        (lens.modules, before.modules),
+        (lens.members, before.members),
+        (lens.jsx, before.jsx),
+        (lens.imports, before.imports),
+        (lens.import_equals, before.import_equals),
+        (lens.exports, before.exports),
+        (lens.tuple_elems, before.tuple_elems),
+        (lens.mapped, before.mapped),
+        (lens.non_null_ends, before.non_null_ends),
+        (lens.specifier_uses, before.specifier_uses),
+        (lens.decorators, before.decorators),
+        (lens.stray_decorators, before.stray_decorators),
+        (lens.modifiers_of_params, before.modifiers_of_params),
+        (lens.modifiers_of_stmts, before.modifiers_of_stmts),
+        (lens.with_bodies, before.with_bodies),
+        (lens.import_attributes, before.import_attributes),
+        (lens.diagnostics, before.diagnostics),
+        (lens.specifier_expressions, before.specifier_expressions),
+        (
+            lens.exports_from_expressions,
+            before.exports_from_expressions,
+        ),
+    ];
+    let of_typescript = Flags::OPTIONAL | Flags::DEFINITE | Flags::PARAMETER_PROPERTY;
+    grown.iter().all(|it| it.0 == it.1)
+        && file.exprs[before.exprs as usize..].iter().all(|it| {
+            !matches!(
+                it.kind,
+                ExprKind::Missing
+                    | ExprKind::PrivateIdentifier(_)
+                    | ExprKind::TaggedTemplate(_)
+                    | ExprKind::Class(_)
+                    | ExprKind::As { .. }
+                    | ExprKind::Satisfies { .. }
+                    | ExprKind::AsConst(_)
+                    | ExprKind::NonNull(_)
+                    | ExprKind::Instantiation { .. }
+                    | ExprKind::Jsx(_)
+                    | ExprKind::JsxText(_)
+                    | ExprKind::ImportCall { .. }
+                    | ExprKind::ImportMeta
+            )
+        })
+        && file.fns[before.fns as usize..]
+            .iter()
+            .all(|it| !matches!(it.body, FnBody::None) && it.this_param.is_none())
+        && file.params[before.params as usize..]
+            .iter()
+            .all(|it| !it.flags.intersects(of_typescript))
+        && file.var_decls[before.var_decls as usize..]
+            .iter()
+            .all(|it| !it.flags.intersects(of_typescript))
+        && file.props[before.props as usize..]
+            .iter()
+            .all(|it| it.postfix_token == 0)
+}
+
 impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS> {
+    /// An expression that is the whole text. `None` if it has an error.
+    fn appended_expression(&mut self) -> Option<ExprId> {
+        self.next();
+        let expression = self.expression_allowing_in();
+        while self.eat(T::Semicolon) {}
+        let is_whole = self.token() == T::Eof
+            && !self.has_failed()
+            && self.lx.flagged.is_empty()
+            && self.lx.errors.is_empty()
+            && self.lx.private_names.is_empty()
+            && !self.lx.has_legacy_octal
+            && !self.lx.has_escaped_keyword
+            && !self.has_top_level_await;
+        self.sort_side_tables();
+        is_whole.then_some(expression)
+    }
+
     #[inline(always)]
     fn new(
         lx: Lexer<'a>,
@@ -676,7 +870,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                 self.statement_jsdoc(statement);
                 self.list_reparsed(reparsed);
             }
-            self.s.ids.push(statement.0);
+            self.push_statement(statement);
         }
         if self.reads_jsdoc() {
             self.end_of_file_jsdoc(reparsed);
@@ -711,6 +905,10 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         let is_parse_error = |it: &Diagnostic| it.kind == DiagnosticKind::Parse;
         self.f.has_parse_diagnostics =
             self.recovers() && self.f.diagnostics.iter().any(is_parse_error);
+        self.sort_side_tables();
+    }
+
+    fn sort_side_tables(&mut self) {
         if !self.f.body_starts.is_sorted_by_key(|body| body.0.0) {
             self.f
                 .body_starts
@@ -877,7 +1075,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             };
             let arguments = [argument.as_slice()];
             let arguments = &arguments[..usize::from(!argument.is_empty())];
-            match self.lx.compiles() {
+            match self.lx.compiles() || self.lx.accepts_legacy_octal {
                 true => self.flag_early_error(code, (start, end), arguments),
                 false => self.flag(DiagnosticKind::Grammar, code, (start, end), arguments),
             }

@@ -118,13 +118,16 @@ define_tables! {
     pub struct RuntimeTablesIn<S> {
         values {
             is_module: bool,
+            are_all_scopes_strict: bool,
             depends_on_sloppy_mode: bool,
             file_uses_arguments: bool,
             import_meta_may_be_modified: bool,
+            writes_import_meta_path: bool,
             may_name_own_require: bool,
             may_name_own_path: bool,
             may_require_get_members: std::sync::OnceLock<bool>,
             lets_made_requires_out_of_sight: std::sync::OnceLock<bool>,
+            redeclared_own_require: std::sync::OnceLock<Option<SymbolId>>,
             hoists_top_level_variables: bool,
             jsx_paths: [Option<crate::atom::Atom>; 2],
             first_appended_symbol: u32,
@@ -161,6 +164,7 @@ define_tables! {
             own_bindings_of_decorated_classes: S::Few<(SymbolId, SymbolId)>,
             container_parameters: S::Few<(ScopeId, SymbolId)>,
             names_taken_from_imports: S::Few<(SymbolId, SymbolId)>,
+            exported_values: S::Few<(SymbolId, SymbolId)>,
             own_scopes: S::List<(StmtId, ScopeId)>,
         }
         sorted {

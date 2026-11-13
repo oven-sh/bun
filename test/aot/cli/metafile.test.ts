@@ -28,6 +28,7 @@ interface Metafile {
       inputs: Record<string, { bytesInOutput: number }>;
       imports: Import[];
       exports: string[];
+      inlinedStrings?: string[];
       entryPoint?: string;
     }
   >;
@@ -143,6 +144,8 @@ describe.concurrent("--metafile with --aot", () => {
           inputs: Object.keys(aot.inputs).sort(),
           imports: [],
           exports: plain.outputs["./app"].exports,
+          // The strings in the machine code of the executable.
+          inlinedStrings: expect.any(Array),
           entryPoint: "main.ts",
         });
         expect(output.exports).toEqual(["first", "second"]);

@@ -3,18 +3,15 @@
 # function grows() { const q = [1, 2, 3]; let s = 0; for (let i = 0; i < q.length; i++) { s = (s + q[i]) | 0; if (q.length < 300) q.push(q[i] + 1); } return s + " " + q.length; }
 # print(grows());
 # -- end of source
-# A push in a tried loop is heard as a writer of its receiver alone only where that receiver is a list made here that the loop's text only fills: what is known of every OTHER object then outlives the head of the loop.
-# Here the list that is pushed is the list that is read, and its length is the loop's bound. THE LIE, testing=ReceiversOfMethodsOfListsAreTakenToBeMadeHere: every receiver is heard so, and is booked among no objects that are
-# written: the length that stood in front of the loop is remembered all round it: three turns in place of three hundred, silently. Under the check of proofs at run time the remembered length is held against memory.
+# A push in a loop under a trial visit counts as a write to its receiver alone only if that receiver is an array that is allocated here and that the loop's source only fills.
+# What is known about every other object then survives the loop header.
+# Here the array that is pushed to is the array that is read, and its length is the loop's bound.
+# Fault injection, testing=AssumeLocalArrayReceivers: every receiver is treated that way and is recorded among no objects that are written,
+# so the length from before the loop is remembered all the way around it. The push is an append in the version of the loop since pushes-append-to-literals-3,
+# and the verifier refuses that code: walk/loops/append-with-assumed-receiver-is-refused.ir.
 # RUN: run-in-shell mechanisms=all
 # CHECK: 15450 300
 # CHECK-NEXT: exited with 0
 # RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
 # HELD: 15450 300
 # HELD-NEXT: exited with 0
-# RUN(LIE): run-in-shell mechanisms=all testing=ReceiversOfMethodsOfListsAreTakenToBeMadeHere
-# LIE: 6 3
-# LIE-NEXT: exited with 0
-# RUN(STOPPED): run-in-shell mechanisms=all testing=ReceiversOfMethodsOfListsAreTakenToBeMadeHere,CheckProofsAtRunTime
-# STOPPED: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it.
-# STOPPED: crashed with

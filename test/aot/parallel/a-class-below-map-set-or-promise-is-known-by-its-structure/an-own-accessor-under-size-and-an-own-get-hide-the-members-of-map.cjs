@@ -1,5 +1,5 @@
 // One object gets an own accessor under size, another an own get: each hides the member of Map from then on, and until it is deleted.
-// COUNT: counter:StructuresOfHeirsRemembered >= 1
+// COUNT: counter:BuiltinSubclassStructuresAccepted >= 1
 "use strict";
 class H extends Map { count() { return this.size; } look(k) { return this.get(k); } }
 const one = new H(), two = new H(); one.set(1, 5); two.set(1, 6);

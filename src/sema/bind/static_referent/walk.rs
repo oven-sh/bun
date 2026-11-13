@@ -7,7 +7,7 @@ use crate::atom::{Atom, known};
 use crate::bind::decorator_metadata::has_decorators;
 use crate::bind::{
     Binding, BindingInitializer, BindingKind, BindingStability, Bound, CommonJsVariable, Decl,
-    InitialState, Parent, PatParent, SymbolId,
+    FnOwner, InitialState, Parent, PatParent, SymbolId,
 };
 use crate::check::aot::{ClassRef, FunctionRef};
 use crate::hir::*;
@@ -30,6 +30,12 @@ struct ExportStore {
     node: ExprId,
     target: ExprId,
     value: Option<ExprId>,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Stars {
+    Followed,
+    Ignored,
 }
 
 enum Step<B, M> {
@@ -67,6 +73,13 @@ pub(super) fn find_only_returned_value(
             Some(value)
         }
         _ => None,
+    }
+}
+
+fn find_value_of_call(hir: &File<'_>, bound: &Bound<'_>, function: FnId) -> Option<ExprId> {
+    match hir[function].body {
+        FnBody::Expr(value) if !hir[function].flags.contains(Flags::ASYNC) => Some(value),
+        _ => find_only_returned_value(hir, bound, function),
     }
 }
 
@@ -143,7 +156,7 @@ fn find_value_of_only_store(
     let PatParent::Var(declaration) = bound.pat_parent[pattern.idx()] else {
         return None;
     };
-    if hir[declaration].init.is_some() || bound.is_visible_to_eval(id) {
+    if hir[declaration].init.is_some() {
         return None;
     }
     let mut stores = bound.stores_to(id).iter();
@@ -250,6 +263,30 @@ fn find_store_of_property(
     reads_exports_object(hir, bound, object).then_some(store)
 }
 
+/// `Object.defineProperty(exports, "Name", { enumerable: true, get: function () { return value; } })`, `{ value: value }`
+fn find_value_of_definition(hir: &File<'_>, bound: &Bound<'_>, node: ExprId) -> Option<ExprId> {
+    let ExprKind::Call(call) = hir[node].kind else {
+        return None;
+    };
+    let descriptor = hir.skip_type_assertions(hir.ids(hir[call].args).nth(2)?);
+    let ExprKind::Object(properties) = hir[descriptor].kind else {
+        return None;
+    };
+    let mut properties = properties.iter();
+    properties.find_map(|property| {
+        let value = hir.skip_type_assertions(hir[property].value);
+        match (hir.runtime_property_key(property), hir[property].kind) {
+            (PropKey::Name(known::value), PropKind::Init | PropKind::Shorthand) => Some(value),
+            (PropKey::Name(known::get), PropKind::Init | PropKind::Method) => match hir[value].kind
+            {
+                ExprKind::Fn(getter) => find_value_of_call(hir, bound, getter),
+                _ => None,
+            },
+            _ => None,
+        }
+    })
+}
+
 fn find_statement_around(bound: &Bound<'_>, parent: Parent) -> Option<StmtId> {
     match parent {
         Parent::Stmt(statement) => statement.some(),
@@ -278,11 +315,7 @@ fn is_evaluated_by_file_body(hir: &File<'_>, bound: &Bound<'_>, mut expr: ExprId
     })
 }
 
-fn find_value_unless_this_of_file_has_one(
-    hir: &File<'_>,
-    bound: &Bound<'_>,
-    expr: ExprId,
-) -> Option<ExprId> {
+fn find_value_unless_this_has_one(hir: &File<'_>, expr: ExprId) -> Option<ExprId> {
     let ExprKind::Binary {
         op: BinOp::Or,
         left,
@@ -291,20 +324,20 @@ fn find_value_unless_this_of_file_has_one(
     else {
         return None;
     };
-    let ExprKind::Binary {
-        op: BinOp::And,
-        left,
-        right,
-    } = hir[hir.skip_type_assertions(left)].kind
-    else {
-        return None;
-    };
     let is_this = |it: ExprId| matches!(hir[hir.skip_type_assertions(it)].kind, ExprKind::This);
+    let read = match hir[hir.skip_type_assertions(left)].kind {
+        ExprKind::Binary {
+            op: BinOp::And,
+            left,
+            right,
+        } if is_this(left) => right,
+        _ => left,
+    };
     let reads_this = matches!(
-        hir.member_key(hir.skip_type_assertions(right)),
+        hir.member_key(hir.skip_type_assertions(read)),
         Some((object, MemberKey::Name(_))) if is_this(object)
     );
-    (is_this(left) && reads_this && is_evaluated_by_file_body(hir, bound, expr)).then_some(value)
+    reads_this.then_some(value)
 }
 
 fn find_symbol_named_by(hir: &File<'_>, bound: &Bound<'_>, expr: ExprId) -> Option<SymbolId> {
@@ -752,7 +785,14 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
             return self.end_walk_that_came_round();
         }
         let (hir, bound) = (context.hir(callee.file), context.bound(callee.file));
-        match find_only_returned_value(hir, bound, callee.function) {
+        let is_copy = file == callee.file
+            && matches!(bound.fns[callee.function.idx()].owner, FnOwner::Expr(copy)
+                if matches!(bound.parent_of_expr(copy), Parent::Expr(sequence) if hir.copied_factory_of(sequence).is_some()));
+        let value = match is_copy {
+            true => find_value_of_call(hir, bound, callee.function),
+            false => find_only_returned_value(hir, bound, callee.function),
+        };
+        match value {
             Some(value) => {
                 self.certainty = ReferentCertainty::Expected;
                 self.entered_callees.push(callee);
@@ -811,9 +851,14 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
             ExprKind::Ident(_) => self.step_identifier(file, bound, expr),
             ExprKind::Binary {
                 op: BinOp::Comma,
+                left,
                 right,
-                ..
-            } => Step::Expression(file, right),
+            } => match (hir.copied_factory_of(expr), hir[left].kind) {
+                (Some(copied), ExprKind::Fn(function)) => {
+                    self.step_into_call(FunctionRef { file, function }, file, copied.call)
+                }
+                _ => Step::Expression(file, right),
+            },
             ExprKind::Cond { branches, .. } => {
                 let branches = hir.branches(branches);
                 let yes = self.resolve_from_here(file, branches.yes).referent;
@@ -867,7 +912,7 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
             } => Step::Expression(file, value),
             ExprKind::Object(properties) => self.step_object_literal(file, properties),
             ExprKind::Binary { op: BinOp::Or, .. } => {
-                match find_value_unless_this_of_file_has_one(hir, bound, expr) {
+                match find_value_unless_this_has_one(hir, expr) {
                     Some(value) => {
                         self.certainty = ReferentCertainty::Expected;
                         Step::Expression(file, value)
@@ -876,15 +921,29 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
                 }
             }
             ExprKind::Call(site) => match context.loaded_value(file, expr) {
+                Some(LoadedValue::InnerExports { file: loaded, body }) => {
+                    if self.open_calls.contains((file, site)) {
+                        return self.end_walk_that_came_round();
+                    }
+                    self.open_calls.push((file, site));
+                    self.step_inner_exports(loaded, body)
+                }
                 Some(loaded) => self.step_loaded_value(loaded),
                 None => match hir[hir.skip_type_assertions(hir[site].callee)].kind {
-                    ExprKind::Fn(function) => {
-                        match find_only_returned_value(hir, bound, function) {
-                            Some(value) => Step::Expression(file, value),
-                            None => unknown(UnknownReferent::NotAReference),
+                    ExprKind::Fn(function) => match find_value_of_call(hir, bound, function) {
+                        Some(value) => Step::Expression(file, value),
+                        None => unknown(UnknownReferent::NotAReference),
+                    },
+                    _ => {
+                        let module = match self.pending_members.is_empty() {
+                            true => None,
+                            false => context.interop_argument(file, expr),
+                        };
+                        match module {
+                            Some(module) => self.step_member_of_interop(file, module),
+                            None => self.step_call_that_returns_its_argument(file, site),
                         }
                     }
-                    _ => self.step_call_that_returns_its_argument(file, site),
                 },
             },
             _ => unknown(UnknownReferent::NotAReference),
@@ -996,8 +1055,44 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
         self.certainty = ReferentCertainty::Expected;
         match loaded {
             LoadedValue::Namespace(module) => Step::Linked(LinkedBinding::Namespace(module)),
-            LoadedValue::DefaultExport(file) => self.step_default_export(file),
+            LoadedValue::DefaultExport(file) => {
+                self.follows_stored_members = true;
+                self.step_default_export(file)
+            }
             LoadedValue::ModuleExports(file) => self.step_module_exports(file),
+            LoadedValue::InnerExports { file, body } => self.step_inner_exports(file, body),
+        }
+    }
+
+    /// `interopRequireDefault(require("./x")).default`: the module's default export, or all that an unmarked module exports.
+    fn step_member_of_interop(&mut self, file: FileId, module: ExprId) -> StepOf<'s, C> {
+        self.certainty = ReferentCertainty::Expected;
+        if self.pending_members.last() == Some(&known::default) {
+            let own = self.branch_off(|own| own.run(Step::Expression(file, module)).referent);
+            match own {
+                None | Some(StaticReferent::Unknown(_)) => {
+                    self.pending_members.pop();
+                }
+                Some(found) => {
+                    self.pending_members.clear();
+                    return Step::Found(found);
+                }
+            }
+        }
+        Step::Expression(file, module)
+    }
+
+    fn step_inner_exports(&mut self, file: FileId, body: FnId) -> StepOf<'s, C> {
+        let context = self.context;
+        self.certainty = ReferentCertainty::Expected;
+        let member = self.pending_members.last().copied();
+        if let Some(value) = member.and_then(|name| context.inner_export(file, body, Some(name))) {
+            self.pending_members.pop();
+            return Step::Expression(file, value);
+        }
+        match context.inner_export(file, body, None) {
+            Some(whole) => Step::Expression(file, whole),
+            None => unknown(UnknownReferent::MissingMember),
         }
     }
 
@@ -1047,6 +1142,10 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
     }
 
     fn step_module_exports(&mut self, file: FileId) -> StepOf<'s, C> {
+        self.step_exports(file, Stars::Followed)
+    }
+
+    fn step_exports(&mut self, file: FileId, stars: Stars) -> StepOf<'s, C> {
         let context = self.context;
         let bound = context.bound(file);
         if !bound.runtime.is_computed() {
@@ -1061,6 +1160,11 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
                 self.pending_members.pop();
                 return self.step_export_stores(property, &stores);
             }
+        }
+        if let Some(name) = next_member
+            && let Some(step) = self.step_forwarded_export(file, name, stars)
+        {
+            return step;
         }
         let whole = bound.lookup(exports, known::export_equals);
         let whole = whole.map(|id| Sym { file, id });
@@ -1081,6 +1185,48 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
             (None, None, None) => unknown(UnknownReferent::NotAReference),
             (None, None, Some(_)) => unknown(UnknownReferent::MissingMember),
         }
+    }
+
+    /// The last pending member is `name`.
+    fn step_forwarded_export(
+        &mut self,
+        file: FileId,
+        name: Atom,
+        stars: Stars,
+    ) -> Option<StepOf<'s, C>> {
+        let context = self.context;
+        if let Some(linked) = context.forwarded_export(file, name) {
+            self.pending_members.pop();
+            self.certainty = ReferentCertainty::Expected;
+            return Some(Step::Linked(linked));
+        }
+        if stars == Stars::Ignored {
+            return None;
+        }
+        let mut sources = context.star_sources(file);
+        let mut next = 0;
+        while let Some(&source) = sources.get(next) {
+            next += 1;
+            for further in context.star_sources(source) {
+                if further != file && !sources.contains(&further) {
+                    sources.push(further);
+                }
+            }
+        }
+        for source in sources {
+            let found = self.branch_off(|walk| {
+                let step = walk.step_exports(source, Stars::Ignored);
+                walk.run(step).referent
+            });
+            if let Some(found) = found
+                && !matches!(found, StaticReferent::Unknown(_))
+            {
+                self.pending_members.clear();
+                self.certainty = ReferentCertainty::Expected;
+                return Some(Step::Found(found));
+            }
+        }
+        None
     }
 
     fn step_export_stores(&mut self, exported: Sym, stores: &[ExportStore]) -> StepOf<'s, C> {
@@ -1104,7 +1250,13 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
         }
         match store.value {
             Some(value) => Step::Expression(file, value),
-            None => unknown(UnknownReferent::OpaqueInitializer),
+            None => match find_value_of_definition(hir, bound, store.node) {
+                Some(value) => {
+                    self.certainty = ReferentCertainty::Expected;
+                    Step::Expression(file, value)
+                }
+                None => unknown(UnknownReferent::OpaqueInitializer),
+            },
         }
     }
 
@@ -1121,6 +1273,13 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
         let is_dead_store = |target: ExprId| context.is_dead_store(file, target);
         match bound.binding_stability_ignoring(id, &is_dead_store) {
             BindingStability::Stable => {}
+            // An eval that stores into the binding may never run.
+            BindingStability::VisibleToEval
+                if bound.initializing_declaration(id).is_some()
+                    && (bound.stores_to(id).iter()).all(|store| is_dead_store(store.target)) =>
+            {
+                self.certainty = ReferentCertainty::Expected;
+            }
             BindingStability::Linked => return Step::Linked(context.linked_binding(file, id)),
             unstable @ (BindingStability::NoBinding
             | BindingStability::Stored
@@ -1146,7 +1305,7 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
                 Step::Found(StaticReferent::Function(FunctionRef { file, function }))
             }
             BindingInitializer::Namespace(_) | BindingInitializer::Enum(_) => {
-                let id = bound.export_symbol_of_value_symbol_if_exported(id);
+                let id = bound.exported_value(id);
                 let container = NamespaceReferent::Declared(Sym { file, id });
                 Step::Found(StaticReferent::Namespace(container))
             }

@@ -1,7 +1,7 @@
-use bun_sema::bind::{Binding, CodeUnit, Decl, ScopeId, SymbolId};
+use bun_sema::bind::{Binding, CodeUnit, Decl, ScopeId, ScopeKind, SymbolId};
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::fold::{TreeNode, push_children};
-use bun_sema::hir::{ExprId, Flags, FnId, PatKind, StmtId, is_moved_to_file_start};
+use bun_sema::hir::{ExprId, Flags, FnId, GlobalCode, PatKind, StmtId, is_moved_to_file_start};
 use bun_sema::util::SharedSort;
 use bun_sort_by_number::{SortByNumber, number_of_pair};
 use rustc_hash::FxHashMap;
@@ -102,6 +102,7 @@ pub(in crate::lower::scope) fn walk_file(
     }
     walk.created_at_each_read = without_place;
     sort_unique(&mut walk.functions_created_before_loops);
+    sort_unique(&mut walk.functions_calling_themselves);
     let references = &walk.function_references;
     let by_callee = order_by(references, walk.function_of_fn.len(), |it| it.1.idx());
     walk.function_references = order_by(&by_callee, walk.functions.len(), |it| it.0.0 as usize);
@@ -244,7 +245,15 @@ fn find_starts_of_functions_made_late(input: &ScopeInput<'_, '_>, walk: &mut Sco
     }
     let bound = input.bound;
     let (functions, function_of_fn) = (&mut walk.functions, &walk.function_of_fn);
-    for &(_, symbol, function) in &walk.hoisted_functions {
+    let global_code = input.hir.global_code();
+    for &(scope, symbol, function) in &walk.hoisted_functions {
+        let is_made_as_property = matches!(
+            bound.scopes[scope.idx()].kind,
+            ScopeKind::Fn(script) if global_code.contains(&(script, GlobalCode::Script))
+        );
+        if is_made_as_property {
+            continue;
+        }
         let is_never_made = matches!(
             bound.code_unit(bound.symbol_scope(symbol)),
             CodeUnit::Function(_)
@@ -337,12 +346,14 @@ impl<'x, 's> Walker<'x, 's> {
         let (hir, bound) = (input.hir, input.bound);
         let decisions = &input.compiled.analysis.decisions;
         let is_commonjs = input.modules.kind(input.file) == ModuleKind::CommonJs;
-        let keeps_wrapper =
-            is_commonjs && commonjs::keeps_wrapper(hir, bound, decisions, input.builtins);
+        let may_run_as_original = input.modules.may_run_as_original(input.file);
+        let keeps_wrapper = may_run_as_original
+            || is_commonjs && commonjs::keeps_wrapper(hir, bound, decisions, input.builtins);
         let wrapper_slots = match keeps_wrapper {
             true => {
-                let runs_again = input.modules.runs_again(input.file);
-                commonjs::WrapperSlots::of(bound, decisions, runs_again)
+                let may_be_reevaluated =
+                    may_run_as_original || input.modules.may_be_reevaluated(input.file);
+                commonjs::WrapperSlots::of(bound, decisions, may_be_reevaluated)
             }
             false => commonjs::WrapperSlots::default(),
         };
@@ -362,6 +373,8 @@ impl<'x, 's> Walker<'x, 's> {
                 bound,
                 input.modules.inner_modules(input.file),
             ),
+            literal_of_bodies: (input.modules.wrapped().literal_of_bodies(input.file))
+                .unwrap_or(ExprId::NONE),
             jsx_uses,
             metadata_uses,
             class_decorators: collect_class_decorators(hir, bound),
@@ -369,6 +382,7 @@ impl<'x, 's> Walker<'x, 's> {
             pending_stores: Vec::new(),
             unconditional_calls_of_super: Default::default(),
             fields_evaluated_in_constructors: Default::default(),
+            places_of_this_super_and_return: Default::default(),
             clock: 0,
             number_walked: 0,
             is_only_called_or_tested: vec![false; hir.exprs.len()],
@@ -386,8 +400,8 @@ impl<'x, 's> Walker<'x, 's> {
                 has_wrapper_parameters: keeps_wrapper,
                 wrapper_slots,
                 has_values_of_each_run: is_commonjs
-                    && !keeps_wrapper
-                    && input.modules.runs_again(input.file),
+                    && (!keeps_wrapper || may_run_as_original)
+                    && input.modules.may_be_reevaluated(input.file),
                 keeps_first_exports: is_commonjs
                     && !keeps_wrapper
                     && commonjs::keeps_first_exports(
@@ -582,7 +596,7 @@ impl<'x, 's> Walker<'x, 's> {
             lexical_scope: self.lexical_owners[scope.idx()],
             enclosing_loop: None,
             enclosing_try: None,
-            is_repeated: function != WalkedFunctionId::MODULE_BODY,
+            is_repeated: self.walk.functions[function.index()].creator.is_some(),
             is_conditional: false,
         };
         self.enter_scope(scope, context);

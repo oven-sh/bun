@@ -1,7 +1,7 @@
 // answers: with-library
 // # An access that is taken to lie inside its view names what shows it: its tests, the length, the counter and its start; where the build verifies, the verifier does the arithmetic again.
 // # The testing word takes every position for one that lies inside: nothing shows it, and the verifier stops the build. No run is needed.
-// # OPTIONS: check=Validate testing=PositionsAreTakenToLieInside
+// # OPTIONS: check=Validate testing=AssumeIndexesInBounds
 // # DIAGNOSTIC: OpcodeNotInForm
 // # RUN: walk f2 mechanisms=all
 // # CHECK-NOT: code f2:Body

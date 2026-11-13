@@ -3,7 +3,7 @@
 # let kept;
 # function last(name) { const l = shelf.get(name); kept = "none"; for (let i = 0; i < l.length; i++) kept = l[i]; return kept; }
 # function find(name, x) { const l = shelf.get(name); for (let i = 0; i < l.length; i++) if (l[i] === x) return i; return -1; }
-# function copy(name) { const l = shelf.get(name), o = new Array(4); for (let i = 0; i < l.length; i++) o[i] = l[i]; return o.join("|"); }
+# function copy(name) { const l = shelf.get(name), o = new Array(4); let sum = 0; for (let i = 0; i < l.length; i++) { o[i] = l[i]; sum += i; } return sum < 0 ? "" : o.join("|"); }
 # function gather(name) { const l = shelf.get(name), o = []; for (let i = 0; i < l.length; i++) o.push(l[i]); return o.length; }
 # function each(name, take) { const l = shelf.get(name); kept = "none"; for (let i = 0; i < l.length; i++) take(l[i]); return kept; }
 # const seen = [];
@@ -34,7 +34,7 @@
 # RUN(EACH): walk f5:Body mechanisms=all
 # EACH-LABEL: code f5:Body
 # EACH-NOT: = GetArrayElement
-# RUN(COUNT): compile mechanisms=all LoopsBuiltForListsThatTheirCounterReads
-# COUNT: statistic LoopsBuiltForListsThatTheirCounterReads 4
+# RUN(COUNT): compile mechanisms=all CounterIndexedLoopsVersioned
+# COUNT: statistic CounterIndexedLoopsVersioned 4
 # RUN(SHELL): run-in-shell globalThis.sink = print;
 # SHELL: ints:4,-1,3|9|4|,3,4 halves:1e+300,-1,0.5|-2|1e+300|,3,1e+300 mixed:7,2,x||7|,3,7 text:z,-1,w|x|y|z,4,zz bytes:8,0,7|8||,2,8 five:none,-1,|||,0,none like:undefined,-1,p|||,2,undefined holes:0.5,-1,1||0.5|,3,0.5

@@ -51,12 +51,19 @@ function readMachO(file: Uint8Array): Image {
     if (command === 2) [symbols, strings] = [u32(at + 8), u32(at + 16)];
     if (command === 11) indirect = u32(at + 56);
     if (command !== 0x19) continue;
-    if (u64(at + 48) > 0) image.segments.push({ offset: u64(at + 40), end: u64(at + 40) + u64(at + 48), address: u64(at + 24), isExecutable: (u32(at + 60) & 4) !== 0 });
+    const isExecutable = (u32(at + 60) & 4) !== 0;
+    // __TEXT holds constants too. Four bytes of 0x10 read as an `adr`.
+    const code: Segment[] = [];
     for (let section = at + 72; section < at + 72 + u32(at + 64) * 80; section += 80) {
       const type = u32(section + 64) & 0xff;
+      const offset = u32(section + 48);
+      if (isExecutable && (u32(section + 64) & 0x80000400) !== 0) code.push({ offset, end: offset + u64(section + 40), address: u64(section + 32), isExecutable });
       if (type === 6 || type === 7) pointers.push({ address: u64(section + 32), size: u64(section + 40), first: u32(section + 68), each: 8, isStub: false });
       if (type === 8) pointers.push({ address: u64(section + 32), size: u64(section + 40), first: u32(section + 68), each: u32(section + 72), isStub: true });
     }
+    if (code.length > 0) image.segments.push(...code);
+    // --trim leaves the constants behind a cut in a segment of their own, mapped for execution as __TEXT is. A segment without a section of instructions is data.
+    else if (u64(at + 48) > 0) image.segments.push({ offset: u64(at + 40), end: u64(at + 40) + u64(at + 48), address: u64(at + 24), isExecutable: false });
   }
   for (const { address, size, first, each, isStub } of pointers) {
     for (let index = 0; index * each < size; index++) {

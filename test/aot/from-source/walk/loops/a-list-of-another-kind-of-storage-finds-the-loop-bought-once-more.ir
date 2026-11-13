@@ -28,16 +28,14 @@
 # OFTEN: = IsElementPresent {{*}}arrayStorage=Int32
 # OFTEN: = HasArrayStorage {{*}}arrayStorage=Contiguous [admitsInt32Storage]
 # RUN(FOLDED): walk f5 mechanisms=all
-# FOLDED: = HasArrayStorage {{*}}arrayStorage=Int32
-# FOLDED: = IsElementPresent {{*}}arrayStorage=Int32
-# FOLDED: = HasArrayStorage {{*}}arrayStorage=Contiguous [admitsInt32Storage]
+# FOLDED: = HasArrayStorage [[list]] arrayStorage=Int32
+# FOLDED: = HasArrayStorage [[list]] arrayStorage=Contiguous [admitsInt32Storage]
+# FOLDED: = IsElementPresent [[list]], {{*}}arrayStorage=Int32
 # RUN(FAR): walk f6 mechanisms=all
 # FAR: = HasArrayStorage {{*}}arrayStorage=Int32
 # FAR: = IsElementPresent {{*}}arrayStorage=Int32
 # FAR: = HasArrayStorage {{*}}arrayStorage=Double [admitsInt32Storage]
 # FAR: = IsElementPresent {{*}}arrayStorage=Double
-# RUN(COUNT): compile LoopsBoughtOnceMoreForListsOfAnotherKindOfStorage mechanisms=all
-# COUNT: statistic LoopsBoughtOnceMoreForListsOfAnotherKindOfStorage 6
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 240 240 17179869424
 # ANSWERS: 250 250

@@ -11,6 +11,6 @@
 # f1 = fill, f2 = told
 # RUN(READ): walk f2 mechanisms=all
 # REQUIRES(READ): as-written
-# READ: GetSlot {{*}} key="TEXT" receivers=[L0]
+# READ: = GetValueAtSiteOrAbsent {{*}} key="TEXT"
 # RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
 # ANSWERS: 4 80 1200 16000

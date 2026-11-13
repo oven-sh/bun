@@ -1,6 +1,6 @@
 use bun_sema::bind::CommonJsVariable;
 use bun_sema::check::aot::{ClassDeclaration, ClassRef, FunctionRef, ObjectOrigin, TypeIdentity};
-use bun_sema::hir::MemberId;
+use bun_sema::hir::{ExprId, FnId, MemberId};
 use bun_sema::program::{FileId, Sym};
 
 use crate::builtins::RuntimeModule;
@@ -10,7 +10,7 @@ use crate::modules::SyntheticExportId;
 pub enum FunctionKey {
     ModuleBody(FileId),
     WrappedModuleBody(FileId),
-    FaceBody(FileId),
+    FacadeBody(FileId),
     CheckBody(FileId),
     Instantiation(FileId),
     Source(FunctionRef),
@@ -19,9 +19,30 @@ pub enum FunctionKey {
     ImplicitConstructor(ClassRef),
     InstanceInitializer(ClassRef),
     StaticInitializer(ClassRef),
-    AccessorGetter { file: FileId, member: MemberId },
-    AccessorSetter { file: FileId, member: MemberId },
-    PrivateNameTest { file: FileId, member: MemberId },
+    AccessorGetter {
+        file: FileId,
+        member: MemberId,
+    },
+    AccessorSetter {
+        file: FileId,
+        member: MemberId,
+    },
+    PrivateNameTest {
+        file: FileId,
+        member: MemberId,
+    },
+    ModuleRequest {
+        file: FileId,
+        call: ExprId,
+    },
+    /// The getter that a helper defines on a copy. `helper` is the one that it would create, `getter` the one that it would enter.
+    CopiedGetter {
+        file: FileId,
+        helper: FnId,
+        getter: FnId,
+    },
+    /// Constructs what Object.create() makes below the literal that the variable holds.
+    PrototypeMaker(Sym),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
@@ -41,11 +62,13 @@ pub enum LayoutKey {
         file: FileId,
         call: u32,
     },
+    PrototypeMaker(Sym),
     Container(Sym),
     Environment {
         file: FileId,
         environment: u32,
     },
+    ModuleInstance(FileId),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
@@ -92,6 +115,14 @@ pub enum VariableKey {
     RequiresMadeForOtherFolders(FileId),
     /// The requires that the real createRequire() made in the file for a written path other than the file's own.
     RequiresMadeForPaths(FileId),
+    InstanceOf(FileId),
+    InstanceAllocator(FileId),
+    HasSeveralInstances(FileId),
+    /// `true` as soon as a direct eval of the file has been handed a text.
+    EvaluationMark(FileId),
+    /// A static field that assignments add to a class: `C.name = value`.
+    AddedStatic(Sym),
+    PrototypeMaker(Sym),
 }
 
 impl FunctionKey {
@@ -99,12 +130,15 @@ impl FunctionKey {
         match *self {
             FunctionKey::ModuleBody(file)
             | FunctionKey::WrappedModuleBody(file)
-            | FunctionKey::FaceBody(file)
+            | FunctionKey::FacadeBody(file)
             | FunctionKey::CheckBody(file)
             | FunctionKey::Instantiation(file)
             | FunctionKey::AccessorGetter { file, .. }
             | FunctionKey::AccessorSetter { file, .. }
-            | FunctionKey::PrivateNameTest { file, .. } => file,
+            | FunctionKey::PrivateNameTest { file, .. }
+            | FunctionKey::ModuleRequest { file, .. }
+            | FunctionKey::CopiedGetter { file, .. } => file,
+            FunctionKey::PrototypeMaker(variable) => variable.file,
             FunctionKey::Source(function) | FunctionKey::Signature(function) => function.file,
             FunctionKey::ClassSignature(class)
             | FunctionKey::ImplicitConstructor(class)
@@ -125,6 +159,7 @@ impl LayoutKey {
         )
     }
 
+    /// The second word of an identity tells files apart. True if it alone tells these two apart.
     pub fn differs_in_files_alone(&self, other: &LayoutKey) -> bool {
         match (*self, *other) {
             (
@@ -165,8 +200,9 @@ impl LayoutKey {
             },
             LayoutKey::UntypedLiteral { file, .. }
             | LayoutKey::CreatedObject { file, .. }
-            | LayoutKey::Environment { file, .. } => Some(file),
-            LayoutKey::Container(symbol) => Some(symbol.file),
+            | LayoutKey::Environment { file, .. }
+            | LayoutKey::ModuleInstance(file) => Some(file),
+            LayoutKey::Container(symbol) | LayoutKey::PrototypeMaker(symbol) => Some(symbol.file),
         }
     }
 }
@@ -180,13 +216,20 @@ impl VariableKey {
             | VariableKey::ModulePath { file, .. }
             | VariableKey::MockOf(file)
             | VariableKey::InstantiationState(file)
+            | VariableKey::EvaluationMark(file)
             | VariableKey::RequiresMadeForOwnFile(file)
             | VariableKey::RequiresMadeForOtherFolders(file)
             | VariableKey::RequiresMadeForPaths(file)
-            | VariableKey::EnvironmentMadeAhead(file) => Some(file),
+            | VariableKey::EnvironmentMadeAhead(file)
+            | VariableKey::InstanceOf(file)
+            | VariableKey::InstanceAllocator(file)
+            | VariableKey::HasSeveralInstances(file) => Some(file),
             VariableKey::InnerModuleExports(callback) => Some(callback.file),
             VariableKey::PrivateState { state, .. } => Some(state.file),
             VariableKey::RequiredAnswer(holder) => Some(holder.file),
+            VariableKey::AddedStatic(symbol) | VariableKey::PrototypeMaker(symbol) => {
+                Some(symbol.file)
+            }
             VariableKey::SyntheticExport(_)
             | VariableKey::Copy(_)
             | VariableKey::MockOfRuntimeModule(_) => None,
@@ -222,7 +265,7 @@ mod tests {
         let keys = [
             FunctionKey::ModuleBody(FILE),
             FunctionKey::WrappedModuleBody(FILE),
-            FunctionKey::FaceBody(FILE),
+            FunctionKey::FacadeBody(FILE),
             FunctionKey::CheckBody(FILE),
             FunctionKey::Instantiation(FILE),
             FunctionKey::Source(FUNCTION),
@@ -242,6 +285,15 @@ mod tests {
             FunctionKey::PrivateNameTest {
                 file: FILE,
                 member: MEMBER,
+            },
+            FunctionKey::ModuleRequest {
+                file: FILE,
+                call: ExprId(3),
+            },
+            FunctionKey::CopiedGetter {
+                file: FILE,
+                helper: FnId(1),
+                getter: FnId(2),
             },
         ];
         for key in keys {
@@ -278,6 +330,7 @@ mod tests {
                 file: FILE,
                 environment: 0,
             },
+            LayoutKey::ModuleInstance(FILE),
         ];
         keys.extend(origins.map(|origin| LayoutKey::ObjectType {
             origin,

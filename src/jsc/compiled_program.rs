@@ -410,6 +410,16 @@ pub fn is_compiled_module(path: &[u8]) -> bool {
         && Bun__isCompiledProgramFile(&bun_core::StringView::from_bytes(path))
 }
 
+/// Whether `source_url` is a path relative to the build folder, as stack traces of an executable print it.
+/// No such file exists at run time.
+pub fn is_build_relative_path(source_url: &[u8]) -> bool {
+    compiled_program().is_some_and(|program| !program.preserves_source_paths)
+        && !bun_paths::is_absolute(source_url)
+        && ![&b"data:"[..], b"blob:", b"file:"]
+            .iter()
+            .any(|scheme| source_url.starts_with(scheme))
+}
+
 /// On a thread that runs apart from the compiled program: an entry point of that program, of which the graph holds no text.
 pub fn is_entry_point_beside_thread(path: &[u8]) -> bool {
     bun_core::runs_no_compiled_program()
@@ -1032,6 +1042,16 @@ pub extern "C" fn Bun__AOT__isLoadedSynchronously(
         || crate::node_compile_cache::is_enabled()
 }
 
+/// Called by BunCompiledModules.cpp. Sets `Resolver::resolves_for_code_from_disk` and returns its previous value.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__AOT__setResolvesForCodeFromDisk(
+    global: &JSGlobalObject,
+    value: bool,
+) -> bool {
+    let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
+    core::mem::replace(&mut resolver.resolves_for_code_from_disk, value)
+}
+
 /// BunCompiledModules.cpp
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__AOT__allowsCodeFromDisk() -> bool {
@@ -1148,7 +1168,6 @@ fn sentence_of(verdict: ImageVerdict) -> Option<&'static str> {
         ImageVerdict::NotAnImage => "the file is corrupt (bad header)",
         ImageVerdict::Truncated => "the file is truncated. Copy or download it again",
         ImageVerdict::Misaligned => "the code isn't page-aligned. Something modified the executable after it was built",
-        ImageVerdict::AlreadyInUse => "this process has already loaded another compiled program",
         ImageVerdict::LowPagesAccessible => "it needs the lowest pages of the address space to be unmapped, and this system maps them",
         ImageVerdict::NoCode => "it contains no code",
         ImageVerdict::CannotMapCode => "its code could not be mapped as executable memory",

@@ -1,5 +1,5 @@
 use bun_sema::atom::Atom;
-use bun_sema::bind::Binding;
+use bun_sema::bind::{Binding, BindingKind};
 use bun_sema::fold::Decision;
 use bun_sema::hir::{
     BinOp, ExprFlags, ExprId, ExprKind, IdList, PropId, Span, UnOp, find_transpiled_mark,
@@ -8,8 +8,8 @@ use bun_sema::hir::{
 use super::ResultUsage;
 use super::logical::LogicalOperator;
 use crate::ir::ValueId;
-use crate::lower::member::KeyConversion;
-use crate::lower::scope::BindingForm;
+use crate::lower::member::{KeyConversion, Reference};
+use crate::lower::scope::{BindingForm, IdentifierTarget};
 use crate::lower::{FileLowering, FunctionLowering};
 
 #[derive(Copy, Clone, Debug)]
@@ -26,9 +26,14 @@ impl FileLowering<'_, '_, '_, '_> {
         self.find_assigned_function_name(target).is_some()
     }
 
+    /// A name in parentheses names no function that is assigned to it. Bun's printer drops the parentheses, and the type syntax in them, so the engine sees them only in a file marked `// @bun`, which runs as it stands.
     pub(in crate::lower) fn is_parenthesized_for_the_engine(&self, target: ExprId) -> bool {
         let is_parenthesized = (self.hir.expr_flags(target)).contains(ExprFlags::PARENTHESIZED);
-        is_parenthesized && find_transpiled_mark(&self.hir.text).is_some()
+        is_parenthesized && self.stands_as_written(self.hir[target].pos)
+    }
+
+    pub(in crate::lower) fn stands_as_written(&self, position: u32) -> bool {
+        find_transpiled_mark(&self.hir.text).is_some() || self.hir.is_in_known_evaluation(position)
     }
 
     fn find_assigned_function_name(&self, target: ExprId) -> Option<(Binding, Atom)> {
@@ -98,7 +103,7 @@ pub(super) fn lower_assignment(
         unreachable!("lower_assignment takes an Assign expression");
     };
     match op {
-        None => lowering.lower_plain_assignment(target, value),
+        None => lowering.lower_plain_assignment(target, value, usage),
         Some(BinOp::And) => {
             lower_logical_assignment(lowering, expression, LogicalOperator::And, usage)
         }
@@ -122,6 +127,11 @@ pub(super) fn lower_assignment(
             | BinOp::BitOr
             | BinOp::BitXor),
         ) => {
+            if let BinOp::Add = op
+                && let Some(stored) = lowering.try_lower_append_to_piece(expression, target, value)
+            {
+                return stored;
+            }
             let reference = lowering.lower_reference(target, KeyConversion::Once);
             let old = lowering.get_reference(&reference);
             let old = lowering.convert_through_assertions(target, old);
@@ -144,13 +154,40 @@ pub(super) fn lower_assignment(
             | BinOp::Comma,
         ) => {
             debug_assert!(false, "not an assignment operator");
-            lowering.lower_plain_assignment(target, value)
+            lowering.lower_plain_assignment(target, value, usage)
         }
     }
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    fn lower_plain_assignment(&mut self, target: ExprId, value: ExprId) -> ValueId {
+    /// `cached || (cached = require("./module"))`: more is known of the variable than of what the call answers.
+    fn is_call_stored_in_variable(&self, reference: &Reference, value: ExprId) -> bool {
+        let hir = self.file.hir;
+        let Reference::Identifier {
+            target:
+                IdentifierTarget::Binding {
+                    binding: Binding::Symbol(symbol),
+                    ..
+                },
+            ..
+        } = *reference
+        else {
+            return false;
+        };
+        matches!(hir[hir.skip_type_assertions(value)].kind, ExprKind::Call(_))
+            && self.file.scopes.form(symbol) == BindingForm::Stored
+            && matches!(
+                self.file.bound.binding_kind(symbol),
+                BindingKind::Var | BindingKind::Let
+            )
+    }
+
+    fn lower_plain_assignment(
+        &mut self,
+        target: ExprId,
+        value: ExprId,
+        usage: ResultUsage,
+    ) -> ValueId {
         match self.file.classify_assignment_target(target) {
             AssignmentTarget::ArrayPattern(_) | AssignmentTarget::ObjectPattern(_) => {
                 let assigned = self.lower_expression(value);
@@ -161,7 +198,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let reference = self.lower_reference(target, KeyConversion::AtAccess);
                 let assigned = self.lower_assigned_value(target, value);
                 self.set_position(self.file.hir[target].pos);
-                self.put_reference(&reference, assigned, Some(value))
+                let stored = self.put_reference(&reference, assigned, Some(value));
+                match usage == ResultUsage::Value
+                    && self.is_call_stored_in_variable(&reference, value)
+                {
+                    true => self.get_reference(&reference),
+                    false => stored,
+                }
             }
         }
     }
@@ -200,6 +243,10 @@ fn lower_logical_assignment(
     lowering.set_position(hir[target].pos);
     let stored = lowering.put_reference(&reference, assigned, Some(value));
     if let Some(result) = result {
+        let stored = match lowering.is_call_stored_in_variable(&reference, value) {
+            true => lowering.get_reference(&reference),
+            false => stored,
+        };
         lowering.builder.write_variable(result, stored);
     }
     lowering.jump(join);
@@ -220,6 +267,14 @@ pub(super) fn lower_update(
     let ExprKind::Unary { op, operand } = hir[expression].kind else {
         unreachable!("lower_update takes a Unary expression");
     };
+    let is_increment = matches!(op, UnOp::PreInc | UnOp::PostInc);
+    let is_postfix = matches!(op, UnOp::PostInc | UnOp::PostDec);
+    let is_old_kept = is_postfix && usage == ResultUsage::Value;
+    if let Some(value) =
+        lowering.try_lower_update_of_private_state(operand, is_increment, is_old_kept)
+    {
+        return value;
+    }
     let reference = lowering.lower_reference(operand, KeyConversion::Once);
     let old = lowering.get_reference(&reference);
     let old = lowering.convert_through_assertions(operand, old);

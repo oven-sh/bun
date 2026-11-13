@@ -17,12 +17,13 @@
 # print(last);
 # -- end of source
 # RUN(PLACED): plan layouts mechanisms=all
-# PLACED: "size" JSValue {{*}}doors=int|string
+# PLACED: "size" JSValue {{*}}doors=int[0, 4294967295]|string
 # RUN(ASKED): walk f2 mechanisms=all-Inlining
 # ASKED-LABEL: code f2:Body
-# ASKED: [[given]]: int @Double = CallDirect {{*}}function=f1
-# ASKED: CheckProof [[given]] checkedType=int typeWithoutProof=number source=Field
-# ASKED: PutSlotOrAdd {{*}}key="size"
+# ASKED: [[given]]: int[0, 4294967295] @Int64 = CallDirect {{*}}function=f1
+# The definitions of both arms are the birth of the object: the number is asked before it is boxed.
+# ASKED: = CheckProof [[given]] checkedType=int[0, 4294967295]
+# ASKED: = NewObject {{*}}layout=L0 fields=[0, 1]
 # ASKED-NOT: DefineOwnProperty
 # RUN(RIGHT): run-in-shell
 # RIGHT: 4294967294 none 0 1

@@ -1,0 +1,16 @@
+# -- source: main.js
+# function sum(a, i) { return i === a.length ? 0 : a[i] + sum(a, i + 1); }
+# print(sum([0.5, 1.5, 2.25], 0), sum([0.5, , 2.5], 0), sum([0.5, 2 ** 40], 1), sum([0.5], 1));
+# -- end of source
+# LIBRARY: own
+# A function that calls itself is a loop: its body is a version that asks the array that arrives for what its accesses rely on, and the generic version behind it.
+# RUN: walk f1 mechanisms=all
+# CHECK: code f1:Body
+# CHECK: IsPristine v0 builtinClass=Array
+# CHECK: HasArrayStorage {{*}} arrayStorage=Double
+# CHECK: IsElementPresent {{*}} arrayStorage=Double
+# CHECK: GetArrayElement {{*}} arrayStorage=Double level=Proven [keyIsIntegral, isPresent]
+# CHECK: GetArrayElement {{*}} mayHaveNumberNames
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 4.25 NaN 1099511627776 0
+# ANSWERS-NEXT: exited with 0

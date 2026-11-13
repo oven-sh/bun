@@ -1,12 +1,12 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="List" {{*}}kind=BaseConstructor
 // CHECK-NOT: CallDirect
-// CHECK: ElemSet
+// CHECK: PropSet {{*}}key="list"
 // CHECK: PropSet {{*}}key="a"
 // CHECK-NOT: CallDirect
 // CHECK-LABEL: function {{*}}name="TypeOfName" {{*}}kind=BaseConstructor
 // CHECK-NOT: CallDirect
-// CHECK: ElemSet
+// CHECK: PropSet {{*}}key="type"
 // CHECK: PropSet {{*}}key="b"
 // CHECK-NOT: CallDirect
 // CHECK-LABEL: function {{*}}name="FunctionAnd" {{*}}kind=BaseConstructor

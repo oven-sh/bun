@@ -118,6 +118,59 @@ describe.concurrent("native binlink optimization", () => {
       await expectPlatformBin();
     });
 
+    test.each([
+      ["bun install", true],
+      ["bun pm trust", false],
+    ])(`lifecycle scripts use the platform-specific bin with linker ${linker}: %s`, async (_, trusted) => {
+      const { packageDir, packageJson } = await verdaccio.createTestDir({ bunfigOpts: { linker } });
+      await mkdir(join(packageDir, "user"));
+      await Promise.all([
+        writeFile(
+          packageJson,
+          JSON.stringify({
+            name: "test-app",
+            dependencies: { user: "file:./user" },
+            nativeDependencies: ["test-native-binlink"],
+            trustedDependencies: trusted ? ["user"] : [],
+          }),
+        ),
+        writeFile(
+          join(packageDir, "user", "package.json"),
+          JSON.stringify({
+            name: "user",
+            version: "1.0.0",
+            dependencies: { "test-native-binlink": "1.0.0" },
+            scripts: { postinstall: "test-binlink-cmd > out.txt" },
+          }),
+        ),
+      ]);
+      const tmpDir = join(packageDir, ".bun-tmp");
+      const run = async (...args: string[]) => {
+        await using proc = spawn({
+          cmd: [bunExe(), ...args],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env: {
+            ...bunEnv,
+            BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
+            BUN_TMPDIR: tmpDir,
+            TMPDIR: tmpDir,
+            TEMP: tmpDir,
+          },
+        });
+        const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toContain("error:");
+        expect(exitCode).toBe(0);
+      };
+      await run("install");
+      if (!trusted) await run("pm", "trust", "user");
+      const userDir = realpathSync(join(packageDir, "node_modules", "user"));
+      expect(readFileSync(join(userDir, "out.txt"), "utf8")).toContain("SUCCESS: Using platform-specific bin");
+      expect(existsSync(join(userDir, "node_modules"))).toBe(false);
+    });
+
     // bunx takes the bin of a package from that package's own package.json. Here the entry in `.bin` leads into
     // the platform package, and the file of the main package keeps the mode of its tarball.
     test.skipIf(isWindows).each(["a folder", "a link to another folder"])(

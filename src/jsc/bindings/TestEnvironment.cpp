@@ -61,18 +61,19 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionTestEnvironmentModuleOfLastingRealm, (JSC::JS
     return Bun__TestEnvironment__setupFunction(lastingRealm(JSC::getVM(globalObject)));
 }
 
-// What `in` finds on a global: its string keys and those of the objects on its prototype chain.
-static RefPtr<JSC::PropertyNameArray> namesOf(JSC::JSGlobalObject* global)
+// The string keys of a global's own properties. Not those of its prototype chain: an object there can run code for its keys.
+static RefPtr<JSC::PropertyNameArray> ownNamesOf(JSC::JSGlobalObject* global)
 {
     auto& vm = JSC::getVM(global);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::PropertyNameArrayBuilder names(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
-    global->getPropertyNames(global, names, JSC::DontEnumPropertiesMode::Include);
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    global->methodTable()->getOwnPropertyNames(global, global, names, JSC::DontEnumPropertiesMode::Include);
+    // The global object lists its slots, its variables and its static tables.
+    scope.assertNoException();
     return names.releaseData();
 }
 
-// Undefined until a test file loads. Then the names that the global had before that, and the names that a preload has stubbed.
+// Undefined until a test file loads. Then the global's own names from before that, and the names that a preload has stubbed.
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionTestEnvironmentNamesBeforeTestFiles, __attribute__((minsize)), (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame*))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -83,8 +84,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionTestEnvironmentNamesBeforeTes
         return JSC::JSValue::encode(JSC::jsUndefined());
     if (!clientData->namesBeforeTestFiles) {
         // Nothing had run on the global then, so it had the names of a new one. That one is not kept.
-        clientData->namesBeforeTestFiles = namesOf(createRealm(vm, false));
-        RETURN_IF_EXCEPTION(scope, {});
+        clientData->namesBeforeTestFiles = ownNamesOf(createRealm(vm, false));
     }
     JSC::MarkedArgumentBuffer names;
     for (auto& name : clientData->namesBeforeTestFiles->propertyNameVector())
@@ -212,10 +212,6 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__TestEnvironment__willLoadTestFile(Z
     if (clientData->testFilesHaveStarted)
         return;
     clientData->testFilesHaveStarted = true;
-    if (!hasNamesOfItsOwn)
-        return;
-    // A Proxy that a preload put on the prototype chain can throw. Then the names of a new global stand in.
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    clientData->namesBeforeTestFiles = Bun::namesOf(globalObject);
-    (void)scope.tryClearException();
+    if (hasNamesOfItsOwn)
+        clientData->namesBeforeTestFiles = Bun::ownNamesOf(globalObject);
 }

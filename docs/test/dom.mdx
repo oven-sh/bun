@@ -59,9 +59,9 @@ By default, test files share one global object and one module registry. Files wi
 
 As in Vitest, a window gives `globalThis` a fixed list of names (`document`, `HTMLElement`, `matchMedia`, ...) and each of its other names (`customElements`, `ResizeObserver`, ...) that `globalThis` doesn't have. Because test files share `globalThis`, Bun looks at where such a name comes from:
 
-- A name that `globalThis` had before the first test file ran stays. That is one of Bun's own globals, or a global that a preload script defined while it loaded.
-- A global that a test file leaves behind doesn't hide the window's name. A later file with a window gets the window's `customElements`, and a file that runs in `node` gets the leftover back.
-- A global that a preload script assigns in a hook, such as `beforeAll`, is like a test file's, because the hook runs in the first test file. What it stubs there with `vi.stubGlobal()` stays.
+- Bun's own globals stay. So does a global that a preload script has defined by the time it finishes loading: define a mock or a polyfill of such a name there.
+- A global that a test file without a window assigns and leaves behind doesn't hide the window's name. A later file with a window gets the window's `customElements`, and a file that runs in `node` gets the leftover back. A leftover that isn't configurable stays.
+- A global that a preload script assigns after it has loaded, for example in a `beforeAll` hook, is like a test file's.
 - What a preload script assigns to a name of the project's window goes to that window. Files with another window, or with none, don't get it.
 
 With [`--isolate` or `--parallel`](/test/parallel), every file gets its own window and its own copy of every module. Use them when files in different environments import the same DOM library, because a shared module stays bound to the first window it saw.

@@ -964,7 +964,8 @@ describe.concurrent("test environment", () => {
         ["happy-dom", "its comment", true, []],
         ["happy-dom", "bunfig.toml", true, []],
         ["jsdom", "--environment", false, []],
-        ["happy-dom", "its comment", false, ["--parallel=1", "--no-isolate"]],
+        // One worker takes every file, in an order of its own.
+        ["happy-dom", "its comment", false, ["--parallel=2", "--parallel-delay=1000000", "--no-isolate"]],
         // With a preload, `bun test` keeps the names that globalThis has when the preloads are done.
         ["happy-dom", "its comment", false, ["--preload=./preload.js"]],
       ] as const)(
@@ -989,7 +990,7 @@ describe.concurrent("test environment", () => {
           const flags = from === "--environment" ? [`--environment=${name}`, ...args] : args;
           const { stdout, stderr, exitCode } = await bunTest(String(dir), ...flags);
           // --parallel prints its workers' stdout on stderr.
-          expect(lines([...stdout, ...stderr.split("\n")])).toEqual([
+          expect(lines([...stdout, ...stderr.split("\n")]).sort()).toEqual([
             ...(opensFirst ? [`0-dom: customElements of ${name}#1`] : []),
             `2-dom: customElements of ${name}#1`,
             // The file's name is back where no window is.
@@ -1115,6 +1116,54 @@ describe.concurrent("test environment", () => {
         expect(exitCode).toBe(0);
       });
 
+      // `bun test` keeps the own names of globalThis. A name that globalThis inherits stays too, as on any global.
+      test("is not what a preload defined on globalThis or under it, even if a Proxy there does not give its keys", async () => {
+        using dir = tempDir("test-environment", {
+          ...windows,
+          "preload.js": `
+            const handler = {
+              ownKeys() {
+                throw new Error("no keys today");
+              },
+            };
+            const prototype = Object.getPrototypeOf(globalThis);
+            prototype.ResizeObserver = "ResizeObserver under globalThis";
+            Object.setPrototypeOf(globalThis, new Proxy(prototype, handler));
+            globalThis.customElements = "customElements of the preload";`,
+          "1-node.test.js": log("customElements", "ResizeObserver"),
+          "2-dom.test.js": `// ${VITEST} happy-dom\n${log("customElements", "ResizeObserver")}`,
+        });
+        const { stdout, stderr, exitCode } = await bunTest(String(dir), "--preload=./preload.js");
+        expect(lines(stdout)).toEqual([
+          "1-node: customElements of the preload, ResizeObserver under globalThis",
+          "2-dom: customElements of the preload, ResizeObserver under globalThis",
+        ]);
+        expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
+        expect(exitCode).toBe(0);
+      });
+
+      // A window never replaces a global that is not configurable, whoever defined it.
+      test("stays if it is not configurable", async () => {
+        using dir = tempDir("test-environment", {
+          ...windows,
+          "1-node.test.js": `
+            import { test } from "bun:test";
+            test("leaves two names", () => {
+              Object.defineProperty(globalThis, "customElements", { value: "customElements of a test file", writable: true });
+              globalThis.ResizeObserver = "ResizeObserver of a test file";
+            });`,
+          "2-dom.test.js": `// ${VITEST} happy-dom\n${log("customElements", "ResizeObserver")}`,
+          "3-node.test.js": log("customElements", "ResizeObserver"),
+        });
+        const { stdout, stderr, exitCode } = await bunTest(String(dir));
+        expect(lines(stdout)).toEqual([
+          "2-dom: customElements of a test file, ResizeObserver of happy-dom#1",
+          "3-node: customElements of a test file, ResizeObserver of a test file",
+        ]);
+        expect(summary(stderr)).toEqual(["3 pass", "0 fail"]);
+        expect(exitCode).toBe(0);
+      });
+
       // The preloads run with the project's window. So its names are on globalThis when `bun test` keeps the names, with
       // a preload and with the globals of Vitest.
       test.each([
@@ -1133,6 +1182,8 @@ describe.concurrent("test environment", () => {
             "3-jsdom.test.js": log("customElements", "ResizeObserver"),
             "4-happy-dom.test.js": `// ${VITEST} happy-dom\n${log("customElements", "ResizeObserver")}`,
             "5-node.test.js": `// ${VITEST} node\n${log("customElements", "ResizeObserver")}`,
+            // A second window that opens after a test file: the project's window is still the one of the preloads.
+            "6-happy-dom.test.js": `// ${VITEST} happy-dom\n// ${VITEST}-options { "url": "https://example.com/" }\n${log("customElements", "ResizeObserver")}`,
           });
           const { stdout, stderr, exitCode } = await bunTest(String(dir));
           expect(lines(stdout)).toEqual([
@@ -1140,8 +1191,9 @@ describe.concurrent("test environment", () => {
             `3-jsdom: customElements of jsdom#1, ${ofGlobal}`,
             `4-happy-dom: customElements of happy-dom#1, ${inHappyDOM}`,
             `5-node: customElements of a test file, ${ofGlobal}`,
+            `6-happy-dom: customElements of happy-dom#2, ${inHappyDOM.replace("#1", "#2")}`,
           ]);
-          expect(summary(stderr)).toEqual(["5 pass", "0 fail"]);
+          expect(summary(stderr)).toEqual(["6 pass", "0 fail"]);
           expect(exitCode).toBe(0);
         },
       );

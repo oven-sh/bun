@@ -776,6 +776,13 @@ static PathsHeldByModuleMock unregisterModuleMock(Zig::GlobalObject* globalObjec
     return { removeIfHeld(mock->importKey.get()), removeIfHeld(mock->requireKey.get()) };
 }
 
+// The paths that the table has `mock` under. A later mock or build.module() may have taken one of two.
+static PathsHeldByModuleMock pathsHeldByModuleMock(Zig::GlobalObject* globalObject, const JSModuleMock* mock)
+{
+    auto holds = [&](JSC::JSString* key) { return key && moduleMockAnsweringFor(globalObject, key->tryGetValue().data) == mock; };
+    return { holds(mock->importKey.get()), holds(mock->requireKey.get()) };
+}
+
 // Each mock once: one with two paths lies in the table twice.
 static void listModuleMocks(Zig::GlobalObject* globalObject, JSC::MarkedArgumentBuffer& mocks)
 {
@@ -941,6 +948,11 @@ __attribute__((minsize)) static LoadedModule findLoadedModule(Zig::GlobalObject*
     if (JSString* key = requireCacheKey(globalObject, mock); key != mock->importKey.get()) {
         findLoadedCommonJSModule(globalObject, key, loaded);
         RETURN_IF_EXCEPTION(scope, {});
+    }
+    // A mock that has kept its require path alone has nothing under its import path any more: the ES module there is of the mock that took that path.
+    if (PathsHeldByModuleMock held = pathsHeldByModuleMock(globalObject, mock); held.requirePath && !held.importPath) {
+        loaded.esmNamespace = nullptr;
+        loaded.staleESMEntry = false;
     }
     return loaded;
 }
@@ -3428,19 +3440,6 @@ struct ModulesToEvict {
     bool keepsFailuresOfCompiledProgram { false };
 #endif
 };
-
-// The paths that the table has `mock` under. A later mock or build.module() may have taken one of two.
-static PathsHeldByModuleMock pathsHeldByModuleMock(Zig::GlobalObject* globalObject, const JSModuleMock* mock)
-{
-    auto* virtualModules = globalObject->onLoadPlugins.virtualModules;
-    auto holds = [&](JSC::JSString* key) {
-        if (!key || !virtualModules)
-            return false;
-        auto entry = virtualModules->find(key->tryGetValue().data);
-        return entry != virtualModules->end() && entry->value.get() == mock;
-    };
-    return { holds(mock->importKey.get()), holds(mock->requireKey.get()) };
-}
 
 // Lists the module that `mock` stands for, under each path that `held` names: the ES module under the import path, the module object of require.cache under the require path.
 // What was patched in place stays where it is, and only its importers go. A mock with one path has both under it.

@@ -58,18 +58,27 @@ impl Expect {
         let hint = hint.as_ref().map_or(bun_core::Utf8Bytes::EMPTY, |hint| hint.to_utf8());
 
         let value = this.get_value(global, this_value, "toMatchFileSnapshot", "<green>path<r><d>, <r>hint")?;
+        // Vitest's order: the file at the path, the number, and then the print.
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let file = runner.snapshots.read_file_snapshot(&runner.files, &this, path.to_utf8().slice(), hint.slice(), &mut path_buf.0);
         let mut received: Vec<u8> = Vec::new();
-        if value.is_string_literal() {
-            received.extend_from_slice(value.to_js_string_view(global)?.to_utf8().slice());
-        } else {
-            JestPrettyFormat::print_snapshot(global, value, None, &mut received, Format::Vitest)?;
-            if received.len() > 2 && received.starts_with(b"\n") && received.ends_with(b"\n") {
-                received.pop();
-                received.remove(0);
+        if file.is_ok() {
+            if value.is_string_literal() {
+                received.extend_from_slice(value.to_js_string_view(global)?.to_utf8().slice());
+            } else {
+                JestPrettyFormat::print_snapshot(global, value, None, &mut received, Format::Vitest)?;
+                if received.len() > 2 && received.starts_with(b"\n") && received.ends_with(b"\n") {
+                    received.pop();
+                    received.remove(0);
+                }
             }
         }
 
-        match runner.snapshots.match_or_write_file(&runner.files, &this, path.to_utf8().slice(), &received, hint.slice()) {
+        let outcome = match file {
+            Ok(file) => runner.snapshots.settle_file(file, &received),
+            Err(refused) => refused,
+        };
+        match outcome {
             FileOutcome::Passed | FileOutcome::Written => Ok(JSPromise::resolved_promise_value(global, JSValue::UNDEFINED)),
             FileOutcome::Mismatch { saved } => {
                 let signature = get_signature("toMatchFileSnapshot", "<green>path<r>", false);

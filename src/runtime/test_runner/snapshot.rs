@@ -69,6 +69,53 @@ impl Format {
             Format::Bun | Format::Jest => saved == received,
         }
     }
+
+    /// Whether the runner that wrote this format has given a snapshot matcher its number by the time it is at `at`.
+    pub(crate) fn takes_number(self, form: Form, at: Step) -> bool {
+        match (self, form) {
+            // Bun 1.4, in a run of one test file: `inline_snapshot` counted first, after it read the `message` of a thrown value.
+            (Format::Bun, Form::Inline) => match at {
+                Step::Message => false,
+                Step::NotAnObject | Step::MatchersThrew | Step::NoMatch | Step::Merge | Step::Print => true,
+            },
+            // Bun 1.4: `match_or_write` takes it after the print, once the file is open.
+            (Format::Bun, Form::Entry) => match at {
+                Step::Message | Step::NotAnObject | Step::MatchersThrew | Step::NoMatch | Step::Merge | Step::Print => false,
+            },
+            // jest-snapshot 30: `fail()` where the properties don't match, else `match()`, which counts and then prints.
+            (Format::Jest, Form::Inline | Form::Entry) => match at {
+                Step::Message | Step::NotAnObject | Step::MatchersThrew | Step::Merge => false,
+                Step::NoMatch | Step::Print => true,
+            },
+            // Vitest since 4.1.3 (vitest-dev/vitest#9986): `SnapshotClient.match` counts on every way out but a merge that throws.
+            (Format::Vitest, Form::Inline | Form::Entry) => match at {
+                Step::Merge => false,
+                Step::Message | Step::NotAnObject | Step::MatchersThrew | Step::NoMatch | Step::Print => true,
+            },
+        }
+    }
+}
+
+/// The two kinds of snapshot matcher that `Format::takes_number` tells apart.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum Form {
+    Inline,
+    /// The snapshot is an entry of the snapshot file.
+    Entry,
+}
+
+/// Where a snapshot matcher is when `Format::takes_number` is asked. It ends at the three in the middle, and is about to do the others.
+#[derive(Copy, Clone)]
+pub(crate) enum Step {
+    /// Reads the `message` of what was thrown. Vitest's print does that, so there it is the print of such a value.
+    Message,
+    /// It has property matchers, and what it received is not an object.
+    NotAnObject,
+    MatchersThrew,
+    NoMatch,
+    /// Merges the property matchers into the value, as the prints of Jest and Vitest do.
+    Merge,
+    Print,
 }
 
 struct Entry {
@@ -93,6 +140,13 @@ pub(crate) enum FileOutcome {
     NotAllowedInCI,
     NoTest(Error),
     Failed(bun_sys::Error),
+}
+
+/// What `toMatchFileSnapshot()` found at its path.
+pub(crate) struct FileSnapshot<'a> {
+    path: &'a [u8],
+    /// An error is the one of a path that `existsSync()` does not find. The matcher reports it after its print.
+    saved: Result<Option<Vec<u8>>, bun_sys::Error>,
 }
 
 pub(crate) struct Snapshots {
@@ -388,10 +442,12 @@ impl Snapshots {
         self._current_file.as_ref().is_some_and(|file| file.may_hold_entries_of_bun)
     }
 
+    /// `taken` is what `add_count` returned to a matcher that took its number before it printed.
     pub(crate) fn match_or_write(
         &mut self,
         files: &FileList,
         expect: &Expect,
+        taken: Option<(Vec<u8>, usize)>,
         received: &[u8],
         hint: &[u8],
     ) -> Result<Outcome, Error> {
@@ -400,7 +456,10 @@ impl Snapshots {
             self.open_to_append(files)?;
         }
 
-        let (mut key, counter) = self.add_count(expect, format, hint)?;
+        let (mut key, counter) = match taken {
+            Some(taken) => taken,
+            None => self.add_count(expect, format, hint)?,
+        };
         let mut counter_string_buf = [0u8; 32];
         let counter = bun_core::fmt::int_as_bytes(&mut counter_string_buf, counter);
         key.push(b' ');
@@ -613,46 +672,58 @@ impl Snapshots {
         }
     }
 
+    /// `toMatchFileSnapshot()` up to its print, in Vitest's order: reads the file at the path, then takes the call's number.
     #[cold]
-    pub(crate) fn match_or_write_file(
+    pub(crate) fn read_file_snapshot<'a>(
         &mut self,
         files: &FileList,
         expect: &Expect,
         path: &[u8],
-        received: &[u8],
         hint: &[u8],
-    ) -> FileOutcome {
+        path_buf: &'a mut [u8],
+    ) -> Result<FileSnapshot<'a>, FileOutcome> {
         let format = match self.format_of(files, expect) {
             Ok(format) => format,
-            Err(err) => return FileOutcome::NoTest(err),
+            Err(err) => return Err(FileOutcome::NoTest(err)),
         };
         let Some(file_id) = self._current_file.as_ref().map(|file| file.id) else {
-            return FileOutcome::NoTest(Error::NoTest);
+            return Err(FileOutcome::NoTest(Error::NoTest));
         };
 
         let mut snapshot_path_buf = bun_paths::path_buffer_pool::get();
         let Some((test_dir, _, len)) = snapshot_file_path(files, file_id, snapshot_path_buf.0.as_mut_slice()) else {
-            return FileOutcome::NoTest(Error::FailedToOpenSnapshotFile);
+            return Err(FileOutcome::NoTest(Error::FailedToOpenSnapshotFile));
         };
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        let Some(path) =
-            bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(test_dir, &mut path_buf.0, &[path])
-        else {
-            return FileOutcome::Failed(bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open));
-        };
-        if path == &snapshot_path_buf.0[..len] {
-            return FileOutcome::IsSnapshotFile;
+        let joined =
+            bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(test_dir, path_buf, &[path]);
+        if joined == Some(&snapshot_path_buf.0[..len]) {
+            return Err(FileOutcome::IsSnapshotFile);
         }
 
-        let saved = match bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
-            Ok(saved) => Some(saved),
-            Err(err) if err.get_errno() == bun_sys::Errno::ENOENT => None,
-            Err(err) => return FileOutcome::Failed(err.with_path(path)),
+        // Vitest asks `existsSync()`. It takes a path that is not found for a new file, and fails when it writes it.
+        let (path, saved) = match joined {
+            None => (&b""[..], Err(bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open))),
+            Some(path) => match bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
+                Ok(saved) => (path, Ok(Some(saved))),
+                Err(err) if err.get_errno() == bun_sys::Errno::ENOENT => (path, Ok(None)),
+                Err(err) if !bun_sys::exists(path) => (path, Err(err.with_path(path))),
+                Err(err) => return Err(FileOutcome::Failed(err.with_path(path))),
+            },
         };
         // Vitest counts a file snapshot among the test's snapshots too.
         if let Err(err) = self.add_count(expect, format, hint) {
-            return FileOutcome::NoTest(err);
+            return Err(FileOutcome::NoTest(err));
         }
+        Ok(FileSnapshot { path, saved })
+    }
+
+    #[cold]
+    pub(crate) fn settle_file(&mut self, file: FileSnapshot<'_>, received: &[u8]) -> FileOutcome {
+        let FileSnapshot { path, saved } = file;
+        let saved = match saved {
+            Ok(saved) => saved,
+            Err(err) => return FileOutcome::Failed(err),
+        };
         match saved {
             Some(mut saved) => {
                 if strings::contains(&saved, b"\r\n") && !strings::contains(received, b"\r\n") {

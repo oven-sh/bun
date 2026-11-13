@@ -9,7 +9,7 @@ use bun_core::StackCheck;
 use bun_core::{Output, Timespec, TimespecMockMode, ZBox, fmt as bun_fmt};
 use bun_core::{String as BunString, ZStr, strings};
 use bun_event_loop::SpawnSyncEventLoop::TickState;
-use bun_io::max_buf::MaxBuf;
+use bun_io::max_buf;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{
     self as jsc, EventLoopHandle, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsError,
@@ -1286,8 +1286,8 @@ fn spawn_maybe_sync(
             Subprocess::Flags::empty()
         }),
         kill_signal,
-        stderr_maxbuf: Cell::new(None),
-        stdout_maxbuf: Cell::new(None),
+        stderr_maxbuf: JsCell::new(None),
+        stdout_maxbuf: JsCell::new(None),
         terminal: Cell::new(
             existing_terminal
                 .map(|t| t.as_ptr())
@@ -1316,17 +1316,14 @@ fn spawn_maybe_sync(
         NonNull::new(subprocess_ptr.cast()).expect("Box::into_raw returned null");
 
     // Address-dependent fields, filled now that `subprocess` has a stable address.
-    {
-        let owner = bun_io::max_buf::Owner {
+    if let Some(max_buffer) = max_buffer {
+        let owner = max_buf::Owner {
             ptr: subprocess_nn.cast::<()>(),
-            on_overflow: SubprocessT::on_max_buffer_overflow,
+            on_overflow: SubprocessT::on_max_buffer,
         };
-        let mut mb = None;
-        MaxBuf::create_for_subprocess(&mut mb, max_buffer, owner);
-        subprocess.stderr_maxbuf.set(mb);
-        let mut mb = None;
-        MaxBuf::create_for_subprocess(&mut mb, max_buffer, owner);
-        subprocess.stdout_maxbuf.set(mb);
+        let new = |kind| Some(max_buf::OwnerRef::new(max_buffer, kind, owner));
+        subprocess.stderr_maxbuf.set(new(max_buf::Kind::Stderr));
+        subprocess.stdout_maxbuf.set(new(max_buf::Kind::Stdout));
     }
 
     #[cfg(windows)]
@@ -1402,12 +1399,6 @@ fn spawn_maybe_sync(
                 // Nothing else holds it yet (no socket wired, no task scheduled).
                 ipc_data.detach();
             }
-            let mut mb = subprocess.stdout_maxbuf.get();
-            MaxBuf::remove_from_subprocess(&mut mb);
-            subprocess.stdout_maxbuf.set(mb);
-            let mut mb = subprocess.stderr_maxbuf.get();
-            MaxBuf::remove_from_subprocess(&mut mb);
-            subprocess.stderr_maxbuf.set(mb);
             subprocess.deref();
             subprocess.deref();
             return Err(err);
@@ -1419,7 +1410,7 @@ fn spawn_maybe_sync(
         event_loop,
         subprocess_nn,
         spawned_stdout,
-        subprocess.stdout_maxbuf.get(),
+        subprocess.stdout_maxbuf.get().as_ref(),
         is_sync,
     ));
     subprocess.stderr.set(Readable::init(
@@ -1427,7 +1418,7 @@ fn spawn_maybe_sync(
         event_loop,
         subprocess_nn,
         spawned_stderr,
-        subprocess.stderr_maxbuf.get(),
+        subprocess.stderr_maxbuf.get().as_ref(),
         is_sync,
     ));
 

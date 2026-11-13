@@ -132,8 +132,8 @@ pub struct Subprocess<'a> {
     pub(crate) event_loop_timer: EventLoopTimer,
     pub(crate) kill_signal: SignalCode,
 
-    pub(crate) stdout_maxbuf: Cell<Option<NonNull<MaxBuf::MaxBuf>>>,
-    pub(crate) stderr_maxbuf: Cell<Option<NonNull<MaxBuf::MaxBuf>>>,
+    pub(crate) stdout_maxbuf: JsCell<Option<MaxBuf::OwnerRef>>,
+    pub(crate) stderr_maxbuf: JsCell<Option<MaxBuf::OwnerRef>>,
     pub(crate) exited_due_to_maxbuf: Cell<Option<MaxBuf::Kind>>,
 }
 
@@ -584,35 +584,12 @@ impl Subprocess<'_> {
         let _ = self.try_kill(self.kill_signal);
     }
 
-    pub(crate) fn on_max_buffer(&self, kind: MaxBuf::Kind) {
-        self.exited_due_to_maxbuf.set(Some(kind));
-        let _ = self.try_kill(self.kill_signal);
-    }
-
-    /// `MaxBuf::Owner::on_overflow` target. Routes straight from the `MaxBuf`
-    /// allocation to this `Subprocess`, independent of whichever pipe reader
-    /// currently holds the budget (the `.stdout`/`.stderr` getter transfers it
-    /// to a `FileReader`).
-    ///
-    /// # Safety
-    /// `sp` is the `Subprocess` passed to `MaxBuf::create_for_subprocess`; it
-    /// is live while the matching `*_maxbuf` slot is `Some` (cleared in
-    /// `finalize` and below).
-    pub(crate) unsafe fn on_max_buffer_overflow(sp: NonNull<()>, maxbuf: NonNull<MaxBuf::MaxBuf>) {
-        // SAFETY: caller contract; all accessed fields are `Cell<_>`.
-        let sp = unsafe { sp.cast::<Subprocess<'static>>().as_ref() };
-        let kind = if sp.stdout_maxbuf.get() == Some(maxbuf) {
-            let mut mb = sp.stdout_maxbuf.get();
-            MaxBuf::MaxBuf::remove_from_subprocess(&mut mb);
-            sp.stdout_maxbuf.set(mb);
-            MaxBuf::Kind::Stdout
-        } else {
-            let mut mb = sp.stderr_maxbuf.get();
-            MaxBuf::MaxBuf::remove_from_subprocess(&mut mb);
-            sp.stderr_maxbuf.set(mb);
-            MaxBuf::Kind::Stderr
-        };
-        sp.on_max_buffer(kind);
+    /// SAFETY: `this` is a live `Subprocess`.
+    pub(crate) unsafe fn on_max_buffer(this: NonNull<()>, kind: MaxBuf::Kind) {
+        // SAFETY: caller contract.
+        let this = unsafe { this.cast::<Subprocess<'static>>().as_ref() };
+        this.exited_due_to_maxbuf.set(Some(kind));
+        let _ = this.try_kill(this.kill_signal);
     }
 
     /// Close still-open stdout/stderr pipe readers after a timeout/maxBuffer
@@ -1229,12 +1206,8 @@ impl Subprocess<'_> {
         }
         self.set_event_loop_timer_refd(false);
 
-        let mut mb = self.stdout_maxbuf.get();
-        MaxBuf::MaxBuf::remove_from_subprocess(&mut mb);
-        self.stdout_maxbuf.set(mb);
-        let mut mb = self.stderr_maxbuf.get();
-        MaxBuf::MaxBuf::remove_from_subprocess(&mut mb);
-        self.stderr_maxbuf.set(mb);
+        self.stdout_maxbuf.set(None);
+        self.stderr_maxbuf.set(None);
 
         if let Some(ipc_data) = self.ipc_data.take() {
             // In normal operation the socket is already `.closed` by the time we

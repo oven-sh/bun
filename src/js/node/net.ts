@@ -302,6 +302,8 @@ const kSetNoDelay = Symbol("kSetNoDelay");
 const kSetTOS = Symbol("kSetTOS");
 const kSetKeepAlive = Symbol("kSetKeepAlive");
 const kSyncWriteFd = Symbol("kSyncWriteFd");
+// The fd the constructor handed to the native connect({ fd }) adoption ({ fd, readable: true }).
+const kAdoptedFd = Symbol("kAdoptedFd");
 const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
 const kConnectOptions = Symbol("connect-options");
 const kAttach = Symbol("kAttach");
@@ -1953,6 +1955,22 @@ function kConnectDispatch(self, req, opts) {
   return 0;
 }
 
+// Node's createHandle() wraps PIPE and TCP fds only: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L183-L199
+function fstatAdoptedFd(fd: number) {
+  let stats;
+  try {
+    stats = require("node:fs").fstatSync(fd);
+  } catch {
+    // Node: createHandle -> uv_guess_handle returns UV_UNKNOWN_HANDLE
+    // for an fd it cannot fstat, then throws ERR_INVALID_FD_TYPE.
+    throw $ERR_INVALID_FD_TYPE("UNKNOWN");
+  }
+  if (stats.isFile()) {
+    throw $ERR_INVALID_FD_TYPE("FILE");
+  }
+  return stats;
+}
+
 function Socket(options?): void {
   if (!(this instanceof Socket)) return new Socket(options);
 
@@ -2039,39 +2057,36 @@ function Socket(options?): void {
   this.on("end", onSocketEnd);
 
   if (fd !== undefined) {
-    // Adopt pipe/character-device fds with synchronous writes. Matches
-    // node's effective semantics for stdio-style sockets: writes to a pipe
-    // complete inline, so data survives an immediate process.exit().
-    // Gated on an explicit `writable: true` (how node's own stdio wraps fds,
-    // e.g. new Socket({ fd: 2, readable: false, writable: true })): a bare
-    // { fd } is the connect({ fd }) path (child_process extra stdio), which
-    // attaches a native duplex handle in Socket.prototype.connect - adopting
-    // here would end its readable side and stomp its write path.
-    // Network-socket fds are not supported (handle adoption needs native
-    // support); those keep the previous validated-but-inert behavior.
-    if (opts.writable === true) {
-      let stats;
-      try {
-        stats = require("node:fs").fstatSync(fd);
-      } catch {
-        // Node: createHandle -> uv_guess_handle returns UV_UNKNOWN_HANDLE
-        // for an fd it cannot fstat, then throws ERR_INVALID_FD_TYPE.
-        throw $ERR_INVALID_FD_TYPE("UNKNOWN");
+    const optionsReadable = opts.readable;
+    if (optionsReadable === true) {
+      // An fd to read from is adopted by the native handle, the way connect({ fd })
+      // attaches one (node: createHandle(fd) + read(0)): a pipe, character device
+      // or socket reads and writes asynchronously through it. Bare { fd } stays
+      // inert for the connect({ fd }) path below (child_process extra stdio).
+      const stats = fstatAdoptedFd(fd);
+      if (stats.isFIFO() || stats.isCharacterDevice() || stats.isSocket()) {
+        Socket.prototype.connect.$call(this, { fd, pauseOnConnect: opts.pauseOnCreate === true });
+        this[kAdoptedFd] = fd;
       }
-      // Node's createHandle() wraps PIPE and TCP fds only: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L183-L199
-      if (stats.isFile()) {
-        throw $ERR_INVALID_FD_TYPE("FILE");
-      }
+    } else if (opts.writable === true) {
+      // Adopt pipe/character-device fds with synchronous writes. Matches
+      // node's effective semantics for stdio-style sockets: writes to a pipe
+      // complete inline, so data survives an immediate process.exit().
+      // Gated on an explicit `writable: true` (how node's own stdio wraps fds,
+      // e.g. new Socket({ fd: 2, readable: false, writable: true })): a bare
+      // { fd } is the connect({ fd }) path (child_process extra stdio), which
+      // attaches a native duplex handle in Socket.prototype.connect - adopting
+      // here would end its readable side and stomp its write path.
+      const stats = fstatAdoptedFd(fd);
       // isSocket() covers stdio handed to a child as a socketpair (how spawn
       // implements pipes on unix); writable-only adoption with sync write(2)
       // is correct there too.
-      const optionsReadable = opts.readable;
-      if (stats.isFIFO() || stats.isCharacterDevice() || (stats.isSocket() && optionsReadable !== true)) {
+      if (stats.isFIFO() || stats.isCharacterDevice() || stats.isSocket()) {
         this[kSyncWriteFd] = fd;
         this._write = fdSyncWrite;
         this._writev = fdSyncWritev;
         // No native reads on this path: an unspecified `readable` gets EOF here (`false` already ended it in the Duplex).
-        if (optionsReadable !== true && optionsReadable !== false) {
+        if (optionsReadable !== false) {
           this.push(null);
           this.read(0);
         }
@@ -2314,6 +2329,8 @@ Socket.prototype.connect = function connect(...args) {
     let connection = this[ksocket];
     let upgradeDuplex = false;
     let { port, host, path, socket, rejectUnauthorized, checkServerIdentity, session, fd, pauseOnConnect } = options;
+    // The constructor adopted this fd ({ fd, readable: true }); net.connect(options) passes the same options on here.
+    if (fd != null && this[kAdoptedFd] === fd) return this;
     // A session over a transport the caller handed in has no connection of its own to dial again.
     if (!socket && this[kupgraded] && !this.destroyed) {
       const ex = new ExceptionWithHostPort(uv().UV_EISCONN, "connect", path || host || "localhost", port);
@@ -2503,6 +2520,8 @@ Socket.prototype._destroy = function _destroy(err, callback) {
       }
     }
   }
+  // The native handle closes an fd it adopted; a later connect({ fd }) on this socket adopts anew.
+  if (this[kAdoptedFd] !== undefined) this[kAdoptedFd] = undefined;
 
   // What closes with this socket clears its own.
   clearTimeout(this[kTimeout]);

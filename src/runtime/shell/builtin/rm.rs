@@ -1417,7 +1417,7 @@ impl DirTask {
     /// # Safety
     /// `this` is a live DirTask whose root has not finished.
     unsafe fn queue_for_write(this: *mut DirTask) {
-        use bun_event_loop::{ConcurrentTask::AutoDeinit, EventLoopTask};
+        use bun_event_loop::EventLoopTask;
         // SAFETY: caller contract.
         let (me, rm) = unsafe { (&mut *this, RefPtr::init_ref((*this).task_manager)) };
         let poster = rm.task.poster.as_ref();
@@ -1425,8 +1425,7 @@ impl DirTask {
         me.write_ref = Some(rm);
         match &mut me.concurrent_task {
             EventLoopTask::Js(ct) => {
-                ct.from(this, AutoDeinit::ManualDeinit);
-                poster.post_js(core::ptr::NonNull::from(ct));
+                poster.post_js_intrusive(core::ptr::NonNull::from(ct.from(this)));
             }
             EventLoopTask::Mini(at) => {
                 let at = at.from(this, dir_task_run_from_main_thread_mini);

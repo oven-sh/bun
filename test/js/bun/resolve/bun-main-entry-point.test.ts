@@ -481,7 +481,9 @@ describe("the look for a server in the default export of the entry point", () =>
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       const lines = stripAsanWarning(stderr);
       const at = lines.indexOf(error);
-      return { printed: { stdout, error: lines.slice(at, at + 2), exitCode }, entry: join(String(dir), "entry.mjs") };
+      // The note names the entry point by its whole path.
+      const named = lines.slice(at, at + 2).map(line => line.replace(/"[^"]*entry\.mjs"$/, '"entry.mjs"'));
+      return { stdout, error: named, exitCode };
     }
 
     test.concurrent.each([
@@ -504,17 +506,16 @@ describe("the look for a server in the default export of the entry point", () =>
         'read "default" to look for a server in',
       ],
     ])("an error of %s says what Bun did", async (_, source, error, whatBunDid) => {
-      const { printed, entry } = await errorOf(source, error);
-      expect(printed).toEqual({
+      expect(await errorOf(source, error)).toEqual({
         stdout: "ran\n",
-        error: [error, `note: Bun ${whatBunDid} the default export of "${entry}"`],
+        error: [error, `note: Bun ${whatBunDid} the default export of "entry.mjs"`],
         exitCode: 1,
       });
     });
 
     test.concurrent("an error that the program froze keeps its message", async () => {
       const source = `export default { get fetch() { throw Object.freeze(new Error("read of fetch")); } };`;
-      const { printed } = await errorOf(source, "error: read of fetch");
+      const printed = await errorOf(source, "error: read of fetch");
       expect({ ...printed, error: printed.error.map(line => line.trimStart().split(" ")[0]) }).toEqual({
         stdout: "ran\n",
         error: ["error:", "at"],

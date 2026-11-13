@@ -103,6 +103,29 @@ impl<const CAPACITY: usize> SignalRing<CAPACITY> {
         }
     }
 
+    /// Any thread. Calls `f` with each queued signal, oldest first, and takes none out.
+    /// Waits for a slot that a producer has claimed but not stored yet.
+    pub fn for_each_queued(&self, mut f: impl FnMut(u8)) {
+        let (head, tail) = unpack(self.state.load(Ordering::Acquire));
+        'slots: for offset in 0..tail.wrapping_sub(head) {
+            let index = head.wrapping_add(offset);
+            let slot = self.slot(index);
+            loop {
+                let signal = slot.load(Ordering::Acquire);
+                if signal != 0 {
+                    f(signal);
+                    break;
+                }
+                // A 0 slot outside the live range is one the consumer took.
+                let (head_now, tail_now) = unpack(self.state.load(Ordering::Acquire));
+                if index.wrapping_sub(head_now) >= tail_now.wrapping_sub(head_now) {
+                    continue 'slots;
+                }
+                std::thread::yield_now();
+            }
+        }
+    }
+
     /// Starts both indices at `index`, to put the `u16` wrap within reach.
     #[cfg(test)]
     fn starting_at(index: u16) -> Self {
@@ -136,9 +159,11 @@ mod tests {
     }
 
     /// Producers wait while `outstanding_limit` accepted entries are in the ring.
+    /// `before_consuming` runs on the consumer thread once the producers are up.
     fn stress<const CAPACITY: usize>(
         ring: &SignalRing<CAPACITY>,
         outstanding_limit: usize,
+        before_consuming: impl FnOnce(),
     ) -> Stress {
         let done = AtomicUsize::new(0);
         let outstanding = AtomicUsize::new(0);
@@ -173,6 +198,7 @@ mod tests {
                 })
                 .collect();
 
+            before_consuming();
             let mut producers_done = false;
             loop {
                 match ring.dequeue() {
@@ -213,7 +239,7 @@ mod tests {
     #[test]
     fn concurrent_producers_deliver_every_accepted_signal_once() {
         let ring = SignalRing::<64>::new();
-        let result = stress(&ring, usize::MAX);
+        let result = stress(&ring, usize::MAX, || {});
         assert_eq!((result.zeros, result.unknown), (0, 0));
         assert_eq!(result.dequeued, result.accepted);
     }
@@ -222,7 +248,7 @@ mod tests {
     #[test]
     fn never_rejects_below_capacity() {
         let ring = SignalRing::<64>::new();
-        let result = stress(&ring, 32);
+        let result = stress(&ring, 32, || {});
         assert_eq!((result.zeros, result.unknown, result.rejected), (0, 0, 0));
         assert_eq!(result.dequeued, result.accepted);
     }
@@ -257,5 +283,125 @@ mod tests {
         assert_eq!(ring.dequeue(), Some(2));
         assert_eq!(ring.dequeue(), Some(3));
         assert_eq!(ring.dequeue(), None);
+    }
+
+    fn queued<const CAPACITY: usize>(ring: &SignalRing<CAPACITY>) -> Vec<u8> {
+        let mut signals = Vec::new();
+        ring.for_each_queued(|signal| signals.push(signal));
+        signals
+    }
+
+    #[test]
+    fn view_reports_what_is_queued_and_takes_nothing() {
+        let ring = SignalRing::<4>::starting_at(u16::MAX - 1);
+        assert_eq!(queued(&ring), []);
+        for signal in 1..=4u8 {
+            assert!(ring.enqueue(signal));
+        }
+        assert_eq!(queued(&ring), [1, 2, 3, 4]);
+        assert_eq!(queued(&ring), [1, 2, 3, 4]);
+        assert_eq!(ring.dequeue(), Some(1));
+        assert_eq!(queued(&ring), [2, 3, 4]);
+        for signal in 2..=4u8 {
+            assert_eq!(ring.dequeue(), Some(signal));
+        }
+        assert_eq!(queued(&ring), []);
+    }
+
+    /// Views the ring on another thread, runs `release` while that view waits on a slot of 0, and returns the view.
+    fn view_while_a_slot_is_zero<const CAPACITY: usize>(
+        ring: &SignalRing<CAPACITY>,
+        release: impl FnOnce(),
+    ) -> Vec<u8> {
+        std::thread::scope(|scope| {
+            let viewer = scope.spawn(|| queued(ring));
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            assert!(
+                !viewer.is_finished(),
+                "the view returned with a slot still at 0"
+            );
+            release();
+            viewer.join().unwrap()
+        })
+    }
+
+    #[test]
+    fn view_waits_for_a_claimed_slot() {
+        let ring = SignalRing::<8>::new();
+        // A producer between its CAS and its store.
+        let (_, claimed) = unpack(ring.state.fetch_add(pack(0, 1), Ordering::AcqRel));
+        assert!(ring.enqueue(2));
+        assert_eq!(ring.dequeue(), None);
+
+        let view =
+            view_while_a_slot_is_zero(&ring, || ring.slot(claimed).store(1, Ordering::Release));
+        assert_eq!(view, [1, 2]);
+        assert_eq!(ring.dequeue(), Some(1));
+        assert_eq!(ring.dequeue(), Some(2));
+    }
+
+    #[test]
+    fn view_skips_a_slot_that_the_consumer_is_taking() {
+        let ring = SignalRing::<8>::new();
+        assert!(ring.enqueue(1));
+        assert!(ring.enqueue(2));
+        // The consumer between its swap and its move of `head`.
+        assert_eq!(ring.slot(0).swap(0, Ordering::AcqRel), 1);
+
+        let view = view_while_a_slot_is_zero(&ring, || {
+            ring.state.fetch_add(pack(1, 0), Ordering::AcqRel);
+        });
+        assert_eq!(view, [2]);
+        assert_eq!(ring.dequeue(), Some(2));
+        assert_eq!(ring.dequeue(), None);
+    }
+
+    /// The consumer takes 65536 signals while the view waits: `head` reads as before.
+    #[test]
+    fn view_ends_when_the_consumer_drained_a_full_u16_cycle_past_its_snapshot() {
+        let ring = SignalRing::<8>::starting_at(7);
+        let (_, claimed) = unpack(ring.state.fetch_add(pack(0, 1), Ordering::AcqRel));
+        let view = view_while_a_slot_is_zero(&ring, || {
+            ring.state.store(pack(claimed, claimed), Ordering::Release);
+        });
+        assert_eq!(view, []);
+    }
+
+    /// A viewer beside working producers and the consumer sees only published signals.
+    #[test]
+    fn view_beside_producers_and_the_consumer_reports_only_published_signals() {
+        const CAPACITY: usize = 64;
+        let ring = SignalRing::<CAPACITY>::new();
+        let finished = AtomicUsize::new(0);
+        let seen_signals = AtomicUsize::new(0);
+        let (result, (views, bad)) = std::thread::scope(|scope| {
+            let viewer = scope.spawn(|| {
+                let (mut views, mut bad) = (0usize, 0usize);
+                loop {
+                    let view = queued(&ring);
+                    views += 1;
+                    if !view.is_empty() {
+                        seen_signals.store(1, Ordering::Release);
+                    }
+                    bad += usize::from(view.len() > CAPACITY);
+                    bad += view.iter().filter(|&&s| s == 0 || s > PRODUCERS).count();
+                    if finished.load(Ordering::Acquire) != 0 {
+                        break (views, bad);
+                    }
+                    std::thread::yield_now();
+                }
+            });
+            // The consumer holds back until a view has seen producers at work.
+            let result = stress(&ring, usize::MAX, || {
+                while seen_signals.load(Ordering::Acquire) == 0 {
+                    std::thread::yield_now();
+                }
+            });
+            finished.store(1, Ordering::Release);
+            (result, viewer.join().unwrap())
+        });
+        assert!(views > 0);
+        assert_eq!((result.zeros, result.unknown, bad), (0, 0, 0));
+        assert_eq!(result.dequeued, result.accepted);
     }
 }

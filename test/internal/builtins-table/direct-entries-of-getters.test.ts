@@ -154,6 +154,16 @@ test("a store is entered only where the accessor cannot be replaced", async () =
   });
 });
 
+test("the field of a getter that keeps its answer is read where the accessor is not configurable, or the prototype is locked", async () => {
+  const cached = `proto: { address: { getter: b.string, cache: true } }`;
+  const readOf = async (definition: string) => (await accessorOf(definition)).signatures[0].implementation;
+  const field = { how: "CachedGetter", cppClass: "Bun::Bindgen::Generated::JSThing", member: "m_address" };
+  expect(await readOf(cached)).toEqual(field);
+  expect(await readOf(`configurable: true, ${cached}`)).toBeUndefined();
+  // An executable refuses to redefine what a locked prototype has, whatever the descriptor says.
+  expect(await readOf(`configurable: true, lockedMembers: ["prototype"], ${cached}`)).toEqual(field);
+});
+
 test("the getters of a constructor and of a function that is bound take other things", async () => {
   expect(await entriesOf(`construct: {}, static: { count: { getter: b.f64 } }`)).toEqual({ "%Thing%.count": null });
   expect(await entriesOf(`forBind: true, proto: { size: { getter: b.f64 } }`)).toEqual({

@@ -56,6 +56,7 @@ export const timingSafeEqual = b.fn(equal);
 
 export const Crypto = b.class({
   rustPath: "crate::webcore::crypto::Crypto",
+  configurable: true,
   construct: "illegal",
   proto: {
     /** A view that is not an integer typed array throws WebCrypto's `TypeMismatchError`, which no type here throws. */

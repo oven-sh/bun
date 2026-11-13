@@ -594,6 +594,133 @@ test("globalThis.self = 123 works", () => {
   }
 });
 
+// Web IDL makes every operation and attribute of an interface configurable, unless it is [LegacyUnforgeable]:
+// https://webidl.spec.whatwg.org/#js-operations and https://webidl.spec.whatwg.org/#js-attributes
+describe("operations and attributes of the web interfaces", () => {
+  // A case changes prototypes that the test runner itself uses, so it runs in a process of its own. It is a file: a
+  // script given with -e also has the modules of Node.js as globals.
+  async function seenBy(script) {
+    using dir = tempDir("web-interfaces", { "script.mjs": script });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "script.mjs"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { seen: stdout.startsWith("{") || stdout.startsWith("[") ? JSON.parse(stdout) : stdout, stderr, exitCode };
+  }
+
+  test.concurrent("are configurable on every global interface, but for three that Bun reads by name", async () => {
+    const script = `
+      // Bun's own classes are no web interfaces.
+      const classesOfBun = ["BuildError", "BuildMessage", "HTMLRewriter", "ResolveError", "ResolveMessage"];
+      const locked = [];
+      for (const name of Object.getOwnPropertyNames(globalThis)) {
+        const constructor = globalThis[name];
+        if (typeof constructor !== "function" || Object(constructor.prototype) !== constructor.prototype) continue;
+        if (classesOfBun.includes(name)) continue;
+        for (const [path, holder] of [[name, constructor], [name + ".prototype", constructor.prototype]]) {
+          for (const key of Object.getOwnPropertyNames(holder)) {
+            const descriptor = Object.getOwnPropertyDescriptor(holder, key);
+            // A constant is a number. It stays locked, and so does the prototype of a constructor.
+            const isMember = key !== "prototype" && ("get" in descriptor || typeof descriptor.value === "function");
+            if (isMember && !descriptor.configurable) locked.push(path + "." + key);
+          }
+        }
+      }
+      console.log(JSON.stringify(locked.sort()));
+    `;
+    // No standard has these three, and Bun reads each by name, so no program can replace it.
+    // Bun.readableStreamToFormData() calls the first, and console.log() of a FormData the second. node:worker_threads
+    // reads the third from the Worker that it wraps, and routes the messages between threads by it.
+    const readByBun = ["FormData.from", "FormData.prototype.toJSON", "Worker.prototype.threadId"];
+    expect(await seenBy(script)).toEqual({ seen: readByBun, stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("can be redefined, deleted and put back", async () => {
+    const script = `
+      const attempt = work => {
+        try {
+          return work();
+        } catch (error) {
+          return error.name + ": " + error.message;
+        }
+      };
+      const seen = {};
+      for (const [name, instance, method, accessor] of [
+        ["TextDecoder", new TextDecoder(), "decode", "encoding"],
+        ["Blob", new Blob(["a"]), "text", "size"],
+        ["Request", new Request("http://example.com/"), "clone", "url"],
+        ["Response", new Response("a"), "clone", "status"],
+        ["Crypto", crypto, "randomUUID", "subtle"],
+        // The accessors of these three are Bun's own.
+        ["Headers", new Headers(), "get", "count"],
+        ["FormData", new FormData(), "get", "length"],
+        ["URLSearchParams", new URLSearchParams(), "get", "length"],
+      ]) {
+        const prototype = globalThis[name].prototype;
+        const real = [Object.getOwnPropertyDescriptor(prototype, method), Object.getOwnPropertyDescriptor(prototype, accessor)];
+        seen[name] = {
+          wrapped: attempt(() => {
+            Object.defineProperty(prototype, method, { value: () => "wrapped", writable: true, configurable: true });
+            return instance[method]();
+          }),
+          replaced: attempt(() => {
+            Object.defineProperty(prototype, accessor, { get: () => "replaced", configurable: true });
+            return instance[accessor];
+          }),
+          "made a value": attempt(() => {
+            Object.defineProperty(prototype, accessor, { value: "value", configurable: true });
+            return instance[accessor];
+          }),
+          "made not enumerable": attempt(() => {
+            Object.defineProperty(prototype, method, { enumerable: false });
+            return Object.keys(prototype).includes(method);
+          }),
+          deleted: attempt(() => [delete prototype[method], delete prototype[accessor], method in instance, accessor in instance]),
+          "put back": attempt(() => {
+            Object.defineProperty(prototype, method, real[0]);
+            Object.defineProperty(prototype, accessor, real[1]);
+            return [instance[method] === real[0].value, Object.getOwnPropertyDescriptor(prototype, accessor).get === real[1].get];
+          }),
+          // Object.freeze() still locks them.
+          frozen: attempt(() => {
+            Object.freeze(prototype);
+            return [Reflect.defineProperty(prototype, method, { value() {} }), Reflect.deleteProperty(prototype, accessor)];
+          }),
+        };
+      }
+      const json = Object.getOwnPropertyDescriptor(Response, "json");
+      seen["Response.json"] = attempt(() => {
+        const deleted = [delete Response.json, typeof Response.json];
+        Object.defineProperty(Response, "json", { ...json, value: () => "redefined" });
+        return [...deleted, Response.json()];
+      });
+      console.log(JSON.stringify(seen));
+    `;
+    const ofAnInterface = {
+      wrapped: "wrapped",
+      replaced: "replaced",
+      "made a value": "value",
+      "made not enumerable": false,
+      deleted: [true, true, false, false],
+      "put back": [true, true],
+      frozen: [false, false],
+    };
+    expect(await seenBy(script)).toEqual({
+      seen: {
+        TextDecoder: ofAnInterface,
+        Blob: ofAnInterface,
+        Request: ofAnInterface,
+        Response: ofAnInterface,
+        Crypto: ofAnInterface,
+        Headers: ofAnInterface,
+        FormData: ofAnInterface,
+        URLSearchParams: ofAnInterface,
+        "Response.json": [true, "undefined", "redefined"],
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 // A constructor reads `new.target.prototype` for the prototype of the object it makes. The read can
 // run script and throw, so it comes after the arguments convert and before the constructor steps.
 describe("new.target.prototype", () => {

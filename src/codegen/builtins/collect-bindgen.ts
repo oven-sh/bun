@@ -748,11 +748,11 @@ const setterTakingAnything = (isRead: boolean, isStatic: boolean): b.SetterOptio
   uses: isRead ? { ...(isStatic ? {} : { this: b.retainedByNativeCode }), value: b.retainedByNativeCode } : undefined,
 });
 
-// The field that a read of the property finds the answer in, once it is there. A property that can be redefined may be something else.
+// The field that a read of the property finds the answer in, once it is there. A property that can be redefined may be something else. Not on a locked prototype: an executable refuses the redefinition, and in a test run a read asks first whether a test has replaced the member.
 function cachedFieldOf(type: ClassType, accessor: Getter | InternalFieldAccessor): string | null {
   if (accessor.internalField === undefined || !hasInstanceReceiver(type)) return null;
   const isConfigurable = (accessor instanceof Getter ? accessor.configurable : undefined) ?? type.configurable;
-  return isConfigurable ? null : accessor.internalField;
+  return isConfigurable && !isLocked(type) ? null : accessor.internalField;
 }
 
 function collectAccessor(type: ClassType, accessor: Getter | InternalFieldAccessor, path: BuiltinPath): Declaration[] {

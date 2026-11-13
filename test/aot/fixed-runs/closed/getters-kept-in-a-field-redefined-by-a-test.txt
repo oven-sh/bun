@@ -1,0 +1,32 @@
+Object.defineProperty() and delete on getters that compiled code reads out of a field of the instance: of Request and Response, whose prototypes an executable locks, and of TextDecoder; the next test file reads the getters again.
+#### a.test.ts
+import { expect, test } from "bun:test";
+import { encodingOf, statusTextOf, urlOf } from "./lib.ts";
+const request = new Request("http://a.example/r");
+const response = new Response(null, { statusText: "made" });
+const decoder = new TextDecoder("utf-16le");
+const read = () => [urlOf(request), statusTextOf(response), encodingOf(decoder)];
+test("a", () => {
+  const url = Object.getOwnPropertyDescriptor(Request.prototype, "url")!;
+  const statusText = Object.getOwnPropertyDescriptor(Response.prototype, "statusText")!;
+  const encoding = Object.getOwnPropertyDescriptor(TextDecoder.prototype, "encoding")!;
+  console.log("| CASE first", ...read());
+  Object.defineProperty(Request.prototype, "url", { get: () => "replaced", configurable: true });
+  Object.defineProperty(Response.prototype, "statusText", { get: () => "replaced", configurable: true });
+  Object.defineProperty(TextDecoder.prototype, "encoding", { get: () => "replaced", configurable: true });
+  console.log("| CASE replaced", ...read());
+  expect(read()).toEqual(["replaced", "replaced", "replaced"]);
+  console.log("| CASE deleted", delete (Request.prototype as any).url, delete (Response.prototype as any).statusText, delete (TextDecoder.prototype as any).encoding, ...read());
+  Object.defineProperty(Request.prototype, "url", url);
+  Object.defineProperty(Response.prototype, "statusText", statusText);
+  Object.defineProperty(TextDecoder.prototype, "encoding", encoding);
+  console.log("| CASE put back", ...read());
+});
+#### b.test.ts
+import { test } from "bun:test";
+import { encodingOf, statusTextOf, urlOf } from "./lib.ts";
+test("b", () => { console.log("| CASE next", urlOf(new Request("http://b.example/r")), statusTextOf(new Response(null, { statusText: "next" })), encodingOf(new TextDecoder())); });
+#### lib.ts
+export const urlOf = (request: Request): unknown => request.url;
+export const statusTextOf = (response: Response): unknown => response.statusText;
+export const encodingOf = (decoder: TextDecoder): unknown => decoder.encoding;

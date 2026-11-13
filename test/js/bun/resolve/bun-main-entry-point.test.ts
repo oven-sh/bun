@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, forEachLine, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -89,6 +89,8 @@ const isSlowBuild = isDebug || isASAN;
 const reloadTestTimeout = isSlowBuild ? 60_000 : 30_000;
 // How long a --hot or --watch child can print nothing before its entry is saved again.
 const resaveAfter = isSlowBuild ? 10_000 : 3_000;
+// Every test of this file starts a process, and twenty tests run at once. A debug build then needs more than the default 5 s for one.
+if (isSlowBuild) setDefaultTimeout(reloadTestTimeout);
 
 /**
  * Runs `dir/filename` under `--hot` or `--watch`. A test drives it from the
@@ -429,49 +431,40 @@ describe("the look for a server in the default export of the entry point", () =>
       test.concurrent.each([
         ["that ends at once", `export default ${server("a Worker")};`],
         ["that awaits", `await new Promise(setImmediate);\nexport default ${server("a Worker")};`],
-      ])(
-        "%s",
-        async (_, source) => {
-          expect(await run({ "entry.mjs": stub + source, "main.mjs": workers[kind] }, ["main.mjs"])).toEqual({
-            stdout: servedBy("a Worker") + "ended: 0\n",
-            stderr: [],
-            exitCode: 0,
-          });
-        },
-        // A debug build needs seconds to start a Worker beside the other tests of this file.
-        isSlowBuild ? reloadTestTimeout : undefined,
-      );
+      ])("%s", async (_, source) => {
+        expect(await run({ "entry.mjs": stub + source, "main.mjs": workers[kind] }, ["main.mjs"])).toEqual({
+          stdout: servedBy("a Worker") + "ended: 0\n",
+          stderr: [],
+          exitCode: 0,
+        });
+      });
     });
 
     test.concurrent.each([
       ["bun build --compile", []],
       ["bun build --compile --bytecode", ["--bytecode"]],
-    ])(
-      "%s",
-      async (name, flags) => {
-        using dir = tempDir("bun-main-look-compile", { "entry.cjs": stub + `module.exports = ${server(name)};` });
-        const executable = join(String(dir), isWindows ? "entry.exe" : "entry");
-        await using build = Bun.spawn({
-          cmd: [bunExe(), "build", "--compile", ...flags, "./entry.cjs", "--outfile", executable],
-          env: bunEnv,
-          cwd: String(dir),
-          stdout: "ignore",
-          stderr: "pipe",
-        });
-        const [buildErrors, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
-        expect({ errors: stripAsanWarning(buildErrors), exitCode: buildExitCode }).toEqual({ errors: [], exitCode: 0 });
-        await using proc = Bun.spawn({
-          cmd: [executable],
-          env: bunEnv,
-          cwd: String(dir),
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect({ stdout, stderr: stripAsanWarning(stderr), exitCode }).toEqual(serves(name));
-      },
-      reloadTestTimeout,
-    );
+    ])("%s", async (name, flags) => {
+      using dir = tempDir("bun-main-look-compile", { "entry.cjs": stub + `module.exports = ${server(name)};` });
+      const executable = join(String(dir), isWindows ? "entry.exe" : "entry");
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", ...flags, "./entry.cjs", "--outfile", executable],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [buildErrors, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+      expect({ errors: stripAsanWarning(buildErrors), exitCode: buildExitCode }).toEqual({ errors: [], exitCode: 0 });
+      await using proc = Bun.spawn({
+        cmd: [executable],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr: stripAsanWarning(stderr), exitCode }).toEqual(serves(name));
+    });
   });
 
   describe("what the look reads and calls", () => {

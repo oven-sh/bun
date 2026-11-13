@@ -45,7 +45,7 @@ pub(crate) fn post_process_html_chunk(
     ));
 
     // Reshaped for borrowck (compute hash before assigning into chunk)
-    let isolated_hash = c.generate_isolated_hash(chunk, alloc);
+    let isolated_hash = c.generate_isolated_hash(chunk);
     chunk.isolated_hash = isolated_hash;
 
     Ok(())

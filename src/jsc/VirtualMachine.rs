@@ -3815,9 +3815,9 @@ impl<'a> SourceMapHandlerGetter<'a> {
             Some(d) if d.mode != crate::debugger::Mode::Connect
         );
         if !wants_inline_source_map {
-            return bun_js_printer::SourceMapHandler::for_(self.source_mappings);
+            return self.source_mappings;
         }
-        bun_js_printer::SourceMapHandler::for_(self)
+        self
     }
 }
 

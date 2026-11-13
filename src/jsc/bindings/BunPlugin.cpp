@@ -7376,7 +7376,10 @@ static bool hasOriginalSetAside(Zig::GlobalObject* globalObject, const String& s
 // A load that goes on gets the mock that was made, or else the module itself. A module that has no file would give it only an error.
 static bool hasSomethingForLoad(JSModuleMock* mock, const String& specifier)
 {
-    return mock->state != JSModuleMock::State::NotCalled || isBuiltinModuleKey(specifier) || FileSystem::fileTypeFollowingSymlinks(specifier) == FileSystem::FileType::Regular;
+    if (mock->state != JSModuleMock::State::NotCalled || isBuiltinModuleKey(specifier))
+        return true;
+    size_t query = specifier.find('?');
+    return FileSystem::fileTypeFollowingSymlinks(query == notFound ? specifier : specifier.left(query)) == FileSystem::FileType::Regular;
 }
 
 // Returns whether it let loads go on that waited for the turn of a mock: they run as soon as the event loop does.

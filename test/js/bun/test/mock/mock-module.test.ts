@@ -5380,6 +5380,33 @@ describe.concurrent("a test file's module mocks are undone when it ends, even wi
     );
   });
 
+  test("a load that waits for the turn of a factory under a name with a query gets the module itself", async () => {
+    await expectFixturesToPass(
+      {
+        ...modules,
+        "user.js": `import { x } from "./k.js?variant"; import { s } from "./slow.js"; export const seen = x + "/" + s;`,
+        "preload.js": holdsSlow(""),
+        "a.test.js": `
+          import { mock, test } from "bun:test";
+          mock.module("./k.js?variant", () => (globalThis.events.push("factory"), { x: "mock" }));
+          test("leaves an import that has asked for the mock", async () => {
+            ${leavesImport}
+          });
+        `,
+        "b.test.js": `
+          import { expect, test } from "bun:test";
+          test("what kept the import gets the module itself", async () => {
+            globalThis.gate.resolve();
+            expect((await globalThis.kept).seen).toBe("real/slow");
+            expect(globalThis.events).toEqual([]);
+          });
+        `,
+      },
+      2,
+      heldArgs,
+    );
+  });
+
   // m.js has a file in __mocks__ and a.js is automocked: neither has a factory to call, and neither waits for a turn.
   test("a load that waits for the turn of a factory keeps the file of __mocks__ that it has asked for", async () => {
     await expectFixturesToPass(

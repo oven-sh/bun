@@ -155,11 +155,12 @@ fn a_module_that_is_not_checked_has_no_stated_member() {
 #[test]
 fn a_name_that_is_declared_outside_the_sources_is_global() {
     let globals = format!(
-        "{GLOBAL_TYPES}interface Pair<A, B> {{ a: A; b: B }}\ndeclare function pair<A, B>(a: A, b: B): Pair<A, B>;\n"
+        "{GLOBAL_TYPES}interface Pair<A, B> {{ a: A; b: B }}\ndeclare function pair<A, B>(a: A, b: B): Pair<A, B>;\ndeclare namespace Formats {{ interface Format {{ f: string }} }}\ndeclare function format(): Formats.Format;\n"
     );
     let main = "import { Item } from './item';
 export class Stated {
     pair = pair('a', new Item());
+    format = format();
 }
 ";
     let files = [
@@ -167,7 +168,10 @@ export class Stated {
         ("item.ts", ITEM),
         ("globals.d.ts", &globals[..]),
     ];
-    let expected = ["pair: Pair<string, Item> [Pair is global] [Item is Item of /project/item.ts]"];
+    let expected = [
+        "pair: Pair<string, Item> [Pair is global] [Item is Item of /project/item.ts]",
+        "format: Formats.Format [Formats is global]",
+    ];
     assert_eq!(stated_members(&files), expected);
 }
 

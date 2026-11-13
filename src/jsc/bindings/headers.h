@@ -265,6 +265,8 @@ CPP_DECL void JSC__VM__drainMicrotasks(JSC::VM* arg0);
 CPP_DECL bool JSC__VM__executionForbidden(JSC::VM* arg0);
 CPP_DECL size_t JSC__VM__externalMemorySize(JSC::VM* arg0);
 CPP_DECL size_t JSC__VM__heapSize(JSC::VM* arg0);
+CPP_DECL uint64_t JSC__VM__totalBytesAllocated(JSC::VM* arg0);
+CPP_DECL size_t JSC__VM__allocationBudgetThisCycle(JSC::VM* arg0);
 CPP_DECL void JSC__VM__holdAPILock(JSC::VM* arg0, void* arg1, void(* ArgFn2)(void* arg0));
 CPP_DECL bool JSC__VM__isEntered(JSC::VM* arg0);
 CPP_DECL void JSC__VM__notifyNeedDebuggerBreak(JSC::VM* arg0);

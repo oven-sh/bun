@@ -1,4 +1,4 @@
-//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory, and once the heap has been quiet for `BUN_IDLE_GC_SECONDS` (default "10,110,480": 10 s, 2 min and 10 min of quiet; 0 = off) full collections so JSC can age out code that no longer runs, the last of which also drops the bytecode JSC can decode again. Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
+//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory (requested once the program has allocated 1/16 of JSC's own allocation budget since the last request, so a busy large heap is left to JSC's pacing), and once the heap has been quiet for `BUN_IDLE_GC_SECONDS` (default "10,110,480": 10 s, 2 min and 10 min of quiet; 0 = off) full collections so JSC can age out code that no longer runs, the last of which also drops the bytecode JSC can decode again. Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
 
 use core::cell::Cell;
 use core::ffi::c_int;
@@ -11,11 +11,16 @@ use crate::JsCell;
 use crate::virtual_machine::VirtualMachine;
 
 const SLOW_REPEAT_INTERVAL_MS: i32 = 30_000;
+/// The tick requests its eden collection once the program has allocated 1/16 of what JSC would let it allocate before
+/// collecting on its own (`Heap::allocationBudgetThisCycle()`): one that frees less is not worth its cost (#48013).
+const TICK_EDEN_BUDGET_DIVISOR: u64 = 16;
 
 pub struct GarbageCollectionController {
     pub gc_repeating_timer: JsCell<EventLoopTimer>,
-    /// Written by every `perform_gc` caller, so the fast/slow comparison sees the last such call, not strictly the last fire; external callers are one-shot so worst case is one extra 30 s slow interval.
+    /// Written by every `perform_gc` caller and by every tick, so the fast/slow comparison sees growth since the last look; external callers are one-shot so worst case is one extra 30 s slow interval.
     pub(crate) gc_last_heap_size: Cell<usize>,
+    /// `Heap::totalBytesAllocated()` when a collection was last requested from here.
+    gc_last_total_allocated: Cell<u64>,
     pub(crate) heap_size_didnt_change_for_repeating_timer_ticks_count: Cell<u8>,
     pub(crate) gc_timer_interval: Cell<i32>,
     pub(crate) gc_repeating_timer_fast: Cell<bool>,
@@ -36,6 +41,7 @@ impl Default for GarbageCollectionController {
         Self {
             gc_repeating_timer: JsCell::new(EventLoopTimer::init_paused(TimerTag::GcRepeating)),
             gc_last_heap_size: Cell::new(0),
+            gc_last_total_allocated: Cell::new(0),
             heap_size_didnt_change_for_repeating_timer_ticks_count: Cell::new(0),
             gc_timer_interval: Cell::new(0),
             gc_repeating_timer_fast: Cell::new(true),
@@ -187,9 +193,19 @@ impl GarbageCollectionController {
             vm.collect_async(false);
         }
         self.gc_last_heap_size.set(vm.block_bytes_allocated());
+        self.gc_last_total_allocated.set(vm.total_bytes_allocated());
     }
 
-    /// `Tag::GcRepeating` fire body: `BUN_GC_TIMER_INTERVAL` (default 1 s) in fast mode, 30 s in slow mode; drops to slow after 30 fires without heap growth beyond the chatter slack, back to fast when it grows.
+    /// Whether enough was allocated since the last request from here for the tick's eden collection.
+    fn tick_eden_due(&self, vm: &VirtualMachine) -> bool {
+        let jsc = vm.jsc_vm();
+        let allocated = jsc
+            .total_bytes_allocated()
+            .saturating_sub(self.gc_last_total_allocated.get());
+        allocated >= jsc.allocation_budget_this_cycle() as u64 / TICK_EDEN_BUDGET_DIVISOR
+    }
+
+    /// `Tag::GcRepeating` fire body: `BUN_GC_TIMER_INTERVAL` (default 1 s) in fast mode, 30 s in slow mode; drops to slow after 30 fires without heap growth beyond the chatter slack, back to fast when it grows. Requests an idle full collection when one is due, else an eden one when `tick_eden_due`.
     ///
     /// # Safety
     /// `this` is the live per-VM controller; `vm` is the per-thread VM.
@@ -211,9 +227,14 @@ impl GarbageCollectionController {
         let prev_heap_size = this.gc_last_heap_size.get();
         // SAFETY: per fn contract.
         let vm_ref = unsafe { &*vm };
-        let grew = vm_ref.jsc_vm().block_bytes_allocated() > prev_heap_size + idle_growth_slack;
+        let heap_size = vm_ref.jsc_vm().block_bytes_allocated();
+        let grew = heap_size > prev_heap_size + idle_growth_slack;
         let (full, idle_gc_due_in) = this.idle_tick(vm_ref, grew, interval);
-        this.perform_gc(full);
+        if full || this.tick_eden_due(vm_ref) {
+            this.perform_gc(full);
+        } else {
+            this.gc_last_heap_size.set(heap_size);
+        }
         // Growth is activity; a shrinking heap is a collection (possibly the one requested above) doing its job. Where the
         // event loop cannot let an idle collection finish while parked (Windows: Bun__JSC_onBeforeWait), it proceeds at
         // this timer's ticks instead, fast ones for the next 30.

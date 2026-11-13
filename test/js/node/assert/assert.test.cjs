@@ -97,12 +97,17 @@ describe("assert.partialDeepStrictEqual", () => {
   // An answer below is that of a new Node.js process, but where a test says that Bun gives another one. The fixture
   // says how to check that with Node.js.
   describe("cycles", () => {
-    const { answerOf, partOfTree, ring, tree } = cycles;
+    const { answerOf, besideRings, partOfTree, ring, tree } = cycles;
     const fails = fn => expect(fn).toThrow(assert.AssertionError);
 
     test("a parent link in actual does not fail a part that matches", () => {
       assert.partialDeepStrictEqual(tree(), partOfTree("Program"));
       fails(() => assert.partialDeepStrictEqual(tree(), partOfTree("Script")));
+
+      // With no array on the way. Bun 1.3.14 passed this one.
+      const root = { type: "root" };
+      root.child = { type: "kid", parent: root };
+      assert.partialDeepStrictEqual(root, { child: { type: "kid", parent: { type: "root" } } });
     });
 
     test("an actual that holds itself matches a finite expected of any depth", () => {
@@ -198,10 +203,7 @@ describe("assert.partialDeepStrictEqual", () => {
     });
 
     test("under the memos every kind of value is still compared", () => {
-      const beside = (actual, expected) => [
-        { loop: ring(1), value: actual },
-        { loop: ring(1), value: expected },
-      ];
+      const beside = besideRings;
       fails(() => assert.partialDeepStrictEqual(...beside(new Error("a"), new Error("b"))));
       assert.partialDeepStrictEqual(...beside(new Error("a"), new Error("a")));
       fails(() => assert.partialDeepStrictEqual(...beside(new Date(1), new Date(2))));

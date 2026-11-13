@@ -80,9 +80,7 @@ pub fn install_with_manager(
 
     // An error from the options or the environment is printed at every log level.
     if manager.log_mut().has_errors() {
-        manager
-            .log_mut()
-            .print(std::ptr::from_mut(Output::error_writer()))?;
+        manager.log_mut().print(Output::error_writer())?;
         Global::crash();
     }
 
@@ -666,9 +664,7 @@ pub fn install_with_manager(
     warn_unchecked_sources(manager);
 
     let had_errors_before_cleaning_lockfile = manager.log_mut().has_errors();
-    manager
-        .log_mut()
-        .print(std::ptr::from_mut(Output::error_writer()))?;
+    manager.log_mut().print(Output::error_writer())?;
     manager.log_mut().reset();
     super::add_catalog::refuse_declared_positionals(manager);
     super::package_json_write_back::fold_resolved_positionals(manager);
@@ -880,9 +876,7 @@ pub fn install_with_manager(
 
     if manager.options.lockfile_only {
         if log_level != Options::LogLevel::Silent {
-            manager
-                .log_mut()
-                .print(std::ptr::from_mut(Output::error_writer()))?;
+            manager.log_mut().print(Output::error_writer())?;
         }
         if had_errors_before_cleaning_lockfile || manager.log_mut().has_errors() {
             Global::crash();
@@ -978,9 +972,7 @@ pub fn install_with_manager(
         warn_unsupported_platform(manager, &workspace_filters, install_root_dependencies);
     }
     if log_level != Options::LogLevel::Silent {
-        manager
-            .log_mut()
-            .print(std::ptr::from_mut(Output::error_writer()))?;
+        manager.log_mut().print(Output::error_writer())?;
     }
     if had_errors_before_cleaning_lockfile || manager.log_mut().has_errors() {
         Global::crash();
@@ -1328,7 +1320,7 @@ fn print_summary_tree(
     // Ensure at this point buffering is enabled.
     // We deliberately do not disable it after this.
     Output::enable_buffering();
-    let writer = Output::writer_buffered();
+    let writer = &mut Output::writer_buffered();
     LockfilePrinter::Tree::print(
         &printer,
         // SAFETY: `mgr` is the sole provenance root; `Tree::print` writes only fields
@@ -1617,9 +1609,7 @@ fn report_lockfile_load_error(
         && !crate::migration::reported_unsupported_lockfile_version(cause)
     {
         if manager.log_mut().errors > 0 {
-            manager
-                .log_mut()
-                .print(std::ptr::from_mut(Output::error_writer()))?;
+            manager.log_mut().print(Output::error_writer())?;
         }
 
         Output::err(
@@ -2061,9 +2051,7 @@ fn root_package_json_source(
         WorkspacePackageJsonCacheResult::ParseErr(err) => ("parse", err),
     };
     if manager.log_mut().errors > 0 {
-        manager
-            .log_mut()
-            .print(std::ptr::from_mut(Output::error_writer()))?;
+        manager.log_mut().print(Output::error_writer())?;
     }
     Output::err(
         err,

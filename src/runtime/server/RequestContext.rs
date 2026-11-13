@@ -711,7 +711,7 @@ where
             let global_this: &JSGlobalObject = server.global_this();
 
             Output::enable_buffering();
-            let writer = Output::error_writer();
+            let mut writer = Output::error_writer();
 
             if class_name == b"Response" {
                 bun_core::err_generic!(
@@ -738,7 +738,7 @@ where
 
             Output::flush();
             if !global_this.has_exception() {
-                jsc::ConsoleObject::write_trace(writer, global_this);
+                jsc::ConsoleObject::write_trace(&mut writer, global_this);
             }
             Output::flush();
         }

@@ -2233,12 +2233,10 @@ impl<'a> Repl<'a> {
     fn print_js_error_to(
         &self,
         error_value: JSValue,
-        writer: &mut bun_core::io::Writer,
+        writer: &bun_core::io::Writer,
         enable_colors: bool,
     ) {
-        // Note: the `bun_core::io::Writer` vtable doesn't implement
-        // `bun_io::Write`, so buffer through a `Vec<u8>` (which does) and
-        // flush in one shot — REPL error output is tiny.
+        // Buffered: none of the value is printed if formatting throws.
         let Some(global) = self.global else {
             return;
         };
@@ -2275,8 +2273,7 @@ impl<'a> Repl<'a> {
             return;
         };
         let writer = Output::writer();
-        // Note: see `print_js_error_to` — buffer because
-        // `bun_core::io::Writer` doesn't implement `bun_io::Write`.
+        // Buffered: none of the value is printed if formatting throws.
         let mut buf: Vec<u8> = Vec::new();
         if let Err(err) = jsc::ConsoleObject::format2(
             jsc::ConsoleObject::MessageLevel::Log,

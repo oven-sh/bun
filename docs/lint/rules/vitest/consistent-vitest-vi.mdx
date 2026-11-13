@@ -23,7 +23,13 @@ By default the name is `vi`. Both the import and the calls are reported.
 - A call on a name that the file doesn't import isn't renamed if the file gets the two names in different ways, as with `vitest` from `require()` and the global `vi`.
 - An import and the uses of its name aren't renamed if the new name would take such a call from the global `vi` and the import isn't a named import from `vitest`.
 
-`--fix` also renames nothing that would then be on another `vi`: one that the file declares apart from the name, like a parameter, or another thing that an import has under that name, like `test as vi`. A `vi` that one declaration has together with the name, as in `const { vi, vitest } = require("vitest")`, counts as the same object.
+The rule goes by the name, as oxlint does, so it also reports a call on a `vitest` of your own, like a parameter of that name or the instance that `createVitest()` returns. `--fix` renames a name only where it is Vitest's object: the global, a named import of `vi` or `vitest` from Vitest, or the same names from `require()` or `await import()`. It leaves these names as they are:
+
+- A name of your own, the module as a whole, as in `import * as vitest from "vitest"`, and another export under the name, as in `test as vitest`.
+- A name that the file assigns to.
+- A name from `await import("vitest")`, or from `require()` of a package around Vitest, in a file that has no `vi` of its own. Vitest has no global `vi` unless its `globals` option is on.
+
+`--fix` also renames nothing that would then be on another `vi`: one that the file declares apart from the name, like a parameter, or one that isn't Vitest's object, like `test as vi` of an import or `test: vi` of `require()`. A `vi` that one declaration has together with the name, as in `const { vi, vitest } = require("vitest")`, counts as the same object.
 
 `--fix` also renames nothing that would put a call, or another use as a value, on a type-only import of `vi` where it was on a value before, as in `import { type vi, vitest }`. TypeScript rejects such a use.
 

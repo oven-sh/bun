@@ -14,6 +14,55 @@ pub struct ConsistentVitestVi {
 
 const CONSISTENT_VITEST_VI: &Message = &Message::new("", "The vitest function accessor used is not allowed");
 
+/// What a name is when the file runs.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Referent {
+    /// Vitest's helper object as the runner's global: nothing declares the name.
+    Global,
+    /// The object as a named import: `import { vi }`, `import { vitest as vi }`.
+    Imported,
+    /// The object from `const { vi } = require("vitest")`. Vitest itself can't be loaded that way, so the file is for a runner that has the global too.
+    Required,
+    /// The object from `const { vi } = await import("vitest")`, or from `require()` of a package around Vitest. A runner without globals can run such a file.
+    Loaded,
+    /// Something else: a parameter, a variable, a class, an import of another module or of another export, a Vitest module as a whole.
+    Other,
+}
+
+/// True for the names that Vitest exports its helper object under.
+fn is_helper(export: Name<'_>) -> bool {
+    matches!(export.bytes(), b"vi" | b"vitest")
+}
+
+impl Referent {
+    /// What `declared` is, which is `None` for a name that nothing declares when the file runs: see [`jest::runtime_symbol`].
+    fn of(declared: Option<Symbol<'_>>) -> Referent {
+        let mut declarations = declared.into_iter().flat_map(Symbol::declarations).filter(|it| !bun_test::is_erased(*it));
+        let Some(declaration) = declarations.next() else {
+            return Referent::Global;
+        };
+        // A name with two declarations is more than what one of them gives it.
+        let bound = jest::bound_export(declaration).filter(|_| declarations.next().is_none());
+        let Some(bound) = bound.filter(|it| jest::is_vitest_import_source(it.source.bytes()) && is_helper(it.export)) else {
+            return Referent::Other;
+        };
+        // A `require` that the file declares can return anything.
+        let is_own = |callee: Expr<'_>| callee.as_ident().is_some_and(|it| jest::runtime_symbol(Node::Expr(callee).scope(), it).is_some());
+        match bound.declarator.and_then(VarDecl::init).map(|it| it.callee()) {
+            None => Referent::Imported,
+            Some(None) => Referent::Loaded,
+            Some(Some(require)) if is_own(require) => Referent::Other,
+            Some(Some(_)) if bound.source.is("vitest") => Referent::Required,
+            Some(Some(_)) => Referent::Loaded,
+        }
+    }
+
+    /// True for Vitest's helper object.
+    fn is_helper(self) -> bool {
+        self != Referent::Other
+    }
+}
+
 impl Rule for ConsistentVitestVi {
     const META: Meta = Meta::oxlint(Plugin::Vitest, "consistent-vitest-vi", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Call]).stmts(&[StmtTag::Import]);
@@ -101,8 +150,10 @@ impl ConsistentVitestVi {
             return;
         };
         let file = cx.file();
+        // Only a named import of `vi` or `vitest` is Vitest's object. The default, a namespace and `test as vitest` are other things, and under the new name they take the uses of the global of that name.
+        let is_object = matches!(vitest_import.import_name, ImportImportName::Name(it) if is_helper(it.imported().name()));
         let report = cx.report(span_of(&vitest_import), CONSISTENT_VITEST_VI);
-        report.data("function", self.function).data("opposite", self.opposite).fix_where_safe(|| !self.changes_uses(file, import), |fixer| {
+        report.data("function", self.function).data("opposite", self.opposite).fix_where_safe(|| is_object && !self.changes_uses(file, import), |fixer| {
             let specifiers: SmallVec<[ImportEntry; 8]> = import_entries_of(import).collect();
             let mut import_text = Vec::new();
             for specifier in specifiers.iter().filter(|it| !is_named(it, self.opposite)) {
@@ -157,7 +208,7 @@ impl ConsistentVitestVi {
         target.is_some_and(|it| !bun_test::is_known(self.function.as_bytes(), Some(it)) && !is_together(it))
     }
 
-    /// True if the new name changes what runs or what type checks: a use is then on another `function`, on a type-only import or on one that `bun test` doesn't treat as it treats the name, or the file declares `function` a second time: see [`bun_test`].
+    /// True if the new name changes what runs or what type checks: a use is then on something else than Vitest's object, on another `function`, on a type-only import or on one that `bun test` doesn't treat as it treats the name, or the file declares `function` a second time: see [`bun_test`].
     #[cold]
     fn changes_uses<'a>(&self, file: &'a File<'a>, import: Import<'a>) -> bool {
         let (function, opposite) = (self.function.as_bytes(), self.opposite.as_bytes());
@@ -182,6 +233,7 @@ impl ConsistentVitestVi {
         if stays_type_only && !declares && file.unresolved_references_to(function).any(is_value_use) {
             return true;
         }
+        let function_name = file.find_name(self.function);
         declared.references().any(|it| {
             let target = it.scope().resolve_bytes(function);
             // Where nothing declares `function`, the use is then on what the import declares. Another `function` of the import, like `test as vi`, is another thing.
@@ -189,21 +241,31 @@ impl ConsistentVitestVi {
                 None => declares_known,
                 target => bun_test::is_known(function, target),
             };
+            // A type can hide a `function` that is there when the file runs, and `target` is that type then.
+            let at_run_time = function_name.and_then(|name| jest::runtime_symbol(it.scope(), name));
             // TypeScript rejects a type-only import where the name was a value and is used as one.
-            before != after || self.is_other(target, Some(declared)) || is_value && is_value_use(it) && is_type_only(target)
+            before != after || !Referent::of(at_run_time).is_helper() || self.is_other(target, Some(declared)) || is_value && is_value_use(it) && is_type_only(target)
         })
     }
 
-    /// True if the new name changes what runs or what type checks: the call is then on another `function` or on a type-only import, or `bun test` treats a module mock call in another way: see [`bun_test`].
+    /// True if the new name changes what runs or what type checks: `name` or the `function` at the call isn't Vitest's object, the call is then on another `function` or on a type-only import, or `bun test` treats a module mock call in another way: see [`bun_test`].
     #[cold]
     fn changes_call<'a>(&self, file: &'a File<'a>, name: Expr<'a>) -> bool {
-        let function = self.function.as_bytes();
+        let (function, scope) = (self.function.as_bytes(), Node::Expr(name).scope());
+        // What the two names are when the file runs. In a file without a `function`, that one is the global.
+        let old = name.as_ident().and_then(|it| jest::runtime_symbol(scope, it));
+        let new = file.find_name(self.function).and_then(|it| jest::runtime_symbol(scope, it));
+        let (from, to) = (Referent::of(old), Referent::of(new));
+        // A runner without globals has no `function` for a file that loads the name itself. A name that the file assigns to can be anything at the call.
+        if !from.is_helper() || !to.is_helper() || (from == Referent::Loaded && to == Referent::Global) || [old, new].iter().flatten().any(|it| it.has_modifying_references()) {
+            return true;
+        }
         let is_mock = bun_test::is_object_of_module_mock_call(name, function);
-        // The rule resolves the file's names for a module mock call and in a file that has a `function` only.
+        // Past this point, the rule resolves the file's references for a module mock call and in a file that has a `function` only.
         if !is_mock && file.find_name(self.function).is_none() {
             return false;
         }
-        let (declared, target) = (name.symbol(), Node::Expr(name).scope().resolve_bytes(function));
+        let (declared, target) = (name.symbol(), scope.resolve_bytes(function));
         let changes_kind = || bun_test::is_known(self.opposite.as_bytes(), declared) != bun_test::is_known(function, target);
         self.is_other(target, declared) || is_type_only(target) && !is_type_only(declared) || is_mock && changes_kind()
     }

@@ -17,6 +17,7 @@ use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::source::mention_bit;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
+use bun_lint::utils::bun_test;
 use bun_lint_oxlint::ast_util::{
     scope_owner, static_property_info, static_property_name, static_string,
 };
@@ -419,6 +420,49 @@ fn require_binding(declarator: VarDecl<'_>) -> Option<(Pat<'_>, Name<'_>)> {
         _ => None,
     };
     Some((declarator.pat(), static_string(source?)?))
+}
+
+/// What a declaration gets from a module under its name.
+pub(crate) struct Bound<'a> {
+    pub(crate) source: Name<'a>,
+    pub(crate) export: Name<'a>,
+    /// The declarator, for a name from `require()` or `await import()`.
+    pub(crate) declarator: Option<VarDecl<'a>>,
+}
+
+/// What `declaration` gets from a module: the `vi` of `vitest` for `import { vi as spy } from "vitest"`, for `const { vi: spy } = require("vitest")` and for `.. = await import("vitest")`. `None` for a type-only import, for a module as a whole and for any other declaration.
+pub(crate) fn bound_export<'a>(declaration: Declaration<'a>) -> Option<Bound<'a>> {
+    match declaration {
+        Declaration::ImportSpec(it) if !it.is_type_only() && !it.import().is_type_only() => {
+            Some(Bound {
+                source: it.import().spec(),
+                export: it.imported().name(),
+                declarator: None,
+            })
+        }
+        Declaration::Var(name) => {
+            let Node::VarDecl(declarator) = declaration.node()? else {
+                return None;
+            };
+            let (pattern, source) = require_binding(declarator)?;
+            let PatKind::Object(properties) = pattern.kind() else {
+                return None;
+            };
+            let property = properties.iter().find(|it| it.value() == name)?;
+            Some(Bound {
+                source,
+                export: property.key()?.name()?,
+                declarator: Some(declarator),
+            })
+        }
+        _ => None,
+    }
+}
+
+/// What `name` is when the file runs, for a reference in `scope`: the nearest symbol with a declaration that isn't gone by then, as a type or a `declare` is. `None` for a name that the file doesn't declare, which is a global.
+pub(crate) fn runtime_symbol<'a>(scope: Scope<'a>, name: Name<'a>) -> Option<Symbol<'a>> {
+    let mut declared = scope.chain().filter_map(|it| it.get_name(name));
+    declared.find(|it| it.declarations().any(|it| !bun_test::is_erased(it)))
 }
 
 /// Runs [`require_binding`] on every top-level variable declaration.

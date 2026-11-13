@@ -3,6 +3,14 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { chmodSync, statSync } from "node:fs";
 import path from "path";
+import {
+  notStored,
+  positions,
+  renameSessionNames,
+  stored,
+  strict,
+  type Row,
+} from "../transpiler/repl-block-function-rows";
 
 const stripAnsi = Bun.stripANSI;
 
@@ -431,6 +439,17 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    test(".load gives the session a function that the file declares in a block", async () => {
+      using dir = tempDir("repl-load-block-function", {
+        "test.js": "if (1) { function loaded() { return 1 } }\nvar fromLoad = loaded() + 1;\n",
+      });
+      const filePath = path.join(String(dir), "test.js");
+      const { outputs, stderr, exitCode } = await runRepl([`.load ${filePath}`, "loaded()", ".exit"]);
+      expect(outputs).toEqual([`Loading ${filePath}...\n2`, "1"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
     test(".load with a nonexistent file shows the error and keeps running", async () => {
       // A relative path: Windows rejects a forward-slash absolute path with EINVAL.
       const { outputs, stderr, exitCode } = await runRepl([
@@ -613,6 +632,18 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    // An import makes a module strict code. The REPL runs the input in a sloppy function.
+    test("an input with an import is sloppy code", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "import * as ns from 'node:path'; var let = typeof ns.join; let",
+        "let",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(['"function"', '"function"']);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
     test("import of a nonexistent module shows an error and keeps running", async () => {
       const { outputs, stderr, exitCode } = await runRepl(["import _ from 'nonexistent-module-xyz'", "1 + 1", ".exit"]);
       expect(outputs).toEqual([
@@ -789,6 +820,91 @@ describe.concurrent("Bun REPL", () => {
     });
   });
 
+  // In sloppy code a function declared in a block is also a `var` of its script
+  // (ECMA-262 Annex B.3.3). At the prompt that `var` is a name of the session.
+  describe("a function declared in a block", () => {
+    const rows: Row[] = [
+      ...positions.map((input): Row => [
+        `\`${input}\` is a function in the next input`,
+        [input, "typeof f"],
+        "function",
+      ]),
+      ...stored,
+      ...notStored.map(([title, inputs, value]): Row => [`stays in its block ${title}`, inputs, value]),
+    ];
+
+    /** What the prompt prints for the value of a row. */
+    function printed(value: unknown) {
+      return typeof value === "string" && !value.startsWith("!") ? JSON.stringify(value) : String(value);
+    }
+
+    // One session runs every row, so each row gets names of its own.
+    test.each<[string, string, Row[]]>([
+      ["an input", "", [...rows, ...strict]],
+      // This input runs in an async wrapper function.
+      ["an input with a top-level await", "await 0; ", rows],
+    ])("of %s", async (_, prefix, session) => {
+      const inputs: string[] = [];
+      const lastInputOf = session.map(([, lines], row) => {
+        for (const line of lines) inputs.push(prefix + renameSessionNames(line, row));
+        return inputs.length - 1;
+      });
+      const { outputs, stderr, exitCode } = await runRepl([...inputs, ".exit"]);
+
+      const values = session.map(([title], row) => [
+        title,
+        outputs[lastInputOf[row]]?.replace(/^(\w+Error): [^]*/, "!$1"),
+      ]);
+      expect(Object.fromEntries(values)).toEqual(
+        Object.fromEntries(session.map(([title, , value]) => [title, printed(value)])),
+      );
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("is a name of the session as an own property of the global object", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "if (0) { function never() {} }",
+        "JSON.stringify(Object.getOwnPropertyDescriptor(globalThis, 'never'))",
+        "if (1) { function once() {} }",
+        "JSON.stringify(Object.getOwnPropertyDescriptor(globalThis, 'once'))",
+        "delete globalThis.once",
+        "typeof once",
+        ".exit",
+      ]);
+      // As for `var`: the property cannot be deleted.
+      const descriptor = JSON.stringify('{"writable":true,"enumerable":true,"configurable":false}');
+      expect(outputs).toEqual(["undefined", descriptor, "undefined", descriptor, "false", '"function"']);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("is stored through a setter of the global object, and not to a read-only property", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "var seen = []; Object.defineProperty(globalThis, 'viaSetter', { set(v) { seen.push(typeof v) }, get() { return 7 }, configurable: true }); 0",
+        "if (1) { function viaSetter() {} }",
+        "[seen.join(), viaSetter].join()",
+        "if (1) { function undefined() {} }",
+        "typeof undefined",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(["0", "undefined", '"function,7"', "undefined", '"undefined"']);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("beside an import is a function in the next input", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        'import { sep } from "node:path"; if (1) { function usesImport() { return typeof sep } }',
+        "usesImport()",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(["undefined", '"string"']);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("multiline input", () => {
     test("keeps reading lines until the input is complete", async () => {
       const { outputs, stderr, exitCode } = await runRepl([
@@ -819,6 +935,14 @@ describe.concurrent("Bun REPL", () => {
         ".exit",
       ]);
       expect(outputs).toEqual(["42", "error: async fail", "2", "undefined", "123"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    // A top-level await makes a module strict code. The REPL runs the input in a sloppy function.
+    test("an input with a top-level await is sloppy code", async () => {
+      const { outputs, stderr, exitCode } = await runRepl(["var package = await 1; [package]", "package", ".exit"]);
+      expect(outputs).toEqual(["[ 1 ]", "1"]);
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
@@ -878,6 +1002,11 @@ describe.concurrent("Bun REPL", () => {
       expect(stdout).toBe("2\n");
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
+    });
+
+    test("-p calls a function that the script declares in a block", async () => {
+      const { stdout, stderr, exitCode } = await runReplWith(["-p", "if (1) { function f() { return 7 } } f()"]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "7\n", stderr: "", exitCode: 0 });
     });
 
     test("--print works like -p", async () => {

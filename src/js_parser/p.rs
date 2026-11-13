@@ -3355,15 +3355,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // ECMAScript modules are always interpreted as strict mode. This has to be
         // done before "hoistSymbols" because strict mode can alter hoisting (!).
-        if self.esm_import_keyword.len > 0 {
-            self.module_scope_mut()
-                .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeImport);
+        let implicit_strict_mode = if self.esm_import_keyword.len > 0 {
+            Some(js_ast::StrictModeKind::ImplicitStrictModeImport)
         } else if self.esm_export_keyword.len > 0 {
-            self.module_scope_mut()
-                .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeExport);
+            Some(js_ast::StrictModeKind::ImplicitStrictModeExport)
         } else if self.top_level_await_keyword.len > 0 {
-            self.module_scope_mut()
-                .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeTopLevelAwait);
+            Some(js_ast::StrictModeKind::ImplicitStrictModeTopLevelAwait)
+        } else {
+            None
+        };
+        // A REPL input is not a module: the REPL runs it in a sloppy function.
+        if let Some(kind) = implicit_strict_mode
+            && !self.options.repl_mode
+        {
+            self.module_scope_mut().recursive_set_strict_mode(kind);
         }
 
         self.hoist_symbols(self.module_scope_ref());

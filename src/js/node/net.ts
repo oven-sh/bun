@@ -1685,6 +1685,10 @@ function Socket(options?): void {
       if (stats.isFile()) {
         throw $ERR_INVALID_FD_TYPE("FILE");
       }
+      // A terminal is read through tty.ReadStream, as in Node. Write-only wrapping of one (stderr on a terminal) stays.
+      if (opts.readable === true && stats.isCharacterDevice()) {
+        throw $ERR_INVALID_FD_TYPE("TTY");
+      }
     }
   }
 

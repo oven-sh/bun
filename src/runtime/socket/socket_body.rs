@@ -754,7 +754,12 @@ impl<const SSL: bool> NewSocket<SSL> {
                 if !SSL && !socket_flags.contains(Flags::RAW_SOCKET_FD) {
                     let is_pipe = socket_flags.contains(Flags::READABLE_PIPE_FD) || {
                         let st = sys::fstat(f).map_err(sys::SystemErrno::from)?;
-                        (st.st_mode & libc::S_IFMT) == libc::S_IFIFO
+                        match st.st_mode & libc::S_IFMT {
+                            libc::S_IFIFO => true,
+                            libc::S_IFSOCK => false,
+                            // A file or a terminal: neither transport can wait on it.
+                            _ => return Err(sys::SystemErrno::ENOTSOCK),
+                        }
                     };
                     if is_pipe {
                         // SAFETY: `!SSL`, so `Self` is `TCPSocket`.

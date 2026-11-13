@@ -1790,6 +1790,41 @@ describe("Socket fd adoption", () => {
     }
   });
 
+  // node's createHandle() gives a terminal fd ERR_INVALID_FD_TYPE('TTY'); tty.ReadStream reads it.
+  it.skipIf(isWindows)("rejects a character-device fd with readable: true, like node", () => {
+    const fd = fs.openSync("/dev/null", "r");
+    try {
+      let error: any;
+      try {
+        new Socket({ fd, readable: true });
+      } catch (e) {
+        error = e;
+      }
+      expect({ code: error?.code, message: error?.message }).toEqual({
+        code: "ERR_INVALID_FD_TYPE",
+        message: "Unsupported fd type: TTY",
+      });
+      expect(fstatCode(fd)).toBe("open");
+    } finally {
+      fs.closeSync(fd);
+    }
+  });
+
+  // Bun.connect({ fd }) never passes through the classifier above, so the native side checks the type itself.
+  it.skipIf(isWindows)("Bun.connect({ fd }) on a regular file fails with ENOTSOCK and leaves the fd open", async () => {
+    const fd = fs.openSync(join(tmpdirSync(), "not-a-socket.txt"), "w+");
+    try {
+      const error: any = await Bun.connect({ fd, socket: { data() {} } }).then(
+        () => null,
+        e => e,
+      );
+      expect(error?.code).toBe("ENOTSOCK");
+      expect(fstatCode(fd)).toBe("open");
+    } finally {
+      fs.closeSync(fd);
+    }
+  });
+
   // node wraps a piped stdout/stderr exactly this way (new Socket({ fd, readable:
   // false, writable: true })). The readable side must start out finished without
   // an 'end' event; emitting one let allowHalfOpen=false end the writable side,

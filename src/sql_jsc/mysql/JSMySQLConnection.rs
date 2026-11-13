@@ -5,8 +5,8 @@ use bun_jsc::bindgen::{Callable, JsLocal, JsScope};
 
 use crate::generated_bindgen::js_my_sql_connection::js_MySQLConnection as js;
 use crate::jsc::{
-    AutoFlush, EventLoopSqlExt as _, EventLoopTimerTag, GlobalRef, JSGlobalObject, JSValue, JsCell,
-    JsRef, JsResult, KeepAlive, VirtualMachine, VirtualMachineSqlExt as _, run_callback,
+    AutoFlush, EventLoopTimerTag, GlobalRef, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
+    KeepAlive, VirtualMachine, VirtualMachineSqlExt as _, run_callback,
 };
 use crate::shared::CachedStructure;
 use crate::shared::cached_structure::{column_name_to_js, transform_name};
@@ -80,8 +80,8 @@ impl JSMySQLConnection {
     }
 
     #[inline]
-    fn event_loop(&self) -> &'static mut crate::jsc::EventLoop {
-        VirtualMachine::get().event_loop_mut()
+    fn event_loop(&self) -> &'static crate::jsc::EventLoop {
+        VirtualMachine::get().event_loop()
     }
 
     #[inline]
@@ -181,7 +181,7 @@ impl JSMySQLConnection {
     }
 
     /// Keeps a callback's exit from draining microtasks in the middle of the calling JS frame.
-    fn entered_from_js(&self) -> bun_jsc::event_loop::EventLoopEnterNoCheckpointGuard {
+    fn entered_from_js(&self) -> bun_jsc::event_loop::EventLoopEnterNoCheckpointGuard<'_> {
         self.vm().enter_event_loop_scope_without_checkpoint()
     }
 
@@ -200,7 +200,7 @@ impl JSMySQLConnection {
         bun_core::scoped_log!(MySQLConnection, "drainInternal");
         let _guard = self.ref_guard();
         {
-            let _loop_guard = self.event_loop().entered();
+            let _loop_guard = self.event_loop().enter_scope();
             self.ensure_js_value_is_alive();
             if let Err(my_sql_connection::FlushQueueError::AuthenticationFailed) =
                 self.connection_mut().flush_queue()
@@ -834,7 +834,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     pub fn on_data(this: &JSMySQLConnection, _: NewSocketHandler<SSL>, data: &[u8]) {
         let _guard = this.ref_guard();
         {
-            let _loop_guard = this.event_loop().entered();
+            let _loop_guard = this.event_loop().enter_scope();
             this.ensure_js_value_is_alive();
 
             if let Err(e) = this.connection_mut().read_and_process_data(data) {

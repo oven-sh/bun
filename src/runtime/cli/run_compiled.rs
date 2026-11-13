@@ -1407,8 +1407,7 @@ pub(crate) extern "C" fn Bun__AOT__isBetweenLoadOfTestFileAndItsCallbacks(
 /// BunCompiledModules.cpp. Immediates that were set have yet to run.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__AOT__hasImmediatesYetToRun(global: &bun_jsc::JSGlobalObject) -> bool {
-    let event_loop = global.bun_vm().event_loop_shared();
-    !event_loop.immediate_tasks.is_empty() || !event_loop.next_immediate_tasks.is_empty()
+    global.bun_vm().event_loop().immediate_task_count() > 0
 }
 
 #[unsafe(no_mangle)]

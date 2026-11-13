@@ -25,13 +25,12 @@ pub(super) fn load_module(
     let _ = vm;
     let vm_ref = VirtualMachine::get();
     vm_ref
-        .as_mut()
         .wait_for_promise(AnyPromise::Internal(promise))
         .map_err(|stopped| js_err(stopped.throw(vm_ref.global())))?;
     // TODO: Specially draining microtasks here because `waitForPromise` has a
     //       bug which forgets to do it, but I don't want to fix it right now as it
     //       could affect a lot of the codebase. This should be removed.
-    if vm_ref.event_loop_mut().drain_microtasks().is_err() {
+    if vm_ref.event_loop().drain_microtasks().is_err() {
         Global::crash();
     }
     let jsc_vm = vm_ref.as_mut().jsc_vm_mut();

@@ -1,6 +1,7 @@
 import { dlopen, FFIType, ptr, toArrayBuffer } from "bun:ffi";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast, tempDir } from "harness";
+import { clickSelectorPages, timerFrames } from "./click-selector-pages";
 
 // FFI shm access for encoding:"shmem" tests. In real use Kitty (or
 // whoever opens the segment) does this — shm_open + mmap + read + unlink.
@@ -593,6 +594,24 @@ itRendering("click(selector) waits for element to stop animating", async () => {
   await view.click("#mover");
   const left = await view.evaluate("String(__hit)");
   expect(Number(left)).toBe(100);
+});
+
+for (const { name, page, selector, settle, timeout, report, want, withoutDisplay } of clickSelectorPages) {
+  (withoutDisplay ? it : itRendering)(`click(selector) ${name}`, async () => {
+    await using view = new Bun.WebView({ width: 300, height: 300 });
+    await view.navigate(html(page));
+    if (settle) await view.evaluate(settle);
+    await view.click(selector, { timeout });
+    expect(await view.evaluate(report)).toBe(want);
+  });
+}
+
+// Not itRendering: the page makes its own frames, so this runs the whole path to the native click without a display.
+it("click(selector) runs on frames that the page makes with a timer", async () => {
+  await using view = new Bun.WebView({ width: 300, height: 300 });
+  await view.navigate(html(timerFrames.page));
+  await view.click("#btn");
+  expect(JSON.parse(await view.evaluate<string>(timerFrames.report))).toEqual(timerFrames.want);
 });
 
 itRendering("click(selector) rejects on timeout when obscured", async () => {

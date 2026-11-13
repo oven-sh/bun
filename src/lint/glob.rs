@@ -47,8 +47,8 @@ fn literal_braces(pattern: &[u8]) -> Vec<bool> {
 ///
 /// With `is_minimatch`:
 /// - A `*` that is a whole path segment needs at least one character, so `a/*` doesn't match `a/`.
-/// - `a//b` is `a/b`. With `keeps_unc`, a leading `//` stays.
-/// - With `single_member_class_is_literal`, `[.]` is the character `.`, so `[.]a` matches `.a` without `dot`.
+/// - `a//b` is `a/b`, unless the `//` is the start of a UNC path that the [`Rewrite`] keeps.
+/// - `[.]` is the character `.` if the [`Rewrite`] says so, so `[.]a` matches `.a` without `dot`.
 fn common(pattern: &[u8], is_minimatch: Option<Rewrite>, out: &mut Vec<u8>) {
     let is_literal = literal_braces(pattern);
     let mut at = 0;
@@ -97,15 +97,14 @@ fn common(pattern: &[u8], is_minimatch: Option<Rewrite>, out: &mut Vec<u8>) {
     }
 }
 
-/// What minimatch versions later than 3 do with a pattern, which [`common`] follows.
+/// What minimatch versions later than 3 do with a pattern.
 #[derive(Copy, Clone, Default)]
 struct Rewrite {
     single_member_class_is_literal: bool,
     keeps_unc: bool,
 }
 
-/// The one ASCII member of a class like `[.]` or `[\.]`. A negated class, a range, a class of more members, and `[/]`,
-/// which matches nothing, are `None`.
+/// The one ASCII member of a class like `[.]` or `[\.]`. `[/]` matches nothing, so it is no member.
 fn single_member_class(class: &[u8]) -> Option<u8> {
     let inner = class.strip_prefix(b"[")?.strip_suffix(b"]")?;
     let member = match inner {
@@ -151,8 +150,7 @@ pub const MINIMATCH_3: MinimatchOptions = MinimatchOptions {
     is_windows: false,
 };
 
-/// Converts a minimatch pattern. [`Minimatch`] handles a leading `!` or `#` and the options. Of `options`, only
-/// `is_version_3` and `is_windows` matter here.
+/// Converts a minimatch pattern. [`Minimatch`] handles a leading `!` or `#` and the options.
 pub fn from_minimatch(pattern: &[u8], options: &MinimatchOptions) -> Vec<u8> {
     let mut out = Vec::with_capacity(pattern.len() + 4);
     let rewrite = Rewrite {
@@ -192,16 +190,13 @@ pub struct MinimatchOptions {
     pub match_base: bool,
     pub nocase: bool,
     pub noext: bool,
-    /// minimatch 3 trims the pattern, and on Windows it reads `\` in a pattern as a separator. Later versions do neither,
-    /// and read a class of one member, `[.]`, as that character.
+    /// minimatch 3 trims the pattern, reads `\` in it as a separator on Windows, and reads `[.]` as a class, not as `.`.
     pub is_version_3: bool,
-    /// `optimizationLevel: 2`: `.` and empty segments inside the pattern and the path go, and a segment followed by
-    /// `..` goes with it, before the match. Only versions later than 3 have it.
+    /// `optimizationLevel: 2`: see [`collapse_dots`]. Versions later than 3 have it.
     pub optimization_level_2: bool,
     /// `windowsPathsNoEscape`: `\` in the pattern is a separator, never an escape.
     pub windows_paths_no_escape: bool,
-    /// `platform: "win32"`, whatever the host: `\` in the path is a separator, the `//` of a UNC path stays, and a
-    /// drive letter like `C:` stays in front of `..`.
+    /// `platform: "win32"`, whatever the host: `\` in the path is a separator, and UNC and drive roots stay.
     pub is_windows: bool,
 }
 
@@ -241,7 +236,7 @@ fn without_groups(pattern: &[u8]) -> Vec<u8> {
     out
 }
 
-/// minimatch's `slashSplit`: a run of `/` is one separator. With `is_windows`, the `//` of a UNC path is two segments.
+/// minimatch's `slashSplit`: a run of `/` is one separator, and with `is_windows` a UNC path keeps its `//`.
 fn split_slashes(text: &[u8], is_windows: bool) -> Vec<&[u8]> {
     let mut parts = Vec::new();
     if is_windows && text.starts_with(b"//") && text.get(2).is_some_and(|it| *it != b'/') {
@@ -259,16 +254,16 @@ fn split_slashes(text: &[u8], is_windows: bool) -> Vec<&[u8]> {
     parts
 }
 
-/// Which of the two sides of a match [`collapse_dots`] works on. minimatch's `levelTwoFileOptimize` takes the path, and
-/// its `firstPhasePreProcess` the pattern.
+/// Which side of a match [`collapse_dots`] works on.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Side {
     Pattern,
     Path,
 }
 
-/// minimatch's `optimizationLevel: 2`: `a/./b` and `a//b` are `a/b`, `a/x/../b` is `a/b`, `./` is `.`. A leading `.` or
-/// `..` stays, and so does a trailing `/`, the `//` of a UNC path, and with `keeps_drive` a drive letter like `C:`.
+/// minimatch's `optimizationLevel: 2` (`levelTwoFileOptimize` for the path, `firstPhasePreProcess` for the pattern):
+/// `a/./b` and `a//b` are `a/b`, `a/x/../b` is `a/b`, `./` is `.`. A leading `.` or `..` stays, and so do a trailing
+/// `/`, the `//` of a UNC path, and with `keeps_drive` a drive letter like `C:`.
 fn collapse_dots<'a>(mut parts: Vec<&'a [u8]>, side: Side, keeps_drive: bool) -> Vec<&'a [u8]> {
     loop {
         let before = parts.len();
@@ -284,8 +279,8 @@ fn collapse_dots<'a>(mut parts: Vec<&'a [u8]>, side: Side, keeps_drive: bool) ->
         if parts.len() == 2 && parts[0] == b"." && matches!(parts[1], b"." | b"") {
             parts.pop();
         }
-        // `<pre>/<p>/../<rest>` is `<pre>/<rest>`. In a pattern, `<p>` stays when it opens a group, which minimatch
-        // would have expanded first, and `<p>/../**` at the front is `./**`.
+        // `<pre>/<p>/../<rest>` is `<pre>/<rest>`. In a pattern, `<p>` stays if it opens a group (minimatch would have
+        // expanded the braces first), and `<p>/../**` at the front is `./**`.
         let mut kept: Vec<&[u8]> = Vec::with_capacity(parts.len());
         for (at, &part) in parts.iter().enumerate() {
             if part == b".."

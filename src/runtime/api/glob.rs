@@ -474,9 +474,7 @@ impl Glob {
     }
 
     /// `match` as Node's `path.matchesGlob` and the `ignore` of `fs.watch` match: minimatch with the options Node
-    /// passes. `*` and `**` don't match a name that starts with `.`, a leading `!` and `#` are characters, `\` in the
-    /// pattern is a separator, and `.` and `x/..` segments of the path collapse. `str` uses `/` as its separator.
-    /// `windows` is minimatch's `platform: "win32"`: `path.win32`, and `fs.watch` on Windows.
+    /// passes. `windows` is minimatch's `platform: "win32"`.
     pub(crate) fn match_node<'a>(&self, str: &'a [u8], windows: bool) -> bool {
         self.node[usize::from(windows)]
             .get_or_init(|| {

@@ -1239,13 +1239,7 @@ static NEVER_INLINE RealProperty realPropertyOfGlobal(JSGlobalObject* globalObje
         } else {
             PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty, nullptr);
             bool found = object->methodTable()->getOwnPropertySlot(object, globalObject, propertyName, slot);
-            // Node drops what a trap throws here: `.To(&attributes)` only says that there are no attributes. A stack overflow goes on, or a trap that stores on this global again would run at every depth.
-            if (auto* exception = scope.exception()) [[unlikely]] {
-                auto* error = dynamicDowncast<ErrorInstance>(exception->value());
-                if (!(error && error->isStackOverflowError()))
-                    (void)scope.tryClearException();
-                return RealProperty::Absent;
-            }
+            RETURN_IF_EXCEPTION(scope, RealProperty::Absent);
             if (found)
                 return isReadOnlyData(slot.attributes()) ? RealProperty::ReadOnly : RealProperty::Writable;
             if (object->type() == ProxyObjectType)
@@ -1274,13 +1268,23 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
     return putOverContextifiedObject(thisObject, globalObject, propertyName, value, slot);
 }
 
-// The store on the global itself, for a store that is not for the contextified object. An object above the global with its own put() ends in a definition on the receiver, and defineOwnProperty() keeps that one on the global.
+// JSObject::put() hands a store to the put() of an object above the receiver that has its own, and that put() ends in a definition on the receiver.
+static bool hasPutAbove(JSObject* object)
+{
+    for (JSValue above = object->getPrototypeDirect(); above.isObject(); above = asObject(above)->getPrototypeDirect()) {
+        if (asObject(above)->structure()->typeInfo().overridesPut())
+            return true;
+    }
+    return false;
+}
+
+// The store on the global itself, for a store that is not for the contextified object. defineOwnProperty() keeps the definition that such an object above the global sends back on the global.
 bool NodeVMGlobalObject::putOnGlobalOnly(NodeVMGlobalObject* thisObject, JSGlobalObject* globalObject, PropertyName propertyName, std::optional<uint32_t> index, JSValue value, PutPropertySlot& slot)
 {
     // A read through the global gives the global for the contextified object, so the global holds itself in its place.
     if (value == JSValue(thisObject->m_sandbox.get()))
         value = thisObject->globalThis();
-    SetForScope nameStoredOnGlobalOnly(thisObject->m_nameStoredOnGlobalOnly, propertyName.uid());
+    SetForScope nameStoredOnGlobalOnly(thisObject->m_nameStoredOnGlobalOnly, index || hasPutAbove(thisObject) ? propertyName.uid() : thisObject->m_nameStoredOnGlobalOnly);
     // JSObject::put() hands an index to the putByIndex() of the method table, which is this class again.
     if (index)
         return Base::putByIndex(thisObject, globalObject, *index, value, slot.isStrictMode());
@@ -1544,21 +1548,22 @@ static NEVER_INLINE bool defineOnGlobalAfterRefusal(NodeVMGlobalObject* thisObje
     RELEASE_AND_RETURN(scope, NodeVMGlobalObject::Base::defineOwnProperty(thisObject, globalObject, propertyName, descriptor, shouldThrow));
 }
 
-// The contextified object took the definition. A variable of that name takes the value and `writable: false`, the two things a variable can take: every tier reads and stores in its slot. The copy that the global keeps of a stored name is hidden when the definition hides the name, for Object.keys() lists the copy.
+// The contextified object took the definition. A script reads and stores its variable in the slot of the variable. So a variable of that name takes the value, and from now on the stores of scripts to the variables of this context come through put(), where the contextified object says what is writable. The copy that the global keeps of a stored name is hidden when the definition hides the name, for Object.keys() lists the copy.
 static NEVER_INLINE void followDefinitionOnGlobal(NodeVMGlobalObject* thisObject, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor)
 {
     VM& vm = JSC::getVM(globalObject);
 
     if (isVariableOfGlobal(thisObject, propertyName)) {
         bool locks = descriptor.writablePresent() && !descriptor.writable();
-        if (!descriptor.value() && !locks)
+        if (!descriptor.value() && !locks && !descriptor.isAccessorDescriptor())
             return;
-        PropertyDescriptor forVariable;
-        if (descriptor.value())
-            forVariable.setValue(descriptor.value());
-        if (locks)
-            forVariable.setWritable(false);
-        NodeVMGlobalObject::Base::defineOwnProperty(thisObject, globalObject, propertyName, forVariable, false);
+        // Once this set has fired, no tier stores to the slot of a variable without a call of put().
+        thisObject->varReadOnlyWatchpointSet().fireAll(vm, "A definition on the contextified object of a node:vm context covers a variable");
+        if (descriptor.value()) {
+            PropertyDescriptor valueOnly;
+            valueOnly.setValue(descriptor.value());
+            NodeVMGlobalObject::Base::defineOwnProperty(thisObject, globalObject, propertyName, valueOnly, false);
+        }
         return;
     }
 

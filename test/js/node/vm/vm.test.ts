@@ -3188,9 +3188,30 @@ describe("a store on the global object of a context", () => {
       global[symbol] = 1;
       rows.proxy = [owns(sandbox, symbol), global[symbol]];
     }
+    {
+      // A setter there defines the name on the receiver, and that definition goes to the contextified object.
+      const inherited = {
+        get replaced() {
+          return "inherited";
+        },
+      };
+      const { sandbox, global } = contextOver(Object.create(inherited));
+      runInContext(
+        `Object.defineProperty(Object.prototype, "replaced", {
+          set(value) {
+            Object.defineProperty(this, "replaced", { value, writable: true, enumerable: true, configurable: true });
+          },
+          configurable: true,
+        })`,
+        sandbox,
+      );
+      global.replaced = 5;
+      rows.setter = [owns(sandbox, "replaced"), runInContext("replaced", sandbox)];
+    }
     expect(rows).toEqual({
       otherContext: [["limit"], 2],
       proxy: [true, 1],
+      setter: [true, 5],
     });
   });
 
@@ -3267,12 +3288,6 @@ describe("a store on the global object of a context", () => {
       rows.otherReceiver = [message(() => (heir.x = 1)), Object.keys(heir)];
     }
     {
-      // A Proxy above the global object: what its trap throws is dropped, and the store goes to the contextified object.
-      const { sandbox, global } = contextOver();
-      Object.setPrototypeOf(global, new Proxy({}, { getOwnPropertyDescriptor: thrower("trap above the global") }));
-      rows.aboveTheGlobal = [message(() => (global.x = 1)), Object.keys(sandbox)];
-    }
-    {
       const throws = contextOver(new Proxy({}, { defineProperty: thrower("defineProperty trap") }));
       const refuses = contextOver(new Proxy({}, { defineProperty: () => false }));
       rows.defineProperty = [
@@ -3288,9 +3303,13 @@ describe("a store on the global object of a context", () => {
       setTrap: ["set trap", "set trap", [], "undefined"],
       afterRefusedStore: ["getOwnPropertyDescriptor trap", "undefined"],
       otherReceiver: ["getOwnPropertyDescriptor trap", []],
-      aboveTheGlobal: ["no throw", ["x"]],
       defineProperty: ["defineProperty trap", "no throw", true, "numbernumber"],
     });
+
+    // Not the result of Node.js, which drops what a trap of a Proxy above the global object throws and stores on the contextified object.
+    const { sandbox, global } = contextOver();
+    Object.setPrototypeOf(global, new Proxy({}, { getOwnPropertyDescriptor: thrower("trap above the global") }));
+    expect([message(() => (global.x = 1)), Object.keys(sandbox)]).toEqual(["trap above the global", []]);
   });
 
   test("Object.defineProperty() from another realm asks the global object of the context, not the global object of the caller", () => {
@@ -3349,10 +3368,16 @@ describe("a store on the global object of a context", () => {
       // A script reads its variable from the variable, which has the value too.
       bareNames: runInContext("[fromInside, fromOutside, made, attributesOnly, locked]", sandbox),
       keys: Object.keys(sandbox).sort(),
-      // The variable is read-only in every tier, as the property of the contextified object is.
+      // The name is read-only in every tier, as the property of the contextified object is.
       storeToLocked: [
         runInContext("locked = 5; for (var i = 0; i < 1e4; i++) locked = i; locked", sandbox),
         outcome(() => runInContext("'use strict'; locked = 5", sandbox)),
+        sandbox.locked,
+      ],
+      // A later definition makes it writable again.
+      unlocked: [
+        outcome(() => Object.defineProperty(global, "locked", data(3))),
+        runInContext("locked = 4; locked", sandbox),
         sandbox.locked,
       ],
     }).toEqual({
@@ -3366,10 +3391,15 @@ describe("a store on the global object of a context", () => {
       bareNames: [2, 2, 2, 1, 2],
       keys: ["fromInside", "fromOutside", "locked", "made"],
       storeToLocked: [2, "TypeError of the context", 2],
+      unlocked: ["no throw", 4, 4],
     });
 
-    // Not the result of Node.js, where a definition never reaches the variable. JavaScriptCore has no way to make a read-only variable writable again.
-    expect(outcome(() => Object.defineProperty(global, "locked", data(3)))).toBe("TypeError");
+    // After a definition, every store of a script to its variable still reaches the contextified object, in every tier.
+    const later = contextOver();
+    runInContext("var counter = 1", later.sandbox);
+    Object.defineProperty(later.global, "counter", data(2));
+    const counted = runInContext("counter += 40; for (var i = 0; i < 1e4; i++) counter++; counter", later.sandbox);
+    expect([counted, later.sandbox.counter]).toEqual([10042, 10042]);
   });
 
   // Node.js reads every global name through the contextified object, and this Proxy answers `undefined` for a name that its target refused. Here the script reads its variable, which took the value. Main dropped the store.

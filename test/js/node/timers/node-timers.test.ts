@@ -1,5 +1,5 @@
 import jsc from "bun:jsc";
-import { describe, expect, it, mock, test } from "bun:test";
+import { describe, expect, it, jest, mock, test } from "bun:test";
 import { bunEnv, bunExe, bunRun, isWindows } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import path from "node:path";
@@ -137,7 +137,7 @@ describe("_destroyed", () => {
   });
 
   it("is false during the callback", async () => {
-    for (const fn of [setTimeout, setInterval, setImmediate]) {
+    for (const fn of [setTimeout, setInterval]) {
       const { promise: done, resolve } = Promise.withResolvers();
       const timer = fn(() => {
         try {
@@ -150,6 +150,17 @@ describe("_destroyed", () => {
       }, 1) as TimerWithDestroyed;
       await done;
     }
+  });
+
+  // Node.js destroys an Immediate before its callback and a Timeout after it.
+  it("is true during the callback of an immediate, where ref() does nothing", async () => {
+    const { promise, resolve } = Promise.withResolvers();
+    const immediate = setImmediate(() => {
+      const inCallback = { destroyed: immediate._destroyed, hasRef: immediate.hasRef() };
+      immediate.unref().ref();
+      resolve({ ...inCallback, hasRefAfterRef: immediate.hasRef() });
+    }) as TimerWithDestroyed;
+    expect(await promise).toEqual({ destroyed: true, hasRef: false, hasRefAfterRef: false });
   });
 
   it("is true after clearing", () => {
@@ -210,6 +221,149 @@ describe("_destroyed", () => {
     }, 2) as TimerWithDestroyed;
     await done;
     expect(timeout._destroyed).toBeTrue();
+  });
+});
+
+// Each script prints `_destroyed` and `hasRef()`, then the process ends by itself.
+describe("ref() holds the event loop only for an Immediate that is still queued", () => {
+  async function run(script: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      // bun:test does not kill the child of a concurrent test that times out.
+      timeout: 4_000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, signalCode: proc.signalCode, exitCode };
+  }
+
+  // Node.js prints the same.
+  it.concurrent.each([
+    [
+      "ref() inside its callback, after unref() before it",
+      `const immediate = setImmediate(() => {
+         console.log("callback", immediate._destroyed, immediate.hasRef());
+         immediate.ref();
+         console.log("ref", immediate._destroyed, immediate.hasRef());
+       });
+       setImmediate(() => console.log("later", immediate._destroyed, immediate.hasRef()));
+       immediate.unref();`,
+      "callback true false\nref true false\nlater true false\n",
+    ],
+    [
+      "unref() and ref() inside its callback",
+      `const immediate = setImmediate(() => {
+         immediate.unref();
+         console.log("unref", immediate._destroyed, immediate.hasRef());
+         immediate.ref();
+         console.log("ref", immediate._destroyed, immediate.hasRef());
+       });`,
+      "unref true false\nref true false\n",
+    ],
+    [
+      "this.ref() inside its callback",
+      `setImmediate(function () {
+         this.ref();
+         console.log("ref", this._destroyed, this.hasRef());
+       }).unref();
+       setImmediate(() => {});`,
+      "ref true false\n",
+    ],
+    [
+      "process.ref(immediate) inside its callback",
+      `const immediate = setImmediate(() => {
+         process.ref(immediate);
+         console.log("ref", immediate._destroyed, immediate.hasRef());
+       });
+       setImmediate(() => {});
+       immediate.unref();`,
+      "ref true false\n",
+    ],
+    [
+      "ref() inside its callback, which then throws",
+      `process.on("uncaughtException", error => {
+         console.log(error.message, immediate._destroyed, immediate.hasRef());
+       });
+       const immediate = setImmediate(() => {
+         immediate.ref();
+         throw new Error("thrown");
+       });
+       setImmediate(() => {});
+       immediate.unref();`,
+      "thrown true false\n",
+    ],
+    [
+      "ref() in the uncaughtException listener that its callback's throw calls",
+      `process.on("uncaughtException", error => {
+         console.log(error.message, immediate._destroyed, immediate.hasRef());
+         immediate.ref();
+         console.log("ref", immediate._destroyed, immediate.hasRef());
+       });
+       const immediate = setImmediate(() => {
+         throw new Error("thrown");
+       });
+       setImmediate(() => {});
+       immediate.unref();`,
+      "thrown true false\nref true false\n",
+    ],
+    [
+      "ref() on a queued Immediate, from the callback of another, runs it",
+      `setImmediate(() => {
+         queued.ref();
+         console.log("ref", queued._destroyed, queued.hasRef());
+       });
+       const queued = setImmediate(() => console.log("callback", queued._destroyed, queued.hasRef()));
+       queued.unref();`,
+      "ref false true\ncallback true false\n",
+    ],
+    [
+      "unref() then ref() before its callback runs it",
+      `const immediate = setImmediate(() => console.log("callback", immediate._destroyed, immediate.hasRef()));
+       immediate.unref().ref();
+       console.log("ref", immediate._destroyed, immediate.hasRef());`,
+      "ref false true\ncallback true false\n",
+    ],
+  ])("%s", async (_, script, stdout) => {
+    expect(await run(script)).toEqual({ stdout, stderr: "", signalCode: null, exitCode: 0 });
+  });
+
+  // Node.js keeps this Immediate queued: it prints "ref false true", then runs the callback.
+  it.concurrent("ref() in beforeExit does nothing on an unref'ed Immediate that the idle loop dropped", async () => {
+    const script = `
+      const immediate = setImmediate(() => console.log("callback", immediate._destroyed, immediate.hasRef()));
+      immediate.unref();
+      process.once("beforeExit", () => {
+        console.log("beforeExit", immediate._destroyed, immediate.hasRef());
+        immediate.ref();
+        console.log("ref", immediate._destroyed, immediate.hasRef());
+      });`;
+    expect(await run(script)).toEqual({
+      stdout: "beforeExit false false\nref false false\n",
+      stderr: "",
+      signalCode: null,
+      exitCode: 0,
+    });
+  });
+
+  // A faked Immediate is in the timer heap, which gives the ref back after the callback.
+  it("ref() inside the callback of a faked Immediate takes the ref", () => {
+    jest.useFakeTimers({ toFake: ["setImmediate"] });
+    try {
+      const hasRef: boolean[] = [];
+      const immediate = globalThis.setImmediate(() => {
+        immediate.unref();
+        hasRef.push(immediate.hasRef());
+        immediate.ref();
+        hasRef.push(immediate.hasRef());
+      });
+      jest.runAllTimers();
+      hasRef.push(immediate.hasRef());
+      expect({ hasRef, pending: jest.getTimerCount() }).toEqual({ hasRef: [false, true, false], pending: 0 });
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
 

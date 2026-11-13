@@ -491,7 +491,7 @@ impl TimerFlags {
     }
     /// Set to `true` only during execution of the JavaScript function so that
     /// `_destroyed` can be false during the callback even though `state` will
-    /// be `FIRED`.
+    /// be `FIRED`. A `setImmediate` on the immediate queue never sets it.
     #[inline]
     pub fn in_callback(self) -> bool {
         self.0 & Self::IN_CALLBACK != 0

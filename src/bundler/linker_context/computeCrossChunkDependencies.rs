@@ -7,8 +7,8 @@ use crate::js_meta;
 use crate::linker_context_mod::{ChunkMeta, ChunkMetaMap, debug};
 use crate::linker_graph::is_external_dynamic_import;
 use crate::{
-    Chunk, CrossChunkImport, CrossChunkImportItem, CrossChunkImportItemList, Index, IndexInt, Ref,
-    RefImportData, ResolvedExports, StableRef, WrapKind, chunk,
+    Chunk, CrossChunkImportItem, CrossChunkImportItemList, Index, IndexInt, Ref, RefImportData,
+    ResolvedExports, StableRef, WrapKind, chunk,
 };
 
 pub(crate) fn compute_cross_chunk_dependencies<'a>(
@@ -594,7 +594,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
     // from the loop above to know which chunk declares each binding).
     {
         debug!("Generating cross-chunk imports");
-        let mut list: Vec<CrossChunkImport> = Vec::new();
+        let mut order: Vec<u32> = Vec::new();
         let mut evaluation_rank: Vec<u32> = vec![u32::MAX; chunks.len()];
         // We move the per-chunk fields we
         // mutate (`imports_from_other_chunks`, `cross_chunk_imports`) out via `take`, drop
@@ -624,8 +624,8 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
             for (rank, &other) in reached.iter().enumerate() {
                 evaluation_rank[other as usize] = rank as u32;
             }
-            CrossChunkImport::sorted_cross_chunk_imports(
-                &mut list,
+            Chunk::sorted_cross_chunk_imports(
+                &mut order,
                 chunks,
                 &mut imports_from_other_chunks,
                 c.graph.stable_source_indices.slice(),
@@ -634,19 +634,20 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
             for &other in reached.iter() {
                 evaluation_rank[other as usize] = u32::MAX;
             }
-            let cross_chunk_imports_input: &[CrossChunkImport] = list.as_slice();
-            for cross_chunk_import in cross_chunk_imports_input {
+            for &index in &order {
                 match c.options.output_format {
                     OutputFormat::Esm => {
                         let import_record_index =
                             u32::try_from(cross_chunk_imports.len() as usize).expect("int cast");
 
+                        let sorted_import_items =
+                            &imports_from_other_chunks.values()[index as usize];
                         let mut clauses =
                             bun_alloc::ArenaVec::<bun_ast::ClauseItem>::with_capacity_in(
-                                cross_chunk_import.sorted_import_items.len() as usize,
+                                sorted_import_items.len(),
                                 c.arena(),
                             );
-                        for item in cross_chunk_import.sorted_import_items.slice() {
+                        for item in sorted_import_items {
                             clauses.push(bun_ast::ClauseItem {
                                 name: bun_ast::LocRef {
                                     ref_: item.r#ref,
@@ -660,7 +661,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
 
                         cross_chunk_imports.push(chunk::ChunkImport {
                             import_kind: bun_ast::ImportKind::Stmt,
-                            chunk_index: cross_chunk_import.chunk_index,
+                            chunk_index: imports_from_other_chunks.keys()[index as usize],
                         });
                         let items_ptr = bun_ast::StoreSlice::new_mut(clauses.into_bump_slice_mut());
                         // Allocated directly from the arena —

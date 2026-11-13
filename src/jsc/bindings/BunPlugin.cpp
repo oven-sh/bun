@@ -4255,10 +4255,35 @@ static ModuleMocksThatLosePaths moduleMocksThatLosePathsTo(Zig::GlobalObject* gl
     return { loser(mock->importKey.get()), loser(mock->requireKey.get()) };
 }
 
+// Whether `moduleObject` holds what require() of a path gets of `mock` where nothing is loaded under the path: the result of the factory, or the `default` of a result
+// with `__esModule`. See commonJSExportsOfObjectModule() in ModuleLoader.cpp. Read without side effects: what only a getter or a Proxy could answer counts as missing.
+static bool holdsWhatRequireGotOfModuleMock(Zig::GlobalObject* globalObject, Bun::JSCommonJSModule* moduleObject, const JSModuleMock* mock)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* result = mock->state == JSModuleMock::State::Settled ? mock->result.get() : nullptr;
+    JSValue exports = moduleObject->getDirect(vm, Bun::builtinNames(vm).exportsPublicName());
+    if (!result || !exports)
+        return false;
+    if (auto* commonJSModule = dynamicDowncast<Bun::JSCommonJSModule>(result))
+        return exports == commonJSModule->getDirect(vm, Bun::builtinNames(vm).exportsPublicName());
+    auto valueOf = [&](JSC::PropertyName name) -> JSValue {
+        JSC::PropertySlot slot(result, JSC::PropertySlot::InternalMethodType::VMInquiry, &vm);
+        return result->getPropertySlot(globalObject, name, slot) && slot.isValue() ? slot.getValue(globalObject, name) : JSValue();
+    };
+    JSValue isESModule = valueOf(vm.propertyNames->__esModule);
+    RETURN_IF_EXCEPTION(scope, false);
+    JSValue defaultValue = isESModule && isESModule.toBoolean(globalObject) ? valueOf(vm.propertyNames->defaultKeyword) : JSValue();
+    RETURN_IF_EXCEPTION(scope, false);
+    return exports == (defaultValue && !defaultValue.isUndefined() ? defaultValue : JSValue(result));
+}
+
 // `mock` has two paths and has taken them from `losers`. Its ES module is under the import path and its module object of require.cache under the require path: of those it has taken over what the losers saved.
 // The other side of each path is not its own. A loser had its module object under the import path if require() loads that path for it, and its ES module under the require path if that is its import path.
-// With two paths, a loser whose import path it is may also have a module object there: what require() of that very path got. It holds the loser's exports, and the loser saved nothing of it.
 // Those end here as unmockModule() ends them, so that the next load of either path comes to `mock`. A mock with one path has both sides under it, and nothing is left.
+// A loser with two paths whose import path it is saved nothing of a module object there, but require() of that very path may have made one of it: see holdsWhatRequireGotOfModuleMock().
+// Only that one leaves require.cache, and no importer with it: whoever imports the ES module under the path is linked to what `mock` has taken over. A file's own module object there,
+// or one that reads that ES module, stays as it did under the loser.
 __attribute__((minsize)) static void endSidesThatModuleMockLeaves(Zig::GlobalObject* globalObject, JSModuleMock* mock, ModuleMocksThatLosePaths losers)
 {
     if (!losers.ofImportPath && !losers.ofRequirePath)
@@ -4272,16 +4297,26 @@ __attribute__((minsize)) static void endSidesThatModuleMockLeaves(Zig::GlobalObj
     evict.onlyImportersFromEarlierTestFiles = true;
     String importKey = mock->importKey->tryGetValue().data;
     if (auto* loser = losers.ofImportPath) {
-        if (loser->keyForRequire()->tryGetValue().data == importKey && !comesBack(loser)) {
+        bool hadModuleObjectThere = loser->keyForRequire()->tryGetValue().data == importKey;
+        if (hadModuleObjectThere && !comesBack(loser)) {
             restoreModuleObjectOfModuleMock(globalObject, loser);
             RETURN_IF_EXCEPTION(scope, );
         }
         LoadedModule underImportPath;
         findLoadedCommonJSModule(globalObject, mock->importKey.get(), underImportPath);
         RETURN_IF_EXCEPTION(scope, );
-        // Out of require.cache. The ES module under the path stays.
-        if (underImportPath.commonJSModule || underImportPath.staleCommonJSEntry)
-            evict.patchedESModules.append(importKey);
+        if (hadModuleObjectThere) {
+            // Out of require.cache. The ES module under the path stays.
+            if (underImportPath.commonJSModule || underImportPath.staleCommonJSEntry)
+                evict.patchedESModules.append(importKey);
+        } else if (auto* moduleObject = underImportPath.commonJSModule) {
+            bool holdsExportsOfLoser = holdsWhatRequireGotOfModuleMock(globalObject, moduleObject, loser);
+            RETURN_IF_EXCEPTION(scope, );
+            if (holdsExportsOfLoser) {
+                JSC__JSMap__remove(Bun::testFileRequireMap(globalObject), globalObject, JSValue::encode(mock->importKey.get()));
+                RETURN_IF_EXCEPTION(scope, );
+            }
+        }
     }
     if (auto* loser = losers.ofRequirePath) {
         String requireKey = mock->requireKey->tryGetValue().data;

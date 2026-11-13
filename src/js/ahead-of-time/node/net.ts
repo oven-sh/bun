@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 d6861dbd59c52394231c89ff7bae0bcff81e31756f79b40db9ee7cee0562b4a5.
+// Written against that file with the SHA-256 8d50f1ffd8e939974329cda4945a8bd1954d9a7e4221afb81b421c02140d33b2.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -981,16 +981,7 @@ function closeOwedRaw(self: $Node.Socket, upgraded: $Node.Socket | null) {
   self[kOwesRawClose] = false;
   if (!upgraded!.destroyed) self[kCloseRawConnection]();
 }
-let addAbortListener: typeof import("internal/abort_listener").default.addAbortListener | undefined;
-function destroyWhenAborted(this: $Node.Socket, err?: object) {
-  if (!this.destroyed) {
-    // node's stream layer (addAbortSignal) destroys the socket with an AbortError (code
-    // ABORT_ERR) carrying the signal's reason as `cause`, not with the raw reason itself.
-    this.destroy(
-      $makeAbortError(undefined, { cause: (err as { target?: AbortSignal | null } | undefined)?.target?.reason }),
-    );
-  }
-}
+let addAbortSignal: typeof import("internal/streams/add-abort-signal").default.addAbortSignal | undefined;
 // in node's code this callback is called 'onReadableStreamEnd' but that seemed confusing when `ReadableStream`s now exist
 function onSocketEnd(this: $Node.Socket) {
   if (!this.allowHalfOpen) {
@@ -2423,6 +2414,18 @@ function Socket(this: $Node.Socket, options?: $Node.SocketOptions): void {
   this._sockname = null;
   this._closeAfterHandlingError = false;
 
+  if (signal) {
+    if (signal.aborted) {
+      // addAbortSignal() would destroy the socket at once, and the connect() that follows un-destroys it and dials:
+      // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/streams/add-abort-signal.js#L52-L53
+      process.nextTick(destroyNT, this, $makeAbortError(undefined, { cause: signal.reason }));
+    } else {
+      // Node's Duplex constructor does this: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/streams/duplex.js#L123-L124
+      addAbortSignal ??= require("internal/streams/add-abort-signal").addAbortSignal;
+      addAbortSignal(signal, this);
+    }
+  }
+
   // Shut down the socket when we're finished with it.
   this.on("end", onSocketEnd);
 
@@ -2576,17 +2579,6 @@ function Socket(this: $Node.Socket, options?: $Node.SocketOptions): void {
         self[kOnreadDeliver]!(buffer);
       },
     };
-  }
-  if (signal) {
-    if (signal.aborted) {
-      process.nextTick(destroyNT, this, $makeAbortError(undefined, { cause: signal.reason }));
-    } else {
-      // addAbortListener registers a once listener; the close hook detaches it when the socket
-      // goes away first (mirrors node's addAbortSignal + eos cleanup).
-      addAbortListener ??= require("internal/abort_listener").addAbortListener;
-      const disposable = addAbortListener(signal, destroyWhenAborted.bind(this));
-      this.once("close", disposable[Symbol.dispose]);
-    }
   }
   const optsBlockList = opts.blockList;
   if (optsBlockList) {

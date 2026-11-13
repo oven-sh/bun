@@ -605,14 +605,7 @@ function closeOwedRaw(self, upgraded) {
   self[kOwesRawClose] = false;
   if (!upgraded.destroyed) self[kCloseRawConnection]();
 }
-let addAbortListener;
-function destroyWhenAborted(err) {
-  if (!this.destroyed) {
-    // node's stream layer (addAbortSignal) destroys the socket with an AbortError (code
-    // ABORT_ERR) carrying the signal's reason as `cause`, not with the raw reason itself.
-    this.destroy($makeAbortError(undefined, { cause: err?.target?.reason }));
-  }
-}
+let addAbortSignal;
 // in node's code this callback is called 'onReadableStreamEnd' but that seemed confusing when `ReadableStream`s now exist
 function onSocketEnd() {
   if (!this.allowHalfOpen) {
@@ -2035,6 +2028,18 @@ function Socket(options?): void {
   this._sockname = null;
   this._closeAfterHandlingError = false;
 
+  if (signal) {
+    if (signal.aborted) {
+      // addAbortSignal() would destroy the socket at once, and the connect() that follows un-destroys it and dials:
+      // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/streams/add-abort-signal.js#L52-L53
+      process.nextTick(destroyNT, this, $makeAbortError(undefined, { cause: signal.reason }));
+    } else {
+      // Node's Duplex constructor does this: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/streams/duplex.js#L123-L124
+      addAbortSignal ??= require("internal/streams/add-abort-signal").addAbortSignal;
+      addAbortSignal(signal, this);
+    }
+  }
+
   // Shut down the socket when we're finished with it.
   this.on("end", onSocketEnd);
 
@@ -2188,17 +2193,6 @@ function Socket(options?): void {
         self[kOnreadDeliver](buffer);
       },
     };
-  }
-  if (signal) {
-    if (signal.aborted) {
-      process.nextTick(destroyNT, this, $makeAbortError(undefined, { cause: signal.reason }));
-    } else {
-      // addAbortListener registers a once listener; the close hook detaches it when the socket
-      // goes away first (mirrors node's addAbortSignal + eos cleanup).
-      addAbortListener ??= require("internal/abort_listener").addAbortListener;
-      const disposable = addAbortListener(signal, destroyWhenAborted.bind(this));
-      this.once("close", disposable[Symbol.dispose]);
-    }
   }
   const optsBlockList = opts.blockList;
   if (optsBlockList) {

@@ -18,7 +18,7 @@ import {
 } from "harness";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { once } from "node:events";
+import { getEventListeners, once } from "node:events";
 import fs from "node:fs";
 import {
   type AddressInfo,
@@ -1033,6 +1033,143 @@ it("should trigger error when aborted even if connection failed, and the signal 
   expect(err.cause?.name).toBe("TimeoutError");
 });
 
+// Node's stream layer wires the `signal` of a socket. For a signal that is not aborted yet it also listens for the
+// socket's 'error': https://github.com/nodejs/node/blob/v26.12.1/lib/internal/streams/add-abort-signal.js#L55-L57
+describe("a socket made with a signal", () => {
+  // The fixture runs unchanged under Node.js. These are the lines that Node.js v26.12.1 prints.
+  async function runFixture(group: string) {
+    const { stdout, stderr, exitCode } = await bunRun([join(import.meta.dir, "socket-signal-fixture.js"), group]);
+    return { stdout: stdout.split(/\r?\n/), stderr, exitCode };
+  }
+
+  it.concurrent("an abort after a call that throws does not end the process", async () => {
+    expect(await runFixture("an abort after the call")).toEqual({
+      stdout: [
+        "new net.Socket(): threw nothing",
+        "new net.Socket() with a blockList that is not one: threw ERR_INVALID_ARG_TYPE",
+        "net.connect() with a port out of range: threw ERR_SOCKET_BAD_PORT",
+        "net.connect() with no port: threw ERR_MISSING_ARGS",
+        "net.connect() with a path that is not a string: threw ERR_INVALID_ARG_TYPE",
+        "net.connect() with a localAddress that is not an IP address: threw ERR_INVALID_IP_ADDRESS",
+        "net.connect() with a lookup that throws: threw Error",
+        "net.createConnection() with a negative timeout: threw ERR_OUT_OF_RANGE",
+        "tls.connect() with a port out of range: threw ERR_SOCKET_BAD_PORT",
+        "tls.connect() with a negative timeout: threw ERR_OUT_OF_RANGE",
+        "http2.connect() with a localAddress that is not an IP address: threw ERR_INVALID_IP_ADDRESS",
+        "http2.connect() to https with a localAddress that is not an IP address: threw ERR_INVALID_IP_ADDRESS",
+        "http2.connect() with a lookup that is not a function: threw ERR_INVALID_ARG_TYPE",
+        "http.Agent#createConnection() with a port out of range: threw ERR_SOCKET_BAD_PORT",
+        "https.Agent#createConnection() with a port out of range: threw ERR_SOCKET_BAD_PORT",
+        "exit code 0",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("an error of a socket with no 'error' listener does not end the process", async () => {
+    expect(await runFixture("a socket with no 'error' listener")).toEqual({
+      stdout: [
+        "a lookup that fails: close true",
+        "an abort while it connects: close true",
+        "an abort when it is connected: close true",
+        "exit code 0",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Node.js adds no 'error' listener for a signal that is already aborted. It destroys the socket in the constructor:
+  // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/streams/add-abort-signal.js#L52-L53
+  it.concurrent("a signal that is already aborted destroys the socket of a constructor that throws", async () => {
+    expect(await runFixture("a signal that is already aborted")).toEqual({
+      stdout: [
+        "new net.Socket() with an fd that is a file: threw ERR_INVALID_FD_TYPE",
+        "uncaught AbortError: new net.Socket() with an fd that is a file",
+        "exit code 1",
+      ],
+      stderr: "",
+      exitCode: 1,
+    });
+  });
+
+  it.each([
+    ["net.Socket", (options?: object) => new Socket(options)],
+    ["tls.TLSSocket", (options?: object) => new TLSSocket(undefined as any, options)],
+  ])("%s has one more listener for each of 'error', 'end', 'finish' and 'close'", (_, make) => {
+    const listenerCounts = (socket: Socket) =>
+      ["error", "end", "finish", "close"].map(name => socket.listenerCount(name));
+    const controller = new AbortController();
+    const withSignal = make({ signal: controller.signal });
+    const without = make();
+    try {
+      expect(listenerCounts(withSignal)).toEqual(listenerCounts(without).map(count => count + 1));
+      expect(getEventListeners(controller.signal, "abort")).toHaveLength(1);
+    } finally {
+      withSignal.destroy();
+      without.destroy();
+    }
+  });
+
+  // Node.js has one more abort listener here. It belongs to lib/net.js and stays until the abort:
+  // https://github.com/nodejs/node/blob/v26.12.1/lib/net.js#L2098-L2115
+  it("stops listening to the signal when it closes", async () => {
+    const server = createServer(connection => connection.end()).listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const { signal } = new AbortController();
+      const socket = connect({ host: "127.0.0.1", port: (server.address() as AddressInfo).port, signal });
+      expect(getEventListeners(signal, "abort")).toHaveLength(1);
+      socket.resume();
+      expect(await once(socket, "close")).toEqual([false]);
+      expect(getEventListeners(signal, "abort")).toHaveLength(0);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("gives the abort to the 'error' listener of the caller one time", async () => {
+    const controller = new AbortController();
+    const socket = new Socket({ signal: controller.signal });
+    const errors: (Error & { code?: string })[] = [];
+    socket.on("error", error => errors.push(error));
+    const { promise: closed, resolve } = Promise.withResolvers();
+    socket.on("close", resolve);
+    controller.abort("the reason");
+    await closed;
+    expect(errors.map(({ name, code, cause }) => ({ name, code, cause }))).toEqual([
+      { name: "AbortError", code: "ABORT_ERR", cause: "the reason" },
+    ]);
+  });
+
+  // When a peer resets a socket that has no 'error' listener, bun closes it in silence: 'end', then 'close' with false.
+  // The listener of the stream layer is an 'error' listener, so this socket reports the reset, as in Node.js.
+  it("reports a reset by the peer when the caller has no 'error' listener", async () => {
+    const server = createServer(connection =>
+      connection.on("error", () => {}).once("data", () => connection.resetAndDestroy()),
+    ).listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const { signal } = new AbortController();
+      const socket = connect({ host: "127.0.0.1", port: (server.address() as AddressInfo).port, signal });
+      const events: string[] = [];
+      const { promise: closed, resolve } = Promise.withResolvers<void>();
+      socket.on("connect", () => socket.write("x"));
+      socket.on("end", () => events.push("end"));
+      socket.on("close", hadError => {
+        events.push(`close ${hadError}`);
+        resolve();
+      });
+      socket.resume();
+      await closed;
+      expect(events).toEqual(["close true"]);
+    } finally {
+      server.close();
+    }
+  });
+});
+
 describe.concurrent("'timeout' is emitted with a write that does not move", () => {
   it("while the socket is connecting", async () => {
     const neverAnswers = () => {};
@@ -1557,6 +1694,24 @@ describe("Socket fd adoption", () => {
         fd: "EBADF",
         eof: "",
       });
+    } finally {
+      fs.closeSync(rfd);
+    }
+  });
+
+  // Node.js destroys the socket in the constructor, so it has no 'end' ahead of the 'error' either:
+  // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/streams/add-abort-signal.js#L52-L53
+  it.skipIf(isWindows)("a signal that is already aborted destroys the socket before it ends", async () => {
+    const { rfd, wfd } = openFifo("aborted.fifo");
+    try {
+      const socket = new Socket({ fd: wfd, writable: true, signal: AbortSignal.abort() });
+      const events: string[] = [];
+      socket.on("end", () => events.push("end"));
+      socket.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
+      const { promise: closed, resolve } = Promise.withResolvers<void>();
+      socket.on("close", () => resolve());
+      await closed;
+      expect({ events, fd: fstatCode(wfd) }).toEqual({ events: ["error:ABORT_ERR"], fd: "EBADF" });
     } finally {
       fs.closeSync(rfd);
     }

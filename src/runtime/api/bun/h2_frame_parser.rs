@@ -2958,9 +2958,10 @@ impl H2FrameParser {
         if !self.auto_flusher.get().registered.get() {
             return;
         }
-        // A write that drains the buffer must not cancel the deferred tick a pending session
-        // error is waiting on; on_auto_flush releases the registration once it has reported it.
-        if self.pending_header_compression_error.get() {
+        // A write that drains the buffer must not cancel the deferred tick that a pending session
+        // error or the close of a rejected transport is waiting on; on_auto_flush releases the
+        // registration.
+        if self.pending_header_compression_error.get() || self.transport_write_fatal.get() {
             return;
         }
         debug_assert!(self.auto_flusher.get().registered.get());
@@ -7637,6 +7638,7 @@ impl H2FrameParser {
     /// this function can be called multiple times, it will erase stream info
     pub(crate) fn detach(&self) {
         self.uncork();
+        self.transport_write_fatal.set(false);
         self.unregister_auto_flush();
         self.detach_native_socket();
 
@@ -7671,6 +7673,8 @@ impl H2FrameParser {
             Self::set_corked(None);
         }
         // Removes the deferred task (its ctx is `self`) and releases the ref it holds.
+        self.transport_write_fatal.set(false);
+        self.pending_header_compression_error.set(false);
         self.unregister_auto_flush();
         let stranded = self.native_keepalives.replace(0);
         for _ in 0..stranded {

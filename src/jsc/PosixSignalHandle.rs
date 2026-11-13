@@ -2,9 +2,10 @@ use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
 use crate::JSGlobalObject;
 #[cfg(unix)]
-use crate::VirtualMachineRef as VirtualMachine;
+use crate::Task;
 #[cfg(unix)]
-use crate::{Task, event_loop::EventLoop};
+use crate::VirtualMachineRef as VirtualMachine;
+use crate::event_loop::EventLoop;
 use bun_event_loop::{Taskable, task_tag};
 #[cfg(unix)]
 use bun_threading::SignalRing;
@@ -58,6 +59,10 @@ extern "C" fn Bun__onPosixSignal(number: i32) {
         {
             // SAFETY: `_exit(2)` is async-signal-safe and takes no pointers.
             unsafe { libc::_exit(0) };
+        }
+        if IS_RESTARTING.load(Ordering::Acquire) && ends_process(number) {
+            end_process_by_signal(number);
+            return;
         }
         let Some(vm) = VirtualMachine::get_main_thread_vm() else {
             return;
@@ -124,6 +129,29 @@ fn is_uncatchable_signal(_number: i32) -> bool {
 /// True while the pre-reload kill-signal handlers run: `process.exit` inside
 /// one must not stop the reload (node restarts the watched child regardless).
 static IS_EMITTING_WATCH_KILL_SIGNAL: AtomicBool = AtomicBool::new(false);
+
+#[cfg(unix)]
+static IS_RESTARTING: AtomicBool = AtomicBool::new(false);
+
+#[cfg(unix)]
+static SIGNALS_SENT_BY_SCRIPT: AtomicU32 = AtomicU32::new(0);
+
+#[cfg(unix)]
+fn ends_process(number: i32) -> bool {
+    matches!(
+        number,
+        libc::SIGHUP | libc::SIGINT | libc::SIGQUIT | libc::SIGTERM
+    )
+}
+
+#[cfg(unix)]
+fn end_process_by_signal(number: i32) {
+    // SAFETY: both are async-signal-safe and take no pointers.
+    unsafe {
+        libc::signal(number, libc::SIG_DFL);
+        libc::raise(number);
+    }
+}
 
 /// JS listener count for the configured watch kill signal, mirrored here so
 /// the watcher thread can decide between the immediate execve reload and the
@@ -201,6 +229,35 @@ pub(crate) fn emit_watch_kill_signal_before_reload(global_object: &JSGlobalObjec
     // its deadline extension. execve replaces the image, so nothing needs to clear it.
     IS_EMITTING_WATCH_KILL_SIGNAL.store(true, Ordering::Relaxed);
     let _ = Bun__onSignalForJS(i32::from(sig), global_object);
+}
+
+#[cfg(unix)]
+pub(crate) fn will_restart(event_loop: &EventLoop) {
+    IS_RESTARTING.store(true, Ordering::SeqCst);
+    let Some(handler) = event_loop.signal_handler else {
+        return;
+    };
+    let sent_by_script = SIGNALS_SENT_BY_SCRIPT.load(Ordering::Relaxed);
+    while let Some(signal) = handler.ring.dequeue() {
+        if ends_process(i32::from(signal)) && sent_by_script & (1 << signal) == 0 {
+            end_process_by_signal(i32::from(signal));
+        }
+    }
+}
+#[cfg(not(unix))]
+pub(crate) fn will_restart(_: &EventLoop) {}
+
+pub(crate) fn did_not_restart() {
+    #[cfg(unix)]
+    IS_RESTARTING.store(false, Ordering::SeqCst);
+}
+
+#[cfg(unix)]
+#[unsafe(no_mangle)]
+extern "C" fn Bun__willSendSignalToSelf(number: i32) {
+    if IS_EMITTING_WATCH_KILL_SIGNAL.load(Ordering::Relaxed) && ends_process(number) {
+        SIGNALS_SENT_BY_SCRIPT.fetch_or(1 << number, Ordering::Relaxed);
+    }
 }
 
 impl PosixSignalTask {

@@ -1075,7 +1075,9 @@ describe("FileSink on a pipe stays alive until end() has drained the buffer", ()
           }
         `,
       ],
-      env: bunEnv,
+      // The CI runner sets BUN_FEATURE_FLAG_NO_ORPHANS on ASAN lanes. It kills the child, which prints its count after
+      // its parent is gone.
+      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
       stdout: "pipe",
       stderr: "pipe",
     });

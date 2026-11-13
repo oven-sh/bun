@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { PerformanceObserver } from "node:perf_hooks";
 import tls from "node:tls";
+import { Worker } from "node:worker_threads";
 import { Duplex, duplexPair } from "stream";
 import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
@@ -6665,32 +6666,40 @@ for (const secure of [true, false]) {
         if (++streams === 10) allStreams.resolve();
       });
       await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
-      // In a process of its own: each client is gone by the time this loop answers it.
-      await using clients = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `const bytes = Buffer.from("${bytes.toString("hex")}", "hex");
-          for (let i = 0; i < 10; i++) {
-            await new Promise(done => {
-              const socket = require("node:${secure ? "tls" : "net"}").connect(
-                { port: ${server.address().port}, host: "127.0.0.1", ALPNProtocols: ["h2"], rejectUnauthorized: false },
-                () => {
-                  socket.write(bytes);
-                  socket.destroy();
-                },
-              );
-              socket.on("error", () => {}).on("close", done);
-            });
-          }`,
-        ],
-        env: bunEnv,
-        stdout: "inherit",
-        stderr: "inherit",
-      });
-      const exitCode = await clients.exited;
-      // The clients can be done before this loop has accepted them, and close() drops the rest.
+      const clientsAreGone = new Int32Array(new SharedArrayBuffer(4));
+      const clients = new Worker(
+        `const { parentPort, workerData } = require("node:worker_threads");
+        const { port, secure, bytes, clientsAreGone } = workerData;
+        const connect = () => new Promise(resolve => {
+          const socket = require(secure ? "node:tls" : "node:net").connect({
+            port,
+            host: "127.0.0.1",
+            ALPNProtocols: ["h2"],
+            rejectUnauthorized: false,
+          });
+          // The server's settings. Their send is the last one that the kernel takes.
+          socket.once("data", () => resolve(socket)).on("error", () => {});
+        });
+        const leave = socket => new Promise(resolve => {
+          socket.on("close", resolve).write(bytes, () => socket.resetAndDestroy());
+        });
+        Promise.all(Array.from({ length: 10 }, connect)).then(sockets => {
+          parentPort.once("message", async () => {
+            await Promise.all(sockets.map(leave));
+            Atomics.store(clientsAreGone, 0, 1);
+            Atomics.notify(clientsAreGone, 0);
+          });
+          parentPort.postMessage("connected");
+        });`,
+        { eval: true, workerData: { port: server.address().port, secure, bytes, clientsAreGone } },
+      );
+      const exited = once(clients, "exit");
+      await once(clients, "message");
+      clients.postMessage("write and leave");
+      // This loop reads nothing meanwhile, so each client is gone by the time it answers.
+      Atomics.wait(clientsAreGone, 0, 0);
       await allStreams.promise;
+      const [exitCode] = await exited;
       // Calls back only once every session is closed.
       await new Promise(resolve => server.close(resolve));
       expect({ exitCode, streams, streamErrors }).toEqual({ exitCode: 0, streams: 10, streamErrors: [] });

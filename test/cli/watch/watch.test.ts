@@ -368,6 +368,64 @@ it.skipIf(!isWindows)("--watch reports an error when its executable was renamed"
   }
 });
 
+// The listeners of the kill signal are the last JavaScript that runs before the process starts again. A signal that
+// arrives while they run used to be queued for a loop that did not turn again.
+it.skipIf(isWindows)("a SIGTERM that arrives while --watch restarts the process ends it", async () => {
+  using dir = tempDir("watch-sigterm-during-restart", {
+    "script.js": `
+      const { spawnSync } = require("node:child_process");
+      process.on("SIGTERM", () => {
+        spawnSync("kill", ["-TERM", String(process.pid)]);
+      });
+      console.log("ready");
+      setInterval(() => {}, 1000);
+    `,
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "--watch", "--no-clear-screen", "script.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const { waitFor, release, output } = stdoutWaiter(proc);
+  await waitFor("ready\n");
+  const path = join(String(dir), "script.js");
+  await Bun.write(path, readFileSync(path, "utf8") + "\n");
+  await proc.exited;
+  release();
+  expect({ output: output(), signalCode: proc.signalCode }).toEqual({ output: "ready\n", signalCode: "SIGTERM" });
+});
+
+// Node restarts the script whatever its listener does.
+it.skipIf(isWindows)("a SIGTERM that the listener sends to its own process does not stop the restart", async () => {
+  using dir = tempDir("watch-sigterm-to-self-during-restart", {
+    "script.js": `
+      process.on("SIGTERM", () => {
+        process.kill(process.pid, "SIGTERM");
+      });
+      console.log("ready");
+      setInterval(() => {}, 1000);
+    `,
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "--watch", "--no-clear-screen", "script.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const { waitFor, release } = stdoutWaiter(proc);
+  await waitFor("ready\n");
+  const path = join(String(dir), "script.js");
+  await Bun.write(path, readFileSync(path, "utf8") + "\n");
+  await waitFor("ready\nready\n");
+  release();
+  proc.kill("SIGKILL");
+});
+
 // A script that registers a SIGTERM handler and then spins in synchronous
 // code must still restart on file change: the watcher thread posts the reload
 // to the JS thread first (so listeners can run), but forces the reload itself

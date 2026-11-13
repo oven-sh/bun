@@ -98,6 +98,10 @@ unsigned char us_connecting_socket_kind(struct us_connecting_socket_t *c) {
 }
 
 __attribute__((always_inline)) void us_socket_timeout(struct us_socket_t *s, unsigned int seconds) {
+    /* A deferred close has a deadline of its own, which its owner does not put off. */
+    if (s->ssl && s->ssl_close_after_spill) {
+        return;
+    }
     if (seconds) {
         s->timeout = ((unsigned int)s->group->timestamp + ((seconds + 3) >> 2)) % 240;
     } else {

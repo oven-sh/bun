@@ -1,4 +1,5 @@
 use core::ffi::c_void;
+use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
 use bun_ptr::{BackRef, RawSlice, RefPtr};
@@ -1064,7 +1065,8 @@ pub(crate) enum HTTPServerWritableState {
 pub struct HTTPServerWritable<const SSL: bool> {
     pub(crate) res: Option<uws::AnyResponse>,
     pub(crate) buffer: Vec<u8>,
-    pub(crate) pooled_buffer: Option<NonNull<ByteListPoolNode>>,
+    /// `destroy` hands it back.
+    pub(crate) pooled_buffer: ManuallyDrop<Option<Box<ByteListPoolNode>>>,
     pub offset: BlobSizeType,
 
     pub(crate) wrote: BlobSizeType,
@@ -1114,7 +1116,7 @@ impl<const SSL: bool> Default for HTTPServerWritable<SSL> {
         Self {
             res: None,
             buffer: Vec::<u8>::default(),
-            pooled_buffer: None,
+            pooled_buffer: ManuallyDrop::new(None),
             offset: 0,
             wrote: 0,
             state: HTTPServerWritableState::Writing,
@@ -1515,15 +1517,9 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         if self.buffer.capacity() == 0 {
             debug_assert!(self.pooled_buffer.is_none());
             if FeatureFlags::HTTP_BUFFER_POOLING {
-                if let Some(pooled_node) = ByteListPool::get_if_exists() {
-                    let pooled_node = NonNull::new(pooled_node)
-                        .expect("ByteListPool::get_if_exists returns a live heap node when Some");
-                    self.pooled_buffer = Some(pooled_node);
-                    // SAFETY: pooled_node is a valid pool checkout; `data` was
-                    // written by `ByteListPool::push` (or zero-initialized).
-                    // Move the Vec<u8> out by bitwise read and reset the slot.
-                    self.buffer =
-                        unsafe { core::mem::take((*pooled_node.as_ptr()).data.assume_init_mut()) };
+                if let Some(mut pooled_node) = ByteListPool::get_if_exists() {
+                    self.buffer = core::mem::take(&mut pooled_node.data);
+                    self.pooled_buffer = ManuallyDrop::new(Some(pooled_node));
                 }
             }
         }
@@ -1925,19 +1921,15 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
 
     /// Hand the pool checkout back with the (emptied) buffer; `false` when nothing was checked out.
     fn release_pooled_buffer(&mut self) -> bool {
-        let Some(pooled) = self.pooled_buffer.take() else {
+        let Some(mut pooled) = self.pooled_buffer.take() else {
             return false;
         };
         self.buffer.clear();
         if self.buffer.capacity() > 64 * 1024 {
             self.buffer.clear_and_free();
         }
-        // SAFETY: `pooled` is this sink's exclusive `ByteListPool` checkout; `data` is rewritten before the release.
-        unsafe {
-            (*pooled.as_ptr()).data =
-                core::mem::MaybeUninit::new(core::mem::take(&mut self.buffer));
-            ByteListPool::release(pooled.as_ptr());
-        }
+        core::mem::swap(&mut pooled.data, &mut self.buffer);
+        ByteListPool::release(pooled);
         true
     }
 

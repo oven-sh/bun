@@ -3628,9 +3628,13 @@ impl<'a> Parser<'a> {
 
     /// The source text of the numeric token `next*` returned last, if an f32 may not hold it
     /// (`1700000000.25`, `123456.78`) or it touches another number: `5.0.1` is `5.0` and `.1`,
-    /// whose values print as `5.1`.
+    /// whose values print as `5.1`. Likewise the `.0` of `beta.0`, after the last item of `list`.
     #[inline]
-    pub(crate) fn raw_number_text(&self) -> Option<&'static [u8]> {
+    pub(crate) fn raw_number_text(
+        &self,
+        // Not a slice: a caller would load its pointer and length for every number.
+        list: Option<&Vec<css_properties::custom::TokenOrValue>>,
+    ) -> Option<&'static [u8]> {
         let cached = self.input.cached_token.as_ref()?;
         if !matches!(
             cached.token,
@@ -3641,8 +3645,15 @@ impl<'a> Parser<'a> {
         let text = self.slice_from(cached.start_position);
         let before = &self.input.tokenizer.src[..cached.start_position];
         let touches_a_number = self.next_byte() == Some(b'.')
-            || text.starts_with(b"+")
-            || (text.starts_with(b".") && before.last().is_some_and(u8::is_ascii_digit));
+            || match text.first() {
+                Some(b'+') => true,
+                Some(b'.') if before.last().is_some_and(u8::is_ascii_digit) => true,
+                // `.0` and `-0` print as `0`, `.5%` as `0.5%`: that digit joins the item before it.
+                Some(b'-' | b'.') => list
+                    .and_then(|items| items.last())
+                    .is_some_and(|item| item.joins_a_number()),
+                _ => false,
+            };
         let digits = text.strip_prefix(b"-").unwrap_or(text);
         let digits = &digits[digits.iter().take_while(|b| **b == b'0').count()..];
         let integer_digits = digits.iter().take_while(|b| b.is_ascii_digit()).count();

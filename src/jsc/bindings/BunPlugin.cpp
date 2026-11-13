@@ -7425,6 +7425,10 @@ static JSC::EncodedJSValue requireMockModule(JSC::JSGlobalObject* lexicalGlobalO
     if (!fromOriginal) {
         if (mock)
             RELEASE_AND_RETURN(scope, JSValue::encode(requireModuleKey(globalObject, from, key)));
+        // No mock answers for the path that require() resolves the name to. One that answers for the path of an import alone is found as well: a mock of vi.mock(), or of that file by its path.
+        // It holds nothing of the file that require() loads, so jest.requireActual() and jest.createMockFromModule() load that file as it is.
+        if (specifier.requireKeyString && moduleMockAnsweringFor(globalObject, specifier.key))
+            RELEASE_AND_RETURN(scope, JSValue::encode(requireModuleKey(globalObject, from, specifier.key)));
         JSC::JSString* manualMock = findManualModuleMock(globalObject, from, specifier.written, key, true);
         RETURN_IF_EXCEPTION(scope, {});
         if (manualMock) {

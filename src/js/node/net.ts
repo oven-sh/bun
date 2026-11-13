@@ -2056,19 +2056,31 @@ function Socket(options?): void {
   // Shut down the socket when we're finished with it.
   this.on("end", onSocketEnd);
 
-  if (fd !== undefined) {
+  if (fd !== undefined && (opts.readable === true || opts.writable === true)) {
     const optionsReadable = opts.readable;
-    if (optionsReadable === true) {
+    const stats = fstatAdoptedFd(fd);
+    if (
+      optionsReadable === true &&
+      (stats.isSocket() || (process.platform !== "win32" && (stats.isFIFO() || stats.isCharacterDevice())))
+    ) {
       // An fd to read from is adopted by the native handle, the way connect({ fd })
       // attaches one (node: createHandle(fd) + read(0)): a pipe, character device
       // or socket reads and writes asynchronously through it. Bare { fd } stays
       // inert for the connect({ fd }) path below (child_process extra stdio).
-      const stats = fstatAdoptedFd(fd);
-      if (stats.isFIFO() || stats.isCharacterDevice() || stats.isSocket()) {
-        Socket.prototype.connect.$call(this, { fd, pauseOnConnect: opts.pauseOnCreate === true });
-        this[kAdoptedFd] = fd;
-      }
-    } else if (opts.writable === true) {
+      // The native pipe transport is POSIX-only; on Windows a FIFO/character
+      // device fd keeps the sync-write arm below.
+      Socket.prototype.connect.$call(this, {
+        fd,
+        pauseOnConnect: opts.pauseOnCreate === true || opts.pauseOnConnect === true,
+      });
+      this[kAdoptedFd] = fd;
+    } else if (
+      opts.writable === true &&
+      // isSocket() covers stdio handed to a child as a socketpair (how spawn
+      // implements pipes on unix); writable-only adoption with sync write(2)
+      // is correct there too.
+      (stats.isFIFO() || stats.isCharacterDevice() || (stats.isSocket() && optionsReadable !== true))
+    ) {
       // Adopt pipe/character-device fds with synchronous writes. Matches
       // node's effective semantics for stdio-style sockets: writes to a pipe
       // complete inline, so data survives an immediate process.exit().
@@ -2077,19 +2089,13 @@ function Socket(options?): void {
       // { fd } is the connect({ fd }) path (child_process extra stdio), which
       // attaches a native duplex handle in Socket.prototype.connect - adopting
       // here would end its readable side and stomp its write path.
-      const stats = fstatAdoptedFd(fd);
-      // isSocket() covers stdio handed to a child as a socketpair (how spawn
-      // implements pipes on unix); writable-only adoption with sync write(2)
-      // is correct there too.
-      if (stats.isFIFO() || stats.isCharacterDevice() || stats.isSocket()) {
-        this[kSyncWriteFd] = fd;
-        this._write = fdSyncWrite;
-        this._writev = fdSyncWritev;
-        // No native reads on this path: an unspecified `readable` gets EOF here (`false` already ended it in the Duplex).
-        if (optionsReadable !== false) {
-          this.push(null);
-          this.read(0);
-        }
+      this[kSyncWriteFd] = fd;
+      this._write = fdSyncWrite;
+      this._writev = fdSyncWritev;
+      // No native reads on this path: an unspecified `readable` gets EOF here (`false` already ended it in the Duplex).
+      if (optionsReadable !== true && optionsReadable !== false) {
+        this.push(null);
+        this.read(0);
       }
     }
   }
@@ -2351,6 +2357,8 @@ Socket.prototype.connect = function connect(...args) {
         allowHalfOpen: true,
         pauseOnConnect,
       }).catch(error => {
+        // Nothing adopted the fd; a later connect({ fd }) on this socket tries again.
+        if (this[kAdoptedFd] === fd) this[kAdoptedFd] = undefined;
         if (!this.destroyed) {
           this.emit("error", error);
           this.emit("close", true);

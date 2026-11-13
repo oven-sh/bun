@@ -334,15 +334,9 @@ fn enqueue_download(
         dependency_id,
         &package,
     )? {
-        // reshaped for borrowck — `task: &mut NetworkTask` borrows
-        // `*this` (pool slot); reborrow as raw so `this.network_tarball_batch`
-        // is reachable.
-        let task: *mut NetworkTask = task;
-        // SAFETY: `task` is the unique handle to a freshly-vended pool slot.
-        unsafe { (*task).schedule(&mut this.network_tarball_batch) };
-        if this.network_tarball_batch.len > 0 {
-            let _ = run_tasks::schedule_tasks(this);
-        }
+        let request = task.take_request();
+        this.network_tarball_batch.push(request);
+        let _ = run_tasks::schedule_tasks(this);
     }
     Ok(())
 }

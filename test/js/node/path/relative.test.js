@@ -102,3 +102,15 @@ describe("path.relative", () => {
     assert.ok(result.includes("b"));
   });
 });
+
+describe("path.win32.relative with non-ASCII characters", () => {
+  // Node compares lengths in UTF-16 code units, not UTF-8 bytes.
+  test("a name of two bytes but one code unit is not a device root", () => {
+    assert.strictEqual(path.win32.relative("/é", "/éa"), "..éa");
+    assert.strictEqual(path.win32.relative("/éa", "/é"), "..é");
+    assert.strictEqual(path.win32.relative("\\é", "\\éa"), "..éa");
+    // Two code units in four bytes: Node treats this as a device root.
+    assert.strictEqual(path.win32.relative("/\u{1F600}", "/\u{1F600}a"), "a");
+    assert.strictEqual(path.win32.relative("/\u{1F600}a", "/\u{1F600}"), "");
+  });
+});

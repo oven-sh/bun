@@ -80,3 +80,11 @@ describe("path.toNamespacedPath", () => {
     assert.strictEqual(path.posix.toNamespacedPath(emptyObj), emptyObj);
   });
 });
+
+describe("path.win32.toNamespacedPath with non-ASCII characters", () => {
+  test("lengths are in UTF-16 code units, not UTF-8 bytes", () => {
+    // The resolved path is `\é`: two code units, so it is returned as is.
+    assert.strictEqual(path.win32.toNamespacedPath("/é"), "/é");
+    assert.strictEqual(path.win32.toNamespacedPath("\\é"), "\\é");
+  });
+});

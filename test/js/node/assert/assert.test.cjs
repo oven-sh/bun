@@ -258,11 +258,17 @@ describe("assert.partialDeepStrictEqual", () => {
       assert.partialDeepStrictEqual({ a: counted(beside, 1), loop: ring(1) }, { a: { v: 1 }, loop: ring(1) });
       expect(beside.count).toBe(2);
 
-      // Each run goes around a ring of six one time.
+      // A list of six whose last item holds itself: each run reads each item one time.
       const inside = { count: 0 };
-      const nodes = Array.from({ length: 6 }, () => counted(inside, 1));
-      nodes.forEach((node, i) => (node.next = nodes[(i + 1) % 6]));
-      assert.partialDeepStrictEqual(nodes[0], ring(6));
+      const listOf = item => {
+        const items = Array.from({ length: 6 }, item);
+        items.forEach((each, i) => (each.next = items[Math.min(i + 1, 5)]));
+        return items[0];
+      };
+      assert.partialDeepStrictEqual(
+        listOf(() => counted(inside, 1)),
+        listOf(() => ({ v: 1 })),
+      );
       expect(inside.count).toBe(12);
     });
 
@@ -334,7 +340,11 @@ describe("assert.partialDeepStrictEqual", () => {
           return fresh();
         },
       });
-      expect(answerOf(fresh(), ring(1))).toBe("fail");
+      // The run gives up above the place where a getter has no stack left, wherever the caller is.
+      const from = (depth, compare) => (depth ? from(depth - 1, compare) : compare());
+      for (let depth = 0; depth < 96; depth += 12) {
+        expect(from(depth, () => answerOf(fresh(), ring(1)))).toBe("fail");
+      }
       // The same pair comes again after 10,100 levels.
       expect(answerOf(ring(100), ring(101))).toBe("fail");
       // The second run compares many pairs before the one that ends it, and is inside of few at a time.
@@ -373,7 +383,7 @@ describe("assert.partialDeepStrictEqual", () => {
     });
 
     test("the depth of the caller does not change an answer", () => {
-      // With little stack left, the first run has no room. The memos give other answers for these four.
+      // With little stack left, the first run has no room. The memos give other answers for these five.
       const inActual = { p: { q: { p: {} } } };
       const loop = { v: 2 };
       loop.next = loop;
@@ -390,14 +400,23 @@ describe("assert.partialDeepStrictEqual", () => {
         last = next;
         expectedList = [62 - i, expectedList];
       }
+      // A link up in the part that is compared first, and 24 levels in the part that is compared after it.
+      const levels = () => {
+        let deepest = { end: 1 };
+        for (let i = 0; i < 24; i++) deepest = { in: deepest };
+        return deepest;
+      };
+      const linkUp = { first: {}, second: levels() };
+      linkUp.first.up = linkUp;
       const pairs = [
         [tree(), partOfTree("Program"), "pass"],
         [{ p: { q: inActual } }, inActual, "pass"],
         [{ v: 1, next: loop }, expectedRing, "fail"],
         [list, expectedList, "pass"],
+        [linkUp, { first: { up: { second: {} } }, second: levels() }, "pass"],
       ];
       const answers = pairs.map(() => new Set());
-      // The stack ends at the deepest call. On the way back, every 32nd caller compares the four. A caller has
+      // The stack ends at the deepest call. On the way back, every 32nd caller compares the five. A caller has
       // stack enough when 192 of them in a row got no RangeError.
       let callers = 0;
       let left = 192;

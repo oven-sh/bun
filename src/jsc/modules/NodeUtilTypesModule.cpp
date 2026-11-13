@@ -889,26 +889,41 @@ static bool setSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
     return true;
 }
 
-// node's isEnumerableOrIdentical for kPartial: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/comparisons.js#L231-L235
-static bool isEnumerableOrIdentical(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSC::JSObject* actualObject, JSC::JSObject* expectedObject, const JSC::Identifier& key)
+// node's isEnumerableOrIdentical for kPartial, up to its comparison of the two values: false when it compares none.
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/comparisons.js#L231-L235
+// Not inline: what it reads with stays out of the frame of errorFieldsEqual, which is under every Error that a field
+// holds.
+static NEVER_INLINE bool errorFieldToCompare(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* actualObject, JSC::JSObject* expectedObject, const JSC::Identifier& key, JSValue& actualValue, JSValue& expectedValue)
 {
     JSC::PropertySlot expectedSlot(expectedObject, JSC::PropertySlot::InternalMethodType::Get);
     bool expectedHasKey = expectedObject->getNonIndexPropertySlot(globalObject, key, expectedSlot);
     RETURN_IF_EXCEPTION(scope, false);
     if (!expectedHasKey)
-        return true;
+        return false;
     // objectSubset compares a key that `expected` owns as an enumerable property.
     if (expectedSlot.slotBase() == expectedObject && !(expectedSlot.attributes() & JSC::PropertyAttribute::DontEnum))
-        return true;
-    JSValue expectedValue = expectedSlot.getValue(globalObject, key);
+        return false;
+    expectedValue = expectedSlot.getValue(globalObject, key);
     RETURN_IF_EXCEPTION(scope, false);
     if (expectedValue.isUndefined())
-        return true;
+        return false;
     if (key == globalObject->vm().propertyNames->message && expectedValue.isString() && !JSC::asString(expectedValue)->length())
-        return true;
-    JSValue actualValue = actualObject->get(globalObject, key);
+        return false;
+    actualValue = actualObject->get(globalObject, key);
     RETURN_IF_EXCEPTION(scope, false);
-    return compareBranch(globalObject, gcBuffer, cycles, scope, actualValue, expectedValue);
+    return true;
+}
+
+// An own `cause` of `expected`, even an undefined one, must be an own property of `actual` as well. Not inline: its
+// locals stay out of the frame of errorFieldsEqual, which is under every Error that a field holds.
+static NEVER_INLINE bool ownCauseIsOnBoth(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* actualObject, JSC::JSObject* expectedObject)
+{
+    auto& vm = globalObject->vm();
+    bool expectedHasCause = expectedObject->hasOwnProperty(globalObject, vm.propertyNames->cause);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!expectedHasCause)
+        return true;
+    RELEASE_AND_RETURN(scope, actualObject->hasOwnProperty(globalObject, vm.propertyNames->cause));
 }
 
 // node's Error arm for kPartial: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/comparisons.js#L391-L404
@@ -925,20 +940,21 @@ static bool errorFieldsEqual(JSC::JSGlobalObject* globalObject, JSC::MarkedArgum
     const bool memosOfItsOwn = cycles.memos && !cycles.memos->a;
     const JSC::Identifier* const keys[] = { &vm.propertyNames->message, &vm.propertyNames->name, &vm.propertyNames->cause, &vm.propertyNames->errors };
     for (const auto* key : keys) {
-        bool equal = isEnumerableOrIdentical(globalObject, gcBuffer, cycles, scope, actualObject, expectedObject, *key);
+        JSValue actualValue;
+        JSValue expectedValue;
+        bool toCompare = errorFieldToCompare(globalObject, scope, actualObject, expectedObject, *key, actualValue, expectedValue);
         RETURN_IF_EXCEPTION(scope, false);
-        if (!equal)
-            return false;
+        if (toCompare) {
+            bool equal = compareBranch(globalObject, gcBuffer, cycles, scope, actualValue, expectedValue);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!equal)
+                return false;
+        }
         if (memosOfItsOwn)
             cycles.memos.emplace(gcBuffer);
     }
 
-    // An own `cause` of `expected`, even an undefined one, must be an own property of `actual` as well.
-    bool expectedHasCause = expectedObject->hasOwnProperty(globalObject, vm.propertyNames->cause);
-    RETURN_IF_EXCEPTION(scope, false);
-    if (!expectedHasCause)
-        return true;
-    RELEASE_AND_RETURN(scope, actualObject->hasOwnProperty(globalObject, vm.propertyNames->cause));
+    RELEASE_AND_RETURN(scope, ownCauseIsOnBoth(globalObject, scope, actualObject, expectedObject));
 }
 
 static JSC::JSWrapperObject* asBoxedPrimitive(JSValue value)

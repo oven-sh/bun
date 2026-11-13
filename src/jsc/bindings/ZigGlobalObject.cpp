@@ -2621,6 +2621,8 @@ void GlobalObject::finishCreation(VM& vm)
 
     if (Bun::codeGenerationFromStrings() != Bun::CodeGenerationFromStrings::Allowed) [[unlikely]]
         setEvalEnabled(false, Bun::codeGenerationFromStringsDisallowedMessage());
+    if (Bun::isCodeGenerationDisallowedByFlags()) [[unlikely]]
+        JSC::AOT::disallowEvaluation(this);
 
     m_bindgenAdditions.initialize();
     m_markdownTagStrings.initialize();

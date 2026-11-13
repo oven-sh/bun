@@ -1,5 +1,5 @@
 // RUN: link
-// CHECK: layout {{*}}fields=[{key="__esModule" declared={type=anything} form=[IsReadOnly, IsNotEnumerable, IsNotConfigurable]}, {key="A" declared={type=anything}}, {key="B" declared={type=anything}}, {key="f" declared={type=anything}}, {key="getter" declared={type=anything} form=[IsNotConfigurable, IsAccessor]}, {key="viaModule" declared={type=anything}}, {key="viaThis" declared={type=anything}}, {key="late" declared={type=anything}}]
+// CHECK: layout {{*}}fields=[{key="__esModule" declared={type=anything} form=[IsReadOnly, IsNotEnumerable, IsNotConfigurable]}, {key="A" declared={type=anything}}, {key="B" declared={type=anything}}, {key="f" declared={type=anything}}, {key="getter" declared={type=anything}}, {key="viaModule" declared={type=anything}}, {key="viaThis" declared={type=anything}}, {key="late" declared={type=anything}}]
 
 // RUN(ABSENT): link
 // ABSENT-NOT: layout {{*}}key="ofParameter"

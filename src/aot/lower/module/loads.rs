@@ -322,6 +322,10 @@ pub(crate) fn lower_import_call(
         unreachable!("lower_import_call takes an ImportCall");
     };
     let position = hir[call].pos;
+    if hir.replaces_evaluation(position) {
+        lowering.set_position(hir.replaced_callee_position(position));
+        lowering.builder.check_evaluation(false);
+    }
     let modules = lowering.file.inputs.modules;
     match modules.site_answer(lowering.file.file, ImportSiteKind::ImportCall(call)) {
         SiteAnswer::Module(module) => {

@@ -23,7 +23,9 @@ pub mod executable_request;
 pub use compiled_program::{
     CompiledEntryPointInput, CompiledPackageNameInput, CompiledPathAliasInput, CompiledProgramInput,
 };
-pub use compiled_program::{find_written_file, has_written_files, normalize_source_path};
+pub use compiled_program::{
+    find_written_code, find_written_file, has_written_files, normalize_source_path,
+};
 #[cfg(not(windows))]
 pub use compiled_program::{
     forget_descriptor, has_descriptors, has_waiting_descriptors, read_descriptor,

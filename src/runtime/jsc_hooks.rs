@@ -4185,7 +4185,22 @@ unsafe fn get_loader_and_virtual_source<'a>(
         virtual_source = virtual_source_to_use.as_ref();
         path = Fs::Path::init(specifier);
     } else if virtual_source.is_none()
-        && let Some(written) = bun_standalone_graph::find_written_file(path.text)
+        && let Some(written) = match attribute_loader
+            .or_else(|| suffix.map(options::ImportSuffix::loader))
+            .or(loader)
+        {
+            Some(
+                Loader::Json
+                | Loader::Jsonc
+                | Loader::Json5
+                | Loader::Toml
+                | Loader::Yaml
+                | Loader::Xml
+                | Loader::Md
+                | Loader::Text,
+            ) => bun_standalone_graph::find_written_file(path.text),
+            _ => bun_standalone_graph::find_written_code(path.text),
+        }
         && let Ok(contents) = bun_sys::File::read_from(bun_sys::Fd::cwd(), &*written)
     {
         // What the program has written is on the disk.
@@ -5148,11 +5163,11 @@ pub(crate) fn resolve_embedded_file_to_buf(
         return None;
     }
 
-    if let Some(path) = bun_standalone_graph::find_written_file(input_path) {
+    if let Some(path) = bun_standalone_graph::find_written_code(input_path) {
         out_buf.get_mut(..path.len())?.copy_from_slice(&path);
         return Some(path.len());
     }
-    let file = bun_standalone_graph::Graph::get_ref()?.find_data(input_path)?;
+    let file = bun_standalone_graph::Graph::get_ref()?.find_library(input_path)?;
     let file_contents: &[u8] = file.contents.as_bytes();
 
     // `.bun-{uid}-{wyhash(contents)}.{ext}`: the hash dedupes; the uid keeps
@@ -5264,7 +5279,7 @@ fn write_next_to_libraries(addon_path: &[u8]) -> Option<Vec<u8>> {
     use bun_sys::O;
 
     let graph = bun_standalone_graph::Graph::get_ref()?;
-    let addon = graph.find_data(addon_path)?;
+    let addon = graph.find_library(addon_path)?;
     let mut files: Vec<(&[u8], &[u8])> = graph.preserved_shared_libraries().collect();
     if files.is_empty() {
         return None;

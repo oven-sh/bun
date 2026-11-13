@@ -1,5 +1,4 @@
 // Scanners whose closures step a captured position: the position goes round the loops as an integer.
-// STATISTIC: CapturedCountersCarriedAsIntegers >= 6
 const TEXT = "abc def ghi bcd"; const T1 = "ab cde fgh  i" + process.argv.length; const T2 = "x\u00e9\u20ac b" + process.argv.length; const list = [4, 8, 15, 16, 23, 42, 1, 2, 3, 0]; const bytes = new Uint8Array([1, 2, 3, 250, 251, 7, 8, 9, 10, 11, 12, 13]); const doubles = [1.5, 2.5, 3.25, -4, 5]; const words = ["a", "bc", "d", "", "e"];
 function code(s: string | undefined): number { return s === undefined ? -7 : s.length ? s.charCodeAt(0) : -9; } function num(n: number | undefined): number { return n === undefined ? -11 : n; }
 function mix(h: number, v: number | undefined): number { const t = v === undefined ? 3 : v; return (Math.imul(h, 33) + (t === t ? (Math.round(t * 2) % 1000003) + (Object.is(t, -0) ? 1 : 0) : 17) | 0) & 0xfffffff; }

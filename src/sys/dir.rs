@@ -415,8 +415,7 @@ impl Dir {
                     ..Default::default()
                 },
             )
-            .map(Dir::from_fd)
-            .map_err(Into::into);
+            .map(Dir::from_fd);
         }
         #[cfg(not(windows))]
         {

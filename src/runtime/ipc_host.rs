@@ -515,9 +515,9 @@ pub(crate) fn get_ipc_instance(
         // `uv_handle_t.data` for the pipe's lifetime; `send_queue` is the
         // allocation's root raw pointer.
         // SAFETY: `send_queue` is the live SendQueue owned by `data`.
-        if let Err(_) = unsafe { SendQueue::windows_configure_client(send_queue, fd) } {
+        if unsafe { SendQueue::windows_configure_client(send_queue, fd) }.is_err() {
             data.detach();
-            bun_core::output::warn(&format_args!("Unable to start IPC pipe '{:?}'", fd));
+            bun_core::warn!("Unable to start IPC pipe '{:?}'", fd);
             return None;
         }
 

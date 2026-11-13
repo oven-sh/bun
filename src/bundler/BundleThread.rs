@@ -218,7 +218,8 @@ impl<C: CompletionStruct> BundleThread<C> {
         let mut timer: bun_sys::windows::libuv::Timer = bun_core::ffi::zeroed();
         #[cfg(windows)]
         {
-            timer.init(this.waker.uv_loop());
+            // SAFETY: the waker's live loop; `timer` stays in this frame, which never returns.
+            unsafe { timer.init(this.waker.uv_loop()) };
             timer.start(u64::MAX, u64::MAX, Some(timer_callback));
         }
 

@@ -400,7 +400,7 @@ mod windows {
         vm.rare_data().memory_pressure_watcher_slot()
     }
 
-    fn thread_main(vm: bun_jsc::VmHandle, notify: usize, shutdown: usize) {
+    fn thread_main(vm: &bun_jsc::VmHandle, notify: usize, shutdown: usize) {
         bun_core::output::Source::configure_named_thread(bun_core::zstr!("MemoryPressure"));
         let handles: [HANDLE; 2] = [shutdown as HANDLE, notify as HANDLE];
         loop {
@@ -450,7 +450,7 @@ mod windows {
         let Ok(thread) = std::thread::Builder::new()
             .name("MemoryPressure".into())
             .stack_size(64 * 1024)
-            .spawn(move || thread_main(vm, n, s))
+            .spawn(move || thread_main(&vm, n, s))
         else {
             return;
         };

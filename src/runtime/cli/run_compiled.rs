@@ -922,7 +922,7 @@ fn list_inherited_extra_descriptors() -> Box<[bool]> {
     let mut startup_info: bun_sys::windows::STARTUPINFOW =
         unsafe { bun_core::ffi::zeroed_unchecked() };
     // SAFETY: the call fills the structure it is given.
-    unsafe { GetStartupInfoW(&mut startup_info) };
+    unsafe { GetStartupInfoW(&raw mut startup_info) };
     if startup_info.lpReserved2.is_null() {
         return Box::default();
     }

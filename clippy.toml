@@ -15,7 +15,7 @@ disallowed-methods = [
   { path = "std::fs::read_dir", reason = "use bun_sys::dir" },
   { path = "std::fs::read_link", reason = "use bun_sys::file" },
   { path = "std::fs::symlink_metadata", reason = "use bun_sys::file" },
-  { path = "std::os::unix::fs::symlink", reason = "use bun_sys::file" },
+  { path = "std::os::unix::fs::symlink", reason = "use bun_sys::file", allow-invalid = true },
   { path = "std::env::var", reason = "use bun_core::env_var" },
   { path = "std::env::var_os", reason = "use bun_core::env_var" },
   { path = "std::thread::spawn", reason = "use std::thread::Builder with a stack size, and name the thread (Output::Source::configure_named_thread), or use bun_threading::ThreadPool" },

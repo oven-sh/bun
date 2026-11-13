@@ -84,6 +84,13 @@ pub struct WriteStrategy {
     pub pwrite: bool,
 }
 
+#[cfg_attr(
+    not(unix),
+    expect(
+        clippy::derivable_impls,
+        reason = "`cfg!(unix)` is `false` on this target only"
+    )
+)]
 impl Default for WriteStrategy {
     fn default() -> Self {
         Self { pwrite: cfg!(unix) }

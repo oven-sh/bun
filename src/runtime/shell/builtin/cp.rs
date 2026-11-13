@@ -30,7 +30,7 @@ pub(crate) enum State {
     Exec(Box<ExecState>),
     /// Windows-only post-processing of EBUSY collisions.
     #[cfg(windows)]
-    Ebusy(EbusyState),
+    Ebusy(Box<EbusyState>),
     WaitingWriteErr,
     Done,
 }
@@ -159,7 +159,7 @@ impl Cp {
                 };
                 let mut ebusy = core::mem::take(&mut exec.ebusy);
                 ebusy.main_exit_code = exit_code;
-                Self::state_mut(interp, cmd).state = State::Ebusy(ebusy);
+                Self::state_mut(interp, cmd).state = State::Ebusy(Box::new(ebusy));
                 Self::ignore_ebusy_error_if_possible(interp, cmd)
             }
             Action::Schedule { start, target } => {
@@ -221,10 +221,10 @@ impl Cp {
                     let ignorable = t
                         .tgt_absolute
                         .as_ref()
-                        .map_or(false, |p| eb.absolute_targets.contains(p))
+                        .is_some_and(|p| eb.absolute_targets.contains(p))
                         || t.src_absolute
                             .as_ref()
-                            .map_or(false, |p| eb.absolute_srcs.contains(p));
+                            .is_some_and(|p| eb.absolute_srcs.contains(p));
                     (t, ignorable)
                 })
             };
@@ -263,9 +263,9 @@ impl Cp {
                     let is_ebusy = matches!(err, ShellErr::Sys(sys)
                         if (sys.get_errno() == bun_sys::E::EBUSY
                                 && task.tgt_absolute.as_deref()
-                                    .map_or(false, |p| sys.path.eql_utf8(p)))
+                                    .is_some_and(|p| sys.path.eql_utf8(p)))
                             || task.src_absolute.as_deref()
-                                    .map_or(false, |p| sys.path.eql_utf8(p)));
+                                    .is_some_and(|p| sys.path.eql_utf8(p)));
                     if is_ebusy {
                         exec.ebusy.tasks.push_back(task);
                         return Self::next(interp, cmd).run(interp);

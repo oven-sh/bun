@@ -1353,7 +1353,8 @@ impl BlobExt for Blob {
                             .expect("Blob.global_this set at construction")
                             .bun_vm()
                             .as_mut()
-                            .event_loop() as *mut (),
+                            .event_loop()
+                            .cast::<()>(),
                     ),
                 );
                 sink.writer
@@ -1561,7 +1562,8 @@ impl BlobExt for Blob {
                         .expect("Blob.global_this set at construction")
                         .bun_vm()
                         .as_mut()
-                        .event_loop() as *mut (),
+                        .event_loop()
+                        .cast::<()>(),
                 ),
             );
             // `to_js` gives init's ref to the wrapper; an early return drops it.
@@ -5571,7 +5573,7 @@ fn resolve_file_stat(store: &RefPtr<Store>) {
             match bun_sys::stat(path.slice_z(&mut buffer)) {
                 bun_sys::Result::Ok(stat) => {
                     file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
-                        ((stat.st_size.max(0)) as u64) as SizeType
+                        bun_sys::stat_size(&stat) as SizeType
                     } else {
                         MAX_SIZE
                     };
@@ -5586,7 +5588,7 @@ fn resolve_file_stat(store: &RefPtr<Store>) {
         PathOrFileDescriptor::Fd(fd) => match bun_sys::fstat(*fd) {
             bun_sys::Result::Ok(stat) => {
                 file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
-                    ((stat.st_size.max(0)) as u64) as SizeType
+                    bun_sys::stat_size(&stat) as SizeType
                 } else {
                     MAX_SIZE
                 };

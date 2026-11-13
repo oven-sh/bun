@@ -194,7 +194,8 @@ pub enum IteratorPathStyle {
 
 pub struct Iterator<'a, const PATH_STYLE: IteratorPathStyle> {
     pub(crate) tree_id: Id,
-    pub(crate) path_buf: PathBuffer,
+    /// Boxed: 96 KiB on Windows, and callers keep the iterator in their frame.
+    pub(crate) path_buf: Box<PathBuffer>,
 
     trees: &'a [Tree],
     hoisted_dependencies: &'a [DependencyID],
@@ -247,7 +248,7 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
             hoisted_dependencies,
             dependencies,
             string_bytes,
-            path_buf: PathBuffer::ZEROED,
+            path_buf: bun_core::boxed_zeroed(),
             depth_stack: depth_buf_uninit(),
         };
         if PATH_STYLE == IteratorPathStyle::NodeModules {

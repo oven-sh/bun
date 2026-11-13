@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 /**
- * `cargo mordant` over the workspace for every target the `mordant` job
- * checks. This file is the one place that names them: the job, `bun run
- * rust:mordant` and `bun run rust:mordant:baseline` all come through here.
+ * `cargo mordant` over the workspace for every target in `rustLintTargets`.
+ * The job, `bun run rust:mordant` and `bun run rust:mordant:baseline` all come
+ * through here.
  *
  * Several targets in one run, because `unused_pub` counts a use only from a
  * unit the run builds: a `pub fn` whose one caller is `#[cfg(windows)]` is
@@ -19,14 +19,11 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { rustLintTargets } from "./build/rust.ts";
 
 const repo = resolve(import.meta.dirname, "..");
 
-// Once any `--target` is given, cargo checks only the targets listed, so the
-// Linux one is named too. One target per OS: a second Windows or macOS
-// target would lint the same `cfg(windows)` / `cfg(target_os = "macos")` code
-// again for the few dozen arch gates.
-const TARGETS = ["x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc", "aarch64-apple-darwin"];
+const TARGETS = [...rustLintTargets];
 
 // Mordant's nightly is older than rust-toolchain.toml's, so `#[allow]`s of
 // lints added since then are unknown to it.

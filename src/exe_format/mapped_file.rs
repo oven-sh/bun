@@ -186,15 +186,15 @@ impl MappedFile {
         let result = unsafe {
             mach_vm_remap(
                 task,
-                &mut address,
+                &raw mut address,
                 size.next_multiple_of(MappedFile::page_size()) as u64,
                 0,
                 VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE,
                 task,
                 self.pointer as u64 + source as u64,
                 COPIES_ON_WRITE,
-                &mut current,
-                &mut maximum,
+                &raw mut current,
+                &raw mut maximum,
                 VM_INHERIT_COPY,
             )
         };

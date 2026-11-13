@@ -391,10 +391,12 @@ impl WindowsNamedPipe {
     }
     #[inline]
     pub(crate) fn encode_and_write(&mut self, data: &[u8]) -> i32 {
+        // SAFETY: `data` is readable for `data.len()` bytes for the duration of the call.
         unsafe { WindowsNamedPipe__encode_and_write(self, data.as_ptr(), data.len()) }
     }
     #[inline]
     pub(crate) fn raw_write(&mut self, data: &[u8]) -> i32 {
+        // SAFETY: `data` is readable for `data.len()` bytes for the duration of the call.
         unsafe { WindowsNamedPipe__raw_write(self, data.as_ptr(), data.len()) }
     }
     #[inline]

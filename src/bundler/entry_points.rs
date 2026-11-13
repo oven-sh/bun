@@ -129,7 +129,7 @@ impl ServerEntryPoint {
 // functions from C++. When that is resolved, we should remove this.
 pub struct MacroEntryPoint {
     /// The label, then the code.
-    code_buffer: [u8; MAX_PATH_BYTES * 2 + 500],
+    code_buffer: Box<[u8; MAX_PATH_BYTES * 2 + 500]>,
     label_len: usize,
     code_len: usize,
 }
@@ -137,7 +137,7 @@ pub struct MacroEntryPoint {
 impl Default for MacroEntryPoint {
     fn default() -> Self {
         Self {
-            code_buffer: [0u8; MAX_PATH_BYTES * 2 + 500],
+            code_buffer: bun_core::boxed_zeroed(),
             label_len: 0,
             code_len: 0,
         }

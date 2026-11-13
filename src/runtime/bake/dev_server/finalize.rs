@@ -138,17 +138,14 @@ fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr
 }
 
 pub(super) fn drain_current_bundle_requests(current_bundle: &mut CurrentBundle) {
-    if !current_bundle.requests.first.is_null() {
+    if current_bundle.requests.first().is_some() {
         // cannot be an assertion because in the case of OOM, the request list was not drained.
         bun_core::debug!(
             "current_bundle.requests.first != null. this leaves pending requests without an error page!",
         );
     }
-    while let Some(node) = current_bundle.requests.pop_first() {
-        // SAFETY: pop_first returns a live `*mut Node<T>`; `data` was
-        // initialized by `defer_request`.
-        let req = unsafe { (*node).data.assume_init_mut() };
-        req.abort_and_deref();
+    while let Some(req) = current_bundle.requests.pop_first() {
+        req.take_handler().fail();
     }
 }
 
@@ -1045,20 +1042,14 @@ fn finalize_bundle_inner(
         let vm = dev.vm;
         let mut inspector_agent = BunFrontendDevServerAgent::of(&vm);
 
-        while let Some(node) = current_bundle!().requests.pop_first() {
-            // SAFETY: `pop_first` hands back ownership of the intrusive node;
-            // `data` was initialized by `defer_request`.
-            let req = unsafe { (*node).data.assume_init_mut() };
-            let req_ptr = std::ptr::from_mut::<DeferredRequest>(req);
-            // SAFETY: the node stays alive until `deref_()` releases it below.
-            scopeguard::defer! { unsafe { (*req_ptr).deref_() } };
-
+        while let Some(req) = current_bundle!().requests.pop_first() {
             let rb = dev.route_bundle_ptr(req.route_bundle_index);
             rb.server_state = route_bundle::State::PossibleBundlingFailures;
 
-            let Some(resp) = req.response_for_error_page() else {
+            let Some((resp, ctx)) = req.take_response_for_error_page() else {
                 continue;
             };
+            scopeguard::defer! { ctx.deref() };
 
             dev.send_serialized_failures(
                 resp,
@@ -1134,15 +1125,10 @@ fn finalize_bundle_inner(
                 }
             } else {
                 'brk: {
-                    let route_bundle_index = 'rbi: {
-                        let first = current_bundle!().requests.first;
-                        if !first.is_null() {
-                            // SAFETY: `first` is a live intrusive node held by current_bundle.requests; `data` was initialized by `defer_request`.
-                            break 'rbi unsafe { (*first).data.assume_init_ref() }
-                                .route_bundle_index;
-                        }
+                    let Some(first) = current_bundle!().requests.first() else {
                         break 'brk None;
                     };
+                    let route_bundle_index = first.route_bundle_index;
 
                     // Note: index `route_bundles` immutably so `dev.relative_path`
                     // / `dev.router` / `dev.graphs` reads below stay disjoint.
@@ -1190,41 +1176,26 @@ fn finalize_bundle_inner(
     scopeguard::defer! { unsafe { (*dev_ptr).graph_safety_lock.lock() } };
 
     // Set the state of all the deferred routes up front
-    {
-        let mut node = current_bundle!().requests.first;
-        while !node.is_null() {
-            // SAFETY: node is an intrusive list node valid while current_bundle.requests holds it;
-            // `data` was initialized by `defer_request`.
-            let n = unsafe { &*node };
-            // SAFETY: `data` was initialized by `defer_request` before being linked.
-            let route_bundle_index = unsafe { n.data.assume_init_ref() }.route_bundle_index;
-            let reaches_failure = !dev.bundling_failures.is_empty()
-                && !trace_route_failures(dev, route_bundle_index)?
-                    .failures
-                    .is_empty();
-            dev.route_bundle_ptr(route_bundle_index).server_state = if reaches_failure {
-                route_bundle::State::PossibleBundlingFailures
-            } else {
-                route_bundle::State::Loaded
-            };
-            node = n.next;
-        }
+    for req in current_bundle!().requests.iter() {
+        let reaches_failure = !dev.graphs.bundling_failures.is_empty()
+            && !trace_route_failures(dev, req.route_bundle_index)?
+                .failures
+                .is_empty();
+        dev.route_bundle_ptr(req.route_bundle_index).server_state = if reaches_failure {
+            route_bundle::State::PossibleBundlingFailures
+        } else {
+            route_bundle::State::Loaded
+        };
     }
 
-    while let Some(node) = current_bundle!().requests.pop_first() {
-        // SAFETY: `pop_first` hands back ownership of the intrusive node;
-        // `data` was initialized by `defer_request`.
-        let req = unsafe { (*node).data.assume_init_mut() };
-        let req_ptr = std::ptr::from_mut::<DeferredRequest>(req);
-        // SAFETY: the node stays alive until `deref_()` releases it below.
-        scopeguard::defer! { unsafe { (*req_ptr).deref_() } };
-
+    while let Some(req) = current_bundle!().requests.pop_first() {
         if dev.route_bundle_ptr(req.route_bundle_index).server_state
             == route_bundle::State::PossibleBundlingFailures
         {
             let failures = trace_route_failures(dev, req.route_bundle_index)?.failures;
             if !failures.is_empty() {
-                if let Some(resp) = req.response_for_error_page() {
+                if let Some((resp, ctx)) = req.take_response_for_error_page() {
+                    scopeguard::defer! { ctx.deref() };
                     dev.send_serialized_failures(resp, &failures, None)?;
                 }
                 continue;
@@ -1234,16 +1205,12 @@ fn finalize_bundle_inner(
         let rb = dev.route_bundle_ptr(req.route_bundle_index);
         rb.server_state = route_bundle::State::Loaded;
 
-        // Note: `SavedRequest` is move-only (`Strong` field). Take the
-        // handler by value so the `Saved` payload moves into the union; the
-        // node is being torn down via `_deref` regardless.
-        match ::core::mem::replace(&mut req.handler, Handler::Aborted) {
+        match req.take_handler() {
             Handler::Aborted => continue,
             Handler::ServerHandler(saved) => {
                 let response = saved.response;
                 let ctx = saved.ctx;
-                // Note: `saved` is moved out (so `__deinit` sees `Aborted`);
-                // `js_request: StrongOptional` releases on Drop, but
+                // Note: `js_request: StrongOptional` releases on Drop, but
                 // `ctx: AnyRequestContext` is `Copy` — explicitly balance the
                 // `ctx.ref_()` from `defer_request` here so the request
                 // context's `on_request_complete` (and thus the server's

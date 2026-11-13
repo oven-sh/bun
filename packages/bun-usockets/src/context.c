@@ -769,6 +769,7 @@ static int has_next_address(struct us_connecting_socket_t *c) {
 static int start_next_attempt(struct us_connecting_socket_t *c) {
     struct addrinfo *ai;
     c->next_attempt_ns = 0;
+    c->due_iteration = 0;
     while ((ai = take_next_address(c)) != NULL) {
         if (start_one(c, ai)) {
             if (has_next_address(c)) {
@@ -811,6 +812,10 @@ void us_internal_connect_sweep(struct us_loop_t *loop) {
                     /* Leave it to after_open, which starts the next address when an
                      * attempt fails and, unlike the sweep, may close c. */
                     c->next_attempt_ns = 0;
+                } else if (!c->due_iteration || c->due_iteration == loop->data.iteration_nr) {
+                    /* The delay may have run out inside a handler, after the last poll:
+                     * poll once more so an attempt that connected meanwhile is seen first. */
+                    c->due_iteration = loop->data.iteration_nr;
                 } else {
                     start_next_attempt(c);
                 }

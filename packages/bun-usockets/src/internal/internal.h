@@ -492,6 +492,8 @@ struct us_connecting_socket_t {
     struct addrinfo *lead;
     struct addrinfo *skip;
     long long next_attempt_ns;
+    /* The loop's iteration_nr when a sweep found next_attempt_ns elapsed, or 0. */
+    size_t due_iteration;
     uint16_t attempt_delay_ms;
     /* Attempts opened and not yet failed. */
     unsigned char pending_attempts;

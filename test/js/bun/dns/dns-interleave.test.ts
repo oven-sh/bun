@@ -366,6 +366,51 @@ describe.concurrent.each(["fetch()", "Bun.connect()"])("connection attempt delay
     );
     expect(result).toEqual({ out: { served: "127.0.0.1", waited: true }, stderr: "", exitCode: 0, signal: null });
   });
+
+  // macOS drops SYNs to 127.0.0.2 and up, and Windows retries a refused one for about
+  // two seconds, so there only the delay reaches the sixth address in time.
+  test.skipIf(isLinux)("an address behind five with no listener is reached", async () => {
+    const result = await run(
+      /* js */ `
+      ${dialHelper(client)}
+      const server = listen("127.0.0.1");
+      const host = "he-sixth-" + server.port + ".test";
+      dnsCacheSeed(host, ["127.0.0.2", "127.0.0.3", "127.0.0.4", "127.0.0.5", "127.0.0.6", "127.0.0.1"]);
+      const served = await Promise.race([dial(host, server.port), Bun.sleep(4000).then(() => "nothing after 4 s")]);
+      console.log(JSON.stringify({ served }));
+      process.exit(0);
+    `,
+      { delayMs: 40 },
+    );
+    expect(result).toEqual({ out: { served: "127.0.0.1" }, stderr: "", exitCode: 0, signal: null });
+  });
+});
+
+// Only Linux refuses 127.0.0.2 at once and counts a connection that was reset in the accept queue.
+test.concurrent.skipIf(!isLinux)("a handler that outlasts the delay does not open a second connection", async () => {
+  const result = await run(
+    /* js */ `
+    ${dialHelper("Bun.connect()")}
+    const [server] = await listenWith("127.0.0.1", port => hold("127.0.0.2", port));
+    const host = "he-busy-" + server.port + ".test";
+    dnsCacheSeed(host, ["127.0.0.2", "127.0.0.1", "127.0.0.1"]);
+    const { promise: served, resolve } = Promise.withResolvers();
+    const handlers = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data(_, chunk) {
+      if (chunk.toString() === "busy") return Bun.sleepSync(150);
+      resolve(dial(host, server.port));
+      // Readable after the refusal, so one poll reports both in that order: the second
+      // address is dialed, then "busy" holds the loop past its delay.
+      setImmediate(() => busy.write("busy"));
+    } } });
+    const connect = () => Bun.connect({ hostname: "127.0.0.1", port: handlers.port, socket: { data() {} } });
+    const [start, busy] = [await connect(), await connect()];
+    start.write("dial");
+    console.log(JSON.stringify({ served: await served, accepted: await server.accepted() }));
+    process.exit(0);
+  `,
+    { delayMs: 50 },
+  );
+  expect(result).toEqual({ out: { served: "127.0.0.1", accepted: 1 }, stderr: "", exitCode: 0, signal: null });
 });
 
 describe.skipIf(!canBlackhole).concurrent("connection attempt delay (RFC 8305 §5): pending attempts", () => {

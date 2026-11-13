@@ -104,6 +104,12 @@ struct us_internal_loop_data_t {
     /* Filled by us_socket_resume(), closed by us_internal_loop_post(). */
     int num_unresumable_sockets;
     struct us_internal_unresumable_socket_t *unresumable_sockets;
+    /* No later than the earliest staggered connect attempt on this loop, monotonic ns, or -1.
+     * POSIX folds it into the poll timeout with the sweep; libuv arms connect_timer. */
+    long long connect_next_tick_ns;
+#ifdef LIBUS_USE_LIBUV
+    struct us_timer_t *connect_timer;
+#endif
 };
 
 #endif // LOOP_DATA_H

@@ -25,6 +25,8 @@
 #include <netinet/in.h>
 #endif
 #define CONCURRENT_CONNECTIONS 4
+/* Staggered dial: stop opening new addresses on the timer while this many are still pending. */
+#define MAX_PENDING_CONNECTIONS 6
 
 #if defined(BUN_DEBUG) || (defined(__has_feature) && __has_feature(address_sanitizer)) || defined(__SANITIZE_ADDRESS__)
 #include <assert.h>
@@ -690,41 +692,134 @@ struct us_socket_t *us_socket_group_connect_unix(struct us_socket_group_t *group
     return connect_socket;
 }
 
-int start_connections(struct us_connecting_socket_t *c, int count) {
-    int opened = 0;
+/* Open a non-blocking connect to `ai` and link it as one of c's attempts; 0 if it could not be opened. */
+static int start_one(struct us_connecting_socket_t *c, struct addrinfo *ai) {
     struct us_socket_group_t *group = c->group;
     struct us_loop_t *loop = group->loop;
+    struct sockaddr_storage addr;
+    init_addr_with_port(ai, c->port, &addr);
+    /* The deferred-DNS path does not carry a local binding. */
+    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(&addr, NULL, c->options);
+    if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
+        return 0;
+    }
+    bsd_socket_nodelay(connect_socket_fd, 1);
+    struct us_socket_t *s = (struct us_socket_t *)us_create_poll(loop, 0, sizeof(struct us_socket_t) + c->socket_ext_size);
+    struct us_poll_t *poll = &s->p;
+    us_poll_init(poll, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
+    if (us_poll_start_rc(poll, loop, LIBUS_SOCKET_WRITABLE) != 0) {
+        bsd_close_socket(connect_socket_fd);
+        us_poll_free(poll, loop);
+        return 0;
+    }
+    us_internal_init_connect_socket(s, group, c->kind, c->options);
+    s->timeout = c->timeout;
+    s->long_timeout = c->long_timeout;
+
+    us_internal_socket_group_link_socket(group, s);
+
+    memcpy((void *)(s + 1), (void *)(c + 1), c->socket_ext_size);
+
+    s->connect_next = c->connecting_head;
+    c->connecting_head = s;
+    s->connect_state = c;
+    c->pending_attempts++;
+    return 1;
+}
+
+int start_connections(struct us_connecting_socket_t *c, int count) {
+    int opened = 0;
     for (; c->addrinfo_head != NULL && opened < count; c->addrinfo_head = c->addrinfo_head->ai_next) {
-        struct sockaddr_storage addr;
-        init_addr_with_port(c->addrinfo_head, c->port, &addr);
-        /* The deferred-DNS path does not carry a local binding. */
-        LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(&addr, NULL, c->options);
-        if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
-            continue;
-        }
-        bsd_socket_nodelay(connect_socket_fd, 1);
-        struct us_socket_t *s = (struct us_socket_t *)us_create_poll(loop, 0, sizeof(struct us_socket_t) + c->socket_ext_size);
-        struct us_poll_t *poll = &s->p;
-        us_poll_init(poll, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
-        if (us_poll_start_rc(poll, loop, LIBUS_SOCKET_WRITABLE) != 0) {
-            bsd_close_socket(connect_socket_fd);
-            us_poll_free(poll, loop);
-            continue;
-        }
-        ++opened;
-        us_internal_init_connect_socket(s, group, c->kind, c->options);
-        s->timeout = c->timeout;
-        s->long_timeout = c->long_timeout;
-
-        us_internal_socket_group_link_socket(group, s);
-
-        memcpy((void *)(s + 1), (void *)(c + 1), c->socket_ext_size);
-
-        s->connect_next = c->connecting_head;
-        c->connecting_head = s;
-        s->connect_state = c;
+        opened += start_one(c, c->addrinfo_head);
     }
     return opened;
+}
+
+/* ── Staggered dial (BUN_CONFIG_CONNECT_ATTEMPT_DELAY_MS, RFC 8305 §5) ──────
+ * One address at a time: the next one starts when the previous attempt fails or
+ * after attempt_delay_ms, whichever is first. Attempts already started keep
+ * racing and the first to connect wins, as in the parallel dial. */
+
+static struct addrinfo *take_next_address(struct us_connecting_socket_t *c) {
+    if (c->lead) {
+        struct addrinfo *ai = c->lead;
+        c->lead = NULL;
+        c->skip = ai;
+        return ai;
+    }
+    if (c->skip && c->addrinfo_head == c->skip) {
+        c->addrinfo_head = c->addrinfo_head->ai_next;
+    }
+    struct addrinfo *ai = c->addrinfo_head;
+    if (ai) {
+        c->addrinfo_head = ai->ai_next;
+    }
+    return ai;
+}
+
+static int has_next_address(struct us_connecting_socket_t *c) {
+    if (c->lead) return 1;
+    struct addrinfo *ai = c->addrinfo_head;
+    if (c->skip && ai == c->skip) ai = ai->ai_next;
+    return ai != NULL;
+}
+
+/* Open the next address that can be opened; arm the delay if any remain after it.
+ * 0 if none could be opened (the list is then exhausted). Never dispatches. */
+static int start_next_attempt(struct us_connecting_socket_t *c) {
+    struct addrinfo *ai;
+    c->next_attempt_ns = 0;
+    while ((ai = take_next_address(c)) != NULL) {
+        if (start_one(c, ai)) {
+            if (has_next_address(c)) {
+                c->next_attempt_ns = (long long) us_internal_monotonic_ns() + (long long) c->attempt_delay_ms * 1000000LL;
+                us_internal_loop_arm_connect_deadline(c->group->loop, c->next_attempt_ns);
+            }
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int same_address(const struct sockaddr_storage *a, const struct addrinfo *ai) {
+    if (a->ss_family != ai->ai_family) return 0;
+    if (ai->ai_family == AF_INET) {
+        return ((const struct sockaddr_in *) a)->sin_addr.s_addr == ((const struct sockaddr_in *) ai->ai_addr)->sin_addr.s_addr;
+    }
+    return memcmp(&((const struct sockaddr_in6 *) a)->sin6_addr, &((const struct sockaddr_in6 *) ai->ai_addr)->sin6_addr, sizeof(struct in6_addr)) == 0;
+}
+
+/* The entry to dial first given the address that connected last time: that
+ * address if still listed, else the first of its family; NULL keeps list order. */
+static struct addrinfo *pick_lead(struct addrinfo *head, const struct sockaddr_storage *last) {
+    struct addrinfo *family_match = NULL;
+    for (struct addrinfo *ai = head; ai; ai = ai->ai_next) {
+        if (same_address(last, ai)) return ai == head ? NULL : ai;
+        if (!family_match && ai->ai_family == last->ss_family) family_match = ai;
+    }
+    return family_match == head ? NULL : family_match;
+}
+
+void us_internal_connect_sweep(struct us_loop_t *loop) {
+    long long now = (long long) us_internal_monotonic_ns();
+    long long next = -1;
+    for (struct us_socket_group_t *group = loop->data.head; group; group = group->next) {
+        for (struct us_connecting_socket_t *c = group->head_connecting_sockets; c; c = c->next_pending) {
+            if (!c->next_attempt_ns || c->closed) continue;
+            if (c->next_attempt_ns <= now) {
+                if (!c->connecting_head || c->pending_attempts >= MAX_PENDING_CONNECTIONS) {
+                    /* Leave it to after_open, which starts the next address when an
+                     * attempt fails and, unlike the sweep, may close c. */
+                    c->next_attempt_ns = 0;
+                } else {
+                    start_next_attempt(c);
+                }
+            }
+            if (c->next_attempt_ns && (next < 0 || c->next_attempt_ns < next)) next = c->next_attempt_ns;
+        }
+    }
+    loop->data.connect_next_tick_ns = -1;
+    if (next >= 0) us_internal_loop_arm_connect_deadline(loop, next);
 }
 
 void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
@@ -763,7 +858,20 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
 
     c->addrinfo_head = &result->entries->info;
 
-    int opened = start_connections(c, CONCURRENT_CONNECTIONS);
+    int opened;
+    int delay_ms = Bun__addrinfo_attemptDelayMs();
+    if (delay_ms > 0 && c->addrinfo_head && c->addrinfo_head->ai_next) {
+        c->attempt_delay_ms = delay_ms > 0xffff ? 0xffff : (uint16_t) delay_ms;
+        /* The list is in the resolver's order with families interleaved; lead
+         * with what connected last time through this cache entry, if recorded. */
+        struct sockaddr_storage last;
+        if (Bun__addrinfo_getLastAddress(c->addrinfo_req, &last)) {
+            c->lead = pick_lead(c->addrinfo_head, &last);
+        }
+        opened = start_next_attempt(c);
+    } else {
+        opened = start_connections(c, CONCURRENT_CONNECTIONS);
+    }
     if (opened == 0) {
         /* Same as the exhausted path in us_internal_socket_after_open: a
          * real connect failure must not be reported as a caller abort. */
@@ -806,8 +914,15 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                 }
             }
             us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
+            c->pending_attempts--;
 
-            if (c->connecting_head == NULL || c->connecting_head->connect_next == NULL) {
+            if (c->attempt_delay_ms) {
+                /* A failed attempt starts the next address now rather than at the delay. */
+                if (!start_next_attempt(c) && c->connecting_head == NULL) {
+                    c->error = ECONNREFUSED;
+                    us_connecting_socket_close(c);
+                }
+            } else if (c->connecting_head == NULL || c->connecting_head->connect_next == NULL) {
                 int opened = start_connections(c, c->connecting_head == NULL ? CONCURRENT_CONNECTIONS : 1);
                 if (opened == 0 && c->connecting_head == NULL) {
                     /* Every resolved address failed to connect. Without this,
@@ -836,6 +951,13 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
             /* Attach TLS now that we know which candidate won. */
             if (c->ssl_ctx) {
                 us_internal_ssl_attach(s, c->ssl_ctx, 1, NULL, NULL);
+            }
+            if (c->attempt_delay_ms) {
+                /* Zeroed: getpeername fills only the family's prefix, and Rust copies all of it. */
+                struct bsd_addr_t won = {0};
+                if (bsd_remote_addr(us_poll_fd(&s->p), &won) == 0) {
+                    Bun__addrinfo_setLastAddress(c->addrinfo_req, &won.mem);
+                }
             }
             Bun__addrinfo_freeRequest(c->addrinfo_req, 0);
             us_connecting_socket_free(c);

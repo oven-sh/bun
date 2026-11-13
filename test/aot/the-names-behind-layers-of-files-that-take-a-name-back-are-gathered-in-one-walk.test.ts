@@ -100,10 +100,12 @@ async function spend({ files, said }: ReturnType<Program>) {
   };
 }
 
-/** How many times the processor time of the small program the large one took. Both runs have ended before either is judged. */
-async function timesTheWork(program: Program, large: number, small: number, besideOneAnother: boolean) {
+/** Holds the processor time of the large program to `bound` times that of the small one. Both runs have ended before either is judged. */
+async function costsAtMost(bound: number, what: string, program: Program, large: number, small: number) {
   const first = spend(program(large));
-  if (!besideOneAnother) await first;
+  // With a sanitizer a run takes ten times as long, so there the two sizes run beside one another and a test takes as long as its large program.
+  // The processor time of each run is counted by itself. The small run has the large one beside it all of its time, so the ratio reads about a twentieth lower there.
+  if (!isASAN) await first;
   const runs = await Promise.all([first, spend(program(small))]);
   for (const { printed, expected, microseconds } of runs) {
     expect(printed).toEqual(expected);
@@ -111,20 +113,8 @@ async function timesTheWork(program: Program, large: number, small: number, besi
     expect(microseconds).toBeGreaterThan(0);
   }
   const [many, few] = runs.map(ran => ran.microseconds);
-  return { times: many / few, readings: `${many} microseconds against ${few}` };
-}
-
-// With a sanitizer a run takes ten times as long, so there the two sizes run beside one another and a test takes as long as its large program.
-// The processor time of each run is counted by itself, but what else the machine does adds to a reading, and there the two runs are such work for each other.
-// So where the bound does not hold beside one another, the two run once more, one behind the other as without a sanitizer, and that reading counts.
-async function costsAtMost(bound: number, what: string, program: Program, large: number, small: number) {
-  let read = await timesTheWork(program, large, small, isASAN);
-  if (isASAN && !(read.times < bound)) {
-    reads(`${what}, beside one another`, read.times, bound, "times the processor time");
-    read = await timesTheWork(program, large, small, false);
-  }
-  reads(what, read.times, bound, "times the processor time");
-  expect(read.times, read.readings).toBeLessThan(bound);
+  reads(what, many / few, bound, "times the processor time");
+  expect(many / few, `${many} microseconds against ${few}`).toBeLessThan(bound);
 }
 const namesOf = (letter: string, count: number) => Array.from({ length: count }, (_, index) => `${letter}${index}`);
 const stars = (...paths: string[]) => paths.map(path => `export * from "${path}";`).join("\n");

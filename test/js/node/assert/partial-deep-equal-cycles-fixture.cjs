@@ -465,6 +465,23 @@ for (const [kind, make] of [
     selfCaused(hiddenCause),
     selfCaused(hiddenCause),
   ]);
+  // Such Errors take all of the stack of the first run, and open no pair. The memos then fail a link up that comes
+  // ahead of them.
+  row("a link up, ahead of Errors that are their own cause", "fail", () => {
+    const actual = { first: {}, second: selfCaused(hiddenCause) };
+    actual.first.up = actual;
+    return [actual, { first: { up: { first: {} } }, second: selfCaused(hiddenCause) }];
+  });
+  row("the same, with the Errors ahead of the link up", "RangeError", () => {
+    const actual = { first: selfCaused(hiddenCause), second: {} };
+    actual.second.up = actual;
+    return [actual, { first: selfCaused(hiddenCause), second: { up: { second: {} } } }];
+  });
+  row("a tree with a link to the parent, ahead of such Errors", "fail", () => {
+    const actual = tree();
+    actual.error = selfCaused(hiddenCause);
+    return [actual, { ...partOfTree("Program"), error: selfCaused(hiddenCause) }];
+  });
 }
 
 // A Map key that both Maps hold. Bun asks for its entry once, by lookup.

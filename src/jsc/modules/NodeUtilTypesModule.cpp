@@ -324,18 +324,19 @@ struct CycleState {
         open.fill(vm, 16, [](JSValue*) {});
     }
 
-    // The pairs under comparison in a run without memos: `actual`, then `expected`, in the first `openValues` slots.
+    // Two values for each pair that the run is inside of. A run without memos has them in `open`: `actual`, `expected`.
     JSC::MarkedVector<JSValue, 16> open;
     size_t openValues { 0 };
-    // The run has no stack below this address: it throws there, or it gives up (`ended`).
+    // Errors whose fields are under comparison: their pairs are not open yet.
+    size_t openErrors { 0 };
+    // The end of the stack of the run. endsAtStackEnd says what happens there.
     void* stackEnd;
     bool throwsAtStackEnd { false };
     End ended { End::None };
     // A run under node's memos.
     std::optional<Memos> memos;
-    // The pairs that such a run is inside of, and the pairs that a run before it was inside of where its stack ended.
-    size_t nestedPairs { 0 };
-    size_t pairsWhereStackEnded { std::numeric_limits<size_t>::max() };
+    // The levels of the first run where its stack ended.
+    size_t levelsWhereStackEnded { std::numeric_limits<size_t>::max() };
 };
 
 using Comparison = bool(JSC::JSGlobalObject*, JSC::MarkedArgumentBuffer&, CycleState&, JSC::ThrowScope&, JSValue actual, JSValue expected);
@@ -358,20 +359,36 @@ static Comparison* bodyOf(Arm arm)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Fewer open pairs than this where the stack of a run ends: the caller is deep, not the comparison.
-static constexpr size_t pairsOfADeepComparison = 32;
+// A call from the lower half of the stack: a first run that does not fit there says nothing about the comparison.
+static bool isCalledDeep(JSC::VM& vm)
+{
+    const auto* top = static_cast<const char*>(vm.stackPointerAtVMEntry());
+    const auto* end = static_cast<const char*>(stackEndOfFirstRun(vm));
+    const auto* call = reinterpret_cast<const char*>(vm.topCallFrame);
+    return call < end + (top - end) / 2;
+}
+
+// How deep a run is: each pair and each Error that it is inside of takes stack.
+static size_t levelsOf(const CycleState& cycles)
+{
+    return cycles.openValues / 2 + cycles.openErrors;
+}
 
 // Out of line, like the other helpers here: their locals stay out of the frames that are under every nested pair.
 static NEVER_INLINE bool endsAtStackEnd(JSC::JSGlobalObject* globalObject, CycleState& cycles, JSC::ThrowScope& scope)
 {
-    const bool calledDeep = !cycles.memos && cycles.openValues < 2 * pairsOfADeepComparison;
-    if (!cycles.throwsAtStackEnd && !calledDeep) {
+    auto& vm = globalObject->vm();
+    if (!cycles.throwsAtStackEnd && isCalledDeep(vm)) {
+        cycles.stackEnd = vm.stackLimit();
+        cycles.throwsAtStackEnd = true;
+    }
+    if (!cycles.throwsAtStackEnd) {
         if (!cycles.memos)
-            cycles.pairsWhereStackEnded = cycles.openValues / 2;
+            cycles.levelsWhereStackEnded = levelsOf(cycles);
         cycles.ended = End::NoStack;
         return true;
     }
-    if (globalObject->vm().isSafeToRecurse())
+    if (vm.isSafeToRecurse())
         return false;
     JSC::throwStackOverflowError(globalObject, scope);
     return true;
@@ -425,7 +442,7 @@ static NEVER_INLINE std::optional<bool> enterMemos(JSC::JSGlobalObject* globalOb
     JSC::JSCell* actualCell = actual.asCell();
     JSC::JSCell* expectedCell = expected.asCell();
     // Memos that get as deep as the run whose stack ended have not ended a cycle: that comparison is only deep.
-    if (cycles.nestedPairs + 1 >= cycles.pairsWhereStackEnded) [[unlikely]] {
+    if (levelsOf(cycles) + 1 >= cycles.levelsWhereStackEnded) [[unlikely]] {
         cycles.ended = End::NoStack;
         return false;
     }
@@ -506,7 +523,7 @@ static NEVER_INLINE std::optional<bool> enterMemos(JSC::JSGlobalObject* globalOb
 static NEVER_INLINE void leaveMemos(CycleState& cycles, JSC::JSCell* actualCell, JSC::JSCell* expectedCell)
 {
     Memos& memos = *cycles.memos;
-    cycles.nestedPairs--;
+    cycles.openValues -= 2;
     memos.deep = false;
     if (memos.hasSet) {
         memos.set.remove(actualCell);
@@ -518,7 +535,7 @@ static NEVER_INLINE bool withMemos(JSC::JSGlobalObject* globalObject, JSC::Marke
 {
     if (const std::optional<bool> answer = enterMemos(globalObject, cycles, scope, actual, expected, arm))
         return *answer;
-    cycles.nestedPairs++;
+    cycles.openValues += 2;
     const bool result = bodyOf(arm)(globalObject, cycles.memos->kept, cycles, scope, actual, expected);
     leaveMemos(cycles, actual.asCell(), expected.asCell());
     return result;
@@ -1085,7 +1102,9 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
     if (actualIsError || expectedIsError) {
         if (!actualIsError || !expectedIsError)
             return false;
+        cycles.openErrors++;
         bool fieldsEqual = errorFieldsEqual(globalObject, gcBuffer, cycles, scope, actual, expected);
+        cycles.openErrors--;
         RETURN_IF_EXCEPTION(scope, false);
         if (!fieldsEqual)
             return false;
@@ -1180,7 +1199,7 @@ static NEVER_INLINE bool compareAgain(JSC::JSGlobalObject* globalObject, JSC::Ma
 {
     auto& vm = globalObject->vm();
     if (cycles.ended == End::NoStack) {
-        // The memos end a comparison that cannot end. pairsWhereStackEnded keeps them from one that is only deep.
+        // The memos end a comparison that cannot end. levelsWhereStackEnded keeps them from one that is only deep.
         cycles.ended = End::None;
         cycles.memos.emplace(gcBuffer);
         bool result = compareBranch(globalObject, gcBuffer, cycles, scope, actual, expected);
@@ -1201,8 +1220,7 @@ static NEVER_INLINE bool compareAgain(JSC::JSGlobalObject* globalObject, JSC::Ma
     cycles.ended = End::None;
     cycles.stackEnd = vm.stackLimit();
     cycles.throwsAtStackEnd = true;
-    cycles.nestedPairs = 0;
-    cycles.pairsWhereStackEnded = std::numeric_limits<size_t>::max();
+    cycles.levelsWhereStackEnded = std::numeric_limits<size_t>::max();
     cycles.memos.emplace(gcBuffer);
     return compareBranch(globalObject, gcBuffer, cycles, scope, actual, expected);
 }
@@ -1215,6 +1233,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPartialDeepStrictEqual,
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // isCalledDeep takes vm.topCallFrame for the place of this call.
+    ASSERT(vm.topCallFrame == callframe);
     JSC::MarkedArgumentBuffer gcBuffer;
     PartialDeepEqual::CycleState cycles { vm };
     bool result = PartialDeepEqual::compareBranch(globalObject, gcBuffer, cycles, scope, callframe->argument(0), callframe->argument(1));

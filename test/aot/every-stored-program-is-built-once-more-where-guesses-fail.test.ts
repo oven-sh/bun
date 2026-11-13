@@ -3,11 +3,10 @@
 // And once more with --aot-harden=proof-checks, where a proof that does not hold stops the program by name. The builds of each way are counted on stderr, so that no flag drops a way without a word.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { readFileSync } from "node:fs";
 import { join, sep } from "node:path";
 import { lineThatLeavesOut } from "./harness/lines-that-leave-out";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { beforeAll, test } from "./supported";
 
 const program = `function sum(list: number[]) {
   let total = 0;
@@ -259,14 +258,30 @@ test("a stop in a way that is not compared fails it all the same", async () => {
   });
 });
 
-test("the lines by which something of a stored program is not compared or not built are these, and a new one is written here too", () => {
+// Some thirty thousand files. Where they are not in the page cache their reads take seconds, and one behind another several times as long.
+// So the scan begins before the first test, reads them beside one another, and goes on beside the starts of the driver. Its test waits for what is left of it.
+async function scanStoredPrograms() {
   const stored = join(import.meta.dir, "parallel");
-  const found: string[] = [];
-  // Some thirty thousand files, read as the driver reads them. A read that is awaited takes a turn of the event loop, and all of them many times what the reads take.
-  for (const file of new Bun.Glob("**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}").scanSync(stored))
-    for (const [, what] of readFileSync(join(stored, file), "utf8").matchAll(lineThatLeavesOut))
-      found.push(`${file.replaceAll("\\", "/")}: ${what}`);
-  expect(found.sort()).toEqual([
+  const files = await Array.fromAsync(new Bun.Glob("**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}").scan(stored));
+  const found = await Promise.all(
+    files.map(async file =>
+      Array.from(
+        (await Bun.file(join(stored, file)).text()).matchAll(lineThatLeavesOut),
+        ([, what]) => `${file.replaceAll("\\", "/")}: ${what}`,
+      ),
+    ),
+  );
+  return found.flat().sort();
+}
+let linesInStoredPrograms: Promise<string[]>;
+beforeAll(() => {
+  linesInStoredPrograms = scanStoredPrograms();
+  // A rejection is for its test to report, and not for whichever test runs at that moment.
+  linesInStoredPrograms.catch(() => {});
+});
+
+test("the lines by which something of a stored program is not compared or not built are these, and a new one is written here too", async () => {
+  expect(await linesInStoredPrograms).toEqual([
     "async/await-direct-call-function-tests-args.ts: Prints what the compiler saves",
     "async/await-direct-call-untyped-version/main.ts: Prints what the compiler saves",
     "calls-fast-paths/class-as-value/main.ts: Prints what the compiler saves",

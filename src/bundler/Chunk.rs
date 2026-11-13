@@ -471,11 +471,7 @@ impl SourceMapShiftTracking {
     }
 }
 
-// We don't need an allocator vtable here yet. `()` is kept as a token for the
-// caller's `Option<&DynAlloc>` plumbing; the actual
-// allocation goes through `alloc_buf` (global mimalloc) regardless. Real
-// arena threading (page_allocator vs default_allocator) lands when
-// `bun_alloc::Allocator` is a stable trait object.
+// A token for the callers' `Option<&DynAlloc>`: `alloc_buf` uses the global allocator regardless.
 type DynAlloc = ();
 
 /// Until `DynAlloc` is a real trait object, route

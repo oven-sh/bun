@@ -1223,6 +1223,8 @@ pub mod O {
 #[cfg(unix)]
 pub mod close_on_fork;
 pub mod file;
+mod mmap;
+pub use mmap::Mmap;
 pub mod private_copy;
 pub use file::{File, ReadToEndResult};
 pub mod dir;

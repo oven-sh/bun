@@ -45,7 +45,7 @@ impl AllocatorVTable {
     }
 }
 
-/// Fat allocator handle (ptr + vtable). Distinct from the `Allocator` trait below.
+/// Fat allocator handle (ptr + vtable).
 #[derive(Clone, Copy)]
 pub struct StdAllocator {
     pub ptr: *mut core::ffi::c_void,
@@ -858,31 +858,6 @@ pub fn secure_zero(bytes: &mut [u8]) {
 pub fn free_sensitive(mut slice: Box<[u8]>) {
     secure_zero(&mut slice);
     drop(slice);
-}
-
-/// [`free_sensitive`] for the C-string
-/// case used by http SSLConfig. Zeros the allocation before freeing
-/// (defence-in-depth for keys/passphrases).
-///
-/// # Safety
-/// `p` must be null or a NUL-terminated allocation from `dupe_z` (i.e.
-/// `default_alloc::malloc`).
-pub unsafe fn free_sensitive_cstr(p: *const core::ffi::c_char) {
-    if p.is_null() {
-        return;
-    }
-    // SAFETY: p is a NUL-terminated `default_alloc::malloc`'d buffer per
-    // `dupe_z` contract. An interior NUL truncating `strlen` only shortens the
-    // zero pass — the free is still exact (`mi_free`/`libc::free` are
-    // size-agnostic). The caller gives the allocation up, so the `&mut [u8]` is exclusive.
-    unsafe {
-        let len = libc::strlen(p);
-        secure_zero(core::slice::from_raw_parts_mut(
-            p.cast::<u8>().cast_mut(),
-            len,
-        ));
-        crate::default_alloc::free(p.cast::<core::ffi::c_void>().cast_mut());
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2249,31 +2224,10 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Allocator-trait surface — OBSOLETE per PORTING.md §Allocators
-// ──────────────────────────────────────────────────────────────────────────
-//
-// The legacy allocator interface threaded an allocator
-// param through every fn. Rust has a global allocator
-// (`#[global_allocator] = Mimalloc` above), so per PORTING.md:
-//
-//   - Non-AST crates: DELETE the `allocator` param. `Box`/`Vec`/`String` use
-//     global mimalloc.
-//   - AST crates: thread `&'bump bumpalo::Bump` (= `Arena`) directly.
-//
-// The trait below is kept ONLY as an empty marker so downstream code that
-// still says `&dyn bun_alloc::Allocator` continues to parse. Do not implement
-// it; do not add methods. Callers should be rewritten to drop the param
-// entirely.
-
-/// Legacy allocator marker trait. See module note.
-pub trait Allocator: 'static {}
-
 /// Legacy default-allocator ZST. With `#[global_allocator]` set,
 /// this is just a unit marker.
 #[derive(Clone, Copy, Default)]
 pub struct DefaultAlloc;
-impl Allocator for DefaultAlloc {}
 
 // `GenericAllocator` / `Borrowed<A>` / `Nullable<A>` are dropped — they modelled
 // an allocator-borrowing discipline (avoid double-free), which Rust's

@@ -1654,7 +1654,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
             }
             drop(proxy);
         }
-        // ssl_config: Option<Box<SSLConfig>> — Drop runs SSLConfig::deinit + frees the box.
         self.ssl_config.set(None);
         // secure: Option<OwnedSslCtx> — Drop releases the ref taken in `connect`.
         self.secure.set(None);

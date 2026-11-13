@@ -422,6 +422,30 @@ const wrong: string = make();
     errors: ["(3,7): TS2322"],
     written: ["declare held: outer.Item2;", "declare flag: Item2;"],
   },
+  // In `make` the type `Item` is the interface, so the printer writes `import("./item").Item` for the class.
+  "class-beside-a-local-type-of-its-name": {
+    files: {
+      "index.ts": `import { Item } from "./item";
+export function make(): number {
+  interface Item { c: boolean }
+  class Local {
+    held = new Item();
+    flag = { c: true } as Item;
+  }
+  return new Local().held.a + Number(new Local().flag.c);
+}
+export { Item };
+`,
+      "item.ts": `export class Item { a = 1; }\n`,
+    },
+    caller: `import { make } from "LIBRARY";
+const sum: number = make();
+const wrong: string = make();
+`,
+    reads: ["make()"],
+    errors: ["(3,7): TS2322"],
+    written: ["declare held: outer.Item;", "declare flag: Item;"],
+  },
   // A default does not add `undefined` to the member, also where a parameter with no default comes behind it.
   "parameter-property-with-a-default-before-a-parameter-with-none": {
     files: {
@@ -634,6 +658,7 @@ describe.concurrent("bun build --dts and class fields", () => {
 
   // A namespace object is `any` in a typed file, so the overloaded call answers `string` there, and `number` in the
   // sources. Without the type of the sources, the typed file says that `size` is a string.
+  // On Windows the build prints no warning for .aot.ts files that it leaves out: `stderr` is empty there.
   test.todoIf(isWindows)(
     "a store that the typed file types in another way than the sources leaves the typed files out",
     async () => {
@@ -691,6 +716,7 @@ export class Box {
 
   // The typed file of another output has the class. For `take`, this one declares a twin of it, which is another
   // type. So the field has no type that this typed file can name, and no declaration.
+  // On Windows the build prints no warning for .aot.ts files that it leaves out: `stderr` is empty there.
   test.todoIf(isWindows)(
     "--splitting: a field whose class is in another output leaves the typed files out",
     async () => {
@@ -733,6 +759,7 @@ const type2: never = box.others;
 const type3: never = box.unit;
 const type4: never = box.mode;
 const type5: never = box.top;
+const type6: never = box.loose;
 `;
     using dir = tempDir("build-dts-members-without-values", {
       ...project({ strict: true, lib: ["es2015"] }),
@@ -750,6 +777,7 @@ export class Box<T> {
   unit;
   mode;
   top;
+  loose;
   constructor(on: boolean, first?: T) {
     if (__DEV__) {
       this.item = new Item();
@@ -758,6 +786,7 @@ export class Box<T> {
       this.unit = on ? Unit.Px : Unit.Em;
       this.mode = (on ? "fast" : "slow") as Mode;
       this.top = first;
+      this.loose = JSON.parse("1");
     }
   }
 }
@@ -776,6 +805,7 @@ export { Item, Other };
   unit: Unit2 | undefined;
   mode: Mode | undefined;
   top: T | undefined;
+  loose: any;
 `);
     const { errors, types } = await checkedIn(String(dir));
     expect(errors).toEqual({});
@@ -787,6 +817,7 @@ export { Item, Other };
       "Unit | undefined",
       "Mode | undefined",
       "string | undefined",
+      "any",
     ]);
   });
 
@@ -1064,6 +1095,7 @@ export class Box {
 
   // What the stores of the bundle say of such a member is another type than the one of the sources: `"em"` is a
   // string there, and the object of a namespace is `any`. With no name for the type, the member gets no declaration.
+  // On Windows the build prints no warning for .aot.ts files that it leaves out: `stderr` is empty there.
   test.todoIf(isWindows).each([
     [
       "an enum behind a namespace import",
@@ -1130,6 +1162,7 @@ export class Holder {
 
   // The bundle gives such a class `constructor() { super(...arguments); }`. With that, `new HttpError("gone")` of the
   // sources has an argument too many.
+  // On Windows the build prints no warning for .aot.ts files that it leaves out: `stderr` is empty there.
   test.todoIf(isWindows)(
     "a derived class with no constructor leaves the typed files out where its base class takes arguments",
     async () => {

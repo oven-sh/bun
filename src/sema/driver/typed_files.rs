@@ -1,6 +1,6 @@
 use bstr::BStr;
 use bun_ast::op::Level;
-use bun_sema::atom::Interner;
+use bun_sema::atom::{Atom, Interner};
 use bun_sema::check::Checker;
 use bun_sema::check::services::{
     Child, LiteralValue, NodeRef, Services, SignatureKind, StatedType, SymbolFlags, SymbolOp,
@@ -2123,33 +2123,22 @@ fn link(
         Target::Module { .. } => None,
     };
     // A package that the bundle holds has its own classes there: what the package declares is another type.
-    let specifier_of = |text: &[u8]| -> Option<Vec<u8>> {
-        let open = bun_core::strings::index_of_any(text, b"\"'")?;
-        let behind = &text[open + 1..];
-        let close = behind.iter().position(|&byte| byte == text[open])?;
-        Some(behind[..close].to_vec())
+    let specifier_of = |file: &File<'_>, statement: StmtId| match file[statement].kind {
+        StmtKind::Import(import) => Some(file[import].spec),
+        _ => None,
     };
-    let output_imports: FxHashSet<Vec<u8>> = (output.file.stmts.iter())
-        .filter_map(|statement| match statement.kind {
-            StmtKind::Import(import) => {
-                let clause_end = output.file[import].clause_end as usize;
-                specifier_of(&output.text[clause_end..statement.loc.end as usize])
-            }
-            _ => None,
-        })
-        .collect();
+    let output_imports = std::cell::OnceCell::new();
+    let imports_of_output = || -> FxHashSet<Atom> {
+        let statements = 0..output.file.stmts.len() as u32;
+        (statements.filter_map(|statement| specifier_of(output.file, StmtId(statement)))).collect()
+    };
     let is_import_of_output = |index: usize, found: &Declared| {
-        let statement = found.import.map(|import| import.0);
-        let module = written[index].as_ref().zip(statement);
-        let specifier = module.and_then(|(module, statement)| {
-            let (file, statement) = (module.syntax.file, &module.syntax.file[statement]);
-            let StmtKind::Import(import) = statement.kind else {
-                return None;
-            };
-            let clause_end = file[import].clause_end as usize;
-            specifier_of(&module.syntax.text[clause_end..statement.loc.end as usize])
-        });
-        specifier.is_some_and(|specifier| output_imports.contains(&specifier))
+        let module = written[index].as_ref().zip(found.import);
+        let specifier =
+            module.and_then(|(module, import)| specifier_of(module.syntax.file, import.0));
+        specifier.is_some_and(|specifier| {
+            (output_imports.get_or_init(imports_of_output)).contains(&specifier)
+        })
     };
     let mut wanted: FxHashSet<(usize, Box<[u8]>)> = FxHashSet::default();
     let mut queue: Vec<(usize, Box<[u8]>)> = Vec::new();
@@ -2798,8 +2787,10 @@ fn link(
                     Named::Target(target) => final_name(target)
                         .filter(|_| is_declared_here(target, member.is_value))
                         .and_then(|name| {
-                            let is_captured =
-                                &name[..] != word && nested_names[index].contains(&name[..]);
+                            // `import("..").Item` stands where the bare `Item` is another declaration.
+                            let is_bare = (*end - *at) as usize == word.len();
+                            let is_captured = (!is_bare || &name[..] != word)
+                                && nested_names[index].contains(&name[..]);
                             match (is_captured, member.is_value) {
                                 (false, _) => Some(name.clone()),
                                 (true, true) => None,
@@ -3241,8 +3232,7 @@ impl<'a> Transfer<'_, 'a, '_> {
                 .filter(|stated| {
                     let has_its_value = stated.has_initializer
                         && output.byte(output.after_trivia(slot.start)) == b'=';
-                    // A field with no type is `any` already.
-                    !stated.is_value && !has_its_value && &stated.text[..] != b"any"
+                    !stated.is_value && !has_its_value
                 });
             if stated.is_some() {
                 self.stated_slots.insert(slot.start);
@@ -4449,7 +4439,7 @@ impl StatedMember {
     /// The word of a name: all of it, or what stands behind `import("..").` or behind the name of a namespace import.
     fn word(&self, name: &(u32, u32, Named)) -> &[u8] {
         let written = &self.text[name.0 as usize..name.1 as usize];
-        let dot = written.iter().rposition(|&byte| byte == b'.');
+        let dot = bun_core::strings::last_index_of_char(written, b'.');
         &written[dot.map_or(0, |dot| dot + 1)..]
     }
 }
@@ -4973,8 +4963,8 @@ fn named_by_head(
     }
     match target {
         Some(target) => Ok(Named::Target(target)),
-        // A namespace below the top level is a variable in the bundle.
-        None if flags.intersects(SymbolFlags::MODULE) => Err(false),
+        // A namespace of the sources below the top level is a variable in the bundle.
+        None if is_namespace => Err(false),
         None => {
             let named = merged.unwrap_or(symbol);
             let local = named_without_target(services, is_source, node.file, named).ok_or(false)?;

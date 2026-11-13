@@ -1675,6 +1675,29 @@ describe.skipIf(!isBun)("this.utils.iterableEquality and this.utils.subsetEquali
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("a tester that is registered inside a this.equals() call is not asked by that call", async () => {
+    const { results, exitCode } = await runTestFile(`
+        ${registering([])}
+        // The answers are those of Jest 30.5.2. No tester is registered when the call starts.
+        test("the call with no list does not ask it, and a later comparison does", () => {
+          const rejectingNumbers = (a, b) => (typeof a === "number" && typeof b === "number" ? false : undefined);
+          const registering = { asymmetricMatch: () => (expect.addEqualityTesters([rejectingNumbers]), true) };
+          let areEqualInTheCall;
+          expect.extend({
+            toCompareWithNoList(received, expected) {
+              areEqualInTheCall = this.equals(received, expected);
+              return { pass: true, message: () => "" };
+            },
+          });
+          expect([registering, 1]).toCompareWithNoList([0, 1]);
+          expect(areEqualInTheCall).toBe(true);
+          expect(1).not.toEqual(1);
+        });
+    `);
+    expect(results).toEqual(["(pass) the call with no list does not ask it, and a later comparison does"]);
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("the testers that a file registers are gone in the next file", async () => {
     const isSubsetEqual = `(() => {
       try {

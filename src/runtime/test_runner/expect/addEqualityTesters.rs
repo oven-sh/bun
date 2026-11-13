@@ -127,7 +127,7 @@ impl Expect {
     /// What expect.addEqualityTesters() registered. `equality_testers()` is the list of a `this.equals()` call while one runs.
     pub(crate) fn registered_testers(global: &JSGlobalObject) -> JsResult<Option<JSValue>> {
         match js::registered_testers_get_cached(ExpectMatcherUtils::singleton(global)) {
-            Some(kept) => Ok(kept.is_array().then_some(kept)),
+            Some(kept) => Ok((!kept.is_null()).then_some(kept)),
             None => Self::equality_testers(global),
         }
     }
@@ -195,17 +195,15 @@ impl ExpectMatcherContext {
 /// Until dropped, deep equality uses `testers` (`ZERO` for none) instead of the registered ones, which stay at hand: like in Jest, they are what an asymmetric matcher and `this.customTesters` get.
 pub(crate) struct EqualityTestersScope<'a> {
     global: &'a JSGlobalObject,
+    utils: JSValue,
+    testers: JSValue,
     outer: JSValue,
     keeps_registered: bool,
 }
 
 impl<'a> EqualityTestersScope<'a> {
-    /// `None` if deep equality uses no tester as it is, and gets none.
-    pub(crate) fn enter(global: &'a JSGlobalObject, testers: JSValue) -> JsResult<Option<Self>> {
+    pub(crate) fn enter(global: &'a JSGlobalObject, testers: JSValue) -> JsResult<Self> {
         let outer = Expect::equality_testers(global)?.unwrap_or_default();
-        if outer.is_empty() && testers.is_empty() {
-            return Ok(None);
-        }
         let utils = ExpectMatcherUtils::singleton(global);
         // A call inside another one finds them kept. `null` is for none, as an empty field is for no call.
         let keeps_registered = js::registered_testers_get_cached(utils).is_none();
@@ -213,20 +211,23 @@ impl<'a> EqualityTestersScope<'a> {
             let registered = if outer.is_empty() { JSValue::NULL } else { outer };
             js::registered_testers_set_cached(utils, global, registered);
         }
-        js::equality_testers_set_cached(utils, global, testers);
-        Ok(Some(Self { global, outer, keeps_registered }))
+        if testers != outer {
+            js::equality_testers_set_cached(utils, global, testers);
+        }
+        Ok(Self { global, utils, testers, outer, keeps_registered })
     }
 }
 
 impl Drop for EqualityTestersScope<'_> {
     fn drop(&mut self) {
-        let utils = ExpectMatcherUtils::singleton(self.global);
         if self.keeps_registered {
             // expect.addEqualityTesters() may have run in between, so what is kept now is what to go back to.
-            let registered = js::registered_testers_get_cached(utils).filter(|kept| kept.is_array());
+            let registered = js::registered_testers_get_cached(self.utils).filter(|kept| !kept.is_null());
             self.outer = registered.unwrap_or_default();
-            js::registered_testers_set_cached(utils, self.global, JSValue::ZERO);
+            js::registered_testers_set_cached(self.utils, self.global, JSValue::ZERO);
         }
-        js::equality_testers_set_cached(utils, self.global, self.outer);
+        if self.outer != self.testers {
+            js::equality_testers_set_cached(self.utils, self.global, self.outer);
+        }
     }
 }

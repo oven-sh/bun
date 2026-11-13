@@ -168,6 +168,7 @@ fn on_require_extension_modify(
         .keys()
         .to_vec()
         .into_boxed_slice();
+    vm.forget_resolutions();
     Ok(())
 }
 
@@ -194,6 +195,7 @@ fn on_require_extension_modify_non_function(
         .keys()
         .to_vec()
         .into_boxed_slice();
+    vm.forget_resolutions();
     Ok(())
 }
 

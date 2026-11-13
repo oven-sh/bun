@@ -205,6 +205,12 @@ impl String {
         unsafe { &*self.value.wtf_string_impl }
     }
 
+    /// The `WTF::StringImpl` of a WTF-backed string.
+    #[inline]
+    pub fn as_wtf_impl(&self) -> Option<&WTFStringImplStruct> {
+        (self.tag == Tag::WTFStringImpl).then(|| self.as_wtf())
+    }
+
     /// `'static` ASCII slice (no encoding tag, no scan); `to_utf8`/`into_utf8`
     /// borrow the bytes directly. Generic over `str`/`[u8]` so call sites may
     /// pass either `"lit"` or `b"lit"`.

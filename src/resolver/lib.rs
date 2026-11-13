@@ -51,6 +51,7 @@ pub use tsconfig_json::TSConfigJSON;
 pub use ::bun_install_types::resolver_hooks as install_types;
 pub use resolver::{
     AnyResolveWatcher, BrowserMapPathKind, Bufs, Dirname, Resolver, module_type_from_ext,
+    resolution_epoch,
 };
 pub use result::{
     DebugLogs, DirEntryResolveQueueItem, ExternalKind, FlushMode, LoadResult, MatchResult,
@@ -411,7 +412,10 @@ pub mod fs {
         /// `DirnameStore` or a process-lifetime buffer like `cwd_buf`).
         #[inline]
         pub fn set_top_level_dir(&self, dir: &'static [u8]) {
+            // Not under a lock: another thread can read `dir` before the epoch moves.
+            let _change = crate::resolution_epoch::Change::begin();
             bun_core::set_top_level_dir(dir);
+            crate::resolution_epoch::bump();
         }
 
         /// `top_level_dir` with any trailing separator stripped (root `/` is
@@ -865,16 +869,32 @@ pub mod fs {
             // `BSSMapInner::put` mutates `result.index` to record placement; callers
             // (e.g. `dir_info_cached_maybe_log`) re-read `result.index` post-`put`, so the
             // mutation must be visible — pass through directly.
-            self.inner()
+            let checked_before = result.has_checked_if_exists();
+            let slot = self
+                .inner()
                 .put(result, value)
                 .map(std::ptr::from_mut::<EntriesOption>)
-                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))
+                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError));
+            // A directory that was found or not found before gets another answer.
+            if checked_before {
+                crate::resolution_epoch::bump();
+            }
+            slot
         }
         pub(crate) fn mark_not_found(&mut self, result: bun_alloc::Result) {
-            self.inner().mark_not_found(result)
+            let was_found = result.status == bun_alloc::ItemStatus::Exists;
+            self.inner().mark_not_found(result);
+            if was_found {
+                crate::resolution_epoch::bump();
+            }
         }
+        /// Whether the map had an answer for `key`.
         pub(crate) fn remove(&mut self, key: &[u8]) -> bool {
-            self.inner().remove(key)
+            let removed = self.inner().remove(key);
+            if removed {
+                crate::resolution_epoch::bump();
+            }
+            removed
         }
     }
 
@@ -1139,6 +1159,8 @@ pub mod fs {
                 DirnameStore::instance().append_slice(dir)?
             };
 
+            // Another thread can hold an entry of this listing, and sees it change before the epoch moves.
+            let _change = in_place.map(|_| crate::resolution_epoch::Change::begin());
             // Cache miss: read the directory entries
             let prev = in_place.map(|p| {
                 // SAFETY: BSSMap-owned, no aliasing here (entries_mutex held).
@@ -1462,6 +1484,7 @@ pub mod fs {
             // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
             if let EntriesOption::Entries(existing) = unsafe { &mut *result_ptr } {
                 if existing.generation < generation {
+                    let _change = crate::resolution_epoch::Change::begin();
                     let e_ptr: *mut DirEntry = std::ptr::from_mut::<DirEntry>(*existing);
                     // SAFETY: BSSMap-owned `DirEntry` (boxed/leaked into `EntriesOption`); `entries_mutex` held.
                     let dir = unsafe { (*e_ptr).dir };
@@ -1486,6 +1509,8 @@ pub mod fs {
                             unsafe { (*e_ptr).data.clear() };
                             // SAFETY: see above — slot is exclusively owned here.
                             unsafe { *e_ptr = new_entry };
+                            // No write to the map follows, which is what moves the epoch for the other ways out.
+                            crate::resolution_epoch::bump();
                         }
                         Err(err) => {
                             // SAFETY: see above.
@@ -2333,6 +2358,7 @@ pub use ::bun_paths::{is_package_path, is_package_path_not_absolute};
 pub mod compiled_program;
 pub mod options;
 pub mod package_names;
+pub mod resolution_memo;
 pub mod resolver;
 pub mod result;
 pub mod standalone_module_graph;

@@ -136,4 +136,15 @@ describe.skipIf(isWindows || !compiler)("a native addon's allocations", () => {
       );
     }, 120_000);
   });
+
+  test("what the runtime remembers of a resolution keeps no external string of the addon on loan", async () => {
+    using folder = tempDir("addon-allocations-resolution", { "main.js": "" });
+    const result = await run("resolution.js", [String(folder)], { ADDON: addon });
+    expect(result).toEqual({ stdout: expect.any(String), stderr: "", exitCode: 0, signalCode: null });
+    expect(JSON.parse(result.stdout.split("\n")[0])).toEqual({
+      answeredFromMemory: 20,
+      blocksOnLoanAfterCollecting: 0,
+      answersACopyFromMemory: true,
+    });
+  });
 });

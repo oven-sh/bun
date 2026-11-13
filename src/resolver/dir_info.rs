@@ -406,6 +406,41 @@ pub use Flags as Flag;
 // COUNT mirrors `fs::preallocate::counts::DIR_ENTRY`.
 pub type HashMap = allocators::BSSMapInner<DirInfo, 2048, true>;
 
+/// The map as the resolver writes it: a write that gives a directory another answer moves `resolution_epoch`.
+pub(crate) struct Map<'a>(pub(crate) &'a mut HashMap);
+
+impl<'a> Map<'a> {
+    #[inline]
+    pub(crate) fn get_or_put(
+        self,
+        key: &[u8],
+    ) -> core::result::Result<allocators::Result, bun_alloc::AllocError> {
+        self.0.get_or_put(key)
+    }
+
+    #[inline]
+    pub(crate) fn at_index(self, index: allocators::IndexType) -> Option<&'a mut DirInfo> {
+        self.0.at_index(index)
+    }
+
+    pub(crate) fn mark_not_found(self, result: allocators::Result) {
+        let was_found = result.status == allocators::ItemStatus::Exists;
+        self.0.mark_not_found(result);
+        if was_found {
+            crate::resolution_epoch::bump();
+        }
+    }
+
+    /// Whether the map had an answer for `key`.
+    pub(crate) fn remove(self, key: &[u8]) -> bool {
+        let removed = self.0.remove(key);
+        if removed {
+            crate::resolution_epoch::bump();
+        }
+        removed
+    }
+}
+
 /// Insert `value` at `result`'s slot and return a retag-durable slot pointer
 /// (see [`slot_ptr_at`]). Takes a raw map pointer, not `&mut self`: a
 /// protected `&mut` receiver would be invalidated when `slot_ptr_at` goes
@@ -423,9 +458,15 @@ pub(crate) unsafe fn put_slot(
         map.cast_const(),
         hash_map_instance().cast_const()
     ));
+    let checked_before = result.has_checked_if_exists();
     // SAFETY: `map` is the live singleton; resolver mutex held. The auto-ref
     // `&mut *map` ends when `put` returns, before `slot_ptr_at` runs.
-    unsafe { (*map).put(result, value) }.map_err(crate::Error::from)?;
+    let put = unsafe { (*map).put(result, value) }.map(|_| ());
+    // A directory that was found or not found before gets another answer.
+    if checked_before {
+        crate::resolution_epoch::bump();
+    }
+    put.map_err(crate::Error::from)?;
     // SAFETY: `put` just assigned a non-sentinel, initialized index.
     Ok(unsafe { slot_ptr_at(result.index) }.expect("put assigned a non-sentinel index"))
 }

@@ -107,6 +107,12 @@ export const napiThreadsafeFunctionLiveCount = $bindgen("napi_body.bind.ts", "th
 
 export const bundlerWorkerLiveCount = $bindgen("JSBundler.bind.ts", "workerLiveCount");
 
+/** How many module resolutions this thread answered from its memo, without the resolver. */
+export const resolutionMemoHits: () => number = $bindgen(
+  "virtual_machine_exports.bind.ts",
+  "resolutionMemoHitsForTesting",
+);
+
 export const semverIntersects = $bindgen("SemverObjectInternals.bind.ts", "intersects") as (
   left: string,
   right: string,

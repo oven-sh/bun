@@ -300,3 +300,10 @@ pub(crate) fn set_synthetic_allocation_limit_for_testing(limit: f64) -> usize {
         .store(limit, core::sync::atomic::Ordering::Relaxed);
     prev
 }
+
+/// How many resolutions this VM answered from its memo, without the resolver.
+pub(crate) fn resolution_memo_hits_for_testing(heap: &crate::bindgen::JsHeap<'_>) -> usize {
+    // SAFETY: only the VM is taken from it.
+    let global_this = unsafe { heap.global() };
+    global_this.bun_vm().resolution_memo_hits() as usize
+}

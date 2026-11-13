@@ -649,6 +649,8 @@ impl WTFStringImplStruct {
     // ---------------------------------------------------------------------
     // These details must stay in sync with WTFStringImpl.h in WebKit!
     // ---------------------------------------------------------------------
+    /// The low bits of `m_hash_and_flags` that are flags; the hash is above them.
+    pub(crate) const S_FLAG_COUNT: u32 = 8;
     pub(crate) const S_HASH_FLAG_8BIT_BUFFER: u32 = 1 << 2;
     pub(crate) const S_HASH_FLAG_STRING_KIND_IS_ATOM: u32 = 1 << 4;
     pub(crate) const S_HASH_FLAG_STRING_KIND_IS_SYMBOL: u32 = 1 << 5;
@@ -781,10 +783,25 @@ impl WTFStringImplStruct {
     pub fn is_thread_shareable(&self) -> bool {
         WTFStringImpl__isThreadShareable(self)
     }
+    /// Not a slice of another impl's characters, and not characters that someone else frees.
+    #[inline]
+    pub fn owns_its_characters(&self) -> bool {
+        WTFStringImpl__ownsItsCharacters(self)
+    }
     /// Compute the hash() if necessary
     #[inline]
     pub fn ensure_hash(&self) {
         Bun__WTFStringImpl__ensureHash(self);
+    }
+    /// `WTF::StringImpl::hash()`: the hash the impl caches, computed on first use.
+    #[inline]
+    pub fn hash(&self) -> u32 {
+        let existing = self.m_hash_and_flags.get() >> Self::S_FLAG_COUNT;
+        if existing != 0 {
+            return existing;
+        }
+        self.ensure_hash();
+        self.m_hash_and_flags.get() >> Self::S_FLAG_COUNT
     }
 }
 
@@ -800,6 +817,7 @@ unsafe extern "C" {
     pub fn Bun__WTFStringImpl__destroy(this: *const WTFStringImplStruct);
     safe fn WTFStringImpl__isThreadIsolated(this: &WTFStringImplStruct) -> bool;
     safe fn WTFStringImpl__isThreadShareable(this: &WTFStringImplStruct) -> bool;
+    safe fn WTFStringImpl__ownsItsCharacters(this: &WTFStringImplStruct) -> bool;
     safe fn Bun__WTFStringImpl__ensureHash(this: &WTFStringImplStruct);
 }
 

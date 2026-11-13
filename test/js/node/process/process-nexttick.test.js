@@ -78,14 +78,16 @@ it.concurrent.each([
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected + "\n", stderr: "", exitCode: 0 });
 });
 
-// The first read of process.nextTick on a global object makes its tick queue. Here an immediate makes that read, outside
-// a microtask, and each round queues its tick from a microtask. `tickQueuesBeforeEachRound` holds the precondition: the
-// first round starts with no tick queue, so nothing read process.nextTick before it.
+// The first read of process.nextTick on a global object makes its tick queue. Each script below reports tickQueues()
+// before the read that it tests. That is the precondition: with 0 tick queues, nothing read process.nextTick earlier.
+const defineTickQueues = `const tickQueues = () => require("bun:jsc").heapStats().objectTypeCounts.NextTickQueue ?? 0;`;
+
+// An immediate makes the first read, outside a microtask, and each round queues its tick from a microtask.
 // Node runs the ticks when the callback ends, after the microtasks that are queued:
 // https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/src/api/callback.cc#L165-L204
 function roundsFromTheFirstRead(report) {
   return `
-    const tickQueues = () => require("bun:jsc").heapStats().objectTypeCounts.NextTickQueue ?? 0;
+    ${defineTickQueues}
     const tickQueuesBeforeEachRound = [];
     const round = () =>
       new Promise(done => {
@@ -140,9 +142,12 @@ it.concurrent.each([
 // runs the script. The tick waits for the jobs of that queue and runs when the immediate ends, before its microtasks.
 it.concurrent("the first tick of a job of a node:vm context's own microtask queue waits for that queue", async () => {
   const result = await runScript(`
+    ${defineTickQueues}
     const vm = require("node:vm");
+    const tickQueuesBeforeEachRound = [];
     const round = () =>
       new Promise(done => {
+        tickQueuesBeforeEachRound.push(tickQueues());
         const order = [];
         const context = vm.createContext({ process, order }, { microtaskMode: "afterEvaluate" });
         vm.runInContext(
@@ -158,11 +163,17 @@ it.concurrent("the first tick of a job of a node:vm context's own microtask queu
       });
     setImmediate(async () => {
       const first = await round();
-      setImmediate(async () => console.log(JSON.stringify({ first, second: await round() })));
+      setImmediate(async () =>
+        console.log(JSON.stringify({ first, second: await round(), tickQueuesBeforeEachRound })),
+      );
     });
   `);
   const order = "vm microtask 1, vm microtask 2, tick, microtask";
-  expect(result).toEqual({ stdout: JSON.stringify({ first: order, second: order }) + "\n", stderr: "", exitCode: 0 });
+  expect(result).toEqual({
+    stdout: JSON.stringify({ first: order, second: order, tickQueuesBeforeEachRound: [0, 1] }) + "\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 // Programs that the early tick silences or kills. An immediate is the first to load or touch a built-in that reads
@@ -172,6 +183,7 @@ it.concurrent.each([
     "'finish' of a Writable, where node:stream is first loaded in the immediate",
     `
       setImmediate(async () => {
+        console.log("tick queues: " + tickQueues());
         const { Writable } = require("node:stream");
         const sink = new Writable({
           write(chunk, encoding, callback) {
@@ -199,6 +211,7 @@ it.concurrent.each([
         return stream;
       }
       setImmediate(async () => {
+        console.log("tick queues: " + tickQueues());
         const { PassThrough } = require("node:stream");
         const stream = await open(PassThrough);
         stream.on("error", error => console.log("handled: " + error.message));
@@ -215,6 +228,7 @@ it.concurrent.each([
         return spawn(command);
       }
       setImmediate(async () => {
+        console.log("tick queues: " + tickQueues());
         process.stdout.write("starting\\n");
         const child = await start(process.execPath + "-does-not-exist");
         child.on("error", error => console.log("handled: " + error.code));
@@ -223,7 +237,11 @@ it.concurrent.each([
     "starting\nhandled: ENOENT\n",
   ],
 ])("a listener added after an await is in time for %s", async (_name, script, stdout) => {
-  expect(await runScript(script)).toEqual({ stdout, stderr: "", exitCode: 0 });
+  expect(await runScript(defineTickQueues + script)).toEqual({
+    stdout: "tick queues: 0\n" + stdout,
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 // The body of an entry point runs inside a microtask, and node runs a CommonJS entry point outside the microtask queue.

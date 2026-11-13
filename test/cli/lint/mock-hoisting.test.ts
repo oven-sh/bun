@@ -44,6 +44,7 @@ const spies = (object: string) =>
   `const spy = ${object}.fn(greet);\ntest("greets", () => {\n  console.log(TAG, spy());\n});\n`;
 const chain = (object: string) =>
   `test("greets", async () => {\n  console.log(TAG, await ${object}.importActual("./dep.js").then(it => it.greet()));\n});\n`;
+const typeOfVi = "export type Utils = typeof vi;\n";
 
 // A function in `helpers/` calls `jest.requireActual("./dep.js")` and the like for a test in `tests/`. `bun test` looks
 // for `./dep.js` next to the file that the frame of the call's caller names. That's `helpers/actual.js`, unless the
@@ -531,6 +532,90 @@ const groups: { name: string; rule: string; config: Files; cases: Record<string,
         prints: ["runs dep.js", "real"],
         dangerously: ["runs dep.js", "real"],
       },
+      // `vi` is a type-only import. TypeScript rejects a use of it as a value (TS1361), and `bun test` takes it for the
+      // global `vi`.
+      "an import that has a type-only vi": {
+        file: "greet.test.ts",
+        text: 'import { type vi, vitest, test } from "vitest";\n' + importGreet + mock("vitest") + typeOfVi + greets(),
+        prints: ["mock"],
+        dangerously: ["mock"],
+      },
+      // An interface of the same name doesn't make the type-only `vi` a value.
+      "an import that has a type-only vi, and an interface named vi": {
+        file: "greet.test.ts",
+        text:
+          'import { type vi, vitest, test } from "vitest";\n' +
+          importGreet +
+          mock("vitest") +
+          "export interface vi {\n  name: string;\n}\n" +
+          typeOfVi +
+          greets(),
+        prints: ["mock"],
+        dangerously: ["mock"],
+      },
+      "a use that is no call, and a type-only vi": {
+        file: "greet.test.ts",
+        text:
+          'import { type vi, vitest, test } from "vitest";\n' +
+          "const api = vitest;\n" +
+          typeOfVi +
+          'test("greets", () => {\n  console.log(TAG, typeof api.fn);\n});\n',
+        prints: ["function"],
+        dangerously: ["function"],
+      },
+      "a call on the global, and a type-only vi": {
+        file: "greet.test.ts",
+        text:
+          'import type { vi } from "vitest";\nimport { test } from "vitest";\n' +
+          importGreet +
+          mock("vitest") +
+          typeOfVi +
+          greets(),
+        prints: ["mock"],
+        dangerously: ["mock"],
+      },
+      "a spy on the global, and a type-only vi": {
+        file: "greet.test.ts",
+        text: 'import { type vi, test } from "vitest";\n' + importGreet + typeOfVi + spies("vitest"),
+        prints: ["runs dep.js", "real"],
+        dangerously: ["runs dep.js", "real"],
+      },
+      // The name is a type-only import, and so is the `vi` that it becomes. That `vi` would take the call on the global.
+      "a type-only import of the name, and a call on the global vi": {
+        file: "greet.test.ts",
+        text:
+          'import type { vitest } from "vitest";\nimport { test } from "vitest";\n' +
+          importGreet +
+          mock("vi") +
+          "export type Utils = typeof vitest;\n" +
+          greets(),
+        prints: ["mock"],
+        dangerously: ["mock"],
+      },
+      // Under `import type`, the `vi` is a type-only import beside another name too. A `type` in the braces stays only
+      // where the name is the only specifier.
+      "a type-only import of the name and of a type, and a call on the global vi": {
+        file: "greet.test.ts",
+        text:
+          'import type { Mock, vitest } from "vitest";\nimport { test } from "vitest";\n' +
+          importGreet +
+          mock("vi") +
+          "export type Utils = typeof vitest | Mock;\n" +
+          greets(),
+        prints: ["mock"],
+        dangerously: ["mock"],
+      },
+      "a type-only name as the only specifier, and a call on the global vi": {
+        file: "greet.test.ts",
+        text:
+          'import { type vitest } from "vitest";\nimport { test } from "vitest";\n' +
+          importGreet +
+          mock("vi") +
+          "export type Utils = typeof vitest;\n" +
+          greets(),
+        prints: ["mock"],
+        dangerously: ["mock"],
+      },
 
       "vitest.fn()": {
         text: 'const { vitest, test } = require("vitest");\n' + requireGreet + spies("vitest"),
@@ -552,6 +637,10 @@ const groups: { name: string; rule: string; config: Files; cases: Record<string,
       // The rule renames the import too.
       "an import from vitest": {
         text: 'import { vitest, test } from "vitest";\n' + importGreet + mock("vitest") + greets(),
+        prints: ["mock"],
+      },
+      "an import that has vi too": {
+        text: 'import { vi, vitest, test } from "vitest";\n' + importGreet + mock("vitest") + greets(),
         prints: ["mock"],
       },
       "an import from @effect/vitest": {
@@ -597,6 +686,85 @@ const groups: { name: string; rule: string; config: Files; cases: Record<string,
         text: 'import { vitest, test } from "vitest";\n' + chain("vitest"),
         prints: ["runs dep.js", "real"],
       },
+      // A type-only `vi` is as good as the name in a type, and for a name that is a type-only import itself.
+      "a use in a type, and a type-only vi": {
+        file: "greet.test.ts",
+        text:
+          'import { type vi, vitest, test } from "vitest";\n' +
+          importGreet +
+          "export type Utils = typeof vi | typeof vitest;\n" +
+          greets(),
+        prints: ["runs dep.js", "real"],
+      },
+      "type-only imports of the name and of vi": {
+        file: "greet.test.ts",
+        text:
+          'import type { vi, vitest } from "vitest";\nimport { test } from "vitest";\n' +
+          importGreet +
+          mock("vitest") +
+          typeOfVi +
+          greets(),
+        prints: ["mock"],
+      },
+      // The same for a call that has its own fix, because no import from Vitest has the name. TypeScript rejects the
+      // call as written, and the rename to a type-only `vi` adds nothing.
+      "type-only imports of the name and of vi from another module": {
+        file: "greet.test.ts",
+        text:
+          'import type { vi, vitest } from "./types";\nimport { test } from "vitest";\n' +
+          importGreet +
+          mock("vitest") +
+          greets(),
+        prints: ["mock"],
+      },
+      // A type-only `vi` is as good as the global `vi` in a type too.
+      "a type-only import of the name, and the global vi in a type": {
+        file: "greet.test.ts",
+        text:
+          'import type { vitest } from "vitest";\nimport { test } from "vitest";\n' +
+          importGreet +
+          "export type Utils = typeof vitest | typeof vi;\n" +
+          greets(),
+        prints: ["runs dep.js", "real"],
+      },
+      // Beside another specifier, the fix writes `vi` without `type`. The call on the global then has a value.
+      "a type-only import of the name beside test, and a call on the global vi": {
+        file: "greet.test.ts",
+        text:
+          'import { type vitest, test } from "vitest";\n' +
+          importGreet +
+          mock("vi") +
+          "export type Utils = typeof vitest;\n" +
+          greets(),
+        prints: ["mock"],
+      },
+      // So it has where the name has no `type` and is the only specifier.
+      "the name as the only specifier, and a call on the global vi": {
+        text:
+          'import { vitest } from "vitest";\nimport { test } from "vitest";\n' + importGreet + mock("vi") + greets(),
+        prints: ["mock"],
+      },
+      // An interface or a type named `vi` is no second declaration of the `vi` that the import then declares.
+      "an interface named vi beside the import": {
+        file: "greet.test.ts",
+        text:
+          'import { vitest, test } from "vitest";\n' +
+          importGreet +
+          mock("vitest") +
+          "export interface vi {\n  name: string;\n}\n" +
+          greets(),
+        prints: ["mock"],
+      },
+      "a type named vi beside the import": {
+        file: "greet.test.ts",
+        text:
+          'import { vitest, test } from "vitest";\n' +
+          importGreet +
+          mock("vitest") +
+          "export type vi = string;\n" +
+          greets(),
+        prints: ["mock"],
+      },
     },
   },
   {
@@ -609,9 +777,52 @@ const groups: { name: string; rule: string; config: Files; cases: Record<string,
         prints: ["runs dep.js", "real"],
         dangerously: ["mock"],
       },
+      "an import that has a type-only vitest": {
+        file: "greet.test.ts",
+        text:
+          'import { type vitest, vi, test } from "vitest";\n' +
+          importGreet +
+          mock("vi") +
+          "export type Utils = typeof vitest;\n" +
+          greets(),
+        prints: ["mock"],
+        dangerously: ["mock"],
+      },
       "two globals": {
         text: 'const { test } = require("vitest");\n' + requireGreet + mock("vi") + greets(),
         prints: ["mock"],
+      },
+    },
+  },
+  {
+    // A config of oxlint gives a fix one pass, and nothing rolls back a fix that declares a name twice.
+    name: "vitest/consistent-vitest-vi with an .oxlintrc.json",
+    rule: "vitest/consistent-vitest-vi",
+    config: {
+      ".oxlintrc.json":
+        '{ "plugins": ["vitest"], "categories": { "correctness": "off" }, "rules": { "vitest/consistent-vitest-vi": "warn" } }',
+    },
+    cases: {
+      // The renamed import would be a second import of `vi`, which TypeScript rejects (TS2300).
+      "a type-only vi in another statement": {
+        file: "greet.test.ts",
+        text:
+          'import type { vi } from "vitest";\nimport { vitest, test } from "vitest";\n' +
+          importGreet +
+          typeOfVi +
+          greets(),
+        prints: ["runs dep.js", "real"],
+        dangerously: ["runs dep.js", "real"],
+      },
+      // The same for a value import. `bun test` doesn't load a JavaScript file that imports `vi` twice.
+      "vi in another statement": {
+        text:
+          'import { vi } from "vitest";\nimport { vitest, test } from "vitest";\n' +
+          importGreet +
+          mock("vi") +
+          greets(),
+        prints: ["mock"],
+        dangerously: [],
       },
     },
   },

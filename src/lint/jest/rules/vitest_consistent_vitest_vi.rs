@@ -3,7 +3,7 @@ use bun_lint_oxlint::import::{ImportEntry, ImportImportName, import_entries_of};
 use crate::jest::{self, JestFnKind, JestGeneralFnKind, PossibleJestNode};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
-use bun_lint::utils::bun_test;
+use bun_lint::utils::{bun_test, ts_utils};
 use smallvec::SmallVec;
 
 /// This rule triggers an error when an unexpected Vitest accessor is used.
@@ -58,6 +58,16 @@ fn span_of(specifier: &ImportEntry) -> Span {
         ImportImportName::Default(local) => local.span(),
         ImportImportName::NamespaceObject(local) => specifier.declaration.namespace_span().unwrap_or_else(|| local.span()),
     }
+}
+
+/// True if `symbol` is a type-only import, like the `vi` of `import { type vi }`. TypeScript rejects a use of it as a value.
+fn is_type_only(symbol: Option<Symbol<'_>>) -> bool {
+    symbol.is_some_and(|it| it.declarations().any(ts_utils::is_type_import))
+}
+
+/// True if `reference` uses its name as a value. The `vitest` of `typeof vitest` in a type doesn't.
+fn is_value_use(reference: Reference<'_>) -> bool {
+    reference.expr().is_some_and(|it| !it.is_in_type_query())
 }
 
 impl ConsistentVitestVi {
@@ -147,7 +157,7 @@ impl ConsistentVitestVi {
         target.is_some_and(|it| !bun_test::is_known(self.function.as_bytes(), Some(it)) && !is_together(it))
     }
 
-    /// True if the new name changes what runs: a use of the name is then on another `function`, or on one that `bun test` doesn't treat as it treats the name: see [`bun_test`].
+    /// True if the new name changes what runs or what type checks: a use is then on another `function`, on a type-only import or on one that `bun test` doesn't treat as it treats the name, or the file declares `function` a second time: see [`bun_test`].
     #[cold]
     fn changes_uses<'a>(&self, file: &'a File<'a>, import: Import<'a>) -> bool {
         let (function, opposite) = (self.function.as_bytes(), self.opposite.as_bytes());
@@ -159,7 +169,19 @@ impl ConsistentVitestVi {
         let Some(declared) = self.declared(import) else {
             return false;
         };
-        let before = bun_test::is_known(opposite, Some(declared));
+        // Beside another declaration of `function`, the renamed import would declare the name a second time. A type or an interface merges with it.
+        let (statement, here) = (Node::Stmt(import.stmt()), Node::Stmt(import.stmt()).scope().get_bytes(function));
+        let is_second = |it: Declaration<'a>| it.parent() != Some(statement) && !matches!(it, Declaration::Interface(_) | Declaration::TypeAlias(_));
+        if here.is_some_and(|it| it.declarations().any(is_second)) {
+            return true;
+        }
+        let (before, is_value) = (bun_test::is_known(opposite, Some(declared)), !is_type_only(Some(declared)));
+        // The `function` that the fix writes is a type-only import too under `import type`, or where the name keeps its `type` as the only specifier.
+        let stays_type_only = !is_value && (import.is_type_only() || import_entries_of(import).count() == 1);
+        // Such an import takes the uses of the global of that name, and TypeScript rejects those that are values.
+        if stays_type_only && !declares && file.unresolved_references_to(function).any(is_value_use) {
+            return true;
+        }
         declared.references().any(|it| {
             let target = it.scope().resolve_bytes(function);
             // Where nothing declares `function`, the use is then on what the import declares. Another `function` of the import, like `test as vi`, is another thing.
@@ -167,11 +189,12 @@ impl ConsistentVitestVi {
                 None => declares_known,
                 target => bun_test::is_known(function, target),
             };
-            before != after || self.is_other(target, Some(declared))
+            // TypeScript rejects a type-only import where the name was a value and is used as one.
+            before != after || self.is_other(target, Some(declared)) || is_value && is_value_use(it) && is_type_only(target)
         })
     }
 
-    /// True if the new name changes what runs: the call is then on another `function`, or `bun test` treats a module mock call in another way: see [`bun_test`].
+    /// True if the new name changes what runs or what type checks: the call is then on another `function` or on a type-only import, or `bun test` treats a module mock call in another way: see [`bun_test`].
     #[cold]
     fn changes_call<'a>(&self, file: &'a File<'a>, name: Expr<'a>) -> bool {
         let function = self.function.as_bytes();
@@ -182,6 +205,6 @@ impl ConsistentVitestVi {
         }
         let (declared, target) = (name.symbol(), Node::Expr(name).scope().resolve_bytes(function));
         let changes_kind = || bun_test::is_known(self.opposite.as_bytes(), declared) != bun_test::is_known(function, target);
-        self.is_other(target, declared) || is_mock && changes_kind()
+        self.is_other(target, declared) || is_type_only(target) && !is_type_only(declared) || is_mock && changes_kind()
     }
 }

@@ -3686,9 +3686,8 @@ pub mod bv2_impl {
                     // "production build" part of Bake.
 
                     let keys = named_exports_array[*source_id as usize].keys();
-                    // `G::Property: !Clone` — build via iterator instead of `vec![v; n]`.
                     let mut client_manifest_items: Box<[G::Property]> =
-                        (0..keys.len()).map(|_| G::Property::default()).collect();
+                        vec![G::Property::default(); keys.len()].into();
 
                     if !sc.separate_ssr_graph {
                         bun_core::todo_panic!("separate_ssr_graph=false");

@@ -4820,19 +4820,7 @@ pub(crate) mod __gated_printer {
         }
 
         pub(crate) fn print_property(&mut self, item_in: &G::Property) {
-            // `G::Property` isn't `Copy`, so take a borrow and shallow-copy the
-            // mutable bits we may rewrite (key + flags).
-            let mut item = G::Property {
-                kind: item_in.kind,
-                flags: item_in.flags,
-                class_static_block: item_in.class_static_block,
-                key: item_in.key,
-                value: item_in.value,
-                initializer: item_in.initializer,
-                // Vec is not Copy — re-slice instead of move.
-                ts_decorators: bun_alloc::AstAlloc::vec(),
-                ts_metadata: Default::default(),
-            };
+            let mut item = *item_in;
             if !IS_JSON {
                 if item.kind == G::PropertyKind::Spread {
                     self.print(b"...");

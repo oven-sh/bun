@@ -403,65 +403,72 @@ describe("libwebp's history", () => {
       refused,
     ],
 
-    // e9e8ece3, after 1.6.0, a speed-up. The last code of an alpha plane may go past the end of the data. These end after 8 of
-    // its 9 bits, and the last bit tells two symbols apart. It is a 0 now. It was the bit that is 64 bits back, a 1 in these.
+    // f9c049d5, after 1.6.0: an alpha plane whose only transform is a palette could end inside its last code or in front of it.
     [
-      "alpha that ends inside a literal",
-      withAlpha("01ff9711119000b66dd8c841504e77ff1111dd1d00ff"),
+      "alpha that ends with its last literal",
+      withAlpha("01ff9711119000b66dd8c841504e77ff11110880ff"),
       lossySize,
-      lossyPixelsWithAlpha(2, 4, 4, 4, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 9),
+      lossyPixelsWithAlpha(1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 10),
     ],
     [
-      "alpha that ends inside a literal, or a copy of more pixels than are left",
-      withAlpha("01ff9711119020b66d18c951504e67efff3fbe88081c00ff"),
-      lossySize,
-      lossyPixelsWithAlpha(1, 1, 1, 4, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 9),
-    ],
-    [
-      "alpha that ends inside a distance of more pixels than there are, or of one",
-      withAlpha("01ff9711112010240de1ffdf151112c0b60d1b39f87f6b2ca2daff"),
+      "alpha that ends inside its last literal",
+      withAlpha("01ff9711119000b66dd8c841504e77ff11110880"),
       lossySize,
       refused,
     ],
     [
-      "alpha that ends inside a distance of a row, or of one pixel",
-      withAlpha("01ff9711112010240de1ffdf151112c0b60d1b39f87f6b2c025aff"),
-      lossySize,
-      lossyPixelsWithAlpha(1, 1, 1, 1, 2, 1, 1, 1, 1, 2, 1, 1, 1, 1, 2),
-    ],
-    // As in 1.6.0: all of a code that starts where the data ends is made of the bits 64 bits back. Zeros would make a 1 of the 4.
-    [
-      "alpha that ends in front of its last code",
+      "alpha that ends in front of its last literal",
       withAlpha("01ff9711119000b66dd8c841504e77ff1111787f7f00"),
       lossySize,
-      lossyPixelsWithAlpha(1, 1, 1, 5, 8, 8, 1, 1, 1, 1, 1, 1, 1, 1, 4),
+      refused,
+    ],
+    [
+      "alpha that ends with the distance of its last copy",
+      withAlpha("01ff9711112010240de1ffdf151112c0b60d1b39f87f6b2c42edff"),
+      lossySize,
+      lossyPixelsWithAlpha(1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2),
+    ],
+    [
+      "alpha that ends inside the distance of its last copy",
+      withAlpha("01ff9711112010240de1ffdf151112c0b60d1b39f87f6b2c025aff"),
+      lossySize,
+      refused,
     ],
 
-    // 85755959, after 1.6.0: the C code's inverse transform multiplied in 32 bits. Coefficients of 32660, or of -32660, add up
-    // to 65320 and to 107992 in its first pass, which its second pass multiplies. The SSE2 code gives other pixels for these.
+    // The bit reader starts with 8 bytes, and shorter data goes on with zeros. They are 14 of the 15 pixels here.
     [
-      "coefficients that overflow 32 bits when multiplied by 35468",
+      "alpha of 4 bytes that ends after its first pixel",
+      withAlpha("01d8828888"),
+      lossySize,
+      lossyPixelsWithAlpha(5, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1),
+    ],
+
+    // The C code's inverse transform multiplies in 32 bits, and the product wraps. In 1.6.0 that was a signed overflow, since
+    // 90ffd412 it is meant. Coefficients of 32660, or of -32660, add up to 65320 and to 107992 in its first pass, which its
+    // second pass multiplies. The SSE2 code gives other pixels for these.
+    [
+      "coefficients that wrap at 32 bits when multiplied by 35468",
       riff([chunk("VP8 ", hex("1001009d012a040004000000fe00000dc000c4ffff8fbf8fff1f000000"))]),
       blockSize,
-      grayBlock(255, 255, 0, 0, 130, 130, 130, 130, 130, 130, 130, 130, 255, 255, 0, 0),
+      grayBlock(255, 0, 255, 0, 130, 130, 130, 130, 130, 130, 130, 130, 255, 0, 255, 0),
     ],
     [
-      "negative coefficients that overflow 32 bits when multiplied by 35468",
+      "negative coefficients that wrap at 32 bits when multiplied by 35468",
       riff([chunk("VP8 ", hex("1001009d012a040004000000fe00000dc000c4ffff907d8fff207c0000"))]),
       blockSize,
-      grayBlock(0, 0, 255, 255, 130, 130, 130, 130, 130, 130, 130, 130, 0, 0, 255, 255),
+      grayBlock(0, 255, 0, 255, 130, 130, 130, 130, 130, 130, 130, 130, 0, 255, 0, 255),
     ],
     [
-      "coefficients that overflow 32 bits when multiplied by 20091",
+      "coefficients that wrap at 32 bits when multiplied by 20091",
       riff([chunk("VP8 ", hex("1001009d012a040004000000fe00000dc000c4ffff8febfff903dffc85bfffc87dff8fe2fff903e000"))]),
       blockSize,
-      grayBlock(255, 255, 255, 0, 255, 255, 255, 0, 0, 0, 0, 255, 255, 255, 255, 0),
+      grayBlock(0, 255, 255, 0, 255, 255, 255, 0, 0, 0, 0, 255, 255, 255, 255, 0),
     ],
     [
-      "negative coefficients that overflow 32 bits when multiplied by 20091",
+      "negative coefficients that wrap at 32 bits when multiplied by 20091",
       riff([chunk("VP8 ", hex("1001009d012a040004000000fe00000dc000c4ffff90a9fff90fbffc7fcfffc81eff90a0fff8f80000"))]),
       blockSize,
-      grayBlock(0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255, 0, 0, 0, 0, 255),
+      grayBlock(255, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255, 0, 0, 0, 0, 255),
     ],
 
     ["an animation", riff([vp8x(ICCP | ANIMATION), iccp, anim, anmf(lossy)]), size, refused],

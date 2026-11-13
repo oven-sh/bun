@@ -118,7 +118,6 @@ fn read_symbol(
     if code.bits() > HUFFMAN_TABLE_BITS {
         br.skip_bits(HUFFMAN_TABLE_BITS);
         let mask = (1 << (code.bits() - HUFFMAN_TABLE_BITS)) - 1;
-        // Not prefetched anew: `bit_pos` may be 64 or more by now.
         index += code.value() as usize + ((next_bits >> HUFFMAN_TABLE_BITS) & mask) as usize;
         code = tables.at(index)?;
     }
@@ -868,7 +867,7 @@ fn decode_alpha_data(
     let mut col = data.len().checked_rem(width).ok_or(Bug)?;
     let mut htree_group = metadata.get_htree_group_for_pos(col, row)?;
 
-    while !br.eos && data.len() < end {
+    while data.len() < end {
         if col & mask == 0 {
             htree_group = metadata.get_htree_group_for_pos(col, row)?;
         }
@@ -903,10 +902,11 @@ fn decode_alpha_data(
                 htree_group = metadata.get_htree_group_for_pos(col, row)?;
             }
         }
-        br.eos = br.is_end_of_stream();
+        if br.is_end_of_stream() {
+            return Err(Error::BitstreamError);
+        }
     }
-    // Unlike `decode_image_data`, this lets the last symbol of the image go past the end of the data.
-    if data.len() > image_end || (br.eos && data.len() < image_end) {
+    if data.len() > image_end {
         return Err(Error::BitstreamError);
     }
     window.pixels = data;

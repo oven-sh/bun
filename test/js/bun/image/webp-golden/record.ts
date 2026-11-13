@@ -15,14 +15,11 @@
 // - Decodes of a bitstream that goes on behind the end of its chunk. 1.6.0 read on, to the end of the file. Since c3fe5bb6
 //   the bitstream ends with its chunk, and `WebPDecode` refuses these files. The same commit has `WebPGetInfo` accept a lossy
 //   frame without a chunk header that ends in its first partition. No case is such a file so far.
-// - Decodes of an alpha plane whose data ends inside its last code, which `WebPDecode` allows if a palette is the plane's only
-//   transform. If the code has more than 8 bits and the data at most 8 of them, 1.6.0 took the rest from 64 bits back. Since
-//   e9e8ece3 they are zeros: another plane, an error for a plane, or a plane for an error. That commit is a speed-up and does
-//   not say so.
+// - Decodes of an alpha plane whose data ends inside its last code or in front of it. If a palette was the plane's only
+//   transform, 1.6.0 made up the missing bits and decoded it. Since f9c049d5 `WebPDecode` refuses these files.
 //
 // No case is a damaged lossy file whose coefficients overflow 16 bits: libwebp's SSE2 code and its C code decode
-// those to different pixels. `bun_webp` does what the C code does since 85755959, after 1.6.0, where its products no
-// longer overflow 32 bits. webp-golden.test.ts has cases of its own for both.
+// those to different pixels. `bun_webp` does what the C code does, and webp-golden.test.ts has cases of its own for that.
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";

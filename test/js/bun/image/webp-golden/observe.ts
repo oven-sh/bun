@@ -134,7 +134,7 @@ export type DecodeCase = {
   metadata: { width: number; height: number; format: string } | { error: string };
   /** Left out if a damaged header announces an image too large to be worth the memory. */
   decoded?: Decoded;
-  /** The results are those of libwebp c3fe5bb6, and differ from those of 1.6.0. */
+  /** The results are those of libwebp f9c049d5, and differ from those of 1.6.0. */
   fixed?: true;
 };
 

@@ -34,8 +34,8 @@ impl<'a> BitReader<'a> {
         }
     }
 
-    /// The next 32 bits. Past the end they are zeros, but from a `bit_pos` of 64 on they are those of `val` over again.
-    /// An alpha plane's last symbol may be made of either.
+    /// The next 32 bits. Data of less than 8 bytes goes on with zeros. What else comes past the end does not matter: nothing
+    /// decodes that has read that far.
     #[inline(always)]
     pub(super) fn prefetch_bits(&self) -> u32 {
         (self.val >> (self.bit_pos & (LBITS - 1))) as u32

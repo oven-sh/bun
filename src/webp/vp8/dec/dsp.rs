@@ -24,15 +24,15 @@ pub(super) const Y_OFF: usize = BPS + 8;
 pub(super) const U_OFF: usize = Y_OFF + BPS * 16 + BPS;
 pub(super) const V_OFF: usize = U_OFF + 16;
 
-// Transforms (paragraph 14.4), like libwebp's C code. Its SSE2 code wraps at 16 bits, which damaged files show.
+// Transforms (paragraph 14.4), in 32 bits like libwebp's C code. Its SSE2 code wraps at 16, which damaged files show.
 
 /// Four rows of four samples in the work buffer, from the first sample to the last.
 pub(super) type Block4 = [u8; 3 * BPS + 4];
 
-/// `(a * k) >> 16`. Damaged files have coefficients so large that the product overflows 32 bits.
+/// `(a * k) >> 16`. Damaged files have coefficients so large that the product wraps, as it does in libwebp.
 #[inline(always)]
 fn mulhi(a: i32, k: i32) -> i32 {
-    ((i64::from(a) * i64::from(k)) >> 16) as i32
+    a.wrapping_mul(k) >> 16
 }
 
 #[inline(always)]

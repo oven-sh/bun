@@ -160,6 +160,24 @@ impl ThreadPool {
     /// `ThreadPool` because `Graph.pool` is `NonNull<ThreadPool>` and the arena
     /// owns the storage). Call [`Self::wait_for_io_tasks`] first.
     pub(crate) fn deinit(&mut self) {
+        let mut assignments = self.workers_assignments.lock();
+        if assignments.count() > 0 {
+            for &worker in assignments.values() {
+                // SAFETY: the map owns `worker`, is emptied below, and no task runs on it any more.
+                // One without a pool thread was made on this thread or on one that has been joined.
+                unsafe {
+                    match (*worker).thread {
+                        Some(thread) => thread.push_idle_task(&raw mut (*worker).deinit_task),
+                        None => Worker::deinit(worker),
+                    }
+                }
+            }
+            self.wake_for_idle_events();
+        }
+        // The arena does not run `Drop`.
+        assignments.clear_and_free();
+        drop(assignments);
+
         if self.worker_pool_is_owned {
             // SAFETY: worker_pool was heap-allocated in `init()` when owned.
             unsafe { drop(bun_core::heap::take(self.worker_pool)) };
@@ -326,7 +344,7 @@ impl ThreadPool {
         if generation == self.generation {
             // SAFETY: cached by `get_worker_slow` on this thread; the Worker is
             // heap-pinned (boxed in the slow path) and live while
-            // `self.generation` is — `deinit_soon` runs before the pool is
+            // `self.generation` is — `ThreadPool::deinit` runs before the pool is
             // dropped, and a new pool at the same address has a fresh
             // generation, so a stale TLS entry never matches here.
             return unsafe { &mut *worker };
@@ -469,7 +487,7 @@ impl Worker {
         // SAFETY: `self.arena` is a `BackRef` to `self.heap`, set in
         // `Worker::create` and never reassigned. `Worker::get` already returns
         // `&'static mut Worker`; callers are task callbacks that complete
-        // before `deinit_soon` tears the worker down, so the arena outlives
+        // before `ThreadPool::deinit` tears the worker down, so the arena outlives
         // every reference handed out here.
         unsafe { bun_ptr::detach_lifetime_ref(self.arena.get()) }
     }
@@ -492,7 +510,7 @@ pub struct WorkerData {
 
 impl Worker {
     // CONCURRENCY: thread-pool callback — runs on the worker's own OS thread
-    // during pool drain (scheduled via `deinit_soon`). Writes: own `Worker`
+    // during pool drain (scheduled via `ThreadPool::deinit`). Writes: own `Worker`
     // fields only (`heap`, `data`, `ast_memory_store` teardown). The `Worker`
     // is per-OS-thread (`Thread::current()`-keyed), so `&mut *this` is unique.
     // `Worker` is `Send` because its arena/backref pointers are
@@ -501,38 +519,17 @@ impl Worker {
     /// Thread-pool idle-task callback (safe fn — coerces to the
     /// `Task.callback` field type at the struct-init site). `task` is the
     /// `deinit_task` field of a live boxed `Worker` — guaranteed by
-    /// [`Self::deinit_soon`], the sole scheduler of this callback.
+    /// [`ThreadPool::deinit`], the sole scheduler of this callback.
     fn deinit_callback(task: *mut ThreadPoolLib::Task) {
         bun_core::scoped_log!(ThreadPool, "Worker.deinit()");
         // SAFETY: `task` points to `Worker.deinit_task` (intrusive field) —
         // only ever invoked by the thread pool against a `Worker` enqueued via
-        // `deinit_soon`, so provenance covers the full `Worker` allocation.
+        // `ThreadPool::deinit`, so provenance covers the full `Worker` allocation.
         let this: *mut Worker = unsafe { bun_core::from_field_ptr!(Worker, deinit_task, task) };
-        // SAFETY: `deinit_soon` schedules this exactly once on a live
+        // SAFETY: `ThreadPool::deinit` schedules this exactly once on a live
         // heap-allocated `Worker`; the idle-task fires on the worker's own OS
         // thread with no other live borrow, so we hold exclusive ownership.
         unsafe { Self::deinit(this) };
-    }
-
-    pub(crate) fn deinit_soon(&mut self) {
-        if let Some(thread) = self.thread {
-            thread.push_idle_task(&raw mut self.deinit_task);
-        } else {
-            // `thread` is `ThreadPoolLib::Thread::current()` captured at
-            // creation. When null, the Worker was created on a non-pool thread
-            // (the bundler thread running an inline parse). `deinit_soon` is
-            // also called from the bundler thread (`deinit_without_freeing_arena`
-            // iterates `workers_assignments`), so we are on the owning thread
-            // and can tear down synchronously. Skipping teardown here would
-            // leak the Worker — including its
-            // `ast_memory_store` mi_heap (every `AstAlloc` buffer the inline
-            // parse produced) and `data.transpiler` per `Bun.build()` call.
-            //
-            // SAFETY: `self` is the heap-allocated Worker; sole owner now that
-            // the caller is about to `clear_retaining_capacity()` the
-            // `workers_assignments` map.
-            unsafe { Self::deinit(std::ptr::from_mut::<Self>(self)) };
-        }
     }
 
     /// Takes ownership of the heap allocation and frees it.

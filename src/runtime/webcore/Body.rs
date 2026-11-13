@@ -770,8 +770,7 @@ impl Value {
             }
             Value::Empty => ReadableStream::empty(cx.global())?,
             Value::InternalBlob(_) | Value::Blob(_) | Value::WTFStringImpl(_) => {
-                // `deinit` must run on every exit incl. `?` paths.
-                let blob = scopeguard::guard(self.use_(), |mut b| b.deinit());
+                let blob = self.use_();
                 blob.resolve_size();
                 let blob_size = blob.size.get();
                 ReadableStream::from_blob_copy_ref(cx, &blob, blob_size)?
@@ -813,7 +812,7 @@ impl Value {
             }
             Value::Blob(_) => {
                 let stream = {
-                    let blob = scopeguard::guard(self.use_(), |mut b| b.deinit());
+                    let blob = self.use_();
                     blob.resolve_size();
                     if blob.needs_to_read_file() || blob.is_s3() {
                         let blob_size = blob.size.get();
@@ -1153,9 +1152,7 @@ impl Value {
 
         match self {
             Value::Blob(b) => {
-                // `Value` has `Drop`, so we cannot move the `Blob` out by
-                // value (E0509). `mem::take` leaves a default `Blob` whose `deinit()`
-                // (run by `Value::drop` on the assignment below) is a no-op.
+                // `Value` has `Drop`, so we cannot move the `Blob` out by value (E0509).
                 let new_blob = core::mem::take(b);
                 *self = Value::Used;
                 debug_assert!(!new_blob.is_heap_allocated()); // owned by Body
@@ -1372,8 +1369,7 @@ impl Value {
             }
             return;
         }
-        // Assignment runs `Drop` on the old variant: deref WTFStringImpl, deinit
-        // Blob, free InternalBlob's Vec, reset Error. Null/Used/Empty are no-ops.
+        // Drops the old variant.
         *self = Value::Null;
     }
 }
@@ -1381,8 +1377,7 @@ impl Value {
 /// Runs when a `HiveRef<Value>` slot is recycled
 /// (`HiveArray::Fallback::put` → `drop_in_place`; see
 /// `bun_collections::HiveRef::unref`). Without this impl `Request`/`Response`
-/// GC finalization leaked `WTFStringImpl` refs / `Blob` stores /
-/// `InternalBlob` buffers (H3 elysia rss).
+/// GC finalization leaked `WTFStringImpl` refs (H3 elysia rss).
 ///
 /// Unlike `reset()` this never reassigns `*self` (it's already being torn
 /// down), so calling `reset()` first then dropping (or dropping a `Null`
@@ -1397,10 +1392,9 @@ impl Drop for Value {
                 }
             }
             Value::WTFStringImpl(s) => wtf_impl(s).deref(),
-            Value::Blob(b) => b.deinit(),
             Value::Error(e) => e.reset(),
-            // `InternalBlob`'s `Vec<u8>` is freed by the compiler's drop glue.
-            Value::InternalBlob(_) | Value::Used | Value::Empty | Value::Null => {}
+            // The blobs are freed by the compiler's drop glue.
+            Value::Blob(_) | Value::InternalBlob(_) | Value::Used | Value::Empty | Value::Null => {}
         }
     }
 }

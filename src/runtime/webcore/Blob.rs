@@ -141,7 +141,7 @@ use crate::generated_bindgen::blob::{
 
 // ──────────────────────────────────────────────────────────────────────────
 // BlobExt — `bun_runtime`-tier behaviour layered on the `bun_jsc` data type.
-// Inherent methods (`new`/`init`/`shared_view`/`dupe`/`detach`/`deinit`/…)
+// Inherent methods (`new`/`init`/`shared_view`/`dupe`/`detach`/…)
 // live on `bun_jsc::webcore_types::Blob`; everything that touches the event
 // loop / S3 / fs / `VirtualMachine` is here.
 // ──────────────────────────────────────────────────────────────────────────
@@ -492,9 +492,8 @@ impl BlobExt for Blob {
                 poll: bun_io::KeepAlive,
             }
             impl<H: ReadBytesHandler> Task<H> {
-                fn done(mut self: Box<Self>, r: ReadBytesResult) -> JsResult<()> {
+                fn done(self: Box<Self>, r: ReadBytesResult) -> JsResult<()> {
                     self.poll.unref(bun_io::js_vm_ctx());
-                    self.blob.deinit();
                     // The braces move the box: the rest of the `Task` is freed here.
                     let ctx = { self }.ctx;
                     ctx.on_read_bytes(r)
@@ -5365,7 +5364,6 @@ impl S3BlobDownloadTask {
 
 impl Drop for S3BlobDownloadTask {
     fn drop(&mut self) {
-        Blob::deinit(&mut self.blob);
         self.poll_ref.unref(bun_io::js_vm_ctx());
         // promise: Drop handles deinit.
     }

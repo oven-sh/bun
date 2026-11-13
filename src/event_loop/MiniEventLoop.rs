@@ -211,24 +211,27 @@ impl MiniEventLoop {
             self.on_after_event_loop();
         }
 
-        // SAFETY: the borrow of `tasks` ends before the task runs. Tasks are pushed by
-        // enqueue_task* and remain valid until run() consumes them.
-        unsafe {
-            while let Some(task) = (*self.tasks.get()).read_item() {
-                (*task).run(context);
-            }
+        self.run_tasks(context);
+    }
+
+    fn run_tasks(&self, context: *mut c_void) {
+        loop {
+            // SAFETY: a queued task is live until it runs. It may queue others and free itself, so
+            // nothing is borrowed across the call.
+            let (callback, ctx) = unsafe {
+                let Some(task) = (*self.tasks.get()).read_item() else {
+                    return;
+                };
+                ((*task).callback, (*task).ctx)
+            };
+            callback(ctx.expect("ctx is non-null").as_ptr(), context.cast());
         }
     }
 
     pub(crate) fn tick_without_idle(&self, context: *mut c_void) {
         loop {
             let _ = self.tick_concurrent();
-            // SAFETY: see tick_once.
-            unsafe {
-                while let Some(task) = (*self.tasks.get()).read_item() {
-                    (*task).run(context);
-                }
-            }
+            self.run_tasks(context);
 
             self.loop_.tick_without_idle();
 

@@ -1,8 +1,10 @@
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{
-    Binding, BindingInitializer, BindingKind, CodeUnit, FnOwner, Parent, ScopeId, SymbolId,
+    Binding, BindingInitializer, BindingKind, CodeUnit, CommonJsVariable, FnOwner, Parent, ScopeId,
+    SymbolId,
 };
 use bun_sema::check::aot::function_of_this;
+use bun_sema::fold::FoldedValue;
 use bun_sema::hir::{
     Call, Chain, ExprId, ExprKind, FnBody, FnId, MemberKey, NodeData, PatKind, PropKey, PropKind,
     StmtKind, is_proto_setter,
@@ -13,6 +15,7 @@ use smallvec::SmallVec;
 
 use super::Arguments;
 use super::written_operands::find_locked_builtin;
+use crate::builtins::Resolved;
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{
     ECMAMode, Field, FunctionFlags, FunctionKind, FunctionSyntax, Layout, LayoutFlags, LayoutKind,
@@ -343,6 +346,7 @@ impl FileLowering<'_, '_, '_, '_> {
             return true;
         }
         let body = match bound.code_unit(bound.symbol_scope(variable)) {
+            CodeUnit::File if self.imports_files() => return false,
             CodeUnit::File => hir.body,
             CodeUnit::Function(function) => match hir[function].body {
                 FnBody::Block(statements) => statements,
@@ -365,12 +369,13 @@ impl FileLowering<'_, '_, '_, '_> {
                         if !matches!(hir[declaration.pat].kind, PatKind::Ident(_)) {
                             return false;
                         }
-                        if bound.initialized_binding(declaration.pat) == Binding::Symbol(variable) {
-                            return true;
+                        if declaration.init == ExprId::NONE {
+                            continue;
                         }
-                        if declaration.init.is_some()
-                            && !self.calls_nothing_of_file(declaration.init, 0)
-                        {
+                        if bound.initialized_binding(declaration.pat) == Binding::Symbol(variable) {
+                            return self.stores_before_calls(variable, declaration.init);
+                        }
+                        if !self.calls_nothing_of_file(declaration.init, 0) {
                             return false;
                         }
                     }
@@ -379,6 +384,116 @@ impl FileLowering<'_, '_, '_, '_> {
             }
         }
         false
+    }
+
+    fn imports_files(&self) -> bool {
+        let hir = self.hir;
+        hir.ids(hir.body)
+            .any(|statement| match hir[statement].kind {
+                StmtKind::Import(_) | StmtKind::ExportStar { .. } => true,
+                StmtKind::ExportNamed(export) => hir[export].has_module_specifier,
+                _ => false,
+            })
+    }
+
+    fn stores_before_calls(&self, variable: SymbolId, initializer: ExprId) -> bool {
+        let (hir, bound) = (self.hir, self.bound);
+        let mut value = hir.skip_type_assertions(initializer);
+        while let ExprKind::Assign {
+            op: None,
+            target,
+            value: stored,
+        } = hir[value].kind
+        {
+            if !self.is_exports_path(target) {
+                return false;
+            }
+            value = hir.skip_type_assertions(stored);
+        }
+        let ExprKind::Call(number) = hir[value].kind else {
+            return self.evaluates_without_calls(value);
+        };
+        let site = hir[number];
+        if self.find_variable_below(site).is_some() {
+            return true;
+        }
+        self.find_assigned_literals(site).is_some_and(|above| {
+            let BindingInitializer::Expression(literal) = bound.binding_initializer(hir, above)
+            else {
+                return false;
+            };
+            let mut sources = hir.ids(site.args).skip(1);
+            bound.symbol_scope(above) == bound.symbol_scope(variable)
+                && self.is_literal_without(literal, PropKind::Setter)
+                && sources.all(|source| {
+                    self.is_literal_without(source, PropKind::Getter)
+                        && self.evaluates_without_calls(source)
+                })
+        })
+    }
+
+    fn is_exports_path(&self, target: ExprId) -> bool {
+        let Some((owner, MemberKey::Name(_))) = self.hir.member_key(self.skip_type_syntax(target))
+        else {
+            return false;
+        };
+        let owner = self.skip_type_syntax(owner);
+        match self.hir[owner].kind {
+            ExprKind::Ident(_) => matches!(
+                self.bound.binding(owner),
+                Binding::CommonJs(CommonJsVariable::Module | CommonJsVariable::Exports)
+            ),
+            _ => self.is_exports_path(owner),
+        }
+    }
+
+    fn is_literal_without(&self, expression: ExprId, kind: PropKind) -> bool {
+        let hir = self.hir;
+        match hir[hir.skip_type_assertions(expression)].kind {
+            ExprKind::Object(properties) => properties.iter().all(|id| hir[id].kind != kind),
+            _ => false,
+        }
+    }
+
+    fn evaluates_without_calls(&self, expression: ExprId) -> bool {
+        let hir = self.hir;
+        let value = hir.skip_type_assertions(expression);
+        let is_builtin = |named: ExprId| {
+            matches!(
+                self.builtins.of_pure_expr(self.skip_type_syntax(named)),
+                Some(Resolved::Builtin(_))
+            )
+        };
+        match hir[value].kind {
+            ExprKind::Missing
+            | ExprKind::Ident(_)
+            | ExprKind::This
+            | ExprKind::Regex { .. }
+            | ExprKind::Fn(_) => true,
+            ExprKind::Array(elements) => hir
+                .ids(elements)
+                .all(|element| self.evaluates_without_calls(element)),
+            ExprKind::Object(properties) => properties.iter().all(|id| {
+                let property = hir[id];
+                let is_key_evaluated = match hir.runtime_property_key(id) {
+                    PropKey::Name(_) => true,
+                    PropKey::Computed(key) => is_builtin(key),
+                    PropKey::None | PropKey::Private(_) => false,
+                };
+                is_key_evaluated
+                    && property.kind != PropKind::Spread
+                    && !is_proto_setter(&property)
+                    && self.evaluates_without_calls(property.value)
+            }),
+            ExprKind::Dot { .. } if is_builtin(value) => true,
+            ExprKind::New(number) => hir[number].args.len() == 0 && is_builtin(hir[number].callee),
+            _ => {
+                matches!(
+                    self.decisions().constant(hir, value),
+                    FoldedValue::Constant(_)
+                ) || self.calls_nothing_of_file(value, 0)
+            }
+        }
     }
 
     fn calls_nothing_of_file(&self, expression: ExprId, depth: u32) -> bool {
@@ -402,7 +517,8 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             ExprKind::Call(number) => {
                 let site = hir[number];
-                matches!(hir[site.callee].kind, ExprKind::Ident(_))
+                self.is_commonjs_module()
+                    && matches!(hir[site.callee].kind, ExprKind::Ident(_))
                     && matches!(self.bound.binding(site.callee), Binding::CommonJs(_))
                     && site.args.len() == 1
                     && matches!(hir[hir.id_at(site.args, 0)].kind, ExprKind::String(_))

@@ -3101,8 +3101,14 @@ int us_internal_ssl_fatal_write_error(struct us_socket_t *s) {
 
 static void ssl_send_fin(struct us_socket_t *s) {
   if (s->ssl_spilled && !s->ssl_fatal_error) {
+#ifdef _WIN32
+    /* On Windows a reset drops what was not read yet, and a peer that answered and closed resets over a close_notify that comes late. */
+    int room;
+    bsd_socket_buffer_size(us_poll_fd(&s->p), 0, 1 << 30, &room);
+#else
     s->ssl_shutdown_after_spill = 1;
     return;
+#endif
   }
   ssl_release_spill(s->group->loop, s);
   us_internal_socket_raw_shutdown(s);

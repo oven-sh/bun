@@ -6039,7 +6039,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill, (JSC::JSGlobalObject * glob
 
 #if !OS(WINDOWS)
     bypassCrashHandlerForSelfSentSignal(pid, ownPid, signal);
-    if (Bun__isMainThreadVM() && killReachesThisProcess(pid, ownPid))
+    if (killReachesThisProcess(pid, ownPid))
         Bun__willSendSignalToSelf(signal);
     int result = kill(pid, signal);
     if (result < 0)

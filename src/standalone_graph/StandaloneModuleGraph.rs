@@ -25,7 +25,9 @@ use bun_resolver::compiled_program::{
     CompiledEntryPoint, CompiledProgram, ImageFile, join_public_file_path,
 };
 use bun_sourcemap as SourceMap;
-use bun_sys::{self as Syscall, E, Fd, FdExt as _, Stat};
+#[cfg(windows)]
+use bun_sys::FdExt as _;
+use bun_sys::{self as Syscall, E, Fd, Stat};
 
 use crate::compiled_program::{self, CompiledProgramInput, ImagePlace, Payload};
 use crate::executable_file::{
@@ -2412,6 +2414,13 @@ impl<'a> Injected<'a> {
     }
 }
 
+fn close_executable(fd: Fd) {
+    #[cfg(unix)]
+    bun_sys::close_on_fork::close(fd);
+    #[cfg(windows)]
+    fd.close();
+}
+
 pub(crate) fn inject<'a>(
     payload: &mut PayloadParts<'_>,
     self_exe: &ZStr,
@@ -2481,7 +2490,7 @@ pub(crate) fn inject<'a>(
             // Make the file writable so we can delete it
             let _ = Syscall::fchmod(fd, 0o700);
         }
-        fd.close();
+        close_executable(fd);
         let _ = Syscall::unlink(name);
     };
 
@@ -2550,7 +2559,8 @@ pub(crate) fn inject<'a>(
         let fd: Fd = 'brk2: {
             let mut tried_changing_abs_dir = false;
             for retry in 0..3 {
-                match Syscall::open(
+                match bun_sys::close_on_fork::openat(
+                    Fd::cwd(),
                     zname,
                     bun_sys::O::CLOEXEC | bun_sys::O::RDWR | bun_sys::O::CREAT | bun_sys::O::EXCL,
                     // Not 0: WSL2 DrvFS re-checks the mode on ftruncate() (#40111).
@@ -3505,7 +3515,7 @@ pub fn to_executable(
         if let Err(e) =
             bun_sys::move_file_z_with_handle(fd, Fd::cwd(), temp_posix, root_dir, &outfile_posix)
         {
-            fd.close();
+            close_executable(fd);
 
             let _ = Syscall::unlink(temp_posix);
 
@@ -3524,7 +3534,7 @@ pub fn to_executable(
             }
         }
 
-        fd.close();
+        close_executable(fd);
         Ok(CompileResult::Success)
     }
 }

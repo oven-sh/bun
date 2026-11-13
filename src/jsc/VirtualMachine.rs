@@ -4989,7 +4989,6 @@ impl VirtualMachine {
     /// `may_return` is true; the error is printed.
     pub fn restart_process(&mut self, may_return: bool) {
         crate::posix_signal_handle::emit_watch_kill_signal_before_reload(self.global());
-        crate::posix_signal_handle::will_restart(self.event_loop_mut());
         let should_clear_terminal = !self
             .env_loader()
             .has_set_no_clear_terminal_on_reload(!bun_core::Output::enable_ansi_colors_stdout());

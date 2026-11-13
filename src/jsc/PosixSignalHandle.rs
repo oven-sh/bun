@@ -2,10 +2,9 @@ use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
 use crate::JSGlobalObject;
 #[cfg(unix)]
-use crate::Task;
-#[cfg(unix)]
 use crate::VirtualMachineRef as VirtualMachine;
-use crate::event_loop::EventLoop;
+#[cfg(unix)]
+use crate::{Task, event_loop::EventLoop};
 use bun_event_loop::{Taskable, task_tag};
 #[cfg(unix)]
 use bun_threading::SignalRing;
@@ -60,9 +59,12 @@ extern "C" fn Bun__onPosixSignal(number: i32) {
             // SAFETY: `_exit(2)` is async-signal-safe and takes no pointers.
             unsafe { libc::_exit(0) };
         }
-        if IS_RESTARTING.load(Ordering::Acquire) && ends_process(number) {
-            end_process_by_signal(number);
-            return;
+        if END_SIGNALS.contains(&number) {
+            UNSEEN_SIGNALS.fetch_or(1 << number, Ordering::SeqCst);
+            if IS_RESTARTING.load(Ordering::SeqCst) {
+                send_unseen_signals_again();
+                return;
+            }
         }
         let Some(vm) = VirtualMachine::get_main_thread_vm() else {
             return;
@@ -134,22 +136,23 @@ static IS_EMITTING_WATCH_KILL_SIGNAL: AtomicBool = AtomicBool::new(false);
 static IS_RESTARTING: AtomicBool = AtomicBool::new(false);
 
 #[cfg(unix)]
+static UNSEEN_SIGNALS: AtomicU32 = AtomicU32::new(0);
+
+#[cfg(unix)]
 static SIGNALS_SENT_BY_SCRIPT: AtomicU32 = AtomicU32::new(0);
 
 #[cfg(unix)]
-fn ends_process(number: i32) -> bool {
-    matches!(
-        number,
-        libc::SIGHUP | libc::SIGINT | libc::SIGQUIT | libc::SIGTERM
-    )
-}
+const END_SIGNALS: [i32; 4] = [libc::SIGHUP, libc::SIGINT, libc::SIGQUIT, libc::SIGTERM];
 
 #[cfg(unix)]
-fn end_process_by_signal(number: i32) {
-    // SAFETY: both are async-signal-safe and take no pointers.
-    unsafe {
-        libc::signal(number, libc::SIG_DFL);
-        libc::raise(number);
+fn send_unseen_signals_again() {
+    let unseen =
+        UNSEEN_SIGNALS.load(Ordering::SeqCst) & !SIGNALS_SENT_BY_SCRIPT.load(Ordering::SeqCst);
+    for number in END_SIGNALS {
+        if unseen & (1 << number) != 0 {
+            // SAFETY: both are async-signal-safe and take no pointers.
+            unsafe { libc::kill(libc::getpid(), number) };
+        }
     }
 }
 
@@ -232,20 +235,11 @@ pub(crate) fn emit_watch_kill_signal_before_reload(global_object: &JSGlobalObjec
 }
 
 #[cfg(unix)]
-pub(crate) fn will_restart(event_loop: &EventLoop) {
+#[unsafe(no_mangle)]
+extern "C" fn Bun__willRestartProcess() {
     IS_RESTARTING.store(true, Ordering::SeqCst);
-    let Some(handler) = event_loop.signal_handler else {
-        return;
-    };
-    let sent_by_script = SIGNALS_SENT_BY_SCRIPT.load(Ordering::Relaxed);
-    while let Some(signal) = handler.ring.dequeue() {
-        if ends_process(i32::from(signal)) && sent_by_script & (1 << signal) == 0 {
-            end_process_by_signal(i32::from(signal));
-        }
-    }
+    send_unseen_signals_again();
 }
-#[cfg(not(unix))]
-pub(crate) fn will_restart(_: &EventLoop) {}
 
 pub(crate) fn did_not_restart() {
     #[cfg(unix)]
@@ -255,14 +249,19 @@ pub(crate) fn did_not_restart() {
 #[cfg(unix)]
 #[unsafe(no_mangle)]
 extern "C" fn Bun__willSendSignalToSelf(number: i32) {
-    if IS_EMITTING_WATCH_KILL_SIGNAL.load(Ordering::Relaxed) && ends_process(number) {
-        SIGNALS_SENT_BY_SCRIPT.fetch_or(1 << number, Ordering::Relaxed);
+    if END_SIGNALS.contains(&number) {
+        SIGNALS_SENT_BY_SCRIPT.fetch_or(1 << number, Ordering::SeqCst);
     }
 }
 
 impl PosixSignalTask {
     pub fn run_from_js_thread(number: u8, global_object: &JSGlobalObject) {
         let fired = Bun__onSignalForJS(i32::from(number), global_object);
+        #[cfg(unix)]
+        if END_SIGNALS.contains(&i32::from(number)) {
+            UNSEEN_SIGNALS.fetch_and(!(1 << number), Ordering::SeqCst);
+            SIGNALS_SENT_BY_SCRIPT.fetch_and(!(1 << number), Ordering::SeqCst);
+        }
         // Node parity: in watch mode the watcher exits 0 on SIGINT when the
         // script has no handler for it (see `enable_watch_mode_signals`).
         if !fired && number == SIGINT_NUMBER && WATCH_MODE_KILL_SIGNAL.load(Ordering::Relaxed) != 0

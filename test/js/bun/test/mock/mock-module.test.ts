@@ -2103,6 +2103,59 @@ describe.concurrent("a name that import and require() resolve to two files", () 
     );
   });
 
+  // A mock call asks an onResolve plugin once, as an import does. What the plugin answers is then resolved for an import
+  // and for require(), like a name that tsconfig.json maps.
+  test("a name that an onResolve plugin or tsconfig.json maps to one of them", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "plugin.js": `
+          import { join } from "node:path";
+          const answers = {
+            "plugin/lib": "./lib",
+            "plugin/folder": join(import.meta.dir, "folder"),
+            "plugin/dual": "dual",
+            "dual/sub": "dual/sub",
+          };
+          globalThis.asked = [];
+          Bun.plugin({
+            name: "alias",
+            setup(build) {
+              build.onResolve({ filter: /^(plugin\\/|dual\\/sub$)/ }, ({ path, kind }) => {
+                globalThis.asked.push(kind);
+                return { path: answers[path] };
+              });
+            },
+          });
+        `,
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { paths: { "paths/lib": ["./lib"], "paths/folder": ["./folder"] } },
+        }),
+        "alias.test.js": `
+          import { expect, mock, test } from "bun:test";
+          // Each name, and the kinds of request that its mock call asks the plugin about.
+          test.each([
+            ["plugin/lib", ["dynamic-import"]],
+            ["plugin/folder", ["dynamic-import"]],
+            ["plugin/dual", ["dynamic-import"]],
+            ["dual/sub", ["dynamic-import"]],
+            ["paths/lib", []],
+            ["paths/folder", []],
+          ])("%s", async (name, asked) => {
+            const which = "mock of " + name;
+            globalThis.asked.length = 0;
+            mock.module(name, () => ({ which }));
+            expect(globalThis.asked).toEqual(asked);
+            expect([require(name).which, (await import(name)).which]).toEqual([which, which]);
+          });
+          test("neither file of any of them ran", () => expect(globalThis.loaded).toBeUndefined());
+        `,
+      },
+      7,
+      ["--preload", "./plugin.js"],
+    );
+  });
+
   test("a mock that a preload made", async () => {
     await expectFixturesToPass(
       {
@@ -3172,6 +3225,40 @@ describe.concurrent("a name that import and require() resolve to two files", () 
       },
       3,
       ["--isolate"],
+    );
+  });
+
+  // A mock call also looks for the file that require() of the name loads. Where there is none, it must not list the
+  // folder of the test file again to look once more. Each listing keeps about 190 bytes for every entry of the folder
+  // for as long as the process runs: 38 MB over the 500 calls that are measured here.
+  test("mock calls of a name that only an import resolves do not grow the process", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "node_modules/esm-only/package.json": JSON.stringify({ name: "esm-only", exports: { import: "./index.mjs" } }),
+        "node_modules/esm-only/index.mjs": `export const which = "real esm";`,
+        ...Object.fromEntries(Array.from({ length: 400 }, (_, i) => [`entry-${i}.txt`, ""])),
+        "grow.test.js": `
+          import { expect, mock, test } from "bun:test";
+          test("a call finds the file that require() of a name with two files loads", () => {
+            mock.module("dual", () => ({ which: "mock" }));
+            expect(require("dual").which).toBe("mock");
+          });
+          test("500 more calls leave the process as large as the first 500 made it", async () => {
+            const factory = () => ({ which: "mock" });
+            const rssAfterCalls = () => {
+              for (let i = 0; i < 500; i++) mock.module("esm-only", factory);
+              Bun.gc(true);
+              return process.memoryUsage.rss();
+            };
+            const before = rssAfterCalls();
+            expect(rssAfterCalls() - before).toBeLessThan(${isASAN || isDebug ? 16 : 8} * 1024 * 1024);
+            expect((await import("esm-only")).which).toBe("mock");
+            expect(() => require("esm-only")).toThrow("Cannot find module");
+          }, 50_000);
+        `,
+      },
+      2,
     );
   });
 

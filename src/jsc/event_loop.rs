@@ -995,15 +995,24 @@ impl EventLoop {
     /// once more after `Closed`.
     pub fn release_queued_tasks(&self) {
         self.closed_for_tasks.set(true);
-        // SAFETY: both borrows end before `promote_yield_tasks` borrows `tasks` again.
-        let (tasks, plugin_requests) =
-            unsafe { (&mut *self.tasks.get(), &mut *self.plugin_requests.get()) };
-        Self::take_concurrent_tasks(tasks, self.concurrent_tasks.pop_batch());
-        Self::take_concurrent_tasks(plugin_requests, self.concurrent_plugin_requests.pop_batch());
-        let _ = self.promote_yield_tasks();
-        while let Some(task) = self.next_task() {
-            // SAFETY: JS thread, heap alive; `task` just left the queue.
-            unsafe { self.release_task_unrun(task) };
+        loop {
+            // SAFETY: both borrows end before `promote_yield_tasks` borrows `tasks` again.
+            let (tasks, plugin_requests) =
+                unsafe { (&mut *self.tasks.get(), &mut *self.plugin_requests.get()) };
+            Self::take_concurrent_tasks(tasks, self.concurrent_tasks.pop_batch());
+            Self::take_concurrent_tasks(
+                plugin_requests,
+                self.concurrent_plugin_requests.pop_batch(),
+            );
+            let _ = self.promote_yield_tasks();
+            while let Some(task) = self.next_task() {
+                // SAFETY: JS thread, heap alive; `task` just left the queue.
+                unsafe { self.release_task_unrun(task) };
+            }
+            // Releasing a task can post another.
+            if self.concurrent_tasks.is_empty() {
+                break;
+            }
         }
         // Pending immediates likewise: cancelling one drops its keep-alive on
         // this thread's loop, so it happens now, not after the loop is gone.

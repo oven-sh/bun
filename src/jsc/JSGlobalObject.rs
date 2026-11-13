@@ -792,7 +792,7 @@ impl JSGlobalObject {
         self.error_instance(ErrorKind::RangeError, args)
     }
 
-    pub(crate) fn create_dom_exception_instance(
+    pub fn create_dom_exception_instance(
         &self,
         code: DOMExceptionCode,
         args: Arguments<'_>,

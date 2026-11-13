@@ -137,6 +137,9 @@ function named after the namespace.
 
 A function with [overloads](#overloads) is an array of its signatures. A function of a namespace has no `passThis`, `passCallee`, `export` or `feature`.
 
+`{ constant: 1 }` is a read-only integer. With `{ webIDL: true }` the `Symbol.toStringTag` of the object is its name, as
+for a WebIDL `namespace`, and it only holds constants.
+
 ### What a function may do: `capability`
 
 What a function can do to the JS heap is a parameter it is given, so it is
@@ -176,7 +179,7 @@ let global = unsafe { heap.global() };
 
 `throws: true` makes the return type a `Result`. The error is a
 `bindgen::Error<'a>`, made by `heap.error(..)`, `heap.type_error(..)`,
-`heap.range_error(..)`, `heap.error_with_code(ErrorCode::OUT_OF_RANGE, ..)`, `heap.invalid_arguments(..)`,
+`heap.range_error(..)`, `heap.dom_exception(..)`, `heap.error_with_code(ErrorCode::OUT_OF_RANGE, ..)`, `heap.invalid_arguments(..)`,
 `heap.string_too_long()`, `heap.memory_allocation_failed()` or
 `bindgen::Error::from_value(value)` (`?` makes one of a `JsError` or an `AllocError`), or any
 type that implements `bindgen::IntoError` (`bun_sys::Error`,
@@ -234,6 +237,10 @@ arguments from left to right:
 Choosing converts nothing and runs no JavaScript. A signature that no call can reach is
 an error when the schema is loaded.
 
+In a [`webIDL` class](#webidl) the number of arguments comes first: the candidates are the signatures that take that
+many, where a call with more than the longest has counts as having that many. If none does, the call throws
+`ERR_MISSING_ARGS` for the shortest signature that requires more.
+
 ## Types
 
 Conversions are strict unless the schema says otherwise: `b.i32` takes a number
@@ -248,6 +255,7 @@ any other: nothing looks at how many there are, except `.ifPassed`, `requiredArg
 | `b.bool`                                         | `bool`                           | a boolean; `.loose` is `ToBoolean`                            |
 | `b.u8` `b.u16` `b.u32` `b.u64` `b.usize` `b.i32` | the same                         | a number that is an integer in range; see below               |
 | `b.f64`                                          | `f64`                            | a number; `.loose` is `ToNumber`; see below                   |
+| `b.f64.finite` `b.f32.finite`                    | `f64`, `f32`                     | WebIDL's `double` and `float`; see below                      |
 | `b.string`                                       | `&bun_core::String`              | a string; `.loose` is `ToString`                              |
 | `b.string.owned`                                 | `bun_core::String`               | as `b.string`                                                 |
 | `b.string.view`                                  | `bun_core::StringView<'a>`       | as `b.string`                                                 |
@@ -256,6 +264,7 @@ any other: nothing looks at how many there are, except `.ifPassed`, `requiredArg
 | `b.string.local`                                 | `JsLocal<'a, JSString>`          | a string                                                      |
 | `b.bufferSource`                                 | `JsLocal<'a, BufferSource>`      | a typed array, `DataView` or `ArrayBuffer` that is not shared |
 | `b.bufferSource.arrayBuffer`                     | `ExternalShared<JSCArrayBuffer>` | the same; the bytes of a view are copied                      |
+| `b.uint32Array`                                  | `JsLocal<'a, BufferSource>`      | a `Uint32Array`, shared or not                                |
 | `b.bytes(options)`                               | `&'a [u8]`, and others           | see [Bytes](#bytes)                                           |
 | `b.byteSpan`                                     | `&'a [u8]`                       | not a JS value: [bytes from C++](#calls-between-c-and-rust)   |
 | `b.blob`                                         | `ExternalShared<Blob>`           | a `Blob`                                                      |
@@ -270,10 +279,12 @@ any other: nothing looks at how many there are, except `.ifPassed`, `requiredArg
 | `b.promisePtr("crate::T")`                       | `*mut T`                         | the context of a promise reaction; see below                  |
 | `b.nativePromiseContext("crate::T")`             | `Option<NonNull<T>>`             | the same, when it is a `NativePromiseContext` cell            |
 | `b.array(T)`                                     | `Vec<T>`                         | an array; `T` holds no JS value, which the GC would not see   |
+| `b.sequence(T)`                                  | `&[T]`                           | an iterable object; see [below](#sequences-and-records)       |
+| `b.record(T)`                                    | `&[(Utf8Bytes<'static>, T)]`     | an object; see [below](#sequences-and-records)                |
 | `b.enumeration(values)`                          | a generated `enum`               | one of the strings                                            |
 | `b.dictionary(members)`                          | `&` a generated `struct`         | an object that is not an array                                |
 | `b.union(alternatives)`                          | a generated `enum`               | see [Unions and kinds](#unions-and-kinds)                     |
-| `b.class(options)`                               | `&'a T`                          | an instance                                                   |
+| `b.class(options)`                               | `&'a T`                          | an instance; `.local` is a `JsWrapper<'a, T>`                 |
 
 One JS type has one name; a modifier picks the Rust form. The last four are named
 types: each is called what it is exported as, and has to be exported. It is used by
@@ -307,16 +318,18 @@ is `IntoIterator`, and `b.array(b.string)` anything that is `AsRef<[bun_core::St
 `heap.create_uninitialized_uint8_array(length)`, `heap.create_uint8_array(bytes)`,
 `heap.create_buffer(bytes)`, `heap.create_uint8_array_from_box(bytes)` or
 `heap.create_buffer_from_box(bytes)` made. The last two take over the allocation, and the two
-before them copy. `b.jsArray` as a result is what `heap.create_array(items, to_js::u8)` made.
+before them copy. `b.jsArray` as a result is what `heap.create_array(items, to_js::u8)` made, or
+`heap.create_frozen_array` for WebIDL's `FrozenArray<T>`. `b.record(T)` as a result is anything that is `IntoIterator` of
+`(key, T)`: an object with an own property for each pair. A key is UTF-8 and one that comes again takes the new value,
+`T` holds no JS value, and it is not a member or an alternative of another result.
 
 These are results only:
 
-| Schema           | Rust                                          | JavaScript gets                                                                                                                                                                      |
-| ---------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `b.u64.asBigInt` | `u64`                                         | always a BigInt                                                                                                                                                                      |
-| `b.f64.asDate`   | `f64`                                         | a `Date` with that time value                                                                                                                                                        |
-| `b.string.local` | `JsLocal<'a, JSString>`                       | the string the body made: `heap.create_latin1_string(bytes)`, `heap.create_utf16_string_from_vec(units)`, `heap.create_utf8_string(bytes)` or `heap.common_string(CommonString::..)` |
-| `b.record(T)`    | anything that is `IntoIterator` of `(key, T)` | an object with an own property for each pair; a key is UTF-8 and one that comes again takes the new value, `T` holds no JS value, and it is not a member or an alternative           |
+| Schema           | Rust                    | JavaScript gets                                                                                                                                                                      |
+| ---------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `b.u64.asBigInt` | `u64`                   | always a BigInt                                                                                                                                                                      |
+| `b.f64.asDate`   | `f64`                   | a `Date` with that time value                                                                                                                                                        |
+| `b.string.local` | `JsLocal<'a, JSString>` | the string the body made: `heap.create_latin1_string(bytes)`, `heap.create_utf16_string_from_vec(units)`, `heap.create_utf8_string(bytes)` or `heap.common_string(CommonString::..)` |
 
 A body that returns `b.any` makes the value with what the generated code calls:
 `bindgen::to_js::record`, `to_js::array`, `to_js::utf8` and the others of that module. An empty
@@ -332,7 +345,10 @@ double nearest to it. `b.f64.allowDate` also takes a `Date`, as its time value, 
 - `.loose`: `ToNumber` first, or `ToNumeric` with `.allowBigInt`, then as strict as the default.
 - `.wrap`: the WebIDL conversion, `ToNumber` then wrap modulo the width.
 - `.enforceRange(min, max)`: WebIDL `[EnforceRange]`.
+- `.clamp`: WebIDL `[Clamp]`, `ToNumber` then the nearest integer in range.
 - `.validateInteger(min, max)`: Node's `validateInteger`, with its exact errors. Use it when implementing Node.js APIs.
+
+`.finite` is `ToNumber`, and a `TypeError` for NaN, an infinity, and a number that rounds to an infinity as an `f32`.
 
 ### Strings
 
@@ -353,6 +369,7 @@ body that keeps it takes `b.string.owned`, which comes after `.loose` or `.allow
 it is held by value. The string belongs to the
 JS thread: see "Cross-thread string hazards" in `src/CLAUDE.md` before sending
 one anywhere. `b.string.allowStringObject` also takes a `String` object, as `.utf8` does.
+`b.string.usv` is WebIDL's `USVString`: `ToString`, and an unpaired surrogate becomes U+FFFD.
 
 `b.string.view`, which comes after `.allowStringObject`, is for a body that only reads the
 characters, in Latin-1 or UTF-16: a `bun_core::StringView<'a>`, and a `&bun_core::StringView<'_>` as an argument of this type alone. It takes no reference to the
@@ -384,8 +401,26 @@ argument: a `String` object arrives as its string, and anything else as it is.
 function passes `undefined` for one that is left out, as for every argument. Code that `bun build --compile --aot`
 has compiled calls the Rust function itself and passes nothing: `None`. So the body takes `None` and
 `undefined` for the same.
-A [class](#classes) is a type too: import it from its `.bind.ts` file. As an argument it is a `&'a` of the struct.
-The argument's slot in the frame holds the instance, so it is only for an argument, alone, in a union, or with one of the modifiers above except `.default()`.
+
+### Instances
+
+A [class](#classes) is a type too: import it from its `.bind.ts` file. It is a `&'a` of the struct. `.local` is the
+object, a `JsWrapper<'a, T>`, for a body that stores it in an internal field. It takes the modifiers above except `.default()`.
+
+The slot of an argument holds the instance for the call. JavaScript can remove one from a dictionary, a sequence or a record
+once it is read, so the frame of the host function keeps a list of those, which the GC marks. A dictionary with `fromJS`
+has no such frame, and holds no instance.
+
+### Sequences and records
+
+`b.sequence(T)` is WebIDL's `sequence<T>`: it runs the iterator of the object, and converts each value before it asks
+for the next. An array whose iteration nothing can observe is read by index. A string is not an object.
+
+`b.record(T)` is WebIDL's `record<K, T>`: the own enumerable properties of the object that have a string for a key, in
+the order of `Object.keys`.
+
+Both are a `Vec` as a member, an alternative or an item. `T` can be `.optional` or `.nullable`, can be or hold an
+[instance](#instances), and holds no other JS value. The only default is the empty one, `.default([])` or `.default({})`.
 
 ### Dictionaries
 
@@ -423,6 +458,8 @@ The second argument of `b.dictionary` takes:
 | `fromJS`           | also generates `Name::from_js(global, value)`, for a body that has a `JSValue`; one that holds JS values is lent to a closure, `Name::from_js(global, value, \|converted\| ..)`                                                      |
 | `reportedAs`       | what an error calls the dictionary, which defaults to the name of the type: `"options"` makes a member `options.level`, and `""` makes it `level`, for a Node function that validates under the bare name (`validateUint32(N, "N")`) |
 | `nullPrototype`    | as a result, the object has no prototype, and the inline room of `Object.create(null)`                                                                                                                                               |
+| `webIDL`           | `undefined` and `null` are read as `{}` is, an array like any other object, and the members in the order of their names; it can have no members                                                                                      |
+| `extends`          | with `webIDL`: the members of that dictionary are read first, into the field `base`, which the struct derefs to                                                                                                                      |
 
 ### Enumerations
 
@@ -436,6 +473,9 @@ except in a union. Returning an enumeration allocates nothing after the first ti
 
 Values that make no identifier, or the same one, are written as a record, whose keys are the variants:
 `b.enumeration({ Rgb: "rgb", RgbArray: "[rgb]" })`.
+
+The second argument takes `webIDL`, which applies `ToString` to any value, and `rustInto: "crate::Rgb"`, which implements
+`From` the enumeration for a type that has a variant or a constant of the name of each variant.
 
 ### Unions and kinds
 
@@ -460,7 +500,9 @@ alternative then converts it, and reports what is wrong with it: `1.5` given to
 `b.union({ integer: b.i32, text: b.string })` "must be an integer", not "must be of type integer or string".
 The buffer types refuse some values of their kinds (a shared buffer); those go on to the next alternative that takes
 the kind and does not refuse the same. What is not an object skips a dictionary or `b.object` in the same way, unless that is the last
-alternative to take its kind, which then reports it. A value no alternative takes throws `ERR_INVALID_ARG_TYPE` listing them all.
+alternative to take its kind, which then reports it. So does what has no `Symbol.iterator` skip a sequence: looking for it
+is the one test that can run JavaScript, and the method is read once. A `webIDL` dictionary is the last alternative.
+A value no alternative takes throws `ERR_INVALID_ARG_TYPE` listing them all.
 
 So the order only matters between alternatives that overlap, and one that takes every
 value goes last. An alternative that can never be chosen is an error when the schema is
@@ -647,7 +689,9 @@ is collected, make the class [`refCounted`](#refcounted).
 | Key              | What it declares                                                                               |
 | ---------------- | ---------------------------------------------------------------------------------------------- |
 | `rustPath`       | the struct                                                                                     |
-| `extends`        | the class [inherits from another](#extends), whose struct it has instead of a `rustPath`       |
+| `extends`        | the class [inherits from another](#extends), or from [one of WebCore's](#webcores-classes)     |
+| `webIDL`         | the class is [a WebIDL `interface`](#webidl)                                                   |
+| `setlike`        | it has the members of `readonly setlike<DOMString>`; the struct implements `bindgen::SetLike`  |
 | `refCounted`     | the struct is a separate allocation that [can outlive the object](#refcounted)                 |
 | `finalize`       | with `refCounted`: call `fn finalize(&self)` when the object is collected                      |
 | `final`          | `false` lets a class with `extends`, or hand-written C++, subclass `JSName`                    |
@@ -702,6 +746,8 @@ A property of `proto` is one of these.
 | `{ internalField: "field", setter }`          | an accessor that reads the field, and with `setter` stores any value, without calling Rust |
 | `{ builtin: true, length }`                   | the export of that name in `src/js/builtins/<class name>.ts`, without the `@@` of a symbol |
 | `{ constant: 3 }`                             | a read-only integer, like a WebIDL `const`                                                 |
+| `{ alias: "values" }`                         | the function object that `values` holds                                                    |
+| `{ eventHandler: "ping" }`                    | with `extends: "EventTarget"`: `onping`, a WebIDL `attribute EventHandler`                 |
 | `[{ rustName, args, .. }, ..]`                | a native function with [overloads](#overloads)                                             |
 
 The properties are in the order of the schema, which `for-in` and `Object.keys` show. The Rust
@@ -721,7 +767,8 @@ writable, configurable and not enumerable, like the built-in ones, whatever the 
 names itself with `$overriddenName`. `"@@inspectCustom"` is `Symbol.for("nodejs.util.inspect.custom")`.
 
 A native function throws `ERR_INVALID_THIS` when `this` is not an instance. With `invalidThis: "undefined"` it returns
-`undefined` instead, as some of Node's methods do.
+`undefined` instead, as some of Node's methods do. A getter of a promise takes [`rejects`](#promises-rejects), and then
+rejects with that error too.
 
 `b.self` is the class itself as an argument, a result or a getter of its own members. It can also be `.optional` or
 `.nullable`. A result that is an instance is a `JsWrapper`, a `JsLocal` or a `JSValue`.
@@ -770,12 +817,53 @@ One class inherits from another as one WebIDL interface does:
 `js_RecordableHistogram::create(heap, payload)` makes an instance, and `create_wrapper(global, payload)` does for code
 that has no capability. `payload.into_js(heap)` makes an instance of the base.
 
-The base has `final: false` and is not `refCounted`. The subclass declares `proto`, `construct: "illegal"`, `final`,
-`rustTraits` and the three attributes, which it does not inherit. The rest is the base's: how it is created and
+The base has `final: false` and is not `refCounted`. The subclass declares `proto`, `construct`, `final`,
+`rustTraits`, `webIDL` and the three attributes, which it does not inherit. The rest is the base's: how it is created and
 collected, its internal fields, which no member of the subclass names, and the memory it reports.
 
 An instance of the subclass is of both [kinds](#unions-and-kinds), so a union or the overloads of a function take the
 base and not both.
+
+### WebCore's classes
+
+`extends` also takes the name of one of these. The class has a `rustPath` of its own, and the object has both the struct
+and what WebCore keeps for the base. What makes an instance says what the base is made of:
+
+| `extends`        | The base is made of         | What the class gains                                                       |
+| ---------------- | --------------------------- | -------------------------------------------------------------------------- |
+| `"EventTarget"`  | nothing                     | `eventHandler` properties, and `this_value.dispatch_new_event(..)` in Rust |
+| `"Event"`        | `bindgen::EventBase`        | an instance can be dispatched                                              |
+| `"DOMException"` | `bindgen::DOMExceptionBase` | its `name` is the name of the class                                        |
+
+```rust
+pub(crate) fn constructor(message: bun_core::String, reason: u32) -> (DOMExceptionBase, Self) {
+    (DOMExceptionBase { message }, Self { reason })
+}
+```
+
+`structure.create` takes the same pair, and `payload.into_js_with_base(heap, &base)` is `into_js`. Such a class is final
+and has no `refCounted`, `forBind`, `prototypeBase`, `estimatedSize` or `callInstance`. To throw a plain `DOMException`, return
+`heap.dom_exception(DOMExceptionCode::OperationError, ..)`.
+
+### `webIDL`
+
+With `webIDL: true` the properties are configurable, enumerable and writable as those of an `interface` are. The arguments up to the last
+one that is not `.optional`, `.default()` or variadic are [`requiredArguments`](#too-few-arguments-requiredarguments):
+a `.nullable` one has to be passed. Their number chooses among [overloads](#overloads). `src/runtime/webgpu/webgpu.bind.ts`
+is an IDL written this way:
+
+| WebIDL                                    | Schema                                                       |
+| ----------------------------------------- | ------------------------------------------------------------ |
+| `boolean`                                 | `b.bool.loose`                                               |
+| `unsigned long`                           | `b.u32.wrap`, `.enforceRange()`, `.clamp`                    |
+| `double`, `float`                         | `b.f64.finite`, `b.f32.finite`                               |
+| `DOMString`, `USVString`                  | `b.string.loose`, `b.string.usv`, or `b.string.loose.utf8`   |
+| `T?`, `optional T`, `optional T x = 1`    | `T.nullable`, `T.optional`, `T.default(1)`                   |
+| `sequence<T>`, `record<K, T>`, `(T or U)` | `b.sequence(T)`, `b.record(T)`, `b.union({ t: T, u: U })`    |
+| `enum`, `dictionary`, `namespace`         | the same, with `{ webIDL: true }`                            |
+| `Promise<T>`                              | `b.any.returning("Promise")` and `rejects: true`             |
+| `[SameObject]`                            | `cache: true`                                                |
+| `interface mixin`                         | an object that is spread into the `proto` that `includes` it |
 
 ### The receiver
 

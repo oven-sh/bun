@@ -35,6 +35,7 @@ export async function loadSchemaFile(source: string): Promise<SchemaFile> {
       result.functions.push(value);
     } else if (value instanceof NamespaceDefinition) {
       value.name = name;
+      value.origin = origin;
       for (const fn of value.functions) {
         fn.origin = origin;
         result.functions.push(fn);

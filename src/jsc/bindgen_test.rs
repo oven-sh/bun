@@ -5,18 +5,20 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
 use crate::bindgen::{
-    self, BufferSource, Callable, IntoError as _, JsBytes, JsHeap, JsLocal, JsPayload as _,
-    JsScope, JsStructure, JsWrapper, PinnedBytes, StringOrJsBytes,
+    self, BufferSource, Callable, DOMExceptionBase, EventBase, IntoError as _, JsBytes, JsHeap,
+    JsLocal, JsPayload as _, JsScope, JsStructure, JsWrapper, PinnedBytes, StringOrJsBytes, to_js,
 };
 use crate::generated_bindgen::bindgen_test::{
     Bun__BindgenTest__doubled, TestAbsence, TestAnything, TestBare, TestBareOptions, TestBracket,
-    TestChoice, TestColor, TestColorOrRest, TestFailure, TestFlag, TestHandle, TestNames,
-    TestNodeOptions, TestObjectOrRest, TestOptions, TestOptionsEcho, TestOtherAsNullOptions,
-    TestOuter, TestTextOrBytes, TestValue, js_TestCounter, js_TestError, js_TestMemberFunctions,
+    TestChoice, TestColor, TestColorOrRest, TestEventInit, TestExtent, TestFailure, TestFlag,
+    TestHandle, TestJustLabeled, TestListOrOrigin, TestListOrText, TestNames, TestNodeOptions,
+    TestObjectOrRest, TestOptions, TestOptionsEcho, TestOtherAsNullOptions, TestOuter,
+    TestPointOrFlag, TestScene, TestShapeOrEntry, TestShapesOrColor, TestTextOrBytes, TestValue,
+    TestWebIDLColor, js_TestCounter, js_TestError, js_TestEvent, js_TestMemberFunctions,
     js_TestNonFinal, js_TestNote, js_TestRefCounted, js_TestRefCountedNote, js_TestShape,
     js_TestSquare,
 };
-use crate::{JSGlobalObject, JSString, JSValue, JsClass, JsResult};
+use crate::{JSArray, JSGlobalObject, JSPromise, JSString, JSValue, JsClass, JsResult};
 use bun_ptr::{AsCtxPtr as _, RefPtr};
 
 // This example should be kept in sync with bindgen's documentation
@@ -1332,4 +1334,275 @@ pub(crate) fn loose_double_or_big_int(value: f64) -> f64 {
 
 pub(crate) fn wide_integer_or_big_int(value: u64) -> String {
     value.to_string()
+}
+
+pub(crate) fn finite_double(value: f64) -> f64 {
+    value
+}
+
+pub(crate) fn finite_float(value: f32) -> f64 {
+    f64::from(value)
+}
+
+pub(crate) fn clamped(value: u16) -> u16 {
+    value
+}
+
+pub(crate) fn enforced_size(value: u64) -> u64 {
+    value
+}
+
+pub(crate) fn usv_echo(text: &bun_core::String) -> bun_core::String {
+    text.clone()
+}
+
+pub(crate) fn uint32_array_sizes<'a>(
+    heap: &JsHeap<'a>,
+    array: JsLocal<'a, BufferSource>,
+) -> [usize; 2] {
+    [array.with_bytes(heap, <[u8]>::len), array.element_size()]
+}
+
+pub(crate) fn element_size(buffer: JsLocal<'_, BufferSource>) -> usize {
+    buffer.element_size()
+}
+
+pub(crate) fn frozen_range<'a>(
+    heap: &JsHeap<'a>,
+    length: u32,
+) -> bindgen::Result<'a, JsLocal<'a, JSArray>> {
+    heap.create_frozen_array(0..length, to_js::u32)
+}
+
+pub(crate) struct Rgb(u32);
+
+#[expect(non_upper_case_globals)]
+impl Rgb {
+    pub(crate) const Red: Self = Self(0xff0000);
+    pub(crate) const DarkGreen: Self = Self(0x006400);
+}
+
+pub(crate) fn rgb_of(color: TestWebIDLColor) -> u32 {
+    Rgb::from(color).0
+}
+
+pub(crate) fn sequence_echo(numbers: &[Option<u8>]) -> Vec<Option<u8>> {
+    numbers.to_vec()
+}
+
+pub(crate) fn nested_sequence_lengths(lists: &[Vec<TestWebIDLColor>]) -> Vec<usize> {
+    lists.iter().map(Vec::len).collect()
+}
+
+pub(crate) fn record_echo(pairs: &[(bun_core::Utf8Bytes<'static>, Option<f64>)]) -> Vec<String> {
+    let describe = |(key, value): &(bun_core::Utf8Bytes<'static>, Option<f64>)| {
+        format!("{}={value:?}", bstr::BStr::new(&**key))
+    };
+    pairs.iter().map(describe).collect()
+}
+
+pub(crate) fn label_of(options: &TestJustLabeled) -> bun_core::String {
+    options.label.clone()
+}
+
+pub(crate) fn describe_extent(extent: &TestExtent) -> String {
+    let empty = if extent.empty.is_some() { " empty" } else { "" };
+    let TestExtent { width, height, .. } = extent;
+    format!("{}: {width}x{height}{empty}", extent.label)
+}
+
+pub(crate) fn describe_list_or_origin(value: &TestListOrOrigin) -> String {
+    match value {
+        TestListOrOrigin::List(list) => format!("list {list:?}"),
+        TestListOrOrigin::Origin(origin) => format!("origin {}", origin.x),
+    }
+}
+
+pub(crate) fn describe_list_or_text(value: &TestListOrText) -> String {
+    match value {
+        TestListOrText::List(list) => format!("list {list:?}"),
+        TestListOrText::Text(text) => format!("text {text}"),
+    }
+}
+
+pub(crate) fn describe_point_or_flag(value: TestPointOrFlag<'_>) -> String {
+    match value {
+        TestPointOrFlag::Flag(flag) => format!("flag {flag}"),
+        TestPointOrFlag::Point(point) => {
+            format!("{} {} {}", point.a, point.b, bstr::BStr::new(point.name))
+        }
+    }
+}
+
+pub(crate) fn sides_after_callback<'a>(
+    cx: &mut JsScope<'a>,
+    scene: &TestScene<'a>,
+    callback: JsLocal<'a, Callable>,
+) -> bindgen::Result<'a, Vec<u32>> {
+    callback.call(cx, JsLocal::UNDEFINED, &[])?;
+    let mut shapes = vec![scene.shape];
+    shapes.extend(scene.by_name.iter().map(|(_, shape)| *shape));
+    shapes.extend(scene.entries.iter().flatten().map(|entry| entry.shape));
+    shapes.extend(scene.either.iter().map(|either| match either {
+        TestShapeOrEntry::Shape(shape) => *shape,
+        TestShapeOrEntry::Entry(entry) => entry.shape,
+    }));
+    if let Some(TestShapesOrColor::Shapes(others)) = &scene.others {
+        shapes.extend(others);
+    }
+    shapes.extend(scene.shapes.iter().flatten());
+    let value = scene.ref_counted.map(|object| object.get_value() as u32);
+    Ok(shapes
+        .iter()
+        .map(|shape| shape.sides)
+        .chain(value)
+        .collect())
+}
+
+pub(crate) fn kept_shape<'a>(
+    _: &JsHeap<'a>,
+    scene: &TestScene<'a>,
+) -> Option<JsWrapper<'a, TestShape>> {
+    scene.kept
+}
+
+pub(crate) struct TestInterface {
+    message: bun_core::String,
+}
+
+impl bindgen::SetLike for TestInterface {
+    fn set_values(&self) -> &[&'static str] {
+        &["one", "two", "3"]
+    }
+}
+
+impl TestInterface {
+    pub(crate) fn constructor(message: bun_core::String) -> Self {
+        Self { message }
+    }
+
+    pub(crate) fn nullable_then_optional(&self, shape: Option<&TestShape>, _: Option<u32>) -> bool {
+        shape.is_some()
+    }
+
+    pub(crate) fn two_or_three(&self, a: u32, b: u32, c: Option<u32>) -> String {
+        format!("two or three: {a} {b} {c:?}")
+    }
+
+    pub(crate) fn five_numbers(&self, a: u32, b: u32, c: u32, d: u32, e: f64) -> String {
+        format!("five numbers: {a} {b} {c} {d} {e}")
+    }
+
+    pub(crate) fn five_with_text(
+        &self,
+        a: u32,
+        b: u32,
+        c: u32,
+        d: u32,
+        e: &bun_core::String,
+    ) -> String {
+        format!("five with text: {a} {b} {c} {d} {e}")
+    }
+
+    pub(crate) fn get_ready<'a>(&self, cx: &mut JsScope<'a>) -> bindgen::Result<'a, JSValue> {
+        if self.message.is_empty() {
+            return Err(cx.heap.type_error(format_args!("there is no message")));
+        }
+        let message = to_js::string(&cx.heap, self.message.clone())?.to_js();
+        Ok(JSPromise::resolved_promise_value(cx.global(), message))
+    }
+
+    pub(crate) fn get_message(&self) -> bun_core::String {
+        self.message.clone()
+    }
+}
+
+static DROPPED_WEB_CORE_SUBCLASSES: AtomicUsize = AtomicUsize::new(0);
+
+struct CountsDrops;
+
+impl Drop for CountsDrops {
+    fn drop(&mut self) {
+        DROPPED_WEB_CORE_SUBCLASSES.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+pub(crate) fn dropped_web_core_subclasses() -> usize {
+    DROPPED_WEB_CORE_SUBCLASSES.load(Ordering::Relaxed)
+}
+
+pub(crate) struct TestTarget(u32, CountsDrops);
+
+impl TestTarget {
+    pub(crate) fn constructor(id: u32) -> Self {
+        Self(id, CountsDrops)
+    }
+
+    pub(crate) fn get_id(&self) -> u32 {
+        self.0
+    }
+
+    pub(crate) fn ping<'a>(
+        &self,
+        this_value: JsWrapper<'a, Self>,
+        cx: &mut JsScope<'a>,
+        detail: JsLocal<'a>,
+    ) -> bindgen::Result<'a, bool> {
+        let base = EventBase {
+            r#type: bun_core::String::static_("ping"),
+            bubbles: false,
+            cancelable: true,
+            composed: false,
+            is_trusted: true,
+        };
+        let event = TestEvent(true, CountsDrops);
+        this_value.dispatch_new_event(cx, &base, event, |cx, event| {
+            js_TestEvent::detail_set_cached(event.to_js(), cx.global(), detail.to_js());
+        })
+    }
+}
+
+pub(crate) struct TestEvent(bool, CountsDrops);
+
+impl TestEvent {
+    pub(crate) fn constructor<'a>(
+        heap: &JsHeap<'a>,
+        structure: JsStructure<'a, Self>,
+        r#type: bun_core::String,
+        init: &TestEventInit<'a>,
+    ) -> JsWrapper<'a, Self> {
+        let base = EventBase {
+            r#type,
+            bubbles: false,
+            cancelable: init.cancelable,
+            composed: false,
+            is_trusted: false,
+        };
+        let this_value = structure.create(heap, (base, Self(false, CountsDrops)));
+        // SAFETY: storing a value runs no JavaScript.
+        let global = unsafe { heap.global() };
+        js_TestEvent::detail_set_cached(this_value.to_js(), global, init.shape.to_js());
+        this_value
+    }
+
+    pub(crate) fn get_is_native(&self) -> bool {
+        self.0
+    }
+}
+
+pub(crate) struct TestException(u32, CountsDrops);
+
+impl TestException {
+    pub(crate) fn constructor(message: bun_core::String, reason: u32) -> (DOMExceptionBase, Self) {
+        (DOMExceptionBase { message }, Self(reason, CountsDrops))
+    }
+
+    pub(crate) fn get_reason(&self) -> u32 {
+        self.0
+    }
+}
+
+pub(crate) fn make_exception<'a>(heap: &JsHeap<'a>, reason: u32) -> JsWrapper<'a, TestException> {
+    let message = bun_core::String::static_("made by native code");
+    TestException(reason, CountsDrops).into_js_with_base(heap, &DOMExceptionBase { message })
 }

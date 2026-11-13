@@ -96,6 +96,13 @@ impl<T: Copy> ExternVector<T> {
     }
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ExternRecordEntry<T: Copy> {
+    pub key: ExternString,
+    pub value: T,
+}
+
 /// Bytes in the C++ host function's frame, or in a JS value that frame keeps alive, until it returns. Another thread can write those of a shared buffer.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -174,6 +181,15 @@ unsafe extern "C" {
         values: *const JSValue,
         count: usize,
     ) -> JSValue;
+    /// `values` is an array without holes.
+    pub(super) fn Bun__Bindgen__createSetIterator(
+        global: &JSGlobalObject,
+        values: JSValue,
+        as_entries: bool,
+    ) -> JSValue;
+    pub(super) fn Bun__Bindgen__addErrorInfo(global: &JSGlobalObject, object: JSValue);
+    pub(super) fn Bun__Bindgen__dispatchEvent(target: *mut c_void, event: *mut c_void) -> bool;
+    pub(super) fn Bun__Bindgen__freezeArray(global: &JSGlobalObject, array: JSValue) -> bool;
     pub(super) fn Bun__Bindgen__enumerationValueToJS(
         global: *mut JSGlobalObject,
         index: u32,

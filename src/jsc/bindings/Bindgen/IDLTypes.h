@@ -61,12 +61,19 @@ struct IDLStrictDouble : WebCore::IDLUnrestrictedDouble {};
 struct IDLStrictDoubleOrDate : WebCore::IDLUnrestrictedDouble {};
 // Converts to a numeric first. A BigInt is the double nearest to it.
 struct IDLLooseDoubleOrBigInt : WebCore::IDLUnrestrictedDouble {};
+// WebIDL's `float` and `double`.
+template<std::floating_point T>
+struct IDLFinite : WebCore::IDLFloatingPoint<T> {};
 struct IDLStrictBoolean : WebCore::IDLBoolean {};
 struct IDLStrictString : WebCore::IDLDOMString {};
 
 // Converts to a number first, or to a numeric where a BigInt is allowed.
 template<std::integral T, AllowBigInt allowBigInt = AllowBigInt::No>
 struct IDLLooseInteger : IDLStrictInteger<T, allowBigInt> {};
+
+// Converts to a string first.
+template<typename T>
+struct IDLLooseEnumeration : WebCore::IDLEnumeration<T> {};
 
 namespace Detail {
 template<typename IDL>
@@ -164,6 +171,9 @@ struct IDLBytes : WebCore::IDLType<Sink> {
 template<bool allowShared>
 struct IDLRawBufferSource : IDLRawAny {};
 
+// Shared or not, as the `JSValue` itself. See IDLRawAny.
+struct IDLRawUint32Array : IDLRawAny {};
+
 // A function, or a proxy of one, as the `JSValue` itself. See IDLRawAny.
 struct IDLRawCallable : IDLRawAny {};
 
@@ -181,7 +191,7 @@ struct IDLRawObject : IDLRawAny {};
 // An array as the `JSValue` itself. See IDLRawAny.
 struct IDLRawArray : IDLRawAny {};
 
-// An instance of a generated class, as the cell itself. The caller's frame keeps it alive.
+// An instance of a generated class, as the cell itself. The caller's frame keeps it alive, or its Roots.
 template<typename JSClass>
 struct IDLRawInterface : WebCore::IDLType<JSClass*> {
     using SequenceStorageType = void;
@@ -190,7 +200,7 @@ struct IDLRawInterface : WebCore::IDLType<JSClass*> {
     static JSClass* nullValue() { return nullptr; }
 };
 
-// An instance of a `refCounted` class, as what it wraps. The caller's frame keeps the cell alive.
+// An instance of a `refCounted` class, as what it wraps. The cell is kept alive as for IDLRawInterface.
 template<typename JSClass, auto name>
 struct IDLWrappedInterface : WebCore::IDLType<void*> {
     using SequenceStorageType = void;

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { exec } from "node:child_process";
+import { join } from "node:path";
 
 test.concurrent("pipe does the right thing", async () => {
   // Note: Bun.spawnSync uses memfd_create on Linux for pipe, which means we see
@@ -470,6 +471,156 @@ test.concurrent("a throw from a 'readable' listener is an uncaughtException, inc
         "uncaughtException:readable-throw-2",
       ]) + "\n",
     exitCode: 0,
+  });
+});
+
+// A file on fd 0 answers each read at once, so its last chunk and its end of input are ready together. The end must
+// reach the stream after the ticks and promise jobs of the consumer of that chunk, where node's event loop callback
+// delivers it. Each expected output is what node v26.3.0 prints for the same program and the same file.
+describe("the end of a file stdin", () => {
+  async function run(input: string, script: string): Promise<StdioResult> {
+    using dir = tempDir("stdin-file-end", { "input.txt": input });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      stdin: Bun.file(join(String(dir), "input.txt")),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, exitCode, stderr: exitCode === 0 ? undefined : stderr };
+  }
+
+  const thenReadable = `
+    const events = [];
+    process.stdin.on("end", () => events.push("end"));
+    process.on("exit", () => console.log(JSON.stringify(events)));
+    const listen = () =>
+      process.stdin.on("readable", () => {
+        events.push("readable");
+        while (process.stdin.read() !== null);
+      });`;
+
+  test.concurrent("reaches a 'readable' listener that takes over from an async iterator", async () => {
+    const result = await run(
+      "hello",
+      `${thenReadable}
+      (async () => {
+        for await (const chunk of process.stdin.iterator({ destroyOnReturn: false })) {
+          events.push(chunk.toString());
+          break;
+        }
+        listen();
+      })();`,
+    );
+    expect(result).toEqual({ stdout: JSON.stringify(["hello", "readable", "end"]) + "\n", exitCode: 0 });
+  });
+
+  test.concurrent("reaches a 'readable' listener that the loop body adds on process.nextTick", async () => {
+    const result = await run(
+      "hello",
+      `${thenReadable}
+      (async () => {
+        for await (const chunk of process.stdin.iterator({ destroyOnReturn: false })) {
+          events.push(chunk.toString());
+          process.nextTick(listen);
+          break;
+        }
+      })();`,
+    );
+    expect(result).toEqual({ stdout: JSON.stringify(["hello", "readable", "end"]) + "\n", exitCode: 0 });
+  });
+
+  test.concurrent("ends a loop of await once(process.stdin, 'readable')", async () => {
+    const result = await run(
+      "hello",
+      `const { once } = require("node:events");
+      (async () => {
+        const chunks = [];
+        for (;;) {
+          await once(process.stdin, "readable");
+          const chunk = process.stdin.read();
+          if (chunk === null) break;
+          chunks.push(chunk.toString());
+        }
+        console.log(JSON.stringify(chunks));
+      })();`,
+    );
+    expect(result).toEqual({ stdout: JSON.stringify(["hello"]) + "\n", exitCode: 0 });
+  });
+
+  test.concurrent("ends that loop when its body awaits the callback of a write", async () => {
+    const result = await run(
+      "hello",
+      `const { once } = require("node:events");
+      const { Writable } = require("node:stream");
+      const written = [];
+      const sink = new Writable({
+        write(chunk, encoding, callback) {
+          written.push(chunk.toString());
+          callback();
+        },
+      });
+      (async () => {
+        for (;;) {
+          await once(process.stdin, "readable");
+          const chunk = process.stdin.read();
+          if (chunk === null) break;
+          await new Promise(resolve => sink.write(chunk, resolve));
+        }
+        console.log(JSON.stringify(written));
+      })();`,
+    );
+    expect(result).toEqual({ stdout: JSON.stringify(["hello"]) + "\n", exitCode: 0 });
+  });
+
+  test.concurrent("follows the rest of the file into pipe() after a header was read", async () => {
+    const result = await run(
+      "head" + Buffer.alloc(96, "x").toString(),
+      `const { once } = require("node:events");
+      const { Writable } = require("node:stream");
+      (async () => {
+        await once(process.stdin, "readable");
+        const header = process.stdin.read(4).toString();
+        let rest = 0;
+        const sink = new Writable({
+          write(chunk, encoding, callback) {
+            rest += chunk.length;
+            callback();
+          },
+        });
+        sink.on("finish", () => console.log(JSON.stringify({ header, rest })));
+        process.stdin.pipe(sink);
+      })();`,
+    );
+    expect(result).toEqual({ stdout: JSON.stringify({ header: "head", rest: 96 }) + "\n", exitCode: 0 });
+  });
+
+  test.concurrent("comes after the uncaughtException of a 'readable' listener that throws on it", async () => {
+    const result = await run(
+      "hello",
+      `const seen = [];
+      process.on("uncaughtException", e => seen.push("uncaughtException:" + e.message));
+      let n = 0;
+      process.stdin.on("readable", () => {
+        n++;
+        let chunk;
+        while ((chunk = process.stdin.read()) !== null) seen.push("readable:" + chunk.toString());
+        throw new Error("readable-throw-" + n);
+      });
+      process.stdin.on("end", () => seen.push("end"));
+      process.on("exit", () => console.log(JSON.stringify(seen)));`,
+    );
+    expect(result).toEqual({
+      stdout:
+        JSON.stringify([
+          "readable:hello",
+          "uncaughtException:readable-throw-1",
+          "uncaughtException:readable-throw-2",
+          "end",
+        ]) + "\n",
+      exitCode: 0,
+    });
   });
 });
 

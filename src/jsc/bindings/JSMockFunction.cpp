@@ -26,6 +26,7 @@
 #include <JavaScriptCore/JSModuleEnvironment.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSBoundFunction.h>
+#include <JavaScriptCore/JSFunctionWithFields.h>
 #include <JavaScriptCore/JSMapInlines.h>
 #include <JavaScriptCore/ArrayConstructor.h>
 #include <JavaScriptCore/ObjectPrototypeInlines.h>
@@ -129,6 +130,7 @@ JSC_DECLARE_HOST_FUNCTION(jsMockFunctionWithImplementation);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionReturnThis);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionRejectWithThis);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionThrowThis);
+JSC_DECLARE_HOST_FUNCTION(jsSpiedValueGet);
 
 uint64_t JSMockModule::s_nextInvocationId = 0;
 
@@ -733,6 +735,16 @@ public:
         m_initialImplementation.set(vm(), this, function);
         setFallbackImplementation(JSMockImplementation::Kind::Call, function);
         this->updatePrototype(globalObject);
+    }
+
+    // The function a new mock starts from: what a spy replaces, or what fn() was given.
+    ALWAYS_INLINE void setOriginal(JSGlobalObject* globalObject, JSValue function)
+    {
+        if (!isVitest) {
+            pushImpl(globalObject, JSMockImplementation::Kind::Call, function);
+            return;
+        }
+        setInitialImplementation(globalObject, function);
     }
 
     void pushImpl(JSGlobalObject* globalObject, JSMockImplementation::Kind kind, JSValue value)
@@ -1913,6 +1925,20 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionReturnThis, (JSC::JSGlobalObject*, JSC::C
     return JSValue::encode(callframe->thisValue());
 }
 
+// The getter a plain property has while its getter or setter is spied on. It holds the property's value in this field.
+static constexpr auto spiedValueField = static_cast<JSC::JSFunctionWithFields::Field>(0);
+
+static bool isSpiedValueGetter(JSValue getter)
+{
+    auto* function = dynamicDowncast<JSC::JSFunctionWithFields>(getter);
+    return function && function->nativeFunction() == JSC::toTagged(jsSpiedValueGet);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsSpiedValueGet, (JSC::JSGlobalObject*, JSC::CallFrame* callframe))
+{
+    return JSValue::encode(uncheckedDowncast<JSC::JSFunctionWithFields>(callframe->jsCallee())->getField(spiedValueField));
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionRejectWithThis, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
@@ -2945,11 +2971,7 @@ __attribute__((minsize)) static void wrapFunction(Zig::GlobalObject* globalObjec
     mock->copyStaticProperties(globalObject, asObject(function));
     RETURN_IF_EXCEPTION(scope, );
     scope.release();
-    if (!mock->isVitest) {
-        mock->pushImpl(globalObject, JSMockImplementation::Kind::Call, function);
-        return;
-    }
-    mock->setInitialImplementation(globalObject, function);
+    mock->setOriginal(globalObject, function);
 }
 
 static String propertyKeyForMessage(const Identifier& key)
@@ -3253,11 +3275,21 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
         return {};
     }
 
+    // A plain property has a value to read. As an accessor it still does, through a getter that holds the value.
+    if (access != SpyAccess::Value && descriptor.isDataDescriptor()) {
+        auto* valueGetter = JSC::JSFunctionWithFields::create(vm, globalObject, vm.getHostFunction(jsSpiedValueGet, ImplementationVisibility::Public, callHostFunctionAsConstructor, 0, String()));
+        valueGetter->setField(vm, spiedValueField, descriptor.value());
+        getter = valueGetter;
+        if (access == SpyAccess::Get)
+            original = valueGetter;
+    }
+
     auto* mock = createMockFunction(vm, globalObject, isVitest);
-    if (original.isCallable()) {
+    if (access != SpyAccess::Value && isSpiedValueGetter(original)) {
+        // Not wrapFunction(): the spy gets its name below, and a copy of the length would allocate.
+        mock->setOriginal(globalObject, original);
+    } else if (original.isCallable()) {
         wrapFunction(globalObject, mock, original);
-    } else if (access == SpyAccess::Get && descriptor.isDataDescriptor()) {
-        mock->pushImpl(globalObject, JSMockImplementation::Kind::ReturnValue, descriptor.value());
     }
     RETURN_IF_EXCEPTION(scope, {});
 

@@ -25,6 +25,8 @@ use crate::socket::{
 };
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 
+#[cfg(unix)]
+use crate::socket::PosixPipeContext;
 #[cfg(windows)]
 use crate::socket::WindowsNamedPipeContext;
 
@@ -1021,6 +1023,228 @@ impl Listener {
             };
             Some((local_addr_bytes.to_vec().into_boxed_slice(), local_port))
         };
+
+        // A FIFO / character device fd cannot go through usockets (it is not a
+        // socket, so `epoll`/`kqueue` + `recv`/`send` fail on it): one `fstat`
+        // classifies the fd and routes non-sockets to the `PosixPipe`
+        // transport. `fdIsRawSocket: true` skips the probe.
+        #[cfg(unix)]
+        {
+            use crate::socket::posix_pipe_context::SocketType as PipeSocketType;
+
+            enum FdClass {
+                /// S_IFSOCK, or no fd at all: the usockets path below.
+                Socket,
+                /// S_IFIFO / S_IFCHR.
+                Pipe,
+                /// Anything else (a regular file, a directory, a bad fd).
+                Other(c_int),
+            }
+            let (fd_class, pipe_fd) = match &connection {
+                UnixOrHost::Fd(fd)
+                    if !opts
+                        .get_truthy(cx.global(), "fdIsRawSocket")?
+                        .is_some_and(|v| v.to_boolean()) =>
+                {
+                    let class = match bun_sys::fstat(*fd) {
+                        Ok(st) => {
+                            let mode = st.st_mode & libc::S_IFMT;
+                            if mode == libc::S_IFSOCK {
+                                FdClass::Socket
+                            } else if mode == libc::S_IFIFO || mode == libc::S_IFCHR {
+                                FdClass::Pipe
+                            } else {
+                                FdClass::Other(bun_sys::SystemErrno::ENOTSOCK as c_int)
+                            }
+                        }
+                        Err(_) => FdClass::Other(bun_sys::SystemErrno::EBADF as c_int),
+                    };
+                    (class, *fd)
+                }
+                _ => (FdClass::Socket, Fd::INVALID),
+            };
+            if !matches!(fd_class, FdClass::Socket) {
+                default_data.ensure_still_alive();
+
+                let mut ssl_taken = socket_config.ssl.take();
+
+                let promise = jsc::JSPromise::create(cx.global());
+                let promise_value = promise.to_js();
+                handlers.set_promise(cx.global(), promise_value);
+
+                if ssl_enabled {
+                    let tls: bun_ptr::ThisPtr<TLSSocket> = if let Some(prev_ptr) = prev_maybe_tls {
+                        // SAFETY: caller passes a live TLSSocket, owned by its JS wrapper.
+                        let prev = unsafe { bun_ptr::ThisPtr::new(prev_ptr) };
+                        debug_assert!(!prev.this_value.get().is_empty());
+                        prev.set_handlers(cx.global(), Some(Rc::clone(&handlers)));
+                        debug_assert!(matches!(
+                            prev.socket.get().socket,
+                            uws::InternalSocket::Detached
+                        ));
+                        prev.connection.set(Some(connection));
+                        prev.local_binding.set(local_binding.clone());
+                        if prev.flags.get().contains(SocketFlags::OWNED_PROTOS) {
+                            prev.protos.set(None);
+                        }
+                        prev.protos
+                            .set(ssl_taken.as_mut().and_then(|s| s.take_protos()));
+                        prev.server_name
+                            .set(ssl_taken.as_mut().and_then(|s| s.take_server_name()));
+                        prev
+                    } else {
+                        TLSSocket::new(TLSSocket {
+                            ref_count: bun_ptr::RefCount::init(),
+                            handlers: JsCell::new(Some(Rc::clone(&handlers))),
+                            socket: Cell::new(uws::NewSocketHandler::<true>::DETACHED),
+                            connection: JsCell::new(Some(connection)),
+                            local_binding: JsCell::new(local_binding.clone()),
+                            protos: JsCell::new(ssl_taken.as_mut().and_then(|s| s.take_protos())),
+                            server_name: JsCell::new(
+                                ssl_taken.as_mut().and_then(|s| s.take_server_name()),
+                            ),
+                            owned_ssl_ctx: JsCell::new(None),
+                            flags: Cell::new(SocketFlags::default()),
+                            this_value: JsCell::new(jsc::JsRef::empty()),
+                            poll_ref: JsCell::new(KeepAlive::init()),
+                            ref_pollref_on_connect: Cell::new(true),
+                            buffered_data_for_node_net: Default::default(),
+                            bytes_written: Cell::new(0),
+                            native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
+                            twin: JsCell::new(None),
+                            verify_error: JsCell::new(None),
+                            latest_session: Cell::new(None),
+                        })
+                    };
+                    let tls_ref = tls;
+                    tls_ref.reset_client_tls_flags(crate::socket::resolve_reject_unauthorized(
+                        vm,
+                        ssl_taken.as_ref(),
+                        false,
+                    ));
+                    tls_ref.update_flags(|f| {
+                        f.set(
+                            SocketFlags::PAUSE_ON_CONNECT,
+                            socket_config.pause_on_connect,
+                        )
+                    });
+                    TLSSocket::data_set_cached(
+                        tls_ref.this_value_for_connect(cx.global()),
+                        cx.global(),
+                        default_data,
+                    );
+                    tls_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+                    tls_ref.ref_();
+
+                    if let FdClass::Other(errno) = fd_class {
+                        let handled = TLSSocket::handle_connect_error(tls_ref, errno, 0);
+                        // Balance the attempt `tls_ref.ref_()` above.
+                        TLSSocket::deref(&tls_ref);
+                        handled?;
+                        return Ok(promise_value);
+                    }
+
+                    let ctx_for_pipe = owned_ssl_ctx.take();
+                    let pipe = match PosixPipeContext::open(
+                        cx,
+                        pipe_fd,
+                        ssl_taken.take(),
+                        ctx_for_pipe,
+                        PipeSocketType::Tls(tls_ref),
+                    ) {
+                        Ok(p) => p,
+                        Err(_) => {
+                            // The context's guard already ran `handle_connect_error`
+                            // on the still-detached socket, which releases nothing.
+                            // Balance the attempt `tls_ref.ref_()` above.
+                            TLSSocket::deref(&tls_ref);
+                            return Ok(promise_value);
+                        }
+                    };
+                    tls_ref.socket.set(uws::NewSocketHandler {
+                        socket: uws::InternalSocket::Pipe(pipe.cast()),
+                    });
+                } else {
+                    let tcp: bun_ptr::ThisPtr<TCPSocket> = if let Some(prev_ptr) = prev_maybe_tcp {
+                        // SAFETY: caller passes a live TCPSocket, owned by its JS wrapper.
+                        let prev = unsafe { bun_ptr::ThisPtr::new(prev_ptr) };
+                        debug_assert!(!prev.this_value.get().is_empty());
+                        prev.set_handlers(cx.global(), Some(Rc::clone(&handlers)));
+                        debug_assert!(matches!(
+                            prev.socket.get().socket,
+                            uws::InternalSocket::Detached
+                        ));
+                        prev.connection.set(Some(connection));
+                        prev.local_binding.set(local_binding.clone());
+                        debug_assert!(prev.protos.get().is_none());
+                        debug_assert!(prev.server_name.get().is_none());
+                        prev
+                    } else {
+                        TCPSocket::new(TCPSocket {
+                            ref_count: bun_ptr::RefCount::init(),
+                            handlers: JsCell::new(Some(Rc::clone(&handlers))),
+                            socket: Cell::new(uws::NewSocketHandler::<false>::DETACHED),
+                            connection: JsCell::new(Some(connection)),
+                            local_binding: JsCell::new(local_binding.clone()),
+                            protos: JsCell::new(None),
+                            server_name: JsCell::new(None),
+                            owned_ssl_ctx: JsCell::new(None),
+                            flags: Cell::new(SocketFlags::default()),
+                            this_value: JsCell::new(jsc::JsRef::empty()),
+                            poll_ref: JsCell::new(KeepAlive::init()),
+                            ref_pollref_on_connect: Cell::new(true),
+                            buffered_data_for_node_net: Default::default(),
+                            bytes_written: Cell::new(0),
+                            native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
+                            twin: JsCell::new(None),
+                            verify_error: JsCell::new(None),
+                            latest_session: Cell::new(None),
+                        })
+                    };
+                    let tcp_ref = tcp;
+                    tcp_ref.update_flags(|f| {
+                        f.set(
+                            SocketFlags::PAUSE_ON_CONNECT,
+                            socket_config.pause_on_connect,
+                        )
+                    });
+                    tcp_ref.ref_();
+                    TCPSocket::data_set_cached(
+                        tcp_ref.this_value_for_connect(cx.global()),
+                        cx.global(),
+                        default_data,
+                    );
+                    tcp_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+
+                    if let FdClass::Other(errno) = fd_class {
+                        let handled = TCPSocket::handle_connect_error(tcp_ref, errno, 0);
+                        // Balance the attempt `tcp_ref.ref_()` above.
+                        TCPSocket::deref(&tcp_ref);
+                        handled?;
+                        return Ok(promise_value);
+                    }
+
+                    let pipe = match PosixPipeContext::open(
+                        cx,
+                        pipe_fd,
+                        None,
+                        None,
+                        PipeSocketType::Tcp(tcp_ref),
+                    ) {
+                        Ok(p) => p,
+                        Err(_) => {
+                            // Balance the attempt `tcp_ref.ref_()` above; see the TLS arm.
+                            TCPSocket::deref(&tcp_ref);
+                            return Ok(promise_value);
+                        }
+                    };
+                    tcp_ref.socket.set(uws::NewSocketHandler {
+                        socket: uws::InternalSocket::Pipe(pipe.cast()),
+                    });
+                }
+                return Ok(promise_value);
+            }
+        }
 
         #[cfg(windows)]
         let mut connection = connection;

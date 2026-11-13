@@ -4750,7 +4750,7 @@ __attribute__((minsize)) static void unmockModule(Zig::GlobalObject* globalObjec
         RETURN_IF_EXCEPTION(scope, );
         keepModuleMockOfLoadInFlight(globalObject, mock, mock->requireKey->tryGetValue().data, underRequirePath);
     }
-    // By `held`, not by the table, which no longer names the mock: under a path that does not end, what the mock has set aside stays aside,
+    // By `held`: the table no longer tells which paths the mock had. Under a path that does not end, what the mock has set aside stays aside,
     // and what lies under a path that a later mock has taken is that mock's.
     if (mock->hasSetLoadedModuleAside || (mock->isOfVitest() && isInNodeModules(specifier))) {
         if (held.importPath)

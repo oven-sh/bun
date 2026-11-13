@@ -1,4 +1,9 @@
 // Objects get late names from who holds them: a list that is returned, a callback, a field. They take as many bytes as those that the allocating function fills itself. Where few get the names, the others stay small.
+// Both are counts of the build and of its executable, the same on each chip and in each run. A heap read behind a collection is neither: plain Bun's and the executable's differ from run to run.
+// The fields that lie beside their cells are those of the four classes whose names few objects get: eight each.
+// STATISTIC: FieldsOutOfLine = 32
+// Where every class had them there, storage would be asked for hundreds of times.
+// COUNT: operation:operationAOTEnsureExtensionGranules <= 16
 "use strict";
 const size = 20000;
 const numbers = Array.from({ length: size }, (_, i) => i);
@@ -52,92 +57,54 @@ function buildLater(n) { const list = []; fillLater(list); for (let i = 0; i < n
 class Maybe { constructor(x) { this.x = x; } }
 function makeMaybe(i, wide) { const p = new Maybe(i); if (wide) { p.a = i; p.b = 1.5; p.c = i; p.d = 2.5; p.e = i; p.f = 3.5; p.g = i; p.h = 4.5; } return p; }
 function buildMaybe(n) { return Array.from({ length: n }, (_, i) => makeMaybe(i, i === 3)); }
-function heap() { Bun.gc(true); return process.memoryUsage().heapUsed; }
-const bytes = {};
-let sum = 0, keys = "", before = heap();
+let sum = 0, keys = "";
 const allHere = buildHere(size);
-bytes.Here = (heap() - before) / size;
 for (let i = 0; i < size; i++) { const p = allHere[i]; sum += p.x + (p.a ?? 0) + (p.d ?? 0) + (p.h ?? 0); }
 keys += Object.keys(allHere[1]).length;
-before = heap();
 const allMade = buildMade(size);
-bytes.Made = (heap() - before) / size;
 for (let i = 0; i < size; i++) { const p = allMade[i]; sum += p.x + (p.a ?? 0) + (p.d ?? 0) + (p.h ?? 0); }
 keys += Object.keys(allMade[1]).length;
-before = heap();
 const allReturned = buildReturned(size);
-bytes.Returned = (heap() - before) / size;
 for (let i = 0; i < size; i++) { const p = allReturned[i]; sum += p.x + (p.a ?? 0) + (p.d ?? 0) + (p.h ?? 0); }
 keys += Object.keys(allReturned[1]).length;
-before = heap();
 const allListed = buildListed(size);
-bytes.Listed = (heap() - before) / size;
 for (let i = 0; i < size; i++) { const p = allListed[i]; sum += p.x + (p.a ?? 0) + (p.d ?? 0) + (p.h ?? 0); }
 keys += Object.keys(allListed[1]).length;
-before = heap();
 const allMapped = buildMapped(size);
-bytes.Mapped = (heap() - before) / size;
 for (let i = 0; i < size; i++) { const p = allMapped[i]; sum += p.x + (p.a ?? 0) + (p.d ?? 0) + (p.h ?? 0); }
 keys += Object.keys(allMapped[1]).length;
-before = heap();
 const allEach = buildEach(size);
-bytes.Each = (heap() - before) / size;
 for (let i = 0; i < size; i++) { const p = allEach[i]; sum += p.x + (p.a ?? 0) + (p.d ?? 0) + (p.h ?? 0); }
 keys += Object.keys(allEach[1]).length;
-before = heap();
 const allStepped = buildStepped(size);
-bytes.Stepped = (heap() - before) / size;
 for (let i = 0; i < size; i++) { const p = allStepped[i]; sum += p.x + (p.a ?? 0) + (p.d ?? 0) + (p.h ?? 0); }
 keys += Object.keys(allStepped[1]).length;
-before = heap();
 const allHeld = buildHeld(size);
-bytes.Held = (heap() - before) / size;
 for (let i = 0; i < size; i++) { const p = allHeld[i]; sum += p.x + (p.a ?? 0) + (p.d ?? 0) + (p.h ?? 0); }
 keys += Object.keys(allHeld[1]).length;
-before = heap();
 const allAdded = buildAdded(size);
-bytes.Added = (heap() - before) / size;
 for (let i = 0; i < size; i++) { const p = allAdded[i]; sum += p.x + (p.a ?? 0) + (p.d ?? 0) + (p.h ?? 0); }
 keys += Object.keys(allAdded[1]).length;
-before = heap();
 const allTried = buildTried(size);
-bytes.Tried = (heap() - before) / size;
 for (let i = 0; i < size; i++) { const p = allTried[i]; sum += p.x + (p.a ?? 0) + (p.d ?? 0) + (p.h ?? 0); }
 keys += Object.keys(allTried[1]).length;
-before = heap();
 const allRow = buildRow(size);
-bytes.Row = (heap() - before) / size;
 for (let i = 0; i < size; i++) { const p = allRow[i]; sum += p.x + (p.a ?? 0) + (p.d ?? 0) + (p.h ?? 0); }
 keys += Object.keys(allRow[1]).length;
-before = heap();
 const allPassed = buildPassed(size);
-bytes.Passed = (heap() - before) / size;
 for (let i = 0; i < size; i++) { const p = allPassed[i]; sum += p.x + (p.a ?? 0) + (p.d ?? 0) + (p.h ?? 0); }
 keys += Object.keys(allPassed[1]).length;
-before = heap();
 const allOther = buildOther(size);
-bytes.Other = (heap() - before) / size;
 for (let i = 0; i < size; i++) { const p = allOther[i]; sum += p.x + (p.a ?? 0) + (p.d ?? 0) + (p.h ?? 0); }
 keys += Object.keys(allOther[1]).length;
-before = heap();
 const allBroken = buildBroken(size);
-bytes.Broken = (heap() - before) / size;
 for (let i = 0; i < size; i++) { const p = allBroken[i]; sum += p.x + (p.a ?? 0) + (p.d ?? 0) + (p.h ?? 0); }
 keys += Object.keys(allBroken[1]).length;
-before = heap();
 const allLater = buildLater(size);
-bytes.Later = (heap() - before) / size;
 for (let i = 0; i < size; i++) { const p = allLater[i]; sum += p.x + (p.a ?? 0) + (p.d ?? 0) + (p.h ?? 0); }
 keys += Object.keys(allLater[1]).length;
-before = heap();
 const allMaybe = buildMaybe(size);
-bytes.Maybe = (heap() - before) / size;
 for (let i = 0; i < size; i++) { const p = allMaybe[i]; sum += p.x + (p.a ?? 0) + (p.d ?? 0) + (p.h ?? 0); }
 keys += Object.keys(allMaybe[1]).length;
-before = heap();
-if (process.env.SHOW) console.log(bytes);
-const many = Object.keys(bytes).slice(0, 12), few = Object.keys(bytes).slice(12);
-for (const name of many) console.log(name, bytes[name] < bytes.Here * 1.08 ? "alike" : "larger");
-for (const name of few) console.log(name, bytes[name] < 90 ? "small" : "large");
 console.log(sum, keys);
 console.log(allHere.length + allMade.length + allReturned.length + allListed.length + allMapped.length + allEach.length + allStepped.length + allHeld.length + allAdded.length + allTried.length + allRow.length + allPassed.length + allOther.length + allBroken.length + allLater.length + allMaybe.length);

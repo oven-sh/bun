@@ -571,20 +571,26 @@ fn lower_statement(
         }
         Data::SReturn(ret) => {
             let loc = convert_loc(stmt_loc);
-            let value = if let Some(arg) = &ret.value {
-                lower_expression_to_temporary(builder, arg)?
+            let (value, return_variant) = if let Some(arg) = &ret.value {
+                (
+                    lower_expression_to_temporary(builder, arg)?,
+                    ReturnVariant::Explicit,
+                )
             } else {
                 let undefined_value = InstructionValue::Primitive {
                     value: PrimitiveValue::Undefined,
                     loc: None,
                 };
-                lower_value_to_temporary(builder, undefined_value)?
+                (
+                    lower_value_to_temporary(builder, undefined_value)?,
+                    ReturnVariant::ExplicitVoid,
+                )
             };
             let fallthrough = builder.reserve(BlockKind::Block);
             builder.terminate_with_continuation(
                 Terminal::Return {
                     value,
-                    return_variant: ReturnVariant::Explicit,
+                    return_variant,
                     id: EvaluationOrder(0),
                     loc,
                     effects: None,

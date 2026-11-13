@@ -1040,10 +1040,17 @@ impl<'a, 'b> Driver<'a, 'b> {
                     next_block = fallthrough_id;
                 }
 
-                Terminal::Return { value, id, loc, .. } => {
+                Terminal::Return {
+                    value,
+                    return_variant,
+                    id,
+                    loc,
+                    ..
+                } => {
                     block_value.push(ReactiveStatement::Terminal(ReactiveTerminalStatement {
                         terminal: ReactiveTerminal::Return {
                             value: value.clone(),
+                            return_variant: *return_variant,
                             id: *id,
                             loc: *loc,
                         },

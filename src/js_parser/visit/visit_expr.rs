@@ -28,6 +28,22 @@ use js_ast::OpCode as Op;
 // `visit_expr_in_out` are surfaced.
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+    /// Without `minify_syntax` the printer spells `E::Undefined` as the identifier `undefined`.
+    fn printed_undefined_is_shadowed(&mut self, loc: bun_ast::Loc) -> bool {
+        if self.options.features.minify_syntax {
+            return false;
+        }
+        match self.find_symbol_with_record_usage::<false>(loc, b"undefined") {
+            Ok(found) => {
+                found.is_inside_with_scope
+                    || (found.r#ref.is_valid()
+                        && self.symbols[found.r#ref.inner_index() as usize].kind
+                            != js_ast::symbol::Kind::Unbound)
+            }
+            Err(_) => true,
+        }
+    }
+
     // PERF(port:noalias): `e: &mut Expr` is lowered to a `noalias` LLVM param, so reads
     // through `e` can be cached in registers across child recursion. The by-value
     // `Expr -> Expr` shape moved 24B in + 24B out per frame; the in-place form moves 8B
@@ -1364,7 +1380,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
                     Op::UnVoid => {
-                        if p.expr_can_be_removed_if_unused(&e_.value) {
+                        if p.expr_can_be_removed_if_unused(&e_.value)
+                            && !p.printed_undefined_is_shadowed(expr.loc)
+                        {
                             *e = p.new_expr(E::Undefined {}, e_.value.loc);
                             return;
                         }

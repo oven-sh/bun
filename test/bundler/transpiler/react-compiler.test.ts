@@ -4595,6 +4595,44 @@ describe("bundler", () => {
       });
     },
   });
+
+  // https://github.com/oven-sh/bun/issues/48056
+  // In an async generator, `return undefined` awaits its operand and
+  // `return;` does not, so codegen has to keep the operand there.
+  itBundled("react-compiler/ReturnUndefinedInAsyncGenerator", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        export function Comp({ log }) {
+          const explicit = async function* () { return undefined; };
+          const implicit = async function* () { return; };
+          explicit().next().then(() => log.push("explicit done"));
+          implicit().next().then(() => log.push("implicit done"));
+          return <div>{log.length}</div>;
+        }
+        const log = [];
+        Comp({ log });
+        await Promise.resolve()
+          .then(() => log.push("tick1"))
+          .then(() => log.push("tick2"));
+        console.log(log.join(", "));
+      `,
+      "/node_modules/react/compiler-runtime.js": `
+        exports.c = function (n) { return new Array(n).fill(Symbol.for("react.memo_cache_sentinel")); };
+      `,
+      "/node_modules/react/index.js": `exports.createElement = () => null;`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = () => "jsx"; exports.jsxs = () => "jsx";`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = () => "jsx";`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    backend: "api",
+    run: { stdout: "implicit done, tick1, explicit done, tick2" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("react.memo_cache_sentinel");
+      expect(out).toMatch(/async function\* \w*\(\) \{\s*return (undefined|void 0);\s*\}/);
+    },
+  });
 });
 
 // Three passes kept one copy of their work per basic block or per nesting

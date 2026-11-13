@@ -41,7 +41,7 @@ use crate::hir::{
     IdentifierId, IdentifierName, InstructionKind, InstructionValue, JsxAttribute, JsxTag,
     LogicalOperator, NonLocalKind, ObjectPattern, ObjectPropertyKey, ObjectPropertyOrSpread,
     ObjectPropertyType, ParamPattern, Pattern, Place, PlaceOrSpread, PrimitiveValue,
-    PropertyLiteral, ScopeId,
+    PropertyLiteral, ReturnVariant, ScopeId,
 };
 use crate::reactive_scopes::visitors::{ReactiveFunctionVisitor, visit_reactive_function};
 use crate::reactive_scopes::{
@@ -401,6 +401,7 @@ struct Context<'a, 'h> {
     object_methods: IdMap<IdentifierId, (InstructionValue, Option<DiagSourceLocation>)>,
     unique_identifiers: HashSet<String>,
     synthesized_names: HashMap<&'static str, String>,
+    is_async_generator: bool,
 }
 
 impl<'a, 'h> Context<'a, 'h> {
@@ -418,6 +419,7 @@ impl<'a, 'h> Context<'a, 'h> {
             object_methods: IdMap::new(),
             unique_identifiers,
             synthesized_names: HashMap::default(),
+            is_async_generator: false,
         }
     }
 
@@ -481,6 +483,7 @@ fn codegen_reactive_function(
     cx: &mut Context,
     func: &ReactiveFunction,
 ) -> Result<CodegenFunction, CompilerError> {
+    cx.is_async_generator = func.is_async && func.generator;
     for param in &func.params {
         let place = param.place();
         let ident = &cx.env.identifiers[place.identifier.0 as usize];
@@ -961,10 +964,17 @@ fn codegen_terminal(
             };
             Ok(Some(Stmt::alloc(S::Continue { label }, convert_loc(*loc))))
         }
-        ReactiveTerminal::Return { value, loc, .. } => {
+        ReactiveTerminal::Return {
+            value,
+            return_variant,
+            loc,
+            ..
+        } => {
             let expr = codegen_place_to_expression(cx, value)?;
             let stmt_loc = convert_loc(*loc);
-            if matches!(expr.data, ExprData::EUndefined(_)) {
+            let is_bare = matches!(expr.data, ExprData::EUndefined(_))
+                && (!cx.is_async_generator || *return_variant != ReturnVariant::Explicit);
+            if is_bare {
                 return Ok(Some(Stmt::alloc(S::Return { value: None }, stmt_loc)));
             }
             Ok(Some(Stmt::alloc(S::Return { value: Some(expr) }, stmt_loc)))

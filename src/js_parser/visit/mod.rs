@@ -91,6 +91,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let old_fn_or_arrow_data = self.fn_or_arrow_data_visit;
         let old_fn_only_data = core::mem::take(&mut self.fn_only_data_visit);
         self.fn_or_arrow_data_visit = FnOrArrowDataVisit {
+            is_async_generator: func.flags.contains(flags::Function::IsAsync)
+                && func.flags.contains(flags::Function::IsGenerator),
             ..Default::default()
         };
         self.fn_only_data_visit = FnOnlyDataVisit {

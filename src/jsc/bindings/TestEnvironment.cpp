@@ -31,11 +31,22 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__TestGlobals__g
 // `process`, which no property shows. What a shared built-in module keeps in its own variables is out of reach from here.
 extern "C" void Bun__TestGlobals__resetNativeState(Zig::GlobalObject* globalObject)
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto* context = globalObject->scriptExecutionContext();
     // Nothing of Bun's own listens on globalThis or performance in the main thread, observes performance or makes a mark.
-    globalObject->scriptExecutionContext()->removeAllEventListeners();
-    if (auto* performance = globalObject->existingPerformance())
+    if (auto* performance = globalObject->existingPerformance()) {
+        // As for the context of a test file. `performance` stays in use: an observer that a later file still holds can observe() again.
+        performance->disconnectObserversOf(*context);
         performance->clearUserTiming();
-    globalObject->processObject()->clearUncaughtExceptionCaptureCallback();
+    }
+    context->removeAllEventListeners();
+
+    auto* process = globalObject->processObject();
+    process->clearUncaughtExceptionCaptureCallback();
+    // node:repl had its dispatcher in that callback. Without its list, the next REPL installs a new one.
+    auto& callbacksOfRepl = WebCore::builtinNames(vm).uncaughtExceptionCaptureCallbacksPrivateName();
+    if (JSC::JSValue callbacks = process->getDirect(vm, callbacksOfRepl); callbacks && !callbacks.isUndefined())
+        process->putDirect(vm, callbacksOfRepl, JSC::jsUndefined());
 }
 
 namespace Bun {

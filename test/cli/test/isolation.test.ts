@@ -1674,6 +1674,47 @@ describe.concurrent("bun test --isolate=modules", () => {
     },
   );
 
+  test("an observer of performance that a later file still holds can observe again", async () => {
+    const stdout = await passes(
+      {
+        "a.test.js": `
+          import os from "node:os";
+          test("a", () => {
+            // Made in a listener of globalThis, it does not end with the file. A built-in module is shared by all files.
+            globalThis.addEventListener("observe", () => {
+              os.observerOfA = new PerformanceObserver(list => console.log("seen: " + list.getEntries().map(mark => mark.name)));
+              os.observerOfA.observe({ entryTypes: ["mark"] });
+            });
+            globalThis.dispatchEvent(new Event("observe"));
+          });
+        `,
+        "b.test.js": `
+          import os from "node:os";
+          // Observers get a mark in the order in which they started to observe.
+          async function mark(name) {
+            const { promise, resolve } = Promise.withResolvers();
+            const observer = new PerformanceObserver(resolve);
+            observer.observe({ entryTypes: ["mark"] });
+            performance.mark(name);
+            await promise;
+            observer.disconnect();
+          }
+          test("b", async () => {
+            await mark("a mark that nothing of a observes");
+            os.observerOfA.observe({ entryTypes: ["mark"] });
+            await mark("a mark after b started the observer again");
+            os.observerOfA.disconnect();
+            delete os.observerOfA;
+          });
+        `,
+      },
+      2,
+    );
+    expect(stdout.split("\n").filter(line => line.startsWith("seen: "))).toEqual([
+      "seen: a mark after b started the observer again",
+    ]);
+  });
+
   // Only --isolate=modules runs a preload again on a global object that it has already run on. Without isolation a
   // preload runs once, and what it registered has to stay for every file.
   test.each([[[]], [["--isolate"]], [["--isolate=modules"]], [["--parallel=2", "--no-isolate"]]])(

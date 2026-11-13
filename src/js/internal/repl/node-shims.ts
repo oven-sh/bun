@@ -325,15 +325,22 @@ const getOwnNonIndexProperties: (value: object, filter: number) => (string | sym
 // ---- process.addUncaughtExceptionCaptureCallback polyfill ----------------
 // Bun only implements the single-callback set/clear API; emulate Node's
 // additive API with a dispatcher list. The shim occupies the exclusive slot
-// once the first REPL starts, and takes it again when it finds it empty. See
-// repl.js setupExceptionCapture() for the rationale.
-
-let captureCallbacks: ((err: unknown) => unknown)[] | null = null;
+// for the process lifetime once the first REPL starts — see repl.js
+// setupExceptionCapture() for the rationale.
+//
+// The list is a private property of `process`, not a variable of this module:
+// `bun test --isolate=modules` shares the module between test files, and
+// Bun__TestGlobals__resetNativeState empties the slot and the property before
+// each of them.
 
 function addUncaughtExceptionCaptureCallback(cb: (err: unknown) => unknown) {
-  // An empty slot means that the dispatcher is gone, and the callbacks that it called with it.
-  if (!captureCallbacks || !process.hasUncaughtExceptionCaptureCallback()) {
+  let captureCallbacks: ((err: unknown) => unknown)[] | undefined = $getByIdDirectPrivate(
+    process,
+    "uncaughtExceptionCaptureCallbacks",
+  );
+  if (!captureCallbacks) {
     captureCallbacks = [];
+    $putByIdDirectPrivate(process, "uncaughtExceptionCaptureCallbacks", captureCallbacks);
     try {
       process.setUncaughtExceptionCaptureCallback((err: unknown) => {
         // Indexed, not for..of: user code can delete Array.prototype[Symbol.iterator]

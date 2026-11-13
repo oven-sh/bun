@@ -140,13 +140,27 @@ static bool severalEntriesResumedAsyncFunctions(JSC::VM& vm)
     return false;
 }
 
+// The name that the source gave the function. A `name` property that the program defines later does not change it.
+static ALWAYS_INLINE WTF::String nameFromSource(JSC::VM& vm, JSC::JSFunction* function)
+{
+    WTF::String name = function->nameWithoutGC(vm);
+    if (name.isEmpty() && !function->isHostFunction())
+        name = function->jsExecutable()->ecmaNameWithoutGC();
+    return name;
+}
+
 void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, JSC::JSCell* owner, JSC::JSValue caller, WTF::Vector<JSC::StackFrame>& stackTrace, size_t stackTraceLimit)
 {
     UNUSED_PARAM(callFrame);
 
     JSC::JSObject* callerObject = caller.getObject();
     // Made at the first frame that is not the caller's by identity.
-    std::optional<WTF::String> nameOfCaller;
+    struct NamesOfCaller {
+        WTF::String now;
+        // Null if it is the same name.
+        WTF::String fromSource;
+    };
+    std::optional<NamesOfCaller> namesOfCaller;
 
     // A deep stack holds the same few functions over and over, and their names take
     // longer to make than to compare.
@@ -160,7 +174,8 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
     // We match by cell identity first, then by name — name matching is needed
     // because a resumed async function's frame callee is the generator's `next`
     // function (a different cell) but Zig::functionName still reports the
-    // original async function's name.
+    // original async function's name. That is the name from the source: no
+    // `name` property that the program defined on the async function reaches that cell.
     auto isFrameOfCaller = [&](const JSC::StackFrame& frame) {
         if (frame.callee() == callerObject)
             return true;
@@ -180,12 +195,19 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
                 return true;
         }
 #endif
-        if (!nameOfCaller)
-            nameOfCaller = Zig::functionName(vm, callerObject);
-        const WTF::String& callerName = *nameOfCaller;
+        if (!namesOfCaller) {
+            namesOfCaller = NamesOfCaller { Zig::functionName(vm, callerObject), {} };
+            if (auto* callerFunction = dynamicDowncast<JSC::JSFunction>(callerObject)) {
+                WTF::String fromSource = nameFromSource(vm, callerFunction);
+                if (fromSource != namesOfCaller->now)
+                    namesOfCaller->fromSource = WTF::move(fromSource);
+            }
+        }
+        const WTF::String& callerName = namesOfCaller->now;
         if (callerName.isEmpty())
             return false;
-        if (Zig::functionName(vm, frame, nullptr) == callerName)
+        WTF::String nameOfFrame = Zig::functionName(vm, frame, nullptr);
+        if (nameOfFrame == callerName || (!nameOfFrame.isEmpty() && nameOfFrame == namesOfCaller->fromSource))
             return true;
         functionWithOtherName = function;
         return false;
@@ -653,11 +675,7 @@ String functionName(JSC::VM& vm, JSC::JSObject* object)
     {
         if (functionName.isEmpty()) {
             if (jstype == JSC::JSFunctionType) {
-                auto* function = uncheckedDowncast<JSC::JSFunction>(object);
-                functionName = function->nameWithoutGC(vm);
-                if (functionName.isEmpty() && !function->isHostFunction()) {
-                    functionName = function->jsExecutable()->ecmaNameWithoutGC();
-                }
+                functionName = nameFromSource(vm, uncheckedDowncast<JSC::JSFunction>(object));
             } else if (jstype == JSC::InternalFunctionType) {
                 functionName = uncheckedDowncast<JSC::InternalFunction>(object)->name();
             }

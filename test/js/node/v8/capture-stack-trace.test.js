@@ -1324,6 +1324,38 @@ test("Error.captureStackTrace with caller argument preserves async frames", asyn
   expect(err.stack).toContain("at async outerAsync");
 });
 
+test("Error.captureStackTrace finds a resumed async caller whose name was redefined", async () => {
+  const methods = {
+    async "qualified.method"() {
+      await new Promise(r => setImmediate(r));
+      const err = new Error("async test");
+      Error.captureStackTrace(err, method);
+      return err;
+    },
+  };
+  const method = methods["qualified.method"];
+  async function declaration() {
+    await new Promise(r => setImmediate(r));
+    const err = new Error("async test");
+    Error.captureStackTrace(err, declaration);
+    return err;
+  }
+
+  for (const innerAsync of [method, declaration]) {
+    // node:assert does this to `rejects` and `doesNotReject`.
+    Object.defineProperty(innerAsync, "name", { value: "renamed" });
+    noInline(innerAsync);
+
+    async function outerAsync() {
+      return await innerAsync();
+    }
+    noInline(outerAsync);
+
+    const err = await outerAsync();
+    expect(err.stack.split("\n")[1]).toStartWith("    at async outerAsync (");
+  }
+});
+
 test("Error.captureStackTrace with caller not in stack clears async frames too", async () => {
   function notInStack() {}
 

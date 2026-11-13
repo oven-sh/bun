@@ -213,6 +213,8 @@ export const dawn: Dependency = {
           ...["assert", "log"].map(name => `src/utils/${name}.cc`),
           ours("Host.cpp"),
           withoutPch(dawnSysChecks(cfg)),
+          // LTO would take it for the only std::streambuf there is.
+          ...(cfg.abi === "musl" ? [{ ...withoutPch(ours("StringStreams.cpp")), cflags: ["-fno-lto"] }] : []),
         ],
       },
       { name: "tint", ...tintFlags, pch: join(buildDir, "tint-pch.h"), sources: tintSources(false) },

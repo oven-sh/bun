@@ -1377,6 +1377,7 @@ export const linkerFlags: Flag[] = [
     flag: [
       "exp",
       "exp2",
+      "exp2f",
       "expf",
       "fcntl64",
       "getrandom",
@@ -1422,9 +1423,10 @@ export const linkerFlags: Flag[] = [
       "copy_file_range",
       "memfd_create",
       "statx",
-      // no older version (2.29/2.35)
+      // no older version (2.29/2.30/2.35)
       "_dl_find_object",
       "posix_spawn_file_actions_addchdir_np",
+      "pthread_cond_clockwait",
     ].map(s => `-Wl,--wrap=${s}`),
     when: c => c.linux && c.abi === "gnu",
     desc: "Wrap glibc 2.18+ symbols (portable down to glibc 2.17)",

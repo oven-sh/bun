@@ -106,6 +106,7 @@ std::atomic<int> wtfStringCopyCount;
 
 BUN_SYMVER(exp, BUN_GLIBC_BASE);
 BUN_SYMVER(exp2, BUN_GLIBC_BASE);
+BUN_SYMVER(exp2f, BUN_GLIBC_BASE);
 BUN_SYMVER(expf, BUN_GLIBC_BASE);
 BUN_SYMVER(log, BUN_GLIBC_BASE);
 BUN_SYMVER(log2, BUN_GLIBC_BASE);
@@ -124,6 +125,7 @@ extern "C" {
 
 double BUN_WRAP_GLIBC_SYMBOL(exp)(double);
 double BUN_WRAP_GLIBC_SYMBOL(exp2)(double);
+float BUN_WRAP_GLIBC_SYMBOL(exp2f)(float);
 float BUN_WRAP_GLIBC_SYMBOL(expf)(float);
 float BUN_WRAP_GLIBC_SYMBOL(log2f)(float);
 float BUN_WRAP_GLIBC_SYMBOL(logf)(float);
@@ -135,6 +137,7 @@ int BUN_WRAP_GLIBC_SYMBOL(fcntl64)(int, int, ...);
 ssize_t BUN_WRAP_GLIBC_SYMBOL(getrandom)(void*, size_t, unsigned int);
 
 float __wrap_expf(float x) { return expf(x); }
+float __wrap_exp2f(float x) { return exp2f(x); }
 float __wrap_powf(float x, float y) { return powf(x, y); }
 float __wrap_logf(float x) { return logf(x); }
 float __wrap_log2f(float x) { return log2f(x); }
@@ -457,6 +460,22 @@ extern "C" int __wrap_posix_spawn_file_actions_addchdir_np(posix_spawn_file_acti
     using fn = int (*)(posix_spawn_file_actions_t*, const char*);
     static fn real = reinterpret_cast<fn>(dlsym(RTLD_DEFAULT, "posix_spawn_file_actions_addchdir_np"));
     return real ? real(fa, path) : ENOSYS;
+}
+// For std::condition_variable, which pthread_cond_timedwait times by CLOCK_REALTIME.
+extern "C" int __wrap_pthread_cond_clockwait(pthread_cond_t* condition, pthread_mutex_t* mutex, clockid_t clock, const struct timespec* deadline)
+{
+    using fn = int (*)(pthread_cond_t*, pthread_mutex_t*, clockid_t, const struct timespec*);
+    static fn real = reinterpret_cast<fn>(dlsym(RTLD_DEFAULT, "pthread_cond_clockwait"));
+    if (real)
+        return real(condition, mutex, clock, deadline);
+    struct timespec now, until;
+    clock_gettime(clock, &now);
+    clock_gettime(CLOCK_REALTIME, &until);
+    constexpr long second = 1'000'000'000;
+    long nanoseconds = until.tv_nsec + deadline->tv_nsec - now.tv_nsec + second;
+    until.tv_sec += deadline->tv_sec - now.tv_sec - 1 + nanoseconds / second;
+    until.tv_nsec = nanoseconds % second;
+    return pthread_cond_timedwait(condition, mutex, &until);
 }
 
 // __libc_start_main: 2.34 dropped the init/fini contract (crt1.o passes

@@ -257,6 +257,13 @@ describe("assert.partialDeepStrictEqual", () => {
       const beside = { count: 0 };
       assert.partialDeepStrictEqual({ a: counted(beside, 1), loop: ring(1) }, { a: { v: 1 }, loop: ring(1) });
       expect(beside.count).toBe(2);
+
+      // Each run goes around a ring of six one time.
+      const inside = { count: 0 };
+      const nodes = Array.from({ length: 6 }, () => counted(inside, 1));
+      nodes.forEach((node, i) => (node.next = nodes[(i + 1) % 6]));
+      assert.partialDeepStrictEqual(nodes[0], ring(6));
+      expect(inside.count).toBe(12);
     });
 
     test("no other candidate is read once a pair is inside its own comparison", () => {

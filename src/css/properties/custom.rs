@@ -1322,15 +1322,6 @@ impl Clone for Function {
     }
 }
 
-impl core::fmt::Debug for EnvironmentVariable {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // Minimal — `media_query::MediaFeatureValue` derives `Debug`.
-        f.debug_struct("EnvironmentVariable")
-            .field("indices", &self.indices)
-            .finish_non_exhaustive()
-    }
-}
-
 /// A known property with an unparsed value.
 ///
 /// This type is used when the value of a known property could not

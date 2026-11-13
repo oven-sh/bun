@@ -81,15 +81,6 @@ HTTPHeaderMap::HTTPHeaderMap()
 {
 }
 
-String HTTPHeaderMap::get(const StringView name) const
-{
-    HTTPHeaderName headerName;
-    if (findHTTPHeaderName(name, headerName))
-        return get(headerName);
-
-    return getUncommonHeader(name);
-}
-
 size_t HTTPHeaderMap::memoryCost() const
 {
     size_t cost = m_commonHeaders.size() * sizeof(CommonHeader);

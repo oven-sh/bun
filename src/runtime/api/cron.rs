@@ -36,9 +36,7 @@ use bun_resolver::fs::RealFS;
 
 #[cfg(not(windows))]
 use crate::api::bun::process::SpawnResultExt as _;
-use crate::api::bun::process::{
-    self as spawn, Process, ProcessHandle, Rusage, SpawnOptions, Status,
-};
+use crate::api::bun::process::{self as spawn, ProcessHandle, Rusage, SpawnOptions, Status};
 use crate::generated_bindgen::cron::{
     Bun__Cron__cron, Bun__Cron__parse, Bun__Cron__remove, Bun__CronJob__onPromiseReject,
     Bun__CronJob__onPromiseResolve, CronOptions, js_CronJob as js,
@@ -200,7 +198,7 @@ trait CronJobBase: Sized + bun_ptr::AnyRefCounted {
     }
 
     /// May free `this` via `maybe_finished`.
-    fn on_process_exit(this: ThisPtr<Self>, _proc: &Process, status: Status, _rusage: &Rusage) {
+    fn on_process_exit(this: ThisPtr<Self>, status: Status, _rusage: &Rusage) {
         this.has_called_process_exit().set(true);
         this.exit_status().set(Some(status));
         Self::maybe_finished(this);
@@ -1871,15 +1869,15 @@ bun_spawn::link_impl_ProcessExit! {
     CronRegister for CronRegisterJob => |this| {
         // SAFETY: `this` is the live heap job installed via `set_exit_handler`;
         // `on_process_exit` → `maybe_finished` may free it.
-        on_process_exit(process, status, rusage) =>
-            <CronRegisterJob as CronJobBase>::on_process_exit(ThisPtr::new(this), &*process, status, rusage),
+        on_process_exit(status, rusage) =>
+            <CronRegisterJob as CronJobBase>::on_process_exit(ThisPtr::new(this), status, rusage),
     }
 }
 bun_spawn::link_impl_ProcessExit! {
     CronRemove for CronRemoveJob => |this| {
         // SAFETY: `this` is the live heap job installed via `set_exit_handler`.
-        on_process_exit(process, status, rusage) =>
-            <CronRemoveJob as CronJobBase>::on_process_exit(ThisPtr::new(this), &*process, status, rusage),
+        on_process_exit(status, rusage) =>
+            <CronRemoveJob as CronJobBase>::on_process_exit(ThisPtr::new(this), status, rusage),
     }
 }
 

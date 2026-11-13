@@ -4265,12 +4265,12 @@ impl VirtualMachine {
     }
 
     /// Registers a spawned subprocess with the auto-killer.
-    pub fn on_subprocess_spawn(&self, process: core::ptr::NonNull<bun_spawn::Process>) {
+    pub fn on_subprocess_spawn(&self, process: &bun_ptr::RefPtr<bun_spawn::Process>) {
         self.auto_killer.on_subprocess_spawn(process);
     }
 
     /// Unregisters an exited subprocess from the auto-killer.
-    pub fn on_subprocess_exit(&self, process: core::ptr::NonNull<bun_spawn::Process>) {
+    pub fn on_subprocess_exit(&self, process: &bun_ptr::RefPtr<bun_spawn::Process>) {
         self.auto_killer.on_subprocess_exit(process);
     }
 

@@ -699,7 +699,7 @@ pub use self::dom_form_data::DOMFormData;
 pub use self::url::{URL, URLJsc};
 pub use self::zig_stack_frame::ZigStackFrame;
 pub use self::zig_stack_trace::ZigStackTrace;
-pub use abort_signal::{AbortSignal, AbortSignalRef};
+pub use abort_signal::{AbortSignal, AbortSignalRef, PendingAbortSignal};
 pub use script_execution_context::{
     AbortCause, AbortHandle, AbortHandleOwner, ContextId, ContextTimer, ScriptExecutionContext,
     StopReason,

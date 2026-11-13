@@ -875,11 +875,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let global = self.global_this();
         let _context = self.vm().enter_context(self.context.get());
         let signal = jsc::AbortSignal::new(global);
-        // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
-        ctx_ref.signal.set(core::ptr::NonNull::new(signal));
-        bun_opaque::opaque_deref_mut(signal).pending_activity_ref();
-
-        let signal_ref = bun_opaque::opaque_deref_mut(signal).ref_();
+        let signal_ref = signal.clone();
+        ctx_ref
+            .signal
+            .set(Some(jsc::PendingAbortSignal::new(signal)));
         // ownership: `Request::new` is `bun.TrivialNew` — the heap
         // allocation is handed to the JS GC via `to_js`/`to_js_for_bake` (C++
         // wrapper finalizer frees it), or, for `CreateJsRequest::No`, retained

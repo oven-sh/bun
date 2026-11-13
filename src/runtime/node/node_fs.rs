@@ -140,10 +140,7 @@ type BlobSizeType = u64;
 /// `maxInt(u52)` == 2^52 - 1.
 const BLOB_SIZE_MAX: u64 = (1u64 << 52) - 1;
 
-/// `webcore.RefPtr<AbortSignal>` — JSC's intrusive ref-counted pointer.
-/// Backed by `bun_ptr::ExternalShared<AbortSignal>` (alias re-exported
-/// from `bun_jsc`): `Clone` → `ref()`, `Drop` → `unref()`, `Deref` → `&AbortSignal`.
-use bun_jsc::AbortSignalRef;
+use bun_jsc::PendingAbortSignal;
 
 // Wired to the real sibling modules under `super::` (rather than a
 // `bun_jsc::node` re-export shim) so this file compiles standalone.
@@ -1145,11 +1142,6 @@ pub(crate) const DEFAULT_PERMISSION: Mode = sys::S::IRUSR as Mode
 #[cfg(not(unix))]
 // Windows does not have permissions
 pub(crate) const DEFAULT_PERMISSION: Mode = 0;
-
-// `AbortSignalRef` (= `ExternalShared<AbortSignal>`) implements `Deref`, so
-// `signal.pending_activity_ref()` / `signal.aborted()` resolve directly to the
-// `&AbortSignal` inherent methods — the former `AbortSignalRefExt` shim with
-// per-call `unsafe { self.as_ref() }` is gone. `unref()` is handled by `Drop`.
 
 /// Tracks subdirectories a recursive `cp` walk has seen but not yet entered. A walk
 /// reuses one src/dest buffer pair for the whole tree, so each entry stores its
@@ -4934,7 +4926,7 @@ pub(crate) mod args {
         pub(crate) max_size: Option<BlobSizeType>,
         pub(crate) limit_size_for_javascript: bool,
         pub(crate) flag: FileSystemFlags,
-        pub(crate) signal: Option<AbortSignalRef>,
+        pub(crate) signal: Option<PendingAbortSignal>,
     }
     impl Default for ReadFile<'_> {
         fn default() -> Self {
@@ -4946,14 +4938,6 @@ pub(crate) mod args {
                 limit_size_for_javascript: false,
                 flag: FileSystemFlags::R,
                 signal: None,
-            }
-        }
-    }
-    impl Drop for ReadFile<'_> {
-        fn drop(&mut self) {
-            // Release the AbortSignal ref taken in `from_js`.
-            if let Some(signal) = self.signal.take() {
-                signal.pending_activity_unref();
             }
         }
     }
@@ -4971,11 +4955,7 @@ pub(crate) mod args {
             })?;
             let mut encoding = Encoding::Buffer;
             let mut flag = FileSystemFlags::R;
-            let mut abort_signal = scopeguard::guard(None::<AbortSignalRef>, |s| {
-                if let Some(signal) = s {
-                    signal.pending_activity_unref(); /* unref via Drop */
-                }
-            });
+            let mut abort_signal = None;
             if let Some(arg) = arguments.next() {
                 arguments.eat();
                 if arg.is_string() {
@@ -4987,8 +4967,7 @@ pub(crate) mod args {
                     }
                     if let Some(value) = arg.get_truthy(ctx, "signal")? {
                         if let Some(signal) = AbortSignal::ref_from_js(value) {
-                            signal.pending_activity_ref();
-                            *abort_signal = Some(signal);
+                            abort_signal = Some(PendingAbortSignal::new(signal));
                         } else {
                             return Err(ctx.throw_invalid_argument_type_value(
                                 b"signal",
@@ -4999,7 +4978,6 @@ pub(crate) mod args {
                     }
                 }
             }
-            let abort_signal = scopeguard::ScopeGuard::into_inner(abort_signal);
             Ok(ReadFile {
                 path,
                 encoding,
@@ -5027,15 +5005,7 @@ pub(crate) mod args {
         /// Encoded at the time of construction.
         pub(crate) data: StringOrBuffer<'a>,
         pub(crate) dirfd: FD,
-        pub(crate) signal: Option<AbortSignalRef>,
-    }
-    impl Drop for WriteFile<'_> {
-        fn drop(&mut self) {
-            // Release the AbortSignal ref taken in `from_js`.
-            if let Some(signal) = self.signal.take() {
-                signal.pending_activity_unref();
-            }
-        }
+        pub(crate) signal: Option<PendingAbortSignal>,
     }
     impl WriteFile<'static> {
         pub(crate) fn from_js(
@@ -5062,11 +5032,7 @@ pub(crate) mod args {
             let mut encoding = Encoding::Buffer;
             let mut flag = default_flag;
             let mut mode: Mode = DEFAULT_PERMISSION;
-            let mut abort_signal = scopeguard::guard(None::<AbortSignalRef>, |s| {
-                if let Some(signal) = s {
-                    signal.pending_activity_unref(); /* unref via Drop */
-                }
-            });
+            let mut abort_signal = None;
             let mut flush = false;
             if data_value.is_string() {
                 encoding = Encoding::Utf8;
@@ -5085,8 +5051,7 @@ pub(crate) mod args {
                     }
                     if let Some(value) = arg.get_truthy(ctx, "signal")? {
                         if let Some(signal) = AbortSignal::ref_from_js(value) {
-                            signal.pending_activity_ref();
-                            *abort_signal = Some(signal);
+                            abort_signal = Some(PendingAbortSignal::new(signal));
                         } else {
                             return Err(ctx.throw_invalid_argument_type_value(
                                 b"signal",
@@ -5115,7 +5080,6 @@ pub(crate) mod args {
             // https://github.com/nodejs/node/blob/6f946c95b9da75c70e868637de8161bc8d048379/lib/internal/fs/utils.js#L916
             let data = StringOrBuffer::from_js_with_encoding_maybe_async(ctx, data_value, encoding, flavor, StringObjects::Reject)?
                 .ok_or_else(|| validators::throw_err_invalid_arg_type_with_message(ctx, format_args!("The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView")))?;
-            let abort_signal = scopeguard::ScopeGuard::into_inner(abort_signal);
             Ok(WriteFile {
                 file: path,
                 flag,

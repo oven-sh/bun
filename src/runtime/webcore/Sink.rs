@@ -649,7 +649,7 @@ impl ReadableSinkController {
         ))
     }
 
-    /// `end()` and `close()` detach before they run any JS: the close handler can re-enter the event loop and free the sink (`handle_resolve_stream` -> `destroy_sink`).
+    /// `end()` and `close()` detach before they run any JS: the close handler can re-enter the event loop and free the sink (`handle_resolve_stream`).
     fn take_sink(&self) -> Option<AnyControlledSink> {
         let sink = self.sink()?;
         self.is_detached.set(true);

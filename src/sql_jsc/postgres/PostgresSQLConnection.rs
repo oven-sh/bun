@@ -2012,12 +2012,13 @@ impl PostgresSQLConnection {
                 }
 
                 let mut putter = DataCell::Putter {
-                    list: SmallVec::with_capacity(statement.fields.len()),
+                    list: SmallVec::new(),
                     fields: &statement.fields,
                     formats: request_flags.formats,
                     bigint: request_flags.bigint,
                     global_object: self.global(),
                 };
+                putter.list.reserve_exact(statement.fields.len());
 
                 // Tells a cell the client cannot decode from a framing error of `decode` itself.
                 let mut cell_failed = false;

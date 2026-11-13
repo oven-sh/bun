@@ -31,7 +31,7 @@ use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
 use bun_jsc::uuid::UUID;
 use bun_jsc::{
     self as jsc, ArrayBuffer, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsError, JsResult,
-    Node, StringJsc as _, VirtualMachine, host_fn,
+    Node, PendingAbortSignal, StringJsc as _, VirtualMachine, host_fn,
 };
 use bun_paths as paths;
 use bun_ptr::{AsCtxPtr, RefPtr};
@@ -125,7 +125,7 @@ trait RequestCtxOps: RequestCtx {
         reason = "the body slot is a separate pooled allocation, not a field of *self (R-2)"
     )]
     fn request_body_mut(&self) -> Option<&mut BodyValue>;
-    fn set_signal(&self, sig: *mut AbortSignal);
+    fn set_signal(&self, signal: PendingAbortSignal);
     fn set_request_weakref(&self, req: *mut Request);
     fn clear_req(&self);
     fn set_is_web_browser_navigation(&self, v: bool);
@@ -213,12 +213,8 @@ where
             .map(|h| unsafe { &mut (*h.as_ptr()).value })
     }
     #[inline]
-    fn set_signal(&self, sig: *mut AbortSignal) {
-        // `AbortSignal::new` returns a raw +1 ref to a C++-refcounted opaque;
-        // `RequestContext.signal` stores it as `Option<NonNull<AbortSignal>>`
-        // and pairs the unref in RequestContext cleanup (`shim::signal_release`,
-        // which drops both the pending-activity count and the intrusive ref).
-        self.signal.set(NonNull::new(sig));
+    fn set_signal(&self, signal: PendingAbortSignal) {
+        self.signal.set(Some(signal));
     }
     #[inline]
     fn set_request_weakref(&self, req: *mut Request) {
@@ -638,17 +634,8 @@ impl AnyRoute {
         let Some(headers_js) = argument.get(init_ctx.global, b"headers")? else {
             return Ok(None);
         };
-        let fetch_headers = FetchHeaders::create_from_js(init_ctx.global, headers_js)?;
-        let _fh_guard = scopeguard::guard(fetch_headers, |fh| {
-            // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-            if let Some(h) = fh {
-                bun_opaque::opaque_deref_mut(h.as_ptr()).deref();
-            }
-        });
-
-        // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-        let headers_ref = fetch_headers.map(|p| bun_opaque::opaque_deref(p.as_ptr().cast_const()));
-        let route = Self::from_options(init_ctx.global, headers_ref, &mut path)?;
+        let fetch_headers = HeadersRef::create_from_js(init_ctx.global, headers_js)?;
+        let route = Self::from_options(init_ctx.global, fetch_headers.as_deref(), &mut path)?;
 
         if is_index_route {
             return Ok(Some(route));
@@ -1683,8 +1670,7 @@ where
         // Keep the upgrader alive across option getters below, which run
         // arbitrary user JS. A re-entrant server.upgrade(req) from a getter
         // would otherwise be able to deref this context out from under us.
-        upgrader.ref_();
-        let _upgrader_guard = scopeguard::guard(upgrader, |upgrader| upgrader.deref());
+        let _upgrader_ref = super::request_context::RequestContextRef::retain(upgrader);
 
         // Validate the handshake against `request.headers`, never the raw uWS request.
         // Copy the values, because the option getters below can modify the headers.
@@ -2679,12 +2665,8 @@ where
 
         let _context = self.vm().enter_context(self.context.get());
         let signal = AbortSignal::new(&self.global());
-        ctx.set_signal(signal);
-        // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
-        bun_opaque::opaque_deref_mut(signal).pending_activity_ref();
-
-        // The Request's own ref.
-        let signal_for_req = bun_opaque::opaque_deref_mut(signal).ref_();
+        let signal_for_req = signal.clone();
+        ctx.set_signal(PendingAbortSignal::new(signal));
         let request_object_ptr: *mut Request = Request::new(Request::init(
             ctx.ctx_method(),
             AnyRequestContext::init(std::ptr::from_ref::<Ctx>(ctx)),
@@ -2941,14 +2923,8 @@ where
 
         let _context = this.vm().enter_context(this.context.get());
         let signal = AbortSignal::new(&this.global());
-        // The
-        // RequestContext owns one ref so aborts during the WS-upgrade fallback
-        // fetch path propagate.
-        ctx.signal.set(NonNull::new(signal));
-        // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
-        bun_opaque::opaque_deref_mut(signal).pending_activity_ref();
-        // The Request's own ref.
-        let signal_for_req = bun_opaque::opaque_deref_mut(signal).ref_();
+        let signal_for_req = signal.clone();
+        ctx.signal.set(Some(PendingAbortSignal::new(signal)));
         let request_object_ptr: *mut Request = Request::new(Request::init(
             ctx.method,
             AnyRequestContext::init(std::ptr::from_ref(ctx)),

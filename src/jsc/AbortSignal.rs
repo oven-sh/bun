@@ -91,14 +91,6 @@ impl AbortSignal {
         WebCore__AbortSignal__signal(self, global_object, reason)
     }
 
-    pub fn pending_activity_ref(&self) {
-        WebCore__AbortSignal__incrementPendingActivity(self)
-    }
-
-    pub fn pending_activity_unref(&self) {
-        WebCore__AbortSignal__decrementPendingActivity(self)
-    }
-
     /// This function is not threadsafe. aborted is a boolean, not an atomic!
     pub fn aborted(&self) -> bool {
         WebCore__AbortSignal__aborted(self)
@@ -150,10 +142,6 @@ impl AbortSignal {
         unsafe { AbortSignalRef::adopt(WebCore__AbortSignal__ref(self)) }
     }
 
-    pub fn unref(&self) {
-        WebCore__AbortSignal__unref(self)
-    }
-
     /// Lifetime: the returned pointer is borrowed from the JS wrapper and is
     /// valid only while `value` remains reachable. Use [`AbortSignal::ref_from_js`]
     /// to take refcounted ownership instead.
@@ -170,9 +158,10 @@ impl AbortSignal {
         WebCore__AbortSignal__create(global)
     }
 
-    pub fn new(global: &JSGlobalObject) -> *mut AbortSignal {
+    pub fn new(global: &JSGlobalObject) -> AbortSignalRef {
         crate::mark_binding!();
-        WebCore__AbortSignal__new(global)
+        // SAFETY: a new signal, with the one ref it starts with.
+        unsafe { AbortSignalRef::adopt(WebCore__AbortSignal__new(global)) }
     }
 
     /// Returns a borrowed handle to the internal Timeout, or null.
@@ -220,6 +209,29 @@ unsafe impl bun_ptr::ExternalSharedDescriptor for AbortSignal {
 /// cannot own a C++-allocated object — its payload address is not the C++
 /// object address).
 pub type AbortSignalRef = bun_ptr::ExternalShared<AbortSignal>;
+
+/// An [`AbortSignalRef`] that also keeps the signal's JS wrapper, with its listeners, from being collected.
+pub struct PendingAbortSignal(AbortSignalRef);
+
+impl PendingAbortSignal {
+    pub fn new(signal: AbortSignalRef) -> Self {
+        WebCore__AbortSignal__incrementPendingActivity(&signal);
+        Self(signal)
+    }
+}
+
+impl core::ops::Deref for PendingAbortSignal {
+    type Target = AbortSignal;
+    fn deref(&self) -> &AbortSignal {
+        &self.0
+    }
+}
+
+impl Drop for PendingAbortSignal {
+    fn drop(&mut self) {
+        WebCore__AbortSignal__decrementPendingActivity(&self.0);
+    }
+}
 
 impl AbortSignal {
     /// Downcast a JS value, ref the underlying signal, and wrap. Returns

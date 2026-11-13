@@ -351,6 +351,35 @@ bool readFlagsAndProcessPromise(JSValue& instanceValue, ExpectFlags& flags, JSGl
     return false;
 }
 
+// Like Jest, an asymmetric matcher compares with the registered testers, and not with the list of a `this.equals()` call around it.
+class RegisteredTestersInUse {
+public:
+    ALWAYS_INLINE RegisteredTestersInUse(JSGlobalObject* globalObject)
+    {
+        JSObject* matcherUtils = static_cast<Zig::GlobalObject*>(globalObject)->m_testMatcherUtilsObject.getConcurrently();
+        if (!matcherUtils) [[likely]]
+            return;
+        auto* utils = uncheckedDowncast<Bun::Bindgen::Generated::JSExpectMatcherUtils>(matcherUtils);
+        // While such a call runs, EqualityTestersScope keeps the registered testers here: an array, or null for none.
+        JSValue registered = utils->m_registeredTesters.get();
+        if (!registered) [[likely]]
+            return;
+        m_utils = utils;
+        m_listOfCall = utils->m_equalityTesters.get();
+        utils->m_equalityTesters.set(utils->vm(), utils, registered.isCell() ? registered : JSValue());
+    }
+
+    ALWAYS_INLINE ~RegisteredTestersInUse()
+    {
+        if (m_utils) [[unlikely]]
+            m_utils->m_equalityTesters.set(m_utils->vm(), m_utils, m_listOfCall);
+    }
+
+private:
+    Bun::Bindgen::Generated::JSExpectMatcherUtils* m_utils { nullptr };
+    JSValue m_listOfCall;
+};
+
 AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* globalObject, JSValue matcherProp, JSValue otherProp, ThrowScope& throwScope, ExpectFlags& flags)
 {
     using namespace Bun::Bindgen::Generated;
@@ -508,6 +537,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
     } else if (auto* expectArrayContaining = dynamicDowncast<JSExpectArrayContaining>(matcherPropCell)) {
         if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
+        RegisteredTestersInUse registeredTestersInUse(globalObject);
 
         JSValue expectedArrayValue = expectArrayContaining->m_arrayValue.get();
 
@@ -554,6 +584,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
     } else if (auto* expectObjectContaining = dynamicDowncast<JSExpectObjectContaining>(matcherPropCell)) {
         if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
+        RegisteredTestersInUse registeredTestersInUse(globalObject);
 
         JSValue patternObject = expectObjectContaining->m_objectValue.get();
         if (patternObject.isObject()) {
@@ -601,6 +632,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
     } else if (auto* customMatcher = dynamicDowncast<JSExpectCustomAsymmetricMatcher>(matcherPropCell)) {
         if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
+        RegisteredTestersInUse registeredTestersInUse(globalObject);
 
         // ignore the "not" flag here, because the custom matchers handle it themselves (accessing this.isNot)
         // and it would result in a double negation
@@ -676,7 +708,7 @@ static bool mayBeAsymmetricMatcher(JSValue value)
     return value.isCell() && !value.isEmpty() && value.asCell()->type() == JSC::JSType(JSDOMWrapperType);
 }
 
-extern "C" int8_t Expect__runEqualityTesters(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue a, JSC::EncodedJSValue b);
+extern "C" int8_t Expect__runEqualityTesters(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue a, JSC::EncodedJSValue b, bool isStrict);
 
 static ALWAYS_INLINE bool hasEqualityTesters(JSGlobalObject* globalObject)
 {
@@ -685,9 +717,9 @@ static ALWAYS_INLINE bool hasEqualityTesters(JSGlobalObject* globalObject)
 }
 
 // nullopt when every tester returned undefined, so the built-in rules decide.
-static NEVER_INLINE std::optional<bool> runEqualityTesters(JSGlobalObject* globalObject, ThrowScope& scope, JSValue a, JSValue b)
+static NEVER_INLINE std::optional<bool> runEqualityTesters(JSGlobalObject* globalObject, ThrowScope& scope, JSValue a, JSValue b, bool isStrict = false)
 {
-    int8_t verdict = Expect__runEqualityTesters(globalObject, JSValue::encode(a ? a : jsUndefined()), JSValue::encode(b ? b : jsUndefined()));
+    int8_t verdict = Expect__runEqualityTesters(globalObject, JSValue::encode(a ? a : jsUndefined()), JSValue::encode(b ? b : jsUndefined()), isStrict);
     RETURN_IF_EXCEPTION(scope, false);
     if (verdict < 0)
         return std::nullopt;
@@ -777,6 +809,7 @@ static NEVER_INLINE std::optional<bool> matchUserAsymmetricMatcher(JSGlobalObjec
         return std::nullopt;
     JSValue method = methodOfA ? methodOfA : methodOfB;
     JSValue other = methodOfA ? b : a;
+    RegisteredTestersInUse registeredTestersInUse(globalObject);
     MarkedArgumentBuffer arguments;
     arguments.append(other ? other : jsUndefined());
     JSValue matched = JSC::call(globalObject, method, JSC::getCallData(method), methodOfA ? a : b, arguments);
@@ -1063,7 +1096,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         }
 
         if (hasEqualityTesters(globalObject)) [[unlikely]] {
-            if (auto verdict = runEqualityTesters(globalObject, scope, v1, v2))
+            if (auto verdict = runEqualityTesters(globalObject, scope, v1, v2, isStrict))
                 return *verdict;
         }
     }

@@ -78,7 +78,7 @@ impl Expect {
         // Build a new array, because script may still hold the old one through `this.customTesters`.
         let all = JSValue::create_empty_array(global, 0)?;
         let mut count = 0;
-        if let Some(registered) = Self::equality_testers(global)? {
+        if let Some(registered) = Self::registered_testers(global)? {
             let mut iter = registered.array_iterator(global)?;
             while let Some(tester) = iter.next()? {
                 all.put_index(global, count, tester)?;
@@ -114,13 +114,41 @@ impl Expect {
             return Ok(());
         }
 
-        js::equality_testers_set_cached(utils_value, global, all);
+        // While `this.equals()` runs, `EqualityTestersScope` keeps the registered testers apart from its list.
+        if js::registered_testers_get_cached(utils_value).is_some() {
+            js::registered_testers_set_cached(utils_value, global, all);
+        } else {
+            js::equality_testers_set_cached(utils_value, global, all);
+        }
         utils.testers_of_file.with_mut(|of_file| of_file.resize(count as usize, is_of_file));
         Ok(())
     }
 
-    fn run_equality_testers(global: &JSGlobalObject, a: JSValue, b: JSValue) -> JsResult<Option<bool>> {
+    /// What expect.addEqualityTesters() registered. `equality_testers()` is the list of a `this.equals()` call while one runs.
+    pub(crate) fn registered_testers(global: &JSGlobalObject) -> JsResult<Option<JSValue>> {
+        match js::registered_testers_get_cached(ExpectMatcherUtils::singleton(global)) {
+            Some(kept) => Ok((!kept.is_null()).then_some(kept)),
+            None => Self::equality_testers(global),
+        }
+    }
+
+    fn run_equality_testers(global: &JSGlobalObject, a: JSValue, b: JSValue, is_strict: bool) -> JsResult<Option<bool>> {
         let Some(testers) = Self::equality_testers(global)? else { return Ok(None) };
+        let utils_value = ExpectMatcherUtils::singleton(global);
+        let Some(utils) = utils_value.as_class_ref::<ExpectMatcherUtils>() else { return Ok(None) };
+        let outer = utils.is_comparing_strictly.replace(is_strict);
+        let verdict = Self::ask_equality_testers(global, utils_value, testers, a, b);
+        utils.is_comparing_strictly.set(outer);
+        verdict
+    }
+
+    fn ask_equality_testers(
+        global: &JSGlobalObject,
+        utils: JSValue,
+        testers: JSValue,
+        a: JSValue,
+        b: JSValue,
+    ) -> JsResult<Option<bool>> {
         let context = ExpectMatcherContext { flags: Flags::default(), parent: None }.to_js(global);
         let mut iter = testers.array_iterator(global)?;
         while let Some(tester) = iter.next()? {
@@ -131,7 +159,11 @@ impl Expect {
                     tester,
                 ));
             }
-            let verdict = tester.call(global, context, &[a, b, testers])?;
+            // The testers of `this.utils` tell by it that deep equality calls them, and no matcher or tester of the user.
+            js::asked_tester_set_cached(utils, global, tester);
+            let verdict = tester.call(global, context, &[a, b, testers]);
+            js::asked_tester_set_cached(utils, global, JSValue::ZERO);
+            let verdict = verdict?;
             if !verdict.is_undefined() {
                 return Ok(Some(verdict.to_boolean()));
             }
@@ -141,8 +173,8 @@ impl Expect {
 
     /// Called by C++ deep equality. Returns 1 for equal, 0 for not equal or threw, -1 if no tester decided.
     #[unsafe(no_mangle)]
-    pub(crate) extern "C" fn Expect__runEqualityTesters(global: &JSGlobalObject, a: JSValue, b: JSValue) -> i8 {
-        match Self::run_equality_testers(global, a, b) {
+    pub(crate) extern "C" fn Expect__runEqualityTesters(global: &JSGlobalObject, a: JSValue, b: JSValue, is_strict: bool) -> i8 {
+        match Self::run_equality_testers(global, a, b, is_strict) {
             Ok(Some(equal)) => i8::from(equal),
             Ok(None) => -1,
             Err(_) => 0,
@@ -153,29 +185,49 @@ impl Expect {
 impl ExpectMatcherContext {
     pub(crate) fn get_custom_testers(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global = cx.global();
-        match Expect::equality_testers(global)? {
+        match Expect::registered_testers(global)? {
             Some(testers) => Ok(testers),
             None => JSValue::create_empty_array(global, 0),
         }
     }
 }
 
-/// Until dropped, deep equality uses `testers` (`ZERO` for none) instead of the registered ones.
+/// Until dropped, deep equality uses `testers` (`ZERO` for none) instead of the registered ones, which stay at hand: like in Jest, they are what an asymmetric matcher and `this.customTesters` get.
 pub(crate) struct EqualityTestersScope<'a> {
     global: &'a JSGlobalObject,
+    utils: JSValue,
+    testers: JSValue,
     outer: JSValue,
+    keeps_registered: bool,
 }
 
 impl<'a> EqualityTestersScope<'a> {
     pub(crate) fn enter(global: &'a JSGlobalObject, testers: JSValue) -> JsResult<Self> {
         let outer = Expect::equality_testers(global)?.unwrap_or_default();
-        js::equality_testers_set_cached(ExpectMatcherUtils::singleton(global), global, testers);
-        Ok(Self { global, outer })
+        let utils = ExpectMatcherUtils::singleton(global);
+        // A call inside another one finds them kept. `null` is for none, as an empty field is for no call.
+        let keeps_registered = js::registered_testers_get_cached(utils).is_none();
+        if keeps_registered {
+            let registered = if outer.is_empty() { JSValue::NULL } else { outer };
+            js::registered_testers_set_cached(utils, global, registered);
+        }
+        if testers != outer {
+            js::equality_testers_set_cached(utils, global, testers);
+        }
+        Ok(Self { global, utils, testers, outer, keeps_registered })
     }
 }
 
 impl Drop for EqualityTestersScope<'_> {
     fn drop(&mut self) {
-        js::equality_testers_set_cached(ExpectMatcherUtils::singleton(self.global), self.global, self.outer);
+        if self.keeps_registered {
+            // expect.addEqualityTesters() may have run in between, so what is kept now is what to go back to.
+            let registered = js::registered_testers_get_cached(self.utils).filter(|kept| !kept.is_null());
+            self.outer = registered.unwrap_or_default();
+            js::registered_testers_set_cached(self.utils, self.global, JSValue::ZERO);
+        }
+        if self.outer != self.testers {
+            js::equality_testers_set_cached(self.utils, self.global, self.outer);
+        }
     }
 }

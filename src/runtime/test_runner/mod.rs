@@ -141,6 +141,7 @@ cfg_jsc! {
     #[path = "dom_format.rs"]     pub(crate) mod dom_format;
     #[path = "DoneCallback.rs"]   pub(crate) mod done_callback;
     #[path = "environment.rs"]    pub(crate) mod environment;
+    #[path = "equality_testers.rs"] mod equality_testers;
     #[path = "Execution.rs"]      pub(crate) mod execution;
     #[path = "jest.rs"]           pub(crate) mod jest;
     #[path = "module_mock.rs"]    mod module_mock;

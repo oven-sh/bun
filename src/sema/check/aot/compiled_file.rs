@@ -194,11 +194,4 @@ impl<'s> Checker<'_, 's> {
             _ => None,
         }
     }
-
-    #[inline]
-    pub(in crate::check) fn is_short_circuited_link(&self, file: FileId, link: ExprId) -> bool {
-        self.files
-            .compiled(file)
-            .is_some_and(|compiled| compiled.analysis.decisions.is_short_circuited_link(link))
-    }
 }

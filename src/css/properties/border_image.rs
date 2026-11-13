@@ -20,9 +20,9 @@ use css::css_values::rect::Rect;
 use bun_alloc::Arena;
 
 /// A value for the [border-image](https://www.w3.org/TR/css-backgrounds-3/#border-image) shorthand property.
-pub struct BorderImage {
+pub struct BorderImage<'bump> {
     /// The border image.
-    pub(crate) source: Image,
+    pub(crate) source: Image<'bump>,
     /// The offsets that define where the image is sliced.
     pub(crate) slice: BorderImageSlice,
     /// The width of the border image.
@@ -33,7 +33,7 @@ pub struct BorderImage {
     pub(crate) repeat: BorderImageRepeat,
 }
 
-impl BorderImage {
+impl<'bump> BorderImage<'bump> {
     // Recorded here for a future shorthand trait/derive to consume.
     // PropertyFieldMap:
     //   source -> PropertyIdTag::BorderImageSource
@@ -43,14 +43,14 @@ impl BorderImage {
     //   repeat -> PropertyIdTag::BorderImageRepeat
     // VendorPrefixMap: all fields = true
 
-    pub(crate) fn parse(input: &mut css::Parser) -> Result<BorderImage> {
+    pub(crate) fn parse(input: &mut css::Parser<'_, 'bump>) -> Result<'bump, BorderImage<'bump>> {
         Self::parse_with_callback(input, |_: &mut css::Parser| false)
     }
 
     pub(crate) fn parse_with_callback(
-        input: &mut css::Parser,
-        mut callback: impl FnMut(&mut css::Parser) -> bool,
-    ) -> Result<BorderImage> {
+        input: &mut css::Parser<'_, 'bump>,
+        mut callback: impl FnMut(&mut css::Parser<'_, 'bump>) -> bool,
+    ) -> Result<'bump, BorderImage<'bump>> {
         let mut source: Option<Image> = None;
         let mut slice: Option<BorderImageSlice> = None;
         let mut width: Option<Rect<BorderImageSideWidth>> = None;
@@ -198,7 +198,7 @@ impl BorderImage {
         &mut self,
         arena: &Arena,
         targets: &css::targets::Targets,
-    ) -> SmallList<BorderImage, 6> {
+    ) -> SmallList<BorderImage<'bump>, 6> {
         let fallbacks = self.source.get_fallbacks(arena, targets);
         // `defer fallbacks.deinit(arena)` dropped — SmallList drops at scope exit.
         let mut res = SmallList::<BorderImage, 6>::init_capacity(fallbacks.len());
@@ -230,7 +230,7 @@ impl BorderImage {
             && self.repeat.eql(&other.repeat)
     }
 
-    pub(crate) fn default() -> BorderImage {
+    pub(crate) fn default() -> BorderImage<'bump> {
         BorderImage {
             source: Image::default(),
             slice: BorderImageSlice::default(),
@@ -250,7 +250,9 @@ pub struct BorderImageRepeat {
 }
 
 impl BorderImageRepeat {
-    pub(crate) fn parse(input: &mut css::Parser) -> Result<BorderImageRepeat> {
+    pub(crate) fn parse<'bump>(
+        input: &mut css::Parser<'_, 'bump>,
+    ) -> Result<'bump, BorderImageRepeat> {
         let horizontal = BorderImageRepeatKeyword::parse(input)?;
         let vertical = input.try_parse(BorderImageRepeatKeyword::parse).ok();
         Ok(BorderImageRepeat {
@@ -305,7 +307,7 @@ pub enum BorderImageSideWidth {
 impl BorderImageSideWidth {
     // Hand-expanded — tried in declaration order
     // (Number → LengthPercentage → keyword `auto`).
-    pub(crate) fn parse(input: &mut css::Parser) -> Result<Self> {
+    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> Result<'bump, Self> {
         if let Ok(n) = input.try_parse(CSSNumberFns::parse) {
             return Ok(BorderImageSideWidth::Number(n));
         }
@@ -386,7 +388,9 @@ pub struct BorderImageSlice {
 }
 
 impl BorderImageSlice {
-    pub(crate) fn parse(input: &mut css::Parser) -> Result<BorderImageSlice> {
+    pub(crate) fn parse<'bump>(
+        input: &mut css::Parser<'_, 'bump>,
+    ) -> Result<'bump, BorderImageSlice> {
         let mut fill = input
             .try_parse(|i| i.expect_ident_matching(b"fill"))
             .is_ok();
@@ -466,8 +470,8 @@ impl BorderImageProperty {
 }
 
 #[derive(Default)]
-pub(crate) struct BorderImageHandler {
-    pub source: Option<Image>,
+pub(crate) struct BorderImageHandler<'bump> {
+    pub source: Option<Image<'bump>>,
     pub slice: Option<BorderImageSlice>,
     pub width: Option<Rect<BorderImageSideWidth>>,
     pub outset: Option<Rect<LengthOrNumber>>,
@@ -477,12 +481,12 @@ pub(crate) struct BorderImageHandler {
     pub has_any: bool,
 }
 
-impl BorderImageHandler {
+impl<'bump> BorderImageHandler<'bump> {
     pub(crate) fn handle_property(
         &mut self,
-        property: &Property,
-        dest: &mut css::DeclarationList,
-        context: &mut css::PropertyHandlerContext,
+        property: &Property<'bump>,
+        dest: &mut css::DeclarationList<'bump>,
+        context: &mut css::PropertyHandlerContext<'_, 'bump>,
     ) -> bool {
         let arena = dest.bump();
 
@@ -551,8 +555,8 @@ impl BorderImageHandler {
 
     pub(crate) fn finalize(
         &mut self,
-        dest: &mut css::DeclarationList,
-        context: &mut css::PropertyHandlerContext,
+        dest: &mut css::DeclarationList<'bump>,
+        context: &mut css::PropertyHandlerContext<'_, 'bump>,
     ) {
         self.flush(dest, context);
         self.flushed_properties = BorderImageProperty::empty();
@@ -616,8 +620,8 @@ impl BorderImageHandler {
 
     fn flush(
         &mut self,
-        dest: &mut css::DeclarationList,
-        context: &mut css::PropertyHandlerContext,
+        dest: &mut css::DeclarationList<'bump>,
+        context: &mut css::PropertyHandlerContext<'_, 'bump>,
     ) {
         if !self.has_any {
             return;

@@ -11,17 +11,17 @@
 # sink(scanner.scanAll() + scanner.getPos());
 # -- end of source
 # `pos` lies in a scope that the maker of the scanner made, not the unit. Every turn reads it and stores it, and the turns run no other code. Its value is a parameter of the head: read once in front of the loop,
-# and what the turn stored comes round. The store stays in the turn, so the scope always holds what the program has written. What a turn steps by one is asked for an int32 once, in front; the failing way is the
-# other copy of the loop. It used to be read, told apart from a fraction, unboxed, stepped as a boxed number and stored in every turn.
+# and what the turn stored comes round. The store stays in the turn, so the scope always holds what the program has written. It is proven to be no fraction and not below 0: only
+# whether it has been written is asked, once, in front; the failing way is the other copy of the loop. It used to be read, told apart from a fraction, unboxed, stepped as a boxed number and stored in every turn.
 # f3 = skipWord
 # OPTIONS: check=Validate
 # RUN: walk f3 mechanisms=all
 # CHECK-LABEL: code f3:Body
 # CHECK: [[read]]: {{*}} = GetEnvironmentField {{*}}field=1
-# CHECK: TypeTest [[read]] testedType=i32
-# CHECK: ([[pos]]: i32 @Int32) isInLoop=true isLoopHead=true
+# CHECK: : true @Boolean = TypeTest [[read]] testedType=int[0, 9007199254740992]
+# CHECK: ([[pos]]: int[0, 9007199254740992] @Int64) isInLoop=true isLoopHead=true
 # CHECK-NOT: GetEnvironmentField
 # CHECK: Less [[pos]], {{*}}form=Integers
-# CHECK: [[next]]: {{*}} @Int32 = Increment {{*}}form=Integers
+# CHECK: [[next]]: {{*}} @Int64 = Increment {{*}}form=Integers
 # CHECK: PutEnvironmentField {{*}}field=1
 # CHECK-NEXT: Jump -> next {{*}}([[next]])

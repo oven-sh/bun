@@ -4,7 +4,7 @@
 # const rows = JSON.parse('[{"v":1},{"v":2},{"v":3},{"v":4.5}]');
 # function sum(count) { let total = 0; for (let place = 0; place < count; place++) total = total + rows[place].v; return total; }
 # function named(count) { let total = 0; for (let place = 0; place < count; place++) total = total + rows[place].v + (rows.size | 0); return total; }
-# print(sum([].length + 4), named([].length + 4));
+# print(sum(+JSON.parse("4")), named(+JSON.parse("4")));
 # -- end of source
 # f1 = sum, f2 = named
 # RUN(COUNT): compile ArraysSpeculatedFromElementUses mechanisms=all

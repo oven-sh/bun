@@ -348,8 +348,9 @@ impl RuntimeBindings<'_> {
         self.depends_on_sloppy_mode
     }
 
-    pub fn set_module_goal(&mut self, is_module: bool) {
+    pub fn set_module_goal(&mut self, is_module: bool, has_sloppy_functions: bool) {
         self.is_module = is_module;
+        self.are_all_scopes_strict = is_module && !has_sloppy_functions;
     }
 
     pub fn stores(&self) -> &[SymbolStore] {
@@ -622,7 +623,7 @@ impl Bound<'_> {
     }
 
     pub fn is_strict_scope(&self, scope: ScopeId) -> bool {
-        self.runtime.is_module || has_bit(&self.runtime.strict_scopes, scope.idx())
+        self.runtime.are_all_scopes_strict || has_bit(&self.runtime.strict_scopes, scope.idx())
     }
 
     pub fn file_uses_arguments(&self) -> bool {
@@ -731,6 +732,22 @@ impl Bound<'_> {
     #[inline]
     pub fn is_stable_binding(&self, symbol: SymbolId) -> bool {
         self.binding_stability(symbol) == BindingStability::Stable
+    }
+
+    /// Nothing but a direct eval, which may never run, stores into the initialized binding.
+    pub fn is_stable_beside_evals(&self, symbol: SymbolId) -> bool {
+        match self.binding_stability(symbol) {
+            BindingStability::Stable => true,
+            BindingStability::VisibleToEval => {
+                self.initializing_declaration(symbol).is_some() && self.stores_to(symbol).is_empty()
+            }
+            BindingStability::NoBinding
+            | BindingStability::Linked
+            | BindingStability::Stored
+            | BindingStability::NotInitializedOnce
+            | BindingStability::MappedArgument
+            | BindingStability::ContainerMember => false,
+        }
     }
 
     #[inline]

@@ -201,7 +201,7 @@ impl Worker {
             let extra_pipes = core::mem::take(&mut spawned.extra_pipes);
             this.process = Some(
                 spawned.to_process_handle(bun_event_loop::EventLoopHandle::init(
-                    coord.vm.event_loop().cast(),
+                    coord.vm.event_loop_ptr(),
                 )),
             );
             if let Some(fd) = stdout {
@@ -259,7 +259,7 @@ impl Worker {
                 extra_fds: vec![Stdio::Ipc(ipc_pipe)].into_boxed_slice(),
                 cwd: coord.cwd.to_vec().into_boxed_slice(),
                 windows: spawn::WindowsOptions {
-                    loop_: jsc::EventLoopHandle::init(coord.vm.event_loop().cast()),
+                    loop_: jsc::EventLoopHandle::init(coord.vm.event_loop_ptr()),
                     ..Default::default()
                 },
                 stream: true,

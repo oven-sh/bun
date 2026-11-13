@@ -2944,8 +2944,37 @@ pub struct KnownEvaluation {
     /// Where the text of the function is in the text of the file.
     pub start: u32,
     pub end: u32,
-    /// `Function` sees the global scope alone.
+    /// Where the evaluated text begins. The loader writes an arrow function around a direct eval's call.
+    pub text_start: u32,
+    /// `Function` and an indirect eval see the global scope alone.
     pub is_in_global_scope: bool,
+    /// An indirect eval. The text is the body of the function, and what the function returns is what the eval returns.
+    pub is_script: bool,
+}
+
+impl KnownEvaluation {
+    /// The evaluation gives what the function returns.
+    pub fn is_called(&self) -> bool {
+        self.text_start != self.start
+    }
+}
+
+/// How the code of a function sees names that it doesn't declare.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum GlobalCode {
+    /// They are in the global scope.
+    Function,
+    /// So are the variables and the functions that it declares.
+    Script,
+    /// Its variables and functions are its own.
+    StrictScript,
+}
+
+impl GlobalCode {
+    /// Names `arguments` as it names any other global.
+    pub fn is_script(self) -> bool {
+        self != GlobalCode::Function
+    }
 }
 
 /// `call` enters `function`, a copy of `factory` with all that is in it, where its callee is a closure of `factory`. `sequence`
@@ -3442,7 +3471,7 @@ impl<S: Storage> FileIn<S> {
     #[inline]
     pub fn is_in_known_evaluation(&self, pos: u32) -> bool {
         !self.known_evaluations.is_empty()
-            && pos >= self.source_len
+            && pos > self.source_len
             && !self.is_in_copied_factory(pos)
     }
 
@@ -3488,6 +3517,30 @@ impl<S: Storage> FileIn<S> {
         }
     }
 
+    /// Whether the loader wrote the import() or the function at `pos` in place of a call that evaluates a string.
+    pub fn replaces_evaluation(&self, pos: u32) -> bool {
+        !self.texts_written_by_loader.is_empty()
+            && !self
+                .text
+                .get(pos as usize..)
+                .is_some_and(|text| text.starts_with(b"import"))
+    }
+
+    /// Where `eval` or `Function` is written in the call that the loader replaced at `pos`.
+    pub fn replaced_callee_position(&self, pos: u32) -> u32 {
+        let text = self.text.get(pos as usize..).unwrap_or_default();
+        let text = &text[..text.len().min(64)];
+        let is_callee =
+            |at: &usize| text[*at..].starts_with(b"eval") || text[*at..].starts_with(b"Function");
+        pos + (0..text.len()).find(is_callee).unwrap_or(0) as u32
+    }
+
+    /// Whether the loader wrote `function` in place of a call of `Function`.
+    pub fn is_evaluated_function(&self, function: FnId) -> bool {
+        let mut written = self.functions_written_by_loader.iter();
+        written.any(|it| it.function == function) && self.replaces_evaluation(self[function].start)
+    }
+
     /// Where the call is that evaluates what is at `pos`, or enters the copy there. `pos` itself in the text that was read.
     pub fn position_of_evaluation(&self, pos: u32) -> u32 {
         if let Some(copied) = self.copied_factory_at(pos) {
@@ -3498,6 +3551,28 @@ impl<S: Storage> FileIn<S> {
             0 => pos,
             count => self[self[all[count - 1].call].callee].pos,
         }
+    }
+
+    /// The functions of `known_evaluations` that see the global scope alone, sorted.
+    pub fn global_code(&self) -> Vec<(FnId, GlobalCode)> {
+        let evaluations = self.known_evaluations.iter();
+        let mut found: Vec<(FnId, GlobalCode)> = evaluations
+            .filter(|it| it.is_in_global_scope)
+            .filter_map(|it| {
+                let root = self.skip_type_assertions(it.function);
+                let ExprKind::Fn(function) = self[root].kind else {
+                    return None;
+                };
+                let code = match (it.is_script, self[function].is_strict) {
+                    (false, _) => GlobalCode::Function,
+                    (true, false) => GlobalCode::Script,
+                    (true, true) => GlobalCode::StrictScript,
+                };
+                Some((function, code))
+            })
+            .collect();
+        found.sort_unstable_by_key(|it| it.0.0);
+        found
     }
 
     pub fn known_evaluations_of(&self, call: CallId) -> &[KnownEvaluation] {

@@ -11,9 +11,12 @@ use std::sync::{Arc, OnceLock};
 
 use bun_core::printer::{FIRST_ASCII, LAST_ASCII, bmp_escape, surrogate_pair_escape};
 use bun_core::strings::{CodepointIterator, Cursor};
-use bun_sema::atom::Atom;
+use bun_sema::atom::{Atom, NAME_IN_GLOBAL_SCOPE};
 use bun_sema::bind::{Binding, Bound, SymbolId};
-use bun_sema::check::aot::{AliasMentions, BuiltinTypeSymbols, NamedValues, Queries, QueryInputs};
+use bun_sema::check::aot::{
+    AliasMentions, BuiltinTypeSymbols, ClassDeclaration, MemberName, NamedValues, Queries,
+    QueryInputs,
+};
 use bun_sema::erasure::{ReplacedText, TypeRanges};
 use bun_sema::fold::{Constant, Decisions};
 use bun_sema::hir::{self, ExprId, ExprKind, MemberId, NodeData};
@@ -47,7 +50,7 @@ use crate::diagnostic_codes::Code;
 use crate::diagnostics::{DiagnosticBuffer, Span};
 use crate::engine::describe_regexp_syntax_error;
 use crate::ir::generated::FunctionRole;
-use crate::ir::{BuilderScratch, ModuleId, PropertyKey, PropertyKeyId, StringId, WellKnownSymbol};
+use crate::ir::{DeclaredType, ModuleId, PropertyKey, PropertyKeyId, StringId, WellKnownSymbol};
 use crate::known_helpers::KnownHelpers;
 use crate::load::contents::FixedBuiltins;
 use crate::load::hoisted_mocks::shown_name_of_namespace;
@@ -194,6 +197,7 @@ pub(in crate::lower) struct StoresByNameInList {
 #[derive(Default)]
 pub(in crate::lower) struct ListsOfFile {
     pub(in crate::lower) literals_named_as_prototype_objects: OnceLock<FxHashSet<ExprId>>,
+    pub(in crate::lower) prototype_makers: OnceLock<super::call::PrototypeMakers>,
     pub(in crate::lower) enums_that_stay_as_born: OnceLock<EnumsThatStayAsBorn>,
     pub(in crate::lower) places_of_this_super_and_return: OnceLock<Vec<u32>>,
 }
@@ -225,6 +229,9 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     pub(in crate::lower) levels_of_literals_inside_built_ones: FxHashMap<ExprId, u64>,
     pub(in crate::lower) lists: Arc<ListsOfFile>,
     pub(in crate::lower) stores_by_name_in_lists: RefCell<FxHashMap<u32, StoresByNameInList>>,
+    /// What the field of a class, or of the nearest class above that says it, is expected to hold.
+    pub(in crate::lower) expectations_at_or_above:
+        FxHashMap<(ClassDeclaration, MemberName), DeclaredType>,
     shown_names: ShownNames,
     pub(in crate::lower) enum_member_reads: FxHashMap<ExprId, Constant>,
     pub(in crate::lower) namespaces_with_two_tables: RefCell<FxHashMap<SymbolId, bool>>,
@@ -241,7 +248,6 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     pub(in crate::lower) declared_records_without_position:
         Vec<(hir::FnId, crate::ir::generated::DeclaredRecord)>,
     pub(in crate::lower) resolved_fields: ResolvedFields,
-    scratch: BuilderScratch,
 }
 
 #[derive(Clone)]
@@ -402,6 +408,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             levels_of_literals_inside_built_ones: FxHashMap::default(),
             lists: shared.map_or_else(Arc::default, |shared| Arc::clone(&shared.lists)),
             stores_by_name_in_lists: RefCell::default(),
+            expectations_at_or_above: FxHashMap::default(),
             shown_names: ShownNames::new(inputs.options, file_inputs.source, hir, bound),
             enum_member_reads: FxHashMap::default(),
             namespaces_with_two_tables: RefCell::default(),
@@ -417,7 +424,6 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             function_sources_reparsed: 0,
             declared_records_without_position: Vec::new(),
             resolved_fields: ResolvedFields::default(),
-            scratch: BuilderScratch::default(),
         }
     }
 
@@ -556,7 +562,9 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         if let Some(&id) = self.task.atoms.get(&atom) {
             return id;
         }
-        let id = self.fragment.strings.intern(self.queries.atom_bytes(atom));
+        let bytes = self.queries.atom_bytes(atom);
+        let bytes = bytes.strip_prefix(NAME_IN_GLOBAL_SCOPE).unwrap_or(bytes);
+        let id = self.fragment.strings.intern(bytes);
         self.task.atoms.insert(atom, id);
         self.fragment.note_atom_first_met(atom);
         id

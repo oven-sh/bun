@@ -1,13 +1,14 @@
 use super::{Distinct, Follower, Held, MemberName, Text, Values, find_class_named_by};
 use crate::atom::{Atom, known};
 use crate::bind::{
-    Binding, BindingInitializer, BindingKind, ClassOwner, Decl, FnOwner, MemberOwner, Parent,
-    PatParent, SymbolId,
+    Binding, BindingInitializer, BindingKind, ClassOwner, CodeUnit, Decl, FnOwner, MemberOwner,
+    Parent, PatParent, ScopeId, SymbolId,
 };
 use crate::fold::{Constant, FoldedValue, PathBelowFolder, PathEnd};
 use crate::hir::{
-    BinOp, Branches, Call, CaseId, ClassId, ExprId, ExprKind, Flags, FnBody, FnId, IdList,
+    BinOp, Branches, Call, CaseId, Chain, ClassId, ExprId, ExprKind, Flags, FnBody, FnId, IdList,
     MemberKey, MemberKind, PatId, PatKind, PropKey, PropKind, Span, StmtId, StmtKind, UnOp,
+    VarDeclId, VarKind,
 };
 use crate::import_sites::ScanInputs;
 use crate::import_sites::call_sites::is_free_name;
@@ -18,6 +19,7 @@ use std::ops::Range;
 use std::rc::Rc;
 
 const MOST_STEPS: u32 = 1 << 15;
+const MOST_STEPS_WITH_THROWS: u32 = 1 << 17;
 const SIZE_OF_STEP: usize = 16;
 const MOST_STATES: usize = 256;
 const MOST_ROUNDS: usize = 8;
@@ -118,6 +120,9 @@ pub(super) struct Execution<'f, 'i, 'a, 's> {
     constructions_running: usize,
     receivers: Vec<Value>,
     attempts: Vec<Attempt>,
+    follows_throws: bool,
+    may_throw: bool,
+    functions_around_code: FxHashSet<FnId>,
     steps_left: u32,
 }
 
@@ -129,52 +134,39 @@ struct Attempt {
     objects: FxHashSet<usize>,
 }
 
+pub(super) struct ExecutedValues {
+    pub(super) values: Values,
+    pub(super) are_all: bool,
+}
+
 pub(super) fn find_executed_values(
     follower: &Follower<'_, '_, '_>,
     operands: FxHashMap<ExprId, bool>,
-) -> FxHashMap<ExprId, Values> {
+) -> FxHashMap<ExprId, ExecutedValues> {
     let mut operands = operands;
     operands.retain(|it, has_path| may_depend_on_stores(follower, *it, *has_path));
     let operands: FxHashSet<ExprId> = operands.into_keys().collect();
     if operands.is_empty() {
         return FxHashMap::default();
     }
-    let mut execution = Execution {
-        follower,
-        operands,
-        seen: FxHashMap::default(),
-        functions_run: FxHashSet::default(),
-        escaped: FxHashSet::default(),
-        escaped_classes: FxHashSet::default(),
-        keys_read: FxHashSet::default(),
-        symbols_read: FxHashSet::default(),
-        ends: Vec::new(),
-        unreachable: FxHashSet::default(),
-        calls: Vec::new(),
-        loops: Vec::new(),
-        functions_running: Vec::new(),
-        constructions_running: 0,
-        receivers: Vec::new(),
-        attempts: Vec::new(),
-        steps_left: MOST_STEPS,
+    let mut execution = Execution::new(follower, operands.clone(), false);
+    let known = execution.find_known_values();
+    let may_throw = execution.may_throw && !known.is_empty();
+    let mut thrown = match may_throw {
+        true => Execution::new(follower, operands, true).find_known_values(),
+        false => FxHashMap::default(),
     };
-    if execution.run_file().is_none() {
-        return FxHashMap::default();
-    }
-    let seen = std::mem::take(&mut execution.seen).into_iter();
-    let mut known: FxHashMap<ExprId, Values> = seen
-        .filter_map(|(operand, values)| Some((operand, values?)))
-        .filter(|it| !it.1.is_empty())
-        .collect();
-    if known.is_empty() {
-        return known;
-    }
-    execution.find_unreachable_functions();
-    if !execution.has_seen_every_store() {
-        return FxHashMap::default();
-    }
-    known.retain(|operand, _| !execution.may_run_again(*operand));
-    known
+    let executed = known.into_iter().map(|(operand, mut values)| {
+        let found = thrown.remove(&operand);
+        let are_all = !may_throw || found.is_some();
+        for value in found.into_iter().flatten() {
+            if !values.contains(&value) {
+                values.push(value);
+            }
+        }
+        (operand, ExecutedValues { values, are_all })
+    });
+    executed.collect()
 }
 
 fn may_depend_on_stores(follower: &Follower<'_, '_, '_>, operand: ExprId, has_path: bool) -> bool {
@@ -326,7 +318,72 @@ impl State {
     }
 }
 
-impl Execution<'_, '_, '_, '_> {
+impl<'f, 'i, 'a, 's> Execution<'f, 'i, 'a, 's> {
+    fn new(
+        follower: &'f Follower<'i, 'a, 's>,
+        operands: FxHashSet<ExprId>,
+        follows_throws: bool,
+    ) -> Self {
+        let bound = follower.inputs.bound;
+        let scopes = (0..bound.scopes.len() as u32).map(ScopeId);
+        let functions_around_code = scopes.filter_map(|scope| {
+            let around = bound.code_unit(bound.scopes[scope.idx()].parent.some()?);
+            match around {
+                CodeUnit::Function(function) if around != bound.code_unit(scope) => Some(function),
+                _ => None,
+            }
+        });
+        let functions_around_code = match follows_throws {
+            true => functions_around_code.collect(),
+            false => FxHashSet::default(),
+        };
+        Execution {
+            follower,
+            operands,
+            seen: FxHashMap::default(),
+            functions_run: FxHashSet::default(),
+            escaped: FxHashSet::default(),
+            escaped_classes: FxHashSet::default(),
+            keys_read: FxHashSet::default(),
+            symbols_read: FxHashSet::default(),
+            ends: Vec::new(),
+            unreachable: FxHashSet::default(),
+            calls: Vec::new(),
+            loops: Vec::new(),
+            functions_running: Vec::new(),
+            constructions_running: 0,
+            receivers: Vec::new(),
+            attempts: Vec::new(),
+            follows_throws,
+            may_throw: false,
+            functions_around_code,
+            steps_left: match follows_throws {
+                true => MOST_STEPS_WITH_THROWS,
+                false => MOST_STEPS,
+            },
+        }
+    }
+
+    fn find_known_values(&mut self) -> FxHashMap<ExprId, Values> {
+        if self.run_file().is_none() {
+            return FxHashMap::default();
+        }
+        let seen = std::mem::take(&mut self.seen).into_iter();
+        let mut known: FxHashMap<ExprId, Values> = seen
+            .filter_map(|(operand, values)| Some((operand, values?)))
+            .filter(|it| !it.1.is_empty())
+            .collect();
+        if known.is_empty() {
+            return known;
+        }
+        self.find_unreachable_functions();
+        if !self.has_seen_every_store() {
+            return FxHashMap::default();
+        }
+        known.retain(|operand, _| !self.may_run_again(*operand));
+        known
+    }
+
     fn run_file(&mut self) -> Option<()> {
         let hir = self.follower.inputs.hir;
         let ends = self.run_list(State::default(), hir.body)?;
@@ -753,6 +810,9 @@ impl Execution<'_, '_, '_, '_> {
                             false => self.evaluate(state, declared.init)?,
                         };
                         for (state, value) in ways {
+                            if matches!(declared.kind, VarKind::Using | VarKind::AwaitUsing) {
+                                self.note_possible_throw(&state);
+                            }
                             bound.extend(self.bind(state, declared.pat, value)?);
                         }
                     }
@@ -780,7 +840,10 @@ impl Execution<'_, '_, '_, '_> {
             } => self.run_for_of(state, statement, (left, expr, body), is_await),
             StmtKind::ForIn { left, expr, body } => {
                 let mut ways = Vec::new();
-                for (state, _) in self.evaluate(state, expr)? {
+                for (state, value) in self.evaluate(state, expr)? {
+                    if matches!(value, Value::Unknown) {
+                        self.note_possible_throw(&state);
+                    }
                     let around = Loop::over(left, body);
                     ways.extend(self.run_loop(state, statement, around)?);
                 }
@@ -843,39 +906,36 @@ impl Execution<'_, '_, '_, '_> {
                 handler,
                 finalizer,
             } => {
-                self.attempts.push(Attempt {
-                    before: state.clone(),
-                    thrown: Vec::new(),
-                    has_calls: false,
-                    variables: FxHashSet::default(),
-                    objects: FxHashSet::default(),
-                });
-                let ways = self.run(state, block);
-                let thrown = self.end_attempt(handler.is_some());
-                let mut ways = ways?;
-                if let Some(handler) = handler.some() {
-                    let thrown = thrown.into_iter().map(|it| (it, ())).collect();
-                    for (state, ()) in self.merge(thrown)? {
-                        let states = match param.some() {
-                            Some(param) => self.bind(state, hir[param].pat, Value::Unknown)?,
-                            None => vec![state],
-                        };
-                        for state in states {
-                            ways.extend(self.run(state, handler)?);
-                        }
-                    }
-                }
                 let Some(finalizer) = finalizer.some() else {
-                    return self.merge(ways);
+                    return self.run_caught(state, block, param, handler);
+                };
+                self.may_throw = true;
+                let follows_throws = self.follows_throws;
+                if follows_throws {
+                    self.begin_attempt(&state);
+                }
+                let ways = self.run_caught(state, block, param, handler);
+                let thrown = match follows_throws {
+                    true => self.end_attempt(true),
+                    false => Vec::new(),
                 };
                 let mut ends = Vec::new();
-                for (state, flow) in ways {
+                for (state, flow) in ways? {
                     for (state, last) in self.run(state, finalizer)? {
                         let flow = match last {
                             Flow::Next => flow.clone(),
                             last => last,
                         };
                         ends.push((state, flow));
+                    }
+                }
+                let thrown = thrown.into_iter().map(|it| (it, ())).collect();
+                for (state, ()) in self.merge(thrown)? {
+                    for (state, last) in self.run(state, finalizer)? {
+                        match last {
+                            Flow::Next => self.note_throw(state)?,
+                            last => ends.push((state, last)),
+                        }
                     }
                 }
                 self.merge(ends)
@@ -913,6 +973,93 @@ impl Execution<'_, '_, '_, '_> {
             | StmtKind::With { .. }
             | StmtKind::Module(_) => None,
             _ => Some(vec![(state, Flow::Next)]),
+        }
+    }
+
+    fn run_caught(
+        &mut self,
+        state: State,
+        block: StmtId,
+        param: VarDeclId,
+        handler: StmtId,
+    ) -> Ways<Flow> {
+        let hir = self.follower.inputs.hir;
+        if self.follows_throws && handler.is_none() {
+            return self.run(state, block);
+        }
+        self.begin_attempt(&state);
+        let ways = self.run(state, block);
+        let thrown = self.end_attempt(handler.is_some());
+        let mut ways = ways?;
+        if let Some(handler) = handler.some() {
+            let thrown = thrown.into_iter().map(|it| (it, ())).collect();
+            for (state, ()) in self.merge(thrown)? {
+                let states = match param.some() {
+                    Some(param) => self.bind(state, hir[param].pat, Value::Unknown)?,
+                    None => vec![state],
+                };
+                for state in states {
+                    ways.extend(self.run(state, handler)?);
+                }
+            }
+        }
+        self.merge(ways)
+    }
+
+    fn begin_attempt(&mut self, state: &State) {
+        self.attempts.push(Attempt {
+            before: state.clone(),
+            thrown: Vec::new(),
+            has_calls: false,
+            variables: FxHashSet::default(),
+            objects: FxHashSet::default(),
+        });
+    }
+
+    fn note_possible_throw(&mut self, state: &State) {
+        let Some(around) = self.attempts.last_mut() else {
+            return;
+        };
+        self.may_throw = true;
+        if !self.follows_throws || around.has_calls {
+            return;
+        }
+        around.thrown.push(state.clone());
+        if around.thrown.len() > 2 * MOST_STATES {
+            let thrown = std::mem::take(&mut around.thrown).into_iter();
+            let thrown = self.limit(thrown.map(|it| (it, ())).collect());
+            if let Some(around) = self.attempts.last_mut() {
+                match thrown {
+                    Some(thrown) => around.thrown = thrown.into_iter().map(|it| it.0).collect(),
+                    None => around.has_calls = true,
+                }
+            }
+        }
+    }
+
+    fn note_conversion(&mut self, state: &State, values: &[&Value]) {
+        let is_plain = |value: &&Value| match value {
+            Value::Held(Held::Primitive(constant)) => !matches!(constant, Constant::BigInt(_)),
+            Value::Held(Held::Text(_) | Held::Url(_) | Held::Resolved(..))
+            | Value::EnvironmentVariable(_)
+            | Value::OfEnvironment(_) => true,
+            _ => false,
+        };
+        if !values.iter().all(is_plain) {
+            self.note_possible_throw(state);
+        }
+    }
+
+    fn note_member_read(&mut self, state: &State, object: &Value, is_optional: bool) {
+        let is_safe = match object {
+            Value::Object(_) | Value::Function(_) | Value::Environment => true,
+            Value::Held(Held::Primitive(Constant::Undefined | Constant::Null))
+            | Value::EnvironmentVariable(_) => is_optional,
+            Value::Held(_) => true,
+            _ => false,
+        };
+        if !is_safe {
+            self.note_possible_throw(state);
         }
     }
 
@@ -971,6 +1118,7 @@ impl Execution<'_, '_, '_, '_> {
                     state.objects[object].fields.clone()
                 }
                 _ => {
+                    self.note_possible_throw(&state);
                     let around = Loop::over(left, body);
                     ends.extend(self.run_loop(state, statement, around)?);
                     continue;
@@ -1244,6 +1392,7 @@ impl Execution<'_, '_, '_, '_> {
                 let mut ways = Vec::new();
                 for (state, first) in self.evaluate(state, left)? {
                     for (state, second) in self.evaluate(state, right)? {
+                        self.note_operation(&state, op, &first, &second);
                         let compared = match is_loose {
                             true => self.compare_loosely(state, &first, &second),
                             false => self.compare(state, &first, &second),
@@ -1519,6 +1668,7 @@ impl Execution<'_, '_, '_, '_> {
                         parts.push(value);
                         parts.push(whole(text));
                     }
+                    self.note_conversion(&state, &parts.iter().collect::<Vec<_>>());
                     (state, self.join_texts(&parts))
                 });
                 Some(joined.collect())
@@ -1534,7 +1684,10 @@ impl Execution<'_, '_, '_, '_> {
             }
             ExprKind::Unary { op, operand } => {
                 let mut ways = Vec::new();
-                for (mut state, _) in self.evaluate(state, operand)? {
+                for (mut state, value) in self.evaluate(state, operand)? {
+                    if !matches!(op, UnOp::Not | UnOp::Typeof | UnOp::Void) {
+                        self.note_conversion(&state, &[&value]);
+                    }
                     if !matches!(
                         op,
                         UnOp::Plus
@@ -1626,14 +1779,16 @@ impl Execution<'_, '_, '_, '_> {
                 let states = self.run_class(state, class)?.into_iter();
                 Some(states.map(|it| (it, Value::Class(class))).collect())
             }
-            ExprKind::Dot { .. } | ExprKind::Index { .. } => {
+            ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => {
                 if self.names_environment(e) {
                     return one(state, Value::Environment);
                 }
+                let is_optional = chain != Chain::No;
                 let (object, key) = hir.member_key(e)?;
                 let mut ways = Vec::new();
                 for (state, object) in self.evaluate(state, object)? {
                     for (state, key) in self.evaluate_key(state, key)? {
+                        self.note_member_read(&state, &object, is_optional);
                         ways.extend(self.read_field(state, &object, key)?);
                     }
                 }
@@ -1642,8 +1797,12 @@ impl Execution<'_, '_, '_, '_> {
             ExprKind::Call(call) => self.evaluate_call(state, e, hir[call]),
             ExprKind::New(call) => self.evaluate_new(state, hir[call]),
             ExprKind::Await(awaited) => {
-                let ways = self.evaluate(state, awaited)?.into_iter();
-                Some(ways.map(|it| (it.0, Value::Unknown)).collect())
+                let mut ways = self.evaluate(state, awaited)?;
+                for (state, value) in &mut ways {
+                    self.note_possible_throw(state);
+                    *value = Value::Unknown;
+                }
+                Some(ways)
             }
             ExprKind::TaggedTemplate(call) => {
                 let mut ways = Vec::new();
@@ -1676,6 +1835,13 @@ impl Execution<'_, '_, '_, '_> {
         self.symbols_read.insert(symbol);
         if let Some(value) = state.variables.get(&symbol) {
             return Value::clone(value);
+        }
+        let is_lexical = matches!(
+            bound.binding_kind(symbol),
+            BindingKind::Let | BindingKind::Const
+        );
+        if is_lexical {
+            self.note_possible_throw(state);
         }
         if !bound.stores_to(symbol).is_empty() {
             return Value::Unknown;
@@ -1854,6 +2020,7 @@ impl Execution<'_, '_, '_, '_> {
             _ => {
                 for (state, first) in self.evaluate(state, left)? {
                     for (state, second) in self.evaluate(state, right)? {
+                        self.note_operation(&state, op, &first, &second);
                         let value = match op {
                             BinOp::Add => self.add(&first, &second),
                             _ => Value::Unknown,
@@ -1864,6 +2031,24 @@ impl Execution<'_, '_, '_, '_> {
             }
         }
         Some(ways)
+    }
+
+    fn note_operation(&mut self, state: &State, op: BinOp, left: &Value, right: &Value) {
+        let is_missing = |value: &Value| {
+            matches!(
+                value,
+                Value::Held(Held::Primitive(Constant::Undefined | Constant::Null))
+            )
+        };
+        match op {
+            BinOp::EqEqEq | BinOp::NotEqEq => {}
+            BinOp::EqEq | BinOp::NotEq if is_missing(left) || is_missing(right) => {}
+            BinOp::In if matches!(right, Value::Object(_)) => self.note_conversion(state, &[left]),
+            BinOp::In => self.note_possible_throw(state),
+            BinOp::Instanceof if matches!(right, Value::Function(_) | Value::Class(_)) => {}
+            BinOp::Instanceof => self.note_possible_throw(state),
+            _ => self.note_conversion(state, &[left, right]),
+        }
     }
 
     fn find_missing(&mut self, mut state: State, value: &Value) -> Vec<(State, bool)> {
@@ -1952,6 +2137,7 @@ impl Execution<'_, '_, '_, '_> {
             Some(op) => {
                 for (state, held) in self.evaluate(state, target)? {
                     for (state, value) in self.evaluate(state, value)? {
+                        self.note_operation(&state, op, &held, &value);
                         let value = match op {
                             BinOp::Add => self.add(&held, &value),
                             _ => Value::Unknown,
@@ -1970,6 +2156,7 @@ impl Execution<'_, '_, '_, '_> {
         let target = hir.skip_type_assertions(target);
         match hir[target].kind {
             ExprKind::Ident(_) => {
+                self.note_store(&state, target);
                 match bound.binding(target) {
                     Binding::Symbol(symbol) => self.set_variable(&mut state, symbol, value),
                     _ => self.escape(&state, &value),
@@ -1994,7 +2181,10 @@ impl Execution<'_, '_, '_, '_> {
                                 self.set_field(&mut state, *object, &key, value.clone());
                             }
                             (Value::Object(_), None) => return None,
-                            _ => self.escape(&state, &value),
+                            _ => {
+                                self.note_possible_throw(&state);
+                                self.escape(&state, &value);
+                            }
                         }
                         states.push(state);
                     }
@@ -2002,6 +2192,20 @@ impl Execution<'_, '_, '_, '_> {
                 Some(states)
             }
             _ => None,
+        }
+    }
+
+    fn note_store(&mut self, state: &State, name: ExprId) {
+        let bound = self.follower.inputs.bound;
+        let may_throw = match bound.binding(name) {
+            Binding::Symbol(symbol) => match bound.binding_kind(symbol) {
+                BindingKind::Let => !state.variables.contains_key(&symbol),
+                kind => kind.is_immutable(),
+            },
+            _ => true,
+        };
+        if may_throw {
+            self.note_possible_throw(state);
         }
     }
 
@@ -2026,6 +2230,7 @@ impl Execution<'_, '_, '_, '_> {
                 Some(vec![state])
             }
             PatKind::Object(properties) => {
+                self.note_member_read(&state, &value, false);
                 let mut states = vec![state];
                 for property in properties.iter() {
                     let PropKey::Name(name) = hir.runtime_binding_key(property) else {
@@ -2050,6 +2255,7 @@ impl Execution<'_, '_, '_, '_> {
                 Some(states)
             }
             PatKind::Array(elements) => {
+                self.note_iteration(&state, &value);
                 let mut states = vec![state];
                 for (place, element) in elements.iter().enumerate() {
                     let element = hir[element];
@@ -2074,6 +2280,13 @@ impl Execution<'_, '_, '_, '_> {
                 Some(states)
             }
             PatKind::Missing => Some(vec![state]),
+        }
+    }
+
+    fn note_iteration(&mut self, state: &State, value: &Value) {
+        let is_list = matches!(value, Value::Object(object) if state.objects[*object].is_list);
+        if !is_list {
+            self.note_possible_throw(state);
         }
     }
 
@@ -2121,9 +2334,10 @@ impl Execution<'_, '_, '_, '_> {
         if let Some(function) = self.follower.find_path_joining_function(callee) {
             let is_join = function != known::resolve;
             let ways = self.evaluate_all(state, hir.ids(call.args))?.into_iter();
-            let joined = ways.map(|it| {
-                let value = self.join_path(&it.1, is_join);
-                (it.0, value)
+            let joined = ways.map(|(state, parts)| {
+                self.note_path_parts(&state, &parts);
+                let value = self.join_path(&parts, is_join);
+                (state, value)
             });
             return Some(joined.collect());
         }
@@ -2133,6 +2347,7 @@ impl Execution<'_, '_, '_, '_> {
         {
             let ways = self.evaluate_all(state, hir.ids(call.args))?.into_iter();
             let folders = ways.map(|(state, mut values)| {
+                self.note_path_parts(&state, &values);
                 values.push(Value::Held(Held::Text(Text::whole(b".."))));
                 let value = self.join_path(&values, true);
                 (state, value)
@@ -2208,6 +2423,20 @@ impl Execution<'_, '_, '_, '_> {
             around.has_calls = true;
         }
         vec![(state, Value::Unknown)]
+    }
+
+    fn note_path_parts(&mut self, state: &State, parts: &[Value]) {
+        let is_text = |part: &Value| {
+            matches!(
+                part,
+                Value::Held(
+                    Held::Text(_) | Held::Resolved(..) | Held::Primitive(Constant::String(_))
+                )
+            )
+        };
+        if !parts.iter().all(is_text) {
+            self.note_possible_throw(state);
+        }
     }
 
     fn join_path(&self, parts: &[Value], is_join: bool) -> Value {
@@ -2319,6 +2548,7 @@ impl Execution<'_, '_, '_, '_> {
             || self.functions_running.contains(&function)
             || self.functions_running.len() >= DEEPEST_CALL;
         if is_refused {
+            self.note_possible_throw(&state);
             self.escape(&state, &Value::Function(function));
             for value in passed.iter().chain([&receiver]) {
                 self.escape(&state, value);
@@ -2384,10 +2614,26 @@ impl Execution<'_, '_, '_, '_> {
             self.receivers.pop();
         }
         self.functions_running.pop();
+        if self.follows_throws && !self.functions_around_code.contains(&function) {
+            for (state, _) in &mut ways {
+                self.forget_variables(state, function);
+            }
+        }
         match is_followed {
             true => self.merge(ways),
             false => None,
         }
+    }
+
+    fn forget_variables(&self, state: &mut State, function: FnId) {
+        let bound = self.follower.inputs.bound;
+        let is_own = |symbol: SymbolId| {
+            bound.code_unit(bound.symbol_scope(symbol)) == CodeUnit::Function(function)
+        };
+        if state.variables.keys().any(|&it| is_own(it)) {
+            Rc::make_mut(&mut state.variables).retain(|&it, _| !is_own(it));
+        }
+        state.constants.retain(|it| !is_own(it.0));
     }
 
     fn evaluate_new(&mut self, state: State, call: Call) -> Ways<Value> {
@@ -2418,6 +2664,11 @@ impl Execution<'_, '_, '_, '_> {
         let mut states = vec![state];
         if let Some(heritage) = hir[class].extends.some() {
             let ways = self.evaluate(states.pop()?, heritage)?;
+            for (state, value) in &ways {
+                if !matches!(value, Value::Class(_)) {
+                    self.note_possible_throw(state);
+                }
+            }
             states = ways.into_iter().map(|it| it.0).collect();
         }
         for member in hir[class].members.iter().map(|id| hir[id]) {

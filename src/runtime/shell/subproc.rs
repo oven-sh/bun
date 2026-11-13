@@ -640,7 +640,7 @@ impl ShellSubprocess {
 
         let foreground = !interp.in_background(cmd_parent.id);
         let ctrl_c_child = foreground.then(bun_spawn::ctrl_c::Child::enter);
-        crate::node::fs::note_found_on_disk();
+        crate::node::fs::note_process_start();
         // SAFETY: `spawn_args.argv` / `env_array` are local null-terminated
         // C-string arrays with argv[0] non-null; valid for this call.
         let spawn_result = match unsafe {

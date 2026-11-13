@@ -370,10 +370,16 @@ fn graph_after_disk(path: &[u8]) -> Option<&'static bun_standalone_graph::Graph>
     compiled_program_graph().filter(|_| !bun_standalone_graph::is_bun_standalone_file_path(path))
 }
 
-/// For what may remove files of the program, also half of a folder: a process that it starts, or a removal of its own.
+/// For a removal by the program, which may remove files of its own, also half of a folder.
 pub(crate) fn note_found_on_disk() {
     if let Some(graph) = compiled_program_graph() {
         graph.note_found_on_disk();
+    }
+}
+
+pub(crate) fn note_process_start() {
+    if let Some(graph) = compiled_program_graph() {
+        graph.note_process_start();
     }
 }
 
@@ -1466,7 +1472,7 @@ mod _async_tasks {
                         let task_ptr: *mut Self = task;
                         task.global_object()
                             .bun_vm()
-                            .event_loop_mut()
+                            .event_loop()
                             .enqueue_task(bun_jsc::Task::init(task_ptr));
                         return task.completion.value();
                     }
@@ -1597,7 +1603,7 @@ mod _async_tasks {
                         let task_ptr: *mut Self = task;
                         task.global_object()
                             .bun_vm()
-                            .event_loop_mut()
+                            .event_loop()
                             .enqueue_task(bun_jsc::Task::init(task_ptr));
                         return task.completion.value();
                     }
@@ -1663,7 +1669,7 @@ mod _async_tasks {
             let this_ptr: *mut Self = this;
             this.global_object()
                 .bun_vm()
-                .event_loop_mut()
+                .event_loop()
                 .enqueue_task(bun_jsc::Task::init(this_ptr));
         }
 
@@ -1684,7 +1690,7 @@ mod _async_tasks {
             let this_ptr: *mut Self = this;
             this.global_object()
                 .bun_vm()
-                .event_loop_mut()
+                .event_loop()
                 .enqueue_task(bun_jsc::Task::init(this_ptr));
         }
 
@@ -2152,7 +2158,7 @@ mod _async_tasks {
         }
 
         fn call(global: &JSGlobalObject, callback: JSValue, arguments: &[JSValue]) {
-            global.bun_vm().event_loop_mut().run_callback(
+            global.bun_vm().event_loop().run_callback(
                 bun_event_loop::ContextId::NONE,
                 callback,
                 global,
@@ -2520,7 +2526,7 @@ mod _async_tasks {
             Self::schedule_new(
                 promise,
                 cp_args,
-                EventLoopHandle::init(vm.event_loop.cast()),
+                EventLoopHandle::init(vm.event_loop_ptr()),
                 bun_jsc::ConcurrentPoster::Js(vm.ticket()),
                 tracker,
                 cx.context().id(),

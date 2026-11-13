@@ -198,9 +198,8 @@ pub struct WebSocket<const SSL: bool> {
     pub(crate) payload_length_frame_bytes: Cell<[u8; 8]>,
     pub(crate) payload_length_frame_len: Cell<u8>,
 
-    /// Bytes not parsed yet. Either bytes that arrived with the 101, held until after `open`
-    /// (or until `resume()` if an `open` listener paused the socket), or bytes from a
-    /// re-entrant `feed`, held until the outer `feed` finishes.
+    /// Bytes not parsed yet: what arrived with the 101, what the transport handed over while
+    /// paused, or what a re-entrant `feed` queued. `parse_initial_data` drains it.
     initial_data: Cell<Option<Box<InitialData>>>,
     /// A `feed` call is on the stack.
     parsing: Cell<bool>,
@@ -658,8 +657,48 @@ impl<const SSL: bool> WebSocket<SSL> {
         // Bumps the intrusive refcount and derefs on Drop.
         let _guard = RefPtr::from_this(this);
 
-        this.parse_initial_data();
-        this.handle_data_loop(data);
+        // The TLS tunnel decrypts a read after the callback that received it. `resume()` queues
+        // `deliver_initial_data` for what is held here.
+        let paused = || this.cpp_websocket().is_some_and(|ws| ws.is_paused());
+        if paused() {
+            this.hold(data);
+            return;
+        }
+        let Some(held) = this.initial_data.take() else {
+            this.handle_data_loop(data);
+            return;
+        };
+        // A listener of the held frames can tick the event loop, which reuses the buffer behind
+        // `data`, and can pause.
+        let mut read = Vec::new();
+        bun_core::handle_oom(read.try_reserve(data.len()));
+        read.extend_from_slice(data);
+        this.handle_data_loop(&held.0);
+        if paused() {
+            // Ahead of what those listeners held.
+            let mut read = read;
+            if let Some(later) = this.initial_data.take() {
+                bun_core::handle_oom(read.try_reserve(later.0.len()));
+                read.extend_from_slice(&later.0);
+            }
+            this.initial_data.set(Some(Box::new(InitialData(read))));
+            return;
+        }
+        this.handle_data_loop(&read);
+    }
+
+    /// Queue `data` behind the bytes `parse_initial_data` has not parsed yet.
+    fn hold(&self, data: &[u8]) {
+        if data.is_empty() {
+            return;
+        }
+        let mut pending = self
+            .initial_data
+            .take()
+            .unwrap_or_else(|| Box::new(InitialData(Vec::new())));
+        bun_core::handle_oom(pending.0.try_reserve(data.len()));
+        pending.0.extend_from_slice(data);
+        self.initial_data.set(Some(pending));
     }
 
     /// Fires `message` events, so never call this from inside a JS call into the WebSocket.
@@ -1751,12 +1790,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
         let _guard = RefPtr::from_this(this);
         if this.parsing.get() {
-            let mut pending = this
-                .initial_data
-                .take()
-                .unwrap_or_else(|| Box::new(InitialData(Vec::new())));
-            pending.0.extend_from_slice(data);
-            this.initial_data.set(Some(pending));
+            this.hold(data);
             return;
         }
 

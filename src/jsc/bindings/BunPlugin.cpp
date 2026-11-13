@@ -41,6 +41,7 @@
 #include <wtf/SetForScope.h>
 #include <wtf/text/StringToIntegerConversion.h>
 #include <wtf/text/WTFString.h>
+#include <wtf/FileSystem.h>
 
 #include "BunClientData.h"
 #include "BuiltinModuleKeys.h"
@@ -7393,7 +7394,36 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void JSMock__didBeginTestFile(Zig::GlobalObje
 #endif
 }
 
-extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoModuleMocksOfTestFile(Zig::GlobalObject* globalObject, bool nextLoadSharesModules)
+// Mirrors packagesToRestore in unmockModule(), also for a mock that the test has ended: a fetch that went on would read the file and make a second instance.
+static bool hasOriginalSetAside(Zig::GlobalObject* globalObject, const ModulesToEvict& evict, JSModuleMock* mock, const String& specifier)
+{
+    if (!mock->didStashLoadedModule && !(mock->isOfVitest() && isInNodeModules(specifier)) && !evict.packagesToRestore.contains(specifier))
+        return false;
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* loader = Bun::testFileModuleLoader(globalObject);
+    auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, specifier));
+    if (entry && entry->record())
+        return false;
+    String original = originalModuleKey(specifier);
+    if (loader->registryEntry(JSC::Identifier::fromString(vm, original)))
+        return true;
+    JSValue required = Bun::testFileRequireMap(globalObject)->get(globalObject, jsString(vm, original));
+    RETURN_IF_EXCEPTION(scope, false);
+    return required.isCell();
+}
+
+// A load that goes on gets the mock that was made, or else the module itself. A module that has no file would give it only an error.
+static bool hasSomethingForLoad(JSModuleMock* mock, const String& specifier)
+{
+    if (mock->state != JSModuleMock::State::NotCalled || isBuiltinModuleKey(specifier))
+        return true;
+    size_t query = specifier.find('?');
+    return FileSystem::fileTypeFollowingSymlinks(query == notFound ? specifier : specifier.left(query)) == FileSystem::FileType::Regular;
+}
+
+// Returns whether it let loads go on that waited for the turn of a mock: they run as soon as the event loop does.
+extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) bool JSMock__undoModuleMocksOfTestFile(Zig::GlobalObject* globalObject, bool nextLoadSharesModules, bool laterLoadSharesRegistry)
 {
     auto& plugins = globalObject->onLoadPlugins;
     plugins.testFile++;
@@ -7416,8 +7446,9 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
         uncheckedDowncast<JSModuleMock>(factory.mock.get())->clearRetainedFailure();
     forEachPreloadMock(globalObject, [](JSModuleMock* mock) { mock->forgetOwedErrors(); });
 #endif
-    for (auto& waiting : std::exchange(plugins.waitingModuleMocks, {}))
-        evict.abandonedModules.append(uncheckedDowncast<JSModuleMock>(waiting.mock.get())->specifier->tryGetValue().data);
+    auto waitingMocks = std::exchange(plugins.waitingModuleMocks, {});
+    // The load of a factory that is abandoned below never settles, so what waits beside it stays as it is.
+    bool letsWaitingLoadsGoOn = laterLoadSharesRegistry && plugins.runningModuleMocks.isEmpty();
     plugins.moduleMocksWithTurn.clear();
     plugins.modulesGivenTimeToRequestImports.clear();
     plugins.loadRoots.clear();
@@ -7449,7 +7480,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
 #endif
     }
     if (!nextLoadSharesModules)
-        return;
+        return false;
 
     MarkedArgumentBuffer mocks;
 #if ENABLE(AOT)
@@ -7633,6 +7664,22 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
             (void)scope.tryClearException();
     }
 
+    // With its turn, a load whose mock is gone with the file finds no mock, calls no factory and takes the module itself. The others never settle.
+    Vector<JSC::Strong<JSC::JSObject>> turnsOfLoadsThatGoOn;
+    for (auto& waiting : waitingMocks) {
+        auto* mock = uncheckedDowncast<JSModuleMock>(waiting.mock.get());
+        String specifier = mock->specifier->tryGetValue().data;
+        if (scope.exception()) [[unlikely]]
+            (void)scope.tryClearException();
+        bool goesOn = letsWaitingLoadsGoOn && !registeredModuleMock(globalObject, specifier) && hasSomethingForLoad(mock, specifier) && !hasOriginalSetAside(globalObject, evict, mock, specifier);
+        if (scope.exception()) [[unlikely]]
+            (void)scope.tryClearException();
+        if (goesOn)
+            turnsOfLoadsThatGoOn.append(waiting.turn);
+        else
+            evict.abandonedModules.append(specifier);
+    }
+
     for (auto& module : plugins.moduleMocksBeingLoaded.keys())
         evict.modules.append(module);
     evict.isEndOfTestFile = plugins.hasVirtualModules();
@@ -7648,6 +7695,9 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
     if (globalObject->vm().hasCompiledCode())
         JSC::AOT::releaseEndedMockImporters(globalObject);
 #endif
+    for (auto& turn : turnsOfLoadsThatGoOn)
+        uncheckedDowncast<JSC::JSPromise>(turn.get())->fulfill(vm, jsUndefined());
+    return !turnsOfLoadsThatGoOn.isEmpty();
 }
 
 static void replaceModuleWithItsExports(Zig::GlobalObject* globalObject, JSC::AbstractModuleRecord* record)

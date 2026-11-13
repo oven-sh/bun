@@ -106,6 +106,12 @@ test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is 
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > a Vitest test file with no mock call of its own still runs its imports one at a time > the transpiler cache doesn't mix up a file run as a test with the same file imported
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > doesn't leak the modules that imported a mock after it ends
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > also when the file fails to load, or has already removed the mock itself
+# The next one ends a test file while a load waits for the turn of a factory, and has asked for a file of `__mocks__` too. A compiled run gives that load the module itself in its place.
+test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, even with loads in flight > a load that waits for the turn of a factory keeps the file of __mocks__ that it has asked for
+# The next three end a test file while a load waits for the turn of a factory that takes the original. A compiled run still calls that factory, and the load gets the mock.
+test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, even with loads in flight > a load whose mock waits for its turn while its module is evaluated gets the module itself
+test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, even with loads in flight > a load whose mock waits for its turn while its module is evaluated goes on before the next file
+test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, even with loads in flight > a load whose mock of a loaded package waits for its turn while its module is evaluated gets the instance that was loaded
 test/js/bun/test/mock/mock-module.test.ts: requiring the original of a module in a cycle before its async factory runs throws, and the mock still loads
 test/js/bun/test/vitest-flavor.test.ts: [test] globals = "vitest" > is part of the transpiler cache key
 test/js/bun/test/import-meta-env.test.ts: import.meta.env > in other realms

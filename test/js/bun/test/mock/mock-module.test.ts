@@ -3048,6 +3048,61 @@ describe.concurrent("a name that import and require() resolve to two files", () 
       [`node_modules/${name}/index.cjs`]: `(globalThis.loaded ??= []).push("${name} cjs"); module.exports = { which: "real", fn: () => "real" };`,
       [`node_modules/${name}/wrapper.mjs`]: `import cjs from "./index.cjs"; (globalThis.loaded ??= []).push("${name} esm"); export const which = cjs.which; export const fn = cjs.fn; export default cjs;`,
     });
+    // Packages with a third file beside the two, as published packages have them.
+    const withThirdFile = {
+      // As Preconstruct builds a package: the ES module takes its default export from a third file, which requires the
+      // CommonJS file.
+      "node_modules/pre/package.json": JSON.stringify({
+        name: "pre",
+        exports: { ".": { import: "./dist/pre.cjs.mjs", default: "./dist/pre.cjs.js" } },
+      }),
+      "node_modules/pre/dist/pre.cjs.mjs": `(globalThis.loaded ??= []).push("pre esm"); export * from "./pre.cjs.js"; export { _default as default } from "./pre.cjs.default.js";`,
+      "node_modules/pre/dist/pre.cjs.default.js": `exports._default = require("./pre.cjs.js").default;`,
+      "node_modules/pre/dist/pre.cjs.js": `(globalThis.loaded ??= []).push("pre cjs"); Object.defineProperty(exports, "__esModule", { value: true }); exports.default = () => "real default"; exports.named = () => "real named";`,
+      // The CommonJS file requires a helper, which requires the CommonJS file again.
+      "node_modules/cycle/package.json": JSON.stringify({
+        name: "cycle",
+        exports: { ".": { import: "./wrapper.mjs", require: "./index.cjs" } },
+      }),
+      "node_modules/cycle/wrapper.mjs": `import cjs from "./index.cjs"; export const named = cjs.named; export const viaHelper = cjs.viaHelper; export default cjs;`,
+      "node_modules/cycle/index.cjs": `exports.named = () => "real named"; exports.viaHelper = require("./helper.cjs");`,
+      "node_modules/cycle/helper.cjs": `const index = require("./index.cjs"); module.exports = () => index.named();`,
+      // The ES module imports the CommonJS file through a second ES module.
+      "node_modules/shim/package.json": JSON.stringify({
+        name: "shim",
+        exports: { ".": { import: "./esm/index.mjs", require: "./cjs/index.cjs" } },
+      }),
+      "node_modules/shim/esm/index.mjs": `import cjs from "./shim.mjs"; export const named = cjs.named; export default cjs;`,
+      "node_modules/shim/esm/shim.mjs": `import cjs from "../cjs/index.cjs"; export default cjs;`,
+      "node_modules/shim/cjs/index.cjs": `module.exports = { named: () => "real named" };`,
+      // The other way around: the CommonJS file requires the ES module through a second file.
+      "node_modules/reverse/package.json": JSON.stringify({
+        name: "reverse",
+        exports: { ".": { import: "./esm.mjs", require: "./cjs/index.cjs" } },
+      }),
+      "node_modules/reverse/esm.mjs": `export const named = () => "real named";`,
+      "node_modules/reverse/cjs/index.cjs": `module.exports = { named: require("./load.cjs").named };`,
+      "node_modules/reverse/cjs/load.cjs": `module.exports = require("../esm.mjs");`,
+      // The third file requires the CommonJS file when it is called.
+      "node_modules/lazy/package.json": JSON.stringify({
+        name: "lazy",
+        exports: { ".": { import: "./lazy.mjs", require: "./lazy.cjs" } },
+      }),
+      "node_modules/lazy/lazy.mjs": `export { later } from "./third.cjs"; export const which = "real esm";`,
+      "node_modules/lazy/third.cjs": `exports.later = () => require("./lazy.cjs").which;`,
+      "node_modules/lazy/lazy.cjs": `module.exports = { which: "real cjs" };`,
+    };
+    // A test file in a folder of its own, with its own copy of these packages and of three wrappers.
+    const inFolder = (folder: string, testFile: string) =>
+      Object.fromEntries(
+        Object.entries({
+          ...withThirdFile,
+          ...wrapper("wrap-a"),
+          ...wrapper("wrap-b"),
+          ...wrapper("wrap-c"),
+          [`${folder}.test.js`]: testFile,
+        }).map(([path, file]) => [`${folder}/${path}`, file]),
+      );
     await expectFixturesToPass(
       {
         ...wrapper("wrap-original"),
@@ -3091,8 +3146,141 @@ describe.concurrent("a name that import and require() resolve to two files", () 
             expect([require("wrap-require").which, require("wrap-require").fn()]).toEqual(["again", "real"]);
           });
         `,
+        ...inFolder(
+          "import-original",
+          `
+          import { expect, jest, mock, test } from "bun:test";
+          for (const name of ["pre", "cycle", "shim"])
+            mock.module(name, async importOriginal => ({ ...(await importOriginal()), extra: "mock" }));
+          test("importOriginal() where a third file requires the CommonJS file", async () => {
+            const imported = await import("pre");
+            expect([imported.default(), imported.named(), imported.extra, require("pre").extra]).toEqual(["real default", "real named", "mock", "mock"]);
+          });
+          test("where the CommonJS file requires a helper that requires it again", async () => {
+            const imported = await import("cycle");
+            expect([imported.viaHelper(), imported.named(), imported.extra, require("cycle").extra]).toEqual(["real named", "real named", "mock", "mock"]);
+          });
+          test("where a second ES module imports the CommonJS file", async () => {
+            const imported = await import("shim");
+            expect([imported.named(), imported.extra, require("shim").extra]).toEqual(["real named", "mock", "mock"]);
+          });
+          test("once a mock has ended, require() gets the CommonJS file that its original loaded", async () => {
+            for (const name of ["pre", "cycle", "shim"]) {
+              const imported = await import(name);
+              jest.unmock(name);
+              expect(require(name).named).toBe(imported.named);
+            }
+          });
+        `,
+        ),
+        ...inFolder(
+          "import-actual",
+          `
+          import { expect, mock, test, vi } from "bun:test";
+          test("vi.importActual() behind a factory that has settled", async () => {
+            for (const name of ["pre", "cycle", "shim"])
+              mock.module(name, () => ({ default: () => "mock", named: () => "mock", viaHelper: () => "mock" }));
+            expect(["pre", "cycle", "shim"].map(name => require(name).named())).toEqual(["mock", "mock", "mock"]);
+            const pre = await vi.importActual("pre");
+            expect([pre.default(), pre.named()]).toEqual(["real default", "real named"]);
+            const cycle = await vi.importActual("cycle");
+            expect([cycle.viaHelper(), cycle.named()]).toEqual(["real named", "real named"]);
+            expect((await vi.importActual("shim")).named()).toBe("real named");
+          });
+          test("a third file that requires the CommonJS file when it is called, also under a later mock of the name", async () => {
+            mock.module("lazy", () => ({ which: "mock" }));
+            const actual = await vi.importActual("lazy");
+            expect([actual.later(), require("lazy").which]).toEqual(["real cjs", "mock"]);
+            mock.module("lazy", () => ({ which: "again" }));
+            expect([actual.later(), require("lazy").which]).toEqual(["real cjs", "again"]);
+          });
+        `,
+        ),
+        ...inFolder(
+          "automock",
+          `
+          import { expect, jest, test } from "bun:test";
+          jest.mock("pre");
+          jest.mock("shim");
+          jest.mock("reverse");
+          test.each(["pre", "shim", "reverse"])("jest.mock(%j) without a factory, then an import", async name => {
+            const imported = await import(name);
+            expect(imported.named()).toBeUndefined();
+            expect(imported.named).toHaveBeenCalledTimes(1);
+            expect(require(name).named).toBe(imported.named);
+          });
+        `,
+        ),
+        ...inFolder(
+          "require-actual",
+          `
+          import { expect, jest, mock, test } from "bun:test";
+          test("jest.requireActual() where the CommonJS file requires the ES module through a second file", () => {
+            mock.module("reverse", () => ({ named: () => "mock" }));
+            expect([require("reverse").named(), jest.requireActual("reverse").named()]).toEqual(["mock", "real named"]);
+          });
+          test("what the original of a file has loaded gets the mock of that same file", () => {
+            mock.module("cycle", () => ({ named: () => "mock" }));
+            const actual = jest.requireActual("cycle");
+            expect([require("cycle").named(), actual.named(), actual.viaHelper()]).toEqual(["mock", "real named", "mock"]);
+          });
+        `,
+        ),
+        ...inFolder(
+          "loaded-first",
+          `
+          import { expect, jest, mock, test, vi } from "bun:test";
+          const start = (globalThis.loaded ?? []).length;
+          // The files of a package that have run since this test file began.
+          const ran = name => globalThis.loaded.slice(start).filter(file => file.startsWith(name + " "));
+          test("importOriginal() gets the CommonJS file that ran before the mock through the ES module", async () => {
+            const first = require("wrap-a");
+            await mock.module("wrap-a", async importOriginal => ({ ...(await importOriginal()), which: "mock" }));
+            const imported = await import("wrap-a");
+            expect([imported.which, require("wrap-a").which]).toEqual(["mock", "mock"]);
+            expect(imported.fn).toBe(first.fn);
+            expect(ran("wrap-a")).toEqual(["wrap-a cjs", "wrap-a esm"]);
+            jest.unmock("wrap-a");
+            expect(require("wrap-a")).toBe(first);
+          });
+          test("so does vi.importActual() behind a factory that has settled", async () => {
+            const first = require("wrap-b");
+            jest.doMock("wrap-b", () => ({ which: "mock" }));
+            expect(require("wrap-b").which).toBe("mock");
+            expect((await vi.importActual("wrap-b")).fn).toBe(first.fn);
+            expect(jest.requireActual("wrap-b")).toBe(first);
+            expect(ran("wrap-b")).toEqual(["wrap-b cjs", "wrap-b esm"]);
+          });
+          test("so does a third file of the package that requires it", async () => {
+            const first = require("pre");
+            await mock.module("pre", async importOriginal => ({ ...(await importOriginal()), extra: "mock" }));
+            const imported = await import("pre");
+            expect(imported.default).toBe(first.default);
+            expect(imported.named).toBe(first.named);
+            expect(require("pre").extra).toBe("mock");
+            expect(ran("pre")).toEqual(["pre cjs", "pre esm"]);
+          });
+          test("and where that file has run anew since an earlier mock of the name, it is the new instance", async () => {
+            const first = require("wrap-c");
+            mock.module("wrap-c", () => ({ which: "mock" }));
+            expect((await vi.importActual("wrap-c")).fn).toBe(first.fn);
+            jest.unmock("wrap-c");
+            delete require.cache[require.resolve("wrap-c")];
+            const second = require("wrap-c");
+            expect(second).not.toBe(first);
+            mock.module("wrap-c", () => ({ which: "again" }));
+            expect(require("wrap-c").which).toBe("again");
+            expect((await vi.importActual("wrap-c")).fn).toBe(second.fn);
+          });
+          test("a third file of an ES module that ran before the mock gets the CommonJS file as it is", async () => {
+            const { later } = await import("lazy");
+            mock.module("lazy", () => ({ which: "mock" }));
+            expect([require("lazy").which, later()]).toEqual(["mock", "real cjs"]);
+          });
+        `,
+        ),
       },
-      4,
+      20,
       args,
     );
   });

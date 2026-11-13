@@ -46,11 +46,10 @@ impl Chunk {
         mutable: &mut MutableString,
         include_sources_contents: bool,
     ) -> Result<(), crate::Error> {
-        let ism = InternalSourceMap {
-            data: self.buffer.list.as_ptr(),
-        };
         let mut vlq = MutableString::init_empty();
-        ism.append_vlq_to(&mut vlq);
+        if let Some(ism) = InternalSourceMap::new(&self.buffer.list) {
+            ism.append_vlq_to(&mut vlq);
+        }
         print_source_map_contents_json::<ASCII_ONLY>(
             source,
             mutable,

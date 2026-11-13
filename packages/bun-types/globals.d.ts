@@ -1317,18 +1317,6 @@ interface Console {
   timeStamp(label?: string): void;
   trace(...data: any[]): void;
   warn(...data: any[]): void;
-
-  /**
-   * Creates a new Console with one or two writable stream instances. stdout is a writable stream to print log or info output. stderr is used for warning or error output. If stderr is not provided, stdout is used for stderr.
-   */
-  // Console: {
-  //   new (options: ConsoleOptions): Console;
-  //   new (
-  //     stdout: import("stream").Writable,
-  //     stderr?: import("stream").Writable,
-  //     ignoreErrors?: boolean,
-  //   ): Console;
-  // };
 }
 
 declare var console: Console;

@@ -137,11 +137,7 @@ impl<'a> Writable<'a> {
         // the vtable-backed handle once and reuse for all arms (both platforms).
         // `event_loop` is a `&jsc::EventLoop` for the live per-thread loop;
         // erasing to `*mut ()` and back is the `EventLoopHandle::init` contract.
-        let evtloop = bun_event_loop::EventLoopHandle::init(
-            std::ptr::from_ref::<EventLoop>(event_loop)
-                .cast_mut()
-                .cast::<()>(),
-        );
+        let evtloop = bun_event_loop::EventLoopHandle::init(event_loop.as_erased_ptr());
 
         #[cfg(windows)]
         {

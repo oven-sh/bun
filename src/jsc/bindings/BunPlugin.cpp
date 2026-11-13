@@ -3900,6 +3900,8 @@ __attribute__((minsize)) static void endSidesThatModuleMockLeaves(Zig::GlobalObj
         LoadedModule underRequirePath;
         findLoadedESModule(globalObject, mock->requireKey.get(), underRequirePath);
         RETURN_IF_EXCEPTION(scope, );
+        if (hadESModuleThere)
+            keepModuleMockOfLoadInFlight(globalObject, loser, requireKey, underRequirePath);
         // A loser that had lost its import path before was loaded under this one by an import, as a mock of the path itself is: see keyOfImportWithTwoPaths().
         bool isLoserItself = underRequirePath.esmNamespace && underRequirePath.esmNamespace->moduleRecord()->hasLiveExports();
         // Out of the registry, with its importers. The module object under the path stays.

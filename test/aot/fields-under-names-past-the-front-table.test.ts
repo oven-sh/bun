@@ -12,10 +12,10 @@
 //   late-fields.cjs        60 times two fields that stores make and one name that no object has, and then
 //                          parallel/objects/first-store-creates-a-field.cjs
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { built, spawned, told } from "./harness/commands";
+import { built, limitWithASAN, spawned, told } from "./harness/commands";
 import { afterAll } from "./harness/default-timeout";
 import { compileCommand } from "./harness/flags";
 import { beforeAll, describe, test } from "./supported";
@@ -97,7 +97,8 @@ const printedByInheritedFields = [
   String(setsOfDefaults * (200 * sumOfValues(0, defaultsInSet) + 100 * 3 * defaultsInSet)),
 ];
 
-// The stores of a constructor make two fields. The third name is on no object.
+// The stores of a constructor make two fields. The third name is on no object. The hash decides for these 120 names of fields as for all: it leaves
+// about one name in twelve without a column, and the build does not say which. The same holds for the names of the stored program behind them.
 const lateFields = (set: number) => `
 function Point${set}(x, y) { this.late${set}X = x; this.late${set}Y = y; }
 Point${set}.prototype.norm = function () { return this.late${set}X * this.late${set}X + this.late${set}Y * this.late${set}Y; };
@@ -141,6 +142,8 @@ beforeAll(async () => {
       [bunExe(), ...compileCommand, "--explain=statistics", "./program.cjs", "--outfile", executable],
       String(dir),
       bunEnv,
+      // With a sanitizer a debug Bun needs about 100 s for this build. Without one, spawned() would give it the 90 s of a release build.
+      isDebug ? limitWithASAN : undefined,
     ),
     spawned([bunExe(), "./plain.cjs"], String(dir), bunEnv),
   ]);

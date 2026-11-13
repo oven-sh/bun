@@ -1,4 +1,4 @@
-use crate::Loc;
+use crate::{Loc, StoreSlice};
 use bun_alloc::AstAlloc;
 use bun_collections::StringArrayHashMap;
 use bun_collections::array_hash_map::StringContext;
@@ -150,7 +150,7 @@ impl Data {
 // Data-only; the parser-state predicates that depend on `P` stay in
 // `bun_js_parser::typescript`.
 
-#[derive(Clone, Default)]
+#[derive(Clone, Copy, Default)]
 pub enum Metadata {
     #[default]
     MNone,
@@ -171,9 +171,7 @@ pub enum Metadata {
     MSymbol,
     MPromise,
     MIdentifier(Ref),
-    // A heap `Vec` is used here because `Metadata` is lifetime-free.
-    // Decorator metadata is rare and the lists are tiny.
-    MDot(Vec<Ref>),
+    MDot(StoreSlice<Ref>),
 }
 
 impl Metadata {

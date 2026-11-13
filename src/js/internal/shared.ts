@@ -152,7 +152,8 @@ $putByIdDirectPrivate(kInternalSendOptions, "internal", true);
 ObjectFreeze(kInternalSendOptions);
 
 // Node invokes fs/dns callbacks via InternalMakeCallback, so a throw becomes uncaughtException
-// (not unhandledRejection); Bun runs them from a promise reaction so we reroute the throw.
+// (not unhandledRejection). Bun runs some of them from a promise reaction or a microtask, and native code reports a
+// throw that leaves a callback after the callback's async context is gone: the throw is caught in JavaScript.
 // https://github.com/nodejs/node/blob/main/src/api/callback.cc
 const reportUncaughtException: (error: unknown) => void = $newCppFunction(
   "BunProcess.cpp",
@@ -476,6 +477,7 @@ export default {
   once,
   getLazy,
   guardCallback,
+  reportUncaughtException,
   isInsideNodeModules,
   resistStopPropagation,
 

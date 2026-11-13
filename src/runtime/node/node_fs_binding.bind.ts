@@ -56,6 +56,25 @@ const callsBack = (length: number, value: table.TableType) =>
     },
   }) as const;
 
+/**
+ * `xJob` is `xCb` for a stream on a `FileHandle`: the callback (`FsCompletion::Job`) is queued as a microtask, with the error and `undefined`, or with `null` and the result.
+ * Where it fails before anything is scheduled it queues the callback the same way.
+ */
+const queuesJob = (length: number, value: table.TableType) =>
+  ({
+    ...operation(length, table.undefined.spec),
+    uses: {
+      this: table.inspected,
+      args: [
+        ...uses.args,
+        table.storedIn(table.nativeCell(callbacksOfFsCell)),
+        calledLaterWith(error, table.undefined),
+        calledLaterWith(table.strictNull, value),
+      ],
+    },
+  }) as const;
+const operationsOfFileHandleStreams = ["read", "write", "writev"];
+
 /** `[length of x, length of xSync]`. `xCb` is `x` with a leading callback. */
 const operations: Record<string, readonly [number, number]> = {
   access: [3, 2],
@@ -148,6 +167,9 @@ export const NodeJSFS = b.class({
         [`${name}Cb`, callsBack(length + 1, resultOf(name))] as const,
         [`${name}Sync`, parsesArguments(syncLength, resultOf(name))] as const,
       ]),
+      ...operationsOfFileHandleStreams.map(
+        name => [`${name}Job`, queuesJob(operations[name][0] + 1, resultOf(name))] as const,
+      ),
       ["cp", parsesArguments(2, promiseOf(table.undefined))] as const,
       ["cpSync", parsesArguments(2, table.undefined)] as const,
       ["watch", operation(3, "FSWatcher", "undefined")] as const,

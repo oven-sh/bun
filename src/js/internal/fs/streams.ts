@@ -2,12 +2,26 @@
 import type { FileSink } from "bun";
 const { Readable, Writable, finished } = require("node:stream");
 const fs = require("node:fs");
-const { read, write, fsync, writev } = fs;
-const { FileHandle, kRef, kUnref, kFd } = (require("node:fs/promises") as any).$data as {
+// Read a member at each call: internal/trace_events replaces them when tracing starts.
+const binding = require("internal/fs/binding");
+const { reportUncaughtException } = require("internal/shared");
+const { isArrayBufferView } = require("node:util/types");
+const {
+  FileHandle,
+  kRef,
+  kUnref,
+  kFd,
+  handleRead: fileHandlePrototypeRead,
+  handleWrite: fileHandlePrototypeWrite,
+  handleWritev: fileHandlePrototypeWritev,
+} = (require("node:fs/promises") as any).$data as {
   FileHandle: { new (): FileHandle };
   readonly kRef: unique symbol;
   readonly kUnref: unique symbol;
   readonly kFd: unique symbol;
+  handleRead: FileHandle["read"];
+  handleWrite: FileHandle["write"];
+  handleWritev: FileHandle["writev"];
 };
 type FileHandle = import("node:fs/promises").FileHandle & {
   on(event: any, listener: any): FileHandle;
@@ -48,20 +62,56 @@ const kIoDone = Symbol("kIoDone");
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
 const kFs = Symbol("kFs");
 
-const {
-  read: fileHandlePrototypeRead,
-  write: fileHandlePrototypeWrite,
-  fsync: fileHandlePrototypeFsync,
-  writev: fileHandlePrototypeWritev,
-} = FileHandle.prototype;
+// Node calls a stream on a FileHandle back from the reaction of a promise:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/streams.js#L87-L116
+// The job arm of the binding calls back as a microtask too, without the promise. Node reports what the callback
+// throws as an unhandled rejection. This reports an uncaughtException, as for a stream on a path: Bun's default mode
+// hands an unhandled rejection to no 'uncaughtException' listener. The throw is caught here, because one that leaves
+// the job is reported outside the async context of the operation.
+function fromBinding(callback, err, count, subject) {
+  try {
+    if (err) callback(err, 0, subject);
+    else callback(null, count, subject);
+  } catch (e) {
+    reportUncaughtException(e);
+  }
+}
+
+function fileHandleStreamRead(fd, buf, offset, length, pos, cb) {
+  binding.readJob((err, bytesRead) => fromBinding(cb, err, bytesRead, buf), fd, buf, offset, length, pos);
+}
+
+function fileHandleStreamWrite(fd, buffer, offset, length, position, cb) {
+  // $isTypedArrayView() answers false for a DataView.
+  if (!$isTypedArrayView(buffer) && !isArrayBufferView(buffer)) {
+    // objectMode lets any chunk through. Node gives it to handle.write(), which refuses what is no string with this
+    // text and writes every string at position 0. So would the binding, which takes (fd, string, position, encoding).
+    if (typeof buffer !== "string") {
+      throw $ERR_INVALID_ARG_TYPE("buffer", ["string", "Buffer", "TypedArray", "DataView"], buffer);
+    }
+    // A string is refused, as fs.write() refused it for these streams.
+    throw $ERR_INVALID_ARG_TYPE("buffer", ["Buffer", "TypedArray", "DataView"], buffer);
+  }
+  binding.writeJob(
+    (err, bytesWritten) => fromBinding(cb, err, bytesWritten, buffer),
+    fd,
+    buffer,
+    offset,
+    length,
+    position,
+  );
+}
+
+function fileHandleStreamWritev(fd, buffers, position, cb) {
+  binding.writevJob((err, bytesWritten) => fromBinding(cb, err, bytesWritten, buffers), fd, buffers, position);
+}
 
 const fileHandleStreamFs = (fh: FileHandle) => ({
-  // try to use the basic fs.read/write/fsync if available, since they are less
-  // abstractions. however, node.js allows patching the file handle, so this has
-  // to be checked for.
+  // node.js allows patching the file handle, on itself or on its prototype, so this has to be checked for: against
+  // the methods that node:fs/promises kept as it built the class.
   read:
     fh.read === fileHandlePrototypeRead
-      ? read
+      ? fileHandleStreamRead
       : function (fd, buf, offset, length, pos, cb) {
           return fh.read(buf, offset, length, pos).then(
             ({ bytesRead, buffer }) => cb(null, bytesRead, buffer),
@@ -70,20 +120,17 @@ const fileHandleStreamFs = (fh: FileHandle) => ({
         },
   write:
     fh.write === fileHandlePrototypeWrite
-      ? write
+      ? fileHandleStreamWrite
       : function (fd, buffer, offset, length, position, cb) {
           return fh.write(buffer, offset, length, position).then(
             ({ bytesWritten, buffer }) => cb(null, bytesWritten, buffer),
             err => cb(err, 0, buffer),
           );
         },
-  writev: fh.writev === fileHandlePrototypeWritev ? writev : undefined,
-  fsync:
-    fh.sync === fileHandlePrototypeFsync
-      ? fsync
-      : function (fd, cb) {
-          return fh.sync().then(() => cb(), cb);
-        },
+  writev: fh.writev === fileHandlePrototypeWritev ? fileHandleStreamWritev : undefined,
+  fsync: function (fd, cb) {
+    return fh.sync().then(() => cb(), cb);
+  },
   close: streamFileHandleClose.bind(fh),
 });
 

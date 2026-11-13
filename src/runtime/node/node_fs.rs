@@ -1399,16 +1399,15 @@ mod _async_tasks {
             self.global_object.get()
         }
 
-        /// `callback`: as for [`AsyncFSTask::create`].
         pub(crate) fn create(
             cx: &bun_jsc::JsThread<'_>,
             binding: &Binding,
             task_args: ThreadIsolated<A>,
             vm: &mut VirtualMachine,
-            callback: Option<JSValue>,
+            receiver: FsReceiver,
         ) -> JSValue {
             let task = Box::new(Self {
-                completion: FsCompletion::new(cx.global(), callback),
+                completion: FsCompletion::new(cx.global(), receiver),
                 args: task_args,
                 // Sentinel — overwritten by `uv_callback` (or the early-return arms
                 // below) before any read on the JS thread. `Maybe<R>` is
@@ -2060,21 +2059,37 @@ mod _async_tasks {
     {
     }
 
-    /// How an async fs operation reports its result: a promise, or the `node:fs` callback, called from the completion.
+    /// Who takes the result of an async fs operation.
+    #[derive(Clone, Copy)]
+    pub(crate) enum FsReceiver {
+        /// `node:fs/promises`: the promise that the binding returns.
+        Promise,
+        /// A `node:fs` callback.
+        Callback(JSValue),
+        /// The callback of a stream on a `FileHandle`.
+        Job(JSValue),
+    }
+
+    /// How an async fs operation reports its result.
     #[derive(bun_jsc::JsAffine)]
     pub(crate) enum FsCompletion {
         Promise(JSPromiseStrong),
+        /// Called from the completion, outside a job: its `process.nextTick` callbacks run before its microtasks.
         Callback(bun_jsc::Strong),
+        /// Queued as a microtask, where Node has the reaction of a promise: its microtasks run before its `process.nextTick` callbacks.
+        /// A throw that leaves it is reported outside its async context, so its caller catches in JavaScript (`fromBinding`).
+        Job(bun_jsc::Strong),
     }
 
     impl FsCompletion {
-        pub(crate) fn new(global: &JSGlobalObject, callback: Option<JSValue>) -> Self {
-            match callback {
-                Some(callback) => Self::Callback(bun_jsc::Strong::create(
-                    callback.with_async_context_if_needed(global),
-                    global,
-                )),
-                None => Self::Promise(JSPromiseStrong::init(global)),
+        pub(crate) fn new(global: &JSGlobalObject, receiver: FsReceiver) -> Self {
+            let keep = |callback: JSValue| {
+                bun_jsc::Strong::create(callback.with_async_context_if_needed(global), global)
+            };
+            match receiver {
+                FsReceiver::Promise => Self::Promise(JSPromiseStrong::init(global)),
+                FsReceiver::Callback(callback) => Self::Callback(keep(callback)),
+                FsReceiver::Job(callback) => Self::Job(keep(callback)),
             }
         }
 
@@ -2082,14 +2097,16 @@ mod _async_tasks {
         pub(crate) fn value(&self) -> JSValue {
             match self {
                 Self::Promise(promise) => promise.value(),
-                Self::Callback(_) => JSValue::UNDEFINED,
+                Self::Callback(_) | Self::Job(_) => JSValue::UNDEFINED,
             }
         }
 
         pub(crate) fn ensure_still_alive(&self) {
             match self {
                 Self::Promise(promise) => promise.value().ensure_still_alive(),
-                Self::Callback(callback) => callback.get().ensure_still_alive(),
+                Self::Callback(callback) | Self::Job(callback) => {
+                    callback.get().ensure_still_alive()
+                }
             }
         }
 
@@ -2100,15 +2117,21 @@ mod _async_tasks {
         ) -> JsResult<JSValue> {
             match self {
                 Self::Promise(promise) => err.to_js_with_async_stack(global, promise.get()),
-                Self::Callback(_) => err.to_js(global),
+                Self::Callback(_) | Self::Job(_) => err.to_js(global),
             }
         }
 
+        // Every async fs operation completes through `settle` and this function.
+        #[inline]
         pub(crate) fn resolve(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
             match self {
                 Self::Promise(promise) => promise.get().resolve(global, value),
                 Self::Callback(callback) => {
                     Self::call(global, callback.get(), &[JSValue::NULL, value]);
+                    Ok(())
+                }
+                Self::Job(callback) => {
+                    global.queue_microtask(callback.get(), &[JSValue::NULL, value]);
                     Ok(())
                 }
             }
@@ -2120,31 +2143,36 @@ mod _async_tasks {
             global: &JSGlobalObject,
             value: JsResult<JSValue>,
         ) -> JsResult<()> {
-            match self {
-                Self::Promise(promise) => promise.get().reject(global, value),
-                // The error value is built exactly as `JSPromise::reject` builds it.
-                Self::Callback(callback) => {
-                    let error = match value {
-                        Ok(error) => error,
-                        Err(bun_jsc::JsError::OutOfMemory) => global.create_out_of_memory_error(),
-                        Err(bun_jsc::JsError::Terminated) => {
-                            return Err(bun_jsc::JsError::Terminated);
-                        }
-                        Err(bun_jsc::JsError::Thrown) => {
-                            let exception = global.take_exception(bun_jsc::JsError::Thrown);
-                            if exception.is_termination_exception() {
-                                return Err(bun_jsc::top_exception_scope::thrown(global));
-                            }
-                            exception.to_error().unwrap_or(exception)
-                        }
-                    };
-                    Self::call(global, callback.get(), &[error]);
-                    Ok(())
+            let (callback, is_job) = match self {
+                Self::Promise(promise) => return promise.get().reject(global, value),
+                Self::Callback(callback) => (callback, false),
+                Self::Job(callback) => (callback, true),
+            };
+            // The error value is built exactly as `JSPromise::reject` builds it.
+            let error = match value {
+                Ok(error) => error,
+                Err(bun_jsc::JsError::OutOfMemory) => global.create_out_of_memory_error(),
+                Err(bun_jsc::JsError::Terminated) => {
+                    return Err(bun_jsc::JsError::Terminated);
                 }
+                Err(bun_jsc::JsError::Thrown) => {
+                    let exception = global.take_exception(bun_jsc::JsError::Thrown);
+                    if exception.is_termination_exception() {
+                        return Err(bun_jsc::top_exception_scope::thrown(global));
+                    }
+                    exception.to_error().unwrap_or(exception)
+                }
+            };
+            if is_job {
+                global.queue_microtask(callback.get(), &[error, JSValue::UNDEFINED]);
+            } else {
+                Self::call(global, callback.get(), &[error]);
             }
+            Ok(())
         }
 
         /// Reports a converted result. `success` says that `converted` holds the value of the operation, not its error.
+        #[inline]
         pub(crate) fn settle(
             &self,
             global: &JSGlobalObject,
@@ -2167,6 +2195,9 @@ mod _async_tasks {
             );
         }
     }
+
+    // Every async fs operation holds one.
+    const _: () = assert!(core::mem::size_of::<FsCompletion>() == 16);
 
     /// The JS-thread half of an async fs operation.
     #[derive(bun_jsc::JsAffine)]
@@ -2242,15 +2273,14 @@ mod _async_tasks {
         /// the functions to check .signal.aborted() for early returns.
         pub(crate) const HAVE_ABORT_SIGNAL: bool = A::HAVE_ABORT_SIGNAL;
 
-        /// `callback`: the `node:fs` callback to call with the result. `None` returns a promise.
         pub(crate) fn create(
             cx: &bun_jsc::JsThread<'_>,
             _binding: &Binding,
             args: ThreadIsolated<A>,
             vm: &mut VirtualMachine,
-            callback: Option<JSValue>,
+            receiver: FsReceiver,
         ) -> JSValue {
-            Self::schedule(cx, args, vm, callback)
+            Self::schedule(cx, args, vm, receiver)
         }
 
         /// [`Self::create`] for a caller that has no `Binding`.
@@ -2258,11 +2288,11 @@ mod _async_tasks {
             cx: &bun_jsc::JsThread<'_>,
             args: ThreadIsolated<A>,
             vm: &mut VirtualMachine,
-            callback: Option<JSValue>,
+            receiver: FsReceiver,
         ) -> JSValue {
             let tracker = AsyncTaskTracker::init(vm);
             tracker.did_schedule(cx.global());
-            let completion = FsCompletion::new(cx.global(), callback);
+            let completion = FsCompletion::new(cx.global(), receiver);
             let value = completion.value();
             bun_jsc::Job::<Self>::schedule(
                 cx,
@@ -3266,12 +3296,11 @@ mod _async_tasks {
             });
         }
 
-        /// `callback`: as for [`AsyncFSTask::create`].
         pub(crate) fn create(
             cx: &bun_jsc::JsThread<'_>,
             args: ThreadIsolated<args::Readdir<'static>>,
             vm: &mut VirtualMachine,
-            callback: Option<JSValue>,
+            receiver: FsReceiver,
         ) -> JSValue {
             let tag = args.tag();
             let encoding = args.encoding;
@@ -3291,7 +3320,7 @@ mod _async_tasks {
             };
             let tracker = AsyncTaskTracker::init(vm);
             tracker.did_schedule(cx.global());
-            let completion = FsCompletion::new(cx.global(), callback);
+            let completion = FsCompletion::new(cx.global(), receiver);
             let value = completion.value();
             bun_jsc::Job::<Self>::schedule(
                 cx,
@@ -3519,7 +3548,8 @@ mod _async_tasks {
     }
 } // mod _async_tasks
 pub(crate) use _async_tasks::{
-    AsyncCpTask, AsyncReaddirRecursiveTask, FsArgument, FsReturn, ShellAsyncCpTask, async_,
+    AsyncCpTask, AsyncReaddirRecursiveTask, FsArgument, FsReceiver, FsReturn, ShellAsyncCpTask,
+    async_,
 };
 
 // ──────────────────────────────────────────────────────────────────────────

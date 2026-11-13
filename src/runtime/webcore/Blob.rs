@@ -1882,7 +1882,7 @@ impl BlobExt for Blob {
                             &cx,
                             crate::node::fs::args::Stat::owned_copy_of(path_like),
                             vm,
-                            None,
+                            crate::node::fs::FsReceiver::Promise,
                         ))
                     }
                     PathOrFileDescriptor::Fd(fd) => {
@@ -1892,7 +1892,7 @@ impl BlobExt for Blob {
                             &cx,
                             crate::node::fs::args::Fstat::for_fd(*fd),
                             vm,
-                            None,
+                            crate::node::fs::FsReceiver::Promise,
                         ))
                     }
                 }
@@ -1916,7 +1916,7 @@ impl BlobExt for Blob {
                     &cx,
                     crate::node::fs::args::Stat::owned(name.to_vec()),
                     vm,
-                    None,
+                    crate::node::fs::FsReceiver::Promise,
                 ))
             }
         }

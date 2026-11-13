@@ -585,6 +585,9 @@ function installFsInstrumentation() {
     if (typeof original === "function") binding[method] = wrapFsAsyncMethod(original, asyncOps[method]);
     const originalCb = binding[method + "Cb"];
     if (typeof originalCb === "function") binding[method + "Cb"] = wrapFsCallbackMethod(originalCb, asyncOps[method]);
+    const originalJob = binding[method + "Job"];
+    if (typeof originalJob === "function")
+      binding[method + "Job"] = wrapFsCallbackMethod(originalJob, asyncOps[method]);
   }
   // fs.opendir never reaches the binding (Bun's Dir reads lazily), so wrap the
   // node:fs export for the node.fs_dir.async category.
@@ -649,7 +652,7 @@ function wrapFsAsyncMethod(original: Wrapped, names: string[]) {
   };
 }
 
-// The callback arm of the binding (`xCb(callback, ...args)`): the span ends when the operation calls back.
+// The callback arms of the binding (`xCb(callback, ...args)`, `xJob(callback, ...args)`): the span ends when the operation calls back.
 function wrapFsCallbackMethod(original: Wrapped, names: string[]) {
   return function (this: unknown, callback: Wrapped, ...args: unknown[]) {
     if (suppressFsEvents || !isCategoryGroupEnabled(kFsAsyncCat)) return original.$apply(this, arguments);

@@ -10,7 +10,7 @@ use bun_sys_jsc::SystemErrorJsc as _;
 use crate::generated_bindgen::node_fs_binding::RmOptions;
 use crate::node::ThreadIsolated;
 use crate::node::fs::{
-    self, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn, NodeFS,
+    self, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReceiver, FsReturn, NodeFS,
     NodeFSDispatch, NodeFSFunctionEnum, Op, args, async_, move_waiting_descriptors, ret,
 };
 
@@ -98,21 +98,32 @@ enum AsyncArm {
     Promise,
     /// Argument 0 is the callback. `fs.promises` forwards user arguments, so a trailing function cannot mark this arm.
     Callback,
+    /// Argument 0 is the callback, and it runs as a microtask: the streams of a `FileHandle`, which Node calls back from a promise.
+    Job,
 }
 
-/// The arguments of the operation, and the callback for [`AsyncArm::Callback`].
+/// The arguments of the operation, and who takes its result.
 fn split_callback<'a>(
     global: &JSGlobalObject,
     args: &'a [JsLocal<'_>],
     arm: AsyncArm,
-) -> JsResult<(Option<JSValue>, &'a [JSValue])> {
+) -> JsResult<(FsReceiver, &'a [JSValue])> {
     let arguments = JsLocal::to_js_slice(args);
-    match arm {
-        AsyncArm::Promise => Ok((None, arguments)),
-        AsyncArm::Callback => match arguments.split_first() {
-            Some((callback, rest)) if callback.is_callable() => Ok((Some(*callback), rest)),
-            _ => Err(global.throw_invalid_arguments(format_args!("callback must be a function"))),
-        },
+    let is_job = match arm {
+        AsyncArm::Promise => return Ok((FsReceiver::Promise, arguments)),
+        AsyncArm::Callback => false,
+        AsyncArm::Job => true,
+    };
+    match arguments.split_first() {
+        Some((&callback, rest)) if callback.is_callable() => Ok((
+            if is_job {
+                FsReceiver::Job(callback)
+            } else {
+                FsReceiver::Callback(callback)
+            },
+            rest,
+        )),
+        _ => Err(global.throw_invalid_arguments(format_args!("callback must be a function"))),
     }
 }
 
@@ -133,19 +144,19 @@ fn run_async<A: FsArgument>(
         &Binding,
         ThreadIsolated<A>,
         &mut VirtualMachine,
-        Option<JSValue>,
+        FsReceiver,
     ) -> JSValue,
 ) -> JsResult<JSValue> {
     let cx = cx.js_thread();
     let global = cx.global();
-    let (callback, arguments) = split_callback(global, args, arm)?;
+    let (receiver, arguments) = split_callback(global, args, arm)?;
     let args = match parse_async_args::<A>(global, arguments)? {
         ParsedAsyncArgs::Args(args) => args,
-        ParsedAsyncArgs::Rejected(error) => return reject_before_schedule(global, callback, error),
+        ParsedAsyncArgs::Rejected(error) => return reject_before_schedule(global, receiver, error),
     };
     let vm: &mut VirtualMachine = global.bun_vm().as_mut();
     move_waiting_descriptors();
-    Ok(create_task(&cx, this, args, vm, callback))
+    Ok(create_task(&cx, this, args, vm, receiver))
 }
 
 enum ParsedAsyncArgs<A> {
@@ -180,13 +191,17 @@ fn parse_async_args<A: FsArgument>(
 /// An error found before scheduling. The callback goes to nextTick bare: it asserts against an `AsyncContextFrame`.
 fn reject_before_schedule(
     global: &JSGlobalObject,
-    callback: Option<JSValue>,
+    receiver: FsReceiver,
     error: JSValue,
 ) -> JsResult<JSValue> {
-    match callback {
-        None => Ok(JSPromise::rejected_promise(global, error).to_js()),
-        Some(callback) => {
+    match receiver {
+        FsReceiver::Promise => Ok(JSPromise::rejected_promise(global, error).to_js()),
+        FsReceiver::Callback(callback) => {
             JSValue::call_next_tick_1(callback, global, error)?;
+            Ok(JSValue::UNDEFINED)
+        }
+        FsReceiver::Job(callback) => {
+            global.queue_microtask(callback, &[error, JSValue::UNDEFINED]);
             Ok(JSValue::UNDEFINED)
         }
     }
@@ -218,7 +233,9 @@ impl Binding {
         let arguments = JsLocal::to_js_slice(args);
         let cp_args = match parse_async_args::<args::Cp<'static>>(global, arguments)? {
             ParsedAsyncArgs::Args(args) => args,
-            ParsedAsyncArgs::Rejected(error) => return reject_before_schedule(global, None, error),
+            ParsedAsyncArgs::Rejected(error) => {
+                return reject_before_schedule(global, FsReceiver::Promise, error);
+            }
         };
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         Ok(AsyncCpTask::create(&cx, self, cp_args, vm))
@@ -262,11 +279,11 @@ impl Binding {
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global = cx.global();
-        let (callback, arguments) = split_callback(global, args, arm)?;
+        let (receiver, arguments) = split_callback(global, args, arm)?;
         let rd_args = match parse_async_args::<args::Readdir<'static>>(global, arguments)? {
             ParsedAsyncArgs::Args(args) => args,
             ParsedAsyncArgs::Rejected(error) => {
-                return reject_before_schedule(global, callback, error);
+                return reject_before_schedule(global, receiver, error);
             }
         };
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
@@ -275,10 +292,30 @@ impl Binding {
             .is_some_and(|graph| graph.owns_directory(rd_args.path.slice()));
         if rd_args.recursive && !is_bunfs {
             return Ok(AsyncReaddirRecursiveTask::create(
-                &cx, rd_args, vm, callback,
+                &cx, rd_args, vm, receiver,
             ));
         }
-        Ok(async_::Readdir::create(&cx, self, rd_args, vm, callback))
+        Ok(async_::Readdir::create(&cx, self, rd_args, vm, receiver))
+    }
+
+    pub(crate) fn read_job(&self, cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
+        run_async::<args::Read>(self, cx, args, AsyncArm::Job, async_::Read::create)
+    }
+
+    pub(crate) fn write_job(
+        &self,
+        cx: &mut JsScope<'_>,
+        args: &[JsLocal<'_>],
+    ) -> JsResult<JSValue> {
+        run_async::<args::Write<'static>>(self, cx, args, AsyncArm::Job, async_::Write::create)
+    }
+
+    pub(crate) fn writev_job(
+        &self,
+        cx: &mut JsScope<'_>,
+        args: &[JsLocal<'_>],
+    ) -> JsResult<JSValue> {
+        run_async::<args::Writev>(self, cx, args, AsyncArm::Job, async_::Writev::create)
     }
 
     /// `callSync(.watch)` — `args::Watch` borrows `globalThis` so it can't go

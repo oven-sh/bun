@@ -3707,3 +3707,936 @@ it("the EventEmitter methods that node:process exports act on process", async ()
   expect(ns.off("namespace-event", listener)).toBe(process);
   expect(process.listenerCount("namespace-event")).toBe(0);
 });
+
+// `process` has an emitter of its own, in native code, and not the one of node:events.
+// A script in a child, and what it printed if it ended well.
+async function runEmitterScript(script, env = bunEnv) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout: stdout.trimEnd().split("\n"), stderr, exitCode, signalCode: proc.signalCode };
+}
+const printed = (...stdout) => ({ stdout, stderr: "", exitCode: 0, signalCode: null });
+
+// Every script of this block prints the same lines on node v26.12.1.
+describe("process emits 'removeListener'", () => {
+  // Not concurrent with the others: a debug build takes seconds to start a Worker.
+  it.each(["main thread", "worker"])(
+    "after removeListener() and off(), and when a once() listener fires (%s)",
+    async where => {
+      const script = `
+        const seen = [];
+        process.on("newListener", name => seen.push("newListener:" + String(name)));
+        process.on("removeListener", name => seen.push("removeListener:" + String(name)));
+        function f() {}
+        process.on("zz_custom", f);
+        process.removeListener("zz_custom", f);
+        process.on("zz_off", f);
+        process.off("zz_off", f);
+        process.once("zz_once", f);
+        process.emit("zz_once");
+        process.prependOnceListener("zz_prepend_once", f);
+        process.emit("zz_prepend_once");
+        console.log(seen.join("\\n"));
+      `;
+      expect(
+        await runEmitterScript(
+          where === "worker"
+            ? `new (require("node:worker_threads").Worker)(${JSON.stringify(script)}, { eval: true });`
+            : script,
+        ),
+      ).toEqual(
+        printed(
+          "newListener:removeListener",
+          "newListener:zz_custom",
+          "removeListener:zz_custom",
+          "newListener:zz_off",
+          "removeListener:zz_off",
+          "newListener:zz_once",
+          "removeListener:zz_once",
+          "newListener:zz_prepend_once",
+          "removeListener:zz_prepend_once",
+        ),
+      );
+    },
+  );
+
+  it.concurrent("after the removal, with the name and the listener, and before a once() listener runs", async () => {
+    expect(
+      await runEmitterScript(`
+        const out = [];
+        const symbol = Symbol("zz_symbol");
+        const object = { toString: () => "zz_object" };
+        function f() {
+          out.push("f runs, listeners left: " + process.listenerCount("zz_once"));
+        }
+        function g() {}
+        function onRemove(name, listener) {
+          if (name !== symbol && name !== 7 && !String(name).startsWith("zz")) return;
+          const which = listener === f ? "f" : listener === g ? "g" : typeof listener;
+          const shown = name === object ? "the object" : typeof name + " " + String(name);
+          out.push([shown, which, arguments.length, this === process, process.listenerCount(name)].join(" "));
+        }
+        process.on("removeListener", onRemove);
+        process.on("zz_plain", g);
+        process.removeListener("zz_plain", g);
+        process.once("zz_once", f);
+        process.emit("zz_once");
+        // The name comes as the program passed it.
+        process.on(symbol, g);
+        process.off(symbol, g);
+        process.on(7, g);
+        process.removeListener(7, g);
+        process.on(7, g);
+        process.removeAllListeners(7);
+        process.on(object, g);
+        process.removeListener(object, g);
+        process.on(object, g);
+        process.removeAllListeners(object);
+        // The same function two times: one event for each removal.
+        process.on("zz_twice", g);
+        process.on("zz_twice", g);
+        process.removeListener("zz_twice", g);
+        process.removeListener("zz_twice", g);
+        // No removal, no event.
+        process.on("zz_other", g);
+        process.removeListener("zz_other", f);
+        process.removeListener("zz_none", f);
+        process.removeAllListeners("zz_none");
+        out.push("left: " + process.listenerCount("zz_other"));
+        process.removeListener("zz_other", g);
+        console.log(out.join("\\n"));
+      `),
+    ).toEqual(
+      printed(
+        "string zz_plain g 2 true 0",
+        "string zz_once f 2 true 0",
+        "f runs, listeners left: 0",
+        "symbol Symbol(zz_symbol) g 2 true 0",
+        "number 7 g 2 true 0",
+        "number 7 g 2 true 0",
+        "the object g 2 true 0",
+        "the object g 2 true 0",
+        "string zz_twice g 2 true 1",
+        "string zz_twice g 2 true 0",
+        "left: 1",
+        "string zz_other g 2 true 0",
+      ),
+    );
+  });
+
+  it.concurrent("for each listener that removeAllListeners() removes, the last added first", async () => {
+    expect(
+      await runEmitterScript(`
+        const out = [];
+        function a() {}
+        function b() {}
+        function c() {}
+        const name = l => (l === a ? "a" : l === b ? "b" : l === c ? "c" : l === second ? "second" : "other");
+        function onRemove(type, listener) {
+          if (String(type).startsWith("zz") || type === "removeListener") out.push(String(type) + ":" + name(listener));
+        }
+        function second() {}
+        process.on("removeListener", onRemove);
+        process.on("zz_one", a);
+        process.on("zz_one", b);
+        process.prependListener("zz_one", c);
+        process.removeAllListeners("zz_one");
+        out.push("zz_one left: " + process.listenerCount("zz_one"));
+        // With no name: the "removeListener" listeners go last, so they hear of every other listener.
+        process.on("zz_two", a);
+        process.on("removeListener", second);
+        process.on("zz_three", b);
+        process.on("zz_two", c);
+        process.removeAllListeners();
+        out.push("names left: " + JSON.stringify(process.eventNames()));
+        console.log(out.join("\\n"));
+      `),
+    ).toEqual(
+      printed(
+        "zz_one:b",
+        "zz_one:a",
+        "zz_one:c",
+        "zz_one left: 0",
+        "zz_two:c",
+        "zz_two:a",
+        "zz_three:b",
+        "removeListener:second",
+        "names left: []",
+      ),
+    );
+  });
+
+  it.concurrent(
+    "removeAllListeners() takes the names in the order of eventNames(), and tells nobody of a listener added meanwhile",
+    async () => {
+      expect(
+        await runEmitterScript(`
+          const out = [];
+          const symbol = Symbol("zz_symbol");
+          const ours = name => name === symbol || /^(zz|\\d+$)/.test(String(name));
+          function f() {}
+          process.on("removeListener", name => {
+            if (name === "zz_a") process.on("zz_late", f);
+            if (ours(name)) out.push(String(name));
+          });
+          process.on(symbol, f);
+          process.on("zz_b", f);
+          process.on("10", f);
+          process.on("4294967295", f);
+          process.on("zz_a", f);
+          process.on("2", f);
+          process.on("4294967294", f);
+          // As Reflect.ownKeys() gives them: the array indexes, of which 4294967294 is the last, then the other strings, then the symbols.
+          out.push("eventNames(): " + process.eventNames().filter(ours).map(String).join(" "));
+          process.removeAllListeners();
+          out.push("names left: " + JSON.stringify(process.eventNames()));
+          console.log(out.join("\\n"));
+        `),
+      ).toEqual(
+        printed(
+          "eventNames(): 2 10 4294967294 zz_b 4294967295 zz_a Symbol(zz_symbol)",
+          "2",
+          "10",
+          "4294967294",
+          "zz_b",
+          "4294967295",
+          "zz_a",
+          "Symbol(zz_symbol)",
+          "names left: []",
+        ),
+      );
+    },
+  );
+
+  it.concurrent(
+    "removeAllListeners(name) removes what its 'removeListener' listeners add of a listener that waits",
+    async () => {
+      expect(
+        await runEmitterScript(`
+        const out = [];
+        function f() {
+          out.push("f runs");
+        }
+        function g() {}
+        let change = null;
+        process.on("removeListener", (name, listener) => {
+          if (!String(name).startsWith("zz")) return;
+          out.push(name + ": " + (listener === f ? "f" : "g") + " went");
+          const now = change;
+          change = null;
+          if (now) now();
+        });
+        // g goes first. The listener takes f off and adds it again: that one goes in the place of the first.
+        process.on("zz_a", f);
+        process.on("zz_a", g);
+        change = () => {
+          process.off("zz_a", f);
+          process.on("zz_a", f);
+        };
+        process.removeAllListeners("zz_a");
+        out.push("zz_a left: " + process.listenerCount("zz_a"));
+        // The listener adds once(f) while f waits: the once() one is then the last registration of f, and it goes.
+        process.on("zz_b", f);
+        process.on("zz_b", g);
+        change = () => process.once("zz_b", f);
+        process.removeAllListeners("zz_b");
+        out.push("zz_b left: " + process.listenerCount("zz_b"));
+        process.emit("zz_b");
+        out.push("zz_b left after an emit: " + process.listenerCount("zz_b"));
+        console.log(out.join("\\n"));
+      `),
+      ).toEqual(
+        printed(
+          "zz_a: g went",
+          "zz_a: f went",
+          "zz_a: f went",
+          "zz_a left: 0",
+          "zz_b: g went",
+          "zz_b: f went",
+          "zz_b left: 1",
+          "f runs",
+          "zz_b left after an emit: 1",
+        ),
+      );
+    },
+  );
+
+  it.concurrent("to the 'removeListener' listeners that stay, and one time to each once() listener", async () => {
+    expect(
+      await runEmitterScript(`
+        const out = [];
+        const name = l => (l === first ? "first" : l === second ? "second" : "other");
+        function first(type, listener) {
+          if (type === "removeListener") out.push("first heard the removal of " + name(listener));
+        }
+        function second(type, listener) {
+          if (type === "removeListener") out.push("second heard the removal of " + name(listener));
+        }
+        process.on("removeListener", first);
+        process.on("removeListener", second);
+        process.removeListener("removeListener", second);
+        process.removeListener("removeListener", first);
+        // The removal of the first once() listener emits the event again, to the second one.
+        function h1(type) {
+          out.push("h1:" + String(type));
+        }
+        function h2(type) {
+          out.push("h2:" + String(type));
+        }
+        process.once("removeListener", h1);
+        process.once("removeListener", h2);
+        function f() {}
+        process.on("zz_a", f);
+        process.off("zz_a", f);
+        process.on("zz_b", f);
+        process.off("zz_b", f);
+        console.log(out.join("\\n"));
+      `),
+    ).toEqual(printed("first heard the removal of second", "h2:removeListener", "h1:zz_a"));
+  });
+
+  it.concurrent("when native code calls a once() listener", async () => {
+    expect(
+      await runEmitterScript(
+        `
+        process.on("removeListener", name => {
+          if (name === "warning" || name === "beforeExit" || name === "exit")
+            console.log("removeListener: " + name + ", listeners left: " + process.listenerCount(name));
+        });
+        process.removeAllListeners("warning");
+        process.once("warning", warning => console.log("warning listener: " + warning.message));
+        process.once("beforeExit", () => console.log("beforeExit listener"));
+        process.once("exit", () => console.log("exit listener"));
+        process.emitWarning("zz");
+      `,
+        // The first removal is the one of the listener that prints warnings, which this variable leaves out.
+        { ...bunEnv, NODE_NO_WARNINGS: undefined },
+      ),
+    ).toEqual(
+      printed(
+        "removeListener: warning, listeners left: 0",
+        "removeListener: warning, listeners left: 0",
+        "warning listener: zz",
+        "removeListener: beforeExit, listeners left: 0",
+        "beforeExit listener",
+        "removeListener: exit, listeners left: 0",
+        "exit listener",
+      ),
+    );
+  });
+
+  it.concurrent.skipIf(isWindows)("when a signal calls a once() listener", async () => {
+    expect(
+      await runEmitterScript(`
+        const timer = setInterval(() => {}, 1000);
+        process.on("removeListener", name => {
+          if (name === "SIGUSR2") console.log("removeListener: SIGUSR2, listeners left: " + process.listenerCount("SIGUSR2"));
+        });
+        process.once("SIGUSR2", () => {
+          console.log("SIGUSR2 listener");
+          clearInterval(timer);
+        });
+        process.kill(process.pid, "SIGUSR2");
+      `),
+    ).toEqual(printed("removeListener: SIGUSR2, listeners left: 0", "SIGUSR2 listener"));
+  });
+
+  // What openclaw's patch of proper-lockfile does beside signal-exit. The lock handler steps aside for the observer, and its
+  // 'removeListener' listener puts it back when the observer has taken its own listener off, inside the dispatch of the signal.
+  // Without the event, the signal that the observer sends again finds no listener and ends the process.
+  it.concurrent.skipIf(isWindows)(
+    "to a listener that puts a signal listener back while the signal is dispatched",
+    async () => {
+      expect(
+        await runEmitterScript(`
+        const timer = setInterval(() => {}, 1000);
+        const names = () => process.listeners("SIGTERM").map(listener => listener.name).join(",") || "none";
+        function observer() {
+          console.log("observer: sees " + names());
+          if (process.listeners("SIGTERM").length !== 1) return;
+          process.removeListener("SIGTERM", observer);
+          console.log("observer: took itself off, left " + names());
+          process.kill(process.pid, "SIGTERM");
+        }
+        function restoreSignal(name, listener) {
+          if (name !== "SIGTERM") return;
+          console.log("restoreSignal: " + listener.name + " went, left " + names());
+          if (process.listeners(name).some(other => other !== lockHandler)) return;
+          process.prependListener(name, lockHandler);
+          process.removeListener("removeListener", restoreSignal);
+          console.log("restoreSignal: put back " + names());
+        }
+        function lockHandler() {
+          if (process.listeners("SIGTERM").some(other => other !== lockHandler)) {
+            console.log("lockHandler: steps aside");
+            process.on("removeListener", restoreSignal);
+            process.removeListener("SIGTERM", lockHandler);
+            return;
+          }
+          console.log("lockHandler: alone, releases the lock");
+          process.removeListener("SIGTERM", lockHandler);
+          clearInterval(timer);
+        }
+        process.prependListener("SIGTERM", lockHandler);
+        process.on("SIGTERM", observer);
+        process.kill(process.pid, "SIGTERM");
+      `),
+      ).toEqual(
+        printed(
+          "lockHandler: steps aside",
+          "restoreSignal: lockHandler went, left observer",
+          "observer: sees observer",
+          "restoreSignal: observer went, left none",
+          "restoreSignal: put back lockHandler",
+          "observer: took itself off, left lockHandler",
+          "lockHandler: alone, releases the lock",
+        ),
+      );
+    },
+  );
+
+  // A timeout of node:vm ends the listener with a termination. Script may run no longer: the method that removed throws it
+  // to its caller, removeAllListeners() leaves the listeners that it did not reach, and a once() listener is not called.
+  it.concurrent("to a listener that a timeout ends, and the call ends with it", async () => {
+    expect(
+      await runEmitterScript(`
+        const vm = require("node:vm");
+        // What the first call with a timeout sets up is done before the calls that count.
+        vm.runInThisContext("0", { timeout: 1000 });
+        const out = [];
+        let calls = 0;
+        globalThis.f = function f() {};
+        process.on("removeListener", name => {
+          if (!String(name).startsWith("zz")) return;
+          calls++;
+          for (;;) {}
+        });
+        function run(label, code) {
+          calls = 0;
+          globalThis.wentOn = false;
+          let result = "returned";
+          try {
+            vm.runInThisContext(code + "; globalThis.wentOn = true;", { timeout: 200 });
+          } catch (error) {
+            result = error.code;
+          }
+          return label + ": " + result + ", listener calls " + calls;
+        }
+        process.on("zz_off", f);
+        out.push(run("off()", "process.off('zz_off', f)") + ", the script went on " + globalThis.wentOn + ", left " + process.listenerCount("zz_off"));
+        for (let i = 0; i < 3; i++) process.on("zz_named", () => {});
+        out.push(run("removeAllListeners(name)", "process.removeAllListeners('zz_named')") + ", the script went on " + globalThis.wentOn + ", left " + process.listenerCount("zz_named"));
+        let ran = 0;
+        process.once("zz_once", () => ran++);
+        out.push(run("emit()", "process.emit('zz_once')") + ", calls of the once() listener " + ran);
+        console.log(out.join("\\n"));
+      `),
+    ).toEqual(
+      printed(
+        "off(): ERR_SCRIPT_EXECUTION_TIMEOUT, listener calls 1, the script went on false, left 0",
+        "removeAllListeners(name): ERR_SCRIPT_EXECUTION_TIMEOUT, listener calls 1, the script went on false, left 2",
+        "emit(): ERR_SCRIPT_EXECUTION_TIMEOUT, listener calls 1, calls of the once() listener 0",
+      ),
+    );
+  });
+
+  // Not concurrent with the others: a debug build takes seconds to start a Worker.
+  it("to a listener that ends its worker with process.exit(), and the script does not go on", async () => {
+    expect(
+      await runEmitterScript(`
+        const { Worker } = require("node:worker_threads");
+        const worker = new Worker(
+          \`
+          const { parentPort } = require("node:worker_threads");
+          function f() {}
+          process.on("removeListener", name => {
+            if (name === "zz") process.exit(0);
+          });
+          process.on("zz", f);
+          process.off("zz", f);
+          parentPort.postMessage("the script went on behind off()");
+          \`,
+          { eval: true },
+        );
+        const messages = [];
+        worker.on("message", message => messages.push(message));
+        worker.on("exit", code => console.log("the worker ended with code " + code + ", messages: " + JSON.stringify(messages)));
+      `),
+    ).toEqual(printed("the worker ended with code 0, messages: []"));
+  });
+
+  // With its handler uninstalled, SIGUSR2 ends the process.
+  describe.concurrent.skipIf(isWindows)("the signal handler of a listener is uninstalled", () => {
+    // The signal may end the process a moment behind kill(): the line is printed only if it ends nothing.
+    const survived = `
+      function survived() {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000);
+        console.log("survived");
+      }
+    `;
+    async function endsBySIGUSR2(script, ...stdout) {
+      const { exitCode, ...result } = await runEmitterScript(survived + script);
+      expect(result).toEqual({ stdout: stdout.length ? stdout : [""], stderr: "", signalCode: "SIGUSR2" });
+    }
+
+    it("before the 'removeListener' listeners hear of its removal", async () => {
+      await endsBySIGUSR2(`
+        process.on("removeListener", name => {
+          if (name === "SIGUSR2") {
+            process.kill(process.pid, "SIGUSR2");
+            survived();
+          }
+        });
+        function f() {}
+        process.on("SIGUSR2", f);
+        process.off("SIGUSR2", f);
+      `);
+    });
+
+    it("when removeAllListeners() tells a 'removeListener' listener of each removal", async () => {
+      await endsBySIGUSR2(
+        `
+        process.on("removeListener", name => {
+          if (name === "SIGUSR2") console.log("heard of SIGUSR2");
+        });
+        process.on("SIGUSR2", () => {});
+        process.removeAllListeners();
+        process.kill(process.pid, "SIGUSR2");
+        survived();
+      `,
+        "heard of SIGUSR2",
+      );
+    });
+
+    it("when a 'removeListener' listener adds it during removeAllListeners()", async () => {
+      await endsBySIGUSR2(
+        `
+        process.on("removeListener", name => {
+          if (name !== "zz") return;
+          process.on("SIGUSR2", () => {});
+          console.log("added, listeners of SIGUSR2: " + process.listenerCount("SIGUSR2"));
+        });
+        process.on("zz", () => {});
+        process.removeAllListeners();
+        process.kill(process.pid, "SIGUSR2");
+        survived();
+      `,
+        "added, listeners of SIGUSR2: 1",
+      );
+    });
+  });
+});
+
+// What node does not have, or does in another way.
+describe("the native emitter of process", () => {
+  // node has no like of the second receiver, and there an object below `process` shares the listeners of `process`.
+  // The other four give the same lines when node:events makes them.
+  it.concurrent("emits 'removeListener' on every object that uses it, and only there", async () => {
+    const events = JSON.stringify(["zz_a true true", "zz_b true true", "zz_c true true", "zz_d true true"]);
+    expect(
+      await runEmitterScript(`
+        require("node:events");
+        const prototype = Object.getPrototypeOf(process);
+        const NativeEventEmitter = prototype.constructor;
+        const borrower = {};
+        for (const name of ["on", "once", "emit", "removeListener", "removeAllListeners"]) borrower[name] = prototype[name];
+        // As jest-util makes the \`process\` of a test file: below the prototype of process, with every constructor above called on it.
+        const likeJest = Object.create(prototype);
+        for (let above = prototype; above; above = Object.getPrototypeOf(above)) {
+          if (typeof above.constructor === "function") above.constructor.call(likeJest);
+        }
+        const receivers = {
+          "new": new NativeEventEmitter(),
+          "call": NativeEventEmitter(),
+          // A tenant's process of Bun.ModuleGraph.
+          "Object.create(process)": Object.create(process),
+          "Object.create(prototype)": Object.create(prototype),
+          "like jest-util": likeJest,
+          "borrowed methods": borrower,
+        };
+        const ofProcess = [];
+        process.on("removeListener", name => ofProcess.push(name));
+        for (const [label, emitter] of Object.entries(receivers)) {
+          const out = [];
+          function f() {}
+          emitter.on("removeListener", function (name, listener) {
+            out.push([name, listener === f, this === emitter].join(" "));
+          });
+          emitter.on("zz_a", f);
+          emitter.removeListener("zz_a", f);
+          emitter.once("zz_b", f);
+          emitter.emit("zz_b");
+          emitter.on("zz_c", f);
+          emitter.removeAllListeners("zz_c");
+          emitter.on("zz_d", f);
+          emitter.removeAllListeners();
+          console.log(label + ": " + JSON.stringify(out));
+        }
+        console.log("process heard: " + JSON.stringify(ofProcess));
+      `),
+    ).toEqual(
+      printed(
+        "new: " + events,
+        "call: " + events,
+        "Object.create(process): " + events,
+        "Object.create(prototype): " + events,
+        "like jest-util: " + events,
+        "borrowed methods: " + events,
+        "process heard: []",
+      ),
+    );
+  });
+
+  // The emitters of node:events give every line but the last one: node throws for a call with the name alone.
+  it.concurrent(
+    "calls the 'removeListener' listeners with the object that the listener is taken off through",
+    async () => {
+      expect(
+        await runEmitterScript(`
+        const out = [];
+        let meanwhile = null;
+        function f() {}
+        function g() {}
+        // Says which of two objects is \`this\`, then runs what waits in \`meanwhile\`.
+        const hears = (first, second, names) =>
+          function (name) {
+            if (!String(name).startsWith("zz")) return;
+            out.push(name + ": this is " + (this === first ? names[0] : this === second ? names[1] : String(this)));
+            const now = meanwhile;
+            meanwhile = null;
+            if (now) now();
+          };
+        // \`b\` is below \`a\` and finds its \`_events\`: the two share one emitter.
+        const a = Object.create(Object.getPrototypeOf(process));
+        // Three of them: in node:events the count of \`a\` alone must stay above zero.
+        for (const name of ["keep1", "keep2", "keep3"]) a.on(name, () => {});
+        const b = Object.create(a);
+        b.on("removeListener", hears(a, b, "ab"));
+        b.on("zz_remove", f);
+        a.removeListener("zz_remove", f);
+        b.on("zz_all", f);
+        a.removeAllListeners("zz_all");
+        a.on("zz_off", f);
+        b.off("zz_off", f);
+        // Between the two removals the listener adds a listener through \`b\`. The second removal still comes from \`a\`.
+        a.on("zz_two", f);
+        a.on("zz_two", g);
+        meanwhile = () => b.on("added", f);
+        a.removeAllListeners("zz_two");
+        // The same between two once() listeners that one emit fires.
+        a.once("zz_fired", f);
+        a.once("zz_fired", g);
+        meanwhile = () => b.on("added", f);
+        a.emit("zz_fired");
+        // A listener of the emit adds a listener through \`b\`. The once() listener behind it is still announced with \`a\`.
+        function adds() {
+          b.on("added", f);
+        }
+        a.on("zz_emit", adds);
+        a.once("zz_emit", g);
+        a.emit("zz_emit");
+        a.off("zz_emit", adds);
+        // The same for removeAllListeners(), on a second pair. Its names are the first ones of \`c\`: so the count of \`c\` alone stays above zero.
+        const c = Object.create(Object.getPrototypeOf(process));
+        for (const name of ["zz_no_name", "zz_no_name_too", "keep"]) c.on(name, f);
+        const d = Object.create(c);
+        d.on("removeListener", hears(c, d, "cd"));
+        meanwhile = () => d.on("added", f);
+        c.removeAllListeners();
+        b.on("zz_name_alone", f);
+        a.removeListener("zz_name_alone");
+        console.log(out.join("\\n"));
+      `),
+      ).toEqual(
+        printed(
+          "zz_remove: this is a",
+          "zz_all: this is a",
+          "zz_off: this is b",
+          "zz_two: this is a",
+          "zz_two: this is a",
+          "zz_fired: this is a",
+          "zz_fired: this is a",
+          "zz_emit: this is a",
+          "zz_emit: this is a",
+          "zz_no_name: this is c",
+          "zz_no_name_too: this is c",
+          "zz_name_alone: this is a",
+        ),
+      );
+    },
+  );
+
+  // node throws ERR_INVALID_ARG_TYPE for each of the five calls without a function. It hands the number 7 to the listeners,
+  // and for a once() listener that is not the only listener of its event, the wrapper in the place of the function.
+  it.concurrent(
+    "announces what off(name) removes, and a once() listener that fires under the key of its name and as its function",
+    async () => {
+      expect(
+        await runEmitterScript(`
+        const out = [];
+        function a() {}
+        function b() {}
+        function c() {}
+        process.on("removeListener", function (name, listener) {
+          if (!/^(zz|7$)/.test(String(name))) return;
+          const which = listener === a ? "a" : listener === b ? "b" : "c";
+          out.push([typeof name, name, which, this === process, process.listenerCount(name)].join(" "));
+        });
+        process.on("zz_off", a);
+        process.on("zz_off", b);
+        process.prependListener("zz_off", c);
+        process.off("zz_off");
+        process.on("zz_remove", a);
+        process.removeListener("zz_remove");
+        process.on("zz_kept", a);
+        process.off("zz_kept", undefined);
+        process.off("zz_kept", null);
+        process.off("zz_kept", {});
+        out.push("zz_kept left: " + process.listenerCount("zz_kept"));
+        process.once(7, a);
+        process.emit(7);
+        process.on("zz_beside", b);
+        process.once("zz_beside", a);
+        process.emit("zz_beside");
+        console.log(out.join("\\n"));
+      `),
+      ).toEqual(
+        printed(
+          "string zz_off b true 2",
+          "string zz_off a true 1",
+          "string zz_off c true 0",
+          "string zz_remove a true 0",
+          "zz_kept left: 1",
+          "string 7 a true 0",
+          "string zz_beside a true 1",
+        ),
+      );
+    },
+  );
+
+  // node throws it to the caller of off(), removeAllListeners() or emit(), which stops there:
+  //   off() threw zz1 a | left: none | removeAllListeners(name) threw zz2 c | left: a,b | emit() threw zz3 wrapper | left: b |
+  //   removeAllListeners() threw zz4 b | left: a, left: c
+  it.concurrent(
+    "reports what a 'removeListener' listener throws as a 'newListener' listener's, and goes on",
+    async () => {
+      expect(
+        await runEmitterScript(`
+        const out = [];
+        process.setUncaughtExceptionCaptureCallback(error => out.push("reported: " + error.message));
+        function a() {
+          out.push("a runs");
+        }
+        function b() {
+          out.push("b runs");
+        }
+        function c() {}
+        let armed = false;
+        process.on("removeListener", (name, listener) => {
+          if (armed && String(name).startsWith("zz")) throw new Error(name + " " + listener.name);
+        });
+        const left = name => "left: " + (process.listeners(name).map(listener => listener.name).join(",") || "none");
+        function attempt(label, call) {
+          armed = true;
+          try {
+            call();
+            out.push(label + " returned");
+          } catch (error) {
+            out.push(label + " threw " + error.message);
+          }
+          armed = false;
+        }
+        process.on("zz1", a);
+        attempt("off()", () => process.off("zz1", a));
+        out.push(left("zz1"));
+        process.on("zz2", a);
+        process.on("zz2", b);
+        process.on("zz2", c);
+        attempt("removeAllListeners(name)", () => process.removeAllListeners("zz2"));
+        out.push(left("zz2"));
+        process.removeAllListeners("zz2");
+        process.once("zz3", a);
+        process.on("zz3", b);
+        attempt("emit()", () => process.emit("zz3"));
+        out.push(left("zz3"));
+        process.removeAllListeners("zz3");
+        process.on("zz4", a);
+        process.on("zz4", b);
+        process.on("zz5", c);
+        attempt("removeAllListeners()", () => process.removeAllListeners());
+        out.push(left("zz4") + ", " + left("zz5"));
+        console.log(out.join("\\n"));
+      `),
+      ).toEqual(
+        printed(
+          "reported: zz1 a",
+          "off() returned",
+          "left: none",
+          "reported: zz2 c",
+          "reported: zz2 b",
+          "reported: zz2 a",
+          "removeAllListeners(name) returned",
+          "left: none",
+          "reported: zz3 a",
+          "a runs",
+          "b runs",
+          "emit() returned",
+          "left: b",
+          "reported: zz4 b",
+          "reported: zz4 a",
+          "reported: zz5 c",
+          "removeAllListeners() returned",
+          "left: none, left: none",
+        ),
+      );
+    },
+  );
+
+  // Each removal of a once() listener of 'removeListener' is announced to the next one before any of them is called.
+  // node throws a RangeError to the caller of off(), which this script catches: the worker ends with code 0 there.
+  // Here it is an uncaught error of the worker, as what a 'newListener' listener throws.
+  // Not concurrent with the others: a debug build takes seconds to start a Worker.
+  it("stops a chain of once('removeListener') listeners where the stack ends", async () => {
+    expect(
+      await runEmitterScript(`
+        const { Worker } = require("node:worker_threads");
+        const worker = new Worker(
+          \`
+          for (let i = 0; i < 500; i++) process.once("removeListener", () => {});
+          function f() {}
+          process.on("zz", f);
+          (function deep() {
+            try {
+              deep();
+            } catch {
+              if (process.listenerCount("zz")) process.off("zz", f);
+            }
+          })();
+          \`,
+          { eval: true },
+        );
+        worker.on("error", () => console.log("the worker had an uncaught error"));
+        worker.on("exit", code => console.log("the worker ended with code " + code));
+      `),
+    ).toEqual(printed("the worker had an uncaught error", "the worker ended with code 1"));
+  });
+
+  // The emitter of the receiver is held by its `_events` alone, and every allocation that leaves the fast path collects:
+  // a collection comes between the two events of the call, when no listener runs.
+  // Not on a debug build: that many collections take 8 seconds there.
+  it.concurrent.skipIf(isDebug)(
+    "keeps an emitter alive whose 'removeListener' listener deletes the _events of the receiver",
+    async () => {
+      expect(
+        await runEmitterScript(
+          `
+        const prototype = Object.getPrototypeOf(process);
+        const object = {};
+        const out = [];
+        prototype.on.call(object, "removeListener", name => {
+          delete object._events;
+          Bun.gc(true);
+          out.push(name);
+        });
+        prototype.on.call(object, "zz_a", () => {});
+        prototype.on.call(object, "zz_b", () => {});
+        prototype.removeAllListeners.call(object);
+        Bun.gc(true);
+        console.log(out.join("\\n"));
+      `,
+          { ...bunEnv, BUN_JSC_slowPathAllocsBetweenGCs: "1", BUN_JSC_sweepSynchronously: "1" },
+        ),
+      ).toEqual(printed("zz_a", "zz_b"));
+    },
+  );
+
+  // The `process` of a Bun.ModuleGraph tenant has a listener table of its own. Its listeners are the object's, like any
+  // listener that the host's emit() finds there: the host's removeAllListeners() calls them after dispose() too.
+  it.concurrent("emits 'removeListener' on the process of a Bun.ModuleGraph tenant", async () => {
+    using dir = tempDir("process-remove-listener-graph", {
+      "tenant.mjs": `
+        export const heard = [];
+        function f() {}
+        export function run() {
+          process.on("removeListener", function (name, listener) {
+            heard.push([name, listener === f, this === process, Bun.ModuleGraph.current !== undefined].join(" "));
+            if (name === "zz_throws") throw new Error("thrown by the tenant's listener");
+          });
+          process.on("zz_off", f);
+          process.off("zz_off", f);
+          process.once("zz_once", f);
+          process.emit("zz_once");
+          process.on("zz_throws", f);
+          process.off("zz_throws", f);
+          process.on("zz_left", f);
+        }
+      `,
+      "host.mjs": `
+        const tenantProcess = Object.create(process);
+        const ofHost = [];
+        process.on("removeListener", name => ofHost.push(name));
+        const errors = [];
+        const graph = new Bun.ModuleGraph({
+          globals: { process: tenantProcess },
+          onError: (error, kind) => errors.push(kind + ": " + error.message),
+        });
+        const tenant = await graph.import("./tenant.mjs");
+        await graph.run(() => tenant.run());
+        console.log(JSON.stringify({ inGraph: tenant.heard, ofHost, errors }));
+        graph.dispose();
+        tenant.heard.length = 0;
+        tenantProcess.removeAllListeners();
+        console.log(JSON.stringify({ afterDispose: tenant.heard, ofHost }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "host.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      stdout: stdout
+        .trimEnd()
+        .split("\n")
+        .map(line => JSON.parse(line)),
+      stderr,
+      exitCode,
+    }).toEqual({
+      stdout: [
+        {
+          inGraph: ["zz_off true true true", "zz_once true true true", "zz_throws true true true"],
+          ofHost: [],
+          errors: ["uncaughtException: thrown by the tenant's listener"],
+        },
+        { afterDispose: ["zz_left true true false"], ofHost: [] },
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // node's own tests of the two methods, with the class of `process` in the place of require("events").
+  // Not concurrent with the others: a debug build takes seconds to load the helpers of node's tests.
+  it.each(["test-event-emitter-remove-all-listeners.js", "test-event-emitter-once.js"])(
+    "passes node's %s",
+    async file => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--preload", join(import.meta.dir, "events-is-the-native-emitter-fixture.js"), file],
+        env: bunEnv,
+        cwd: join(import.meta.dir, "..", "test", "parallel"),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    },
+  );
+});

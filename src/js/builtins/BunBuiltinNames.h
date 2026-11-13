@@ -143,6 +143,7 @@ using namespace JSC;
     macro(napiDlopenHandle) \
     macro(napiWrappedContents) \
     macro(natives) \
+    macro(newListener) \
     macro(nodeName) \
     macro(nodeType) \
     macro(normalize) \
@@ -176,6 +177,7 @@ using namespace JSC;
     macro(redirect) \
     macro(relative) \
     macro(removeAbortAlgorithmFromSignal) \
+    macro(removeListener) \
     macro(requestListener) \
     macro(require) \
     macro(requireCacheCompiledEntry) \

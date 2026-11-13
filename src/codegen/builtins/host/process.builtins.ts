@@ -148,24 +148,50 @@ const addsListener = [
   }),
 ] satisfies b.FunctionField[];
 
-const removesListener = methodOfEventEmitter({
-  args: { event: b.propertyKey.loose, listener: b.any.optional },
-  returns: self,
-  capability: "heap",
-  throws: true,
-  uses: { this: b.inspected, listener: b.inspected },
-  reads: listenerLists,
-  writes: listenerLists,
-});
+// The two below call the listeners that were added under "removeListener", each with the event as it was passed and the listener that went.
+const removesListener = [
+  {
+    args: { event: b.propertyKey, listener: b.any.optional },
+    returns: self,
+    capability: "js",
+    throws: true,
+    uses: { this: b.inspected, event: b.inspected, listener: b.inspected },
+    reads: listenerLists,
+    writes: listenerLists,
+    this: nativeEmitter,
+    implementation: b.generic,
+  },
+  ...methodOfEventEmitter({
+    args: { event: b.any, listener: b.any.optional },
+    returns: self,
+    capability: "js",
+    throws: true,
+    uses: { this: b.inspected, event: [b.retained, b.runs("ToPrimitive")], listener: b.inspected },
+    reads: listenerLists,
+    writes: listenerLists,
+  }),
+] satisfies b.FunctionField[];
 
-const removesAllListeners = methodOfEventEmitter({
-  args: { event: b.propertyKey.loose.optional },
-  returns: self,
-  capability: "heap",
-  throws: true,
-  uses: { this: b.inspected },
-  writes: listenerLists,
-});
+const removesAllListeners = [
+  {
+    args: { event: b.propertyKey.optional },
+    returns: self,
+    capability: "js",
+    throws: true,
+    uses: { this: b.inspected, event: b.inspected },
+    writes: listenerLists,
+    this: nativeEmitter,
+    implementation: b.generic,
+  },
+  ...methodOfEventEmitter({
+    args: { event: b.any.optional },
+    returns: self,
+    capability: "js",
+    throws: true,
+    uses: { this: b.inspected, event: [b.retained, b.runs("ToPrimitive")] },
+    writes: listenerLists,
+  }),
+] satisfies b.FunctionField[];
 
 const setsMaxListeners = methodOfEventEmitter({
   args: { count: b.union(b.f64, b.notPassed) },

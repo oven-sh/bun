@@ -74,7 +74,7 @@ JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGloba
 template<typename Visitor>
 void JSEventEmitter::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
-    wrapped().eventListenerMap().visitJSEventListeners(visitor);
+    wrapped().visitJSEventListeners(visitor);
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSEventEmitter);

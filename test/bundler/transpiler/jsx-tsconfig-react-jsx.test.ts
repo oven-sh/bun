@@ -296,4 +296,18 @@ describe("tsconfig jsxImportSource selects the createElement fallback import too
       "shim",
     ]);
   });
+
+  // TypeScript reads an empty jsxImportSource as unset and uses react.
+  test('Bun.Transpiler({ tsconfig }) with jsxImportSource ""', () => {
+    const transpiler = new Bun.Transpiler({
+      loader: "jsx",
+      autoImportJSX: true,
+      logLevel: "error",
+      tsconfig: { compilerOptions: { jsxImportSource: "" } },
+    });
+    expect(importsOf(transpiler.transformSync(keyAfterSpread))).toEqual([
+      "react",
+      expect.stringMatching(/^react\/jsx(-dev)?-runtime$/),
+    ]);
+  });
 });

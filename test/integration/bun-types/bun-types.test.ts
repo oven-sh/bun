@@ -957,11 +957,12 @@ describe("@types/bun integration test", () => {
   // `LibDomIsLoaded` looks for. The global reader is the one of that lib, as
   // with lib.dom, and not the reader of node:stream/web.
   describe("ReadableStreamDefaultReader with lib.webworker.d.ts", () => {
-    test("read() keeps Bun's result type, and every default reader has readMany()", async () => {
-      const checkDir = join(TEMP_DIR, "reader-lib-webworker-check");
+    async function checkReader(name: string, skipLibCheck: boolean) {
+      const checkDir = join(TEMP_DIR, name);
       const tsconfig = structuredClone(sourceTsconfig);
       tsconfig.include = ["reader-check.ts"];
       tsconfig.compilerOptions.lib = ["ESNext", "WebWorker"];
+      tsconfig.compilerOptions.skipLibCheck = skipLibCheck;
       tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
       await mkdir(checkDir, { recursive: true });
       await makeTree(checkDir, {
@@ -983,12 +984,24 @@ describe("@types/bun integration test", () => {
       });
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode };
+    }
 
-      expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
-        stdout: "",
-        stderr: "",
-        exitCode: 0,
-      });
+    test("read() keeps Bun's result type, and every default reader has readMany()", async () => {
+      expect(await checkReader("reader-lib-webworker-check", true)).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    });
+
+    // With skipLibCheck off, tsc reports the declarations too. Beside lib.webworker, bun-types and
+    // @types/node have errors there for other globals (Request, Response, Worker and more), so
+    // this run cannot be clean. None of its errors may be in the program or about the reader.
+    test("no declaration error is about the reader", async () => {
+      const { stdout, stderr } = await checkReader("reader-lib-webworker-declarations", false);
+      const errors = stdout.split("\n").filter(line => line.includes(": error TS"));
+      expect({
+        inTheProgram: errors.filter(line => line.startsWith("reader-check.ts")),
+        aboutTheReader: errors.filter(line => /(Interface|Variable) 'ReadableStreamDefaultReader[<']/.test(line)),
+        stderr,
+      }).toEqual({ inTheProgram: [], aboutTheReader: [], stderr: "" });
     });
   });
 

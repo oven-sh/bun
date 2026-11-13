@@ -8131,7 +8131,7 @@ declare module "bun" {
        * - `"pipe"`, `undefined`: The process has a {@link ReadableStream} for standard output/error
        * - `"ignore"`, `null`: The process has no standard output/error
        * - `"inherit"`: The process inherits the standard output/error of the current process
-       * - `ArrayBufferView`: The process writes to the preallocated buffer. Not implemented.
+       * - `ArrayBufferView`: Not implemented. Bun throws a `TypeError` for a non-empty view.
        * - `number`: The process writes to the file descriptor
        *
        * At indices >= 3, `"socket-fd"` (POSIX only) is also accepted:
@@ -8166,7 +8166,7 @@ declare module "bun" {
        * - `"pipe"`, `undefined`: The process has a {@link ReadableStream} for standard output/error
        * - `"ignore"`, `null`: The process has no standard output/error
        * - `"inherit"`: The process inherits the standard output/error of the current process
-       * - `ArrayBufferView`: The process writes to the preallocated buffer. Not implemented.
+       * - `ArrayBufferView`: Not implemented. Bun throws a `TypeError` for a non-empty view.
        * - `number`: The process writes to the file descriptor
        *
        * @default "pipe"
@@ -8178,7 +8178,7 @@ declare module "bun" {
        * - `"pipe"`, `undefined`: The process has a {@link ReadableStream} for standard output/error
        * - `"ignore"`, `null`: The process has no standard output/error
        * - `"inherit"`: The process inherits the standard output/error of the current process
-       * - `ArrayBufferView`: The process writes to the preallocated buffer. Not implemented.
+       * - `ArrayBufferView`: Not implemented. Bun throws a `TypeError` for a non-empty view.
        * - `number`: The process writes to the file descriptor
        *
        * @default "inherit" for `spawn`

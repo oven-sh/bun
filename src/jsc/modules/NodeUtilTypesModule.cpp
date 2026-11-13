@@ -267,24 +267,11 @@ static bool partialBufferContentsEquiv(JSC::JSGlobalObject* globalObject, JSC::T
 extern "C" bool JSC__JSValue__strictDeepEquals(JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::JSGlobalObject*);
 
 // assert.partialDeepStrictEqual (node's kPartial mode), fully native. `expected` must be
-// recursively contained in `actual`.
-// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/comparisons.js
+// recursively contained in `actual`; a cycle is decided by a second run under node's memos (compareAgain).
+// https://github.com/nodejs/node/blob/main/lib/internal/util/comparisons.js
 namespace PartialDeepEqual {
 
-// Cycles. node compares with no cycle check. When that run throws, a stack overflow included, it compares again under
-// handleCycles, and keeps handleCycles for every later comparison of the realm (detectCycles). So node has two
-// answers for some pairs, by what ran before. A cycle on one side only is the common case: the first run goes on, as
-// node's documentation of partialDeepStrictEqual says, and handleCycles answers false.
-// Here nothing outlives a call: every call answers as the first comparison of a realm. A run without memos gives no
-// cycle verdict. It gives up where a pair is inside its own comparison, or where its stack ends, and compareAgain
-// decides how to go on. What is not node's:
-// - An earlier comparison changes nothing. node's test of the other answer ("GH-14441" in test-assert-deep.js) holds
-//   in node only after earlier tests of its file have thrown.
-// - A run that throws from operand code is not repeated.
-// - The first run of node ends where the stack of node ends. See stackEndOfFirstRun and compareAgain.
-// - Set members and Map keys are paired in bun's order (setSubset, mapSubset). A key that both Maps hold is found by
-//   lookup. Under handleCycles node compares it with itself as two objects.
-// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/comparisons.js#L1061-L1070
+// The state of handleCycles: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/comparisons.js#L536-L591
 struct Memos {
     explicit Memos(JSC::MarkedArgumentBuffer& kept)
         : kept(kept)
@@ -319,9 +306,7 @@ enum class End : uint8_t {
     NoStack,
 };
 
-// Operand code (a getter, a Proxy trap) gets a RangeError from JSC at the soft limit. The first run ends above it,
-// so that a comparison that cannot end gets node's answer and not that error. Which run answers depends on this
-// number.
+// Above the soft limit, where operand code gets a RangeError: a comparison that cannot end must give up before that.
 static void* stackEndOfFirstRun(JSC::VM& vm)
 {
 #if ASAN_ENABLED
@@ -339,8 +324,7 @@ struct CycleState {
         open.fill(vm, 16, [](JSValue*) {});
     }
 
-    // A run without memos: the pairs that are being compared, `actual` before `expected`, in the first `openValues`
-    // slots of `open`.
+    // The pairs under comparison in a run without memos: `actual`, then `expected`, in the first `openValues` slots.
     JSC::MarkedVector<JSValue, 16> open;
     size_t openValues { 0 };
     // The run has no stack below this address: it throws there, or it gives up (`ended`).
@@ -374,12 +358,10 @@ static Comparison* bodyOf(Arm arm)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A run without memos that has fewer open pairs than this where its stack ends was called with little stack left:
-// the caller is deep, not the comparison.
+// Fewer open pairs than this where the stack of a run ends: the caller is deep, not the comparison.
 static constexpr size_t pairsOfADeepComparison = 32;
 
-// The stack of a run has ended. True when the run ends here as well: it has given up, or it has thrown. A run whose
-// caller is deep compares on as far as it is safe.
+// Out of line, like the other helpers here: their locals stay out of the frames that are under every nested pair.
 static NEVER_INLINE bool endsAtStackEnd(JSC::JSGlobalObject* globalObject, CycleState& cycles, JSC::ThrowScope& scope)
 {
     const bool calledDeep = !cycles.memos && cycles.openValues < 2 * pairsOfADeepComparison;
@@ -395,9 +377,7 @@ static NEVER_INLINE bool endsAtStackEnd(JSC::JSGlobalObject* globalObject, Cycle
     return true;
 }
 
-// node's keyCheck answers true for an `expected` with no key, element or entry before it looks at its memos. The
-// caller has counted the elements of an array.
-// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/comparisons.js#L523-L528
+// node's keyCheck: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/comparisons.js#L523-L528
 static bool hasNoKeyOrEntry(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* expected, Arm arm)
 {
     if (arm == Arm::Map && uncheckedDowncast<JSC::JSMap>(expected)->size())
@@ -438,16 +418,13 @@ static bool hasNoKeyOrEntry(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& 
     return !names.size();
 }
 
-// node's handleCycles up to its call of objEquiv, behind the answers that node gives ahead of it: an answer, or
-// nothing when the pair is to be compared. Not inline: its locals stay out of the stack of each nested pair.
-// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/comparisons.js#L536-L583
+// handleCycles up to objEquiv: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/comparisons.js#L536-L583
 static NEVER_INLINE std::optional<bool> enterMemos(JSC::JSGlobalObject* globalObject, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected, Arm arm)
 {
     Memos& memos = *cycles.memos;
     JSC::JSCell* actualCell = actual.asCell();
     JSC::JSCell* expectedCell = expected.asCell();
-    // After a run that ended on its stack, the memos answer only for a pair that the other run went below. They end
-    // a comparison that cannot end. They do not take over one that is only deep.
+    // Memos that get as deep as the run whose stack ended have not ended a cycle: that comparison is only deep.
     if (cycles.nestedPairs + 1 >= cycles.pairsWhereStackEnded) [[unlikely]] {
         cycles.ended = End::NoStack;
         return false;
@@ -478,9 +455,7 @@ static NEVER_INLINE std::optional<bool> enterMemos(JSC::JSGlobalObject* globalOb
     else
         next = memos.b == expectedCell ? Next::AnswerFalse : Next::Remember;
 
-    // node answers ahead of handleCycles for an `expected` array that is longer than `actual` (false), and for an
-    // `expected` with nothing to compare (true). Where handleCycles only remembers the pair, the comparison gives both
-    // answers itself and leaveMemos takes the pair out again. Where handleCycles answers true, the second is the same.
+    // Answers that node gives ahead of handleCycles (L293-L298, L523-L528); a remembered pair gets them from its comparison.
     if (next != Next::Remember) {
         bool hasElements = false;
         if (arm == Arm::Array) {
@@ -521,17 +496,13 @@ static NEVER_INLINE std::optional<bool> enterMemos(JSC::JSGlobalObject* globalOb
     const bool expectedIsNew = memos.set.add(expectedCell).isNewEntry;
     if (actualIsNew && expectedIsNew)
         return std::nullopt;
-    // node leaves the one that was new in its Set (L578-L583), and so a later pair can meet it there. It can be a
-    // getter's new object that nothing else holds: its address must not become another object's while the Set has it.
+    // node leaves the new one in its Set (L578-L583). Rooted, so that its address cannot become another object's.
     if (actualIsNew != expectedIsNew)
         memos.kept.append(actualIsNew ? actual : expected);
     return !actualIsNew && !expectedIsNew;
 }
 
-// What handleCycles does once objEquiv has answered for a pair. Without a Set, the pair is the one that set `deep`,
-// or the first pair of all. `deep` is not read once there is a Set. For the first pair of all nothing is left to do,
-// and what this does then has no effect.
-// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/comparisons.js#L561-L588
+// handleCycles after objEquiv: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/comparisons.js#L561-L588
 static NEVER_INLINE void leaveMemos(CycleState& cycles, JSC::JSCell* actualCell, JSC::JSCell* expectedCell)
 {
     Memos& memos = *cycles.memos;
@@ -555,8 +526,6 @@ static NEVER_INLINE bool withMemos(JSC::JSGlobalObject* globalObject, JSC::Marke
 
 static bool withOpenPair(JSC::JSGlobalObject*, JSC::MarkedArgumentBuffer&, CycleState&, JSC::ThrowScope&, JSValue actual, JSValue expected, Arm);
 
-// `open` has no slot left: twice as many, then the pair again. Not inline, and withOpenPair comes back to it with a
-// jump, so that what the calls here keep in a frame is not under the nested pairs.
 static NEVER_INLINE bool withOpenPairInMoreSlots(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected, Arm arm)
 {
     for (size_t more = cycles.open.size(); more; more--)
@@ -564,8 +533,7 @@ static NEVER_INLINE bool withOpenPairInMoreSlots(JSC::JSGlobalObject* globalObje
     return withOpenPair(globalObject, gcBuffer, cycles, scope, actual, expected, arm);
 }
 
-// A run without memos gives up at a pair inside its own comparison: that comparison cannot end. It has no other
-// verdict: one side alone that comes back says nothing about a pair that was never compared.
+// No cycle verdict: the run gives up where a pair is inside its own comparison, and compareAgain goes on from there.
 static NEVER_INLINE bool withOpenPair(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected, Arm arm)
 {
     const auto slots = cycles.open.mutableSpan();
@@ -652,15 +620,13 @@ static bool nonIndexObjectSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedA
     return true;
 }
 
-// An object whose structure holds no property has no own named key: nothing to compare for it, and no operand code
-// to run.
+// No own named key: nothing to compare, and no operand code to run.
 static ALWAYS_INLINE bool structureHasNoProperty(JSC::Structure* structure)
 {
     return structure->maxOffset() == JSC::invalidOffset && !structure->hasNonReifiedStaticProperties();
 }
 
-// Expected's own enumerable non-index properties, then expected's elements as a subsequence of actual's, in order
-// with gaps. The order is node's (objEquiv): where a comparison ends, and so which run answers, depends on it.
+// Expected's own non-index keys first, as in node's objEquiv, then its elements as a subsequence of actual's, with gaps.
 static bool arraySubsequence(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
 {
     JSC::JSObject* actualObject = actual.getObject();
@@ -889,10 +855,7 @@ static bool setSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
     return true;
 }
 
-// node's isEnumerableOrIdentical for kPartial, up to its comparison of the two values: false when it compares none.
-// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/comparisons.js#L231-L235
-// Not inline: what it reads with stays out of the frame of errorFieldsEqual, which is under every Error that a field
-// holds.
+// node's isEnumerableOrIdentical: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/comparisons.js#L231-L235
 static NEVER_INLINE bool errorFieldToCompare(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* actualObject, JSC::JSObject* expectedObject, const JSC::Identifier& key, JSValue& actualValue, JSValue& expectedValue)
 {
     JSC::PropertySlot expectedSlot(expectedObject, JSC::PropertySlot::InternalMethodType::Get);
@@ -914,8 +877,7 @@ static NEVER_INLINE bool errorFieldToCompare(JSC::JSGlobalObject* globalObject, 
     return true;
 }
 
-// An own `cause` of `expected`, even an undefined one, must be an own property of `actual` as well. Not inline: its
-// locals stay out of the frame of errorFieldsEqual, which is under every Error that a field holds.
+// An own `cause` of `expected`, even an undefined one, must be an own property of `actual` as well.
 static NEVER_INLINE bool ownCauseIsOnBoth(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* actualObject, JSC::JSObject* expectedObject)
 {
     auto& vm = globalObject->vm();
@@ -927,16 +889,13 @@ static NEVER_INLINE bool ownCauseIsOnBoth(JSC::JSGlobalObject* globalObject, JSC
 }
 
 // node's Error arm for kPartial: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/comparisons.js#L391-L404
-// It comes ahead of keyCheck, so the pair of Errors is not under the cycle guard yet. A cycle through these four
-// alone, on both sides, ends in a RangeError, as in node.
 static bool errorFieldsEqual(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
 {
     auto& vm = globalObject->vm();
     JSC::JSObject* actualObject = actual.getObject();
     JSC::JSObject* expectedObject = expected.getObject();
 
-    // node makes its memos at the first pair that reaches handleCycles, for what is below that pair. Until then each
-    // of the four has memos of its own.
+    // node has no memos until a pair reaches handleCycles: until then each of the four fields gets memos of its own.
     const bool memosOfItsOwn = cycles.memos && !cycles.memos->a;
     const JSC::Identifier* const keys[] = { &vm.propertyNames->message, &vm.propertyNames->name, &vm.propertyNames->cause, &vm.propertyNames->errors };
     for (const auto* key : keys) {
@@ -969,15 +928,13 @@ static JSC::JSWrapperObject* asBoxedPrimitive(JSValue value)
     return nullptr;
 }
 
-// A Map or a Set with no own property of any kind.
 static ALWAYS_INLINE bool collectionHasNoOwnProperty(JSValue collection)
 {
     JSC::Structure* structure = collection.asCell()->structure();
     return structureHasNoProperty(structure) && !JSC::hasIndexedProperties(structure->indexingType()) && !structure->typeInfo().overridesAnyFormOfGetOwnPropertyNames();
 }
 
-// Own enumerable properties on the Map/Set object itself first, then the container contents — node's partial mode
-// checks both (subset semantics), like every other container arm, and in this order (objEquiv).
+// Own enumerable properties of the Map/Set object first, as in node's objEquiv, then its contents: both as subsets.
 static bool mapSubsetAndProps(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
 {
     if (!collectionHasNoOwnProperty(expected)) [[unlikely]] {
@@ -1218,14 +1175,12 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
     return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, Arm::Keys);
 }
 
-// A first run has given up.
+// node's detectCycles (L1061-L1070), per call: node keeps handleCycles on for the realm after a throw, bun does not.
 static NEVER_INLINE bool compareAgain(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
 {
     auto& vm = globalObject->vm();
     if (cycles.ended == End::NoStack) {
-        // No pair came again in the stack that the run had. The comparison cannot end in another way (a new object
-        // for each read, rings that meet late), or it is only deep. The memos end the first kind early
-        // (pairsWhereStackEnded keeps them from the end of the second kind).
+        // The memos end a comparison that cannot end. pairsWhereStackEnded keeps them from one that is only deep.
         cycles.ended = End::None;
         cycles.memos.emplace(gcBuffer);
         bool result = compareBranch(globalObject, gcBuffer, cycles, scope, actual, expected);

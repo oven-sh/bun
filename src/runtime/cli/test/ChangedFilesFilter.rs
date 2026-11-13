@@ -125,14 +125,10 @@ pub(crate) fn filter<'a>(
     // transpiler because BundleV2.init takes ownership of the allocator and
     // log, and we want the runtime transpiler left untouched for actually
     // executing tests afterward.
-    //
-    // `BundleV2::scan_module_graph_from_cli` takes
-    // `&'a mut Transpiler<'a>` (invariant), so the arena, log, and transpiler
-    // are process-lifetime. Route through the shared CLI arena.
     let arena: &'static Arena = crate::cli::cli_arena();
     let log: &'static mut bun_ast::Log = arena.alloc(bun_ast::Log::new());
 
-    let scan_transpiler: &'static mut Transpiler<'static> = arena.alloc(
+    let mut scan_transpiler =
         match Transpiler::init(arena, log, ctx.args.clone(), Some(vm.transpiler.get().env)) {
             Ok(t) => t,
             Err(err) => {
@@ -142,8 +138,7 @@ pub(crate) fn filter<'a>(
                 );
                 Global::exit(1);
             }
-        },
-    );
+        };
     scan_transpiler.options.target = bun_ast::Target::Bun;
     // Do not follow bare specifiers into node_modules; changes there are not
     // considered local edits.
@@ -167,7 +162,7 @@ pub(crate) fn filter<'a>(
     let event_loop = bun_event_loop::AnyEventLoop::init();
 
     let bundle = match BundleV2::scan_module_graph_from_cli(
-        scan_transpiler,
+        &mut scan_transpiler,
         arena,
         Some(core::ptr::NonNull::from(&event_loop)),
         &entry_points,
@@ -299,15 +294,8 @@ pub(crate) fn filter<'a>(
     // `to_ast()` materializes `Vec<Symbol>` / `Vec<Part>` / `Vec<ImportRecord>` on the
     // global heap and the slab-only `MultiArrayList` drop never frees them, so
     // release the graph columns and the bundler-owned worker pool now that
-    // everything needed has been copied out above. The scan transpiler itself
-    // is in the CLI arena (the `&'a mut Transpiler<'a>` invariant forces a
-    // `'static` borrow), so its Drop never runs either; free its heap-backed
-    // options through the borrow `bundle` held.
-    let scan_transpiler = &raw mut *bundle.transpiler;
+    // everything needed has been copied out above.
     drop(bundle);
-    // SAFETY: the arena-backed `&'static mut` noted above — its `Drop` never
-    // runs, so `deinit` cannot lead to a double-drop.
-    unsafe { (*scan_transpiler).deinit() };
 
     Ok(Result {
         test_files: &mut test_files[0..write],

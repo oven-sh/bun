@@ -201,7 +201,7 @@ pub(crate) struct QuicEndpoint {
     socket: Cell<Option<*mut uws::udp::Socket>>,
     bind_config: JsCell<BindConfig>,
     local_addr: Cell<StoredAddr>,
-    poll_ref: JsCell<KeepAlive>,
+    poll_ref: KeepAlive,
     this_value: JsCell<JsRef>,
 
     /// Both can coexist on one endpoint — Node allows that.
@@ -1187,7 +1187,7 @@ impl QuicEndpoint {
             socket: Cell::new(None),
             bind_config: JsCell::new(bind_config),
             local_addr: Cell::new(StoredAddr::default()),
-            poll_ref: JsCell::new(KeepAlive::init()),
+            poll_ref: KeepAlive::init(),
             this_value: JsCell::new(JsRef::empty()),
             server_engine: Cell::new(null_mut()),
             client_engine: Cell::new(null_mut()),
@@ -1404,8 +1404,11 @@ impl QuicEndpoint {
         let listening = self.with_state(|s| s.listening) != 0;
         let busy = listening || !self.sessions.get().is_empty();
         let ctx = bun_io::js_vm_ctx();
-        self.poll_ref
-            .with_mut(|p| if busy { p.ref_(ctx) } else { p.unref(ctx) });
+        if busy {
+            self.poll_ref.ref_(ctx);
+        } else {
+            self.poll_ref.unref(ctx);
+        }
     }
 
     fn process(&self, global: &JSGlobalObject) {
@@ -2078,7 +2081,7 @@ impl QuicEndpoint {
             return;
         }
         // Defer onEndpointClose to the next turn (Node closes asynchronously).
-        self.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+        self.poll_ref.ref_(bun_io::js_vm_ctx());
         self.pending_endpoint_close.set(true);
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1);
         timer_all().update(&raw const self.event_loop_timer, &next);
@@ -2127,7 +2130,7 @@ impl QuicEndpoint {
     }
 
     fn deliver_endpoint_close(&self, global: &JSGlobalObject, context: u8, status: c_int) {
-        self.poll_ref.with_mut(|p| p.disable());
+        self.poll_ref.disable();
         if let Some(callback) = callbacks::get(global, "onEndpointClose") {
             let vm = global.bun_vm();
             vm.event_loop().run_callback(
@@ -2521,7 +2524,7 @@ impl QuicEndpoint {
     pub(crate) fn release_socket(&self, _: &mut JsScope<'_>) {
         self.pending_endpoint_close.set(false);
         self.teardown();
-        self.poll_ref.with_mut(|p| p.disable());
+        self.poll_ref.disable();
     }
 
     pub(crate) fn address(&self, cx: &mut JsScope<'_>) -> JSValue {

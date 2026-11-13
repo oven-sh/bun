@@ -285,7 +285,7 @@ pub(crate) struct Interpreter {
     pub(crate) root_shell: JsCell<ShellExecEnv>,
     pub args: JsCell<Box<ShellArgs>>,
 
-    pub(crate) keep_alive: JsCell<bun_io::KeepAlive>,
+    pub(crate) keep_alive: bun_io::KeepAlive,
     /// The `Bun.ModuleGraph` context whose script started this (`run_from_js`), if any. Every
     /// child the script spawns belongs to it, and once it stops the script runs no further.
     pub(crate) context: Cell<Option<bun_jsc::ContextId>>,
@@ -547,7 +547,7 @@ impl Interpreter {
                 stdout: crate::shell::io::OutKind::Pipe,
                 stderr: crate::shell::io::OutKind::Pipe,
             }),
-            keep_alive: JsCell::new(bun_io::KeepAlive::default()),
+            keep_alive: bun_io::KeepAlive::default(),
             context: Cell::new(None),
             async_commands_executing: Cell::new(0),
             global_this: Cell::new(core::ptr::null_mut()),
@@ -1207,7 +1207,7 @@ impl Interpreter {
             if let Some(this_jsvalue) = this_value.try_get() {
                 if self.failed() {
                     // The trampoline that ran `fail` rejects the promise.
-                    self.keep_alive.with_mut(|k| k.disable());
+                    self.keep_alive.disable();
                     self.release_root();
                 } else if let Some(resolve) = js::resolve_get_cached(this_jsvalue) {
                     let loop_ = self.event_loop;
@@ -1219,7 +1219,7 @@ impl Interpreter {
                     let buffers = self
                         .get_buffered_stdout(global_this)
                         .and_then(|out| Ok((out, self.get_buffered_stderr(global_this)?)));
-                    self.keep_alive.with_mut(|k| k.disable());
+                    self.keep_alive.disable();
                     self.release_root();
                     let _entered = loop_.entered();
                     // The shell state machine (`Yield`) has no exception channel,
@@ -1536,7 +1536,7 @@ impl Drop for Interpreter {
         }
 
         let event_loop_ctx = self.event_loop.as_event_loop_ctx();
-        self.keep_alive.with_mut(|k| k.unref(event_loop_ctx));
+        self.keep_alive.unref(event_loop_ctx);
     }
 }
 
@@ -2549,7 +2549,7 @@ pub(crate) struct ShellTask {
 impl ShellTask {
     /// A queued completion that will never run (`Taskable::release_unrun`):
     /// drop the keep-alive `schedule` took, as `run_from_main_thread` would have.
-    pub(crate) fn unref_unrun(&mut self) {
+    pub(crate) fn unref_unrun(&self) {
         self.keep_alive.unref(self.event_loop.as_event_loop_ctx());
     }
 
@@ -2807,9 +2807,7 @@ pub(crate) fn create_shell_interpreter<'a>(
     // SAFETY: the payload of `this_value`.
     let interp = unsafe { this_value.payload_ptr().as_ref() };
     interp.this_value.set(JsRef::init_weak(js_value));
-    interp
-        .keep_alive
-        .with_mut(|k| k.ref_(global.bun_vm().loop_ctx()));
+    interp.keep_alive.ref_(global.bun_vm().loop_ctx());
     bun_analytics::features::shell.fetch_add(1, Ordering::Relaxed);
     Ok(this_value)
 }

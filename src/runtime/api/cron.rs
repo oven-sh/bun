@@ -72,7 +72,7 @@ trait CronJobBase: Sized + bun_ptr::AnyRefCounted {
     fn owner(&self) -> &Cell<Option<RefPtr<Self>>>;
     fn promise(&self) -> &JsCell<jsc::JSPromiseStrong>;
     fn global(&self) -> GlobalRef;
-    fn poll(&self) -> &JsCell<KeepAlive>;
+    fn poll(&self) -> &KeepAlive;
     fn remaining_fds(&self) -> &Cell<i8>;
     fn err_msg(&self) -> &JsCell<Option<Vec<u8>>>;
     fn has_called_process_exit(&self) -> &Cell<bool>;
@@ -127,7 +127,7 @@ trait CronJobBase: Sized + bun_ptr::AnyRefCounted {
     /// enter/exit scope. Callers return without touching `this` again.
     fn finish(this: ThisPtr<Self>) {
         let owner = this.owner().take().expect("cron job finished twice");
-        this.poll().with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+        this.poll().unref(bun_io::js_vm_ctx());
         let global = this.global();
         let ev = VirtualMachine::get().event_loop();
         ev.enter();
@@ -225,7 +225,7 @@ struct CronRegisterJob {
     promise: JsCell<jsc::JSPromiseStrong>,
     // LIFETIMES.tsv: JSC_BORROW → GlobalRef
     global: GlobalRef,
-    poll: JsCell<KeepAlive>,
+    poll: KeepAlive,
 
     bun_exe: &'static ZStr,
     abs_path: ZString,
@@ -303,7 +303,7 @@ impl CronJobBase for CronRegisterJob {
     fn global(&self) -> GlobalRef {
         self.global
     }
-    fn poll(&self) -> &JsCell<KeepAlive> {
+    fn poll(&self) -> &KeepAlive {
         &self.poll
     }
     fn remaining_fds(&self) -> &Cell<i8> {
@@ -793,7 +793,7 @@ pub(crate) fn register_os_job(
         owner: Cell::new(None),
         promise: JsCell::new(jsc::JSPromiseStrong::init(global)),
         global: GlobalRef::from(global),
-        poll: JsCell::new(KeepAlive::default()),
+        poll: KeepAlive::default(),
         bun_exe,
         abs_path,
         schedule: ZString::from_bytes(normalized_schedule),
@@ -812,7 +812,7 @@ pub(crate) fn register_os_job(
         tmp_path: JsCell::new(None),
         event_loop_handle: EventLoopHandle::init(VirtualMachine::get().event_loop_ptr()),
     });
-    job.poll.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+    job.poll.ref_(bun_io::js_vm_ctx());
     let promise_value = job.promise.get().value();
     let this = job.this_ptr();
     this.owner.set(Some(job));
@@ -940,7 +940,7 @@ struct CronRemoveJob {
     promise: JsCell<jsc::JSPromiseStrong>,
     // LIFETIMES.tsv: JSC_BORROW → GlobalRef
     global: GlobalRef,
-    poll: JsCell<KeepAlive>,
+    poll: KeepAlive,
     title: ZString,
 
     state: Cell<RemoveState>,
@@ -1006,7 +1006,7 @@ impl CronJobBase for CronRemoveJob {
     fn global(&self) -> GlobalRef {
         self.global
     }
-    fn poll(&self) -> &JsCell<KeepAlive> {
+    fn poll(&self) -> &KeepAlive {
         &self.poll
     }
     fn remaining_fds(&self) -> &Cell<i8> {
@@ -1236,7 +1236,7 @@ pub(crate) fn remove(cx: &mut JsScope<'_>, title: &[u8]) -> JsResult<JSValue> {
         owner: Cell::new(None),
         promise: JsCell::new(jsc::JSPromiseStrong::init(global)),
         global: GlobalRef::from(global),
-        poll: JsCell::new(KeepAlive::default()),
+        poll: KeepAlive::default(),
         title: ZString::from_bytes(title),
         state: Cell::new(RemoveState::ReadingCrontab),
         process: JsCell::new(None),
@@ -1250,7 +1250,7 @@ pub(crate) fn remove(cx: &mut JsScope<'_>, title: &[u8]) -> JsResult<JSValue> {
         tmp_path: JsCell::new(None),
         event_loop_handle: EventLoopHandle::init(VirtualMachine::get().event_loop_ptr()),
     });
-    job.poll.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+    job.poll.ref_(bun_io::js_vm_ctx());
     let promise_value = job.promise.get().value();
     let this = job.this_ptr();
     this.owner.set(Some(job));
@@ -1320,7 +1320,7 @@ pub(crate) struct CronJob {
     parsed: CronExpression,
     // Read-only after construction.
     tz: CronTz,
-    poll_ref: JsCell<KeepAlive>,
+    poll_ref: KeepAlive,
     this_value: JsCell<JsRef>,
     stopped: Cell<bool>,
     /// Last computed wall-clock fire target (ms epoch); floors the next search
@@ -1429,7 +1429,7 @@ impl CronJob {
         if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
             timer_all().remove(&self.event_loop_timer);
         }
-        self.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+        self.poll_ref.unref(bun_io::js_vm_ctx());
         self.abort_handle.leave();
         self.maybe_downgrade();
     }
@@ -1477,7 +1477,7 @@ impl CronJob {
         // and clearAllForVM(.teardown) can take the tick's claim back.
         if this.in_fire.get() || !this.tick_cell.get().is_empty() {
             this.stopped.set(true);
-            this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+            this.poll_ref.unref(bun_io::js_vm_ctx());
             return;
         }
         this.stop_internal(vm);
@@ -1670,13 +1670,13 @@ impl CronJob {
 
     pub(crate) fn r#ref<'a>(&self, this_value: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
         if !self.stopped.get() {
-            self.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+            self.poll_ref.ref_(bun_io::js_vm_ctx());
         }
         this_value
     }
 
     pub(crate) fn unref<'a>(&self, this_value: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
-        self.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+        self.poll_ref.unref(bun_io::js_vm_ctx());
         this_value
     }
 
@@ -1709,7 +1709,7 @@ impl CronJob {
             global: GlobalRef::from(global),
             parsed,
             tz,
-            poll_ref: JsCell::new(KeepAlive::default()),
+            poll_ref: KeepAlive::default(),
             this_value: JsCell::new(JsRef::empty()),
             stopped: Cell::new(false),
             last_next_ms: Cell::new(0.0),
@@ -1747,7 +1747,7 @@ impl CronJob {
             handler.to_js().with_async_context_if_needed(global),
         );
 
-        job.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+        job.poll_ref.ref_(bun_io::js_vm_ctx());
         // SAFETY: heap-allocated (`RefPtr`); `stop_internal` leaves the context before the job is released.
         unsafe { bun_jsc::AbortHandle::arm_owner(job.as_ptr(), cx.context()) };
         timer_all().update(&raw const job.event_loop_timer, &next_time);

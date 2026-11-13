@@ -8770,7 +8770,8 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * global
     Zig::listModuleMocks(global, mocks);
     for (size_t i = 0; i < mocks.size(); ++i) {
         auto* mock = uncheckedDowncast<Zig::JSModuleMock>(mocks.at(i));
-        auto loaded = Zig::findLoadedModule(global, mock->importKey.get());
+        // A mock that has lost its import path to a later one serves no load in flight under it.
+        auto loaded = Zig::findLoadedModule(global, mock);
         RETURN_IF_EXCEPTION(scope, {});
         Zig::keepModuleMockOfLoadInFlight(global, mock, mock->importKey->tryGetValue().data, loaded);
     }

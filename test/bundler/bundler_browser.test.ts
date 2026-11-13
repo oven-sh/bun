@@ -101,6 +101,57 @@ describe("bundler", () => {
       api.expectFile("out.js").not.toInclude("import ");
     },
   });
+  // The polyfill sources have `/* @__PURE__ */` marks, so that a bundle drops the parts of a polyfill that it does
+  // not use. The marks must still be there after src/node-fallbacks/build-fallbacks.ts has built the polyfills.
+  for (const minify of [false, true]) {
+    const minifyOptions = { minifySyntax: minify, minifyWhitespace: minify, minifyIdentifiers: minify };
+    itBundled(`browser/NodePolyfillDropsUnusedParts${minify ? "Minified" : ""}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { inherits } from "node:util";
+          import { join } from "node:path";
+          import { isIPv4 } from "node:net";
+          function Base() {}
+          function Derived() {}
+          inherits(Derived, Base);
+          console.log(Derived.super_ === Base, join("a", "b"), isIPv4("127.0.0.1"));
+        `,
+      },
+      target: "browser",
+      ...minifyOptions,
+      run: {
+        stdout: "true a/b true",
+      },
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        for (const [unused, text] of [
+          ["util.inspect, which util.debuglog reaches", "nodejs.util.inspect.custom"],
+          ["util.promisify", "argument must be of type Function"],
+          ["path.posix", "_makeLong"],
+          ["the IPv6 pattern of net", "[0-9a-fA-F]{1,4}"],
+        ]) {
+          assert(!out.includes(text), `the bundle keeps ${unused}`);
+        }
+        assert(out.length < 6000, `the bundle keeps unused parts of the polyfills, got ${out.length} bytes`);
+      },
+    });
+    itBundled(`browser/NodeNetPolyfillDropsUnusedIPv4Pattern${minify ? "Minified" : ""}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { isIPv6 } from "node:net";
+          console.log(isIPv6("::1"));
+        `,
+      },
+      target: "browser",
+      ...minifyOptions,
+      run: {
+        stdout: "true",
+      },
+      onAfterBundle(api) {
+        assert(!api.readFile("/out.js").includes("^(?:(?:25[0-5]"), "the bundle keeps the IPv4 pattern of net");
+      },
+    });
+  }
   itBundled("browser/NodeTTY", {
     files: {
       "/entry.js": /* js */ `

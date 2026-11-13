@@ -8,6 +8,10 @@ const outdir = process.argv[2];
 const builtins = Module.builtinModules;
 let commands: Promise<void>[] = [];
 
+// `NAME = /* @__PURE__ */` before a call or `new`. A bundle drops an unused NAME only while the mark is there.
+const pureBinding = /([\w$]+)\s*=\s*\/\*\s*[@#]__PURE__\s*\*\/\s*(?:new\b|[\w$.]+\(|\((?!\)))/g;
+const pureBindings = (code: string) => new Set(Array.from(code.matchAll(pureBinding), match => match[1]));
+
 let moduleFiles: string[] = [];
 for (const name of allFiles) {
   const mod = basename(name, extname(name)).replaceAll(".", "/");
@@ -31,9 +35,13 @@ for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
     .flatMap(b => [`--external:node:${b}`, `--external:${b}`])
     .join(" ");
 
+  const source = fs.readFileSync(name, "utf8");
+  // `--minify-whitespace` prints no marks without this flag (#12808). A source without marks is built as before.
+  const keepMarks = source.includes("__PURE__") ? ["--emit-dce-annotations"] : [];
+
   // Create the build command with all the specified options
   const buildCommand =
-    Bun.$`bun build --define=process.env.NODE_DEBUG:"false" --define=process.env.READABLE_STREAM="'enable'" --define=global:globalThis --outdir=${outdir} ${name} --minify-syntax --minify-whitespace --format=${name.includes("stream") ? "cjs" : "esm"} --target=node ${{ raw: externalModules }}`.text();
+    Bun.$`bun build --define=process.env.NODE_DEBUG:"false" --define=process.env.READABLE_STREAM="'enable'" --define=global:globalThis --outdir=${outdir} ${name} --minify-syntax --minify-whitespace ${keepMarks} --format=${name.includes("stream") ? "cjs" : "esm"} --target=node ${{ raw: externalModules }}`.text();
 
   commands.push(
     buildCommand.then(async text => {
@@ -74,6 +82,19 @@ for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
         outfile.includes("$newPromiseCapability(")
       ) {
         throw new Error("Unsupported function in " + name);
+      }
+
+      // The build drops a marked binding that nothing uses. Only a binding that is still there needs its mark.
+      const built = pureBindings(outfile);
+      const words = new Set(outfile.match(/[\w$]+/g));
+      const lost = [...pureBindings(source)].filter(binding => words.has(binding) && !built.has(binding));
+      if (lost.length > 0) {
+        throw new Error(`The build removed /* @__PURE__ */ from ${lost.join(", ")} in ${name}`);
+      }
+
+      // Printer bugs (#45443): `a//*@__PURE__*/b()` starts a line comment, `()=>/*@__PURE__*/{}.b()` starts a block.
+      if (outfile.includes("//*@__PURE__") || outfile.includes("=>/*@__PURE__*/{")) {
+        throw new Error("A /* @__PURE__ */ mark breaks the code next to it in " + name);
       }
 
       fs.writeFileSync(`${outdir}/${name}`, outfile);

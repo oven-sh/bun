@@ -8,8 +8,8 @@ impl DevServer {
         entry_points: &mut EntryPointList,
         rbi: route_bundle::Index,
     ) -> crate::Result<()> {
-        let server_file_names = self.server_graph.bundled_files.keys();
-        let client_file_names = self.client_graph.bundled_files.keys();
+        let server_file_names = self.graphs.server.bundled_files.keys();
+        let client_file_names = self.graphs.client.bundled_files.keys();
 
         // Build a list of all files that have not yet been bundled.
         // Note: split borrow — `route_bundle_ptr`/`type_ptr` are `&mut self`;
@@ -50,8 +50,8 @@ impl DevServer {
                 }
                 // A router whose pages also run in the browser: the same files, in the client graph.
                 for path in self.client_page_files(bundle.route_index).iter() {
-                    let stale = match self.client_graph.get_file_index(path) {
-                        Some(index) => self.client_graph.stale_files.is_set(index.get() as usize),
+                    let stale = match self.graphs.client.get_file_index(path) {
+                        Some(index) => self.graphs.client.stale_files.is_set(index.get() as usize),
                         None => true,
                     };
                     if stale {
@@ -66,7 +66,7 @@ impl DevServer {
 
         if let Some(map) = &self.has_tailwind_plugin_hack {
             for abs_path in map.keys() {
-                let Some(file) = self.client_graph.bundled_files.get(abs_path) else {
+                let Some(file) = self.graphs.client.bundled_files.get(abs_path) else {
                     continue;
                 };
                 if file.kind == FileKind::Css {
@@ -111,9 +111,9 @@ impl DevServer {
             }};
         }
         match side {
-            bake::Graph::Client => check!(&self.client_graph, |_file| true),
+            bake::Graph::Client => check!(&self.graphs.client, |_file| true),
             // The server and SSR graphs share one record per file. Only a JS record tracks which graph bundled it.
-            bake::Graph::Server | bake::Graph::Ssr => check!(&self.server_graph, |file| {
+            bake::Graph::Server | bake::Graph::Ssr => check!(&self.graphs.server, |file| {
                 file.file_kind() != FileKind::Js
                     || if side == bake::Graph::Ssr {
                         file.is_ssr
@@ -141,11 +141,13 @@ impl DevServer {
         let file_index = from_opaque_file_id::<SIDE>(file);
         let stale = match SIDE {
             bake::Side::Server => self
-                .server_graph
+                .graphs
+                .server
                 .stale_files
                 .is_set(file_index.get() as usize),
             bake::Side::Client => self
-                .client_graph
+                .graphs
+                .client
                 .stale_files
                 .is_set(file_index.get() as usize),
         };
@@ -352,7 +354,7 @@ impl DevServer {
             agent.notify_bundle_start(self.inspector_server_id, &mut trigger_files);
         }
 
-        self.incremental_result.reset();
+        self.graphs.incremental_result.reset();
 
         // Ref server to keep it from closing.
         if let Some(server) = self.server.as_mut() {
@@ -410,8 +412,8 @@ impl DevServer {
 
         {
             self.graph_safety_lock.lock();
-            self.client_graph.reset();
-            self.server_graph.reset();
+            self.graphs.client.reset();
+            self.graphs.server.reset();
             self.graph_safety_lock.unlock();
         }
 
@@ -547,7 +549,10 @@ impl DevServer {
                             self.router.type_ptr_const(route.r#type).server_file
                         });
                         let file_index = from_opaque_file_id::<{ bake::Side::Server }>(file);
-                        self.server_graph.stale_files.set(file_index.get() as usize);
+                        self.graphs
+                            .server
+                            .stale_files
+                            .set(file_index.get() as usize);
                     }
                     self.append_route_entry_points_if_not_stale(
                         &mut entry_points,

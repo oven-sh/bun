@@ -37,7 +37,6 @@ bun_bundler::link_impl_DevServerHandle! {
         },
         track_resolution_failure(import_source, specifier, renderer, loader) => {
             (*this)
-                .directory_watchers
                 .track_resolution_failure(import_source, specifier, renderer, loader)
                 .map_err(Into::into)
         },
@@ -54,7 +53,7 @@ bun_bundler::link_impl_DevServerHandle! {
                 }
             })
         },
-        asset_hash(abs_path) => (*this).assets.get_hash(abs_path),
+        asset_hash(abs_path) => (*this).graphs.assets.get_hash(abs_path),
         current_bundle_start_data() => {
             (*this)
                 .current_bundle

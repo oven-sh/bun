@@ -1975,9 +1975,7 @@ impl FetchTasklet {
             is_waiting_abort: false,
             is_waiting_request_stream_start: false,
             mutex: Mutex::new(),
-            // SAFETY: jsc_vm derived from FFI ptr above; AsyncTaskTracker::init only
-            // bumps a counter on the VM.
-            tracker: AsyncTaskTracker::init(cx.vm().as_mut()),
+            tracker: AsyncTaskTracker::init(cx.vm()),
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
         });
 
@@ -1992,7 +1990,7 @@ impl FetchTasklet {
         // `clear_data() → request_body.detach()` releases it.
 
         let url = fetch_options.url;
-        let env = cx.vm().as_mut().transpiler.env_mut();
+        let env = cx.vm().transpiler.get().env_mut();
         // Capture the proxy env so the HTTP thread can re-resolve per redirect
         // hop (`HTTPClient::reevaluate_proxy_for_redirect`). `ProxySettings`
         // owns copies of the env values, so a later `process.env.HTTP_PROXY =

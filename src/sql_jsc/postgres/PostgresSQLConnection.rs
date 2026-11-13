@@ -864,13 +864,12 @@ pub(crate) fn create_connection<'a>(
     scram_password: &[u8],
 ) -> JsResult<JSValue> {
     let global_object = cx.global();
-    let vm = global_object.bun_vm().as_mut();
+    let vm = global_object.bun_vm();
     let port = port as i32;
     // The connection is the calling script's.
     let context = global_object.bun_vm().context_of_caller();
     let Some(args) = ConnectionCtorArgs::parse(
         global_object,
-        &mut *vm,
         hostname,
         ssl_mode,
         tls.to_js(),
@@ -1040,7 +1039,7 @@ impl CancelTarget {
 
 fn open(
     global_object: &JSGlobalObject,
-    group: &mut uws::SocketGroup,
+    group: &uws::SocketGroup,
     params: ConnectParams<'_>,
 ) -> Result<JSValue, uws::ConnectError> {
     let ConnectionStrings {
@@ -1071,9 +1070,7 @@ fn open(
             advancing: Cell::new(false),
             poll_ref: JsCell::new(KeepAlive::default()),
             global_object: BackRef::new(global_object),
-            vm: BackRef::from(
-                core::ptr::NonNull::new(VirtualMachine::get_mut_ptr()).expect("vm singleton"),
-            ),
+            vm: BackRef::new(VirtualMachine::get()),
             statements: JsCell::new(StatementCache::default()),
             prepared_statement_id: Cell::new(0),
             transaction_status: Cell::new(b'I'),

@@ -342,7 +342,7 @@ impl<'a> InternalState<'a> {
                         {
                             break 'libdeflate;
                         }
-                        let result = deflater.decompressor_mut().decompress_to_vec(
+                        let result = deflater.decompressor().decompress_to_vec(
                             buffer,
                             &mut self.decoded_body.list,
                             bun_libdeflate::Encoding::Gzip,
@@ -364,7 +364,7 @@ impl<'a> InternalState<'a> {
 
                 let decompressor = deflater
                     .decompressor
-                    .as_deref_mut()
+                    .as_deref()
                     .expect("set in HttpThread::deflater()");
                 let result = decompressor.decompress(buffer, &mut deflater.shared_buffer, format);
 

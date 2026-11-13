@@ -442,7 +442,7 @@ fn finalize_bundle_inner(
             code: compile_result_code,
             script_injection_offset: compile_result_offset,
             ..
-        } = chunk.compile_results_for_chunk.get_mut(0)
+        } = &mut chunk.compile_results_for_chunk[0]
         else {
             unreachable!()
         };

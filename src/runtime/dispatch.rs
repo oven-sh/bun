@@ -303,12 +303,16 @@ pub(crate) fn run_task(
             // SAFETY: tag identifies the pointee; the queue owns it until here.
             unsafe { crate::socket::fd_pipe::FdPipe::run_event(pipe) };
         }),
-        #[cfg(unix)]
         task_tag::PosixPipe => {
-            feature_arm!([Sockets], |pipe: crate::socket::posix_pipe::PosixPipe| {
-                // SAFETY: tag identifies the pointee; the queue owns it until here.
-                unsafe { crate::socket::posix_pipe::PosixPipe::run_event(pipe) };
-            })
+            #[cfg(unix)]
+            {
+                feature_arm!([Sockets], |pipe: crate::socket::posix_pipe::PosixPipe| {
+                    // SAFETY: tag identifies the pointee; the queue owns it until here.
+                    unsafe { crate::socket::posix_pipe::PosixPipe::run_event(pipe) };
+                })
+            }
+            #[cfg(not(unix))]
+            unreachable!("posix-only");
         }
         #[cfg(windows)]
         task_tag::WindowsNamedPipe => {
@@ -1691,7 +1695,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             #[cfg(unix)]
             release_in!([Sockets], crate::socket::posix_pipe::PosixPipe);
             #[cfg(not(unix))]
-            unreachable!("unix-only tag");
+            unreachable!("posix-only tag");
         }
         task_tag::FetchTasklet => release_in!([Fetch], FetchTasklet),
         task_tag::FetchTaskletDeinit => {

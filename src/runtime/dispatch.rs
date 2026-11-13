@@ -303,6 +303,13 @@ pub(crate) fn run_task(
             // SAFETY: tag identifies the pointee; the queue owns it until here.
             unsafe { crate::socket::fd_pipe::FdPipe::run_event(pipe) };
         }),
+        #[cfg(unix)]
+        task_tag::PosixPipe => {
+            feature_arm!([Sockets], |pipe: crate::socket::posix_pipe::PosixPipe| {
+                // SAFETY: tag identifies the pointee; the queue owns it until here.
+                unsafe { crate::socket::posix_pipe::PosixPipe::run_event(pipe) };
+            })
+        }
         #[cfg(windows)]
         task_tag::WindowsNamedPipe => {
             // SAFETY: tag identifies the pointee; the queue owns it until here.
@@ -891,7 +898,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 88,
+    task_tag::COUNT == 89,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1095,6 +1102,12 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
         poll_tag::TERMINAL_POLL => feature_poll_arm!([Terminal], TerminalPoll),
         bun_io::PollTag::FdPipe => {
             in_features!([Sockets], (pipe: *mut crate::socket::fd_pipe::FdPipe = owner.ptr.cast()) {
+                // SAFETY: tag matched, so `owner.ptr` is the live pipe that registered this poll.
+                unsafe { (*pipe).on_poll() }
+            })
+        }
+        bun_io::PollTag::PosixPipe => {
+            in_features!([Sockets], (pipe: *mut crate::socket::posix_pipe::PosixPipe = owner.ptr.cast()) {
                 // SAFETY: tag matched, so `owner.ptr` is the live pipe that registered this poll.
                 unsafe { (*pipe).on_poll() }
             })
@@ -1673,6 +1686,12 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::UpgradedDuplex => release_in!([Sockets], UpgradedDuplex),
         task_tag::FdPipe => {
             release_in!([Sockets], crate::socket::fd_pipe::FdPipe)
+        }
+        task_tag::PosixPipe => {
+            #[cfg(unix)]
+            release_in!([Sockets], crate::socket::posix_pipe::PosixPipe);
+            #[cfg(not(unix))]
+            unreachable!("unix-only tag");
         }
         task_tag::FetchTasklet => release_in!([Fetch], FetchTasklet),
         task_tag::FetchTaskletDeinit => {

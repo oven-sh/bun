@@ -348,7 +348,7 @@ impl DateHeaderTimer {
     /// reschedule for 1s later iff there are active connections.
     pub(crate) fn run(&self, vm: &VirtualMachine) {
         self.event_loop_timer.state.set(EventLoopTimerState::FIRED);
-        let loop_ = vm.uws_loop_ref();
+        let loop_ = vm.uws_loop();
         let now = Timespec::now(TimespecMockMode::ForceRealTime);
 
         // Record when we last ran it.

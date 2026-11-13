@@ -65,9 +65,7 @@ type Queue = LinearFifo<*mut AnyTaskWithExtraContext, DynamicBuffer<*mut AnyTask
 pub struct MiniEventLoop {
     pub(crate) tasks: Queue,
     pub(crate) concurrent_tasks: ConcurrentTaskQueue,
-    // Raw pointer because the loop is C-owned
-    // (created by `uws_get_loop`/`us_create_loop`) and outlives this struct.
-    pub loop_: *mut UwsLoop,
+    pub loop_: &'static UwsLoop,
     pub file_polls: Option<Box<FilePollStore>>,
     /// Mutable; callers (shell spawn,
     /// `createNullDelimitedEnvMap`) write through it. Stored as `NonNull`
@@ -131,19 +129,13 @@ pub fn init_global(
         }
     }
 
-    let uws_loop = global.loop_ptr();
+    let uws_loop = global.loop_;
     // §Forbidden bans `Box::leak` for `&'static`; this is a
     // thread-lifetime singleton, so use `heap::alloc` (intrusive ownership)
     // and store the raw pointer in the thread-local.
     let global_ptr: *mut MiniEventLoop = bun_core::heap::into_raw(Box::new(global));
 
-    // sys-level API is `set_parent_raw(tag, ptr)`. Tag 1 = JS,
-    // tag 2 = mini (`EventLoopHandle` discriminant + 1).
-    {
-        let (tag, ptr) = EventLoopHandle::init_mini(global_ptr).into_tag_ptr();
-        // SAFETY: see `loop_ptr()` invariant.
-        unsafe { (*uws_loop).internal_loop_data.set_parent_raw(tag, ptr) };
-    }
+    EventLoopHandle::init_mini(global_ptr).set_as_parent_of(uws_loop);
 
     GLOBAL.with(|g| g.set(global_ptr));
     GLOBAL_INITIALIZED.with(|g| g.set(true));
@@ -151,24 +143,6 @@ pub fn init_global(
 }
 
 impl MiniEventLoop {
-    /// Raw `*mut uws::Loop`.
-    ///
-    /// This is the sole accessor for the `loop_` field. A `&mut UwsLoop`-
-    /// returning accessor is intentionally **not** provided: `UwsLoop::tick()`
-    /// fires FilePoll callbacks which re-enter this struct via the
-    /// `EventLoopCtx` vtable (`platform_event_loop`) and via
-    /// `EventLoopHandle::Mini` (e.g. `enqueue_task_concurrent` → `wakeup()`),
-    /// so a held `&mut UwsLoop` across `.tick()` would alias. The loop is also
-    /// a C-owned handle whose internals are mutated by uSockets itself. All
-    /// access goes through the raw pointer instead.
-    ///
-    /// SAFETY (invariant): `self.loop_` is the live C-owned uws loop set in
-    /// [`init`](Self::init) via `UwsLoop::get()`; never null, outlives `self`.
-    #[inline]
-    pub fn loop_ptr(&self) -> *mut UwsLoop {
-        self.loop_
-    }
-
     /// Raw pointer to the `DotEnv::Loader` backref.
     ///
     /// Returns `None` until [`init_global`] populates it. Neither a `&`- nor
@@ -180,7 +154,7 @@ impl MiniEventLoop {
     /// Handing out a long-lived `&DotEnvLoader` here would let safe code hold
     /// it across one of those `&mut` paths → aliased `&`/`&mut` UB. Callers
     /// deref the returned `NonNull` for a tightly-scoped borrow under their
-    /// own SAFETY contract instead (mirrors [`loop_ptr`](Self::loop_ptr)).
+    /// own SAFETY contract instead.
     ///
     /// SAFETY (invariant): when `Some`, points to a thread-/process-lifetime
     /// loader set in `init_global` that outlives `self` (never freed).
@@ -290,12 +264,9 @@ impl MiniEventLoop {
     #[inline]
     pub fn tick_once(&mut self, context: *mut c_void) {
         if self.tick_concurrent_with_count() == 0 && self.tasks.readable_length() == 0 {
-            // SAFETY: see `loop_ptr()` invariant.
-            unsafe {
-                (*self.loop_ptr()).inc();
-                (*self.loop_ptr()).tick();
-                (*self.loop_ptr()).dec();
-            }
+            self.loop_.inc();
+            self.loop_.tick();
+            self.loop_.dec();
             self.on_after_event_loop();
         }
 
@@ -313,8 +284,7 @@ impl MiniEventLoop {
                 unsafe { (*task).run(context) };
             }
 
-            // SAFETY: see `loop_ptr()` invariant.
-            unsafe { (*self.loop_ptr()).tick_without_idle() };
+            self.loop_.tick_without_idle();
 
             if self.tasks.readable_length() == 0 && self.tick_concurrent_with_count() == 0 {
                 break;
@@ -338,8 +308,7 @@ impl MiniEventLoop {
     /// node stays with the caller until the callback runs.
     pub fn enqueue_task_concurrent(&self, task: NonNull<AnyTaskWithExtraContext>) {
         self.concurrent_tasks.push(task);
-        // SAFETY: see `loop_ptr()` invariant.
-        unsafe { (*self.loop_ptr()).wakeup() };
+        self.loop_.wakeup();
     }
 
     /// The caller supplies `field_offset = core::mem::offset_of!(C, <field>)` of the
@@ -364,8 +333,7 @@ impl MiniEventLoop {
         self.concurrent_tasks
             .push(unsafe { NonNull::new_unchecked(task) });
 
-        // SAFETY: see `loop_ptr()` invariant.
-        unsafe { (*self.loop_ptr()).wakeup() };
+        self.loop_.wakeup();
     }
 }
 
@@ -377,7 +345,7 @@ impl MiniEventLoop {
 
 bun_io::link_impl_EventLoopCtx! {
     Mini for MiniEventLoop => |this| {
-        platform_event_loop_ptr() => (*this).loop_ptr(),
+        loop_() => (*this).loop_,
         // `file_polls_raw` to avoid aliased `&mut MiniEventLoop` while `tick*`
         // holds `&mut self` across the re-entrant `UwsLoop::tick()` that
         // reaches this body.

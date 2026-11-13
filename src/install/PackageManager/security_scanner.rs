@@ -20,7 +20,7 @@ use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{
     DependencyID, PackageID, PackageManager, invalid_dependency_id, invalid_package_id,
 };
-use bun_io::Loop as AsyncLoop;
+use bun_io::LoopRef;
 #[cfg(unix)]
 use bun_io::pipe_reader::PosixFlags;
 use bun_io::{BufferedReader, ReadState};
@@ -1186,7 +1186,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         self.exit_status.is_some() && self.remaining_fds == 0
     }
 
-    pub(crate) fn loop_(&mut self) -> *mut AsyncLoop {
+    pub(crate) fn loop_(&mut self) -> LoopRef {
         self.manager.event_loop.native_loop()
     }
 

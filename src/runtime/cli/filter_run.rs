@@ -286,7 +286,7 @@ bun_spawn::link_impl_ProcessExit! {
 }
 
 impl<'a> ProcessHandle<'a> {
-    fn loop_(&self) -> *mut bun_io::Loop {
+    fn loop_(&self) -> bun_io::LoopRef {
         // SAFETY: state backref valid; event_loop is the live MiniEventLoop singleton.
         bun_io::uws_to_native(unsafe { (*self.state.event_loop).loop_ })
     }

@@ -931,8 +931,7 @@ fn ensure_debugger(vm: &VirtualMachine, block_until_connected: bool) {
 /// gates.
 fn auto_tick(vm: &VirtualMachine) {
     let el = vm.event_loop();
-    // SAFETY: nothing frees the uws loop during a tick.
-    let loop_ = unsafe { &*el.usockets_loop() };
+    let loop_ = el.usockets_loop();
 
     // ── tick_immediate_tasks ────────────────────────────────────────────
     // After this call `immediate_tasks` reflects next-tick immediates, so
@@ -1059,8 +1058,7 @@ fn run_pending_test_step(global: &JSGlobalObject) {
 /// hang shutdown.
 fn auto_tick_active(vm: &VirtualMachine) {
     let el = vm.event_loop();
-    // SAFETY: nothing frees the uws loop during a tick.
-    let loop_ = unsafe { &*el.usockets_loop() };
+    let loop_ = el.usockets_loop();
 
     el.tick_immediate_tasks();
     let has_yielded_tasks = el.promote_yield_tasks();

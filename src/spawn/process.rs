@@ -511,11 +511,10 @@ impl Process {
             // Borrow scoped to the call.
             unsafe { (*poll).enable_keeping_process_alive(ctx) };
 
-            // SAFETY: poll is live and `platform_event_loop` returns the live
-            // uws loop; both borrows are scoped to the `register` call.
+            // SAFETY: poll is live; borrow scoped to the call.
             match unsafe {
                 (*poll).register(
-                    &*self.event_loop.platform_event_loop(),
+                    self.event_loop.platform_event_loop(),
                     bun_io::PollKind::Process,
                     PROCESS_POLL_ONE_SHOT,
                 )
@@ -555,10 +554,8 @@ impl Process {
         }
 
         if let Some(fd) = self.poller.fd_poll_mut() {
-            // SAFETY: `platform_event_loop` returns the live uws loop; borrow
-            // scoped to the `register` call.
             let maybe = fd.register(
-                unsafe { &*self.event_loop.platform_event_loop() },
+                self.event_loop.platform_event_loop(),
                 bun_io::PollKind::Process,
                 PROCESS_POLL_ONE_SHOT,
             );
@@ -1940,15 +1937,9 @@ mod spawn_process_body {
         // SAFETY: argv is null-terminated, argv[0] is non-null
         uv_process_options.file = options.argv0.unwrap_or_else(|| unsafe { *argv });
         uv_process_options.exit_cb = Some(Process::on_exit_uv);
-        // `WindowsOptions::default()` leaves `loop_` zeroed (every
-        // `bun.spawnSync` call site sets it explicitly). A zeroed
-        // `EventLoopHandle` is discriminant 0 (`Js`) with a null inner pointer,
-        // so `platform_event_loop()` returns null and the deref below segfaults
-        // at the `.uv_loop` field offset. Catch that with a clear panic instead
-        // of an opaque exit-code-3. Release-build assert: this is the contract
-        // boundary, not a debug aid.
+        // `WindowsOptions::default()` leaves a null handle, which `uv_loop()` would dereference.
         assert!(
-            !options.windows.loop_.platform_event_loop().is_null(),
+            !matches!(options.windows.loop_, EventLoopHandle::Js { owner } if owner.owner.is_null()),
             "spawn_process_windows: WindowsSpawnOptions.windows.loop_ was not set. \
          WindowsOptions::default() leaves it zeroed (Zig spec: `= undefined`); \
          every caller must populate it — see src/CLAUDE.md §Spawning Subprocesses \
@@ -2786,7 +2777,6 @@ mod spawn_process_body {
             argv: *const *const c_char,
             envp: *const *const c_char,
         ) -> core::result::Result<Maybe<Result>, crate::Error> {
-            let loop_ = options.windows.loop_.platform_event_loop();
             // All stdio inherited: the child is the foreground program on our console.
             let _child = crate::ctrl_c::Child::enter();
             let mut spawned =
@@ -2795,6 +2785,7 @@ mod spawn_process_body {
                     Ok(proces) => proces,
                 };
 
+            let loop_ = options.windows.loop_.platform_event_loop();
             // Sole owner during sync spawn; detached and released on return,
             // by which time the loop has drained and no uv callback holds a
             // competing `&mut Process`.
@@ -2808,9 +2799,7 @@ mod spawn_process_body {
             // SAFETY: read-only field access between uv ticks; the uv exit
             // callback's `&mut Process` does not overlap this `&Process`.
             while !unsafe { (*process).has_exited() } {
-                // SAFETY: `loop_` is the live `uws::WindowsLoop*` from
-                // `EventLoopHandle::platform_event_loop`.
-                unsafe { (*loop_).run() };
+                loop_.run();
             }
 
             Ok(Ok(Result {
@@ -2905,8 +2894,7 @@ mod spawn_process_body {
             // SAFETY: read-only field access between uv ticks; callbacks fired
             // inside `tick()` write through the same `this_ptr` root.
             while unsafe { (*this_ptr).waiting_count } > 0 {
-                // SAFETY: `loop_` wraps a live `uws::WindowsLoop*`.
-                unsafe { (*loop_.platform_event_loop()).tick() };
+                loop_.platform_event_loop().tick();
             }
 
             // SAFETY: loop drained (waiting_count == 0); no further uv callback

@@ -21,7 +21,7 @@ use bun_core::EncodedSlice;
 #[cfg(not(windows))]
 use bun_core::env_var;
 use bun_io::BufferedReader as OutputReader;
-use bun_io::{KeepAlive, Loop as AsyncLoop};
+use bun_io::{KeepAlive, LoopRef};
 use bun_jsc::bindgen::{Callable, JsLocal, JsScope, JsWrapper};
 use bun_jsc::virtual_machine::{HotReload, VirtualMachine};
 use bun_jsc::{
@@ -162,7 +162,7 @@ trait CronJobBase: Sized + bun_ptr::AnyRefCounted {
         }
     }
 
-    fn loop_(&self) -> *mut AsyncLoop {
+    fn loop_(&self) -> LoopRef {
         // `VirtualMachine::uv_loop` already returns the native loop on both
         // targets (jsc/VirtualMachine.rs:2975); the prior POSIX arm's
         // `bun_uws::Loop::get()` named the same per-thread singleton.
@@ -272,7 +272,7 @@ bun_io::impl_buffered_reader_parent! {
     on_reader_done  = |this| <Self as CronJobBase>::on_reader_done(ThisPtr::new(this));
     // SAFETY: `this` is the live heap job registered via `set_parent`.
     on_reader_error = |this, err| <Self as CronJobBase>::on_reader_error(ThisPtr::new(this), err);
-    loop_           = |this| <Self as CronJobBase>::loop_(&*this).cast();
+    loop_           = |this| <Self as CronJobBase>::loop_(&*this);
     event_loop      = |this| (*this).event_loop_handle.as_event_loop_ctx();
 }
 
@@ -975,7 +975,7 @@ bun_io::impl_buffered_reader_parent! {
     on_reader_done  = |this| <Self as CronJobBase>::on_reader_done(ThisPtr::new(this));
     // SAFETY: `this` is the live heap job registered via `set_parent`.
     on_reader_error = |this, err| <Self as CronJobBase>::on_reader_error(ThisPtr::new(this), err);
-    loop_           = |this| <Self as CronJobBase>::loop_(&*this).cast();
+    loop_           = |this| <Self as CronJobBase>::loop_(&*this);
     event_loop      = |this| (*this).event_loop_handle.as_event_loop_ctx();
 }
 

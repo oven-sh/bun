@@ -68,8 +68,7 @@ impl GarbageCollectionController {
     }
 
     pub(crate) fn init(&self, vm: &VirtualMachine) {
-        // SAFETY: uws::Loop::get() returns the live process-global loop.
-        let actual = unsafe { &*uws::Loop::get() };
+        let actual = uws::Loop::get();
         actual.internal_loop_data.jsc_vm.set(vm.jsc_vm.get().cast());
 
         self.gc_timer_interval.set(

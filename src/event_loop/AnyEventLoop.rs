@@ -79,8 +79,7 @@ impl AnyEventLoop {
     pub fn iteration_number(&self) -> u64 {
         match self {
             AnyEventLoop::Js { owner } => owner.iteration_number(),
-            // SAFETY: see `MiniEventLoop::loop_ptr()` invariant.
-            AnyEventLoop::Mini(mini) => unsafe { (*mini.loop_ptr()).iteration_number() },
+            AnyEventLoop::Mini(mini) => mini.loop_.iteration_number(),
         }
     }
 
@@ -178,28 +177,26 @@ impl AnyEventLoop {
 // duplicating each `match`.
 impl AnyEventLoop {
     #[inline]
-    pub fn r#loop(&mut self) -> *mut UwsLoop {
+    pub fn r#loop(&mut self) -> &'static UwsLoop {
         EventLoopHandle::from_any(self).r#loop()
     }
 
     /// Alias for [`r#loop`](Self::r#loop) so callers spell `event_loop.loop_()`
     /// without the raw-identifier escape.
     #[inline]
-    pub fn loop_(&mut self) -> *mut UwsLoop {
+    pub fn loop_(&mut self) -> &'static UwsLoop {
         self.r#loop()
     }
 
-    /// Platform-native loop pointer (`us_loop_t*` on POSIX, `uv_loop_t*` on
-    /// Windows). See [`bun_io::uws_to_native`].
+    /// See [`bun_io::uws_to_native`].
     #[inline]
-    pub fn native_loop(&mut self) -> *mut bun_io::Loop {
+    pub fn native_loop(&mut self) -> bun_io::LoopRef {
         bun_io::uws_to_native(self.r#loop())
     }
 
     #[inline]
     pub fn wakeup(&mut self) {
-        // SAFETY: `r#loop()` returns a valid live loop pointer.
-        unsafe { (*self.r#loop()).wakeup() };
+        self.r#loop().wakeup();
     }
 }
 
@@ -325,7 +322,7 @@ impl EventLoopHandle {
     /// Erase to the `(tag, ptr)` pair stored in `uws::InternalLoopData`
     /// (`parent_tag` / `parent_ptr`). Tag 1 = JS, tag 2 = mini.
     #[inline]
-    pub fn into_tag_ptr(self) -> (core::ffi::c_char, *mut core::ffi::c_void) {
+    fn into_tag_ptr(self) -> (core::ffi::c_char, *mut core::ffi::c_void) {
         match self {
             EventLoopHandle::Js { owner, .. } => (1, owner.owner.cast()),
             EventLoopHandle::Mini(mini) => (2, mini.as_ptr().cast()),
@@ -373,9 +370,6 @@ impl EventLoopHandle {
 }
 
 impl EventLoopHandle {
-    /// Convenience wrapper so callers don't need both `bun_uws::InternalLoopDataExt`
-    /// (the trait) and the `*mut Loop` deref dance in scope. `uws_loop` is the
-    /// process-global loop returned by `AnyEventLoop::r#loop()` — never null.
     #[inline]
     pub fn set_as_parent_of(self, uws_loop: &UwsLoop) {
         let (tag, ptr) = self.into_tag_ptr();
@@ -436,32 +430,28 @@ impl EventLoopHandle {
         }
     }
 
-    pub fn r#loop(self) -> *mut UwsLoop {
+    pub fn r#loop(self) -> &'static UwsLoop {
         match self {
             EventLoopHandle::Js { owner } => owner.uws_loop(),
-            // `loop_ptr` takes `&self`; safe via `BackRef: Deref`.
-            EventLoopHandle::Mini(mini) => mini.loop_ptr(),
+            EventLoopHandle::Mini(mini) => mini.loop_,
         }
     }
 
     #[inline]
-    pub fn platform_event_loop(self) -> *mut UwsLoop {
+    pub fn platform_event_loop(self) -> &'static UwsLoop {
         self.r#loop()
     }
 
     /// Alias for [`r#loop`](Self::r#loop) so callers spell `handle.loop_()`
     /// without the raw-identifier escape.
     #[inline]
-    pub fn loop_(self) -> *mut UwsLoop {
+    pub fn loop_(self) -> &'static UwsLoop {
         self.r#loop()
     }
 
-    /// Platform-native loop pointer (`us_loop_t*` on POSIX, `uv_loop_t*` on
-    /// Windows). See [`bun_io::uws_to_native`] — collapses the per-site
-    /// `#[cfg(windows)]` `.uv_loop` projection that previously appeared at
-    /// every `BufferedReaderParent::loop_` impl.
+    /// See [`bun_io::uws_to_native`].
     #[inline]
-    pub fn native_loop(self) -> *mut bun_io::Loop {
+    pub fn native_loop(self) -> bun_io::LoopRef {
         bun_io::uws_to_native(self.r#loop())
     }
 

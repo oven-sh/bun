@@ -1451,8 +1451,10 @@ impl CompletionStruct for JSBundleCompletionTask {
             Some(NonNull::from(&mut any_loop).cast::<bun_event_loop::AnyEventLoop>());
         if let bun_event_loop::AnyEventLoop::Mini(mini) = &any_loop {
             // So a cancelling VM can wake us out of an idle wait for plugins.
-            self.bundle_loop
-                .store(mini.loop_ptr(), core::sync::atomic::Ordering::Release);
+            self.bundle_loop.store(
+                core::ptr::from_ref(mini.loop_).cast_mut(),
+                core::sync::atomic::Ordering::Release,
+            );
         }
 
         // `thread_pool` is the `WorkPool` singleton (`OnceLock`-backed,

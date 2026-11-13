@@ -2721,14 +2721,10 @@ pub fn init(
     {
         // SAFETY: singleton fully initialized; main thread, no workers yet.
         let manager = unsafe { &mut *manager_ptr };
-        // `r#loop()` returns the process-global `*mut uws::Loop`; build the
-        // handle from `&mut manager.event_loop` and write it back as the loop's
+        // Build the handle from `&mut manager.event_loop` and write it back as the loop's
         // parent so uSockets timers / lifecycle subprocess waiters can find the
         // mini event loop on tick.
         let uws_loop = manager.event_loop.r#loop();
-        // SAFETY: `uws_loop` is the live process-global `uws::Loop` (`r#loop()` above);
-        // the handle's backref is `manager.event_loop`, owned by the singleton.
-        let uws_loop = unsafe { &*uws_loop };
         EventLoopHandle::from_any(&mut manager.event_loop).set_as_parent_of(uws_loop);
     }
     {

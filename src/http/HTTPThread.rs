@@ -70,7 +70,7 @@ pub struct HttpThread {
     pub(crate) loop_: *const MiniEventLoop,
     /// The raw uSockets loop inside `loop_.loop` — split out so HTTPContext
     /// can `SocketGroup::init` without naming MiniEventLoop.
-    pub(crate) uws_loop: *mut uws::Loop,
+    pub(crate) uws_loop: *const uws::Loop,
     pub(crate) http_context: NewHttpContext<false>,
     pub(crate) https_context: NewHttpContext<true>,
     /// Stashed `InitOpts` for the default HTTPS context. When the user passed
@@ -143,7 +143,7 @@ impl HttpThread {
     fn new() -> Self {
         Self {
             loop_: core::ptr::null(),
-            uws_loop: core::ptr::null_mut(),
+            uws_loop: core::ptr::null(),
             http_context: NewHttpContext::<false> {
                 ref_count: Cell::new(1),
                 pending_sockets: crate::http_context::LazyPool::new(),
@@ -320,13 +320,6 @@ fn on_init_error_noop(err: InitError, opts: &InitOpts) -> ! {
 }
 
 impl HttpThread {
-    /// Raw uSockets loop for `SocketGroup::init`. Split from `loop_` so
-    /// HTTPContext doesn't need to name the higher-tier MiniEventLoop type.
-    #[inline]
-    pub(crate) fn uws_loop(&self) -> *mut uws::Loop {
-        self.uws_loop
-    }
-
     /// The live uSockets event loop.
     ///
     /// INVARIANT: `uws_loop` is set once in [`on_start`] (published via the
@@ -1185,7 +1178,7 @@ use core::cell::Cell;
 // init / on_start / process_events — uses `bun_event_loop::MiniEventLoop`
 // for `loop_.loop_.{tick,inc,dec,num_polls}` (`on_start` calls
 // `mini_event_loop::init_global` and drives the thread's event loop). The
-// wakeup path above still uses the raw `*mut uws::Loop` directly.
+// wakeup path above still uses the raw `*const uws::Loop` directly.
 // ═══════════════════════════════════════════════════════════════════════════
 
 mod _event_loop_draft {
@@ -1277,12 +1270,11 @@ mod _event_loop_draft {
         // the process — `bun install` SIGABRT on the first uncached lookup.
         let loop_ = mini_event_loop::init_global(None, None);
         // `init_global` returns the heap-allocated thread-local singleton (never
-        // null); this thread owns it for the thread lifetime. `loop_ptr()` reads
-        // a stable field via `&self`, so a `ParentRef` shared deref suffices.
+        // null); this thread owns it for the thread lifetime.
         let uws_loop = bun_ptr::ParentRef::from(
             NonNull::new(loop_).expect("init_global returns the thread-local singleton"),
         )
-        .loop_ptr();
+        .loop_;
 
         #[cfg(windows)]
         {

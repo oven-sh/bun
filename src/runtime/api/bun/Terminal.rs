@@ -19,7 +19,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use crate::node::StringOrBuffer;
 use bun_core::EncodedSlice;
 use bun_core::SignalCode;
-use bun_io::Loop as AsyncLoop;
+use bun_io::LoopRef;
 use bun_io::pipe_reader::BufferedReaderParent;
 #[cfg(unix)]
 use bun_io::pipe_reader::PosixFlags;
@@ -1900,15 +1900,8 @@ impl Terminal {
         true // Continue reading
     }
 
-    fn loop_(&self) -> *mut AsyncLoop {
-        #[cfg(windows)]
-        {
-            self.event_loop_handle.uv_loop()
-        }
-        #[cfg(not(windows))]
-        {
-            self.event_loop_handle.r#loop().cast()
-        }
+    fn loop_(&self) -> LoopRef {
+        self.event_loop_handle.native_loop()
     }
 
     pub(crate) fn finalize(&self) {
@@ -1959,11 +1952,8 @@ impl BufferedReaderParent for Terminal {
             Self::from_parent_ptr(this).on_reader_error(&err);
         })
     }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
-        // Delegate to the inherent `Terminal::loop_()` which is cfg-split:
-        // on Windows it projects `.uv_loop()` (the `*mut uv_loop_t` field of
-        // `WindowsLoop`), NOT a raw cast of the `bun_uws::Loop` wrapper.
-        Self::from_parent_ptr(this).loop_().cast()
+    unsafe fn loop_(this: *mut Self) -> LoopRef {
+        Self::from_parent_ptr(this).loop_()
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         Self::from_parent_ptr(this)
@@ -1992,7 +1982,7 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
             .event_loop_handle
             .as_event_loop_ctx()
     }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
+    unsafe fn loop_(this: *mut Self) -> LoopRef {
         Self::from_parent_ptr(this).event_loop_handle.r#loop()
     }
 }

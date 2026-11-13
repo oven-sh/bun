@@ -11,6 +11,8 @@ This works with any of the following:
 - `new Date()`
 - `new Intl.DateTimeFormat().format()`
 
+The timestamp in a UUID from `Bun.randomUUIDv7()` or from `randomUUIDv7()` in `node:crypto` comes from the system clock, not from the mocked time. To get a UUID at the mocked time, pass a timestamp: `Bun.randomUUIDv7("hex", new Date())`.
+
 ## setSystemTime
 
 To change the system time, use `setSystemTime`:

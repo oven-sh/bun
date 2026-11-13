@@ -10895,7 +10895,10 @@ declare module "bun" {
    * a pseudo-random integer.
    *
    * @param encoding Output encoding for the UUID
-   * @param timestamp Unix timestamp in milliseconds, defaults to `Date.now()`
+   * @param timestamp A `Date`, or a whole number of milliseconds since the
+   * Unix epoch, from 0 to 2^48 - 1. Defaults to the current time of the system
+   * clock, also while `bun:test` mocks the time. Pass `new Date()` for a UUID
+   * at the mocked time.
    *
    * @example
    * ```js
@@ -10918,7 +10921,7 @@ declare module "bun" {
      */
     encoding?: "hex" | "base64" | "base64url",
     /**
-     * @default Date.now()
+     * @default the current time of the system clock
      */
     timestamp?: number | Date,
   ): string;
@@ -10927,12 +10930,12 @@ declare module "bun" {
    * Generate a UUIDv7 as a `Buffer`.
    *
    * @param encoding Pass `"buffer"` to get the UUID as bytes instead of a string
-   * @param timestamp Unix timestamp in milliseconds, defaults to `Date.now()`
+   * @param timestamp Unix timestamp in milliseconds, defaults to the current time of the system clock
    */
   function randomUUIDv7(
     encoding: "buffer",
     /**
-     * @default Date.now()
+     * @default the current time of the system clock
      */
     timestamp?: number | Date,
   ): Buffer;

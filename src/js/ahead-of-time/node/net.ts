@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 d6861dbd59c52394231c89ff7bae0bcff81e31756f79b40db9ee7cee0562b4a5.
+// Written against that file with the SHA-256 10cc41018fa18e4d47cf4425d99d4c6c4ee26668816d9a9509909d61df6b78e1.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -729,7 +729,7 @@ function holdRejectedWrite(self: $Node.Socket, handle: SocketHandle, negErrno: n
   self[kwriteCallback] = callback;
   self[kRejectedWrite] = writeErrnoException(negErrno);
   // It holds the loop as any pending write does (_write).
-  if ((self[kended] || self[kPausedUnref]) && !self[kUserUnrefed]) handle.ref?.();
+  if (pendingWriteHoldsLoop(self)) handle.ref?.();
   if (self[kPausedUnref]) setImmediate(failRejectedWriteOfStoppedReader, self);
   return true;
 }
@@ -1329,8 +1329,6 @@ const SocketHandlers = {
       self.emit("connect", self);
       self.emit("ready");
     }
-
-    SocketHandlers.drain(socket);
   },
   handshake(socket: $Node.SocketHandle<$Node.TLSSocket>, success, verifyError) {
     const { data: self } = socket;
@@ -1370,10 +1368,20 @@ function restorePausedHold(self: $Node.Socket, handle: SocketHandle | null) {
   if (!self[kUserUnrefed]) handle?.ref?.();
 }
 
-// The write that was holding the loop (_write) just drained; a socket whose
-// reads are over (peer FIN) or stopped is back at rest and lets go again.
+// The handle has queued the write. One that waits for the connect or for the TLS wrap keeps its chunk in _pendingData.
+function writeWaitsForDrain(self: $Node.Socket) {
+  return self[kwriteCallback] != null && self._pendingData == null;
+}
+
+// A write that waits for the native drain holds the loop for a handle that does not, as libuv's uv_write_t does.
+function pendingWriteHoldsLoop(self: $Node.Socket) {
+  // Not TLS after unref(): its write may wait for the handshake, where Node holds nothing, or in the engine, unseen here.
+  return self[kUserUnrefed] ? !self.encrypted : self[kended] || self[kPausedUnref];
+}
+
+// The write that was holding the loop (_write) just drained; the socket is back at rest and lets go again.
 function unrefAfterDrain(self: $Node.Socket, handle: SocketHandle) {
-  if ((self[kended] || self[kPausedUnref]) && !self[kUserUnrefed] && handle === self._handle) handle.unref?.();
+  if (pendingWriteHoldsLoop(self) && handle === self._handle) handle.unref?.();
 }
 
 function finishSocketEnd(self: $Node.Socket) {
@@ -2686,7 +2694,6 @@ Socket.prototype[kAttach] = function (
     this.emit("connect", this);
     this.emit("ready");
   }
-  SocketHandlers.drain(socket);
 };
 
 Socket.prototype[kCloseRawConnection] = function (this: $Node.Socket) {
@@ -3393,6 +3400,8 @@ Socket.prototype.unref = function unref(this: $Node.Socket) {
     this.once("connect", this.unref);
     return this;
   }
+  // A write that waits for the native drain keeps its hold; unrefAfterDrain lets go.
+  if (writeWaitsForDrain(this) && pendingWriteHoldsLoop(this)) return this;
   ((socket[kAdoptedTLSRaw] as $Node.Socket | undefined) ?? socket).unref();
   return this;
 };
@@ -3527,9 +3536,8 @@ Socket.prototype._write = function _write(
     callback(new Error("overlapping _write()"));
   } else {
     this[kwriteCallback] = callback;
-    // A pending write holds the loop even on a handle whose FIN/pause dropped
-    // its hold (libuv: the uv_write_t is active); unrefAfterDrain lets go again.
-    if ((this[kended] || this[kPausedUnref]) && !this[kUserUnrefed]) socket.ref?.();
+    // unrefAfterDrain lets go again.
+    if (pendingWriteHoldsLoop(this)) socket.ref?.();
   }
 };
 

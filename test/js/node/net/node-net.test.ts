@@ -12,6 +12,7 @@ import {
   isDebug,
   isMusl,
   isWindows,
+  libcPathForDlopen,
   tempDir,
   tls as tlsCert,
   tmpdirSync,
@@ -899,6 +900,74 @@ it("socket should keep process alive if unref is not called", async () => {
 // Node never resumes a socket on the user's behalf: afterConnect only calls
 // read(0) (lib/net.js), so bytes that arrive before a 'data' listener is
 // attached stay buffered instead of being emitted to nobody and lost.
+// libuv counts a write in flight whatever the handle holds, so in node a write that waits for the kernel keeps the
+// process alive after socket.unref() too. Both ends of the fixture are on one loop, and nothing but that write holds
+// it. It runs unchanged under node v26.3.0, which prints the same lines.
+describe.concurrent("a write that waits for drain holds the loop on a socket that unref() was called on", () => {
+  const fixture = join(import.meta.dir, "node-net-unref-pending-write-fixture.js");
+  // Over a unix path the kernel takes the rest of a write only once the peer reads. Over TCP, which Windows gets, an
+  // acknowledgement can make room before that.
+  const transport = isWindows ? [] : ["s.sock"];
+  // A debug build takes seconds to start, and more while the runs share the processors.
+  const timeout = 30_000;
+
+  async function run(writer: string, unrefWhen: string, peerDoes: string) {
+    using dir = tempDir("net-unref-write", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), fixture, writer, unrefWhen, peerDoes, ...transport],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), exitCode, ...(exitCode === 0 ? {} : { stderr }) };
+  }
+
+  it.each([
+    ["unref() before the writes, in 'connect'", "client", "before"],
+    ["unref() after the writes, in 'connect'", "client", "after"],
+    ["unref() before the writes, in 'connection'", "server", "before"],
+    ["unref() after the writes, in 'connection'", "server", "after"],
+    ["unref() after the writes, in 'connection' under pauseOnConnect", "paused-server", "after"],
+    ["the writes, then unref(), after 'connection'", "server", "later"],
+    ["a write of 16 MB, then unref(), while it dials", "client", "dialing"],
+    ["a write of one byte, then unref(), while it dials", "client", "dialing, one byte"],
+  ])(
+    "until the write completes: %s",
+    async (_, writer, unrefWhen) => {
+      expect(await run(writer, unrefWhen, "reads")).toEqual({
+        stdout: JSON.stringify({ callbacks: "all" }),
+        exitCode: 0,
+      });
+    },
+    timeout,
+  );
+
+  // On Windows a send that fails for good still counts as a drain (see on_writable).
+  it.skipIf(isWindows)(
+    "until the write fails, when the peer destroys its end",
+    async () => {
+      expect(await run("client", "after", "destroys")).toEqual({
+        stdout: JSON.stringify({ callbacks: "all, the last one failed", closed: true }),
+        exitCode: 0,
+      });
+    },
+    timeout,
+  );
+
+  it(
+    "and a ref() made while the write waits still holds it after the write",
+    async () => {
+      expect(await run("client", "before", "replies")).toEqual({
+        stdout: JSON.stringify({ callbacks: "all", reply: true }),
+        exitCode: 0,
+      });
+    },
+    timeout,
+  );
+});
+
 it("a connected socket is not flowing until the user reads from it", async () => {
   const { promise: received, resolve: onClose, reject } = Promise.withResolvers<string>();
   const server = createServer(c => {
@@ -3353,6 +3422,56 @@ describe.skipIf(isWindows)("socket write while data is buffered natively", () =>
       expect(sent.bw).toBe(totalSent);
     }, 90_000);
   });
+});
+
+// Node completes a write that did not fit in the kernel's buffer from the event loop alone (libuv's uv_write_t), so its
+// callback follows those of the writes before it. The fixture writes inside the handler that the open of the handle
+// runs ('connect', 'ready', the connect listener or a server's 'connection') and waits there until a reader on another
+// thread has made room. But for `fd` it runs unchanged under node v26.3.0, which prints the same line.
+describe.concurrent("a write that does not fit, made where the handle opens", () => {
+  const fixture = join(import.meta.dir, "node-net-write-callback-order-fixture.js");
+  // Each run starts bun and a Worker: seconds on a debug build, and more while the runs share the processors.
+  const timeout = 60_000;
+
+  async function run(...args: string[]) {
+    // A unix path is relative to this folder, to stay under the length a socket address allows.
+    using dir = tempDir("net-open-write", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), fixture, ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), exitCode, ...(exitCode === 0 ? {} : { stderr }) };
+  }
+  const inOrder = { stdout: JSON.stringify({ fitted: true, callbacks: "in order" }), exitCode: 0 };
+
+  it.each([
+    ["client", "tcp", "connect"],
+    ["client", "tcp", "ready"],
+    ["client", "tcp", "listener"],
+    ["server", "tcp", "connection"],
+    ["server", "tcp", "paused-connection"],
+    ["client", "unix", "connect"],
+    ["server", "unix", "connection"],
+  ])(
+    "its callback follows the callbacks of the writes before it (%s, %s, '%s')",
+    async (role, transport, where) => {
+      expect(await run(role, transport, where, "s.sock")).toEqual(inOrder);
+    },
+    timeout,
+  );
+
+  // `socket.connect({ fd })` opens its socket inside the call. The fd is one end of a socketpair(2).
+  it.skipIf(isWindows)(
+    "its callback follows the callbacks of the writes before it (connect({ fd }))",
+    async () => {
+      expect(await run("fd", libcPathForDlopen())).toEqual(inOrder);
+    },
+    timeout,
+  );
 });
 
 // On Windows the connect-error path receives raw WSA codes (WSAECONNRESET,

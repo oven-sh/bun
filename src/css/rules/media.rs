@@ -5,11 +5,11 @@ use crate::{PrintErr, Printer};
 /// A `@media` rule.
 pub struct MediaRule<'bump, R> {
     /// The media query list.
-    pub query: MediaList<'bump>,
+    pub(crate) query: MediaList<'bump>,
     /// The rules within the `@media` rule.
-    pub rules: CssRuleList<'bump, R>,
+    pub(crate) rules: CssRuleList<'bump, R>,
     /// The location of the rule in the source file.
-    pub loc: Location,
+    pub(crate) loc: Location,
 }
 
 // ─── behavior bodies ──────────────────────────────────────────────────────
@@ -21,20 +21,25 @@ impl<'bump, R> MediaRule<'bump, R> {
         dest: &mut Printer,
         ctx: Option<&StyleContext<'_, 'bump>>,
     ) -> Result<(), PrintErr> {
-        if dest.minify && self.query.always_matches() {
-            self.rules.to_css(dest, ctx)?;
-            return Ok(());
-        }
-        // #[cfg(feature = "sourcemap")]
-        // dest.add_mapping(self.loc);
-
-        dest.write_str("@media ")?;
-        self.query.to_css(dest)?;
-        dest.block(|d| {
-            d.newline()?;
-            self.rules.to_css(d, ctx)
-        })
+        block_to_css(&self.query, dest, |d| self.rules.to_css(d, ctx))
     }
+}
+
+pub(crate) fn block_to_css<'p>(
+    query: &MediaList,
+    dest: &mut Printer<'p>,
+    body: impl FnOnce(&mut Printer<'p>) -> Result<(), PrintErr>,
+) -> Result<(), PrintErr> {
+    if dest.minify && query.always_matches() {
+        return body(dest);
+    }
+
+    dest.write_str("@media ")?;
+    query.to_css(dest)?;
+    dest.block(|d| {
+        d.newline()?;
+        body(d)
+    })
 }
 
 impl<'bump, R> MediaRule<'bump, R> {

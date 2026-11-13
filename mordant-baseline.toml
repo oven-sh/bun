@@ -64,7 +64,6 @@
 
 [bun_install]
 "bare_bool_args:src/install/windows-shim/BinLinkingShim.rs" = 1
-"freed_while_borrowed:src/install/lifecycle_script_runner.rs" = 2
 "generic_body_not_generic:src/install/bin.rs" = 1
 "generic_body_not_generic:src/install/extract_tarball.rs" = 1
 "generic_body_not_generic:src/install/lockfile/Tree.rs" = 1

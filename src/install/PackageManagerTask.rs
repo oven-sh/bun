@@ -354,8 +354,7 @@ impl Task {
                 // `defer pt.deinit()` → Box<PatchTask> drops at end of this block
                 bun_core::handle_oom(pt.apply());
                 // `defer pt.callback.apply.logger.deinit()` → `Log` drops with `pt`.
-                let _ = (pt.callback.apply_mut().logger)
-                    .print(std::ptr::from_mut(Output::error_writer()));
+                let _ = (pt.callback.apply_mut().logger).print(Output::error_writer());
             }
         }
         // SAFETY: `UnboundedQueue::push` takes `&self` (lock-free), so reach it

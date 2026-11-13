@@ -226,17 +226,8 @@ pub(crate) fn post_process_js_chunk(
             });
         }
 
-        // `MultiArrayList::get` returns `ManuallyDrop<BundledAst>` —
-        // the storage retains ownership of every Drop field (`named_imports`,
-        // `parts`, `top_level_symbols_to_parts`, …), so the gathered struct
-        // must NOT run Drop. `to_ast` consumes by value, so unwrap, convert,
-        // and re-wrap the result (which carries the same heap pointers).
-        let ast_view = core::mem::ManuallyDrop::new(
-            core::mem::ManuallyDrop::into_inner(
-                c.graph.ast.get(chunk.entry_point.source_index() as usize),
-            )
-            .to_ast(),
-        );
+        let ast = c.graph.ast.get(chunk.entry_point.source_index() as usize);
+        let ast_view = ast.for_printer();
         let source = c.get_source(chunk.entry_point.source_index());
         let target = c.resolver.opts.target;
 
@@ -813,9 +804,6 @@ pub(crate) fn generate_entry_point_tail_js(
 ) -> CompileResult {
     let flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index as usize];
     let mut stmts: Vec<Stmt> = Vec::new();
-    // `MultiArrayList::get` returns `ManuallyDrop<BundledAst>`; the
-    // storage retains ownership of every Drop field, so neither this
-    // `BundledAst` nor the `ast_view: Ast` derived from it below may run Drop.
     let ast = c.graph.ast.get(source_index as usize);
 
     match c.options.output_format {
@@ -1259,16 +1247,14 @@ pub(crate) fn generate_entry_point_tail_js(
         ..Default::default()
     };
 
-    let ast_view = core::mem::ManuallyDrop::new(core::mem::ManuallyDrop::into_inner(ast).to_ast());
-
     CompileResult::Javascript {
         result: js_printer::print::<false>(
             arena,
             c.resolver.opts.target,
-            &ast_view,
+            &ast.for_printer(),
             c.get_source(source_index),
             print_options,
-            ast_view.import_records.as_slice(),
+            ast.import_records.as_slice(),
             &[Part {
                 stmts: bun_ast::StoreSlice::new_mut(stmts.as_mut_slice()),
                 ..Default::default()

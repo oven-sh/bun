@@ -576,18 +576,17 @@ mod test_gate {
     type Task = core::ptr::NonNull<super::ConcurrentTaskItem>;
 
     impl TestGate {
-        pub(crate) fn from_env() -> TestGate {
+        /// `Err` names a value that is not a mode, for the `Worker` constructor to throw.
+        pub(crate) fn from_env() -> Result<TestGate, Vec<u8>> {
             match bun_core::env_var::BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE::get().unwrap_or(b"") {
-                b"" => TestGate::Off,
-                b"draining" => TestGate::Draining,
-                b"closed" => TestGate::Closed,
+                b"" => Ok(TestGate::Off),
+                b"draining" => Ok(TestGate::Draining),
+                b"closed" => Ok(TestGate::Closed),
                 other => {
-                    bun_core::Output::err_generic(
-                        "BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE={}: the modes are draining and closed",
-                        (bstr::BStr::new(other),),
-                    );
-                    bun_core::Output::flush();
-                    bun_core::Global::exit(1)
+                    let mut message = b"BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE=".to_vec();
+                    message.extend_from_slice(other);
+                    message.extend_from_slice(b": the modes are draining and closed");
+                    Err(message)
                 }
             }
         }

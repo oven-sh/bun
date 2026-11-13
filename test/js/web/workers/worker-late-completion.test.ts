@@ -347,18 +347,24 @@ describe.skipIf(!isDebug && !isASAN)("work that comes back after its worker bega
 
 // A mode the gate does not know (main's old "1", a typo) must not read as "off":
 // a row would then run ungated and fail with nothing that names the variable.
+// The Worker constructor throws, so the process exits through its normal path
+// (the VM is torn down, which LeakSanitizer needs).
 test.concurrent.skipIf(!isDebug && !isASAN)("a gate mode that does not exist is refused by name", async () => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", `new (require("node:worker_threads").Worker)("", { eval: true });`],
+    cmd: [
+      bunExe(),
+      "-e",
+      `try { new (require("node:worker_threads").Worker)("", { eval: true }); } catch (e) { console.log(e.constructor.name + ": " + e.message); }`,
+    ],
     env: { ...bunEnv, BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE: "1" },
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({
-    stdout: "",
-    stderr: "error: BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE=1: the modes are draining and closed\n",
-    exitCode: 1,
+    stdout: "TypeError: BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE=1: the modes are draining and closed\n",
+    stderr: "",
+    exitCode: 0,
   });
 });
 

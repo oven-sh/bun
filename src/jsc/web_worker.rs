@@ -483,6 +483,18 @@ impl WebWorker {
         // its own thread; the worker never dereferences `parent`.
         // SAFETY: `parent` is the calling thread's live VM.
         let parent_ref = unsafe { &*parent };
+        #[cfg(debug_assertions)]
+        let test_gate = if parent_ref.is_main_thread() {
+            match crate::vm_handle::TestGate::from_env() {
+                Ok(mode) => mode,
+                Err(message) => {
+                    *error_message = BunString::clone_utf8(&message);
+                    return core::ptr::null_mut();
+                }
+            }
+        } else {
+            crate::vm_handle::TestGate::Off
+        };
         let mut transform_options = (*parent_ref.transpiler.options.transform_options).clone();
         if !inherit_exec_argv {
             let hooks = runtime_hooks().expect("RuntimeHooks not installed");
@@ -540,11 +552,7 @@ impl WebWorker {
             parent,
             hot_reload: parent_ref.hot_reload,
             #[cfg(debug_assertions)]
-            test_gate: if parent_ref.is_main_thread() {
-                crate::vm_handle::TestGate::from_env()
-            } else {
-                crate::vm_handle::TestGate::Off
-            },
+            test_gate,
             execution_context_id: this_context_id,
             mini,
             eval_mode,

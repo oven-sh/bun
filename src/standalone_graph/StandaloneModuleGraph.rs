@@ -3160,7 +3160,7 @@ pub(crate) fn download_to_path(
                     }
                     break;
                 }
-                tmpdir.close();
+                drop(tmpdir);
                 refresher.root.end();
             }
             refresher.refresh();

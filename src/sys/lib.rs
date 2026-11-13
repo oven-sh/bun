@@ -3710,7 +3710,7 @@ mod windows_impl {
         }
         let adjusted_len = buf.len().min(MAX_COUNT) as w::DWORD;
         // Stdin callers route through this function (via
-        // `File::stdin().read_to_end_into` / `output_sink().read`), so the
+        // `File::read_to_end_into` / `output_sink().read`), so the
         // BROKEN_PIPE/HANDLE_EOF → 0 (EOF) mapping and the OPERATION_ABORTED
         // retry live here.
         loop {

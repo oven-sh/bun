@@ -125,7 +125,7 @@ impl Finalize {
                 })
             }
             Finalize::CachedCheckout(dir, json) => {
-                read_package_json(task, dir, json).map(|data| Task::Data {
+                read_package_json(task, &dir, json).map(|data| Task::Data {
                     git_checkout: ManuallyDrop::new(data),
                 })
             }
@@ -204,7 +204,7 @@ fn finish_checkout(
             .map_err(|err| ("writing \".bun-tag\"", err))
         });
     // Windows cannot rename a directory with an open handle inside it.
-    dir.close();
+    drop(dir);
     if let Err((what, err)) = prepared {
         staging.discard();
         task.log.add_error_fmt(
@@ -223,7 +223,7 @@ fn finish_checkout(
     let folder_name = checkout_folder_name(&resolved);
     let package_dir = staging.publish(&mut task.log, &name, &folder_name, &is_usable_checkout)?;
     let json = read_package_json_in(&package_dir);
-    read_package_json(task, package_dir, json)
+    read_package_json(task, &package_dir, json)
 }
 
 /// git was told to check out each symlink as a plain file. This replaces it with a copy of its
@@ -443,10 +443,10 @@ pub(crate) fn read_package_json_in(package_dir: &bun_sys::Dir) -> bun_sys::Maybe
         .read_to_end()
 }
 
-/// `json` is the result of `read_package_json_in(&package_dir)`. This closes `package_dir`.
+/// `json` is the result of `read_package_json_in(package_dir)`.
 fn read_package_json(
     task: &mut Task::Task<'_>,
-    package_dir: bun_sys::Dir,
+    package_dir: &bun_sys::Dir,
     json: bun_sys::Maybe<Vec<u8>>,
 ) -> Result<ExtractData, Error> {
     let req = task.request_git_checkout();
@@ -457,7 +457,6 @@ fn read_package_json(
     let json_buf = match json {
         Ok(v) => v,
         Err(err) => {
-            package_dir.close();
             if err.get_errno() == bun_sys::E::ENOENT {
                 // allow git dependencies without package.json
                 return Ok(ExtractData {
@@ -495,20 +494,18 @@ fn read_package_json(
                     BStr::new(err.name())
                 ),
             );
-            package_dir.close();
             return Err(Error::InstallFailed);
         }
     };
     let path = bun_resolver::fs::FileSystem::get()
         .dirname_store()
-        .append(json_path);
-    package_dir.close();
+        .append(json_path)?;
 
     Ok(ExtractData {
         url,
         resolved,
         json: Some(ExtractDataJson {
-            path: path?.into(),
+            path: path.into(),
             buf: json_buf,
         }),
         ..Default::default()
@@ -1129,7 +1126,6 @@ impl GitSubprocess {
                         return Ok(());
                     }
                 }
-                dir.close();
             }
             Err(err) if err.get_errno() == bun_sys::E::ENOENT => {}
             Err(err) => return Err(err.into()),

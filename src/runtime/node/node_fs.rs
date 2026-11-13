@@ -11064,7 +11064,7 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
             }
             // Reached the end of the directory entries, which means we successfully deleted all of them.
             // Now to remove the directory itself.
-            dir.close();
+            drop(dir);
 
             let dir_name: &[u8] = if dir_name_is_sub_path {
                 sub_path

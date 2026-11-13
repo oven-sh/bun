@@ -1,6 +1,6 @@
 //! `bun.sys.Dir` — directory handle + helpers.
 //!
-//! Owns the descriptor; closes it on Drop (skipping `Fd::INVALID` and the
+//! Owns the descriptor; closes it on Drop (even 0-2 on POSIX, but not the
 //! `AT_FDCWD` sentinel). Use [`Dir::into_raw`] to hand the fd off,
 //! [`Dir::borrow`] for a non-owning `&Dir` view of someone else's fd.
 
@@ -14,7 +14,7 @@ pub struct Dir {
 impl Drop for Dir {
     #[inline]
     fn drop(&mut self) {
-        if self.fd != Fd::INVALID && self.fd != Fd::cwd() {
+        if self.fd != Fd::cwd() {
             let _ = close(self.fd);
         }
     }
@@ -67,12 +67,6 @@ impl Dir {
     #[inline]
     pub fn get_fd_path<'b>(&self, buf: &'b mut bun_paths::PathBuffer) -> Maybe<&'b mut [u8]> {
         get_fd_path(self.fd, buf)
-    }
-    /// Close now. Equivalent to dropping `self` but discards the syscall
-    /// result.
-    #[inline]
-    pub fn close(self) {
-        drop(self);
     }
     /// Disarm the drop guard and return the raw [`Fd`]. The caller takes over
     /// the descriptor's lifecycle.
@@ -475,17 +469,6 @@ mod tests {
     }
 
     #[test]
-    fn close_disarms_drop() {
-        let _g = FD_TEST_LOCK.lock();
-        let dir = open_cwd();
-        let raw = dir.fd();
-        dir.close();
-        let canary = open_cwd();
-        assert!(fstat(canary.fd()).is_ok());
-        let _ = raw;
-    }
-
-    #[test]
     fn into_raw_disarms_drop() {
         let _g = FD_TEST_LOCK.lock();
         let dir = open_cwd();
@@ -519,13 +502,5 @@ mod tests {
         }
         // Still able to open files relative to cwd.
         assert!(Dir::cwd().open_at(b".").is_ok());
-    }
-
-    #[test]
-    fn dropping_invalid_fd_is_safe() {
-        let _g = FD_TEST_LOCK.lock();
-        for _ in 0..16 {
-            let _ = Dir::from_fd(Fd::INVALID);
-        }
     }
 }

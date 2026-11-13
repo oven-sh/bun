@@ -3243,8 +3243,13 @@ where
                                 // so a pre-first-byte handler failure can
                                 // still reach `error()`.
                             } else {
-                                // if we only have metadata to send, send it now
+                                // A native byte stream can remain idle after the
+                                // headers are ready. Finish the header block so
+                                // the client need not wait for its first chunk.
                                 resp.run_corked_with_type(Self::render_metadata, this);
+                                if let Some(resp) = this.live_resp() {
+                                    resp.flush_headers(true);
+                                }
                             }
                             // Runs `end_chunk`, which adopts the ref taken above and may free `this`.
                             if byte_stream.end_sink_with_pending_error() {

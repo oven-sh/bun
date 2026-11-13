@@ -5,21 +5,22 @@ use core::ptr::NonNull;
 use bun_jsc::bindgen::{self, JsHeap, JsScope, JsWrapper};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    DOMExceptionCode, JSGlobalObject, JSPromise, JSValue, JsClass as _, JsRef, JsResult,
+    ContextId, DOMExceptionCode, JSGlobalObject, JSPromise, JSValue, JsClass, JsResult, Strong,
+    Weak,
 };
 use bun_ptr::{JsCell, RefPtr};
 
 use super::adapter::supported_features;
 use super::buffer::GPUBuffer;
 use super::error::{GPUError, GPUUncapturedErrorEvent};
-use super::instance::Instance;
+use super::instance::{Instance, TIDY_INTERVAL_MS};
 use super::{
-    GPUAdapterInfo, GPUQueue, GPUSupportedLimits, WebEnum as _, dom_exception, gpu_object,
-    new_object, string_of_view, sys,
+    Bun__WebGPU__reduceMemoryUsage, Bun__WebGPU__tickDevice, GPUAdapterInfo, GPUQueue,
+    GPUSupportedLimits, WebEnum as _, dom_exception, gpu_object, new_object, string_of_view, sys,
 };
 use crate::generated_bindgen::webgpu::{
     GPUDeviceLostReason, GPUErrorFilter, GPUFeatureName, GPUQueryType, GPUTextureFormat,
-    js_GPUDevice,
+    js_GPUDevice, js_GPUQueue,
 };
 
 // ───────────────────────────── DeviceState ─────────────────────────────
@@ -34,8 +35,17 @@ pub(crate) struct DeviceState {
     pub(super) instance: RefPtr<Instance>,
     /// A bit for each `GPUFeatureName` that the device has.
     features: Cell<u32>,
-    /// The `GPUDevice`, which this does not keep alive.
-    wrapper: JsCell<JsRef>,
+    /// Live until the device is lost. Null until it is made.
+    handle: Cell<sys::WGPUDevice>,
+    /// Of the script that asked for the device, and hears what happens to it.
+    context: ContextId,
+    /// The `GPUDevice`. See [`DeviceState::held_by`].
+    wrapper: JsCell<Weak<()>>,
+    /// The same, until it has heard what there is to report.
+    wrapper_to_report_to: JsCell<Option<Strong>>,
+    tidiness: Cell<Tidiness>,
+    /// Of what `destroy()` was called on since the last submit.
+    destroyed_bytes: Cell<u64>,
     lost: JsCell<Option<GPUDeviceLostInfo>>,
     /// Errors that no error scope caught, for `report_errors`.
     errors: JsCell<Vec<GPUError>>,
@@ -45,13 +55,31 @@ pub(crate) struct DeviceState {
     buffers_with_ranges: JsCell<Vec<NonNull<GPUBuffer>>>,
 }
 
+/// Dawn frees what a device is done with once the GPU has finished the next submit, in a call that comes after that.
+/// A program that is idle, or submits nothing, makes neither.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Tidiness {
+    HasGarbage,
+    Submitted,
+    /// For so many calls of `tidy`. What is left is kept to be used again.
+    Idle(u8),
+    /// That is garbage now, and submitted.
+    Reduced,
+    Tidy,
+}
+
 impl DeviceState {
-    pub(super) fn new(instance: RefPtr<Instance>) -> RefPtr<Self> {
+    pub(super) fn new(instance: RefPtr<Instance>, context: ContextId) -> RefPtr<Self> {
         RefPtr::new(Self {
             ref_count: Cell::new(1),
             instance,
             features: Cell::new(0),
-            wrapper: JsCell::new(JsRef::empty()),
+            handle: Cell::new(core::ptr::null_mut()),
+            context,
+            wrapper: JsCell::new(Weak::default()),
+            wrapper_to_report_to: JsCell::new(None),
+            tidiness: Cell::new(Tidiness::Tidy),
+            destroyed_bytes: Cell::new(0),
             lost: JsCell::new(None),
             errors: JsCell::new(Vec::new()),
             is_reporting: Cell::new(false),
@@ -88,10 +116,9 @@ impl DeviceState {
         if self.instance.handle().is_none() || self.is_reporting.replace(true) {
             return;
         }
-        if self.wrapper.get().try_get().is_some() {
-            self.wrapper
-                .with_mut(|wrapper| wrapper.upgrade(self.instance.global()));
-        }
+        let wrapper = self.wrapper.get().get();
+        self.wrapper_to_report_to
+            .set(wrapper.map(|wrapper| Strong::create(wrapper, self.instance.global())));
         // SAFETY: `self` is live.
         let this = unsafe { RefPtr::init_ref(core::ptr::from_ref(self).cast_mut()) };
         self.instance.report_errors_later(this);
@@ -105,16 +132,19 @@ impl DeviceState {
     pub(super) fn forget_errors(&self) {
         self.is_reporting.set(false);
         self.errors.take();
-        self.wrapper.with_mut(JsRef::downgrade);
+        self.wrapper_to_report_to.take();
     }
 
     /// Runs JavaScript.
     pub(super) fn report_errors(&self, vm: &VirtualMachine) {
+        if !vm.is_context_live(self.context) {
+            return self.forget_errors();
+        }
+        let _context = vm.enter_context(self.context);
         let global = self.instance.global();
         self.is_reporting.set(false);
-        // Collected already, if one of its objects made the error and nothing else held it.
-        let wrapper = self.wrapper.get().try_get();
-        self.wrapper.with_mut(JsRef::downgrade);
+        let held = self.wrapper_to_report_to.take();
+        let wrapper = held.as_ref().map(Strong::get);
         for error in self.errors.take() {
             let description = error.describe();
             // SAFETY: the event loop called this to run JavaScript, and `wrapper` is the `GPUDevice`.
@@ -133,16 +163,121 @@ impl DeviceState {
                 bun_core::output::flush();
             }
         }
-        if let Some(wrapper) = wrapper
+        self.resolve_lost();
+    }
+
+    pub(super) fn resolve_lost(&self) {
+        let global = self.instance.global();
+        if let Some(info) = self.lost.get()
+            && global.bun_vm().is_context_live(self.context)
+            && let Some(wrapper) = self.wrapper.get().get()
             && let Some(promise) = js_GPUDevice::lost_get_cached(wrapper)
             && let Some(promise) = promise.as_promise()
-            && let Some(info) = self.lost.get()
         {
+            let _context = global.bun_vm().enter_context(self.context);
             let promise = JSPromise::opaque_mut(promise);
             if promise.status() == bun_jsc::js_promise::Status::Pending {
                 // An error is the termination of the VM, which the event loop finds out by itself.
                 let _ = promise.resolve(global, info.clone().to_js(global));
             }
+        }
+    }
+
+    /// `object`, whose methods can make errors, keeps the `GPUDevice` and so its listeners alive.
+    pub(super) fn held_by(
+        &self,
+        object: JSValue,
+        set_device: impl FnOnce(JSValue, &JSGlobalObject, JSValue),
+    ) -> JSValue {
+        if let Some(wrapper) = self.wrapper.get().get() {
+            set_device(object, self.instance.global(), wrapper);
+        }
+        object
+    }
+
+    #[inline]
+    pub(super) fn has_garbage(&self) {
+        if self.tidiness.replace(Tidiness::HasGarbage) == Tidiness::Tidy {
+            self.instance.tidy_later();
+        }
+    }
+
+    /// A loop that never lets the timer fire does not pile up what it destroys.
+    pub(super) fn did_destroy(&self, bytes: u64) {
+        const MOST_BYTES: u64 = 64 << 20;
+        self.has_garbage();
+        self.destroyed_bytes
+            .set(self.destroyed_bytes.get().saturating_add(bytes));
+        if self.destroyed_bytes.get() >= MOST_BYTES && !self.is_lost() {
+            self.submit_nothing();
+        }
+    }
+
+    pub(super) fn did_submit(&self) {
+        self.destroyed_bytes.set(0);
+        self.has_garbage();
+    }
+
+    fn submit_nothing(&self) {
+        debug_assert!(!self.is_lost());
+        self.destroyed_bytes.set(0);
+        // SAFETY: a live device, and the reference to its queue that the first call adds.
+        unsafe {
+            let queue = sys::wgpuDeviceGetQueue(self.handle.get());
+            sys::wgpuQueueSubmit(queue, 0, core::ptr::null());
+            sys::wgpuQueueRelease(queue);
+        }
+    }
+
+    /// One step towards `Tidiness::Tidy`.
+    pub(super) fn tidy(&self) {
+        const IDLE_FOR_A_SECOND: u8 = (1000 / TIDY_INTERVAL_MS) as u8;
+        if self.is_lost() {
+            return;
+        }
+        let handle = self.handle.get();
+        let tidiness = self.tidiness.get();
+        let next = match tidiness {
+            Tidiness::HasGarbage => {
+                self.submit_nothing();
+                Tidiness::Submitted
+            }
+            // SAFETY: a live device.
+            Tidiness::Submitted | Tidiness::Reduced
+                if unsafe { Bun__WebGPU__tickDevice(handle) } =>
+            {
+                tidiness
+            }
+            Tidiness::Submitted => Tidiness::Idle(0),
+            Tidiness::Idle(calls) if calls < IDLE_FOR_A_SECOND => Tidiness::Idle(calls + 1),
+            // SAFETY: a live device.
+            Tidiness::Idle(_) if unsafe { Bun__WebGPU__reduceMemoryUsage(handle) } => {
+                Tidiness::Reduced
+            }
+            Tidiness::Idle(_) | Tidiness::Reduced | Tidiness::Tidy => Tidiness::Tidy,
+        };
+        self.tidiness.set(next);
+        if next != Tidiness::Tidy {
+            self.instance.tidy_later();
+        }
+    }
+
+    /// Dawn frees the memory that is mapped. The caller has seen to it that nothing but JavaScript uses that.
+    fn destroy(&self) {
+        for buffer in self.buffers_with_ranges.take() {
+            // SAFETY: an `ArrayBuffer` of its own holds a reference to it.
+            let buffer = unsafe { RefPtr::init_ref(buffer.as_ptr()) };
+            buffer.detach_ranges(self.instance.global());
+        }
+        // SAFETY: the caller holds the device, or it is not lost.
+        unsafe { sys::wgpuDeviceDestroy(self.handle.get()) };
+    }
+
+    pub(super) fn destroy_unless_in_use(&self) {
+        let mut buffers = self.buffers_with_ranges.get().iter();
+        // SAFETY: an `ArrayBuffer` of its own holds a reference to it.
+        if !self.is_lost() && !buffers.any(|buffer| unsafe { buffer.as_ref() }.has_range_in_use()) {
+            self.destroy();
         }
     }
 
@@ -230,8 +365,9 @@ unsafe extern "C" fn on_lost(
         // SAFETY: Dawn's, until this returns.
         message: unsafe { string_of_view(message) },
     }));
+    state.instance.remove_device(state.as_ptr());
     // Otherwise nobody can ask. That is so where the collector dropped the last reference to the device.
-    if state.wrapper.get().try_get().is_some() {
+    if state.wrapper.get().get().is_some() {
         state.report_later();
     }
 }
@@ -271,6 +407,8 @@ impl Clone for DeviceRef {
 
 impl Drop for DeviceRef {
     fn drop(&mut self) {
+        // What held this has released its own object of Dawn's.
+        self.state.has_garbage();
         // SAFETY: the reference that `GPUDevice::device_ref` added.
         unsafe { sys::wgpuDeviceRelease(self.handle) }
     }
@@ -322,18 +460,20 @@ impl GPUDevice {
             }
         }
         state.features.set(features);
+        state.handle.set(handle);
+        if !state.is_lost()
+            && let Some(device) = NonNull::new(state.as_ptr())
+        {
+            state.instance.add_device(device);
+        }
         Self::new(handle, label, state, queue_label)
     }
 
     pub(super) fn into_js(self, global: &JSGlobalObject) -> JSValue {
         let state = self.state.clone();
         let wrapper = self.to_js(global);
-        state.wrapper.set(JsRef::init_weak(wrapper));
+        state.wrapper.set(Weak::create_passive(wrapper, global));
         wrapper
-    }
-
-    pub(crate) fn finalize(&self) {
-        self.state.wrapper.with_mut(JsRef::finalize);
     }
 
     pub(super) fn device_ref(&self) -> DeviceRef {
@@ -371,26 +511,17 @@ impl GPUDevice {
     pub(crate) fn get_queue(&self, heap: &JsHeap<'_>) -> JSValue {
         // SAFETY: a live device. The queue takes over the reference.
         let queue = unsafe { sys::wgpuDeviceGetQueue(self.handle) };
-        new_object(
-            heap,
-            GPUQueue::new(queue, &self.queue_label, self.device_ref()),
-        )
+        let queue = GPUQueue::new(queue, &self.queue_label, self.device_ref());
+        self.state
+            .held_by(new_object(heap, queue), js_GPUQueue::device_set_cached)
     }
 
     pub(crate) fn destroy<'a>(&self, cx: &mut JsScope<'a>) -> bindgen::Result<'a, ()> {
-        // Dawn frees the memory that is mapped.
         for buffer in self.state.buffers_with_ranges.get() {
             // SAFETY: an `ArrayBuffer` of its own holds a reference to it.
             unsafe { buffer.as_ref() }.check_ranges_are_free(&cx.heap, "destroy()")?;
         }
-        let global = cx.global();
-        for buffer in self.state.buffers_with_ranges.take() {
-            // SAFETY: as above.
-            let buffer = unsafe { RefPtr::init_ref(buffer.as_ptr()) };
-            buffer.detach_ranges(global);
-        }
-        // SAFETY: a live device.
-        unsafe { sys::wgpuDeviceDestroy(self.handle) };
+        self.state.destroy();
         Ok(())
     }
 

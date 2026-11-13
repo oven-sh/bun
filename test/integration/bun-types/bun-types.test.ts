@@ -466,7 +466,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "vi_utils.bind.ts": null,
   "vi_wait.bind.ts": null,
   "virtual_machine_exports.bind.ts": null,
-  // Only in a build with `--webgpu=on`. `@webgpu/types` describes them.
+  // Both are written from one IDL, by src/codegen/generate-webgpu-bindings.ts.
   "webgpu.bind.ts": null,
 };
 
@@ -1645,7 +1645,11 @@ describe("@types/bun integration test", () => {
   });
 });
 
-const expectedEmptyInterfacesWhenNoDOM = new Set(["ThisType"]);
+const expectedEmptyInterfacesWhenNoDOM = new Set([
+  "ThisType",
+  // The specification gives it no members.
+  "GPUExternalTextureBindingLayout",
+]);
 
 const expectedEmptyInterfacesThatReactDeclareWhenNoDOM = new Set([
   ...expectedEmptyInterfacesWhenNoDOM,

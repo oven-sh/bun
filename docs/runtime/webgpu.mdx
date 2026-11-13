@@ -1,0 +1,71 @@
+---
+title: WebGPU
+description: Run compute shaders and render to textures with navigator.gpu
+---
+
+Bun implements [WebGPU](https://developer.mozilla.org/en-US/docs/Web/API/WebGPU_API) with [Dawn](https://dawn.googlesource.com/dawn), the implementation that Chrome uses. `navigator.gpu` and the `GPU*` globals are available on the main thread and in workers.
+
+```ts double.ts icon="/icons/typescript.svg"
+const adapter = await navigator.gpu.requestAdapter();
+if (!adapter) throw new Error("No GPU");
+const device = await adapter.requestDevice();
+
+const input = new Float32Array([1, 2, 3, 4]);
+const size = input.byteLength;
+const storage = device.createBuffer({
+  size,
+  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+});
+const readback = device.createBuffer({ size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+device.queue.writeBuffer(storage, 0, input);
+
+const pipeline = await device.createComputePipelineAsync({
+  layout: "auto",
+  compute: {
+    module: device.createShaderModule({
+      code: `
+        @group(0) @binding(0) var<storage, read_write> data: array<f32>;
+        @compute @workgroup_size(4) fn main(@builtin(global_invocation_id) id: vec3u) {
+          data[id.x] *= 2;
+        }`,
+    }),
+  },
+});
+
+const encoder = device.createCommandEncoder();
+const pass = encoder.beginComputePass();
+pass.setPipeline(pipeline);
+pass.setBindGroup(
+  0,
+  device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource: storage }] }),
+);
+pass.dispatchWorkgroups(1);
+pass.end();
+encoder.copyBufferToBuffer(storage, readback);
+device.queue.submit([encoder.finish()]);
+
+await readback.mapAsync(GPUMapMode.READ);
+console.log(new Float32Array(readback.getMappedRange())); // [ 2, 4, 6, 8 ]
+```
+
+## Platforms
+
+| OS                      | Backend     | Needs                                   |
+| ----------------------- | ----------- | --------------------------------------- |
+| macOS                   | Metal       | nothing                                 |
+| Windows                 | Direct3D 12 | nothing; see below for `dxcompiler.dll` |
+| Linux, Android, FreeBSD | Vulkan      | the Vulkan loader, and a driver for it  |
+
+Where there is no adapter, `requestAdapter()` resolves with `null`. A Linux machine without a GPU can use Mesa's software driver, which is `mesa-vulkan-drivers` on Debian and Ubuntu.
+
+A software driver compiles shaders to machine code, which an executable [compiled ahead of time](/compiler/aot) does not allow on Linux. There `requestAdapter()` prints a warning and resolves with `null` unless the machine has a GPU.
+
+On Windows, the `shader-f16` and `subgroups` features need Microsoft's [DirectX Shader Compiler](https://github.com/microsoft/DirectXShaderCompiler/releases), which does not come with Windows. Bun uses `dxcompiler.dll` if it is beside the executable.
+
+## Differences from browsers
+
+- There is no canvas: `GPUCanvasContext`, `importExternalTexture()` and `copyExternalImageToTexture()` are not implemented. Render to a texture, and copy it to a buffer to read the pixels.
+- `getMappedRange()` does not copy. `unmap()` and `destroy()` throw an `InvalidStateError` while an operation such as `fs.promises.writeFile()` is still using the range. Await it first.
+- Calls run on the thread that makes them. `createComputePipeline()` and `createRenderPipeline()` block the event loop while the shader compiles, and their `Async` variants do not.
+- Adapters report the limits of the hardware, and timestamp queries are not rounded.
+- A validation error that nothing handles prints a warning. Call `preventDefault()` on the `uncapturederror` event to silence it.

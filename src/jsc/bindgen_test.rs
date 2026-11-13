@@ -10,12 +10,13 @@ use crate::bindgen::{
 };
 use crate::generated_bindgen::bindgen_test::{
     Bun__BindgenTest__doubled, TestAbsence, TestAnything, TestBare, TestBareOptions, TestBracket,
-    TestChoice, TestColor, TestColorOrRest, TestFailure, TestFlag, TestHandle, TestMarks,
-    TestNames, TestNodeOptions, TestNothing, TestNothingOrInteger, TestObjectOrRest, TestOptions,
-    TestOptionsEcho, TestOtherAsNullOptions, TestOuter, TestPingEventInit, TestRecords,
-    TestRefOrInteger, TestRefs, TestSize, TestTextOrBytes, TestValue, js_TestCounter, js_TestError,
-    js_TestMemberFunctions, js_TestNonFinal, js_TestNote, js_TestPingEvent, js_TestRefCounted,
-    js_TestRefCountedNote, js_TestShape, js_TestSquare,
+    TestChoice, TestColor, TestColorOrRest, TestFailure, TestFlag, TestHandle, TestLevelsOrOptions,
+    TestMarks, TestNames, TestNodeOptions, TestNothing, TestNothingOrInteger, TestObjectOrRest,
+    TestOptions, TestOptionsEcho, TestOtherAsNullOptions, TestOuter, TestPingEventInit,
+    TestRecords, TestRefOrInteger, TestRefs, TestSize, TestTextOrBytes, TestValue, TestWebOptions,
+    TestWebOuter, js_TestCounter, js_TestError, js_TestMemberFunctions, js_TestNonFinal,
+    js_TestNote, js_TestPingEvent, js_TestRefCounted, js_TestRefCountedNote, js_TestShape,
+    js_TestSquare,
 };
 use crate::{JSGlobalObject, JSString, JSValue, JsClass, JsResult};
 use bun_ptr::{AsCtxPtr as _, RefPtr};
@@ -162,6 +163,22 @@ pub(crate) fn describe_marks(marks: &TestMarks, mark: Option<&TestNothing>) -> V
         f64::from(u8::from(marks.mark.is_some())),
         f64::from(u8::from(mark.is_some())),
     ]
+}
+
+pub(crate) fn levels_of(
+    options: &TestWebOptions,
+    outer: &TestWebOuter,
+    either: TestLevelsOrOptions,
+) -> Vec<f64> {
+    let either = match either {
+        TestLevelsOrOptions::Levels(levels) => levels.into_iter().next(),
+        TestLevelsOrOptions::Options(options) => Some(options.level),
+    };
+    let inner = outer.inner.as_ref().map(|inner| inner.level);
+    [Some(options.level), inner, either]
+        .into_iter()
+        .map(|level| level.map_or(-1.0, f64::from))
+        .collect()
 }
 
 pub(crate) fn count_nothing(

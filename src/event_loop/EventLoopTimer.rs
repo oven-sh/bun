@@ -219,7 +219,6 @@ pub enum Tag {
     /// An N-API addon's `uv_timer_t` (POSIX, where Bun emulates libuv).
     UvTimer,
     WorkerWaitsForRoom,
-    /// Only armed in a build with WebGPU.
     WebGPUInstance,
 }
 

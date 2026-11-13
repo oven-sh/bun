@@ -5,7 +5,7 @@
  *   bun scripts/build/dawn-source-lists.ts
  *
  * Dawn's CMake files decide what is in the library, through ~400 targets and their dependencies, so cmake answers:
- * this configures Dawn for each OS, which compiles nothing and works for all three on any host, and reads the
+ * this configures Dawn for each OS, which compiles nothing and works for all of them on any host, and reads the
  * closure of the library out of what cmake generated. It needs cmake, ninja, python3 and clang on PATH.
  */
 
@@ -18,7 +18,7 @@ import { BuildError } from "./error.ts";
 import { fetchCliPath } from "./fetch-cli.ts";
 import { writeIfChanged } from "./fs.ts";
 
-const operatingSystems = ["linux", "darwin", "windows"] as const;
+const operatingSystems = ["linux", "android", "darwin", "windows"] as const;
 type OperatingSystem = (typeof operatingSystems)[number];
 
 const repo = resolve(import.meta.dirname, "..", "..");
@@ -65,6 +65,14 @@ const options: Record<string, string> = {
 const optionsOf: Record<OperatingSystem, Record<string, string>> = {
   linux: {
     CMAKE_SYSTEM_NAME: "Linux",
+    CMAKE_C_COMPILER: "clang",
+    CMAKE_CXX_COMPILER: "clang++",
+    DAWN_ENABLE_VULKAN: "ON",
+  },
+  // Dawn's CMake files choose sources by ANDROID. The system name would have cmake look for an NDK.
+  android: {
+    CMAKE_SYSTEM_NAME: "Linux",
+    ANDROID: "1",
     CMAKE_C_COMPILER: "clang",
     CMAKE_CXX_COMPILER: "clang++",
     DAWN_ENABLE_VULKAN: "ON",
@@ -132,8 +140,12 @@ function fetchSpirvTools(scratch: string): string {
 }
 
 /** As a build does it: nothing, where `dest` already holds that commit. */
-function fetch(name: string, githubRepo: string, commit: string, dest: string, scratch: string): void {
-  run(process.execPath, [fetchCliPath, "dep", name, githubRepo, commit, dest, join(scratch, "tarballs")], repo);
+function fetch(name: string, githubRepo: string, commit: string, dest: string, scratch: string, rest: string[] = []) {
+  run(
+    process.execPath,
+    [fetchCliPath, "dep", name, githubRepo, commit, dest, join(scratch, "tarballs"), ...rest],
+    repo,
+  );
 }
 
 function listsOf(os: OperatingSystem, spirvTools: string): Lists {
@@ -215,8 +227,13 @@ function main(): void {
     for (const dep of dawnDeps) {
       // None of them asks the configuration where its source is.
       const source = dep.source(undefined as never);
-      if (source.kind !== "github-archive" || dep.patches) throw new BuildError(`${dep.name}: not a plain archive`);
-      fetch(dep.name, source.repo, source.commit, vendor(dep.name), scratch);
+      if (source.kind !== "github-archive" || typeof dep.patches === "function") {
+        throw new BuildError(`${dep.name}: not the same archive on every target`);
+      }
+      fetch(dep.name, source.repo, source.commit, vendor(dep.name), scratch, [
+        ...(source.exclude ?? []).map(path => `--exclude=${path}`),
+        ...(dep.patches ?? []).map(patch => join(repo, patch)),
+      ]);
     }
     const spirvTools = fetchSpirvTools(scratch);
     all = Object.fromEntries(operatingSystems.map(os => [os, listsOf(os, spirvTools)])) as typeof all;

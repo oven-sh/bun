@@ -683,6 +683,11 @@ pub mod ntdll {
             BackTrace: *mut *mut c_void,
             BackTraceHash: *mut u32,
         ) -> u16;
+        pub fn NtSetTimerResolution(
+            DesiredResolution: ULONG,
+            SetResolution: u8,
+            CurrentResolution: *mut ULONG,
+        ) -> NTSTATUS;
         pub fn NtCreateFile(
             FileHandle: *mut HANDLE,
             DesiredAccess: ACCESS_MASK,

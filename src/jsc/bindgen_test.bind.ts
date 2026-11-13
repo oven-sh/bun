@@ -770,6 +770,18 @@ export const countNothing = b.fn({
   },
   returns: b.array(b.f64),
 });
+/** As WebIDL converts a dictionary. */
+export const TestWebOptions = b.dictionary(
+  { level: b.u8.default(3) },
+  { allowArray: true, nonObjectAsEmpty: "nullish" },
+);
+export const TestWebOuter = b.dictionary({ inner: TestWebOptions.optional });
+export const TestLevelsOrOptions = b.union({ levels: b.sequence(b.u8), options: TestWebOptions });
+/** The level of each, or -1. */
+export const levelsOf = b.fn({
+  args: { options: TestWebOptions, outer: TestWebOuter, either: TestLevelsOrOptions },
+  returns: b.array(b.f64),
+});
 /** `b.sequence` by itself. */
 export const sumOfSequence = b.fn({ args: { numbers: b.sequence(b.f64.loose).default([]) }, returns: b.f64 });
 

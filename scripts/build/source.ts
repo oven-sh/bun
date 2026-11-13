@@ -42,7 +42,13 @@ import { toolIdentityFile } from "./tools.ts";
  * disk content, so hand-edits to vendor/<dep>/*.c are preserved (identity
  * still matches, no wipe).
  */
-function invalidateStaleSource(srcDir: string, refStamp: string, commit: string, patchPaths: string[]): void {
+function invalidateStaleSource(
+  srcDir: string,
+  refStamp: string,
+  commit: string,
+  patchPaths: string[],
+  exclude: string[],
+): void {
   if (!existsSync(srcDir)) return;
 
   const patchContents = patchPaths.map(p => {
@@ -54,7 +60,7 @@ function invalidateStaleSource(srcDir: string, refStamp: string, commit: string,
       return "<missing>";
     }
   });
-  const expected = computeSourceIdentity(commit, patchContents);
+  const expected = computeSourceIdentity(commit, patchContents, exclude);
 
   let current = "";
   try {
@@ -89,6 +95,8 @@ export type Source =
        * will silently change what we fetch.
        */
       commit: string;
+      /** Paths in the repository that are not extracted. Only where `commit` is a sha, which names the archive's folder. */
+      exclude?: string[];
     }
   | {
       /**
@@ -1007,7 +1015,8 @@ function emitFetch(
   //
   // Only deletes when identity is demonstrably wrong — normal no-op
   // builds skip it (identity matches, nothing touched).
-  invalidateStaleSource(srcDir, refStamp, source.commit, patchPaths);
+  const exclude = source.exclude ?? [];
+  invalidateStaleSource(srcDir, refStamp, source.commit, patchPaths, exclude);
 
   n.build({
     outputs: [refStamp],
@@ -1028,7 +1037,7 @@ function emitFetch(
       cache: resolve(cfg.cacheDir, "tarballs"),
       // Pass patches space-separated. Shell-safe because patch paths are
       // under our control (no spaces in repo paths per convention).
-      patches: patchPaths.join(" "),
+      patches: [...exclude.map(path => `--exclude=${path}`), ...patchPaths].join(" "),
     },
   });
 

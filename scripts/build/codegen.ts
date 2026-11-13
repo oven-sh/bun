@@ -28,7 +28,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { basename, dirname, relative, resolve, sep } from "node:path";
+import { basename, dirname, relative, resolve } from "node:path";
 import type { Sources } from "../glob-sources.ts";
 import { builtinUsesArguments, emitAotCodegen, guardInputs, hashTableInputs, type EngineSources } from "./aot.ts";
 import { generateBuildOptionsRs } from "./buildOptionsRs.ts";
@@ -284,7 +284,14 @@ export interface CodegenOutputs {
  * Call after registerCodegenRules() and after registerDirStamps() (we use
  * the `mkdir_stamp` rule for the codegen dir).
  */
-export function emitCodegen(n: Ninja, cfg: CodegenFields, sources: Sources, engine?: EngineSources): CodegenOutputs {
+export function emitCodegen(
+  n: Ninja,
+  cfg: CodegenFields,
+  sources: Sources,
+  engine?: EngineSources,
+  /** What Rust includes and a step of a dep writes. */
+  rustInputsOfDeps: string[] = [],
+): CodegenOutputs {
   n.comment("─── Codegen ───");
   n.blank();
 
@@ -294,9 +301,9 @@ export function emitCodegen(n: Ninja, cfg: CodegenFields, sources: Sources, engi
   const rootInstall = emitPackageInstall(n, cfg, cfg.cwd);
 
   const o: CodegenOutputs = {
-    all: [],
+    all: [...rustInputsOfDeps],
     generatedTypes: [],
-    rustInputs: [],
+    rustInputs: [...rustInputsOfDeps],
     cppSources: [],
     builtinTableSources: [],
     cppHeaders: [],
@@ -928,12 +935,8 @@ function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
   o.rustInputs.push(...outputs);
 }
 
-/**
- * A `*_test.bind.ts` binds what exists for tests. Only a build where Rust has `debug_assertions` has it, and none ships.
- * What src/runtime/webgpu binds calls Dawn, which only a build with `webgpu` links.
- */
+/** A `*_test.bind.ts` binds what exists for tests. Only a build where Rust has `debug_assertions` has it, and none ships. */
 function isCompiled(cfg: CodegenFields, src: string): boolean {
-  if (src.startsWith(resolve(cfg.cwd, "src", "runtime", "webgpu") + sep)) return cfg.webgpu;
   return cfg.debug || cfg.assertions || !src.endsWith("_test.bind.ts");
 }
 

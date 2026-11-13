@@ -247,11 +247,6 @@ export interface Config {
    * the binary; a prebuilt one keeps it.
    */
   ffi: boolean;
-  /**
-   * Default false. On builds a Bun with WebGPU: `navigator.gpu` and the `GPU*` globals, without canvases or windows.
-   * It compiles and links Dawn (deps/dawn.ts), which talks to Vulkan on Linux, Metal on macOS and Direct3D 12 on Windows.
-   */
-  webgpu: boolean;
   /** Bundle small .cpp files into unified TUs (WebKit-style). See unified.ts. */
   unifiedSources: boolean;
   /**
@@ -488,7 +483,6 @@ export interface PartialConfig {
   webAssembly?: boolean;
   shadowRealm?: boolean;
   ffi?: boolean;
-  webgpu?: boolean;
   unifiedSources?: boolean;
   archiveDeps?: boolean;
   timeTrace?: boolean;
@@ -968,12 +962,6 @@ function resolveBase(partial: PartialConfig, host: Host, os: OS, arch: Arch, js:
   const canary = partial.canary ?? true;
   const canaryRevision = canary ? "1" : "0";
   const fuzzilli = partial.fuzzilli ?? false;
-  const webgpu = partial.webgpu ?? false;
-  assert(
-    !webgpu || darwin || windows || (linux && abi !== "android"),
-    "webgpu=true requires os=linux (glibc or musl), os=darwin or os=windows",
-    { hint: "Those are the platforms that scripts/build/deps/dawn-sources.ts has Dawn's sources for" },
-  );
   const pkgJsonPath = resolve(cwd, "package.json");
   const pkgJson = JSON.parse(readFileSync(pkgJsonPath, "utf8")) as { version: string };
   const version = pkgJson.version;
@@ -991,7 +979,6 @@ function resolveBase(partial: PartialConfig, host: Host, os: OS, arch: Arch, js:
     canary,
     canaryRevision,
     fuzzilli,
-    webgpu,
     version,
     revision,
     nodejsVersion,
@@ -1039,7 +1026,6 @@ export type CodegenFields = Pick<
   | "canary"
   | "canaryRevision"
   | "fuzzilli"
-  | "webgpu"
   | "version"
   | "revision"
   | "nodejsVersion"
@@ -1095,7 +1081,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     canary,
     canaryRevision,
     fuzzilli,
-    webgpu,
     version,
     revision,
     nodejsVersion,
@@ -1545,7 +1530,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     webAssembly: partial.webAssembly ?? true,
     shadowRealm: partial.shadowRealm ?? true,
     ffi: partial.ffi ?? true,
-    webgpu,
     unifiedSources: partial.unifiedSources ?? true,
     archiveDeps: partial.archiveDeps ?? false,
     timeTrace: partial.timeTrace ?? false,
@@ -1960,7 +1944,6 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (!cfg.webAssembly) features.push("webassembly:off");
   if (!cfg.shadowRealm) features.push("shadow-realm:off");
   if (!cfg.ffi) features.push("ffi:off");
-  if (cfg.webgpu) features.push("webgpu");
   if (!cfg.canary) features.push("canary:off");
   // Non-default modes — show so you notice when a build is unusual.
   if (cfg.webkit !== "prebuilt") features.push(`webkit:${cfg.webkit}`);

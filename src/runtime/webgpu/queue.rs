@@ -35,6 +35,7 @@ impl GPUQueue {
             .collect();
         // SAFETY: live objects, and a list that outlives the call.
         unsafe { sys::wgpuQueueSubmit(self.handle, handles.len(), handles.as_ptr()) };
+        self.device.state.did_submit();
         drop(command_buffers);
     }
 
@@ -78,6 +79,7 @@ impl GPUQueue {
                     bytes.len(),
                 )
             };
+            self.device.state.has_garbage();
             Ok(())
         })
     }
@@ -106,6 +108,7 @@ impl GPUQueue {
                 )
             };
         });
+        self.device.state.has_garbage();
         Ok(())
     }
 }

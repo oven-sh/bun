@@ -656,16 +656,24 @@ template<> bool Bun::Bindgen::convertDictionaryInto<${type.cpp}>(JSC::JSGlobalOb
     ${cppStaticContext("ctx", `LiteralConversionContext { ${asciiLiteral(type.reportedAs || type.name)} }`)}
     auto* object = value.getObject();
 ${
-  type.nonObjectAsEmpty
-    ? `    if (!object${type.nonObjectAsEmpty === "typeof" ? " || object->isCallable()" : ""}) {
+  type.nonObjectAsEmpty === "nullish"
+    ? `    if (value.isUndefinedOrNull()) {
+${indent(type.cppAssign("result", {}), 8)}
+        return true;
+    }
+`
+    : ""
+}${
+    type.nonObjectAsEmpty && type.nonObjectAsEmpty !== "nullish"
+      ? `    if (!object${type.nonObjectAsEmpty === "typeof" ? " || object->isCallable()" : ""}) {
 ${indent(type.cppAssign("result", {}), 8)}
         return true;
     }`
-    : `    if (!object) [[unlikely]] {
+      : `    if (!object) [[unlikely]] {
         ctx.throwNotObject(*globalObject, scope);
         return false;
     }`
-}
+  }
 ${
   type.allowArray
     ? ""

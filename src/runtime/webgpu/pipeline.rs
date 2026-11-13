@@ -12,7 +12,7 @@ use super::{
 };
 use crate::generated_bindgen::webgpu::{
     GPUBlendComponent, GPUComputePipelineDescriptor, GPUPipelineLayoutOrAuto,
-    GPURenderPipelineDescriptor, GPUStencilFaceState,
+    GPURenderPipelineDescriptor, GPUStencilFaceState, js_GPUComputePipeline, js_GPURenderPipeline,
 };
 
 gpu_object! {
@@ -313,9 +313,12 @@ impl GPUDevice {
         let handle = with_compute_pipeline_descriptor(descriptor, |descriptor| unsafe {
             sys::wgpuDeviceCreateComputePipeline(self.handle, descriptor)
         });
-        new_object(
-            heap,
-            GPUComputePipeline::new(handle, &descriptor.label, self.device_ref()),
+        self.state.held_by(
+            new_object(
+                heap,
+                GPUComputePipeline::new(handle, &descriptor.label, self.device_ref()),
+            ),
+            js_GPUComputePipeline::device_set_cached,
         )
     }
 
@@ -329,9 +332,12 @@ impl GPUDevice {
         let handle = with_render_pipeline_descriptor(descriptor, |descriptor| unsafe {
             sys::wgpuDeviceCreateRenderPipeline(self.handle, descriptor)
         });
-        Ok(new_object(
-            heap,
-            GPURenderPipeline::new(handle, &descriptor.label, self.device_ref()),
+        Ok(self.state.held_by(
+            new_object(
+                heap,
+                GPURenderPipeline::new(handle, &descriptor.label, self.device_ref()),
+            ),
+            js_GPURenderPipeline::device_set_cached,
         ))
     }
 
@@ -384,7 +390,7 @@ impl GPUDevice {
 }
 
 macro_rules! on_pipeline {
-    ($name:ident, $Handle:ident, $Pipeline:ident) => {
+    ($name:ident, $Handle:ident, $Pipeline:ident, $js:ident) => {
         unsafe extern "C" fn $name(
             status: sys::WGPUCreatePipelineAsyncStatus,
             pipeline: sys::$Handle,
@@ -398,7 +404,8 @@ macro_rules! on_pipeline {
             let pipeline = (!pipeline.is_null()).then(|| $Pipeline::new(pipeline, &label, device));
             settle.with(|global| match pipeline {
                 Some(pipeline) if status == sys::WGPUCreatePipelineAsyncStatus::Success => {
-                    Ok(pipeline.to_js(global))
+                    let state = pipeline.device.state.clone();
+                    Ok(state.held_by(pipeline.to_js(global), $js::device_set_cached))
                 }
                 // SAFETY: Dawn's, until this returns.
                 _ => Err(unsafe { GPUPipelineError::of(status, message) }.to_js(global)),
@@ -406,5 +413,15 @@ macro_rules! on_pipeline {
         }
     };
 }
-on_pipeline!(on_compute_pipeline, WGPUComputePipeline, GPUComputePipeline);
-on_pipeline!(on_render_pipeline, WGPURenderPipeline, GPURenderPipeline);
+on_pipeline!(
+    on_compute_pipeline,
+    WGPUComputePipeline,
+    GPUComputePipeline,
+    js_GPUComputePipeline
+);
+on_pipeline!(
+    on_render_pipeline,
+    WGPURenderPipeline,
+    GPURenderPipeline,
+    js_GPURenderPipeline
+);

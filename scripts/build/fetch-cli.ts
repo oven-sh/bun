@@ -48,11 +48,14 @@ async function main(): Promise<void> {
 
   switch (kind) {
     case "dep": {
-      // fetch-cli.ts dep <name> <repo> <commit> <dest> <cache> [...patches]
-      const [name, repo, commit, dest, cache, ...patches] = args;
+      // fetch-cli.ts dep <name> <repo> <commit> <dest> <cache> [--exclude=<path>]... [...patches]
+      const [name, repo, commit, dest, cache, ...rest] = args;
+      const isExclude = (arg: string) => arg.startsWith("--exclude=");
+      const exclude = rest.filter(isExclude).map(arg => arg.slice("--exclude=".length));
+      const patches = rest.filter(arg => !isExclude(arg));
       assert(name !== undefined && repo !== undefined && commit !== undefined, "dep: missing name/repo/commit");
       assert(dest !== undefined && cache !== undefined, "dep: missing dest/cache");
-      return fetchDep(name, repo, commit, dest, cache, patches);
+      return fetchDep(name, repo, commit, dest, cache, patches, exclude);
     }
 
     case "subst": {
@@ -273,6 +276,7 @@ async function fetchDep(
   dest: string,
   cache: string,
   patches: string[],
+  exclude: string[],
 ): Promise<void> {
   const refPath = join(dest, ".ref");
 
@@ -290,7 +294,7 @@ async function fetchDep(
     }
   }
 
-  const identity = computeSourceIdentity(commit, patchContents);
+  const identity = computeSourceIdentity(commit, patchContents, exclude);
 
   // Short-circuit: already fetched at this identity?
   if (existsSync(refPath)) {
@@ -325,7 +329,12 @@ async function fetchDep(
   await mkdir(dest, { recursive: true });
 
   // Github archives have a top-level directory <repo>-<commit>/. Strip it.
-  await extractTarGz(tarballPath, dest);
+  await extractTarGz(
+    tarballPath,
+    dest,
+    1,
+    exclude.map(path => `${basename(repo)}-${commit}/${path}`),
+  );
 
   // ─── Apply patches / overlays ───
   for (let i = 0; i < patches.length; i++) {
@@ -364,9 +373,10 @@ async function fetchDep(
  * Exported so source.ts can compute the same identity at configure time
  * (for the preemptive-delete-on-mismatch check).
  */
-export function computeSourceIdentity(commit: string, patchContents: string[]): string {
+export function computeSourceIdentity(commit: string, patchContents: string[], exclude: readonly string[]): string {
   const h = createHash("sha256");
   h.update(commit);
+  for (const path of exclude) h.update(`\0--exclude=${path}`);
   for (const content of patchContents) {
     h.update("\0"); // Separator so patch concatenation can't produce collisions.
     h.update(normalizeLf(content));

@@ -47,6 +47,7 @@ const loadsNativeCode = {
   functions: ["dlopen", "dlmopen"],
   features: [
     ...featuresOf("cli", "native-code", "sqlite", "secrets", "terminal", "webview", "image", "dns", "bundler"),
+    ...featuresOf("webgpu"),
     featureNamed("NodeFs"),
     featureOf("process.versions"),
     // macOS reads the system's certificates through Security.framework, which it opens by name.

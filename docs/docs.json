@@ -142,6 +142,7 @@
               "/runtime/shell",
               "/runtime/child-process",
               "/runtime/webview",
+              "/runtime/webgpu",
               "/runtime/cron"
             ]
           },

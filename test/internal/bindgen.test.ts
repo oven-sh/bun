@@ -3476,6 +3476,19 @@ describe("WebIDL's numbers", () => {
     expect(() => countNothing({}, 1, 7, {}, 0, [{}, 1])).toThrow(TypeError);
   });
 
+  it('nonObjectAsEmpty: "nullish" takes null and undefined, and no other primitive', () => {
+    const { levelsOf } = bindgen as any;
+    expect(levelsOf({ level: 1 }, { inner: { level: 2 } }, { level: 4 })).toEqual([1, 2, 4]);
+    expect(levelsOf(null, { inner: null }, null)).toEqual([3, 3, 3]);
+    expect(levelsOf(undefined, { inner: undefined }, undefined)).toEqual([3, -1, 3]);
+    expect(levelsOf([], { inner: [] }, [])).toEqual([3, 3, -1]);
+    for (const value of [0, "", false, 1n, Symbol()]) {
+      expect(() => levelsOf(value, {}, [])).toThrow(TypeError);
+      expect(() => levelsOf({}, { inner: value }, [])).toThrow(TypeError);
+      expect(() => levelsOf({}, {}, value)).toThrow(TypeError);
+    }
+  });
+
   it("b.sequence by itself refuses what cannot be iterated", () => {
     const { sumOfSequence } = bindgen as any;
     expect(sumOfSequence()).toBe(0);

@@ -9,6 +9,7 @@ use super::{
 };
 use crate::generated_bindgen::webgpu::{
     GPUColor, GPUIndexFormat, GPURenderBundleDescriptor, GPURenderBundleEncoderDescriptor,
+    js_GPURenderBundleEncoder,
 };
 
 gpu_object! {
@@ -474,9 +475,12 @@ impl GPUDevice {
         let handle = unsafe {
             sys::wgpuDeviceCreateRenderBundleEncoder(self.handle, &raw const sys_descriptor)
         };
-        Ok(new_object(
-            heap,
-            GPURenderBundleEncoder::new(handle, &descriptor.label, self.device_ref()),
+        Ok(self.state.held_by(
+            new_object(
+                heap,
+                GPURenderBundleEncoder::new(handle, &descriptor.label, self.device_ref()),
+            ),
+            js_GPURenderBundleEncoder::device_set_cached,
         ))
     }
 }

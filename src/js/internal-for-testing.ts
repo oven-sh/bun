@@ -247,7 +247,6 @@ export const declaredResults = {
   ) as () => boolean,
 };
 
-// Only in a build with `--webgpu=on`: `isCompiled` in scripts/build/codegen.ts.
 export const webgpuUseNullBackend = $bindgen("webgpu.bind.ts", "useNullBackendForTesting");
 export const webgpuIsDeviceLost = $bindgen("webgpu.bind.ts", "isDeviceLostForTesting");
 
@@ -272,6 +271,7 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   areaOf: $bindgen("bindgen_test.bind.ts", "areaOf"),
   sumOfSequence: $bindgen("bindgen_test.bind.ts", "sumOfSequence"),
   describeMarks: $bindgen("bindgen_test.bind.ts", "describeMarks"),
+  levelsOf: $bindgen("bindgen_test.bind.ts", "levelsOf"),
   countNothing: $bindgen("bindgen_test.bind.ts", "countNothing"),
   describeRecords: $bindgen("bindgen_test.bind.ts", "describeRecords"),
   TestFlags: $bindgen("bindgen_test.bind.ts", "TestFlags"),

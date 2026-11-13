@@ -3247,6 +3247,7 @@ declare module "bun" {
       | "node-vm"
       | "node-crypto"
       | "web-crypto"
+      | "webgpu"
       | "password"
       | "brotli"
       | "intl"

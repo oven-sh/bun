@@ -435,6 +435,10 @@ unsafe extern "C" {
         array_buffer: *mut *mut c_void,
     ) -> JSValue;
     fn Bun__WebGPU__createInstance(log: sys::WGPULoggingCallback) -> sys::WGPUInstance;
+    /// Whether the GPU has something left to finish.
+    fn Bun__WebGPU__tickDevice(device: sys::WGPUDevice) -> bool;
+    /// Whether it has submitted something, for a tick to finish.
+    fn Bun__WebGPU__reduceMemoryUsage(device: sys::WGPUDevice) -> bool;
     fn Bun__WebGPU__isMappedRangeInUse(array_buffer: *mut c_void) -> bool;
     fn Bun__WebGPU__detachMappedRange(global: *mut JSGlobalObject, array_buffer: *mut c_void);
     fn Bun__WebGPU__createSet(

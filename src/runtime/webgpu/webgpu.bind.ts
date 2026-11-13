@@ -1,59 +1,41 @@
-/**
- * WebGPU (https://gpuweb.github.io/gpuweb/), in the order of its IDL, without what needs a window or a DOM: canvases,
- * importing external textures and images, XR. Only in a build with `--webgpu=on`.
- */
+// Written by src/codegen/generate-webgpu-bindings.ts, from webgpu.idl.
+
 import * as b from "../../codegen/bindgen-lib.ts";
-import type { Type } from "../../codegen/bindgen-lib-internal.ts";
+import * as table from "../../codegen/builtins/lib.ts";
 
 export default b.module({ rustPath: "crate::webgpu" });
 
-// ───────────────────────────── typedefs ─────────────────────────────
+const promiseOf = (value: table.TableType) =>
+  b.any.returning(table.instance("Promise").holding({ value, reason: table.any }).spec);
+const typesOf = (name: string) => [
+  table.viewType(name),
+  table.viewType(`bun.WebGPU.${name}`),
+  table.exactType(`$Bindgen.${name}`),
+];
+/** The call is done with the bytes when it returns. */
+const copied = [table.readsContents()];
+/** What a device makes in a later turn of the event loop, for a listener or a promise. */
+const madeByDevice = [
+  "GPUDeviceLostInfo",
+  "GPUInternalError",
+  "GPUOutOfMemoryError",
+  "GPUPipelineError",
+  "GPUUncapturedErrorEvent",
+  "GPUValidationError",
+].map(name => table.createdIn(table.instance(name), table.nativeMemory));
 
-const GPUSize64 = b.u64.enforceRange();
-const GPUSize32 = b.u32.enforceRange();
-const GPUIndex32 = GPUSize32;
-const GPUIntegerCoordinate = GPUSize32;
-const GPUBufferDynamicOffset = GPUSize32;
-const GPUStencilValue = GPUSize32;
-const GPUSampleMask = GPUSize32;
-const GPUFlags = GPUSize32;
-const GPUSignedOffset32 = b.i32.enforceRange();
-const GPUDepthBias = GPUSignedOffset32;
-const double = b.f64.loose.finite;
-const boolean = b.bool.loose;
-const DOMString = b.string.loose;
-const USVString = b.string.usv;
-/** For what Dawn takes and nothing keeps. An unpaired surrogate becomes U+FFFD, as in a `USVString`. */
-const utf8 = b.string.loose.utf8;
-const promise = b.any.returning("Promise");
-
-type Members = Record<string, Type>;
-
-/** WebIDL reads the members of a dictionary in lexicographical order, after those of the dictionary it inherits from. */
-function dictionary(...levels: Members[]) {
-  const inOrder = levels.flatMap(level => Object.entries(level).sort(([a], [b]) => (a < b ? -1 : 1)));
-  return b.dictionary(Object.fromEntries(inOrder));
-}
-
-const GPUObjectDescriptorBase = { label: USVString.default("") };
-const GPUObjectBase = { label: { getter: USVString, setter: true } } as const;
-
-const rustPath = (name: string) => `crate::webgpu::${name}`;
-/** The attributes and the operations of a WebIDL interface can be replaced, which shims and debuggers do. */
-const webIDL = { configurable: true } as const;
-/** An interface that JavaScript names and does not construct. */
-const webInterface = { ...webIDL, construct: "illegal" } as const;
-/** One whose struct a descriptor can hold. */
-const gpuObject = { ...webInterface, refCounted: true } as const;
-
-const setIterator = b.any.returning("object");
-/** `readonly setlike<DOMString>`. */
+const iteratorOver = (element: table.TableType) =>
+  ({
+    returns: b.any.returning(table.instance("SetIterator").holding({ element }).spec),
+    capability: "heap",
+    passThis: true,
+  }) as const;
 const setlike = {
   size: { getter: b.u32 },
-  has: { args: { value: DOMString }, returns: b.bool },
-  entries: { returns: setIterator, capability: "heap", passThis: true },
-  keys: { returns: setIterator, capability: "heap", passThis: true },
-  values: { returns: setIterator, capability: "heap", passThis: true },
+  has: { args: { value: b.string.loose }, returns: b.bool },
+  entries: iteratorOver(table.instance("Array").holding({ element: table.string })),
+  keys: iteratorOver(table.string),
+  values: iteratorOver(table.string),
   forEach: {
     args: { callback: b.callable, thisArg: b.any },
     capability: "js",
@@ -61,11 +43,98 @@ const setlike = {
     passThis: true,
     length: 1,
   },
-  "@@iterator": { returns: setIterator, capability: "heap", passThis: true, rustName: "values" },
+  "@@iterator": { ...iteratorOver(table.string), rustName: "values" },
 } as const;
 
-// ───────────────────────────── features, limits, adapter info ─────────────────────────────
-
+export const GPUSupportedLimits = b.class({
+  types: typesOf("GPUSupportedLimits"),
+  rustPath: "crate::webgpu::GPUSupportedLimits",
+  configurable: true,
+  construct: "illegal",
+  proto: {
+    maxTextureDimension1D: { getter: b.u32 },
+    maxTextureDimension2D: { getter: b.u32 },
+    maxTextureDimension3D: { getter: b.u32 },
+    maxTextureArrayLayers: { getter: b.u32 },
+    maxBindGroups: { getter: b.u32 },
+    maxBindGroupsPlusVertexBuffers: { getter: b.u32 },
+    maxImmediateSize: { getter: b.u32 },
+    maxBindingsPerBindGroup: { getter: b.u32 },
+    maxDynamicUniformBuffersPerPipelineLayout: { getter: b.u32 },
+    maxDynamicStorageBuffersPerPipelineLayout: { getter: b.u32 },
+    maxSampledTexturesPerShaderStage: { getter: b.u32 },
+    maxSamplersPerShaderStage: { getter: b.u32 },
+    maxStorageBuffersPerShaderStage: { getter: b.u32 },
+    maxStorageBuffersInVertexStage: { getter: b.u32 },
+    maxStorageBuffersInFragmentStage: { getter: b.u32 },
+    maxStorageTexturesPerShaderStage: { getter: b.u32 },
+    maxStorageTexturesInVertexStage: { getter: b.u32 },
+    maxStorageTexturesInFragmentStage: { getter: b.u32 },
+    maxUniformBuffersPerShaderStage: { getter: b.u32 },
+    maxUniformBufferBindingSize: { getter: b.u64 },
+    maxStorageBufferBindingSize: { getter: b.u64 },
+    minUniformBufferOffsetAlignment: { getter: b.u32 },
+    minStorageBufferOffsetAlignment: { getter: b.u32 },
+    maxVertexBuffers: { getter: b.u32 },
+    maxBufferSize: { getter: b.u64 },
+    maxVertexAttributes: { getter: b.u32 },
+    maxVertexBufferArrayStride: { getter: b.u32 },
+    maxInterStageShaderVariables: { getter: b.u32 },
+    maxColorAttachments: { getter: b.u32 },
+    maxColorAttachmentBytesPerSample: { getter: b.u32 },
+    maxComputeWorkgroupStorageSize: { getter: b.u32 },
+    maxComputeInvocationsPerWorkgroup: { getter: b.u32 },
+    maxComputeWorkgroupSizeX: { getter: b.u32 },
+    maxComputeWorkgroupSizeY: { getter: b.u32 },
+    maxComputeWorkgroupSizeZ: { getter: b.u32 },
+    maxComputeWorkgroupsPerDimension: { getter: b.u32 },
+  },
+});
+export const GPUSupportedFeatures = b.class({
+  types: typesOf("GPUSupportedFeatures"),
+  rustPath: "crate::webgpu::GPUSupportedFeatures",
+  configurable: true,
+  internalFields: ["set"],
+  construct: "illegal",
+  proto: { ...setlike },
+});
+export const WGSLLanguageFeatures = b.class({
+  types: typesOf("WGSLLanguageFeatures"),
+  rustPath: "crate::webgpu::WGSLLanguageFeatures",
+  configurable: true,
+  internalFields: ["set"],
+  construct: "illegal",
+  proto: { ...setlike },
+});
+export const GPUAdapterInfo = b.class({
+  types: typesOf("GPUAdapterInfo"),
+  rustPath: "crate::webgpu::GPUAdapterInfo",
+  configurable: true,
+  construct: "illegal",
+  proto: {
+    vendor: { getter: b.string },
+    architecture: { getter: b.string },
+    device: { getter: b.string },
+    description: { getter: b.string },
+    subgroupMinSize: { getter: b.u32 },
+    subgroupMaxSize: { getter: b.u32 },
+    isFallbackAdapter: { getter: b.bool },
+  },
+});
+export const GPUPowerPreference = b.enumeration(["low-power", "high-performance"]);
+export const GPURequestAdapterOptions = b.dictionary(
+  {
+    featureLevel: b.string.loose.utf8.default("core"),
+    forceFallbackAdapter: b.bool.loose.default(false),
+    powerPreference: GPUPowerPreference.optional,
+    xrCompatible: b.bool.loose.default(false),
+  },
+  { allowArray: true, nonObjectAsEmpty: "nullish" },
+);
+export const GPUQueueDescriptor = b.dictionary(
+  { label: b.string.usv.default("") },
+  { allowArray: true, nonObjectAsEmpty: "nullish" },
+);
 export const GPUFeatureName = b.enumeration([
   "core-features-and-limits",
   "depth-clip-control",
@@ -93,84 +162,63 @@ export const GPUFeatureName = b.enumeration([
   "texture-compression-unaligned",
   "atomic-vec2u-min-max",
 ]);
-
-const limit32 = { getter: b.u32 };
-const limit64 = { getter: b.u64 };
-export const GPUSupportedLimits = b.class({
-  rustPath: rustPath("GPUSupportedLimits"),
-  ...webInterface,
-  proto: {
-    maxTextureDimension1D: limit32,
-    maxTextureDimension2D: limit32,
-    maxTextureDimension3D: limit32,
-    maxTextureArrayLayers: limit32,
-    maxBindGroups: limit32,
-    maxBindGroupsPlusVertexBuffers: limit32,
-    maxImmediateSize: limit32,
-    maxBindingsPerBindGroup: limit32,
-    maxDynamicUniformBuffersPerPipelineLayout: limit32,
-    maxDynamicStorageBuffersPerPipelineLayout: limit32,
-    maxSampledTexturesPerShaderStage: limit32,
-    maxSamplersPerShaderStage: limit32,
-    maxStorageBuffersPerShaderStage: limit32,
-    maxStorageBuffersInVertexStage: limit32,
-    maxStorageBuffersInFragmentStage: limit32,
-    maxStorageTexturesPerShaderStage: limit32,
-    maxStorageTexturesInVertexStage: limit32,
-    maxStorageTexturesInFragmentStage: limit32,
-    maxUniformBuffersPerShaderStage: limit32,
-    maxUniformBufferBindingSize: limit64,
-    maxStorageBufferBindingSize: limit64,
-    minUniformBufferOffsetAlignment: limit32,
-    minStorageBufferOffsetAlignment: limit32,
-    maxVertexBuffers: limit32,
-    maxBufferSize: limit64,
-    maxVertexAttributes: limit32,
-    maxVertexBufferArrayStride: limit32,
-    maxInterStageShaderVariables: limit32,
-    maxColorAttachments: limit32,
-    maxColorAttachmentBytesPerSample: limit32,
-    maxComputeWorkgroupStorageSize: limit32,
-    maxComputeInvocationsPerWorkgroup: limit32,
-    maxComputeWorkgroupSizeX: limit32,
-    maxComputeWorkgroupSizeY: limit32,
-    maxComputeWorkgroupSizeZ: limit32,
-    maxComputeWorkgroupsPerDimension: limit32,
+const GPUSize64 = b.u64.enforceRange();
+export const GPUDeviceDescriptor = b.dictionary(
+  {
+    label: b.string.usv.default(""),
+    defaultQueue: GPUQueueDescriptor.default({}),
+    requiredFeatures: b.sequence(GPUFeatureName).default([]),
+    requiredLimits: b.record(GPUSize64.optional).default({}),
   },
+  { allowArray: true, nonObjectAsEmpty: "nullish" },
+);
+export const GPUCommandBuffer = b.class({
+  types: typesOf("GPUCommandBuffer"),
+  rustPath: "crate::webgpu::GPUCommandBuffer",
+  configurable: true,
+  refCounted: true,
+  construct: "illegal",
+  proto: { label: { getter: b.string.usv, setter: true } },
 });
-
-export const GPUSupportedFeatures = b.class({
-  rustPath: rustPath("GPUSupportedFeatures"),
-  ...webInterface,
-  internalFields: ["set"],
-  proto: setlike,
-});
-
-export const WGSLLanguageFeatures = b.class({
-  rustPath: rustPath("WGSLLanguageFeatures"),
-  ...webInterface,
-  internalFields: ["set"],
-  proto: setlike,
-});
-
-export const GPUAdapterInfo = b.class({
-  rustPath: rustPath("GPUAdapterInfo"),
-  ...webInterface,
-  proto: {
-    vendor: { getter: b.string },
-    architecture: { getter: b.string },
-    device: { getter: b.string },
-    description: { getter: b.string },
-    subgroupMinSize: { getter: b.u32 },
-    subgroupMaxSize: { getter: b.u32 },
-    isFallbackAdapter: { getter: b.bool },
-  },
-});
-
-// ───────────────────────────── enumerations that a class below returns ─────────────────────────────
-
 export const GPUBufferMapState = b.enumeration(["unmapped", "pending", "mapped"]);
-export const GPUTextureDimension = b.enumeration({ D1: "1d", D2: "2d", D3: "3d" });
+const GPUMapModeFlags = b.u32.enforceRange();
+export const GPUBuffer = b.class({
+  types: typesOf("GPUBuffer"),
+  rustPath: "crate::webgpu::GPUBuffer",
+  configurable: true,
+  refCounted: true,
+  internalFields: ["device"],
+  estimatedSize: true,
+  construct: "illegal",
+  proto: {
+    size: { getter: b.u64 },
+    usage: { getter: b.u32 },
+    mapState: { getter: GPUBufferMapState },
+    mapAsync: {
+      args: { mode: GPUMapModeFlags, offset: GPUSize64.default(0), size: GPUSize64.optional },
+      returns: promiseOf(table.undefined),
+      capability: "js",
+      throws: true,
+      rejects: true,
+    },
+    getMappedRange: {
+      args: { offset: GPUSize64.default(0), size: GPUSize64.optional },
+      returns: b.any.returning("ArrayBuffer"),
+      capability: "heap",
+      throws: true,
+    },
+    unmap: { capability: "js", throws: true },
+    destroy: { capability: "js", throws: true },
+    label: { getter: b.string.usv, setter: true },
+  },
+});
+export const GPUTextureAspect = b.enumeration(["all", "stencil-only", "depth-only"]);
+const GPUIntegerCoordinate = b.u32.enforceRange();
+export const GPUOrigin3DDict = b.dictionary(
+  { x: GPUIntegerCoordinate.default(0), y: GPUIntegerCoordinate.default(0), z: GPUIntegerCoordinate.default(0) },
+  { allowArray: true, nonObjectAsEmpty: "nullish" },
+);
+export const GPUOrigin3D = b.union({ sequence: b.sequence(GPUIntegerCoordinate), dict: GPUOrigin3DDict });
 export const GPUTextureViewDimension = b.enumeration({
   D1: "1d",
   D2: "2d",
@@ -179,7 +227,6 @@ export const GPUTextureViewDimension = b.enumeration({
   CubeArray: "cube-array",
   D3: "3d",
 });
-export const GPUTextureAspect = b.enumeration(["all", "stencil-only", "depth-only"]);
 export const GPUTextureFormat = b.enumeration([
   "r8unorm",
   "r8snorm",
@@ -283,112 +330,42 @@ export const GPUTextureFormat = b.enumeration([
   "astc-12x12-unorm",
   "astc-12x12-unorm-srgb",
 ]);
-export const GPUQueryType = b.enumeration(["occlusion", "timestamp"]);
-export const GPUCompilationMessageType = b.enumeration(["error", "warning", "info"]);
-export const GPUDeviceLostReason = b.enumeration(["unknown", "destroyed"]);
-export const GPUErrorFilter = b.enumeration(["validation", "out-of-memory", "internal"]);
-
-// ───────────────────────────── colors, origins, extents ─────────────────────────────
-
-export const GPUColorDict = dictionary({ r: double, g: double, b: double, a: double });
-export const GPUColor = b.union({ sequence: b.sequence(double), dict: GPUColorDict });
-export const GPUOrigin3DDict = dictionary({
-  x: GPUIntegerCoordinate.default(0),
-  y: GPUIntegerCoordinate.default(0),
-  z: GPUIntegerCoordinate.default(0),
-});
-export const GPUOrigin3D = b.union({ sequence: b.sequence(GPUIntegerCoordinate), dict: GPUOrigin3DDict });
-export const GPUExtent3DDict = dictionary({
-  width: GPUIntegerCoordinate,
-  height: GPUIntegerCoordinate.default(1),
-  depthOrArrayLayers: GPUIntegerCoordinate.default(1),
-});
-export const GPUExtent3D = b.union({ sequence: b.sequence(GPUIntegerCoordinate), dict: GPUExtent3DDict });
-
-// ───────────────────────────── buffers ─────────────────────────────
-
-export const GPUBuffer = b.class({
-  ...gpuObject,
-  rustPath: rustPath("GPUBuffer"),
-  estimatedSize: true,
-  proto: {
-    ...GPUObjectBase,
-    size: { getter: b.u64 },
-    usage: { getter: b.u32 },
-    mapState: { getter: GPUBufferMapState },
-    mapAsync: {
-      args: { mode: GPUFlags, offset: GPUSize64.default(0), size: GPUSize64.optional },
-      returns: promise,
-      capability: "js",
-      throws: true,
-      rejects: true,
-    },
-    getMappedRange: {
-      args: { offset: GPUSize64.default(0), size: GPUSize64.optional },
-      returns: b.any.returning("ArrayBuffer"),
-      capability: "heap",
-      throws: true,
-    },
-    unmap: { capability: "js", throws: true },
-    destroy: { capability: "js", throws: true },
-  },
-});
-
-export const GPUBufferDescriptor = dictionary(GPUObjectDescriptorBase, {
-  size: GPUSize64,
-  usage: GPUFlags,
-  mappedAtCreation: boolean.default(false),
-});
-
-export const GPUBufferUsage = b.namespace(
+const GPUTextureUsageFlags = b.u32.enforceRange();
+export const GPUTextureViewDescriptor = b.dictionary(
   {
-    MAP_READ: { constant: 0x0001 },
-    MAP_WRITE: { constant: 0x0002 },
-    COPY_SRC: { constant: 0x0004 },
-    COPY_DST: { constant: 0x0008 },
-    INDEX: { constant: 0x0010 },
-    VERTEX: { constant: 0x0020 },
-    UNIFORM: { constant: 0x0040 },
-    STORAGE: { constant: 0x0080 },
-    INDIRECT: { constant: 0x0100 },
-    QUERY_RESOLVE: { constant: 0x0200 },
+    label: b.string.usv.default(""),
+    arrayLayerCount: GPUIntegerCoordinate.optional,
+    aspect: GPUTextureAspect.default("all"),
+    baseArrayLayer: GPUIntegerCoordinate.default(0),
+    baseMipLevel: GPUIntegerCoordinate.default(0),
+    dimension: GPUTextureViewDimension.optional,
+    format: GPUTextureFormat.optional,
+    mipLevelCount: GPUIntegerCoordinate.optional,
+    swizzle: b.string.loose.utf8.default("rgba"),
+    usage: GPUTextureUsageFlags.default(0),
   },
-  { toStringTag: true },
+  { allowArray: true, nonObjectAsEmpty: "nullish" },
 );
-
-export const GPUMapMode = b.namespace(
-  { READ: { constant: 0x0001 }, WRITE: { constant: 0x0002 } },
-  { toStringTag: true },
-);
-
-// ───────────────────────────── textures ─────────────────────────────
-
 export const GPUTextureView = b.class({
-  ...gpuObject,
-  rustPath: rustPath("GPUTextureView"),
-  proto: GPUObjectBase,
+  types: typesOf("GPUTextureView"),
+  rustPath: "crate::webgpu::GPUTextureView",
+  configurable: true,
+  refCounted: true,
+  construct: "illegal",
+  proto: { label: { getter: b.string.usv, setter: true } },
 });
-
-export const GPUTextureViewDescriptor = dictionary(GPUObjectDescriptorBase, {
-  format: GPUTextureFormat.optional,
-  dimension: GPUTextureViewDimension.optional,
-  usage: GPUFlags.default(0),
-  aspect: GPUTextureAspect.default("all"),
-  baseMipLevel: GPUIntegerCoordinate.default(0),
-  mipLevelCount: GPUIntegerCoordinate.optional,
-  baseArrayLayer: GPUIntegerCoordinate.default(0),
-  arrayLayerCount: GPUIntegerCoordinate.optional,
-  swizzle: utf8.default("rgba"),
-});
-
+export const GPUTextureDimension = b.enumeration({ D1: "1d", D2: "2d", D3: "3d" });
 export const GPUTexture = b.class({
-  ...gpuObject,
-  rustPath: rustPath("GPUTexture"),
+  types: typesOf("GPUTexture"),
+  rustPath: "crate::webgpu::GPUTexture",
+  configurable: true,
+  refCounted: true,
+  internalFields: ["device"],
   estimatedSize: true,
+  construct: "illegal",
   proto: {
-    ...GPUObjectBase,
     createView: {
-      args: { descriptor: GPUTextureViewDescriptor.nullable.default({}) },
+      args: { descriptor: GPUTextureViewDescriptor.default({}) },
       returns: GPUTextureView,
       capability: "heap",
       throws: true,
@@ -403,39 +380,93 @@ export const GPUTexture = b.class({
     format: { getter: GPUTextureFormat },
     usage: { getter: b.u32 },
     textureBindingViewDimension: { getter: GPUTextureViewDimension.optional },
+    label: { getter: b.string.usv, setter: true },
   },
 });
-
-export const GPUTextureDescriptor = dictionary(GPUObjectDescriptorBase, {
-  size: GPUExtent3D,
-  mipLevelCount: GPUIntegerCoordinate.default(1),
-  sampleCount: GPUSize32.default(1),
-  dimension: GPUTextureDimension.default("2d"),
-  format: GPUTextureFormat,
-  usage: GPUFlags,
-  viewFormats: b.sequence(GPUTextureFormat).default([]),
-  textureBindingViewDimension: GPUTextureViewDimension.optional,
-});
-
-export const GPUTextureUsage = b.namespace(
+export const GPUTexelCopyTextureInfo = b.dictionary(
   {
-    COPY_SRC: { constant: 0x01 },
-    COPY_DST: { constant: 0x02 },
-    TEXTURE_BINDING: { constant: 0x04 },
-    STORAGE_BINDING: { constant: 0x08 },
-    RENDER_ATTACHMENT: { constant: 0x10 },
-    TRANSIENT_ATTACHMENT: { constant: 0x20 },
+    aspect: GPUTextureAspect.default("all"),
+    mipLevel: GPUIntegerCoordinate.default(0),
+    origin: GPUOrigin3D.optional,
+    texture: GPUTexture.ref,
   },
-  { toStringTag: true },
+  { allowArray: true },
 );
-
-// ───────────────────────────── samplers ─────────────────────────────
-
-export const GPUSampler = b.class({ ...gpuObject, rustPath: rustPath("GPUSampler"), proto: GPUObjectBase });
-
+const GPUSize32 = b.u32.enforceRange();
+export const GPUTexelCopyBufferLayout = b.dictionary(
+  { bytesPerRow: GPUSize32.optional, offset: GPUSize64.default(0), rowsPerImage: GPUSize32.optional },
+  { allowArray: true, nonObjectAsEmpty: "nullish" },
+);
+export const GPUExtent3DDict = b.dictionary(
+  {
+    depthOrArrayLayers: GPUIntegerCoordinate.default(1),
+    height: GPUIntegerCoordinate.default(1),
+    width: GPUIntegerCoordinate,
+  },
+  { allowArray: true },
+);
+export const GPUExtent3D = b.union({ sequence: b.sequence(GPUIntegerCoordinate), dict: GPUExtent3DDict });
+export const GPUQueue = b.class({
+  types: typesOf("GPUQueue"),
+  rustPath: "crate::webgpu::GPUQueue",
+  configurable: true,
+  refCounted: true,
+  internalFields: ["device"],
+  construct: "illegal",
+  proto: {
+    submit: { args: { commandBuffers: b.sequence(GPUCommandBuffer.ref) } },
+    onSubmittedWorkDone: { returns: promiseOf(table.undefined), capability: "js", throws: true, rejects: true },
+    writeBuffer: {
+      args: {
+        buffer: GPUBuffer,
+        bufferOffset: GPUSize64,
+        data: b.bufferSource.allowShared,
+        dataOffset: GPUSize64.default(0),
+        size: GPUSize64.optional,
+      },
+      capability: "heap",
+      throws: true,
+      uses: { data: copied },
+    },
+    writeTexture: {
+      args: {
+        destination: GPUTexelCopyTextureInfo,
+        data: b.bufferSource.allowShared,
+        dataLayout: GPUTexelCopyBufferLayout,
+        size: GPUExtent3D,
+      },
+      capability: "heap",
+      throws: true,
+      uses: { data: copied },
+    },
+    label: { getter: b.string.usv, setter: true },
+  },
+});
+const GPUBufferUsageFlags = b.u32.enforceRange();
+export const GPUBufferDescriptor = b.dictionary(
+  {
+    label: b.string.usv.default(""),
+    mappedAtCreation: b.bool.loose.default(false),
+    size: GPUSize64,
+    usage: GPUBufferUsageFlags,
+  },
+  { allowArray: true },
+);
+export const GPUTextureDescriptor = b.dictionary(
+  {
+    label: b.string.usv.default(""),
+    dimension: GPUTextureDimension.default("2d"),
+    format: GPUTextureFormat,
+    mipLevelCount: GPUIntegerCoordinate.default(1),
+    sampleCount: GPUSize32.default(1),
+    size: GPUExtent3D,
+    textureBindingViewDimension: GPUTextureViewDimension.optional,
+    usage: GPUTextureUsageFlags,
+    viewFormats: b.sequence(GPUTextureFormat).default([]),
+  },
+  { allowArray: true },
+);
 export const GPUAddressMode = b.enumeration(["clamp-to-edge", "repeat", "mirror-repeat"]);
-export const GPUFilterMode = b.enumeration(["nearest", "linear"]);
-export const GPUMipmapFilterMode = b.enumeration(["nearest", "linear"]);
 export const GPUCompareFunction = b.enumeration([
   "never",
   "less",
@@ -446,81 +477,111 @@ export const GPUCompareFunction = b.enumeration([
   "greater-equal",
   "always",
 ]);
-
-export const GPUSamplerDescriptor = dictionary(GPUObjectDescriptorBase, {
-  addressModeU: GPUAddressMode.default("clamp-to-edge"),
-  addressModeV: GPUAddressMode.default("clamp-to-edge"),
-  addressModeW: GPUAddressMode.default("clamp-to-edge"),
-  magFilter: GPUFilterMode.default("nearest"),
-  minFilter: GPUFilterMode.default("nearest"),
-  mipmapFilter: GPUMipmapFilterMode.default("nearest"),
-  lodMinClamp: b.f32.default(0),
-  lodMaxClamp: b.f32.default(32),
-  compare: GPUCompareFunction.optional,
-  maxAnisotropy: b.u16.clamp.default(1),
-});
-
-// ───────────────────────────── bind groups ─────────────────────────────
-
-export const GPUBindGroupLayout = b.class({
-  ...gpuObject,
-  rustPath: rustPath("GPUBindGroupLayout"),
-  proto: GPUObjectBase,
-});
-
-export const GPUShaderStage = b.namespace(
-  { VERTEX: { constant: 0x1 }, FRAGMENT: { constant: 0x2 }, COMPUTE: { constant: 0x4 } },
-  { toStringTag: true },
+export const GPUFilterMode = b.enumeration(["nearest", "linear"]);
+export const GPUMipmapFilterMode = b.enumeration(["nearest", "linear"]);
+export const GPUSamplerDescriptor = b.dictionary(
+  {
+    label: b.string.usv.default(""),
+    addressModeU: GPUAddressMode.default("clamp-to-edge"),
+    addressModeV: GPUAddressMode.default("clamp-to-edge"),
+    addressModeW: GPUAddressMode.default("clamp-to-edge"),
+    compare: GPUCompareFunction.optional,
+    lodMaxClamp: b.f32.default(32),
+    lodMinClamp: b.f32.default(0),
+    magFilter: GPUFilterMode.default("nearest"),
+    maxAnisotropy: b.u16.clamp.default(1),
+    minFilter: GPUFilterMode.default("nearest"),
+    mipmapFilter: GPUMipmapFilterMode.default("nearest"),
+  },
+  { allowArray: true, nonObjectAsEmpty: "nullish" },
 );
-
+export const GPUSampler = b.class({
+  types: typesOf("GPUSampler"),
+  rustPath: "crate::webgpu::GPUSampler",
+  configurable: true,
+  refCounted: true,
+  construct: "illegal",
+  proto: { label: { getter: b.string.usv, setter: true } },
+});
+const GPUIndex32 = b.u32.enforceRange();
 export const GPUBufferBindingType = b.enumeration(["uniform", "storage", "read-only-storage"]);
-export const GPUBufferBindingLayout = dictionary({
-  type: GPUBufferBindingType.default("uniform"),
-  hasDynamicOffset: boolean.default(false),
-  minBindingSize: GPUSize64.default(0),
-});
+export const GPUBufferBindingLayout = b.dictionary(
+  {
+    hasDynamicOffset: b.bool.loose.default(false),
+    minBindingSize: GPUSize64.default(0),
+    type: GPUBufferBindingType.default("uniform"),
+  },
+  { allowArray: true, nonObjectAsEmpty: "nullish" },
+);
+export const GPUExternalTextureBindingLayout = b.dictionary({}, { allowArray: true, nonObjectAsEmpty: "nullish" });
 export const GPUSamplerBindingType = b.enumeration(["filtering", "non-filtering", "comparison"]);
-export const GPUSamplerBindingLayout = dictionary({ type: GPUSamplerBindingType.default("filtering") });
-export const GPUTextureSampleType = b.enumeration(["float", "unfilterable-float", "depth", "sint", "uint"]);
-export const GPUTextureBindingLayout = dictionary({
-  sampleType: GPUTextureSampleType.default("float"),
-  viewDimension: GPUTextureViewDimension.default("2d"),
-  multisampled: boolean.default(false),
-});
+export const GPUSamplerBindingLayout = b.dictionary(
+  { type: GPUSamplerBindingType.default("filtering") },
+  { allowArray: true, nonObjectAsEmpty: "nullish" },
+);
 export const GPUStorageTextureAccess = b.enumeration(["write-only", "read-only", "read-write"]);
-export const GPUStorageTextureBindingLayout = dictionary({
-  access: GPUStorageTextureAccess.default("write-only"),
-  format: GPUTextureFormat,
-  viewDimension: GPUTextureViewDimension.default("2d"),
+export const GPUStorageTextureBindingLayout = b.dictionary(
+  {
+    access: GPUStorageTextureAccess.default("write-only"),
+    format: GPUTextureFormat,
+    viewDimension: GPUTextureViewDimension.default("2d"),
+  },
+  { allowArray: true },
+);
+export const GPUTextureSampleType = b.enumeration(["float", "unfilterable-float", "depth", "sint", "uint"]);
+export const GPUTextureBindingLayout = b.dictionary(
+  {
+    multisampled: b.bool.loose.default(false),
+    sampleType: GPUTextureSampleType.default("float"),
+    viewDimension: GPUTextureViewDimension.default("2d"),
+  },
+  { allowArray: true, nonObjectAsEmpty: "nullish" },
+);
+const GPUShaderStageFlags = b.u32.enforceRange();
+export const GPUBindGroupLayoutEntry = b.dictionary(
+  {
+    binding: GPUIndex32,
+    buffer: GPUBufferBindingLayout.optional,
+    externalTexture: GPUExternalTextureBindingLayout.optional,
+    sampler: GPUSamplerBindingLayout.optional,
+    storageTexture: GPUStorageTextureBindingLayout.optional,
+    texture: GPUTextureBindingLayout.optional,
+    visibility: GPUShaderStageFlags,
+  },
+  { allowArray: true },
+);
+export const GPUBindGroupLayoutDescriptor = b.dictionary(
+  { label: b.string.usv.default(""), entries: b.sequence(GPUBindGroupLayoutEntry) },
+  { allowArray: true },
+);
+export const GPUBindGroupLayout = b.class({
+  types: typesOf("GPUBindGroupLayout"),
+  rustPath: "crate::webgpu::GPUBindGroupLayout",
+  configurable: true,
+  refCounted: true,
+  construct: "illegal",
+  proto: { label: { getter: b.string.usv, setter: true } },
 });
-export const GPUExternalTextureBindingLayout = dictionary({});
-export const GPUBindGroupLayoutEntry = dictionary({
-  binding: GPUIndex32,
-  visibility: GPUFlags,
-  buffer: GPUBufferBindingLayout.optional,
-  sampler: GPUSamplerBindingLayout.optional,
-  texture: GPUTextureBindingLayout.optional,
-  storageTexture: GPUStorageTextureBindingLayout.optional,
-  externalTexture: GPUExternalTextureBindingLayout.optional,
+export const GPUPipelineLayoutDescriptor = b.dictionary(
+  {
+    label: b.string.usv.default(""),
+    bindGroupLayouts: b.sequence(GPUBindGroupLayout.ref.nullable),
+    immediateSize: GPUSize32.default(0),
+  },
+  { allowArray: true },
+);
+export const GPUPipelineLayout = b.class({
+  types: typesOf("GPUPipelineLayout"),
+  rustPath: "crate::webgpu::GPUPipelineLayout",
+  configurable: true,
+  refCounted: true,
+  construct: "illegal",
+  proto: { label: { getter: b.string.usv, setter: true } },
 });
-export const GPUBindGroupLayoutDescriptor = dictionary(GPUObjectDescriptorBase, {
-  entries: b.sequence(GPUBindGroupLayoutEntry),
-});
-
-export const GPUBindGroup = b.class({ ...gpuObject, rustPath: rustPath("GPUBindGroup"), proto: GPUObjectBase });
-
-/** Nothing makes one: it is imported from a video. `instanceof` needs the interface, and a view binds where one would. */
-export const GPUExternalTexture = b.class({
-  ...webInterface,
-  rustPath: rustPath("GPUExternalTexture"),
-  proto: GPUObjectBase,
-});
-
-export const GPUBufferBinding = dictionary({
-  buffer: GPUBuffer.ref,
-  offset: GPUSize64.default(0),
-  size: GPUSize64.optional,
-});
+export const GPUBufferBinding = b.dictionary(
+  { buffer: GPUBuffer.ref, offset: GPUSize64.default(0), size: GPUSize64.optional },
+  { allowArray: true },
+);
 export const GPUBindingResource = b.union({
   sampler: GPUSampler.ref,
   texture: GPUTexture.ref,
@@ -528,127 +589,120 @@ export const GPUBindingResource = b.union({
   buffer: GPUBuffer.ref,
   bufferBinding: GPUBufferBinding,
 });
-export const GPUBindGroupEntry = dictionary({ binding: GPUIndex32, resource: GPUBindingResource });
-export const GPUBindGroupDescriptor = dictionary(GPUObjectDescriptorBase, {
-  layout: GPUBindGroupLayout.ref,
-  entries: b.sequence(GPUBindGroupEntry),
+export const GPUBindGroupEntry = b.dictionary(
+  { binding: GPUIndex32, resource: GPUBindingResource },
+  { allowArray: true },
+);
+export const GPUBindGroupDescriptor = b.dictionary(
+  { label: b.string.usv.default(""), entries: b.sequence(GPUBindGroupEntry), layout: GPUBindGroupLayout.ref },
+  { allowArray: true },
+);
+export const GPUBindGroup = b.class({
+  types: typesOf("GPUBindGroup"),
+  rustPath: "crate::webgpu::GPUBindGroup",
+  configurable: true,
+  refCounted: true,
+  construct: "illegal",
+  proto: { label: { getter: b.string.usv, setter: true } },
 });
-
-export const GPUPipelineLayout = b.class({
-  ...gpuObject,
-  rustPath: rustPath("GPUPipelineLayout"),
-  proto: GPUObjectBase,
-});
-export const GPUPipelineLayoutDescriptor = dictionary(GPUObjectDescriptorBase, {
-  bindGroupLayouts: b.sequence(GPUBindGroupLayout.ref.nullable),
-  immediateSize: GPUSize32.default(0),
-});
-
-// ───────────────────────────── shader modules ─────────────────────────────
-
-export const GPUCompilationMessage = b.class({
-  rustPath: rustPath("GPUCompilationMessage"),
-  ...webInterface,
-  proto: {
-    message: { getter: b.string },
-    type: { getter: GPUCompilationMessageType },
-    lineNum: { getter: b.u64 },
-    linePos: { getter: b.u64 },
-    offset: { getter: b.u64 },
-    length: { getter: b.u64 },
-  },
-});
-
-export const GPUCompilationInfo = b.class({
-  rustPath: rustPath("GPUCompilationInfo"),
-  ...webInterface,
-  internalFields: ["messages"],
-  /** A `FrozenArray`. */
-  proto: { messages: { internalField: "messages" } },
-});
-
-export const GPUShaderModule = b.class({
-  ...gpuObject,
-  rustPath: rustPath("GPUShaderModule"),
-  proto: {
-    ...GPUObjectBase,
-    getCompilationInfo: { returns: promise, capability: "js", throws: true, rejects: true },
-  },
-});
-
 export const GPUAutoLayoutMode = b.enumeration(["auto"]);
 export const GPUPipelineLayoutOrAuto = b.union({ layout: GPUPipelineLayout.ref, automatic: GPUAutoLayoutMode });
-
-export const GPUShaderModuleCompilationHint = dictionary({
-  entryPoint: USVString,
-  layout: GPUPipelineLayoutOrAuto.optional,
-});
-export const GPUShaderModuleDescriptor = dictionary(GPUObjectDescriptorBase, {
-  code: utf8,
-  compilationHints: b.sequence(GPUShaderModuleCompilationHint).default([]),
-});
-
-// ───────────────────────────── pipelines ─────────────────────────────
-
-const GPUPipelineDescriptorBase = { layout: GPUPipelineLayoutOrAuto };
-const GPUPipelineBase = {
-  getBindGroupLayout: { args: { index: b.u32.wrap }, returns: GPUBindGroupLayout, capability: "heap" },
-} as const;
-
-const GPUProgrammableStageMembers = {
-  module: GPUShaderModule.ref,
-  entryPoint: utf8.optional,
-  constants: b.record(double).default({}),
-};
-export const GPUProgrammableStage = dictionary(GPUProgrammableStageMembers);
-
-export const GPUComputePipeline = b.class({
-  ...gpuObject,
-  rustPath: rustPath("GPUComputePipeline"),
-  proto: { ...GPUObjectBase, ...GPUPipelineBase },
-});
-export const GPUComputePipelineDescriptor = dictionary(GPUObjectDescriptorBase, GPUPipelineDescriptorBase, {
-  compute: GPUProgrammableStage,
-});
-
-export const GPURenderPipeline = b.class({
-  ...gpuObject,
-  rustPath: rustPath("GPURenderPipeline"),
-  proto: { ...GPUObjectBase, ...GPUPipelineBase },
-});
-
-export const GPUPrimitiveTopology = b.enumeration([
-  "point-list",
-  "line-list",
-  "line-strip",
-  "triangle-list",
-  "triangle-strip",
-]);
-export const GPUFrontFace = b.enumeration(["ccw", "cw"]);
-export const GPUCullMode = b.enumeration(["none", "front", "back"]);
-export const GPUIndexFormat = b.enumeration(["uint16", "uint32"]);
-export const GPUPrimitiveState = dictionary({
-  topology: GPUPrimitiveTopology.default("triangle-list"),
-  stripIndexFormat: GPUIndexFormat.optional,
-  frontFace: GPUFrontFace.default("ccw"),
-  cullMode: GPUCullMode.default("none"),
-  unclippedDepth: boolean.default(false),
-});
-export const GPUMultisampleState = dictionary({
-  count: GPUSize32.default(1),
-  mask: GPUSampleMask.default(0xffffffff),
-  alphaToCoverageEnabled: boolean.default(false),
-});
-
-export const GPUColorWrite = b.namespace(
+export const GPUShaderModuleCompilationHint = b.dictionary(
+  { entryPoint: b.string.usv, layout: GPUPipelineLayoutOrAuto.optional },
+  { allowArray: true },
+);
+export const GPUShaderModuleDescriptor = b.dictionary(
   {
-    RED: { constant: 0x1 },
-    GREEN: { constant: 0x2 },
-    BLUE: { constant: 0x4 },
-    ALPHA: { constant: 0x8 },
-    ALL: { constant: 0xf },
+    label: b.string.usv.default(""),
+    code: b.string.loose.utf8,
+    compilationHints: b.sequence(GPUShaderModuleCompilationHint).default([]),
   },
-  { toStringTag: true },
+  { allowArray: true },
+);
+export const GPUCompilationInfo = b.class({
+  types: typesOf("GPUCompilationInfo"),
+  rustPath: "crate::webgpu::GPUCompilationInfo",
+  configurable: true,
+  internalFields: ["messages"],
+  construct: "illegal",
+  proto: { messages: { internalField: "messages" } },
+});
+export const GPUShaderModule = b.class({
+  types: typesOf("GPUShaderModule"),
+  rustPath: "crate::webgpu::GPUShaderModule",
+  configurable: true,
+  refCounted: true,
+  construct: "illegal",
+  proto: {
+    getCompilationInfo: {
+      returns: promiseOf(table.instance("GPUCompilationInfo")),
+      capability: "js",
+      throws: true,
+      rejects: true,
+    },
+    label: { getter: b.string.usv, setter: true },
+  },
+});
+const GPUPipelineConstantValue = b.f64.loose.finite;
+export const GPUProgrammableStage = b.dictionary(
+  {
+    constants: b.record(GPUPipelineConstantValue).default({}),
+    entryPoint: b.string.loose.utf8.optional,
+    module: GPUShaderModule.ref,
+  },
+  { allowArray: true },
+);
+export const GPUComputePipelineDescriptor = b.dictionary(
+  { label: b.string.usv.default(""), layout: GPUPipelineLayoutOrAuto, compute: GPUProgrammableStage },
+  { allowArray: true },
+);
+export const GPUComputePipeline = b.class({
+  types: typesOf("GPUComputePipeline"),
+  rustPath: "crate::webgpu::GPUComputePipeline",
+  configurable: true,
+  refCounted: true,
+  internalFields: ["device"],
+  construct: "illegal",
+  proto: {
+    label: { getter: b.string.usv, setter: true },
+    getBindGroupLayout: { args: { index: b.u32.wrap }, returns: GPUBindGroupLayout, capability: "heap" },
+  },
+});
+const GPUDepthBias = b.i32.enforceRange();
+export const GPUStencilOperation = b.enumeration([
+  "keep",
+  "zero",
+  "replace",
+  "invert",
+  "increment-clamp",
+  "decrement-clamp",
+  "increment-wrap",
+  "decrement-wrap",
+]);
+export const GPUStencilFaceState = b.dictionary(
+  {
+    compare: GPUCompareFunction.default("always"),
+    depthFailOp: GPUStencilOperation.default("keep"),
+    failOp: GPUStencilOperation.default("keep"),
+    passOp: GPUStencilOperation.default("keep"),
+  },
+  { allowArray: true, nonObjectAsEmpty: "nullish" },
+);
+const GPUStencilValue = b.u32.enforceRange();
+export const GPUDepthStencilState = b.dictionary(
+  {
+    depthBias: GPUDepthBias.default(0),
+    depthBiasClamp: b.f32.default(0),
+    depthBiasSlopeScale: b.f32.default(0),
+    depthCompare: GPUCompareFunction.optional,
+    depthWriteEnabled: b.bool.loose.optional,
+    format: GPUTextureFormat,
+    stencilBack: GPUStencilFaceState.default({}),
+    stencilFront: GPUStencilFaceState.default({}),
+    stencilReadMask: GPUStencilValue.default(0xffffffff),
+    stencilWriteMask: GPUStencilValue.default(0xffffffff),
+  },
+  { allowArray: true },
 );
 export const GPUBlendFactor = b.enumeration([
   "zero",
@@ -670,50 +724,58 @@ export const GPUBlendFactor = b.enumeration([
   "one-minus-src1-alpha",
 ]);
 export const GPUBlendOperation = b.enumeration(["add", "subtract", "reverse-subtract", "min", "max"]);
-export const GPUBlendComponent = dictionary({
-  operation: GPUBlendOperation.default("add"),
-  srcFactor: GPUBlendFactor.default("one"),
-  dstFactor: GPUBlendFactor.default("zero"),
-});
-export const GPUBlendState = dictionary({ color: GPUBlendComponent, alpha: GPUBlendComponent });
-export const GPUColorTargetState = dictionary({
-  format: GPUTextureFormat,
-  blend: GPUBlendState.optional,
-  writeMask: GPUFlags.default(0xf),
-});
-export const GPUFragmentState = dictionary(GPUProgrammableStageMembers, {
-  targets: b.sequence(GPUColorTargetState.nullable),
-});
-
-export const GPUStencilOperation = b.enumeration([
-  "keep",
-  "zero",
-  "replace",
-  "invert",
-  "increment-clamp",
-  "decrement-clamp",
-  "increment-wrap",
-  "decrement-wrap",
+export const GPUBlendComponent = b.dictionary(
+  {
+    dstFactor: GPUBlendFactor.default("zero"),
+    operation: GPUBlendOperation.default("add"),
+    srcFactor: GPUBlendFactor.default("one"),
+  },
+  { allowArray: true, nonObjectAsEmpty: "nullish" },
+);
+export const GPUBlendState = b.dictionary({ alpha: GPUBlendComponent, color: GPUBlendComponent }, { allowArray: true });
+const GPUColorWriteFlags = b.u32.enforceRange();
+export const GPUColorTargetState = b.dictionary(
+  { blend: GPUBlendState.optional, format: GPUTextureFormat, writeMask: GPUColorWriteFlags.default(0xf) },
+  { allowArray: true },
+);
+export const GPUFragmentState = b.dictionary(
+  {
+    constants: b.record(GPUPipelineConstantValue).default({}),
+    entryPoint: b.string.loose.utf8.optional,
+    module: GPUShaderModule.ref,
+    targets: b.sequence(GPUColorTargetState.nullable),
+  },
+  { allowArray: true },
+);
+const GPUSampleMask = b.u32.enforceRange();
+export const GPUMultisampleState = b.dictionary(
+  {
+    alphaToCoverageEnabled: b.bool.loose.default(false),
+    count: GPUSize32.default(1),
+    mask: GPUSampleMask.default(0xffffffff),
+  },
+  { allowArray: true, nonObjectAsEmpty: "nullish" },
+);
+export const GPUCullMode = b.enumeration(["none", "front", "back"]);
+export const GPUFrontFace = b.enumeration(["ccw", "cw"]);
+export const GPUIndexFormat = b.enumeration(["uint16", "uint32"]);
+export const GPUPrimitiveTopology = b.enumeration([
+  "point-list",
+  "line-list",
+  "line-strip",
+  "triangle-list",
+  "triangle-strip",
 ]);
-export const GPUStencilFaceState = dictionary({
-  compare: GPUCompareFunction.default("always"),
-  failOp: GPUStencilOperation.default("keep"),
-  depthFailOp: GPUStencilOperation.default("keep"),
-  passOp: GPUStencilOperation.default("keep"),
-});
-export const GPUDepthStencilState = dictionary({
-  format: GPUTextureFormat,
-  depthWriteEnabled: boolean.optional,
-  depthCompare: GPUCompareFunction.optional,
-  stencilFront: GPUStencilFaceState.nullable.default({}),
-  stencilBack: GPUStencilFaceState.nullable.default({}),
-  stencilReadMask: GPUStencilValue.default(0xffffffff),
-  stencilWriteMask: GPUStencilValue.default(0xffffffff),
-  depthBias: GPUDepthBias.default(0),
-  depthBiasSlopeScale: b.f32.default(0),
-  depthBiasClamp: b.f32.default(0),
-});
-
+export const GPUPrimitiveState = b.dictionary(
+  {
+    cullMode: GPUCullMode.default("none"),
+    frontFace: GPUFrontFace.default("ccw"),
+    stripIndexFormat: GPUIndexFormat.optional,
+    topology: GPUPrimitiveTopology.default("triangle-list"),
+    unclippedDepth: b.bool.loose.default(false),
+  },
+  { allowArray: true, nonObjectAsEmpty: "nullish" },
+);
 export const GPUVertexFormat = b.enumeration([
   "uint8",
   "uint8x2",
@@ -758,180 +820,133 @@ export const GPUVertexFormat = b.enumeration([
   "unorm8x4-bgra",
   "snorm10-10-10-2",
 ]);
+export const GPUVertexAttribute = b.dictionary(
+  { format: GPUVertexFormat, offset: GPUSize64, shaderLocation: GPUIndex32 },
+  { allowArray: true },
+);
 export const GPUVertexStepMode = b.enumeration(["vertex", "instance"]);
-export const GPUVertexAttribute = dictionary({
-  format: GPUVertexFormat,
-  offset: GPUSize64,
-  shaderLocation: GPUIndex32,
-});
-export const GPUVertexBufferLayout = dictionary({
-  arrayStride: GPUSize64,
-  stepMode: GPUVertexStepMode.default("vertex"),
-  attributes: b.sequence(GPUVertexAttribute),
-});
-export const GPUVertexState = dictionary(GPUProgrammableStageMembers, {
-  buffers: b.sequence(GPUVertexBufferLayout.nullable).default([]),
-});
-
-export const GPURenderPipelineDescriptor = dictionary(GPUObjectDescriptorBase, GPUPipelineDescriptorBase, {
-  vertex: GPUVertexState,
-  primitive: GPUPrimitiveState.nullable.default({}),
-  depthStencil: GPUDepthStencilState.optional,
-  multisample: GPUMultisampleState.nullable.default({}),
-  fragment: GPUFragmentState.optional,
-});
-
-// ───────────────────────────── copies ─────────────────────────────
-
-const GPUTexelCopyBufferLayoutMembers = {
-  offset: GPUSize64.default(0),
-  bytesPerRow: GPUSize32.optional,
-  rowsPerImage: GPUSize32.optional,
-};
-export const GPUTexelCopyBufferLayout = dictionary(GPUTexelCopyBufferLayoutMembers);
-export const GPUTexelCopyBufferInfo = dictionary(GPUTexelCopyBufferLayoutMembers, { buffer: GPUBuffer.ref });
-export const GPUTexelCopyTextureInfo = dictionary({
-  texture: GPUTexture.ref,
-  mipLevel: GPUIntegerCoordinate.default(0),
-  origin: GPUOrigin3D.optional,
-  aspect: GPUTextureAspect.default("all"),
-});
-
-// ───────────────────────────── query sets ─────────────────────────────
-
-export const GPUQuerySet = b.class({
-  ...gpuObject,
-  rustPath: rustPath("GPUQuerySet"),
+export const GPUVertexBufferLayout = b.dictionary(
+  { arrayStride: GPUSize64, attributes: b.sequence(GPUVertexAttribute), stepMode: GPUVertexStepMode.default("vertex") },
+  { allowArray: true },
+);
+export const GPUVertexState = b.dictionary(
+  {
+    constants: b.record(GPUPipelineConstantValue).default({}),
+    entryPoint: b.string.loose.utf8.optional,
+    module: GPUShaderModule.ref,
+    buffers: b.sequence(GPUVertexBufferLayout.nullable).default([]),
+  },
+  { allowArray: true },
+);
+export const GPURenderPipelineDescriptor = b.dictionary(
+  {
+    label: b.string.usv.default(""),
+    layout: GPUPipelineLayoutOrAuto,
+    depthStencil: GPUDepthStencilState.optional,
+    fragment: GPUFragmentState.optional,
+    multisample: GPUMultisampleState.default({}),
+    primitive: GPUPrimitiveState.default({}),
+    vertex: GPUVertexState,
+  },
+  { allowArray: true },
+);
+export const GPURenderPipeline = b.class({
+  types: typesOf("GPURenderPipeline"),
+  rustPath: "crate::webgpu::GPURenderPipeline",
+  configurable: true,
+  refCounted: true,
+  internalFields: ["device"],
+  construct: "illegal",
   proto: {
-    ...GPUObjectBase,
+    label: { getter: b.string.usv, setter: true },
+    getBindGroupLayout: { args: { index: b.u32.wrap }, returns: GPUBindGroupLayout, capability: "heap" },
+  },
+});
+export const GPUCommandEncoderDescriptor = b.dictionary(
+  { label: b.string.usv.default("") },
+  { allowArray: true, nonObjectAsEmpty: "nullish" },
+);
+export const GPUColorDict = b.dictionary(
+  { a: b.f64.loose.finite, b: b.f64.loose.finite, g: b.f64.loose.finite, r: b.f64.loose.finite },
+  { allowArray: true },
+);
+export const GPUColor = b.union({ sequence: b.sequence(b.f64.loose.finite), dict: GPUColorDict });
+export const GPULoadOp = b.enumeration(["load", "clear"]);
+export const GPUTextureOrView = b.union({ texture: GPUTexture.ref, view: GPUTextureView.ref });
+export const GPUStoreOp = b.enumeration(["store", "discard"]);
+export const GPURenderPassColorAttachment = b.dictionary(
+  {
+    clearValue: GPUColor.optional,
+    depthSlice: GPUIntegerCoordinate.optional,
+    loadOp: GPULoadOp,
+    resolveTarget: GPUTextureOrView.optional,
+    storeOp: GPUStoreOp,
+    view: GPUTextureOrView,
+  },
+  { allowArray: true },
+);
+export const GPURenderPassDepthStencilAttachment = b.dictionary(
+  {
+    depthClearValue: b.f32.optional,
+    depthLoadOp: GPULoadOp.optional,
+    depthReadOnly: b.bool.loose.default(false),
+    depthStoreOp: GPUStoreOp.optional,
+    stencilClearValue: GPUStencilValue.default(0),
+    stencilLoadOp: GPULoadOp.optional,
+    stencilReadOnly: b.bool.loose.default(false),
+    stencilStoreOp: GPUStoreOp.optional,
+    view: GPUTextureOrView,
+  },
+  { allowArray: true },
+);
+export const GPUQueryType = b.enumeration(["occlusion", "timestamp"]);
+export const GPUQuerySet = b.class({
+  types: typesOf("GPUQuerySet"),
+  rustPath: "crate::webgpu::GPUQuerySet",
+  configurable: true,
+  refCounted: true,
+  construct: "illegal",
+  proto: {
     destroy: {},
     type: { getter: GPUQueryType },
     count: { getter: b.u32 },
+    label: { getter: b.string.usv, setter: true },
   },
 });
-export const GPUQuerySetDescriptor = dictionary(GPUObjectDescriptorBase, { type: GPUQueryType, count: GPUSize32 });
-
-// ───────────────────────────── command encoding ─────────────────────────────
-
-export const GPUCommandBuffer = b.class({
-  ...gpuObject,
-  rustPath: rustPath("GPUCommandBuffer"),
-  proto: GPUObjectBase,
+export const GPURenderPassTimestampWrites = b.dictionary(
+  { beginningOfPassWriteIndex: GPUSize32.optional, endOfPassWriteIndex: GPUSize32.optional, querySet: GPUQuerySet.ref },
+  { allowArray: true },
+);
+export const GPURenderPassDescriptor = b.dictionary(
+  {
+    label: b.string.usv.default(""),
+    colorAttachments: b.sequence(GPURenderPassColorAttachment.nullable),
+    depthStencilAttachment: GPURenderPassDepthStencilAttachment.optional,
+    maxDrawCount: GPUSize64.default(50000000),
+    occlusionQuerySet: GPUQuerySet.ref.optional,
+    timestampWrites: GPURenderPassTimestampWrites.optional,
+  },
+  { allowArray: true },
+);
+export const GPURenderBundle = b.class({
+  types: typesOf("GPURenderBundle"),
+  rustPath: "crate::webgpu::GPURenderBundle",
+  configurable: true,
+  refCounted: true,
+  construct: "illegal",
+  proto: { label: { getter: b.string.usv, setter: true } },
 });
-export const GPUCommandBufferDescriptor = dictionary(GPUObjectDescriptorBase);
-export const GPUCommandEncoderDescriptor = dictionary(GPUObjectDescriptorBase);
-
-const GPUDebugCommandsMixin = {
-  pushDebugGroup: { args: { groupLabel: utf8 } },
-  popDebugGroup: {},
-  insertDebugMarker: { args: { markerLabel: utf8 } },
-} as const;
-
-const GPUBindingCommandsMixin = {
-  setBindGroup: [
-    {
-      rustName: "set_bind_group",
-      args: {
-        index: GPUIndex32,
-        bindGroup: GPUBindGroup.nullable,
-        dynamicOffsets: b.sequence(GPUBufferDynamicOffset).default([]),
-      },
-    },
-    {
-      rustName: "set_bind_group_with_data",
-      args: {
-        index: GPUIndex32,
-        bindGroup: GPUBindGroup.nullable,
-        dynamicOffsetsData: b.bufferSource.allowShared,
-        dynamicOffsetsDataStart: GPUSize64,
-        dynamicOffsetsDataLength: GPUSize32,
-      },
-      capability: "heap",
-      throws: true,
-    },
-  ],
-  setImmediates: {
-    args: {
-      rangeOffset: GPUSize32,
-      data: b.bufferSource.allowShared,
-      dataOffset: GPUSize64.default(0),
-      dataSize: GPUSize64.optional,
-    },
-    capability: "heap",
-    throws: true,
-  },
-} as const;
-
-export const GPUComputePassEncoder = b.class({
-  ...gpuObject,
-  rustPath: rustPath("GPUComputePassEncoder"),
-  proto: {
-    ...GPUObjectBase,
-    setPipeline: { args: { pipeline: GPUComputePipeline } },
-    dispatchWorkgroups: {
-      args: {
-        workgroupCountX: GPUSize32,
-        workgroupCountY: GPUSize32.default(1),
-        workgroupCountZ: GPUSize32.default(1),
-      },
-    },
-    dispatchWorkgroupsIndirect: { args: { indirectBuffer: GPUBuffer, indirectOffset: GPUSize64 } },
-    end: {},
-    ...GPUDebugCommandsMixin,
-    ...GPUBindingCommandsMixin,
-  },
-});
-
-const timestampWrites = {
-  querySet: GPUQuerySet.ref,
-  beginningOfPassWriteIndex: GPUSize32.optional,
-  endOfPassWriteIndex: GPUSize32.optional,
-};
-export const GPUComputePassTimestampWrites = dictionary(timestampWrites);
-export const GPUComputePassDescriptor = dictionary(GPUObjectDescriptorBase, {
-  timestampWrites: GPUComputePassTimestampWrites.optional,
-});
-
-export const GPURenderBundle = b.class({ ...gpuObject, rustPath: rustPath("GPURenderBundle"), proto: GPUObjectBase });
-export const GPURenderBundleDescriptor = dictionary(GPUObjectDescriptorBase);
-
-const GPURenderCommandsMixin = {
-  setPipeline: { args: { pipeline: GPURenderPipeline } },
-  setIndexBuffer: {
-    args: { buffer: GPUBuffer, indexFormat: GPUIndexFormat, offset: GPUSize64.default(0), size: GPUSize64.optional },
-  },
-  setVertexBuffer: {
-    args: { slot: GPUIndex32, buffer: GPUBuffer.nullable, offset: GPUSize64.default(0), size: GPUSize64.optional },
-  },
-  draw: {
-    args: {
-      vertexCount: GPUSize32,
-      instanceCount: GPUSize32.default(1),
-      firstVertex: GPUSize32.default(0),
-      firstInstance: GPUSize32.default(0),
-    },
-  },
-  drawIndexed: {
-    args: {
-      indexCount: GPUSize32,
-      instanceCount: GPUSize32.default(1),
-      firstIndex: GPUSize32.default(0),
-      baseVertex: GPUSignedOffset32.default(0),
-      firstInstance: GPUSize32.default(0),
-    },
-  },
-  drawIndirect: { args: { indirectBuffer: GPUBuffer, indirectOffset: GPUSize64 } },
-  drawIndexedIndirect: { args: { indirectBuffer: GPUBuffer, indirectOffset: GPUSize64 } },
-} as const;
-
+const GPUBufferDynamicOffset = b.u32.enforceRange();
+const GPUSignedOffset32 = b.i32.enforceRange();
 export const GPURenderPassEncoder = b.class({
-  ...gpuObject,
-  rustPath: rustPath("GPURenderPassEncoder"),
+  types: typesOf("GPURenderPassEncoder"),
+  rustPath: "crate::webgpu::GPURenderPassEncoder",
+  configurable: true,
+  refCounted: true,
+  internalFields: ["device"],
+  construct: "illegal",
   proto: {
-    ...GPUObjectBase,
-    setViewport: {
-      args: { x: b.f32, y: b.f32, width: b.f32, height: b.f32, minDepth: b.f32, maxDepth: b.f32 },
-    },
+    setViewport: { args: { x: b.f32, y: b.f32, width: b.f32, height: b.f32, minDepth: b.f32, maxDepth: b.f32 } },
     setScissorRect: {
       args: {
         x: GPUIntegerCoordinate,
@@ -946,73 +961,159 @@ export const GPURenderPassEncoder = b.class({
     endOcclusionQuery: {},
     executeBundles: { args: { bundles: b.sequence(GPURenderBundle.ref) } },
     end: {},
-    ...GPUDebugCommandsMixin,
-    ...GPUBindingCommandsMixin,
-    ...GPURenderCommandsMixin,
-  },
-});
-
-export const GPULoadOp = b.enumeration(["load", "clear"]);
-export const GPUStoreOp = b.enumeration(["store", "discard"]);
-export const GPUTextureOrView = b.union({ texture: GPUTexture.ref, view: GPUTextureView.ref });
-export const GPURenderPassTimestampWrites = dictionary(timestampWrites);
-export const GPURenderPassColorAttachment = dictionary({
-  view: GPUTextureOrView,
-  depthSlice: GPUIntegerCoordinate.optional,
-  resolveTarget: GPUTextureOrView.optional,
-  clearValue: GPUColor.optional,
-  loadOp: GPULoadOp,
-  storeOp: GPUStoreOp,
-});
-export const GPURenderPassDepthStencilAttachment = dictionary({
-  view: GPUTextureOrView,
-  depthClearValue: b.f32.optional,
-  depthLoadOp: GPULoadOp.optional,
-  depthStoreOp: GPUStoreOp.optional,
-  depthReadOnly: boolean.default(false),
-  stencilClearValue: GPUStencilValue.default(0),
-  stencilLoadOp: GPULoadOp.optional,
-  stencilStoreOp: GPUStoreOp.optional,
-  stencilReadOnly: boolean.default(false),
-});
-export const GPURenderPassDescriptor = dictionary(GPUObjectDescriptorBase, {
-  colorAttachments: b.sequence(GPURenderPassColorAttachment.nullable),
-  depthStencilAttachment: GPURenderPassDepthStencilAttachment.optional,
-  occlusionQuerySet: GPUQuerySet.ref.optional,
-  timestampWrites: GPURenderPassTimestampWrites.optional,
-  maxDrawCount: GPUSize64.default(50000000),
-});
-
-const GPURenderPassLayout = {
-  colorFormats: b.sequence(GPUTextureFormat.nullable),
-  depthStencilFormat: GPUTextureFormat.optional,
-  sampleCount: GPUSize32.default(1),
-};
-export const GPURenderBundleEncoderDescriptor = dictionary(GPUObjectDescriptorBase, GPURenderPassLayout, {
-  depthReadOnly: boolean.default(false),
-  stencilReadOnly: boolean.default(false),
-});
-export const GPURenderBundleEncoder = b.class({
-  ...gpuObject,
-  rustPath: rustPath("GPURenderBundleEncoder"),
-  proto: {
-    ...GPUObjectBase,
-    finish: {
-      args: { descriptor: GPURenderBundleDescriptor.nullable.default({}) },
-      returns: GPURenderBundle,
+    label: { getter: b.string.usv, setter: true },
+    pushDebugGroup: { args: { groupLabel: b.string.loose.utf8 } },
+    popDebugGroup: {},
+    insertDebugMarker: { args: { markerLabel: b.string.loose.utf8 } },
+    setBindGroup: [
+      {
+        rustName: "set_bind_group",
+        args: {
+          index: GPUIndex32,
+          bindGroup: GPUBindGroup.nullable,
+          dynamicOffsets: b.sequence(GPUBufferDynamicOffset).default([]),
+        },
+      },
+      {
+        rustName: "set_bind_group_with_data",
+        args: {
+          index: GPUIndex32,
+          bindGroup: GPUBindGroup.nullable,
+          dynamicOffsetsData: b.bufferSource.allowShared,
+          dynamicOffsetsDataStart: GPUSize64,
+          dynamicOffsetsDataLength: GPUSize32,
+        },
+        capability: "heap",
+        throws: true,
+        uses: { dynamicOffsetsData: copied },
+      },
+    ],
+    setImmediates: {
+      args: {
+        rangeOffset: GPUSize32,
+        data: b.bufferSource.allowShared,
+        dataOffset: GPUSize64.default(0),
+        dataSize: GPUSize64.optional,
+      },
       capability: "heap",
+      throws: true,
+      uses: { data: copied },
     },
-    ...GPUDebugCommandsMixin,
-    ...GPUBindingCommandsMixin,
-    ...GPURenderCommandsMixin,
+    setPipeline: { args: { pipeline: GPURenderPipeline } },
+    setIndexBuffer: {
+      args: { buffer: GPUBuffer, indexFormat: GPUIndexFormat, offset: GPUSize64.default(0), size: GPUSize64.optional },
+    },
+    setVertexBuffer: {
+      args: { slot: GPUIndex32, buffer: GPUBuffer.nullable, offset: GPUSize64.default(0), size: GPUSize64.optional },
+    },
+    draw: {
+      args: {
+        vertexCount: GPUSize32,
+        instanceCount: GPUSize32.default(1),
+        firstVertex: GPUSize32.default(0),
+        firstInstance: GPUSize32.default(0),
+      },
+    },
+    drawIndexed: {
+      args: {
+        indexCount: GPUSize32,
+        instanceCount: GPUSize32.default(1),
+        firstIndex: GPUSize32.default(0),
+        baseVertex: GPUSignedOffset32.default(0),
+        firstInstance: GPUSize32.default(0),
+      },
+    },
+    drawIndirect: { args: { indirectBuffer: GPUBuffer, indirectOffset: GPUSize64 } },
+    drawIndexedIndirect: { args: { indirectBuffer: GPUBuffer, indirectOffset: GPUSize64 } },
   },
 });
-
-export const GPUCommandEncoder = b.class({
-  ...gpuObject,
-  rustPath: rustPath("GPUCommandEncoder"),
+export const GPUComputePassTimestampWrites = b.dictionary(
+  { beginningOfPassWriteIndex: GPUSize32.optional, endOfPassWriteIndex: GPUSize32.optional, querySet: GPUQuerySet.ref },
+  { allowArray: true },
+);
+export const GPUComputePassDescriptor = b.dictionary(
+  { label: b.string.usv.default(""), timestampWrites: GPUComputePassTimestampWrites.optional },
+  { allowArray: true, nonObjectAsEmpty: "nullish" },
+);
+export const GPUComputePassEncoder = b.class({
+  types: typesOf("GPUComputePassEncoder"),
+  rustPath: "crate::webgpu::GPUComputePassEncoder",
+  configurable: true,
+  refCounted: true,
+  internalFields: ["device"],
+  construct: "illegal",
   proto: {
-    ...GPUObjectBase,
+    setPipeline: { args: { pipeline: GPUComputePipeline } },
+    dispatchWorkgroups: {
+      args: {
+        workgroupCountX: GPUSize32,
+        workgroupCountY: GPUSize32.default(1),
+        workgroupCountZ: GPUSize32.default(1),
+      },
+    },
+    dispatchWorkgroupsIndirect: { args: { indirectBuffer: GPUBuffer, indirectOffset: GPUSize64 } },
+    end: {},
+    label: { getter: b.string.usv, setter: true },
+    pushDebugGroup: { args: { groupLabel: b.string.loose.utf8 } },
+    popDebugGroup: {},
+    insertDebugMarker: { args: { markerLabel: b.string.loose.utf8 } },
+    setBindGroup: [
+      {
+        rustName: "set_bind_group",
+        args: {
+          index: GPUIndex32,
+          bindGroup: GPUBindGroup.nullable,
+          dynamicOffsets: b.sequence(GPUBufferDynamicOffset).default([]),
+        },
+      },
+      {
+        rustName: "set_bind_group_with_data",
+        args: {
+          index: GPUIndex32,
+          bindGroup: GPUBindGroup.nullable,
+          dynamicOffsetsData: b.bufferSource.allowShared,
+          dynamicOffsetsDataStart: GPUSize64,
+          dynamicOffsetsDataLength: GPUSize32,
+        },
+        capability: "heap",
+        throws: true,
+        uses: { dynamicOffsetsData: copied },
+      },
+    ],
+    setImmediates: {
+      args: {
+        rangeOffset: GPUSize32,
+        data: b.bufferSource.allowShared,
+        dataOffset: GPUSize64.default(0),
+        dataSize: GPUSize64.optional,
+      },
+      capability: "heap",
+      throws: true,
+      uses: { data: copied },
+    },
+  },
+});
+export const GPUTexelCopyBufferInfo = b.dictionary(
+  {
+    bytesPerRow: GPUSize32.optional,
+    offset: GPUSize64.default(0),
+    rowsPerImage: GPUSize32.optional,
+    buffer: GPUBuffer.ref,
+  },
+  { allowArray: true },
+);
+export const GPUCommandBufferDescriptor = b.dictionary(
+  { label: b.string.usv.default("") },
+  { allowArray: true, nonObjectAsEmpty: "nullish" },
+);
+export const GPUCommandEncoder = b.class({
+  types: typesOf("GPUCommandEncoder"),
+  rustPath: "crate::webgpu::GPUCommandEncoder",
+  configurable: true,
+  refCounted: true,
+  internalFields: ["device"],
+  construct: "illegal",
+  proto: {
     beginRenderPass: {
       args: { descriptor: GPURenderPassDescriptor },
       returns: GPURenderPassEncoder,
@@ -1020,7 +1121,7 @@ export const GPUCommandEncoder = b.class({
       throws: true,
     },
     beginComputePass: {
-      args: { descriptor: GPUComputePassDescriptor.nullable.default({}) },
+      args: { descriptor: GPUComputePassDescriptor.default({}) },
       returns: GPUComputePassEncoder,
       capability: "heap",
     },
@@ -1066,154 +1167,152 @@ export const GPUCommandEncoder = b.class({
       },
     },
     finish: {
-      args: { descriptor: GPUCommandBufferDescriptor.nullable.default({}) },
+      args: { descriptor: GPUCommandBufferDescriptor.default({}) },
       returns: GPUCommandBuffer,
       capability: "heap",
     },
-    ...GPUDebugCommandsMixin,
+    label: { getter: b.string.usv, setter: true },
+    pushDebugGroup: { args: { groupLabel: b.string.loose.utf8 } },
+    popDebugGroup: {},
+    insertDebugMarker: { args: { markerLabel: b.string.loose.utf8 } },
   },
 });
-
-// ───────────────────────────── queues ─────────────────────────────
-
-export const GPUQueueDescriptor = dictionary(GPUObjectDescriptorBase);
-export const GPUQueue = b.class({
-  ...gpuObject,
-  rustPath: rustPath("GPUQueue"),
+export const GPURenderBundleEncoderDescriptor = b.dictionary(
+  {
+    label: b.string.usv.default(""),
+    colorFormats: b.sequence(GPUTextureFormat.nullable),
+    depthStencilFormat: GPUTextureFormat.optional,
+    sampleCount: GPUSize32.default(1),
+    depthReadOnly: b.bool.loose.default(false),
+    stencilReadOnly: b.bool.loose.default(false),
+  },
+  { allowArray: true },
+);
+export const GPURenderBundleDescriptor = b.dictionary(
+  { label: b.string.usv.default("") },
+  { allowArray: true, nonObjectAsEmpty: "nullish" },
+);
+export const GPURenderBundleEncoder = b.class({
+  types: typesOf("GPURenderBundleEncoder"),
+  rustPath: "crate::webgpu::GPURenderBundleEncoder",
+  configurable: true,
+  refCounted: true,
+  internalFields: ["device"],
+  construct: "illegal",
   proto: {
-    ...GPUObjectBase,
-    submit: { args: { commandBuffers: b.sequence(GPUCommandBuffer.ref) } },
-    onSubmittedWorkDone: { returns: promise, capability: "js", throws: true, rejects: true },
-    writeBuffer: {
+    finish: {
+      args: { descriptor: GPURenderBundleDescriptor.default({}) },
+      returns: GPURenderBundle,
+      capability: "heap",
+    },
+    label: { getter: b.string.usv, setter: true },
+    pushDebugGroup: { args: { groupLabel: b.string.loose.utf8 } },
+    popDebugGroup: {},
+    insertDebugMarker: { args: { markerLabel: b.string.loose.utf8 } },
+    setBindGroup: [
+      {
+        rustName: "set_bind_group",
+        args: {
+          index: GPUIndex32,
+          bindGroup: GPUBindGroup.nullable,
+          dynamicOffsets: b.sequence(GPUBufferDynamicOffset).default([]),
+        },
+      },
+      {
+        rustName: "set_bind_group_with_data",
+        args: {
+          index: GPUIndex32,
+          bindGroup: GPUBindGroup.nullable,
+          dynamicOffsetsData: b.bufferSource.allowShared,
+          dynamicOffsetsDataStart: GPUSize64,
+          dynamicOffsetsDataLength: GPUSize32,
+        },
+        capability: "heap",
+        throws: true,
+        uses: { dynamicOffsetsData: copied },
+      },
+    ],
+    setImmediates: {
       args: {
-        buffer: GPUBuffer,
-        bufferOffset: GPUSize64,
+        rangeOffset: GPUSize32,
         data: b.bufferSource.allowShared,
         dataOffset: GPUSize64.default(0),
-        size: GPUSize64.optional,
+        dataSize: GPUSize64.optional,
       },
       capability: "heap",
       throws: true,
+      uses: { data: copied },
     },
-    writeTexture: {
+    setPipeline: { args: { pipeline: GPURenderPipeline } },
+    setIndexBuffer: {
+      args: { buffer: GPUBuffer, indexFormat: GPUIndexFormat, offset: GPUSize64.default(0), size: GPUSize64.optional },
+    },
+    setVertexBuffer: {
+      args: { slot: GPUIndex32, buffer: GPUBuffer.nullable, offset: GPUSize64.default(0), size: GPUSize64.optional },
+    },
+    draw: {
       args: {
-        destination: GPUTexelCopyTextureInfo,
-        data: b.bufferSource.allowShared,
-        dataLayout: GPUTexelCopyBufferLayout,
-        size: GPUExtent3D,
+        vertexCount: GPUSize32,
+        instanceCount: GPUSize32.default(1),
+        firstVertex: GPUSize32.default(0),
+        firstInstance: GPUSize32.default(0),
       },
-      capability: "heap",
-      throws: true,
     },
+    drawIndexed: {
+      args: {
+        indexCount: GPUSize32,
+        instanceCount: GPUSize32.default(1),
+        firstIndex: GPUSize32.default(0),
+        baseVertex: GPUSignedOffset32.default(0),
+        firstInstance: GPUSize32.default(0),
+      },
+    },
+    drawIndirect: { args: { indirectBuffer: GPUBuffer, indirectOffset: GPUSize64 } },
+    drawIndexedIndirect: { args: { indirectBuffer: GPUBuffer, indirectOffset: GPUSize64 } },
   },
 });
-
-// ───────────────────────────── errors ─────────────────────────────
-
+export const GPUQuerySetDescriptor = b.dictionary(
+  { label: b.string.usv.default(""), count: GPUSize32, type: GPUQueryType },
+  { allowArray: true },
+);
+export const GPUDeviceLostReason = b.enumeration(["unknown", "destroyed"]);
 export const GPUDeviceLostInfo = b.class({
-  rustPath: rustPath("GPUDeviceLostInfo"),
-  ...webInterface,
-  proto: {
-    reason: { getter: GPUDeviceLostReason },
-    message: { getter: b.string },
-  },
+  types: typesOf("GPUDeviceLostInfo"),
+  rustPath: "crate::webgpu::GPUDeviceLostInfo",
+  configurable: true,
+  construct: "illegal",
+  proto: { reason: { getter: GPUDeviceLostReason }, message: { getter: b.string } },
 });
-
+export const GPUErrorFilter = b.enumeration(["validation", "out-of-memory", "internal"]);
 export const GPUError = b.class({
-  ...webInterface,
-  rustPath: rustPath("GPUError"),
+  types: typesOf("GPUError"),
+  rustPath: "crate::webgpu::GPUError",
+  configurable: true,
   final: false,
+  construct: "illegal",
   proto: { message: { getter: b.string } },
 });
-const errorConstructor = (rustName: string) => ({
-  args: { message: DOMString.owned },
-  requiredArguments: 1,
-  rustName,
-});
-export const GPUValidationError = b.class({
-  ...webIDL,
-  extends: GPUError,
-  construct: errorConstructor("new_validation_error"),
-  proto: {},
-});
-export const GPUOutOfMemoryError = b.class({
-  ...webIDL,
-  extends: GPUError,
-  construct: errorConstructor("new_out_of_memory_error"),
-  proto: {},
-});
-export const GPUInternalError = b.class({
-  ...webIDL,
-  extends: GPUError,
-  construct: errorConstructor("new_internal_error"),
-  proto: {},
-});
-
-const EventInit = {
-  bubbles: boolean.default(false),
-  cancelable: boolean.default(false),
-  composed: boolean.default(false),
-};
-/** `error` is a `GPUError`, which the event holds as the object that it is. */
-export const GPUUncapturedErrorEventInit = dictionary(EventInit, { error: b.any });
-export const GPUUncapturedErrorEvent = b.class({
-  rustPath: rustPath("GPUUncapturedErrorEvent"),
-  ...webIDL,
-  refCounted: true,
-  webcoreBase: "Event",
-  construct: {
-    args: { type: DOMString.owned, gpuUncapturedErrorEventInitDict: GPUUncapturedErrorEventInit },
-    requiredArguments: 2,
-    passStructure: true,
-    capability: "heap",
-    throws: true,
-  },
-  internalFields: ["error"],
-  proto: { error: { internalField: "error" } },
-});
-
-export const GPUPipelineErrorReason = b.enumeration(["validation", "internal"]);
-export const GPUPipelineErrorInit = dictionary({ reason: GPUPipelineErrorReason });
-export const GPUPipelineError = b.class({
-  rustPath: rustPath("GPUPipelineError"),
-  ...webIDL,
-  refCounted: true,
-  webcoreBase: "DOMException",
-  construct: { args: { message: DOMString.owned.default(""), options: GPUPipelineErrorInit } },
-  proto: { reason: { getter: GPUPipelineErrorReason } },
-});
-
-// ───────────────────────────── devices ─────────────────────────────
-
 export const GPUDevice = b.class({
-  ...gpuObject,
-  rustPath: rustPath("GPUDevice"),
+  types: typesOf("GPUDevice"),
+  rustPath: "crate::webgpu::GPUDevice",
+  configurable: true,
+  refCounted: true,
   webcoreBase: "EventTarget",
-  finalize: true,
+  construct: "illegal",
   proto: {
-    ...GPUObjectBase,
     features: { getter: GPUSupportedFeatures, cache: true, capability: "heap" },
     limits: { getter: GPUSupportedLimits, cache: true, capability: "heap" },
     adapterInfo: { getter: GPUAdapterInfo, cache: true, capability: "heap" },
     queue: { getter: GPUQueue, cache: true, capability: "heap" },
     destroy: { capability: "js", throws: true },
-    createBuffer: {
-      args: { descriptor: GPUBufferDescriptor },
-      returns: GPUBuffer,
-      capability: "heap",
-      throws: true,
-    },
+    createBuffer: { args: { descriptor: GPUBufferDescriptor }, returns: GPUBuffer, capability: "heap", throws: true },
     createTexture: {
       args: { descriptor: GPUTextureDescriptor },
       returns: GPUTexture,
       capability: "heap",
       throws: true,
     },
-    createSampler: {
-      args: { descriptor: GPUSamplerDescriptor.nullable.default({}) },
-      returns: GPUSampler,
-      capability: "heap",
-    },
+    createSampler: { args: { descriptor: GPUSamplerDescriptor.default({}) }, returns: GPUSampler, capability: "heap" },
     createBindGroupLayout: {
       args: { descriptor: GPUBindGroupLayoutDescriptor },
       returns: GPUBindGroupLayout,
@@ -1244,20 +1343,20 @@ export const GPUDevice = b.class({
     },
     createComputePipelineAsync: {
       args: { descriptor: GPUComputePipelineDescriptor },
-      returns: promise,
+      returns: promiseOf(table.instance("GPUComputePipeline")),
       capability: "js",
       throws: true,
       rejects: true,
     },
     createRenderPipelineAsync: {
       args: { descriptor: GPURenderPipelineDescriptor },
-      returns: promise,
+      returns: promiseOf(table.instance("GPURenderPipeline")),
       capability: "js",
       throws: true,
       rejects: true,
     },
     createCommandEncoder: {
-      args: { descriptor: GPUCommandEncoderDescriptor.nullable.default({}) },
+      args: { descriptor: GPUCommandEncoderDescriptor.default({}) },
       returns: GPUCommandEncoder,
       capability: "heap",
     },
@@ -1273,53 +1372,46 @@ export const GPUDevice = b.class({
       capability: "heap",
       throws: true,
     },
-    lost: { getter: promise, cache: true, capability: "js" },
+    label: { getter: b.string.usv, setter: true },
+    lost: { getter: promiseOf(table.instance("GPUDeviceLostInfo")), cache: true, capability: "js" },
     pushErrorScope: { args: { filter: GPUErrorFilter } },
-    popErrorScope: { returns: promise, capability: "js", throws: true, rejects: true },
+    popErrorScope: {
+      returns: promiseOf(table.instance("GPUError").or(table.strictNull)),
+      capability: "js",
+      throws: true,
+      rejects: true,
+    },
     onuncapturederror: { eventHandler: "uncapturederror" },
   },
 });
-
-// ───────────────────────────── adapters ─────────────────────────────
-
-export const GPUDeviceDescriptor = dictionary(GPUObjectDescriptorBase, {
-  requiredFeatures: b.sequence(GPUFeatureName).default([]),
-  requiredLimits: b.record(GPUSize64.optional).default({}),
-  defaultQueue: GPUQueueDescriptor.nullable.default({}),
-});
-
 export const GPUAdapter = b.class({
-  ...webInterface,
-  rustPath: rustPath("GPUAdapter"),
+  types: typesOf("GPUAdapter"),
+  rustPath: "crate::webgpu::GPUAdapter",
+  configurable: true,
+  construct: "illegal",
   proto: {
     features: { getter: GPUSupportedFeatures, cache: true, capability: "heap" },
     limits: { getter: GPUSupportedLimits, cache: true, capability: "heap" },
     info: { getter: GPUAdapterInfo, cache: true, capability: "heap" },
     requestDevice: {
-      args: { descriptor: GPUDeviceDescriptor.nullable.default({}) },
-      returns: promise,
+      args: { descriptor: GPUDeviceDescriptor.default({}) },
+      returns: promiseOf(table.instance("GPUDevice")),
       capability: "js",
       throws: true,
       rejects: true,
+      uses: { this: [table.retained, ...madeByDevice] },
     },
   },
 });
-
-export const GPUPowerPreference = b.enumeration(["low-power", "high-performance"]);
-export const GPURequestAdapterOptions = dictionary({
-  featureLevel: utf8.default("core"),
-  powerPreference: GPUPowerPreference.optional,
-  forceFallbackAdapter: boolean.default(false),
-  xrCompatible: boolean.default(false),
-});
-
 export const GPU = b.class({
-  ...webInterface,
-  rustPath: rustPath("GPU"),
+  types: typesOf("GPU"),
+  rustPath: "crate::webgpu::GPU",
+  configurable: true,
+  construct: "illegal",
   proto: {
     requestAdapter: {
-      args: { options: GPURequestAdapterOptions.nullable.default({}) },
-      returns: promise,
+      args: { options: GPURequestAdapterOptions.default({}) },
+      returns: promiseOf(table.instance("GPUAdapter").or(table.strictNull)),
       capability: "js",
       throws: true,
       rejects: true,
@@ -1328,11 +1420,134 @@ export const GPU = b.class({
     wgslLanguageFeatures: { getter: WGSLLanguageFeatures, cache: true, capability: "heap" },
   },
 });
+export const GPUBufferUsage = b.namespace(
+  {
+    MAP_READ: { constant: 0x0001 },
+    MAP_WRITE: { constant: 0x0002 },
+    COPY_SRC: { constant: 0x0004 },
+    COPY_DST: { constant: 0x0008 },
+    INDEX: { constant: 0x0010 },
+    VERTEX: { constant: 0x0020 },
+    UNIFORM: { constant: 0x0040 },
+    STORAGE: { constant: 0x0080 },
+    INDIRECT: { constant: 0x0100 },
+    QUERY_RESOLVE: { constant: 0x0200 },
+  },
+  { toStringTag: true },
+);
+export const GPUMapMode = b.namespace(
+  { READ: { constant: 0x0001 }, WRITE: { constant: 0x0002 } },
+  { toStringTag: true },
+);
+export const GPUTextureUsage = b.namespace(
+  {
+    COPY_SRC: { constant: 0x01 },
+    COPY_DST: { constant: 0x02 },
+    TEXTURE_BINDING: { constant: 0x04 },
+    STORAGE_BINDING: { constant: 0x08 },
+    RENDER_ATTACHMENT: { constant: 0x10 },
+    TRANSIENT_ATTACHMENT: { constant: 0x20 },
+  },
+  { toStringTag: true },
+);
+export const GPUExternalTexture = b.class({
+  types: typesOf("GPUExternalTexture"),
+  rustPath: "crate::webgpu::GPUExternalTexture",
+  configurable: true,
+  construct: "illegal",
+  proto: { label: { getter: b.string.usv, setter: true } },
+});
+export const GPUShaderStage = b.namespace(
+  { VERTEX: { constant: 0x1 }, FRAGMENT: { constant: 0x2 }, COMPUTE: { constant: 0x4 } },
+  { toStringTag: true },
+);
+export const GPUCompilationMessageType = b.enumeration(["error", "warning", "info"]);
+export const GPUCompilationMessage = b.class({
+  types: typesOf("GPUCompilationMessage"),
+  rustPath: "crate::webgpu::GPUCompilationMessage",
+  configurable: true,
+  construct: "illegal",
+  proto: {
+    message: { getter: b.string },
+    type: { getter: GPUCompilationMessageType },
+    lineNum: { getter: b.u64 },
+    linePos: { getter: b.u64 },
+    offset: { getter: b.u64 },
+    length: { getter: b.u64 },
+  },
+});
+export const GPUPipelineErrorReason = b.enumeration(["validation", "internal"]);
+export const GPUPipelineErrorInit = b.dictionary({ reason: GPUPipelineErrorReason }, { allowArray: true });
+export const GPUPipelineError = b.class({
+  types: typesOf("GPUPipelineError"),
+  rustPath: "crate::webgpu::GPUPipelineError",
+  configurable: true,
+  refCounted: true,
+  webcoreBase: "DOMException",
+  construct: { args: { message: b.string.loose.owned.default(""), options: GPUPipelineErrorInit } },
+  proto: { reason: { getter: GPUPipelineErrorReason } },
+});
+export const GPUColorWrite = b.namespace(
+  {
+    RED: { constant: 0x1 },
+    GREEN: { constant: 0x2 },
+    BLUE: { constant: 0x4 },
+    ALPHA: { constant: 0x8 },
+    ALL: { constant: 0xf },
+  },
+  { toStringTag: true },
+);
+export const GPUValidationError = b.class({
+  extends: GPUError,
+  types: typesOf("GPUValidationError"),
+  configurable: true,
+  construct: { args: { message: b.string.loose.owned }, requiredArguments: 1, rustName: "new_validation_error" },
+  proto: {},
+});
+export const GPUOutOfMemoryError = b.class({
+  extends: GPUError,
+  types: typesOf("GPUOutOfMemoryError"),
+  configurable: true,
+  construct: { args: { message: b.string.loose.owned }, requiredArguments: 1, rustName: "new_out_of_memory_error" },
+  proto: {},
+});
+export const GPUInternalError = b.class({
+  extends: GPUError,
+  types: typesOf("GPUInternalError"),
+  configurable: true,
+  construct: { args: { message: b.string.loose.owned }, requiredArguments: 1, rustName: "new_internal_error" },
+  proto: {},
+});
+export const GPUUncapturedErrorEventInit = b.dictionary(
+  {
+    bubbles: b.bool.loose.default(false),
+    cancelable: b.bool.loose.default(false),
+    composed: b.bool.loose.default(false),
+    error: b.any,
+  },
+  { allowArray: true },
+);
+export const GPUUncapturedErrorEvent = b.class({
+  types: typesOf("GPUUncapturedErrorEvent"),
+  rustPath: "crate::webgpu::GPUUncapturedErrorEvent",
+  configurable: true,
+  refCounted: true,
+  webcoreBase: "Event",
+  internalFields: ["error"],
+  construct: {
+    args: { type: b.string.loose.owned, gpuUncapturedErrorEventInitDict: GPUUncapturedErrorEventInit },
+    requiredArguments: 2,
+    passStructure: true,
+    capability: "heap",
+    throws: true,
+  },
+  proto: { error: { internalField: "error" } },
+});
 
 /** For `bun:internal-for-testing`. */
 export const useNullBackendForTesting = b.fn({ args: { useIt: b.bool } });
 /** Whether Dawn has said that the device of `queue` is lost, which JavaScript only hears from the `GPUDevice`. */
 export const isDeviceLostForTesting = b.fn({ args: { queue: GPUQueue }, returns: b.bool });
 
-/** `navigator.gpu`, for WebGPUBindings.cpp. */
+/** `navigator.gpu`, for ZigGlobalObject.cpp. */
 export const createGPU = b.value({ returns: GPU, capability: "heap" });

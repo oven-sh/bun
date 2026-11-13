@@ -12,7 +12,8 @@ use super::{
 use crate::generated_bindgen::webgpu::{
     GPUCommandBufferDescriptor, GPUCommandEncoderDescriptor, GPUComputePassDescriptor, GPUExtent3D,
     GPURenderPassDescriptor, GPUTexelCopyBufferInfo, GPUTexelCopyBufferLayout,
-    GPUTexelCopyTextureInfo, GPUTextureOrView,
+    GPUTexelCopyTextureInfo, GPUTextureOrView, js_GPUCommandEncoder, js_GPUComputePassEncoder,
+    js_GPURenderPassEncoder,
 };
 
 gpu_object! {
@@ -54,9 +55,12 @@ impl GPUDevice {
         // SAFETY: a live device, and a descriptor that outlives the call.
         let handle =
             unsafe { sys::wgpuDeviceCreateCommandEncoder(self.handle, &raw const sys_descriptor) };
-        new_object(
-            heap,
-            GPUCommandEncoder::new(handle, &descriptor.label, self.device_ref()),
+        self.state.held_by(
+            new_object(
+                heap,
+                GPUCommandEncoder::new(handle, &descriptor.label, self.device_ref()),
+            ),
+            js_GPUCommandEncoder::device_set_cached,
         )
     }
 }
@@ -207,9 +211,12 @@ impl GPUCommandEncoder {
         let handle = unsafe {
             sys::wgpuCommandEncoderBeginRenderPass(self.handle, &raw const sys_descriptor)
         };
-        Ok(new_object(
-            heap,
-            GPURenderPassEncoder::new(handle, &descriptor.label, self.device.clone()),
+        Ok(self.device.state.held_by(
+            new_object(
+                heap,
+                GPURenderPassEncoder::new(handle, &descriptor.label, self.device.clone()),
+            ),
+            js_GPURenderPassEncoder::device_set_cached,
         ))
     }
 
@@ -237,9 +244,12 @@ impl GPUCommandEncoder {
         let handle = unsafe {
             sys::wgpuCommandEncoderBeginComputePass(self.handle, &raw const sys_descriptor)
         };
-        new_object(
-            heap,
-            GPUComputePassEncoder::new(handle, &descriptor.label, self.device.clone()),
+        self.device.state.held_by(
+            new_object(
+                heap,
+                GPUComputePassEncoder::new(handle, &descriptor.label, self.device.clone()),
+            ),
+            js_GPUComputePassEncoder::device_set_cached,
         )
     }
 

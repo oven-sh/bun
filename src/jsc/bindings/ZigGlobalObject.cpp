@@ -80,6 +80,7 @@
 #include "GeneratedResolveMessage.h"
 #include "GeneratedResponse.h"
 #include "GeneratedTextDecoder.h"
+#include "GeneratedWebgpu.h"
 #include "BunPlugin.h"
 #include "BunProcess.h"
 #include "BunSecureContextCache.h"
@@ -237,7 +238,6 @@
 #include "NodeFSStatFSBinding.h"
 #include "NodeDirent.h"
 #include "../../runtime/webview/JSWebView.h"
-#include "../../runtime/webgpu/WebGPUBindings.h"
 
 #if !OS(WINDOWS)
 #include <dlfcn.h>
@@ -2288,6 +2288,14 @@ JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetPlatform, (JSC::JSGlobalObject * gl
 #endif
 }
 
+extern "C" SYSV_ABI JSC::EncodedJSValue js2native_bindgen_webgpu_createGPU(Zig::GlobalObject*);
+
+JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetGPU, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    auto* global = defaultGlobalObject(globalObject);
+    return JSValue::encode(global->m_navigatorGPUObject.getInitializedOnMainThread(global));
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetHardwareConcurrency, (JSC::JSGlobalObject*, JSC::CallFrame*))
 {
     return JSValue::encode(JSC::jsNumber(WTF::numberOfProcessorCores()));
@@ -3073,19 +3081,22 @@ void GlobalObject::finishCreation(VM& vm)
              JSC::JSGlobalObject* globalObject = init.owner;
              unsigned accessorAttributes = PropertyAttribute::Accessor | 0;
 
-             JSC::JSObject* obj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
+             JSC::JSObject* obj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 5);
 
              obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "userAgent"_s), functionNavigatorGetUserAgent, JSC::NoIntrinsic, accessorAttributes);
              obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "platform"_s), functionNavigatorGetPlatform, JSC::NoIntrinsic, accessorAttributes);
              obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "hardwareConcurrency"_s), functionNavigatorGetHardwareConcurrency, JSC::NoIntrinsic, accessorAttributes);
+             obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "gpu"_s), JSC::removableFunction<Bun::Feature::WebGpu, JSC::RemovedFeatureStub::Throw, functionNavigatorGetGPU>(), JSC::NoIntrinsic, accessorAttributes);
 
              obj->putDirect(init.vm, init.vm.propertyNames->toStringTagSymbol,
                  jsNontrivialString(init.vm, "Navigator"_s), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
-#if BUN_WEBGPU
-             Bun::addWebGPUToNavigator(init.vm, obj);
-#endif
 
              init.set(obj);
+         } },
+        { OBJECT_OFFSETOF(GlobalObject, m_navigatorGPUObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(WebGpu, Abort, void)
+             init.set(JSC::asObject(JSValue::decode(js2native_bindgen_webgpu_createGPU(static_cast<Zig::GlobalObject*>(init.owner)))));
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_bunObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              JSObject* bunObject = Bun::createBunObject(init.vm, init.owner);
@@ -3583,9 +3594,6 @@ private:
 
 void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 {
-#if BUN_WEBGPU
-    Bun::addWebGPUGlobals(vm, this);
-#endif
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     m_builtinInternalFunctions->initialize(*this);
 

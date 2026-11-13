@@ -1,0 +1,11 @@
+// What Dawn and Abseil get for <iostream> (deps/dawn.ts): the stream types without std::cout and its siblings, whose
+// initializer would run at the start of every process. A source that names one does not compile.
+#pragma once
+
+#ifdef NDEBUG
+#include <istream>
+#include <ostream>
+#else
+// Abseil's assertions print.
+#include_next <iostream>
+#endif

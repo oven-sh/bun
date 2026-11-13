@@ -1,13 +1,9 @@
-// What src/runtime/webgpu/*.rs asks of JavaScriptCore.
+// What src/runtime/webgpu/*.rs asks of JavaScriptCore, and of Dawn beyond its C API.
 
 #include "root.h"
 
-#if BUN_WEBGPU
-
 #include "BunBuiltinNames.h"
 #include "BunString.h"
-#include "GeneratedWebgpu.h"
-#include "WebGPUBindings.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/JSArrayBuffer.h>
@@ -16,6 +12,10 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <dawn/native/DawnNative.h>
 #include <wtf/SharedTask.h>
+
+#if OS(WINDOWS)
+#include <windows.h>
+#endif
 
 // What says where an instance logs is a struct of C++. Without it Dawn writes to stderr, for one why there is no adapter.
 extern "C" WGPUInstance Bun__WebGPU__createInstance(WGPULoggingCallback log)
@@ -26,6 +26,25 @@ extern "C" WGPUInstance Bun__WebGPU__createInstance(WGPULoggingCallback log)
     descriptor.nextInChain = reinterpret_cast<WGPUChainedStruct*>(&dawnDescriptor);
     return wgpuCreateInstance(&descriptor);
 }
+
+extern "C" bool Bun__WebGPU__tickDevice(WGPUDevice device)
+{
+    return dawn::native::DeviceTick(device);
+}
+
+extern "C" bool Bun__WebGPU__reduceMemoryUsage(WGPUDevice device)
+{
+    return dawn::native::ReduceMemoryUsage(device);
+}
+
+#if OS(WINDOWS)
+// Where Dawn looks for it: beside the executable, then in System32.
+extern "C" bool Bun__WebGPU__hasDXC()
+{
+    static const bool hasDXC = !!LoadLibraryExW(L"dxcompiler.dll", nullptr, LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
+    return hasDXC;
+}
+#endif
 
 extern "C" void Bun__WebGPU__mappedRangeReleased(void* buffer, uint64_t id);
 
@@ -86,114 +105,3 @@ extern "C" void Bun__WebGPU__freeze(JSC::JSGlobalObject* globalObject, JSC::Enco
     JSC::objectConstructorFreeze(globalObject, JSC::asObject(JSC::JSValue::decode(array)));
     scope.assertNoException();
 }
-
-// ───────────────────────────── globals ─────────────────────────────
-
-extern "C" SYSV_ABI JSC::EncodedJSValue js2native_bindgen_webgpu_createGPU(Zig::GlobalObject*);
-
-namespace Bun {
-
-using namespace Bun::Bindgen::Generated::Webgpu;
-
-static JSC::JSValue createNavigatorGPU(JSC::VM&, JSC::JSObject* navigator)
-{
-    return JSC::JSValue::decode(js2native_bindgen_webgpu_createGPU(defaultGlobalObject(navigator->globalObject())));
-}
-
-struct LazyWebGPUProperty {
-    ASCIILiteral name;
-    JSC::JSValue (*create)(JSC::VM&, JSC::JSObject* owner);
-};
-
-static constexpr LazyWebGPUProperty webGPUGlobals[] = {
-    { "GPU"_s, getGPUConstructor },
-    { "GPUAdapter"_s, getGPUAdapterConstructor },
-    { "GPUAdapterInfo"_s, getGPUAdapterInfoConstructor },
-    { "GPUBindGroup"_s, getGPUBindGroupConstructor },
-    { "GPUBindGroupLayout"_s, getGPUBindGroupLayoutConstructor },
-    { "GPUBuffer"_s, getGPUBufferConstructor },
-    { "GPUBufferUsage"_s, createGPUBufferUsage },
-    { "GPUColorWrite"_s, createGPUColorWrite },
-    { "GPUCommandBuffer"_s, getGPUCommandBufferConstructor },
-    { "GPUCommandEncoder"_s, getGPUCommandEncoderConstructor },
-    { "GPUCompilationInfo"_s, getGPUCompilationInfoConstructor },
-    { "GPUCompilationMessage"_s, getGPUCompilationMessageConstructor },
-    { "GPUComputePassEncoder"_s, getGPUComputePassEncoderConstructor },
-    { "GPUComputePipeline"_s, getGPUComputePipelineConstructor },
-    { "GPUDevice"_s, getGPUDeviceConstructor },
-    { "GPUDeviceLostInfo"_s, getGPUDeviceLostInfoConstructor },
-    { "GPUError"_s, getGPUErrorConstructor },
-    { "GPUExternalTexture"_s, getGPUExternalTextureConstructor },
-    { "GPUInternalError"_s, getGPUInternalErrorConstructor },
-    { "GPUMapMode"_s, createGPUMapMode },
-    { "GPUOutOfMemoryError"_s, getGPUOutOfMemoryErrorConstructor },
-    { "GPUPipelineError"_s, getGPUPipelineErrorConstructor },
-    { "GPUPipelineLayout"_s, getGPUPipelineLayoutConstructor },
-    { "GPUQuerySet"_s, getGPUQuerySetConstructor },
-    { "GPUQueue"_s, getGPUQueueConstructor },
-    { "GPURenderBundle"_s, getGPURenderBundleConstructor },
-    { "GPURenderBundleEncoder"_s, getGPURenderBundleEncoderConstructor },
-    { "GPURenderPassEncoder"_s, getGPURenderPassEncoderConstructor },
-    { "GPURenderPipeline"_s, getGPURenderPipelineConstructor },
-    { "GPUSampler"_s, getGPUSamplerConstructor },
-    { "GPUShaderModule"_s, getGPUShaderModuleConstructor },
-    { "GPUShaderStage"_s, createGPUShaderStage },
-    { "GPUSupportedFeatures"_s, getGPUSupportedFeaturesConstructor },
-    { "GPUSupportedLimits"_s, getGPUSupportedLimitsConstructor },
-    { "GPUTexture"_s, getGPUTextureConstructor },
-    { "GPUTextureUsage"_s, createGPUTextureUsage },
-    { "GPUTextureView"_s, getGPUTextureViewConstructor },
-    { "GPUUncapturedErrorEvent"_s, getGPUUncapturedErrorEventConstructor },
-    { "GPUValidationError"_s, getGPUValidationErrorConstructor },
-    { "WGSLLanguageFeatures"_s, getWGSLLanguageFeaturesConstructor },
-};
-static constexpr LazyWebGPUProperty navigatorGPU { "gpu"_s, createNavigatorGPU };
-
-// The first read makes the value, which is an ordinary property from then on. A static property table does this with a
-// PropertyCallback, but that of the global object is the same in every build.
-JSC_DEFINE_CUSTOM_GETTER(getLazyWebGPUProperty, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName propertyName))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto* owner = JSC::JSValue::decode(thisValue).getObject();
-    auto* name = propertyName.publicName();
-    if (!owner || !name)
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    auto create = [&](const LazyWebGPUProperty& property, unsigned attributes) {
-        JSC::JSValue value = property.create(vm, owner);
-        owner->putDirect(vm, propertyName, value, attributes);
-        return JSC::JSValue::encode(value);
-    };
-    if (WTF::equal(name, navigatorGPU.name))
-        return create(navigatorGPU, JSC::PropertyAttribute::ReadOnly | 0);
-    for (const auto& property : webGPUGlobals) {
-        if (WTF::equal(name, property.name))
-            return create(property, JSC::PropertyAttribute::DontEnum | 0);
-    }
-    return JSC::JSValue::encode(JSC::jsUndefined());
-}
-
-JSC_DEFINE_CUSTOM_SETTER(setLazyWebGPUProperty, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName propertyName))
-{
-    auto* owner = JSC::JSValue::decode(thisValue).getObject();
-    if (!owner)
-        return false;
-    owner->putDirect(JSC::getVM(globalObject), propertyName, JSC::JSValue::decode(value), JSC::PropertyAttribute::DontEnum | 0);
-    return true;
-}
-
-void addWebGPUGlobals(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
-{
-    auto* accessor = JSC::CustomGetterSetter::create(vm, getLazyWebGPUProperty, setLazyWebGPUProperty);
-    for (const auto& property : webGPUGlobals)
-        globalObject->putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, property.name), accessor, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::CustomValue);
-}
-
-void addWebGPUToNavigator(JSC::VM& vm, JSC::JSObject* navigator)
-{
-    auto* accessor = JSC::CustomGetterSetter::create(vm, getLazyWebGPUProperty, nullptr);
-    navigator->putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, navigatorGPU.name), accessor, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomValue);
-}
-
-}
-
-#endif

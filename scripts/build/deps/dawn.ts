@@ -1,10 +1,10 @@
 /**
- * Dawn — Chromium's implementation of WebGPU, with Tint, its WGSL compiler. Behind `navigator.gpu` in a build with
- * `--webgpu=on` (src/runtime/webgpu/), which calls the C API of `webgpu.h`.
+ * Dawn — Chromium's implementation of WebGPU, with Tint, its WGSL compiler. Behind `navigator.gpu`
+ * (src/runtime/webgpu/), which calls the C API of `webgpu.h`.
  *
  * What is built is Dawn's `webgpu_dawn` library without windows or surfaces: one backend for each OS (Vulkan, Metal,
  * Direct3D 12) and Null, which runs nothing and needs no GPU. The drivers are loaded when an adapter is asked for:
- * libvulkan.so.1, d3d12.dll, dxgi.dll and the HLSL compiler. Metal is linked.
+ * libvulkan, d3d12.dll, dxgi.dll and the HLSL compiler. Metal is linked.
  *
  * DirectBuild: ~570 sources of Dawn and ~100 of Abseil. Which ones, and with which defines, is in dawn-sources.ts,
  * which ../dawn-source-lists.ts writes from Dawn's own CMake files. Dawn generates `webgpu.h` and its tables from
@@ -37,13 +37,12 @@ const VULKAN_UTILITY_LIBRARIES_COMMIT = "271510bc50a1ecc65e62ca07dbf6b8dfe530dfd
 const JINJA2_COMMIT = "15206881c006c79667fe5154fe80c01c65410679"; // 3.1.6
 const MARKUPSAFE_COMMIT = "28ace20b140d15c083e1cbc163ee6b7778ba098c"; // 3.0.2
 
-const enabled = (cfg: Config): boolean => cfg.webgpu;
-
 /** What the sources of the Metal backend import. Dawn's CMake files also link Cocoa, which only windows need. */
 export const dawnFrameworks = ["CoreVideo", "Foundation", "IOKit", "IOSurface", "Metal", "QuartzCore"] as const;
 
 function listFor(lists: DawnLists, cfg: Config): string[] {
-  const system = cfg.windows ? "windows" : cfg.darwin ? "darwin" : "linux";
+  // patches/dawn/freebsd.patch has FreeBSD pass for Linux.
+  const system = cfg.windows ? "windows" : cfg.darwin ? "darwin" : cfg.abi === "android" ? "android" : "linux";
   return Object.entries(lists).flatMap(([systems, entries]) => (systems.split(" ").includes(system) ? entries : []));
 }
 
@@ -54,20 +53,22 @@ function languageFlags(cfg: Config): string[] {
     : ["-std=c++20", "-fno-exceptions", "-fno-rtti", "-fvisibility=hidden", "-w"];
 }
 
+const withoutIostream = (cfg: Config): string => join(cfg.cwd, "scripts", "build", "shims", "no-iostream");
+
 const windowsDefines = { NOMINMAX: true, WIN32_LEAN_AND_MEAN: true, _CRT_SECURE_NO_WARNINGS: true } as const;
 
 /** Only read: headers, or the python that Dawn's generators import. */
-function sourceOnly(name: DepName, repo: string, commit: string, when = enabled): Dependency {
+function sourceOnly(name: DepName, repo: string, commit: string, enabled?: (cfg: Config) => boolean): Dependency {
   return {
     name,
     source: () => ({ kind: "github-archive", repo, commit }),
     build: () => ({ kind: "none" }),
     provides: () => ({ libs: [], includes: [] }),
-    enabled: when,
+    ...(enabled && { enabled }),
   };
 }
 
-const usesVulkan = (cfg: Config): boolean => cfg.webgpu && cfg.linux;
+const usesVulkan = (cfg: Config): boolean => cfg.linux || cfg.freebsd;
 
 export const spirvHeaders = sourceOnly("spirv-headers", "KhronosGroup/SPIRV-Headers", SPIRV_HEADERS_COMMIT, usesVulkan);
 export const vulkanHeaders = sourceOnly(
@@ -92,21 +93,24 @@ export const abseil: Dependency = {
     kind: "direct",
     lang: "cxx",
     sources: listFor(abseilSources, cfg),
-    includes: ["."],
+    includes: [withoutIostream(cfg), "."],
     defines: cfg.windows ? windowsDefines : {},
     cflags: languageFlags(cfg),
   }),
   provides: () => ({ libs: [], includes: [] }),
-  enabled,
 };
 
 /** Where Dawn's generators write. `include/dawn/webgpu.h` is there. */
 export const dawnGeneratedDir = (cfg: Config): string => join(depBuildDir(cfg, "dawn"), "gen");
 
+/** The Rust declarations of `webgpu.h`, which src/webgpu_sys includes. */
+export const webgpuSysPath = (cfg: Config): string => join(cfg.codegenDir, "webgpu_sys.rs");
+
 export const dawn: Dependency = {
   name: "dawn",
   versionMacro: "DAWN",
-  source: () => ({ kind: "github-archive", repo: "google/dawn", commit: DAWN_COMMIT }),
+  source: () => ({ kind: "github-archive", repo: "google/dawn", commit: DAWN_COMMIT, exclude: ["test"] }),
+  patches: ["patches/dawn/no-cerr.patch", "patches/dawn/freebsd.patch"],
   fetchDeps: cfg => [
     "abseil-cpp",
     "jinja2",
@@ -209,9 +213,9 @@ export const dawn: Dependency = {
         {
           desc: "webgpu_sys.rs",
           cwd: cfg.cwd,
-          cmd: [cfg.bun, sysGenerator, generated("include/dawn/webgpu.h"), join(cfg.codegenDir, "webgpu_sys.rs")],
+          cmd: [cfg.bun, sysGenerator, generated("include/dawn/webgpu.h"), webgpuSysPath(cfg)],
           inputs: [sysGenerator, join(cfg.cwd, "src", "codegen", "helpers.ts"), generated("include/dawn/webgpu.h")],
-          outputs: [join(cfg.codegenDir, "webgpu_sys.rs")],
+          outputs: [webgpuSysPath(cfg)],
         },
       ],
       groups: [
@@ -219,6 +223,7 @@ export const dawn: Dependency = {
           name: "webgpu_dawn",
           sources: [...listFor(dawnSources, cfg), ...sources.map(generated)],
           includes: [
+            withoutIostream(cfg),
             ".",
             "include",
             "src/dawn/partition_alloc",
@@ -239,7 +244,10 @@ export const dawn: Dependency = {
             ...(cfg.debug || cfg.assertions ? ["-DDAWN_ENABLE_ASSERTS"] : []),
             // Otherwise Dawn writes to stdout and stderr. What its instance has to say goes to `on_log` (instance.rs).
             "-DDAWN_DISABLE_LOGGING",
-            ...(cfg.darwin ? ["-fno-objc-arc"] : []),
+            ...(cfg.darwin ? ["-fno-objc-arc", "-fno-objc-exceptions"] : []),
+            // The first only has Dawn load dxcompiler.dll, where WebGPUBindings.cpp finds one. The second has it look for
+            // d3dcompiler_47.dll in System32, which is where Windows keeps it.
+            ...(cfg.windows ? ["-DDAWN_USE_BUILT_DXC", "-DDAWN_FORCE_SYSTEM_COMPONENT_LOAD"] : []),
           ],
           cxxflags: languageFlags(cfg),
           orderOnly: headers.map(generated),
@@ -253,7 +261,6 @@ export const dawn: Dependency = {
     libs: [],
     includes: [join(depSourceDir(cfg, "dawn"), "include"), join(dawnGeneratedDir(cfg), "include")],
   }),
-  enabled,
 };
 
 /** In the order of `allDeps`: what Dawn reads comes before it. */

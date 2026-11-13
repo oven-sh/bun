@@ -9,6 +9,7 @@ use super::{
 use crate::generated_bindgen::webgpu::{
     GPUQuerySetDescriptor, GPUQueryType, GPUSamplerDescriptor, GPUTextureDescriptor,
     GPUTextureDimension, GPUTextureFormat, GPUTextureViewDescriptor, GPUTextureViewDimension,
+    js_GPUTexture,
 };
 
 // ───────────────────────────── GPUTexture ─────────────────────────────
@@ -90,7 +91,9 @@ impl GPUDevice {
             descriptor.format,
             estimated_size,
         );
-        Ok(new_object(heap, texture))
+        Ok(self
+            .state
+            .held_by(new_object(heap, texture), js_GPUTexture::device_set_cached))
     }
 }
 
@@ -185,6 +188,7 @@ impl GPUTexture {
     pub(crate) fn destroy(&self) {
         // SAFETY: a live texture.
         unsafe { sys::wgpuTextureDestroy(self.handle) };
+        self.device.state.did_destroy(self.estimated_size as u64);
     }
 
     pub(crate) fn get_width(&self) -> u32 {
@@ -274,7 +278,7 @@ gpu_object! {
         handle: WGPUQuerySet,
         release: wgpuQuerySetRelease,
         set_label: wgpuQuerySetSetLabel,
-        _device: DeviceRef,
+        device: DeviceRef,
         kind: GPUQueryType,
         count: u32,
     }
@@ -312,6 +316,7 @@ impl GPUQuerySet {
     pub(crate) fn destroy(&self) {
         // SAFETY: a live query set.
         unsafe { sys::wgpuQuerySetDestroy(self.handle) };
+        self.device.state.has_garbage();
     }
     pub(crate) fn get_type(&self) -> GPUQueryType {
         self.kind

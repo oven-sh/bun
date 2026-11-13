@@ -684,7 +684,8 @@ export class IntegerType extends PrimitiveType {
     const accepted = this.#allowBigInt ? unionType(integers, bigIntType) : integers;
     if (this.#conversion === "Strict") return strictType(accepted);
     if (this.#allowBigInt) return convertingType(accepted, "ToNumeric", unionType(numberType, bigIntType));
-    if (this.#conversion === "Loose" || this.info.size !== 4) return convertingType(accepted, "ToNumber", numberType);
+    const wraps = this.#conversion === `WebCore::${this.info.webidl}`;
+    if (!wraps || this.info.size !== 4) return convertingType(accepted, "ToNumber", numberType);
     return convertingType(accepted, this.info.min < 0 ? "ToInt32" : "ToUint32");
   }
   /** A caller proves of an integer that it is an int32 and no more. */
@@ -907,6 +908,9 @@ export class LooseDoubleType extends DoubleType {
 }
 
 class FiniteDoubleType extends DoubleType {
+  get directForm(): null {
+    return null;
+  }
   get canRefuse(): boolean {
     return true;
   }
@@ -2670,9 +2674,9 @@ export interface DictionaryOptions {
   allowArray?: boolean;
   /**
    * A value that is not an object gives every member its default. With `"typeof"` so does a function: Node's
-   * `if (typeof options !== "object") options = null`.
+   * `if (typeof options !== "object") options = null`. With `"nullish"` only `null` and `undefined` do, as in WebIDL.
    */
-  nonObjectAsEmpty?: boolean | "typeof";
+  nonObjectAsEmpty?: boolean | "typeof" | "nullish";
   /** As a result, the object has no prototype. */
   nullPrototype?: boolean;
   /** What an error calls the dictionary: `"options"` makes a member `options.level`, and `""` makes it `level`. Defaults to the name of the type. */
@@ -2731,11 +2735,11 @@ export class DictionaryType extends NamedType {
   get allowArray(): boolean {
     return !!this.options.allowArray;
   }
-  get nonObjectAsEmpty(): boolean | "typeof" {
+  get nonObjectAsEmpty(): boolean | "typeof" | "nullish" {
     return this.options.nonObjectAsEmpty ?? false;
   }
   get refuses(): string | null {
-    return this.nonObjectAsEmpty ? null : nonObjects;
+    return this.nonObjectAsEmpty && this.nonObjectAsEmpty !== "nullish" ? null : nonObjects;
   }
   get borrowedByBody(): boolean {
     return true;
@@ -2752,7 +2756,7 @@ export class DictionaryType extends NamedType {
   /** Nothing is read of what `nonObjectAsEmpty` takes. */
   get parameterType(): ParameterType {
     const accepted = unionType(
-      this.nonObjectAsEmpty ? anyPrimitiveType : neverType,
+      this.nonObjectAsEmpty === "nullish" ? nullishType : this.nonObjectAsEmpty ? anyPrimitiveType : neverType,
       this.nonObjectAsEmpty === "typeof" ? { type: "Function" } : neverType,
     );
     return { ...convertingType(accepted, "Dictionary", unionType(accepted, { type: "Object" })), members: this.names };

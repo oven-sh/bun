@@ -1,5 +1,3 @@
-// `navigator.gpu` is only in a build with `--webgpu=on` (scripts/build/config.ts).
-//
 // Most of this runs on Dawn's Null backend, which validates every call and needs no GPU. It keeps the memory of buffers,
 // so what is written to one can be read back, and it runs no command buffer. "on a GPU" needs an adapter: a GPU, or a
 // software one like Mesa's lavapipe.
@@ -14,9 +12,8 @@ declare const navigator: any;
 declare const GPUBufferUsage: any, GPUMapMode: any, GPUTextureUsage: any, GPUShaderStage: any, GPUColorWrite: any;
 const g = globalThis as any;
 
-const hasWebGPU = typeof navigator.gpu === "object";
 /** Of a GPU, or of software that stands in for one. `null` on a machine that has neither. */
-const deviceOfGPU = hasWebGPU ? ((await (await navigator.gpu.requestAdapter())?.requestDevice()) ?? null) : null;
+const deviceOfGPU = (await (await navigator.gpu.requestAdapter())?.requestDevice()) ?? null;
 
 async function rejection(promise: Promise<unknown>): Promise<any> {
   return promise.then(
@@ -56,13 +53,7 @@ async function run(script: string, { prologue = useNullBackend, env = {} } = {})
   return { stdout, stderr, exitCode };
 }
 
-test.skipIf(hasWebGPU)("a build without WebGPU has none of its names", () => {
-  expect("gpu" in navigator).toBe(false);
-  expect("dawn" in process.versions).toBe(false);
-  expect(Object.getOwnPropertyNames(globalThis).filter(name => /^(GPU|WGSL)/.test(name))).toEqual([]);
-});
-
-describe.skipIf(!hasWebGPU)("WebGPU", () => {
+describe("WebGPU", () => {
   let device: any;
   const newDevice = async (descriptor?: unknown) => (await navigator.gpu.requestAdapter()).requestDevice(descriptor);
 
@@ -1070,6 +1061,55 @@ describe.skipIf(!hasWebGPU)("WebGPU", () => {
     });
   });
 
+  test("a device keeps its listeners for as long as one of its objects can make an error, and no longer", async () => {
+    const texture = { size: [1], format: "rgba8unorm", usage: GPUTextureUsage.RENDER_ATTACHMENT };
+    const compute = (device: any) => ({
+      layout: "auto",
+      compute: { module: device.createShaderModule({ code: "@compute @workgroup_size(1) fn main() {}" }) },
+    });
+    const twice = (method: string) => (object: any) => (object[method](), object[method]());
+    const cases: Record<string, [make: (device: any) => unknown, fail: (object: any) => unknown]> = {
+      GPUBuffer: [d => d.createBuffer({ size: 4, usage: GPUBufferUsage.COPY_DST }), b => b.mapAsync(1).catch(() => {})],
+      GPUTexture: [d => d.createTexture(texture), t => t.createView({ baseMipLevel: 1 })],
+      GPUQueue: [d => d.queue, q => q.writeBuffer(device.createBuffer({ size: 4, usage: 8 }), 0, new Uint8Array(4))],
+      GPUCommandEncoder: [d => d.createCommandEncoder(), twice("finish")],
+      GPUComputePassEncoder: [d => d.createCommandEncoder().beginComputePass(), twice("end")],
+      GPURenderPassEncoder: [
+        d =>
+          d.createCommandEncoder().beginRenderPass({
+            colorAttachments: [{ view: d.createTexture(texture), loadOp: "clear", storeOp: "store" }],
+          }),
+        twice("end"),
+      ],
+      GPURenderBundleEncoder: [d => d.createRenderBundleEncoder({ colorFormats: ["rgba8unorm"] }), twice("finish")],
+      GPUComputePipeline: [d => d.createComputePipeline(compute(d)), p => p.getBindGroupLayout(9)],
+      "GPUComputePipeline, async": [d => d.createComputePipelineAsync(compute(d)), p => p.getBindGroupLayout(9)],
+    };
+    const devices = () => (Bun.gc(true), heapStats().objectTypeCounts.GPUDevice);
+    const before = devices();
+    await (async () => {
+      const heard: Promise<string>[] = [];
+      const objects: unknown[] = [];
+      for (const [name, [make]] of Object.entries(cases)) {
+        const { promise, resolve } = Promise.withResolvers<string>();
+        const other = await newDevice();
+        const object = await make(other);
+        // It holds the object, which holds the device.
+        other.addEventListener("uncapturederror", (event: Event) => {
+          event.preventDefault();
+          resolve(object && name);
+        });
+        heard.push(promise);
+        objects.push(object);
+      }
+      await new Promise(resolve => setImmediate(resolve));
+      Bun.gc(true);
+      Object.values(cases).forEach(([, fail], i) => fail(objects[i]));
+      expect(await Promise.all(heard)).toEqual(Object.keys(cases));
+    })();
+    while (devices() > before) await new Promise(resolve => setImmediate(resolve));
+  });
+
   describe("shaders and pipelines", () => {
     const code = `
       override scale: f32 = 1.0;
@@ -1172,6 +1212,20 @@ describe.skipIf(!hasWebGPU)("WebGPU", () => {
         await Promise.all([before, outcomeOf("after")]);
         expect(order).toEqual(["lost", `GPU${kind}Pipeline before`, `GPU${kind}Pipeline after`]);
       }
+    });
+
+    test("a device that a listener destroys says first that it is lost", async () => {
+      const [first, second] = [await newDevice(), await newDevice()];
+      const compute = { module: second.createShaderModule({ code }), entryPoint: "nothing" };
+      const order: string[] = [];
+      second.lost.then(() => order.push("lost"));
+      first.onuncapturederror = (event: Event) => {
+        event.preventDefault();
+        second.destroy();
+      };
+      first.createBuffer({ size: 4, usage: 0 });
+      await second.createComputePipelineAsync({ layout: "auto", compute }).then(() => order.push("made"));
+      expect(order).toEqual(["lost", "made"]);
     });
 
     test("what is wrong with a descriptor throws, or rejects", async () => {
@@ -1496,6 +1550,21 @@ describe.skipIf(!hasWebGPU)("WebGPU", () => {
       device.destroy();
     });
 
+    test("null, and an array, are a dictionary with no members", async () => {
+      const texture = device.createTexture({ size: [1], format: "rgba8unorm", usage: GPUTextureUsage.COPY_DST });
+      const error = await validationErrorOf(device, () => {
+        device.createSampler([]);
+        device.createBindGroupLayout({ entries: [{ binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: null }] });
+        device.queue.writeTexture({ texture, origin: null }, new Uint8Array(4), null, [1]);
+        device.queue.writeTexture({ texture }, new Uint8Array(4), undefined, [1]);
+      });
+      expect(error).toBeNull();
+      for (const descriptor of [1, "", true])
+        expect(thrown(() => device.createSampler(descriptor))).toBeInstanceOf(TypeError);
+      for (const descriptor of [null, []])
+        expect(thrown(() => device.createBuffer(descriptor))).toBeInstanceOf(TypeError);
+    });
+
     test("a view is bound where a layout has an external texture", async () => {
       const visibility = GPUShaderStage.COMPUTE;
       const layoutOf = (...entries: object[]) =>
@@ -1551,6 +1620,38 @@ describe.skipIf(!hasWebGPU)("WebGPU", () => {
       expect(stdout.split("\n").toSorted()).toEqual(["", "done", "mapped"]);
       expect(result).toEqual({ stderr: "", exitCode: 0 });
     });
+
+    test.concurrent("does not stay for a device that has something to free", async () => {
+      const result = await run(`
+        const device = await (await navigator.gpu.requestAdapter()).requestDevice();
+        device.createBuffer({ size: 4, usage: GPUBufferUsage.COPY_DST }).destroy();
+        setTimeout(() => console.log("stayed"), 50).unref();
+      `);
+      expect(result).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    });
+
+    test.concurrent(
+      "disposing of a module graph leaves the GPU to the others, and settles nothing of its own",
+      async () => {
+        using dir = tempDir("webgpu-graph", {
+          "graph.mjs": `
+          const device = await (await navigator.gpu.requestAdapter()).requestDevice();
+          export const wait = () => void device.queue.onSubmittedWorkDone().then(() => console.log("the graph heard"));
+        `,
+        });
+        const result = await run(`
+        const graph = new Bun.ModuleGraph();
+        const { wait } = await graph.import(${JSON.stringify(join(String(dir), "graph.mjs"))});
+        const device = await (await navigator.gpu.requestAdapter()).requestDevice();
+        graph.run(wait);
+        const done = device.queue.onSubmittedWorkDone();
+        graph.dispose();
+        await done;
+        console.log(String(await navigator.gpu.requestAdapter()));
+      `);
+        expect(result).toEqual({ stdout: "[object GPUAdapter]\n", stderr: "", exitCode: 0 });
+      },
+    );
 
     test.concurrent("a worker has a navigator.gpu of its own", async () => {
       const result = await run(`
@@ -1719,6 +1820,91 @@ describe.skipIf(deviceOfGPU === null)("WebGPU on a GPU", () => {
     } finally {
       webgpuUseNullBackend(true);
     }
+  });
+
+  test.skipIf(!deviceOfGPU?.adapterInfo.description.includes("llvmpipe"))("timestamps are not rounded", async () => {
+    webgpuUseNullBackend(false);
+    const adapter = await navigator.gpu.requestAdapter().finally(() => webgpuUseNullBackend(true));
+    const device = await adapter.requestDevice({ requiredFeatures: ["timestamp-query"] });
+    const count = 16;
+    const querySet = device.createQuerySet({ type: "timestamp", count });
+    const resolved = device.createBuffer({
+      size: count * 8,
+      usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
+    });
+    const readback = device.createBuffer({ size: count * 8, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const encoder = device.createCommandEncoder();
+    for (let i = 0; i < count; i += 2) {
+      const timestampWrites = { querySet, beginningOfPassWriteIndex: i, endOfPassWriteIndex: i + 1 };
+      encoder.beginComputePass({ timestampWrites }).end();
+    }
+    encoder.resolveQuerySet(querySet, 0, count, resolved, 0);
+    encoder.copyBufferToBuffer(resolved, readback);
+    device.queue.submit([encoder.finish()]);
+    await readback.mapAsync(GPUMapMode.READ);
+    expect([...new BigUint64Array(readback.getMappedRange())].some(time => time % 65536n !== 0n)).toBe(true);
+    device.destroy();
+  });
+
+  // What this driver allocates is a mapping of the process, which can be counted.
+  describe.skipIf(!deviceOfGPU?.adapterInfo.description.includes("llvmpipe"))("with nothing submitted", () => {
+    const prologue = `
+      // Not collected, which would free everything.
+      globalThis.device = await (await navigator.gpu.requestAdapter()).requestDevice();
+      const mappings = () => require("fs").readFileSync("/proc/self/maps", "utf8").split("memfd:allocation").length;
+      const usage = GPUBufferUsage.MAP_WRITE | GPUBufferUsage.COPY_SRC;
+      const before = mappings();
+      const freed = async () => {
+        while (mappings() > before) await new Promise(resolve => setTimeout(resolve, 10));
+        console.log("freed");
+      };
+    `;
+
+    test.concurrent("what is destroyed is freed", async () => {
+      const result = await run(
+        `for (let i = 0; i < 20; i++) device.createBuffer({ size: 16, usage }).destroy();
+         console.log(mappings() - before);
+         await freed();`,
+        { prologue },
+      );
+      expect(result).toEqual({ stdout: "20\nfreed\n", stderr: "", exitCode: 0 });
+    });
+
+    test.concurrent("what is collected is freed", async () => {
+      const result = await run(
+        `(() => { for (let i = 0; i < 20; i++) device.createBuffer({ size: 16, usage }); })();
+         console.log(mappings() - before);
+         await new Promise(resolve => setImmediate(resolve));
+         Bun.gc(true);
+         await freed();`,
+        { prologue },
+      );
+      expect(result).toEqual({ stdout: "20\nfreed\n", stderr: "", exitCode: 0 });
+    });
+
+    test.concurrent("what Dawn keeps to use again is freed once the device is idle", async () => {
+      const result = await run(
+        `const made = Array.from({ length: 64 }, () => device.createBuffer({ size: 1 << 20, usage: GPUBufferUsage.STORAGE }));
+         console.log(mappings() > before);
+         for (const buffer of made) buffer.destroy();
+         await freed();`,
+        { prologue },
+      );
+      expect(result).toEqual({ stdout: "true\nfreed\n", stderr: "", exitCode: 0 });
+    });
+
+    test.concurrent("a loop that never yields does not pile up what it destroys", async () => {
+      const result = await run(
+        `let most = 0;
+         for (let i = 0; i < 40; i++) {
+           device.createBuffer({ size: 32 << 20, usage }).destroy();
+           most = Math.max(most, mappings() - before);
+         }
+         console.log(most < 20);`,
+        { prologue },
+      );
+      expect(result).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
+    });
   });
 
   test("a render pass draws", async () => {

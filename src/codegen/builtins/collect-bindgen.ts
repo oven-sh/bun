@@ -23,12 +23,13 @@ import {
   ClassType,
   Constant,
   DictionaryType,
+  EventHandlerAccessor,
   FunctionDefinition,
   Getter,
-  EventHandlerAccessor,
   InternalFieldAccessor,
   Method,
   OptionalType,
+  RecordType,
   RefType,
   RestType,
   Signature,
@@ -53,7 +54,7 @@ import {
   type SourcedDeclaration,
 } from "./declarations.ts";
 import * as b from "./lib.ts";
-import { compareBytes, joinPath, parsePath, pathOfClassMember, pathOfNativeBinding } from "./paths.ts";
+import { compareBytes, joinPath, memberPathOf, parsePath, pathOfClassMember, pathOfNativeBinding } from "./paths.ts";
 import {
   conversionProtocols,
   maximumDirectParameterCount,
@@ -229,7 +230,12 @@ export function dispatchOfBindgen(
   return convert(fn.dispatch);
 }
 
-const isContainer = (type: Type): boolean => type instanceof ArrayType || type instanceof DictionaryType;
+const isContainer = (type: Type): boolean =>
+  type instanceof ArrayType || type instanceof DictionaryType || type instanceof RecordType;
+
+/** What the wrapper runs to go over all that a container holds. A dictionary is read by name, which its conversion says. */
+const protocolsGoingOver = (type: Type): readonly KeyedProtocol[] =>
+  type instanceof ArrayType ? ["Iterate"] : type instanceof RecordType ? ["OwnKeys", "OwnValues"] : [];
 
 function collectParts(roots: readonly Type[]): Set<Type> {
   const parts = new Set<Type>();
@@ -255,7 +261,7 @@ function computeContentProtocols(containers: readonly Type[]): ProtocolSpec[] {
   const protocols = new Set<KeyedProtocol>();
   const names = new Set<string>();
   for (const part of collectParts(containers.flatMap(container => container.dependencies))) {
-    if (part instanceof ArrayType) protocols.add("Iterate");
+    for (const protocol of protocolsGoingOver(part)) protocols.add(protocol);
     const { accepted, conversion, members } = part.parameterType;
     if (acceptsStringObject(accepted)) protocols.add("ToPrimitive");
     for (const protocol of conversionProtocols[conversion]) {
@@ -282,11 +288,12 @@ function computeConversionUses(type: Type): UseSpec[] {
   const ownConversion = runsToString ? [b.runs("ToPrimitive")] : [];
   const containers = findContainers(type);
   if (containers.length === 0) return ownConversion;
+  const ownProtocols = new Set(containers.flatMap(protocolsGoingOver));
   const contentProtocols = computeContentProtocols(containers);
   return [
     ...ownConversion,
     b.readsContents(),
-    ...(containers.some(container => container instanceof ArrayType) ? [b.runs("Iterate")] : []),
+    ...(ownProtocols.size > 0 ? [b.runs(...ownProtocols)] : []),
     ...(contentProtocols.length > 0 ? [b.runsTransitively(...contentProtocols)] : []),
   ];
 }
@@ -370,9 +377,9 @@ function leavesCellsAlone(type: Type, converted: TypeSpec): boolean {
   return isImmediate(converted) || (type.isReadInPlace && Bun.deepEquals(converted, type.directForm?.type));
 }
 
-// The wrapper goes over a list by the @@iterator that the operand has.
+// The wrapper goes over a list by the @@iterator that the operand has, or over the own properties of a record.
 const iteratesOperand = ({ args }: Signature): boolean =>
-  args.some(({ type }) => findContainers(type).some(container => container instanceof ArrayType));
+  args.some(({ type }) => findContainers(type).some(container => protocolsGoingOver(container).length > 0));
 
 function capabilityOf(signature: Signature, result: TypeSpec, converted: readonly TypeSpec[]): Capability {
   const { args, capability } = signature;
@@ -799,6 +806,31 @@ function collectAccessor(type: ClassType, accessor: Getter | InternalFieldAccess
   });
 }
 
+// JSEventListener.cpp, eventHandlerAttribute(): it answers the object that was stored last, and null after anything else. What makes an event of a class below Event says so.
+function collectEventHandler(path: BuiltinPath): Declaration[] {
+  const called = b.called({
+    afterwards: "TouchesOnlyWhatRowNames",
+    times: "PerEvent",
+    this: b.operand("this"),
+    args: [b.anyMadeOf("Event")],
+    result: "Escapes",
+  });
+  return b.method(path, {
+    getter: b.strictNull,
+    capability: "heap",
+    uses: { this: [b.returnedFrom(path)] },
+    reads: externalState,
+    implementation: b.generic,
+    setter: {
+      value: b.any,
+      capability: "heap",
+      uses: { this: [b.retained], value: [b.retained, called, b.storedIn(b.nativeCell(path))] },
+      writes: externalState,
+      implementation: b.generic,
+    },
+  });
+}
+
 /** A property that can be redefined may hold something else. */
 function collectConstant(type: ClassType, constant: Constant, path: BuiltinPath): Declaration[] {
   const isConfigurable = constant.configurable ?? type.configurable;
@@ -823,8 +855,7 @@ function directEntryOfMethod(type: ClassType, fn: FunctionDefinition): DirectEnt
 
 function collectClassMember(type: ClassType, member: ClassMember, path: BuiltinPath, isStatic: boolean): Declaration[] {
   if (member instanceof Getter || member instanceof InternalFieldAccessor) return collectAccessor(type, member, path);
-  // Nobody has said what it does: it holds a function of the program's, which an event calls.
-  if (member instanceof EventHandlerAccessor) return [createStructureMember(path, "Accessor", null)];
+  if (member instanceof EventHandlerAccessor) return collectEventHandler(path);
   if (member instanceof Constant) return collectConstant(type, member, path);
   if (!(member instanceof FunctionDefinition)) return collectBuiltin(type, member, path);
   const methods = member.signatures as readonly Method[];
@@ -849,7 +880,6 @@ const pathOfMember = (classPath: BuiltinPath, side: "static" | "proto", name: st
 
 function prototypeBaseOf(type: ClassType): BuiltinPath | null {
   if (type.forBind || type.callInstance) return "Function.prototype";
-  if (type.webcoreBase) return `${type.webcoreBase}.prototype`;
   return type.prototypeBase === "Error" ? "Error.prototype" : null;
 }
 
@@ -889,7 +919,7 @@ function collectClass(type: ClassType, joins: Joins): Declaration[] {
     types: [...(constructorPath === undefined ? [] : [b.exactType(constructorPath)]), b.exactType(`$Bindgen.${name}`)],
     stateHeap: externalStateHeap,
     ...type.columns,
-    extends: type.base?.name,
+    extends: type.base?.name ?? type.webcoreBase,
     instanceCppClass: ofInstances ? b.cppClass(cpp, headerOf(type)) : undefined,
     prototypeCppExpression: ofInstances ? `Bun::Bindgen::prototypeForClass<${cpp}>(globalObject)` : undefined,
     instanceStructureCppExpression: ofInstances
@@ -930,11 +960,16 @@ function collectClass(type: ClassType, joins: Joins): Declaration[] {
   ];
 }
 
+const collectDataOfNamespace = ({ constants, toStringTag }: NamespaceDefinition, path: BuiltinPath): Declaration[] => [
+  ...constants.flatMap(({ name, value }) => b.method(joinPath([path, name]), b.constant(value))),
+  ...(toStringTag ? b.method(memberPathOf(path, "@@toStringTag"), b.property(b.string)) : []),
+];
+
 function collectNamespace(namespace: NamespaceDefinition, path: BuiltinPath): Declaration[] {
   return [
     ...b.namespace(path, {}, namespace.columns),
     ...(namespace.call === undefined ? [] : declareFunction(namespace.call, path)),
-    ...namespace.constants.flatMap(constant => b.method(joinPath([path, constant.name]), b.constant(constant.value))),
+    ...collectDataOfNamespace(namespace, path),
     ...namespace.functions.flatMap(fn => declareFunction(fn, joinPath([path, fn.name]))),
   ];
 }
@@ -950,7 +985,7 @@ function collectBoundNamespace(
     ...b.namespace(path, {}, { scope: "Module", listsAllMembers: true, ...namespace.columns }),
     ...(usesFeature.length > 0 ? b.extend(path, { usesFeature }) : []),
     ...(namespace.call === undefined ? b.inherits(path, "Object.prototype") : declareFunction(namespace.call, path)),
-    ...namespace.constants.flatMap(constant => b.method(joinPath([path, constant.name]), b.constant(constant.value))),
+    ...collectDataOfNamespace(namespace, path),
     ...namespace.functions.flatMap(fn => [
       ...declareFunction(fn, joinPath([path, fn.name])),
       ...b.extend(joinPath([path, fn.name]), {

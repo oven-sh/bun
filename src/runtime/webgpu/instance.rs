@@ -1,11 +1,12 @@
 use core::cell::Cell;
 use core::ffi::c_void;
+use core::ptr::NonNull;
 
 use bun_core::{Timespec, TimespecMockMode};
 use bun_io::KeepAlive;
 use bun_jsc::js_promise::Strong as PromiseStrong;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{AbortHandle, GlobalRef, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{AbortHandle, ContextId, GlobalRef, JSGlobalObject, JSValue, JsResult};
 use bun_ptr::{AsCtxPtr as _, JsCell, RefPtr};
 
 use super::device::DeviceState;
@@ -48,25 +49,30 @@ impl Promises {
 /// Dawn's instance, of which a global object has one, and what calls its callbacks.
 ///
 /// Dawn has nothing for an event loop to wait on, so while something is pending a timer polls it, and the process
-/// stays alive. `GPUDevice.lost` is not pending: nothing waits for a device to be lost.
+/// stays alive. `GPUDevice.lost` is not pending: nothing waits for a device to be lost. The same timer has devices
+/// free what they are done with, which keeps nothing alive.
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct Instance {
     ref_count: Cell<u32>,
-    /// Null once the script that made it has stopped. Dawn cancels the callbacks that are left when its instance goes,
-    /// which its adapters and devices hold too: that can be as late as when the collector finalizes the last of them.
+    /// Null once the realm has stopped.
     handle: Cell<sys::WGPUInstance>,
     global: GlobalRef,
     promises: JsCell<Promises>,
-    /// Those promises, and the devices of `devices_with_errors`. Nothing counts once the script has stopped.
+    /// Those promises, and the devices of `devices_with_errors`. Nothing counts once the realm has stopped.
     pending: Cell<u32>,
-    /// How many times in a row the timer has found nothing finished.
-    idle_polls: Cell<u32>,
+    /// When something last began or finished.
+    waiting_since: Cell<Timespec>,
+    has_raised_timer_resolution: Cell<bool>,
+    /// When `DeviceState::tidy` is next due.
+    tidy_at: Cell<Option<Timespec>>,
+    /// Those that are not lost. The lost callback of each holds a reference to it.
+    devices: JsCell<Vec<NonNull<DeviceState>>>,
     /// Dawn reports an error in the middle of the call that made it, where no JavaScript can run.
     devices_with_errors: JsCell<Vec<RefPtr<DeviceState>>>,
     // pub: the timer's dispatch finds `self` from this field.
     pub(crate) poll_timer: JsCell<EventLoopTimer>,
     keep_alive: JsCell<KeepAlive>,
-    /// Armed while something is pending.
+    /// In the context of the realm, whose `navigator.gpu` this is, whichever script asked for it first.
     abort_handle: AbortHandle,
 }
 
@@ -98,8 +104,12 @@ unsafe extern "C" fn on_log(
 
 impl Drop for Instance {
     fn drop(&mut self) {
-        debug_assert!(self.poll_timer.get().state != EventLoopTimerState::ACTIVE);
-        self.release_handle();
+        debug_assert!(self.pending.get() == 0);
+        self.disarm_timer();
+        if let Some(handle) = self.handle() {
+            // SAFETY: the reference that `create` got.
+            unsafe { sys::wgpuInstanceRelease(handle) };
+        }
     }
 }
 
@@ -111,23 +121,31 @@ impl Instance {
         if handle.is_null() {
             return None;
         }
-        Some(RefPtr::new(Instance {
+        let instance = RefPtr::new(Instance {
             ref_count: Cell::new(1),
             handle: Cell::new(handle),
             global: GlobalRef::new(global),
             promises: JsCell::new(Promises::default()),
             pending: Cell::new(0),
-            idle_polls: Cell::new(0),
+            waiting_since: Cell::new(Timespec::EPOCH),
+            has_raised_timer_resolution: Cell::new(false),
+            tidy_at: Cell::new(None),
+            devices: JsCell::new(Vec::new()),
             devices_with_errors: JsCell::new(Vec::new()),
             poll_timer: JsCell::new(EventLoopTimer::init_paused(
                 EventLoopTimerTag::WebGPUInstance,
             )),
             keep_alive: JsCell::new(KeepAlive::default()),
             abort_handle: AbortHandle::for_owner::<Instance>(),
-        }))
+        });
+        // What is pending says so with `keep_alive`.
+        instance.abort_handle.set_only_waits_to_be_closed();
+        // SAFETY: heap-allocated, and dropping the handle disarms it.
+        unsafe { AbortHandle::arm_owner(instance.as_ptr(), global.bun_vm().root_context()) };
+        Some(instance)
     }
 
-    /// `None` once the script that made it has stopped.
+    /// `None` once the realm has stopped.
     pub(super) fn handle(&self) -> Option<sys::WGPUInstance> {
         let handle = self.handle.get();
         (!handle.is_null()).then_some(handle)
@@ -144,12 +162,22 @@ impl Instance {
             || self.global.has_pending_termination_exception()
     }
 
-    fn release_handle(&self) {
-        let handle = self.handle.replace(core::ptr::null_mut());
-        if !handle.is_null() {
-            // SAFETY: the reference that `create` got.
-            unsafe { sys::wgpuInstanceRelease(handle) };
-        }
+    pub(super) fn add_device(&self, device: NonNull<DeviceState>) {
+        self.devices.with_mut(|devices| devices.push(device));
+    }
+
+    pub(super) fn remove_device(&self, device: *mut DeviceState) {
+        self.devices
+            .with_mut(|devices| devices.retain(|other| other.as_ptr() != device));
+    }
+
+    /// For a caller that can lose some of them.
+    fn devices(&self) -> Vec<RefPtr<DeviceState>> {
+        let devices = self.devices.get().iter();
+        // SAFETY: not lost, so live.
+        devices
+            .map(|device| unsafe { RefPtr::init_ref(device.as_ptr()) })
+            .collect()
     }
 
     // ───────────────────────────── promises ─────────────────────────────
@@ -168,6 +196,7 @@ impl Instance {
             // SAFETY: `self` is live.
             instance: unsafe { RefPtr::init_ref(self.as_ctx_ptr()) },
             slot,
+            context: global.bun_vm().context_of_caller().id(),
             data,
         });
         (value, bun_core::heap::into_raw(operation).cast())
@@ -182,12 +211,14 @@ impl Instance {
         let Operation {
             instance,
             slot,
+            context,
             data,
         } = *unsafe { bun_core::heap::take(userdata.cast::<Operation<T>>()) };
         let promise = instance.promises.with_mut(|promises| promises.take(slot));
         let settle = Settle {
             instance,
             slot,
+            context,
             promise,
         };
         (settle, data)
@@ -219,23 +250,12 @@ impl Instance {
         }
         self.pending.set(self.pending.get() + 1);
         bun_core::scoped_log!(webgpu, "began one: {} pending", self.pending.get());
-        // What has just begun may be quick, however slow what the timer was waiting for is.
-        let was_slow = self.poll_interval_ms() > 1;
-        self.idle_polls.set(0);
-        if self.pending.get() > 1 {
-            if was_slow {
-                self.poll_after(0);
-            }
-            return;
+        self.waiting_since.set(now());
+        if self.pending.get() == 1 {
+            self.keep_alive
+                .with_mut(|keep_alive| keep_alive.ref_(bun_io::js_vm_ctx()));
         }
-        self.keep_alive
-            .with_mut(|keep_alive| keep_alive.ref_(bun_io::js_vm_ctx()));
-        let context = self.global.js_thread_of_caller().context();
-        // SAFETY: heap-allocated, and `finished_one`, `stop` or `Drop` disarms it.
-        unsafe { AbortHandle::arm_owner(self.as_ctx_ptr(), context) };
-        if self.poll_timer.get().state != EventLoopTimerState::ACTIVE {
-            self.poll_after(0);
-        }
+        self.arm_timer();
     }
 
     fn finished_one(&self) {
@@ -243,42 +263,83 @@ impl Instance {
             return;
         }
         self.pending.set(self.pending.get() - 1);
-        self.idle_polls.set(0);
         bun_core::scoped_log!(webgpu, "finished one: {} pending", self.pending.get());
-        if self.pending.get() == 0 {
-            self.stop_polling();
+        if self.pending.get() > 0 {
+            self.waiting_since.set(now());
+            return;
+        }
+        self.nothing_is_pending();
+        self.arm_timer();
+    }
+
+    fn nothing_is_pending(&self) {
+        self.keep_alive
+            .with_mut(|keep_alive| keep_alive.unref(bun_io::js_vm_ctx()));
+        if self.has_raised_timer_resolution.replace(false) {
+            timer_resolution::restore();
         }
     }
 
-    /// How long the event loop sleeps between two looks at what the GPU has finished: 1 ms, and up to 8 ms once
-    /// nothing has finished for a while.
-    fn poll_interval_ms(&self) -> i64 {
-        1 << (self.idle_polls.get() / 16).min(3)
+    /// A device has something for `DeviceState::tidy`. The collector's finalizers call this too.
+    pub(super) fn tidy_later(&self) {
+        if self.tidy_at.get().is_some()
+            || self.handle().is_none()
+            || !VirtualMachine::get().script_allowed()
+        {
+            return;
+        }
+        self.tidy_at.set(Some(now().add_ms(TIDY_INTERVAL_MS)));
+        if self.pending.get() == 0 {
+            self.arm_timer();
+        }
     }
 
-    fn poll_after(&self, ms: i64) {
-        let next = Timespec::ms_from_now(TimespecMockMode::ForceRealTime, ms);
+    fn arm_timer(&self) {
+        let (next, is_now) = if self.pending.get() > 0 {
+            let now = now();
+            let interval = poll_interval_ms(now.duration(&self.waiting_since.get()).ns());
+            if interval > 0.0 && !self.has_raised_timer_resolution.replace(true) {
+                timer_resolution::raise();
+            }
+            (now.add_ms_float(interval), interval == 0.0)
+        } else if let Some(tidy_at) = self.tidy_at.get() {
+            (tidy_at, false)
+        } else {
+            return self.disarm_timer();
+        };
+        // On Windows any other timer waits for 1 ms.
+        self.poll_timer
+            .with_mut(|timer| timer.is_due_when_idle = is_now);
         timer_all().update(self.poll_timer.as_ptr(), &next);
     }
 
-    fn stop_polling(&self) {
+    fn disarm_timer(&self) {
         if self.poll_timer.get().state == EventLoopTimerState::ACTIVE {
             timer_all().remove(self.poll_timer.as_ptr());
         }
-        self.keep_alive
-            .with_mut(|keep_alive| keep_alive.unref(bun_io::js_vm_ctx()));
-        self.abort_handle.leave();
     }
 
-    /// The script is gone: none of its promises is settled, and nothing is reported to it.
+    /// The realm is gone: none of its promises is settled, and nothing is reported to it.
     fn stop(&self) {
+        let handle = self.handle.replace(core::ptr::null_mut());
         self.promises.take();
         for device in self.devices_with_errors.take() {
             device.forget_errors();
         }
-        self.pending.set(0);
-        self.stop_polling();
-        self.release_handle();
+        if self.pending.replace(0) > 0 {
+            self.nothing_is_pending();
+        }
+        self.tidy_at.set(None);
+        self.disarm_timer();
+        // An operation that has not finished holds its device, which holds Dawn's instance, which holds the operation.
+        for device in self.devices() {
+            device.destroy_unless_in_use();
+        }
+        // SAFETY: the reference that `create` got: a handle is aborted once.
+        unsafe {
+            sys::wgpuInstanceProcessEvents(handle);
+            sys::wgpuInstanceRelease(handle);
+        }
     }
 
     /// # Safety
@@ -289,15 +350,9 @@ impl Instance {
         this.poll_timer
             .with_mut(|timer| timer.state = EventLoopTimerState::FIRED);
         bun_core::scoped_log!(webgpu, "poll: {} pending", this.pending.get());
-        let Some(context) = this.abort_handle.context_id() else {
-            return;
-        };
-        {
+        if this.pending.get() > 0 {
             // What the promises' reactions do, they do when this scope ends.
             let _event_loop = vm.enter_event_loop_scope();
-            let _context = vm.enter_context(context);
-            // What has happened to a device by now comes before what Dawn answers knowing of it: a device that is lost
-            // makes what it would have refused to.
             this.report_errors(vm);
             if let Some(handle) = this.handle()
                 && !this.is_script_gone(vm)
@@ -307,9 +362,16 @@ impl Instance {
             }
             this.report_errors(vm);
         }
-        if this.pending.get() > 0 && this.poll_timer.get().state != EventLoopTimerState::ACTIVE {
-            this.poll_after(this.poll_interval_ms());
-            this.idle_polls.set(this.idle_polls.get().saturating_add(1));
+        if let Some(tidy_at) = this.tidy_at.get()
+            && !tidy_at.greater(&now())
+        {
+            this.tidy_at.set(None);
+            for device in this.devices() {
+                device.tidy();
+            }
+        }
+        if this.handle().is_some() {
+            this.arm_timer();
         }
     }
 
@@ -334,9 +396,66 @@ impl Instance {
     }
 }
 
+fn now() -> Timespec {
+    Timespec::now(TimespecMockMode::ForceRealTime)
+}
+
+pub(super) const TIDY_INTERVAL_MS: i64 = 100;
+
+/// How long the event loop may sleep before the next look at what the GPU has finished. Not at all at first, while
+/// a sleep takes longer than what is waited for may. Then a promise is late by about 3% of what it waited, or 2 ms.
+fn poll_interval_ms(waited_ns: u64) -> f64 {
+    const SHORTEST_SLEEP_NS: u64 = if cfg!(windows) { 1_000_000 } else { 100_000 };
+    if waited_ns < SHORTEST_SLEEP_NS {
+        return 0.0;
+    }
+    (waited_ns as f64 / 32e6).min(2.0)
+}
+
+/// A timer of Windows fires on the next tick of the system's clock, which is every 15.6 ms unless the process asks.
+#[cfg(windows)]
+mod timer_resolution {
+    use bun_sys::windows::ntdll::NtSetTimerResolution;
+
+    /// A process has one request, for all of its threads.
+    static REQUESTS: bun_threading::Guarded<u32> = bun_threading::Guarded::new(0);
+    const ONE_MILLISECOND: u32 = 10_000;
+
+    fn set(is_wanted: bool) {
+        let mut current = 0;
+        // SAFETY: `current` outlives the call. If it fails, timers are as coarse as they were.
+        let _ =
+            unsafe { NtSetTimerResolution(ONE_MILLISECOND, is_wanted.into(), &raw mut current) };
+    }
+
+    pub(super) fn raise() {
+        let mut requests = REQUESTS.lock();
+        *requests += 1;
+        if *requests == 1 {
+            set(true);
+        }
+    }
+
+    pub(super) fn restore() {
+        let mut requests = REQUESTS.lock();
+        *requests -= 1;
+        if *requests == 0 {
+            set(false);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+mod timer_resolution {
+    pub(super) fn raise() {}
+    pub(super) fn restore() {}
+}
+
 struct Operation<T> {
     instance: RefPtr<Instance>,
     slot: usize,
+    /// Of the script that began it.
+    context: ContextId,
     data: T,
 }
 
@@ -344,7 +463,8 @@ struct Operation<T> {
 pub(super) struct Settle {
     instance: RefPtr<Instance>,
     slot: usize,
-    /// `None` if it was rejected early, or the script has stopped.
+    context: ContextId,
+    /// `None` if it was rejected early, or the realm has stopped.
     promise: Option<PromiseStrong>,
 }
 
@@ -356,31 +476,34 @@ impl Drop for Settle {
 
 impl Settle {
     /// `Ok` resolves and `Err` rejects. `outcome` is not called if there is nobody to tell.
-    pub(super) fn with(
-        mut self,
-        outcome: impl FnOnce(&JSGlobalObject) -> Result<JSValue, JSValue>,
-    ) {
-        let Some(mut promise) = self.promise.take() else {
-            return;
-        };
-        let global = &*self.instance.global;
-        // An error is the termination of the VM, which the event loop finds out by itself.
-        let _ = match outcome(global) {
+    pub(super) fn with(self, outcome: impl FnOnce(&JSGlobalObject) -> Result<JSValue, JSValue>) {
+        self.settle(|global, promise| match outcome(global) {
             Ok(value) => promise.resolve(global, value),
             Err(reason) => promise.reject(global, Ok(reason)),
-        };
+        });
     }
 
     /// As [`with`](Self::with), for an outcome that takes making: what that throws is the reason.
-    pub(super) fn with_result(
-        mut self,
-        outcome: impl FnOnce(&JSGlobalObject) -> JsResult<JSValue>,
-    ) {
+    pub(super) fn with_result(self, outcome: impl FnOnce(&JSGlobalObject) -> JsResult<JSValue>) {
+        self.settle(|global, promise| promise.settle(global, outcome(global)));
+    }
+
+    fn settle<R>(mut self, settle: impl FnOnce(&JSGlobalObject, &mut PromiseStrong) -> R) {
+        let global = &*self.instance.global;
+        let vm = global.bun_vm();
         let Some(mut promise) = self.promise.take() else {
             return;
         };
-        let global = &*self.instance.global;
-        let _ = promise.settle(global, outcome(global));
+        if !vm.is_context_live(self.context) {
+            return;
+        }
+        // That a device is lost comes before what Dawn answers knowing of it: it makes what it would have refused to.
+        for device in self.instance.devices_with_errors.get().clone() {
+            device.resolve_lost();
+        }
+        let _context = vm.enter_context(self.context);
+        // An error is the termination of the VM, which the event loop finds out by itself.
+        let _ = settle(global, &mut promise);
     }
 
     pub(super) fn instance(&self) -> &RefPtr<Instance> {

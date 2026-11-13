@@ -13,7 +13,7 @@ use super::{
     Bun__WebGPU__isMappedRangeInUse, GPUDevice, dom_error, dom_exception, gpu_object, new_object,
     operation_error, string_view, sys, to_sys_bool,
 };
-use crate::generated_bindgen::webgpu::{GPUBufferDescriptor, GPUBufferMapState};
+use crate::generated_bindgen::webgpu::{GPUBufferDescriptor, GPUBufferMapState, js_GPUBuffer};
 
 gpu_object! {
     GPUBuffer {
@@ -74,7 +74,9 @@ impl GPUDevice {
             Cell::new(0),
             Cell::new(None),
         );
-        Ok(new_object(heap, buffer))
+        Ok(self
+            .state
+            .held_by(new_object(heap, buffer), js_GPUBuffer::device_set_cached))
     }
 }
 
@@ -232,18 +234,23 @@ impl GPUBuffer {
         unsafe { NonNull::new_unchecked(self.as_ctx_ptr()) }
     }
 
-    /// `what` frees the memory that is mapped, which an operation that has not finished may still read or write: one
-    /// that was given what `getMappedRange()` returned, and pinned it.
+    /// An operation that has not finished may still read or write the memory that is mapped: one that was given what
+    /// `getMappedRange()` returned, and pinned it.
+    pub(super) fn has_range_in_use(&self) -> bool {
+        // SAFETY: none of them has called `Bun__WebGPU__mappedRangeReleased`, so they are live.
+        let is_in_use = |&(_, array_buffer): &(u64, *mut c_void)| unsafe {
+            Bun__WebGPU__isMappedRangeInUse(array_buffer)
+        };
+        self.array_buffers.get().iter().any(is_in_use)
+    }
+
+    /// `what` frees the memory that is mapped.
     pub(super) fn check_ranges_are_free<'a>(
         &self,
         heap: &JsHeap<'a>,
         what: &str,
     ) -> bindgen::Result<'a, ()> {
-        // SAFETY: none of them has called `Bun__WebGPU__mappedRangeReleased`, so they are live.
-        let is_in_use = |&(_, array_buffer): &(u64, *mut c_void)| unsafe {
-            Bun__WebGPU__isMappedRangeInUse(array_buffer)
-        };
-        if !self.array_buffers.get().iter().any(is_in_use) {
+        if !self.has_range_in_use() {
             return Ok(());
         }
         let message = format!(
@@ -279,6 +286,8 @@ impl GPUBuffer {
         self.detach_ranges(cx.global());
         // SAFETY: a live buffer.
         unsafe { sys::wgpuBufferUnmap(self.handle) };
+        // What was mapped at creation may be a copy.
+        self.device.state.has_garbage();
         Ok(())
     }
 
@@ -288,6 +297,7 @@ impl GPUBuffer {
         self.detach_ranges(cx.global());
         // SAFETY: a live buffer.
         unsafe { sys::wgpuBufferDestroy(self.handle) };
+        self.device.state.did_destroy(self.size);
         Ok(())
     }
 }
@@ -320,6 +330,8 @@ unsafe extern "C" fn on_mapped(
 ) {
     // SAFETY: `map_async` passed what `new_promise` gave it.
     let (settle, buffer) = unsafe { Instance::finish::<RefPtr<GPUBuffer>>(userdata1) };
+    // Where it is this event that finds the GPU finished, Dawn frees nothing.
+    buffer.device.state.has_garbage();
     if buffer.pending_map.get() == Some(settle.slot()) {
         buffer.pending_map.set(None);
     }

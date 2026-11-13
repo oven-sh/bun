@@ -577,15 +577,9 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
           exact: true,
           allowed: [
             ...sanitizerLibs,
-            // Foundation hands on the two that are not in dawnFrameworks.
-            ...(cfg.webgpu
-              ? [
-                  ...[...dawnFrameworks, "CoreFoundation"].map(
-                    name => `/System/Library/Frameworks/${name}.framework/*`,
-                  ),
-                  "/usr/lib/libobjc.A.dylib",
-                ]
-              : []),
+            // WebGPU's Metal backend. Foundation hands on the two that are not in dawnFrameworks.
+            ...[...dawnFrameworks, "CoreFoundation"].map(name => `/System/Library/Frameworks/${name}.framework/*`),
+            "/usr/lib/libobjc.A.dylib",
           ],
         },
         ...(cfg.osxDeploymentTarget !== undefined && { minOSVersion: cfg.osxDeploymentTarget }),

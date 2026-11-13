@@ -1,8 +1,9 @@
 use core::cell::Cell;
-use core::ffi::c_void;
+use core::ffi::{c_char, c_void};
 use core::sync::atomic::{AtomicBool, Ordering};
 use std::rc::Rc;
 
+use bun_core::env_var::feature_flag;
 use bun_jsc::bindgen::{JsHeap, JsScope};
 use bun_jsc::{DOMExceptionCode, JSGlobalObject, JSPromise, JSValue, JsClass as _, JsResult};
 use bun_ptr::{JsCell, RefPtr};
@@ -41,7 +42,9 @@ pub(crate) fn use_null_backend_for_testing(use_it: bool) {
 
 /// One backend for each OS, as `scripts/build/deps/dawn.ts` compiles them.
 fn backend_type() -> sys::WGPUBackendType {
-    if USES_NULL_BACKEND.load(Ordering::Relaxed) {
+    if USES_NULL_BACKEND.load(Ordering::Relaxed)
+        || feature_flag::BUN_DEBUG_TEST_WEBGPU_NULL_BACKEND::get() == Some(true)
+    {
         sys::WGPUBackendType::Null
     } else if cfg!(target_os = "macos") {
         sys::WGPUBackendType::Metal
@@ -49,6 +52,28 @@ fn backend_type() -> sys::WGPUBackendType {
         sys::WGPUBackendType::D3D12
     } else {
         sys::WGPUBackendType::Vulkan
+    }
+}
+
+/// Direct3D 12 has two shader compilers. `shader-f16` and `subgroups` take the one that does not come with Windows.
+fn has_dxc() -> bool {
+    #[cfg(windows)]
+    {
+        unsafe extern "C" {
+            safe fn Bun__WebGPU__hasDXC() -> bool;
+        }
+        Bun__WebGPU__hasDXC()
+    }
+    #[cfg(not(windows))]
+    true
+}
+
+/// Points at `names`.
+fn disable_toggles(names: &[*const c_char]) -> sys::WGPUDawnTogglesDescriptor {
+    sys::WGPUDawnTogglesDescriptor {
+        disabledToggleCount: names.len(),
+        disabledToggles: names.as_ptr(),
+        ..sys::WGPUDawnTogglesDescriptor::INIT
     }
 }
 
@@ -129,7 +154,14 @@ impl GPU {
         let Some(handle) = instance.handle() else {
             return no_adapter();
         };
+        let disabled = [c"use_dxc".as_ptr()];
+        let mut toggles = disable_toggles(&disabled);
         let options = sys::WGPURequestAdapterOptions {
+            nextInChain: if has_dxc() {
+                core::ptr::null_mut()
+            } else {
+                (&raw mut toggles).cast()
+            },
             featureLevel: feature_level,
             powerPreference: optional_to_sys!(options.power_preference, WGPUPowerPreference),
             forceFallbackAdapter: to_sys_bool(options.force_fallback_adapter),
@@ -185,7 +217,9 @@ unsafe extern "C" fn on_adapter(
         is_consumed: Rc::new(Cell::new(false)),
     });
     settle.with(|global| match adapter {
-        Some(adapter) if status == sys::WGPURequestAdapterStatus::Success => {
+        Some(adapter)
+            if status == sys::WGPURequestAdapterStatus::Success && adapter.can_run_shaders() =>
+        {
             Ok(adapter.to_js(global))
         }
         _ => Ok(JSValue::NULL),
@@ -408,6 +442,29 @@ impl Drop for GPUAdapter {
 }
 
 impl GPUAdapter {
+    /// A driver without a GPU compiles shaders to machine code, and jumps to it whether or not it may.
+    fn can_run_shaders(&self) -> bool {
+        if !bun_jsc::compiled_program::is_write_execute_memory_denied() {
+            return true;
+        }
+        let mut info = sys::WGPUAdapterInfo::INIT;
+        // SAFETY: a live adapter, and what it fills in.
+        let runs_on_cpu = unsafe {
+            sys::wgpuAdapterGetInfo(self.handle, &raw mut info);
+            let runs_on_cpu = info.adapterType == sys::WGPUAdapterType::CPU
+                && info.backendType != sys::WGPUBackendType::Null;
+            sys::wgpuAdapterInfoFreeMembers(info);
+            runs_on_cpu
+        };
+        if runs_on_cpu {
+            bun_core::pretty_errorln!(
+                "<r><yellow>warn<r><d>:<r> Cannot use a software GPU driver because this process can't create executable memory (PR_SET_MDWE). An executable built with bun compile turns that on when it starts."
+            );
+            bun_core::output::flush();
+        }
+        !runs_on_cpu
+    }
+
     pub(crate) fn get_features(&self, heap: &JsHeap<'_>) -> JSValue {
         // SAFETY: a live adapter.
         let features = unsafe {
@@ -474,7 +531,10 @@ impl GPUAdapter {
             })?;
         }
 
-        let state = DeviceState::new(self.instance.clone());
+        let state = DeviceState::new(
+            self.instance.clone(),
+            global.bun_vm().context_of_caller().id(),
+        );
         let label = descriptor.label.to_utf8();
         let queue_label = descriptor.default_queue.label.to_utf8();
         let request = DeviceRequest {
@@ -493,8 +553,12 @@ impl GPUAdapter {
             userdata1: userdata,
             userdata2: core::ptr::null_mut(),
         };
+        // It rounds timestamps to 65 µs, so that a web page cannot time what is not its own.
+        let disabled = [c"timestamp_quantization".as_ptr()];
+        let mut toggles = disable_toggles(&disabled);
         limits.with_chain(|limits| {
             let descriptor = sys::WGPUDeviceDescriptor {
+                nextInChain: (&raw mut toggles).cast(),
                 label: string_view(&label),
                 requiredFeatureCount: features.len(),
                 requiredFeatures: features.as_ptr(),

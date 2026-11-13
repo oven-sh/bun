@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { registerDebugger } from "./features/debug";
 import { registerDiagnosticsSocket } from "./features/diagnostics/diagnostics";
 import { registerBunlockEditor } from "./features/lockfile";
+import { registerLanguageServer, stopLanguageServer } from "./features/lsp";
 import { registerPackageJsonProviders } from "./features/tasks/package.json";
 import { registerTaskProvider } from "./features/tasks/tasks";
 import { registerTests } from "./features/tests";
@@ -48,9 +49,14 @@ export function activate(context: vscode.ExtensionContext) {
   registerPackageJsonProviders(context);
   registerDiagnosticsSocket(context);
   registerTests(context);
+  registerLanguageServer(context);
 
   // Only register for text editors
   context.subscriptions.push(vscode.commands.registerTextEditorCommand("extension.bun.runUnsavedCode", runUnsavedCode));
+}
+
+export function deactivate() {
+  return stopLanguageServer();
 }
 
 export function getConfig<T>(path: string, scope?: vscode.ConfigurationScope) {

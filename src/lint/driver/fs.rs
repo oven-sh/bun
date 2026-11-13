@@ -556,8 +556,40 @@ fn identity_if_stream(found: &bun_sys::Stat) -> Option<Identity> {
         .then_some((found.st_dev as _, found.st_ino as _))
 }
 
-/// Writes `text` to `stream`, which is what `path` resolved to. Doesn't create, replace or truncate anything.
-fn write_to_stream(cwd: &[u8], path: &[u8], stream: Identity, text: &[u8]) -> Result<(), Vec<u8>> {
+/// Returns the number of the file descriptor that `path` names: `/dev/fd/<n>`, `/proc/self/fd/<n>`, or a symlink to
+/// one, like `/dev/stdout`.
+fn fd_named_by(path: &[u8]) -> Option<u32> {
+    let mut path = paths::from_native(path);
+    // As many links as the system follows before `ELOOP`.
+    for _ in 0..40 {
+        let name = [&b"/dev/fd/"[..], b"/proc/self/fd/"]
+            .iter()
+            .find_map(|prefix| path.strip_prefix(*prefix));
+        if let Some(name) = name
+            && !name.is_empty()
+            && name.iter().all(u8::is_ascii_digit)
+        {
+            return bun_core::fmt::parse_int(name, 10).ok();
+        }
+        if !matches!(link_kind_and_size(&path), Some((LinkKind::Link, _))) {
+            return None;
+        }
+        let (mut link, mut target) = (path_buffer_pool::get(), path_buffer_pool::get());
+        let len = bun_sys::readlink(for_libuv(&path, &mut link), &mut target[..]).ok()?;
+        path = paths::resolve(paths::dirname(&path), &paths::from_native(&target[..len]));
+    }
+    None
+}
+
+/// Writes `text` to the stream at `path`: the one with the identity `stream`, or `stdout` if `path` names fd 1, which
+/// is stderr while a run lasts. Doesn't create, replace or truncate anything.
+fn write_to_stream(
+    cwd: &[u8],
+    path: &[u8],
+    stream: Option<Identity>,
+    stdout: Fd,
+    text: &[u8],
+) -> Result<(), Vec<u8>> {
     // `/dev/stdout` has no real path when it's a pipe, but everything in a repository has one. So a path inside `cwd`
     // with no real path is rejected only if `cwd` is in a repository. `/dev/stdout` still works from `/` and `/dev`.
     let real = real_path(path);
@@ -571,6 +603,11 @@ fn write_to_stream(cwd: &[u8], path: &[u8], stream: Identity, text: &[u8]) -> Re
     if is_rejected {
         return Err(ESCAPES_REPOSITORY.to_vec());
     }
+    let Some(stream) = stream else {
+        return File::borrow(&stdout)
+            .write_all(text)
+            .map_err(|error| describe(&error));
+    };
     let (checked, last_link) = match &real {
         Some(real) => (&real[..], O::NOFOLLOW),
         None => (path, 0),
@@ -589,13 +626,17 @@ fn write_to_stream(cwd: &[u8], path: &[u8], stream: Identity, text: &[u8]) -> Re
 
 /// Writes a file that may not exist yet, and creates its parent directories. `Err` is the reason it wasn't written.
 /// Like [`write_atomically`], doesn't follow a symlink inside `cwd` out of the repository. A pipe or a device, such as
-/// `/dev/stdout`, is written to directly.
-pub(crate) fn write_new(cwd: &[u8], path: &[u8], text: &[u8]) -> Result<(), Vec<u8>> {
-    if cfg!(unix)
-        && let Ok(found) = bun_sys::stat(for_libuv(path, &mut path_buffer_pool::get()))
-        && let Some(stream) = identity_if_stream(&found)
-    {
-        return write_to_stream(cwd, path, stream, text);
+/// `/dev/stdout`, is written to directly. `stdout` is where `/dev/stdout` goes: fd 1 is stderr while a run lasts.
+pub(crate) fn write_new(cwd: &[u8], path: &[u8], text: &[u8], stdout: Fd) -> Result<(), Vec<u8>> {
+    if cfg!(unix) {
+        if fd_named_by(path) == Some(1) {
+            return write_to_stream(cwd, path, None, stdout, text);
+        }
+        if let Ok(found) = bun_sys::stat(for_libuv(path, &mut path_buffer_pool::get()))
+            && let Some(stream) = identity_if_stream(&found)
+        {
+            return write_to_stream(cwd, path, Some(stream), stdout, text);
+        }
     }
     let real = real_path_of_new(path).map_err(|error| describe(&error))?;
     if escapes_repository(cwd, path, &real) {

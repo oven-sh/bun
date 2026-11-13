@@ -18,7 +18,7 @@ use bun_lint::formats::Reason;
 use bun_lint::js_plugin::{Engine, HEAVY, Host, Loading, Route, Work};
 use bun_lint::language::Parser;
 use bun_lint::linter::{
-    FileConfig, LintMessage, Registry, ResolvedConfig, RuleId, formatting_rule, is_parse_error,
+    FileConfig, LintMessage, ResolvedConfig, RuleId, formatting_rule, is_parse_error,
 };
 use bun_sema::resolve::ScriptKind;
 use bun_sema::util::FxHashSet;
@@ -81,8 +81,11 @@ pub struct Environment<'e> {
     pub cwd: Vec<u8>,
     pub stdout: Stream,
     pub stderr: Stream,
-    /// Width of stdout's terminal, in columns.
-    pub columns: fn() -> u16,
+    /// Where the output goes: fd 1 as it was when the process started. On Unix fd 1 itself is stderr by then, so what
+    /// a plugin prints can't get into the output.
+    pub to_stdout: bun_core::Fd,
+    /// Width of the terminal at `to_stdout`, in columns.
+    pub columns: fn(bun_core::Fd) -> u16,
     /// `Output::is_ai_agent()`
     pub is_ai_agent: bool,
     /// `Output::is_github_action()`
@@ -331,7 +334,7 @@ fn is_ordered_by_bytes(path: &[u8]) -> bool {
     path.iter().all(|&byte| byte < 0xEE)
 }
 
-struct Run<'r> {
+pub(crate) struct Run<'r> {
     options: &'r Options,
     environment: &'r Environment<'r>,
     out: Outcome,
@@ -353,11 +356,210 @@ struct Suppressed {
     updated: Option<bool>,
 }
 
-struct Linted {
-    results: Vec<FileResult>,
-    files: usize,
+pub(crate) struct Linted {
+    pub(crate) results: Vec<FileResult>,
+    /// How many files were linted. `0`: the file of `--stdin-filename` is not one to lint.
+    pub(crate) files: usize,
     /// `--list-files`
     listed: Option<Vec<Vec<u8>>>,
+}
+
+/// What a run has to tell the user beside the results: the sinks of a [`Context`].
+#[derive(Default)]
+pub(crate) struct Sinks {
+    pub(crate) skipped_in_comments: Guarded<Vec<Box<[u8]>>>,
+    pub(crate) out_of_stack: Guarded<Vec<Vec<u8>>>,
+    pub(crate) without_include: Guarded<Vec<bun_sema_driver::WithoutInclude>>,
+    pub(crate) broken_fixes: Guarded<Vec<(Vec<u8>, Vec<RuleId>)>>,
+    pub(crate) handed_back: Guarded<Vec<(Reason, usize)>>,
+    pub(crate) unread: Guarded<Vec<Vec<u8>>>,
+    pub(crate) needs_eslint: Guarded<Vec<(Vec<u8>, Flavor)>>,
+    pub(crate) invalid_tsconfigs: Guarded<typed::InvalidTsconfigs>,
+}
+
+impl Sinks {
+    /// Empties the sinks into `warn`, `loader.advise` and `loader.add_unsupported`. `cwd_flavor` is that of the
+    /// working directory's config. `not_built_in` gets the formatting rules that comments turn on.
+    pub(crate) fn report(
+        &self,
+        loader: &Loader,
+        options: &Options,
+        cwd: &[u8],
+        cwd_flavor: Option<Flavor>,
+        not_built_in: &mut NotBuiltIn,
+        warn: &mut dyn FnMut(&[u8]),
+    ) {
+        let is_oxlint = cwd_flavor == Some(Flavor::Oxlint);
+        for (reason, files) in std::mem::take(&mut *self.handed_back.lock()) {
+            // This only happens where no formatter is wired up, and means nothing to the user.
+            if reason != Reason::NoFormatter {
+                let noun = if files == 1 { "file" } else { "files" };
+                let text = reason.text();
+                loader.advise(
+                    format!(
+                        "prettier/prettier ran in JavaScript for {files} {noun} because {text}"
+                    )
+                    .into_bytes(),
+                );
+            }
+        }
+        let mut broken = std::mem::take(&mut *self.broken_fixes.lock());
+        bun_lint::utils::sort::sort_by(&mut broken, |a, b| a.0.cmp(&b.0));
+        for (path, rules) in &broken {
+            let rules: Vec<Vec<u8>> = rules.iter().map(RuleId::to_vec).collect();
+            let of: &[u8] = if rules.is_empty() { b"" } else { b" from " };
+            warn(
+                &[
+                    b"Fixes",
+                    of,
+                    &rules.join(&b", "[..])[..],
+                    b" were not applied to ",
+                    &paths::relative_escaped(cwd, &paths::from_native(path))[..],
+                    b" because they would cause a syntax error",
+                ]
+                .concat(),
+            );
+        }
+        let mut incomplete: Vec<Vec<u8>> = std::mem::take(&mut *self.out_of_stack.lock());
+        if !incomplete.is_empty() {
+            bun_lint::utils::sort::sort_by(&mut incomplete, |a, b| a.cmp(b));
+            incomplete.dedup();
+            let examples: Vec<Vec<u8>> = (incomplete.iter().take(3))
+                .map(|it| paths::relative_escaped(cwd, &paths::from_native(it)))
+                .collect();
+            let more: &[u8] = if incomplete.len() > 3 { b", .." } else { b"" };
+            warn(
+                &[
+                    b"The type checker ran out of stack in ",
+                    &examples.join(&b", "[..])[..],
+                    more,
+                    b"\n  Rules that need type information may have missed problems there. This is a bug in Bun.",
+                ]
+                .concat(),
+            );
+        }
+        // With `--staged`, `--changed` or standard input, the user already knows that only a few files are linted.
+        let mut without_include = std::mem::take(&mut *self.without_include.lock());
+        if options.only.is_some() || options.stdin || options.silent {
+            without_include.clear();
+        }
+        without_include.retain(typed::is_out_of_proportion);
+        for program in without_include {
+            let plural = bun_sema_driver::format::plural;
+            let seconds = program.load_time.as_secs_f64();
+            let took = match seconds >= 1.0 {
+                true => format!("{seconds:.1}s"),
+                false => format!("{:.0}ms", seconds * 1e3),
+            };
+            let relative = |path: &[u8]| paths::relative_escaped(cwd, &paths::from_native(path));
+            let (config, example) = (relative(&program.config_path), relative(&program.example));
+            let linted = match program.requested_files {
+                1 => example,
+                many => [
+                    &plural(many, b"file", b"files")[..],
+                    b" (",
+                    &example,
+                    b", ..)",
+                ]
+                .concat(),
+            };
+            // With an oxlint config the flag doesn't select the project.
+            let or_the_flag: &[u8] = match options.tsconfig.is_some() || is_oxlint {
+                true => b".",
+                false => b" or pass --tsconfig.",
+            };
+            warn(
+                &[
+                    b"Loaded ",
+                    &plural(program.included, b"file", b"files")[..],
+                    b" in ",
+                    took.as_bytes(),
+                    b" to lint ",
+                    &linted,
+                    b"\n  ",
+                    &config,
+                    b" has no \"include\", so it covers every file under it.",
+                    b"\n  To speed this up, add \"include\" to it",
+                    or_the_flag,
+                ]
+                .concat(),
+            );
+        }
+        let mut in_comments = std::mem::take(&mut *self.skipped_in_comments.lock());
+        in_comments.retain(|it| !not_built_in.record_formatting_rule(it));
+        if !in_comments.is_empty() {
+            bun_lint::utils::sort::sort_by(&mut in_comments, |a, b| a.cmp(b));
+            let noun: &[u8] = match in_comments.len() {
+                1 => b" rule enabled in a comment",
+                _ => b" rules enabled in comments",
+            };
+            // With no config file there's no plugin package these rules could come from, so skip the advice.
+            let is_native = cwd_flavor == Some(Flavor::BuiltIn);
+            loader.add_unsupported(&[
+                in_comments.len().to_string().as_bytes(),
+                noun,
+                b" did not run: ",
+                &in_comments.join(&b", "[..]),
+                match is_native {
+                    true => &b""[..],
+                    false => b"\n  Enable at least one rule from the same plugin in your config.",
+                },
+            ]);
+        }
+        let mut unread: Vec<Vec<u8>> = std::mem::take(&mut *self.unread.lock());
+        if !unread.is_empty() {
+            bun_lint::utils::sort::sort_unstable(&mut unread);
+            unread.dedup();
+            let noun: &[u8] = match unread.len() {
+                1 => b" file was not linted because only the parser in your config can read it: ",
+                _ => {
+                    b" files were not linted because only the parser in your config can read them: "
+                }
+            };
+            let first: Vec<Vec<u8>> = (unread.iter().take(3))
+                .map(|it| paths::relative_escaped(cwd, it))
+                .collect();
+            loader.add_unsupported(&[
+                unread.len().to_string().as_bytes(),
+                noun,
+                &first.join(&b", "[..]),
+                if unread.len() > 3 { b", .." } else { b"" },
+                b"\n  To lint with that parser, install eslint: bun add -d eslint",
+            ]);
+        }
+        let mut needs_eslint = std::mem::take(&mut *self.needs_eslint.lock());
+        bun_lint::utils::sort::sort_by(&mut needs_eslint, |a, b| a.0.cmp(&b.0));
+        // Each pass of `--fix` finds the same blocks.
+        needs_eslint.dedup();
+        let of = |is_flat: bool| -> Vec<Vec<u8>> {
+            let all = needs_eslint.iter();
+            all.filter(|it| (it.1 == Flavor::Eslint) == is_flat)
+                .map(|it| it.0.clone())
+                .collect()
+        };
+        let because: [&[u8]; 2] = [
+            b"it needs eslint, which is not installed",
+            b"they need eslint, which is not installed",
+        ];
+        let hint = b"\n  Run bun add -d eslint";
+        not_linted(loader, cwd, &of(true), because, hint);
+        // An `.eslintrc` has no languages, so only a custom parser can read such a file.
+        let because: &[u8] = b"the parser in your config only works with an eslint.config.js";
+        not_linted(loader, cwd, &of(false), [because; 2], b"");
+    }
+}
+
+impl<'r> Run<'r> {
+    pub(crate) fn new(options: &'r Options, environment: &'r Environment<'r>) -> Run<'r> {
+        Run {
+            options,
+            environment,
+            out: Outcome::default(),
+            began: Instant::now(),
+            emulates_oxlint: None,
+            modules: None,
+        }
+    }
 }
 
 impl Run<'_> {
@@ -504,12 +706,13 @@ impl Run<'_> {
         Some(text.to_vec())
     }
 
-    /// ESLint's `lintText`.
-    fn lint_text(
+    /// ESLint's `lintText`. `with_types`: the rules that need types run, if the configuration asks for them.
+    pub(crate) fn lint_text(
         &self,
         loader: &Loader,
         context: &Context,
         text: Vec<u8>,
+        with_types: bool,
     ) -> Result<Linted, Fatal> {
         let cwd = &self.environment.cwd;
         let name = self
@@ -597,7 +800,8 @@ impl Run<'_> {
             inferred.files(vec![path.clone()]);
         }
         let has_rules_with_types = config.has_enabled(|it| it.triggers_type_check());
-        let needs_types = name.is_some()
+        let needs_types = with_types
+            && name.is_some()
             && loader.wants_types(&loaded, config)
             && (has_rules_with_types || context.checks_types);
         if needs_types {
@@ -919,17 +1123,7 @@ impl Run<'_> {
         if let Some(only) = options.only.as_ref().filter(|_| options.stdin) {
             return self.reject_flag(&only.stdin_conflict_error("--stdin"));
         }
-        let registry = Registry::new(&[
-            bun_lint_eslint::RULES,
-            bun_lint_typescript::RULES,
-            bun_lint_plugins::RULES,
-            bun_lint_unicorn::RULES,
-            bun_lint_react::RULES,
-            bun_lint_jest::RULES,
-            bun_lint_json::RULES,
-            bun_lint_markdown::RULES,
-        ])
-        .with_languages(crate::rules::LANGUAGES);
+        let registry = crate::rules::registry();
         if let Some(rule) = &options.explain {
             match explain::explain(&registry, rule, environment, options.color) {
                 Ok(page) => self.out.stdout = page,
@@ -984,16 +1178,7 @@ impl Run<'_> {
             return self.out;
         }
         let is_native = (cwd_config.as_ref()).is_some_and(|it| it.flavor == Flavor::BuiltIn);
-        let store = bun_lint_graph::Store::new(&environment.cwd);
-        let store = if is_native {
-            store.with_nearest_tsconfig()
-        } else {
-            store
-        };
-        let store = match &options.tsconfig {
-            Some(path) => store.with_tsconfig(path),
-            None => store,
-        };
+        let store = store_for(&environment.cwd, is_native, options);
         let modules = bun_lint_graph::Graph::new(&store);
         modules.list_files_by(Box::new(|patterns: &[&[u8]], extensions: &[&[u8]]| {
             let run_state = (&linter, environment, &js_plugins);
@@ -1003,14 +1188,11 @@ impl Run<'_> {
             Ok(format) => format,
             Err(error) => return self.reject(&error),
         };
-        let checks_types =
-            options.type_check || cwd_config.as_ref().is_some_and(|it| it.checks_types);
+        let checks_types = match checks_types(options, cwd_config.as_deref()) {
+            Ok(checks_types) => checks_types,
+            Err(why) => return self.fail(why),
+        };
         let config_wants_types = cwd_config.as_ref().and_then(|it| it.wants_types);
-        if checks_types && options.type_aware.or(config_wants_types) != Some(true) {
-            return self.fail(
-                b"The `--type-check` option requires type-aware linting.\nUse `--type-aware --type-check` or enable `options.typeAware` in your config.",
-            );
-        }
         if options.rules {
             let (out, registry) = (&mut self.out.stdout, linter.registry());
             let colors = options.color.unwrap_or(environment.stdout.colors);
@@ -1045,12 +1227,7 @@ impl Run<'_> {
             .collect();
         let atoms = bun_sema::atom::InternerPerThread::new_in(&names);
         let memory = bun_sema::session::Session::new();
-        let (skipped_in_comments, out_of_stack) =
-            (Guarded::new(Vec::new()), Guarded::new(Vec::new()));
-        let without_include = Guarded::new(Vec::new());
-        let broken_fixes = Guarded::new(Vec::new());
-        let handed_back = Guarded::new(Vec::new());
-        let (unread, needs_eslint) = (Guarded::new(Vec::new()), Guarded::new(Vec::new()));
+        let sinks = Sinks::default();
         let formatter =
             crate::fmt::ForRules::new(environment, options.bun_format_defaults.as_deref());
         let only = (options.only.as_ref()).map(|it| git::Files::read(it, environment, true));
@@ -1066,16 +1243,15 @@ impl Run<'_> {
         let by_options = options.infer_globals.is_none() && options.infers_globals_by_options;
         let inferred = (options.infer_globals == Some(true) || by_options)
             .then(|| Inferred::new(environment, pool.threads(), by_options));
-        let invalid_tsconfigs = Guarded::new(Default::default());
         let context = Context {
-            skipped_in_comments: &skipped_in_comments,
-            out_of_stack: &out_of_stack,
-            without_include: &without_include,
-            broken_fixes: &broken_fixes,
-            handed_back: &handed_back,
-            unread: &unread,
-            needs_eslint: &needs_eslint,
-            invalid_tsconfigs: &invalid_tsconfigs,
+            skipped_in_comments: &sinks.skipped_in_comments,
+            out_of_stack: &sinks.out_of_stack,
+            without_include: &sinks.without_include,
+            broken_fixes: &sinks.broken_fixes,
+            handed_back: &sinks.handed_back,
+            unread: &sinks.unread,
+            needs_eslint: &sinks.needs_eslint,
+            invalid_tsconfigs: &sinks.invalid_tsconfigs,
             memory: &memory,
             atoms: &atoms,
             linter: &linter,
@@ -1141,9 +1317,15 @@ impl Run<'_> {
             return self.out;
         }
         let mut phases = Phases::default();
+        // Kept for the second pass: a result without a text is read from the file, which may differ or not exist.
+        let mut stdin_text = None;
         let linted = match options.stdin {
             true => match fs::read_stdin() {
-                Ok(text) => self.lint_text(&loader, &context, text),
+                Ok(text) => {
+                    let linted = self.lint_text(&loader, &context, text.clone(), true);
+                    stdin_text = Some(text);
+                    linted
+                }
                 Err(error) => Err(Fatal(
                     [&b"Cannot read standard input: "[..], &fs::describe(&error)].concat(),
                 )),
@@ -1178,164 +1360,16 @@ impl Run<'_> {
                 },
             ]);
         }
-        for (reason, files) in std::mem::take(&mut *handed_back.lock()) {
-            // This only happens where no formatter is wired up, and means nothing to the user.
-            if reason != Reason::NoFormatter {
-                let noun = if files == 1 { "file" } else { "files" };
-                let text = reason.text();
-                loader.advise(
-                    format!(
-                        "prettier/prettier ran in JavaScript for {files} {noun} because {text}"
-                    )
-                    .into_bytes(),
-                );
-            }
-        }
-        let mut broken = std::mem::take(&mut *broken_fixes.lock());
-        bun_lint::utils::sort::sort_by(&mut broken, |a, b| a.0.cmp(&b.0));
-        for (path, rules) in &broken {
-            let rules: Vec<Vec<u8>> = rules.iter().map(RuleId::to_vec).collect();
-            let of: &[u8] = if rules.is_empty() { b"" } else { b" from " };
-            self.warn(
-                &[
-                    b"Fixes",
-                    of,
-                    &rules.join(&b", "[..])[..],
-                    b" were not applied to ",
-                    &paths::relative_escaped(&environment.cwd, &paths::from_native(path))[..],
-                    b" because they would cause a syntax error",
-                ]
-                .concat(),
-            );
-        }
-        let mut incomplete: Vec<Vec<u8>> = std::mem::take(&mut *out_of_stack.lock());
-        if !incomplete.is_empty() {
-            bun_lint::utils::sort::sort_by(&mut incomplete, |a, b| a.cmp(b));
-            incomplete.dedup();
-            let examples: Vec<Vec<u8>> = (incomplete.iter().take(3))
-                .map(|it| paths::relative_escaped(&environment.cwd, &paths::from_native(it)))
-                .collect();
-            let more: &[u8] = if incomplete.len() > 3 { b", .." } else { b"" };
-            self.warn(
-                &[
-                    b"The type checker ran out of stack in ",
-                    &examples.join(&b", "[..])[..],
-                    more,
-                    b"\n  Rules that need type information may have missed problems there. This is a bug in Bun.",
-                ]
-                .concat(),
-            );
-        }
-        // With `--staged`, `--changed` or standard input, the user already knows that only a few files are linted.
-        let mut without_include = std::mem::take(&mut *without_include.lock());
-        if options.only.is_some() || options.stdin || options.silent {
-            without_include.clear();
-        }
-        without_include.retain(typed::is_out_of_proportion);
-        for program in without_include {
-            let plural = bun_sema_driver::format::plural;
-            let seconds = program.load_time.as_secs_f64();
-            let took = match seconds >= 1.0 {
-                true => format!("{seconds:.1}s"),
-                false => format!("{:.0}ms", seconds * 1e3),
-            };
-            let relative =
-                |path: &[u8]| paths::relative_escaped(&environment.cwd, &paths::from_native(path));
-            let (config, example) = (relative(&program.config_path), relative(&program.example));
-            let linted = match program.requested_files {
-                1 => example,
-                many => [
-                    &plural(many, b"file", b"files")[..],
-                    b" (",
-                    &example,
-                    b", ..)",
-                ]
-                .concat(),
-            };
-            // With an oxlint config the flag doesn't select the project.
-            let or_the_flag: &[u8] = match options.tsconfig.is_some() || is_oxlint {
-                true => b".",
-                false => b" or pass --tsconfig.",
-            };
-            self.warn(
-                &[
-                    b"Loaded ",
-                    &plural(program.included, b"file", b"files")[..],
-                    b" in ",
-                    took.as_bytes(),
-                    b" to lint ",
-                    &linted,
-                    b"\n  ",
-                    &config,
-                    b" has no \"include\", so it covers every file under it.",
-                    b"\n  To speed this up, add \"include\" to it",
-                    or_the_flag,
-                ]
-                .concat(),
-            );
-        }
-        let mut in_comments = std::mem::take(&mut *skipped_in_comments.lock());
         let mut not_built_in = NotBuiltIn::default();
-        in_comments.retain(|it| !not_built_in.record_formatting_rule(it));
-        if !in_comments.is_empty() {
-            bun_lint::utils::sort::sort_by(&mut in_comments, |a, b| a.cmp(b));
-            let noun: &[u8] = match in_comments.len() {
-                1 => b" rule enabled in a comment",
-                _ => b" rules enabled in comments",
-            };
-            // With no config file there's no plugin package these rules could come from, so skip the advice.
-            let is_native = (cwd_config.as_ref()).is_some_and(|it| it.flavor == Flavor::BuiltIn);
-            loader.add_unsupported(&[
-                in_comments.len().to_string().as_bytes(),
-                noun,
-                b" did not run: ",
-                &in_comments.join(&b", "[..]),
-                match is_native {
-                    true => &b""[..],
-                    false => b"\n  Enable at least one rule from the same plugin in your config.",
-                },
-            ]);
-        }
-        let mut unread: Vec<Vec<u8>> = std::mem::take(&mut *unread.lock());
-        if !unread.is_empty() {
-            bun_lint::utils::sort::sort_unstable(&mut unread);
-            unread.dedup();
-            let noun: &[u8] = match unread.len() {
-                1 => b" file was not linted because only the parser in your config can read it: ",
-                _ => {
-                    b" files were not linted because only the parser in your config can read them: "
-                }
-            };
-            let first: Vec<Vec<u8>> = (unread.iter().take(3))
-                .map(|it| paths::relative_escaped(&environment.cwd, it))
-                .collect();
-            loader.add_unsupported(&[
-                unread.len().to_string().as_bytes(),
-                noun,
-                &first.join(&b", "[..]),
-                if unread.len() > 3 { b", .." } else { b"" },
-                b"\n  To lint with that parser, install eslint: bun add -d eslint",
-            ]);
-        }
-        let mut needs_eslint = std::mem::take(&mut *needs_eslint.lock());
-        bun_lint::utils::sort::sort_by(&mut needs_eslint, |a, b| a.0.cmp(&b.0));
-        // Each pass of `--fix` finds the same blocks.
-        needs_eslint.dedup();
-        let of = |is_flat: bool| -> Vec<Vec<u8>> {
-            let all = needs_eslint.iter();
-            all.filter(|it| (it.1 == Flavor::Eslint) == is_flat)
-                .map(|it| it.0.clone())
-                .collect()
-        };
-        let because: [&[u8]; 2] = [
-            b"it needs eslint, which is not installed",
-            b"they need eslint, which is not installed",
-        ];
-        let hint = b"\n  Run bun add -d eslint";
-        not_linted(&loader, &environment.cwd, &of(true), because, hint);
-        // An `.eslintrc` has no languages, so only a custom parser can read such a file.
-        let because: &[u8] = b"the parser in your config only works with an eslint.config.js";
-        not_linted(&loader, &environment.cwd, &of(false), [because; 2], b"");
+        let cwd_flavor = cwd_config.as_ref().map(|it| it.flavor);
+        sinks.report(
+            &loader,
+            options,
+            &environment.cwd,
+            cwd_flavor,
+            &mut not_built_in,
+            &mut |text| self.warn(text),
+        );
         let mut seen: Vec<&Arc<_>> = Vec::new();
         let results = linted.iter().flat_map(|it| &it.results);
         let configs = results.filter_map(|it| it.linted.as_ref());
@@ -1390,6 +1424,12 @@ impl Run<'_> {
                 .into_iter()
                 .map(|at| Guarded::new(Some(results.swap_remove(at))))
                 .collect();
+            // With --stdin the only result is the piped text's.
+            if let Some(text) = stdin_text
+                && let Some(result) = picked.iter_mut().find_map(|it| it.get_mut().as_mut())
+            {
+                result.text.get_or_insert(text);
+            }
             let mut failure = Guarded::new(None);
             pool.for_each(picked.len(), 1, &|index| {
                 if let Some(result) = picked[index].lock().as_mut()
@@ -1543,7 +1583,7 @@ impl Run<'_> {
             color,
             links: color && to_terminal,
             width: match to_terminal {
-                true => (bun_core::output::File::from(bun_core::Fd::stdout()).winsize())
+                true => (bun_core::output::File::from(environment.to_stdout).winsize())
                     .map_or(0, |size| usize::from(size.col)),
                 false => 0,
             },
@@ -1597,7 +1637,8 @@ impl Run<'_> {
                     .concat(),
                 );
             }
-            if let Err(why) = fs::write_new(&environment.cwd, &path, &output) {
+            if let Err(why) = fs::write_new(&environment.cwd, &path, &output, environment.to_stdout)
+            {
                 return self.fail(
                     &[&b"There was a problem writing the output file:\n"[..], &why].concat(),
                 );
@@ -1754,12 +1795,12 @@ impl Run<'_> {
         let mut suppressed = Suppressions::load(&path)?;
         if writes {
             suppressed.suppress(results, cwd, options.suppress_rule.as_deref(), is_oxlint);
-            suppressed.save(cwd, &path)?;
+            suppressed.save(cwd, &path, self.environment.to_stdout)?;
         }
         let unused = suppressed.apply(results, cwd, is_oxlint);
         if options.prune_suppressions {
             suppressed.prune(&unused, cwd);
-            suppressed.save(cwd, &path)?;
+            suppressed.save(cwd, &path, self.environment.to_stdout)?;
             return Ok(Suppressed {
                 updated,
                 ..Suppressed::default()
@@ -1848,7 +1889,7 @@ impl Run<'_> {
 /// on without naming them. Every format prints a note that they didn't run. The formats for people only mention the
 /// formatting rules if the run fails.
 #[derive(Default)]
-struct NotBuiltIn {
+pub(crate) struct NotBuiltIn {
     /// [`formatting_rule`]
     about_layout: Vec<&'static str>,
     /// [`ResolvedConfig::plugins_without_rules`]
@@ -1960,6 +2001,38 @@ fn warn_about_circular_fixes(loader: &Loader, path: &[u8]) {
         &paths::escaped(&paths::to_native(path.to_vec())),
         b". It is likely that you have conflicting rules in your configuration.",
     ]);
+}
+
+/// The store `bun lint` resolves imports with in `cwd`: with the nearest `tsconfig.json` of each file when the
+/// configuration is Bun's own (`is_native`), and with `--tsconfig` when given.
+pub(crate) fn store_for(cwd: &[u8], is_native: bool, options: &Options) -> bun_lint_graph::Store {
+    let store = bun_lint_graph::Store::new(cwd);
+    let store = if is_native {
+        store.with_nearest_tsconfig()
+    } else {
+        store
+    };
+    match &options.tsconfig {
+        Some(path) => store.with_tsconfig(path),
+        None => store,
+    }
+}
+
+/// Why `--type-check` is refused without type-aware linting.
+pub(crate) const TYPE_CHECK_NEEDS_TYPE_AWARE: &[u8] = b"The `--type-check` option requires type-aware linting.\nUse `--type-aware --type-check` or enable `options.typeAware` in your config.";
+
+/// Whether `--type-check` or `typeCheck` of the working directory's configuration (`of_cwd`) reports the type errors
+/// of the files. `Err`: it is on without the type-aware rules it needs.
+pub(crate) fn checks_types(
+    options: &Options,
+    of_cwd: Option<&Loaded>,
+) -> Result<bool, &'static [u8]> {
+    let checks_types = options.type_check || of_cwd.is_some_and(|it| it.checks_types);
+    let config_wants_types = of_cwd.and_then(|it| it.wants_types);
+    match checks_types && options.type_aware.or(config_wants_types) != Some(true) {
+        true => Err(TYPE_CHECK_NEEDS_TYPE_AWARE),
+        false => Ok(checks_types),
+    }
 }
 
 /// The outcome for a command line that can't be parsed. `message` is the error.

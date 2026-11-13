@@ -175,6 +175,32 @@ pub(crate) fn order_fixes_as_oxlint(messages: &mut [LintMessage]) {
     }
 }
 
+/// ESLint's `fix` option as built by `getFixerForFixTypes`. `fixes_warnings`: warnings are fixed even with `--quiet`.
+pub(crate) fn should_fix(options: &Options, fixes_warnings: bool, message: &LintMessage) -> bool {
+    if options.quiet && message.severity != Severity::Error && !fixes_warnings {
+        return false;
+    }
+    let Some(types) = &options.fix_type else {
+        return true;
+    };
+    types.contains(&match &message.rule_id {
+        None => FixType::Directive,
+        Some(RuleId::Known(meta) | RuleId::Named(meta, _)) => match meta.kind {
+            Kind::Problem => FixType::Problem,
+            Kind::Suggestion => FixType::Suggestion,
+            Kind::Layout => FixType::Layout,
+            Kind::None => return false,
+        },
+        Some(RuleId::Js(rule)) => match rule.kind {
+            Some(Kind::Problem) => FixType::Problem,
+            Some(Kind::Suggestion) => FixType::Suggestion,
+            Some(Kind::Layout) => FixType::Layout,
+            Some(Kind::None) | None => return false,
+        },
+        Some(RuleId::Unknown(_)) => return false,
+    })
+}
+
 impl Context<'_, '_> {
     pub(crate) fn lint_options(&self) -> LintOptions<'_> {
         LintOptions {
@@ -250,28 +276,7 @@ impl Context<'_, '_> {
 
     /// ESLint's `fix` option as built by `getFixerForFixTypes`.
     pub(crate) fn should_fix(&self, message: &LintMessage) -> bool {
-        if self.options.quiet && message.severity != Severity::Error && !self.fixes_warnings() {
-            return false;
-        }
-        let Some(types) = &self.options.fix_type else {
-            return true;
-        };
-        types.contains(&match &message.rule_id {
-            None => FixType::Directive,
-            Some(RuleId::Known(meta) | RuleId::Named(meta, _)) => match meta.kind {
-                Kind::Problem => FixType::Problem,
-                Kind::Suggestion => FixType::Suggestion,
-                Kind::Layout => FixType::Layout,
-                Kind::None => return false,
-            },
-            Some(RuleId::Js(rule)) => match rule.kind {
-                Some(Kind::Problem) => FixType::Problem,
-                Some(Kind::Suggestion) => FixType::Suggestion,
-                Some(Kind::Layout) => FixType::Layout,
-                Some(Kind::None) | None => return false,
-            },
-            Some(RuleId::Unknown(_)) => return false,
-        })
+        should_fix(self.options, self.fixes_warnings(), message)
     }
 
     /// ESLint's `createIgnoreResult`. `flavor` is the flavor of the config that ignores the file.

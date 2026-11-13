@@ -110,6 +110,9 @@ const OTHER: &[Param] = &[
     clap::param!(
         "--no-script                     Run the linter even if the project has a <b>lint<r> script"
     ),
+    clap::param!(
+        "--lsp                           Serve editors as a language server over standard input and output"
+    ),
     clap::param!("-v, --version                   Print the version of Bun"),
     clap::param!(
         "-h, --help                      Print the common flags. With <b>--all<r>, every flag"
@@ -189,7 +192,6 @@ const OXLINT_COMPAT: &[Param] = &[
     clap::param!(
         "--disable-nested-config         Use the config file in the working directory for every file"
     ),
-    clap::param!("--lsp                           Not supported"),
     clap::param!("--import-plugin                 Turn on the <b>import<r> plugin"),
     clap::param!("--react-plugin                  Turn on the <b>react<r> plugin"),
     clap::param!("--jsdoc-plugin                  Turn on the <b>jsdoc<r> plugin"),
@@ -327,7 +329,7 @@ const ESLINT_ONLY: [&[u8]; 35] = [
 
 /// Flags only oxlint has, besides `--import-plugin` and friends. Flags that `--help` lists as Bun's own don't belong
 /// here.
-const OXLINT_ONLY: [&[u8]; 8] = [
+const OXLINT_ONLY: [&[u8]; 7] = [
     b"allow",
     b"warn",
     b"deny",
@@ -335,7 +337,6 @@ const OXLINT_ONLY: [&[u8]; 8] = [
     b"silent",
     b"disable-nested-config",
     b"rules",
-    b"lsp",
 ];
 
 /// The [`ESLINT_ONLY`] flags that can't be honored with an oxlint config.
@@ -596,6 +597,8 @@ pub struct Options {
     pub rulesdir: Vec<Vec<u8>>,
     /// ESLint 8's `--resolve-plugins-relative-to`.
     pub resolve_plugins_relative_to: Option<Vec<u8>>,
+    /// Serve editors as a language server over standard input and output, instead of linting.
+    pub lsp: bool,
 }
 
 impl Default for Options {
@@ -689,6 +692,7 @@ impl Default for Options {
             env: Vec::new(),
             rulesdir: Vec::new(),
             resolve_plugins_relative_to: None,
+            lsp: false,
         }
     }
 }
@@ -970,6 +974,7 @@ impl Options {
             b"type-check" => self.type_check = is_on,
             b"rules" => self.rules = is_on,
             b"explain" => self.explain = owned(),
+            b"lsp" => self.lsp = is_on,
             _ if is_on && name.ends_with(b"-plugin") => {
                 let plugin = &name[..name.len() - b"-plugin".len()];
                 self.plugins.push(match plugin.strip_prefix(b"disable-") {
@@ -1015,6 +1020,35 @@ impl Options {
                 .find(|it| it.is_unsupported_with(flavor))?
                 .spelling_and_tool(),
         )
+    }
+
+    /// The error message if `--lsp` comes with a flag or a file that asks for a one-shot run.
+    pub fn lsp_conflict_error(&self) -> Option<Vec<u8>> {
+        if !self.lsp {
+            return None;
+        }
+        let conflicts: [(bool, &[u8]); 18] = [
+            (self.init, b"--init"),
+            (self.version, b"--version"),
+            (self.doctor, b"--doctor"),
+            (self.rules, b"--rules"),
+            (self.explain.is_some(), b"--explain"),
+            (self.print_config.is_some(), b"--print-config"),
+            (self.stdin, b"--stdin"),
+            (self.stdin_filename.is_some(), b"--stdin-filename"),
+            (self.only.is_some(), b"--staged or --changed"),
+            (self.cwd.is_some(), b"--cwd"),
+            (self.fix_safely, b"--fix"),
+            (self.fix_dry_run, b"--fix-dry-run"),
+            (self.fix_type.is_some(), b"--fix-type"),
+            (self.fix_suggestions, b"--fix-suggestions"),
+            (self.fix_dangerously, b"--fix-dangerously"),
+            (self.list_files, b"--list-files"),
+            (self.output_file.is_some(), b"--output-file"),
+            (!self.patterns.is_empty(), b"Files"),
+        ];
+        let (_, what) = conflicts.into_iter().find(|(is_on, _)| *is_on)?;
+        Some([what, b" cannot be used with --lsp"].concat())
     }
 
     /// `args` is everything after `lint` on the command line.
@@ -1293,6 +1327,8 @@ impl Options {
 
     fn with(self, args: &[&[u8]]) -> Result<Options, UsageError> {
         let mut options = self;
+        let stripped = without_editor_flags(args);
+        let args = &stripped[..];
         // Flags that oxlint spells differently.
         let (mut rewritten, count): (Vec<&[u8]>, usize) = (Vec::new(), args.len());
         for (at, arg) in args.iter().copied().enumerate() {
@@ -1344,4 +1380,22 @@ impl Options {
         })?;
         Ok(options)
     }
+}
+
+/// Drops `--stdio` and `--clientProcessId=<pid>`, which editors pass to every language server, from a command line
+/// that has `--lsp`. Without it they stay unknown flags.
+pub(crate) fn without_editor_flags<'a>(args: &[&'a [u8]]) -> Vec<&'a [u8]> {
+    let flag_count = args.iter().take_while(|arg| **arg != b"--").count();
+    let flags = &args[..flag_count];
+    if !flags.contains(&&b"--lsp"[..]) {
+        return args.to_vec();
+    }
+    let is_of_editor = |arg: &[u8]| {
+        arg == b"--stdio"
+            || arg
+                .strip_prefix(b"--clientProcessId=")
+                .is_some_and(|pid| !pid.is_empty() && pid.iter().all(u8::is_ascii_digit))
+    };
+    let kept = flags.iter().copied().filter(|arg| !is_of_editor(arg));
+    kept.chain(args[flag_count..].iter().copied()).collect()
 }

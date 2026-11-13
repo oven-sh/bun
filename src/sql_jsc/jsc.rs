@@ -5,7 +5,7 @@
 //! [`EventLoop`], [`KeepAlive`], …) are **re-exported from `bun_jsc` /
 //! `bun_io`**. SQL-specific helpers that `bun_jsc` doesn't expose at
 //! this tier are provided as extension traits ([`JSGlobalObjectSqlExt`],
-//! [`VirtualMachineSqlExt`], [`EventLoopSqlExt`]).
+//! [`VirtualMachineSqlExt`]).
 //!
 //! [`RareData`] here is the **per-VM SQL state** (`mysql_context` /
 //! `postgresql_context`) that `bun_runtime::jsc_hooks::RuntimeState` owns by
@@ -167,21 +167,15 @@ impl JSGlobalObjectSqlExt for JSGlobalObject {
 }
 
 pub use bun_io::KeepAlive;
-pub use bun_jsc::event_loop::{EventLoop, EventLoopEnterGuard as EventLoopGuard};
+pub use bun_jsc::event_loop::EventLoop;
 pub use bun_jsc::virtual_machine::VirtualMachine;
 
-// `bun_runtime` owns the per-VM `RuntimeState` (timer heap, SSLContextCache, SSLConfig parser) and
+// `bun_runtime` owns the per-VM `RuntimeState` (SSLContextCache, SSLConfig parser) and
 // depends on this crate, so importing it would be a cycle. This crate defines the table of
 // function pointers, `bun_runtime::hw_exports::sql_hooks` the one instance.
 pub struct SqlRuntimeHooks {
     /// `&mut runtime_state().sql_rare` — this crate's [`RareData`] storage.
     pub sql_rare: unsafe fn(*mut VirtualMachine) -> *mut RareData,
-    /// `&mut runtime_state().timer` — opaque `bun_runtime::timer::All`.
-    pub timer_heap: fn(*mut VirtualMachine) -> *mut c_void,
-    /// `Timer.All.insert` — push an intrusive `EventLoopTimer` into the heap.
-    pub timer_insert: unsafe fn(heap: *mut c_void, *mut EventLoopTimer),
-    /// `Timer.All.remove`.
-    pub timer_remove: unsafe fn(heap: *mut c_void, *mut EventLoopTimer),
     /// `&mut runtime_state().ssl_ctx_cache` — opaque `SSLContextCache`.
     pub ssl_ctx_cache: unsafe fn(*mut VirtualMachine) -> *mut c_void,
     /// `SSLContextCache::getOrCreateOpts` — digest-keyed weak `SSL_CTX*` cache.
@@ -247,8 +241,6 @@ pub(crate) trait VirtualMachineSqlExt {
     /// shadowing the inherent VirtualMachine::rare_data() (which returns the
     /// bun_jsc RareData holding the per-protocol SocketGroups).
     fn sql_state(&mut self) -> &mut RareData;
-    /// vm.timer — the Timer::All heap, owned by RuntimeState.
-    fn timer(&mut self) -> &mut TimerHeap;
     /// RareData.ssl_ctx_cache — owned by RuntimeState.
     fn ssl_ctx_cache(&mut self) -> &mut SslCtxCache;
     /// bun_io::EventLoopCtx for the JS-thread VM, for KeepAlive::{ref_,unref}.
@@ -270,13 +262,6 @@ impl VirtualMachineSqlExt for VirtualMachine {
         // SAFETY: hook returns `&mut runtime_state().sql_rare`; non-null on
         // the JS thread once `init_runtime_state` has run.
         unsafe { &mut *(hooks().sql_rare)(self) }
-    }
-    #[inline]
-    fn timer(&mut self) -> &mut TimerHeap {
-        // SAFETY: hook returns `&mut runtime_state().timer`; non-null after
-        // `init_runtime_state`. `TimerHeap` is an opaque newtype over the
-        // `*mut c_void` so callers stay typed.
-        unsafe { &mut *(hooks().timer_heap)(self).cast::<TimerHeap>() }
     }
     #[inline]
     fn ssl_ctx_cache(&mut self) -> &mut SslCtxCache {
@@ -308,23 +293,9 @@ impl VirtualMachineSqlExt for VirtualMachine {
     }
 }
 
-/// RAII enter()/exit() for [EventLoop] — wraps the inherent (unsafe,
-/// raw-pointer) bun_jsc::event_loop::EventLoop::enter_scope.
-pub(crate) trait EventLoopSqlExt {
-    fn entered(&mut self) -> EventLoopGuard;
-}
-impl EventLoopSqlExt for EventLoop {
-    #[inline]
-    fn entered(&mut self) -> EventLoopGuard {
-        // SAFETY: self is the live VM-owned event loop; the guard holds the
-        // raw pointer so no &mut is held across re-entrant JS.
-        unsafe { EventLoop::enter_scope(self) }
-    }
-}
-
 /// What `callback` throws is reported, not returned.
 pub(crate) fn run_callback(global: &JSGlobalObject, callback: JSValue, arguments: &[JSValue]) {
-    VirtualMachine::get_mut().event_loop_mut().run_callback(
+    VirtualMachine::get().event_loop().run_callback(
         bun_event_loop::ContextId::NONE,
         callback,
         global,
@@ -336,23 +307,6 @@ pub(crate) fn run_callback(global: &JSGlobalObject, callback: JSValue, arguments
 pub use bun_event_loop::EventLoopTimer::{
     EventLoopTimer, State as EventLoopTimerState, Tag as EventLoopTimerTag,
 };
-
-// `bun_runtime::timer::All` — heap of `EventLoopTimer`. Opaque on this side
-// (the layout is high-tier); insert/remove forward to `bun_runtime` via the
-// [`SqlRuntimeHooks`] vtable.
-bun_opaque::opaque_ffi! { pub struct TimerHeap; }
-impl TimerHeap {
-    pub(crate) fn insert(&mut self, t: *mut EventLoopTimer) {
-        // SAFETY: `self` is `&mut runtime_state().timer`; `t` is a live
-        // intrusive heap node whose provenance covers its container.
-        unsafe { (hooks().timer_insert)(self._p.get().cast::<c_void>(), t) }
-    }
-    pub(crate) fn remove(&mut self, t: &mut EventLoopTimer) {
-        // SAFETY: `self` is `&mut runtime_state().timer`; `t` was previously
-        // inserted by the caller.
-        unsafe { (hooks().timer_remove)(self._p.get().cast::<c_void>(), t) }
-    }
-}
 
 /// A connection that writes what one turn of JS queued on it in one flush, at the end of the turn.
 pub(crate) trait AutoFlush: Sized {
@@ -369,7 +323,7 @@ pub(crate) trait AutoFlush: Sized {
             bun_ptr::ParentRef::from(this).on_auto_flush()
         }
         if !self.auto_flush_registered().get() && self.can_flush() {
-            let tasks = &mut self.vm().event_loop_mut().deferred_tasks;
+            let tasks = &self.vm().event_loop().deferred_tasks;
             tasks.post_task(Some(NonNull::from(self).cast()), run::<Self>);
             self.auto_flush_registered().set(true);
         }
@@ -377,7 +331,7 @@ pub(crate) trait AutoFlush: Sized {
 
     fn unregister_auto_flusher(&self) {
         if self.auto_flush_registered().replace(false) {
-            let tasks = &mut self.vm().event_loop_mut().deferred_tasks;
+            let tasks = &self.vm().event_loop().deferred_tasks;
             tasks.unregister_task(Some(NonNull::from(self).cast()));
         }
     }

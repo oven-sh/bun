@@ -1,7 +1,7 @@
 # `with (scope) y`: where the scope has the name, the run time reads Symbol.unscopables off it, and the name off what that gives. No read was recorded, so Link saw no reader of the member:
 # the getter of the class was unreached and never ran in compiled code, and what it stores into `this` was no store into the layout
 # RUN: link fields functions mechanisms=all
-# CHECK: field L0.0 "x" proven=i32|string
+# CHECK: field L0.0 "x" proven=int[0, 2147483647]|string
 # CHECK: function f4 callers-known
 # RUN(NONE): run-in-shell mechanisms=none
 # NONE: 2

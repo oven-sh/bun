@@ -43,9 +43,7 @@ pub(crate) fn drain_microtasks(cx: &mut JsScope<'_>) {
     // straight to the thread-local for the VM.
     let vm = VirtualMachine::get_mut();
     let jsc_vm = global.vm();
-    let _ = vm
-        .event_loop_mut()
-        .drain_microtasks_with_global(global, jsc_vm);
+    let _ = vm.event_loop().drain_microtasks_with_global(global, jsc_vm);
 }
 
 /// `export fn Bun__logUnhandledException(exception: JSValue) void { get().runErrorHandler(exception, null); }`
@@ -182,7 +180,6 @@ pub(crate) fn close_child_ipc(global: &JSGlobalObject) {
 
 mod sql_hooks {
     use super::*;
-    use bun_event_loop::EventLoopTimer::EventLoopTimer;
     use bun_sql_jsc::jsc::{RareData as SqlRareData, SqlRuntimeHooks};
 
     unsafe fn sql_rare(_vm: *mut VirtualMachine) -> *mut SqlRareData {
@@ -191,22 +188,6 @@ mod sql_hooks {
         // SAFETY: `state` is the boxed per-thread `RuntimeState`; `sql_rare` is
         // an embedded field with stable address for the VM lifetime.
         unsafe { core::ptr::addr_of_mut!((*state).sql_rare) }
-    }
-    fn timer_heap(_vm: *mut VirtualMachine) -> *mut c_void {
-        crate::jsc_hooks::timer_all().cast()
-    }
-    unsafe fn timer_insert(heap: *mut c_void, timer: *mut EventLoopTimer) {
-        // SAFETY: `heap` is `&runtime_state().timer` (live for the VM); `timer`
-        // is a live intrusive heap node owned by the caller. Route through
-        // `All::insert` (NOT the raw `.timers` field) so the fake-timers
-        // routing and the `(*timer).state` / `in_heap` bookkeeping happen.
-        unsafe { (*heap.cast::<crate::timer::All>()).insert(timer) };
-    }
-    unsafe fn timer_remove(heap: *mut c_void, timer: *mut EventLoopTimer) {
-        // SAFETY: `heap` is `&runtime_state().timer`; `timer` was previously
-        // inserted via `timer_insert`. Route through `All::remove` so
-        // `in_heap` is consulted and reset.
-        unsafe { (*heap.cast::<crate::timer::All>()).remove(timer) };
     }
     unsafe fn ssl_ctx_cache(_vm: *mut VirtualMachine) -> *mut c_void {
         let state = crate::jsc_hooks::runtime_state();
@@ -261,9 +242,6 @@ mod sql_hooks {
     #[unsafe(no_mangle)]
     static __BUN_SQL_RUNTIME_HOOKS: SqlRuntimeHooks = SqlRuntimeHooks {
         sql_rare,
-        timer_heap,
-        timer_insert,
-        timer_remove,
         ssl_ctx_cache,
         ssl_ctx_get_or_create,
         ssl_config_from_js,

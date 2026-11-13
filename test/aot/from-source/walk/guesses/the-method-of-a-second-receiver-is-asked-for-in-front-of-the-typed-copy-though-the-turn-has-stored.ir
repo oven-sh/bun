@@ -12,11 +12,10 @@
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: isInLoop=true isLoopHead=true:
-# CHECK: isInLoop=true isLoopHead=true:
 # CHECK-NOT: calleeKey=
-# CHECK: inlineBuiltin=DataViewSet
+# CHECK: PutDataViewElement
 # CHECK-NOT: calleeKey=
-# CHECK: inlineBuiltin=DataViewSet
+# CHECK: PutDataViewElement
 # RUN(ANSWER): run-in-shell
 # ANSWER: 29 37
 # ANSWER-NEXT: exited with 0

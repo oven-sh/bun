@@ -99,7 +99,7 @@ pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) {
 // HOST_EXPORT(Bun__VM__queueTask, c)
 pub fn vm_queue_task(this: &VirtualMachine, task: *mut crate::cpp_task::CppTask) {
     crate::mark_binding!();
-    this.event_loop_mut().enqueue_task(Task::init(task));
+    this.event_loop().enqueue_task(Task::init(task));
 }
 
 /// [`vm_queue_task`] for a task that must let the loop poll I/O and timers
@@ -107,8 +107,7 @@ pub fn vm_queue_task(this: &VirtualMachine, task: *mut crate::cpp_task::CppTask)
 // HOST_EXPORT(Bun__VM__queueTaskAfterYield, c)
 pub fn vm_queue_task_after_yield(this: &VirtualMachine, task: *mut crate::cpp_task::CppTask) {
     crate::mark_binding!();
-    this.event_loop_mut()
-        .enqueue_task_after_yield(Task::init(task));
+    this.event_loop().enqueue_task_after_yield(Task::init(task));
 }
 
 /// Off-thread counterpart of [`vm_queue_task`] (`postTaskConcurrently`: the
@@ -188,7 +187,7 @@ pub fn handle_handled_promise(global: &JSGlobalObject, promise: &JSPromise) {
     let promise_js = promise.to_js();
     global
         .bun_vm()
-        .event_loop_mut()
+        .event_loop()
         .enqueue_task(bun_event_loop::Task::from_boxed(Box::new(
             HandledPromiseTask {
                 global_this: global.into(),

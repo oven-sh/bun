@@ -191,6 +191,7 @@ pub(crate) struct RunContents {
     pub names_added: Vec<(BuiltinId, Atom)>,
     pub members_written_as_reads: Arc<[u32]>,
     pub loads: LoadsOfRun,
+    pub test_files: Vec<FileId>,
     pub counts: CountsOfScan,
 }
 
@@ -311,12 +312,15 @@ pub(crate) fn fix_places_on_the_way(builtins: &ResolvedBuiltins, fixed: &FixedBu
 }
 
 pub(crate) fn runs_unseen_code(source: &ParsedSource) -> bool {
-    let names = &source.contents.names;
+    runs_unseen_code_without_require(source)
+        || source.contents.names.loads_by_unknown_path
+        || source.builtins.hands_on_loader_of_paths()
+}
+
+pub(crate) fn runs_unseen_code_without_require(source: &ParsedSource) -> bool {
     source.of_run.runs_unseen_code
         || source.of_run.loads.names_file_with_query.is_some()
-        || names.loads_by_unknown_path
-        || source.builtins.hands_on_loader_of_paths()
-        || !names.files_missing_at_build_at.is_empty()
+        || !source.contents.names.files_missing_at_build_at.is_empty()
         || source.contents.starts_worker_out_of_sight
 }
 
@@ -461,12 +465,14 @@ pub(crate) fn collect_run_contents(
     let started = Instant::now();
     let (files, atoms) = (input.files, &input.files.atoms);
     let texts_written = settle_texts_written(&input, &whose);
+    let listed = find_files_listed_by_runner(&input);
     let mut run = RunContents {
         whose,
         rejects_uncompiled_code,
         members_written_as_reads: list_members_written_as_reads(input.replaced_builtins),
-        preloads: find_files_listed_by_runner(&input).preloads,
+        preloads: listed.preloads,
         loads: collect_loads_of_run(files, input.options),
+        test_files: listed.test_files,
         ..RunContents::default()
     };
     let members = &run.members_written_as_reads;
@@ -586,6 +592,7 @@ pub(crate) struct TestRunPlan {
     pub is_changed_on_disk_by_run: Vec<bool>,
     pub may_be_evicted: Vec<bool>,
     pub is_reloadable: Vec<bool>,
+    pub is_reloadable_commonjs: Vec<bool>,
 }
 
 impl TestRunPlan {
@@ -612,6 +619,11 @@ pub(crate) fn flags_of_module(graph: &ModuleGraph, module: ModuleRef) -> ModuleF
     if TestRunPlan::has(&plan.is_changed_on_disk_by_run, module) && graph.is_code_of_program(module)
     {
         flags |= ModuleFlags::IS_CHANGED_ON_DISK_BY_RUN;
+    }
+    if matches!(module, ModuleRef::File(_))
+        && TestRunPlan::has(&plan.is_reloadable_commonjs, module)
+    {
+        flags |= ModuleFlags::IS_RELOADABLE;
     }
     flags
 }

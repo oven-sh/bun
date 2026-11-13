@@ -400,7 +400,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // the global `Loader` would let user code dereference a non-object
             // and trip JSValue::synthesizePrototype's isSymbol() debug assert.
             JSC::Options::exposeInternalModuleLoader() = false;
-            JSC::Options::useSharedArrayBuffer() = true;
+            JSC::Options::alwaysUseSharedArrayBuffer() = true;
             JSC::Options::useJITCage() = false;
 #if defined(BUN_DISABLE_SHADOW_REALM)
             JSC::Options::useShadowRealm() = false;
@@ -1675,7 +1675,7 @@ JSC_DEFINE_CUSTOM_SETTER(errorConstructorPrepareStackTraceSetter,
 
 // onmessage/onerror are CustomValue properties, so JSC invokes these callbacks
 // with the property receiver as thisValue, which is not necessarily the global
-// object: `new Proxy(globalThis, {}).onmessage = fn` passes the Proxy.
+// object: the global of `vm.createContext(globalThis)` as a Reflect.set receiver.
 static Zig::GlobalObject* globalObjectForEventHandler(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue thisValue)
 {
     if (auto* globalObject = dynamicDowncast<Zig::GlobalObject>(JSValue::decode(thisValue)))
@@ -2621,6 +2621,8 @@ void GlobalObject::finishCreation(VM& vm)
 
     if (Bun::codeGenerationFromStrings() != Bun::CodeGenerationFromStrings::Allowed) [[unlikely]]
         setEvalEnabled(false, Bun::codeGenerationFromStringsDisallowedMessage());
+    if (Bun::isCodeGenerationDisallowedByFlags()) [[unlikely]]
+        JSC::AOT::disallowEvaluation(this);
 
     m_bindgenAdditions.initialize();
     m_markdownTagStrings.initialize();
@@ -4280,7 +4282,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         RETURN_IF_EXCEPTION(scope, {});
 #if ENABLE(AOT)
         if (JSC::AOT::isResolvingImportCallWithoutAttributes(vm)) {
-            Bun::throwIfHeldUnderTypesAlone(globalObject, resolved, keyString, referrerString, false);
+            Bun::throwIfOnlyTyped(globalObject, resolved, keyString, referrerString, false);
             RETURN_IF_EXCEPTION(scope, {});
         }
 #endif

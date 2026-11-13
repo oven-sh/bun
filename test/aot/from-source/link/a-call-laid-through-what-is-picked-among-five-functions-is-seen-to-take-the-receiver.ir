@@ -13,6 +13,6 @@
 # -- end of source
 # L0 = Box. The name is laid through the lost functions themselves: nobody knows on which.
 # RUN(FIELDS): link fields mechanisms=all
-# FIELDS: "count" proven=i32|string
+# FIELDS: "count" proven=int[0, 2147483647]|string
 # RUN(ANSWERS): run-in-shell globalThis.hidden = () => 3;
 # ANSWERS: 21,22,23,own,text5,text,[object Object],string

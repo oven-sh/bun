@@ -101,7 +101,7 @@ impl PipeReader {
     }
 
     pub(crate) fn create(
-        event_loop: NonNull<EventLoop>,
+        event_loop: &EventLoop,
         process: NonNull<Subprocess<'static>>,
         result: StdioResult,
         limit: Option<NonNull<MaxBuf>>,
@@ -110,8 +110,10 @@ impl PipeReader {
             ref_count: RefCount::init(),
             process: Some(ParentRef::from(process)),
             reader: IOReader::init::<PipeReader>(),
-            event_loop: event_loop.into(),
-            event_loop_handle: bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>()),
+            event_loop: bun_ptr::BackRef::new(event_loop),
+            event_loop_handle: bun_jsc::EventLoopHandle::init(
+                core::ptr::from_ref(event_loop).cast_mut().cast(),
+            ),
             stdio_result: result,
             state: State::Pending,
         });
@@ -145,13 +147,14 @@ impl PipeReader {
     pub(crate) fn start(
         &mut self,
         process: NonNull<Subprocess<'static>>,
-        event_loop: NonNull<EventLoop>,
+        event_loop: &EventLoop,
         lazy: bool,
     ) {
         self.r#ref();
         self.process = Some(ParentRef::from(process));
-        self.event_loop = event_loop.into();
-        self.event_loop_handle = bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>());
+        self.event_loop = bun_ptr::BackRef::new(event_loop);
+        self.event_loop_handle =
+            bun_jsc::EventLoopHandle::init(core::ptr::from_ref(event_loop).cast_mut().cast());
         #[cfg(windows)]
         {
             if lazy {
@@ -369,15 +372,7 @@ impl PipeReader {
 
     #[cfg(windows)]
     fn loop_(&self) -> *mut AsyncLoop {
-        // `event_loop.virtual_machine` is set by the time a PipeReader is
-        // created. The VM is the per-thread singleton owning `event_loop`, so
-        // the `BackRef` invariant (pointee outlives holder) trivially holds.
-        let vm = self
-            .event_loop
-            .virtual_machine
-            .map(bun_ptr::BackRef::from)
-            .expect("event_loop.virtual_machine");
-        let uws = vm.uws_loop();
+        let uws = self.event_loop.vm_ref().uws_loop();
         // SAFETY: uws loop pointer is live for the VM lifetime.
         unsafe { (*uws).uv_loop() }
     }

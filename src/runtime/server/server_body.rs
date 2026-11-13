@@ -4,6 +4,7 @@ use core::ptr::NonNull;
 use std::io::Write as _;
 
 use crate::api::js_bundler::PluginJscExt as _;
+use crate::api::standalone_graph_jsc::is_asset;
 use crate::api::{SocketAddress, js_bundler as JSBundler};
 use crate::bake::router as FrameworkRouter;
 use crate::bake::{self as bake};
@@ -884,10 +885,16 @@ impl AnyRoute {
         if let Some(file_route) = FileRoute::from_js(global, argument)? {
             return Ok(Some(AnyRoute::File(file_route)));
         }
-        match StaticRoute::from_js(global, argument)? {
-            Some(s) => Ok(Some(AnyRoute::Static(s))),
-            None => Ok(None),
+        if let Some(s) = StaticRoute::from_js(global, argument)? {
+            return Ok(Some(AnyRoute::Static(s)));
         }
+        // Like a file on disk.
+        let Some(file) = argument.as_class_ref::<Blob>().filter(|it| is_asset(it)) else {
+            return Ok(None);
+        };
+        let file = AnyBlob::Blob(file.dupe());
+        let route = StaticRoute::init_from_any_blob_with_headers(global, file, None, 200)?;
+        Ok(Some(AnyRoute::Static(route)))
     }
 }
 
@@ -1035,7 +1042,7 @@ impl ServePlugins {
             dev_server: None,
         };
 
-        global.bun_vm().event_loop_mut().enter();
+        global.bun_vm().event_loop().enter();
         let result = jsc::host_fn::from_js_host_call(global, || {
             match &self.state {
                 ServePluginsState::Pending { plugin, .. } => plugin.as_ref(),
@@ -1043,7 +1050,7 @@ impl ServePlugins {
             }
             .load_and_resolve_plugins_for_serve(plugin_js_array, bunfig_folder_bunstr)
         })?;
-        global.bun_vm().event_loop_mut().exit();
+        global.bun_vm().event_loop().exit();
 
         // handle the case where js synchronously throws an error
         if let Some(e) = global.try_take_exception() {
@@ -3123,9 +3130,7 @@ where
 
             let error_code_value = JSValue::js_number(error_code as f64);
             let raw_packet_value = ArrayBuffer::create_buffer(&global, raw_packet)?;
-            // SAFETY: event_loop() returns a live raw pointer tied to the global.
-            let _scope =
-                unsafe { jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
+            let _scope = global.bun_vm().enter_event_loop_scope();
             callback.call(
                 &global,
                 JSValue::UNDEFINED,
@@ -3159,9 +3164,7 @@ where
         if node_socket.is_undefined_or_null() {
             return Ok(());
         }
-        // SAFETY: event_loop() returns a live raw pointer tied to the global.
-        let _scope =
-            unsafe { jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
+        let _scope = global.bun_vm().enter_event_loop_scope();
         callback.call(&global, JSValue::UNDEFINED, &[node_socket])?;
         Ok(())
     }

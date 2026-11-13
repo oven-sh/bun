@@ -12,12 +12,29 @@ use crate::ir::{ClassSlot, VariableKey};
 use crate::lower::captures::{CapturedBinding, is_initialized_before};
 use crate::lower::class;
 use crate::lower::scope::analysis::{find_by_key, sort_unique};
+use crate::lower::scope::dead_zone::find_constant_initializer;
 use crate::lower::scope::{
     BindingForm, BindingRef, Initialization, ScopeSlot, WalkedFunctionId, order_by_number,
 };
 use crate::modules::{ExportBinding, ModuleKind};
 
 type Users = SmallVec<[(BindingRef, WalkedFunctionId); 8]>;
+
+fn find_registries(
+    context: &Context<'_, '_>,
+    variables: &[(ScopeId, SymbolId)],
+) -> Vec<(ScopeId, BindingRef)> {
+    let Some(find) = context.input.find_registries else {
+        return Vec::new();
+    };
+    let symbols: Vec<SymbolId> = variables.iter().map(|it| it.1).collect();
+    let answers = find(&symbols);
+    let held = variables.iter().zip(answers).filter(|it| it.1);
+    let held = held.map(|(&(scope, symbol), _)| (scope, BindingRef::Symbol(symbol)));
+    let mut registries: Vec<(ScopeId, BindingRef)> = held.collect();
+    registries.sort_unstable();
+    registries
+}
 
 pub(super) fn compute_sharing(
     context: &Context<'_, '_>,
@@ -28,6 +45,10 @@ pub(super) fn compute_sharing(
     let eval_bindings = uses.eval_uses.iter().map(|eval_use| eval_use.binding);
     let mut seen_by_eval: Vec<BindingRef> = eval_bindings.collect();
     sort_unique(&mut seen_by_eval);
+    let input = context.input;
+    let read_as_members = input.modules.bindings_read_as_members(input.file);
+    let mut read_as_members: Vec<SymbolId> = read_as_members.collect();
+    sort_unique(&mut read_as_members);
     debug_assert!(
         uses.uses.is_sorted(),
         "the users of a binding stand in order"
@@ -40,7 +61,7 @@ pub(super) fn compute_sharing(
     let first_slot = by_binding.partition_point(|entry| matches!(entry.0, BindingRef::Symbol(_)));
     by_binding[first_slot..].sort_unstable();
     let mut sharing = BindingSharing::default();
-    let mut registries = Vec::new();
+    let mut may_hold_registries: Vec<(ScopeId, SymbolId)> = Vec::new();
     for mut run in by_binding.chunk_by(|first, second| first.0 == second.0) {
         let binding = run[0].0;
         let Some(owner) = context.owner_of(binding) else {
@@ -50,7 +71,11 @@ pub(super) fn compute_sharing(
         let is_seen_by_eval =
             !seen_by_eval.is_empty() && seen_by_eval.binary_search(&binding).is_ok();
         let mut readers = Users::new();
-        if !is_exported && !is_seen_by_eval && context.is_holder_without_value(binding) {
+        if !is_exported
+            && !is_seen_by_eval
+            && (context.is_holder_without_value(binding)
+                || is_captured_constant(context, owner, run, &read_as_members))
+        {
             readers.extend_from_slice(run);
             drop_users_behind_initialization(context, owner, &mut readers, &mut sharing);
             run = readers.as_slice();
@@ -72,7 +97,7 @@ pub(super) fn compute_sharing(
                 find_variable_key_between_bodies(context, binding)
             }
             BindingRef::Symbol(_) | BindingRef::Slot(..) => {
-                find_variable_key(context, binding).filter(|_| is_shared)
+                find_variable_key(context, binding, is_seen_by_eval).filter(|_| is_shared)
             }
         };
         if let Some(key) = key {
@@ -80,11 +105,11 @@ pub(super) fn compute_sharing(
             continue;
         }
         let captured = describe_captured_binding(context, binding, owner);
-        match binding {
-            BindingRef::Symbol(symbol) if is_shared && (context.input.holds_registry)(symbol) => {
-                registries.push((captured.scope, binding));
-            }
-            BindingRef::Symbol(_) | BindingRef::Slot(..) => {}
+        if let BindingRef::Symbol(symbol) = binding
+            && is_shared
+            && context.input.find_registries.is_some()
+        {
+            may_hold_registries.push((captured.scope, symbol));
         }
         sharing.captured.push(captured);
         for &(binding, user) in run {
@@ -97,14 +122,19 @@ pub(super) fn compute_sharing(
         let is_used = find_by_key(&sharing.variables[..used_count], binding).is_some();
         if forms[symbol.idx()] == BindingForm::Stored && !is_used {
             sharing.shared.push(binding);
-            let key = symbol_key(context, symbol);
-            sharing.variables.push((binding, key));
+            match context.find_instance_field(symbol) {
+                Some(field) => sharing.instance_fields.push((binding, field)),
+                None => {
+                    let key = symbol_key(context, symbol);
+                    sharing.variables.push((binding, key));
+                }
+            }
         }
     }
     sharing
         .captured
         .sort_unstable_by_key(|captured| captured.binding);
-    registries.sort_unstable();
+    let registries = find_registries(context, &may_hold_registries);
     hold_in_every_closure(context, &registries, &mut sharing.captured_uses);
     sharing.registries = registries;
     sharing.fields_for_eval = collect_fields_for_eval(context, uses, &sharing.captured);
@@ -168,11 +198,14 @@ fn describe_captured_binding(
             precedes_hoisted_functions: false,
         });
     }
+    let is_entered_once_per_instance = context.has_instances
+        && context.is_entered_once_per_instance(context.scope_of(binding))
+        && !matches!(binding, BindingRef::Slot(_, ScopeSlot::ModuleInstance));
     CapturedBinding {
         binding,
-        scope: context.scope_of(binding),
+        scope: context.storage_scope(binding),
         owner,
-        is_immutable,
+        is_immutable: is_immutable && !is_entered_once_per_instance,
         initialization,
     }
 }
@@ -230,6 +263,24 @@ fn find_time_of_only_super_call(context: &Context<'_, '_>, scope: ScopeId) -> Op
         [(_, true)] => find_by_key(times, (scope, ScopeSlot::This)),
         _ => None,
     }
+}
+
+/// `var unit = "day"; C.prototype.get = function () { return this[unit]; };`: a closure made behind the declaration
+/// has the constant itself. A member read names the variable.
+fn is_captured_constant(
+    context: &Context<'_, '_>,
+    owner: WalkedFunctionId,
+    uses: &[(BindingRef, WalkedFunctionId)],
+    read_as_members: &[SymbolId],
+) -> bool {
+    let Some(&(BindingRef::Symbol(symbol), _)) = uses.first() else {
+        return false;
+    };
+    let input = context.input;
+    let decisions = &input.compiled.analysis.decisions;
+    uses.iter().any(|&(_, user)| user != owner)
+        && read_as_members.binary_search(&symbol).is_err()
+        && find_constant_initializer(input.hir, input.bound, decisions, symbol).is_some()
 }
 
 fn drop_users_behind_initialization(
@@ -293,8 +344,17 @@ fn symbol_key(context: &Context<'_, '_>, id: SymbolId) -> VariableKey {
     VariableKey::Symbol(Sym { file, id })
 }
 
-fn find_variable_key(context: &Context<'_, '_>, binding: BindingRef) -> Option<VariableKey> {
-    if !context.is_module_level_scope[context.scope_of(binding).idx()] {
+fn find_variable_key(
+    context: &Context<'_, '_>,
+    binding: BindingRef,
+    is_seen_by_eval: bool,
+) -> Option<VariableKey> {
+    let scope = context.scope_of(binding);
+    if !context.is_module_level_scope[scope.idx()] {
+        return None;
+    }
+    // What a direct eval of an inner module names stands in an environment.
+    if is_seen_by_eval && context.input.bound.code_unit(scope) != CodeUnit::File {
         return None;
     }
     create_variable_key(context, binding)
@@ -340,7 +400,8 @@ fn create_variable_key(context: &Context<'_, '_>, binding: BindingRef) -> Option
             | ScopeSlot::ArgumentsBinding
             | ScopeSlot::WithObject
             | ScopeSlot::EvalVariables
-            | ScopeSlot::ParameterEvalVariables,
+            | ScopeSlot::ParameterEvalVariables
+            | ScopeSlot::ModuleInstance,
         ) => None,
     }
 }
@@ -409,6 +470,7 @@ fn collect_exported_symbols(context: &Context<'_, '_>, forms: &[BindingForm]) ->
             }
         }
     }
+    symbols.extend(input.modules.wrapped().require_function(input.file));
     sort_unique(&mut symbols);
     symbols
 }

@@ -1,5 +1,5 @@
 // Positions that are sums of a counter, behind a test of that counter against a length and a constant.
-// STATISTIC: PositionsShownByTestedTerms >= 300
+// STATISTIC: IndexesProvenByTestedTerms >= 300
 function f0_0_0_0(a, b, c, m) {
   let s = 0;
   for (let i = -1; i < (a.length - 1); i++) {

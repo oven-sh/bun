@@ -19,6 +19,7 @@ use super::expression::is_link_in_brackets;
 use super::{FileLowering, FunctionLowering};
 use crate::ir::generated::QuotedSource;
 use crate::load::hoisted_mocks::is_namespace_of_hoisted_import;
+use crate::load::objects_created_below::{is_created_below, written_name_of_prototype};
 use crate::load::test_runner_names::{skip_to_written_use, written_name_of_local};
 
 #[derive(Default)]
@@ -28,7 +29,13 @@ pub(in crate::lower) struct QuotedSources {
     places_of_patterns: PlacesOfPatterns,
     is_printed: Vec<u64>,
     quoted: Vec<QuotedSource>,
+    quoted_in_parts: Vec<QuotedSource>,
     line: Cell<Option<(usize, usize)>>,
+}
+
+pub(in crate::lower) struct QuotedInPart {
+    text: Vec<u8>,
+    quoted: Vec<QuotedSource>,
 }
 
 impl QuotedSources {
@@ -46,6 +53,22 @@ impl QuotedSources {
         self.places_of_patterns = places_of_patterns;
         (gaps == 0).then_some((start as u32, end as u32))
     }
+}
+
+fn merge_by_position(own: Vec<QuotedSource>, mut of_parts: Vec<QuotedSource>) -> Vec<QuotedSource> {
+    if !of_parts.is_sorted_by_key(|quoted| quoted.position) {
+        of_parts.sort_by_u32(|quoted| quoted.position);
+    }
+    let mut merged = Vec::with_capacity(own.len() + of_parts.len());
+    let mut own = own.into_iter().peekable();
+    for quoted in of_parts {
+        while let Some(before) = own.next_if(|it| it.position <= quoted.position) {
+            merged.push(before);
+        }
+        merged.push(quoted);
+    }
+    merged.extend(own);
+    merged
 }
 
 #[derive(Default)]
@@ -653,6 +676,10 @@ impl Printer<'_, '_, '_, '_, '_> {
                 self.expression(expression, level, around);
                 break;
             };
+            if hir.copied_factory_of(expression).is_some() {
+                expression = right;
+                continue;
+            }
             if let Some(constant) = self.constant_of(expression) {
                 self.constant(constant, level);
                 break;
@@ -945,6 +972,17 @@ impl Printer<'_, '_, '_, '_, '_> {
                 (start, wraps)
             }
             ExprKind::Call(site) => self.call(hir[site], around, level),
+            ExprKind::New(site) if is_created_below(hir, expression) => {
+                let wraps = level >= Level::New || around.forbids_call;
+                if wraps {
+                    self.text.push(b'(');
+                }
+                let start = self.text.len();
+                self.word(b"Object.create(");
+                self.expression(hir[site].callee, Level::Comma, Around::default());
+                self.text.push(b')');
+                (start, wraps)
+            }
             ExprKind::New(site) => {
                 let site = hir[site];
                 let wraps = level >= Level::Call;
@@ -1232,6 +1270,10 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             ExprKind::Cond { .. } => {
                 skip_to_written_use(self.hir, |name| self.queries.atom_bytes(name), written)
             }
+            ExprKind::Dot { .. } => written_name_of_prototype(self.hir, written).unwrap_or(written),
+            ExprKind::Binary { right, .. } if self.hir.copied_factory_of(written).is_some() => {
+                right
+            }
             ExprKind::Binary {
                 op: BinOp::Comma,
                 left,
@@ -1249,6 +1291,9 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         &self,
         expression: ExprId,
     ) -> Option<&'a [u8]> {
+        if !self.inputs.options.runs_tests {
+            return None;
+        }
         let hir = self.hir;
         let written = hir[expression];
         let namespace = match written.kind {
@@ -1329,7 +1374,22 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         !self.inputs.options.obfuscates && self.inputs.options.embeds_function_source
     }
 
+    fn quote_known_evaluation_at(&mut self, position: u32, expression: ExprId) {
+        let (written, own) = (self.hir[expression], &mut self.quoted_sources);
+        let text = &self.hir.text[written.pos as usize..written.end as usize];
+        let start = own.text.len() as u32;
+        own.text.extend_from_slice(text);
+        own.quoted.push(QuotedSource {
+            position,
+            start,
+            end: own.text.len() as u32,
+        });
+    }
+
     fn quote_at(&mut self, position: u32, expression: ExprId) {
+        if self.is_in_known_evaluation(expression) {
+            return self.quote_known_evaluation_at(position, expression);
+        }
         let expression = self.skip_to_written_expression(expression);
         let mut place = self.quoted_sources.places.get(&expression).copied();
         if place.is_none() {
@@ -1417,7 +1477,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         let StmtKind::Var(declarations) = hir[statement].kind else {
             return None;
         };
-        let stands_in_list = match bound.parent_of_stmt(statement) {
+        let is_list_element = match bound.parent_of_stmt(statement) {
             Parent::Stmt(parent) => matches!(hir[parent].kind, StmtKind::Block(_)),
             Parent::FnBody(_) | Parent::File => true,
             _ => false,
@@ -1434,16 +1494,52 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
                     matches!(written.next(), None | Some(b'/'))
                 })
         });
-        (stands_in_list && !may_be_joined && declarations.iter().next() == Some(declaration))
+        (is_list_element && !may_be_joined && declarations.iter().next() == Some(declaration))
             .then_some(start)
+    }
+
+    fn move_out_of_copies(&self, quoted: &mut [QuotedSource]) {
+        if !self.hir.copied_factories.is_empty() {
+            for quoted in quoted {
+                quoted.position = self.hir.written_position(quoted.position);
+            }
+        }
+    }
+
+    pub(in crate::lower) fn take_quoted_in_part(&mut self) -> QuotedInPart {
+        let QuotedSources {
+            text, mut quoted, ..
+        } = core::mem::take(&mut self.quoted_sources);
+        self.move_out_of_copies(&mut quoted);
+        quoted.sort_by_u32(|quoted| quoted.position);
+        QuotedInPart { text, quoted }
+    }
+
+    pub(in crate::lower) fn add_quoted_in_part(&mut self, part: QuotedInPart) {
+        let own = &mut self.quoted_sources;
+        let start = own.text.len() as u32;
+        own.text.extend_from_slice(&part.text);
+        own.quoted_in_parts
+            .extend(part.quoted.into_iter().map(|quoted| QuotedSource {
+                start: quoted.start + start,
+                end: quoted.end + start,
+                ..quoted
+            }));
     }
 
     pub(in crate::lower) fn take_quoted_sources(&mut self) -> (Vec<QuotedSource>, Vec<u8>) {
         let QuotedSources {
-            text, mut quoted, ..
+            text,
+            mut quoted,
+            quoted_in_parts,
+            ..
         } = core::mem::take(&mut self.quoted_sources);
         let text_of = |quoted: &QuotedSource| &text[quoted.start as usize..quoted.end as usize];
+        self.move_out_of_copies(&mut quoted);
         quoted.sort_by_u32(|quoted| quoted.position);
+        if !quoted_in_parts.is_empty() {
+            quoted = merge_by_position(quoted, quoted_in_parts);
+        }
         let mut kept: Vec<QuotedSource> = Vec::with_capacity(quoted.len());
         let mut index = 0;
         while let Some(first) = quoted.get(index) {

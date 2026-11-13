@@ -16,7 +16,11 @@
 # -- end of source
 # The compiler before this one: 27 instructions, 8 of them patches.
 # When the bound was taken: loop: operations 17, patches 2, moves 0, unlikely 15.
-# RUN(X64): loops most:17 f1 mechanisms=all-Inlining
+# Since the string is flattened before the loop the scan has the loops of the same scan without a try: four characters an iteration, then one.
+# A comma counts as a number, as in count-a-character-by-index.ir: no branch stands between two characters.
+# RUN(X64): loops most:37,0,10 f1 mechanisms=all-Inlining
 # REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
 # X64-LABEL: unit f1:Body
-# X64-NEXT: loop: at most 17
+# X64-NEXT: loop: at most 37
+# X64-NEXT: loop: at most 0
+# X64-NEXT: loop: at most 10

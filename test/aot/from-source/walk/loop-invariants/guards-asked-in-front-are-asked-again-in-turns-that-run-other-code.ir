@@ -1,37 +1,38 @@
 # -- source: main.js
+# function Hook(age) { }
 # function Animal(legs) { this.legs = legs; }
-# function Dog(legs, age) { var self = Animal.call(this, legs) || this; self.age = age; return self; }
+# function Dog(legs, age) { var self = Animal.call(this, legs) || this; self.age = age; Hook.touch(age); return self; }
 # Dog.prototype.total = function () { return this.legs + this.age; };
 # var last;
 # function keepsDog(count) { var total = 0; for (var i = 0; i < count; i++) { var made = new Dog(4, i); last = made; total += made.total(); } return total; }
-# publish(Animal, Dog, keepsDog);
+# publish(Hook, Dog, keepsDog);
 # -- end of source
-# Animal is in the hands of code that nobody has seen, so the read of `call` off it is closed, and it stands in every turn. The loop is built twice all the same: a turn of the typed copy runs that code and comes round.
+# Hook is in the hands of code that nobody has seen and has no class, so the read of `touch` off it is closed, and it stands in every turn. The loop is built twice all the same: a turn of the typed copy runs that code and comes round.
 # The front begins the guards of Dog once and asks the guard of `total`. Behind code that nobody has seen that answer holds for no turn, so each turn asks again.
-# f3 = keepsDog, L0 = Dog
-# RUN(TWICE): walk f3 mechanisms=all
-# TWICE-LABEL: code f3:Body
+# f4 = keepsDog, L0 = Dog
+# RUN(TWICE): walk f4 mechanisms=all
+# TWICE-LABEL: code f4:Body
 # TWICE: BeginMemberGuards layout=L0
-# With it the front asks the guards of the stores that a try of the loop saw asked.
-# TWICE-NEXT: = AreMembersUnchanged conditions=[{layout=L0 key="total"}, {kind=MemberPassedByStores layout=L0 key="legs"}, {kind=MemberPassedByStores layout=L0 key="age"}]
+# With it the front may ask what the births and the stores of the turns lean on.
+# TWICE-NEXT: = AreMembersUnchanged conditions=[{layout=L0 key="total"}
 # TWICE: ) isInLoop=true isLoopHead=true:
 # TWICE-NOT: BeginMemberGuards
-# TWICE: = PropGet {{*}} key="call"
+# TWICE: = PropGet {{*}} key="touch"
 # TWICE: = AreMembersUnchanged conditions=[{layout=L0 key="total"}]
-# Code that nobody has seen calls keepsDog, so its own body runs. In the third turn the getter behind `call` takes away what a guard stands for.
-# RUN(ANSWERS): run-in-shell globalThis.publish = (Animal, Dog, keepsDog) => { let reads = 0; Object.defineProperty(Animal, "call", { get() { if (++reads == 3) {  } return Function.prototype.call; } }); print(keepsDog(5)); print(keepsDog(5)); };
+# Code that nobody has seen calls keepsDog, so its own body runs. In the third turn the getter behind `touch` takes away what a guard stands for.
+# RUN(ANSWERS): run-in-shell globalThis.publish = (Hook, Dog, keepsDog) => { let reads = 0; Object.defineProperty(Hook, "touch", { get() { if (++reads == 3) {  } return Math.abs; } }); print(keepsDog(5)); print(keepsDog(5)); };
 # ANSWERS: 30
 # ANSWERS-NEXT: 30
 # ANSWERS-NEXT: exited with 0
-# RUN(METHOD): run-in-shell globalThis.publish = (Animal, Dog, keepsDog) => { let reads = 0; Object.defineProperty(Animal, "call", { get() { if (++reads == 3) { Dog.prototype.total = function () { return 1000; }; } return Function.prototype.call; } }); print(keepsDog(5)); print(keepsDog(5)); };
+# RUN(METHOD): run-in-shell globalThis.publish = (Hook, Dog, keepsDog) => { let reads = 0; Object.defineProperty(Hook, "touch", { get() { if (++reads == 3) { Dog.prototype.total = function () { return 1000; }; } return Math.abs; } }); print(keepsDog(5)); print(keepsDog(5)); };
 # METHOD: 3009
 # METHOD-NEXT: 5000
 # METHOD-NEXT: exited with 0
-# RUN(PROTOTYPE): run-in-shell globalThis.publish = (Animal, Dog, keepsDog) => { let reads = 0; Object.defineProperty(Animal, "call", { get() { if (++reads == 3) { Dog.prototype = { total() { return 1000; } }; } return Function.prototype.call; } }); print(keepsDog(5)); print(keepsDog(5)); };
+# RUN(PROTOTYPE): run-in-shell globalThis.publish = (Hook, Dog, keepsDog) => { let reads = 0; Object.defineProperty(Hook, "touch", { get() { if (++reads == 3) { Dog.prototype = { total() { return 1000; } }; } return Math.abs; } }); print(keepsDog(5)); print(keepsDog(5)); };
 # PROTOTYPE: 2015
 # PROTOTYPE-NEXT: 5000
 # PROTOTYPE-NEXT: exited with 0
-# RUN(SETTER): run-in-shell globalThis.publish = (Animal, Dog, keepsDog) => { let reads = 0; Object.defineProperty(Animal, "call", { get() { if (++reads == 3) { Object.defineProperty(Dog.prototype, "legs", { set(value) { }, get() { return 500; } }); } return Function.prototype.call; } }); print(keepsDog(5)); print(keepsDog(5)); };
-# SETTER: 1518
+# RUN(SETTER): run-in-shell globalThis.publish = (Hook, Dog, keepsDog) => { let reads = 0; Object.defineProperty(Hook, "touch", { get() { if (++reads == 3) { Object.defineProperty(Dog.prototype, "legs", { set(value) { }, get() { return 500; } }); } return Math.abs; } }); print(keepsDog(5)); print(keepsDog(5)); };
+# SETTER: 1022
 # SETTER-NEXT: 2510
 # SETTER-NEXT: exited with 0

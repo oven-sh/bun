@@ -6,4 +6,5 @@
 # sink(Row, sumInLoop, new (Row as any)(1));
 # -- end of source
 # RUN: walk f2 mechanisms=all
-# CHECK: = GetSlotOrUndefined {{*}}key="mark" receivers=[L0] level=Expected
+# CHECK: = GetSlot {{*}}key="mark" receivers=[L0] level=Expected
+# CHECK: = IsSlotFilled {{*}}key="mark" receivers=[L0] level=Proven

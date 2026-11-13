@@ -320,7 +320,7 @@ impl Debugger {
             if wait == Wait::Off {
                 break;
             }
-            this.event_loop_mut().tick();
+            this.event_loop().tick();
             // Re-read after `tick()` — `Debugger__didConnect` may have flipped it.
             let wait = match this.debugger.as_deref() {
                 Some(d) => d.wait_for_connection,
@@ -328,7 +328,7 @@ impl Debugger {
             };
             match wait {
                 Wait::Forever => {
-                    this.event_loop_mut().auto_tick_active();
+                    this.event_loop().auto_tick_active();
 
                     if bun_core::Environment::ENABLE_LOGS {
                         bun_core::scoped_log!(
@@ -440,7 +440,7 @@ impl Debugger {
                 .map_err(|_| crate::CrateError::ThreadSpawnFailed)?;
             // The `JoinHandle` is dropped here, detaching the thread.
         }
-        this_ref.event_loop_mut().ensure_waker();
+        this_ref.event_loop().ensure_waker();
 
         // Re-borrow after `ensure_waker` (which may touch `*this`).
         let dbg = this_ref.debugger_mut().unwrap();
@@ -480,7 +480,7 @@ impl Debugger {
         // `init` installs the freshly-boxed VM as this thread's singleton.
         let vm = VirtualMachine::get().as_mut();
         vm.is_main_thread = false;
-        vm.event_loop_mut().ensure_waker();
+        vm.event_loop().ensure_waker();
 
         extern "C" fn start_trampoline(ctx: *mut c_void) {
             // SAFETY: `ctx` is `&mut slot` below; `hold_api_lock` calls this
@@ -543,8 +543,8 @@ impl Debugger {
         debuggee.wake();
         // `vm.event_loop` may have flipped between `regular_event_loop` and
         // `macro_event_loop` inside the re-entrant JS above;
-        // `event_loop_mut()` re-reads the slot.
-        this.event_loop_mut().tick();
+        // `event_loop()` re-reads the slot.
+        this.event_loop().tick();
         debuggee.wake();
 
         loop {
@@ -553,9 +553,9 @@ impl Debugger {
             // call `VirtualMachine::get()` without aliasing.
             while this.is_event_loop_alive() {
                 this.as_mut().tick();
-                this.event_loop_mut().auto_tick_active();
+                this.event_loop().auto_tick_active();
             }
-            this.event_loop_mut().tick_possibly_forever();
+            this.event_loop().tick_possibly_forever();
         }
     }
 }
@@ -675,7 +675,7 @@ pub fn did_connect() {
     if dbg.wait_for_connection != Wait::Off {
         dbg.wait_for_connection = Wait::Off;
         dbg.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
-        this.event_loop_mut().wakeup();
+        this.event_loop().wakeup();
     }
 }
 

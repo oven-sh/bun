@@ -1,5 +1,5 @@
 // Loops under written bounds store into lists of every kind: too short, with holes, frozen, the list that is read, a list whose kind the store changes. The length is asked once for all turns that are written out.
-// STATISTIC: LengthsAskedForUnrolledTurns >= 100
+// STATISTIC: UnrolledIterationLengthChecks >= 100
 // STATISTIC: ArrayBoundsChecksHoisted >= 100
 const log = [];
 let seen = 0;

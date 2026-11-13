@@ -27,6 +27,7 @@ use crate::builtins::RuntimeModule::{
 use crate::builtins::{BuiltinId, Mutability, Resolved};
 use crate::compile::testing::{BUNDLED_LIBS, TestProject, default_settings, run_build};
 use crate::compile::{Build, LoadedBuild};
+use crate::ir::run_serially;
 use crate::load::ProjectId;
 use crate::load::source_provider::{
     DataFailure, DeferredLoad, Failed, LoadRequest, Loaded, ModuleName, Resolution, ResolveRequest,
@@ -656,6 +657,49 @@ fn build_outside_the_root_directory_looks_from_the_working_directory_first() {
                 "{given} beside {on_disk:?}"
             );
             assert_found_follow_written(loaded, 1);
+        });
+    }
+}
+
+#[test]
+fn name_like_text_leads_only_to_root_directory_files() {
+    let rows: [(&str, &[&str], &[&str], &str); 8] = [
+        ("./w.ts", &["src/w.ts"], &["w.ts"], ""),
+        ("./w.ts", &["w.ts"], &[], "w.ts (named \"./w.ts\" at "),
+        ("./w.ts", &["w.ts", "src/w.ts"], &["w.ts"], ""),
+        ("./src/w.ts", &["src/w.ts"], &["w.ts"], ""),
+        ("../w.ts", &["w.ts"], &[], "w.ts (named \"../w.ts\" at "),
+        ("../src/w.ts", &["src/w.ts"], &["w.ts"], ""),
+        (
+            "./lib/w.ts",
+            &["lib/w.ts"],
+            &[],
+            "lib/w.ts (named \"./lib/w.ts\" at ",
+        ),
+        ("./absent.ts", &["w.ts", "src/w.ts"], &[], ""),
+    ];
+    for (text, on_disk, found, left_out) in rows {
+        let main = format!("import {{ start }} from \"./pool.ts\";\nstart(\"{text}\");\n");
+        let pool = "export const start = (entry: string) => new Worker(entry);\n";
+        let mut files = vec![("src/main.ts", &main[..]), ("src/pool.ts", pool)];
+        files.extend(on_disk.iter().map(|&file| (file, WORKER)));
+        let mut project = executable(&files);
+        project.root_directory = Some(b"/project/src");
+        load_from(&project, &EmbedsFiles, |build, loaded| {
+            let expected = found.iter().map(|name| format!("{name} MayStartWorker"));
+            assert_eq!(
+                describe_found(&loaded.contents.found_entry_points),
+                expected.collect::<Vec<String>>(),
+                "{text} beside {on_disk:?}"
+            );
+            let said = &build.started_workers.names_left_out;
+            assert_eq!(
+                said.is_empty(),
+                left_out.is_empty(),
+                "{text} beside {on_disk:?}"
+            );
+            let said = BStr::new(said).to_string();
+            assert!(said.contains(left_out), "{text} beside {on_disk:?}: {said}");
         });
     }
 }
@@ -1656,7 +1700,7 @@ fn file_found_for_a_load_is_read_as_that_load_reads_it() {
                 ("setup.cjs", NO_KIND),
             ],
             "setup.cjs",
-            Esm,
+            CommonJs,
         ),
         (
             &[
@@ -2030,7 +2074,7 @@ fn name_known_in_part_brings_no_library_module() {
             assert!(!holds_library_module(loaded, BunWrap), "{name}");
             assert_eq!(found.written_as_values, [NodeDgram], "{name}");
             assert_eq!(found.loads_by_unknown_name, fits, "{name}");
-            let held = find_library_modules_that_unknown_names_may_stand_for(files);
+            let held = find_library_modules_that_unknown_names_may_stand_for(files, &run_serially);
             assert_eq!(held.contains(&NodeDgram), fits, "{name}");
             assert!(!fits || holds_library_module(loaded, NodeDgram), "{name}");
             assert!(found.loads_by_unknown_path, "{name}");
@@ -2125,7 +2169,7 @@ export const os = { os: 1 }.os;"#;
             written.sort_unstable_by_key(|module| module.registry_id());
             let names = &contents_of(files, "writes.ts").names;
             assert_eq!(names.written_as_values, written);
-            let held = find_library_modules_that_unknown_names_may_stand_for(files);
+            let held = find_library_modules_that_unknown_names_may_stand_for(files, &run_serially);
             for module in written {
                 assert_eq!(held.contains(&module), are_held, "{module:?}");
                 assert!(
@@ -2162,7 +2206,7 @@ export interface Told { "node:http2": 9 }"#;
             let names = &contents_of(files, "writes.ts").names;
             assert_eq!(names.written_as_keys, written);
             assert!(names.written_as_values.is_empty());
-            let held = find_library_modules_that_unknown_names_may_stand_for(files);
+            let held = find_library_modules_that_unknown_names_may_stand_for(files, &run_serially);
             for module in written {
                 assert_eq!(held.contains(&module), are_held, "{module:?}");
                 assert!(
@@ -2220,7 +2264,10 @@ console.log(createRequire(import.meta.url)(names.list[JSON.parse("1")]));"#;
                     .all(|&module| holds_library_module(loaded, module))
             );
             assert!(holds_library_module(loaded, NodeVm));
-            let held = find_library_modules_that_unknown_names_may_stand_for(files_of(loaded));
+            let held = find_library_modules_that_unknown_names_may_stand_for(
+                files_of(loaded),
+                &run_serially,
+            );
             assert!(held.contains(&NodeVm) && !held.contains(&NodeDgram));
         },
     );

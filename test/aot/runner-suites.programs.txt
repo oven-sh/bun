@@ -39,8 +39,6 @@ test/js/bun/resolve/resolve.test.ts: TypeScript extension rewrite matrix > `.mjs
 test/js/bun/resolve/resolve.test.ts: TypeScript extension rewrite matrix > `dep/c` inside node_modules resolves to null
 test/js/bun/resolve/resolve.test.ts: TypeScript extension rewrite matrix > `dep/m` inside node_modules resolves to null
 test/js/bun/resolve/resolve.test.ts: TypeScript extension rewrite matrix > an exact target with no extension is not probed
-# These tests make their temporary folders below an empty node_modules folder, where Bun installs nothing: there `bun run` says "Cannot find package" too. Without that folder the compiled program says what `bun run` says.
-test/js/bun/resolve/resolve.test.ts: auto-install init failure from an unreadable cwd is a catchable error
 test/js/bun/resolve/resolve.test.ts: can resolve with source directories that do not exist
 test/js/bun/resolve/resolve.test.ts: file url in await import resolves
 test/js/bun/resolve/resolve.test.ts: file url in import resolves
@@ -386,8 +384,6 @@ test/bundler/bundler_compile_splitting.test.ts: bundler > compile with splitting
 test/bundler/bundler_compile_splitting.test.ts: bundler > compile with splitting > compile/splitting/ReExportExternalFromSplitChunk
 test/bundler/bundler_compile_splitting.test.ts: bundler > compile with splitting > compile/splitting/ReExportExternalFromSplitChunk+minify
 ~ test/bundler/bundler_edgecase.test.ts: bundler > edgecase/AwsCdkLib
-~ test/bundler/bundler_html_server.test.ts: bundler > compile/api/HTMLServerMultipleRoutes
-~ test/bundler/bundler_html_server.test.ts: bundler > compile/cli/HTMLServerMultipleRoutes
 test/bundler/compile-argv.test.ts: bundler > compile/CompileExecArgvDisallowCodeGenerationFromStrings
 test/bundler/compile-argv.test.ts: bundler > compile/CompileExecArgvDisallowCodeGenerationFromStringsBunOptionsCannotLower
 test/bundler/compile-argv.test.ts: bundler > compile/CompileExecArgvDisallowCodeGenerationFromStringsQuotedBunOptionsCannotLower
@@ -398,7 +394,6 @@ test/bundler/compile-asset-bunfs.test.ts: compile --asset and /$bunfs/ directory
 # A trimmed executable whose program cannot be read has no command line to go on with, and says that it is damaged: a-truncated-executable-says-so.test.ts holds that.
 trims test/bundler/compile-corrupted-embed.test.ts: a truncated standalone executable says so unless part of the payload's last page is left
 trims test/bundler/compile-corrupted-embed.test.ts: doesn't crash at startup when the graph length or address points outside mapped memory
-~ test/bundler/compile-asset-streams.test.ts: files embedded with --asset --aot > are served in ranges
 test/bundler/compile-node-compile-cache.test.ts: NODE_COMPILE_CACHE is ignored by compiled executables and honored by bun
 test/bundler/compile-sourcemap-internal.test.ts: compile --sourcemap remaps stack frames to original line:col
 # fake-timers.test.ts. `delete Date.prototype.constructor` throws in an executable: built-in objects are read-only, as docs/compiler/compatibility.mdx says.

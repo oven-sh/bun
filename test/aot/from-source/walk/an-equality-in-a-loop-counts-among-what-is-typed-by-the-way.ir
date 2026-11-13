@@ -9,4 +9,8 @@
 # -- end of source
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
-# CHECK: TypeTest {{*}} testedType=undefined|null
+# The loop starts at what its rows say comes round. In the typed copy `top` is an object, so the equality compares bits.
+# CHECK: = ShapeTest v1
+# CHECK: isInLoop=true isLoopHead=true:
+# CHECK: = ShapeTest {{*}}layouts=[L0, L1]
+# CHECK: = StrictEq {{*}}form=Bits

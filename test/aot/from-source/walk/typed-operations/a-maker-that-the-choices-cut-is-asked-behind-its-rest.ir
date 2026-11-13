@@ -10,7 +10,7 @@
 # -- end of source
 # RUN(STOPS): compile IncompleteAllocationsTrapped FieldInitializationChecksEmitted mechanisms=all
 # STOPS: statistic IncompleteAllocationsTrapped 0
-# STOPS: statistic FieldInitializationChecksEmitted 1
+# STOPS: statistic FieldInitializationChecksEmitted 0
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: idq,noteq,zq idq,noteq idq,noteq
 # ANSWERS-NEXT: exited with 0

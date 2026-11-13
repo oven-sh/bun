@@ -6,16 +6,21 @@
 # PLAIN-NOT: GreaterEqual
 # PLAIN-NOT: Opaque
 # RUN(POSITIONS): emit f1:Body mechanisms=all testing=CheckBoundsAtRunTime
-# POSITIONS: GreaterEqual
-# POSITIONS: Opaque
+# POSITIONS: = ZExt32({{*}}ExtendsWordThatIsNotNegative
+# POSITIONS-NEXT: Int64 @[[anew]] = Opaque(
+# POSITIONS: = Load(@[[anew]], {{*}}JSArrayBufferView_vector
+# POSITIONS: = Load(@[[anew]], {{*}}JSArrayBufferView_length
+# POSITIONS-NEXT: = Below(
 # RUN(PROOFS): emit f1:Body mechanisms=all testing=CheckProofsAtRunTime
 # PROOFS: GreaterEqual
 # PROOFS: Opaque
 # RUN(STORE): emit f2:Body mechanisms=all
 # STORE-NOT: GreaterEqual
 # RUN(STOREPOSITIONS): emit f2:Body mechanisms=all testing=CheckBoundsAtRunTime
-# STOREPOSITIONS: GreaterEqual
-# STOREPOSITIONS: Opaque
+# STOREPOSITIONS: Int64 @[[anew]] = Opaque(
+# STOREPOSITIONS: = Load(@[[anew]], {{*}}JSArrayBufferView_vector
+# STOREPOSITIONS: = Load(@[[anew]], {{*}}JSArrayBufferView_length
+# STOREPOSITIONS-NEXT: = Below(
 # RUN(BYTES): emit f3:Body mechanisms=all
 # BYTES-NOT: GreaterEqual
 # RUN(BYTESPOSITIONS): emit f3:Body mechanisms=all testing=CheckBoundsAtRunTime

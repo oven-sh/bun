@@ -1,0 +1,12 @@
+# -- source: masked-locals-keep-their-ranges-round-loops.ts
+# declare function sink(value: unknown): void;
+# function run(memory: Uint8Array, steps: number): number {
+#   let pc = 0, sp = 255;
+#   for (let i = 0; i < steps; i++) { pc = (pc + memory[pc & 255]) & 0xffff; if (pc & 1) sp = (sp - 1) & 255; }
+#   return pc + sp;
+# }
+# sink(run(new Uint8Array(256), 100)); sink(run(new Uint8Array(256), 5));
+# -- end of source
+# Both locals come round masked, so the loop's head begins with the ranges that the masks leave, and the sum of both behind the loop is a small integer.
+# RUN: walk f1 mechanisms=all
+# CHECK: (v{{*}}: int[0, 65535] @Int32, v{{*}}: int[0, 255] @Int32, {{*}} isLoopHead=true

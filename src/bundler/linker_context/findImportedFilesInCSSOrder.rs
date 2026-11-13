@@ -85,9 +85,9 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
     let _ = temp_arena;
 
     struct Visitor<'v, 'a> {
-        arena: &'v Arena,
+        arena: &'a Arena,
         // `BundledAst.css` SoA column.
-        css_asts: &'v [crate::bundled_ast::CssCol],
+        css_asts: &'v [crate::bundled_ast::CssCol<'a>],
         all_import_records: &'v [bun_ast::import_record::List<'a>],
         parse_graph: &'v Graph<'a>,
 
@@ -112,7 +112,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         fn push_entry(
             &mut self,
             kind: CssImportOrderKind<'a>,
-            wrapping_conditions: &Vec<ImportConditions>,
+            wrapping_conditions: &Vec<ImportConditions<'a>>,
         ) {
             self.order.push(CssImportOrder {
                 kind,
@@ -125,7 +125,10 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         }
 
         /// An import that loads no style sheet still adds its layer to the layer order.
-        fn push_layers_of_unloaded_import(&mut self, wrapping_conditions: &Vec<ImportConditions>) {
+        fn push_layers_of_unloaded_import(
+            &mut self,
+            wrapping_conditions: &Vec<ImportConditions<'a>>,
+        ) {
             if wrapping_conditions.iter().any(|c| c.layer.is_some()) {
                 self.push_entry(
                     CssImportOrderKind::Layers(Layers::Owned(Vec::new())),
@@ -136,7 +139,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
 
         /// The external import is hoisted out of the anonymous layer that its
         /// neighbours share, so something else must hold the place of its sublayer.
-        fn push_sublayer_of_external_import(&mut self, conditions: &Vec<ImportConditions>) {
+        fn push_sublayer_of_external_import(&mut self, conditions: &Vec<ImportConditions<'a>>) {
             let names_a_sublayer = conditions
                 .iter()
                 .skip_while(|c| !c.has_anonymous_layer())
@@ -153,8 +156,8 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         /// is the same rule or its conditions look the same.
         fn append_conditions(
             &mut self,
-            conditions: &mut Vec<ImportConditions>,
-            import_rule: &ImportRule,
+            conditions: &mut Vec<ImportConditions<'a>>,
+            import_rule: &ImportRule<'a>,
         ) {
             // SAFETY: never dropped (see the note at `bitwise_copy`).
             let mut appended = unsafe { bitwise_copy(&import_rule.conditions) };
@@ -172,7 +175,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             &mut self,
             importer: Index,
             record: &ImportRecord<'a>,
-            wrapping_conditions: &mut Vec<ImportConditions>,
+            wrapping_conditions: &mut Vec<ImportConditions<'a>>,
             wrapping_import_records: &mut Vec<ImportRecord<'a>>,
         ) -> bool {
             if !self.stack_check.is_safe_to_recurse() {
@@ -194,7 +197,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         fn visit(
             &mut self,
             source_index: Index,
-            wrapping_conditions: &mut Vec<ImportConditions>,
+            wrapping_conditions: &mut Vec<ImportConditions<'a>>,
             wrapping_import_records: &mut Vec<ImportRecord<'a>>,
         ) {
             debug!(
@@ -541,13 +544,13 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
     // forward instead of backward because "@layer" takes effect at the first
     // copy instead of the last copy like other things in CSS.
     {
-        struct DuplicateEntry {
+        struct DuplicateEntry<'a> {
             // Lifetime-erased slice header — borrows either
             // `css_asts[..].layer_names` or `Layers::inner()`.
             // `RawSlice` (vs raw `*const [_]`) so reads go through safe
             // `.slice()` under the back-reference invariant: the borrowed
             // storage (`css_asts` arena / `Layers` Vec) outlives this loop.
-            layers: bun_ptr::RawSlice<LayerName>,
+            layers: bun_ptr::RawSlice<LayerName<'a>>,
             indices: Vec<u32>,
         }
         let mut layer_duplicates: Vec<DuplicateEntry> = Vec::new();
@@ -840,7 +843,10 @@ impl CssImportChainTooDeep {
 /// one extra slot for the single `append_assume_capacity` each call site
 /// performs, so the header never reallocates.
 #[inline]
-fn fork_conditions(list: &Vec<ImportConditions>, arena: &Arena) -> Vec<ImportConditions> {
+fn fork_conditions<'a>(
+    list: &Vec<ImportConditions<'a>>,
+    arena: &'a Arena,
+) -> Vec<ImportConditions<'a>> {
     let cap = list.len() as usize + 1;
     let slab = arena.alloc_uninit_slice::<ImportConditions>(cap);
     for (dst, src) in slab.iter_mut().zip(list.slice_const()) {
@@ -881,7 +887,10 @@ fn layer_lists_are_equal(a: &[LayerName], b: &[LayerName]) -> bool {
 }
 
 /// Whether two import orders print the same CSS. `CssImportOrder::hash` is not enough to tell.
-pub(crate) fn css_import_orders_are_equal(a: &[CssImportOrder], b: &[CssImportOrder]) -> bool {
+pub(crate) fn css_import_orders_are_equal<'a>(
+    a: &[CssImportOrder<'a>],
+    b: &[CssImportOrder<'a>],
+) -> bool {
     a.len() == b.len()
         && a.iter().zip(b).all(|(a, b)| {
             import_conditions_are_equal(a.conditions.slice_const(), b.conditions.slice_const())
@@ -916,7 +925,7 @@ fn prints_as_layer_statement(no_names: bool, conditions: &[ImportConditions]) ->
 }
 
 /// Whether an earlier entry is the same import under the same conditions.
-fn has_earlier_copy(earlier: &[CssImportOrder], import: &CssImportOrder) -> bool {
+fn has_earlier_copy<'a>(earlier: &[CssImportOrder<'a>], import: &CssImportOrder<'a>) -> bool {
     earlier.iter().any(|e| {
         css_import_orders_are_equal(core::slice::from_ref(e), core::slice::from_ref(import))
     })
@@ -934,7 +943,7 @@ fn can_mask_external_import(earlier: &[CssImportOrder], import: &CssImportOrder)
     prints_as_layer_statement(true, conditions) && !earlier.iter().any(is_external)
 }
 
-fn import_conditions_are_equal(a: &[ImportConditions], b: &[ImportConditions]) -> bool {
+fn import_conditions_are_equal<'a>(a: &[ImportConditions<'a>], b: &[ImportConditions<'a>]) -> bool {
     if a.len() != b.len() {
         return false;
     }
@@ -980,9 +989,9 @@ fn import_conditions_are_equal(a: &[ImportConditions], b: &[ImportConditions]) -
 ///
 /// A "@layer" condition that only the earlier one has means the two apply in
 /// different layers, so neither can stand for the other.
-fn is_conditional_import_redundant(
-    earlier: &Vec<ImportConditions>,
-    later: &Vec<ImportConditions>,
+fn is_conditional_import_redundant<'a>(
+    earlier: &Vec<ImportConditions<'a>>,
+    later: &Vec<ImportConditions<'a>>,
 ) -> bool {
     if later.len() > earlier.len() {
         return false;
@@ -1065,7 +1074,11 @@ impl CssOrderDebugStep {
     }
 }
 
-fn debug_css_order(this: &LinkerContext, order: &Vec<CssImportOrder>, step: CssOrderDebugStep) {
+fn debug_css_order<'a>(
+    this: &LinkerContext<'a>,
+    order: &Vec<CssImportOrder<'a>>,
+    step: CssOrderDebugStep,
+) {
     // `step` is a runtime param; this path is debug-only.
     #[cfg(debug_assertions)]
     {
@@ -1089,9 +1102,9 @@ fn debug_css_order(this: &LinkerContext, order: &Vec<CssImportOrder>, step: CssO
 }
 
 #[cfg(debug_assertions)]
-fn debug_css_order_impl(
-    this: &LinkerContext,
-    order: &Vec<CssImportOrder>,
+fn debug_css_order_impl<'a>(
+    this: &LinkerContext<'a>,
+    order: &Vec<CssImportOrder<'a>>,
     step: CssOrderDebugStep,
 ) {
     use crate::bun_css::{ImportInfo, LocalsResultsMap, Printer, PrinterOptions};

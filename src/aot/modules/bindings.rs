@@ -33,9 +33,13 @@ pub struct CopiedExports {
     pub written: ExprId,
     pub shows: ShownNames,
     pub passes_marked_answer_on: bool,
+    /// `{ default: answer }` in place of an answer without the marker, which is a function where its module has ended.
+    pub wraps_unmarked_answer: bool,
     pub runs_once: bool,
     pub is_of_ordinary_object: bool,
     pub has_marker: bool,
+    pub passes_over_marker: bool,
+    pub reads_own_default: bool,
     pub may_hold_answer: bool,
     pub is_looked_at: bool,
     pub is_called_through: bool,
@@ -50,6 +54,7 @@ pub struct AnswerMember {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct AccessedModule {
     pub module: ModuleRef,
+    pub name: Atom,
     pub is_imported: bool,
 }
 

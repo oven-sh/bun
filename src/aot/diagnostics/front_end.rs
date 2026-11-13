@@ -41,6 +41,7 @@ impl Diagnostics {
         self.add_build_diagnostics(Stage::Load, failure.diagnostics);
     }
 
+    /// One warning for each package. Returns the number of files that have an error.
     pub(crate) fn add_dependency_type_errors(&mut self, errors: &[BuildDiagnostic]) -> usize {
         let mut places: Vec<(&[u8], &[u8])> = errors
             .iter()
@@ -374,7 +375,7 @@ fn commonjs_notes(
     notes
 }
 
-fn module_name<'a>(view: ProgramView<'a, '_>, module: ModuleRef) -> &'a [u8] {
+pub(crate) fn module_name<'a>(view: ProgramView<'a, '_>, module: ModuleRef) -> &'a [u8] {
     match module {
         ModuleRef::File(file)
         | ModuleRef::Inner { file, .. }

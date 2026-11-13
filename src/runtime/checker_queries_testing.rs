@@ -121,6 +121,7 @@ pub(crate) fn describe_checker_queries(
         progress: None,
         left_out_bodies: None,
         discards_first_visits: false,
+        order: 1,
     };
 
     let loaded = match load_program(&session, &host, &request) {

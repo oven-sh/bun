@@ -300,12 +300,11 @@ pub(crate) fn spawn_sync(
         && let Some(runner) = crate::test_runner::jest::Jest::runner()
         && let Some(active_file) = runner.bun_test_root.active_file.clone()
     {
-        let vm = cx.vm().as_mut();
-        runner.remove_active_timeout(vm);
+        runner.remove_active_timeout();
         crate::test_runner::bun_test::BunTest::bun_test_timeout_callback(
             &active_file,
             &deadline,
-            vm,
+            cx.vm(),
         );
         if cx.global().has_exception() {
             return Ok(JSValue::ZERO);
@@ -1074,16 +1073,14 @@ fn spawn_maybe_sync(
     // For is_sync, use the isolated loop's `event_loop` (created by
     // `SpawnSyncEventLoop::init`) so stdio readers/writers register on it
     // instead of the main loop.
-    let event_loop: *mut jsc::event_loop::EventLoop = match &sync_loop {
-        // `SpawnSyncEventLoop.event_loop` is type-erased to `*mut ()`
-        // (bun_event_loop is below bun_jsc).
-        Some(sync_loop) => sync_loop
-            .event_loop_ptr()
-            .cast::<jsc::event_loop::EventLoop>(),
-        None => jsc_vm.event_loop(),
+    let event_loop_ptr = match &sync_loop {
+        Some(sync_loop) => sync_loop.event_loop_ptr(),
+        None => jsc_vm.event_loop_ptr(),
     };
+    // SAFETY: both erase a `jsc::EventLoop` that the VM owns (bun_event_loop is below bun_jsc).
+    let event_loop = unsafe { &*event_loop_ptr.cast::<jsc::event_loop::EventLoop>() };
 
-    let loop_handle = EventLoopHandle::init(event_loop.cast::<()>());
+    let loop_handle = EventLoopHandle::init(event_loop_ptr);
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     let cgroup_dir = match &cgroup {
@@ -1156,6 +1153,7 @@ fn spawn_maybe_sync(
         ..Default::default()
     };
 
+    crate::node::fs::note_process_start();
     // SAFETY: `argv`/`env_array` are local null-terminated C-string arrays
     // with argv[0] non-null; valid for this call.
     let mut spawned = match unsafe {
@@ -1315,9 +1313,9 @@ fn spawn_maybe_sync(
         abort_handle: bun_jsc::AbortHandle::for_owner::<SubprocessT<'static>>(),
         context: cx.context().id(),
         event_loop_timer_refd: Cell::new(false),
-        event_loop_timer: JsCell::new(crate::timer::EventLoopTimer::init_paused(
+        event_loop_timer: crate::timer::EventLoopTimer::init_paused(
             crate::timer::EventLoopTimerTag::SubprocessTimeout,
-        )),
+        ),
         exited_due_to_maxbuf: Cell::new(None),
     }));
     // SAFETY: subprocess_ptr is a freshly-boxed Subprocess; we hold the only reference.
@@ -1358,8 +1356,7 @@ fn spawn_maybe_sync(
 
     match Writable::init(
         &mut stdio[0],
-        // SAFETY: event_loop points to the live JSC EventLoop for this thread.
-        unsafe { &*event_loop },
+        event_loop,
         subprocess,
         spawned_stdin,
         &mut promise_for_stream,
@@ -1429,11 +1426,9 @@ fn spawn_maybe_sync(
         }
     }
 
-    // event_loop points to the live JSC EventLoop for this thread.
-    let event_loop_nn = NonNull::new(event_loop).expect("event_loop is null");
     subprocess.stdout.set(Readable::init(
         core::mem::replace(&mut stdio[1], Stdio::Ignore),
-        event_loop_nn,
+        event_loop,
         subprocess_nn,
         spawned_stdout,
         subprocess.stdout_maxbuf.get(),
@@ -1441,7 +1436,7 @@ fn spawn_maybe_sync(
     ));
     subprocess.stderr.set(Readable::init(
         core::mem::replace(&mut stdio[2], Stdio::Ignore),
-        event_loop_nn,
+        event_loop,
         subprocess_nn,
         spawned_stderr,
         subprocess.stderr_maxbuf.get(),
@@ -1601,28 +1596,14 @@ fn spawn_maybe_sync(
         // registered before onProcessExit can potentially be called.
         if let Some(timeout_val) = timeout {
             let ts = Timespec::ms_from_now(TimespecMockMode::ForceRealTime, i64::from(timeout_val));
-            // Note: `EventLoopTimer.next` is a local-stub Timespec until
-            // `bun_event_loop` switches to `bun_core::Timespec`; copy fieldwise.
-            subprocess.event_loop_timer.with_mut(|t| {
-                t.next = crate::timer::ElTimespec {
-                    sec: ts.sec,
-                    nsec: ts.nsec,
-                };
-            });
+            subprocess.event_loop_timer.next.set(ts);
             // `Timer::All` lives in `bun_runtime`; reach it via the
             // `RuntimeHooks` dispatch (`VirtualMachineRef::timer_insert`) which
             // forwards to `crate::timer::All::insert`.
             // SAFETY: `jsc_vm_ptr` is the live per-thread VM; the timer node is
             // owned by the boxed `Subprocess` and stays at a stable address
             // until `Subprocess::finalize` removes it from the heap.
-            unsafe {
-                jsc::VirtualMachineRef::timer_insert(
-                    jsc_vm_ptr,
-                    core::ptr::addr_of!(subprocess.event_loop_timer)
-                        .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
-                        .cast_mut(),
-                );
-            }
+            unsafe { (*jsc_vm_ptr).timer_insert(&raw const subprocess.event_loop_timer) };
             subprocess.set_event_loop_timer_refd(true);
         }
 
@@ -1670,7 +1651,7 @@ fn spawn_maybe_sync(
         // Note: pass `subprocess_nn` (the `NonNull<Subprocess<'static>>`
         // captured above) instead of the live `&mut subprocess`, which would
         // alias with the `&mut subprocess.stdout` borrow held by `pipe`.
-        Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !is_sync && lazy);
+        Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop, !is_sync && lazy);
         if (is_sync || !lazy) && matches!(subprocess.stdout.get(), Readable::Pipe(_)) {
             if let Readable::Pipe(pipe) = subprocess.stdout.get() {
                 Readable::pipe_reader_mut(pipe).read_all();
@@ -1680,7 +1661,7 @@ fn spawn_maybe_sync(
 
     if let Readable::Pipe(pipe) = subprocess.stderr.get() {
         // Note: see stdout arm above — avoid aliased &mut.
-        Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !is_sync && lazy);
+        Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop, !is_sync && lazy);
 
         if (is_sync || !lazy) && matches!(subprocess.stderr.get(), Readable::Pipe(_)) {
             if let Readable::Pipe(pipe) = subprocess.stderr.get() {
@@ -1811,22 +1792,15 @@ fn spawn_maybe_sync(
         // This does mean if an AbortSignal times out it will throw
         if let Some(signal) = subprocess.abort_signal_ref() {
             if let Some(abort_signal_timeout) = signal.get_timeout() {
-                // Note: `AbortSignal::Timeout.event_loop_timer` uses the
-                // bun_event_loop-local `Timespec` stub; convert fieldwise.
-                //
                 // A fake-heap deadline is on the mocked clock, which cannot
                 // advance while this call blocks; only a real-heap one is
                 // comparable with `now`.
-                if abort_signal_timeout.event_loop_timer.state
+                if abort_signal_timeout.event_loop_timer.state.get()
                     == crate::timer::EventLoopTimerState::ACTIVE
-                    && abort_signal_timeout.event_loop_timer.in_heap
+                    && abort_signal_timeout.event_loop_timer.in_heap.get()
                         == crate::timer::InHeap::Regular
                 {
-                    let next = &abort_signal_timeout.event_loop_timer.next;
-                    let next_ts = Timespec {
-                        sec: next.sec,
-                        nsec: next.nsec,
-                    };
+                    let next_ts = abort_signal_timeout.event_loop_timer.next.get();
                     if user_timespec.eql(&Timespec::EPOCH)
                         || next_ts.order(&user_timespec) == core::cmp::Ordering::Less
                     {

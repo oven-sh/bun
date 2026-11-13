@@ -1,0 +1,17 @@
+# f1 = words, f2 = doubles
+# -- source: main.cjs
+# function words(list) { return new Uint32Array(list); }
+# function doubles(list) { return new Float64Array(list); }
+# const lists = [[1, -2, 3.5], [1099511627776 + 5, , undefined], ["7"], new Array(300).fill(9)];
+# for (let i = 0; i < 4; i++) console.log(words(lists[i]).slice(0, 4).join(), doubles(lists[i]).length);
+# -- end of source
+# new Int32Array(array) and new Uint32Array(array) are allocated and filled by a stub, which leaves other arrays to the constructor.
+# RUN: bytes f1:Body f2:Body mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK: NewTypedArrayOfArray
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 1,4294967294,3 3
+# RIGHT-NEXT: 5,0,0 3
+# RIGHT-NEXT: 7 1
+# RIGHT-NEXT: 9,9,9,9 300
+# RIGHT-NEXT: exited with 0

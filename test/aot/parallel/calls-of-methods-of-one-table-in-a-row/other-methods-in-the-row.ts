@@ -14,7 +14,7 @@ function churn(table: Map<unknown, Sym>, bases: Sym[]): number {
   }
   return n;
 }
-(globalThis as any).handed = churn;
+(globalThis as any).handed = new Function("x", "return x")(churn);
 const t = new Map<unknown, Sym>();
 OUT.push(churn(t, [new Sym("a", 1), new Sym("b", 2), new Sym("a", 3)]), show(t));
 console.log(OUT.join(" | "));

@@ -1,5 +1,5 @@
 // In a loop, a method of lists is copied for a callback that is written in place even where the callback calls: what it calls may change the list, throw, or come back here.
-// STATISTIC: ListCallbacksCopiedWithCalls >= 5
+// STATISTIC: ArrayCallbacksInlinedWithCalls >= 5
 const rows: { id: number; cells: number[] }[] = JSON.parse('[{"id":1,"cells":[1,2,3]},{"id":2,"cells":[]},{"id":3,"cells":[4,0,6]},{"id":4,"cells":[7]}]');
 const log: string[] = [];
 let calls = 0;

@@ -266,7 +266,7 @@ impl Listener {
                         .into_boxed_slice(),
                 );
 
-                vm.event_loop_ref().ensure_waker();
+                vm.event_loop().ensure_waker();
 
                 let handlers = Rc::clone(&socket_config.handlers);
                 let protos_taken = socket_config.ssl.as_mut().and_then(|s| s.take_protos());
@@ -384,7 +384,7 @@ impl Listener {
             }
         }
 
-        vm.event_loop_ref().ensure_waker();
+        vm.event_loop().ensure_waker();
 
         // Make the object up front so the embedded `group` has its final
         // address before we hand it to listen() (it's linked into the loop's
@@ -968,7 +968,7 @@ impl Listener {
         let ssl_enabled = socket_config.ssl.is_some();
         let default_data = socket_config.default_data;
 
-        vm.event_loop_ref().ensure_waker();
+        vm.event_loop().ensure_waker();
 
         let connection: UnixOrHost = 'blk: {
             if let Some(fd_) = opts.get_truthy(cx.global(), "fd")? {

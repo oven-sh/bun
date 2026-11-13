@@ -359,6 +359,30 @@ for (const f of cells) {
 console.log("cells", cells.length);
 #### folded-expression-in-function-text.mjs prints
 cells 342
+#### left-out-statement-in-function-text.mjs
+const cells = [
+  function (a) { let r = 1; true && { a }
+    r = a; return r; },
+  function (a) { let r = 1; false || { a }
+    return r; },
+  function (a) { let r = 1; true && { a }; r = a; return r; },
+  function (a) { let r = 1; if (a) true && { a }
+    else r = a; return r; },
+  function (a) { let r = 1; null ?? { a } },
+  function (a) { let r = 1; true && { a }, false || { a }; return r; },
+  function (a) { let r = 1; r = a; true && { a }, r++
+    return r; },
+  (a) => { let r = 1; false ? 0 : { a }, r = a, true && { a }, r++; return r; },
+];
+for (const f of cells) {
+  const text = String(f);
+  let again;
+  try { again = (0, eval)('"use strict"; (' + text + ")")(7); } catch (error) { again = "the text: " + error.name; }
+  if (f(7) !== again) console.log(text.replace(/\s+/g, " "), "|", f(7), "|", again);
+}
+console.log("cells", cells.length);
+#### left-out-statement-in-function-text.mjs prints
+cells 8
 #### defined-value-in-function-text.mjs
 const cells = [
   (a) => OBJ,

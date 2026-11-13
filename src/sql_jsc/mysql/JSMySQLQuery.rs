@@ -231,7 +231,7 @@ impl JSMySQLQuery {
         pending_value.ensure_still_alive();
         self.set_pending_value(JSValue::UNDEFINED);
 
-        vm.event_loop_mut().run_callback(
+        vm.event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             function,
             self.global_object(),
@@ -315,7 +315,7 @@ impl JSMySQLQuery {
             return;
         };
         debug_assert!(function.is_callable(), "onQueryRejectFn is not callable");
-        vm.event_loop_mut().run_callback(
+        vm.event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             function,
             self.global_object(),

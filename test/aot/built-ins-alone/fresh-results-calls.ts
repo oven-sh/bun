@@ -620,6 +620,8 @@ export const notCalled: Record<string, string> = {
   "%CompilerHelpers%.plainQueryEntries": ofTheCompiler,
   "%CompilerHelpers%.plainQueryKeys": ofTheCompiler,
   "%CompilerHelpers%.plainQueryValues": ofTheCompiler,
+  "%CompilerHelpers%.toSortedByDifference": ofTheCompiler,
+  "%CompilerHelpers%.toSortedByReversedDifference": ofTheCompiler,
   "native:Bindgen:ffi.bind.ts:linkLibrary": ofOneModule("bun:ffi"),
   "native:Bindgen:ffi.bind.ts:openLibrary": ofOneModule("bun:ffi"),
   "native:Bindgen:ffi.bind.ts:printSource": ofOneModule("bun:ffi"),

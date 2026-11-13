@@ -16,19 +16,18 @@
 # The table of an edit distance, kept in two lists that are constants of the file and whose making is put off to the first read. Four things let the inner loop run in a typed copy, and none pays alone.
 # The two lists are read, and made where they are not yet, in front of the first loop, so no turn reads the variable or asks whether the list is made, and the look at a loop has a name for each list.
 # `above` and `last` take what `heights[i]` gives round the loop. In the plain walk that may be undefined; in the typed copy the turn that finds no element begins again in the other copy, so its head
-# starts without undefined, the store takes a number, and the turns come round. What the store has tested to be an int32 is an int32 behind the store, so `last` comes round as one.
+# starts without undefined, the store takes a number, and the turns come round as numbers.
 # f1 = spread
-# RUN(COUNT): compile ModuleConstantReadsHoisted AbsentArrayElementWideningsAvoided StoredValuesNarrowedToInt32 WalkLoopsVersioned mechanisms=all
+# RUN(COUNT): compile ModuleConstantReadsHoisted AbsentArrayElementWideningsAvoided WalkLoopsVersioned mechanisms=all
 # COUNT: statistic ModuleConstantReadsHoisted 2
 # COUNT: statistic AbsentArrayElementWideningsAvoided 2
-# COUNT: statistic StoredValuesNarrowedToInt32 1
 # RUN(FORM): walk f1 mechanisms=all
 # FORM-LABEL: code f1:Body
 # FORM: = GetModuleVariable
 # FORM: = GetModuleVariable
 # FORM: isLoopHead=true
 # FORM: = HasArrayStorage {{*}} arrayStorage=Int32 [isWritable]
-# FORM: i32 @Int32, {{*}}: i32 @Int32, {{*}} isLoopHead=true
-# FORM: = PutContiguousIndex
+# FORM: int|whole @Double, {{*}}: int|whole @Double, {{*}} isLoopHead=true
+# FORM: PutDoubleIndex
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 53

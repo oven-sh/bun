@@ -200,6 +200,40 @@ fn the_mark_of_exports_that_something_looks_at_is_read_from_the_object() {
 }
 
 #[test]
+fn destructured_names_are_read_from_module() {
+    let main = "
+        const a = require('./m.cjs');
+        let b = require('./m.cjs');
+        const { c } = a;
+        exports.f = function (x) { const { f, c: other = x } = b; return f(other) + c; };
+    ";
+    let files = [
+        ("main.cjs", main),
+        ("m.cjs", "exports.c = 1; exports.f = (x) => x;"),
+    ];
+    with_plan(&files, |plan| {
+        assert_eq!(plan.shape("m.cjs"), Shape::Names);
+        let exports = Some(View::Exports(plan.module("m.cjs")));
+        assert_eq!(plan.holder("main.cjs", "a"), exports);
+        assert_eq!(plan.holder("main.cjs", "b"), exports);
+        assert_eq!(plan.reads_as_value("main.cjs"), [false, false]);
+    });
+}
+
+#[test]
+fn rest_is_read_from_object() {
+    let main = "const a = require('./m.cjs'); const { c, ...rest } = a; exports.rest = [c, rest];";
+    let files = [
+        ("main.cjs", main),
+        ("m.cjs", "exports.c = 1; exports.d = 2;"),
+    ];
+    with_plan(&files, |plan| {
+        assert_eq!(plan.shape("m.cjs"), Shape::Value);
+        assert_eq!(plan.holder("main.cjs", "a"), None);
+    });
+}
+
+#[test]
 fn require_of_a_commonjs_module_binds_its_names() {
     let main = "
         const a = require('./m.cjs');
@@ -841,6 +875,9 @@ fn hoisted_below_required_root(imports: &[(&str, &[&str])]) -> Vec<String> {
     hoisted
 }
 
+// Each order below but the last is what `bun main.cjs` prints. While a require() drains the loader's queue, a file that is asked for a second time before its text has settled
+// overtakes what was asked for in front of it, and one that is asked for a third time is made on the spot: runtime/JSModuleLoader.cpp hostLoadImportedModule().
+// Where a ring lies below the root those steps cost many walks over the ring: the list stays breadth first, and the run time goes through the steps when a require() begins the load.
 #[test]
 fn below_a_require_commonjs_files_run_level_by_level_where_each_is_asked_for_once() {
     let imports: [(&str, &[&str]); 4] = [

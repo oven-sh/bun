@@ -481,31 +481,6 @@ pub struct Batch {
 }
 
 impl Batch {
-    pub fn pop(&mut self) -> Option<NonNull<Task>> {
-        let len = self.len;
-        if len == 0 {
-            return None;
-        }
-        let task = self.head.unwrap();
-        // SAFETY: head is non-null per the unwrap above; tasks form an intrusive list.
-        let next = unsafe { (*Task::node_of(task).as_ptr()).next };
-        if !next.is_null() {
-            self.head = NonNull::new(Task::from_node(next));
-        } else {
-            if task != self.tail.unwrap() {
-                unreachable!();
-            }
-            self.tail = None;
-            self.head = None;
-        }
-
-        self.len -= 1;
-        if len == 0 {
-            self.tail = None;
-        }
-        Some(task)
-    }
-
     /// Create a batch from a single task.
     pub fn from(task: *mut Task) -> Batch {
         let task = NonNull::new(task);

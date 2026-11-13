@@ -264,12 +264,28 @@ export function getStdinStream(
         // EOF. Nothing is left to read, so release the native reader before
         // push(null) runs user 'readable' listeners; the process must be able
         // to exit even if one of them throws or never drains the buffer.
+        const isFirstEof = !stream_reachedEof;
         stream_reachedEof = true;
         disown();
         // push(null) instead of emitting 'end' by hand so read(n) can still
         // return the buffered < n byte remainder and 'end'/'readableEnded'
         // come from the stream machinery once the buffer drains.
-        stream.push(null);
+        if (isTTY || fdType !== BunProcessStdinFdType.file) {
+          stream.push(null);
+        } else if (isFirstEof) {
+          // A file answers each read at once, so this job runs among the ticks and promise jobs of the consumer
+          // of the last chunk, and push(null) emits 'readable' right there. Node pushes the end from a callback
+          // of the event loop, which runs when both queues are empty. The push waits for that point.
+          const { ring } = require("internal/process/next_tick_queue");
+          const queueTick = () => process.nextTick(pushWhenAlone, ring.read === ring.write);
+          // The tick loop takes a tick off the ring before it calls it. A tick that a promise job queued on an
+          // empty ring is the first to run after the jobs, so if the ring is empty again nothing is left behind it.
+          const pushWhenAlone = (wasAlone: boolean) => {
+            if (!wasAlone || ring.read !== ring.write) $Promise.$resolve().$then(queueTick);
+            else if (!stream.destroyed) stream.push(null);
+          };
+          queueTick();
+        }
       }
     } catch (err) {
       if (value) triggerRead.$call(stream, undefined);

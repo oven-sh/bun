@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ProcessObjectInternals.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 34b28730976f3729b1f08385ac19a7f622a31d5c76459e81ae77e00f2e40eba8.
+// Written against that file with the SHA-256 295244e32541159c9235af7511c6e9b6d0abe468ad0970dfebc2ac4d26141f29.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /*
@@ -283,12 +283,28 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
         // EOF. Nothing is left to read, so release the native reader before
         // push(null) runs user 'readable' listeners; the process must be able
         // to exit even if one of them throws or never drains the buffer.
+        const isFirstEof = !stream_reachedEof;
         stream_reachedEof = true;
         disown();
         // push(null) instead of emitting 'end' by hand so read(n) can still
         // return the buffered < n byte remainder and 'end'/'readableEnded'
         // come from the stream machinery once the buffer drains.
-        stream.push(null);
+        if (isTTY || fdType !== BunProcessStdinFdType.file) {
+          stream.push(null);
+        } else if (isFirstEof) {
+          // A file answers each read at once, so this job runs among the ticks and promise jobs of the consumer
+          // of the last chunk, and push(null) emits 'readable' right there. Node pushes the end from a callback
+          // of the event loop, which runs when both queues are empty. The push waits for that point.
+          const { ring } = require("internal/process/next_tick_queue");
+          const queueTick = () => process.nextTick(pushWhenAlone, ring.read === ring.write);
+          // The tick loop takes a tick off the ring before it calls it. A tick that a promise job queued on an
+          // empty ring is the first to run after the jobs, so if the ring is empty again nothing is left behind it.
+          const pushWhenAlone = (wasAlone: boolean) => {
+            if (!wasAlone || ring.read !== ring.write) $Promise.$resolve().$then(queueTick);
+            else if (!stream.destroyed) stream.push(null);
+          };
+          queueTick();
+        }
       }
     } catch (err) {
       if (value) triggerRead.$call(stream, undefined);

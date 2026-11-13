@@ -1978,9 +1978,7 @@ impl ShellExecEnv {
         // Only `OLDPWD` is gated on `!in_init`;
         // `PWD` is written unconditionally so the very first env (built during
         // `init()` with `in_init = true`) still exports the resolved cwd.
-        // Note: reshaped for borrowck — materialize the EnvStr (which
-        // erases the slice lifetime into a packed ptr) before taking
-        // `&mut self.export_env`.
+        // `init_slice` erases the borrow of `self`, so it goes before `&mut self.export_env`.
         use crate::shell::env_str::EnvStr;
         if !in_init {
             let oldpwd = EnvStr::init_slice(self.prev_cwd());
@@ -1995,8 +1993,6 @@ impl ShellExecEnv {
 
     /// Routes `label = value` into an env map depending on where the
     /// assignment appeared (`FOO=1 cmd` → cmd-local, bare `FOO=1` → shell).
-    /// NOTE: `EnvMap::insert` `.ref()`s the value, so callers should deref
-    /// `value` after the call.
     pub(crate) fn assign_var(
         &mut self,
         label: crate::shell::env_str::EnvStr,
@@ -2012,22 +2008,19 @@ impl ShellExecEnv {
     /// Looks up `$HOME` (`$USERPROFILE` on Windows) in `shell_env` first, then
     /// `export_env`. Falls back to `""` (or `/data/local/tmp` on Android) so
     /// `cd` with no args / `~` expansion never sees a null.
-    pub(crate) fn get_homedir(&self) -> crate::shell::env_str::EnvStr {
-        use crate::shell::env_str::EnvStr;
-        let key = if cfg!(windows) {
-            EnvStr::init_slice(b"USERPROFILE")
+    pub(crate) fn get_homedir(&self) -> &[u8] {
+        let key: &[u8] = if cfg!(windows) {
+            b"USERPROFILE"
         } else {
-            EnvStr::init_slice(b"HOME")
+            b"HOME"
         };
         self.shell_env
             .get(key)
             .or_else(|| self.export_env.get(key))
-            .unwrap_or_else(|| {
-                EnvStr::init_slice(if bun_core::env::IS_ANDROID {
-                    b"/data/local/tmp"
-                } else {
-                    b""
-                })
+            .unwrap_or(if bun_core::env::IS_ANDROID {
+                b"/data/local/tmp"
+            } else {
+                b""
             })
     }
 }

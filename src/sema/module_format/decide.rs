@@ -292,9 +292,7 @@ fn has_with_statement(hir: &File<'_>, bound: &Bound<'_>) -> bool {
     })
 }
 
-/// A function declaration is the statement of a label or of `if`, which strict code rejects, so `bun run` takes the
-/// file for CommonJS. Not with the `import` keyword: its parser also finds that in a type-only `import x = require()`
-/// and in an `import` of a `declare module`.
+/// A function declaration is the statement of a label or of `if`: strict code rejects that, so `bun run` takes the file for CommonJS.
 fn has_function_as_body(hir: &File<'_>, bound: &Bound<'_>) -> bool {
     if hir.rare_syntax & rare::DECLARATION_AS_BODY == 0 || file_esm_syntax(hir) != EsmSyntax::None {
         return false;
@@ -310,6 +308,7 @@ fn has_function_as_body(hir: &File<'_>, bound: &Bound<'_>) -> bool {
     let mut has_function = false;
     for (index, statement) in hir.stmts.iter().enumerate() {
         let is_form = match statement.kind {
+            // Below a `declare module` and in a type-only `import x = require()`, the parser of `bun run` finds the `import` keyword too.
             StmtKind::Import(_) if !hir.is_in_jsdoc(statement.start) => return false,
             StmtKind::ImportEquals(alias) if is_type_only(alias) => return false,
             StmtKind::Labeled { body, .. } => is_function(body),

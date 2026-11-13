@@ -4928,9 +4928,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Whether a sloppy function behind a label stays the statement of the label. `has_sloppy_only_syntax` makes the
-    /// file CommonJS unless it is a declared ES module, and there the engine declares the function in the statement
-    /// list around the label. In a block of its own the function is assigned only when the label runs.
+    /// In sloppy CommonJS the engine declares a function behind a label in the statement list around the label, so it needs no block.
     #[inline]
     pub(crate) fn keeps_labelled_function_bare(&self) -> bool {
         self.has_sloppy_only_syntax

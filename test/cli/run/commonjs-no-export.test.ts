@@ -300,9 +300,8 @@ describe("a function declaration as the body of a label, if or else", () => {
     });
   });
 
-  // A CommonJS file cannot take the import of the JSX runtime that the parser generates: the load fails with
-  // "SyntaxError: Unexpected token '{'. import call expects one or two arguments." Without the form the file is an
-  // ES module and loads. #38012 gives a CommonJS file that import with `require()`: this row is a regular test then.
+  // The parser generates an import of the JSX runtime, which a CommonJS file cannot take: "import call expects one or
+  // two arguments." #38012 makes that import a `require()`, and this row is a regular test then.
   test.failing("runs a file that also needs the JSX runtime import", async () => {
     using dir = tempDir("sloppy-fn-decl-jsx", {
       "node_modules/react/package.json": JSON.stringify({

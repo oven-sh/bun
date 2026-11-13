@@ -131,6 +131,7 @@ const jsFixtures = [
   "regexp-repeated-group-with-many-alternatives.js",
   "regexp-many-single-character-alternatives.js",
   // Builtins
+  "bound-function-does-not-convert-non-number-length.js",
   "function-prototype-call-not-called-as-a-method.js",
 ];
 

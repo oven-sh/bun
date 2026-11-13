@@ -3678,7 +3678,7 @@ describe.concurrent("a client paused while connecting", () => {
 // One test runs the same rows in node, so the reports are pinned to it.
 describe.concurrent("a write in flight on an unref'd socket", () => {
   const completed = { callbacks: "all", delivered: "all", errors: [], exitCode: 0 };
-  const rows = [
+  const inFlight = [
     ["TLSv1.3", "unref() before the writes", completed],
     ["TLSv1.3", "unref() while a write is in flight", completed],
     ["TLSv1.3", "end(data) after unref()", completed],
@@ -3687,19 +3687,28 @@ describe.concurrent("a write in flight on an unref'd socket", () => {
     ["TLSv1.3", "a write made before the handshake", completed],
     ["TLSv1.2", "a write made before the handshake", completed],
     ["TLSv1.3", "an upload on an unref'd http2 session", completed],
+  ] as const;
+  const waiting = [
     [
       "TLSv1.3",
       "a write that still waits for the handshake",
       { callbacks: "0 of 1", delivered: "0 of 65536", errors: [], exitCode: 0 },
     ],
   ] as const;
+  const rows = [...inFlight, ...waiting];
+  const expectReport = async (version: string, shape: string, expected: unknown) => {
+    expect(await unrefWriteReport(shape, version)).toEqual(expected);
+  };
 
-  it.each(rows)("%s %s", async (version, shape, expected) => {
-    expect(await unrefWriteReport(shape, version)).toEqual<unknown>(expected);
-  });
+  // A process that exits on Windows resets the sockets it has open, and the peer loses what it has not read by then:
+  // https://learn.microsoft.com/en-us/windows/win32/api/winsock/nf-winsock-wsacleanup#remarks
+  // The child of these rows exits with megabytes in the kernel. In CI on Windows every write callback had run, and
+  // the peer was short of some of them. node's own run of the fixture ends with `write EPROTO` there.
+  it.skipIf(isWindows).each(inFlight)("%s %s", expectReport);
+  it.each(waiting)("%s %s", expectReport);
 
   // Not beside the rows above: node runs all of them at once.
-  it.serial.skipIf(!nodeExe())("node gives the same reports", async () => {
+  it.serial.skipIf(isWindows || !nodeExe())("node gives the same reports", async () => {
     const { reports } = await reportsFromNode(
       "tls-unref-write-fixture.mjs",
       rows.map(([version, shape]) => [version, shape]),

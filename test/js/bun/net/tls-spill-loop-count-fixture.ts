@@ -2,12 +2,14 @@
 // one ends. Every connection first fills the kernel, so sealed records wait in the TLS engine and hold the event loop.
 // A hold that is not given back, or is given back twice, moves the count.
 //
-// Both ends are in this process: each close is an event here, and the count is taken when both have come.
+// Both ends are in this process: each close is an event here, and the count is taken after both.
 import type { Socket } from "bun";
 import { getEventLoopStats } from "bun:internal-for-testing";
 import { tls } from "harness";
 
 const megabyte = Buffer.alloc(1024 * 1024, "a");
+const turn = () => new Promise<void>(resolve => setImmediate(resolve));
+const polls = () => getEventLoopStats().numPolls;
 
 let accepted = Promise.withResolvers<Socket>();
 let acceptedClosed = Promise.withResolvers<void>();
@@ -25,6 +27,8 @@ const listener = Bun.listen({
     close: () => acceptedClosed.resolve(),
   },
 });
+// The count with no connection open.
+const idle = polls();
 
 async function countAfter(ending: string) {
   accepted = Promise.withResolvers();
@@ -70,12 +74,19 @@ async function countAfter(ending: string) {
   else peer.resume();
 
   await Promise.all([closed.promise, acceptedClosed.promise]);
-  // A socket leaves the event loop when its close handler has returned.
-  await new Promise<void>(resolve => setImmediate(resolve));
-  return getEventLoopStats().numPolls;
+  // A socket leaves the event loop after its close handler. On Windows it stays counted until libuv has closed its
+  // handle, some turns later. A hold that is not given back ends the wait too, and its count is the result.
+  let turns = 0;
+  do await turn();
+  while (polls() > idle && ++turns < 10_000);
+  // What a hold given back twice takes away shows when nothing is closing any more.
+  for (turns = 0; turns < 16; turns++) await turn();
+  return polls();
 }
 
 const counts: number[] = [];
 for (const ending of process.argv.slice(2)) counts.push(await countAfter(ending));
 console.log(JSON.stringify(counts));
 listener.stop(true);
+// Nothing is left to hold the event loop. This timer does not hold it, so it only runs in a process that stays.
+setTimeout(() => process.exit(4), 3000).unref();

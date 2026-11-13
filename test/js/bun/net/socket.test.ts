@@ -6330,7 +6330,10 @@ describe.concurrent("sealed TLS records that the kernel has not taken", () => {
     return { socket, peer: peer.promise, closed: closed.promise, received: () => received };
   };
 
-  it.each([
+  // A process that exits on Windows resets the sockets it has open, and the peer loses what it has not read by then:
+  // https://learn.microsoft.com/en-us/windows/win32/api/winsock/nf-winsock-wsacleanup#remarks
+  // So the peer cannot count there what the kernel took. In CI on Windows it received 0 of 1966080 bytes.
+  it.skipIf(isWindows).each([
     ["write()", ""],
     ["write() and end()", "socket.end();"],
   ])("hold the process of an unref'd socket until the kernel has them: %s", async (_name, afterWrites) => {

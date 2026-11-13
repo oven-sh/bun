@@ -272,6 +272,13 @@ impl Ticket {
     }
 }
 
+impl bun_event_loop::PostToJs for Ticket {
+    fn post(&self, task: Box<ConcurrentTaskItem>) -> Posted {
+        Ticket::post(self, task);
+        Posted::Queued
+    }
+}
+
 impl Clone for Ticket {
     /// One more ticket for the same VM and loop (any thread).
     #[track_caller]

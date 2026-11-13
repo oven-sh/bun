@@ -124,8 +124,6 @@ pub mod Graph;
 pub mod IndexStringMap;
 pub mod PathToSourceIndexMap;
 
-pub mod BundleThread;
-
 pub mod ServerComponentParseTask;
 
 pub mod HTMLImportManifest;

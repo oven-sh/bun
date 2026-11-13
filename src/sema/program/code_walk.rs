@@ -669,7 +669,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
             }
         }
         // An entry point is no barrel, and a file that keeps its parse here was loaded as a module.
-        for entry_point in &added {
+        for entry_point in added {
             let index = state.index_of[&context.canonical_key(entry_point.key)];
             if state.files[index as usize].parsed.is_some() && state.barrels.is_waiting(index) {
                 scan_parsed_file_again(state, index);

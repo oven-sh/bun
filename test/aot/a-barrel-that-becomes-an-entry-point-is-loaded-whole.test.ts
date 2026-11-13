@@ -60,17 +60,22 @@ test("a barrel that the build finds to be an entry point is in the executable wh
   const rounds = built.stderr.split("\n").filter(line => line.startsWith("AOT round of Load"));
   const count = (what: RegExp) => rounds.reduce((sum, line) => sum + Number(what.exec(line)?.[1]), 0);
   const ran = built.exitCode === 0 ? await run([executable], cwd, bunEnv) : undefined;
+  const said = (of: { stdout: string; stderr: string; exitCode: number | null }) => ({
+    seen: seenIn(of.stdout),
+    stderr: of.exitCode ? of.stderr : "",
+    exitCode: of.exitCode,
+  });
   expect({
-    plain: seenIn(plain.stdout),
+    plain: said(plain),
     build: {
       loadedAgain: count(/(\d+) loaded again/),
       scannedAgain: count(/(\d+) scanned again/),
       stderr: built.exitCode ? built.stderr : "",
       exitCode: built.exitCode,
     },
-    executable: ran && { seen: seenIn(ran.stdout), stderr: ran.exitCode ? ran.stderr : "", exitCode: ran.exitCode },
+    executable: ran && said(ran),
   }).toEqual({
-    plain: seen,
+    plain: { seen, stderr: "", exitCode: 0 },
     // Each of the two barrels is scanned again. No file is read and parsed a second time.
     build: { loadedAgain: 0, scannedAgain: 2, stderr: "", exitCode: 0 },
     executable: { seen, stderr: "", exitCode: 0 },

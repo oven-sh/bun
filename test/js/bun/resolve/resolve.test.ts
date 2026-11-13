@@ -1,7 +1,19 @@
 import { pathToFileURL } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, isLinux, isMacOS, isRoot, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  isLinux,
+  isMacOS,
+  isRoot,
+  isWindows,
+  joinP,
+  nodeExeAtLeast,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
 import { join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
@@ -2048,6 +2060,367 @@ describe("TypeScript extension rewrite matrix", () => {
       }
     },
   );
+});
+
+// `pkg/name.js` also finds the key "./name": after an "exports" lookup that gives
+// no file, the resolver looks the subpath up again without ".js". Node does one
+// lookup. A null target excludes the subpath, so the second lookup does not run.
+describe.concurrent('null targets in package.json "exports"', () => {
+  const node = nodeExeAtLeast("20.11.0");
+  const NOT_FOUND = "not found";
+  // A file of the package, or NOT_FOUND.
+  type Loads = string | { require: string; import: string };
+  // name: [its "exports", its files, what each subpath loads, what Node loads where that is different]
+  type Packages = Record<
+    string,
+    [exports: object, files: string[], loads: Record<string, Loads>, inNode?: Record<string, Loads>]
+  >;
+  type Project = { files: Record<string, string>; loads: Record<string, Loads> };
+
+  // Every file exports its own name.
+  const namedFiles = (dir: string, names: string[]) =>
+    Object.fromEntries(names.map(name => [dir + name, `module.exports = ${JSON.stringify(name)};`]));
+
+  // Installs `packages` in node_modules. One process of `runtime` then loads
+  // every `<package>/<subpath>` through require() and require.resolve(), and
+  // through import(), import.meta.resolve() and, in Bun, Bun.resolveSync().
+  // Each must give what the table says. `project` adds files and specifiers of
+  // the importing project itself.
+  async function expectToLoad(runtime: "bun" | "node", packages: Packages, project?: Project) {
+    const files: Record<string, string> = {
+      // The second pass runs in reverse: an answer must not depend on what was resolved before it.
+      "index.mjs": `
+        import { createRequire } from "node:module";
+        import { fileURLToPath } from "node:url";
+        const require = createRequire(import.meta.url);
+        const specifiers = process.argv.slice(2);
+        const seen = Object.fromEntries(specifiers.map(s => [s, { require: new Set(), import: new Set() }]));
+        const notFound =
+          /^(ERR_)?MODULE_NOT_FOUND$|^ERR_PACKAGE_(PATH_NOT_EXPORTED|IMPORT_NOT_DEFINED)$|^ERR_INVALID_PACKAGE_TARGET$/;
+        const attempt = async (results, load) => {
+          try {
+            results.add(await load());
+          } catch (e) {
+            results.add(notFound.test(e.code) ? ${JSON.stringify(NOT_FOUND)} : String(e));
+          }
+        };
+        for (const pass of [specifiers, specifiers.toReversed()]) {
+          for (const s of pass) {
+            await attempt(seen[s].require, () => require(s));
+            await attempt(seen[s].require, () => require(require.resolve(s)));
+            await attempt(seen[s].import, async () => (await import(s)).default);
+            await attempt(seen[s].import, () => require(fileURLToPath(import.meta.resolve(s))));
+            if (typeof Bun !== "undefined") {
+              await attempt(seen[s].import, () => require(Bun.resolveSync(s, import.meta.dirname)));
+            }
+          }
+        }
+        const join = results => [...results].join(" | ");
+        console.log(JSON.stringify(specifiers.map(s => [s, { require: join(seen[s].require), import: join(seen[s].import) }])));
+      `,
+      ...project?.files,
+    };
+    const loads: Record<string, Loads> = { ...project?.loads };
+    for (const [name, [exports, names, subpaths, inNode]] of Object.entries(packages)) {
+      files[`node_modules/${name}/package.json`] = JSON.stringify({ name, exports });
+      Object.assign(files, namedFiles(`node_modules/${name}/`, names));
+      for (const [subpath, loaded] of Object.entries(subpaths)) {
+        loads[`${name}/${subpath}`] = (runtime === "node" && inNode?.[subpath]) || loaded;
+      }
+    }
+    const expected = Object.entries(loads).map(([specifier, loaded]) => [
+      specifier,
+      typeof loaded === "string" ? { require: loaded, import: loaded } : loaded,
+    ]);
+
+    using dir = tempDir("exports-js-retry", files);
+    await using proc = Bun.spawn({
+      cmd: [runtime === "node" ? node! : bunExe(), "index.mjs", ...Object.keys(loads)],
+      env: { ...bunEnv, NODE_NO_WARNINGS: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      loaded: stdout.startsWith("[") ? JSON.parse(stdout) : stdout,
+      stderr: stripAsanWarning(stderr),
+    }).toEqual({ loaded: expected, stderr: "" });
+    expect(exitCode).toBe(0);
+  }
+
+  const excluded: Packages = {
+    "null-pattern": [
+      { "./b/*": "./dir/*", "./b/*.js": null },
+      ["dir/q.js"],
+      { "b/q.js": NOT_FOUND, "b/q.js?v=1": NOT_FOUND },
+      // Node matches the subpath with its query, and that does not end in ".js".
+      { "b/q.js?v=1": "dir/q.js" },
+    ],
+    "null-pattern-first": [
+      { "./b/*.js": null, "./b/*": "./dir/*.js" },
+      ["dir/q.js"],
+      { "b/q.js": NOT_FOUND, "b/q": "dir/q.js" },
+    ],
+    "null-carve-out": [
+      { "./features/*": "./src/features/*", "./features/*/internal.js": null },
+      ["src/features/a/index.js", "src/features/a/internal.js"],
+      { "features/a/internal.js": NOT_FOUND, "features/a/index.js": "src/features/a/index.js" },
+    ],
+    "null-exact": [
+      { "./name.js": null, "./name": "./name.js" },
+      ["name.js"],
+      { "name.js": NOT_FOUND, "name": "name.js" },
+    ],
+    "null-conditions": [
+      { "./name.js": { import: null, default: null }, "./name": "./name.js" },
+      ["name.js"],
+      { "name.js": NOT_FOUND },
+    ],
+    "null-import": [
+      { "./name.js": { import: null, require: "./name.js" }, "./name": "./name.js" },
+      ["name.js"],
+      { "name.js": { require: "name.js", import: NOT_FOUND } },
+    ],
+    "null-require": [
+      { "./name.js": { require: null, default: "./name.js" }, "./name": "./name.js" },
+      ["name.js"],
+      { "name.js": { require: NOT_FOUND, import: "name.js" } },
+    ],
+    "empty-array": [{ "./name.js": [], "./name": "./name.js" }, ["name.js"], { "name.js": NOT_FOUND }],
+    "null-array": [
+      { "./name.js": ["../outside.js", null], "./name": "./name.js" },
+      ["name.js"],
+      { "name.js": NOT_FOUND },
+    ],
+    "null-catch-all": [
+      { "./name": "./name.js", "./*": null },
+      ["name.js"],
+      { "name.js": NOT_FOUND, "name": "name.js" },
+    ],
+    // cosmjs-types@0.11.0
+    "null-js-suffix": [
+      { "./*": { types: "./*.d.ts", default: "./*.js" }, "./*.js": null },
+      ["cosmos/tx.js"],
+      { "cosmos/tx.js": NOT_FOUND, "cosmos/tx": "cosmos/tx.js", "cosmos/tx.js?v=1": NOT_FOUND },
+      { "cosmos/tx.js?v=1": "cosmos/tx.js" },
+    ],
+  };
+  // A self-reference, and an "imports" target that names a package subpath.
+  const excludedProject: Project = {
+    files: {
+      "package.json": JSON.stringify({
+        name: "project",
+        exports: { "./name.js": null, "./name": "./name.js" },
+        imports: { "#null-exact": "null-exact/name.js" },
+      }),
+      ...namedFiles("", ["name.js"]),
+    },
+    loads: { "project/name.js": NOT_FOUND, "project/name": "name.js", "#null-exact": NOT_FOUND },
+  };
+
+  // The subpath has no key, its target has no file, or its key has no usable
+  // target. Node refuses these ".js" spellings.
+  const retried: Packages = {
+    // react: "./jsx-runtime": "./jsx-runtime.js"
+    "no-key": [{ "./name": "./name.js" }, ["name.js"], { "name.js": "name.js" }, { "name.js": NOT_FOUND }],
+    "target-adds-js": [{ "./*": "./dist/*.js" }, ["dist/foo.js"], { "foo.js": "dist/foo.js" }, { "foo.js": NOT_FOUND }],
+    "missing-file": [
+      { "./name.js": "./missing.js", "./name": "./name.js" },
+      ["name.js"],
+      { "name.js": "name.js" },
+      { "name.js": NOT_FOUND },
+    ],
+    "no-condition": [
+      { "./name.js": { nope: "./name.js" }, "./name": "./name.js" },
+      ["name.js"],
+      { "name.js": "name.js" },
+      { "name.js": NOT_FOUND },
+    ],
+    "invalid-target": [
+      { "./name.js": "../outside.js", "./name": "./name.js" },
+      ["name.js"],
+      { "name.js": "name.js" },
+      { "name.js": NOT_FOUND },
+    ],
+    // sst@4.17.2: "./*" has no "require" target
+    "no-require-condition": [
+      { "./*": { types: "./dist/*.d.ts", import: "./dist/*.js" }, "./auth": "./dist/auth/index.js" },
+      ["dist/auth/index.js"],
+      { "auth.js": "dist/auth/index.js" },
+      { "auth.js": NOT_FOUND },
+    ],
+    // Node 17 and later do not match a key that ends in "/", and load the file through "./*".
+    "null-folder-key": [
+      { "./*": "./*", "./lib/": null, "./lib/x": "./lib/x.js" },
+      ["lib/x.js"],
+      { "lib/x.js": "lib/x.js", "lib/x": "lib/x.js" },
+    ],
+    // The null is on a key that the subpath does not match.
+    "null-elsewhere": [
+      { "./*": "./lib/*.js", "./internal/*": null },
+      ["lib/pub.js", "lib/internal/x.js"],
+      { "pub.js": "lib/pub.js", "internal/x.js": NOT_FOUND },
+      { "pub.js": NOT_FOUND },
+    ],
+  };
+
+  // An array target goes on to the next entry after a null entry or an invalid
+  // target, as in Node and esbuild. When no entry resolves, the last of those decides.
+  const arrays: Packages = {
+    "arr": [
+      {
+        "./null-first": [null, "./alt.js"],
+        "./invalid-first": ["../outside.js", "./alt.js"],
+        // "./fallbackfile" of Node's `pkgexports` fixture
+        "./node-fixture": [[], null, {}, "builtin:x", "./alt.js"],
+        "./pattern/*": [null, "./dir/*.js"],
+        "./only-null": [null],
+        "./invalid-then-null": ["../outside.js", null],
+        "./null-then-invalid": [null, "../outside.js"],
+        "./no-condition": [{ nope: "./alt.js" }],
+        // A valid target is the answer, also when its file is missing.
+        "./missing-file": ["./missing.js", "./alt.js"],
+      },
+      ["alt.js", "dir/q.js"],
+      {
+        "null-first": "alt.js",
+        "invalid-first": "alt.js",
+        "node-fixture": "alt.js",
+        "pattern/q": "dir/q.js",
+        "only-null": NOT_FOUND,
+        "invalid-then-null": NOT_FOUND,
+        "null-then-invalid": NOT_FOUND,
+        "no-condition": NOT_FOUND,
+        "missing-file": NOT_FOUND,
+      },
+    ],
+    // The lookup ends at alt.js, not at the null entry and not at "./name".
+    "arr-beside-key": [
+      { "./name.js": [null, "./alt.js"], "./name": "./name.js" },
+      ["name.js", "alt.js"],
+      { "name.js": "alt.js" },
+    ],
+  };
+  const arraysProject: Project = {
+    files: {
+      "package.json": JSON.stringify({
+        name: "project",
+        imports: { "#null-first": [null, "./alt.js"], "#only-null": [null] },
+      }),
+      ...namedFiles("", ["alt.js"]),
+    },
+    loads: { "#null-first": "alt.js", "#only-null": NOT_FOUND },
+  };
+
+  test('the ".js" retry does not run for a subpath with a null target', async () => {
+    await expectToLoad("bun", excluded, excludedProject);
+  });
+
+  test('the ".js" retry still runs after every other failed lookup', async () => {
+    await expectToLoad("bun", retried);
+  });
+
+  test("an array target goes on after a null or invalid entry", async () => {
+    await expectToLoad("bun", arrays, arraysProject);
+  });
+
+  test.skipIf(!node)("Node.js loads the same files, except where a row says what Node.js loads", async () => {
+    await Promise.all([
+      expectToLoad("node", excluded, excludedProject),
+      expectToLoad("node", retried),
+      expectToLoad("node", arrays, arraysProject),
+    ]);
+  });
+
+  // A package that auto-install loads from the cache goes through a second copy of the same lookup.
+  test('the ".js" retry does not run after a null target in an auto-installed package', async () => {
+    const manifest = {
+      name: "pkg",
+      version: "1.0.0",
+      exports: {
+        "./name.js": null,
+        "./name": "./name.js",
+        "./b/*": "./dir/*",
+        "./b/*.js": null,
+        "./kept": "./kept.js",
+      },
+    };
+    const tarball = await new Bun.Archive(
+      {
+        "package/package.json": JSON.stringify(manifest),
+        ...namedFiles("package/", ["name.js", "dir/q.js", "kept.js"]),
+      },
+      { compress: "gzip" },
+    ).bytes();
+    const requests: string[] = [];
+    using registry = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const { origin, pathname } = new URL(req.url);
+        requests.push(pathname);
+        if (pathname === "/pkg-1.0.0.tgz") return new Response(tarball);
+        if (pathname !== "/pkg") return new Response("not found", { status: 404 });
+        return Response.json({
+          name: "pkg",
+          "dist-tags": { latest: "1.0.0" },
+          versions: { "1.0.0": { ...manifest, dist: { tarball: `${origin}/pkg-1.0.0.tgz` } } },
+        });
+      },
+    });
+    using dir = tempDir("exports-js-retry-autoinstall", {
+      "index.cjs": `
+        const attempt = s => { try { return require(s); } catch (e) { return e.code; } };
+        console.log(JSON.stringify(["pkg/name", "pkg/name.js", "pkg/b/q.js", "pkg/kept.js"].map(attempt)));
+      `,
+      "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${registry.port}/"\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.cjs"],
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      loaded: stdout.startsWith("[") ? JSON.parse(stdout) : stdout,
+      stderr: stripAsanWarning(stderr),
+      requests,
+    }).toEqual({
+      loaded: ["name.js", "MODULE_NOT_FOUND", "MODULE_NOT_FOUND", "kept.js"],
+      stderr: "",
+      requests: ["/pkg", "/pkg-1.0.0.tgz"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("require.resolve() with `paths` goes on to the next root", () => {
+    using dir = tempDir("exports-js-retry-paths", {
+      "a/node_modules/pkg/package.json": JSON.stringify({
+        name: "pkg",
+        exports: { "./name.js": null, "./name": "./name.js" },
+      }),
+      "a/node_modules/pkg/name.js": "",
+      "b/node_modules/pkg/package.json": JSON.stringify({ name: "pkg", exports: { "./name.js": "./other.js" } }),
+      "b/node_modules/pkg/other.js": "",
+    });
+    const [a, b] = [join(String(dir), "a"), join(String(dir), "b")];
+    const resolveIn = (...paths: string[]) => {
+      try {
+        return require.resolve("pkg/name.js", { paths });
+      } catch (e: any) {
+        return e.code;
+      }
+    };
+
+    expect({ a: resolveIn(a), "a, b": resolveIn(a, b) }).toEqual({
+      a: "MODULE_NOT_FOUND",
+      // Node.js throws here too. Bun tries the next root after every lookup that gives no file.
+      "a, b": join(b, "node_modules", "pkg", "other.js"),
+    });
+  });
 });
 
 // A tsconfig `paths` substitution that names a declaration file (`.d.ts`,

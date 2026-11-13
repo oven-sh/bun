@@ -134,6 +134,10 @@ pub(crate) type JsxFieldSet = EnumSet<JsxField>;
 
 pub struct TSConfigJSON {
     pub(crate) abs_path: Box<[u8]>,
+    /// The directory's own file, when `abs_path` is the base of an `extends` chain.
+    pub(crate) own_abs_path: Box<[u8]>,
+    /// Hash of the bytes `own_abs_path` was parsed from.
+    pub(crate) own_source_hash: u64,
 
     /// The absolute path of "compilerOptions.baseUrl"
     pub(crate) base_url: Box<[u8]>,
@@ -176,6 +180,8 @@ impl Default for TSConfigJSON {
     fn default() -> Self {
         Self {
             abs_path: Box::default(),
+            own_abs_path: Box::default(),
+            own_source_hash: 0,
             base_url: Box::default(),
             base_url_for_paths: Box::default(),
             extends: Box::default(),
@@ -383,6 +389,8 @@ impl TSConfigJSON {
 
         let mut result = TSConfigJSON {
             abs_path: Box::from(source.path.text),
+            own_abs_path: Box::from(source.path.text),
+            own_source_hash: bun_wyhash::hash(&source.contents),
             paths: PathsMap::default(),
             ..Default::default()
         };

@@ -138,6 +138,8 @@ pub struct Entry {
 
     pub mutex: Mutex,
     pub need_stat: AtomicBool,
+    /// Listed as a symlink or of unknown kind: stat'ed again when its listing is kept without a read.
+    pub(crate) is_link: AtomicBool,
 
     abs_path: OnceLock<Interned>,
 }
@@ -329,6 +331,8 @@ pub mod dir_entry {
     pub struct Err {
         pub original_err: crate::Error,
         pub canonical_error: crate::Error,
+        /// A reader at a newer generation opens the directory again.
+        pub generation: bun_core::Generation,
     }
 }
 
@@ -341,12 +345,99 @@ impl DirEntryIterator for () {
     fn next<R: EntryKindResolver>(&mut self, _fs: &R, _entry: &Entry, _fd: Fd) {}
 }
 
+/// `stat` of a directory when its listing was read: a later reader keeps the listing while it holds.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct ListingIdentity {
+    dev: u64,
+    ino: u64,
+    mtime_ns: i64,
+    /// A tool that restores a directory's mtime still moves its ctime.
+    ctime_ns: i64,
+    /// The read was well after the last change: a later change cannot share its ctime on a coarse clock.
+    settled: bool,
+    /// What the directory holds: `None` for an identity of the directory alone.
+    kind: Option<EntryKind>,
+}
+
+impl ListingIdentity {
+    const SETTLED_AFTER_NS: i128 = 2 * bun_core::time::NS_PER_S as i128;
+
+    /// `(st_dev, st_ino)`, `(0, 0)` when no read recorded an identity.
+    pub(crate) fn file_id(&self) -> (u64, u64) {
+        (self.dev, self.ino)
+    }
+
+    /// A read recorded this identity.
+    pub(crate) fn is_recorded(&self) -> bool {
+        self.ino != 0
+    }
+
+    /// `Dir` or `File`, from a `stat` that followed links.
+    pub(crate) fn kind(&self) -> Option<EntryKind> {
+        self.kind
+    }
+
+    /// `None` when `fstat` fails.
+    pub(crate) fn read(fd: Fd) -> Option<Self> {
+        Self::from_stat(&bun_sys::fstat(fd).ok()?)
+    }
+
+    /// `stat` of `path`, links followed. `None` when it fails.
+    pub(crate) fn stat(path: &bun_core::ZStr) -> Option<Self> {
+        Self::from_stat(&bun_sys::stat(path).ok()?)
+    }
+
+    fn from_stat(stat: &bun_sys::Stat) -> Option<Self> {
+        let stat = bun_sys::PosixStat::init(stat);
+        let ns = |t: bun_core::Timespec| {
+            t.sec
+                .saturating_mul(bun_core::time::NS_PER_S as i64)
+                .saturating_add(t.nsec)
+        };
+        let ctime_ns = ns(stat.ctime());
+        // A file system that keeps no change time (FAT reports 0) never settles: its listings are read again.
+        let settled = ctime_ns > 0
+            && bun_core::time::nano_timestamp() - ctime_ns as i128 > Self::SETTLED_AFTER_NS;
+        let kind = if bun_sys::kind_from_mode(stat.mode as bun_sys::Mode)
+            == bun_sys::FileKind::Directory
+        {
+            EntryKind::Dir
+        } else {
+            EntryKind::File
+        };
+        Some(Self {
+            dev: stat.dev,
+            ino: stat.ino,
+            mtime_ns: ns(stat.mtime()),
+            ctime_ns,
+            settled,
+            kind: Some(kind),
+        })
+    }
+
+    /// The directory read for this identity is `now`, with nothing added, removed or renamed since.
+    pub(crate) fn holds_for(&self, now: &Self) -> bool {
+        self.settled
+            && now.dev == self.dev
+            && now.ino == self.ino
+            && now.ctime_ns == self.ctime_ns
+            && now.mtime_ns == self.mtime_ns
+    }
+
+    /// `fd` is the directory that was read, with nothing added, removed or renamed since.
+    pub(crate) fn still_current(&self, fd: Fd) -> bool {
+        self.settled && Self::read(fd).is_some_and(|now| self.holds_for(&now))
+    }
+}
+
 pub struct DirEntry {
     // `dir` is interned in
     // DirnameStore (a process-lifetime BSSList), so `&'static` is correct.
     pub dir: &'static [u8],
     pub fd: Fd,
     pub(crate) generation: Generation,
+    /// Recorded when the listing was read.
+    pub(crate) identity: ListingIdentity,
     pub data: dir_entry::EntryMap,
 }
 
@@ -356,8 +447,53 @@ impl DirEntry {
             dir,
             data: dir_entry::EntryMap::default(),
             generation,
+            identity: ListingIdentity::default(),
             fd: Fd::INVALID,
         }
+    }
+
+    /// A read that failed leaves no entries and no identity, so the next newer generation reads again.
+    pub(crate) fn abandon(&mut self) {
+        self.data.clear();
+        self.identity = ListingIdentity::default();
+    }
+
+    /// Installs a re-read of this listing. Caller holds `entries_mutex`.
+    pub(crate) fn replace_with(&mut self, new: DirEntry) {
+        // Another directory under the same path (a link pointed elsewhere): every cached real path of an entry is of the old one.
+        if self.identity.is_recorded() && self.identity.file_id() != new.identity.file_id() {
+            for &entry in new.data.values() {
+                // SAFETY: EntryStore-owned pointer, valid for the life of the process.
+                let entry = unsafe { &*entry };
+                let _guard = entry.mutex.lock_guard();
+                let fd = entry.cache().fd;
+                if fd.is_valid() {
+                    let _ = bun_sys::close(fd);
+                    entry.set_cache_fd(Fd::INVALID);
+                }
+                entry.need_stat.store(true, Ordering::Release);
+            }
+        }
+        self.data.clear();
+        *self = new;
+    }
+
+    /// Stamps the listing with `generation` when the open directory is unchanged. Caller holds `entries_mutex`.
+    pub(crate) fn keep_if_current(&mut self, fd: Fd, generation: Generation) -> bool {
+        if !self.identity.still_current(fd) {
+            return false;
+        }
+        self.generation = generation;
+        for &entry in self.data.values() {
+            // SAFETY: EntryStore-owned pointer, valid for the life of the process.
+            let entry = unsafe { &*entry };
+            if entry.is_link.load(Ordering::Relaxed) {
+                // Under the entry's mutex: a `kind()` in flight must not clear this after its stat.
+                let _guard = entry.mutex.lock_guard();
+                entry.need_stat.store(true, Ordering::Release);
+            }
+        }
+        true
     }
 
     // Compatibility wrapper for callers outside the `readdir` hot loop —
@@ -447,9 +583,13 @@ impl DirEntry {
                     existing.need_stat.store(
                         existing.need_stat.load(Ordering::Relaxed)
                             || found_kind.is_none()
+                            || existing.is_link.load(Ordering::Relaxed)
                             || Some(existing.cache().kind) != found_kind,
                         Ordering::Release,
                     );
+                    existing
+                        .is_link
+                        .store(found_kind.is_none(), Ordering::Relaxed);
                     break 'brk existing_ptr;
                 }
             }
@@ -496,6 +636,7 @@ impl DirEntry {
                 // contains a directory with over 11,000 entries in it and running "stat"
                 // for each entry was a big performance issue for that package.
                 addr_of_mut!((*p).need_stat).write(AtomicBool::new(found_kind.is_none()));
+                addr_of_mut!((*p).is_link).write(AtomicBool::new(found_kind.is_none()));
                 addr_of_mut!((*p).cache).write(core::cell::Cell::new(EntryCache {
                     symlink: Interned::EMPTY,
                     // if found_kind is null, we have set need_stat above, so we

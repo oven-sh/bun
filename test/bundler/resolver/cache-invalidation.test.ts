@@ -348,6 +348,34 @@ describe("resolver cache invalidation", () => {
     expect(text3).toContain("v2");
   });
 
+  test("a package installed after a build that missed it", async () => {
+    using dir = tempDir("cache-test-late-package", {
+      "entry.js": `export { value } from "latelib";`,
+      "node_modules/.keep": "",
+    });
+
+    // Build 1: the package is not there, and the miss is cached
+    const result1 = await Bun.build({
+      entrypoints: [path.join(String(dir), "entry.js")],
+      outdir: path.join(String(dir), "out1"),
+      throw: false,
+    });
+    expect(result1.success).toBe(false);
+
+    const latelib = path.join(String(dir), "node_modules", "latelib");
+    await fs.mkdir(latelib);
+    await fs.writeFile(path.join(latelib, "package.json"), JSON.stringify({ name: "latelib" }));
+    await fs.writeFile(path.join(latelib, "index.js"), `export const value = "late";`);
+
+    // Build 2: finds the package
+    const result2 = await Bun.build({
+      entrypoints: [path.join(String(dir), "entry.js")],
+      outdir: path.join(String(dir), "out2"),
+    });
+    expect(result2.success).toBe(true);
+    expect(await result2.outputs[0].text()).toContain("late");
+  });
+
   test("sibling directory resolution after parent deletion", async () => {
     using dir = tempDir("cache-test-sibling", {
       "src/index.js": `export { helper } from "../lib/helper.js";`,

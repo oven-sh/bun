@@ -50,7 +50,8 @@ pub use tsconfig_json::TSConfigJSON;
 /// Re-export so dependents can spell `bun_resolver::install_types::AutoInstaller`.
 pub use ::bun_install_types::resolver_hooks as install_types;
 pub use resolver::{
-    AnyResolveWatcher, BrowserMapPathKind, Bufs, Dirname, Resolver, module_type_from_ext,
+    AnyResolveWatcher, BrowserMapPathKind, Bufs, CheckedDirs, Dirname, FreshGeneration, Resolver,
+    module_type_from_ext,
 };
 pub use result::{
     DebugLogs, DirEntryResolveQueueItem, ExternalKind, FlushMode, LoadResult, MatchResult,
@@ -690,6 +691,7 @@ pub mod fs {
     // ── Entry / DirEntry / EntryKind ─────────────────────────────────────
     // Canonical definitions live in `fs.rs` (mounted as `crate::fs_full`).
     // Re-exported here so the public path `bun_resolver::fs::*` is preserved.
+    pub(crate) use crate::fs_full::ListingIdentity;
     pub use crate::fs_full::{
         DirEntry, DirEntryIterator, Entry, EntryCache, EntryKind, EntryKindResolver, EntryLookup,
         FilenameStoreAppender, dir_entry,
@@ -994,6 +996,10 @@ pub mod fs {
         ) -> crate::CrateResult<DirEntry> {
             let mut iter = bun_sys::iterate_dir(handle);
             let mut dir = DirEntry::init(dir_, generation);
+            if let Some(prev) = prev_map.as_deref() {
+                dir.data.reserve(prev.count());
+            }
+            dir.identity = ListingIdentity::read(handle).unwrap_or_default();
 
             if store_fd {
                 FileSystem::set_max_fd(bun_sys::Fd::native(handle));
@@ -1022,6 +1028,7 @@ pub mod fs {
             &mut self,
             dir: &[u8],
             err: crate::Error,
+            generation: Generation,
         ) -> crate::CrateResult<&'static EntriesOption> {
             let mut get_or_put_result = self.entries.get_or_put(dir)?;
             if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
@@ -1030,6 +1037,7 @@ pub mod fs {
                     dir_entry::Err {
                         original_err: err,
                         canonical_error: err,
+                        generation,
                     },
                 )));
             }
@@ -1038,10 +1046,32 @@ pub mod fs {
                 EntriesOption::Err(dir_entry::Err {
                     original_err: err,
                     canonical_error: err,
+                    generation,
                 }),
             )?;
             // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
             Ok(unsafe { &*opt })
+        }
+
+        /// Like [`read_directory_error`], but the slot keeps its listing at its old generation, so
+        /// a reader at a newer generation opens the directory again.
+        fn read_directory_error_transient(
+            &mut self,
+            dir: &[u8],
+            err: crate::Error,
+            generation: Generation,
+        ) -> crate::CrateResult<&'static EntriesOption> {
+            if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                let result = self.entries.get_or_put(dir)?;
+                self.entries.mark_not_found(result);
+            }
+            Ok(temp_entries_option_write(EntriesOption::Err(
+                dir_entry::Err {
+                    original_err: err,
+                    canonical_error: err,
+                    generation,
+                },
+            )))
         }
 
         /// A missing directory's `Err` is this thread's scratch slot; read it before the next call.
@@ -1092,6 +1122,8 @@ pub mod fs {
                         EntriesOption::Entries(e) if e.generation < generation => {
                             in_place = Some(std::ptr::from_mut::<DirEntry>(*e));
                         }
+                        // A directory that could not be opened (ENOTDIR, EACCES) is opened again.
+                        EntriesOption::Err(e) if e.generation < generation => {}
                         cached => return Ok(cached),
                     }
                 } else if cache_result.status == bun_alloc::ItemStatus::NotFound && generation == 0
@@ -1100,6 +1132,7 @@ pub mod fs {
                         dir_entry::Err {
                             original_err: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
                             canonical_error: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
+                            generation,
                         },
                     )));
                 }
@@ -1110,7 +1143,7 @@ pub mod fs {
                 Some(h) => h,
                 None => match self.open_dir(dir) {
                     Ok(h) => h,
-                    Err(err) => return self.read_directory_error(dir, err),
+                    Err(err) => return self.read_directory_error(dir, err, generation),
                 },
             };
 
@@ -1122,6 +1155,23 @@ pub mod fs {
                     let _ = bun_sys::close(h);
                 }
             });
+
+            if let Some(existing) = in_place {
+                // SAFETY: BSSMap-owned `DirEntry`; `entries_mutex` held.
+                if unsafe { &mut *existing }.keep_if_current(handle, generation) {
+                    // Nothing stores the handle on this path.
+                    if !had_handle && !should_close_handle {
+                        let _ = bun_sys::close(handle);
+                    }
+                    let slot = std::ptr::from_mut::<EntriesOption>(
+                        self.entries
+                            .at_index(cache_result.index)
+                            .expect("the slot that `in_place` was taken from"),
+                    );
+                    // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
+                    return Ok(unsafe { &mut *slot });
+                }
+            }
 
             // if we get this far, it's a real directory, so we can just store the dir name.
             // An in-place refresh always keeps the slot's existing interned name: callers
@@ -1150,30 +1200,26 @@ pub mod fs {
                 Err(err) => {
                     if let Some(existing) = in_place {
                         // SAFETY: see above.
-                        unsafe { (*existing).data.clear() };
+                        unsafe { (*existing).abandon() };
                     }
-                    return self.read_directory_error(dir, err);
+                    return self.read_directory_error(dir, err, generation);
                 }
             };
 
             // `EntriesOption::Entries` here holds an unbounded `&mut DirEntry` (raw, BSSMap-stored
             // pointer), so a fresh slot is a leaked `Box<DirEntry>` whose lifetime is the
             // `entries_option_map()` singleton (process-static).
-            let entries_ptr: *mut DirEntry = match in_place {
-                Some(p) => p,
-                None => bun_core::heap::into_raw(Box::new(DirEntry::init(dir, generation))),
-            };
-            if let Some(original) = in_place {
-                // SAFETY: BSSMap-owned; entries_mutex held.
-                unsafe { (*original).data.clear() };
-            }
             if store_fd && !entries.fd.is_valid() {
                 entries.fd = handle;
             }
-
-            // SAFETY: `entries_ptr` is either a live BSSMap slot (`in_place`) or a fresh
-            // leaked Box; exclusively owned here under `entries_mutex`.
-            unsafe { *entries_ptr = entries };
+            let entries_ptr: *mut DirEntry = match in_place {
+                Some(p) => {
+                    // SAFETY: BSSMap-owned; entries_mutex held.
+                    unsafe { (*p).replace_with(entries) };
+                    p
+                }
+                None => bun_core::heap::into_raw(Box::new(entries)),
+            };
             let result = EntriesOption::Entries(
                 // SAFETY: see above — re-borrow as 'static for the BSSMap slot.
                 unsafe { &mut *entries_ptr },
@@ -1471,26 +1517,33 @@ pub mod fs {
                         Ok(h) => h,
                         Err(err) => {
                             // SAFETY: see above.
-                            unsafe { (*e_ptr).data.clear() };
-                            return self.read_directory_error(dir, err.into()).ok();
+                            unsafe { (*e_ptr).abandon() };
+                            return self
+                                .read_directory_error_transient(dir, err.into(), generation)
+                                .ok();
                         }
                     };
                     let _close_guard = scopeguard::guard(handle, |h| {
                         let _ = bun_sys::close(h);
                     });
+                    // SAFETY: see above.
+                    if unsafe { &mut *e_ptr }.keep_if_current(handle, generation) {
+                        // SAFETY: BSSMap-owned slot; outlives caller.
+                        return Some(unsafe { &mut *result_ptr });
+                    }
                     // SAFETY: see above — exclusive `&mut` on the prev map for the duration of `readdir`.
                     let prev = Some(unsafe { &mut (*e_ptr).data });
                     match self.readdir(false, prev, dir, generation, handle, &mut ()) {
                         Ok(new_entry) => {
-                            // SAFETY: see above.
-                            unsafe { (*e_ptr).data.clear() };
                             // SAFETY: see above — slot is exclusively owned here.
-                            unsafe { *e_ptr = new_entry };
+                            unsafe { (*e_ptr).replace_with(new_entry) };
                         }
                         Err(err) => {
                             // SAFETY: see above.
-                            unsafe { (*e_ptr).data.clear() };
-                            return self.read_directory_error(dir, err).ok();
+                            unsafe { (*e_ptr).abandon() };
+                            return self
+                                .read_directory_error_transient(dir, err, generation)
+                                .ok();
                         }
                     }
                 }
@@ -1648,6 +1701,7 @@ pub mod fs {
 
     pub mod file_system {
         pub use super::{DirEntry, DirnameStore, Entry, EntryKind, FilenameStore, RealFS};
+        pub(crate) use crate::fs_full::ListingIdentity;
         pub mod real_fs {
             pub use crate::fs::EntriesOption;
         }

@@ -146,6 +146,10 @@ pub struct DirInfo {
     pub abs_real_path: &'static [u8],
 
     pub(crate) flags: Flags,
+    /// `stat` of the directory when the listing these facts derive from was read.
+    pub(crate) built_from: fs::ListingIdentity,
+    /// The generation at which `abs_real_path` was last checked against the link. Shared with bundle threads.
+    pub(crate) real_path_checked_at: core::sync::atomic::AtomicU64,
 }
 
 impl Default for DirInfo {
@@ -164,6 +168,8 @@ impl Default for DirInfo {
             tsconfig_json: None,
             abs_real_path: b"",
             flags: Flags::empty(),
+            built_from: fs::ListingIdentity::default(),
+            real_path_checked_at: core::sync::atomic::AtomicU64::new(0),
         }
     }
 }
@@ -386,6 +392,10 @@ bitflags::bitflags! {
         /// This directory has a node_modules subdirectory
         const HasNodeModules    = 1 << 1;
         const InsideNodeModules = 1 << 2;
+        /// A `package.json` file was listed, whether or not it parsed.
+        const HasPackageJsonFile = 1 << 3;
+        /// A `tsconfig.json` or `jsconfig.json` file was listed, whether or not it loaded.
+        const HasTsconfigFile   = 1 << 4;
     }
 }
 impl Flags {

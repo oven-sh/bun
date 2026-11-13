@@ -223,7 +223,6 @@ impl<C: CompletionStruct> BundleThread<C> {
         }
 
         let mut has_bundled = false;
-        let mut generation: bun_core::Generation = 0;
         loop {
             loop {
                 let completion = this.queue.pop();
@@ -239,6 +238,8 @@ impl<C: CompletionStruct> BundleThread<C> {
                 }
                 // SAFETY: as above; started ⇒ the owner waits for us.
                 let completion = unsafe { &mut *completion };
+                // Newer than every cached listing, also one a runtime retry read again.
+                let generation = bun_core::next_generation();
                 // `panic = "abort"` → a Rust panic on this thread enters the
                 // crash-handler hook and aborts the whole process.
                 // No `catch_unwind` — there is nothing to catch.

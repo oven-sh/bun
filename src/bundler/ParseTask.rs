@@ -205,9 +205,6 @@ pub(crate) struct Success<'a> {
 
     /// The package name from package.json, used for barrel optimization.
     pub(crate) package_name: ast::StoreStr,
-
-    /// A TypeScript file that was parsed with `ParseTask::use_define_for_class_fields` off.
-    pub(crate) assigns_class_fields: bool,
 }
 
 pub(crate) struct ResultError {
@@ -2737,7 +2734,6 @@ pub mod parse_worker {
             side_effects: task.side_effects,
             loader,
             package_name: task.package_name,
-            assigns_class_fields: !task.use_define_for_class_fields && loader.is_typescript(),
 
             // Hash the files in here so that we do it in parallel.
             content_hash_for_additional_file: unique_key_for_additional_file.content_hash,

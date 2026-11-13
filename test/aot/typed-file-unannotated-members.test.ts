@@ -393,7 +393,8 @@ const wrong: number = box.hidden.h;
 `,
     reads: ["new Box().hidden", "new Box().made", "new Box().pick"],
     errors: ["(6,7): TS2322"],
-    written: ["declare hidden;", "declare made;", "declare pick;"],
+    // The printer writes `import("./hidden").Hidden`. The typed file has a name for that declaration.
+    written: ["declare hidden: Hidden;", "declare made: Made<string>;", "declare pick: <U>(value: U) => U;"],
   },
   // The bundle names the class of other.ts `Item2`. In `make` that name is the interface.
   "renamed-class-beside-a-local-type-of-that-name": {
@@ -419,7 +420,7 @@ const wrong: string = make();
 `,
     reads: ["make()"],
     errors: ["(3,7): TS2322"],
-    written: ["declare held;", "declare flag: Item2;"],
+    written: ["declare held: outer.Item2;", "declare flag: Item2;"],
   },
   // A default does not add `undefined` to the member, also where a parameter with no default comes behind it.
   "parameter-property-with-a-default-before-a-parameter-with-none": {
@@ -486,34 +487,22 @@ const wrong: number = box.items;
     errors: ["(5,7): TS2322"],
     written: ["declare items: globalThis.Map<string, number> | null;", "declare own: Map;"],
   },
-  // A type printer writes `any` below ten levels and for a type inside itself. Such a text is not the type.
-  "type-that-the-printer-cuts-short": {
+  // `index.d.ts` has all of such a type too.
+  "type-with-many-members": {
     files: {
-      "index.ts": `function cons<H, R>(head: H, rest: R) { return { head, rest }; }
-export class Box {
-  list = cons(1, cons(2, cons(3, cons(4, cons(5, cons(6, cons(7, cons(8, cons(9, cons(10, cons(11, cons(12, "end"))))))))))));
-  api = { count: 0, add(n: number) { this.count += n; return this; } };
-  pair = [this.api, this.api];
-  // More than the 4,000 characters that a stated type can have.
+      "index.ts": `export class Box {
   wide = { ${Array.from({ length: 400 }, (_, index) => `p${index}: ${index}`).join(", ")} };
-  next(): number { return this.api.add(1).add(1).count + this.pair.length + this.wide.p399; }
+  next(): number { return this.wide.p399; }
 }
 `,
     },
     caller: `import { Box } from "LIBRARY";
-const box = new Box();
-const end: string = box.list.rest.rest.rest.rest.rest.rest.rest.rest.rest.rest.rest.rest;
-const count: number = box.api.add(1).add(2).add(3).count + box.pair[0].add(1).count + box.wide.p399;
-const wrong: number = box.list.rest.rest.rest.rest.rest.rest.rest.rest.rest.rest.rest.rest;
+const last: number = new Box().wide.p399;
+const wrong: string = new Box().wide.p0;
 `,
-    reads: [
-      "new Box().list.rest.rest.rest.rest.rest.rest.rest.rest.rest.rest.rest.head",
-      "new Box().api.add(1).add(1).count",
-      "new Box().pair[0].add(1).count",
-      "new Box().wide.p399",
-    ],
-    errors: ["(5,7): TS2322"],
-    written: ["declare list;", "declare api;", "declare pair;", "declare wide;"],
+    reads: ["new Box().wide.p399"],
+    errors: ["(3,7): TS2322"],
+    written: [`declare wide: { ${Array.from({ length: 400 }, (_, index) => `p${index}: number;`).join(" ")} };`],
   },
 };
 
@@ -629,25 +618,19 @@ describe.concurrent("bun build --dts and class fields", () => {
     });
   });
 
-  // On Windows the build says nothing about .aot.ts files that it leaves out.
-  test.todoIf(isWindows)(
-    "without noImplicitAny a field whose type has no name there leaves the typed files out",
-    async () => {
-      const loose = { strict: false, lib: ["es2015"], useDefineForClassFields: false };
-      using dir = tempDir("build-dts-assigned-fields-loose-hidden", {
-        ...project(loose),
-        "src/hidden.ts": `export interface Hidden { h: string }\nexport function hide(): Hidden { return { h: "" }; }\n`,
-        "src/index.ts": `import { hide } from "./hidden";\nexport class Box {\n  hidden = hide();\n}\n`,
-      });
-      const build = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts");
-      expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({
-        stderr:
-          "warn: the .aot.ts files that --aot compiles a package from are left out: they have type errors, the first at index.aot.ts:10:10: TS2339: Property 'hidden' does not exist on type 'Box'.\n",
-        exitCode: 0,
-      });
-      expect(readdirSync(join(String(dir), "out")).sort()).toEqual(["hidden.d.ts", "index.d.ts", "index.js"]);
-    },
-  );
+  test("without noImplicitAny a field takes a type that its module does not import", async () => {
+    const loose = { strict: false, lib: ["es2015"], useDefineForClassFields: false };
+    using dir = tempDir("build-dts-assigned-fields-loose-hidden", {
+      ...project(loose),
+      "src/hidden.ts": `export interface Hidden { h: string }\nexport function hide(): Hidden { return { h: "" }; }\n`,
+      "src/index.ts": `import { hide } from "./hidden";\nexport class Box {\n  hidden = hide();\n}\n`,
+    });
+    const build = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts");
+    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const typed = readFileSync(join(String(dir), "out/index.aot.ts"), "utf8");
+    expect(typed).toContain("interface Hidden { h: string }\n");
+    expect(typed).toContain("declare hidden: Hidden;\n");
+  });
 
   // A namespace object is `any` in a typed file, so the overloaded call answers `string` there, and `number` in the
   // sources. Without the type of the sources, the typed file says that `size` is a string.
@@ -706,53 +689,38 @@ export class Box {
     });
   });
 
-  // The typed file of another output has the class. For `take`, this one declares a twin of it, which is another type.
-  test("--splitting: a field whose class is in another output takes its type from the constructor", async () => {
-    const reads = (library: string) => `import { Box } from "${library}";
-const type0: never = new Box().item;
-const type1: never = new Box().held;
-const type2: never = new Box().unit;
-const type3: never = new Box().n;
-`;
-    using dir = tempDir("build-dts-assigned-fields-splitting", {
-      ...project(assigned),
-      "src/shared.ts": `export class Item {
+  // The typed file of another output has the class. For `take`, this one declares a twin of it, which is another
+  // type. So the field has no type that this typed file can name, and no declaration.
+  test.todoIf(isWindows)(
+    "--splitting: a field whose class is in another output leaves the typed files out",
+    async () => {
+      using dir = tempDir("build-dts-assigned-fields-splitting", {
+        ...project(assigned),
+        "src/shared.ts": `export class Item {
   a = 1;
   private secret = "s";
   read(): string { return this.secret + this.a; }
 }
-export enum Unit { Px, Em }
 `,
-      "src/index.ts": `import { Item, Unit } from "./shared";
+        "src/index.ts": `import { Item } from "./shared";
 export class Box {
   item = new Item();
-  #held = new Item();
-  unit = Unit.Px;
-  n = 1;
-  get held() { return this.#held; }
-  set(unit: Unit): void { this.unit = unit; }
   take(item: Item): void {}
 }
 `,
-      "src/other.ts": `import { Item, Unit } from "./shared";
+        "src/other.ts": `import { Item } from "./shared";
 export function make() { return new Item(); }
-export function unit() { return Unit.Em; }
 `,
-      "types/of-the-sources.ts": reads("../src/index"),
-      "types/of-the-typed-file.ts": reads("../out/index.aot"),
-    });
-    const entries = ["./src/index.ts", "./src/other.ts"];
-    const build = await bun(String(dir), "build", ...entries, "--splitting", "--outdir", "out", "--dts");
-    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    expect(readFileSync(join(String(dir), "out/index.aot.ts"), "utf8")).toContain(
-      "  declare item;\n  #held;\n  declare unit: Unit;\n  declare n: number;\n",
-    );
-    const types = ["Item", "Item", "Unit", "number"];
-    expect(await checkedIn(String(dir))).toEqual({
-      errors: {},
-      types: { "types/of-the-sources.ts": types, "types/of-the-typed-file.ts": types },
-    });
-  });
+      });
+      const entries = ["./src/index.ts", "./src/other.ts"];
+      const build = await bun(String(dir), "build", ...entries, "--splitting", "--outdir", "out", "--dts");
+      expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({
+        stderr:
+          "warn: the .aot.ts files that --aot compiles a package from are left out: they have type errors, the first at index.aot.ts:13:10: TS2339: Property 'item' does not exist on type 'Box'.\n",
+        exitCode: 0,
+      });
+    },
+  );
 
   // A member with no value has the type of its stores, and this build removes them. The sources name `Other`, and
   // the typed file names that class as its bundle does.
@@ -951,6 +919,30 @@ export class Bus {
     });
   });
 
+  // The bundle has the JavaScript class of the package. The class that the package declares is another type, so the
+  // member keeps the type of its store, as it has without this table.
+  test("a member that stores a class of a bundled package is not stated with what the package declares", async () => {
+    using dir = tempDir("build-dts-members-bundled-package", {
+      ...project({ strict: true, lib: ["es2015"] }),
+      "node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0", types: "index.d.ts" }),
+      "node_modules/dep/index.js": `export class Thing { constructor() { this.size = 1; } }\n`,
+      "node_modules/dep/index.d.ts": `export declare class Thing { size: number; }\n`,
+      "src/index.ts": `import { Thing } from "dep";
+export class Box {
+  thing;
+  constructor() {
+    this.thing = new Thing();
+  }
+}
+`,
+    });
+    const build = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts");
+    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const typed = readFileSync(join(String(dir), "out/index.aot.ts"), "utf8");
+    expect(typed).toContain("class Box {\n  thing;\n");
+    expect(typed).not.toContain("import type");
+  });
+
   // Beside an `accessor` field the bundle keeps a field for a parameter property.
   test("a parameter property whose field the bundle keeps gets its type at that field", async () => {
     using dir = tempDir("build-dts-assigned-fields-kept-parameter", {
@@ -1001,23 +993,40 @@ export class Server {
     });
   });
 
-  // The bundle has `0` for `Level.Low`, and its source map has no place for the field. The class has one `#level`.
-  test("a private field that the source map has no place for gets its type by its name", async () => {
+  // The bundle has `"fast"` for `Mode.Fast`, and its source map has no place for that value. The store of a field has
+  // the place of its member, and a default the place of its parameter: there the value gets its cast. The map has no
+  // place for a `#name;` behind such a store either. The class has one field of that name, which gets the type.
+  test("a field whose value is a member of an enum of another module has its type, and the value its cast", async () => {
     const caller = (library: string) => `import { Box } from "${library}";
 const level: number = new Box().level;
+const inner: string = new Box().inner;
 const wrong: string = new Box().level;
+new Box().mode = "fast";
 `;
     const reads = (library: string) => `import { Box } from "${library}";
 const type0: never = new Box().level;
+const type1: never = new Box().inner;
+const type2: never = new Box().kept;
+const type3: never = new Box().mode;
+const type4: never = new Box().fixed;
+const type5: never = new Box().wide;
+const type6: never = new Box().given;
 `;
-    using dir = tempDir("build-dts-assigned-fields-private-enum", {
+    using dir = tempDir("build-dts-assigned-fields-enum-of-another-module", {
       ...project(assigned),
-      "src/level.ts": `export enum Level { Low, High }\n`,
-      "src/index.ts": `import { Level } from "./level";
+      "src/enums.ts": `export enum Level { Low, High }\nexport enum Mode { Fast = "fast", Slow = "slow" }\n`,
+      "src/index.ts": `import { Level, Mode } from "./enums";
 export class Box {
   #level = Level.Low;
+  #mode = Mode.Fast;
+  #kept: Level = Level.High;
+  mode = Mode.Slow;
+  readonly fixed = Mode.Fast;
+  wide: Mode = Mode.Fast;
+  constructor(public given = Mode.Fast) {}
   get level() { return this.#level; }
-  raise(): void { this.#level = Level.High; }
+  get inner() { return this.#mode; }
+  get kept() { return this.#kept; }
 }
 `,
       "callers/of-the-sources.ts": caller("../src/index"),
@@ -1027,11 +1036,29 @@ export class Box {
     });
     const build = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts");
     expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    const typed = readFileSync(join(String(dir), "out/index.aot.ts"), "utf8");
-    expect(typed.match(/^ *#level.*;$/gm)).toEqual(["  #level: Level;"]);
+    expect(readFileSync(join(String(dir), "out/index.aot.ts"), "utf8")).toContain(`class Box {
+  declare public given: Mode;
+  #level: Level;
+  #mode: Mode;
+  #kept: Level;
+  declare mode: Mode;
+  declare readonly fixed = Mode.Fast;
+  declare wide: Mode;
+  constructor(given: Mode = "fast" as Mode.Fast /* Fast */) {
+    this.given = given;
+    this.#level = 0 as Level.Low /* Low */;
+    this.#mode = "fast" as Mode.Fast /* Fast */;
+    this.#kept = 1 as Level.High /* High */;
+    this.mode = "slow" as Mode.Slow /* Slow */;
+    this.fixed = "fast" as Mode.Fast /* Fast */;
+    this.wide = "fast" as Mode.Fast /* Fast */;
+  }
+`);
+    const errors = ["(4,7): TS2322", "(5,1): TS2322"];
+    const types = ["Level", "Mode", "Level", "Mode", "Mode.Fast", "Mode", "Mode"];
     expect(await checkedIn(String(dir))).toEqual({
-      errors: { "callers/of-the-sources.ts": ["(3,7): TS2322"], "callers/of-the-typed-file.ts": ["(3,7): TS2322"] },
-      types: { "types/of-the-sources.ts": ["Level"], "types/of-the-typed-file.ts": ["Level"] },
+      errors: { "callers/of-the-sources.ts": errors, "callers/of-the-typed-file.ts": errors },
+      types: { "types/of-the-sources.ts": types, "types/of-the-typed-file.ts": types },
     });
   });
 
@@ -1080,19 +1107,17 @@ export class Holder {
       },
       "index.aot.ts:11:12: TS2339: Property 'fixed' does not exist on type 'Box'.",
     ],
-    // The field has its type, and the bundle stores `"fast"` with no cast.
+    // A type printer writes `any` for a type inside itself, also into index.d.ts. Such a text is not the type.
     [
-      "an enum with text values of another module, at a private name,",
+      "a type that has itself inside",
       {
-        "src/mode.ts": `export enum Mode { Fast = "fast", Slow = "slow" }\n`,
-        "src/index.ts": `import { Mode } from "./mode";
-export class Box {
-  #mode = Mode.Fast;
-  get mode() { return this.#mode; }
+        "src/index.ts": `export class Box {
+  api = { count: 0, add(n: number) { this.count += n; return this; } };
+  next(): number { return this.api.add(1).add(1).count; }
 }
 `,
       },
-      "index.aot.ts:5:5: TS2322: Type '\"fast\"' is not assignable to type 'Mode'.",
+      "index.aot.ts:4:10: TS2339: Property 'api' does not exist on type 'Box'.",
     ],
   ])("a field whose type is %s leaves the typed files out", async (_, sources, first) => {
     using dir = tempDir("build-dts-assigned-fields-other-stores", { ...project(assigned), ...sources });
@@ -1105,25 +1130,51 @@ export class Box {
 
   // The bundle gives such a class `constructor() { super(...arguments); }`. With that, `new HttpError("gone")` of the
   // sources has an argument too many.
-  test.todoIf(isWindows)("a derived class with no constructor leaves the typed files out", async () => {
-    using dir = tempDir("build-dts-assigned-fields-derived-warning", {
-      ...project(assigned),
-      "src/index.ts": `export class HttpError extends Error {
+  test.todoIf(isWindows)(
+    "a derived class with no constructor leaves the typed files out where its base class takes arguments",
+    async () => {
+      using dir = tempDir("build-dts-assigned-fields-derived-warning", {
+        ...project(assigned),
+        "src/index.ts": `export class HttpError extends Error {
   status = 500;
 }
 `,
-    });
-    const build = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts");
-    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({
-      stderr:
-        "warn: the .aot.ts files that --aot compiles a package from are left out: index.js: class HttpError inherits its constructor in the sources, and the build gives it one with no parameters\n",
-      exitCode: 0,
-    });
-    expect(readdirSync(join(String(dir), "out")).sort()).toEqual(["index.d.ts", "index.js"]);
-  });
+      });
+      const build = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts");
+      expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({
+        stderr:
+          "warn: the .aot.ts files that --aot compiles a package from are left out: index.js: class HttpError inherits its constructor in the sources, and the build gives it one with no parameters\n",
+        exitCode: 0,
+      });
+      expect(readdirSync(join(String(dir), "out")).sort()).toEqual(["index.d.ts", "index.js"]);
+    },
+  );
 
   // The typed file needs the parameters of the base class at the constructor that the build adds.
-  test.todo("a derived class with no constructor keeps its typed file", async () => {
+  test.todo(
+    "a derived class with no constructor keeps its typed file where its base class takes arguments",
+    async () => {
+      using dir = tempDir("build-dts-assigned-fields-derived-arguments", {
+        ...project(assigned),
+        "src/index.ts": `export class HttpError extends Error {
+  status = 500;
+}
+`,
+      });
+      const build = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts");
+      expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      expect(readFileSync(join(String(dir), "out/index.aot.ts"), "utf8")).toContain("  declare status: number;\n");
+    },
+  );
+
+  // A base class that takes no argument: the constructor that the build adds has the parameters of the sources. For
+  // the check of the typed file, its `arguments` is the empty list.
+  test("a derived class with no constructor keeps its typed file where its base class takes no argument", async () => {
+    const caller = (library: string) => `import { Derived, Last } from "${library}";
+const sum: number = new Derived().sum() + new Last().m;
+const wrong: string = new Derived().m;
+new Derived(1);
+`;
     using dir = tempDir("build-dts-assigned-fields-derived", {
       ...project(assigned),
       "src/index.ts": `export class Base {
@@ -1131,12 +1182,27 @@ export class Box {
 }
 export class Derived extends Base {
   m = 2;
+  sum(): number { return this.n + this.m; }
+}
+export class Last extends Derived {
+  label: string = "last";
 }
 `,
+      "callers/of-the-sources.ts": caller("../src/index"),
+      "callers/of-the-typed-file.ts": caller("../out/index.aot"),
     });
     const build = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts");
     expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    expect(readFileSync(join(String(dir), "out/index.aot.ts"), "utf8")).toContain("  declare m: number;\n");
+    expect(readFileSync(join(String(dir), "out/index.aot.ts"), "utf8")).toContain(`class Derived extends Base {
+  constructor() {
+    super(...arguments as any as []);
+    this.m = 2;
+  }
+  declare m: number;
+`);
+    const { errors } = await checkedIn(String(dir));
+    const expected = ["(3,7): TS2322", "(4,13): TS2554"];
+    expect(errors).toEqual({ "callers/of-the-sources.ts": expected, "callers/of-the-typed-file.ts": expected });
   });
 
   test("a build that defines the fields writes no declaration for them", async () => {
@@ -1157,7 +1223,7 @@ export class Derived extends Base {
     expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
     expect(readFileSync(join(String(dir), "out/index.aot.ts"), "utf8")).toEndWith(`
 class Box {
-  public size;
+  public size: number;
   n = 1;
   readonly kind = "box";
   #held = null as string | null;

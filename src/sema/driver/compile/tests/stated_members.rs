@@ -8,17 +8,13 @@ fn word_at(text: &[u8], at: usize) -> String {
     String::from_utf8(text[at..at + length].to_vec()).unwrap()
 }
 
-fn of_main<T: Send>(
-    files: &[(&str, &str)],
-    assigns_class_fields: bool,
-    show: impl Fn(&ModuleTypes) -> T + Sync,
-) -> T {
+fn of_main<T: Send>(files: &[(&str, &str)], show: impl Fn(&ModuleTypes) -> T + Sync) -> T {
     with_program(files, &["./main.ts"], 1, |program| {
         let main = program.file("main.ts");
         let shown = Mutex::new(None);
         check(program, &|checker, file| {
             if file == main {
-                let types = module_types(checker, file, assigns_class_fields).unwrap();
+                let types = module_types(checker, file).unwrap();
                 *shown.lock().unwrap() = Some(show(&types));
             }
         });
@@ -26,22 +22,14 @@ fn of_main<T: Send>(
     })
 }
 
-/// The name of each member of main.ts that its stores in the bundle type in another way than the sources.
-fn members_with_other_stores(files: &[(&str, &str)]) -> Vec<String> {
-    of_main(files, true, |types| {
-        let keys = types.members_with_other_stores.iter();
-        keys.map(|&key| word_at(&types.text, key as usize))
-            .collect()
-    })
-}
-
 /// Each stated member of main.ts: its name, `: ` and its type or ` = ` and its value, then what each name in that is.
-fn stated_members(files: &[(&str, &str)], assigns_class_fields: bool) -> Vec<String> {
-    of_main(files, assigns_class_fields, |types| {
+fn stated_members(files: &[(&str, &str)]) -> Vec<String> {
+    of_main(files, |types| {
         let shown = types.stated_members.iter().map(|member| {
             let text = String::from_utf8(member.text.to_vec()).unwrap();
-            let names = member.names.iter().map(|(at, named)| {
-                let word = word_at(&member.text, *at as usize);
+            let names = member.names.iter().map(|(at, end, named)| {
+                let written = member.text[*at as usize..*end as usize].to_vec();
+                let word = String::from_utf8(written).unwrap();
                 match named {
                     Named::Target(Target::Declaration { path, name }) => {
                         let path = String::from_utf8(path.to_vec()).unwrap();
@@ -143,28 +131,25 @@ fn a_member_with_no_annotation_is_stated_with_the_type_that_the_check_has_for_it
         "level: string",
         "both: { item: Item; unit: Unit; } [Item is Item of /project/item.ts] [Unit is Unit of /project/main.ts]",
         "call: typeof helper [helper is helper of /project/main.ts]",
+        "hidden: items.Hidden [items.Hidden is Hidden of /project/item.ts]",
         "through: Item [Item is Item of /project/item.ts]",
+        "bound: <U>(u: U) => U",
         "reads: (other: number) => typeof shadowed [shadowed is shadowed of /project/main.ts]",
+        "onlyThrough: items.Hidden | null [items.Hidden is Hidden of /project/item.ts]",
         "shallow: { head: number; rest: { head: number; rest: number; }; }",
         "shared: number",
         "held: number",
         "count: number",
         "label: string",
     ];
-    assert_eq!(stated_members(&files, true), expected);
-}
-
-#[test]
-fn a_module_whose_fields_the_build_defines_states_only_a_member_with_no_value() {
-    let files = [("main.ts", MEMBERS), ("item.ts", ITEM)];
-    assert_eq!(stated_members(&files, false), ["level: string"]);
+    assert_eq!(stated_members(&files), expected);
 }
 
 #[test]
 fn a_module_that_is_not_checked_has_no_stated_member() {
     let unchecked = format!("// @ts-nocheck\n{MEMBERS}");
     let files = [("main.ts", &unchecked[..]), ("item.ts", ITEM)];
-    assert_eq!(stated_members(&files, true), [""; 0]);
+    assert_eq!(stated_members(&files), [""; 0]);
 }
 
 #[test]
@@ -183,7 +168,7 @@ export class Stated {
         ("globals.d.ts", &globals[..]),
     ];
     let expected = ["pair: Pair<string, Item> [Pair is global] [Item is Item of /project/item.ts]"];
-    assert_eq!(stated_members(&files, true), expected);
+    assert_eq!(stated_members(&files), expected);
 }
 
 const WITHOUT_VALUES: &str = "type Mode = 'fast' | 'slow';
@@ -282,11 +267,9 @@ fn a_member_with_no_value_is_stated_with_the_type_of_its_stores() {
         "optional: string | undefined",
         "count: number | undefined",
         "#hidden: number",
+        "valued: number",
     ];
-    assert_eq!(
-        stated_members(&[("main.ts", WITHOUT_VALUES)], false),
-        expected
-    );
+    assert_eq!(stated_members(&[("main.ts", WITHOUT_VALUES)]), expected);
 }
 
 const OPTIONAL: &str = "export class Holder {
@@ -314,7 +297,7 @@ fn an_index_that_may_have_no_entry_is_undefined_in_a_stated_type() {
         "label: string | undefined",
         "maybe: string | undefined",
     ];
-    assert_eq!(stated_members(&files, false), expected);
+    assert_eq!(stated_members(&files), expected);
 }
 
 #[test]
@@ -327,17 +310,15 @@ fn the_question_mark_says_that_a_member_can_be_absent_under_exact_optional_prope
         "label: string",
         "maybe: string | undefined",
     ];
-    assert_eq!(stated_members(&files, false), expected);
-    assert_eq!(stated_members(&files, true), expected);
+    assert_eq!(stated_members(&files), expected);
 }
 
 #[test]
-fn without_no_implicit_any_only_a_member_that_the_build_moves_is_stated() {
+fn without_no_implicit_any_a_member_with_no_value_is_any() {
     let loose = options(r#", "noImplicitAny": false"#);
     let files = [("main.ts", OPTIONAL), ("tsconfig.json", &loose[..])];
-    assert_eq!(stated_members(&files, false), [""; 0]);
     let expected = ["first: any", "label: any", "maybe: any"];
-    assert_eq!(stated_members(&files, true), expected);
+    assert_eq!(stated_members(&files), expected);
 }
 
 const LOUD: &str = "export function shout(): Uppercase<string> { return 'A' as Uppercase<string>; }
@@ -412,26 +393,7 @@ fn a_name_that_the_typed_file_has_as_a_variable_states_no_member() {
         "first: number",
         "last: string",
     ];
-    assert_eq!(stated_members(&files, true), expected);
-    let expected = [
-        "local",
-        "fixed",
-        "kind",
-        "plain",
-        "item",
-        "options",
-        "deep",
-        "viaAlias",
-        "fixedAlias",
-        "aliased",
-        "space",
-        "top",
-        "fixedTop",
-        "made",
-        "merged",
-        "fixedMerged",
-    ];
-    assert_eq!(members_with_other_stores(&files), expected);
+    assert_eq!(stated_members(&files), expected);
 }
 
 #[test]
@@ -439,7 +401,7 @@ fn a_word_that_the_printer_wrote_for_another_symbol_states_no_member() {
     let shadowing = format!("type Uppercase<T> = T;\n{NAMES}");
     let files = with_intrinsic_types(&shadowing);
     let files = files.each_ref().map(|file| (file.0, &file.1[..]));
-    let stated = stated_members(&files, true);
+    let stated = stated_members(&files);
     assert!(stated.contains(&"last: string".to_string()), "{stated:?}");
     assert!(
         !stated.iter().any(|member| member.starts_with("loud")),
@@ -459,5 +421,70 @@ export class Holder {
 ";
     // Inside the class expression its name is a type. Outside, no name is, and the class has a member of its own type.
     let expected = ["count: number", "twin: Inner [Inner is Inner below]"];
-    assert_eq!(stated_members(&[("main.ts", main)], true), expected);
+    assert_eq!(stated_members(&[("main.ts", main)]), expected);
+}
+
+#[test]
+fn a_class_with_no_constructor_is_listed_where_its_base_class_takes_no_argument() {
+    let main = "class Plain { a = 1; }
+class Taking { constructor(public n: number) {} }
+class Optional { constructor(public n?: number) {} }
+class Rest { constructor(...all: number[]) {} }
+export class OfPlain extends Plain { x = 1; }
+export class OfTaking extends Taking { x = 1; }
+export class OfOptional extends Optional { x = 1; }
+export class OfRest extends Rest { x = 1; }
+export class WithOwn extends Plain { x = 1; constructor() { super(); } }
+export class OfDerived extends OfPlain { y = 2; }
+";
+    let listed = || {
+        of_main(&[("main.ts", main)], |types| {
+            let names = types.classes_of_bases_without_parameters.iter().map(|&at| {
+                let header = &types.text[..at as usize];
+                let class = header
+                    .windows(6)
+                    .rposition(|word| word == b"class ")
+                    .unwrap();
+                word_at(&types.text, class + 6)
+            });
+            names.collect::<Vec<String>>()
+        })
+    };
+    assert_eq!(listed(), ["OfPlain", "OfDerived"]);
+}
+
+const SCOPES: &str = "import { hide } from './item';
+interface U { u: number }
+namespace Outer {
+    export namespace Inner { export class P { p = 1; } export interface I { i: number } }
+    export interface Entry { e: number }
+    export class Q {
+        q = new Inner.P();
+        i = null as Inner.I | null;
+        entry = null as Entry | null;
+    }
+}
+namespace Outer {
+    export class Other {
+        entries = [] as Entry[];
+    }
+}
+export class Holder {
+    hidden = hide();
+    own = <U>(u: U) => u;
+    plain = <V>(v: V) => v;
+}
+";
+
+#[test]
+fn a_name_is_stated_only_where_the_bundle_has_it_in_scope() {
+    let files = [("main.ts", SCOPES), ("item.ts", ITEM)];
+    // In the bundle a namespace below the top level is a variable, and each block of a namespace a function.
+    let expected = [
+        "p: number",
+        "entry: Entry | null [Entry is Entry below]",
+        "hidden: import(\"./item\").Hidden [import(\"./item\").Hidden is Hidden of /project/item.ts]",
+        "plain: <V>(v: V) => V",
+    ];
+    assert_eq!(stated_members(&files), expected);
 }

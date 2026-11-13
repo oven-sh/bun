@@ -3,8 +3,8 @@ use bun_ast::op::Level;
 use bun_sema::atom::Interner;
 use bun_sema::check::Checker;
 use bun_sema::check::services::{
-    Child, LiteralValue, NodeRef, Services, StatedType, SymbolFlags, SymbolOp, SymbolRef,
-    SymbolTable, TypeFlags, TypeFormatFlags,
+    Child, LiteralValue, NodeRef, Services, SignatureKind, StatedType, SymbolFlags, SymbolOp,
+    SymbolRef, SymbolTable, TypeFlags, TypeFormatFlags,
 };
 use bun_sema::check::spans::{compute_ecma_line_starts, skip_trivia, skip_trivia_back, token_end};
 use bun_sema::config::find_config_of_package;
@@ -251,6 +251,16 @@ impl<'a, 's> Syntax<'a, 's> {
                 .iter()
                 .find_map(|element| self.first_identifier(self.file[element].pat)),
         }
+    }
+
+    /// The end of `arguments` in `super(...arguments)`, if the body of `constructor` starts with that call.
+    fn arguments_given_on(&self, constructor: &Member) -> Option<u32> {
+        const CALL: &[u8] = b"super(...arguments";
+        let open = self.body_start(constructor.func.some()?)?;
+        let start = self.after_trivia(open + 1);
+        let given = self.text.get(start as usize..)?.starts_with(CALL);
+        let end = start + CALL.len() as u32;
+        (given && self.byte(end) == b')').then_some(end)
     }
 
     fn body_start(&self, function: FnId) -> Option<u32> {
@@ -1422,8 +1432,6 @@ struct Bundle<'a> {
     modules: &'a [ModuleTypes],
     emitted_declarations: &'a [ModuleTypes],
     entry_point: Option<&'a [u8]>,
-    /// As the typed files are checked. Only then has a member with no type the type of what the constructor stores.
-    no_implicit_any: bool,
     /// The build writes more than this output. Another typed file can have the class that this one has a twin of.
     has_other_outputs: bool,
 }
@@ -2045,8 +2053,8 @@ fn link(
         taken.extend(heads.map(|name| module.syntax.word(name.pos()).to_vec()));
         let stated = types.stated_members.iter();
         let heads = stated.flat_map(|member| member.names.iter().map(move |name| (member, name)));
-        let unresolved = heads.filter(|(_, name)| !matches!(name.1, Named::Target(_)));
-        taken.extend(unresolved.map(|(member, name)| member.word(name.0).to_vec()));
+        let unresolved = heads.filter(|(_, name)| !matches!(name.2, Named::Target(_)));
+        taken.extend(unresolved.map(|(member, name)| member.word(name).to_vec()));
     }
 
     let nested_names: Vec<FxHashSet<&[u8]>> = written
@@ -2114,6 +2122,35 @@ fn link(
         }
         Target::Module { .. } => None,
     };
+    // A package that the bundle holds has its own classes there: what the package declares is another type.
+    let specifier_of = |text: &[u8]| -> Option<Vec<u8>> {
+        let open = bun_core::strings::index_of_any(text, b"\"'")?;
+        let behind = &text[open + 1..];
+        let close = behind.iter().position(|&byte| byte == text[open])?;
+        Some(behind[..close].to_vec())
+    };
+    let output_imports: FxHashSet<Vec<u8>> = (output.file.stmts.iter())
+        .filter_map(|statement| match statement.kind {
+            StmtKind::Import(import) => {
+                let clause_end = output.file[import].clause_end as usize;
+                specifier_of(&output.text[clause_end..statement.loc.end as usize])
+            }
+            _ => None,
+        })
+        .collect();
+    let is_import_of_output = |index: usize, found: &Declared| {
+        let statement = found.import.map(|import| import.0);
+        let module = written[index].as_ref().zip(statement);
+        let specifier = module.and_then(|(module, statement)| {
+            let (file, statement) = (module.syntax.file, &module.syntax.file[statement]);
+            let StmtKind::Import(import) = statement.kind else {
+                return None;
+            };
+            let clause_end = file[import].clause_end as usize;
+            specifier_of(&module.syntax.text[clause_end..statement.loc.end as usize])
+        });
+        specifier.is_some_and(|specifier| output_imports.contains(&specifier))
+    };
     let mut wanted: FxHashSet<(usize, Box<[u8]>)> = FxHashSet::default();
     let mut queue: Vec<(usize, Box<[u8]>)> = Vec::new();
     for module in written.iter().take(mapped).flatten() {
@@ -2127,13 +2164,13 @@ fn link(
         let stated = module.types.iter().flat_map(|types| &types.stated_members);
         let named = stated.flat_map(|member| member.names.iter());
         queue.extend(named.filter_map(|name| {
-            let Named::Target(Target::Declaration { path, name }) = &name.1 else {
+            let Named::Target(Target::Declaration { path, name }) = &name.2 else {
                 return None;
             };
             let index = *index_of.get(&path[..])?;
             let found = declared[index].get(&name[..])?;
             let is_type = found.bindings.is_empty() && !found.is_ambient_value;
-            (is_type || found.import.is_some()).then(|| (index, name.clone()))
+            (is_type || is_import_of_output(index, found)).then(|| (index, name.clone()))
         }));
     }
     let entry = bundle
@@ -2734,6 +2771,75 @@ fn link(
         all_edits.push(edits);
     }
 
+    // A class or a function of another output has a twin here, which is another type than what the bundle stores.
+    let is_declared_here = |target: &Target, is_value: bool| {
+        let found = place_of(target).and_then(|(index, name)| {
+            let found = declared[index].get(&name[..])?;
+            let is_twin = bundle.has_other_outputs && emitted_from.contains_key(&index);
+            // Only an enum that the typed file declares, or imports, has members for a declaration.
+            let is_enum = found.enum_statement.is_some() || is_import_of_output(index, found);
+            let is_type = found.bindings.is_empty()
+                || name_in_output(index, found).is_some_and(|_| index < mapped);
+            Some(!is_twin && (is_enum || (is_type && !is_value)))
+        });
+        found == Some(true)
+    };
+    for (index, module) in written.iter().enumerate().take(mapped) {
+        let Some(types) = module.as_ref().and_then(|module| module.types) else {
+            continue;
+        };
+        for member in types.stated_members.iter() {
+            let (mut text, mut copied, mut captured) = (Vec::new(), 0, Vec::new());
+            let in_typed_file = member.names.iter().all(|name| {
+                let (at, end, named) = name;
+                let word = member.word(name);
+                let name: Option<Vec<u8>> = match named {
+                    // No name yet: out. A binding below the top level has the name: `outer` has the one of the top.
+                    Named::Target(target) => final_name(target)
+                        .filter(|_| is_declared_here(target, member.is_value))
+                        .and_then(|name| {
+                            let is_captured =
+                                &name[..] != word && nested_names[index].contains(&name[..]);
+                            match (is_captured, member.is_value) {
+                                (false, _) => Some(name.clone()),
+                                (true, true) => None,
+                                (true, false) => {
+                                    captured.push(name.clone());
+                                    Some([&outer_scope[..], b".", &name[..]].concat())
+                                }
+                            }
+                        }),
+                    Named::Global if declared_in_output.contains(word) => {
+                        Some([b"globalThis.", word].concat())
+                    }
+                    Named::Global => Some(word.to_vec()),
+                    Named::Local(binding) => {
+                        let in_output = generated.get(&(index as u32, *binding));
+                        Some(
+                            in_output
+                                .map_or(word, |&offset| output.word(offset))
+                                .to_vec(),
+                        )
+                    }
+                };
+                let Some(name) = name else { return false };
+                text.extend_from_slice(&member.text[copied..*at as usize]);
+                text.extend_from_slice(&name);
+                copied = *end as usize;
+                true
+            });
+            if in_typed_file {
+                shadowed.append(&mut captured);
+                text.extend_from_slice(&member.text[copied..]);
+                let stated = Stated {
+                    text,
+                    is_value: member.is_value,
+                    has_initializer: member.has_initializer,
+                };
+                (linked.stated_members).insert((index as u32, member.key), stated);
+            }
+        }
+    }
     shadowed.shared_sort();
     shadowed.dedup();
     if !shadowed.is_empty() {
@@ -2832,65 +2938,6 @@ fn link(
     );
     hoisted_statements.shared_sort();
     hoisted_statements.dedup();
-    // A class or a function of another output has a twin here, which is another type than what the bundle stores.
-    let is_declared_here = |target: &Target, is_value: bool| {
-        let found = place_of(target).and_then(|(index, name)| {
-            let found = declared[index].get(&name[..])?;
-            let is_twin = bundle.has_other_outputs && emitted_from.contains_key(&index);
-            // Only an enum that the typed file declares, or imports, has members for a declaration.
-            let is_enum = found.enum_statement.is_some() || found.import.is_some();
-            let is_type = found.bindings.is_empty()
-                || name_in_output(index, found).is_some_and(|_| index < mapped);
-            Some(!is_twin && (is_enum || (is_type && !is_value)))
-        });
-        found == Some(true)
-    };
-    for (index, module) in written.iter().enumerate().take(mapped) {
-        let Some(types) = module.as_ref().and_then(|module| module.types) else {
-            continue;
-        };
-        for member in types.stated_members.iter() {
-            let (mut text, mut copied) = (Vec::new(), 0);
-            let in_typed_file = member.names.iter().all(|(at, named)| {
-                let word = member.word(*at);
-                let name: Option<Vec<u8>> = match named {
-                    // A declaration that the typed file does not have yet stays out of it.
-                    Named::Target(target) => final_name(target)
-                        .filter(|_| is_declared_here(target, member.is_value))
-                        .filter(|name| {
-                            &name[..] == word || !nested_names[index].contains(&name[..])
-                        })
-                        .cloned(),
-                    Named::Global if declared_in_output.contains(word) => {
-                        Some([b"globalThis.", word].concat())
-                    }
-                    Named::Global => Some(word.to_vec()),
-                    Named::Local(binding) => {
-                        let in_output = generated.get(&(index as u32, *binding));
-                        Some(
-                            in_output
-                                .map_or(word, |&offset| output.word(offset))
-                                .to_vec(),
-                        )
-                    }
-                };
-                let Some(name) = name else { return false };
-                text.extend_from_slice(&member.text[copied..*at as usize]);
-                text.extend_from_slice(&name);
-                copied = *at as usize + word.len();
-                true
-            });
-            if in_typed_file {
-                text.extend_from_slice(&member.text[copied..]);
-                let stated = Stated {
-                    text,
-                    is_value: member.is_value,
-                    has_initializer: member.has_initializer,
-                };
-                (linked.stated_members).insert((index as u32, member.key), stated);
-            }
-        }
-    }
     drop(names);
     drop(declared);
     for (module, edits) in written.iter_mut().zip(all_edits) {
@@ -3108,7 +3155,6 @@ fn add_types(
         dropped_casts: 0,
         hoisted: Vec::new(),
         optional_parameter_properties,
-        no_implicit_any: bundle.no_implicit_any,
         stated_slots: FxHashSet::default(),
         class_with_added_constructor: None,
     };
@@ -3133,7 +3179,6 @@ struct Transfer<'t, 'a, 's> {
     dropped_casts: usize,
     hoisted: Vec<u8>,
     optional_parameter_properties: FxHashMap<(u32, u32), (u32, bool)>,
-    no_implicit_any: bool,
     /// Where `copy_slots` wrote the type of a stated member, so that `copy_casts` writes none.
     stated_slots: FxHashSet<u32>,
     /// `TypedFilesError::ConstructorWithoutParameters::class`, for the first such class.
@@ -3196,7 +3241,8 @@ impl<'a> Transfer<'_, 'a, '_> {
                 .filter(|stated| {
                     let has_its_value = stated.has_initializer
                         && output.byte(output.after_trivia(slot.start)) == b'=';
-                    !stated.is_value && !has_its_value
+                    // A field with no type is `any` already.
+                    !stated.is_value && !has_its_value && &stated.text[..] != b"any"
                 });
             if stated.is_some() {
                 self.stated_slots.insert(slot.start);
@@ -3426,6 +3472,30 @@ impl<'a> Transfer<'_, 'a, '_> {
             .filter(|property| property.kind == PropKind::Shorthand)
             .map(|property| property.value)
             .collect();
+        // The store of a field that the build moved has the place of the member, and a default that of its parameter.
+        let values_by_place = std::cell::OnceCell::new();
+        let by_place = || {
+            let mut values: FxHashMap<(u32, u32), Vec<ExprId>> = FxHashMap::default();
+            for parameter in output_file.params.iter() {
+                let key = output.first_identifier(parameter.pat);
+                if let (Some(default), Some(original)) = (
+                    parameter.default.some(),
+                    key.and_then(|key| mappings.original(key)),
+                ) {
+                    values.entry(original).or_default().push(default);
+                }
+            }
+            for expr in output_file.exprs.iter() {
+                if let ExprKind::Assign {
+                    op: None, value, ..
+                } = expr.kind
+                    && let Some(original) = mappings.original(expr.pos)
+                {
+                    values.entry(original).or_default().push(value);
+                }
+            }
+            values
+        };
         for (index, module) in written.iter().enumerate() {
             let Some(module) = module.as_ref().filter(|module| !module.is_unchecked()) else {
                 continue;
@@ -3539,6 +3609,17 @@ impl<'a> Transfer<'_, 'a, '_> {
                     .get(&(index as u32, syntax.file.exprs.get(obj.idx())?.pos))?;
                 Some([&b" as "[..], name, b".", syntax.word(name_pos)].concat())
             };
+            let valued = std::cell::OnceCell::new();
+            let values_of = || -> FxHashMap<ExprId, u32> {
+                let fields =
+                    (file.members.iter()).filter(|member| member.kind == MemberKind::Property);
+                let fields = fields.map(|member| (member.init, Some(syntax.member_key(member))));
+                let parameters = (file.params.iter())
+                    .map(|parameter| (parameter.default, syntax.first_identifier(parameter.pat)));
+                (fields.chain(parameters))
+                    .filter_map(|(value, key)| Some((value.some()?, key?)))
+                    .collect()
+            };
             let mut chains = syntax.cast_chains();
             let operands: FxHashSet<ExprId> = chains.iter().map(|chain| chain.operand).collect();
             let members = (0..syntax.file.exprs.len() as u32)
@@ -3559,13 +3640,20 @@ impl<'a> Transfer<'_, 'a, '_> {
                 }
                 let source_position = syntax.file[chain.operand].pos;
                 let found = find(chain.operand).or_else(|| find_via_ancestor(&chain));
-                let Some(operand) = found.or_else(|| {
+                let found = found.or_else(|| {
                     [Shape::Leaf, Shape::Prefix].iter().find_map(|&shape| {
                         output_expressions
                             .get(&(shape, index as u32, source_position))
                             .copied()
                             .filter(|&literal| is_literal(literal))
                     })
+                });
+                // A constant of another module has no place in the map: its store or its parameter has one.
+                let Some(operand) = found.or_else(|| {
+                    let key = *valued.get_or_init(values_of).get(&chain.outermost)?;
+                    let values = values_by_place.get_or_init(by_place);
+                    let mut values = values.get(&(index as u32, key))?.iter().copied();
+                    values.find(|&value| is_literal(value))
                 }) else {
                     continue;
                 };
@@ -4047,16 +4135,29 @@ impl<'a> Transfer<'_, 'a, '_> {
                     class.members.iter().map(|member| &file[member]).collect();
                 // `constructor() { super(...arguments); }` of the build states no parameter of the base class.
                 let is_constructor = |member: &Member| member.kind == MemberKind::Constructor;
-                let adds_constructor = class.extends.is_some()
-                    && !members.iter().any(|member| is_constructor(member))
-                    && (in_output.members.iter())
-                        .any(|member| is_constructor(&output_file[member]));
-                if adds_constructor && self.class_with_added_constructor.is_none() {
-                    let class = match class.name.is_some() {
-                        true => [b"class ", syntax.word(class.name_pos)].concat(),
-                        false => b"a class".to_vec(),
-                    };
-                    self.class_with_added_constructor = Some(class);
+                let mut added = (in_output.members.iter().map(|member| &output_file[member]))
+                    .filter(|member| class.extends.is_some() && is_constructor(member))
+                    .filter(|_| !members.iter().any(|member| is_constructor(member)));
+                if let Some(added) = added.next() {
+                    // Where the base class takes no argument, `arguments` is the empty list for the check.
+                    let body = syntax.class_body_pos(class);
+                    let takes_none = module.types.is_some_and(|types| {
+                        (types
+                            .classes_of_bases_without_parameters
+                            .binary_search(&body))
+                        .is_ok()
+                    });
+                    match output.arguments_given_on(added).filter(|_| takes_none) {
+                        Some(end) => insertions.add(end, Order::Slot, b" as any as []".to_vec()),
+                        None if self.class_with_added_constructor.is_none() => {
+                            let class = match class.name.is_some() {
+                                true => [b"class ", syntax.word(class.name_pos)].concat(),
+                                false => b"a class".to_vec(),
+                            };
+                            self.class_with_added_constructor = Some(class);
+                        }
+                        None => {}
+                    }
                 }
                 let mut add = |place: usize, text: &[u8]| {
                     let next = members[place..].iter().find_map(|next| {
@@ -4079,8 +4180,6 @@ impl<'a> Transfer<'_, 'a, '_> {
                         }
                     }
                 };
-                // With no type, a member has the type of what the constructor stores, if the check looks for one.
-                let is_typed_by_stores = self.no_implicit_any || module.is_unchecked();
                 let mut types_of_private_fields: Vec<(u32, Vec<u8>)> = Vec::new();
                 for (place, member) in members.iter().enumerate() {
                     let key = (index as u32, syntax.member_key(member));
@@ -4105,27 +4204,29 @@ impl<'a> Transfer<'_, 'a, '_> {
                         };
                         let mut fields = in_output.members.iter().map(|kept| &output_file[kept]);
                         let stated = self.linked.stated_members.get(&key);
-                        let stated = stated.filter(|stated| !stated.is_value);
-                        if let (Some(kept), Some(stated)) = (fields.find(is_kept), stated) {
+                        let typed = match member.ty.some() {
+                            Some(annotation) => {
+                                let (start, end) = syntax.type_span(annotation);
+                                Some(module.text(start, end))
+                            }
+                            None => (stated.filter(|stated| !stated.is_value))
+                                .map(|stated| stated.text.clone()),
+                        };
+                        if let (Some(kept), Some(typed)) = (fields.find(is_kept), typed) {
                             let at = output.member_type_span(kept).0;
-                            types_of_private_fields.push((at, [b": ", &stated.text[..]].concat()));
+                            types_of_private_fields.push((at, [b": ", &typed[..]].concat()));
                         }
                     } else if member.kind == MemberKind::Property
                         && !output_members.contains_key(&key)
                     {
-                        // The stores of an assigned member type it, unless they type it in another way.
-                        let is_typed_by_stores = is_typed_by_stores
-                            && module.types.is_some_and(|types| {
-                                let others = &types.members_with_other_stores;
-                                types.assigns_class_fields && others.binary_search(&key.1).is_err()
-                            });
+                        // With no type, only a module that is not checked has a line: its members are `any`.
                         let stated = match self.linked.stated_members.get(&key) {
                             _ if member.ty.is_some() => Some(Vec::new()),
                             Some(stated) if stated.is_value => {
                                 Some([b" = ", &stated.text[..]].concat())
                             }
                             Some(stated) => Some([b": ", &stated.text[..]].concat()),
-                            None => is_typed_by_stores.then(Vec::new),
+                            None => module.is_unchecked().then(Vec::new),
                         };
                         if let Some(stated) = stated {
                             let modifiers = file.modifier_list(member.modifiers);
@@ -4340,13 +4441,16 @@ pub struct StatedMember {
     pub is_value: bool,
     /// The member has a value in the sources.
     pub has_initializer: bool,
-    /// Where `text` has the head of an entity name, and what that is where the member stands.
-    pub names: Vec<(u32, Named)>,
+    /// Where `text` names something: from, to, and what that is where the member stands. `link` writes its name there.
+    pub names: Vec<(u32, u32, Named)>,
 }
 
 impl StatedMember {
-    fn word(&self, at: u32) -> &[u8] {
-        &self.text[at as usize..token_end(&self.text, at as usize, false)]
+    /// The word of a name: all of it, or what stands behind `import("..").` or behind the name of a namespace import.
+    fn word(&self, name: &(u32, u32, Named)) -> &[u8] {
+        let written = &self.text[name.0 as usize..name.1 as usize];
+        let dot = written.iter().rposition(|&byte| byte == b'.');
+        &written[dot.map_or(0, |dot| dot + 1)..]
     }
 }
 
@@ -4358,11 +4462,9 @@ pub struct ModuleTypes {
     pub exports: Vec<(Box<[u8]>, Target)>,
     pub constants: Vec<(u32, Box<[u8]>)>,
     pub functions_returning_undefined: Vec<u32>,
-    /// The build stores the class fields of the module in the constructor: a member has no value where it is declared.
-    pub assigns_class_fields: bool,
     pub stated_members: Box<[StatedMember]>,
-    /// `StatedMember::key` of each member whose type names an enum or a namespace: its stores type it in another way.
-    pub members_with_other_stores: Box<[u32]>,
+    /// `Syntax::class_body_pos` of each class with no constructor whose base class is constructed with no argument.
+    pub classes_of_bases_without_parameters: Box<[u32]>,
     pub globals: Vec<u32>,
     pub augmented_modules: Vec<(u32, Box<[u8]>)>,
     pub locals: Vec<(u32, u32)>,
@@ -4568,16 +4670,10 @@ fn stated_members(
     is_source: &dyn Fn(FileId) -> Option<Box<[u8]>>,
     file: FileId,
     syntax: &Syntax<'_, '_>,
-    assigns_class_fields: bool,
-) -> (Box<[StatedMember]>, Box<[u32]>) {
+) -> Box<[StatedMember]> {
     let hir = syntax.file;
-    // Only `noImplicitAny` types a member by its stores.
-    let is_typed_by_stores = services.compiler_options().no_implicit_any;
-    if hir.kind == FileKind::Declaration
-        || hir.check_directive == Some(false)
-        || !(is_typed_by_stores || assigns_class_fields)
-    {
-        return Default::default();
+    if hir.kind == FileKind::Declaration || hir.check_directive == Some(false) {
+        return Box::default();
     }
     let mut stated: Vec<(u32, NodeRef, StatedType, bool)> = Vec::new();
     let mut state =
@@ -4594,7 +4690,6 @@ fn stated_members(
         if member.kind == MemberKind::Property
             && member.ty.is_none()
             && !syntax.is_type_only_member(member)
-            && (assigns_class_fields || (is_typed_by_stores && !has_initializer))
         {
             let key = syntax.member_key(member);
             state(services, key, hir.node(id), has_initializer);
@@ -4602,7 +4697,7 @@ fn stated_members(
         let Some(constructor) = member
             .func
             .some()
-            .filter(|_| assigns_class_fields && member.kind == MemberKind::Constructor)
+            .filter(|_| member.kind == MemberKind::Constructor)
         else {
             continue;
         };
@@ -4618,7 +4713,7 @@ fn stated_members(
         }
     }
     if stated.is_empty() {
-        return Default::default();
+        return Box::default();
     }
     // One text declares each type that can name something. A value that can is an enum member: a type behind `typeof`.
     let mut text = Vec::new();
@@ -4658,14 +4753,13 @@ fn stated_members(
                     let parsed = parse(&session, &atoms, b"stated.ts", declaration).ok()?;
                     let mut heads = heads_of_stated(&parsed, &[(start - from, end - from)]);
                     let mut heads = heads.pop()??;
-                    heads.iter_mut().for_each(|head| head.0 += from);
+                    heads.iter_mut().for_each(|head| head.at += from);
                     Some(heads)
                 })
                 .collect(),
         }
     };
     let mut members = Vec::with_capacity(stated.len());
-    let mut with_other_stores = Vec::new();
     let mut holders: Vec<SymbolRef> = Vec::new();
     let spans = spans.into_iter().zip(heads);
     for ((key, node, found, has_initializer), ((start, _), heads)) in stated.into_iter().zip(spans)
@@ -4684,37 +4778,47 @@ fn stated_members(
                 }
             }
         }
-        let mut has_other_stores = assigns_class_fields
-            && holders.iter().any(|&symbol| {
-                let flags = services.symbol_info(symbol).flags;
-                flags.intersects(SymbolFlags::ENUM | SymbolFlags::ENUM_MEMBER)
-                    || is_namespace_of_sources(services, is_source, symbol)
-            });
         let heads = heads.filter(|_| !found.is_refused);
         let mut names = heads.is_some().then(Vec::new);
-        for (at, meaning, is_whole_name) in heads.into_iter().flatten() {
-            let word_end = token_end(&text, at as usize, false);
-            let head = Head {
-                word: &text[at as usize..word_end],
-                behind: &text[word_end..],
-                meaning,
-                is_whole_name,
-                is_in_value: found.is_value,
+        for at in heads.into_iter().flatten() {
+            let word_end = token_end(&text, at.at as usize, false);
+            let word = &text[at.at as usize..word_end];
+            // `import("..").Name`, and `ns.Name` behind a namespace import: the declaration of that name.
+            let of_module = |services: &mut Services<'_, '_, '_>, (from, to): (usize, usize)| {
+                let name = (&text[from..to], &text[to..]);
+                let named = named_by_module(services, is_source, &holders, name, found.is_value);
+                named.map(|named| (to, named))
             };
-            match named_by_head(services, is_source, node, &holders, &head) {
-                Ok(named) => {
-                    if let Some(names) = names.as_mut() {
-                        names.push((at - start, named));
+            let named = match name_of_import_type(&text, at.at as usize) {
+                Some(name) => of_module(services, name),
+                // The word is the type parameter only if nothing has that name where the member stands.
+                None if at.is_bound => {
+                    let outside = services.resolve_name(node, word, at.meaning, false);
+                    names = names.filter(|_| outside.is_none());
+                    continue;
+                }
+                None => {
+                    let head = Head {
+                        word,
+                        behind: &text[word_end..],
+                        meaning: at.meaning,
+                        is_whole_name: at.is_whole_name,
+                        is_in_value: found.is_value,
+                    };
+                    match named_by_head(services, is_source, node, &holders, &head) {
+                        Ok(named) => Some((word_end, named)),
+                        Err(true) if text[word_end..].starts_with(b".") => {
+                            let name = (word_end + 1, token_end(&text, word_end + 1, false));
+                            of_module(services, name)
+                        }
+                        Err(_) => None,
                     }
                 }
-                Err(is_namespace_object) => {
-                    has_other_stores |= is_namespace_object && assigns_class_fields;
-                    names = None;
-                }
-            }
-        }
-        if has_other_stores {
-            with_other_stores.push(key);
+            };
+            names = names.zip(named).map(|(mut names, (end, named))| {
+                names.push((at.at - start, end as u32 - start, named));
+                names
+            });
         }
         if let Some(names) = names {
             members.push(StatedMember {
@@ -4726,8 +4830,35 @@ fn stated_members(
             });
         }
     }
-    with_other_stores.sort_unstable();
-    (members.into(), with_other_stores.into())
+    members.into()
+}
+
+/// `ModuleTypes::classes_of_bases_without_parameters`. Sorted.
+fn classes_of_bases_without_parameters(
+    services: &mut Services<'_, '_, '_>,
+    file: FileId,
+    syntax: &Syntax<'_, '_>,
+) -> Box<[u32]> {
+    let hir = syntax.file;
+    let mut found = Vec::new();
+    for class in hir.classes.iter().filter(|class| class.extends.is_some()) {
+        let mut members = class.members.iter().map(|member: MemberId| &hir[member]);
+        if members.any(|member| member.kind == MemberKind::Constructor) {
+            continue;
+        }
+        let node = hir.node(class.extends);
+        let base = services.type_at_location(NodeRef { file, node });
+        let signatures = services.signatures_of_type(base, SignatureKind::Construct);
+        let takes_none = |services: &mut Services<'_, '_, '_>| {
+            (signatures.iter())
+                .all(|&signature| services.signature_info(signature).parameters.is_empty())
+        };
+        if !signatures.is_empty() && takes_none(services) {
+            found.push(syntax.class_body_pos(class));
+        }
+    }
+    found.sort_unstable();
+    found.into()
 }
 
 /// The head of an entity name in a stated text, and what the text has behind it.
@@ -4753,7 +4884,7 @@ fn is_namespace_of_sources(
         })
 }
 
-/// What `link` takes for `head`. `Err`: no typed file has that name, and `Err(true)`: it is the object of a module.
+/// What `link` takes for `head`. `Err`: no typed file has that name. `Err(true)`: the object of a namespace import.
 fn named_by_head(
     services: &mut Services<'_, '_, '_>,
     is_source: &dyn Fn(FileId) -> Option<Box<[u8]>>,
@@ -4775,14 +4906,27 @@ fn named_by_head(
     let is_global = |services: &mut Services<'_, '_, '_>| {
         (services.resolve_name(node, head.word, head.meaning, true)).is_none()
     };
-    let is_named_by_printer = [symbol, exported, real]
-        .iter()
-        .any(|form| holders.contains(form))
+    let is_named_by_printer = match WITHOUT_SYMBOL.contains(&head.word) {
+        true => is_global(services),
         // The printer tells no one of a type parameter that it copies from the sources.
-        || flags.contains(SymbolFlags::TYPE_PARAMETER)
-        || (WITHOUT_SYMBOL.contains(&head.word) && is_global(services));
+        false => {
+            flags.contains(SymbolFlags::TYPE_PARAMETER)
+                || [symbol, exported, real]
+                    .iter()
+                    .any(|form| holders.contains(form))
+        }
+    };
     if !is_named_by_printer {
         return Err(false);
+    }
+    let merged = alias_merged_with_type(services, symbol).filter(|_| head.is_whole_name);
+    let target = match merged {
+        Some(merged) => target_declared_by(services, is_source, merged),
+        None => target_of(services, is_source, symbol),
+    };
+    // `link` has the object of a namespace import, which is no name. What stands behind it can have one.
+    if matches!(target, Some(Target::Module { .. })) {
+        return Err(true);
     }
     let is_enum = flags.intersects(SymbolFlags::ENUM);
     let is_namespace = is_namespace_of_sources(services, is_source, real);
@@ -4814,11 +4958,6 @@ fn named_by_head(
         }
         (holder, behind) = (member, &rest[name.len()..]);
     }
-    let merged = alias_merged_with_type(services, symbol).filter(|_| head.is_whole_name);
-    let target = match merged {
-        Some(merged) => target_declared_by(services, is_source, merged),
-        None => target_of(services, is_source, symbol),
-    };
     // The name of a class expression is one inside that class only, also where a variable of the module has the class.
     let declaration = services.declarations(real).first().copied();
     let names_class_expression = declaration
@@ -4833,37 +4972,86 @@ fn named_by_head(
         return Err(false);
     }
     match target {
-        // `link` has the object of a namespace import, which is no name for a type.
-        Some(Target::Module { .. }) => Err(true),
         Some(target) => Ok(Named::Target(target)),
-        None => named_without_target(services, is_source, node.file, merged.unwrap_or(symbol))
-            .ok_or(false),
+        // A namespace below the top level is a variable in the bundle.
+        None if flags.intersects(SymbolFlags::MODULE) => Err(false),
+        None => {
+            let named = merged.unwrap_or(symbol);
+            let local = named_without_target(services, is_source, node.file, named).ok_or(false)?;
+            // Another block of a namespace has its own function in the bundle: its names are not in scope here.
+            let is_in_scope = match (&local, declaration) {
+                (Named::Local(_), Some(declaration)) => {
+                    let block = namespace_block_of(services, declaration);
+                    block.is_none_or(|block| is_below(services, node, block))
+                }
+                _ => true,
+            };
+            is_in_scope.then_some(local).ok_or(false)
+        }
     }
 }
 
-/// For each of `spans`: where an entity name starts, its meaning, whether it is one word. `None`: `link` has no name.
-fn heads_of_stated(
-    file: &File<'_>,
-    spans: &[(u32, u32)],
-) -> Vec<Option<Vec<(u32, SymbolFlags, bool)>>> {
-    let mut heads: Vec<Option<Vec<(u32, SymbolFlags, bool)>>> = vec![Some(Vec::new()); spans.len()];
+/// The block of a namespace that `node` stands in, if any: the nearest one.
+fn namespace_block_of(services: &mut Services<'_, '_, '_>, node: NodeRef) -> Option<Node> {
+    let mut at = services.node_parent(node);
+    while at != Node::FILE && at.is_some() {
+        let here = NodeRef {
+            file: node.file,
+            node: at,
+        };
+        if services.node_kind(here) == Kind::ModuleDeclaration {
+            return Some(at);
+        }
+        at = services.node_parent(here);
+    }
+    None
+}
+
+fn is_below(services: &mut Services<'_, '_, '_>, node: NodeRef, block: Node) -> bool {
+    let mut at = node.node;
+    while at != Node::FILE && at.is_some() {
+        if at == block {
+            return true;
+        }
+        at = services.node_parent(NodeRef {
+            file: node.file,
+            node: at,
+        });
+    }
+    false
+}
+
+/// Where a stated text has the head of an entity name, or `import("..").Name`.
+#[derive(Clone, Copy)]
+struct HeadAt {
+    at: u32,
+    meaning: SymbolFlags,
+    is_whole_name: bool,
+    /// The word is a type parameter of the text itself.
+    is_bound: bool,
+}
+
+/// The heads in each of `spans`, in the order of the text. `None`: the text has what `link` has no name for.
+fn heads_of_stated(file: &File<'_>, spans: &[(u32, u32)]) -> Vec<Option<Vec<HeadAt>>> {
+    let mut heads: Vec<Option<Vec<HeadAt>>> = vec![Some(Vec::new()); spans.len()];
     let owner = |at: u32| {
         let index = spans.partition_point(|span| span.0 <= at).checked_sub(1)?;
         (at < spans[index].1).then_some(index)
     };
-    let refuse = |at: u32, heads: &mut Vec<Option<Vec<(u32, SymbolFlags, bool)>>>| {
+    let refuse = |at: u32, heads: &mut Vec<Option<Vec<HeadAt>>>| {
         if let Some(index) = owner(at) {
             heads[index] = None;
         }
     };
-    for parameter in file.type_params.iter() {
-        refuse(parameter.pos, &mut heads);
-    }
     for member in file.members.iter() {
         if matches!(member.key, PropKey::Computed(_)) {
             refuse(member.name_pos, &mut heads);
         }
     }
+    let is_bound = |head: &Name| {
+        (file.type_params.iter())
+            .any(|bound| bound.name == head.text && owner(bound.pos) == owner(head.pos()))
+    };
     let is_parameter = |head: &Name| {
         file.pats.iter().any(|pattern| {
             matches!(pattern.kind, PatKind::Ident(name) if name == head.text)
@@ -4871,10 +5059,16 @@ fn heads_of_stated(
         })
     };
     for node in file.types.iter() {
-        let (name, meaning) = match node.kind {
-            TypeNodeKind::Ref { name, .. } if name.len == 1 => (name, SymbolFlags::TYPE),
-            TypeNodeKind::Ref { name, .. } => (name, SymbolFlags::NAMESPACE),
-            TypeNodeKind::Typeof { name, .. } => (name, SymbolFlags::VALUE),
+        let (name, meaning, at) = match node.kind {
+            TypeNodeKind::Ref { name, .. } if name.len == 1 => (name, SymbolFlags::TYPE, None),
+            TypeNodeKind::Ref { name, .. } => (name, SymbolFlags::NAMESPACE, None),
+            TypeNodeKind::Typeof { name, .. } => (name, SymbolFlags::VALUE, None),
+            // The printer writes this for a declaration that has no name where the member stands.
+            TypeNodeKind::Import {
+                name,
+                is_typeof: false,
+                ..
+            } if name.len == 1 => (name, SymbolFlags::TYPE, Some(node.pos)),
             TypeNodeKind::Import { .. }
             | TypeNodeKind::UniqueSymbol
             | TypeNodeKind::Unique(_)
@@ -4893,22 +5087,76 @@ fn heads_of_stated(
             refuse(node.pos, &mut heads);
             continue;
         };
-        let is_whole_name = name.len == 1 && meaning == SymbolFlags::TYPE;
-        if let Some(found) = owner(head.pos()).and_then(|index| heads[index].as_mut()) {
-            found.push((head.pos(), meaning, is_whole_name));
+        let found = HeadAt {
+            at: at.unwrap_or_else(|| head.pos()),
+            meaning,
+            is_whole_name: name.len == 1 && meaning == SymbolFlags::TYPE,
+            is_bound: at.is_none() && meaning == SymbolFlags::TYPE && is_bound(head),
+        };
+        if let Some(heads) = owner(found.at).and_then(|index| heads[index].as_mut()) {
+            heads.push(found);
         }
     }
     for found in heads.iter_mut().flatten() {
-        found.sort_unstable_by_key(|head| head.0);
+        found.sort_unstable_by_key(|head| head.at);
     }
     heads
 }
 
-pub fn module_types(
-    checker: &mut Checker<'_, '_>,
-    file: FileId,
-    assigns_class_fields: bool,
-) -> Option<ModuleTypes> {
+/// In a stated text with `import("..").Name` at `at`: where `Name` starts and ends.
+fn name_of_import_type(text: &[u8], at: usize) -> Option<(usize, usize)> {
+    let specifier = text.get(at..)?.strip_prefix(b"import(")?;
+    let quote = *specifier.first()?;
+    let close = 1 + specifier[1..].iter().position(|&byte| byte == quote)?;
+    let name = specifier.get(close + 1..)?.strip_prefix(b").")?;
+    let start = text.len() - name.len();
+    Some((start, token_end(text, start, false)))
+}
+
+/// The declaration of the sources that `name` of a module is: the one of that name that the printer named.
+fn named_by_module(
+    services: &mut Services<'_, '_, '_>,
+    is_source: &dyn Fn(FileId) -> Option<Box<[u8]>>,
+    holders: &[SymbolRef],
+    (name, behind): (&[u8], &[u8]),
+    is_in_value: bool,
+) -> Option<Named> {
+    let mut found: Option<Target> = None;
+    for &holder in holders {
+        // The printer names the module alone where it copies `ns.Name` from the sources.
+        let of_module = |services: &mut Services<'_, '_, '_>| {
+            let exported = services.symbol_table(SymbolTable::ExportsOfModule, holder);
+            let mut exported = exported.iter().copied();
+            let symbol = exported.find(|&symbol| services.symbol_info(symbol).name == name)?;
+            Some((services.symbol_op(SymbolOp::Aliased, symbol)).unwrap_or(symbol))
+        };
+        let symbol = match services.symbol_info(holder) {
+            info if info.name == name => holder,
+            info if info.flags.intersects(SymbolFlags::MODULE) => match of_module(services) {
+                Some(symbol) => symbol,
+                None => continue,
+            },
+            _ => continue,
+        };
+        let info = services.symbol_info(symbol);
+        // Only an enum has a name behind its own that the typed file has: a member. And a value is such a member.
+        let is_enum = info.flags.intersects(SymbolFlags::ENUM);
+        if !is_enum && (is_in_value || behind.starts_with(b".")) {
+            return None;
+        }
+        let target = target_declared_by(services, is_source, symbol);
+        let Some(target @ Target::Declaration { .. }) = target else {
+            continue;
+        };
+        if found.as_ref().is_some_and(|known| *known != target) {
+            return None;
+        }
+        found = Some(target);
+    }
+    found.map(Named::Target)
+}
+
+pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<ModuleTypes> {
     if !is_project_source(checker, file) {
         return None;
     }
@@ -5103,8 +5351,9 @@ pub fn module_types(
                 augmented_modules.push((statement.start, path));
             }
         }
-        let (stated_members, members_with_other_stores) =
-            stated_members(services, &is_source, file, &syntax, assigns_class_fields);
+        let stated_members = stated_members(services, &is_source, file, &syntax);
+        let classes_of_bases_without_parameters =
+            classes_of_bases_without_parameters(services, file, &syntax);
         ModuleTypes {
             path,
             text: hir.text[..].into(),
@@ -5113,9 +5362,8 @@ pub fn module_types(
             exports,
             constants,
             functions_returning_undefined,
-            assigns_class_fields,
             stated_members,
-            members_with_other_stores,
+            classes_of_bases_without_parameters,
             globals,
             augmented_modules,
             locals,
@@ -5251,7 +5499,6 @@ fn typed_outputs(
     outputs: &[Output<'_>],
     modules: &[ModuleTypes],
     emitted_declarations: &[ModuleTypes],
-    no_implicit_any: bool,
 ) -> Result<Vec<(Vec<u8>, TypedText)>, TypedFilesError> {
     let outdir = outdir.strip_suffix(b"/").unwrap_or(outdir);
     let mut found = Vec::new();
@@ -5261,7 +5508,6 @@ fn typed_outputs(
             modules,
             emitted_declarations,
             entry_point: output.entry_point,
-            no_implicit_any,
             has_other_outputs: outputs.len() > 1,
         };
         let typed =
@@ -5357,13 +5603,11 @@ pub fn annotate_implicit_any(
     is_changed
 }
 
-/// `no_implicit_any`: whether the typed files are checked under that option.
 pub fn build_typed_files(
     outdir: &[u8],
     outputs: &[Output<'_>],
     modules: &[ModuleTypes],
     emitted_declarations: &[ModuleTypes],
-    no_implicit_any: bool,
 ) -> Result<TypedFiles, TypedFilesError> {
     let outdir = outdir.strip_suffix(b"/").unwrap_or(outdir);
     let mut found = TypedFiles {
@@ -5377,7 +5621,6 @@ pub fn build_typed_files(
         outputs,
         modules,
         emitted_declarations,
-        no_implicit_any,
     )?) {
         let name_of = |path: &[u8]| {
             path[bun_core::strings::last_index_of_char(path, b'/').map_or(0, |slash| slash + 1)..]

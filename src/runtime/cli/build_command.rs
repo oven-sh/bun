@@ -206,10 +206,8 @@ impl BuildCommand {
         let writes_typed_files = ctx.bundler_options.dts
             && has_typescript_entry_point
             && skips_typed_files_for.is_none();
-        let type_check: Option<options::TypeCheck> = if writes_typed_files {
+        let type_check: Option<options::TypeCheck> = if ctx.bundler_options.dts {
             Some(crate::cli::check_command::check_and_emit_declarations)
-        } else if ctx.bundler_options.dts {
-            Some(crate::cli::check_command::check_and_emit_only_declarations)
         } else if ctx.bundler_options.check {
             Some(crate::cli::check_command::check_for_build_command)
         } else {
@@ -228,7 +226,6 @@ impl BuildCommand {
                 loaders: &this_transpiler.options.loaders,
                 entry_points: &mut entry_points.map(|path| &**path),
                 sources: &mut core::iter::empty(),
-                assigns_class_fields: &mut core::iter::empty(),
             };
             if !type_check(checked, log_ref) {
                 log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(

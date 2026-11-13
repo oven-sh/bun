@@ -69,25 +69,17 @@ pub(crate) fn warn_about_skipped_typed_files(option: &str, log: &mut bun_ast::Lo
 pub(super) struct NotedModuleTypes(Guarded<Vec<(u32, ModuleTypes)>>);
 
 impl NotedModuleTypes {
-    /// `assigns_class_fields`: `ModuleTypes::assigns_class_fields`.
-    pub(super) fn note(
-        &self,
-        checker: &mut Checker<'_, '_>,
-        file: FileId,
-        assigns_class_fields: bool,
-    ) {
-        self.note_if(checker, file, assigns_class_fields, |_| true);
+    pub(super) fn note(&self, checker: &mut Checker<'_, '_>, file: FileId) {
+        self.note_if(checker, file, |_| true);
     }
 
     fn note_if(
         &self,
         checker: &mut Checker<'_, '_>,
         file: FileId,
-        assigns_class_fields: bool,
         is_wanted: impl Fn(&ModuleTypes) -> bool,
     ) {
-        let found = module_types(checker, file, assigns_class_fields);
-        if let Some(found) = found.filter(is_wanted) {
+        if let Some(found) = module_types(checker, file).filter(is_wanted) {
             self.replace(file, found);
         }
     }
@@ -311,13 +303,7 @@ pub(crate) fn typed_files_for_build(
             }
         }
     };
-    let is_on = |name: &[u8]| {
-        let stated = compiler_options.iter().find(|option| option.0 == name)?;
-        Some(matches!(stated.1, Json::Bool(true)))
-    };
-    let no_implicit_any = is_on(b"noImplicitAny").or(is_on(b"strict")) == Some(true);
-    let without_emitted_declarations =
-        build_typed_files(outdir, &outputs, modules, &[], no_implicit_any);
+    let without_emitted_declarations = build_typed_files(outdir, &outputs, modules, &[]);
     let untyped_modules = without_emitted_declarations
         .as_ref()
         .map_or(&[][..], |found| &found.modules_of_untyped_values[..]);
@@ -325,7 +311,7 @@ pub(crate) fn typed_files_for_build(
     let emitted_modules = NotedModuleTypes::default();
     if !emitted.is_empty() {
         let note = |checker: &mut Checker<'_, '_>, file: FileId| {
-            emitted_modules.note_if(checker, file, false, |found| {
+            emitted_modules.note_if(checker, file, |found| {
                 emitted.iter().any(|file| file.0[..] == found.path[..])
             });
         };
@@ -360,7 +346,7 @@ pub(crate) fn typed_files_for_build(
     let emitted_modules = emitted_modules.take();
     let found = match emitted_modules.is_empty() {
         true => without_emitted_declarations,
-        false => build_typed_files(outdir, &outputs, modules, &emitted_modules, no_implicit_any),
+        false => build_typed_files(outdir, &outputs, modules, &emitted_modules),
     };
     let mut warn = |why: core::fmt::Arguments<'_>| {
         log.add_warning_fmt(

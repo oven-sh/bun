@@ -40,18 +40,6 @@ pub(crate) fn take_module_types() -> Vec<ModuleTypes> {
 }
 
 pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
-    check_and_emit(checked, log, true)
-}
-
-/// `check_and_emit_declarations` for a build that writes no typed files: nothing reads `take_module_types` then.
-pub(crate) fn check_and_emit_only_declarations(
-    checked: TypeChecked,
-    log: &mut bun_ast::Log,
-) -> bool {
-    check_and_emit(checked, log, false)
-}
-
-fn check_and_emit(checked: TypeChecked, log: &mut bun_ast::Log, notes_module_types: bool) -> bool {
     let TypeChecked {
         cwd,
         tsconfig,
@@ -59,7 +47,6 @@ fn check_and_emit(checked: TypeChecked, log: &mut bun_ast::Log, notes_module_typ
         loaders,
         entry_points,
         sources,
-        assigns_class_fields,
     } = checked;
     let by_extension = script_kinds_by_extension(loaders);
     let mut script_kinds: Vec<(Vec<u8>, ScriptKind)> = Vec::new();
@@ -70,16 +57,10 @@ fn check_and_emit(checked: TypeChecked, log: &mut bun_ast::Log, notes_module_typ
         }
         (path, text)
     });
-    // The sources whose class fields the bundle assigns in the constructor, as the checker names them.
-    let mut assigning: Vec<Vec<u8>> = assigns_class_fields
-        .filter(|_| notes_module_types)
-        .map(|path| from_native(join_abs_string::<Auto>(cwd, &[path])))
-        .collect();
     let provided = Provided {
         already_read: already_read(cwd, &mut sources),
         ..Default::default()
     };
-    assigning.sort_unstable();
     let is_source = |path: &&[u8]| {
         has_types_with(&by_extension, path) || script_kinds.iter().any(|it| it.0 == **path)
     };
@@ -101,15 +82,7 @@ fn check_and_emit(checked: TypeChecked, log: &mut bun_ast::Log, notes_module_typ
     // A task of the checker can run again: the last time counts.
     let module_types = NotedModuleTypes::default();
     let emit = |checker: &mut Checker<'_, '_>, file: FileId| {
-        let assigns_class_fields = !assigning.is_empty() && {
-            let source = checker.p.files.module(file).file_name();
-            assigning
-                .binary_search_by(|path| path[..].cmp(source))
-                .is_ok()
-        };
-        if notes_module_types {
-            module_types.note(checker, file, assigns_class_fields);
-        }
+        module_types.note(checker, file);
         let text = checker.emit_declaration_file(file);
         let source = checker.p.files.module(file).file_name();
         let mut emitted = emitted.lock();

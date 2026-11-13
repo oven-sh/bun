@@ -26,8 +26,7 @@ mod declarations;
 mod typed_files;
 
 pub(crate) use declarations::{
-    DeclarationFile, check_and_emit_declarations, check_and_emit_only_declarations,
-    take_declaration_files, take_module_types,
+    DeclarationFile, check_and_emit_declarations, take_declaration_files, take_module_types,
 };
 pub(crate) use typed_files::{
     CompilerOptions, TypedFilesRequest, WrittenJavaScript, typed_files_for_build,
@@ -709,7 +708,6 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
         loaders,
         entry_points,
         sources,
-        assigns_class_fields: _,
     } = checked;
     let by_extension = script_kinds_by_extension(loaders);
     // The bundler knows each file's loader. Files in `node_modules` always go by their extension.

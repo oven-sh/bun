@@ -1011,7 +1011,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `IsTypeSymbolAccessible`
     pub(super) fn is_type_symbol_accessible_at(&mut self, symbol: Sym, at: Enclosing) -> bool {
-        self.is_any_symbol_accessible(&[symbol], at, symbol, Meaning::Type, false, false)
+        self.is_any_symbol_accessible(&[symbol], at, symbol, Meaning::Type, false)
             .is_some_and(|access| access.is_accessible())
     }
 }
@@ -2529,7 +2529,7 @@ impl<'p, 's> Checker<'p, 's> {
         best
     }
 
-    /// `IsAnySymbolAccessible`. `paints` is `shouldComputeAliasesToMakeVisible`. `by_name`: see `is_symbol_named_at`.
+    /// `IsAnySymbolAccessible`. `paints` is `shouldComputeAliasesToMakeVisible`.
     fn is_any_symbol_accessible(
         &mut self,
         symbols: &[Sym],
@@ -2537,7 +2537,6 @@ impl<'p, 's> Checker<'p, 's> {
         initial: Sym,
         meaning: Meaning,
         paints: bool,
-        by_name: bool,
     ) -> Option<Access> {
         if self.is_stack_low() {
             return None;
@@ -2548,18 +2547,12 @@ impl<'p, 's> Checker<'p, 's> {
             let chain = self.accessible_symbol_chain(symbol, at, meaning);
             if let Some(&first) = chain.first() {
                 had_accessible_chain = Some(symbol);
-                if by_name {
-                    return Some(Access::accessible(Vec::new()));
-                }
                 if let Some(aliases) = self.has_visible_declarations(first, paints) {
                     return Some(Access::accessible(aliases));
                 }
             }
             // A module symbol, under any meaning, can be emitted as an `import` type.
             if self.is_external_module_symbol(symbol) {
-                if by_name {
-                    continue;
-                }
                 if paints {
                     early_module_bail = true;
                     continue;
@@ -2573,7 +2566,7 @@ impl<'p, 's> Checker<'p, 's> {
                 meaning
             };
             let parent_access =
-                self.is_any_symbol_accessible(&containers, at, initial, next, paints, by_name);
+                self.is_any_symbol_accessible(&containers, at, initial, next, paints);
             if parent_access.is_some() {
                 return parent_access;
             }
@@ -2603,8 +2596,8 @@ impl<'p, 's> Checker<'p, 's> {
         meaning: Meaning,
         paints: bool,
     ) -> Access {
-        let found = self.is_any_symbol_accessible(&[symbol], at, symbol, meaning, paints, false);
-        if let Some(result) = found {
+        if let Some(result) = self.is_any_symbol_accessible(&[symbol], at, symbol, meaning, paints)
+        {
             return result;
         }
         self.inaccessible(symbol, at, meaning)
@@ -2634,15 +2627,45 @@ impl<'p, 's> Checker<'p, 's> {
         result
     }
 
-    /// `IsSymbolAccessible` for text in the file of `at`: a name of that file counts, an `import("..")` type does not.
+    /// `IsSymbolAccessible` for text in the file of `at`: a declaration that is not exported has its name there too.
     pub(super) fn is_symbol_named_at(
         &mut self,
         symbol: Sym,
         at: Enclosing,
         meaning: Meaning,
     ) -> bool {
-        self.is_any_symbol_accessible(&[symbol], at, symbol, meaning, false, true)
-            .is_some_and(|access| access.is_accessible())
+        self.is_any_symbol_named_at(&[symbol], at, symbol, meaning)
+    }
+
+    fn is_any_symbol_named_at(
+        &mut self,
+        symbols: &[Sym],
+        at: Enclosing,
+        initial: Sym,
+        meaning: Meaning,
+    ) -> bool {
+        if self.is_stack_low() {
+            return false;
+        }
+        for &symbol in symbols {
+            if !self.accessible_symbol_chain(symbol, at, meaning).is_empty() {
+                return true;
+            }
+            // A module symbol, under any meaning, can be written as an `import` type.
+            if self.is_external_module_symbol(symbol) {
+                return true;
+            }
+            let containers = self.containers_of_symbol(symbol, at, meaning);
+            let next = if initial == symbol {
+                meaning.left()
+            } else {
+                meaning
+            };
+            if self.is_any_symbol_named_at(&containers, at, initial, next) {
+                return true;
+            }
+        }
+        false
     }
 
     /// `DeclarationEmit::literal_const_type` for a node of `file`.

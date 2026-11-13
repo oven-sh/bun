@@ -470,7 +470,7 @@ impl LoadResultErr {
 
 pub(crate) fn print_log_errors(log: &bun_ast::Log) {
     if log.has_errors() {
-        let _ = log.print(core::ptr::from_mut(Output::error_writer()));
+        let _ = log.print(Output::error_writer());
     }
 }
 
@@ -1987,7 +1987,7 @@ impl<'a> Printer<'a> {
             crate::lockfile::LoadResult::Ok(_) => {}
         }
 
-        match printer::Yarn::print(&lockfile, Output::writer_buffered()) {
+        match printer::Yarn::print(&lockfile, &mut Output::writer_buffered()) {
             Ok(()) => {}
             Err(crate::Error::Alloc(bun_alloc::AllocError)) => bun_core::out_of_memory(),
             Err(crate::Error::WriteFailed) => return Ok(()),

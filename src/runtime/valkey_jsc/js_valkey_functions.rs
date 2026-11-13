@@ -884,17 +884,29 @@ impl JSValkeyClient {
         )
     }
 
-    /// `hmget`, `hset` and `hmset` send an array or object of fields as the whole call, so a field after it would be dropped.
+    /// `hmget`, `hset` and `hmset` send an array or object of fields as the whole call, so fields after it would be dropped.
     #[cold]
     #[inline(never)]
-    fn rest_holds_field(global: &JSGlobalObject, rest: &[JSValue]) -> bool {
+    fn rest_holds_field(
+        global: &JSGlobalObject,
+        fields: JSValue,
+        rest: &[JSValue],
+        is_fields: fn(JSValue) -> bool,
+    ) -> bool {
         let is_field = |value: &JSValue| {
             value.is_string()
                 || value.as_array_buffer(global).is_some()
                 || value.as_class_ref::<crate::webcore::Blob>().is_some()
         };
-        // `lists.map(client.hmget.bind(client, key))` passes an index and then the array, so neither is a field.
-        rest.first().is_some_and(|value| value.is_array()) || rest.iter().any(is_field)
+        // An iterator adds (key, collection): `map()` an index and the array, a `Map` its key, a `Set` the value again.
+        if let [key, collection] = rest
+            && collection.is_object()
+            && !is_field(collection)
+            && (!key.is_object() || *key == fields)
+        {
+            return false;
+        }
+        rest.first().is_some_and(|value| is_fields(*value)) || rest.iter().any(is_field)
     }
 
     // Implement hmget (get multiple values from hash)
@@ -921,7 +933,9 @@ impl JSValkeyClient {
         args.push(key);
 
         if second_arg.is_array() {
-            if fields.len() > 1 && Self::rest_holds_field(global, &fields[1..]) {
+            if fields.len() > 1
+                && Self::rest_holds_field(global, second_arg, &fields[1..], JSValue::is_array)
+            {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "HMGET takes its fields as one array or as separate arguments, not both"
                 )));
@@ -1032,7 +1046,9 @@ impl JSValkeyClient {
         fields: JSValue,
         rest: &[JSValue],
     ) -> JsResult<()> {
-        if !Self::rest_holds_field(global, rest) {
+        if !Self::rest_holds_field(global, fields, rest, |value| {
+            value.is_object() && !value.is_callable()
+        }) {
             return Ok(());
         }
         // A buffer or a `Blob` in the place of the field is read as an object of fields (#41640).

@@ -5427,6 +5427,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         );
         expect(() => redis.hset(key, { field2: "value2" }, "field3", "value3")).toThrow(hsetForms("HSET"));
         expect(() => redis.hset(key, ["field2", "value2"], "field3", "value3")).toThrow(hsetForms("HSET"));
+        expect(() => redis.hset(key, { field2: "value2" }, { field3: "value3" })).toThrow(hsetForms("HSET"));
         expect(() => redis.hmset(key, { field2: "value2" }, "field3", "value3")).toThrow(hsetForms("HMSET"));
         expect(() => redis.hmset(key, ["field2", "value2"], "field3", "value3")).toThrow(hsetForms("HMSET"));
         expect(await redis.hgetall(key)).toEqual({ field1: "value1" });
@@ -7750,8 +7751,8 @@ describe("RedisClient command encoding", () => {
     ]);
   });
 
-  // hmget, hset and hmset send an array or object of fields as the whole call.
-  // A string, a buffer or a Blob after it, or an array right after it, is a field that was dropped.
+  // hmget, hset and hmset send an array or object of fields as the whole call. A string, a buffer
+  // or a Blob after it, or a second array or object of fields right after it, was dropped.
   const hmgetForms = "HMGET takes its fields as one array or as separate arguments, not both";
   const hsetForms = (command: string) =>
     `${command} takes its fields as one object or array, or as separate arguments, not both`;
@@ -7765,13 +7766,17 @@ describe("RedisClient command encoding", () => {
     ['hmget("h", ["f1"], "")', c => c.hmget("h", ["f1"], ""), hmgetForms],
     ['hmget("h", ["f1"], Buffer.from("f2"))', c => c.hmget("h", ["f1"], Buffer.from("f2")), hmgetForms],
     ['hmget("h", ["f1"], new Blob(["f2"]))', c => c.hmget("h", ["f1"], new Blob(["f2"])), hmgetForms],
+    ['hmget("h", ["f1"], ["f2"], ["f3"])', c => c.hmget("h", ["f1"], ["f2"], ["f3"]), hmgetForms],
     ['hset("h", { a: 1 }, "b", "2")', c => c.hset("h", { a: 1 }, "b", "2"), hsetForms("HSET")],
     ['hset("h", { a: 1 }, ["b", "2"])', c => c.hset("h", { a: 1 }, ["b", "2"]), hsetForms("HSET")],
+    ['hset("h", { a: 1 }, { b: 2 })', c => c.hset("h", { a: 1 }, { b: 2 }), hsetForms("HSET")],
+    ['hset("h", { a: 1 }, { b: 2 }, { c: 3 })', c => c.hset("h", { a: 1 }, { b: 2 }, { c: 3 }), hsetForms("HSET")],
     ['hset("h", { a: 1 }, "")', c => c.hset("h", { a: 1 }, ""), hsetForms("HSET")],
     ['hset("h", ["a", "1"], "b", "2")', c => c.hset("h", ["a", "1"], "b", "2"), hsetForms("HSET")],
     ['hset("h", ["a", "1"], ["b", "2"])', c => c.hset("h", ["a", "1"], ["b", "2"]), hsetForms("HSET")],
     ['hmset("h", { a: 1 }, "b", "2")', c => c.hmset("h", { a: 1 }, "b", "2"), hsetForms("HMSET")],
     ['hmset("h", ["a", "1"], "b", "2")', c => c.hmset("h", ["a", "1"], "b", "2"), hsetForms("HMSET")],
+    ['hmset("h", ["a", "1"], { b: 2 })', c => c.hmset("h", ["a", "1"], { b: 2 }), hsetForms("HMSET")],
     ['hmset("h", ["a", "1"], null, "b", "2")', c => c.hmset("h", ["a", "1"], null, "b", "2"), hsetForms("HMSET")],
     // A buffer or a Blob in the place of the field is read as an object of fields, and its value was dropped.
     ['hset("h", Buffer.from("ab"), "v")', c => c.hset("h", Buffer.from("ab"), "v"), notAString("HSET")],
@@ -7799,21 +7804,28 @@ describe("RedisClient command encoding", () => {
       await client.hmget("h", ["f1"], null, undefined);
       await client.hmget("h", ["f1"], 0);
       await client.hmget("h", ["f1"], () => {});
-      // map() passes an index and then the array. Array.from() passes an index.
-      await Promise.all([["f1", "f2"], ["f3"]].map(client.hmget.bind(client, "h")));
-      await Promise.all(Array.from([["f4"]], client.hmget.bind(client, "h")));
+      await client.hmget("h", ["f1"], {});
       await client.hset("h", { a: 1, b: "2" });
       await client.hset("h", { a: 1 }, undefined);
       await client.hset("h", { a: 1 }, () => {});
       await client.hset("h", ["a", "1"], null);
-      await Promise.all([{ a: 1 }, { b: 2 }].map(client.hset.bind(client, "h")));
       await client.hmset("h", ["a", "1", "b", "2"]);
-      await Promise.all(
-        [
-          ["a", "1"],
-          ["b", "2"],
-        ].map(client.hmset.bind(client, "h")),
-      );
+
+      // An iterator calls a bound method with (value, key, collection).
+      // map() passes an index and the array. Array.from() passes an index.
+      await Promise.all([["f1", "f2"], ["f3"]].map(client.hmget.bind(client, "h")));
+      await Promise.all(Array.from([["f4"]], client.hmget.bind(client, "h")));
+      await Promise.all([{ a: 1 }, { b: 2 }].map(client.hset.bind(client, "h")));
+      await Promise.all([["a", "1"]].map(client.hmset.bind(client, "h")));
+      // A Set passes the value again. A Map, and lodash over an object, pass the key.
+      new Set([["f5"]]).forEach(client.hmget.bind(client, "h"));
+      new Map([["user", ["f6"]]]).forEach(client.hmget.bind(client, "h"));
+      await client.hmget("h", ["f7"], "user", { user: ["f7"] });
+      new Set([{ c: 3 }]).forEach(client.hset.bind(client, "h"));
+      new Map([["user", { d: 4 }]]).forEach(client.hset.bind(client, "h"));
+      await client.hset("h", { e: 5 }, "user", { user: { e: 5 } });
+      new Set([["f", "6"]]).forEach(client.hmset.bind(client, "h"));
+      await client.ping();
     });
     expect(received).toEqual([
       ["HMGET", "h", "f1", "f2"],
@@ -7821,18 +7833,27 @@ describe("RedisClient command encoding", () => {
       ["HMGET", "h", "f1"],
       ["HMGET", "h", "f1"],
       ["HMGET", "h", "f1"],
-      ["HMGET", "h", "f1", "f2"],
-      ["HMGET", "h", "f3"],
-      ["HMGET", "h", "f4"],
+      ["HMGET", "h", "f1"],
       ["HSET", "h", "a", "1", "b", "2"],
       ["HSET", "h", "a", "1"],
       ["HSET", "h", "a", "1"],
       ["HSET", "h", "a", "1"],
+      ["HMSET", "h", "a", "1", "b", "2"],
+
+      ["HMGET", "h", "f1", "f2"],
+      ["HMGET", "h", "f3"],
+      ["HMGET", "h", "f4"],
       ["HSET", "h", "a", "1"],
       ["HSET", "h", "b", "2"],
-      ["HMSET", "h", "a", "1", "b", "2"],
       ["HMSET", "h", "a", "1"],
-      ["HMSET", "h", "b", "2"],
+      ["HMGET", "h", "f5"],
+      ["HMGET", "h", "f6"],
+      ["HMGET", "h", "f7"],
+      ["HSET", "h", "c", "3"],
+      ["HSET", "h", "d", "4"],
+      ["HSET", "h", "e", "5"],
+      ["HMSET", "h", "f", "6"],
+      ["PING"],
     ]);
   });
 

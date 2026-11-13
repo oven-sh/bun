@@ -1,0 +1,17 @@
+# -- source: main.cjs
+# "use strict";
+# class A {}
+# const a = new A();
+# function run(turns) { let n = 0; for (let k = 0; k < turns; k++) n += Object.getPrototypeOf(a) === A.prototype ? 1 : 0; return n; }
+# print(run(10), run(0));
+# -- end of source
+# Nobody stores to the prototype of a class, and no turn changes that of the object: both stand in front of the loop.
+# RUN: walk f1 mechanisms=all
+# CHECK-NOT: PropGet
+# CHECK: CallInline {{*}}inlineBuiltin=GetPrototypeOf
+# CHECK: GetClassPrototype
+# CHECK: ) isInLoop=true
+# CHECK-NOT: GetClassPrototype
+# CHECK-NOT: inlineBuiltin=GetPrototypeOf
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 10 0

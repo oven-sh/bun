@@ -1,0 +1,20 @@
+# The read by key off a filled record stands in a callee that is copied into the loop of its caller. Under CheckProofsAtRunTime with CheckDictionaryReadProofs what Link says of it is asked in the copy too.
+# f2 = at, f3 = sumOf
+# RUN(PLAIN): walk f3 mechanisms=all
+# PLAIN-LABEL: code f3:Body
+# PLAIN: ElemGet
+# PLAIN-NOT: source=Contents
+# RUN(LISTED): walk f3 mechanisms=all testing=CheckProofsAtRunTime,CheckDictionaryReadProofs
+# LISTED-LABEL: code f3:Body
+# LISTED: ElemGet
+# LISTED: CheckProof {{*}}source=Contents
+# -- source: main.cjs
+# 'use strict';
+# function make(size) { const like = { length: size }; for (let i = 0; i < size; i++) like[i] = i * 3; return like; }
+# const like = make(16);
+# function at(i) { return like[i & 15]; }
+# function sumOf(turn) { let sum = 0; for (let i = 0; i < 16; i++) sum = (sum + at(i + turn)) | 0; return sum; }
+# let total = 0;
+# for (let turn = 0; turn < 40; turn++) total = (total + sumOf(turn)) % 1000003;
+# console.log(total);
+# -- end of source

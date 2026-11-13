@@ -9,14 +9,12 @@
 //!
 //! Ported from TypeScript `src/ReactiveScopes/AlignObjectMethodScopes.ts`.
 
+use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::cmp;
-use std::collections::{HashMap, HashSet};
 
 use crate::diagnostics::{CompilerDiagnostic, cold_invariant};
 use crate::hir::environment::Environment;
-use crate::hir::{
-    EvaluationOrder, HirFunction, IdentifierId, InstructionValue, ObjectPropertyOrSpread, ScopeId,
-};
+use crate::hir::{EvaluationOrder, HirFunction, IdentifierId, InstructionValue, ScopeId};
 use crate::utils::DisjointSet;
 
 // =============================================================================
@@ -30,7 +28,7 @@ fn find_scopes_to_merge(
     func: &HirFunction,
     env: &Environment,
 ) -> Result<DisjointSet<ScopeId>, CompilerDiagnostic> {
-    let mut object_method_decls: HashSet<IdentifierId> = HashSet::new();
+    let mut object_method_decls: HashSet<IdentifierId> = HashSet::default();
     let mut merged_scopes = DisjointSet::<ScopeId>::new();
 
     for (_block_id, block) in &func.body.blocks {
@@ -42,10 +40,7 @@ fn find_scopes_to_merge(
                 }
                 InstructionValue::ObjectExpression { properties, .. } => {
                     for prop_or_spread in properties {
-                        let operand_place = match prop_or_spread {
-                            ObjectPropertyOrSpread::Property(prop) => &prop.place,
-                            ObjectPropertyOrSpread::Spread(spread) => &spread.place,
-                        };
+                        let operand_place = prop_or_spread.place();
                         if object_method_decls.contains(&operand_place.identifier) {
                             let operand_scope =
                                 env.identifiers[operand_place.identifier.0 as usize].scope;
@@ -91,6 +86,10 @@ pub(crate) fn align_object_method_scopes(
     func: &mut HirFunction,
     env: &mut Environment,
 ) -> Result<(), CompilerDiagnostic> {
+    if !env.has_stack() {
+        return Err(crate::lowering::nested_too_deeply());
+    }
+
     // Handle inner functions first (TS recurses before processing the outer function)
     for (_block_id, block) in &func.body.blocks {
         for &instr_id in &block.instructions {
@@ -116,7 +115,8 @@ pub(crate) fn align_object_method_scopes(
     // Step 1: Merge affected scopes to their canonical root.
     // Use a HashMap to accumulate min/max across all scopes mapping to the same root,
     // matching TS behavior where root.range is updated in-place during iteration.
-    let mut range_updates: HashMap<ScopeId, (EvaluationOrder, EvaluationOrder)> = HashMap::new();
+    let mut range_updates: HashMap<ScopeId, (EvaluationOrder, EvaluationOrder)> =
+        HashMap::default();
 
     merged_scopes.for_each(|scope_id, root_id| {
         if scope_id == root_id {
@@ -148,13 +148,16 @@ pub(crate) fn align_object_method_scopes(
 
     // Sync identifier mutable_ranges that shared the old scope range.
     // Uses MutableRangeId for exact identity matching instead of value comparison.
-    for ident in &mut env.identifiers {
-        if let Some(scope_id) = ident.scope {
-            if let Some(&orig_range_id) = original_range_ids.get(&scope_id) {
-                if ident.mutable_range.id == orig_range_id {
-                    let new_range = &env.scopes[scope_id.0 as usize].range;
-                    ident.mutable_range.start = new_range.start;
-                    ident.mutable_range.end = new_range.end;
+    // This runs for each nested function, and the identifiers are those of all functions.
+    if !original_range_ids.is_empty() {
+        for ident in &mut env.identifiers {
+            if let Some(scope_id) = ident.scope {
+                if let Some(&orig_range_id) = original_range_ids.get(&scope_id) {
+                    if ident.mutable_range.id == orig_range_id {
+                        let new_range = &env.scopes[scope_id.0 as usize].range;
+                        ident.mutable_range.start = new_range.start;
+                        ident.mutable_range.end = new_range.end;
+                    }
                 }
             }
         }
@@ -162,7 +165,7 @@ pub(crate) fn align_object_method_scopes(
 
     // Step 2: Repoint identifiers whose scopes were merged
     // Build a map from old scope -> root scope for quick lookup
-    let mut scope_remap: HashMap<ScopeId, ScopeId> = HashMap::new();
+    let mut scope_remap: HashMap<ScopeId, ScopeId> = HashMap::default();
     merged_scopes.for_each(|scope_id, root_id| {
         if scope_id != root_id {
             scope_remap.insert(scope_id, root_id);

@@ -48,9 +48,7 @@ fn e_string_eql_bytes(s: &E::EString, other: &[u8]) -> bool {
 
 // File-split mixin pattern: a direct `impl P` block.
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
-    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
-{
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub(crate) fn maybe_relocate_vars_to_top_level(
         &mut self,
         decls: &[G::Decl],
@@ -83,11 +81,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
         let mut value: Expr = Expr::EMPTY;
         for decl in decls {
-            // Derive `*mut P` from the live `&mut Self` so the trampoline's
-            // `&mut *ctx` reborrows under the active Unique tag (see Binding.rs).
-            let wrapper = p.to_expr_wrapper_hoisted;
-            let ctx = core::ptr::addr_of_mut!(*p).cast::<core::ffi::c_void>();
-            let binding = Binding::to_expr(&decl.binding, ctx, wrapper);
+            let binding =
+                Binding::to_expr(&decl.binding, p.arena, p, Self::wrap_identifier_hoisting);
             if let Some(decl_value) = decl.value {
                 value = Expr::join_with_comma(value, Expr::assign(binding, decl_value));
             } else if mode == RelocateVarsMode::ForInOrForOf {
@@ -634,7 +629,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                             return Some(p.new_expr(e_string_init(p.source.path.text), name_loc));
                         } else if name == b"url" {
                             // Inline import.meta.url as file:// URL
-                            let bunstr = bun_core::String::from_bytes(p.source.path.text);
+                            let bunstr = bun_core::StringView::from_bytes(p.source.path.text);
                             let url = p.arena.alloc_slice_copy(
                                 format!("{}", bun_url::file_url_from_string(&bunstr)).as_bytes(),
                             );

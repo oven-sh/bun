@@ -82,7 +82,7 @@ unsafe extern "C" fn Bun__tickWhilePaused(paused: *mut bool) {
     // SAFETY: see fn contract.
     unsafe {
         VirtualMachine::get()
-            .event_loop_mut()
+            .event_loop()
             .tick_while_paused(paused.cast_const());
     }
 }

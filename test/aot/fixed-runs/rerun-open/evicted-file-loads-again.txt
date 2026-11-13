@@ -1,0 +1,37 @@
+A file taken out of require.cache loads again.
+#### cache.test.js
+import { expect, mock, test } from "bun:test";
+const again = (name, load, path) => test(name, () => {
+  const first = load(); first.bump();
+  console.log("| CASE", name, "in the cache:", path in require.cache);
+  delete require.cache[path];
+  const second = load();
+  console.log("| CASE", name, second === first, first.count, second.count, path in require.cache);
+});
+const esm = require.resolve("./helpers/state.js"), cjs = require.resolve("./helpers/state.cjs");
+const hidden = text => JSON.parse(JSON.stringify(text));
+again("a module, by the resolved path", () => require(esm), esm);
+again("a module, by a literal", () => require("./helpers/state.js"), esm);
+again("a module, by a path nobody follows", () => require(hidden(esm)), esm);
+again("a CommonJS file, by the resolved path", () => require(cjs), cjs);
+again("a CommonJS file, by a literal", () => require("./helpers/state.cjs"), cjs);
+again("a CommonJS file, by a path nobody follows", () => require(hidden(cjs)), cjs);
+#### helpers/state.cjs
+exports.count = 0;
+exports.bump = () => ++exports.count;
+#### helpers/state.js
+export let count = 0;
+export function bump() { return ++count; }
+#### imported-too.test.js
+import { expect, mock, test } from "bun:test";
+import { bump } from "./helpers/state.js";
+test("a module that is also imported", () => {
+  const path = require.resolve("./helpers/state.js");
+  bump();
+  const first = require(path);
+  delete require.cache[path];
+  const second = require(path);
+  console.log("| CASE", "imported too", first.count, second.count, bump(), first.count, second.count);
+});
+#### tsconfig.json
+{ "compilerOptions": { "allowJs": true } }

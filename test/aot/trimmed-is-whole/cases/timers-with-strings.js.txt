@@ -1,0 +1,21 @@
+// Passes a string to a timer or a scheduler.
+const text = "console.log(Bun.color('red', 'hex') + ' ' + typeof HTMLRewriter)";
+//// setTimeout
+try { setTimeout(text, 1); } catch (error) { console.log("threw", error.name, error.message); }
+console.log("set");
+//// setInterval
+try { const t = setInterval(text, 1); setTimeout(() => clearInterval(t), 20); } catch (error) { console.log("threw", error.name, error.message); }
+console.log("set");
+//// setImmediate
+try { setImmediate(text); } catch (error) { console.log("threw", error.name, error.message); }
+console.log("set");
+//// queueMicrotask
+try { queueMicrotask(text); } catch (error) { console.log("threw", error.name, error.message); }
+console.log("set");
+//// nextTick
+try { process.nextTick(text); } catch (error) { console.log("threw", error.name, error.message); }
+console.log("set");
+//// node-timers
+import { setTimeout as later } from "node:timers";
+try { later(text, 1); } catch (error) { console.log("threw", error.name, error.message); }
+console.log("set");

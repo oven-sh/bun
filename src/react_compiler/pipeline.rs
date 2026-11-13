@@ -20,12 +20,12 @@
     reason = "interops with vendored react_compiler_hir which uses std::collections"
 )]
 
-use std::collections::HashSet;
+use crate::collections::FxHashSet as HashSet;
 
 use crate::diagnostics::CompilerError;
 use crate::hir::ReactFunctionType;
 use crate::hir::environment::{Environment, OutputMode};
-use crate::hir::environment_config::EnvironmentConfig;
+use crate::hir::environment_config::{EnvironmentConfig, ExhaustiveEffectDepsMode};
 
 use crate::codegen::{self, Codegen, CodegenFunction, OutlinedFunction};
 use crate::collections::IndexMap;
@@ -89,6 +89,24 @@ mod timing {
     }
 }
 
+/// `BUN_REACT_COMPILER_DUMP_HIR=1`: prints what a function is lowered to, to compare the trees of
+/// the two callers of the lowering.
+#[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
+#[allow(clippy::disallowed_methods, clippy::disallowed_macros)]
+pub(crate) fn dump_lowered(hir: &crate::hir::HirFunction, env: &Environment) {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *ENABLED.get_or_init(|| std::env::var_os("BUN_REACT_COMPILER_DUMP_HIR").is_some()) {
+        let names: Vec<_> = env.identifiers.iter().map(|it| &it.name).collect();
+        eprintln!(
+            "lowered {:?} {hir:?} functions {:?} names {names:?} errors {:?}",
+            hir.id, env.functions, env.errors
+        );
+    }
+}
+#[cfg(not(any(debug_assertions, bun_asan, feature = "fixtures")))]
+#[inline(always)]
+pub(crate) fn dump_lowered(_: &crate::hir::HirFunction, _: &Environment) {}
+
 #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
 fn ensure_timing_dump_registered() {
     timing::ensure_dump_registered();
@@ -115,6 +133,15 @@ macro_rules! timed {
     ($name:literal, $body:expr) => {
         $body
     };
+}
+
+/// `timed!`, and fails if the pass had not the stack to go on: what it returns is then worth nothing.
+macro_rules! pass {
+    ($env:expr, $name:literal, $body:expr $(,)?) => {{
+        let result = timed!($name, $body);
+        $env.stack_held()?;
+        result
+    }};
 }
 
 /// Run the compilation pipeline on a single function.
@@ -149,10 +176,13 @@ pub(crate) fn compile_fn(
 
     ensure_timing_dump_registered();
 
-    let mut hir = timed!(
+    let mut hir = pass!(
+        env,
         "Lowering",
         lowering::lower(func, fn_name, &*host, &mut env, import_bindings)
     )?;
+
+    dump_lowered(&hir, &env);
 
     // Copy renames from lowering to context (keep on env for codegen to apply to type annotations)
     if !env.renames.is_empty() {
@@ -172,7 +202,8 @@ pub(crate) fn compile_fn(
     let (reactive_fn, unique_identifiers) = run_hir_passes(&mut hir, &mut env, context)?;
 
     let mut cg = Codegen::new(host, arena);
-    let codegen_result = timed!(
+    let codegen_result = pass!(
+        env,
         "Codegen",
         codegen::codegen_function(&reactive_fn, &mut env, &mut cg, context, unique_identifiers)
     )?;
@@ -337,84 +368,112 @@ fn run_hir_passes(
     env: &mut Environment,
     context: &mut ProgramContext,
 ) -> Result<(crate::hir::reactive::ReactiveFunction, HashSet<String>), CompilerError> {
-    timed!(
+    run_analysis_passes(hir, env, context, None)?;
+    run_reactive_scope_passes(hir, env, context)
+}
+
+/// Whether [`run_reactive_scope_passes`] is to follow, by what is known of the function when all
+/// that records an error has run but the validation of dependencies.
+pub(crate) type IsFollowed<'a> = &'a dyn Fn(&crate::hir::HirFunction, &Environment) -> bool;
+
+/// The passes up to and including the validations of the HIR.
+///
+/// With `is_followed`, what nothing uses is left out, even if it could throw.
+pub(crate) fn run_analysis_passes(
+    hir: &mut crate::hir::HirFunction,
+    env: &mut Environment,
+    context: &mut ProgramContext,
+    is_followed: Option<IsFollowed<'_>>,
+) -> Result<(), CompilerError> {
+    pass!(
+        env,
         "PruneMaybeThrows",
         crate::optimization::prune_maybe_throws(hir, &mut env.functions)
     )?;
 
-    timed!(
+    pass!(
+        env,
         "ValidateContextVariableLValues",
         crate::validation::validate_context_variable_lvalues(hir, env)
     )?;
 
-    let _void_memo_errors = timed!(
+    let void_memo_errors = pass!(
+        env,
         "ValidateUseMemo",
         crate::validation::validate_use_memo(hir, env)
     );
+    if env.output_mode == OutputMode::Lint {
+        context.logged.merge(void_memo_errors);
+    }
 
-    timed!(
+    pass!(
+        env,
         "DropManualMemoization",
         crate::optimization::drop_manual_memoization(hir, env)
     )?;
 
-    timed!(
+    pass!(
+        env,
         "InlineImmediatelyInvokedFunctionExpressions",
         crate::optimization::inline_immediately_invoked_function_expressions(hir, env)
     );
 
-    timed!(
+    pass!(
+        env,
         "MergeConsecutiveBlocks",
         crate::optimization::merge_consecutive_blocks::merge_consecutive_blocks(
             hir,
             &mut env.functions,
         )
-    );
+    )?;
+    crate::hir::assert_terminal_blocks_exist::assert_terminal_successors_exist(hir)?;
 
-    timed!("EnterSSA", crate::ssa::enter_ssa(hir, env)).map_err(ssa_diag_to_error)?;
+    pass!(env, "EnterSSA", crate::ssa::enter_ssa(hir, env)).map_err(ssa_diag_to_error)?;
 
-    timed!(
+    pass!(
+        env,
         "EliminateRedundantPhi",
         crate::ssa::eliminate_redundant_phi(hir, env)
     );
 
-    timed!(
+    pass!(
+        env,
         "ConstantPropagation",
         crate::optimization::constant_propagation(hir, env)
     );
 
-    timed!("InferTypes", crate::typeinference::infer_types(hir, env))?;
+    pass!(
+        env,
+        "InferTypes",
+        crate::typeinference::infer_types(hir, env)
+    )?;
 
     if env.enable_validations() {
         if env.config.validate_hooks_usage {
-            timed!(
+            pass!(
+                env,
                 "ValidateHooksUsage",
                 crate::validation::validate_hooks_usage(hir, env)
             )?;
         }
 
-        #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
-        if env.config.validate_no_jsx_in_try_statements && env.output_mode == OutputMode::Lint {
-            let _ = timed!(
-                "ValidateNoJSXInTryStatement",
-                crate::validation::validate_no_jsx_in_try_statement(hir)
-            );
-        }
-
-        #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
         if env.config.validate_no_capitalized_calls.is_some() {
-            timed!(
+            pass!(
+                env,
                 "ValidateNoCapitalizedCalls",
                 crate::validation::validate_no_capitalized_calls(hir, env)
             )?;
         }
     }
 
-    timed!(
+    pass!(
+        env,
         "OptimizePropsMethodCalls",
         crate::optimization::optimize_props_method_calls(hir, env)
     );
 
-    timed!(
+    pass!(
+        env,
         "AnalyseFunctions",
         crate::inference::analyse_functions(hir, env, &mut |_inner_func, _inner_env| {})
     )?;
@@ -423,254 +482,334 @@ fn run_hir_passes(
         return Err(env.take_invariant_errors());
     }
 
-    timed!(
+    pass!(
+        env,
         "InferMutationAliasingEffects",
         crate::inference::infer_mutation_aliasing_effects(hir, env, false)
     )?;
 
     if env.output_mode == OutputMode::Ssr {
-        timed!(
+        pass!(
+            env,
             "OptimizeForSSR",
             crate::optimization::optimize_for_ssr(hir, env)
         );
     }
 
-    timed!(
+    pass!(
+        env,
         "DeadCodeElimination",
         crate::optimization::dead_code_elimination(hir, env)
     );
 
-    timed!(
+    pass!(
+        env,
         "PruneMaybeThrows2",
         crate::optimization::prune_maybe_throws(hir, &mut env.functions)
     )?;
 
-    timed!(
+    pass!(
+        env,
         "InferMutationAliasingRanges",
         crate::inference::infer_mutation_aliasing_ranges(hir, env, false)
     )?;
 
     if env.enable_validations() {
-        timed!(
+        pass!(
+            env,
             "ValidateLocalsNotReassignedAfterRender",
             crate::validation::validate_locals_not_reassigned_after_render(hir, env)
         );
 
         if env.config.validate_ref_access_during_render {
-            timed!(
+            pass!(
+                env,
                 "ValidateNoRefAccessInRender",
                 crate::validation::validate_no_ref_access_in_render(hir, env)
             );
         }
 
         if env.config.validate_no_set_state_in_render {
-            timed!(
+            pass!(
+                env,
                 "ValidateNoSetStateInRender",
                 crate::validation::validate_no_set_state_in_render(hir, env)
             )?;
         }
 
-        #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
-        if env.config.validate_no_set_state_in_effects && env.output_mode == OutputMode::Lint {
-            let _ = timed!(
-                "ValidateNoSetStateInEffects",
-                crate::validation::validate_no_set_state_in_effects(hir, env)
-            );
-        }
-
-        #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
         if env.config.validate_no_derived_computations_in_effects {
-            timed!(
+            pass!(
+                env,
                 "ValidateNoDerivedComputationsInEffects",
                 crate::validation::validate_no_derived_computations_in_effects(hir, env)
             )?;
         }
 
-        timed!(
+        if env.config.validate_no_set_state_in_effects && env.output_mode == OutputMode::Lint {
+            context.logged.merge(pass!(
+                env,
+                "ValidateNoSetStateInEffects",
+                crate::validation::validate_no_set_state_in_effects(hir, env)
+            )?);
+        }
+
+        if env.config.validate_no_jsx_in_try_statements && env.output_mode == OutputMode::Lint {
+            context.logged.merge(pass!(
+                env,
+                "ValidateNoJSXInTryStatement",
+                crate::validation::validate_no_jsx_in_try_statement(hir)
+            ));
+        }
+
+        pass!(
+            env,
             "ValidateNoFreezingKnownMutableFunctions",
             crate::validation::validate_no_freezing_known_mutable_functions(hir, env)
         );
-
-        #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
-        if env.config.validate_static_components && env.output_mode == OutputMode::Lint {
-            let _ = timed!(
-                "ValidateStaticComponents",
-                crate::validation::validate_static_components(hir)
-            );
-        }
     }
 
     // Upstream `.unwrap()`s the four validations above, so a recorded error
     // throws here. The Bun ports record into `env.errors` and return `()`;
     // gate explicitly so the reactive-scope passes are not run on a function
     // the end-of-pipeline `has_errors()` check is going to discard anyway.
-    if env.has_errors() {
+    // A linter wants what the later validations say too.
+    if env.output_mode != OutputMode::Lint && env.has_errors() {
         return Err(env.take_errors());
     }
 
-    timed!(
-        "InferReactivePlaces",
-        crate::inference::infer_reactive_places(hir, env)
-    )?;
+    // Memoization to validate is followed by the other passes.
+    let is_reactivity_used = is_followed.is_none_or(|is_followed| {
+        env.config.validate_exhaustive_effect_dependencies != ExhaustiveEffectDepsMode::Off
+            || is_followed(hir, env)
+    });
 
-    if env.enable_validations() {
-        timed!(
+    if is_reactivity_used {
+        pass!(
+            env,
+            "InferReactivePlaces",
+            crate::inference::infer_reactive_places(hir, env)
+        )?;
+    }
+
+    if env.enable_validations() && is_reactivity_used {
+        pass!(
+            env,
             "ValidateExhaustiveDependencies",
             crate::validation::validate_exhaustive_dependencies(hir, env)
         )?;
     }
 
-    timed!(
+    pass!(
+        env,
         "RewriteInstructionKindsBasedOnReassignment",
         crate::ssa::rewrite_instruction_kinds_based_on_reassignment(hir, env)
     )?;
 
+    if env.enable_validations()
+        && env.config.validate_static_components
+        && env.output_mode == OutputMode::Lint
+    {
+        context.logged.merge(pass!(
+            env,
+            "ValidateStaticComponents",
+            crate::validation::validate_static_components(hir)
+        ));
+    }
+
+    Ok(())
+}
+
+/// The passes from the inference of reactive scopes to the last validation, which is of the
+/// `ReactiveFunction`.
+pub(crate) fn run_reactive_scope_passes(
+    hir: &mut crate::hir::HirFunction,
+    env: &mut Environment,
+    context: &mut ProgramContext,
+) -> Result<(crate::hir::reactive::ReactiveFunction, HashSet<String>), CompilerError> {
     if env.enable_memoization() {
-        timed!(
+        pass!(
+            env,
             "InferReactiveScopeVariables",
             crate::inference::infer_reactive_scope_variables(hir, env)
         )?;
     }
 
-    let fbt_operands = timed!(
+    let fbt_operands = pass!(
+        env,
         "MemoizeFbtAndMacroOperandsInSameScope",
         crate::inference::memoize_fbt_and_macro_operands_in_same_scope(hir, env)
     );
 
     #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
     if env.config.enable_jsx_outlining {
-        timed!("OutlineJSX", crate::optimization::outline_jsx(hir, env));
+        pass!(
+            env,
+            "OutlineJSX",
+            crate::optimization::outline_jsx(hir, env)
+        );
     }
 
     #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
     if env.config.enable_name_anonymous_functions {
-        timed!(
+        pass!(
+            env,
             "NameAnonymousFunctions",
             crate::optimization::name_anonymous_functions(hir, env)
         );
     }
 
     if env.config.enable_function_outlining {
-        timed!(
+        pass!(
+            env,
             "OutlineFunctions",
             crate::optimization::outline_functions(hir, env, &fbt_operands.values)
         );
     }
 
-    timed!(
+    pass!(
+        env,
         "AlignMethodCallScopes",
         crate::inference::align_method_call_scopes(hir, env)
     );
-    timed!(
+    pass!(
+        env,
         "AlignObjectMethodScopes",
         crate::inference::align_object_method_scopes(hir, env)
     )?;
 
-    timed!(
+    pass!(
+        env,
         "PruneUnusedLabelsHIR",
         crate::optimization::prune_unused_labels_hir(hir)
-    );
+    )?;
+    crate::hir::assert_terminal_blocks_exist::assert_terminal_successors_exist(hir)?;
 
-    timed!(
+    pass!(
+        env,
         "AlignReactiveScopesToBlockScopesHIR",
         crate::inference::align_reactive_scopes_to_block_scopes_hir(hir, env)
-    );
-    timed!(
+    )?;
+    pass!(
+        env,
         "MergeOverlappingReactiveScopesHIR",
         crate::inference::merge_overlapping_reactive_scopes_hir(hir, env)
     );
 
-    timed!(
+    pass!(
+        env,
         "BuildReactiveScopeTerminalsHIR",
         crate::inference::build_reactive_scope_terminals_hir(hir, env)
-    );
+    )?;
+    crate::hir::assert_terminal_blocks_exist::assert_terminal_successors_exist(hir)?;
 
-    timed!(
+    pass!(
+        env,
         "FlattenReactiveLoopsHIR",
         crate::inference::flatten_reactive_loops_hir(hir)
     );
-    timed!(
+    pass!(
+        env,
         "FlattenScopesWithHooksOrUseHIR",
         crate::inference::flatten_scopes_with_hooks_or_use_hir(hir, env)
     )?;
+    crate::hir::assert_terminal_blocks_exist::assert_terminal_successors_exist(hir)?;
 
-    timed!(
+    pass!(
+        env,
         "PropagateScopeDependenciesHIR",
         crate::inference::propagate_scope_dependencies_hir(hir, env)
-    );
+    )?;
 
-    let mut reactive_fn = timed!(
+    let mut reactive_fn = pass!(
+        env,
         "BuildReactiveFunction",
         crate::reactive_scopes::build_reactive_function(hir, env)
     )?;
 
-    timed!(
+    pass!(
+        env,
         "AssertWellFormedBreakTargets",
         crate::reactive_scopes::assert_well_formed_break_targets(&reactive_fn, env)
-    );
+    )?;
 
-    timed!(
+    pass!(
+        env,
         "PruneUnusedLabels",
         crate::reactive_scopes::prune_unused_labels(&mut reactive_fn, env)
     )?;
 
-    timed!(
+    pass!(
+        env,
         "AssertScopeInstructionsWithinScopes",
         crate::reactive_scopes::assert_scope_instructions_within_scopes(&reactive_fn, env)
     )?;
 
-    timed!(
+    pass!(
+        env,
         "PruneNonEscapingScopes",
         crate::reactive_scopes::prune_non_escaping_scopes(&mut reactive_fn, env)
     )?;
-    timed!(
+    pass!(
+        env,
         "PruneNonReactiveDependencies",
         crate::reactive_scopes::prune_non_reactive_dependencies(&mut reactive_fn, env)
-    );
-    timed!(
+    )?;
+    pass!(
+        env,
         "PruneUnusedScopes",
         crate::reactive_scopes::prune_unused_scopes(&mut reactive_fn, env)
     )?;
-    timed!(
+    pass!(
+        env,
         "MergeReactiveScopesThatInvalidateTogether",
         crate::reactive_scopes::merge_reactive_scopes_that_invalidate_together(
             &mut reactive_fn,
             env
         )
     )?;
-    timed!(
+    pass!(
+        env,
         "PruneAlwaysInvalidatingScopes",
         crate::reactive_scopes::prune_always_invalidating_scopes(&mut reactive_fn, env)
     )?;
-    timed!(
+    pass!(
+        env,
         "PropagateEarlyReturns",
         crate::reactive_scopes::propagate_early_returns(&mut reactive_fn, env)
     );
-    timed!(
+    pass!(
+        env,
         "PruneUnusedLValues",
         crate::reactive_scopes::prune_unused_lvalues(&mut reactive_fn, env)
     );
-    timed!(
+    pass!(
+        env,
         "PromoteUsedTemporaries",
         crate::reactive_scopes::promote_used_temporaries(
             &mut reactive_fn,
             env,
             &fbt_operands.inline
         )
-    );
-    timed!(
+    )?;
+    pass!(
+        env,
         "ExtractScopeDeclarationsFromDestructuring",
         crate::reactive_scopes::extract_scope_declarations_from_destructuring(
             &mut reactive_fn,
             env
         )
     )?;
-    timed!(
-        "StabilizeBlockIds",
-        crate::reactive_scopes::stabilize_block_ids(&mut reactive_fn, env)
-    );
+    // Of the passes after it only codegen looks at a label.
+    if env.output_mode != OutputMode::Lint {
+        pass!(
+            env,
+            "StabilizeBlockIds",
+            crate::reactive_scopes::stabilize_block_ids(&mut reactive_fn, env)
+        );
+    }
 
-    let unique_identifiers = timed!(
+    let unique_identifiers = pass!(
+        env,
         "RenameVariables",
         crate::reactive_scopes::rename_variables(&mut reactive_fn, env)
     );
@@ -679,7 +818,8 @@ fn run_hir_passes(
         context.add_new_reference(name.clone());
     }
 
-    timed!(
+    pass!(
+        env,
         "PruneHoistedContexts",
         crate::reactive_scopes::prune_hoisted_contexts(&mut reactive_fn, env)
     )?;
@@ -687,7 +827,8 @@ fn run_hir_passes(
     if env.config.enable_preserve_existing_memoization_guarantees
         || env.config.validate_preserve_existing_memoization_guarantees
     {
-        timed!(
+        pass!(
+            env,
             "ValidatePreservedManualMemoization",
             crate::validation::validate_preserved_manual_memoization(&reactive_fn, env)
         );

@@ -1,0 +1,28 @@
+# -- source: main.cjs
+# var quiet = Object.assign({}, console, { log: function () {} });
+# var Lib = {};
+# (function (lib) {
+#   lib.number = function (value) { return Math.abs(parseInt(value)); };
+#   lib.Point = function Point(x) { this.x = x; };
+#   lib.Box = function Box(side) { this.side = side; this.list = new Array(1, true); };
+#   lib.Box.prototype.fill = function () { for (var i = 0; i < 2; i++) this.list[i] = new lib.Point(this.side); return this; };
+#   lib.Box.prototype.move = function (by) { this.list[0].x += by; this.list[1].x = by; return this; };
+#   lib.Box.prototype.first = function () { for (var i = 0, x; i < 1; i++) x = this.list[i].x; return x; };
+#   lib.Point.prototype.take = function (other) { this.x = other.x; return this; };
+#   lib.Box.prototype.give = function (point) { for (var i = 0; i < 2; i++) this.list[i].take(point); return this; };
+#   lib.Box.prototype.sum = function () { for (var i = 0, sum = 0; i < this.list.length; i++) sum += this.list[i].x; return lib.number(sum) + lib.number(this.list[0].x) + lib.number(this.list[1]); };
+# })(Lib);
+# function run(count) {
+#   var box = new Lib.Box(0.5).fill(), sum = 0;
+#   if (box.constructor !== Lib.Box) return -1;
+#   for (var i = 0; i < count; i++) sum += box.give(new Lib.Point(i)).move(i).sum() || box.first() || 1;
+#   return sum;
+# }
+# console.log(run(10), run(1000), typeof quiet.log);
+# -- end of source
+# A program that may come by prototypes defines nothing out of sight: a name that is read off 1 or true finds nothing.
+# RUN: link functions
+# CHECK: function f3 callers-known
+# CHECK: function f4 callers-known
+# CHECK: function f5 callers-known
+# CHECK: function f10 callers-known

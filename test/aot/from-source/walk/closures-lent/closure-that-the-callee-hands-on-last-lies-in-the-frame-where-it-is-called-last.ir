@@ -1,0 +1,31 @@
+# `first` returns at once what `second` gives and hands its own `visit` on to it, and `second` returns at once what `visit` gives: the condition of `second` is the condition of `first`.
+# `start` and `other` meet it with arrows that make no tail call: their calls stay calls. The frames of `first` and `second` are gone when the arrow runs, and the arrow lies in the frame of its maker, which is not.
+# `nested` hands over an arrow that returns at once what `start` gives: `start` ends its tail calls because its own arrow does, so the arrow of `nested` does, and it lies in the frame too.
+# f1 = second, f2 = first, f3 = start, f4 = other, f5 = nested
+# -- source: closure-that-the-callee-hands-on-last-lies-in-the-frame-where-it-is-called-last.ts
+# declare function sink(...values: unknown[]): void;
+# function second(x: number, visit: (x: number) => number): number { return visit(x + 1); }
+# function first(x: number, visit: (x: number) => number): number { return second(x * 2, visit); }
+# function start(k: number) { return first(k, x => x * k); }
+# function other(k: number) { return first(k, x => x - k); }
+# function nested(k: number) { return first(k, x => start(x + k)); }
+# sink(start(1), start(2), other(1), other(2), nested(1), nested(2));
+# -- end of source
+# RUN: bytes f3 mechanisms=all-Inlining
+# CHECK-NOT: NewSlimClosure.Plain
+# CHECK: NewSlimClosureInFrame.Plain
+# CHECK-NOT: NewSlimClosure.Plain
+# RUN(WALK): walk f3 mechanisms=all-Inlining
+# WALK-NOT: ReturnCall
+# RUN(HELPER): walk f2 mechanisms=all-Inlining
+# HELPER: ReturnCall
+# RUN(OWED): walk f2 mechanisms=all-Inlining
+# OWED-NOT: requirement=Allowed
+# RUN(NESTED): bytes f5 mechanisms=all-Inlining
+# NESTED-NOT: NewSlimClosure.Plain
+# RUN(WORD): plan units mechanisms=all
+# WORD: unit f1:Body {{*}}ends-tail-calls-if-arguments-do=[1]
+# WORD: unit f2:Body {{*}}ends-tail-calls-if-arguments-do=[1]
+# WORD: unit f3:Body {{*}}ends-its-tail-calls
+# WORD: unit f4:Body {{*}}ends-its-tail-calls
+# WORD: unit f5:Body {{*}}ends-its-tail-calls

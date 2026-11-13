@@ -1,0 +1,24 @@
+# f1 = total
+# -- source: for-of-over-the-entries-of-a-map.ts
+# function total(counts: Map<number, number>): number {
+#   let sum = 0;
+#   for (const [key, count] of counts.entries()) sum += key * count;
+#   return sum;
+# }
+# declare const input: any;
+# const counts = new Map<number, number>();
+# counts.set(+input, +input);
+# (globalThis as any).answer = total(counts);
+# -- end of source
+# The compiler before this one: 22 instructions, 1 of them patches.
+# When the bound was taken: loop: operations 0, patches 0, moves 0, unlikely 6.
+# RUN(X64): loops most:0 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 0
+# The compiler before this one: 106 instructions, 2 of them patches.
+# When the bound was taken: steps: operations 56, patches 2, moves 9, unlikely or rare 42.
+# RUN(X64N6): steps most:65 f1 mechanisms=all-Inlining
+# REQUIRES(X64N6): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64N6-LABEL: unit f1:Body
+# X64N6-NEXT: steps: at most 65

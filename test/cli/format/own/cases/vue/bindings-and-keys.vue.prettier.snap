@@ -1,0 +1,30 @@
+------------------
+{ printWidth: 40 }
+------------------
+<template>
+  <a #x="this" v-slot="this, a"></a>
+  <b v-for="this in a"></b>
+  <c :d="{ '1': a, b: c, 2: d }">{{
+    { "1": a, b: c }
+  }}</c>
+</template>
+
+------------------
+{ printWidth: 80 }
+------------------
+<template>
+  <a #x="this" v-slot="this, a"></a>
+  <b v-for="this in a"></b>
+  <c :d="{ '1': a, b: c, 2: d }">{{ { "1": a, b: c } }}</c>
+</template>
+
+-------------------
+{ printWidth: 100 }
+-------------------
+<template>
+  <a #x="this" v-slot="this, a"></a>
+  <b v-for="this in a"></b>
+  <c :d="{ '1': a, b: c, 2: d }">{{ { "1": a, b: c } }}</c>
+</template>
+
+===================== End =====================

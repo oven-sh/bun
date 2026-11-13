@@ -1,0 +1,3 @@
+//  assigned, unseen
+const show = (label, f) => { let r; try { r = f(); } catch (e) { r = `${e?.name}: ${e?.message}`.slice(0, 90); } console.log(label, typeof r === "object" ? Object.prototype.toString.call(r) : String(r).slice(0, 60)); };
+class A { k = 0;  } let a = new A(); A.prototype.m = function (n) { return n + this.k; }; function g(j) { if (j === 70) { Object[["define", "Property"].join("")](A[["proto", "type"].join("")], "m", { value: n => n * 41, configurable: true, writable: true }); } return j > 1e9 ? g(j - 1) + 1 : 0; } function r() { let s = 0; for (let j = 0; j < 150; j++) { s += a.m(j & 3); s += g(j); s += a.m(j & 3); } return s; } show("called", r); show("again", r);

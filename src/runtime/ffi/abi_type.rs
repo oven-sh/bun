@@ -106,44 +106,55 @@ bun_core::comptime_string_map! {
 // ToCFormatter / ToJSFormatter. Indexed by `self as usize`.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Selects the `FFI.h` function a generated wrapper calls to convert an argument.
+enum ToC {
+    /// Either [`ToCFormatter`] writes the conversion inline or this isn't an argument type.
+    Special,
+    /// `f(arg)`
+    Infallible(&'static str),
+    /// `f(JS_GLOBAL_OBJECT, <ABIType>, &threw, arg)`. Can throw from `JSVALUE_TO_SLOT_SLOW`.
+    Fallible(&'static str),
+}
+
 struct AbiRow {
     c_type: &'static [u8],
-    to_c_macro: Option<&'static str>,
+    to_c: ToC,
     to_js: Option<(&'static str, &'static str)>,
 }
 
 #[rustfmt::skip]
 static ABI_TABLE: [AbiRow; 22] = {
+    use ToC::*;
     const fn r(
         c_type: &'static [u8],
-        to_c_macro: Option<&'static str>,
+        to_c: ToC,
         to_js: Option<(&'static str, &'static str)>,
     ) -> AbiRow {
-        AbiRow { c_type, to_c_macro, to_js }
+        AbiRow { c_type, to_c, to_js }
     }
     [
-    /* Char      */ r(b"char",       Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Int8T     */ r(b"int8_t",     Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Uint8T    */ r(b"uint8_t",    Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Int16T    */ r(b"int16_t",    Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Uint16T   */ r(b"uint16_t",   Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Int32T    */ r(b"int32_t",    Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Uint32T   */ r(b"uint32_t",   Some("JSVALUE_TO_INT32("),               Some(("UINT32_TO_JSVALUE(", ")"))),
-    /* Int64T    */ r(b"int64_t",    Some("JSVALUE_TO_INT64("),               Some(("INT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, ", ")"))),
-    /* Uint64T   */ r(b"uint64_t",   Some("JSVALUE_TO_UINT64("),              Some(("UINT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, ", ")"))),
-    /* Double    */ r(b"double",     Some("JSVALUE_TO_DOUBLE("),              Some(("DOUBLE_TO_JSVALUE(", ")"))),
-    /* Float     */ r(b"float",      Some("JSVALUE_TO_FLOAT("),               Some(("FLOAT_TO_JSVALUE(", ")"))),
-    /* Bool      */ r(b"bool",       Some("JSVALUE_TO_BOOL("),                Some(("BOOLEAN_TO_JSVALUE(", ")"))),
-    /* Ptr       */ r(b"void*",      Some("JSVALUE_TO_PTR("),                 Some(("PTR_TO_JSVALUE(", ")"))),
-    /* Void      */ r(b"void",       None,                                    None),
-    /* CString   */ r(b"void*",      Some("JSVALUE_TO_PTR("),                 Some(("PTR_TO_JSVALUE(", ")"))),
-    /* I64Fast   */ r(b"int64_t",    Some("JSVALUE_TO_INT64("),               Some(("INT64_TO_JSVALUE(JS_GLOBAL_OBJECT, (int64_t)", ")"))),
-    /* U64Fast   */ r(b"uint64_t",   Some("JSVALUE_TO_UINT64("),              Some(("UINT64_TO_JSVALUE(JS_GLOBAL_OBJECT, ", ")"))),
-    /* Function  */ r(b"void*",      Some("JSVALUE_TO_PTR("),                 Some(("PTR_TO_JSVALUE(", ")"))),
-    /* NapiEnv   */ r(b"napi_env",   None,                                    None),
-    /* NapiValue */ r(b"napi_value", None,                                    Some(("((EncodedJSValue) {.asNapiValue = ", " } )"))),
-    /* Buffer    */ r(b"void*",      Some("JSVALUE_TO_TYPED_ARRAY_VECTOR("),  None),
-    /* BufferLen */ r(b"uint64_t",   None,                                    None),
+    /* Char      */ r(b"char",       Infallible("JSVALUE_TO_INT32"),   Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Int8T     */ r(b"int8_t",     Infallible("JSVALUE_TO_INT32"),   Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Uint8T    */ r(b"uint8_t",    Infallible("JSVALUE_TO_INT32"),   Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Int16T    */ r(b"int16_t",    Infallible("JSVALUE_TO_INT32"),   Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Uint16T   */ r(b"uint16_t",   Infallible("JSVALUE_TO_INT32"),   Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Int32T    */ r(b"int32_t",    Infallible("JSVALUE_TO_INT32"),   Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Uint32T   */ r(b"uint32_t",   Infallible("JSVALUE_TO_INT32"),   Some(("UINT32_TO_JSVALUE(", ")"))),
+    /* Int64T    */ r(b"int64_t",    Fallible("JSVALUE_TO_INT64"),     Some(("INT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, ", ")"))),
+    /* Uint64T   */ r(b"uint64_t",   Fallible("JSVALUE_TO_UINT64"),    Some(("UINT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, ", ")"))),
+    /* Double    */ r(b"double",     Infallible("JSVALUE_TO_DOUBLE"),  Some(("DOUBLE_TO_JSVALUE(", ")"))),
+    /* Float     */ r(b"float",      Infallible("JSVALUE_TO_FLOAT"),   Some(("FLOAT_TO_JSVALUE(", ")"))),
+    /* Bool      */ r(b"bool",       Infallible("JSVALUE_TO_BOOL"),    Some(("BOOLEAN_TO_JSVALUE(", ")"))),
+    /* Ptr       */ r(b"void*",      Fallible("JSVALUE_TO_PTR"),       Some(("PTR_TO_JSVALUE(", ")"))),
+    /* Void      */ r(b"void",       Special,                          None),
+    /* CString   */ r(b"void*",      Fallible("JSVALUE_TO_PTR"),       Some(("PTR_TO_JSVALUE(", ")"))),
+    /* I64Fast   */ r(b"int64_t",    Fallible("JSVALUE_TO_INT64"),     Some(("INT64_TO_JSVALUE(JS_GLOBAL_OBJECT, (int64_t)", ")"))),
+    /* U64Fast   */ r(b"uint64_t",   Fallible("JSVALUE_TO_UINT64"),    Some(("UINT64_TO_JSVALUE(JS_GLOBAL_OBJECT, ", ")"))),
+    /* Function  */ r(b"void*",      Fallible("JSVALUE_TO_PTR"),       Some(("PTR_TO_JSVALUE(", ")"))),
+    /* NapiEnv   */ r(b"napi_env",   Special,                          None),
+    /* NapiValue */ r(b"napi_value", Special,                          None),
+    /* Buffer    */ r(b"void*",      Fallible("JSVALUE_TO_BUFFER"),    None),
+    /* BufferLen */ r(b"uint64_t",   Special,                          None),
     ]
 };
 
@@ -208,6 +219,11 @@ impl ABIType {
         matches!(self, ABIType::Double | ABIType::Float)
     }
 
+    /// True if converting an argument of this type can throw. See [`ToC::Fallible`].
+    pub(crate) fn arg_conversion_can_throw(self) -> bool {
+        matches!(self.row().to_c, ToC::Fallible(_))
+    }
+
     pub(crate) fn to_c(self, symbol: &[u8]) -> ToCFormatter<'_> {
         ToCFormatter { tag: self, symbol }
     }
@@ -233,18 +249,21 @@ pub(crate) struct ToCFormatter<'a> {
 
 impl fmt::Display for ToCFormatter<'_> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let row = self.tag.row();
-        let Some(macro_) = row.to_c_macro else {
-            return match self.tag {
+        let symbol = BStr::new(self.symbol);
+        match self.tag.row().to_c {
+            ToC::Infallible(function) => write!(writer, "{function}({symbol})"),
+            ToC::Fallible(function) => write!(
+                writer,
+                "{function}(JS_GLOBAL_OBJECT, {}, &threw, {symbol})",
+                self.tag as i32
+            ),
+            ToC::Special => match self.tag {
                 ABIType::Void => Ok(()),
                 ABIType::NapiEnv => writer.write_str("((napi_env)&Bun__thisFFIModuleNapiEnv)"),
-                ABIType::NapiValue => write!(writer, "{}.asNapiValue", BStr::new(self.symbol)),
+                ABIType::NapiValue => write!(writer, "{symbol}.asNapiValue"),
                 _ => unreachable!(),
-            };
-        };
-        writer.write_str(macro_)?;
-        fmt::Display::fmt(BStr::new(self.symbol), writer)?;
-        writer.write_str(")")
+            },
+        }
     }
 }
 
@@ -260,6 +279,12 @@ impl fmt::Display for ToJSFormatter<'_> {
             None => match self.tag {
                 ABIType::Void => Ok(()),
                 ABIType::NapiEnv => writer.write_str("((napi_env)&Bun__thisFFIModuleNapiEnv)"),
+                // NULL has the same bits as the empty JSValue. Return `undefined` like Node does.
+                ABIType::NapiValue => write!(
+                    writer,
+                    "({sym} ? ((EncodedJSValue) {{.asNapiValue = {sym} }}) : ValueUndefined)",
+                    sym = BStr::new(self.symbol)
+                ),
                 ABIType::Buffer => writer.write_str("0"),
                 _ => unreachable!(),
             },

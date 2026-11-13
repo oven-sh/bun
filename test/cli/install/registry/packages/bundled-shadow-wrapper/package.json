@@ -1,0 +1,22 @@
+{
+  "_id": "bundled-shadow-wrapper",
+  "name": "bundled-shadow-wrapper",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "bundled-shadow-wrapper",
+      "version": "1.0.0",
+      "dependencies": {
+        "bundled-shadow-inner": "1.0.0"
+      },
+      "_id": "bundled-shadow-wrapper@1.0.0",
+      "dist": {
+        "integrity": "sha512-oNjMSn8UuncNL0QOe+g4H/lnBTdDaHblibo3/FIwXQhtj/stdtrckJBW3svJII23M03kpIQT9zL86LOVokMo4w==",
+        "shasum": "89b99e0d115ec1c580bde8f72344e9b8d4878d81",
+        "tarball": "http://localhost:4873/bundled-shadow-wrapper/-/bundled-shadow-wrapper-1.0.0.tgz"
+      }
+    }
+  }
+}

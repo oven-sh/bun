@@ -19,7 +19,10 @@ use bun_parsers::toml::TOML;
 use bun_install_types::NodeLinker::FromExprError;
 use bun_options_types::LoaderExt as _;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
-use bun_options_types::context::{MacroImportReplacementMap, MacroMap, MacroOptions};
+use bun_options_types::context::{
+    MacroImportReplacementMap, MacroMap, MacroOptions, RESETS_BEFORE_EACH_TEST, ReactCompilerScope,
+    TestEnvironment, TestGlobals,
+};
 use bun_options_types::global_cache::GlobalCache;
 use bun_options_types::offline_mode::PREFER as OFFLINE_PREFER;
 use bun_options_types::schema::api;
@@ -139,9 +142,9 @@ fn num_to_u32(n: f64) -> u32 {
 // Parser
 // ─────────────────────────────────────────────────────────────────────────────
 
-struct Parser<'a> {
+struct Parser<'a, 'tool> {
     json: Expr,
-    source: &'a bun_ast::Source,
+    source: &'a bun_ast::Source<'a>,
     log: &'a mut bun_ast::Log,
     // Holding both a `TransformOptions` pointer (= `&ctx.args`) and `ctx`
     // would be an overlapping borrow, so `bunfig` writes route through
@@ -150,9 +153,47 @@ struct Parser<'a> {
     /// Arena backing `EString::string()` UTF-16→UTF-8 transcodes; lifetime
     /// matches the `Expr` tree (same bump used for the TOML/JSON parse).
     bump: &'a Bump,
+    /// True for `./bunfig.toml`, which comes with the project. False for the user's own file and
+    /// for `--config`.
+    is_project_file: bool,
+    /// Reads `[lint]` and `[fmt]`.
+    tool: Option<&'a mut crate::ToolReader<'tool>>,
+    counts: Counts,
 }
 
-impl<'a> Parser<'a> {
+/// What of a bunfig.toml counts.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Counts {
+    Everything,
+    /// `[lint]` and `[fmt]`: the file is above the working directory.
+    OnlyForTheTool,
+    /// Only the `[install]` section, which holds the package manager's settings.
+    OnlyInstall,
+}
+
+impl<'a> Parser<'a, '_> {
+    /// A string or an array of strings.
+    fn strings(&mut self, expr: &Expr, error: &'static [u8]) -> crate::Result<Vec<Box<[u8]>>> {
+        match &expr.data {
+            ExprData::EString(s) => Ok(vec![estring_to_owned(s, self.bump)]),
+            ExprData::EArray(array) => {
+                let mut strings = Vec::with_capacity(array.items.slice().len());
+                for item in array.items.slice() {
+                    let ExprData::EString(s) = &item.data else {
+                        self.add_error(item.loc, error)?;
+                        unreachable!();
+                    };
+                    strings.push(estring_to_owned(s, self.bump));
+                }
+                Ok(strings)
+            }
+            _ => {
+                self.add_error(expr.loc, error)?;
+                unreachable!();
+            }
+        }
+    }
+
     fn add_error(&mut self, loc: bun_ast::Loc, text: &'static [u8]) -> crate::Result<()> {
         self.log.add_error_opts(
             text,
@@ -344,6 +385,15 @@ impl<'a> Parser<'a> {
     // `cmd` is a runtime arg rather than a const generic —
     // `bun_options_types::command_tag::Tag` does not derive `ConstParamTy` (it
     // already derives `enum_map::Enum`, which conflicts). Monomorphising over
+    fn read_for_tool(&mut self, json: &Expr) -> crate::Result<()> {
+        if let Some(read) = self.tool.as_deref_mut() {
+            if let Err((loc, message)) = read(json) {
+                self.add_error_format(loc, format_args!("{}", bstr::BStr::new(&message)))?;
+            }
+        }
+        Ok(())
+    }
+
     // `cmd` would only dead-code-eliminate untaken arms; the
     // runtime branches below are equivalent and the few hot fields are tiny.
     fn parse(&mut self, cmd: CommandTag) -> crate::Result<()> {
@@ -353,6 +403,18 @@ impl<'a> Parser<'a> {
 
         if !matches!(json.data, ExprData::EObject(_)) {
             self.add_error(json.loc, b"bunfig expects an object { } at the root")?;
+        }
+
+        if self.counts == Counts::OnlyForTheTool {
+            return self.read_for_tool(&json);
+        }
+
+        if self.counts == Counts::OnlyInstall {
+            if let Some(install_obj) = json.get_object(b"install") {
+                self.ctx.install = Some(Box::default());
+                self.parse_install(&install_obj)?;
+            }
+            return Ok(());
         }
 
         if let Some(expr) = json.get(b"logLevel") {
@@ -408,6 +470,8 @@ impl<'a> Parser<'a> {
             }
         }
 
+        self.read_for_tool(&json)?;
+
         if cmd == CommandTag::TestCommand {
             if let Some(test) = json.get(b"test") {
                 if let Some(root) = test.get(b"root") {
@@ -422,6 +486,79 @@ impl<'a> Parser<'a> {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     self.ctx.runtime_options.smol =
                         expr.as_bool().expect("infallible: type checked");
+                }
+
+                if let Some(expr) = test.get(b"environment") {
+                    self.expect_string(&expr)?;
+                    let name = expr.as_string(self.bump).unwrap_or(b"");
+                    let Some(environment) = TestEnvironment::from_name(name) else {
+                        return self.add_error_format(
+                            expr.loc,
+                            format_args!(
+                                "expected \"environment\" to be \"node\", \"jsdom\" or \"happy-dom\" but received \"{}\"",
+                                bstr::BStr::new(name)
+                            ),
+                        );
+                    };
+                    // --environment is parsed first and wins.
+                    if self.ctx.test_options.environment.is_none() {
+                        self.ctx.test_options.environment = Some(environment);
+                    }
+                }
+
+                // Vitest's `globals` is a boolean, and Bun always defines the globals.
+                if let Some(expr) = test.get(b"globals")
+                    && !matches!(expr.data, ExprData::EBoolean(_))
+                {
+                    self.expect_string(&expr)?;
+                    let name = expr.as_string(self.bump).unwrap_or(b"");
+                    let Some(globals) = TestGlobals::from_name(name) else {
+                        return self.add_error_format(
+                            expr.loc,
+                            format_args!(
+                                "expected \"globals\" to be \"bun\" or \"vitest\" but received \"{}\"",
+                                bstr::BStr::new(name)
+                            ),
+                        );
+                    };
+                    // --globals is parsed first and wins.
+                    if self.ctx.test_options.globals.is_none() {
+                        self.ctx.test_options.globals = Some(globals);
+                    }
+                }
+
+                if let Some(expr) = test.get(b"reactCompiler") {
+                    let mut scope = ReactCompilerScope::default();
+                    match &expr.data {
+                        // --react-compiler is parsed first and wins.
+                        ExprData::EBoolean(enabled) => {
+                            if enabled.value && self.ctx.test_options.react_compiler.is_none() {
+                                self.ctx.test_options.react_compiler = Some(scope);
+                            }
+                        }
+                        ExprData::EObject(_) => {
+                            if let Some(include) = expr.get(b"include") {
+                                scope.include = self.strings(
+                                    &include,
+                                    b"reactCompiler.include must be a string or array of strings",
+                                )?;
+                            }
+                            if let Some(exclude) = expr.get(b"exclude") {
+                                scope.exclude = self.strings(
+                                    &exclude,
+                                    b"reactCompiler.exclude must be a string or array of strings",
+                                )?;
+                            }
+                            self.ctx.test_options.react_compiler = Some(scope);
+                        }
+                        _ => {
+                            scope.include = self.strings(
+                                &expr,
+                                b"reactCompiler must be a boolean, an array of folders, or a table with \"include\" and \"exclude\"",
+                            )?;
+                            self.ctx.test_options.react_compiler = Some(scope);
+                        }
+                    }
                 }
 
                 if let Some(expr) = test.get(b"coverage") {
@@ -447,6 +584,26 @@ impl<'a> Parser<'a> {
                                     Some(estring_to_owned(s, self.bump));
                             }
                         }
+                    }
+                    if let Some(suites_expr) = expr.get(b"junitSuites") {
+                        self.expect_string(&suites_expr)?;
+                        let name = suites_expr.as_string(self.bump).unwrap_or(b"");
+                        let Some(suites) = bun_options_types::context::JunitSuites::from_name(name)
+                        else {
+                            return self.add_error_format(
+                                suites_expr.loc,
+                                format_args!(
+                                    "expected \"junitSuites\" to be \"nested\" or \"flat\" but received \"{}\"",
+                                    bstr::BStr::new(name)
+                                ),
+                            );
+                        };
+                        // --reporter-junit-suites is parsed first and wins.
+                        self.ctx
+                            .test_options
+                            .reporters
+                            .junit_suites
+                            .get_or_insert(suites);
                     }
                     if let Some(dots_expr) = expr.get(b"dots").or_else(|| expr.get(b"dot")) {
                         self.expect(&dots_expr, ExprTag::EBoolean)?;
@@ -531,6 +688,13 @@ impl<'a> Parser<'a> {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     self.ctx.test_options.coverage.skip_test_files =
                         expr.as_bool().expect("infallible: type checked");
+                }
+
+                for (index, name) in RESETS_BEFORE_EACH_TEST.iter().enumerate() {
+                    if let Some(expr) = test.get(name.as_bytes()) {
+                        self.expect(&expr, ExprTag::EBoolean)?;
+                        self.ctx.test_options.resets_before_each_test[index] = expr.as_bool();
+                    }
                 }
 
                 let mut randomize_from_config: Option<bool> = None;
@@ -767,6 +931,24 @@ impl<'a> Parser<'a> {
                     self.load_log_level(&expr)?;
                 }
 
+                // Only the package manager reads these two.
+                if self.is_project_file && cmd.is_npm_related() {
+                    for (key, env_var) in [
+                        ("globalDir", "BUN_INSTALL_GLOBAL_DIR"),
+                        ("globalBinDir", "BUN_INSTALL_BIN"),
+                    ] {
+                        if let Some(expr) = install_obj.get(key.as_bytes()) {
+                            self.log.add_warning_fmt(
+                                Some(self.source),
+                                expr.loc,
+                                format_args!(
+                                    "ignoring \"{key}\" in project bunfig.toml, set it in $HOME/.bunfig.toml or ${env_var}"
+                                ),
+                            );
+                        }
+                    }
+                }
+
                 self.parse_install(&install_obj)?;
             }
 
@@ -849,6 +1031,7 @@ impl<'a> Parser<'a> {
 
         if let Some(_bun) = json.get(b"bundle") {
             if cmd == CommandTag::BuildCommand
+                || cmd == CommandTag::CompileCommand
                 || cmd == CommandTag::RunCommand
                 || cmd == CommandTag::AutoCommand
             {
@@ -864,7 +1047,7 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            if cmd == CommandTag::BuildCommand {
+            if matches!(cmd, CommandTag::BuildCommand | CommandTag::CompileCommand) {
                 if let Some(expr2) = _bun.get(b"logLevel") {
                     self.load_log_level(&expr2)?;
                 }
@@ -1096,7 +1279,10 @@ impl Bunfig {
     pub(crate) fn parse(
         cmd: CommandTag,
         source: &bun_ast::Source,
+        is_project_file: bool,
         ctx: &mut ContextData,
+        tool: Option<&mut crate::ToolReader<'_>>,
+        counts: Counts,
     ) -> crate::Result<()> {
         // SAFETY: ctx.log is populated by `create_context_data()` before any
         // bunfig load; single-threaded CLI startup invariant. The raw pointer
@@ -1168,8 +1354,39 @@ impl Bunfig {
             source,
             ctx,
             bump: &bump,
+            is_project_file,
+            tool,
+            counts,
         };
         parser.parse(cmd)
+    }
+
+    /// Checks whether the file sets `[install.security] scanner` without applying any settings.
+    pub(crate) fn has_security_scanner(source: &bun_ast::Source) -> crate::Result<bool> {
+        // The AST store is not reset afterwards, because the caller may be in the middle of
+        // parsing a module whose nodes live in the same store.
+        bun_ast::initialize_store();
+        let bump = Bump::borrowing_default();
+        let file = TOML::parse(source, &mut bun_ast::Log::init(), &bump, true)?;
+        let security = file.get(b"install").and_then(|it| it.get(b"security"));
+        Ok(security.is_some_and(|it| it.get(b"scanner").is_some()))
+    }
+
+    /// Returns the settings in the file's `[install]` section without applying them.
+    pub(crate) fn parse_install_section(
+        source: &bun_ast::Source,
+    ) -> crate::Result<Option<Box<api::BunInstall>>> {
+        // The AST store is not reset afterwards, because the caller may be in the middle of
+        // parsing a module whose nodes live in the same store.
+        bun_ast::initialize_store();
+        let mut log = bun_ast::Log::init();
+        let mut ctx = ContextData {
+            log: &raw mut log,
+            ..Default::default()
+        };
+        let cmd = CommandTag::InstallCommand;
+        Self::parse(cmd, source, true, &mut ctx, None, Counts::OnlyInstall)?;
+        Ok(ctx.install)
     }
 }
 
@@ -1178,25 +1395,14 @@ impl Bunfig {
 // Split into a second `impl` block purely to keep `parse(cmd)` readable.
 // ─────────────────────────────────────────────────────────────────────────────
 
-impl<'a> Parser<'a> {
-    fn parse_registry_url(&mut self, url: &[u8]) -> crate::Result<api::NpmRegistry> {
-        // Dedup D009: body is the canonical port in `bun_api::npm_registry`.
-        // The api `Parser` is generic over log/source and never reads them for
-        // this path, so we just hand it our reborrowed handles.
-        Ok(bun_api::npm_registry::Parser {
-            log: &mut *self.log,
-            source: self.source,
-        }
-        .parse_registry_url_string_impl(url)?)
-    }
-
+impl<'a> Parser<'a, '_> {
     fn parse_registry_object(&mut self, obj: &E::Object) -> crate::Result<api::NpmRegistry> {
         // `user:pass@` / `:token@` in the URL are credentials, as in the string form.
         let mut registry = match obj.get(b"url") {
             Some(url) => {
                 self.expect_string(&url)?;
                 let url = url.as_string(self.bump).expect("infallible: type checked");
-                self.parse_registry_url(url)?
+                api::NpmRegistry::from_url(url)
             }
             None => api::NpmRegistry::default(),
         };
@@ -1213,26 +1419,18 @@ impl<'a> Parser<'a> {
             };
         }
 
-        if let Some(username) = username {
-            self.expect_string(&username)?;
-            registry.username = username
-                .as_string(self.bump)
-                .expect("infallible: type checked")
-                .into();
-        }
-        if let Some(password) = password {
-            self.expect_string(&password)?;
-            registry.password = password
-                .as_string(self.bump)
-                .expect("infallible: type checked")
-                .into();
-        }
-        if let Some(token) = token {
-            self.expect_string(&token)?;
-            registry.token = token
-                .as_string(self.bump)
-                .expect("infallible: type checked")
-                .into();
+        for (value, field) in [
+            (username, &mut registry.username),
+            (password, &mut registry.password),
+            (token, &mut registry.token),
+        ] {
+            if let Some(value) = value {
+                self.expect_string(&value)?;
+                *field = value
+                    .as_string(self.bump)
+                    .expect("infallible: type checked")
+                    .into();
+            }
         }
 
         Ok(registry)
@@ -1240,10 +1438,7 @@ impl<'a> Parser<'a> {
 
     fn parse_registry(&mut self, expr: &Expr) -> crate::Result<api::NpmRegistry> {
         match &expr.data {
-            ExprData::EString(s) => {
-                let url = s.string(self.bump)?;
-                self.parse_registry_url(url)
-            }
+            ExprData::EString(s) => Ok(api::NpmRegistry::from_url(s.string(self.bump)?)),
             ExprData::EObject(o) => self.parse_registry_object(o),
             _ => {
                 self.add_error(
@@ -1253,6 +1448,12 @@ impl<'a> Parser<'a> {
                 Ok(api::NpmRegistry::default())
             }
         }
+    }
+
+    /// Resolves a relative path in `[install]` against the directory that contains the bunfig.toml.
+    fn install_path(&self, path: &[u8]) -> Box<[u8]> {
+        let dir = bun_paths::dirname(self.source.path.text).unwrap_or_default();
+        api::BunInstall::resolve_path(dir, path)
     }
 
     fn parse_install(&mut self, install_obj: &Expr) -> crate::Result<()> {
@@ -1272,9 +1473,17 @@ impl<'a> Parser<'a> {
         install: &mut api::BunInstall,
         install_obj: &Expr,
     ) -> crate::Result<()> {
-        if let Some(cafile) = install_obj.get(b"cafile") {
+        let cafile = install_obj.get(b"cafile");
+        let ca = install_obj.get(b"ca");
+        // `ca` and `cafile` are one setting, so a file that sets either one replaces both.
+        if cafile.is_some() || ca.is_some() {
+            install.cafile = None;
+            install.ca = None;
+        }
+
+        if let Some(cafile) = cafile {
             install.cafile = match cafile.as_string(self.bump) {
-                Some(s) => Some(s.into()),
+                Some(s) => Some(self.install_path(s)),
                 None => {
                     self.add_error(cafile.loc, b"Invalid cafile. Expected a string.")?;
                     return Ok(());
@@ -1282,7 +1491,7 @@ impl<'a> Parser<'a> {
             };
         }
 
-        if let Some(ca) = install_obj.get(b"ca") {
+        if let Some(ca) = ca {
             match &ca.data {
                 ExprData::EArray(arr) => {
                     let items = arr.items.slice();
@@ -1426,15 +1635,17 @@ impl<'a> Parser<'a> {
         }
         if let Some(v) = install_obj
             .get(b"globalDir")
+            .filter(|_| !self.is_project_file)
             .and_then(|e| e.as_string(self.bump))
         {
-            install.global_dir = Some(v.into());
+            install.global_dir = Some(self.install_path(v));
         }
         if let Some(v) = install_obj
             .get(b"globalBinDir")
+            .filter(|_| !self.is_project_file)
             .and_then(|e| e.as_string(self.bump))
         {
-            install.global_bin_dir = Some(v.into());
+            install.global_bin_dir = Some(self.install_path(v));
         }
 
         if let Some(cache) = install_obj.get(b"cache") {
@@ -1447,7 +1658,7 @@ impl<'a> Parser<'a> {
                     break 'load;
                 }
                 if let Some(value) = cache.as_string(self.bump) {
-                    install.cache_directory = Some(value.into());
+                    install.cache_directory = Some(self.install_path(value));
                     break 'load;
                 }
                 if let ExprData::EObject(_) = cache.data {
@@ -1458,7 +1669,7 @@ impl<'a> Parser<'a> {
                         install.disable_manifest_cache = Some(v);
                     }
                     if let Some(v) = cache.get(b"dir").and_then(|e| e.as_string(self.bump)) {
-                        install.cache_directory = Some(v.into());
+                        install.cache_directory = Some(self.install_path(v));
                     }
                 }
             }
@@ -1475,7 +1686,16 @@ impl<'a> Parser<'a> {
             if let ExprData::EObject(_) = security_obj.data {
                 if let Some(scanner) = security_obj.get(b"scanner") {
                     self.expect_string(&scanner)?;
-                    install.security_scanner = scanner.as_string(self.bump).map(Into::into);
+                    install.security_scanner = scanner.as_string(self.bump).map(|name| {
+                        // The scanner process runs in the project directory, so a relative path
+                        // from the project's own bunfig.toml already resolves correctly.
+                        if self.is_project_file || bun_paths::is_package_path(name) {
+                            return name.into();
+                        }
+                        let mut path = self.install_path(name);
+                        bun_paths::resolve_path::platform_to_posix_in_place(&mut path[..]);
+                        path
+                    });
                 }
             } else {
                 self.add_error(
@@ -1486,17 +1706,21 @@ impl<'a> Parser<'a> {
         }
 
         if let Some(min_age) = install_obj.get(b"minimumReleaseAge") {
+            const MS_PER_S: f64 = bun_core::time::MS_PER_S as f64;
+            let duration = (min_age.as_string(self.bump)).and_then(bun_core::fmt::parse_seconds);
             match &min_age.data {
                 ExprData::ENumber(seconds) => {
-                    if seconds.value() < 0.0 {
+                    if !(seconds.value() >= 0.0 && seconds.value().is_finite()) {
                         self.add_error(
                             min_age.loc,
                             b"Expected positive number of seconds for minimumReleaseAge",
                         )?;
                         return Ok(());
                     }
-                    const MS_PER_S: f64 = bun_core::time::MS_PER_S as f64;
                     install.minimum_release_age_ms = Some(seconds.value() * MS_PER_S);
+                }
+                _ if duration.is_some() => {
+                    install.minimum_release_age_ms = duration.map(|seconds| seconds * MS_PER_S);
                 }
                 _ => {
                     self.add_error(

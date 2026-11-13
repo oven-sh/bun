@@ -13,7 +13,7 @@ test("utf16-le buffer", () => {
       ).toString("hex"),
     )
     .join("\n");
-  expect(twoByteString.toString("hex")).toEqual(
+  expect((twoByteString as any).toString("hex")).toEqual(
     `00000100020003000400050006000700080009000a000b000c000d000e000f00
 10001100120013001400150016001700180019001a001b001c001d001e001f00
 20002100220023002400250026002700280029002a002b002c002d002e002f00

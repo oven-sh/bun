@@ -35,11 +35,11 @@ struct DeduplicatedImportResult {
 }
 
 impl<'a> ConvertESMExportsForHmr<'a> {
-    // Note: takes the concrete `P<'p, TS, SCAN, SEMA>`; `AstBuilder` instead
+    // Note: takes the concrete `P<'p, TS, SCAN>`; `AstBuilder` instead
     // open-codes the equivalent transform (see bundler/AstBuilder.rs).
-    pub(crate) fn convert_stmt<'p, const TS: bool, const SCAN: bool, const SEMA: bool>(
+    pub(crate) fn convert_stmt<'p, const TS: bool, const SCAN: bool>(
         &mut self,
-        p: &mut P<'p, TS, SCAN, SEMA>,
+        p: &mut P<'p, TS, SCAN>,
         stmt: Stmt,
     ) -> Result<(), AllocError> {
         let new_stmt: Stmt = match stmt.data {
@@ -54,9 +54,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 // Note: reshaped for borrowck — index loop instead of `|*decl_ptr|`.
                 let decls_len = st.decls.len_u32() as usize;
                 for i in 0..decls_len {
-                    // explicit field copies (G::Decl is not `Copy`) to avoid aliasing
-                    let binding = st.decls.slice()[i].binding;
-                    let value = st.decls.slice()[i].value;
+                    let G::Decl { binding, value } = st.decls[i];
                     let Some(value) = value else {
                         st.decls[new_len] = G::Decl {
                             binding,
@@ -170,10 +168,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     },
                 };
                 if can_be_moved_to_inner_scope {
-                    // Note: `StmtOrExpr` is not `Copy`; read by ptr to avoid moving
-                    // out of the StoreRef deref.
-                    // SAFETY: StoreRef points into a live arena; value is POD-shaped.
-                    let value = unsafe { core::ptr::read(&raw const st.value) }.to_expr();
+                    let value = st.value.to_expr();
                     self.export_props.push(G::Property {
                         key: Some(Expr::init(E::EString::init(b"default"), stmt.loc)),
                         value: Some(value),
@@ -205,8 +200,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                             ..Default::default()
                         });
 
-                        // SAFETY: as above — POD-shaped read out of arena.
-                        let value = unsafe { core::ptr::read(&raw const st.value) }.to_expr();
+                        let value = st.value.to_expr();
                         let mut decls = bun_alloc::AstAlloc::vec();
                         VecExt::append(
                             &mut decls,
@@ -366,6 +360,8 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                         value: Some(Expr::init_identifier(deduped.namespace_ref, stmt.loc)),
                         ..Default::default()
                     });
+                    p.export_star_import_records
+                        .push(deduped.import_record_index);
                 }
                 return Ok(());
             }
@@ -393,9 +389,9 @@ impl<'a> ConvertESMExportsForHmr<'a> {
 
     /// Deduplicates imports, returning a previously used Ref and import record
     /// index if present.
-    fn deduplicated_import<'p, const TS: bool, const SCAN: bool, const SEMA: bool>(
+    fn deduplicated_import<'p, const TS: bool, const SCAN: bool>(
         &mut self,
-        p: &mut P<'p, TS, SCAN, SEMA>,
+        p: &mut P<'p, TS, SCAN>,
         import_record_index: u32,
         namespace_ref: Ref,
         items: js_ast::StoreSlice<js_ast::ClauseItem>,
@@ -433,25 +429,13 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     stmt.items = items;
                 } else {
                     // Allocate the concatenated slice in the arena.
-                    // ClauseItem fields are all bitwise-copyable; copy raw to avoid Clone bound.
-                    let prev_len = stmt.items.len();
-                    let concat = p.arena.alloc_slice_fill_with(prev_len + items_len, |_| {
+                    let prev = stmt.items.slice();
+                    let concat = p.arena.alloc_slice_fill_with(prev.len() + items_len, |_| {
                         js_ast::ClauseItem::default()
                     });
-                    // SAFETY: src/dst non-overlapping arena allocations of correct length;
-                    // ClauseItem is POD-shaped.
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(
-                            stmt.items.as_ptr(),
-                            concat.as_mut_ptr(),
-                            prev_len,
-                        );
-                        core::ptr::copy_nonoverlapping(
-                            items.as_ptr(),
-                            concat.as_mut_ptr().add(prev_len),
-                            items_len,
-                        );
-                    }
+                    let (head, tail) = concat.split_at_mut(prev.len());
+                    head.copy_from_slice(prev);
+                    tail.copy_from_slice(items.slice());
                     stmt.items = bun_ast::StoreSlice::new_mut(concat);
                 }
             }
@@ -512,9 +496,9 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         })
     }
 
-    fn visit_binding_to_export<'p, const TS: bool, const SCAN: bool, const SEMA: bool>(
+    fn visit_binding_to_export<'p, const TS: bool, const SCAN: bool>(
         &mut self,
-        p: &mut P<'p, TS, SCAN, SEMA>,
+        p: &mut P<'p, TS, SCAN>,
         binding: Binding,
     ) -> Result<(), AllocError> {
         match binding.data {
@@ -536,9 +520,9 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         Ok(())
     }
 
-    fn visit_ref_to_export<'p, const TS: bool, const SCAN: bool, const SEMA: bool>(
+    fn visit_ref_to_export<'p, const TS: bool, const SCAN: bool>(
         &mut self,
-        p: &mut P<'p, TS, SCAN, SEMA>,
+        p: &mut P<'p, TS, SCAN>,
         ref_: Ref,
         export_symbol_name: Option<js_ast::StoreStr>,
         loc: bun_ast::Loc,
@@ -633,9 +617,9 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         Ok(())
     }
 
-    pub(crate) fn finalize<'p, const TS: bool, const SCAN: bool, const SEMA: bool>(
+    pub(crate) fn finalize<'p, const TS: bool, const SCAN: bool>(
         &mut self,
-        p: &mut P<'p, TS, SCAN, SEMA>,
+        p: &mut P<'p, TS, SCAN>,
         // Note: `self.last_part` must not alias into this slice
         // (Stacked Borrows: `&mut [Part]` asserts
         // exclusive access to every element). Caller passes the `[0..len-1]`

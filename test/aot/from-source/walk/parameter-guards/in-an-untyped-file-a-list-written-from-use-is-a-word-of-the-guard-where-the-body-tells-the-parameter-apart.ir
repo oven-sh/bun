@@ -1,0 +1,34 @@
+# -- source: in-an-untyped-file-a-list-written-from-use-is-a-word-of-the-guard-where-the-body-tells-the-parameter-apart.js
+# function count(value, rounds) {
+#   let total = 0;
+#   for (let round = 0; round < rounds; round++) {
+#     if (Array.isArray(value)) total += value.length;
+#     else for (const unit of value) total += unit.length;
+#   }
+#   return total;
+# }
+# function ends(list) {
+#   return list[0] + list[1] + list[2] + list[list.length - 1];
+# }
+# sink(count, ends);
+# print(count([1, 2, 3], 5), count("abc", 2));
+# print(ends([1, 2, 3, 4]), ends("abcd"));
+# -- end of source
+# Nobody has written a type in this file. A list that the front end wrote from use is no word for a guard: what is read under an index may be a list, a view or a text. Where the body itself tells the
+# parameter apart it has said that a list is one of several things that come, and has its own way for each: the body asks once at its entry, and each kind has a loop of its own: no guard is needed (349 > 141 instructions).
+# Without it every turn asked whether `value` is a list and what `rounds` is, and the sum was kept as a value of any kind: two and a half times the instructions.
+# f1 = count, f2 = ends
+# RUN: walk f1 mechanisms=all
+# CHECK: b0([[value]]: anything?ParameterOfEscapedFunction
+# CHECK-NOT: isLoopHead=true
+# CHECK: = TypeTest [[value]] testedType=Array
+# CHECK-NOT: isLoopHead=true
+# CHECK: = TypeTest [[value]] testedType=string
+# CHECK: isLoopHead=true
+# RUN(BODY): plan units mechanisms=all
+# BODY-NOT: unit f1:ParameterGuard
+# RUN(READS): plan units mechanisms=all
+# READS-NOT: unit f2:ParameterGuard
+# RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
+# ANSWERS: 15 6
+# ANSWERS: 10 abcd

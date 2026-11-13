@@ -1,6 +1,7 @@
 import { createTest } from "node-harness";
 import nodefs from "node:fs";
 import https from "node:https";
+import type { AddressInfo } from "node:net";
 import { sep } from "node:path";
 const { expect } = createTest(import.meta.path);
 
@@ -20,7 +21,7 @@ await using server = https.createServer(
   },
 );
 server.listen(0, "localhost");
-const address = server.address();
+const address = server.address() as AddressInfo;
 let url_address = address.address;
 const res = await fetch(`https://localhost:${address.port}`, {
   tls: {

@@ -1,0 +1,15 @@
+# -- source: a-loop-whose-turns-store-into-what-may-be-a-list-is-not-built-for-views-on-a-word-drawn-from-use.cjs
+# function distance(a, b) { let prev = Array.from({ length: b.length + 1 }, (_, i) => i); for (let i = 1; i <= a.length; i++) { const cur = [i]; for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); prev = cur; } return prev[b.length]; }
+# const given = JSON.parse('["kitten", "", "flaw"]'), known = JSON.parse('["sitting", "abc", "lawn"]'), found = [];
+# for (let i = 0; i < given.length; i++) found.push(distance(given[i], known[i]));
+# sink(found.join(" "));
+# -- end of source
+# `prev` stands in front of the inner loop and use alone says that it is a list of numbers, so the loop was built once for the list and once for every view of numbers
+# (a-list-of-numbers-that-use-alone-says-is-asked-beside-every-view-of-numbers.ir). That building comes in front of the one that asks the lists which the turns WRITE for their storage, and the turns here
+# store into `cur`: 8.5% more instructions. Where the turns store into what may be a list, the loop keeps its own front.
+# f1 = distance
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: = GetTypedArrayElement
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: 3 3 2

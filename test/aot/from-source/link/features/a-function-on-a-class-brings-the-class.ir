@@ -1,0 +1,6 @@
+# the constructor is only read, the function on it is called
+# -- source: a-function-on-a-class-brings-the-class.ts
+# console.log(Bun.Cookie.parse("a=b").name);
+# -- end of source
+# RUN: features
+# CHECK: by BunCookie named

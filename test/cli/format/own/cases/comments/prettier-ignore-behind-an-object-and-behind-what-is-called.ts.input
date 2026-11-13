@@ -1,0 +1,2 @@
+const x0 = (y   as T) // prettier-ignore
+  ( 1 );

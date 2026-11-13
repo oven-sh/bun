@@ -1,0 +1,28 @@
+# `steps.constructor = 1.5` on what `[1.5].values()` made: the setter of Iterator.prototype.constructor defines the name on its receiver, and its row says so: what the site makes does not stay as its class makes it,
+# so the read behind the store is not listed, nor the call on the list that it walks. `url.hash = "x"`: the setter of URL.prototype.hash writes what the object holds and leaves its names: the read behind that store is listed.
+# const url = new URL("http://a/");  url.hash = "x";  url.hash;    const steps = [1.5].values();  steps.constructor = 1.5;  steps.constructor;
+# RUN: link accesses mechanisms=all
+# CHECK: receiver-as-made f0 v7
+# CHECK-NOT: receiver-as-made
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="URL" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(URL) flags=[IsExpected]}
+    v3 = String string="http://a/"
+    v4 = Construct v2, -, v3 calleeName="URL"
+    v5 = String string="x"
+    PropSet v4, v5 key="hash"
+    v7 = PropGet v4 key="hash"
+    v8 = Double number=1.5
+    v9 = NewArray v8 contents=anything
+    v10 = PropGet v9 key="values"
+    v11 = Call v10, v9 calleeKey="values"
+    PropSet v11, v8 key="constructor"
+    v13 = PropGet v11 key="constructor"
+    v14 = NewArray v7, v13 contents=anything
+    Return v14
+}

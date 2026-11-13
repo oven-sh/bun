@@ -1,0 +1,52 @@
+barrel2.js says `export * from "./barrel.js"`, and a mock of barrel.js takes the original: behind the star it passes on exactly the names of the original, for a written read, a computed one and whoever lists the keys.
+#### over/a.test.js
+import { test, vi } from "bun:test";
+vi.mock("./barrel.js", async original => ({ ...(await original()), x: "over x" }));
+import { seen } from "./user.js";
+test("over", () => console.log("| CASE over, in the test", seen()));
+#### over/barrel.js
+export { x, y } from "./leaf.js";
+#### over/barrel2.js
+export * from "./barrel.js";
+#### over/leaf.js
+export const x = "real x"; export const y = "real y";
+#### over/user.js
+import * as ns from "./barrel2.js";
+const computed = key => { try { return String(ns[key]); } catch (e) { return e.name; } };
+const all = () => [ns.x, ns.y, ...JSON.parse('["x","y","added"]').map(computed), Object.keys(ns).sort().join("+")].join(" ");
+console.log("| CASE over, at the load", all());
+export const seen = all;
+#### adds/a.test.js
+import { test, vi } from "bun:test";
+vi.mock("./barrel.js", async original => ({ ...(await original()), x: "over x", added: "added" }));
+import { seen } from "./user.js";
+test("adds", () => console.log("| CASE adds, in the test", seen()));
+#### adds/barrel.js
+export { x, y } from "./leaf.js";
+#### adds/barrel2.js
+export * from "./barrel.js";
+#### adds/leaf.js
+export const x = "real x"; export const y = "real y";
+#### adds/user.js
+import * as ns from "./barrel2.js";
+const computed = key => { try { return String(ns[key]); } catch (e) { return e.name; } };
+const all = () => [ns.x, ns.y, ...JSON.parse('["x","y","added"]').map(computed), Object.keys(ns).sort().join("+")].join(" ");
+console.log("| CASE adds, at the load", all());
+export const seen = all;
+#### lacks/a.test.js
+import { test, vi } from "bun:test";
+vi.mock("./barrel.js", async original => { const { y, ...rest } = await original(); return { ...rest, x: "over x" }; });
+import { seen } from "./user.js";
+test("lacks", () => console.log("| CASE lacks, in the test", seen()));
+#### lacks/barrel.js
+export { x, y } from "./leaf.js";
+#### lacks/barrel2.js
+export * from "./barrel.js";
+#### lacks/leaf.js
+export const x = "real x"; export const y = "real y";
+#### lacks/user.js
+import * as ns from "./barrel2.js";
+const computed = key => { try { return String(ns[key]); } catch (e) { return e.name; } };
+const all = () => [ns.x, ns.y, ...JSON.parse('["x","y","added"]').map(computed), Object.keys(ns).sort().join("+")].join(" ");
+console.log("| CASE lacks, at the load", all());
+export const seen = all;

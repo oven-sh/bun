@@ -417,8 +417,25 @@ pub type List<'a> = bun_alloc::ArenaVec<'a, Symbol>;
 /// clones are owned for the link lifetime — global allocator, no arena tag.
 pub type NestedList = Vec<Vec<Symbol>>;
 
+/// Like [`Map::follow`], including path compression, but for the parser's flat per-file symbol table.
+pub fn follow_symbols(symbols: &[Symbol], ref_: Ref) -> Ref {
+    let mut root = ref_;
+    loop {
+        let link = symbols[root.inner_index() as usize].link.get();
+        if !link.is_valid() {
+            break;
+        }
+        root = link;
+    }
+    let mut current = ref_;
+    while current != root {
+        current = symbols[current.inner_index() as usize].link.replace(root);
+    }
+    root
+}
+
 impl Symbol {
-    pub(crate) fn merge_contents_with(&mut self, old: &mut Symbol) {
+    pub(crate) fn merge_contents_with(&mut self, old: &Symbol) {
         self.use_count_estimate += old.use_count_estimate;
         if old.must_not_be_renamed() {
             self.original_name = old.original_name;
@@ -548,10 +565,10 @@ impl Map {
         let new_symbol = self.get(new).unwrap();
         // SAFETY: `old != new` (checked above) so the two slots are disjoint
         // elements of the NestedList; `get()` derives `*mut` from Vec's raw
-        // `NonNull` (write provenance preserved). Neither `&mut` outlives this
+        // `NonNull` (write provenance preserved). Neither reference outlives this
         // block (cf. split_at_mut).
         unsafe {
-            (&mut *new_symbol).merge_contents_with(&mut *old_symbol);
+            (&mut *new_symbol).merge_contents_with(&*old_symbol);
         }
         new
     }

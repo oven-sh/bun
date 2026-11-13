@@ -1,0 +1,20 @@
+# f1 = unlink
+# -- source: store-null-into-an-object-that-was-handed-in.ts
+# type Entry = { follower: Entry | null; weight: number };
+# function unlink(entry: Entry): void {
+#   entry.follower = null;
+# }
+# declare const input: any;
+# const first: Entry = { follower: null, weight: +input };
+# const second: Entry = { follower: first, weight: 1.5 };
+# first.follower = input ? second : null;
+# unlink(first);
+# if (input) unlink(second);
+# (globalThis as any).answer = [first.follower, second.follower];
+# -- end of source
+# The compiler before this one: 2 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 6, patches 0, moves 1, unlikely or rare 2.
+# RUN(X64): steps most:7 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 7

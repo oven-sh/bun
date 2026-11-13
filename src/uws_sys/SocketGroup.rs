@@ -72,8 +72,6 @@ const _: () = assert!(
 // SAFETY: all-zero is a valid SocketGroup — every field is a raw pointer
 // (null), `Option<&'static _>` (None via NPO), or an integer (0).
 unsafe impl bun_core::ffi::Zeroable for SocketGroup {}
-// SAFETY: all-zero is a valid VTable — every field is `Option<fn>` (None via NPO).
-unsafe impl bun_core::ffi::Zeroable for VTable {}
 
 impl Default for SocketGroup {
     fn default() -> Self {

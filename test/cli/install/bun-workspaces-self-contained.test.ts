@@ -175,6 +175,26 @@ it("an entry that matches no workspace warns and the rest still applies", async 
   ]);
 });
 
+it("packages that the workspace no longer needs are removed from its node_modules", async () => {
+  const desktop = { name: "desktop", version: "1.0.0", installConfig: { hoistingLimits: "workspaces" } };
+  await writeProject(desktop, {});
+  expect((await install(package_dir)).code).toBe(0);
+  const desktopNm = join(package_dir, "apps", "desktop", "node_modules");
+  await mkdir(join(desktopNm, "mine"));
+  expect(await readdirSorted(desktopNm)).toEqual(["@barn", "bar", "baz", "mine", "shared"]);
+
+  await writeFile(
+    join(package_dir, "apps", "desktop", "package.json"),
+    JSON.stringify({ ...desktop, dependencies: { shared: "workspace:*" } }),
+  );
+  const r = await install(package_dir);
+
+  expect(r.err).not.toContain("error:");
+  expect(await readdirSorted(desktopNm)).toEqual(["baz", "mine", "shared"]);
+  expect(existsSync(join(package_dir, "node_modules", "bar", "package.json"))).toBeTrue();
+  expect(r.code).toBe(0);
+});
+
 // "none" is yarn's default: no hoisting limit, so nothing to warn about
 it('hoistingLimits "none" hoists the workspace normally and does not warn', async () => {
   await writeProject({ installConfig: { hoistingLimits: "none" } }, {});

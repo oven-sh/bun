@@ -1,5 +1,6 @@
 #pragma once
 
+#include "JSDOMIterator.h"
 #include "JSDOMWrapper.h"
 #include "CookieMap.h"
 
@@ -53,5 +54,10 @@ template<> struct JSDOMWrapperConverterTraits<CookieMap> {
     using WrapperClass = JSCookieMap;
     using ToWrappedReturnType = CookieMap*;
 };
+
+struct CookieMapIteratorTraits;
+using CookieMapIteratorBase = JSDOMIteratorBase<JSCookieMap, CookieMapIteratorTraits>;
+template<> const JSC::ClassInfo CookieMapIteratorBase::s_info;
+JSC::JSObject* cookieMapIteratorPrototype(JSDOMGlobalObject&);
 
 } // namespace WebCore

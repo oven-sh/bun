@@ -34,46 +34,21 @@
 //! that gets embedded directly into the JavaScript output.
 
 use crate::mal_prelude::*;
-use core::fmt;
 
 use bun_ast::Source;
 use bun_collections::AutoBitSet;
 use bun_collections::VecExt;
 use bun_core::strings;
-use bun_io::{FmtAdapter, Write};
+use bun_io::Write;
 use bun_js_printer::Encoding;
 use bun_paths::resolve_path::{platform, platform_to_posix_in_place, relative_normalized};
 use bun_resolver::fs::FileSystem;
 
 use crate::Graph::Graph;
 use crate::chunk::Content;
-use crate::options::{Loader, OutputKind};
+use crate::options::{Loader, OutputFile, OutputKind};
 use crate::options_impl::LoaderExt as _;
 use crate::{BundleV2, Chunk, LinkerGraph};
-
-#[derive(Clone, Copy)]
-pub struct HTMLImportManifest<'a> {
-    pub(crate) index: u32,
-    pub(crate) graph: &'a Graph<'a>,
-    pub(crate) chunks: &'a [Chunk],
-    pub(crate) linker_graph: &'a LinkerGraph<'a>,
-}
-
-impl<'a> fmt::Display for HTMLImportManifest<'a> {
-    fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut adapter = FmtAdapter::new(writer);
-        match write(
-            self.index,
-            self.graph,
-            self.linker_graph,
-            self.chunks,
-            &mut adapter,
-        ) {
-            Ok(()) => Ok(()),
-            Err(_) => Err(fmt::Error),
-        }
-    }
-}
 
 fn write_entry_item<W: Write + ?Sized>(
     writer: &mut W,
@@ -142,36 +117,29 @@ pub(crate) fn write_escaped_json<W: Write + ?Sized>(
     Ok(())
 }
 
-/// Newtype wrapper produced by [`HTMLImportManifest::format_escaped_json`].
-pub struct EscapedJson<'a>(pub HTMLImportManifest<'a>);
-
-impl<'a> fmt::Display for EscapedJson<'a> {
-    fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut adapter = FmtAdapter::new(writer);
-        match write_escaped_json(
-            self.0.index,
-            self.0.graph,
-            self.0.linker_graph,
-            self.0.chunks,
-            &mut adapter,
-        ) {
-            Ok(()) => Ok(()),
-            Err(_) => Err(fmt::Error),
-        }
-    }
-}
-
-impl<'a> HTMLImportManifest<'a> {
-    pub(crate) fn format_escaped_json(self) -> EscapedJson<'a> {
-        EscapedJson(self)
-    }
-}
-
 pub(crate) fn write<W: Write + ?Sized>(
     index: u32,
     graph: &Graph,
     linker_graph: &LinkerGraph<'_>,
     chunks: &[Chunk],
+    writer: &mut W,
+) -> Result<(), crate::Error> {
+    write_with_assets(
+        index,
+        graph,
+        linker_graph,
+        chunks,
+        &graph.additional_output_files,
+        writer,
+    )
+}
+
+pub(crate) fn write_with_assets<W: Write + ?Sized>(
+    index: u32,
+    graph: &Graph,
+    linker_graph: &LinkerGraph<'_>,
+    chunks: &[Chunk],
+    assets: &[OutputFile],
     writer: &mut W,
 ) -> Result<(), crate::Error> {
     let browser_source_index = graph.html_imports.html_source_indices.slice()[index as usize];
@@ -190,8 +158,7 @@ pub(crate) fn write<W: Write + ?Sized>(
     let root_dir: &[u8] = if !options.root_dir.is_empty() {
         &options.root_dir[..]
     } else {
-        // SAFETY: FileSystem singleton is initialized before bundling.
-        FileSystem::get().top_level_dir
+        FileSystem::get().top_level_dir()
     };
 
     writer.write_all(b"{")?;
@@ -257,7 +224,7 @@ pub(crate) fn write<W: Write + ?Sized>(
 
     let mut first = true;
 
-    let additional_output_files = graph.additional_output_files.as_slice();
+    let additional_output_files = assets;
     let file_entry_bits: &[AutoBitSet] = linker_graph.files.items_entry_bits();
     let mut already_visited_output_file = AutoBitSet::init_empty(additional_output_files.len())?;
 
@@ -366,22 +333,15 @@ pub mod html_import_manifest {
     use crate::Graph::Graph;
     use crate::{LinkerGraph, chunk::Chunk};
 
-    pub use super::{EscapedJson, HTMLImportManifest};
-
-    #[inline]
-    pub(crate) fn format_escaped_json<'a>(
+    pub(crate) fn count_escaped_json(
         index: u32,
-        graph: &'a Graph,
-        chunks: &'a [Chunk],
-        linker_graph: &'a LinkerGraph,
-    ) -> EscapedJson<'a> {
-        super::HTMLImportManifest {
-            index,
-            graph,
-            chunks,
-            linker_graph,
-        }
-        .format_escaped_json()
+        graph: &Graph,
+        linker_graph: &LinkerGraph<'_>,
+        chunks: &[Chunk],
+    ) -> usize {
+        let mut counter = bun_io::DiscardingWriter::new();
+        let _ = super::write_escaped_json(index, graph, linker_graph, chunks, &mut counter);
+        counter.count
     }
 
     pub(crate) fn write_escaped_json(

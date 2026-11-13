@@ -1,0 +1,19 @@
+# -- source: a-descriptor-whose-layout-is-lost-behind-its-definition-leaves-the-flow-closed.js
+# const described = { value: 7, enumerable: true, configurable: true };
+# function tag(target, descriptor) { Object.defineProperty(target, "tag", descriptor); return target; }
+# const kinds = [{ a: 1 }, { b: 2, c: 1 }, { d: 3, e: 1, f: 2 }, { g: 4 }, { h: 5, i: 6 }, { j: 7 }, { k: 8, l: 9, m: 1 }, { o: 1 }, { p: 2, q: 3 }];
+# function choose(i) { return i === 0 ? described : i === 1 ? kinds[0] : i === 2 ? kinds[1] : i === 3 ? kinds[2] : i === 4 ? kinds[3] : i === 5 ? kinds[4] : i === 6 ? kinds[5] : i === 7 ? kinds[6] : i === 8 ? kinds[7] : kinds[8]; }
+# function deep() { return function () { return function () { return function () { return function () { return choose; }; }; }; }; }
+# const first = tag({ name: 1 }, described);
+# const late = deep()()()()();
+# let out = "";
+# for (let i = 0; i < 10; i++) out += Object.keys(late(i)).length;
+# print(out, first.tag, JSON.stringify(tag({ name: 3 }, described)));
+# -- end of source
+# The definition in tag() is looked at while the descriptor's layout is in sight: it lays a value alone. `choose` is reached late, and there ten layouts meet, so the descriptor's layout is lost. The rule of the definition asks whether that layout is lost, and nobody told it again when it was: run once more over the solved sets it took the other road and added something. It watches a node now that gets something where the lost layout is tied in.
+# OPTIONS: check=FlowFixpoint
+# RUN: link functions mechanisms=all
+# CHECK-NOT: FlowEndedTooEarly
+# CHECK: function f1 
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 3123121312 7 {"name":3,"tag":7}

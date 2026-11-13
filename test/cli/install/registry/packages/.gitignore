@@ -1,4 +1,5 @@
-# Packages that publish tests write into this directory at run time; never commit them.
+# Packages that verdaccio wrote into this directory when the publish tests ran on it. A checkout from that time
+# can still have them. They are not fixtures: never commit them.
 /dry-run-1/
 /dry-run-2/
 /otp-pkg-1/

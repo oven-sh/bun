@@ -47,6 +47,23 @@ struct us_poll_t {
   uv_poll_t *uv_p;
   LIBUS_SOCKET_DESCRIPTOR fd;
   unsigned char poll_type;
+  /* Set by us_poll_stop. uv_p is closing, or will close when poll_cb_depth
+   * drops to 0 (see poll_cb). The poll is never re-armed after this. */
+  unsigned char stopped : 1;
+  /* Set when us_internal_poll_close_fd runs while uv_p's close is deferred.
+   * poll_cb then closes fd right after uv_close. uv_close cancels the in-flight
+   * request with an ioctl on the socket, and a process with strict handle
+   * checks (every AppContainer) dies if that socket is already closed. */
+  unsigned char close_fd : 1;
+  /* libuv keeps pointers into a registered uv_p until it runs the close
+   * callback. Whichever of us_poll_free and close_cb_free_poll runs second
+   * frees both blocks. These flags record which one already ran. */
+  unsigned char uv_closed : 1;
+  unsigned char released : 1;
+  /* Number of poll_cb frames on the stack for this poll. It's above 1 when a
+   * handler waits for a promise and the nested loop run dispatches this poll
+   * again. */
+  unsigned int poll_cb_depth;
 };
 
 #endif // LIBUV_H

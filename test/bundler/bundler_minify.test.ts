@@ -186,6 +186,59 @@ describe("bundler", () => {
     minifyIdentifiers: true,
     run: { file: "/importer.js", stdout: "2 2" },
   });
+  itBundled("minify/DefaultExportOfNamedExpressionAcrossChunks", {
+    files: {
+      "/a.js": /* js */ `
+        import inc from './inc.js'
+        import User from './user.js'
+        import Decorated from './decorated.js'
+        console.log("a", inc(1), new User(1).value, new Decorated().kind)
+      `,
+      "/b.js": /* js */ `
+        import inc from './inc.js'
+        import User from './user.js'
+        import Decorated from './decorated.js'
+        console.log("b", inc(2), new User(2).value, new Decorated().kind)
+      `,
+      "/inc.js": /* js */ `
+        export default (function inc(n) { return n + 1 })
+      `,
+      "/user.js": /* js */ `
+        export default (class User { constructor(value) { this.value = value } })
+      `,
+      "/decorated.js": /* js */ `
+        function dec(value) { return value }
+        export default @dec class Decorated { kind = "decorated" }
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    minifyIdentifiers: true,
+    outdir: "/out",
+    format: "esm",
+    backend: "cli",
+    run: [
+      { file: "/out/a.js", stdout: "a 2 1 decorated" },
+      { file: "/out/b.js", stdout: "b 3 2 decorated" },
+    ],
+  });
+  itBundled("minify/DefaultExportOfNamedExpressionKeepsItsName", {
+    files: {
+      "/entry.js": /* js */ `
+        import Controller from './controller.js'
+        import Model from './model.js'
+        console.log(Controller.name, Model.name)
+      `,
+      "/controller.js": /* js */ `
+        export default (function Controller(a) { return a })
+      `,
+      "/model.js": /* js */ `
+        export default (class Model { value = 1 })
+      `,
+    },
+    minifySyntax: true,
+    run: { stdout: "Controller Model" },
+  });
   itBundled("minify/TemplateStringFolding", {
     files: {
       "/entry.js": /* js */ `
@@ -2033,7 +2086,7 @@ test.each(["transformSync", "transform"] as const)(
   "minify.identifiers: %s gives no import or parameter the name of an export",
   async method => {
     const exportNames = [..."abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$"];
-    const output = await new Bun.Transpiler({ loader: "js", minify: { identifiers: true } })[method](
+    const output = await new Bun.Transpiler({ loader: "js", minify: { identifiers: true } } as any)[method](
       [
         `import { imported } from "./imported.js";`,
         ...exportNames.map(name => `export const ${name} = "${name}";`),
@@ -2055,7 +2108,7 @@ test.each(["transformSync", "transform"] as const)(
 test.each(["transformSync", "transform"] as const)(
   "minify.identifiers: %s keeps the name of an export that is declared again",
   async method => {
-    const output = await new Bun.Transpiler({ loader: "js", minify: { identifiers: true } })[method](
+    const output = await new Bun.Transpiler({ loader: "js", minify: { identifiers: true } } as any)[method](
       "export var t = 1;\nvar t = 2;\nexport function read() { return t; }\n",
     );
     expect(output).toBe("export var t = 1;\nvar t = 2;\nexport function read() {\n  return t;\n}\n");

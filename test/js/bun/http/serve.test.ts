@@ -4057,7 +4057,7 @@ describe("idle timeout with a forced sweep", () => {
   }
 
   async function sweepUntilClosed(client: net.Socket) {
-    for (let i = 0; i < 50 && !client.destroyed; i++) {
+    for (const deadline = Date.now() + 2_000; !client.destroyed && Date.now() < deadline;) {
       await sweep();
       // A server that has closed resets the connection for this byte.
       client.write("x");

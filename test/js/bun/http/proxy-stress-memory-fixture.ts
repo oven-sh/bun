@@ -67,6 +67,8 @@ const origin = Bun.serve({
 
 let connects = 0;
 let onNextConnect: (() => void) | undefined;
+// The sockets that a tls.Server accepts share an SSL_CTX that goes with the last of them. This one keeps it in every sample.
+let firstClient: net.Socket | undefined;
 
 // Sampling starts after the warm-up.
 let tunnelStart = -1;
@@ -79,6 +81,7 @@ let sslCtxBusyMax = -Infinity;
 // test can check that every request went through it, and so "after-connect"
 // aborts can wait for the CONNECT.
 function handleClient(client: net.Socket) {
+  firstClient ??= client;
   client.on("error", () => {});
   let head = Buffer.alloc(0);
   let upstream: net.Socket | undefined;

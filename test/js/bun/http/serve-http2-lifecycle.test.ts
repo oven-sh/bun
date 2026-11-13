@@ -34,10 +34,12 @@ const sweep = (fx: { port: number }) => control(fx, "/sweep");
 const release = (fx: { port: number }, gate: string) => control(fx, "/release?gate=" + gate);
 /** Sweeps until `session` has closed, `limit` times at most. Returns whether it got there. */
 async function sweepUntilClosed(fx: { port: number }, session: Awaited<ReturnType<typeof connectH2>>, limit: number) {
-  for (let i = 0; i < limit && !session.closed; i++) await sweep(fx);
-  // The answer to a sweep comes over a connection of its own, so a close can still be on its way. It is here ahead of the answer to a ping.
-  if (!session.closed) await new Promise<void>(r => session.ping(() => r()));
-  return session.closed;
+  const isGone = () => session.closed || session.destroyed;
+  for (let i = 0; i < limit && !isGone(); i++) await sweep(fx);
+  // The answer to a sweep comes over a connection of its own, so a close can still be on its way. It is here ahead of the answer to a ping,
+  // or the ping is answered with a reset, for which Windows drops the GOAWAY.
+  if (!isGone()) await new Promise<void>(r => session.ping(() => r()));
+  return isGone();
 }
 
 describe("Bun.serve http2 + http3 on one port", () => {

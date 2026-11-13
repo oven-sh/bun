@@ -727,13 +727,13 @@ impl ExpectDeferred {
         }
     }
 
-    /// Abandons the calls still held by the group (or by the file, if `group_index` is `None`) and reports the unhandled ones.
+    /// Abandons the calls still held by the group (or by the file, if `group_index` is `None`) and reports the unhandled ones, unless there is no `message`.
     #[optimize(size)]
     fn give_up(
         buntest: &BunTestPtr,
         global: &JSGlobalObject,
         group_index: Option<usize>,
-        message: core::fmt::Arguments<'_>,
+        message: Option<core::fmt::Arguments<'_>>,
     ) {
         let mut index = 0;
         while let Some(call) = buntest.get().unclaimed.calls.get(index) {
@@ -765,9 +765,9 @@ impl ExpectDeferred {
                 .is_some_and(|promise| ExpectDeferred__isHandled(promise));
             // SAFETY: as above; `deferred` is on the stack.
             crate::dispatch::fold(unsafe { &*this }.abandon(global, deferred, Some(buntest)));
-            if is_handled {
+            let Some(message) = message.filter(|_| !is_handled) else {
                 continue;
-            }
+            };
             let error = global.create_error_instance(message);
             if let Some(call_site) = js::call_site_get_cached(deferred) {
                 ExpectDeferred__continueStackAt(global, error, call_site);
@@ -829,10 +829,16 @@ impl ExpectDeferred {
             buntest,
             global,
             Some(group_index),
-            format_args!(
+            Some(format_args!(
                 "An un-awaited matcher in a concurrent test timed out because its promise never settled"
-            ),
+            )),
         );
+    }
+
+    /// `--bail` stopped the run, so nothing waits for the calls that the group still holds, and none of them is reported.
+    #[cold]
+    pub(crate) fn group_stopped(buntest: &BunTestPtr, global: &JSGlobalObject, group_index: usize) {
+        Self::give_up(buntest, global, Some(group_index), None);
     }
 
     /// After a file's tests have run, keeps the file open until the calls it holds finish or time out.
@@ -843,6 +849,12 @@ impl ExpectDeferred {
     ) -> StepResult {
         let this = buntest.get();
         if this.unclaimed.of_file == 0 {
+            return StepResult::Complete;
+        }
+        // A file that `--bail` stopped does not wait for the calls that it holds, and reports none of them.
+        if this.execution.stopped_in.is_some() {
+            this.unclaimed.of_file = 0;
+            Self::give_up(buntest, global, None, None);
             return StepResult::Complete;
         }
         let timeout_ms = this.reporter.map_or(0, |reporter| {
@@ -865,9 +877,9 @@ impl ExpectDeferred {
             buntest,
             global,
             None,
-            format_args!(
+            Some(format_args!(
                 "An un-awaited matcher called outside a test timed out {timeout_ms}ms after its file's tests finished because its promise never settled"
-            ),
+            )),
         );
         StepResult::Complete
     }

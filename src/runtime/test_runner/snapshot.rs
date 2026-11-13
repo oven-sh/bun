@@ -98,7 +98,10 @@ pub(crate) enum FileOutcome {
 pub(crate) struct Snapshots {
     pub(crate) update_snapshots: bool,
     pub(crate) total: usize,
+    /// Snapshots that are new on disk. A run that `--bail` stops does not write them all.
     pub(crate) added: usize,
+    /// New entries of the current file, which count as `added` once `write_snapshot_file` wrote them.
+    added_to_current_file: usize,
     pub(crate) passed: usize,
     pub(crate) failed: usize,
 
@@ -128,6 +131,7 @@ impl Snapshots {
             update_snapshots,
             total: 0,
             added: 0,
+            added_to_current_file: 0,
             passed: 0,
             failed: 0,
             file_buf: Vec::new(),
@@ -461,7 +465,7 @@ impl Snapshots {
             }
         }
         if written_by_earlier_attempt.is_none() {
-            self.added += 1;
+            self.added_to_current_file += 1;
         }
         self.values.insert(&key, Entry { value: Box::<[u8]>::from(received), checked: true, stays: false });
         Ok(Outcome::Written)
@@ -684,6 +688,7 @@ impl Snapshots {
     #[optimize(size)]
     pub(crate) fn write_snapshot_file(&mut self, files: &FileList) -> Result<(), Error> {
         if let Some(file) = self._current_file.take() {
+            let added = core::mem::take(&mut self.added_to_current_file);
             let result = if file.dirty { self.write_sorted(files, &file) } else { Ok(()) };
             if let Some(file) = file.file {
                 file.write_all(&self.file_buf)
@@ -698,6 +703,7 @@ impl Snapshots {
 
             self.counts.clear();
             result?;
+            self.added += added;
         }
         Ok(())
     }

@@ -1794,6 +1794,44 @@ pub(crate) fn exit_is_requested() -> bool {
     !should_drain_event_loop()
 }
 
+/// `process.exit()` in a run that `--bail` has stopped: prints the report that the end of `TestCommand::exec`, which the run does not get to, would have printed.
+#[cold]
+#[inline(never)] // --trim cuts the test runner at the call.
+pub(crate) fn report_stopped_run(vm: &mut VirtualMachine) {
+    let Some(runner) = jest::Jest::runner() else {
+        return;
+    };
+    let Some(reporter) = runner.stopped else {
+        return;
+    };
+    let is_in_file = runner.bun_test_root.active_file.is_some();
+    // SAFETY: the reporter outlives `RUNNER`, and `process.exit()` does not return to the frames of `TestCommand` that hold it.
+    let reporter = unsafe { &mut *reporter.as_ptr() };
+    // The end of `exec` printed it already, and an 'exit' listener called `process.exit()`.
+    if reporter.has_reported {
+        return;
+    }
+    let Some(ctx) = bun_options_types::context::try_get() else {
+        return;
+    };
+    if is_in_file && Output::is_github_action() {
+        pretty_errorln!("<r>\n::endgroup::\n");
+    }
+    let mut coverage_options = ctx.test_options.coverage.clone();
+    TestCommand::report_run(
+        reporter,
+        vm,
+        RunEnd {
+            ctx,
+            found_test_files: true,
+            pass_with_no_tests_from_filter: false,
+            search_count: 0,
+            coverage_options: &mut coverage_options,
+            ran_parallel: false,
+        },
+    );
+}
+
 pub(crate) struct CommandLineReporter {
     // `TestRunner<'a>` borrows `TestOptions`/regex from the CLI ctx; the
     // reporter is held in a `Box` local to `TestCommand::exec` which never
@@ -1813,6 +1851,11 @@ pub(crate) struct CommandLineReporter {
     pub(crate) failures_to_repeat_buf: Vec<u8>,
     pub(crate) skips_to_repeat_buf: Vec<u8>,
     pub(crate) todos_to_repeat_buf: Vec<u8>,
+
+    /// `--bail` reached its failure count, and this process starts no other test or file. Never set where a coordinator hands files to workers: there the coordinator counts the failures.
+    pub(crate) bailed: bool,
+    /// `TestCommand::report_run` printed the report of the run.
+    pub(crate) has_reported: bool,
 
     pub(crate) reporters: ReportersConfig,
 
@@ -2273,7 +2316,8 @@ impl CommandLineReporter {
                 this.summary().fail += 1;
 
                 if this.summary().fail == this.jest.bail {
-                    this.bail_out(VirtualMachine::get().as_mut());
+                    this.bail(VirtualMachine::get().as_mut());
+                    buntest.stop();
                 }
             }
         }
@@ -2281,6 +2325,14 @@ impl CommandLineReporter {
             .summary()
             .expectations
             .saturating_add(sequence.expect_call_count);
+    }
+
+    /// `--bail` reached its failure count, and the caller stops what it runs. The script that still runs can't make the run exit 0, and its `process.exit()` prints the report.
+    #[cold]
+    fn bail(&mut self, vm: &mut VirtualMachine) {
+        self.bailed = true;
+        self.jest.stopped = Some(core::ptr::NonNull::from(&mut *self));
+        vm.exit_handler.exits_nonzero = true;
     }
 
     pub(crate) fn print_summary(&mut self) {
@@ -2299,35 +2351,7 @@ impl CommandLineReporter {
         Output::print_start_end(bun::start_time(), bun::time::nano_timestamp());
     }
 
-    /// Prints that `--bail` hit its failure count, then exits with code 1. Tears down the VM the same way `exec` does.
-    /// A `--parallel` worker never gets here: its `jest.bail` is 0, and the coordinator counts the failures.
-    pub(crate) fn bail_out(&mut self, vm: &mut VirtualMachine) -> ! {
-        self.print_summary();
-        pretty_error!(
-            "\nBailed out after {} failure{}<r>\n",
-            self.jest.bail,
-            if self.jest.bail == 1 { "" } else { "s" }
-        );
-        Output::flush();
-        self.write_junit_report_if_needed();
-        self.write_timings_if_needed();
-
-        vm.exit_handler.exit_code = 1;
-        vm.exit_handler.skip_exit_listeners = skip_exit_listeners(self);
-        vm.exit_handler.requested = true;
-        vm.run_with_api_lock_mut(VirtualMachine::on_exit);
-        // Exit listeners need the runner, so release the `bun:test` GC roots and clear `RUNNER`
-        // after they run. Finalizers in the teardown GC must not see a half-torn-down `TestRunner`.
-        self.jest.bun_test_root.deinit_for_exit();
-        // SAFETY: `RUNNER` is a `RacyCell` touched only from the single JS thread;
-        // no concurrent reader exists on this shutdown path.
-        unsafe {
-            jest::Jest::RUNNER.write(None);
-        }
-        vm.run_with_api_lock_mut(|vm| vm.global_exit())
-    }
-
-    /// Like the JUnit report, called before every exit path (including bail) so measured durations aren't lost.
+    /// Like the JUnit report, called before every exit path so measured durations aren't lost.
     #[optimize(size)]
     pub(crate) fn write_timings_if_needed(&mut self) {
         if self.jest.test_options.update_timings
@@ -2340,7 +2364,7 @@ impl CommandLineReporter {
 
     /// Writes the JUnit reporter output file if a JUnit reporter is active and
     /// an outfile path was configured. This must be called before any early exit
-    /// (e.g. bail) so that the report is not lost.
+    /// (e.g. an aborted `--parallel` run) so that the report is not lost.
     #[optimize(size)]
     pub(crate) fn write_junit_report_if_needed(&mut self) {
         if let Some(junit) = self.reporters.junit.as_mut() {
@@ -2681,6 +2705,22 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Stri
     true
 }
 
+/// What the end of a run knows and the reporter does not. See `TestCommand::report_run`.
+pub(crate) struct RunEnd<'a> {
+    ctx: &'a crate::cli::command::ContextData,
+    /// Whether the scan found a test file to run.
+    found_test_files: bool,
+    pass_with_no_tests_from_filter: bool,
+    search_count: usize,
+    coverage_options: &'a mut CodeCoverageOptions,
+    ran_parallel: bool,
+}
+
+pub(crate) struct RunReport {
+    failed_to_find_any_tests: bool,
+    write_coverage_success: bool,
+}
+
 pub(crate) struct TestCommand;
 
 impl TestCommand {
@@ -2780,6 +2820,7 @@ impl TestCommand {
                 run_todo: ctx.test_options.run_todo,
                 only: ctx.test_options.only,
                 bail: ctx.test_options.bail,
+                stopped: None,
                 max_concurrency: ctx.test_options.max_concurrency,
                 // `test_filter_regex` is an erased `*mut RegularExpression` (see
                 // options_types::context).
@@ -2812,6 +2853,8 @@ impl TestCommand {
             failures_to_repeat_buf: Vec::new(),
             skips_to_repeat_buf: Vec::new(),
             todos_to_repeat_buf: Vec::new(),
+            bailed: false,
+            has_reported: false,
             reporters: ReportersConfig::default(),
             timings: if ctx.test_options.test_worker || ctx.test_options.timings_files.is_empty() {
                 None
@@ -3357,10 +3400,95 @@ impl TestCommand {
                 let _ = watcher.add_file_by_path_slow(path);
             }
         }
+        // `--bail` stopped the run before it loaded every test file. A change to one of the others restarts it too.
+        if reporter.bailed && vm.is_watcher_enabled() {
+            // SAFETY: as above.
+            let watcher =
+                unsafe { &mut *vm.bun_watcher.cast::<jsc::hot_reloader::ImportWatcher>() };
+            for path in test_files.iter() {
+                let _ = watcher.add_file_by_path_slow(path.as_bytes());
+            }
+        }
 
-        let runner = &mut reporter.jest;
-        let write_snapshots_success = runner.snapshots.write_inline_snapshots(&runner.files)?;
-        runner.snapshots.write_snapshot_file(&runner.files)?;
+        let mut write_snapshots_success = true;
+        // `--bail` writes no pending snapshot: under `--update-snapshots` the file it stopped in would lose the entries of the tests that did not run.
+        if !reporter.bailed {
+            let runner = &mut reporter.jest;
+            write_snapshots_success = runner.snapshots.write_inline_snapshots(&runner.files)?;
+            runner.snapshots.write_snapshot_file(&runner.files)?;
+        }
+        let RunReport {
+            failed_to_find_any_tests,
+            write_coverage_success,
+        } = Self::report_run(
+            &mut reporter,
+            vm,
+            RunEnd {
+                ctx,
+                found_test_files: !test_files.is_empty(),
+                pass_with_no_tests_from_filter,
+                search_count,
+                coverage_options: &mut coverage_options,
+                ran_parallel,
+            },
+        );
+
+        if vm.hot_reload == jsc::virtual_machine::HotReload::Watch {
+            vm.run_with_api_lock_mut(Self::run_event_loop_for_watch);
+        }
+        let summary = reporter.summary();
+
+        let should_fail_on_no_tests = !ctx.test_options.pass_with_no_tests
+            && (failed_to_find_any_tests || summary.did_label_filter_out_all_tests());
+        if should_fail_on_no_tests
+            || summary.fail > 0
+            || (coverage_options.enabled
+                && coverage_options.fractions.failing
+                && coverage_options.fail_on_low_coverage)
+            || !write_snapshots_success
+            || !write_coverage_success
+            || reporter.jest.unhandled_errors_between_tests > 0
+        {
+            vm.exit_handler.exit_code = 1;
+        }
+        vm.exit_handler.skip_exit_listeners = skip_exit_listeners(&reporter);
+        // The event loop of a run that `--bail` stopped did not run dry.
+        vm.exit_handler.requested = reporter.bailed || exit_is_requested();
+        // Must precede the GC-root release below: exit listeners are user JS and may touch still-live state.
+        vm.run_with_api_lock_mut(VirtualMachine::on_exit);
+        // Releases the `bun:test` GC roots, so that the `collectNow()` of `Zig__GlobalObject__destructOnExit()` can reach the closures they pin.
+        reporter.jest.bun_test_root.deinit_for_exit();
+        // SAFETY: `RUNNER` is a `RacyCell` touched only from the single JS thread;
+        // no concurrent reader exists on this shutdown path.
+        unsafe {
+            jest::Jest::RUNNER.write(None);
+        }
+        // `RUNNER` is cleared first, so that a finalizer in that GC can't observe a dangling `TestRunner`.
+        drop(reporter);
+        // `global_exit()` does not return, so nothing is dropped after it.
+        drop(all_test_files);
+        // on_exit() already set is_shutting_down; global_exit() asserts it.
+        vm.run_with_api_lock_mut(|vm| vm.global_exit());
+        Ok(())
+    }
+
+    /// The report that ends a run, from the lists of more than 20 passes to the JUnit and timings files. Printed by the end of `exec`, or by `report_stopped_run`.
+    fn report_run(
+        reporter: &mut CommandLineReporter,
+        vm: &mut VirtualMachine,
+        end: RunEnd<'_>,
+    ) -> RunReport {
+        let RunEnd {
+            ctx,
+            found_test_files,
+            pass_with_no_tests_from_filter,
+            search_count,
+            coverage_options,
+            ran_parallel,
+        } = end;
+        reporter.has_reported = true;
+        // `exec` stores the seed that it drew.
+        let seed = ctx.test_options.seed.unwrap_or_default();
         let mut write_coverage_success = true;
         if reporter.summary().pass > 20
             && !Output::is_ai_agent()
@@ -3404,7 +3532,7 @@ impl TestCommand {
 
         let mut failed_to_find_any_tests = false;
 
-        if test_files.is_empty() && !pass_with_no_tests_from_filter {
+        if !found_test_files && !pass_with_no_tests_from_filter {
             failed_to_find_any_tests = true;
 
             // "bun test" - positionals[0] == "test"
@@ -3477,7 +3605,7 @@ impl TestCommand {
             pretty_error!("\n");
 
             if coverage_options.enabled && !ran_parallel {
-                write_coverage_success = reporter.generate_code_coverage(vm, &mut coverage_options);
+                write_coverage_success = reporter.generate_code_coverage(vm, coverage_options);
             }
 
             // `Summary` is `Copy`; take a value snapshot so the `&mut` from
@@ -3509,7 +3637,7 @@ impl TestCommand {
                 }
 
                 // Display the random seed if tests were randomized
-                if random_instance.is_some() || summary.shuffled > 0 {
+                if ctx.test_options.randomize || summary.shuffled > 0 {
                     pretty_error!("{}<r>--seed={}<r>\n", &indenter, seed);
                 }
 
@@ -3620,6 +3748,14 @@ impl TestCommand {
         }
 
         pretty_error!("\n");
+        // Under `--parallel` the coordinator has said so already, when it stopped handing out files.
+        if reporter.bailed {
+            pretty_error!(
+                "Bailed out after {} failure{}<r>\n",
+                reporter.jest.bail,
+                if reporter.jest.bail == 1 { "" } else { "s" }
+            );
+        }
         let (refused_loads, refused): (Vec<Vec<u8>>, Vec<Vec<u8>>) =
             (run_compiled::refused_changes().into_iter())
                 .partition(|refusal| refusal.starts_with(run_compiled::REFUSED_LOAD));
@@ -3740,49 +3876,13 @@ impl TestCommand {
         Output::flush();
 
         reporter.write_junit_report_if_needed();
-        if !test_files.is_empty() || ctx.test_options.shard.is_some() {
+        if found_test_files || ctx.test_options.shard.is_some() {
             reporter.write_timings_if_needed();
         }
-
-        if vm.hot_reload == jsc::virtual_machine::HotReload::Watch {
-            vm.run_with_api_lock_mut(Self::run_event_loop_for_watch);
+        RunReport {
+            failed_to_find_any_tests,
+            write_coverage_success,
         }
-        let summary = reporter.summary();
-
-        let should_fail_on_no_tests = !ctx.test_options.pass_with_no_tests
-            && (failed_to_find_any_tests || summary.did_label_filter_out_all_tests());
-        if should_fail_on_no_tests
-            || summary.fail > 0
-            || (coverage_options.enabled
-                && coverage_options.fractions.failing
-                && coverage_options.fail_on_low_coverage)
-            || !write_snapshots_success
-            || !write_coverage_success
-            || reporter.jest.unhandled_errors_between_tests > 0
-        {
-            vm.exit_handler.exit_code = 1;
-        }
-        vm.exit_handler.skip_exit_listeners = skip_exit_listeners(&reporter);
-        vm.exit_handler.requested = exit_is_requested();
-        // Must precede the GC-root release below: exit listeners are user JS and may touch still-live state.
-        vm.run_with_api_lock_mut(VirtualMachine::on_exit);
-        // on_exit() already set is_shutting_down; global_exit() asserts it.
-        // Release `bun:test` GC roots before `global_exit()` so
-        // `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reach the closures they pin
-        // (preload hooks, per-file describe/test callbacks). Clear `RUNNER`
-        // before dropping `reporter` so finalizers running inside the GC can't
-        // observe a dangling `TestRunner`.
-        reporter.jest.bun_test_root.deinit_for_exit();
-        // SAFETY: `RUNNER` is a `RacyCell` touched only from the single JS thread;
-        // no concurrent reader exists on this shutdown path.
-        unsafe {
-            jest::Jest::RUNNER.write(None);
-        }
-        drop(reporter);
-        // `global_exit()` does not return, so nothing is dropped after it.
-        drop(all_test_files);
-        vm.run_with_api_lock_mut(|vm| vm.global_exit());
-        Ok(())
     }
 
     fn run_event_loop_for_watch(vm: &mut VirtualMachine) {
@@ -3831,6 +3931,10 @@ impl TestCommand {
                         ) {
                             handle_top_level_test_error_before_javascript_start(&err);
                         }
+                        // The file did not run to its end, so it has no time to record, and no file follows it.
+                        if reporter.bailed {
+                            return;
+                        }
                         if let Some(t) = reporter.timings.as_mut() {
                             t.record_since(file_name.as_bytes(), started);
                         }
@@ -3860,6 +3964,9 @@ impl TestCommand {
                     },
                 ) {
                     handle_top_level_test_error_before_javascript_start(&err);
+                }
+                if reporter.bailed {
+                    return;
                 }
                 if let Some(t) = reporter.timings.as_mut() {
                     t.record_since(last.as_bytes(), started);
@@ -3975,6 +4082,96 @@ impl TestCommand {
             bun_test::RefDataValue::Done => ("An un-awaited matcher's promise", None),
             _ => ("A test or hook with no timeout", None),
         }
+    }
+
+    /// Runs what `buntest_strong` collected until its file ends. Returns the `unhandled_error_counter` up to which the rejected promises are handled.
+    #[optimize(size)]
+    fn run_to_end(
+        vm: &mut VirtualMachine,
+        buntest_strong: &bun_test::BunTestPtr,
+        file_path: &[u8],
+    ) -> crate::Result<usize> {
+        let global = vm.global();
+        let buntest = buntest_strong.get();
+        buntest.is_loading = false;
+
+        // Automatically execute bun_test tests
+        if buntest.result_queue.readable_length() == 0 {
+            buntest.add_result(bun_test::ResultMsg::Start);
+        }
+        bun_test::BunTest::run(buntest_strong, global)?;
+
+        // Process event loop while bun_test tests are running
+        vm.event_loop_ref().tick();
+
+        let mut prev_unhandled_count = vm.unhandled_error_counter;
+        while buntest.phase != bun_test::Phase::Done {
+            // `RunTestsTask` leaves results queued when it fires in an event loop nested under JS.
+            if buntest.result_queue.readable_length() > 0 {
+                bun_test::BunTest::run_next_tick(
+                    &std::rc::Rc::downgrade(buntest_strong),
+                    global,
+                    bun_test::ResultMsg::Start,
+                );
+            }
+            if buntest.wants_wakeup {
+                buntest.wants_wakeup = false;
+                vm.wakeup();
+            }
+            if buntest.timer.state != crate::timer::EventLoopTimerState::ACTIVE
+                && !vm.has_work_left()
+            {
+                let (what, waits_for) = Self::what_runner_waits_for(buntest);
+                let p = jsc::JSPromise::opaque_mut(Self::never_settled(global, what, file_path));
+                vm.unhandled_rejection(global, p.result(global.vm()), p.to_js());
+                vm.event_loop_ref().tick();
+                // The error ends a describe() or a test. Anything else stays stuck, so abandon the file.
+                if waits_for.is_none() || waits_for == Self::what_runner_waits_for(buntest).1 {
+                    break;
+                }
+                continue;
+            }
+            vm.event_loop_ref().auto_tick_asleep();
+            if buntest.phase == bun_test::Phase::Done {
+                break;
+            }
+            vm.event_loop_ref().tick();
+
+            while prev_unhandled_count < vm.unhandled_error_counter {
+                let _ = vm.global().handle_rejected_promises();
+                prev_unhandled_count = vm.unhandled_error_counter;
+            }
+        }
+        Ok(prev_unhandled_count)
+    }
+
+    /// `--bail` stopped the run in a file that was not due to be the last one, so its order left out what the preload tears down after the last file. Runs that as a last file with no test.
+    #[cold]
+    fn tear_down_preload(
+        reporter: &mut CommandLineReporter,
+        vm: &mut VirtualMachine,
+        file_id: jest::FileId,
+        file_path: &[u8],
+    ) -> crate::Result<()> {
+        let bun_test_root = &mut jest::Jest::runner().unwrap().bun_test_root;
+        let preload = &bun_test_root.hook_scope;
+        if preload.after_all.is_empty() && preload.around_all_teardown.is_empty() {
+            return Ok(());
+        }
+        bun_test_root.exit_file();
+        let last = bun_test::FirstLast {
+            first: false,
+            last: true,
+        };
+        bun_test_root.enter_file(file_id, reporter, false, last);
+        let Some(buntest_strong) = bun_test_root.clone_active_file() else {
+            return Ok(());
+        };
+        Self::run_to_end(vm, &buntest_strong, file_path)?;
+        let el = vm.event_loop();
+        // SAFETY: el is the VM-owned event loop; vm is passed back as *mut.
+        unsafe { (*el).tick_immediate_tasks(vm) };
+        Ok(())
     }
 
     #[optimize(size)]
@@ -4119,64 +4316,9 @@ impl TestCommand {
                     break 'blk;
                 };
                 let buntest = buntest_strong.get();
-                buntest.is_loading = false;
                 // Skips this file's tests, but preload hooks due with this file still run.
                 buntest.collection.root_scope.failed |= failed_to_load;
-
-                // Automatically execute bun_test tests
-                if buntest.result_queue.readable_length() == 0 {
-                    buntest.add_result(bun_test::ResultMsg::Start);
-                }
-                // `BunTestPtr` is `Rc<BunTestCell>`; clone (refcount++) so the
-                // local `buntest_strong` survives for the post-run drain loop and
-                // the explicit `drop` below.
-                bun_test::BunTest::run(&buntest_strong, vm.global())?;
-
-                // Process event loop while bun_test tests are running
-                vm.event_loop_ref().tick();
-
-                let mut prev_unhandled_count = vm.unhandled_error_counter;
-                while buntest.phase != bun_test::Phase::Done {
-                    // `RunTestsTask` leaves results queued when it fires in an event loop nested under JS.
-                    if buntest.result_queue.readable_length() > 0 {
-                        bun_test::BunTest::run_next_tick(
-                            &std::rc::Rc::downgrade(&buntest_strong),
-                            global,
-                            bun_test::ResultMsg::Start,
-                        );
-                    }
-                    if buntest.wants_wakeup {
-                        buntest.wants_wakeup = false;
-                        vm.wakeup();
-                    }
-                    if buntest.timer.state != crate::timer::EventLoopTimerState::ACTIVE
-                        && !vm.has_work_left()
-                    {
-                        let (what, waits_for) = Self::what_runner_waits_for(buntest);
-                        let p = jsc::JSPromise::opaque_mut(Self::never_settled(
-                            global, what, file_path,
-                        ));
-                        vm.unhandled_rejection(global, p.result(global.vm()), p.to_js());
-                        vm.event_loop_ref().tick();
-                        // The error ends a describe() or a test. Anything else stays stuck, so abandon the file.
-                        if waits_for.is_none()
-                            || waits_for == Self::what_runner_waits_for(buntest).1
-                        {
-                            break;
-                        }
-                        continue;
-                    }
-                    vm.event_loop_ref().auto_tick_asleep();
-                    if buntest.phase == bun_test::Phase::Done {
-                        break;
-                    }
-                    vm.event_loop_ref().tick();
-
-                    while prev_unhandled_count < vm.unhandled_error_counter {
-                        let _ = vm.global().handle_rejected_promises();
-                        prev_unhandled_count = vm.unhandled_error_counter;
-                    }
-                }
+                let mut prev_unhandled_count = Self::run_to_end(vm, &buntest_strong, file_path)?;
 
                 // Under --aot a call of import() that asks for a mocked file waits in the run time for its text, by a task that would be lost here.
                 // `bun test` has a read under way in its place. A plain run holds no such call, so it does nothing here.
@@ -4199,7 +4341,7 @@ impl TestCommand {
                 // on_before_exit() drains and dispatches 'beforeExit' like `bun run`;
                 // it early-returns when unhandled_error_counter > 0, which is fine
                 // here since such a file already failed. Opt-in; one file per process.
-                if should_drain_event_loop() {
+                if should_drain_event_loop() && !reporter.bailed {
                     vm.on_before_exit();
                 }
                 reporter.jest.snapshots.remove_obsolete(buntest);
@@ -4221,8 +4363,7 @@ impl TestCommand {
                 }
 
                 if reporter.jest.bail == reporter.summary().fail {
-                    // This never returns, so `EnteredFile`'s `Drop` doesn't run.
-                    reporter.bail_out(vm);
+                    reporter.bail(vm);
                 }
             }
 
@@ -4235,8 +4376,12 @@ impl TestCommand {
                 global,
                 file_path,
                 next_load_shares_global,
-                !failed_to_load && repeat_index + 1 < repeat_count,
+                !failed_to_load && !reporter.bailed && repeat_index + 1 < repeat_count,
             );
+            // After the cleanup above, like the file that would have followed: the preload does not get this file's mocks and fake timers.
+            if reporter.bailed && !first_last.last {
+                Self::tear_down_preload(reporter, vm, file_id, file_path)?;
+            }
             // Must run after the cleanup above, so rejections from JS it runs are reported in this file.
             let _ = vm.global().handle_rejected_promises();
 
@@ -4253,7 +4398,8 @@ impl TestCommand {
                 vm.auto_killer.disable();
             }
 
-            repeat_index = if failed_to_load {
+            // A file that `--bail` stopped does not run again.
+            repeat_index = if failed_to_load || reporter.bailed {
                 repeat_count
             } else {
                 repeat_index + 1

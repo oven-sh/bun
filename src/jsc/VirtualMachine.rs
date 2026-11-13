@@ -790,12 +790,19 @@ pub struct ExitHandler {
     /// `process.exit()`, a fatal error or the end of a `bun test` run, as opposed to the event loop running dry.
     /// See `VirtualMachine::exit_tears_down_napi_envs`.
     pub requested: bool,
+    /// `bun test --bail` sets this when it stops a run: the script that still runs cannot make the failed run exit 0. See `code`.
+    pub exits_nonzero: bool,
 }
 
 impl ExitHandler {
+    /// The code that the process exits with. 'exit' listeners are told it, and `process.exitCode` reads it once the script has stored a code.
+    pub fn code(&self) -> u8 {
+        self.exit_code.max(u8::from(self.exits_nonzero))
+    }
+
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__getExitCode(vm: &VirtualMachine) -> u8 {
-        vm.exit_handler.exit_code
+        vm.exit_handler.code()
     }
 
     #[unsafe(no_mangle)]
@@ -850,7 +857,7 @@ impl ExitHandler {
     /// (which only covers the `ExitHandler` field). Callers pass the VM
     /// reference instead; the body re-enters JS so no `&mut` is held.
     pub(crate) fn dispatch_on_exit(vm: &VirtualMachine) {
-        let exit_code = vm.exit_handler.exit_code;
+        let exit_code = vm.exit_handler.code();
         // `process.on('exit')` handlers are user script (see `on_exit`).
         if vm.script_allowed() && !vm.exit_handler.skip_exit_listeners {
             Process__dispatchOnExit(vm.global(), exit_code);
@@ -2510,7 +2517,7 @@ impl VirtualMachine {
         } else {
             self.close_sqlite_databases_for_exit();
         }
-        bun_core::Global::exit(u32::from(self.exit_handler.exit_code))
+        bun_core::Global::exit(u32::from(self.exit_handler.code()))
     }
 
     /// Ends this thread's VM, which is not the main thread's: its exit handlers,

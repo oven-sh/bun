@@ -598,14 +598,9 @@ impl BunTestRoot {
 
     /// Tear down `bun:test` GC roots before `global_exit()` so
     /// `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reclaim the
-    /// closures they pin. Releases the active file's per-test `Strong`s (the
-    /// bail path skips its `scopeguard::defer! { exit_file() }` because
-    /// `process::exit()` does not unwind), the preload-hook `Strong`s held in
-    /// `hook_scope`, and the `pending_then_refs` Vec.
+    /// closures they pin: the preload-hook `Strong`s held in `hook_scope`, and the `pending_then_refs` Vec.
     pub(crate) fn deinit_for_exit(&mut self) {
-        if self.active_file.is_some() {
-            self.exit_file();
-        }
+        debug_assert!(self.active_file.is_none());
         self.reset_hook_scope_for_test_isolation();
         // `pending_then_refs` holds the `+1` `RefData` ref taken at
         // `Promise.then()` time so a never-settled promise's box stays
@@ -989,11 +984,17 @@ impl BunTest {
     fn on_done_error(global_this: &JSGlobalObject, entry: &RefDataValue, error: JSValue) {
         if let Some(strong) = clone_active_strong() {
             let this = strong.get();
-            let is_running_test = this
+            let running = this
                 .execution
                 .get_current_and_valid_execution_sequence(entry)
-                .is_some_and(|(sequence, _)| sequence.active_entry == sequence.test_entry);
-            if is_running_test {
+                .map(|(sequence, _)| (sequence.active_entry == sequence.test_entry, sequence.result));
+            // Once `--bail` has stopped the run, this is an error of the run only if a sequence still runs the callback, for a test that the stop did not end.
+            if !matches!(running, Some((_, result)) if result != Execution::Result::Skip)
+                && Jest::runner().is_some_and(|runner| runner.stopped.is_some())
+            {
+                return;
+            }
+            if let Some((true, _)) = running {
                 this.on_uncaught_exception(global_this, Some(error), false, entry);
                 // As for any other uncaught exception: the test is over whatever its callback returns,
                 // and `on_before_exit()` doesn't drain the event loop of a file that failed.
@@ -1128,6 +1129,16 @@ impl BunTest {
         let _ = self.result_queue.write_item(result); // OOM/capacity: fire-and-forget
     }
 
+    /// Whether a result of `entry` waits in `queue`: its callback has settled, and the step of that result has not run yet.
+    pub(crate) fn has_result_of(queue: &ResultQueue, group_index: usize, entry: EntryData) -> bool {
+        (0..queue.readable_length()).any(|at| {
+            matches!(
+                queue.peek_item(at),
+                RefDataValue::Execution { group_index: group, entry_data: Some(data) } if group == group_index && data == entry
+            )
+        })
+    }
+
     pub(crate) fn run(this_strong: &BunTestPtr, global_this: &JSGlobalObject) -> JsResult<()> {
         let _g = group_begin!();
         // `Collection::step` / `Execution::step` re-enter and call `.get()` on
@@ -1215,6 +1226,14 @@ impl BunTest {
             }
             bun_core::scoped_log!(bun_test_group, "-> timer set");
         }
+    }
+
+    /// `--bail` reached its failure count in the group that is running. See `Execution::stopped_in`.
+    #[cold]
+    pub(crate) fn stop(&mut self) {
+        self.execution.stopped_in = Some(self.execution.group_index);
+        // A step of the whole group ends the tests of it that are not in their teardown and have no result in the queue.
+        self.add_result(RefDataValue::Start);
     }
 
     fn advance(&mut self, _global_this: &JSGlobalObject) -> JsResult<Advance> {

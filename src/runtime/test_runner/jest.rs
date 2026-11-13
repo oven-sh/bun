@@ -127,6 +127,8 @@ pub(crate) struct TestRunner<'a> {
     /// `concurrentTestGlob` in bunfig: files that match one of these run their tests concurrently.
     pub(crate) concurrent_test_glob: Option<Vec<bun_glob::Prepared<Box<[u8]>>>>,
     pub(crate) bail: u32,
+    /// The reporter that owns this runner, once `--bail` has stopped the run: `test_command::report_stopped_run` reads it in `process.exit()`.
+    pub(crate) stopped: Option<NonNull<crate::cli::test_command::CommandLineReporter>>,
     pub(crate) max_concurrency: u32,
 
     pub(crate) snapshots: Snapshots,

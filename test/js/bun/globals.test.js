@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 
 it("ERR_INVALID_THIS", () => {
@@ -270,6 +270,260 @@ describe("globalThis.gc", () => {
       const delta = Number.parseInt(runAndPrint(expr, "--expose-gc"));
       expect(delta).not.toBeNaN();
       expect(delta).toBeGreaterThanOrEqual(0);
+    });
+  });
+
+  // The flag is the process's, as in Node.js, where it is V8's: each global object made in a process that has it has
+  // `gc`.
+  describe.concurrent("in each global object of the process", () => {
+    /**
+     * @param {string[]} cmd
+     * @param {{ cwd?: string, env?: Record<string, string> }} [options]
+     */
+    const run = async (cmd, { cwd, env } = {}) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...cmd],
+        env: { ...bunEnv, BUN_OPTIONS: undefined, ...env },
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr, exitCode };
+    };
+
+    const withAndWithoutTheFlag = [
+      { flags: ["--expose-gc"], type: "function" },
+      { flags: [], type: "undefined" },
+    ];
+
+    /**
+     * Prints `typeof gc` in each kind of global object that a program can make, after it ran `first`.
+     * @param {string} [first]
+     */
+    const typeofGcInEachKind = (first = "") => /* js */ `
+      const vm = require("node:vm");
+      const { Worker } = require("node:worker_threads");
+      ${first}
+      const inWorker = options => {
+        const { promise, resolve, reject } = Promise.withResolvers();
+        const source = "require('node:worker_threads').parentPort.postMessage(typeof gc)";
+        new Worker(source, { eval: true, ...options }).once("message", resolve).once("error", reject);
+        return promise;
+      };
+      const [worker, workerWithOwnExecArgv] = await Promise.all([inWorker({}), inWorker({ execArgv: [] })]);
+      console.log(
+        JSON.stringify({
+          main: typeof gc,
+          shadowRealm: new ShadowRealm().evaluate("typeof gc"),
+          vmNewContext: vm.runInNewContext("typeof gc"),
+          vmContext: vm.runInContext("typeof gc", vm.createContext({})),
+          vmSandboxKey: vm.runInNewContext("typeof gc", { gc: 1 }),
+          worker,
+          workerWithOwnExecArgv,
+        }),
+      );
+    `;
+
+    /**
+     * What `typeofGcInEachKind` prints.
+     * @param {string} main
+     * @param {string} made in the global objects that the program makes
+     */
+    const typesOf = (main, made) =>
+      JSON.stringify({
+        main,
+        shadowRealm: made,
+        vmNewContext: made,
+        vmContext: made,
+        // A name of the sandbox hides the one of the global object.
+        vmSandboxKey: "number",
+        worker: made,
+        workerWithOwnExecArgv: made,
+      });
+
+    it.each(withAndWithoutTheFlag)("typeof gc is $type with the flags $flags", async ({ flags, type }) => {
+      expect(await run([...flags, "-e", typeofGcInEachKind()])).toEqual({
+        stdout: typesOf(type, type),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // As in Node.js, the flag is one that a program can change: the global objects made afterwards follow it.
+    it.each([
+      { flags: [], set: "--expose-gc", main: "undefined", made: "function" },
+      { flags: ["--expose-gc"], set: "--no-expose-gc", main: "function", made: "undefined" },
+    ])("v8.setFlagsFromString($set) with the flags $flags", async ({ flags, set, main, made }) => {
+      const first = `require("node:v8").setFlagsFromString(${JSON.stringify(set)});`;
+      expect(await run([...flags, "-e", typeofGcInEachKind(first)])).toEqual({
+        stdout: typesOf(main, made),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it.each(withAndWithoutTheFlag)("bun repl: typeof gc is $type with the flags $flags", async ({ flags, type }) => {
+      expect(await run(["repl", ...flags, "-e", "console.log(typeof gc)"])).toEqual({
+        stdout: type,
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it("gc() returns where the global object is not the main one", async () => {
+      const script = /* js */ `
+        const vm = require("node:vm");
+        const { Worker } = require("node:worker_threads");
+        const returned = [vm.runInNewContext("typeof gc()"), new ShadowRealm().evaluate("typeof gc()")];
+        const source = "require('node:worker_threads').parentPort.postMessage(typeof gc())";
+        new Worker(source, { eval: true }).once("message", inWorker => console.log([...returned, inWorker].join()));
+      `;
+      expect(await run(["--expose-gc", "-e", script])).toEqual({
+        stdout: "undefined,undefined,undefined",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // test/harness.ts defines its own `gc` over this one.
+    it("is writable and configurable, and not enumerable", async () => {
+      const descriptor = "JSON.stringify(Object.getOwnPropertyDescriptor(globalThis, 'gc'))";
+      expect(await run(["--expose-gc", "-p", descriptor])).toEqual({
+        stdout: JSON.stringify({ writable: true, enumerable: false, configurable: true }),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    describe("of bun test", () => {
+      /**
+       * A test file that prints `typeof gc` in its global object and in a new one. It sets `flag` first, if it has one.
+       * @param {string} name
+       * @param {string} [flag]
+       */
+      const fileThatSets = (name, flag) => `
+        import { test } from "bun:test";
+        import v8 from "node:v8";
+        import vm from "node:vm";
+        test("${name}", () => {
+          ${flag ? `v8.setFlagsFromString("${flag}");` : ""}
+          console.log("${name}:", typeof gc, vm.runInNewContext("typeof gc"));
+        });
+      `;
+
+      const files = {
+        "preload.ts": `console.log("preload:", typeof gc);`,
+        "a.test.ts": `
+          import { test } from "bun:test";
+          test("a", () => {
+            console.log("a:", typeof gc);
+            // The next file reads this only where it runs in the same global object.
+            globalThis.gc = "replaced";
+          });
+        `,
+        "b.test.ts": `
+          import { test } from "bun:test";
+          test("b", () => console.log("b:", typeof gc));
+        `,
+        "node.test.mjs": `
+          import { test } from "node:test";
+          test("node", () => console.log("node:", typeof gc));
+        `,
+        "expose.test.ts": fileThatSets("expose", "--expose-gc"),
+        "hide.test.ts": fileThatSets("hide", "--no-expose-gc"),
+        "after.test.ts": fileThatSets("after"),
+        "runner.mjs": `
+          import { run } from "node:test";
+          const events = run({ files: ["./a.test.ts"], execArgv: ["--expose-gc"] });
+          events.on("test:stdout", ({ message }) => process.stdout.write(message));
+        `,
+      };
+
+      /**
+       * The lines that the preload and the test files print.
+       * @param {string[]} cmd
+       * @param {Record<string, string>} [env]
+       */
+      const typeofGcInTestFiles = async (cmd, env) => {
+        using dir = tempDir("expose-gc-bun-test", files);
+        const { stdout, stderr, exitCode } = await run(cmd, { cwd: String(dir), env });
+        // The output of a --parallel worker is relayed on the coordinator's stderr.
+        const printed = `${stdout}\n${stderr}`
+          .split(/\r?\n/)
+          .filter(line => /^(preload|a|b|node|expose|hide|after): /.test(line));
+        return { printed, exitCode };
+      };
+
+      it.each([
+        { where: "before `test`", cmd: ["--expose-gc", "test", "./a.test.ts"] },
+        { where: "after `test`", cmd: ["test", "--expose-gc", "./a.test.ts"] },
+        { where: "after the file", cmd: ["test", "./a.test.ts", "--expose-gc"] },
+      ])("the flag $where", async ({ cmd }) => {
+        expect(await typeofGcInTestFiles(cmd)).toEqual({ printed: ["a: function"], exitCode: 0 });
+      });
+
+      it("the flag in BUN_OPTIONS", async () => {
+        const ran = await typeofGcInTestFiles(["test", "./a.test.ts"], { BUN_OPTIONS: "--expose-gc" });
+        expect(ran).toEqual({ printed: ["a: function"], exitCode: 0 });
+      });
+
+      it("no flag", async () => {
+        expect(await typeofGcInTestFiles(["test", "./a.test.ts"])).toEqual({ printed: ["a: undefined"], exitCode: 0 });
+      });
+
+      it("a node:test file", async () => {
+        const ran = await typeofGcInTestFiles(["test", "--expose-gc", "./node.test.mjs"]);
+        expect(ran).toEqual({ printed: ["node: function"], exitCode: 0 });
+      });
+
+      it("a preload and the files share one global object", async () => {
+        const cmd = ["test", "--expose-gc", "--preload", "./preload.ts", "./a.test.ts", "./b.test.ts"];
+        expect(await typeofGcInTestFiles(cmd)).toEqual({
+          printed: ["preload: function", "a: function", "b: string"],
+          exitCode: 0,
+        });
+      });
+
+      it("--isolate gives the global object of each file its own", async () => {
+        const cmd = ["test", "--expose-gc", "--isolate", "--preload", "./preload.ts", "./a.test.ts", "./b.test.ts"];
+        expect(await typeofGcInTestFiles(cmd)).toEqual({
+          printed: ["preload: function", "a: function", "preload: function", "b: function"],
+          exitCode: 0,
+        });
+      });
+
+      // Each line is `typeof gc` in the global object of the file, then in a new one. What a file sets with
+      // v8.setFlagsFromString() stays with that file: the next one starts from the command line, as a process does.
+      describe.each(["--isolate", "--isolate=modules"])("%s after a file that sets the flag itself", isolate => {
+        it.each([
+          { flags: [], sets: "expose", printed: ["expose: undefined function", "after: undefined undefined"] },
+          { flags: ["--expose-gc"], sets: "hide", printed: ["hide: function undefined", "after: function function"] },
+        ])("with the flags $flags", async ({ flags, sets, printed }) => {
+          const cmd = ["test", ...flags, isolate, `./${sets}.test.ts`, "./after.test.ts"];
+          expect(await typeofGcInTestFiles(cmd)).toEqual({ printed, exitCode: 0 });
+        });
+      });
+
+      it("files that share one global object share the flag too", async () => {
+        expect(await typeofGcInTestFiles(["test", "./expose.test.ts", "./after.test.ts"])).toEqual({
+          printed: ["expose: undefined function", "after: undefined function"],
+          exitCode: 0,
+        });
+      });
+
+      it.each(withAndWithoutTheFlag)("--parallel workers with the flags $flags", async ({ flags, type }) => {
+        const cmd = ["test", ...flags, "--parallel=2", "--preload", "./preload.ts", "./a.test.ts", "./b.test.ts"];
+        const { printed, exitCode } = await typeofGcInTestFiles(cmd, { BUN_TEST_PARALLEL_SCALE_MS: "0" });
+        expect({ printed: printed.sort(), exitCode }).toEqual({
+          printed: [`a: ${type}`, `b: ${type}`, `preload: ${type}`, `preload: ${type}`],
+          exitCode: 0,
+        });
+      });
+
+      it("a file that node:test run() starts with the flag in execArgv", async () => {
+        expect(await typeofGcInTestFiles(["runner.mjs"])).toEqual({ printed: ["a: function"], exitCode: 0 });
+      });
     });
   });
 });

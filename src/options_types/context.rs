@@ -698,9 +698,6 @@ pub struct RuntimeOptions {
     pub experimental_http2_fetch: bool,
     pub experimental_http3_fetch: bool,
     pub dns_result_order: Box<[u8]>,
-    /// `--expose-gc` makes `globalThis.gc()` available. Added for Node
-    /// compatibility.
-    pub expose_gc: bool,
     /// `--interactive` starts the Node.js-compatible REPL (node:repl), like
     /// `node --interactive`. (`-i` is taken by `--install=fallback`.)
     pub interactive: bool,
@@ -772,7 +769,6 @@ impl Default for RuntimeOptions {
             experimental_http2_fetch: false,
             experimental_http3_fetch: false,
             dns_result_order: Box::from(&b"verbatim"[..]),
-            expose_gc: false,
             interactive: false,
             preserve_symlinks_main: false,
             console_depth: None,

@@ -176,6 +176,7 @@ impl PackageManagerCommand {
         let load_lockfile = lockfile.load_from_bytes(None, bytes, log);
         Self::handle_load_lockfile_errors_for(&load_lockfile, LogLevel::Default, "hash");
 
+        Output::stdout_is_the_result();
         Output::flush();
         Output::disable_buffering();
         Output::writer().print(format_args!("{}", lockfile.fmt_meta_hash()))?;
@@ -300,6 +301,32 @@ impl PackageManagerCommand {
 
         if pm.options.global {
             setup_global_dir(pm, &&mut *ctx)?;
+        }
+
+        // `pm`, `pm version` and `pm pkg` print their usage when they get no argument.
+        let prints_usage = match subcommand {
+            b"" => true,
+            b"version" => positionals.len() <= 1,
+            b"pkg" => positionals.get(1).is_none_or(|word| *word == b"help"),
+            _ => false,
+        };
+        // These subcommands only print, and what they print is their result. So is what a dry run prints.
+        if (pm.options.dry_run && !prints_usage)
+            || matches!(
+                subcommand,
+                b"bin"
+                    | b"hash"
+                    | b"hash-print"
+                    | b"hash-string"
+                    | b"ls"
+                    | b"untrusted"
+                    | b"default-trusted"
+                    | b"diff"
+                    | b"licenses"
+                    | b"whoami"
+            )
+        {
+            Output::stdout_is_the_result();
         }
 
         if strings::eql_comptime(subcommand, b"scan") {
@@ -582,6 +609,7 @@ impl PackageManagerCommand {
                 Ok(p) => &p[..],
                 Err(err) => Self::crash_getting_cache_directory(err),
             };
+            Output::stdout_is_the_result();
             let _ = Output::writer().write_all(outpath);
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"default-trusted") {

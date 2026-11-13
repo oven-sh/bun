@@ -6790,17 +6790,46 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     RETURN_IF_EXCEPTION(scope, {});
 
     JSC::JSPromise* pendingFactory = nullptr;
-    // False once the factory itself has re-mocked or unmocked the module, which wins.
+    // False once the factory itself, or a file that the mock is made of, has re-mocked or unmocked the module, which wins.
     bool isCurrent = true;
     if (loaded.esmNamespace || loaded.compiledModule || loaded.commonJSModule) {
-        // An automock of Jest's kind is made of the file that require() loads. With two paths only the ES module of the name may be loaded: the other file is then loaded here, as require() loads it,
-        // so that the ES module is patched before this call returns and a require() of the name finds a mock that has settled.
-        bool loadsFileOfRequireAtOnce = !mock->factory.get() && mock->isOfJest() && mock->requireKey;
+        // A mock of Jest's kind that has no factory is made of a file that require() loads: the file that require() resolves the name to, or a file of `__mocks__`.
+        // With two paths only the ES module of the name may be loaded: that file is then loaded here, as require() loads it, so that the ES module is patched before this call returns
+        // and a require() of the name finds a mock that has settled. What the file loads meets the mocks that stand at this call: one that a later line makes comes too late for it.
+        JSValue source = mock->factory.get();
+        bool loadsFileOfRequireAtOnce = (!source || source.isString()) && mock->isOfJest() && mock->requireKey;
+        // While that file loads, the mock answers for its two paths, as it does where a require() behind this call loads the file: what the file loads is given what the graph of an original is given,
+        // and the mock is told of it. See keyOfImportWithTwoPaths() and keyOfImportWhileModuleMocksRun(). So its record of that begins here, and is found begun where the mock takes its paths for good.
+        // Behind the load the table names what it named before: a file that throws leaves the earlier mocks standing, and otherwise they end below as they do under any mock.
+        JSC::Strong<JSC::JSObject> answeredForImportPath, answeredForRequirePath;
+        if (loadsFileOfRequireAtOnce) {
+            beginModulesLoadedByOriginals(globalObject, mock);
+            if (auto* table = globalObject->onLoadPlugins.virtualModules) {
+                answeredForImportPath = table->get(specifier);
+                answeredForRequirePath = table->get(requireCachePath);
+            }
+            registerModuleMock(globalObject, mock);
+        }
 #if ENABLE(AOT)
         pendingFactory = mock->run(globalObject, placeOfMockThatEnds && !mock->factory.get(), nullptr, loadsFileOfRequireAtOnce);
 #else
         pendingFactory = mock->run(globalObject, false, nullptr, loadsFileOfRequireAtOnce);
 #endif
+        if (loadsFileOfRequireAtOnce) {
+            auto answerAgain = [&](const String& path, const JSC::Strong<JSC::JSObject>& answered) {
+                // What the file has loaded may have ended the mock under the path, or laid another there.
+                if (moduleMockAnsweringFor(globalObject, path) != mock) {
+                    isCurrent = false;
+                    return;
+                }
+                if (JSObject* named = answered.get())
+                    globalObject->onLoadPlugins.addModuleMock(vm, path, named);
+                else
+                    globalObject->onLoadPlugins.virtualModules->remove(path);
+            };
+            answerAgain(specifier, answeredForImportPath);
+            answerAgain(requireCachePath, answeredForRequirePath);
+        }
         // As in Vitest and Jest, a hoisted factory that reads a variable declared below the call waits for the first import.
 #if ENABLE(AOT)
         // A compiled module that has run, or on which a mock stands, stays as it is, and the loader comes to the mock at its next load.
@@ -6878,7 +6907,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     }
 #endif
     if (loaded.esmNamespace || loaded.compiledModule || loaded.commonJSModule) {
-        isCurrent = isStillRegisteredModuleMock(globalObject, specifier, previous);
+        isCurrent = isCurrent && isStillRegisteredModuleMock(globalObject, specifier, previous);
 
         // The factory may have evicted the module, or require()d it: `() => ({ ...require("./m"), extra })`.
         LoadedModule before = std::exchange(loaded, findLoadedModule(globalObject, mock));

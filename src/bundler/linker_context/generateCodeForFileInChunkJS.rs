@@ -132,17 +132,7 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                 });
             }
 
-            // `G::Arg` is not `Copy`; duplicate the args element-wise.
-            let dup_args: &mut [G::Arg] = {
-                let mut v = bun_alloc::ArenaVec::with_capacity_in(
-                    clousure_args.const_slice().len(),
-                    temp_arena,
-                );
-                for a in clousure_args.slice().iter_mut() {
-                    v.push(core::mem::take(a));
-                }
-                v.into_bump_slice_mut()
-            };
+            let dup_args = temp_arena.alloc_slice_copy(clousure_args.const_slice());
 
             stmts.all_stmts.push(Stmt::allocate_expr(
                 temp_arena,
@@ -371,22 +361,7 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
 
             // Be careful: the top-level value in a JSON file is not necessarily an object
             if let ExprData::EObject(e_object) = default_expr.data {
-                // `G::Property` is not `Clone` (it embeds a `Vec`), so
-                // copy the properties bitwise. JSON object properties carry no
-                // owned heap data (`ts_decorators` is always empty, `class_static_block`
-                // is `None`), so the duplicated bits do not alias any allocation.
-                let src_len = e_object.properties.len();
-                let mut new_properties = Vec::<G::Property>::init_capacity(src_len);
-                // SAFETY: `new_properties` has capacity `src_len`; source slice is live
-                // arena memory of length `src_len`; see note above re: no owned heap data.
-                unsafe {
-                    core::ptr::copy_nonoverlapping(
-                        e_object.properties.as_ptr(),
-                        new_properties.as_mut_ptr(),
-                        src_len,
-                    );
-                    new_properties.set_len((src_len as u32) as usize);
-                }
+                let mut new_properties = G::PropertyList::from_arena_slice(&e_object.properties);
 
                 let resolved_exports = &c.graph.meta.items_resolved_exports()[source_index];
 
@@ -420,30 +395,13 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                             .top_level_symbol_to_parts(source_index as u32, export_ref)[0]
                             as usize;
                         if parts_live.is_set(part_idx) {
-                            // PTR_AUDIT(#1): `*prop` is a bitwise copy of
-                            // `e_object.properties[i]` (see `copy_nonoverlapping`
-                            // above). A plain `*prop = …` would run `Drop` on the
-                            // aliased old value — specifically `prop.ts_decorators:
-                            // Vec<Expr>`, which (if non-empty) would free the
-                            // *original AST's* allocation. The "JSON ⇒ ts_decorators
-                            // empty" invariant makes that drop a no-op today, but
-                            // `ptr::write` enforces it structurally.
-                            let key = prop.key;
                             let value_loc =
                                 prop.value.as_ref().expect("infallible: prop has value").loc;
-                            // SAFETY: `prop` is a valid `&mut G::Property` slot;
-                            // the overwritten old value aliases AST-owned data and
-                            // MUST NOT be dropped (PTR_AUDIT.md class #1).
-                            unsafe {
-                                core::ptr::write(
-                                    prop,
-                                    G::Property {
-                                        key,
-                                        value: Some(Expr::init_identifier(export_ref, value_loc)),
-                                        ..Default::default()
-                                    },
-                                );
-                            }
+                            *prop = G::Property {
+                                key: prop.key,
+                                value: Some(Expr::init_identifier(export_ref, value_loc)),
+                                ..Default::default()
+                            };
                         }
                     }
                 }
@@ -451,7 +409,7 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                 default_expr = Expr::allocate(
                     temp_arena,
                     E::Object {
-                        properties: Vec::move_from_list(new_properties),
+                        properties: new_properties,
                         ..Default::default()
                     },
                     default_expr.loc,

@@ -156,7 +156,9 @@ impl<'a> ResolverKey<'a> {
         match conditions {
             None => Cow::Borrowed(config),
             Some(conditions) => {
+                // An empty list is not the default: only `default` matches.
                 let mut key = config.to_vec();
+                key.push(b'\0');
                 for condition in conditions {
                     key.push(b'\0');
                     key.extend_from_slice(condition);

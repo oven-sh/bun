@@ -877,6 +877,14 @@ test.concurrent.each([
   ["an invalid resolver", true, ["a.js:1:1 import/no-cycle"]],
   ["an invalid resolver in a list", ["node", 0], ["a.js:1:1 import/no-cycle"]],
   ["core modules that aren't a list", "node", ["a.js:1:1 import/no-cycle"], { "import/core-modules": 5 }],
+  ["conditionNames", { typescript: { conditionNames: ["import", "default"] } }, []],
+  ["conditionNames that aren't a list", { typescript: { conditionNames: "import" } }, ["a.js:1:1 import/no-cycle"]],
+  [
+    "a conditionNames that isn't a string",
+    { typescript: { conditionNames: ["import", 1] } },
+    ["a.js:1:1 import/no-cycle"],
+  ],
+  ["conditionNames set to null", { typescript: { conditionNames: null } }, ["a.js:1:1 import/no-cycle"]],
   [
     "the built-in parsers",
     undefined,

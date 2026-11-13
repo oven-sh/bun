@@ -1060,6 +1060,9 @@ rules = { "import/no-unassigned-import" = ["error", { allow = ["src/client/*.css
     const rootDuplicates = ["src/root.ts:1 import/no-duplicates", "src/root.ts:2 import/no-duplicates"];
     const setting = (conditions: string) =>
       `[lint.settings]\n"import/resolver" = { typescript = { conditionNames = ${conditions} } }\n`;
+    /** What the reports of `-f unix` say the imports of `icons-pkg` resolve to, sorted. */
+    const resolvedPaths = (stdout: string) =>
+      [...stdout.replaceAll("\\", "/").matchAll(/node_modules\/icons-pkg\/(\S+)' imported/g)].map(it => it[1]).sort();
 
     test("by default, every wildcard entry resolves to the shared types, as with eslint-import-resolver-typescript", async () => {
       expect(await lintIn(".", files(""), ["src"])).toMatchObject({ found: [...duplicates, ...rootDuplicates] });
@@ -1087,12 +1090,38 @@ rules = { "import/no-unassigned-import" = ["error", { allow = ["src/client/*.css
           stderr: "pipe",
         });
         const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect(exitCode).toBe(1);
-        return stdout.replaceAll("\\", "/");
+        return { paths: resolvedPaths(stdout), exitCode };
       };
-      expect(await resolved(`["import", "node"]`)).toContain("icons-pkg/dist/node.js");
-      expect(await resolved(`["import"]`)).toContain("icons-pkg/dist/import.js");
-      expect(await resolved(`[]`)).toContain("icons-pkg/dist/default.js");
+      expect(await resolved(`["import", "node"]`)).toEqual({ paths: ["dist/node.js", "dist/node.js"], exitCode: 1 });
+      expect(await resolved(`["import"]`)).toEqual({ paths: ["dist/import.js", "dist/import.js"], exitCode: 1 });
+      expect(await resolved(`[]`)).toEqual({ paths: ["dist/default.js", "dist/default.js"], exitCode: 1 });
+    });
+
+    test("files with different lists share a tsconfig.json, in either order", async () => {
+      const override = `[[lint.overrides]]\nfiles = "src/root.ts"\nsettings = { "import/resolver" = { typescript = { conditionNames = [] } } }\n`;
+      const withOverride = { ...files(override), "tsconfig.json": "{}" };
+      for (const args of [
+        ["src/index.ts", "src/root.ts"],
+        ["src/root.ts", "src/index.ts"],
+      ]) {
+        using dir = tempDir("bun-lint", withOverride);
+        await using proc = spawn({
+          cmd: [bunExe(), "lint", "-f", "unix", ...args],
+          env,
+          cwd: String(dir),
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(resolvedPaths(stdout)).toEqual([
+          "dist/default.js",
+          "dist/default.js",
+          "dist/icon.d.mts",
+          "dist/icon.d.mts",
+        ]);
+        expect(exitCode).toBe(1);
+      }
     });
 
     // Real ESLint reports a resolve error for every import. Here, as with every resolver that throws, the rules that

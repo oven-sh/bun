@@ -160,12 +160,20 @@ pub(super) fn settings_have_unknown_resolver(settings: &Json) -> bool {
     if (parsers.unwrap_or_default().iter()).any(|it| !is_known_parser(&it.0)) {
         return true;
     }
-    let is_known = |name: &[u8]| {
+    fn short_name(name: &[u8]) -> &[u8] {
         let name = package_of(name);
-        let name = name
-            .strip_prefix(b"eslint-import-resolver-")
-            .unwrap_or(name);
-        matches!(name, b"node" | b"typescript")
+        name.strip_prefix(b"eslint-import-resolver-")
+            .unwrap_or(name)
+    }
+    let is_known = |name: &[u8]| matches!(short_name(name), b"node" | b"typescript");
+    // eslint-import-resolver-typescript throws on a `conditionNames` that isn't an array of strings.
+    let has_known_options = |name: &[u8], options: &Json| {
+        short_name(name) != b"typescript"
+            || match options.get(b"conditionNames") {
+                None => true,
+                Some(Json::Array(names)) => names.iter().all(|it| it.as_str().is_some()),
+                Some(_) => false,
+            }
     };
     // `new Set(..)` throws on these.
     let core_modules = settings.get(b"import/core-modules");
@@ -185,7 +193,10 @@ pub(super) fn settings_have_unknown_resolver(settings: &Json) -> bool {
         match it {
             Json::Array(items) => pending.extend(items),
             Json::String(name) if is_known(name) => {}
-            Json::Object(entries) if entries.iter().all(|it| is_known(&it.0)) => {}
+            Json::Object(entries)
+                if entries
+                    .iter()
+                    .all(|it| is_known(&it.0) && has_known_options(&it.0, &it.1)) => {}
             Json::Null => {}
             _ => return true,
         }

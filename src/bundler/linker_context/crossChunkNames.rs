@@ -84,14 +84,14 @@ pub(crate) fn assign_unminified(
     let mut buf: Vec<u8> = Vec::new();
     c.cross_chunk_names.reserve(refs.len());
     for ref_ in refs {
-        let original = c
-            .graph
-            .symbols
-            .get_const(ref_)
-            .unwrap()
-            .original_name
-            .slice();
-        let base = bun_core::MutableString::ensure_valid_identifier(original)?;
+        let symbol = c.graph.symbols.get_const(ref_).unwrap();
+        let mut base =
+            bun_core::MutableString::ensure_valid_identifier(symbol.original_name.slice())?;
+        if symbol.must_start_with_capital_letter_for_jsx()
+            && base.first().is_some_and(u8::is_ascii_lowercase)
+        {
+            base[0].make_ascii_uppercase();
+        }
         let mut name: &[u8] = &base;
         // `used[base]` remembers the last suffix handed out for `base`, so a
         // run of bindings sharing one name does not re-probe 2, 3, ... each time.

@@ -664,8 +664,20 @@ trait NameScopes {
 
     /// Takes `name` for `owner` in the current scope if free, else the first
     /// free `name2`, `name3`, …. `None`: `name` itself was free.
-    fn find_unused_name(&mut self, input_name: NameStr, owner: Ref) -> Option<NameStr> {
-        let owned_name = valid_identifier_for(input_name.slice());
+    fn find_unused_name(
+        &mut self,
+        input_name: NameStr,
+        owner: Ref,
+        needs_capital_for_jsx: bool,
+    ) -> Option<NameStr> {
+        let mut owned_name = valid_identifier_for(input_name.slice());
+        let name = owned_name.as_deref().unwrap_or_else(|| input_name.slice());
+        if needs_capital_for_jsx && name.first().is_some_and(u8::is_ascii_lowercase) {
+            // Capitalizing linked lowercase exports; JSX would otherwise treat them as intrinsic tags.
+            let mut name = owned_name.unwrap_or_else(|| input_name.slice().into());
+            name[0].make_ascii_uppercase();
+            owned_name = Some(name);
+        }
         let normalized = owned_name.is_some();
         let name: &[u8] = owned_name.as_deref().unwrap_or_else(|| input_name.slice());
 
@@ -919,8 +931,9 @@ impl NumberRenamer {
         }
 
         let original_name = symbol.original_name;
+        let needs_capital_for_jsx = symbol.must_start_with_capital_letter_for_jsx();
         let name = self
-            .find_unused_name(original_name, ref_)
+            .find_unused_name(original_name, ref_, needs_capital_for_jsx)
             .unwrap_or(original_name);
         store_name(&mut self.names[row], ref_.inner_index(), name);
     }
@@ -1151,8 +1164,9 @@ impl<'r> NestedRenamer<'r> {
             return;
         }
         let original_name = symbol.original_name;
+        let needs_capital_for_jsx = symbol.must_start_with_capital_letter_for_jsx();
         let name = self
-            .find_unused_name(original_name, ref_)
+            .find_unused_name(original_name, ref_, needs_capital_for_jsx)
             .unwrap_or(original_name);
         self.names[ref_.inner_index() as usize] = name;
     }

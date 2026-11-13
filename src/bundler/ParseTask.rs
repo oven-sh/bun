@@ -2441,6 +2441,9 @@ pub mod parse_worker {
             loader,
         );
         opts.bundle = true;
+        if topts.compile_mode.is_executable() {
+            opts.jsx_preserve_restriction = bun_js_parser::JsxPreserveRestriction::Executable;
+        }
         opts.warn_about_unbundled_modules = false;
         // `AllowUnresolved` is the same nominal type on
         // both sides (re-export in options.rs). `'static` erasure: `topts` borrows

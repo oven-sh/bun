@@ -2084,7 +2084,7 @@ describe("import.meta.env in a browser bundle", () => {
     };
   }
 
-  test("development: false", async () => {
+  test.concurrent("development: false", async () => {
     const out = await collect("false");
     expect(out.jsContainsImportMetaEnv).toBe(false);
     expect(out.jsContainsPrivateValue).toBe(false);
@@ -2100,7 +2100,7 @@ describe("import.meta.env in a browser bundle", () => {
     });
   });
 
-  test('development: false, env = "inline"', async () => {
+  test.concurrent('development: false, env = "inline"', async () => {
     const out = await collect("false", "inline");
     expect(out.jsContainsImportMetaEnv).toBe(false);
     expect(out.evalError).toBeNull();
@@ -2115,7 +2115,7 @@ describe("import.meta.env in a browser bundle", () => {
     });
   });
 
-  test("development: { hmr: false }", async () => {
+  test.concurrent("development: { hmr: false }", async () => {
     const out = await collect("{ hmr: false }");
     expect(out.jsContainsImportMetaEnv).toBe(false);
     expect(out.jsContainsPrivateValue).toBe(false);
@@ -2131,7 +2131,7 @@ describe("import.meta.env in a browser bundle", () => {
     });
   });
 
-  test("development: true (HMR dev server)", async () => {
+  test.concurrent("development: true (HMR dev server)", async () => {
     const out = await collect("true");
     expect(out.jsContainsImportMetaEnv).toBe(false);
     expect(out.jsContainsInlinedValue).toBe(true);

@@ -991,7 +991,6 @@ pub(crate) fn defines_from_transform_options(
             Box::from(b"\"development\"".as_slice())
         };
 
-        // `import.meta.env.NODE_ENV` folds to the same value as `process.env.NODE_ENV`.
         let node_env: Box<[u8]> = user_defines
             .get_or_put_value(b"process.env.NODE_ENV", quoted_node_env.clone())?
             .value_ptr
@@ -1000,8 +999,11 @@ pub(crate) fn defines_from_transform_options(
             .get_or_put_value(b"process.env.BUN_ENV", quoted_node_env)?
             .value_ptr
             .clone();
-        user_defines.get_or_put_value(b"import.meta.env.NODE_ENV", node_env)?;
-        user_defines.get_or_put_value(b"import.meta.env.BUN_ENV", bun_env)?;
+        // A browser has no `import.meta.env`. On the Bun runtime it is the live `process.env`.
+        if target == Target::Browser {
+            user_defines.get_or_put_value(b"import.meta.env.NODE_ENV", node_env)?;
+            user_defines.get_or_put_value(b"import.meta.env.BUN_ENV", bun_env)?;
+        }
 
         // Automatically set `process.browser` to `true` for browsers and false for node+js
         // This enables some extra dead code elimination

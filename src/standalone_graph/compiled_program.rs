@@ -2452,29 +2452,11 @@ impl StandaloneModuleGraph {
         let Some(program) = self.compiled_program.as_ref() else {
             return false;
         };
-        let mut cut = bun_paths::basename(key).len() + 1;
-        if cut >= key.len() || !bun_sys::exists(&key[..key.len() - cut]) {
-            return false;
-        }
-        while cut < key.len() && cut < key_in_graph.len() {
-            let folder = &key[..key.len() - cut];
-            let folder_in_graph = &key_in_graph[..key_in_graph.len() - cut];
-            let mut entry_points = program.entry_points_in_directory(folder_in_graph);
-            let mut source = entry_points.next().map(|it| it.source_path.to_vec());
-            program.for_each_module_below(folder_in_graph, &mut |path| {
-                source = Some(path.to_vec());
-                false
-            });
-            if let Some(source) = source {
-                return is_file_on_disk(&[folder, &source[folder_in_graph.len()..]].concat());
-            }
-            let name = bun_paths::basename(folder);
-            if name != bun_paths::basename(folder_in_graph) {
-                return false;
-            }
-            cut += name.len() + 1;
-        }
-        false
+        Self::folders_around(key_in_graph, key)
+            .find_map(|(folder_in_graph, folder)| {
+                Self::finds_source_on_disk(program, folder_in_graph, folder, key_in_graph)
+            })
+            .unwrap_or(false)
     }
 
     fn has_other_source_on_disk(
@@ -2482,33 +2464,85 @@ impl StandaloneModuleGraph {
         key_in_graph: &[u8],
         key: &[u8],
     ) -> bool {
+        Self::folders_around(key_in_graph, key).any(|(folder_in_graph, folder)| {
+            Self::finds_source_on_disk(program, folder_in_graph, folder, key_in_graph)
+                .unwrap_or(false)
+        })
+    }
+
+    fn folders_around<'a>(
+        key_in_graph: &'a [u8],
+        key: &'a [u8],
+    ) -> impl Iterator<Item = (&'a [u8], &'a [u8])> {
         let mut cut = bun_paths::basename(key).len() + 1;
-        if cut >= key.len() || !bun_sys::exists(&key[..key.len() - cut]) {
-            return false;
-        }
-        while cut < key.len() && cut < key_in_graph.len() {
-            let folder = &key[..key.len() - cut];
+        let is_on_disk = cut < key.len() && bun_sys::exists(&key[..key.len() - cut]);
+        core::iter::from_fn(move || {
+            if !is_on_disk || cut >= key.len() || cut >= key_in_graph.len() {
+                return None;
+            }
             let folder_in_graph = &key_in_graph[..key_in_graph.len() - cut];
-            let is_on_disk = |source: &[u8]| {
-                is_file_on_disk(&[folder, &source[folder_in_graph.len()..]].concat())
+            let folder = &key[..key.len() - cut];
+            let name = bun_paths::basename(folder);
+            cut = match name == bun_paths::basename(folder_in_graph) {
+                true => cut + name.len() + 1,
+                false => key.len(),
             };
-            let mut entry_points = program.entry_points_in_directory(folder_in_graph);
-            let entry_point = entry_points.find(|it| it.source_path != key_in_graph);
-            let mut module: Option<Vec<u8>> = None;
-            program.for_each_module_below(folder_in_graph, &mut |path| {
-                module = (path != key_in_graph).then(|| path.to_vec());
-                module.is_none()
-            });
-            if entry_point.is_some_and(|it| is_on_disk(it.source_path))
+            Some((folder_in_graph, folder))
+        })
+    }
+
+    fn finds_source_on_disk(
+        program: &CompiledProgram,
+        folder_in_graph: &[u8],
+        folder: &[u8],
+        key_in_graph: &[u8],
+    ) -> Option<bool> {
+        let is_on_disk =
+            |source: &[u8]| is_file_on_disk(&[folder, &source[folder_in_graph.len()..]].concat());
+        let mut entry_points = program.entry_points_in_directory(folder_in_graph);
+        let entry_point = entry_points.find(|it| it.source_path != key_in_graph);
+        let mut module: Option<Vec<u8>> = None;
+        program.for_each_module_below(folder_in_graph, &mut |path| {
+            module = (path != key_in_graph).then(|| path.to_vec());
+            module.is_none()
+        });
+        if entry_point.is_none() && module.is_none() {
+            return None;
+        }
+        Some(
+            entry_point.is_some_and(|it| is_on_disk(it.source_path))
                 || module.is_some_and(|it| is_on_disk(&it))
-            {
+                || Self::lists_source(program, folder_in_graph, folder, key_in_graph),
+        )
+    }
+
+    fn lists_source(
+        program: &CompiledProgram,
+        folder_in_graph: &[u8],
+        folder: &[u8],
+        key_in_graph: &[u8],
+    ) -> bool {
+        let Ok(directory) = bun_sys::Dir::open(folder) else {
+            return false;
+        };
+        let mut entries = bun_sys::iterate_dir(directory.fd());
+        while let Ok(Some(entry)) = entries.next() {
+            let name = entry.name.slice_u8();
+            let [in_graph, path] = [folder_in_graph, folder].map(|it| [it, b"/", name].concat());
+            if is_at_or_below(key_in_graph, &in_graph) {
+                continue;
+            }
+            let is_source = program.entry_point_by_source_path(&in_graph).is_some()
+                || program.holds_module_at(&in_graph);
+            if is_source && is_file_on_disk(&path) {
                 return true;
             }
-            let name = bun_paths::basename(folder);
-            if name != bun_paths::basename(folder_in_graph) {
-                return false;
+            let mut entry_points = program.entry_points_in_directory(&in_graph);
+            let holds_sources =
+                entry_points.next().is_some() || program.holds_module_below(&in_graph);
+            if holds_sources && Self::lists_source(program, &in_graph, &path, key_in_graph) {
+                return true;
             }
-            cut += name.len() + 1;
         }
         false
     }

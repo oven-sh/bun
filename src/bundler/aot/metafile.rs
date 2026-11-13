@@ -1,7 +1,6 @@
 //! The metafile of a build with `--aot`, in the format of `linker_context::metafile_builder`.
 //!
 //! Nothing is bundled, so there is one output, the executable. Its "bytes" are those of the compiled program in it, and the
-//! "bytesInOutput" of an input are those of the machine code of its functions.
 
 use std::io::Write;
 

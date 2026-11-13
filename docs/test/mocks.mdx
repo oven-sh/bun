@@ -469,6 +469,20 @@ The exception is a `vi.mock()` call in a module that is imported with a static i
 
 A mocked builtin such as `node:fs` is mocked for every importer with all of them.
 
+With `mock.module()`, `jest.mock()` and `jest.doMock()`, the importers include CommonJS packages in `node_modules`. One that calls `require()` of the mocked package after the mock is made gets the object the factory returned. That is also so when the mocked package has one file for `import` and another for `require()` (see [Path Resolution](#path-resolution)). A factory that returns only some of the names, or only `default`, leaves the CommonJS package without the rest. When it uses a name that is missing, it fails with an error such as `axios.create is not a function`. Spread the real package in the factory to keep the rest:
+
+```ts
+import { jest, mock } from "bun:test";
+
+const get = mock(async () => ({ data: { id: 1, name: "Ada" } }));
+
+mock.module("axios", () => {
+  const real = jest.requireActual("axios");
+  const axios = { ...(real.default ?? real), get };
+  return { ...axios, default: axios };
+});
+```
+
 ### Mocking Without a Factory
 
 You can call `vi.mock(path)` and `jest.mock(path)` without a factory. `mock.module()` always needs one.
@@ -820,17 +834,32 @@ Bun calls the factory at the next `import` or `require()` that gets the mock. If
 
 ### Path Resolution
 
-Bun resolves the module specifier the same way it resolves an `import`, supporting:
+Bun resolves the module specifier, supporting:
 
 - Relative paths (`'./module'`)
 - Absolute paths (`'/path/to/module'`)
 - Package names (`'lodash'`)
 
-Some names resolve to one file for `import` and to another for `require()`. The usual case is a package whose `exports` has an `import` and a `require` condition. Bun resolves the specifier both ways, and the mock stands for both files. `import` and `require()` of the name get the same mock, and the factory is called once.
+Some names resolve to one file for `import` and to another for `require()`. The usual case is a package whose `exports` has an `import` and a `require` condition.
 
-For such a name, each function loads the original that its kind loads. `jest.requireActual()`, `jest.requireMock()`, `jest.createMockFromModule()` and `jest.mock()` without a factory load the file that `require()` loads, as in Jest. `vi.importActual()`, `vi.importMock()`, `importOriginal()` and `vi.mock()` without a factory load the file that `import` loads, as in Vitest.
+`mock.module()`, `jest.mock()` and `jest.doMock()` resolve such a name both ways, and the mock stands for both files. `import` and `require()` of the name get the same mock, and the factory is called once.
+
+The exception is an async factory, because `require()` can't wait for it. A `require()` that runs before the factory has settled loads the real file, and its caller keeps the real exports. A `require()` that runs after the factory has settled gets the mock.
+
+`vi.mock()` and `vi.doMock()` resolve the name as an `import` does, and the mock stands for the file that `import` loads. `require()` of the name loads the real file, as in Vitest.
+
+The other functions that take a module name follow their kind, Jest or Vitest. For a name with two files, that decides which file they mean:
+
+- `jest.requireActual()`, `jest.requireMock()`, `jest.createMockFromModule()`, `jest.unmock()` and `jest.dontMock()` resolve the name both ways. For the first three, the original is the file that `require()` loads, as in Jest. So it is for `jest.mock()` and `jest.doMock()` without a factory. `jest.unmock()` and `jest.dontMock()` remove the mock of each of the two files.
+- `vi.importActual()`, `vi.importMock()`, `vi.unmock()` and `vi.doUnmock()` resolve the name as an `import` does. For the first two, the original is the file that `import` loads, as in Vitest. So it is for `importOriginal()`, and for `vi.mock()` and `vi.doMock()` without a factory. `vi.unmock()` and `vi.doUnmock()` remove the mock of the file that `import` loads.
+
+When two mocks stand for the same file, the later mock has it. If you mock the name and then the path that `require()` resolves it to, the second mock answers `require()` with its own factory, and `import` still gets the first. Several names can share the file that `require()` loads, such as two subpaths of a package with one CommonJS bundle. Then `require()` of each name gets the mock that was made last, and `import` of each name gets its own mock.
+
+If your tests also call `mock.module(require.resolve(name), factory)` to make `require()` get the mock, delete that line. The mock of the name reaches `require()`, and the extra line makes a second mock of the same file.
 
 If only `import` resolves the name, `require()` of it still fails.
+
+If only `require()` resolves the name, the mock answers to the name as written, not to the file. With a factory, `import` and `require()` of the name both get the mock. `jest.mock()` without a factory can't load the original of such a name. Mock the path instead: `jest.mock(require.resolve(name))`.
 
 ### Import Timing Effects
 

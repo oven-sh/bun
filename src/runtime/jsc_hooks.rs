@@ -93,7 +93,7 @@ pub(crate) struct RuntimeState {
     /// — far too large to construct on the stack inside `Box::new(RuntimeState{..})`.
     /// `ManuallyDrop` inside the `Box`: `deinit_runtime_state` runs after
     /// `event_loop.deinit()`, so `HiveArray::Drop` on a leaked body would run
-    /// `Value::drop` (which touches `Blob`/`readable` state) at a point that
+    /// `Value`'s drop (which touches `Blob`/`readable` state) at a point that
     /// has not been proven safe; keep the prior behavior of leaking any
     /// still-occupied slot while still freeing the pool allocation itself.
     pub(crate) body_value_pool: Box<core::mem::ManuallyDrop<crate::webcore::body::HiveAllocator>>,

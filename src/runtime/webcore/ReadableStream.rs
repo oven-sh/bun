@@ -75,6 +75,13 @@ impl Strong {
         Self::Held(bun_jsc::Strong::create(this.value, global))
     }
 
+    pub(crate) fn set(&mut self, this: ReadableStream, global: &JSGlobalObject) {
+        match self {
+            Self::Held(s) => s.set(global, this.value),
+            Self::Weak(_) | Self::Empty => *self = Self::init(this, global),
+        }
+    }
+
     /// Release the GC root while keeping the stream readable via `Weak`. The
     /// owning wrapper's `m_stream` `WriteBarrier` keeps the stream alive from
     /// here.
@@ -92,22 +99,6 @@ impl Strong {
     /// [`ReadableStream::from_js`], which converts arbitrary values).
     pub(crate) fn get(&self) -> Option<ReadableStream> {
         self.value().and_then(ReadableStream::from_js_direct)
-    }
-
-    pub(crate) fn tee(&mut self, global: &JSGlobalObject) -> JsResult<Option<ReadableStream>> {
-        if let Some(stream) = self.get() {
-            let Some((first, second)) = stream.tee(global)? else {
-                return Ok(None);
-            };
-            match self {
-                Self::Held(s) => s.set(global, first.value),
-                Self::Weak(_) | Self::Empty => {
-                    *self = Self::Weak(bun_jsc::Weak::create_passive(first.value, global))
-                }
-            }
-            return Ok(Some(second));
-        }
-        Ok(None)
     }
 }
 

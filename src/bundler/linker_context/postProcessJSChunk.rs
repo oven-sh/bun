@@ -1260,9 +1260,7 @@ pub(crate) fn generate_entry_point_tail_js(
 
         to_esm_ref,
         to_commonjs_ref: to_common_js_ref,
-        require_or_import_meta_for_source_callback: Some(
-            js_printer::RequireOrImportMetaCallback::init(c),
-        ),
+        require_or_import_meta_source: Some(c),
 
         minify_whitespace: c.options.minify_whitespace,
         print_dce_annotations: c.options.emit_dce_annotations,

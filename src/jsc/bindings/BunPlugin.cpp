@@ -3867,7 +3867,7 @@ static ModuleMocksThatLosePaths moduleMocksThatLosePathsTo(Zig::GlobalObject* gl
 }
 
 // `mock` has two paths and has taken them from `losers`. Its ES module is under the import path and its module object of require.cache under the require path: of those it has taken over what the losers saved.
-// The other side of each path is not its own: the module object that require() of the import path itself got, and the ES module that an import of the require path itself got.
+// The other side of each path is not its own. A loser had its module object under the import path if require() loads that path for it, and its ES module under the require path if that is its import path.
 // Those end here as unmockModule() ends them, so that the next load of either path comes to `mock`. A mock with one path has both sides under it, and nothing is left.
 __attribute__((minsize)) static void endSidesThatModuleMockLeaves(Zig::GlobalObject* globalObject, JSModuleMock* mock, ModuleMocksThatLosePaths losers)
 {
@@ -3877,33 +3877,34 @@ __attribute__((minsize)) static void endSidesThatModuleMockLeaves(Zig::GlobalObj
     // A preload's mock that a test file displaces comes back when the file ends, with what it saved, and so does what the eviction takes out of a preload's modules.
     auto comesBack = [&](const JSModuleMock* loser) { return loser->isFromPreload && !mock->isFromPreload; };
     ModulesToEvict evict;
-    if (auto* loser = losers.ofImportPath) {
-        String importKey = mock->importKey->tryGetValue().data;
+    String importKey = mock->importKey->tryGetValue().data;
+    if (auto* loser = losers.ofImportPath; loser && loser->keyForRequire()->tryGetValue().data == importKey) {
+        if (!comesBack(loser)) {
+            restoreModuleObjectOfModuleMock(globalObject, loser);
+            RETURN_IF_EXCEPTION(scope, );
+        }
         LoadedModule underImportPath;
         findLoadedCommonJSModule(globalObject, mock->importKey.get(), underImportPath);
         RETURN_IF_EXCEPTION(scope, );
-        if (underImportPath.commonJSModule || underImportPath.staleCommonJSEntry) {
-            if (!comesBack(loser) && loser->keyForRequire()->tryGetValue().data == importKey) {
-                restoreModuleObjectOfModuleMock(globalObject, loser);
-                RETURN_IF_EXCEPTION(scope, );
-            }
-            // Out of require.cache, with its importers. The ES module under the path stays.
+        // Out of require.cache, with its importers. The ES module under the path stays.
+        if (underImportPath.commonJSModule || underImportPath.staleCommonJSEntry)
             evict.patchedESModules.append(importKey);
-        }
     }
     if (auto* loser = losers.ofRequirePath) {
         String requireKey = mock->requireKey->tryGetValue().data;
+        bool hadESModuleThere = loser->importKey->tryGetValue().data == requireKey;
+        if (hadESModuleThere && !comesBack(loser)) {
+            restoreESModuleOfModuleMock(globalObject, loser);
+            RETURN_IF_EXCEPTION(scope, );
+        }
         LoadedModule underRequirePath;
         findLoadedESModule(globalObject, mock->requireKey.get(), underRequirePath);
         RETURN_IF_EXCEPTION(scope, );
-        if (underRequirePath.esmNamespace || underRequirePath.staleESMEntry) {
-            if (!comesBack(loser) && loser->importKey->tryGetValue().data == requireKey) {
-                restoreESModuleOfModuleMock(globalObject, loser);
-                RETURN_IF_EXCEPTION(scope, );
-            }
-            // Out of the registry, with its importers. The module object under the path stays.
+        // A loser that had lost its import path before was loaded under this one by an import, as a mock of the path itself is: see keyOfImportWithTwoPaths().
+        bool isLoserItself = underRequirePath.esmNamespace && underRequirePath.esmNamespace->moduleRecord()->hasLiveExports();
+        // Out of the registry, with its importers. The module object under the path stays.
+        if (hadESModuleThere ? underRequirePath.esmNamespace || underRequirePath.staleESMEntry : isLoserItself)
             evict.patchedCommonJSModules.append(requireKey);
-        }
     }
     RELEASE_AND_RETURN(scope, evictModulesAndTheirImporters(globalObject, WTF::move(evict)));
 }

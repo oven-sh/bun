@@ -1919,20 +1919,21 @@ describe.concurrent("a name that import and require() resolve to two files", () 
     "folder/index.mjs": esm("./folder"),
     "folder/index.cjs": cjs("./folder"),
   };
+  // The last is what require() of the name gets. As in Vitest, vi.mock() and vi.doMock() mock what an import loads.
   const forms = [
-    ["mock.module", "mock", "bun:test"],
-    ["jest.mock", "jest", "bun:test"],
-    ["jest.doMock", "jest", "bun:test"],
-    ["vi.mock", "vi", "vitest"],
-    ["vi.doMock", "vi", "vitest"],
+    ["mock.module", "mock", "bun:test", "mock"],
+    ["jest.mock", "jest", "bun:test", "mock"],
+    ["jest.doMock", "jest", "bun:test", "mock"],
+    ["vi.mock", "vi", "vitest", "real cjs"],
+    ["vi.doMock", "vi", "vitest", "real cjs"],
   ];
 
-  test.each(isolationFlags)("every kind of mock is what require() and import() of the name get %j", async args => {
+  test.each(isolationFlags)("what require() and import() of the name get under every kind of mock %j", async args => {
     await expectFixturesToPass(
       {
         ...files,
         ...Object.fromEntries(
-          forms.map(([mock, api, from]) => [
+          forms.map(([mock, api, from, ofRequire]) => [
             `${mock}.test.js`,
             `
             import { expect, test, ${api} } from "${from}";
@@ -1947,14 +1948,16 @@ describe.concurrent("a name that import and require() resolve to two files", () 
             test("${name}", async () => {
               const required = require("${name}");
               const imported = await import("${name}");
-              expect([required.which, imported.which]).toEqual(["mock", "mock"]);
-              expect(imported.fn).toBe(required.fn);
+              expect([required.which, imported.which]).toEqual(["${ofRequire}", "mock"]);
+              expect(imported.fn)${ofRequire === "mock" ? "" : ".not"}.toBe(required.fn);
               expect(require("${name}")).toBe(required);
               expect(globalThis.calls["${name}"]).toBe(1);
             });`,
               )
               .join("")}
-            test("neither file of any of them ran", () => expect(globalThis.loaded).toBeUndefined());
+            test("the files of them that ran", () => {
+              expect(globalThis.loaded ?? []).toEqual(${JSON.stringify(ofRequire === "mock" ? [] : names.map(name => `${name} cjs`))});
+            });
           `,
           ]),
         ),
@@ -2060,18 +2063,27 @@ describe.concurrent("a name that import and require() resolve to two files", () 
         ...files,
         "early.cjs": `module.exports = require("dual");`,
         "async.test.js": `
-          import { expect, test, vi } from "bun:test";
+          import { expect, jest, test } from "bun:test";
           import early from "./early.cjs";
           import * as dual from "dual";
-          vi.mock("dual", async importOriginal => ({ ...(await importOriginal()), which: "mock" }));
+          jest.mock("dual", async importOriginal => ({ ...(await importOriginal()), which: "mock" }));
           test("and the mock once the factory has settled", () => {
             expect([early.which, dual.which, require("dual").which]).toEqual(["real cjs", "mock", "mock"]);
             expect(require("dual").fn).toBe(dual.fn);
             expect(globalThis.loaded).toEqual(["dual cjs", "dual esm"]);
           });
         `,
+        "vi.test.js": `
+          import { expect, test, vi } from "vitest";
+          import early from "./early.cjs";
+          import * as dual from "dual";
+          vi.mock("dual", async importOriginal => ({ ...(await importOriginal()), which: "mock" }));
+          test("and still that file once the factory of vi.mock() has settled, as in Vitest", () => {
+            expect([early.which, dual.which, require("dual").which]).toEqual(["real cjs", "mock", "real cjs"]);
+          });
+        `,
       },
-      1,
+      2,
     );
   });
 
@@ -2087,20 +2099,21 @@ describe.concurrent("a name that import and require() resolve to two files", () 
     const file = (mock: string, api: string, from: string, expected: string[], loaded: string) => `
       import { expect, test, ${api} } from "${from}";
       ${mock}("dual", () => ({ which: "mock" }));
+      import { which } from "dual";
       import own from "./own.cjs";
       import cjsLib from "cjs-lib";
       import * as esmLib from "esm-lib";
       test("${mock}()", () => {
-        expect([own.which(), cjsLib.which(), esmLib.which()]).toEqual(${JSON.stringify(expected)});
+        expect([which, own.which(), cjsLib.which(), esmLib.which()]).toEqual(${JSON.stringify(expected)});
         expect(globalThis.loaded).toEqual(${loaded});
       });
     `;
 
-    test("jest.mock() and mock.module() mock it for the library too, as in Jest", async () => {
+    test.each(isolationFlags)("jest.mock() and mock.module() reach the library, vi.mock() does not %j", async args => {
       await expectFixturesToPass(
         {
           ...libraries,
-          "jest.test.js": file("jest.mock", "jest", "bun:test", ["mock", "mock", "mock"], "undefined"),
+          "jest.test.js": file("jest.mock", "jest", "bun:test", ["mock", "mock", "mock", "mock"], "undefined"),
           "mock.test.js": `
             import { expect, mock, test } from "bun:test";
             test("mock.module()", async () => {
@@ -2110,17 +2123,14 @@ describe.concurrent("a name that import and require() resolve to two files", () 
               expect(globalThis.loaded).toBeUndefined();
             });
           `,
-        },
-        2,
-      );
-    });
-
-    test.each(isolationFlags)("vi.mock() leaves the library the file that it loads, as in Vitest %j", async args => {
-      await expectFixturesToPass(
-        {
-          ...libraries,
-          "1.test.js": file("vi.mock", "vi", "vitest", ["mock", "real cjs", "real esm"], `["dual cjs", "dual esm"]`),
-          "2.test.js": `
+          "vi.1.test.js": file(
+            "vi.mock",
+            "vi",
+            "vitest",
+            ["mock", "real cjs", "real cjs", "real esm"],
+            `["dual cjs", "dual esm"]`,
+          ),
+          "vi.2.test.js": `
             import { expect, test, vi } from "vitest";
             import own from "./own.cjs";
             import cjsLib from "cjs-lib";
@@ -2130,7 +2140,7 @@ describe.concurrent("a name that import and require() resolve to two files", () 
             });
           `,
         },
-        2,
+        4,
         args,
       );
     });
@@ -2177,16 +2187,14 @@ describe.concurrent("a name that import and require() resolve to two files", () 
           import { expect, test, vi } from "vitest";
           import * as dual from "dual";
           const required = require("dual");
-          test("vi.doMock() leaves both alone, and vi.doUnmock() brings both back", async () => {
+          test("vi.doMock() leaves both alone, and mocks the next import but no require()", async () => {
             let calls = 0;
             vi.doMock("dual", () => ({ which: "mock", fn: () => "mock", calls: ++calls }));
             expect([calls, dual.which, required.which]).toEqual([0, "real esm", "real cjs"]);
-            const mocked = require("dual");
-            expect([mocked.which, mocked.calls]).toEqual(["mock", 1]);
-            expect((await import("dual")).fn).toBe(mocked.fn);
-            expect(calls).toBe(1);
-            vi.doUnmock("dual");
+            const mocked = await import("dual");
+            expect([mocked.which, mocked.calls, calls]).toEqual(["mock", 1, 1]);
             expect(require("dual")).toBe(required);
+            vi.doUnmock("dual");
             expect(await import("dual")).toBe(dual);
             expect(globalThis.loaded.filter(name => name.startsWith("dual "))).toEqual(["dual esm", "dual cjs"]);
           });
@@ -2213,7 +2221,7 @@ describe.concurrent("a name that import and require() resolve to two files", () 
           test("the end of the block of a using declaration", async () => {
             {
               using _ = vi.doMock("dual/sub", () => ({ which: "mock" }));
-              expect(await both("dual/sub")).toEqual(["mock", "mock"]);
+              expect(await both("dual/sub")).toEqual(["real cjs", "mock"]);
             }
             expect(await both("dual/sub")).toEqual(["real cjs", "real esm"]);
           });
@@ -2308,11 +2316,12 @@ describe.concurrent("a name that import and require() resolve to two files", () 
         "vi.test.js": `
           import { expect, test, vi } from "vitest";
           vi.mock("./lib");
-          test("vi.mock() without a factory mocks what an import loads", async () => {
+          test("vi.mock() without a factory mocks what an import loads, and require() gets its file", async () => {
             const imported = await import("./lib");
             expect([imported.which, imported.fn()]).toEqual(["real esm", undefined]);
-            expect(require("./lib").fn).toBe(imported.fn);
-            expect(globalThis.loaded).toEqual(["./lib esm"]);
+            const required = require("./lib");
+            expect([required.which, required.fn()]).toEqual(["real cjs", "real cjs"]);
+            expect(globalThis.loaded.filter(name => name.startsWith("./lib "))).toEqual(["./lib esm", "./lib cjs"]);
           });
         `,
       },
@@ -2350,8 +2359,8 @@ describe.concurrent("a name that import and require() resolve to two files", () 
           import cjsLib from "cjs-lib";
           import * as esmLib from "esm-lib";
           vi.mock("wrap", async importOriginal => ({ ...(await importOriginal()), which: "mock" }));
-          test("vi.mock() with importOriginal(), and a library that gets each file as it is", () => {
-            expect([which, fn(), require("wrap").which]).toEqual(["mock", "real", "mock"]);
+          test("vi.mock() with importOriginal(), and require() and a library that get each file as it is", () => {
+            expect([which, fn(), require("wrap").which]).toEqual(["mock", "real", "real"]);
             expect([cjsLib.which(), esmLib.which()]).toEqual(["real", "real"]);
             expect(globalThis.loaded).toEqual(["cjs", "esm"]);
           });
@@ -2375,16 +2384,16 @@ describe.concurrent("a name that import and require() resolve to two files", () 
   });
 
   test("a mock of the name and a mock of the path that require() resolves it to", async () => {
-    const file = (first: string, second: string) => `
+    const file = (first: string, second: string, mocked: string[], unmocked: string[]) => `
       import { expect, jest, mock, test } from "bun:test";
       const byName = () => mock.module("dual", () => ({ which: "by name" }));
       const byPath = () => mock.module(require.resolve("dual"), () => ({ which: "by path" }));
-      test("each is called for its own", async () => {
+      test("the later mock of the path has it, and jest.unmock() of the path ends that mock", async () => {
         ${first}();
         ${second}();
-        expect([(await import("dual")).which, require("dual").which]).toEqual(["by name", "by path"]);
+        expect([(await import("dual")).which, require("dual").which]).toEqual(${JSON.stringify(mocked)});
         jest.unmock(require.resolve("dual"));
-        expect([(await import("dual")).which, require("dual").which]).toEqual(["by name", "by name"]);
+        expect([(await import("dual")).which, require("dual").which]).toEqual(${JSON.stringify(unmocked)});
       });
     `;
     await expectFixturesToPass(
@@ -2392,8 +2401,8 @@ describe.concurrent("a name that import and require() resolve to two files", () 
         ...files,
         "node_modules/esm-only/package.json": JSON.stringify({ name: "esm-only", exports: { import: "./index.mjs" } }),
         "node_modules/esm-only/index.mjs": `export const which = "real esm";`,
-        "name-first.test.js": file("byName", "byPath"),
-        "path-first.test.js": file("byPath", "byName"),
+        "name-first.test.js": file("byName", "byPath", ["by name", "by path"], ["by name", "real cjs"]),
+        "path-first.test.js": file("byPath", "byName", ["by name", "by name"], ["real esm", "real cjs"]),
         "esm-only.test.js": `
           import { expect, mock, test } from "bun:test";
           test("require() of a name that only an import resolves fails as before", async () => {

@@ -541,6 +541,8 @@ pub(crate) struct BunTestRoot {
     /// state (node:test root) resets on `--rerun-each` where `Bun.main` is
     /// unchanged across iterations.
     pub(crate) file_generation: u32,
+    /// The last `ExecutionSequence::attempt_id` handed out. Counted across files, because code of an earlier file can still run.
+    last_attempt_id: core::cell::Cell<u32>,
 }
 
 impl BunTestRoot {
@@ -560,7 +562,14 @@ impl BunTestRoot {
             hook_scope,
             pending_then_refs: std::cell::RefCell::new(Vec::new()),
             file_generation: 0,
+            last_attempt_id: core::cell::Cell::new(0),
         }
+    }
+
+    pub(crate) fn next_attempt_id(&self) -> u32 {
+        let id = self.last_attempt_id.get().wrapping_add(1).max(1);
+        self.last_attempt_id.set(id);
+        id
     }
 
     /// Drop preload-level hooks registered in the previous global. The next
@@ -1389,7 +1398,7 @@ impl BunTest {
                 args_slice,
                 move || drop(on_stack),
             )
-            .and_then(|returned| Self::promise_of_thenable(global_this, returned))
+            .and_then(|returned| Self::promise_of_thenable(global_this, cfg_callback, returned))
         {
             Ok(v) => v,
             Err(_) => {
@@ -1521,13 +1530,24 @@ impl BunTest {
     }
 
     /// A promise that follows `returned` if it's a thenable other than a promise. Otherwise `returned`.
-    fn promise_of_thenable(global_this: &JSGlobalObject, returned: JSValue) -> JsResult<JSValue> {
+    /// `callback` is what returned it.
+    fn promise_of_thenable(global_this: &JSGlobalObject, callback: JSValue, returned: JSValue) -> JsResult<JSValue> {
+        unsafe extern "C" {
+            safe fn ExpectDeferred__followThenable(
+                global: &JSGlobalObject,
+                callback: JSValue,
+                promise: &bun_jsc::JSPromise,
+                thenable: JSValue,
+            );
+        }
         if !returned.is_object() || returned.as_promise().is_some() {
             return Ok(returned);
         }
         // Reads `then` once. Only a value without a callable `then` fulfills the promise right away.
         let promise = bun_jsc::JSPromise::create(global_this);
-        promise.resolve(global_this, returned)?;
+        bun_jsc::call_check_slow(global_this, || {
+            ExpectDeferred__followThenable(global_this, callback, promise, returned)
+        })?;
         Ok(if promise.status() == PromiseStatus::Fulfilled { returned } else { promise.to_js() })
     }
 

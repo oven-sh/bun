@@ -65,7 +65,7 @@ function assertValidFrame(frame: unknown): boolean {
   for (var f = frame, n = 0; f !== undefined; f = (f as Frame).prev, n++) {
     // A Bun.ModuleGraph's context is a frame whose storage is the graph, and a module mock's
     // factory runs in one whose storage is the mock: made in ModuleGraph.cpp (null prototype),
-    // or a copy of one made here.
+    // or a copy of one made here. So is the frame of a test that is expected to fail (storage: the bun:test module).
     $assert(
       f instanceof Frame || Object.getPrototypeOf(f) === null,
       "AsyncContextData must be a Frame chain or undefined, got",
@@ -73,7 +73,7 @@ function assertValidFrame(frame: unknown): boolean {
     );
     $assert(
       $isObject((f as Frame).storage),
-      "Frame.storage must be an AsyncLocalStorage, a ModuleGraph, a module mock, or (leaving a graph's context) the global object",
+      "Frame.storage must be an AsyncLocalStorage, a ModuleGraph, a module mock, the bun:test module, or (leaving a graph's context) the global object",
     );
     $assert((f as Frame).masked === undefined || $isJSArray((f as Frame).masked), "Frame.masked must be an array");
     $assert(n < 10000, "AsyncContextData chain is unreasonably long (cycle?)");
@@ -341,6 +341,11 @@ class AsyncLocalStorage<T = any> {
     var top = get();
     if (top !== undefined && lookup(top, this) !== undefined) {
       top.masked = mergeMasks(top.masked, [this]);
+      // A frame of bun:test (storage: the bun:test module, value: a number) sits on top of the frame that Node would mask.
+      for (var f = top; typeof f.value === "number" && !(#name in (f.storage as object)) && f.prev !== undefined;) {
+        f = f.prev;
+        f.masked = mergeMasks(f.masked, [this]);
+      }
       frameMutations++;
     }
   }

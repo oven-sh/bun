@@ -6,7 +6,7 @@ use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     AbortHandle, JSFunction, JSGlobalObject, JSHostFn, JSPromise, JSValue, JsCell, JsClass as _,
-    JsError, JsResult, JsThread, Strong,
+    JsError, JsResult, JsThread, StringJsc as _, Strong,
 };
 
 use super::expect_core::expect_deferred::RunningEntry;
@@ -34,6 +34,9 @@ impl Kind {
     }
 }
 
+/// What the timeout error of an `expect.poll()` says when `ViWait::end_with_test` ends the wait before its timeout.
+const ENDED_WITH_TEST: &str = "Matcher did not succeed before the end of the test that was running when expect.poll() was called.";
+
 pub(crate) struct ViWait {
     kind: Kind,
     interval_ms: u32,
@@ -41,8 +44,10 @@ pub(crate) struct ViWait {
     callback_pending: Cell<bool>,
     /// The wait is dropped once the test file that started it ends.
     test_file: Option<u32>,
-    /// For `Kind::Poll`, the wait is also dropped once this test ends.
+    /// For `Kind::Poll`, the wait is also dropped once this test ends. If the test only ran beside the call, the wait fails then.
     test: Option<RunningEntry>,
+    /// What `RunningEntry::keep_poll` returned.
+    kept: Cell<Option<usize>>,
     pub(crate) timer: JsCell<EventLoopTimer>,
     abort_handle: AbortHandle,
     keep_alive: JsCell<KeepAlive>,
@@ -188,6 +193,7 @@ impl ViWait {
             callback_pending: Cell::new(false),
             test_file: running_test_file(cx.vm()),
             test,
+            kept: Cell::new(None),
             timer: JsCell::new(EventLoopTimer::init_paused(EventLoopTimerTag::ViWait)),
             abort_handle: AbortHandle::for_owner::<ViWait>(),
             keep_alive: JsCell::new(KeepAlive::default()),
@@ -228,9 +234,30 @@ impl ViWait {
             let now = Timespec::now(TimespecMockMode::ForceRealTime);
             this.deadline.set(now.add_ms(i64::from(timeout_ms)));
             this.arm(&now);
+            if let Some(test) = &this.test {
+                this.kept.set(test.keep_poll(global, this_value));
+            }
         }
         this_value.ensure_still_alive();
         Ok(promise)
+    }
+
+    /// Ends a pending `expect.poll()` wait with its last error, because the test that ran beside it has ended.
+    pub(crate) fn end_with_test(global: &JSGlobalObject, this_value: JSValue) -> JsResult<()> {
+        let Some(this) = ViWait::from_js(this_value) else {
+            return Ok(());
+        };
+        // SAFETY: `this_value` is on the stack and owns the payload.
+        let this = unsafe { &*this };
+        if !this.is_pending() {
+            return Ok(());
+        }
+        // The error keeps the stack of the call, where it was made.
+        if let Some(error) = js::timeout_error_get_cached(this_value) {
+            let message = BunString::static_(ENDED_WITH_TEST).to_js(global)?;
+            error.put_non_enumerable(global, b"message", message);
+        }
+        this.time_out(global, this_value)
     }
 
     fn is_pending(&self) -> bool {
@@ -256,6 +283,9 @@ impl ViWait {
         self.abort_handle.leave();
         self.keep_alive
             .with_mut(|keep_alive| keep_alive.unref(bun_io::js_vm_ctx()));
+        if let (Some(test), Some(kept)) = (&self.test, self.kept.take()) {
+            test.forget_poll(kept);
+        }
         self.root.set(None);
     }
 
@@ -422,7 +452,10 @@ impl ViWait {
             .abort_handle
             .context_id()
             .map(|context| vm.enter_context(context));
-        let result = if self.timer.get().next.order(&self.deadline.get()).is_lt() {
+        let outlived = self.test.as_ref().is_some_and(RunningEntry::outlived_bystander);
+        let result = if outlived {
+            Self::end_with_test(global, this_value)
+        } else if self.timer.get().next.order(&self.deadline.get()).is_lt() {
             self.poll(global, this_value, false)
         } else {
             self.time_out(global, this_value)

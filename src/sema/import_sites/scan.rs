@@ -47,6 +47,7 @@ pub(crate) fn collect_import_sites<'s>(
         paths_from_own_directory: slice_in(&calls.paths_from_own_directory, arena),
         answers_of_resolvers: slice_in(&calls.answers_of_resolvers, arena),
         names_of_workers: slice_in(&calls.names_of_workers, arena),
+        names_preloaded: slice_in(&calls.names_preloaded, arena),
         paths_of_changed_files: slice_in(&calls.paths_of_changed_files, arena),
         module_relative_reads: slice_in(&calls.module_relative_reads, arena),
         module_relative_patterns: slice_in(&calls.module_relative_patterns, arena),

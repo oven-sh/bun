@@ -236,12 +236,20 @@ pub struct WorkerName {
     pub is_on_trust: bool,
 }
 
+/// `new Worker(file, { preload: [name] })`, or a `super(file, options)` that hands the options on: a name that the options hold under `preload`.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct NamePreloaded {
+    pub construction: ExprId,
+    pub name: ExprId,
+}
+
 pub(crate) struct ImportScan<'s> {
     pub sites: &'s [ImportSite],
     pub alternatives: &'s [ImportSpecifier],
     pub paths_from_own_directory: &'s [ExprId],
     pub answers_of_resolvers: &'s [(ExprId, ResolvedForm)],
     pub names_of_workers: &'s [WorkerName],
+    pub names_preloaded: &'s [NamePreloaded],
     pub paths_of_changed_files: &'s [ChangedPath],
     pub module_relative_reads: &'s [(ExprId, Atom)],
     pub module_relative_patterns: &'s [(ExprId, Atom, Atom)],

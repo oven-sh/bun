@@ -7,8 +7,9 @@ use super::alternatives::{
 use super::changed_files::{TextsOfFile, find_file_path_operands, find_list_iterated_by_read};
 use super::made_requires::{
     OwnRequire, StepsLeft, Text, UrlsHanded, find_imported_export, find_own_require,
-    follow_settled_bindings, follow_to_own_require, holds_import_meta_require, is_nothing,
-    may_be_modified, may_require_get_members, settled_symbol,
+    follow_declared_bindings, follow_settled_bindings, follow_to_own_require,
+    holds_import_meta_require, is_nothing, may_be_modified, may_require_get_members,
+    settled_symbol,
 };
 use super::named_paths::{
     add_forwarding_functions, collect_candidates, find_database_read, find_named_paths,
@@ -17,7 +18,8 @@ use super::named_paths::{
 use super::parameters::{find_names_exported_for, find_parameter_named};
 use super::{
     Alternatives, CallerRelativeRead, ChangedPath, ExportedFileChanger, ImportSite, ImportSiteKind,
-    ImportSpecifier, NamedPath, OwnUrlArgument, ResolvedForm, ResolvedFrom, ScanInputs, WorkerName,
+    ImportSpecifier, NamePreloaded, NamedPath, OwnUrlArgument, ResolvedForm, ResolvedFrom,
+    ScanInputs, WorkerName,
 };
 use crate::atom::{Atom, Interner, known};
 use crate::bind::{
@@ -34,6 +36,7 @@ use crate::hir::{
 };
 use crate::util::{FxHashMap, FxHashSet, SharedSort};
 use bun_core::strings;
+use smallvec::{SmallVec, smallvec};
 
 pub const WORDS_THAT_MOCK_LOOKS_FOR_IN_FACTORY: [&[u8]; 3] =
     [b"importOriginal", b"importActual", b"requireActual"];
@@ -900,6 +903,7 @@ pub(super) struct ScannedCalls {
     pub(super) paths_from_own_directory: Vec<ExprId>,
     pub(super) answers_of_resolvers: Vec<(ExprId, ResolvedForm)>,
     pub(super) names_of_workers: Vec<WorkerName>,
+    pub(super) names_preloaded: Vec<NamePreloaded>,
     pub(super) paths_of_changed_files: Vec<ChangedPath>,
     pub(super) module_relative_reads: Vec<(ExprId, Atom)>,
     pub(super) module_relative_patterns: Vec<(ExprId, Atom, Atom)>,
@@ -944,7 +948,7 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     let mut module_require_objects = Vec::new();
     let mut requires_of_other_files = Vec::new();
     let mut paths_given_to_create_require = Vec::new();
-    let mut names_of_workers = Vec::new();
+    let mut names_given_to_workers = NamesGivenToWorkers::default();
     let mut paths_of_changed_files = Vec::new();
     let mut module_relative_reads = Vec::new();
     let mut module_relative_patterns = Vec::new();
@@ -998,9 +1002,8 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         let Some(form) = find_call_form(hir, call) else {
             match hir.exprs[index].kind {
                 ExprKind::New(_) => {
-                    if let Some(name) = find_name_of_worker(inputs, call, &mut alternatives) {
-                        names_of_workers.push(name);
-                    }
+                    let found = &mut names_given_to_workers;
+                    find_names_given_to_worker(inputs, call, &mut alternatives, found);
                     if !decisions.is_dead_expr(call) {
                         let read = find_database_read(inputs, call);
                         reads.extend(read.map(|path| (path, false)));
@@ -1030,7 +1033,8 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         if let (false, CallForm::Call { callee, .. }) = (is_dead, form)
             && matches!(expr_kind(hir, callee), Some(ExprKind::Super))
         {
-            names_of_workers.extend(find_name_of_worker(inputs, call, &mut alternatives));
+            let found = &mut names_given_to_workers;
+            find_names_given_to_worker(inputs, call, &mut alternatives, found);
             continue;
         }
         if let (false, CallForm::Call { callee, args }) = (is_dead, form) {
@@ -1264,6 +1268,12 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         }
     }
     known_operands.extend(sites.iter().map(|it| it.specifier_node));
+    let NamesGivenToWorkers {
+        names: mut names_of_workers,
+        preloaded: names_preloaded,
+        ..
+    } = names_given_to_workers;
+    debug_assert!(names_preloaded.is_sorted_by_key(|it| it.construction));
     known_operands.extend(names_of_workers.iter().map(|it| it.argument));
     for candidate in candidates {
         if !known_operands.contains(&candidate.operand) {
@@ -1320,6 +1330,7 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         paths_from_own_directory: alternatives.paths_from_own_directory,
         answers_of_resolvers: alternatives.answers_of_resolvers,
         names_of_workers,
+        names_preloaded,
         paths_of_changed_files,
         module_relative_reads,
         module_relative_patterns,
@@ -1591,11 +1602,21 @@ pub(crate) fn may_construct_worker(hir: &File<'_>, bound: &Bound<'_>, callee: Ex
     find_whether_constructor_is_worker(hir, bound, callee).unwrap_or(is_called_worker)
 }
 
-fn find_name_of_worker(
+#[derive(Default)]
+struct NamesGivenToWorkers {
+    names: Vec<WorkerName>,
+    preloaded: Vec<NamePreloaded>,
+    preloaded_names_read: FxHashSet<ExprId>,
+}
+
+/// `new Worker(file, options)`, and `super(file, options)` in a class that extends `Worker`: the name of the file, and the names
+/// under `preload` in the options. Each is read in the same way.
+fn find_names_given_to_worker(
     inputs: &ScanInputs<'_, '_>,
     construction: ExprId,
     alternatives: &mut FoundAlternatives,
-) -> Option<WorkerName> {
+    found: &mut NamesGivenToWorkers,
+) -> Option<()> {
     let &ScanInputs {
         hir,
         bound,
@@ -1609,10 +1630,74 @@ fn find_name_of_worker(
     };
     let is_evaluated =
         bound.parent_of_expr(construction) != Parent::None && !decisions.is_dead_expr(construction);
-    if !is_evaluated || !may_construct_worker(hir, bound, constructor) {
+    if !is_evaluated {
         return None;
     }
-    let argument = hir.ids(hir[call].args).next()?;
+    let mut arguments = hir.ids(hir[call].args);
+    let argument = arguments.next()?;
+    let is_followed = may_construct_worker(hir, bound, constructor);
+    if is_followed {
+        (found.names).extend(find_name_given_to_worker(inputs, argument, alternatives));
+    }
+    // A name under `preload` is listed for every constructor: whoever reads the list knows some as `Worker` that this does not, and takes a
+    // constant from the name then.
+    for name in find_names_under_preload(hir, bound, arguments.next()?) {
+        // Two constructions may share their options.
+        if is_followed && found.preloaded_names_read.insert(name) {
+            (found.names).extend(find_name_given_to_worker(inputs, name, alternatives));
+        }
+        found.preloaded.push(NamePreloaded { construction, name });
+    }
+    Some(())
+}
+
+/// `{ preload: "./a.ts" }` and `{ preload: ["./a.ts", b] }`: the names, where the options are a literal, hold one behind `...`, or
+/// are a name that was declared with one. A list may stand behind a name too.
+fn find_names_under_preload(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    options: ExprId,
+) -> SmallVec<[ExprId; 4]> {
+    let mut names = SmallVec::new();
+    let options = follow_declared_bindings(hir, bound, options);
+    let mut literals: SmallVec<[ExprId; 4]> = smallvec![options];
+    let mut looked_at = 0;
+    while let Some(&literal) = literals.get(looked_at) {
+        looked_at += 1;
+        let Some(ExprKind::Object(properties)) = expr_kind(hir, literal) else {
+            continue;
+        };
+        for property in properties.iter().map(|property| &hir[property]) {
+            match (property.kind, property.key) {
+                (PropKind::Spread, _) => {
+                    let spread = follow_declared_bindings(hir, bound, property.value);
+                    if !literals.contains(&spread) {
+                        literals.push(spread);
+                    }
+                }
+                (PropKind::Init | PropKind::Shorthand, PropKey::Name(known::preload)) => {
+                    let written = hir.skip_type_assertions(property.value);
+                    let is_hole = |it: &ExprId| matches!(hir[*it].kind, ExprKind::Missing);
+                    match expr_kind(hir, follow_declared_bindings(hir, bound, written)) {
+                        Some(ExprKind::Array(list)) => {
+                            names.extend(hir.ids(list).filter(|it| !is_hole(it)));
+                        }
+                        _ => names.push(written),
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    names
+}
+
+fn find_name_given_to_worker(
+    inputs: &ScanInputs<'_, '_>,
+    argument: ExprId,
+    alternatives: &mut FoundAlternatives,
+) -> Option<WorkerName> {
+    let hir = inputs.hir;
     let mut specifier = call_specifier(inputs, argument, alternatives);
     let is_on_trust = specifier == ImportSpecifier::Unknown;
     if is_on_trust {

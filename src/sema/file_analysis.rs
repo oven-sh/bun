@@ -14,8 +14,8 @@ use crate::hir::{ExprId, File, ImportEqualsId, ImportedName, NodeData};
 use crate::hir_from_data::HostValue;
 use crate::import_sites::{
     CallerRelativeRead, ChangedPath, ExportedFileChanger, ImportSite, ImportSiteKind,
-    ImportSpecifier, JsxImport, JsxImportSet, JsxMode, NamedPath, OwnUrlArgument, ResolvedForm,
-    ResolvedFrom, WorkerName,
+    ImportSpecifier, JsxImport, JsxImportSet, JsxMode, NamePreloaded, NamedPath, OwnUrlArgument,
+    ResolvedForm, ResolvedFrom, WorkerName,
 };
 use crate::module_format::{DeclaredModuleType, FormatByDeclaredType, ModuleFormat};
 use crate::session::Arena;
@@ -41,6 +41,7 @@ pub struct FileAnalysis<'s> {
     paths_from_own_directory: &'s [ExprId],
     answers_of_resolvers: &'s [(ExprId, ResolvedForm)],
     names_of_workers: &'s [WorkerName],
+    names_preloaded: &'s [NamePreloaded],
     pub paths_of_changed_files: &'s [ChangedPath],
     /// File reads with a path relative to this module, as in `fs.readFileSync(path.join(import.meta.dirname, "a.txt"))`: the operand and each path it can name.
     pub module_relative_reads: &'s [(ExprId, Atom)],
@@ -143,6 +144,13 @@ impl FileAnalysis<'_> {
         let names = self.names_of_workers;
         let index = names.binary_search_by_key(&argument, |it| it.argument);
         index.ok().map(|index| &names[index])
+    }
+
+    /// The names under `preload` in the options of `construction`, in the order of the text.
+    pub fn names_preloaded_by(&self, construction: ExprId) -> &[NamePreloaded] {
+        let names = self.names_preloaded;
+        let names = &names[names.partition_point(|it| it.construction < construction)..];
+        &names[..names.partition_point(|it| it.construction == construction)]
     }
 
     pub fn find_key_stored_in_cache(&self, key: ExprId) -> Option<&ImportSpecifier> {

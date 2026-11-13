@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 a740b23781e90714a9b5741cdd29ed2e1470c5d2f3664ec35dbbba82e30b3395.
+// Written against that file with the SHA-256 bbea0492eb352f964f1cd9f067c562d07a0c3d64ad5614447e5d7aa39ca76d4e.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -1207,6 +1207,16 @@ function pushDataToSocket(self: $Node.Socket, socket: SocketHandle, buffer: Uint
   if (full) readStop(self, socket);
 }
 
+function onreadData(self: $Node.Socket, socket: SocketHandle, buffer: Uint8Array) {
+  if (socket[kAdoptedTLSRaw]) return;
+  const tail = self[kOnreadTail];
+  if (tail !== undefined) {
+    self[kOnreadTail] = Buffer.concat([tail, buffer]);
+    return;
+  }
+  self[kOnreadDeliver]!(buffer);
+}
+
 const SocketHandlers = {
   close(socket, err) {
     const self = socket.data;
@@ -1222,6 +1232,11 @@ const SocketHandlers = {
     if (!self) return;
 
     self._unrefTimer();
+    // An adopted fd ({ fd, readable: true, onread }) reaches these handlers, not the onread ones the constructor installs.
+    if (self[kOnreadDeliver] !== undefined) {
+      onreadData(self, socket, buffer);
+      return;
+    }
     self.bytesRead += buffer.length;
     pushDataToSocket(self, socket, buffer);
   },
@@ -2590,13 +2605,7 @@ function Socket(this: $Node.Socket, options?: $Node.SocketOptions): void {
         const { self } = socket.data;
         if (!self) return;
         self._unrefTimer();
-        if (socket[kAdoptedTLSRaw]) return;
-        const tail = self[kOnreadTail];
-        if (tail !== undefined) {
-          self[kOnreadTail] = Buffer.concat([tail, buffer]);
-          return;
-        }
-        self[kOnreadDeliver]!(buffer);
+        onreadData(self, socket, buffer);
       },
     };
   }

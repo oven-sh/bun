@@ -2353,6 +2353,60 @@ describe("Socket fd adoption", () => {
       fs.closeSync(wfd);
     }
   });
+
+  // The fd path attaches the plain handlers, not the onread ones the
+  // constructor installs; the callback must still see every byte.
+  it.skipIf(isWindows)("readable: true with onread hands the bytes to the callback, not to 'data'", async () => {
+    const { rfd, wfd } = openFifo("onread.fifo");
+    const seen: string[] = [];
+    const buffer = Buffer.alloc(64);
+    const socket = new Socket({
+      fd: rfd,
+      readable: true,
+      onread: {
+        buffer,
+        callback(n: number, buf: Buffer) {
+          seen.push(buf.toString("utf8", 0, n));
+          return true;
+        },
+      },
+    });
+    let pushed = 0;
+    socket.on("data", () => pushed++);
+    socket.on("error", err => seen.push(`error:${(err as NodeJS.ErrnoException).code}`));
+    const closed = once(socket, "close");
+    fs.writeSync(wfd, "onread-hello");
+    fs.closeSync(wfd);
+    await closed;
+    expect({ seen, pushed, fd: fstatCode(rfd) }).toEqual({ seen: ["onread-hello"], pushed: 0, fd: "EBADF" });
+  });
+
+  it.skipIf(isWindows)("readable: true with pauseOnCreate delivers nothing until resume()", async () => {
+    const { rfd, wfd } = openFifo("pause-on-create.fifo");
+    const got: string[] = [];
+    const socket = new Socket({ fd: rfd, readable: true, pauseOnCreate: true });
+    socket.on("data", chunk => got.push(String(chunk)));
+    socket.on("error", err => got.push(`error:${(err as NodeJS.ErrnoException).code}`));
+    fs.writeSync(wfd, "early");
+    // Two immediate turns are past the read(0) that would have started the flow.
+    await new Promise<void>(resolve => setImmediate(() => setImmediate(resolve)));
+    expect({ got, flowing: socket.readableFlowing }).toEqual({ got: [], flowing: false });
+    socket.resume();
+    await once(socket, "data");
+    socket.pause();
+    fs.writeSync(wfd, "between");
+    await new Promise<void>(resolve => setImmediate(() => setImmediate(resolve)));
+    const whilePaused = got.join("");
+    socket.resume();
+    const closed = once(socket, "close");
+    fs.closeSync(wfd);
+    await closed;
+    expect({ whilePaused, all: got.join(""), fd: fstatCode(rfd) }).toEqual({
+      whilePaused: "early",
+      all: "earlybetween",
+      fd: "EBADF",
+    });
+  });
 });
 
 describe.concurrent("socket that already sent FIN and is paused with unread data", () => {

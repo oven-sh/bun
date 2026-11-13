@@ -817,6 +817,16 @@ function pushDataToSocket(self, socket, buffer) {
   if (full) readStop(self, socket);
 }
 
+function onreadData(self, socket, buffer) {
+  if (socket[kAdoptedTLSRaw]) return;
+  const tail = self[kOnreadTail];
+  if (tail !== undefined) {
+    self[kOnreadTail] = Buffer.concat([tail, buffer]);
+    return;
+  }
+  self[kOnreadDeliver](buffer);
+}
+
 const SocketHandlers = {
   close(socket, err) {
     const self = socket.data;
@@ -832,6 +842,11 @@ const SocketHandlers = {
     if (!self) return;
 
     self._unrefTimer();
+    // An adopted fd ({ fd, readable: true, onread }) reaches these handlers, not the onread ones the constructor installs.
+    if (self[kOnreadDeliver] !== undefined) {
+      onreadData(self, socket, buffer);
+      return;
+    }
     self.bytesRead += buffer.length;
     pushDataToSocket(self, socket, buffer);
   },
@@ -2200,13 +2215,7 @@ function Socket(options?): void {
         const { self } = socket.data;
         if (!self) return;
         self._unrefTimer();
-        if (socket[kAdoptedTLSRaw]) return;
-        const tail = self[kOnreadTail];
-        if (tail !== undefined) {
-          self[kOnreadTail] = Buffer.concat([tail, buffer]);
-          return;
-        }
-        self[kOnreadDeliver](buffer);
+        onreadData(self, socket, buffer);
       },
     };
   }

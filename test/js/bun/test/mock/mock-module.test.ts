@@ -144,9 +144,6 @@ test("mocking a local file", async () => {
   expect(require("./mock-module-fixture").fn()).toBe(3);
   expect(require("./mock-module-fixture").variable).toBe(10);
   expect(iCallFn()).toBe(3);
-  // Bun.plugin.clearAll() below would forget this mock and leave the module patched for the rest of the process,
-  // where mock-module-two-files.test.ts may run this test once more.
-  vi.doUnmock("./mock-module-fixture");
 });
 
 test.todo("adding a default on a module with no default", async () => {
@@ -225,6 +222,10 @@ test("a factory export getter that throws while patching an already-imported mod
   // `fn` was read successfully before `variable` threw; neither may have been applied.
   expect(fn).toBe(before.fn);
   expect(variable).toBe(before.variable);
+  // After "mocking a local file" its last mock still stands. Bun.plugin.clearAll() below would forget it and leave the
+  // module patched for the rest of the process, where mock-module-two-files.test.ts may run these tests once more.
+  vi.doUnmock("./mock-module-fixture");
+  expect(fn()).toBe(42);
 });
 
 test("onResolve plugin errors surface from mock.module; an unresolvable specifier is still mockable", () => {

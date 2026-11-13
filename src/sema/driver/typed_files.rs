@@ -76,15 +76,6 @@ fn level_of_operator(op: BinOp) -> Level {
     }
 }
 
-fn has_same_operator(kind: ExprKind, other: ExprKind) -> bool {
-    match (kind, other) {
-        (ExprKind::Binary { op, .. }, ExprKind::Binary { op: other, .. }) => op == other,
-        (ExprKind::Unary { op, .. }, ExprKind::Unary { op: other, .. }) => op == other,
-        (ExprKind::Assign { op, .. }, ExprKind::Assign { op: other, .. }) => op == other,
-        _ => true,
-    }
-}
-
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 enum Shape {
     Leaf,
@@ -1314,17 +1305,6 @@ impl Mappings {
             .filter(|entry| entry.0 == generated)?;
         Some((last.1, last.2))
     }
-
-    /// Each entry as (source, original, generated), in that order.
-    fn by_original(&self) -> Vec<(u32, u32, u32)> {
-        let mut by_original: Vec<(u32, u32, u32)> = self
-            .entries
-            .iter()
-            .map(|&(generated, source, original)| (source, original, generated))
-            .collect();
-        by_original.sort_unstable();
-        by_original
-    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -1419,7 +1399,6 @@ fn outermost_only(mut slots: Vec<Slot>, regions: &[(u32, u32)]) -> Vec<Slot> {
 struct TypedText {
     text: Vec<u8>,
     dropped_casts: usize,
-    root_casts: usize,
     has_default_export: bool,
     modules_of_untyped_values: Vec<Vec<u8>>,
     source: Option<Vec<u8>>,
@@ -1429,7 +1408,6 @@ struct Bundle<'a> {
     modules: &'a [ModuleTypes],
     emitted_declarations: &'a [ModuleTypes],
     entry_point: Option<&'a [u8]>,
-    with_root_lookup: bool,
 }
 
 struct Written<'a, 's> {
@@ -3005,19 +2983,15 @@ fn add_types(
         &mappings,
         bundle,
     );
-    let by_original = mappings.by_original();
     let mut transfer = Transfer {
         javascript,
         output: &output,
         mappings: &mappings,
-        by_original: &by_original,
         modules: &written[..sources.len()],
         linked: &linked,
         type_references,
         insertions: Insertions { list: Vec::new() },
         dropped_casts: 0,
-        with_root_lookup: bundle.with_root_lookup,
-        root_casts: 0,
         hoisted: Vec::new(),
         optional_parameter_properties,
     };
@@ -3035,15 +3009,11 @@ struct Transfer<'t, 'a, 's> {
     javascript: &'a [u8],
     output: &'t Syntax<'a, 's>,
     mappings: &'t Mappings,
-    by_original: &'t [(u32, u32, u32)],
     modules: &'t [Option<Written<'a, 's>>],
     linked: &'t Linked,
     type_references: FxHashSet<(&'t [u8], &'t [u8])>,
     insertions: Insertions,
     dropped_casts: usize,
-    with_root_lookup: bool,
-    /// The casts whose operand only `find_via_root` found.
-    root_casts: usize,
     hoisted: Vec<u8>,
     optional_parameter_properties: FxHashMap<(u32, u32), (u32, bool)>,
 }
@@ -3263,15 +3233,9 @@ impl<'a> Transfer<'_, 'a, '_> {
 
     fn copy_casts(&mut self) {
         let output_anchored = self.anchored_expressions();
-        let (output, mappings, by_original, written, linked) = (
-            self.output,
-            self.mappings,
-            self.by_original,
-            self.modules,
-            self.linked,
-        );
+        let (output, mappings, written, linked) =
+            (self.output, self.mappings, self.modules, self.linked);
         let (output_file, insertions) = (output.file, &mut self.insertions);
-        let with_root_lookup = self.with_root_lookup;
         let output_context = output.context();
         let mut output_expressions: FxHashMap<(Shape, u32, u32), ExprId> = FxHashMap::default();
         for index in 0..output_file.exprs.len() {
@@ -3321,72 +3285,6 @@ impl<'a> Transfer<'_, 'a, '_> {
             .filter(|property| property.kind == PropKind::Shorthand)
             .map(|property| property.value)
             .collect();
-        // The places in the output of what is printed from inside an expression of a source.
-        let printed = |source: u32, expr: &Expr| {
-            let (start, end) = ((source, expr.pos), (source, expr.end));
-            let from = by_original.partition_point(|entry| (entry.0, entry.1) < start);
-            let inside = by_original[from..].iter();
-            inside
-                .take_while(move |entry| (entry.0, entry.1) < end)
-                .map(|entry| entry.2)
-        };
-        // A line that starts without a mapping repeats the last one of the line before it.
-        let is_repeated = |at: u32| at > 0 && output.byte(at - 1) == b'\n';
-        // Whether `found` starts with the first token of the expression, has each token of it, and has no other.
-        let is_printed_from = |found: ExprId, source: u32, expr: &Expr| {
-            let (open, end) = output.outer_span(found);
-            // The printer maps a token, then may put a space before it.
-            let start = open - u32::from(open > 0 && output.byte(open - 1) == b' ');
-            let is_inside = |at: u32| start <= at && at < end;
-            let from = mappings.entries.partition_point(|entry| entry.0 < start);
-            let mut inside = mappings.entries[from..]
-                .iter()
-                .take_while(|entry| entry.0 < end);
-            let first = printed(source, expr).filter(|&at| !is_repeated(at)).min();
-            let first = first.map(|at| at + u32::from(output.byte(at) == b' '));
-            first.is_some_and(|first| open <= first && first <= output_file[found].pos)
-                && printed(source, expr).all(|at| is_inside(at) || is_repeated(at))
-                && inside
-                    .all(|entry| entry.1 == source && expr.pos <= entry.2 && entry.2 < expr.end)
-        };
-        let output_roots = std::cell::OnceCell::new();
-        // The innermost root of the output that has both places.
-        let output_root_around = |from: u32, until: u32| {
-            let (roots, around): &(Vec<(u32, u32, ExprId)>, Vec<usize>) =
-                output_roots.get_or_init(|| {
-                    let places = output.parent_links();
-                    let roots = (0..output_file.exprs.len() as u32).map(ExprId);
-                    let roots = roots.filter(|&root| {
-                        let is_expression = !matches!(output_file[root].kind, ExprKind::Missing);
-                        is_expression && places[root.idx()].is_none()
-                    });
-                    let mut roots: Vec<(u32, u32, ExprId)> = roots
-                        .map(|root| (output.outer_span(root), root))
-                        .map(|((start, end), root)| (start, end, root))
-                        .collect();
-                    roots.shared_sort_by_key(|root| (root.0, std::cmp::Reverse(root.1)));
-                    let (mut around, mut open) = (Vec::with_capacity(roots.len()), Vec::new());
-                    for (at, root) in roots.iter().enumerate() {
-                        while open
-                            .last()
-                            .is_some_and(|&last: &usize| roots[last].1 <= root.0)
-                        {
-                            open.pop();
-                        }
-                        around.push(open.last().copied().unwrap_or(usize::MAX));
-                        open.push(at);
-                    }
-                    (roots, around)
-                });
-            let mut at = roots
-                .partition_point(|root| root.0 <= from)
-                .checked_sub(1)?;
-            while roots[at].1 <= until {
-                at = around[at];
-                roots.get(at)?;
-            }
-            Some(roots[at].2)
-        };
         for (index, module) in written.iter().enumerate() {
             let Some(module) = module.as_ref().filter(|module| !module.is_unchecked()) else {
                 continue;
@@ -3417,23 +3315,9 @@ impl<'a> Transfer<'_, 'a, '_> {
                     .flatten()
                     .find_map(|key| output_expressions.get(&(shape, index as u32, key)).copied())
             };
-            let find_below = |mut found: ExprId, way: Vec<(ExprId, usize)>, is_exact: bool| {
-                for (parent, place) in way.into_iter().rev() {
-                    let (kind, output_kind) = (syntax.file[parent].kind, output_file[found].kind);
-                    let children = output.children(found);
-                    if std::mem::discriminant(&kind) != std::mem::discriminant(&output_kind)
-                        || children.len() != syntax.children(parent).len()
-                        || is_exact && !has_same_operator(kind, output_kind)
-                    {
-                        return None;
-                    }
-                    found = children[place];
-                }
-                Some(found)
-            };
             let find_via_ancestor = |chain: &CastChain| {
                 let (mut at, mut way) = (chain.outermost, Vec::new());
-                let found = loop {
+                let mut found = loop {
                     if let Some(&found) = anchored
                         .get(&at)
                         .and_then(|&key| output_anchored.get(&(index as u32, key)))
@@ -3450,85 +3334,17 @@ impl<'a> Transfer<'_, 'a, '_> {
                         break found;
                     }
                 };
-                find_below(found, way, false)
-            };
-            // Whether `found` is a constant, or the kind of expression that a value of `expr` is.
-            let is_value_of = |found: ExprId, expr: ExprId| {
-                let output_kind = output_file[found].kind;
-                let is_constant = match output_kind {
-                    ExprKind::Unary {
-                        op: UnOp::Void | UnOp::Not,
-                        operand,
-                    } => matches!(output_file[operand].kind, ExprKind::Number(_)),
-                    ExprKind::Ident(_) => matches!(
-                        output.word(output_file[found].pos),
-                        b"undefined" | b"NaN" | b"Infinity"
-                    ),
-                    _ => is_literal(found),
-                };
-                // The build writes a member of a namespace as a name, and a name that is imported as a member.
-                let is_name = |kind: ExprKind| {
-                    matches!(
-                        kind,
-                        ExprKind::Ident(_) | ExprKind::Dot { .. } | ExprKind::Index { .. }
-                    )
-                };
-                let (mut at, mut others) = (Some(expr), Vec::new());
-                while let Some(expr) = at.or_else(|| others.pop()) {
-                    let kind = syntax.file[expr].kind;
-                    if std::mem::discriminant(&kind) == std::mem::discriminant(&output_kind)
-                        && has_same_operator(kind, output_kind)
-                        || is_name(kind) && is_name(output_kind)
+                for (parent, place) in way.into_iter().rev() {
+                    let children = output.children(found);
+                    if std::mem::discriminant(&syntax.file[parent].kind)
+                        != std::mem::discriminant(&output_file[found].kind)
+                        || children.len() != syntax.children(parent).len()
                     {
-                        return true;
+                        return None;
                     }
-                    at = match kind {
-                        ExprKind::Cond { branches, .. } => {
-                            let Branches { yes, no } = syntax.file.branches(branches);
-                            others.push(no);
-                            Some(yes)
-                        }
-                        ExprKind::Binary {
-                            op: BinOp::And | BinOp::Or | BinOp::Nullish,
-                            left,
-                            right,
-                        } => {
-                            others.push(right);
-                            Some(left)
-                        }
-                        ExprKind::Binary {
-                            op: BinOp::Comma,
-                            right,
-                            ..
-                        } => Some(right),
-                        _ => syntax.file.type_assertion_operand(expr),
-                    };
+                    found = children[place];
                 }
-                is_constant
-            };
-            // A root is an expression that no expression is the parent of. The build prints it as a root too.
-            let find_via_root = |chain: &CastChain| {
-                let (mut root, mut way) = (chain.outermost, Vec::new());
-                while let Some((parent, place)) = places[root.idx()] {
-                    root = parent;
-                    if syntax.file.type_assertion_operand(parent).is_none() {
-                        way.push((parent, place));
-                    }
-                }
-                let tokens = printed(index as u32, &syntax.file[root]);
-                let mut tokens = tokens.filter(|&at| !is_repeated(at));
-                let first = tokens.next()?;
-                let (from, until) = tokens.fold((first, first), |(from, until), at| {
-                    (from.min(at), until.max(at))
-                });
-                // The printer maps a token, then may put a space before it.
-                let from = from + u32::from(output.byte(from) == b' ');
-                let found = output_root_around(from, until.max(from))?;
-                // The build can fold away what is around the operand, and add what no source has.
-                let found = find_below(found, way, true)?;
-                let is_operand = is_value_of(found, chain.operand)
-                    && is_printed_from(found, index as u32, &syntax.file[chain.operand]);
-                is_operand.then_some(found)
+                Some(found)
             };
             let file = syntax.file;
             let variables = file
@@ -3602,25 +3418,14 @@ impl<'a> Transfer<'_, 'a, '_> {
                 }
                 let source_position = syntax.file[chain.operand].pos;
                 let found = find(chain.operand).or_else(|| find_via_ancestor(&chain));
-                let found = found.or_else(|| {
+                let Some(operand) = found.or_else(|| {
                     [Shape::Leaf, Shape::Prefix].iter().find_map(|&shape| {
                         output_expressions
                             .get(&(shape, index as u32, source_position))
                             .copied()
                             .filter(|&literal| is_literal(literal))
                     })
-                });
-                // An operand that the build removed is not missed.
-                let is_through_root = with_root_lookup
-                    && found.is_none()
-                    && printed(index as u32, &syntax.file[chain.operand])
-                        .next()
-                        .is_some();
-                let found = match is_through_root {
-                    true => find_via_root(&chain),
-                    false => found,
-                };
-                let Some(operand) = found else {
+                }) else {
                     continue;
                 };
                 let member = enum_member_cast(chain.operand).filter(|_| is_literal(operand));
@@ -3718,7 +3523,6 @@ impl<'a> Transfer<'_, 'a, '_> {
                     vec![b'('; opens],
                 );
                 insertions.add(end, Order::Close(end - start), suffix);
-                self.root_casts += usize::from(is_through_root);
             }
         }
     }
@@ -3918,13 +3722,18 @@ impl<'a> Transfer<'_, 'a, '_> {
     }
 
     fn copy_directives(&mut self) {
-        let (javascript, mappings, by_original, written, insertions) = (
+        let (javascript, mappings, written, insertions) = (
             self.javascript,
             self.mappings,
-            self.by_original,
             self.modules,
             &mut self.insertions,
         );
+        let mut by_original: Vec<(u32, u32, u32)> = mappings
+            .entries
+            .iter()
+            .map(|&(generated, source, original)| (source, original, generated))
+            .collect();
+        by_original.sort_unstable();
         let mut ignored: Vec<usize> = Vec::new();
         let templates: Vec<(usize, usize)> = (self.output.file.exprs.iter())
             .filter(|expr| javascript.get(expr.pos as usize) == Some(&b'`'))
@@ -4190,7 +3999,6 @@ impl<'a> Transfer<'_, 'a, '_> {
         Ok(TypedText {
             text,
             dropped_casts: self.dropped_casts,
-            root_casts: self.root_casts,
             has_default_export,
             modules_of_untyped_values: self.linked.modules_of_untyped_values.clone(),
             source: None,
@@ -4714,8 +4522,6 @@ pub struct TypedFiles {
     pub typed: Vec<(Vec<u8>, Vec<u8>)>,
     pub declarations_while_checked: Vec<(Vec<u8>, Vec<u8>)>,
     pub dropped_casts: usize,
-    /// The casts whose operand is found only through the root of its expression. See `first_kept`.
-    pub root_casts: usize,
 }
 
 fn inside<'a>(directory: &[u8], path: &'a [u8]) -> Option<&'a [u8]> {
@@ -4773,7 +4579,6 @@ fn typed_outputs(
     outputs: &[Output<'_>],
     modules: &[ModuleTypes],
     emitted_declarations: &[ModuleTypes],
-    with_root_lookup: bool,
 ) -> Result<Vec<(Vec<u8>, TypedText)>, TypedFilesError> {
     let outdir = outdir.strip_suffix(b"/").unwrap_or(outdir);
     let mut found = Vec::new();
@@ -4783,7 +4588,6 @@ fn typed_outputs(
             modules,
             emitted_declarations,
             entry_point: output.entry_point,
-            with_root_lookup,
         };
         let typed =
             add_types_by_source_map(output.path, output.javascript, output.source_map, &bundle)
@@ -4878,26 +4682,11 @@ pub fn annotate_implicit_any(
     is_changed
 }
 
-/// The first text that `judge` accepts: the one with the casts of the lookup through a root, or the one without.
-pub fn first_kept<T, E>(
-    with_root_lookup: Result<TypedFiles, TypedFilesError>,
-    without_root_lookup: impl FnOnce() -> Result<TypedFiles, TypedFilesError>,
-    mut judge: impl FnMut(Result<TypedFiles, TypedFilesError>) -> Result<T, E>,
-) -> Result<T, E> {
-    let found = with_root_lookup.as_ref();
-    let is_another_text = found.map_or(true, |found| found.root_casts > 0);
-    match judge(with_root_lookup) {
-        Err(_) if is_another_text => judge(without_root_lookup()),
-        judged => judged,
-    }
-}
-
 pub fn build_typed_files(
     outdir: &[u8],
     outputs: &[Output<'_>],
     modules: &[ModuleTypes],
     emitted_declarations: &[ModuleTypes],
-    with_root_lookup: bool,
 ) -> Result<TypedFiles, TypedFilesError> {
     let outdir = outdir.strip_suffix(b"/").unwrap_or(outdir);
     let mut found = TypedFiles {
@@ -4905,21 +4694,18 @@ pub fn build_typed_files(
         typed: Vec::new(),
         declarations_while_checked: Vec::new(),
         dropped_casts: 0,
-        root_casts: 0,
     };
     for (output, (typed_path, typed)) in outputs.iter().zip(typed_outputs(
         outdir,
         outputs,
         modules,
         emitted_declarations,
-        with_root_lookup,
     )?) {
         let name_of = |path: &[u8]| {
             path[bun_core::strings::last_index_of_char(path, b'/').map_or(0, |slash| slash + 1)..]
                 .to_vec()
         };
         found.dropped_casts += typed.dropped_casts;
-        found.root_casts += typed.root_casts;
         found
             .modules_of_untyped_values
             .extend(typed.modules_of_untyped_values);
@@ -4971,82 +4757,4 @@ pub fn build_typed_files(
         found.typed.push((typed_path, typed.text));
     }
     Ok(found)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{TypedFiles, TypedFilesError, first_kept};
-
-    fn text(name: &str, root_casts: usize) -> Result<TypedFiles, TypedFilesError> {
-        Ok(TypedFiles {
-            modules_of_untyped_values: Vec::new(),
-            typed: vec![(name.as_bytes().to_vec(), Vec::new())],
-            declarations_while_checked: Vec::new(),
-            dropped_casts: 0,
-            root_casts,
-        })
-    }
-
-    /// The texts that are judged, in order, and the answer about the last one. `passes` has the answer for each.
-    fn judged(
-        first: Result<TypedFiles, TypedFilesError>,
-        passes: &[bool],
-    ) -> (Vec<String>, Result<String, String>) {
-        let mut seen = Vec::new();
-        let kept = first_kept(
-            first,
-            || text("without", 0),
-            |found| {
-                let name = match &found {
-                    Ok(found) => String::from_utf8_lossy(&found.typed[0].0).into_owned(),
-                    Err(_) => "not written".to_owned(),
-                };
-                seen.push(name.clone());
-                match found.is_ok() && passes[seen.len() - 1] {
-                    true => Ok(name),
-                    false => Err(name),
-                }
-            },
-        );
-        (seen, kept)
-    }
-
-    #[test]
-    fn the_first_text_is_kept_if_it_passes() {
-        let (seen, kept) = judged(text("with", 2), &[true]);
-        assert_eq!(
-            (seen, kept),
-            (vec!["with".to_owned()], Ok("with".to_owned()))
-        );
-    }
-
-    #[test]
-    fn the_second_text_is_judged_if_the_first_fails() {
-        let (seen, kept) = judged(text("with", 2), &[false, true]);
-        assert_eq!(seen, ["with", "without"]);
-        assert_eq!(kept, Ok("without".to_owned()));
-    }
-
-    #[test]
-    fn the_answer_is_about_the_second_text_if_both_fail() {
-        let (seen, kept) = judged(text("with", 1), &[false, false]);
-        assert_eq!(seen, ["with", "without"]);
-        assert_eq!(kept, Err("without".to_owned()));
-    }
-
-    #[test]
-    fn a_text_without_a_cast_of_the_root_lookup_is_not_written_again() {
-        let (seen, kept) = judged(text("with", 0), &[false]);
-        assert_eq!(
-            (seen, kept),
-            (vec!["with".to_owned()], Err("with".to_owned()))
-        );
-    }
-
-    #[test]
-    fn the_second_text_is_judged_if_the_first_is_not_written() {
-        let (seen, kept) = judged(Err(TypedFilesError::SourceMapNotJson), &[false, true]);
-        assert_eq!(seen, ["not written", "without"]);
-        assert_eq!(kept, Ok("without".to_owned()));
-    }
 }

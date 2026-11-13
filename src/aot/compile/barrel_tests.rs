@@ -373,8 +373,7 @@ fn load_with_main(
     })
 }
 
-// main.ts binds no name of another file, so its store is known before any other file is loaded. From then on no file
-// has an answer for the main module, and none changes when the barrel becomes an entry point.
+// main.ts binds no name of another file, so its store is known before the barrel is loaded.
 const STORES: (&str, &str) = ("main.ts", "import './app.ts'; Bun.main = '/nowhere.js';");
 const IMPORTS_ONE_NAME: &str = "import { b } from 'lib'; console.log(b);";
 const STARTS_WORKER: (&str, &str) = (

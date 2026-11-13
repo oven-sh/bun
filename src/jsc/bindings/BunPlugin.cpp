@@ -3650,7 +3650,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
         staysInRequireCache.add(key);
         keys.append(key);
     }
-    // An import of the path that require() resolves a mocked name to gets the mock's own path, so what the loader holds under the first is the mock's only if it has live exports.
+    // What the loader holds under the path that require() resolves a mocked name to is a mock's only if it has live exports.
     // An ES module there ran before the mock and stays. What the loader made of a CommonJS module stays with its module object in require.cache, which the mock may have patched:
     // require() of a path that the loader alone holds gets a namespace object.
     for (auto& paths : evict.pathsOfTwoFileMocks) {

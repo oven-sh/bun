@@ -3,7 +3,8 @@ const T = f => { try { const v = f(); return typeof v === "function" ? "fn" : ty
 `;
 const whole = `{ v: "mock v", f: () => "mock f", kept: "mock kept", default: "mock default" }`;
 
-const kinds = ["mjs", "cjs"] as const;
+// "dual": lib.mjs and lib.cjs, named "./lib". An import resolves that to lib.mjs and require() to lib.cjs.
+type Kind = "mjs" | "cjs" | "dual";
 const functions = ["mock.module", "jest.mock", "vi.mock", "jest.doMock", "vi.doMock"] as const;
 const times = ["first", "behind-imports", "in-test-unloaded", "in-test-loaded", "preload", "before-all"] as const;
 
@@ -34,7 +35,8 @@ function factories(mock: string, path: string): Record<string, string | undefine
   };
 }
 
-function shared(kind: (typeof kinds)[number], path: string): Record<string, string> {
+function shared(kind: Kind, path: string): Record<string, string> {
+  if (kind === "dual") return { ...shared("mjs", path), ...shared("cjs", path) };
   const files: Record<string, string> =
     kind === "mjs"
       ? {
@@ -62,11 +64,18 @@ function shared(kind: (typeof kinds)[number], path: string): Record<string, stri
   return files;
 }
 
-/** One small graph (two test files > three users > lib > base) for each way to lay a mock on lib. Each file prints a line that starts with "| " for what it sees. */
-export function mockSweep(): Map<string, Record<string, string>> {
+/**
+ * One small graph (two test files > three users > lib > base) for each way to lay a mock on lib. Each file prints a line that starts with "| " for what it sees.
+ * ../mock-sweep-cases.ts keeps the kinds with one file: under `--aot` a mock has the path of the import alone.
+ * With `requireFirst` the test asks require() and the CommonJS user before the ES modules.
+ */
+export function mockSweep(
+  kinds: readonly Kind[] = ["mjs", "cjs"],
+  requireFirst = false,
+): Map<string, Record<string, string>> {
   const projects = new Map<string, Record<string, string>>();
   for (const kind of kinds) {
-    const path = `"./lib.${kind}"`;
+    const path = kind === "dual" ? `"./lib"` : `"./lib.${kind}"`;
     for (const mock of functions) {
       for (const [factoryName, factory] of Object.entries(factories(mock, path))) {
         if (!factory && mock === "mock.module") continue;
@@ -85,16 +94,22 @@ export function mockSweep(): Map<string, Record<string, string>> {
           if (time.startsWith("in-test")) text += before + call + "\n";
           text += `const show = (tag, o) => log(tag, T(() => o), T(() => o.v), T(() => o.f()), T(() => o.kept), T(() => o.default));\n`;
           if (importsFirst) text += `log("static usern", T(() => readStatic()));\n`;
+          const userc = `try { const c = import.meta.require("./userc.cjs"); log("userc", c.read(), c.late()); } catch (e) { log("userc failed", e.name); }\n`;
+          const required = `try { show("require()", import.meta.require(${path})); } catch (e) { log("require() failed", e.name); }\n`;
+          if (requireFirst) text += required + userc;
           for (const user of ["usern.mjs", "user.mjs"])
             text += `try { const u = await import("./${user}"); log("${user}", u.read()); } catch (e) { log("${user} failed", e.name); }\n`;
-          text += `try { const c = import.meta.require("./userc.cjs"); log("userc", c.read(), c.late()); } catch (e) { log("userc failed", e.name); }\n`;
-          text += `try { show("import()", await import(${path})); } catch (e) { log("import() failed", e.name); }\ntry { show("require()", import.meta.require(${path})); } catch (e) { log("require() failed", e.name); }\n`;
+          if (!requireFirst) text += userc;
+          text += `try { show("import()", await import(${path})); } catch (e) { log("import() failed", e.name); }\n`;
+          if (!requireFirst) text += required;
           text += `mock.restore();\ntry { show("restored import()", await import(${path})); } catch (e) { log("restored import() failed", e.name); }\ntry { show("restored require()", import.meta.require(${path})); } catch (e) { log("restored require() failed", e.name); }\n`;
           if (importsFirst) text += `log("restored static usern", T(() => readStatic()));\n`;
           text += "});\n";
           const files: Record<string, string> = { "a.test.mjs": text, ...shared(kind, path) };
           if (userAlone) files["z.test.mjs"] = secondFileWithUsersAlone;
-          if (factoryName === "folder") files[`__mocks__/lib.${kind}`] = inFolder[kind];
+          if (factoryName === "folder")
+            for (const one of kind === "dual" ? (["mjs", "cjs"] as const) : [kind])
+              files[`__mocks__/lib.${one}`] = inFolder[one];
           if (time === "preload") {
             files["setup.mjs"] =
               `import { mock, jest, vi } from "bun:test";\nconsole.log("| setup runs");\n` + before + call + "\n";

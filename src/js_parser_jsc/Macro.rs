@@ -220,10 +220,9 @@ impl MacroContext {
         let _flush_guard = Output::flush_guard();
 
         let macro_: &Macro = macro_entry.value_ptr;
-        if macro_.disabled {
+        let Some(vm) = macro_.vm else {
             return Ok(caller);
-        }
-        let vm = macro_.vm();
+        };
         // Enables macro mode now; disables on scope exit.
         let _mode_guard = MacroModeGuard::new(vm);
         vm.event_loop().ensure_waker();
@@ -373,10 +372,8 @@ fn __bun_macro_context_get_remap(
 // ══════════════════════════════════════════════════════════════════════════
 
 pub struct Macro {
-    /// `None` only when `disabled`, which `MacroContext::call` checks before any access.
+    /// `None` if the macro failed to load.
     pub(crate) vm: Option<&'static VirtualMachine>,
-
-    pub(crate) disabled: bool,
 }
 
 impl Default for Macro {
@@ -389,17 +386,12 @@ impl Macro {
     /// Sentinel stored in the `MacroMap` when `Macro::init` fails, so subsequent
     /// calls with the same hash short-circuit instead of retrying the load.
     fn disabled_sentinel() -> Self {
-        Macro {
-            vm: None,
-            disabled: true,
-        }
+        Macro { vm: None }
     }
 
-    /// Unwrap the VM handle. Only valid when `!self.disabled` — `MacroContext::call`
-    /// returns early on `disabled` before any `vm()` access.
+    /// `MacroContext::call` returns early if there is none.
     #[inline]
     pub(crate) fn vm(&self) -> &'static VirtualMachine {
-        debug_assert!(!self.disabled);
         self.vm.expect("Macro.vm accessed on disabled sentinel")
     }
 
@@ -472,10 +464,7 @@ impl Macro {
             return Err(crate::Error::MacroLoadError);
         }
 
-        Ok(Macro {
-            vm: Some(vm),
-            disabled: false,
-        })
+        Ok(Macro { vm: Some(vm) })
     }
 }
 

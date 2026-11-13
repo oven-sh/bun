@@ -7,7 +7,6 @@ use bun_uws as uws;
 
 use crate::webcore::CookieMap;
 
-pub(crate) use super::request_context::AdditionalOnAbortCallback;
 use super::request_context::RequestContext;
 use super::{DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer};
 
@@ -152,12 +151,13 @@ macro_rules! dispatch {
 }
 
 impl AnyRequestContext {
-    pub(crate) fn set_additional_on_abort_callback(self, cb: Option<AdditionalOnAbortCallback>) {
+    pub(crate) fn set_deferred_request(
+        self,
+        deferred: crate::bake::dev_server::deferred_request::Handle,
+    ) {
         dispatch!(self, (), |_T, ctx| {
-            if let Some(old) = ctx.additional_on_abort.replace(cb) {
-                debug_assert!(false, "additional_on_abort set twice");
-                old.deref();
-            }
+            let old = ctx.deferred_request.replace(Some(deferred));
+            debug_assert!(old.is_none(), "deferred_request set twice");
         })
     }
 

@@ -3056,11 +3056,9 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionRunModuleMockLater, __attribu
     RETURN_IF_EXCEPTION(scope, {});
     auto* settled = uncheckedDowncast<JSC::JSPromise>(waiting->getInternalField(0));
 
-    bool isInUse = Bun::isModuleMockInUse(globalObject, mock);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    String specifier = mock->importKey->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
+    // The key that the loader fetches, from runModuleMock(). As Bun::isModuleMockInUse() has it, of that key.
+    String specifier = asString(waiting->getInternalField(1))->tryGetValue().data;
+    bool isInUse = mock->state != JSModuleMock::State::NotCalled || moduleMockAnsweringFor(globalObject, specifier) == mock;
 
     auto& moduleMocksBeingLoaded = globalObject->onLoadPlugins.moduleMocksBeingLoaded;
     if (JSC::JSPromise* turn = isInUse && mock->state == JSModuleMock::State::NotCalled ? waitForTurn(globalObject, mock, true) : nullptr) {
@@ -8271,14 +8269,16 @@ JSC::JSPromise* runModuleMock(Zig::GlobalObject* globalObject, JSC::JSObject* mo
         if (mock->importsOriginal)
             return nullptr;
         // Call the factory from a microtask, not under the loader's fetch of this module: what the factory loads may import it too.
-        String specifier = mock->importKey->value(globalObject);
+        // The loader found the mock under `key`. Of a mock with two paths that is the second one once a later mock has taken the first.
+        JSC::JSString* path = mock->requireKey && mock->requireKey->tryGetValue().data == key ? mock->requireKey.get() : mock->importKey.get();
+        String specifier = path->value(globalObject);
         RETURN_IF_EXCEPTION(scope, nullptr);
         globalObject->onLoadPlugins.moduleMocksBeingLoaded.add(specifier, JSC::Strong<JSC::JSObject> { vm, mock });
         JSC::JSPromise* fulfilled = JSC::JSPromise::create(vm, globalObject->promiseStructure());
         fulfilled->fulfill(vm, jsUndefined());
         JSC::JSPromise* settled = JSC::JSPromise::create(vm, globalObject->promiseStructure());
         JSC::JSFunction* later = JSC::JSFunction::create(vm, globalObject, 2, String(), Zig::jsFunctionRunModuleMockLater, ImplementationVisibility::Private);
-        auto* waiting = JSC::InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), settled, jsUndefined());
+        auto* waiting = JSC::InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), settled, path);
         fulfilled->performPromiseThenWithContext(vm, globalObject, later, jsUndefined(), jsUndefined(), Zig::moduleMockWith(globalObject, mock, waiting));
         return settled;
     }

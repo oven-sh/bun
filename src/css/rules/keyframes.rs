@@ -24,14 +24,6 @@ pub enum KeyframesName {
 impl KeyframesName {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         use bun_core::strings;
-        #[inline]
-        fn write_ident<'a>(
-            dest: &mut Printer<'a>,
-            v: &'a [u8],
-            handle_css_module: bool,
-        ) -> core::result::Result<(), PrintErr> {
-            dest.write_ident(v, handle_css_module)
-        }
 
         let css_module_animation_enabled = if let Some(css_module) = &dest.css_module {
             css_module.config.animation
@@ -41,12 +33,7 @@ impl KeyframesName {
 
         match self {
             KeyframesName::Ident(ident) => {
-                write_ident(
-                    dest,
-                    // SAFETY: CustomIdent.v points into the parser arena which outlives the AST.
-                    unsafe { crate::arena_str(ident.v) },
-                    css_module_animation_enabled,
-                )?;
+                dest.write_ident(ident.v(), css_module_animation_enabled)?;
             }
             KeyframesName::Custom(s) => {
                 // CSS-wide keywords and `none` cannot remove quotes.
@@ -55,7 +42,7 @@ impl KeyframesName {
                 {
                     dest.serialize_string(s)?;
                 } else {
-                    write_ident(dest, s, css_module_animation_enabled)?;
+                    dest.write_ident(s, css_module_animation_enabled)?;
                 }
             }
         }

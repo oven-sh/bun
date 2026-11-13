@@ -1466,10 +1466,7 @@ pub(crate) mod serialize {
         if let Some(ctx) = context {
             dest.nesting_expansions += 1;
             if dest.nesting_expansions > MAX_NESTING_EXPANSIONS {
-                return dest.new_error(
-                    crate::error::PrinterErrorKind::maximum_nesting_expansion,
-                    None,
-                );
+                return dest.new_error(crate::error::PrinterErrorKind::maximum_nesting_expansion);
             }
             // If there's only one simple selector, just serialize it directly.
             // Otherwise, use an :is() pseudo class.

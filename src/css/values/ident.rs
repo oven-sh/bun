@@ -131,11 +131,6 @@ impl DashedIdentReference {
             None => false,
         };
         if dashed_idents {
-            // NOTE: cannot use `self.ident.v()` here — `reference_dashed` requires
-            // `&'a [u8]` (arena lifetime), but the safe accessor ties the borrow
-            // to `&self`. Raw deref yields the unbounded arena borrow.
-            // SAFETY: arena-owned slice; see `DashedIdent::v`.
-            let ident_v = unsafe { crate::arena_str(self.ident.v) };
             let source_index = dest.loc.source_index;
             let bump = dest.arena;
             // Borrowck forbids handing
@@ -149,9 +144,9 @@ impl DashedIdentReference {
                 }
                 _ => None,
             };
-            let name = dest.css_module.as_mut().unwrap().reference_dashed(
+            let name = dest.css_module.as_ref().unwrap().reference_dashed(
                 bump,
-                ident_v,
+                self.ident.v(),
                 self.from,
                 specifier_path,
                 source_index,
@@ -161,7 +156,7 @@ impl DashedIdentReference {
                 return dest.serialize_name(name);
             }
         }
-        dest.write_dashed_ident(&self.ident, false)
+        dest.write_dashed_ident(&self.ident)
     }
 }
 
@@ -188,7 +183,7 @@ impl DashedIdent {
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        dest.write_dashed_ident(self, true)
+        dest.write_dashed_ident(self)
     }
 }
 
@@ -442,10 +437,7 @@ impl CustomIdent {
             } else {
                 false
             };
-        // SAFETY: arena-owned slice valid for the printer's `'a` lifetime
-        // (`arena_str` yields an unbounded borrow, which coerces to `'a`).
-        let v = unsafe { crate::arena_str(self.v) };
-        dest.write_ident(v, css_module_custom_idents_enabled)
+        dest.write_ident(self.v(), css_module_custom_idents_enabled)
     }
 }
 

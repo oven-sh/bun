@@ -33,10 +33,7 @@ impl<T: fmt::Display> fmt::Display for Err<T> {
 // `to_error_instance` lives as an extension-trait method in `bun_css_jsc`.
 
 impl Err<ParserError> {
-    pub(crate) fn from_parse_error(
-        err: ParseError<ParserError>,
-        filename: &[u8],
-    ) -> Err<ParserError> {
+    pub(crate) fn from_parse_error(err: ParseError<ParserError>) -> Err<ParserError> {
         let kind = match err.kind {
             ParserErrorKind::basic(b) => match b {
                 BasicParseErrorKind::unexpected_token(t) => ParserError::unexpected_token(t),
@@ -51,7 +48,6 @@ impl Err<ParserError> {
         Err {
             kind,
             loc: Some(ErrorLocation {
-                filename,
                 line: err.location.line,
                 column: err.location.column,
             }),
@@ -166,8 +162,6 @@ impl fmt::Display for BasicParseErrorKind {
 
 /// A line and column location within a source file.
 pub struct ErrorLocation {
-    /// The filename in which the error occurred.
-    pub(crate) filename: Str,
     /// The line number, starting from 0.
     pub(crate) line: u32,
     /// The column number, starting from 1.
@@ -192,20 +186,9 @@ impl ErrorLocation {
     }
 }
 
-impl fmt::Display for ErrorLocation {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{}:{}", bs(self.filename), self.line, self.column)
-    }
-}
-
 /// A printer error type.
 #[allow(non_camel_case_types)]
 pub enum PrinterErrorKind {
-    /// An ambiguous relative `url()` was encountered in a custom property declaration.
-    ambiguous_url_in_custom_property {
-        /// The ambiguous URL.
-        url: Str,
-    },
     /// A [std::fmt::Error](std::fmt::Error) was encountered in the underlying destination.
     fmt_error,
     /// The CSS modules pattern must end with `[local]` for use in CSS grid.
@@ -224,11 +207,6 @@ pub enum PrinterErrorKind {
 impl fmt::Display for PrinterErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ambiguous_url_in_custom_property { url } => write!(
-                f,
-                "Ambiguous relative URL '{}' in custom property declaration",
-                bs(*url)
-            ),
             Self::fmt_error => f.write_str("Formatting error occurred"),
             Self::invalid_css_modules_pattern_in_grid => {
                 f.write_str("CSS modules pattern must end with '[local]' when used in CSS grid")
@@ -460,21 +438,6 @@ pub type MinifyError = ErrorWithLocation<MinifyErrorKind>;
 /// A transformation error.
 #[allow(non_camel_case_types)]
 pub enum MinifyErrorKind {
-    /// A circular `@custom-media` rule was detected.
-    circular_custom_media {
-        /// The name of the `@custom-media` rule that was referenced circularly.
-        name: Str,
-    },
-    /// Attempted to reference a custom media rule that doesn't exist.
-    custom_media_not_defined {
-        /// The name of the `@custom-media` rule that was not defined.
-        name: Str,
-    },
-    /// Boolean logic with media types in @custom-media rules is not supported.
-    unsupported_custom_media_boolean_logic {
-        /// The source location of the `@custom-media` rule with unsupported boolean logic.
-        custom_media_loc: Location,
-    },
     /// Compiling nested rules for the configured browser targets would expand to
     /// more than [`crate::css_rules::MAX_SELECTOR_EXPANSION`] selectors.
     selector_expansion_limit_exceeded,
@@ -487,17 +450,6 @@ pub enum MinifyErrorKind {
 impl fmt::Display for MinifyErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::circular_custom_media { name } => {
-                write!(f, "Circular @custom-media rule: \"{}\"", bs(*name))
-            }
-            Self::custom_media_not_defined { name } => {
-                write!(f, "Custom media rule \"{}\" not defined", bs(*name))
-            }
-            Self::unsupported_custom_media_boolean_logic { custom_media_loc } => write!(
-                f,
-                "Unsupported boolean logic in custom media rule at line {}, column {}",
-                custom_media_loc.line, custom_media_loc.column,
-            ),
             Self::selector_expansion_limit_exceeded => write!(
                 f,
                 "Nested CSS rules expand to more than {} selectors when compiled for the configured browser targets. Reduce the nesting depth or the number of selectors per rule, or target browsers that support CSS nesting.",

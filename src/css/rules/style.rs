@@ -159,7 +159,6 @@ impl<R> StyleRule<R> {
                         if dest.prefix_expansion_bytes > MAX_PREFIX_EXPANSION_BYTES {
                             return dest.new_error(
                                 css::error::PrinterErrorKind::maximum_vendor_prefix_expansion,
-                                None,
                             );
                         }
                     }

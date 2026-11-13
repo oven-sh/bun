@@ -23,11 +23,7 @@ type SymbolList = Vec<bun_ast::Symbol>;
 use bun_ast::{ImportKind, ImportRecord};
 
 pub use crate::compat::{self, Feature};
-pub use crate::css_modules::{
-    self, Config as CssModuleConfig, CssModule, CssModuleExports, CssModuleReference,
-    CssModuleReferences,
-};
-pub use crate::dependencies::{self, Dependency};
+pub use crate::css_modules::{self, Config as CssModuleConfig, CssModule};
 pub use crate::error::{
     self as errors_, BasicParseError, BasicParseErrorKind, Err, ErrorLocation, MinifyErr,
     MinifyError, MinifyErrorKind, ParseError, ParserError, PrinterError, PrinterErrorKind,
@@ -147,8 +143,7 @@ impl VendorPrefix {
 }
 
 // ───────────────────────────── SourceLocation ─────────────────────────────
-// Data layout hoisted at crate root (lib.rs); error.rs / dependencies.rs
-// reference `crate::SourceLocation` directly. Behavior impls live here.
+// Data layout hoisted at crate root (lib.rs). Behavior impls live here.
 
 pub use crate::SourceLocation;
 
@@ -2347,8 +2342,6 @@ pub struct StyleSheet<AtRule> {
     pub sources: Vec<Box<[u8]>>,
     pub source_map_urls: Vec<Option<Box<[u8]>>>,
     pub license_comments: Vec<&'static [u8]>, // TODO: lifetime — arena
-    /// [`ParserOptions::filename`] of the parse.
-    pub filename: &'static [u8], // TODO: lifetime
     /// [`ParserOptions::css_modules`] of the parse.
     pub css_modules: Option<css_modules::Config>,
     /// [`ParserOptions::flags`] of the parse.
@@ -2373,7 +2366,6 @@ impl<AtRule> StyleSheet<AtRule> {
             sources: Vec::new(),
             source_map_urls: Vec::new(),
             license_comments: Vec::new(),
-            filename: b"",
             css_modules: None,
             flags: ParserFlags::default(),
             layer_names: Vec::new(),
@@ -2466,15 +2458,9 @@ mod stylesheet_impl {
                     kind: MinifyErrorKind::unknown,
                     loc: crate::Location::default(),
                 });
-                let filename: &[u8] = self
-                    .sources
-                    .get(e.loc.source_index as usize)
-                    .map(|source| &**source)
-                    .unwrap_or(self.filename);
                 let minify_error = Err {
                     kind: e.kind,
                     loc: Some(ErrorLocation {
-                        filename,
                         line: e.loc.line,
                         column: e.loc.column,
                     }),
@@ -2531,43 +2517,16 @@ mod stylesheet_impl {
             }
 
             if let Some(config) = &self.css_modules {
-                let mut references = CssModuleReferences::default();
-                let references_ptr: *mut CssModuleReferences<'_> = &raw mut references;
-                // SAFETY: `'bump`-erasure — `Printer<'a>` stores `CssModule<'a>` which
-                // holds `&'a mut CssModuleReferences<'a>`; tying the borrow to `'a`
-                // (the printer's whole lifetime) makes the local `references`
-                // unmovable. Detach the borrow here and re-attach by clearing
-                // `printer.css_module` before moving `references` out below.
-                // Re-thread once `Printer<'a>` / `CssModule<'a>` split borrow vs.
-                // arena lifetimes (see rules/mod.rs `decl_block_static`).
-                let references_mut: &mut CssModuleReferences<'_> = unsafe { &mut *references_ptr };
                 printer.css_module = Some(CssModule::new(
                     printer.arena,
                     config,
                     &self.sources,
                     project_root,
-                    references_mut,
                 ));
-
-                // `css_module` holds a pointer-detached `&mut references`; clear
-                // it before any return out of the frame that owns `references`.
-                if let Err(e) = self.rules.to_css(printer) {
-                    printer.css_module = None;
-                    return Err(e);
-                }
-                if let Err(e) = printer.newline() {
-                    printer.css_module = None;
-                    return Err(e);
-                }
-
-                printer.css_module = None;
-
-                return Ok(());
-            } else {
-                self.rules.to_css(printer)?;
-                printer.newline()?;
-                return Ok(());
             }
+
+            self.rules.to_css(printer)?;
+            printer.newline()
         }
 
         pub fn to_css<'a>(
@@ -2685,12 +2644,12 @@ mod stylesheet_impl {
                         result_options.warn(&e);
                         continue;
                     }
-                    return Err(Err::from_parse_error(e, options.filename));
+                    return Err(Err::from_parse_error(e));
                 }
             }
             if parser.input.out_of_stack {
                 let e = parser.new_custom_error(ParserError::maximum_nesting_depth);
-                return Err(Err::from_parse_error(e, options.filename));
+                return Err(Err::from_parse_error(e));
             }
 
             let sources: Vec<Box<[u8]>> = vec![Box::<[u8]>::from(options.filename)];
@@ -2710,7 +2669,6 @@ mod stylesheet_impl {
                     sources,
                     source_map_urls,
                     license_comments,
-                    filename: options.filename,
                     css_modules: options.css_modules,
                     flags: options.flags,
                     layer_names,
@@ -2755,13 +2713,11 @@ mod stylesheet_impl {
                 },
                 Some(&mut parser_extra),
             );
-            let sources: Vec<Box<[u8]>> = vec![options.filename.into()];
             Ok(StyleAttribute {
                 declarations: match DeclarationBlock::parse(&mut parser, options) {
                     Ok(v) => v,
-                    Err(e) => return Err(Err::from_parse_error(e, b"")),
+                    Err(e) => return Err(Err::from_parse_error(e)),
                 },
-                sources,
             })
         }
 
@@ -2788,7 +2744,6 @@ mod stylesheet_impl {
                 None,
                 &symbols,
             );
-            printer.sources = Some(&self.sources);
 
             self.declarations.to_css(&mut printer)?;
 
@@ -2841,7 +2796,6 @@ pub struct StyleAttribute {
     // erased to `'static` until 'bump threads through the rule tree (matches
     // `StyleRule.declarations` in rules/style.rs).
     pub(crate) declarations: DeclarationBlock<'static>,
-    pub(crate) sources: Vec<Box<[u8]>>,
 }
 
 impl StyleAttribute {
@@ -2966,7 +2920,7 @@ where
 // ───────────────────────────── ParserOptions ─────────────────────────────
 
 pub struct ParserOptions<'a> {
-    /// Filename to use in error messages.
+    /// Names the file in warnings and in CSS module hashes.
     pub filename: &'static [u8], // TODO: lifetime
     /// Whether to enable [CSS modules](https://github.com/css-modules/css-modules).
     pub css_modules: Option<css_modules::Config>,

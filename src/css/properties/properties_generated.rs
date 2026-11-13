@@ -2423,10 +2423,8 @@ impl Property {
             Property::ViewTransitionClass(v) => css::generic::to_css(v, dest),
             Property::ViewTransitionGroup(v) => css::generic::to_css(v, dest),
             Property::All(v) => css::generic::to_css(v, dest),
-            Property::Unparsed(u) => u.value.to_css(dest, false),
-            Property::Custom(c) => c
-                .value
-                .to_css(dest, matches!(c.name, CustomPropertyName::Custom(..))),
+            Property::Unparsed(u) => u.value.to_css(dest),
+            Property::Custom(c) => c.value.to_css(dest),
         }
     }
 

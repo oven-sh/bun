@@ -46,8 +46,6 @@ pub mod crate_error;
 pub use crate_error::{Error as CrateError, Result as CrateResult};
 #[path = "css_modules.rs"]
 pub mod css_modules;
-#[path = "dependencies.rs"]
-pub mod dependencies;
 #[path = "error.rs"]
 pub mod error;
 #[path = "small_list.rs"]
@@ -178,8 +176,6 @@ impl core::error::Error for PrintErr {}
 /// signal (the *kind* lives in `Printer.error_kind`).
 pub(crate) type PrintResult<T = ()> = core::result::Result<T, PrintErr>;
 
-pub use dependencies::Dependency;
-
 // Re-export the hub types at the crate root so `bun_css::Foo` paths resolve
 // for css_jsc / bundler.
 pub use css_parser::{
@@ -292,7 +288,7 @@ impl VendorPrefix {
 }
 
 // ───────────────────────── Core lexer/location types ─────────────────────────
-// Hoisted from css_parser.rs / rules/mod.rs so leaf modules (error, dependencies)
+// Hoisted from css_parser.rs / rules/mod.rs so leaf modules (error)
 // compile without the 6k-line parser hub.
 
 /// Line/column within a single source. Column is 1-based, line is 0-based.

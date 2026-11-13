@@ -152,6 +152,28 @@ export { join };
     expect(filesIn(join(root, "out"))).toContain("index.aot.ts");
   });
 
+  test("minify.syntax: a default that is a cast keeps its cast", async () => {
+    using dir = tempDir("build-api-dts-default-cast", {
+      ...project,
+      "src/index.ts": `export function pick(index: number = undefined as any): number {
+  return index ?? 1;
+}
+`,
+    });
+    const root = String(dir);
+    const built = await Bun.build({
+      entrypoints: [join(root, "src/index.ts")],
+      tsconfig: join(root, "tsconfig.json"),
+      minify: { syntax: true },
+      dts: true,
+    });
+    expect(built.logs).toEqual([]);
+    const typed = built.outputs.find(output => output.path.endsWith("index.aot.ts"));
+    expect((await typed?.text())?.match(/^function .*$/gm)).toEqual([
+      "function pick(index: number = void 0 as any): number {",
+    ]);
+  });
+
   test("two builds at once keep their files apart", async () => {
     using dir = tempDir("build-api-dts-twice", {
       ...Object.fromEntries(Object.entries(project).map(([path, text]) => ["a/" + path, text])),

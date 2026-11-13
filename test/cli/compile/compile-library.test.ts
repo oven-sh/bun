@@ -969,6 +969,176 @@ export function literal(which: "plain" | "loud"): { done: true } {
     },
   );
 
+  const respelled = {
+    "src/index.ts": `export function parameter(index: number = undefined as any): number {
+  return index ?? 1;
+}
+export const arrow = (on: number = true as any, off: number = false as any): number => on + off;
+export function patterns({ a = undefined as any }: { a?: number }, [b = undefined!]: number[]): number {
+  return a + b;
+}
+export class Late {
+  field: number = undefined as any;
+  static shared: number = <any>undefined;
+  #hidden: boolean = true as const;
+  #late: number = undefined!;
+  constructor(public property: number = undefined as unknown as number) {}
+  hidden(): number {
+    return this.#hidden ? this.#late : 0;
+  }
+}
+export function heads(x: number): number {
+  switch (undefined as any) {
+    case x:
+      return 1;
+  }
+  return x;
+}
+export function checked(on = true satisfies true, none = undefined satisfies undefined): boolean {
+  return on && none === undefined;
+}
+`,
+  };
+
+  test.each([
+    ["--minify-syntax", ["--minify-syntax"]],
+    ["--minify-syntax --minify-whitespace", ["--minify-syntax", "--minify-whitespace"]],
+  ])("%s keeps the cast of a constant that it writes in another form", async (_, flags) => {
+    using dir = tempDir("library-typed-file-respelled", library(respelled));
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts", ...flags);
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(typedFile(dir).match(/(void 0|![01])\)?( as \w+| satisfies \w+|!)+/g)).toEqual([
+      "void 0 as any",
+      "!0 as any",
+      "!1 as any",
+      "void 0 as any",
+      "void 0)!",
+      "void 0 as any",
+      "void 0 as any",
+      "!0 as true",
+      "void 0)!",
+      "void 0 as unknown as number",
+      "void 0 as any",
+      "!0 satisfies true",
+      "void 0 satisfies undefined",
+    ]);
+    const javascript = readFileSync(join(String(dir), "dist/index.js"), "utf8");
+    const code = (text: string) => text.replace(/\s+/g, "");
+    const erased = new Bun.Transpiler({ loader: "ts", target: "node" }).transformSync(typedFile(dir));
+    expect(code(erased)).toBe(code(new Bun.Transpiler({ loader: "js", target: "node" }).transformSync(javascript)));
+  });
+
+  // A comparison is printed at the place of its left side, also when the build folds it. A name can be missing in index.aot.ts.
+  test("--minify-syntax does not put a cast of another expression, or one with a name in its type, on a constant", async () => {
+    using dir = tempDir(
+      "library-typed-file-respelled-not",
+      library({
+        "src/ns.ts": `export const value: unknown = 1;\n`,
+        "src/index.ts": `import * as ns from "./ns";
+export interface Shape {
+  a: number;
+}
+export function compared(x: unknown, p: boolean = (undefined === x) as boolean): boolean {
+  return p;
+}
+export function twice(x: unknown, p = (undefined === x) as unknown as string): unknown {
+  return p;
+}
+export function turned(x: unknown, p = (true === x) as unknown as number): unknown {
+  return p;
+}
+export function named(p: unknown = undefined as unknown as Shape, q: unknown = undefined as unknown as keyof typeof ns): unknown {
+  return [p, q, ns.value];
+}
+export function imported(p: unknown = undefined as unknown as typeof import("./ns")): unknown {
+  return p;
+}
+export function folded(p = (false as const) === false, q: boolean = (true as unknown as number) === 1): boolean {
+  return p && q;
+}
+export class Fields {
+  kept: boolean = (false satisfies false) == false;
+}
+`,
+      }),
+    );
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts", "--minify-syntax");
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(typedFile(dir).match(/^(function .*|  kept: .*)$/gm)).toEqual([
+      "function compared(x: unknown, p: boolean = x === void 0): boolean {",
+      "function twice(x: unknown, p = x === void 0): unknown {",
+      "function turned(x: unknown, p = x === !0): unknown {",
+      "function named(p: unknown = void 0, q: unknown = void 0): unknown {",
+      "function imported(p: unknown = void 0): unknown {",
+      "function folded(p = !0, q: boolean = !1): boolean {",
+      "  kept: boolean = !0;",
+    ]);
+  });
+
+  test("--minify-syntax keeps the cast of a field that useDefineForClassFields: false turns into an assignment", async () => {
+    using dir = tempDir("library-typed-file-assigned-field", {
+      ...library({
+        "src/index.ts": `export class Late {
+  field: number = undefined as any;
+}
+`,
+      }),
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { strict: true, moduleResolution: "bundler", types: [], useDefineForClassFields: false },
+      }),
+      "package.json": JSON.stringify({
+        name: "shapes",
+        version: "1.0.0",
+        compilerOptions: { strict: true, useDefineForClassFields: false },
+      }),
+    });
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts", "--minify-syntax");
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(typedFile(dir)).toContain("this.field = void 0 as any;");
+  });
+
+  // Today each of these is printed without its cast, and index.aot.ts is left out with the error of the row.
+  test.todo.each([
+    [
+      "a type with a name (TS2322, 'undefined' is not assignable to 'Shape')",
+      `export interface Shape {
+  a: number;
+}
+export class Holder {
+  shape: Shape = undefined as unknown as Shape;
+}
+`,
+      "  shape: Shape = void 0 as unknown as Shape;",
+    ],
+    [
+      "a class that extends a constant (TS2507)",
+      `export class Extended extends (undefined as any) {}\n`,
+      "class Extended extends (void 0 as any) {",
+    ],
+    [
+      "NaN (TS2322, 'number' is not assignable to 'string')",
+      `export function hidden(fallback: string = (0 / 0) as any): string {
+  return fallback;
+}
+`,
+      "function hidden(fallback: string = NaN as any): string {",
+    ],
+    [
+      "Infinity (TS2322, 'number' is not assignable to 'Ms')",
+      `export type Ms = number & { readonly unit: "ms" };
+export function wait(limit: Ms = Infinity as Ms): Ms {
+  return limit;
+}
+`,
+      "function wait(limit: Ms = 1 / 0 as Ms): Ms {",
+    ],
+  ])("--minify-syntax keeps the cast of %s", async (_, source, line) => {
+    using dir = tempDir("library-typed-file-respelled-todo", library({ "src/index.ts": source }));
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts", "--minify-syntax");
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(typedFile(dir)).toContain(line);
+  });
+
   test("--minify-whitespace puts each statement of the .aot.ts file on its own line", async () => {
     using dir = tempDir(
       "library-typed-file-lines",

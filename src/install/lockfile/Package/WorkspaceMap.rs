@@ -548,6 +548,7 @@ impl WorkspaceMap {
                 )? {
                     Ok(mut w) => {
                         w.follow_matched_symlinks();
+                        w.literal_target_error_is_fatal();
                         w
                     }
                     Err(e) => {

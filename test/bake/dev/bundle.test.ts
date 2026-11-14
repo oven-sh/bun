@@ -6,6 +6,53 @@ import net from "node:net";
 import path from "node:path";
 import { Dev, devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
+for (const editedFile of ["client.ts", "message.ts"]) {
+  devTest(`invalidates a framework's cached client bundle after editing ${editedFile}`, {
+    framework: {
+      fileSystemRouterTypes: [
+        {
+          root: "routes",
+          style: "nextjs-pages",
+          serverEntryPoint: "./render.ts",
+          clientEntryPoint: "./client.ts",
+        },
+      ],
+    },
+    files: {
+      "routes/index.ts": `export default null;`,
+      "render.ts": `
+        export function render(request, meta) {
+          const scripts = meta.modules.map(url => '<script type="module" src="' + url + '"></script>').join('');
+          return new Response('<!DOCTYPE html><html><body><h1></h1>' + scripts + '</body></html>', {
+            headers: { 'content-type': 'text/html' },
+          });
+        }
+      `,
+      "message.ts": `export const message = 'BEFORE';`,
+      "client.ts": `import { message } from './message.ts'; document.querySelector('h1').textContent = message;`,
+    },
+    async test(dev) {
+      await using client = await dev.client("/", { allowUnlimitedReloads: true });
+      await client.expectElemText("h1", "BEFORE");
+      const initialHtml = await dev.fetch("/").text();
+      const initialScript = initialHtml.match(/<script type="module" src="([^"]+)"/)![1];
+      expect(await dev.fetch(initialScript).text()).toContain("BEFORE");
+
+      await dev.write(
+        editedFile,
+        editedFile === "client.ts"
+          ? `import { message } from './message.ts'; document.querySelector('h1').textContent = 'AFTER:' + message;`
+          : `export const message = 'AFTER';`,
+      );
+      await client.expectElemText("h1", editedFile === "client.ts" ? "AFTER:BEFORE" : "AFTER");
+      const updatedHtml = await dev.fetch("/").text();
+      const updatedScript = updatedHtml.match(/<script type="module" src="([^"]+)"/)![1];
+      expect(await dev.fetch(updatedScript).text()).toContain("AFTER");
+      expect(updatedScript).not.toBe(initialScript);
+    },
+  });
+}
+
 devTest("import identifier doesnt get renamed", {
   framework: minimalFramework,
   files: {
@@ -326,6 +373,69 @@ devTest("directory cache bust case #17576", {
     await c.expectMessage(456);
   },
 });
+for (const closure of ["eager", "edited", "transitive", "cycle"]) {
+  const cachedFiles =
+    closure === "eager" || closure === "edited"
+      ? {
+          "before.ts": `import { shared } from './shared.ts'; export const value = { label: 'before', shared };`,
+        }
+      : closure === "transitive"
+        ? {
+            "before.ts": `export { value } from './cached-middle.ts';`,
+            "cached-middle.ts": `export { value } from './cached-leaf.ts';`,
+            "cached-leaf.ts": `import { shared } from './shared.ts'; export const value = { label: 'before', shared };`,
+          }
+        : {
+            "before.ts": `import { makeValue } from './cached-cycle-a.ts'; import { shared } from './shared.ts'; export const value = makeValue(shared);`,
+            "cached-cycle-a.ts": `
+              import { getLabel } from './cached-cycle-b.ts';
+              export function label() { return 'before'; }
+              export function makeValue(shared) { return { label: getLabel(), shared }; }
+            `,
+            "cached-cycle-b.ts": `import { label } from './cached-cycle-a.ts'; export function getLabel() { return label(); }`,
+          };
+  devTest(`restores a cached ${closure} client dependency closure after a fresh page load`, {
+    files: {
+      "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+      "index.ts": `
+        import { value } from './graph.ts';
+        import { shared } from './shared.ts';
+        console.log({ label: value.label, identity: value.shared === shared, initialization: shared.initialization });
+        import.meta.hot.accept();
+      `,
+      "graph.ts": `export { value } from './before.ts';`,
+      "after.ts": `import { shared } from './shared.ts'; export const value = { label: 'after', shared };`,
+      "shared.ts": `
+        globalThis.cachedClosureInitializations = (globalThis.cachedClosureInitializations ?? 0) + 1;
+        export const shared = { initialization: globalThis.cachedClosureInitializations };
+      `,
+      ...cachedFiles,
+    },
+    async test(dev) {
+      await using client = await dev.client("/");
+      const before = { label: "before", identity: true, initialization: 1 };
+      const after = { label: "after", identity: true, initialization: 1 };
+      await client.expectMessage(before);
+      await dev.write("graph.ts", `export { value } from './after.ts';`);
+      await client.expectMessage(after);
+      await dev.write("graph.ts", `export { value } from './before.ts';`);
+      await client.expectMessage(before);
+      await dev.write("graph.ts", `export { value } from './after.ts';`);
+      await client.expectMessage(after);
+      await client.hardReload();
+      await client.expectMessage(after);
+      if (closure === "edited") {
+        await dev.write(
+          "before.ts",
+          `import { shared } from './shared.ts'; export const value = { label: 'edited', shared };`,
+        );
+      }
+      await dev.write("graph.ts", `export { value } from './before.ts';`);
+      await client.expectMessage(closure === "edited" ? { ...before, label: "edited" } : before);
+    },
+  });
+}
+
 devTest("deleting imported file shows error then recovers", {
   skip: [
     "win32", // unlinkSync is having weird behavior

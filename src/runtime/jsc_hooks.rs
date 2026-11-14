@@ -2382,6 +2382,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         && jsc_vm.module_loader.eval_source.get().is_some(),
                     macro_js_ctx: bun_bundler::transpiler::default_macro_js_value(),
                     replace_exports: Default::default(),
+                    output_never_runs: false,
                 };
                 let own = (jsc_vm.transpiler)
                     .with_mut(|t| t.find_aot_package_config(parse_options.path.text, loader));

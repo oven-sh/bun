@@ -43,6 +43,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     #[inline]
+    /// `find_symbol` for a name in a type that decorator metadata can hold. The metadata of a macro import is `Object`, so the name is not a use of it.
+    fn find_metadata_type_symbol(&mut self, name: &'a [u8]) -> Result<Ref, Error> {
+        let r#ref = self.find_symbol(bun_ast::Loc::EMPTY, name)?.r#ref;
+        if !self.macro_.refs.is_empty() {
+            self.ignore_usage_if_macro_ref(r#ref);
+        }
+        Ok(r#ref)
+    }
+
     pub(crate) fn skip_type_script_type_with_metadata(
         &mut self,
         level: Level,
@@ -634,11 +643,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         TsIdentKind::Normal => {
                             if GET_METADATA {
                                 let ident = self.lexer.identifier;
-                                let find_result = self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
+                                let found = self.find_metadata_type_symbol(ident)?;
                                 **result
                                     .as_mut()
                                     .expect("infallible: GET_METADATA implies Some") =
-                                    Metadata::MIdentifier(find_result.r#ref);
+                                    Metadata::MIdentifier(found);
                             }
 
                             self.lexer.next()?;
@@ -907,17 +916,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         match r {
                             Metadata::MIdentifier(id_ref) => {
                                 let id_ref = *id_ref;
-                                let mut dot: Vec<Ref> = Vec::with_capacity(2);
+                                let mut dot = bun_alloc::AstAlloc::vec_with_capacity(2);
                                 dot.push(id_ref);
-                                let find_result = self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
-                                dot.push(find_result.r#ref);
+                                dot.push(self.find_metadata_type_symbol(ident)?);
                                 *r = Metadata::MDot(dot);
                             }
                             Metadata::MDot(dot) => {
                                 if self.lexer.is_identifier_or_keyword() {
-                                    let find_result =
-                                        self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
-                                    dot.push(find_result.r#ref);
+                                    dot.push(self.find_metadata_type_symbol(ident)?);
                                 }
                             }
                             _ => {}

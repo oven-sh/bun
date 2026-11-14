@@ -30,9 +30,7 @@ using namespace JSC;
 
 static JSC_DECLARE_HOST_FUNCTION(functionStartServerFromNamespace);
 
-// The program did not ask for the reads of the look. A read that throws, of a name that the object says it does not have, answers a
-// question that only Bun asked: the throw is dropped, and the answer is empty. Every other throw is the program's: of a name that the
-// object has, of an object that cannot say, and a termination.
+// A throw for a name that the object says it does not have is dropped, and the answer is empty. Every other throw stays the program's.
 static JSValue getForLook(JSGlobalObject* globalObject, JSValue object, PropertyName name)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));

@@ -657,10 +657,9 @@ impl Resolver<'_, '_> {
         }
         self.mention_members_read_under_written_keys(expr);
         let mention_use = self.classify_use(expr);
-        if matches!(mention_use, MentionUse::Exposed)
-            || self.is_stored_to(expr)
-            || self.is_stored_to_member(expr)
-        {
+        let changes_member = self.is_stored_to_member(expr)
+            && !table::has_flag(table::canonical_id(id), BuiltinFlags::IS_GLOBAL_OBJECT);
+        if matches!(mention_use, MentionUse::Exposed) || self.is_stored_to(expr) || changes_member {
             self.note_escaped_object(id);
         }
         match mention_use {

@@ -328,9 +328,12 @@ const PROGRAMS_THAT_CHANGE_THE_HOLDER: &[&str] = &[
     "Temporal.zone = 1;",
     "Temporal[1] = 1;",
     "delete Temporal.zone;",
-    "globalThis.Temporal = f();",
-    "globalThis.Temporal ??= f();",
-    "if (!globalThis.Temporal) globalThis.Temporal = f();",
+    "globalThis.Temporal = 5;",
+    "globalThis.Temporal ??= {};",
+    "if (!globalThis.Temporal) globalThis.Temporal = [];",
+    "Temporal = 5;",
+    "const g = globalThis; g.Temporal = 5;",
+    "globalThis['Temporal'] = 5;",
     "globalThis.Temporal.PlainTime = f();",
     "const copy = { ...Temporal };",
     "for (const name in Temporal) f(name);",
@@ -340,8 +343,30 @@ const PROGRAMS_THAT_CHANGE_THE_HOLDER: &[&str] = &[
     "const Times = Temporal; Times.zone = 1;",
 ];
 
+/// What such a store lays on the global object may read it as its `this`, and a delete hands it on.
+const HAND_THE_GLOBAL_OBJECT_ON: &[&str] = &[
+    "globalThis.Temporal = f();",
+    "globalThis.Temporal ??= f();",
+    "if (!globalThis.Temporal) globalThis.Temporal = f();",
+    "delete globalThis.Temporal;",
+];
+
+const CHANGE_NO_BUILT_IN: &[&str] = &[
+    "Object.freeze(Math);",
+    "globalThis.__DEV__ = true;",
+    "globalThis.__DEV__ ??= {};",
+    "globalThis.count = (globalThis.count ?? 0) + 1;",
+    "globalThis['__DEV__'] = [];",
+    "const g = globalThis; g.__DEV__ = true;",
+];
+
 #[test]
 fn a_member_of_an_object_that_the_program_changes_asks_for_its_name() {
+    for source in HAND_THE_GLOBAL_OBJECT_ON {
+        with_case(PROGRAM, source, |case| {
+            assert!(case.resolved.uses().lets_in_what_nobody_names, "{source}");
+        });
+    }
     let holds_from = |asks: &AsksOfText| {
         let uses = RuntimeUses::of_asks(asks, Platforms::LINUX);
         holds_code_of(&uses, BuiltinId::IteratorFrom)
@@ -355,12 +380,11 @@ fn a_member_of_an_object_that_the_program_changes_asks_for_its_name() {
         asks.add(&of_call);
         assert!(holds_from(&asks), "{source}");
     }
-    let of_other = with_case(PROGRAM, "Object.freeze(Math);", |case| {
-        case.resolved.uses().asks.clone()
-    });
-    let mut asks = of_call;
-    asks.add(&of_other);
-    assert!(!holds_from(&asks));
+    for source in CHANGE_NO_BUILT_IN {
+        let mut asks = with_case(PROGRAM, source, |case| case.resolved.uses().asks.clone());
+        asks.add(&of_call);
+        assert!(!holds_from(&asks), "{source}");
+    }
 }
 
 #[test]

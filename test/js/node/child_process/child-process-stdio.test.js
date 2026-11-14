@@ -282,7 +282,9 @@ describe.concurrent("stdio _handle", () => {
         child.unref();
         `,
       ],
-      env: bunEnv,
+      // The CI runner sets BUN_FEATURE_FLAG_NO_ORPHANS on ASAN lanes. It kills
+      // the child, which prints its count after its parent is gone.
+      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

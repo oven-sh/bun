@@ -1309,9 +1309,7 @@ impl<'a> PackageInstall<'a> {
         mutable: &'m mut MutableString,
         until_eof: bool,
     ) -> Option<&'m [u8]> {
-        let mut total: usize = 0;
         mutable.reset();
-        mutable.expand_to_capacity();
 
         let mut spill = Vec::new();
         let package_json_path = path::resolve_path::join_z_spill::<path::platform::Posix>(
@@ -1326,19 +1324,19 @@ impl<'a> PackageInstall<'a> {
 
         // Heuristic: most package.jsons will be less than 2048 bytes.
         loop {
-            if mutable.list.len() - total < 1024 {
+            if mutable.list.capacity() - mutable.list.len() < 1024 {
                 mutable.grow_by(4096).ok()?;
-                mutable.expand_to_capacity();
             }
-            let remain = &mut mutable.list[total..];
-            let read = package_json_file.read(remain).ok()?;
-            total += read;
-            if read == 0 || (!until_eof && read < remain.len()) {
+            let read = bun_core::vec::append_with(&mut mutable.list, usize::MAX, |spare| {
+                bun_sys::read_buf(package_json_file.handle(), spare)
+            })
+            .ok()?;
+            if read == 0 || (!until_eof && mutable.list.len() < mutable.list.capacity()) {
                 break;
             }
         }
 
-        Some(&mutable.list[0..total])
+        Some(&mutable.list)
     }
 
     fn verify_package_json_name_and_version(&mut self, root_node_modules_dir: &Dir) -> bool {

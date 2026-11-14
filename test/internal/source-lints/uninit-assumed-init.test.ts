@@ -15,9 +15,8 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // rustc's `invalid_value` lint (an error under the workspace `warnings = deny`)
 // and clippy's `uninit_assumed_init` both catch the pattern, so such code only
 // compiles under an `#[allow(..)]` for them. A scratch buffer is
-// `[MaybeUninit<T>; N]` instead, written with `write_copy_of_slice` / `write`
-// and read back through `assume_init_ref` on the written prefix. See
-// `bun_url::URL::join_normalize` and `bun_paths::resolve_path::join_string_buf_t`.
+// `[MaybeUninit<T>; N]` instead, filled and read back through a `BorrowedBuf`. See
+// `bun_url::URL::join_normalize`.
 // Scratch path storage comes from `bun_paths::path_buffer_pool`, which zeroes
 // a buffer once on allocation and reuses it (issue #41437 covers the old
 // `PathBuffer::uninit` / `WPathBuffer::uninit` constructors).

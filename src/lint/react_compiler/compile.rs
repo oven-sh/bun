@@ -50,6 +50,7 @@ fn config_of(flavor: Flavor, has_no_foreign_config: bool) -> EnvironmentConfig {
         unreachable_code_is_reported_at_its_function: is_oxlint,
         tagged_templates_are_always_called: is_oxlint,
         react_is_known_by_its_module: false,
+        optional_member_callees_keep_their_receiver: false,
         dependencies_are_sorted_by_bytes: is_oxlint,
         validate_no_set_state_in_render: true,
         validate_no_set_state_in_effects: true,

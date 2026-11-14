@@ -1337,6 +1337,120 @@ pub(super) fn lower_optional_call_expression(
     lower_optional_call_expression_impl(builder, expr, None)
 }
 
+/// Unlike upstream, `(a?.b)(args)` is a `MethodCall` of `a`, in one value block with the chain and the arguments.
+#[inline(never)]
+pub(super) fn lower_optional_member_callee_call(
+    builder: &mut HirBuilder,
+    call: &ast::E::Call,
+    loc: Option<SourceLocation>,
+) -> Result<InstructionValue, CompilerError> {
+    let continuation_block = builder.reserve(builder.current_block_kind());
+    let continuation_id = continuation_block.id;
+    let place = build_temporary_place(builder, loc);
+
+    let sequence_block = builder.try_enter(BlockKind::Sequence, |builder, _block_id| {
+        let (receiver, value) = lower_optional_member_callee(builder, &call.target)?;
+        // The property of a `MethodCall` gets a scope from the instruction that makes it: here, this load.
+        let property = build_temporary_place(builder, value.loc);
+        builder.push(Instruction {
+            id: EvaluationOrder(0),
+            lvalue: property.clone(),
+            value: InstructionValue::LoadLocal {
+                loc: value.loc,
+                place: value,
+            },
+            loc: property.loc,
+            effects: None,
+        });
+        let args = lower_arguments(builder, &call.args)?;
+        let result = lower_value_to_temporary(
+            builder,
+            InstructionValue::MethodCall {
+                receiver,
+                property,
+                args,
+                loc,
+            },
+        )?;
+        lower_value_to_temporary(
+            builder,
+            InstructionValue::StoreLocal {
+                lvalue: LValue {
+                    kind: InstructionKind::Const,
+                    place: place.clone(),
+                },
+                value: result,
+                type_annotation: None,
+                loc,
+            },
+        )?;
+        Ok(Terminal::Goto {
+            block: continuation_id,
+            variant: GotoVariant::Break,
+            id: EvaluationOrder(0),
+            loc,
+        })
+    });
+
+    builder.terminate_with_continuation(
+        Terminal::Sequence {
+            block: sequence_block?,
+            fallthrough: continuation_id,
+            id: EvaluationOrder(0),
+            loc,
+        },
+        continuation_block,
+    );
+    Ok(InstructionValue::LoadLocal { place, loc })
+}
+
+/// The object and the value of the callee of `(a?.b)()`, both set where the chain goes on and where it stops.
+fn lower_optional_member_callee(
+    builder: &mut HirBuilder,
+    callee: &Expr,
+) -> Result<(Place, Place), CompilerError> {
+    if optional_chain_of(member_object(callee)).is_none() {
+        // The object is lowered before the chain can stop.
+        return lower_optional_member_expression_impl(builder, callee, None);
+    }
+    // The object is a link of the chain (`a?.b` in `(a?.b.c)()`), so only this block stores it where the chain stops.
+    let alternate = builder.reserve(BlockKind::Value);
+    let (object, value) =
+        lower_optional_member_expression_impl(builder, callee, Some(alternate.id))?;
+    let continuation_id = builder.current_block_id();
+    let loc = value.loc;
+    builder.try_enter_reserved(alternate, |builder| {
+        let undefined = lower_value_to_temporary(
+            builder,
+            InstructionValue::Primitive {
+                value: PrimitiveValue::Undefined,
+                loc,
+            },
+        )?;
+        for place in [&value, &object] {
+            lower_value_to_temporary(
+                builder,
+                InstructionValue::StoreLocal {
+                    lvalue: LValue {
+                        kind: InstructionKind::Const,
+                        place: place.clone(),
+                    },
+                    value: undefined.clone(),
+                    type_annotation: None,
+                    loc,
+                },
+            )?;
+        }
+        Ok(Terminal::Goto {
+            block: continuation_id,
+            variant: GotoVariant::Break,
+            id: EvaluationOrder(0),
+            loc,
+        })
+    })?;
+    Ok((object, value))
+}
+
 fn lower_optional_call_expression_impl(
     builder: &mut HirBuilder,
     expr: &Expr,

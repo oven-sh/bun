@@ -11,8 +11,8 @@ use super::function::{lower_function_to_value, lower_object_method};
 use super::helpers::{
     AssignmentStyle, MemberProperty, build_temporary_place, expression_type_name, lower_arguments,
     lower_assignment, lower_expression_to_temporary, lower_identifier, lower_member_expression,
-    lower_object_property_key, lower_optional_call_expression, lower_optional_member_expression,
-    lower_value_to_temporary,
+    lower_object_property_key, lower_optional_call_expression, lower_optional_member_callee_call,
+    lower_optional_member_expression, lower_value_to_temporary,
 };
 use super::jsx::lower_jsx_call;
 use crate::lowering::FunctionNode;
@@ -69,6 +69,16 @@ pub(crate) fn lower_expression(
             }
             if call.optional_chain.is_some() {
                 return lower_optional_call_expression(builder, expr);
+            }
+            // Unlike upstream, which lowers this callee as a value: see `lower_optional_member_callee_call`.
+            if (matches!(&call.target.data, Data::EDot(d) if d.optional_chain.is_some())
+                || matches!(&call.target.data, Data::EIndex(i) if i.optional_chain.is_some()))
+                && builder
+                    .environment()
+                    .config
+                    .optional_member_callees_keep_their_receiver
+            {
+                return lower_optional_member_callee_call(builder, call, loc);
             }
             // Check if callee is a MemberExpression => MethodCall
             let is_member = matches!(

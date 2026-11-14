@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { readdirSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
 import { mkfifo } from "mkfifo";
 import path from "path";
@@ -1278,6 +1279,69 @@ test("--parallel: a test writing garbage to fd 3 gets its worker killed and the 
   expect(stderr).toContain("\n 3 pass\n 1 fail\n");
   expect(stderr).toContain("Ran 4 tests across 4 files.");
   expect(exitCode).toBe(1);
+});
+
+// The coordinator is stopped meanwhile, so it finds a worker's last frame and its end together.
+describe.skipIf(!isLinux)("--parallel: a worker that has exited gets no file", () => {
+  const states = (pid: number) =>
+    readdirSync(`/proc/${pid}/task`).map(tid => {
+      try {
+        const stat = readFileSync(`/proc/${pid}/task/${tid}/stat`, "utf8");
+        return stat[stat.lastIndexOf(")") + 2];
+      } catch {
+        return "X";
+      }
+    });
+  const exitAfterTheFile = `setTimeout(() => process.exit(0));`;
+  const exitAfterReady = `writeSync(3, Buffer.alloc(5)); process.exit(0);`;
+
+  test.concurrent.each([
+    ["after its file", exitAfterTheFile, {}, "3 pass\n 0 fail", 0],
+    [
+      "after its file, with the exit reported later",
+      exitAfterTheFile,
+      { BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1", BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
+      "3 pass\n 0 fail",
+      0,
+    ],
+    ["after a Ready frame", exitAfterReady, {}, "1 fail", 1],
+  ])("%s", async (_, exit, env, summary, expectedExitCode) => {
+    using dir = tempDir("parallel-exited-worker", {
+      "a.test.js": `import {test} from "bun:test"; import {existsSync, writeSync} from "fs";
+        test("pid " + process.pid, () => {});
+        test("last", () => { while (!existsSync("go")) Bun.sleepSync(1); ${exit} });`,
+      "b.test.js": `import {test} from "bun:test"; test("b", () => {});`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", "--parallel-delay=1000000", "--no-isolate"],
+      env: { ...bunEnv, ...env },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "ignore",
+    });
+    let stderr = "";
+    let resumed: Promise<void> | undefined;
+    for await (const chunk of proc.stderr.pipeThrough(new TextDecoderStream())) {
+      stderr += chunk;
+      const worker = Number(/\(pass\) pid (\d+)/.exec(stderr)?.[1]);
+      if (!worker) continue;
+      resumed ??= (async () => {
+        proc.kill("SIGSTOP");
+        try {
+          while (states(proc.pid).some(state => state !== "T")) await Bun.sleep(1);
+          writeFileSync(path.join(String(dir), "go"), "");
+          while (states(worker).join("") !== "Z") await Bun.sleep(1);
+        } finally {
+          proc.kill("SIGCONT");
+        }
+      })();
+    }
+    await resumed;
+    expect(stderr).not.toContain("b.test.js (worker crashed");
+    expect(stderr).toContain("(pass) b");
+    expect(stderr).toContain(summary);
+    expect(await proc.exited).toBe(expectedExitCode);
+  });
 });
 
 // About 1 MB of todo lines overflows the socketpair send buffer, so the worker sends its

@@ -199,10 +199,14 @@ static inline bool setJSMessagePort_onmessageSetter(JSGlobalObject& lexicalGloba
     vm.writeBarrier(&thisObject, value);
     ensureStillAliveHere(value);
 
-    // node: a callable handler starts the port and keeps the loop alive; assigning anything else
-    // clears the handler and lets the loop exit again.
+    // An installed handler is a 'message' listener: registering it started the port and, if it
+    // is the first listener, ref'd it (node's setupPortReferencing). The setter takes no ref of
+    // its own, so a handler added next to other listeners leaves an earlier unref() in force,
+    // as in node. Anything that cannot be called (a cleared handler, or an object
+    // setAttributeEventListener stores but JSEventListener never invokes) lets the loop exit
+    // again, as node's setter also only counts functions.
     if (value.isCallable())
-        thisObject.wrapped().jsRef(&lexicalGlobalObject);
+        thisObject.wrapped().didSetMessageHandler();
     else
         thisObject.wrapped().jsUnref(&lexicalGlobalObject);
 

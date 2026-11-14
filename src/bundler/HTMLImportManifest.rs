@@ -342,15 +342,9 @@ pub mod html_import_manifest {
         bundle: &BundleV2<'_>,
         linker_graph: &LinkerGraph<'_>,
         chunks: &[Chunk],
-        w: &mut &mut [u8],
-    ) -> Result<(), core::fmt::Error> {
-        let taken = core::mem::take(w);
-        let mut fbs = bun_io::FixedBufferStream::new_mut(taken);
-        super::write_escaped_json(index, bundle, linker_graph, chunks, &mut fbs)
-            .map_err(|_| core::fmt::Error)?;
-        let bun_io::FixedBufferStream { buffer, pos } = fbs;
-        *w = &mut buffer[pos..];
-        Ok(())
+        out: &mut Vec<u8>,
+    ) -> Result<(), crate::Error> {
+        super::write_escaped_json(index, bundle, linker_graph, chunks, out)
     }
 }
 

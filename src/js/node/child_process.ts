@@ -575,6 +575,14 @@ function spawnSync(file, args, options?): SpawnSyncResult {
     }
   }
 
+  // node converts the arguments and then the cwd when it spawns: https://github.com/nodejs/node/blob/v26.3.0/src/spawn_sync.cc#L817-L838
+  const spawnargs = options.args;
+  const argc = spawnargs.length;
+  const cmd = $newArrayWithSize<string>(argc);
+  $putByValDirect(cmd, 0, options.file);
+  for (let i = 1; i < argc; i++) $putByValDirect(cmd, i, `${spawnargs[i]}`);
+  const cwd = options.cwd ? `${options.cwd}` : undefined;
+
   var error;
   try {
     var {
@@ -593,12 +601,12 @@ function spawnSync(file, args, options?): SpawnSyncResult {
       // normalizeSpawnargs has already prepended argv0 to the spawnargs array
       // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when running the command,
       // so we have to set argv0 to spawnargs[0] and cmd[0] to file
-      cmd: [options.file, ...Array.prototype.slice.$call(options.args, 1)],
+      cmd,
       // The normalized env (kBunEnv) is built from the live process.env when
       // options.env is not given, so runtime mutations of process.env reach
       // the child like in Node.js.
       env: options[kBunEnv] || options.env || undefined,
-      cwd: options.cwd || undefined,
+      cwd,
       stdio: bunStdio,
       detached: options.detached,
       uid: options.uid,
@@ -1095,7 +1103,8 @@ function normalizeSpawnArguments(file, args, options?) {
         validateArgumentNullCheck(key, `options.env['${key}']`);
         validateArgumentNullCheck(value, `options.env['${key}']`);
       }
-      bunEnv[key] = value;
+      // node converts each value here: https://github.com/nodejs/node/blob/v26.3.0/lib/child_process.js#L737
+      bunEnv[key] = `${value}`;
     }
   }
 

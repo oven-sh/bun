@@ -1107,7 +1107,7 @@ impl RewriterPipe {
         let Some(stream) = stream else {
             // lol-html consumes UTF-8; `use_as_any_blob()` encodes a non-ASCII
             // WTFStringImpl into an InternalBlob so `.slice()` is always UTF-8.
-            let mut any_blob = value.use_as_any_blob();
+            let any_blob = value.use_as_any_blob();
             let bytes = any_blob.slice();
             // Mark EOF first so a handler that suspends mid-feed resumes into
             // `end_rewrite` once its promise settles.
@@ -1116,7 +1116,6 @@ impl RewriterPipe {
                 this.end_rewrite();
             }
             // A suspended lol-html has already copied the unconsumed tail into its arena.
-            any_blob.detach();
             return;
         };
 

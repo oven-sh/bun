@@ -124,11 +124,10 @@ trait CronJobBase: Sized + bun_ptr::AnyRefCounted {
     /// job's `Drop` (process detach, reader teardown) runs inside the
     /// enter/exit scope. Callers return without touching `this` again.
     fn finish(this: ThisPtr<Self>) {
-        let owner = this.owner().take().expect("cron job finished twice");
+        let _entered = VirtualMachine::get().enter_event_loop_scope();
+        let _owner = this.owner().take().expect("cron job finished twice");
         this.poll().unref(bun_io::js_vm_ctx());
         let global = this.global();
-        let ev = VirtualMachine::get().event_loop();
-        ev.enter();
         if let Some(msg) = this.err_msg().replace(None) {
             let err = EncodedSlice::utf8(&msg).to_error_instance(&global);
             let _ = this
@@ -139,8 +138,6 @@ trait CronJobBase: Sized + bun_ptr::AnyRefCounted {
                 .promise()
                 .with_mut(|p| p.resolve(&global, JSValue::UNDEFINED));
         }
-        drop(owner);
-        ev.exit();
     }
 
     fn set_err(&self, args: core::fmt::Arguments<'_>) {

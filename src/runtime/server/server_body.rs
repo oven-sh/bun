@@ -1029,15 +1029,16 @@ impl ServePlugins {
             dev_server: None,
         };
 
-        global.bun_vm().event_loop().enter();
-        let result = jsc::host_fn::from_js_host_call(global, || {
-            match &self.state {
-                ServePluginsState::Pending { plugin, .. } => plugin,
-                _ => unreachable!(),
-            }
-            .load_and_resolve_plugins_for_serve(plugin_js_array, bunfig_folder_bunstr)
-        })?;
-        global.bun_vm().event_loop().exit();
+        let result = {
+            let _entered = global.bun_vm().enter_event_loop_scope();
+            jsc::host_fn::from_js_host_call(global, || {
+                match &self.state {
+                    ServePluginsState::Pending { plugin, .. } => plugin,
+                    _ => unreachable!(),
+                }
+                .load_and_resolve_plugins_for_serve(plugin_js_array, bunfig_folder_bunstr)
+            })?
+        };
 
         // handle the case where js synchronously throws an error
         if let Some(e) = global.try_take_exception() {

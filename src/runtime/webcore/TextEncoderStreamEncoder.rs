@@ -3,7 +3,6 @@ use core::cell::Cell;
 use bun_alloc::AllocError;
 use bun_core::strings;
 use bun_jsc::{JSGlobalObject, JSUint8Array, JSValue, JsResult};
-use bun_ptr::RawSlice;
 use bun_simdutf_sys::simdutf;
 
 use crate::webcore::sink::ReadableSinkController;
@@ -292,7 +291,7 @@ pub(crate) extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
         return JSValue::UNDEFINED;
     }
     let wrote = handle
-        .write(&streams::Result::Temporary(RawSlice::new(&buf)))
+        .write(&streams::Result::Temporary(&buf))
         .to_js(&global.js_thread_of_caller());
     if buf.capacity() <= SCRATCH_CAP {
         this.scratch.replace(buf);
@@ -316,6 +315,6 @@ pub(crate) extern "C" fn TextEncoderStreamEncoder__flushIntoSink(
         return JSValue::UNDEFINED;
     }
     handle
-        .write(&streams::Result::Temporary(RawSlice::new(&REPLACEMENT)))
+        .write(&streams::Result::Temporary(&REPLACEMENT))
         .to_js(&global.js_thread_of_caller())
 }

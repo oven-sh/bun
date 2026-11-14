@@ -16,8 +16,8 @@ fetch("https://example.com", { body: Bun.file("hey").stream() });
 fetch("https://example.com", { body: new Response("bun").body });
 fetch("https://example.com", { body: Bun.s3.file("hey") });
 fetch("https://example.com", { body: Bun.s3.file("hey").stream() });
+// @ts-expect-error - an S3File has no `readable`, use `stream()`
 fetch("https://example.com", { body: Bun.s3.file("hey").readable });
-
 async function* asyncGenerator() {
   yield "chunk1";
   yield "chunk2";

@@ -10660,6 +10660,48 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       );
     });
 
+    // `photo?.purgedAt === null` is false for an undefined `photo`, and the `||` chain is true. typescript-eslint 8.71.2
+    // stopped reporting this. The chain before the `=== null` is still reported (`b`), and a chain that starts with
+    // the pair `=== null || === undefined` is too (`d`): the pair merges to `== null`.
+    test("prefer-optional-chain leaves a lone === null out of an || chain with an === undefined guard", async () => {
+      const text = `type Photo = { purgedAt: Date | null; variant: { id: number | null } | undefined };
+declare const photo: Photo | undefined;
+declare const item: Photo | null | undefined;
+export const a = photo === undefined || photo.purgedAt === null;
+export const b = photo === undefined || photo.variant === undefined || photo.variant.id === null;
+export const c = typeof photo === "undefined" || photo.purgedAt === null;
+export const d = item === null || item === undefined || item.purgedAt === null;
+export const e = photo === undefined || photo.purgedAt === null || photo.purgedAt === undefined;
+export const f = !photo || photo.purgedAt === null;
+export const g = photo && photo.purgedAt;
+`;
+      const config = files["eslint.config.js"].replace(
+        /rules: \{.*\}/,
+        `rules: { "@typescript-eslint/prefer-optional-chain": "error" }`,
+      );
+      const { raw } = await lint({ ...files, "eslint.config.js": config, "a.ts": text }, ["-f", "json"]);
+      type Message = {
+        line: number;
+        column: number;
+        fix?: { text: string };
+        suggestions?: { fix: { text: string } }[];
+      };
+      const reported: Message[] = JSON.parse(raw).flatMap((file: { messages: Message[] }) => file.messages);
+      expect(
+        reported.map(it => [
+          it.line,
+          it.column,
+          it.fix ? { fix: it.fix.text } : { suggest: it.suggestions?.map(suggestion => suggestion.fix.text) },
+        ]),
+      ).toEqual([
+        [5, 18, { fix: "photo?.variant === undefined" }],
+        [7, 18, { suggest: ["item?.purgedAt === null"] }],
+        [8, 18, { suggest: ["photo?.purgedAt === null"] }],
+        [9, 18, { suggest: ["photo?.purgedAt === null"] }],
+        [10, 18, { fix: "photo?.purgedAt" }],
+      ]);
+    });
+
     // TypeScript 7 treats `/** @type {T} */ (e)` in JavaScript as `(e as T)`.
     describe("a JSDoc cast", () => {
       const project = {

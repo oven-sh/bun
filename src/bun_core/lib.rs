@@ -624,8 +624,8 @@ pub mod build_options {
 // ── re-exports (the tier-0 surface downstream crates need) ────────────────
 pub use bun_alloc::oom_from_alloc;
 pub use bun_alloc::{
-    Alignment, AllocError, Allocator, is_slice_in_buffer, is_slice_in_buffer_t, out_of_memory,
-    page_size, range_of_slice_in_buffer,
+    AllocError, Allocator, is_slice_in_buffer, is_slice_in_buffer_t, out_of_memory, page_size,
+    range_of_slice_in_buffer,
 };
 // FFI ABI-safety primitives — `bun_opaque` is the zero-dep `#![no_std]` crate
 // that hosts both the opaque-handle macro and the layout-assert macro, so all

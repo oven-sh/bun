@@ -422,6 +422,311 @@ describe("bundler", () => {
     },
   });
 
+  // A "browser" key spelled with the node: prefix applies to an import spelled
+  // with it, as in esbuild. It wins over a bare key for the same builtin.
+  const shim = (id: string) => /* js */ `module.exports = { id: "shimmed-${id}" };`;
+  itBundled("browser/BrowserFieldNodePrefixKeyRemapsBuiltin", {
+    // The bare "events" key still covers "node:events": esbuild has no such rule.
+    skipOnEsbuild: true,
+    files: {
+      "/entry.js": /* js */ `
+        import required from "pkg";
+        import imported from "pkg/esm.mjs";
+        console.log(JSON.stringify({ ...required, imported }));
+      `,
+      "/node_modules/pkg/package.json": /* json */ `
+        {
+          "name": "pkg",
+          "main": "./index.js",
+          "browser": {
+            "node:crypto": "./crypto-shim.js",
+            "events": false
+          }
+        }
+      `,
+      "/node_modules/pkg/crypto-shim.js": shim("crypto"),
+      "/node_modules/pkg/index.js": /* js */ `
+        module.exports = {
+          required: require("node:crypto").id,
+          events: typeof require("node:events").EventEmitter,
+          url: typeof require("node:url").parse,
+        };
+      `,
+      "/node_modules/pkg/esm.mjs": /* js */ `
+        import crypto from "node:crypto";
+        export default crypto.id;
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: '{"required":"shimmed-crypto","events":"undefined","url":"function","imported":"shimmed-crypto"}',
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      assert(!out.includes("createHash"), "crypto polyfill should not be bundled when browser map remaps node:crypto");
+    },
+  });
+  itBundled("browser/BrowserFieldNodePrefixKeyDisablesBuiltin", {
+    // The default import of a disabled path is undefined. In esbuild it is an empty object.
+    skipOnEsbuild: true,
+    files: {
+      "/entry.js": /* js */ `
+        import required from "pkg";
+        import imported from "pkg/esm.mjs";
+        console.log(required, imported);
+      `,
+      "/node_modules/pkg/package.json": /* json */ `
+        {
+          "name": "pkg",
+          "main": "./index.js",
+          "browser": {
+            "node:crypto": false
+          }
+        }
+      `,
+      "/node_modules/pkg/index.js": /* js */ `
+        const nodeCrypto = require("node:crypto");
+        module.exports = typeof nodeCrypto.randomBytes;
+      `,
+      "/node_modules/pkg/esm.mjs": /* js */ `
+        import nodeCrypto from "node:crypto";
+        export default typeof nodeCrypto;
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "undefined undefined",
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      assert(!out.includes("createHash"), "crypto polyfill should not be bundled when browser:{node:crypto:false}");
+    },
+  });
+  const bothSpellings = /* js */ `
+    module.exports = {
+      prefixed: String(require("node:crypto").id),
+      bare: String(require("crypto").id),
+    };
+  `;
+  itBundled("browser/BrowserFieldNodePrefixKeyWinsOverBareKey", {
+    files: {
+      "/entry.js": /* js */ `
+        import remaps from "remaps-prefixed";
+        import disables from "disables-prefixed";
+        console.log(JSON.stringify({ remaps, disables }));
+      `,
+      "/node_modules/remaps-prefixed/package.json": /* json */ `
+        {
+          "name": "remaps-prefixed",
+          "main": "./index.js",
+          "browser": {
+            "crypto": false,
+            "node:crypto": "./crypto-shim.js"
+          }
+        }
+      `,
+      "/node_modules/remaps-prefixed/crypto-shim.js": shim("crypto"),
+      "/node_modules/remaps-prefixed/index.js": bothSpellings,
+      "/node_modules/disables-prefixed/package.json": /* json */ `
+        {
+          "name": "disables-prefixed",
+          "main": "./index.js",
+          "browser": {
+            "crypto": "./crypto-shim.js",
+            "node:crypto": false
+          }
+        }
+      `,
+      "/node_modules/disables-prefixed/crypto-shim.js": shim("crypto"),
+      "/node_modules/disables-prefixed/index.js": bothSpellings,
+    },
+    target: "browser",
+    run: {
+      stdout:
+        '{"remaps":{"prefixed":"shimmed-crypto","bare":"undefined"},"disables":{"prefixed":"undefined","bare":"shimmed-crypto"}}',
+    },
+  });
+  itBundled("browser/BrowserFieldNodePrefixKeyRemapsBuiltinWithoutPolyfill", {
+    // Without the keys "node:fs" is a stub and "node:nope" does not resolve.
+    // The "node:fs" key does not apply to "fs", which esbuild cannot resolve.
+    skipOnEsbuild: true,
+    files: {
+      "/entry.js": /* js */ `
+        import pkg from "pkg";
+        console.log(pkg.join(" "));
+      `,
+      "/node_modules/pkg/package.json": /* json */ `
+        {
+          "name": "pkg",
+          "main": "./index.js",
+          "browser": {
+            "node:fs": "./fs-shim.js",
+            "node:nope": "./nope-shim.js"
+          }
+        }
+      `,
+      "/node_modules/pkg/fs-shim.js": shim("fs"),
+      "/node_modules/pkg/nope-shim.js": shim("nope"),
+      "/node_modules/pkg/index.js": /* js */ `
+        module.exports = [require("node:fs").id, require("node:nope").id, String(require("fs").id)];
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "shimmed-fs shimmed-nope undefined",
+    },
+  });
+  itBundled("browser/BrowserFieldNodePrefixKeyWithDotSlash", {
+    // "./node:url" is the only key of this map that "node:url" can match.
+    backend: "cli",
+    files: {
+      "/entry.js": /* js */ `
+        import url from "node:url";
+        console.log(url.id);
+      `,
+      "/package.json": /* json */ `
+        { "browser": { "./node:url": "./url-shim.js" } }
+      `,
+      "/url-shim.js": shim("url"),
+    },
+    target: "browser",
+    run: {
+      stdout: "shimmed-url",
+    },
+  });
+  itBundled("browser/BrowserFieldNodePrefixKeyToBuiltin", {
+    // A target does not get a polyfill. The same holds for a bare key.
+    skipOnEsbuild: true,
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("node:url"));
+      `,
+      "/package.json": /* json */ `
+        { "browser": { "node:url": "node:path" } }
+      `,
+    },
+    target: "browser",
+    bundleErrors: {
+      "/entry.js": [
+        `Browser build cannot require() Node.js builtin: "node:url". To use Node.js builtins, set target to 'node' or 'bun'`,
+      ],
+    },
+  });
+  itBundled("browser/BrowserFieldNodePrefixKeyToInstalledPackage", {
+    // The target is an installed package, and its own "browser" map applies to it.
+    files: {
+      "/entry.js": /* js */ `
+        import required from "pkg";
+        import imported from "pkg/esm.mjs";
+        console.log(required, imported);
+      `,
+      "/node_modules/pkg/package.json": /* json */ `
+        {
+          "name": "pkg",
+          "main": "./index.js",
+          "browser": {
+            "node:stream": "stream-for-browsers"
+          }
+        }
+      `,
+      "/node_modules/pkg/index.js": /* js */ `
+        module.exports = require("node:stream").id;
+      `,
+      "/node_modules/pkg/esm.mjs": /* js */ `
+        import stream from "node:stream";
+        export default stream.id;
+      `,
+      "/node_modules/stream-for-browsers/package.json": /* json */ `
+        {
+          "name": "stream-for-browsers",
+          "main": "./node.js",
+          "browser": {
+            "./node.js": "./browser.js"
+          }
+        }
+      `,
+      "/node_modules/stream-for-browsers/node.js": /* js */ `module.exports = { id: "installed-node" };`,
+      "/node_modules/stream-for-browsers/browser.js": /* js */ `module.exports = { id: "installed-browser" };`,
+    },
+    target: "browser",
+    run: {
+      stdout: "installed-browser installed-browser",
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      assert(!out.includes("Readable"), "stream polyfill should not be bundled when browser map remaps node:stream");
+    },
+  });
+  itBundled("browser/BrowserFieldNodePrefixKeyToInstalledPackageNamedLikeBuiltin", {
+    // The target "buffer" is the installed package. The import of "buffer" is
+    // still the polyfill, where esbuild takes the installed package.
+    skipOnEsbuild: true,
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("node:buffer").id, typeof require("buffer").Buffer);
+      `,
+      "/package.json": /* json */ `
+        { "browser": { "node:buffer": "buffer" } }
+      `,
+      "/node_modules/buffer/package.json": /* json */ `
+        { "name": "buffer", "main": "./index.js" }
+      `,
+      "/node_modules/buffer/index.js": /* js */ `module.exports = { id: "installed-buffer" };`,
+    },
+    target: "browser",
+    run: {
+      stdout: "installed-buffer function",
+    },
+  });
+  itBundled("browser/BrowserFieldNodePrefixKeyToModuleWithoutExport", {
+    // The import links against the target, as for a bare key.
+    files: {
+      "/entry.js": /* js */ `
+        import { mkdirSync } from "node:fs";
+        console.log(typeof mkdirSync);
+      `,
+      "/package.json": /* json */ `
+        { "browser": { "node:fs": "./fs-for-browsers.js" } }
+      `,
+      "/fs-for-browsers.js": /* js */ `
+        export const readFileSync = () => "";
+      `,
+    },
+    target: "browser",
+    bundleErrors: {
+      "/entry.js": [`No matching export in "fs-for-browsers.js" for import "mkdirSync"`],
+    },
+  });
+  itBundled("browser/BrowserFieldNodePrefixKeyExternal", {
+    // An "external" name wins over the key. The bare name "crypto" covers the
+    // import of "node:crypto" too, as it does when only the bare key matches.
+    files: {
+      "/entry.js": /* js */ `
+        import crypto from "node:crypto";
+        import url from "node:url";
+        console.log(typeof crypto.randomBytes, typeof url.parse);
+      `,
+      "/package.json": /* json */ `
+        {
+          "browser": {
+            "crypto": false,
+            "node:crypto": false,
+            "node:url": false
+          }
+        }
+      `,
+    },
+    target: "browser",
+    external: ["crypto", "node:url"],
+    onAfterBundle(api) {
+      const imports = new Bun.Transpiler().scanImports(api.readFile("/out.js"));
+      expect(imports).toEqual([
+        { kind: "import-statement", path: "node:crypto" },
+        { kind: "import-statement", path: "node:url" },
+      ]);
+    },
+  });
+
   // An entry point the "browser" field maps to false has nothing to bundle.
   // This used to reach the linker with zero entry points and crash
   // ("index out of bounds" in generateChunksInParallel); with a second, live

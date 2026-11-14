@@ -2295,6 +2295,8 @@ impl<'a> Resolver<'a> {
         }
 
         if check_package {
+            // `--external x` also covers `node:x` after a "browser" map key matched it as written.
+            let mut bare_external_name = None;
             if self.opts.polyfill_node_globals {
                 let had_node_prefix = import_path.starts_with(b"node:");
                 let import_path_without_node_prefix: &[u8] = if had_node_prefix {
@@ -2303,24 +2305,30 @@ impl<'a> Resolver<'a> {
                     import_path
                 };
 
-                // The importer's package.json "browser" map wins over the builtin
-                // polyfill. The lookup uses the bare name so it matches the same
-                // spellings the polyfill table below does.
-                let browser_map_overrides_builtin = self.care_about_browser_field
-                    && matches!(self.dir_info_cached(source_dir), Ok(Some(info))
-                    if info
-                        .get_enclosing_browser_scope()
-                        .is_some_and(|scope| {
-                            self.check_browser_map::<{ BrowserMapPathKind::PackagePath }>(
-                                &scope,
-                                import_path_without_node_prefix,
-                            )
+                // The importer's "browser" map wins over the builtin: the key as written, then the bare key.
+                let browser_map_name = if self.care_about_browser_field
+                    && let Ok(Some(info)) = self.dir_info_cached(source_dir)
+                    && let Some(scope) = info.get_enclosing_browser_scope()
+                {
+                    let mut has_key = |name: &[u8]| {
+                        self.check_browser_map::<{ BrowserMapPathKind::PackagePath }>(&scope, name)
                             .is_some()
-                        }));
+                    };
+                    if had_node_prefix && has_key(import_path) {
+                        bare_external_name = Some(import_path_without_node_prefix);
+                        Some(import_path)
+                    } else if has_key(import_path_without_node_prefix) {
+                        Some(import_path_without_node_prefix)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
 
-                if browser_map_overrides_builtin {
-                    // check_package_path re-runs this lookup; give it the bare name.
-                    import_path = import_path_without_node_prefix;
+                if let Some(name) = browser_map_name {
+                    // `--external` and check_package_path, which re-runs this lookup, use this name.
+                    import_path = name;
                 } else {
                     result.jsx = self.opts.jsx.clone();
 
@@ -2398,7 +2406,11 @@ impl<'a> Resolver<'a> {
                     // If the module "foo" has been marked as external, we also want to treat
                     // paths into that module such as "foo/bar" as external too.
                     let Some(slash) = strings::last_index_of_char(query, b'/') else {
-                        break;
+                        let Some(bare_name) = bare_external_name.take() else {
+                            break;
+                        };
+                        query = bare_name;
+                        continue;
                     };
                     query = &query[0..slash];
                 }

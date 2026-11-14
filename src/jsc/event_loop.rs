@@ -1482,6 +1482,7 @@ pub(crate) fn get_active_tasks(
         concurrent_ref: event_loop.concurrent_ref.load(Ordering::SeqCst),
         num_polls,
         iteration: event_loop.usockets_loop().iteration_number(),
+        tickets_outstanding: vm_ref.handle_ref().tickets_outstanding() as usize,
     }
 }
 

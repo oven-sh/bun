@@ -23,7 +23,19 @@ static void count_add(atomic_count *count) { InterlockedIncrement(count); }
 static int count_get(atomic_count *count) {
   return (int)InterlockedCompareExchange(count, 0, 0);
 }
+typedef HANDLE thread_handle;
+#define THREAD_ENTRY(name) static DWORD WINAPI name(LPVOID data)
+#define THREAD_ENTRY_RETURN return 0
+static void thread_start(thread_handle *thread, LPTHREAD_START_ROUTINE entry,
+                         void *data) {
+  *thread = CreateThread(NULL, 0, entry, data, 0, NULL);
+}
+static void thread_join(thread_handle *thread) {
+  WaitForSingleObject(*thread, INFINITE);
+  CloseHandle(*thread);
+}
 #else
+#include <pthread.h>
 typedef int atomic_count;
 static void count_add(atomic_count *count) {
   __atomic_fetch_add(count, 1, __ATOMIC_SEQ_CST);
@@ -31,6 +43,14 @@ static void count_add(atomic_count *count) {
 static int count_get(atomic_count *count) {
   return __atomic_load_n(count, __ATOMIC_SEQ_CST);
 }
+typedef pthread_t thread_handle;
+#define THREAD_ENTRY(name) static void *name(void *data)
+#define THREAD_ENTRY_RETURN return NULL
+static void thread_start(thread_handle *thread, void *(*entry)(void *),
+                         void *data) {
+  pthread_create(thread, NULL, entry, data);
+}
+static void thread_join(thread_handle *thread) { pthread_join(*thread, NULL); }
 #endif
 
 enum kind {
@@ -69,6 +89,14 @@ struct closing_handle {
   napi_env env;
 };
 
+// startProducer(): a thread that calls a threadsafe function with room for
+// one call, and waits for room each time.
+struct producer {
+  thread_handle thread;
+  napi_threadsafe_function function;
+  atomic_count calls;
+};
+
 // The callbacks that callFunctionFromCallbacks() makes call into JavaScript.
 enum caller {
   caller_finalizer,
@@ -97,13 +125,28 @@ struct state {
   napi_ref function;
   bool called[caller_count];
   int call_status[caller_count];
-  // createThreadsafeFunction()
+  // createThreadsafeFunction(): the function, and whether the addon still has
+  // its reference to it.
   napi_threadsafe_function threadsafe_function;
+  bool holds_threadsafe_function;
   int queued_calls;
   int delivered_calls;
+  // callThreadsafeFunction(count, true): the first call aborts the function.
+  bool aborts_in_call;
+  // requeueInCall(count): how many more calls queue the next call. -1: each.
+  int requeues_left;
+  bool requeues;
   // callThreadsafeFunctionInFinalizer()
   bool called_in_finalizer;
   int status_in_finalizer;
+  // callThreadsafeFunctionInCleanupHook()
+  bool calls_in_cleanup_hook;
+  bool cleanup_hook_ran;
+  // createThreadsafeFunctionInFinalizer()
+  bool created_in_finalizer;
+  int status_of_creation;
+  // startProducer()
+  struct producer *producer;
 };
 
 // What a finalize callback gets: as `data`, or as `hint` when `data` is the
@@ -121,10 +164,16 @@ struct value {
   bool posts;
   // callThreadsafeFunctionInFinalizer(): the finalizer calls the function.
   bool calls_threadsafe_function;
+  // createThreadsafeFunctionInFinalizer(): the finalizer creates a function.
+  bool creates_threadsafe_function;
+  // startProducer(): the finalizer joins the thread.
+  struct producer *producer;
   char bytes[8];
 };
 
 static void uv_handle_closed(uv_handle_t *handle);
+static void call_js(napi_env env, napi_value js_callback, void *context,
+                    void *data);
 #ifdef NAPI_EXPERIMENTAL
 static void finalize_posted(napi_env env, void *data, void *hint);
 #endif
@@ -149,6 +198,8 @@ static void call_function(napi_env env, struct state *state,
   napi_get_reference_value(env, state->function, &function);
   napi_get_undefined(env, &receiver);
   state->called[caller] = true;
+  // The function can end the process.
+  state->call_status[caller] = -1;
   state->call_status[caller] =
       (int)napi_call_function(env, receiver, function, 0, NULL, NULL);
   napi_close_handle_scope(env, scope);
@@ -178,7 +229,24 @@ static void finalize(node_api_basic_env env, void *data, void *hint) {
       }
       napi_release_threadsafe_function(state->threadsafe_function,
                                        napi_tsfn_release);
+      state->holds_threadsafe_function = false;
     }
+#ifndef NAPI_EXPERIMENTAL
+    if (value->creates_threadsafe_function) {
+      napi_handle_scope scope;
+      napi_open_handle_scope(env, &scope);
+      napi_value name;
+      napi_create_string_utf8(env, "late", NAPI_AUTO_LENGTH, &name);
+      napi_threadsafe_function function = NULL;
+      state->created_in_finalizer = true;
+      state->status_of_creation = (int)napi_create_threadsafe_function(
+          env, NULL, NULL, name, 0, 1, NULL, NULL, state, call_js, &function);
+      if (function) {
+        napi_release_threadsafe_function(function, napi_tsfn_abort);
+      }
+      napi_close_handle_scope(env, scope);
+    }
+#endif
   } else {
     printf("%s finalized after the instance data finalizer\n",
            kind_names[value->kind]);
@@ -189,6 +257,13 @@ static void finalize(node_api_basic_env env, void *data, void *hint) {
   }
   if (value->closing) {
     uv_close((uv_handle_t *)&value->closing->handle, uv_handle_closed);
+  }
+  if (value->producer) {
+    thread_join(&value->producer->thread);
+    free(value->producer);
+    if (state) {
+      state->producer = NULL;
+    }
   }
 #ifdef NAPI_EXPERIMENTAL
   if (value->posts) {
@@ -241,8 +316,15 @@ static void finalize_instance_data(napi_env env, void *data, void *hint) {
     printf("threadsafe function: the call from a finalizer returned %d\n",
            state->status_in_finalizer);
   }
+  if (state->created_in_finalizer) {
+    printf("threadsafe function: its creation in a finalizer returned %d\n",
+           state->status_of_creation);
+  }
   for (int caller = 0; caller < caller_count; caller++) {
-    if (state->called[caller]) {
+    if (state->called[caller] && state->call_status[caller] == -1) {
+      printf("a call into JavaScript from %s did not return\n",
+             caller_names[caller]);
+    } else if (state->called[caller]) {
       printf("a call into JavaScript from %s returned %d\n",
              caller_names[caller], state->call_status[caller]);
     }
@@ -279,6 +361,16 @@ static void cleanup_hook(void *data) {
            "it\n",
            state->delivered_calls, state->queued_calls);
   }
+  if (state->calls_in_cleanup_hook) {
+    napi_status status = napi_call_threadsafe_function(
+        state->threadsafe_function, NULL, napi_tsfn_nonblocking);
+    if (status == napi_ok) {
+      state->queued_calls++;
+    }
+    printf("cleanup hook: its call of the threadsafe function returned %d\n",
+           (int)status);
+  }
+  state->cleanup_hook_ran = true;
   fflush(stdout);
 }
 
@@ -483,36 +575,100 @@ static napi_value close_uv_handle_in_finalizer(napi_env env,
   return create_value(env, kind_external, value);
 }
 
+// Releases the reference that the addon has to the function, if it is left.
+static void release_threadsafe_function(struct state *state) {
+  if (state->holds_threadsafe_function) {
+    state->holds_threadsafe_function = false;
+    napi_release_threadsafe_function(state->threadsafe_function,
+                                     napi_tsfn_release);
+  }
+}
+
 static void call_js(napi_env env, napi_value js_callback, void *context,
                     void *data) {
   struct state *state = env ? get_state(env) : NULL;
   if (state) {
     state->delivered_calls++;
     report(state, "threadsafe function: call ran");
+    if (state->aborts_in_call) {
+      state->aborts_in_call = false;
+      napi_release_threadsafe_function(state->threadsafe_function,
+                                       napi_tsfn_abort);
+      state->holds_threadsafe_function = false;
+    }
+    if (state->requeues_left != 0) {
+      if (state->requeues_left > 0) {
+        state->requeues_left--;
+      }
+      if (napi_call_threadsafe_function(state->threadsafe_function, NULL,
+                                        napi_tsfn_nonblocking) == napi_ok) {
+        state->queued_calls++;
+      }
+    } else if (state->requeues) {
+      release_threadsafe_function(state);
+    }
   } else {
     printf("threadsafe function called %s\n",
            env ? "after the instance data finalizer" : "without an env");
     fflush(stdout);
+    // Without an env, the function is closing and the instance data is still
+    // there: the context is the instance data.
+    if (!env) {
+      release_threadsafe_function(context);
+    }
   }
 }
 
 // createThreadsafeFunction(): the function does not keep the loop alive. The
-// addon holds one reference to it, which callThreadsafeFunction() or the
-// finalizer of callThreadsafeFunctionInFinalizer() releases.
+// addon holds one reference to it, which callThreadsafeFunction(), an abort
+// in call_js, or the finalizer of callThreadsafeFunctionInFinalizer() releases.
+// After requeueInCall() the addon keeps the reference: a function without one
+// closes when its queue is empty. Then the call that queues no other call
+// releases it, or a call that comes back without an env.
 static napi_value create_threadsafe_function(napi_env env,
                                              napi_callback_info info) {
   struct state *state = get_state(env);
   napi_value name;
   napi_create_string_utf8(env, "calls", NAPI_AUTO_LENGTH, &name);
-  napi_create_threadsafe_function(env, NULL, NULL, name, 0, 1, NULL, NULL, NULL,
-                                  call_js, &state->threadsafe_function);
+  napi_create_threadsafe_function(env, NULL, NULL, name, 0, 1, NULL, NULL,
+                                  state, call_js, &state->threadsafe_function);
   napi_unref_threadsafe_function(env, state->threadsafe_function);
+  state->holds_threadsafe_function = true;
   return NULL;
 }
 
-// callThreadsafeFunction(count: number): queues `count` calls.
+// callThreadsafeFunction(count: number, abortsInCall?: boolean): queues `count`
+// calls. With `abortsInCall`, the first call that runs aborts the function,
+// and the addon gets the other calls back without an env.
 static napi_value call_threadsafe_function(napi_env env,
                                            napi_callback_info info) {
+  size_t argc = 2;
+  napi_value argv[2];
+  napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+  uint32_t count = 0;
+  napi_get_value_uint32(env, argv[0], &count);
+  struct state *state = get_state(env);
+  if (argc > 1) {
+    napi_get_value_bool(env, argv[1], &state->aborts_in_call);
+  }
+  for (uint32_t i = 0; i < count; i++) {
+    napi_call_threadsafe_function(state->threadsafe_function, NULL,
+                                  napi_tsfn_nonblocking);
+    state->queued_calls++;
+  }
+  // The abort releases the reference.
+  if (!state->aborts_in_call && !state->requeues_left) {
+    napi_release_threadsafe_function(state->threadsafe_function,
+                                     napi_tsfn_release);
+    state->holds_threadsafe_function = false;
+  }
+  return NULL;
+}
+
+// abortThreadsafeFunction(count: number): queues `count` calls, then aborts
+// the function. The addon gets the calls back without an env.
+static napi_value abort_threadsafe_function(napi_env env,
+                                            napi_callback_info info) {
   size_t argc = 1;
   napi_value argv[1];
   napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
@@ -524,9 +680,78 @@ static napi_value call_threadsafe_function(napi_env env,
                                   napi_tsfn_nonblocking);
     state->queued_calls++;
   }
-  napi_release_threadsafe_function(state->threadsafe_function,
-                                   napi_tsfn_release);
+  napi_release_threadsafe_function(state->threadsafe_function, napi_tsfn_abort);
+  state->holds_threadsafe_function = false;
   return NULL;
+}
+
+// requeueInCall(count: number): each of the next `count` calls that run
+// queues one more call. With -1, every call does.
+static napi_value requeue_in_call(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value argv[1];
+  napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+  struct state *state = get_state(env);
+  napi_get_value_int32(env, argv[0], &state->requeues_left);
+  state->requeues = true;
+  return NULL;
+}
+
+// callThreadsafeFunctionInCleanupHook(): the cleanup hook of
+// reportCleanupHook() calls the function, and prints the status.
+static napi_value
+call_threadsafe_function_in_cleanup_hook(napi_env env,
+                                         napi_callback_info info) {
+  get_state(env)->calls_in_cleanup_hook = true;
+  return NULL;
+}
+
+THREAD_ENTRY(produce) {
+  struct producer *producer = data;
+  for (;;) {
+    napi_status status = napi_call_threadsafe_function(producer->function, NULL,
+                                                       napi_tsfn_blocking);
+    if (status != napi_ok) {
+      // napi_closing takes the reference of this thread.
+      if (status != napi_closing) {
+        napi_release_threadsafe_function(producer->function, napi_tsfn_release);
+      }
+      THREAD_ENTRY_RETURN;
+    }
+    count_add(&producer->calls);
+  }
+}
+
+static void produced(napi_env env, napi_value js_callback, void *context,
+                     void *data) {
+  struct state *state = env ? get_state(env) : NULL;
+  if (state && state->cleanup_hook_ran) {
+    printf("producer: a call ran with an env after the cleanup hook\n");
+    fflush(stdout);
+  }
+}
+
+// startProducer(): a wrapped object whose finalizer joins a thread. The thread
+// calls a threadsafe function with room for one call until a call fails.
+static napi_value start_producer(napi_env env, napi_callback_info info) {
+  struct producer *producer = calloc(1, sizeof(*producer));
+  napi_value name;
+  napi_create_string_utf8(env, "producer", NAPI_AUTO_LENGTH, &name);
+  napi_create_threadsafe_function(env, NULL, NULL, name, 1, 1, NULL, NULL, NULL,
+                                  produced, &producer->function);
+  napi_unref_threadsafe_function(env, producer->function);
+  thread_start(&producer->thread, produce, producer);
+  struct value *value = calloc(1, sizeof(*value));
+  value->producer = producer;
+  get_state(env)->producer = producer;
+  return create_value(env, kind_wrap, value);
+}
+
+// producerCalls(): how many calls of the producer the function has taken.
+static napi_value producer_calls(napi_env env, napi_callback_info info) {
+  napi_value result;
+  napi_create_int32(env, count_get(&get_state(env)->producer->calls), &result);
+  return result;
 }
 
 // callThreadsafeFunctionInFinalizer(): an external whose finalizer calls the
@@ -535,6 +760,15 @@ static napi_value
 call_threadsafe_function_in_finalizer(napi_env env, napi_callback_info info) {
   struct value *value = calloc(1, sizeof(*value));
   value->calls_threadsafe_function = true;
+  return create_value(env, kind_external, value);
+}
+
+// createThreadsafeFunctionInFinalizer(): an external whose finalizer creates
+// a threadsafe function. The instance data finalizer prints the status.
+static napi_value
+create_threadsafe_function_in_finalizer(napi_env env, napi_callback_info info) {
+  struct value *value = calloc(1, sizeof(*value));
+  value->creates_threadsafe_function = true;
   return create_value(env, kind_external, value);
 }
 
@@ -610,6 +844,15 @@ NAPI_MODULE_INIT(/* napi_env env, napi_value exports */) {
                   call_threadsafe_function);
   export_function(env, exports, "callThreadsafeFunctionInFinalizer",
                   call_threadsafe_function_in_finalizer);
+  export_function(env, exports, "createThreadsafeFunctionInFinalizer",
+                  create_threadsafe_function_in_finalizer);
+  export_function(env, exports, "abortThreadsafeFunction",
+                  abort_threadsafe_function);
+  export_function(env, exports, "requeueInCall", requeue_in_call);
+  export_function(env, exports, "callThreadsafeFunctionInCleanupHook",
+                  call_threadsafe_function_in_cleanup_hook);
+  export_function(env, exports, "startProducer", start_producer);
+  export_function(env, exports, "producerCalls", producer_calls);
 #ifdef NAPI_EXPERIMENTAL
   export_function(env, exports, "createWrapThatPosts", create_wrap_that_posts);
   export_function(env, exports, "post", post);

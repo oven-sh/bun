@@ -12,6 +12,7 @@ export const ActiveTasks = b.dictionary({
   concurrentRef: b.i32,
   numPolls: b.i32,
   iteration: b.u64,
+  ticketsOutstanding: b.usize,
 });
 
 export const getActiveTasks = b.fn({ returns: ActiveTasks, capability: "heap" });

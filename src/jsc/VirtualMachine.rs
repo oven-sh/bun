@@ -523,6 +523,8 @@ unsafe extern "C" {
     safe fn Bun__closeAllNodeSqliteDatabasesForTermination(global: &JSGlobalObject);
     safe fn Bun__WebView__closeAllForTermination();
     safe fn Zig__GlobalObject__prepareForDestruction(global: &JSGlobalObject);
+    /// `ThreadSafeFunction::deliver_at_exit` for each threadsafe function of each Node-API env of `global`. Returns how many calls ran. An addon that a ShadowRealm loaded has its env on another global: its calls run at the env's teardown, as before.
+    safe fn Bun__napi_deliver_threadsafe_function_calls(global: &JSGlobalObject) -> usize;
     safe fn Zig__GlobalObject__forbidExecution(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__retireForTestIsolation(global: &JSGlobalObject);
@@ -2311,10 +2313,10 @@ impl VirtualMachine {
         self.will_run_queued_addon_callbacks.get()
     }
 
-    /// Node runs an addon's queued finalizers, async work completions and `uv_close` callbacks before its cleanup hooks (`CleanupHandles()`, https://github.com/nodejs/node/blob/v26.3.0/src/env.cc#L1323-L1344). Here the loops release them.
+    /// Node runs an addon's queued finalizers, async work completions, `uv_close` callbacks and threadsafe function calls in its first `CleanupHandles()`, before the cleanup hooks (https://github.com/nodejs/node/blob/v26.3.0/src/env.cc#L1329). Here the loops release them, then the threadsafe functions deliver their queues. What a cleanup hook queues is not released here.
     fn run_queued_addon_callbacks(&self) {
         use bun_event_loop::task_tag;
-        // Only the tags whose `release_unrun` runs the addon's callback. A threadsafe function delivers its own queue (`NapiEnv::cleanup`), and a release of `uv_async_send` or `uv_queue_work` runs none.
+        // Only the tags whose `release_unrun` runs the addon's callback. A threadsafe function has a queue of its own, and a release of `uv_async_send` or `uv_queue_work` runs no callback.
         const TAGS: [bun_event_loop::TaskTag; 3] = [
             task_tag::NapiFinalizerTask,
             task_tag::NapiAsyncWork,
@@ -2324,10 +2326,14 @@ impl VirtualMachine {
         let has_hooks =
             (self.rare_data.get()).is_some_and(|rare| !rare.cleanup_hooks.get().is_empty());
         if has_hooks {
-            while self.regular_event_loop.release_queued_tasks_tagged(&TAGS)
-                + self.macro_event_loop.release_queued_tasks_tagged(&TAGS)
-                != 0
-            {}
+            loop {
+                let released = self.regular_event_loop.release_queued_tasks_tagged(&TAGS)
+                    + self.macro_event_loop.release_queued_tasks_tagged(&TAGS);
+                // A callback can queue a call, and a call can queue a callback.
+                if released + Bun__napi_deliver_threadsafe_function_calls(self.global()) == 0 {
+                    break;
+                }
+            }
         }
         self.will_run_queued_addon_callbacks.set(false);
     }
@@ -2535,7 +2541,7 @@ impl VirtualMachine {
             // SAFETY: fn contract.
             let _ = unsafe { Self::stop_phase_sweep(this, kind) };
         });
-        // Node-API finalizers that `NapiEnv::cleanup` held back for an `execute()` on the pool or for a `complete()` that had not run. The walk also runs what they queue.
+        // Node-API finalizers that `NapiEnv::cleanup` held back for an `execute()` on the pool or for a `complete()` that had not begun. The walk also runs what they queue.
         if let Some(rare) = vm.rare_data.get() {
             let held_back = rare.cleanup_hooks_after_teardown_wait.take();
             rare.cleanup_hooks.with_mut(|hooks| hooks.extend(held_back));

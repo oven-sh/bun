@@ -91,7 +91,13 @@ async function run(exe: string, code: string, env: Record<string, string> = {}) 
 function scripts(target: string) {
   const prelude = `
     const collect = () => (typeof Bun === "object" ? Bun.gc(true) : global.gc());
-    const wait = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+    // Bun's thread pool holds a ticket of the VM until it has posted the completion of async work. Node waits for
+    // the work when it tears the env down.
+    const untilPosted = () => {
+      if (typeof Bun !== "object") return;
+      const { getEventLoopStats } = require("bun:internal-for-testing");
+      while (getEventLoopStats().ticketsOutstanding > 0);
+    };
     const addon = require(${JSON.stringify(addonPath(target))});
     const create = () => ${JSON.stringify(everyKind)}.map(kind => addon.create(kind, 3));
   `;
@@ -139,7 +145,9 @@ function onlyBun(rows: Row[]) {
 }
 
 // Not covered: the callbacks of uv_queue_work and uv_async_send, which Bun drops at the exit, and the finalizer of a
-// value that is alive at the exit.
+// value that is alive at the exit. Also not covered: a queued finalizer or completion that joins a thread which ends
+// only when a call of its threadsafe function returns napi_closing. The functions are open then, as in Node, and the
+// join does not return, in Node or in Bun.
 describe.skipIf(!canBuildNodeAddons())(
   "finalizers, completions, uv_close callbacks and threadsafe function calls that are queued when a VM exits run before the cleanup of the env",
   () => {
@@ -148,9 +156,7 @@ describe.skipIf(!canBuildNodeAddons())(
       const created = `addon.reportCleanupHook(); let values = create();`;
       const collected = created + ` values = null; collect();`;
       const queuedWork = `addon.queueWork(); while (!addon.workExecuted());`;
-      // The thread pool posts the completion after execute() has returned, and nothing tells the addon that it has.
-      // The script gives it 100 ms.
-      const completedWork = queuedWork + ` wait(100);`;
+      const completedWork = queuedWork + ` untilPosted();`;
       const everyValue = [hook(3 * everyKind.length), ...finalized(everyKind)];
       const completion = [
         "cleanup hook: async work completed before it",
@@ -165,6 +171,7 @@ describe.skipIf(!canBuildNodeAddons())(
         `threadsafe function: ${count} of ${count} calls delivered before the instance data finalizer`,
       ];
       const writesALine = `() => require("node:fs").writeSync(1, "a JavaScript function ran\\n")`;
+      const threadsafeFunction = `addon.reportCleanupHook(); addon.createThreadsafeFunction();`;
 
       likeNode([
         {
@@ -223,24 +230,123 @@ describe.skipIf(!canBuildNodeAddons())(
           ],
           todoOnWindows: true,
         },
+        ...[
+          ["when a Worker exits", `process.exit(0);`],
+          ["before worker.terminate()", untilTerminated],
+        ].flatMap(([when, exit]) => [
+          {
+            name: `threadsafe function calls that are queued ${when}`,
+            code: inWorker(`${threadsafeFunction} addon.callThreadsafeFunction(3); ${exit}`),
+            stdout: calls(3),
+          },
+          {
+            // The addon gets the two other calls back without an env.
+            name: `a queued threadsafe function call that aborts the function ${when}`,
+            code: inWorker(`${threadsafeFunction} addon.callThreadsafeFunction(3, true); ${exit}`),
+            stdout: [
+              "threadsafe function called without an env",
+              "threadsafe function called without an env",
+              "cleanup hook: 1 of 3 threadsafe function calls delivered before it",
+              "threadsafe function: 1 of 3 calls delivered before the instance data finalizer",
+            ],
+          },
+          {
+            // The addon gets the calls back without an env, before the cleanup hooks.
+            name: `threadsafe function calls that are queued behind an abort ${when}`,
+            code: inWorker(`${threadsafeFunction} addon.abortThreadsafeFunction(3); ${exit}`),
+            stdout: [
+              "threadsafe function called without an env",
+              "threadsafe function called without an env",
+              "threadsafe function called without an env",
+              "cleanup hook: 0 of 3 threadsafe function calls delivered before it",
+              "threadsafe function: 0 of 3 calls delivered before the instance data finalizer",
+            ],
+          },
+          {
+            name: `a threadsafe function that a queued finalizer calls ${when}`,
+            code: inWorker(`${threadsafeFunction} addon.callThreadsafeFunctionInFinalizer(); collect(); ${exit}`),
+            stdout: [
+              hook(1),
+              calls(1)[0],
+              ...finalized(["external"], 1),
+              calls(1)[1],
+              "threadsafe function: the call from a finalizer returned 0",
+            ],
+          },
+        ]),
         {
-          name: "threadsafe function calls that are queued when a Worker exits",
+          name: "a threadsafe function call that queues the next call when a Worker exits",
           code: inWorker(
-            `addon.reportCleanupHook(); addon.createThreadsafeFunction(); addon.callThreadsafeFunction(3); process.exit(0);`,
+            `${threadsafeFunction} addon.requeueInCall(4); addon.callThreadsafeFunction(1); process.exit(0);`,
+          ),
+          stdout: calls(5),
+        },
+        {
+          // The hook is newer than the function, so Node runs it while the function is open. The call comes back
+          // without an env when the function closes.
+          name: "a threadsafe function that a cleanup hook calls when a Worker exits",
+          code: inWorker(
+            `addon.createThreadsafeFunction(); addon.callThreadsafeFunctionInCleanupHook(); addon.reportCleanupHook(); process.exit(0);`,
+          ),
+          stdout: [
+            "cleanup hook: its call of the threadsafe function returned 0",
+            "threadsafe function called without an env",
+            "threadsafe function: 0 of 1 calls delivered before the instance data finalizer",
+          ],
+        },
+        {
+          name: "threadsafe function calls that are queued when an unhandled rejection ends a Worker",
+          code: inWorker(
+            `${threadsafeFunction} addon.callThreadsafeFunction(3); Promise.reject(new Error("unhandled"));`,
           ),
           stdout: calls(3),
         },
         {
-          name: "a threadsafe function that a queued finalizer calls when a Worker exits",
+          name: "values, async work and threadsafe function calls that are queued when an uncaught exception ends a Worker",
           code: inWorker(
-            `addon.reportCleanupHook(); addon.createThreadsafeFunction(); addon.callThreadsafeFunctionInFinalizer(); collect(); process.exit(0);`,
+            `${created} addon.createThreadsafeFunction(); setImmediate(() => { values = null; collect(); addon.callThreadsafeFunction(3); ${completedWork} throw new Error("uncaught"); });`,
+          ),
+          stdout: [hook(24), completion[0], calls(3)[0], ...finalized(everyKind), completion[1], calls(3)[1]],
+        },
+        {
+          // Node runs the queued finalizers first, then turns its loop: the close callbacks, the completions of the
+          // thread pool, then the calls of the threadsafe functions.
+          name: "the order of the callbacks that are queued when a Worker exits",
+          code: inWorker(
+            `addon.reportEveryCallback(); addon.createThreadsafeFunction(); addon.closeUvHandle(); ${completedWork} let values = addon.create("external", 1); values = null; collect(); addon.callThreadsafeFunction(2); process.exit(0);`,
           ),
           stdout: [
-            hook(1),
-            calls(1)[0],
+            "external finalizer ran",
+            "uv handle: close callback ran",
+            "async work: complete ran",
+            "threadsafe function: call ran",
+            "threadsafe function: call ran",
             ...finalized(["external"], 1),
-            calls(1)[1],
-            "threadsafe function: the call from a finalizer returned 0",
+            completion[1],
+            closedHandle[1],
+            calls(2)[1],
+          ],
+          todoOnWindows: true,
+        },
+        {
+          // Node delivers the queued calls of every env before the cleanup hooks of any env.
+          name: "threadsafe function calls of two addons that are queued when a Worker exits",
+          code: inWorker(`
+            const second = require(${JSON.stringify(addonPath(targets[1]))});
+            addon.reportCleanupHook();
+            second.reportEveryCallback();
+            for (const each of [addon, second]) {
+              each.createThreadsafeFunction();
+              each.callThreadsafeFunction(3);
+            }
+            process.exit(0);
+          `),
+          stdout: [
+            "threadsafe function: call ran",
+            "threadsafe function: call ran",
+            "threadsafe function: call ran",
+            ...calls(3),
+            calls(3)[1],
           ],
         },
         {
@@ -269,6 +375,44 @@ describe.skipIf(!canBuildNodeAddons())(
 
       onlyBun([
         {
+          // Node stops at a count of its own. The call that is left comes back without an env.
+          name: "a threadsafe function call that always queues the next call when a Worker exits",
+          code: inWorker(
+            `${threadsafeFunction} addon.requeueInCall(-1); addon.callThreadsafeFunction(1); process.exit(0);`,
+          ),
+          stdout: [
+            "cleanup hook: 1001 of 1002 threadsafe function calls delivered before it",
+            "threadsafe function called without an env",
+            "threadsafe function: 1001 of 1002 calls delivered before the instance data finalizer",
+          ],
+        },
+        {
+          // The status is napi_generic_failure, as after the teardown of the env: Bun closes the threadsafe functions
+          // of an env after its cleanup hooks, so a new one would stay open for each of them. Node creates it.
+          name: "a threadsafe function that a queued finalizer creates when a Worker exits",
+          code: inWorker(
+            `addon.reportCleanupHook(); addon.createThreadsafeFunctionInFinalizer(); collect(); process.exit(0);`,
+          ),
+          stdout: [
+            hook(1),
+            ...finalized(["external"], 1),
+            "threadsafe function: its creation in a finalizer returned 9",
+          ],
+        },
+        {
+          // Not a Worker: as at a process exit, the call is accepted and no call_js runs.
+          name: "a threadsafe function that a queued finalizer calls when process.exit() destroys the VM of the main thread",
+          code: script(`${threadsafeFunction} addon.callThreadsafeFunctionInFinalizer(); collect(); process.exit(0);`),
+          stdout: [
+            hook(1),
+            "cleanup hook: 0 of 1 threadsafe function calls delivered before it",
+            ...finalized(["external"], 1),
+            "threadsafe function: 0 of 1 calls delivered before the instance data finalizer",
+            "threadsafe function: the call from a finalizer returned 0",
+          ],
+          env: destruct,
+        },
+        {
           name: "values collected before process.exit() destroys the VM of the main thread",
           code: script(collected + `process.exit(0);`),
           stdout: everyValue,
@@ -281,6 +425,17 @@ describe.skipIf(!canBuildNodeAddons())(
           env: destruct,
         },
         {
+          // The exit begins inside complete(), which does not return. The work object stays allocated. The row
+          // passes on main: it guards the env's count of async work, which an assertion of debug builds checks.
+          name: "a completion that calls process.exit() when the VM of the main thread is destroyed",
+          code: script(`addon.callFunctionFromCallbacks(() => process.exit(0)); addon.queueWork();`),
+          stdout: [
+            "async work: completed before the instance data finalizer",
+            "a call into JavaScript from complete did not return",
+          ],
+          env: { ...destruct, ASAN_OPTIONS: noDestruct.ASAN_OPTIONS },
+        },
+        {
           name: "a uv handle whose close callback is queued when process.exit() destroys the VM of the main thread",
           code: script(`addon.reportCleanupHook(); addon.closeUvHandle(); process.exit(0);`),
           stdout: closedHandle,
@@ -288,6 +443,21 @@ describe.skipIf(!canBuildNodeAddons())(
           todoOnWindows: true,
         },
       ]);
+
+      // The thread calls a threadsafe function with room for one call, and waits for room each time. Its calls run
+      // with an env only before the cleanup hooks: what it queues later comes back without an env. Node delivers in
+      // the same way, but it can then deadlock: it finalizes the live wrap, whose finalizer joins the thread, while
+      // it holds the mutex of the function that the thread needs to wake. So the row runs on Bun only.
+      it("a thread that calls a threadsafe function while a Worker exits", async () => {
+        const code = inWorker(
+          `addon.reportCleanupHook(); globalThis.producer = addon.startProducer(); while (addon.producerCalls() < 1); process.exit(0);`,
+        );
+        expect(await run(bunExe(), code)).toEqual({
+          stdout: ["cleanup hook: 0 of 1 values finalized before it", ...finalized(["wrap"], 1)],
+          stderr: "",
+          exitCode: 0,
+        });
+      });
 
       // No VM teardown follows the default exit of the main thread, so the env must not wait for one. Node runs the
       // completion here and Bun does not: the row checks only that the instance data finalizer runs.

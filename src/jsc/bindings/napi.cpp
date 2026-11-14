@@ -3406,9 +3406,18 @@ extern "C" void NapiEnv__asyncWorkLeftThreadPool(napi_env env)
     env->asyncWorkLeftThreadPool();
 }
 
-extern "C" void NapiEnv__asyncWorkCompleted(napi_env env)
+extern "C" void NapiEnv__asyncWorkReachedComplete(napi_env env)
 {
-    env->asyncWorkCompleted();
+    env->asyncWorkReachedComplete();
+}
+
+extern "C" size_t Bun__napi_deliver_threadsafe_function_calls(Zig::GlobalObject* globalObject)
+{
+    size_t delivered = 0;
+    for (size_t i = 0; i < globalObject->m_napiEnvs.size(); i++) {
+        delivered += Ref { globalObject->m_napiEnvs[i] }->deliverThreadSafeFunctionCalls();
+    }
+    return delivered;
 }
 
 extern "C" void NapiEnv__runFinalizers(void* env)

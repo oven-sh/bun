@@ -1,5 +1,14 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, hideFromStackTrace, integersThatNeedRounding, isDebug, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  hideFromStackTrace,
+  integersThatNeedRounding,
+  isASAN,
+  isDebug,
+  tempDir,
+} from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -5680,6 +5689,59 @@ it("deeply nested expressions error instead of crashing the process", () => {
   expect(stdout.toString()).toBe("depth-ok\n");
   expect([exitCode, signalCode ?? undefined]).toEqual([0, undefined]);
 }, 60_000);
+
+// A chain of binary operators is not nested, however long it is. The runtime
+// transpiles the entry file on the main thread and an imported file on a pool
+// thread, both with minify-syntax.
+it.concurrent("minify-syntax takes a long chain of binary operators on every thread", async () => {
+  const links = isDebug || isASAN ? 16_000 : 250_000;
+  const calls = `(${Buffer.alloc(links * 5, "h(), ").toString()}o)`;
+  using dir = tempDir("long-binary-chain", {
+    "imported.js": `export function imported(h) { const o = { a: 1 }; return ${calls}; }`,
+    "entry.js": `
+      import { imported } from "./imported.js";
+      function entry(h) { const o = { a: 1 }; return ${calls}; }
+      const run = f => {
+        let count = 0;
+        return [f(() => count++), count];
+      };
+
+      const repeat = (fill, count) => Buffer.alloc(fill.length * count, fill).toString();
+      const transpiler = new Bun.Transpiler({ loader: "js", minify: { syntax: true } });
+      const chain = "function f(x, g) { const o = g(); return o" + repeat(" + x", ${links}) + "; }";
+      const substituted = "function f(x, g) {\\n  return g()" + repeat(" + x", ${links}) + ";\\n}\\n";
+      console.log(
+        JSON.stringify({
+          entry: run(entry),
+          imported: run(imported),
+          transformSync: transpiler.transformSync(chain) === substituted,
+          transform: (await transpiler.transform(chain)) === substituted,
+        }),
+      );
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout:
+      JSON.stringify({
+        entry: [{ a: 1 }, links],
+        imported: [{ a: 1 }, links],
+        transformSync: true,
+        transform: true,
+      }) + "\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
 
 it("moves import() and require() of a conditional into each branch", () => {
   const transpiler = new Bun.Transpiler({ loader: "js", deadCodeElimination: true });

@@ -34,8 +34,6 @@ use super::uuid::UUID;
 //
 //   - `mysql_context` / `postgresql_context` / `ssl_ctx_cache` / `editor_context`
 //     → moved to `bun_runtime::jsc_hooks::RuntimeState` (already there).
-//   - `node_fs_stat_watcher_scheduler`
-//     → erased `*mut c_void` slot; high tier lazy-inits.
 //   - the `bun test --isolate` watcher/server registries → each owner embeds
 //     a `bun_jsc::AbortHandle` armed in its `ScriptExecutionContext`.
 //   - `stdin/stdout/stderr_store` → erased `*mut blob::Store` constructed via
@@ -228,10 +226,6 @@ pub struct RareData {
     /// Held until `tls.DEFAULT_CIPHERS` is assigned so the weak-cache entry never tombstones.
     pub default_client_ssl_ctx: JsCell<Option<boring::OwnedSslCtx>>,
 
-    /// `bun_runtime::node::StatWatcherScheduler` — erased `RefPtr` payload;
-    /// lazy-init in `bun_runtime::node::node_fs_stat_watcher`.
-    pub node_fs_stat_watcher_scheduler: Cell<Option<NonNull<c_void>>>,
-
     /// `bun_runtime::node::memory_pressure::MemoryPressureWatcher` — erased
     /// `Box`; lazy-init on the first `process.on("memoryPressure", ...)` listener.
     pub memory_pressure_watcher: Cell<Option<NonNull<c_void>>>,
@@ -294,7 +288,6 @@ impl Default for RareData {
             test_parallel_ipc_group: SocketGroup::default(),
             socket_groups: SocketGroups::default(),
             default_client_ssl_ctx: JsCell::new(None),
-            node_fs_stat_watcher_scheduler: Cell::new(None),
             memory_pressure_watcher: Cell::new(None),
             listening_sockets_for_watch_mode: Mutex::new(Vec::new()),
             pipe_read_scratch: Box::new(bun_event_loop::PipeReadScratch::new()),

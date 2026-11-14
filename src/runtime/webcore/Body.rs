@@ -1008,7 +1008,7 @@ impl Value {
                                 fetch_headers.fast_get(HTTPHeaderName::ContentType)
                             {
                                 let content_slice = content_type.to_utf8();
-                                let mime_type = MimeType::init(content_slice.slice(), true, None);
+                                let mime_type = MimeType::init(content_slice.slice());
                                 set_blob_content_type(&blob, mime_type);
                             }
                         }
@@ -1933,7 +1933,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 let fetch_headers = bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
                 if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
                     let content_slice = content_type.to_utf8();
-                    let mime_type = MimeType::init(content_slice.slice(), true, None);
+                    let mime_type = MimeType::init(content_slice.slice());
                     set_blob_content_type(&blob, mime_type);
                 }
             }

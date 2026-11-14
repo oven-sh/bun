@@ -959,12 +959,12 @@ impl FSWatcher {
     }
 
     pub(crate) fn close(&self) {
-        self.mutex.lock();
+        let guard = self.mutex.lock_guard();
         if !self.closed.get() {
             self.closed.set(true);
             // Taken before `detach()` clears it: roots the wrapper while 'close' is emitted.
             let js_this = self.js_this.replace(JsRef::empty());
-            self.mutex.unlock();
+            drop(guard);
             self.detach();
 
             if let Some(js_this) = js_this.try_get() {
@@ -984,24 +984,17 @@ impl FSWatcher {
                     );
                 }
             }
-        } else {
-            self.mutex.unlock();
         }
-        // Manual lock/unlock: the lock is released
-        // before `detach()` on the not-closed path and in the else branch — every
-        // path unlocks exactly once. `ref_task` uses the RAII guard.
     }
 
     /// The watcher's context is stopping: `close()` minus the `'close'` event
     /// (no user JS then; parity with `StatWatcher::close`).
     fn close_without_event(&self) {
-        self.mutex.lock();
+        let guard = self.mutex.lock_guard();
         if !self.closed.get() {
             self.closed.set(true);
-            self.mutex.unlock();
+            drop(guard);
             self.detach();
-        } else {
-            self.mutex.unlock();
         }
     }
 

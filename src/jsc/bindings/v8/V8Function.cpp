@@ -74,7 +74,7 @@ MaybeLocal<Value> Function::Call(Local<Context> context, Local<Value> recv, int 
     }
 
     JSC::JSValue result = JSC::call(globalObject, callee, thisValue, args, "v8::Function::Call"_s);
-    RETURN_IF_EXCEPTION(scope, MaybeLocal<Value>());
+    V8_RETURN_IF_EXCEPTION(scope, MaybeLocal<Value>());
 
     return context->currentHandleScope()->createLocal<Value>(vm, result);
 }
@@ -96,7 +96,7 @@ MaybeLocal<Object> Function::NewInstance(Local<Context> context, int argc, Local
     // FunctionTemplate::functionConstruct, so JSC::construct dispatches there.
     JSC::JSValue callee = localToJSValue();
     JSC::JSObject* result = JSC::construct(globalObject, callee, args, "v8::Function::NewInstance"_s);
-    RETURN_IF_EXCEPTION(scope, MaybeLocal<Object>());
+    V8_RETURN_IF_EXCEPTION(scope, MaybeLocal<Object>());
     return context->currentHandleScope()->createLocal<Object>(vm, result);
 }
 

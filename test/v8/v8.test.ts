@@ -522,6 +522,261 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
       await checkSameOutput("test_uv_queue_work_on_current_event_loop");
     });
   });
+
+  describe("an entry that fails", () => {
+    const nextEntriesWork = [
+      "next Object::Set failed = 0",
+      "next Object::Get failed = 0",
+      "after() runs",
+      "next Function::Call failed = 0",
+    ];
+    // What one case prints: its name, the lines given here, and the entries that the addon runs next.
+    const lines = (entry: string, description: string, ...between: string[]) => [
+      `${entry} with ${description}`,
+      ...between,
+      ...nextEntriesWork,
+    ];
+    // The listener runs before the entry returns.
+    const javaScriptThrew = (entry: string, description: string, by: string) =>
+      lines(entry, description, `${by} runs`, `uncaughtException: thrown by ${by}`, `${entry} failed = 1`);
+    const engineThrew = (entry: string, description: string) =>
+      lines(entry, description, "uncaughtException: TypeError", `${entry} failed = 1`);
+    // Isolate::ThrowException runs no JavaScript. The listener runs after the addon's callback.
+    const addonThrew = (entry: string, description: string, failed: 0 | 1) => [
+      ...lines(entry, description, `${entry} failed = ${failed}`),
+      "uncaughtException: thrown by the addon",
+    ];
+
+    // Not on Windows: after_work_cb runs with no handle scope open there, as in the uv_queue_work test.
+    describe.skipIf(isWindows)("with no JavaScript below the addon", () => {
+      it("reports what Function::Call and Function::NewInstance throw, inside the call", async () => {
+        const output = await checkSameOutput("test_entries_throw_from_event_loop", '["calls"]');
+        expect(output.split(/\r?\n/)).toEqual([
+          ...javaScriptThrew("Function::Call", "a function that throws", "function"),
+          ...engineThrew("Function::Call", "a class constructor"),
+          ...javaScriptThrew("Function::NewInstance", "a constructor that throws", "constructor"),
+          ...engineThrew("Function::NewInstance", "an arrow function"),
+        ]);
+      });
+
+      it("reports what a getter, a setter, a Proxy trap and a key throw, inside the call", async () => {
+        const output = await checkSameOutput("test_entries_throw_from_event_loop", '["properties"]');
+        expect(output.split(/\r?\n/)).toEqual([
+          ...javaScriptThrew("Object::Get(key)", "a getter that throws", "getter"),
+          ...javaScriptThrew("Object::Get(key)", "a Proxy trap that throws", "get trap"),
+          ...javaScriptThrew("Object::Get(key)", "a key whose toString throws", "toString"),
+          ...javaScriptThrew("Object::Get(index)", "a getter that throws", "getter"),
+          ...javaScriptThrew("Object::Get(index)", "a Proxy trap that throws", "get trap"),
+          ...javaScriptThrew("Object::Set(key)", "a setter that throws", "setter"),
+          ...javaScriptThrew("Object::Set(key)", "a Proxy trap that throws", "set trap"),
+          ...javaScriptThrew("Object::Set(index)", "a setter that throws", "setter"),
+          ...javaScriptThrew("Object::Set(index)", "a Proxy trap that throws", "set trap"),
+          ...javaScriptThrew("Object::DefineOwnProperty", "a Proxy trap that throws", "defineProperty trap"),
+          ...javaScriptThrew("Array::Iterate", "an element getter that throws", "getter"),
+        ]);
+      });
+
+      it("reports what toString and valueOf throw, inside the conversion", async () => {
+        const output = await checkSameOutput("test_entries_throw_from_event_loop", '["conversions"]');
+        expect(output.split(/\r?\n/)).toEqual([
+          ...javaScriptThrew("Value::ToString", "a toString that throws", "toString"),
+          ...javaScriptThrew("Value::ToInt32", "a valueOf that throws", "valueOf"),
+          ...javaScriptThrew("Value::ToInteger", "a valueOf that throws", "valueOf"),
+        ]);
+      });
+
+      it("reports each of two failures in a row", async () => {
+        const output = await checkSameOutput("test_entries_throw_from_event_loop", '["oneCall", 2]');
+        const failure = ["function runs", "uncaughtException: thrown by function", "Function::Call failed = 1"];
+        expect(output.split(/\r?\n/)).toEqual(
+          lines("Function::Call", "a function that throws", ...failure, ...failure),
+        );
+      });
+
+      it("node::MakeCallback reports what the callback throws and returns undefined", async () => {
+        const output = await checkSameOutput("test_entries_throw_from_event_loop", '["makeCallback"]');
+        expect(output.split(/\r?\n/)).toEqual(
+          lines(
+            "node::MakeCallback",
+            "a callback that throws",
+            "callback runs",
+            "uncaughtException: thrown by callback",
+            "node::MakeCallback returned undefined = 1",
+            "node::MakeCallback failed = 0",
+          ),
+        );
+      });
+
+      it("runs the ticks and microtasks of the function that threw after the addon's callback", async () => {
+        const output = await checkSameOutput("test_entry_throws_from_event_loop_with_queued_jobs");
+        expect(output.split(/\r?\n/)).toEqual([
+          ...lines(
+            "Function::Call",
+            "a function that queues jobs and throws",
+            "uncaughtException: thrown by function",
+            "Function::Call failed = 1",
+          ),
+          "tick",
+          "microtask",
+        ]);
+      });
+
+      it("lets the uncaughtException listener call the addon", async () => {
+        const output = await checkSameOutput("test_entry_throws_from_event_loop_and_listener_calls_addon");
+        expect(output.split(/\r?\n/)).toEqual(
+          lines(
+            "Function::Call",
+            "a function that throws",
+            "function runs",
+            "uncaughtException: thrown by function",
+            "Object::Get(key) failed = 0",
+            "Function::Call failed = 1",
+          ),
+        );
+      });
+
+      // Node reports an exception only when a function call raised it, and drops the others. Bun reports every
+      // exception: it also did before, after the addon's callback.
+      it("reports an exception that no function call raised, which Node clears without a report", async () => {
+        const args = '["withoutJavaScript"]';
+        const [node, bun] = await Promise.all([
+          runOn(Runtime.node, BuildMode.release, "test_entries_throw_from_event_loop", args),
+          outputUnderBun("test_entries_throw_from_event_loop", args),
+        ]);
+        const expected = [
+          ...engineThrew("Object::Get(key)", "a revoked Proxy"),
+          ...engineThrew("Object::Get(key)", "a key that has no primitive value"),
+          ...engineThrew("Object::Get(index)", "a revoked Proxy"),
+          ...engineThrew("Object::Set(key)", "a revoked Proxy"),
+          ...engineThrew("Object::DefineOwnProperty", "a revoked Proxy"),
+          ...engineThrew("Value::ToString", "a Symbol"),
+          ...engineThrew("Value::ToInt32", "a Symbol"),
+          ...engineThrew("Value::ToInt32", "a BigInt"),
+          ...engineThrew("Value::ToInteger", "a Symbol"),
+          ...addonThrew("Isolate::ThrowException", "an Error", 0),
+          ...addonThrew("Isolate::ThrowError", "a message", 0),
+          ...addonThrew("Array::New, the callback throws", "two elements", 1),
+          ...addonThrew("Array::Iterate, the callback throws", "one element", 1),
+        ];
+        expect(bun.split(/\r?\n/)).toEqual(expected);
+        expect(node.split(/\r?\n/)).toEqual(expected.filter(line => !line.startsWith("uncaughtException:")));
+      });
+
+      // V8 aborts the process for a view that does not fit its buffer.
+      it("reports the RangeError of Uint8Array::New", async () => {
+        const output = await outputUnderBun("test_entries_throw_from_event_loop", '["typedArray"]');
+        expect(output.split(/\r?\n/)).toEqual(
+          lines(
+            "Uint8Array::New",
+            "an ArrayBuffer that is too short",
+            "uncaughtException: RangeError",
+            "Uint8Array::New failed = 1",
+          ),
+        );
+      });
+
+      // Node exits inside the report. Bun prints the error, and the addon's callback runs to its end.
+      it("prints the error and exits with code 1 when there is no uncaughtException listener", async () => {
+        const results = await Promise.all([
+          spawnOn(Runtime.node, BuildMode.release, "test_entry_throws_from_event_loop_without_listener"),
+          spawnOn(Runtime.bun, BuildMode.release, "test_entry_throws_from_event_loop_without_listener"),
+          spawnOn(Runtime.bun, BuildMode.debug, "test_entry_throws_from_event_loop_without_listener"),
+        ]);
+        for (const { out, err, exitCode } of results) {
+          const stdout = out.trim().split(/\r?\n/);
+          expect({
+            first: stdout.slice(0, 3),
+            last: stdout.at(-1),
+            stderrHasTheError: err.includes("thrown by function"),
+            exitCode,
+          }).toEqual({
+            first: [
+              "Function::Call with a function that throws",
+              "function runs",
+              "uncaughtExceptionMonitor: thrown by function",
+            ],
+            last: "exit: 1",
+            stderrHasTheError: true,
+            exitCode: 1,
+          });
+        }
+      });
+
+      it("lets the addon's callback run to its end in a Worker that the exception ends", async () => {
+        const output = await checkSameOutput("test_entry_throws_from_event_loop_in_worker");
+        expect(output.split(/\r?\n/)).toEqual([
+          "function runs",
+          "worker exit handler: 1",
+          "Function::Call failed = 1",
+          "function runs",
+          "Function::Call failed = 1",
+          "next Object::Set failed = 0",
+          "next Object::Get failed = 0",
+          "after() runs",
+          "next Function::Call failed = 0",
+          "worker error: thrown by function",
+          "worker exit code: 1",
+        ]);
+      });
+
+      // The function that the addon calls next has not run before. Without the report, its first run found the
+      // exception of the failed call, and Bun crashed.
+      it("fails one test of bun test and runs the next", async () => {
+        await using proc = spawn({
+          cmd: [bunExe(), "test", "./throw-from-event-loop-fixture.mjs"],
+          cwd: directories.bunRelease,
+          env: bunEnv,
+          stdio: ["inherit", "pipe", "pipe"],
+        });
+        const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({
+          // The first line of stdout is the version of bun test.
+          stdout: out.trim().split(/\r?\n/).slice(1),
+          summary: err.match(/^ \d+ (pass|fail)$/gm),
+          exitCode,
+        }).toEqual({
+          stdout: [
+            "Function::Call failed = 1",
+            "next Object::Set failed = 0",
+            "next Object::Get failed = 0",
+            "next Function::Call failed = 0",
+          ],
+          summary: [" 1 pass", " 1 fail"],
+          exitCode: 1,
+        });
+      });
+    });
+
+    it("leaves the exception to a JS caller", async () => {
+      const groups = ["calls", "properties", "conversions", "makeCallback", "withoutJavaScript"];
+      const output = await checkSameOutput("test_entries_throw_from_js", JSON.stringify(groups));
+      const outputLines = output.split(/\r?\n/);
+      expect(outputLines.filter(line => line.startsWith("uncaughtException:"))).toEqual([]);
+      expect(outputLines.filter(line => line.startsWith("JS caller caught:"))).toEqual([
+        "JS caller caught: thrown by function",
+        "JS caller caught: TypeError",
+        "JS caller caught: thrown by constructor",
+        "JS caller caught: TypeError",
+        "JS caller caught: thrown by getter",
+        "JS caller caught: thrown by get trap",
+        "JS caller caught: thrown by toString",
+        "JS caller caught: thrown by getter",
+        "JS caller caught: thrown by get trap",
+        "JS caller caught: thrown by setter",
+        "JS caller caught: thrown by set trap",
+        "JS caller caught: thrown by setter",
+        "JS caller caught: thrown by set trap",
+        "JS caller caught: thrown by defineProperty trap",
+        "JS caller caught: thrown by getter",
+        "JS caller caught: thrown by toString",
+        "JS caller caught: thrown by valueOf",
+        "JS caller caught: thrown by valueOf",
+        "JS caller caught: thrown by callback",
+        ...new Array(9).fill("JS caller caught: TypeError"),
+        ...new Array(4).fill("JS caller caught: thrown by the addon"),
+      ]);
+    });
+  });
 });
 
 async function checkSameOutput(testName: string, args?: string, thisValue?: any) {
@@ -552,11 +807,33 @@ async function checkSameOutput(testName: string, args?: string, thisValue?: any)
   return nodeResult;
 }
 
+/** The output under Bun alone, for what Bun does differently from Node on purpose. */
+async function outputUnderBun(testName: string, args?: string) {
+  const [release, debug] = await Promise.all([
+    runOn(Runtime.bun, BuildMode.release, testName, args),
+    runOn(Runtime.bun, BuildMode.debug, testName, args),
+  ]);
+  const withoutDebugLogs = (output: string) => output.replaceAll(/^\[\w+\].+$/gm, "").trim();
+  expect(withoutDebugLogs(debug)).toBe(withoutDebugLogs(release));
+  return withoutDebugLogs(release);
+}
+
 /**
  * @param jsArgs should eval() to an array
  * @param thisValue will be JSON stringified
  */
 async function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, jsArgs?: string, thisValue?: any) {
+  const { exitCode, out, err } = await spawnOn(runtime, buildMode, testName, jsArgs, thisValue);
+  const crashMsg = `test ${testName} crashed under ${Runtime[runtime]} in ${BuildMode[buildMode]} mode (exit code ${exitCode}${exitCode && exitCode > 256 ? ` / 0x${exitCode.toString(16)}` : ""})`;
+  if (exitCode !== 0) {
+    throw new Error(`${crashMsg}: ${err}\n${out}`.trim());
+  }
+  expect(exitCode, crashMsg).toBe(0);
+  return out.trim();
+}
+
+/** runOn for a test that can exit with an error. */
+async function spawnOn(runtime: Runtime, buildMode: BuildMode, testName: string, jsArgs?: string, thisValue?: any) {
   if (runtime == Runtime.node) {
     assert(buildMode == BuildMode.release);
   }
@@ -587,12 +864,7 @@ async function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, j
     stdio: ["inherit", "pipe", "pipe"],
   });
   const [exitCode, out, err] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);
-  const crashMsg = `test ${testName} crashed under ${Runtime[runtime]} in ${BuildMode[buildMode]} mode (exit code ${exitCode}${exitCode && exitCode > 256 ? ` / 0x${exitCode.toString(16)}` : ""})`;
-  if (exitCode !== 0) {
-    throw new Error(`${crashMsg}: ${err}\n${out}`.trim());
-  }
-  expect(exitCode, crashMsg).toBe(0);
-  return out.trim();
+  return { exitCode, out, err };
 }
 
 function standaloneAddonFiles(targetName: string, addonCpp: string, runJs: string) {
@@ -1079,6 +1351,116 @@ console.log("global handle:", addon.readStashedArray());`,
         "per-iteration napi_handle_scope: released before the callback returned",
         "no scope: released when the callback returned",
         "global handle: stashed array of length 5, 5000 in total over 1000 inline scopes",
+      ]);
+      expect(exitCode).toBe(0);
+    },
+    10 * 60 * 1000,
+  );
+
+  it(
+    "reports an exception inside the V8 call when no JavaScript is below the Node-API callback",
+    async () => {
+      using dir = tempDir(
+        "v8-api-from-napi-no-js-below",
+        standaloneAddonFiles(
+          "nojsbelow",
+          `// A Node-API addon whose napi_async_work complete callback and threadsafe function call_js call V8 API
+// entries. No JavaScript is below either callback. run.js prints every line, so the order does not
+// depend on how the platform buffers stdout.
+#include <node.h>
+#include <node_api.h>
+
+namespace no_js_below {
+
+using namespace v8;
+
+napi_async_work work;
+napi_threadsafe_function tsfn;
+
+// Calls globalThis.thrower, then three entries that cannot fail by themselves, and gives run.js what failed.
+void call_thrower(napi_env env, const char* where) {
+  Isolate* isolate = Isolate::GetCurrent();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<Object> global = context->Global();
+  Local<String> key = String::NewFromUtf8Literal(isolate, "key");
+  Local<Function> thrower = global->Get(context, String::NewFromUtf8Literal(isolate, "thrower"))
+                                .ToLocalChecked()
+                                .As<Function>();
+  Local<Function> after =
+      global->Get(context, String::NewFromUtf8Literal(isolate, "after")).ToLocalChecked().As<Function>();
+
+  bool failed[4];
+  failed[0] = thrower->Call(context, Undefined(isolate), 0, nullptr).IsEmpty();
+  failed[1] = global->Set(context, key, key).IsNothing();
+  failed[2] = global->Get(context, key).IsEmpty();
+  failed[3] = after->Call(context, Undefined(isolate), 0, nullptr).IsEmpty();
+
+  napi_value napi_global, report = nullptr, args[5];
+  napi_get_global(env, &napi_global);
+  napi_get_named_property(env, napi_global, "report", &report);
+  napi_create_string_utf8(env, where, NAPI_AUTO_LENGTH, &args[0]);
+  for (int i = 0; i < 4; i++) napi_get_boolean(env, failed[i], &args[i + 1]);
+  napi_call_function(env, napi_global, report, 5, args, nullptr);
+}
+
+void execute(napi_env env, void* data) {}
+
+void complete(napi_env env, napi_status status, void* data) {
+  call_thrower(env, "napi_async_work complete");
+  napi_delete_async_work(env, work);
+  napi_call_threadsafe_function(tsfn, nullptr, napi_tsfn_blocking);
+  napi_release_threadsafe_function(tsfn, napi_tsfn_release);
+}
+
+void call_js(napi_env env, napi_value js_callback, void* context, void* data) {
+  if (env != nullptr) call_thrower(env, "threadsafe function call_js");
+}
+
+napi_value start(napi_env env, napi_callback_info info) {
+  napi_value name;
+  napi_create_string_utf8(env, "no_js_below", NAPI_AUTO_LENGTH, &name);
+  napi_create_async_work(env, nullptr, name, execute, complete, nullptr, &work);
+  napi_create_threadsafe_function(env, nullptr, nullptr, name, 0, 1, nullptr, nullptr, nullptr, call_js,
+                                  &tsfn);
+  napi_queue_async_work(env, work);
+  return nullptr;
+}
+
+napi_value init(napi_env env, napi_value exports) {
+  napi_value value;
+  napi_create_function(env, "start", NAPI_AUTO_LENGTH, start, nullptr, &value);
+  napi_set_named_property(env, exports, "start", value);
+  return exports;
+}
+
+}  // namespace no_js_below
+
+NAPI_MODULE(NODE_GYP_MODULE_NAME, no_js_below::init)`,
+          `const addon = require("./build/Release/nojsbelow");
+
+process.on("uncaughtException", error => console.log("uncaughtException:", error.message));
+globalThis.thrower = () => {
+  console.log("function runs");
+  throw new Error("thrown by function");
+};
+globalThis.after = () => console.log("after() runs");
+globalThis.report = (where, ...failed) => console.log(where + ": failed =", failed.map(Number).join(" "));
+addon.start();`,
+        ),
+      );
+      const cwd = String(dir);
+      await buildStandaloneAddon(cwd);
+      const { lines, err, exitCode } = await runStandaloneAddon(cwd);
+      // Of the four calls, only the call of the function that throws fails.
+      const callback = (where: string) => [
+        "function runs",
+        "uncaughtException: thrown by function",
+        "after() runs",
+        `${where}: failed = 1 0 0 0`,
+      ];
+      expect(lines, `stderr:\n${err}`).toEqual([
+        ...callback("napi_async_work complete"),
+        ...callback("threadsafe function call_js"),
       ]);
       expect(exitCode).toBe(0);
     },

@@ -43,7 +43,7 @@ bun_alloc::bss_list! { pub entry_store_backing : Entry, preallocate::counts::FIL
 
 /// Pre-resolved `FilenameStore` appender for the `readdir` hot loop.
 ///
-/// `<FilenameStore as Appender>::append` re-evaluates `filename_store_backing()`
+/// `FilenameStore::append` re-evaluates `filename_store_backing()`
 /// (a `bss_singleton!` accessor: `Once::call_once` + `AtomicPtr::load`) on every
 /// call. `add_entry` runs once per directory entry, so for the
 /// @material-ui/icons-style 11,000-entry directories that's 11,000+ redundant
@@ -63,7 +63,7 @@ impl FilenameStoreAppender {
 }
 impl strings::Appender for FilenameStoreAppender {
     #[inline]
-    fn append(&mut self, s: &[u8]) -> core::result::Result<&[u8], AllocError> {
+    fn append(&mut self, s: &[u8]) -> core::result::Result<&'static [u8], AllocError> {
         // SAFETY: `backing` is the live process-lifetime `bss_string_list!`
         // singleton; `BSSStringList::append` takes `*mut Self` and serializes on
         // its inner mutex (no aliased `&mut` is ever formed). Returned slice

@@ -226,20 +226,10 @@ fn update_package_json_and_install_with_manager_with_updates(
             None
         };
 
-    // reshaped for borrowck — the `&mut MapEntry` is
-    // borrowed from `manager.workspace_package_json_cache`, but we then need
-    // `&mut *manager` for `PackageJSONEditor::edit` while still
-    // holding the entry. Demote to `*mut MapEntry` and re-
-    // borrow at point of use. The cache map is not mutated again until the
-    // next `get_with_path` call below, so the pointer remains valid.
     let original_package_json_path: Box<[u8]> =
         manager.original_package_json_path.as_bytes().into();
-    let current_package_json_ptr: *mut MapEntry =
-        package_json_entry_or_crash(manager, &original_package_json_path);
-    // SAFETY: see note above — pointer into `manager.workspace_package_json_cache`,
-    // valid until the next `get_with_path`. No `&mut manager.workspace_package_json_cache`
-    // is taken across this borrow; `PackageJSONEditor` touches only disjoint manager fields.
-    let current_package_json: &mut MapEntry = unsafe { &mut *current_package_json_ptr };
+    let current_package_json = package_json_entry_or_crash(manager, &original_package_json_path);
+    let mut current_package_json_root: bun_ast::Expr = current_package_json.root;
     // `bun add` and `bun link` put their dependency into the empty file.
     if current_package_json.source.contents.is_empty()
         && !matches!(subcommand, Subcommand::Add | Subcommand::Link)
@@ -248,7 +238,6 @@ fn update_package_json_and_install_with_manager_with_updates(
             manager.original_package_json_path.as_bytes(),
         );
     }
-    let mut current_package_json_root: bun_ast::Expr = current_package_json.root;
 
     if subcommand == Subcommand::Remove {
         if !current_package_json_root.data.is_e_object() {
@@ -357,26 +346,19 @@ fn update_package_json_and_install_with_manager_with_updates(
     // (`current_package_json_root`), so re-parse the
     // printed source so the cached AST (consumed by `FolderResolver` for workspace
     // members during `install_with_manager`) reflects the new dependency list.
-    save_entry(
-        current_package_json,
-        current_package_json_root,
-        manager.log_mut(),
-    );
+    let current_target = WorkspaceTarget {
+        name: Box::default(),
+        name_hash: manager.workspace_name_hash,
+        package_json_path: original_package_json_path,
+    };
+    store_entry(manager, &current_target, current_package_json_root);
 
     let received_requests = matches!(
         subcommand,
         Subcommand::Add | Subcommand::Update | Subcommand::Link
     );
     if (received_requests && manager.update_target_workspaces.is_none()) || any_changes {
-        super::package_json_write_back::record(
-            manager,
-            WorkspaceTarget {
-                name: Box::default(),
-                name_hash: manager.workspace_name_hash,
-                package_json_path: original_package_json_path,
-            },
-            received_requests,
-        );
+        super::package_json_write_back::record(manager, current_target, received_requests);
     }
 
     // may or may not be the package json we are editing
@@ -395,39 +377,25 @@ fn update_package_json_and_install_with_manager_with_updates(
         root_package_json_path_buf[root_package_json_path_len] = 0;
         let root_package_json_path = &root_package_json_path_buf[..root_package_json_path_len];
 
-        // The lifetime of this pointer is only valid until the next call to `getWithPath`, which can happen after this scope.
-        // https://github.com/oven-sh/bun/issues/12288
-        // reshaped for borrowck — see `current_package_json_ptr` above.
-        let root_package_json_ptr: *mut MapEntry =
-            package_json_entry_or_crash(manager, root_package_json_path);
-
-        if let Some(stuff) = not_in_workspace_root {
-            let root_target = WorkspaceTarget::root();
-            let mut root_package_json_root = fetch_entry_root(manager, &root_target);
-            stuff.edit_package_json(manager, &mut root_package_json_root)?;
-            store_entry(manager, &root_target, root_package_json_root);
-            super::package_json_write_back::record(manager, root_target, false);
-        }
-
-        // SAFETY: pointer into `manager.workspace_package_json_cache`, valid until the
-        // next `get_with_path` of a new path (after this block).
-        let root_package_json: &mut MapEntry = unsafe { &mut *root_package_json_ptr };
-
+        let root = package_json_entry_or_crash(manager, root_package_json_path).root;
         let root_is_targeted = manager
             .update_target_workspaces
             .as_deref()
             .is_none_or(|t| t.iter().any(|w| w.is_root));
 
-        if subcommand == Subcommand::Update
+        if let Some(stuff) = not_in_workspace_root {
+            let root_target = WorkspaceTarget::root();
+            let mut root = fetch_entry_root(manager, &root_target);
+            stuff.edit_package_json(manager, &mut root)?;
+            store_entry(manager, &root_target, root);
+            super::package_json_write_back::record(manager, root_target, false);
+        } else if subcommand == Subcommand::Update
             && manager.update_requests.is_empty()
             && root_is_targeted
         {
-            let root_package_json_root: bun_ast::Expr = root_package_json.root;
-            PackageJSONEditor::record_catalog_entries(manager, &root_package_json_root)?;
-        }
-
-        if manager.options.add_catalog.is_some() && manager.workspace_name_hash.is_some() {
-            add_catalog::edit_root_entry_before_install(manager, root_package_json)?;
+            PackageJSONEditor::record_catalog_entries(manager, &root)?;
+        } else if manager.options.add_catalog.is_some() && manager.workspace_name_hash.is_some() {
+            add_catalog::edit_root_entry_before_install(manager, root, root_package_json_path)?;
         }
 
         // SAFETY: root_package_json_path_buf[root_package_json_path_len] == 0 written above

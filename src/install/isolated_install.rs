@@ -2501,55 +2501,13 @@ pub(crate) fn install_isolated_packages(
 
                     let ctx = install::TaskCallbackContext::IsolatedPackageInstallContext(entry_id);
 
-                    let dep = &lockfile_ro.buffers.dependencies[dep_id as usize];
-
-                    let enqueued = match pkg_res.tag {
-                        ResolutionTag::Npm => package_manager::enqueue_package_for_download(
-                            installer.manager_mut(),
-                            pkg_name.slice(string_buf),
-                            dep_id,
-                            pkg_id,
-                            pkg_res.npm().version,
-                            pkg_res.npm().url.slice(string_buf),
-                            ctx,
-                        ),
-                        ResolutionTag::Git => package_manager::enqueue_git_for_checkout(
-                            installer.manager_mut(),
-                            dep_id,
-                            pkg_id,
-                            dep.name.slice(string_buf),
-                            ctx,
-                            patch_info.name_and_version_hash(),
-                        ),
-                        ResolutionTag::Github => {
-                            let url = installer.manager().alloc_github_url(pkg_res.github());
-                            package_manager::enqueue_tarball_for_download(
-                                installer.manager_mut(),
-                                dep_id,
-                                pkg_id,
-                                &url,
-                                ctx,
-                            )
-                        }
-                        ResolutionTag::LocalTarball => {
-                            package_manager::enqueue_tarball_for_reading(
-                                installer.manager_mut(),
-                                dep_id,
-                                pkg_id,
-                                dep.name.slice(string_buf),
-                                &pkg_res,
-                                ctx,
-                            )
-                        }
-                        _ => package_manager::enqueue_tarball_for_download(
-                            installer.manager_mut(),
-                            dep_id,
-                            pkg_id,
-                            pkg_res.remote_tarball().slice(string_buf),
-                            ctx,
-                        ),
-                    };
-                    match enqueued {
+                    match package_manager::enqueue_package_for_cache(
+                        installer.manager_mut(),
+                        dep_id,
+                        pkg_id,
+                        ctx,
+                        patch_info.name_and_version_hash(),
+                    ) {
                         Ok(()) => {}
                         Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
                         Err(ForTarballError::AlreadyFailed | ForTarballError::Offline) => {

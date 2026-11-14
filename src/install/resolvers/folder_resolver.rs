@@ -443,9 +443,7 @@ pub(crate) fn get_or_put(
     let link_path;
     let (tag, folder_path, features): (_, &[u8], _) = match global_or_relative {
         GlobalOrRelative::Global(_) => {
-            // `non_normalized_path` may alias the lockfile string buffer, which grows below.
-            link_path = std::borrow::Cow::Owned(non_normalized_path.to_vec());
-            (ResolutionTag::Symlink, &*link_path, Features::LINK)
+            (ResolutionTag::Symlink, non_normalized_path, Features::LINK)
         }
         GlobalOrRelative::Relative(dependency::version::Tag::Symlink) => {
             link_path = dependency::link_path_for_lockfile(rel);

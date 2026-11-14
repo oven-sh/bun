@@ -98,7 +98,7 @@ pub enum Callback {
 pub struct DedupeMapEntry {
     pub(crate) is_required: bool,
     /// Set once the download/extract for this task id has terminally failed so a
-    /// later `enqueue_*_for_download` can observe the failure instead of
+    /// later `enqueue_download` can observe the failure instead of
     /// re-scheduling the entire network task (and its retry cycle) a second time.
     pub(crate) failed: bool,
     pub(crate) manifest: ManifestOrigin,
@@ -723,7 +723,7 @@ pub enum ForTarballError {
     /// package); callers treat it like `AlreadyFailed`.
     #[error("TarballFailedToDownload")]
     Offline,
-    /// Returned by `enqueue_*_for_download` when the dedupe map already records
+    /// Returned by `enqueue_package_for_cache` when the dedupe map already records
     /// a terminal failure for this task id. Callers handle it silently (the
     /// original failure was already reported) and advance their own bookkeeping.
     #[error("TarballFailedToDownload")]
@@ -753,6 +753,13 @@ impl bun_core::output::ErrName for ForTarballError {
 }
 
 impl NetworkTask {
+    pub(crate) fn tarball(&self) -> &ExtractTarball {
+        let Callback::Extract(tarball) = &self.callback else {
+            unreachable!("not a tarball task")
+        };
+        tarball
+    }
+
     pub(crate) fn for_tarball(
         &mut self,
         tarball_: ExtractTarball,

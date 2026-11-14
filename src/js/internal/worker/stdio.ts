@@ -37,8 +37,17 @@ function makePortReadable(
       }
       port.removeEventListener("message", onMessage);
     } else if (ended === false) {
-      for (let i = 0; i < payload.length; i++) {
-        stream.push(Buffer.from(payload[i]));
+      let i = 0;
+      try {
+        for (; i < payload.length; i++) {
+          stream.push(Buffer.from(payload[i]));
+        }
+      } finally {
+        // A 'data' listener threw out of push(), before its maybeReadMore(): that call schedules the _read() that acks this batch.
+        if (i < payload.length) {
+          // Node has no such call: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/worker.js#L431-L441
+          require("internal/streams/state").internals.readMoreLater!(stream, stream._readableState);
+        }
       }
     }
   }
@@ -72,16 +81,19 @@ function makePortReadable(
   // Lets the parent end worker.stdout/stderr when the worker exits. What the worker
   // wrote and the port still holds comes first (node's kOnExit drains its port).
   stream.endFromOwner = function () {
-    try {
-      let entry: unknown;
-      while (ended === false && (entry = receiveMessageOnPort?.(port)) !== undefined) {
-        onMessage({ data: (entry as { message: Uint8Array[] | null }).message });
-      }
-    } finally {
-      if (ended === false) {
-        ended = true;
-        stream.push(null);
-        port.removeEventListener("message", onMessage);
+    while (ended === false) {
+      try {
+        const entry = receiveMessageOnPort?.(port);
+        if (entry === undefined) {
+          ended = true;
+          stream.push(null);
+          port.removeEventListener("message", onMessage);
+        } else {
+          onMessage({ data: (entry as { message: Uint8Array[] | null }).message });
+        }
+      } catch (err) {
+        // A listener threw. The owner goes on, and the error is reported on a tick.
+        require("internal/process/next_tick_queue").queueTick1(require("internal/shared").reportUncaughtException, err);
       }
     }
   };

@@ -576,10 +576,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon && invalid_log.is_empty() {
                 if opts.is_after_question_and_before_colon {
                     // Only do this very expensive check if we must
-                    is_arrow_fn = p
+                    let parsed;
+                    (is_arrow_fn, parsed) = p
                         .is_type_script_arrow_return_type_after_question_and_before_colon(
                             &arrow_data,
                         )?;
+                    if let Some(arrow) = parsed {
+                        // Parsed without its arguments, for an outer attempt that restores
+                        debug_assert!(p.lexer.is_log_disabled);
+                        p.pop_scope();
+                        return Ok(p.new_expr(arrow, loc));
+                    }
                     if is_arrow_fn {
                         // We know this will succeed because we've already done it once above
                         p.lexer.next()?;
@@ -1612,6 +1619,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let result = matches!(self.lexer.next(), Ok(())) && pred(self);
         self.lexer.restore(&old_lexer);
         result
+    }
+
+    /// Whether the lexer can read the token after the current one. Not inlined,
+    /// so that the lexer snapshot stays out of the frame of a caller that recurses.
+    #[inline(never)]
+    pub(crate) fn can_read_next_token(&mut self) -> bool {
+        self.next_token_matches(|_| true)
     }
 
     #[inline]

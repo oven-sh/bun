@@ -2944,6 +2944,90 @@ describe("bundler", () => {
     }
   }
 
+  // A function that only assigns an outer variable refers to it as much as one
+  // that reads it: the compiler gives no local the name of that variable. The
+  // test runner prints the names of the compiler as they are ("react-compiler
+  // does not name a local like", below). So does the renamer here, now that
+  // it has nothing to keep apart: it had made `t12`, `$2`, `x2` and `helper2`.
+  itBundled("react-compiler/LocalNamedLikeAnOuterVariableItAssigns", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as forms from "./forms";
+        console.log(Object.entries(forms).map(([name, form]) => name + "=" + form()).join("\\n"));
+      `,
+      "/forms.jsx": /* jsx */ `
+        let t1 = "outer", $ = "outer", x = "outer", helper = "outer";
+        function useTemporary(url, options = {}) {
+          "use memo";
+          const set = () => {
+            t1 = "stored:" + url;
+          };
+          return [set, () => [url, options]];
+        }
+        function useMemoCache(url) {
+          "use memo";
+          const set = () => {
+            $ = "stored:" + url;
+          };
+          return [set, [url]];
+        }
+        function useBlockLocal(url) {
+          "use memo";
+          const set = () => {
+            x = "stored:" + url;
+          };
+          let list;
+          {
+            let x = [url];
+            x.push(url);
+            list = x;
+          }
+          return [set, list];
+        }
+        // The local is one of another function, and has a new name all the same,
+        // as it has when \`set\` reads \`helper\`.
+        function useLocalOfAnotherFunction(url) {
+          "use memo";
+          const set = () => {
+            helper = "stored:" + url;
+          };
+          const make = () => {
+            const helper = () => url;
+            return [helper, helper];
+          };
+          return [set, make];
+        }
+        export const temporary = () => (useTemporary("u")[0](), t1);
+        export const memoCache = () => (useMemoCache("u")[0](), $);
+        export const blockLocal = () => (useBlockLocal("u")[0](), x);
+        export const localOfAnotherFunction = () => {
+          const [set, make] = useLocalOfAnotherFunction("u");
+          set();
+          return helper + " " + make()[0].name;
+        };
+      `,
+      "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "api",
+    run: {
+      stdout: `
+        blockLocal=stored:u
+        localOfAnotherFunction=stored:u helper$0
+        memoCache=stored:u
+        temporary=stored:u
+      `,
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("let options = t2;");
+      expect(out).toMatch(/function useMemoCache\(url\) \{\s*let \$0 = /);
+      expect(out).toContain("list = x$0;");
+    },
+  });
+
   // The compiler lowers the call the visit pass made of each JSX element into
   // HIR and builds a new call from that. Both steps have to use the call shape
   // of the file's JSX runtime. The classic runtime, and `key` after a spread in
@@ -4595,6 +4679,404 @@ describe("bundler", () => {
       });
     },
   });
+});
+
+// `bun test --react-compiler` prints the names of the compiler as they are: no renamer runs. So the compiler must
+// give no local the name of a variable outside of the function, or what the function does to that variable is done
+// to the local. Each case is a module: it is compiled, and `check` gives what it gives without the compiler.
+describe("react-compiler does not name a local like", () => {
+  type Case = [name: string, expected: string, source: string];
+  async function underBunTest(cases: Case[], more: Record<string, string> = {}) {
+    const names = cases.map(([name]) => name);
+    using dir = tempDir("react-compiler-outer-names", {
+      "node_modules/react/package.json": JSON.stringify({
+        name: "react",
+        exports: { ".": "./index.js", "./compiler-runtime": "./compiler-runtime.js" },
+      }),
+      "node_modules/react/index.js": `
+        export const useMemo = callback => callback();
+        export default { createElement: (type, props, ...children) => type + ":" + children };
+      `,
+      "node_modules/react/compiler-runtime.js": `export const c = size => Array(size).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      ...more,
+      ...Object.fromEntries(cases.map(([name, , source]) => [`${name}.jsx`, source])),
+      "names.test.js": `
+        import { test } from "bun:test";
+        ${names.map(name => `import * as ${name} from "./${name}.jsx";`).join("\n")}
+        test("what each function does", () => {
+          const all = {};
+          for (const [name, { useThing, check }] of Object.entries({ ${names} })) {
+            let value;
+            try {
+              value = check();
+            } catch (error) {
+              value = String(error);
+            }
+            // What is compiled has a memo cache, $[0] or $0[0], or a function that the compiler moved out of it.
+            // It has no useMemo() left.
+            const text = String(useThing);
+            const compiled = /\\$\\d*\\[\\d+\\]|\\b_temp\\b/.test(text) && !text.includes("useMemo(");
+            all[name] = [compiled ? "compiled" : "as written", value];
+          }
+          console.log(JSON.stringify(all));
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--react-compiler", "./names.test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const line = stdout.split("\n").find(line => line.startsWith("{"));
+    expect(line ? JSON.parse(line) : stderr).toEqual(
+      Object.fromEntries(cases.map(([name, expected]) => [name, ["compiled", expected]])),
+    );
+    expect(exitCode).toBe(0);
+  }
+
+  test.concurrent("an outer variable that the function only assigns", async () => {
+    await underBunTest([
+      [
+        // The callback of `useMemo` becomes a part of the hook, and so does its `rows`.
+        "memoCallbackLocal",
+        "stored:1,2",
+        `
+          import { useMemo } from "react";
+          let rows = "outer";
+          export function useThing(list) {
+            const sorted = useMemo(() => {
+              const rows = [...list];
+              rows.sort();
+              return rows;
+            }, [list]);
+            const set = () => {
+              rows = "stored:" + sorted;
+            };
+            return [set, sorted];
+          }
+          export const check = () => (useThing([2, 1])[0](), rows);
+        `,
+      ],
+      [
+        // The compiler declares the `x` of the block beside `set`.
+        "blockLocal",
+        "stored:u",
+        `
+          let x = "outer";
+          export function useThing(url) {
+            "use memo";
+            const set = () => {
+              x = "stored:" + url;
+            };
+            let list;
+            {
+              let x = [url];
+              x.push(url);
+              list = x;
+            }
+            return [set, list];
+          }
+          export const check = () => (useThing("u")[0](), x);
+        `,
+      ],
+      [
+        // The `x` of the block is one of `set` itself.
+        "closureLocal",
+        "stored:u 2",
+        `
+          let x = "outer";
+          export function useThing(url) {
+            "use memo";
+            const set = () => {
+              x = "stored:" + url;
+              {
+                let x = [url];
+                x.push(url);
+                return x.length;
+              }
+            };
+            return [set, [url]];
+          }
+          export const check = () => {
+            const length = useThing("u")[0]();
+            return x + " " + length;
+          };
+        `,
+      ],
+      [
+        // The function reads the outer `x`, so the compiler names the `x` of the block `x$0`.
+        "renamedLocal",
+        "stored:u",
+        `
+          let x = "x", x$0 = "outer";
+          export function useThing(url) {
+            "use memo";
+            const read = x;
+            const set = () => {
+              x$0 = "stored:" + url;
+            };
+            {
+              const x = [url, read];
+              x.push(read);
+              return [set, x];
+            }
+          }
+          export const check = () => (useThing("u")[0](), x$0);
+        `,
+      ],
+      [
+        // The value of `options` is first in a temporary, `t1`.
+        "temporary",
+        "stored:u",
+        `
+          let t1 = "outer";
+          export function useThing(url, options = {}) {
+            "use memo";
+            const set = () => {
+              t1 = "stored:" + url;
+            };
+            return [set, () => [url, options]];
+          }
+          export const check = () => (useThing("u")[0](), t1);
+        `,
+      ],
+      [
+        // So is the value of the parameter of `set`.
+        "closureParameter",
+        "stored:objectu",
+        `
+          let t1 = "outer";
+          export function useThing(url) {
+            "use memo";
+            const set = (value = {}) => {
+              t1 = "stored:" + typeof value + url;
+            };
+            return set;
+          }
+          export const check = () => (useThing("u")(), t1);
+        `,
+      ],
+      [
+        // `set` reads nothing of the hook. The compiler makes it a function of the module, with a parameter `t0`.
+        "outlinedParameter",
+        "stored:object",
+        `
+          let t0 = "outer";
+          export function useThing(url) {
+            "use memo";
+            const set = (value = {}) => {
+              t0 = "stored:" + typeof value;
+            };
+            return [set, [url]];
+          }
+          export const check = () => (useThing("u")[0](), t0);
+        `,
+      ],
+      [
+        // The same in a CommonJS file. This hook has no memo cache.
+        "commonJS",
+        "stored:object",
+        `
+          let t0 = "outer";
+          function useThing(url) {
+            "use memo";
+            const set = (value = {}) => {
+              t0 = "stored:" + typeof value;
+            };
+            return set;
+          }
+          module.exports = { useThing, check: () => (useThing("u")(), t0) };
+        `,
+      ],
+      [
+        // The memo cache is `$`.
+        "memoCache",
+        "stored:u",
+        `
+          let $ = "outer";
+          export function useThing(url) {
+            "use memo";
+            const set = () => {
+              $ = "stored:" + url;
+            };
+            return [set, [url]];
+          }
+          export const check = () => (useThing("u")[0](), $);
+        `,
+      ],
+      [
+        "destructuring",
+        "stored:u",
+        `
+          let t1 = "outer";
+          export function useThing(url, options = {}) {
+            "use memo";
+            const set = () => {
+              [t1] = ["stored:" + url];
+            };
+            return [set, () => [url, options]];
+          }
+          export const check = () => (useThing("u")[0](), t1);
+        `,
+      ],
+      [
+        "objectMethod",
+        "stored:u",
+        `
+          let t1 = "outer";
+          export function useThing(url, options = {}) {
+            "use memo";
+            const store = {
+              set() {
+                t1 = "stored:" + url;
+              },
+            };
+            return [() => store.set(), () => [url, options]];
+          }
+          export const check = () => (useThing("u")[0](), t1);
+        `,
+      ],
+      [
+        "nestedTwice",
+        "stored:u",
+        `
+          let t1 = "outer";
+          export function useThing(url, options = {}) {
+            "use memo";
+            const set = () => () => {
+              t1 = "stored:" + url;
+            };
+            return [() => set()(), () => [url, options]];
+          }
+          export const check = () => (useThing("u")[0](), t1);
+        `,
+      ],
+      [
+        "undeclaredGlobal",
+        "stored:u",
+        `
+          globalThis.t1 = "outer";
+          export function useThing(url, options = {}) {
+            "use memo";
+            const set = () => {
+              t1 = "stored:" + url;
+            };
+            return [set, () => [url, options]];
+          }
+          export const check = () => (useThing("u")[0](), globalThis.t1);
+        `,
+      ],
+      [
+        "enclosingFunction",
+        "stored:u",
+        `
+          function make() {
+            let t1 = "outer";
+            function useThing(url, options = {}) {
+              "use memo";
+              const set = () => {
+                t1 = "stored:" + url;
+              };
+              return [set, () => [url, options]];
+            }
+            return [useThing, () => t1];
+          }
+          export const [useThing, outer] = make();
+          export const check = () => (useThing("u")[0](), outer());
+        `,
+      ],
+    ]);
+  });
+
+  // Codegen prints the factory, `h` or `React.createElement`, and the compiler has no read of it.
+  test.concurrent("the classic JSX factory", async () => {
+    const factory = { "factory.js": `export const h = (type, props, ...children) => type + ":" + children;` };
+    await underBunTest(
+      [
+        [
+          // The callback of `useMemo` becomes a part of the component, and so does its `h`.
+          "memoCallbackLocal",
+          "div:6",
+          `
+          /** @jsxRuntime classic @jsx h */
+          import { useMemo } from "react";
+          import { h } from "./factory.js";
+          export function useThing(box) {
+            "use memo";
+            const area = useMemo(() => {
+              const h = box.height;
+              const w = box.width;
+              return h * w;
+            }, [box]);
+            return <div>{area}</div>;
+          }
+          export const check = () => useThing({ height: 2, width: 3 });
+        `,
+        ],
+        [
+          "blockLocal",
+          "div:u,u",
+          `
+          /** @jsxRuntime classic */
+          import React from "react";
+          export function useThing(url) {
+            "use memo";
+            let list;
+            {
+              let React = [url];
+              React.push(url);
+              list = React;
+            }
+            return <div>{list}</div>;
+          }
+          export const check = () => useThing("u");
+        `,
+        ],
+      ],
+      factory,
+    );
+  });
+});
+
+// Lint mode generates no code, so a report has each name as written. Only a fixture pragma asks for that mode here.
+test.skipIf(!isDebug && !isASAN)("react-compiler in lint mode renames no local for the JSX factory", async () => {
+  using dir = tempDir("react-compiler-lint-names", {
+    "entry.jsx": `
+      // @outputMode:"lint" @validatePreserveExistingMemoizationGuarantees
+      import React, { useMemo } from "react";
+      export function Component(props) {
+        let data;
+        {
+          const React = props.list;
+          data = useMemo(() => {
+            const x = [];
+            x.push(React?.a);
+            if (props.cond) {
+              x.push(React.a);
+            }
+            return x;
+          }, [React?.a, props.cond]);
+        }
+        return <div>{data}</div>;
+      }
+    `,
+  });
+  const result = await Bun.build({
+    entrypoints: [join(String(dir), "entry.jsx")],
+    target: "browser",
+    external: ["*"],
+    jsx: { runtime: "classic" },
+    reactCompiler: true,
+    // @ts-expect-error test-only option, not in bun-types
+    reactCompilerParseTestPragmas: true,
+    throw: false,
+  });
+  expect(result.logs.map(log => String(log.message).match(/The inferred dependency was .*?\]/)?.[0])).toEqual([
+    "The inferred dependency was `React`, but the source dependencies were [React?.a, props.cond]",
+  ]);
 });
 
 // Three passes kept one copy of their work per basic block or per nesting

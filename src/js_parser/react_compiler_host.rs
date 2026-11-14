@@ -96,6 +96,10 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
             .jsx_classic_member_expression(loc, |jsx| &jsx.factory)
     }
 
+    fn jsx_classic_factory_root(&self) -> Option<&[u8]> {
+        self.p.options.jsx.factory.first()
+    }
+
     fn jsx_import_kind(&self, ref_: js_ast::Ref) -> Option<bun_react_compiler::JsxImportKind> {
         use bun_react_compiler::JsxImportKind as K;
         Some(match self.p.jsx_imports.tag_of(ref_)? {

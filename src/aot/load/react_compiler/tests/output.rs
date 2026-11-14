@@ -288,6 +288,46 @@ fn local_never_shares_a_name_with_an_outside_variable() {
 }
 
 #[test]
+fn local_never_shares_a_name_with_the_classic_factory() {
+    let text = "import { h } from 'preact';\n\
+                import { useMemo } from 'react';\n\
+                export const outside = h;\n\
+                export function View(p: { n: number }) {\n\
+                const twice = useMemo(() => {\n\
+                const h = p.n;\n\
+                return h * 2;\n\
+                }, [p.n]);\n\
+                return <b>{twice}</b>;\n\
+                }\n";
+    with_tree_and_settings(text, &classic_settings(&["h"]), |tree| {
+        assert!(tree.has_compiled_components());
+        let (hir, bound) = (tree.hir(), tree.files.bound(tree.file));
+        let outside = bound.symbol_of_expr(tree.declaration_named("outside").init);
+        let callees = tree.calls_of("h").into_iter();
+        let callees = callees.map(|call| bound.symbol_of_expr(hir[call].callee));
+        assert_eq!(callees.collect::<Vec<_>>(), [outside]);
+        assert_eq!(tree.count_names("h$0"), 1);
+    });
+}
+
+#[test]
+fn local_never_shares_a_name_with_a_global_that_only_the_output_names() {
+    let text = "export function View(p: { n: number }) {\n\
+                let text = '';\n\
+                {\n\
+                const NaN = p.n * 2;\n\
+                text = 'twice ' + NaN;\n\
+                }\n\
+                return <b>{text}{0 / 0}</b>;\n\
+                }\n";
+    with_compiled_tree(text, |tree| {
+        assert!(tree.has_compiled_components());
+        assert_eq!(tree.count_names("%react:local:NaN"), 1);
+        assert_eq!(tree.count_names("NaN"), 1);
+    });
+}
+
+#[test]
 fn constant_element_uses_the_memo_cache_sentinel() {
     with_compiled_tree(RULE, |tree| {
         assert_eq!(tree.cache_size(tree.function_named("Rule")), Some(1.0));

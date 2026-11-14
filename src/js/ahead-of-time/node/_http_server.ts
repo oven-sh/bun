@@ -60,15 +60,15 @@ function onResponseSocketDrain(this: any) {
 function freezeBufferedResponseHeaders(res: any, fromEnd: boolean) {
   if (res[headerStateSymbol] !== NodeHTTPHeaderState.none) return;
   if (fromEnd) {
+    const exchange = res.$exchange;
+    if (exchange !== undefined) exchange.flags |= ExchangeFlags.was_implicit_from_end;
     storeRarely(res, kImplicitHeaderFromEnd, true);
-    followResponse(res.$exchange);
   }
   try {
     res._implicitHeader();
   } finally {
     if (fromEnd) {
       storeRarely(res, kImplicitHeaderFromEnd, false);
-      followResponse(res.$exchange);
     }
   }
 }

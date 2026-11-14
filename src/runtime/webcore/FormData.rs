@@ -278,11 +278,16 @@ pub(crate) fn for_each_multipart_entry<C>(
         let mut filename: Option<bun_semver::String> = None;
         let mut header_chunk = header;
         let mut is_file = false;
-        while !header_chunk.is_empty() && (filename.is_none() || name.len() == 0) {
+        while !header_chunk.is_empty() {
             let line_end = strings::index_of(header_chunk, b"\r\n")
                 .ok_or(crate::Error::IsMissingHeaderLineEnd)?;
             let line = &header_chunk[..line_end];
             header_chunk = &header_chunk[line_end + 2..];
+            let has_name_and_filename = filename.is_some() && name.len() != 0;
+            // Indy folds a long file name onto a second line, which is skipped and not rejected.
+            if has_name_and_filename && matches!(line.first(), Some(b' ' | b'\t')) {
+                continue;
+            }
             let colon =
                 strings::index_of(line, b":").ok_or(crate::Error::IsMissingHeaderColonSeparator)?;
 
@@ -292,7 +297,10 @@ pub(crate) fn for_each_multipart_entry<C>(
             } else {
                 b""
             };
-            if strings::eql_case_insensitive_ascii(key, b"content-disposition", true) {
+            // The first Content-Disposition line that gives a name and a filename is final.
+            if !has_name_and_filename
+                && strings::eql_case_insensitive_ascii(key, b"content-disposition", true)
+            {
                 // OWS after the colon is SP or HTAB (RFC 9112 §5.6.3); the
                 // disposition type is a case-insensitive token (RFC 2183 §2).
                 value = strings::trim(value, b" \t");

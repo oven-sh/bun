@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, isLinux, isMusl, isPosix, isRoot, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, isASAN, isLinux, isMusl, isPosix, isRoot, isWindows, tempDir } from "harness";
 import { totalmem } from "os";
 import { join } from "path";
 describe("spawnSync", () => {
@@ -330,4 +330,48 @@ it.skipIf(!isLinux)("a writer finalized during spawnSync leaves its fd number us
     stderr: "registered",
     exitCode: 0,
   });
+});
+
+// A poll that a loop has watched goes back to the VM's pool from a list, which the thread's loop empties each time it
+// turns. spawnSync waits on a loop of its own, so the polls of these calls (two pipes and the process each) stay on
+// the list, and past the pool's 128 slots a poll is a heap allocation that only the list names. The pool was freed
+// with the VM and the list was not: 40 bytes for each of those polls, which only LeakSanitizer sees.
+it.skipIf(!isASAN || isWindows)("polls left by spawnSync are freed when a VM ends before its loop turns", async () => {
+  // The bytes LeakSanitizer reports for a VM that makes 70 piped spawnSync calls in one task, which leave 82 polls on
+  // the heap, and then ends: at once, or after its loop has turned and emptied the list.
+  async function leakedBytes(loopTurnsFirst: boolean) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        setImmediate(async () => {
+          for (let i = 0; i < 70; i++) Bun.spawnSync({ cmd: ["true"], stdio: ["ignore", "pipe", "pipe"] });
+          if (${loopTurnsFirst}) await new Promise(resolve => setImmediate(resolve));
+          console.log("ok");
+          process.exit(0);
+        });
+      `,
+      ],
+      env: {
+        ...bunEnv,
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        // symbolize=0 keeps a child that leaks fast. It also turns the suppressions off, which is fine: the two
+        // children do the same work, so what such a process leaks apart from these polls cancels out.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1", "symbolize=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const summary = /SUMMARY: AddressSanitizer: (\d+) byte\(s\) leaked/.exec(stderr);
+    // With no report, only exit code 0 means that the scan ran and found nothing.
+    if (!summary) expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(stdout).toBe("ok\n");
+    return Number(summary?.[1] ?? 0);
+  }
+  const [afterTurn, atOnce] = await Promise.all([leakedBytes(true), leakedBytes(false)]);
+  // A list that is not freed adds 82 polls of 40 bytes each, 3280 bytes. The bound is far below that, and it leaves
+  // room for anything else that two such children report differently while the suppressions are off.
+  expect(atOnce - afterTurn).toBeLessThan(400);
 });

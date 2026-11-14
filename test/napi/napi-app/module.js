@@ -489,6 +489,37 @@ nativeTests.test_set_property = () => {
   }
 };
 
+nativeTests.test_set_index_on_global = () => {
+  // Made by the Function constructor: Bun's transpiler drops the "use strict" of a function in a CommonJS file
+  // (https://github.com/oven-sh/bun/issues/14251).
+  const makeSetter = new Function(
+    "label",
+    `return function (value) {
+      "use strict";
+      console.log(label + ": this is " + (this === globalThis ? "globalThis" : typeof this));
+    };`,
+  );
+  for (const [holderName, holder] of [
+    ["inherited", Object.prototype],
+    ["own", globalThis],
+  ]) {
+    // 4294967295 is the one uint32_t that is no array index.
+    for (const key of [0, 4294967295]) {
+      Object.defineProperty(holder, key, { set: makeSetter(`${holderName} setter for ${key}`), configurable: true });
+      try {
+        console.log("napi_set_element");
+        nativeTests.perform_set_element(globalThis, key, 1);
+        console.log("napi_set_property with a number");
+        nativeTests.perform_set(globalThis, key, 1);
+        console.log("napi_set_named_property, then napi_set_property with a string");
+        nativeTests.perform_set(globalThis, String(key), 1);
+      } finally {
+        delete holder[key];
+      }
+    }
+  }
+};
+
 nativeTests.test_define_properties = () => {
   const statusNames = [
     "napi_ok",

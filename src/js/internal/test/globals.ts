@@ -1,5 +1,5 @@
 // Called by VirtualMachine.rs. With `bun test --isolate=modules`, all test files share one global object,
-// so after each file we restore what it changed: globals, builtins, `process.env` and `process` listeners.
+// so after each file we restore what it changed: globals, builtins, `expect`, `process.env` and `process` listeners.
 
 const isEnvironmentGlobal: (key: PropertyKey) => boolean = require("internal/test/environment").isEnvironmentGlobal;
 const shapesOf: (objects: object[]) => unknown[] = $newCppFunction(
@@ -18,6 +18,13 @@ const deleteOwnProperty: (object: object, key: PropertyKey) => boolean = $newCpp
   "jsFunctionDeleteOwnProperty",
   2,
 );
+// The objects that `expect.extend()` adds each matcher to. `globalThis` doesn't reach them: `expect` is an export of "bun:test".
+const getMatcherHolders: () => object[] = $bindgen("expect.bind.ts", "matcherHolders");
+const flattenDictionary: (object: object) => void = $newCppFunction(
+  "TestEnvironment.cpp",
+  "jsFunctionFlattenDictionary",
+  1,
+);
 
 // Builtin modules are loaded once and shared by all files. These two patch `Performance.prototype` and
 // `MessagePort.prototype` on load, so load them before the snapshot. Otherwise the restore would remove their patches.
@@ -26,8 +33,8 @@ require("node:worker_threads");
 
 // This module is evaluated before any test file runs. Test files can patch builtins later,
 // so only use what's captured here, $-private names, index loops and null-prototype descriptors.
-const { getPrototypeOf, getOwnPropertyDescriptor, defineProperty, getOwnPropertyNames } = Object;
-const { ownKeys } = Reflect;
+const { getPrototypeOf, getOwnPropertyDescriptor, defineProperty, getOwnPropertyNames, isExtensible } = Object;
+const { ownKeys, defineProperty: tryDefineProperty } = Reflect;
 const { eventNames, rawListeners, removeListener } = process;
 
 type Properties = Map<PropertyKey, PropertyDescriptor>;
@@ -46,6 +53,7 @@ const skippedKeys = new Set([
   "mainModule",
 ]);
 
+let matcherHolders: object[] = [];
 const objects: object[] = [];
 const savedProperties: Properties[] = [];
 const savedPropertyCounts: number[] = [];
@@ -61,15 +69,21 @@ function getDescriptor(object: object, key: PropertyKey): PropertyDescriptor | u
   return descriptor && ({ __proto__: null, ...descriptor } as PropertyDescriptor);
 }
 
+function isMatcherHolder(object: object) {
+  for (let i = 0; i < matcherHolders.length; i++) if (matcherHolders[i] === object) return true;
+  return false;
+}
+
 function isTracked(object: object, key: PropertyKey) {
   if (object === globalThis) return true;
-  // Underscore-prefixed properties hold internal state, like `process._events`.
-  if (typeof key === "string" && key.$charCodeAt(0) === 95) return false;
+  // Underscore-prefixed properties hold internal state, like `process._events`. A matcher can have any name.
+  if (typeof key === "string" && key.$charCodeAt(0) === 95) return isMatcherHolder(object);
   return !((object === process || object === Bun) && skippedKeys.$has(key as string));
 }
 
 // Walks globalThis, its object properties, every function reachable from those, and their prototypes.
-function saveProperties(object: object, isGlobalThis: boolean) {
+// Of an `isLeaf` object it saves the properties, and doesn't walk what they hold.
+function saveProperties(object: object, isGlobalThis: boolean, isLeaf = false) {
   if (seen.$has(object)) return;
   seen.$set(object, true);
   const properties: Properties = new Map();
@@ -85,6 +99,7 @@ function saveProperties(object: object, isGlobalThis: boolean) {
     if (!descriptor) continue;
     properties.$set(key, descriptor);
     savedPropertyCounts[index]++;
+    if (isLeaf) continue;
     const { value, get, set } = descriptor;
     if (
       typeof value === "function" ||
@@ -125,13 +140,16 @@ function restoreProperties(object: object, properties: Properties, size: number)
     const current = getOwnPropertyDescriptor(object, key)!;
     if (isSame(current, saved)) continue;
     if (!$getByIdDirect(current, "configurable")) {
-      if (saved.configurable) deleteOwnProperty(object, key);
       // Some builtins have a read-only property that gives a new value each time it's read.
-      else if (!$getByIdDirect(current, "writable")) continue;
+      if (saved.writable === false && !saved.configurable && !$getByIdDirect(current, "writable")) continue;
+      // A test file can leave it read-only or not configurable. A delete lets it be defined again, while extensible.
+      if (!tryDefineProperty(object, key, saved) && isExtensible(object) && deleteOwnProperty(object, key))
+        defineProperty(object, key, saved);
+      continue;
     }
     defineProperty(object, key, saved);
   }
-  if (found === size) return;
+  if (found === size || !isExtensible(object)) return;
   properties.$forEach((saved, key) => {
     if (!getOwnPropertyDescriptor(object, key)) defineProperty(object, key, saved);
   });
@@ -169,7 +187,14 @@ function saveShapes() {
 // The first call takes the snapshot. Later calls restore it.
 export default function restoreGlobals() {
   if (!env) {
+    matcherHolders = getMatcherHolders();
     saveProperties(globalThis, true);
+    for (let i = 0; i < matcherHolders.length; i++) {
+      // They start as dictionaries, which `shapesOf` can't describe: they would be compared key by key after every file.
+      flattenDictionary(matcherHolders[i]);
+      // `expect.extend()` writes only their own properties. The matchers would be 130 more objects to compare.
+      saveProperties(matcherHolders[i], false, true);
+    }
     saveShapes();
     env = new Map();
     const keys = getOwnPropertyNames(process.env);

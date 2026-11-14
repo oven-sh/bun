@@ -1512,6 +1512,21 @@ impl Expect {
         Ok(result)
     }
 
+    /// Where `expect.extend()` puts each matcher: `expect.prototype`, `expect` and the prototype of `expect.not`.
+    fn matcher_holders(global_this: &JSGlobalObject) -> [JSValue; 3] {
+        [
+            Expect__getPrototype(global_this),
+            super::expect::js::get_constructor(global_this),
+            ExpectStatic__getPrototype(global_this),
+        ]
+    }
+
+    /// For `internal/test/globals`, which restores these objects between the test files of `--isolate=modules`.
+    pub(crate) fn matcher_holders_array(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        let global_this = cx.global();
+        JSValue::create_array_from_slice(global_this, &Self::matcher_holders(global_this))
+    }
+
     /// Implements `expect.extend({ ... })`
     pub(crate) fn extend(cx: &mut JsScope<'_>, matchers: JsLocal<'_>) -> JsResult<()> {
         let global_this = cx.global();
@@ -1523,9 +1538,7 @@ impl Expect {
             ));
         };
 
-        let expect_proto = Expect__getPrototype(global_this);
-        let expect_constructor = super::expect::js::get_constructor(global_this);
-        let expect_static_proto = ExpectStatic__getPrototype(global_this);
+        let holders = Self::matcher_holders(global_this);
 
         {
             let iter = JSPropertyIterator::init(
@@ -1576,9 +1589,9 @@ impl Expect {
                     )
                 };
 
-                expect_proto.put_may_be_index(global_this, &matcher_name, wrapper_fn)?;
-                expect_constructor.put_may_be_index(global_this, &matcher_name, wrapper_fn)?;
-                expect_static_proto.put_may_be_index(global_this, &matcher_name, wrapper_fn)?;
+                for holder in holders {
+                    holder.put_may_be_index(global_this, &matcher_name, wrapper_fn)?;
+                }
             }
         }
 

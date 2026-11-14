@@ -87,7 +87,7 @@ fn to_count(global: &JSGlobalObject, name: &'static str, value: JSValue) -> JsRe
 }
 
 impl Expect {
-    /// One object per global, so properties that `setState` or a caller adds persist between calls.
+    /// Cached, so what `setState` or a caller adds persists. `reset_for_test_isolation` drops it between test files.
     fn state_object(global: &JSGlobalObject) -> JSValue {
         let utils = ExpectMatcherUtils::singleton(global);
         js::state_get_cached(utils).unwrap_or_else(|| {

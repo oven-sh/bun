@@ -666,6 +666,8 @@ static void startPipelinedResponseImpl(us_socket_t* socket, bool isAncient, bool
     // Clears the finished response's framing bits and keeps the connection-scoped
     // ones (notably HTTP_NODE_READS_PAUSED, read again below).
     httpResponseData->resetResponseState();
+    // A response is in flight again, so the connection is not idle.
+    httpResponseData->isIdle = false;
     if (connectionClose) {
         httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
     }

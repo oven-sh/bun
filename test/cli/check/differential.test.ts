@@ -1624,6 +1624,46 @@ differential("prints a module with `export =` like tsc, for every augmentation a
   expect(await casesThatDiffer(options, declarations, cases, 1, files)).toEqual([]);
 });
 
+// `resolveSymbol` doesn't follow an alias that is also a value. typescript-go takes the declared type through every
+// alias of the chain (`tryGetDeclaredTypeOfSymbol`), and only then rejects type arguments (`checkNoTypeArguments`).
+differential(
+  "matches tsc on an `import()` type of an alias that is also a value, with and without type arguments",
+  async () => {
+    // `Gone` is no export of `box.ts`. The type of an alias that names nothing is the error type, which `never` does
+    // not take.
+    const targets = { Iface: "export interface Iface<T> { value: T }", Enm: "export enum Enm { A }", Gone: "" };
+    const merges = { const: (n: string) => `const ${n} = 1;`, function: (n: string) => `function ${n}() {}` };
+    const files: Record<string, string> = { "box.ts": Object.values(targets).join("\n") + "\n" };
+    const cases: string[] = [];
+    // `m1` merges the import with a value, `m2` imports that and merges it again, `m3` exports it under two names.
+    const chain = (stem: string, name: string, box: string, merge: (n: string) => string) => {
+      files[`m1_${stem}.ts`] = `import type { ${name} } from "./${box}";\n${merge(name)}\nexport { ${name} };\n`;
+      files[`m2_${stem}.ts`] =
+        `import type { ${name} } from "./m1_${stem}";\nnamespace ${name} { export type Y = 2 }\nexport { ${name} };\n`;
+      files[`m3_${stem}.ts`] = `export { ${name} as Re } from "./m2_${stem}";\nexport * as all from "./m2_${stem}";\n`;
+      return [
+        `"./m1_${stem}").${name}`,
+        `"./m2_${stem}").${name}`,
+        `"./m3_${stem}").Re`,
+        `"./m3_${stem}").all.${name}`,
+      ];
+    };
+    for (const [target, [kind, merge]] of product(Object.keys(targets), Object.entries(merges))) {
+      for (const [named, args] of product(chain(`${target}_${kind}`, target, "box", merge), ["", "<string>"])) {
+        cases.push(`{ const v: never = null! as import(${named}${args}; }`);
+      }
+    }
+    // Inside the declaration that it names.
+    for (const [index, [hop, args]] of [...product([0, 1], ["", "<T>"])].entries()) {
+      const name = `U${index}`;
+      const named = chain(name, name, `box_${name}`, merges.const)[hop];
+      files[`box_${name}.ts`] = `export type ${name}<T> = T | import(${named}${args};\n`;
+      cases.push(`{ const v: never = null! as import("./box_${name}").${name}<string>; }`);
+    }
+    expect(await casesThatDiffer({}, [], cases, 1, files)).toEqual([]);
+  },
+);
+
 // `false | true` is `boolean` whether or not the two are fresh, and the elaboration doesn't single out one of them.
 differential("matches tsc on booleans for every source, target and kind of assignment", async () => {
   const declarations = [

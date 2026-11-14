@@ -5,7 +5,7 @@ use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSValue, JsError, JsRes
 use bun_collections::StringHashMap;
 use bun_core::UnwrapOrOom as _;
 use bun_core::wtf::WTFStringImpl;
-use bun_sql::shared::{ColumnIdentifier, Data};
+use bun_sql::shared::ColumnIdentifier;
 
 // Note: This entire type is passed by pointer
 // across FFI to C++ (`JSC__constructObjectFromDataCell`). Field layout is
@@ -359,22 +359,17 @@ impl SQLDataCell {
         }
     }
 
-    pub(crate) fn raw<'a>(optional_bytes: impl IntoOptionalData<'a>) -> SQLDataCell {
-        if let Some(bytes) = optional_bytes.into_optional_data() {
-            let bytes_slice = bytes.slice();
-            return SQLDataCell {
-                tag: Tag::Raw,
-                value: Value {
-                    raw: Raw {
-                        ptr: bytes_slice.as_ptr(),
-                        len: bytes_slice.len() as u64,
-                    },
+    pub(crate) fn raw(bytes: &[u8]) -> SQLDataCell {
+        SQLDataCell {
+            tag: Tag::Raw,
+            value: Value {
+                raw: Raw {
+                    ptr: bytes.as_ptr(),
+                    len: bytes.len() as u64,
                 },
-                ..Default::default()
-            };
+            },
+            ..Default::default()
         }
-        // TODO: check empty and null fields
-        SQLDataCell::null()
     }
 
     /// Shared wrapper around `construct_object_from_data_cell` used by the
@@ -449,30 +444,6 @@ impl SQLDataCell {
     }
 }
 
-/// Coercion helper for `raw()` call sites. Lets callers pass `&Data`,
-/// `Option<&Data>`, or `Option<&mut Data>` without wrapping.
-pub trait IntoOptionalData<'a> {
-    fn into_optional_data(self) -> Option<&'a Data>;
-}
-impl<'a> IntoOptionalData<'a> for &'a Data {
-    #[inline]
-    fn into_optional_data(self) -> Option<&'a Data> {
-        Some(self)
-    }
-}
-impl<'a> IntoOptionalData<'a> for Option<&'a Data> {
-    #[inline]
-    fn into_optional_data(self) -> Option<&'a Data> {
-        self
-    }
-}
-impl<'a> IntoOptionalData<'a> for Option<&'a mut Data> {
-    #[inline]
-    fn into_optional_data(self) -> Option<&'a Data> {
-        self.map(|d| &*d)
-    }
-}
-
 /// Clones the bytes into a fresh `WTFStringImpl` whose +1 ref is transferred
 /// to the cell (`free_value = 1`). Empty input maps to a null pointer instead
 /// of allocating an empty string.
@@ -512,14 +483,11 @@ pub(crate) fn dedupe_columns<'a>(
     for name_or_index in columns {
         // The verdict of an earlier pass, when the other columns may have had other names.
         if let ColumnIdentifier::Duplicate(name) = &mut *name_or_index {
-            *name_or_index = ColumnIdentifier::init(core::mem::take(name)).unwrap_or_oom();
+            *name_or_index = ColumnIdentifier::init(core::mem::take(name).into());
         }
         match &mut *name_or_index {
             ColumnIdentifier::Name(name) => {
-                let found_existing = seen_fields
-                    .get_or_put(name.slice())
-                    .unwrap_or_oom()
-                    .found_existing;
+                let found_existing = seen_fields.get_or_put(name).unwrap_or_oom().found_existing;
                 if found_existing {
                     *name_or_index = ColumnIdentifier::Duplicate(core::mem::take(name));
                     flags.insert(Flags::HAS_DUPLICATE_COLUMNS);
@@ -531,9 +499,9 @@ pub(crate) fn dedupe_columns<'a>(
                 let index = *index;
                 if seen_numbers.contains(&index) {
                     let mut digits = bun_core::fmt::ItoaBuf::new();
-                    *name_or_index = ColumnIdentifier::Duplicate(Data::Owned(
+                    *name_or_index = ColumnIdentifier::Duplicate(
                         bun_core::fmt::itoa(&mut digits, index).to_vec(),
-                    ));
+                    );
                     flags.insert(Flags::HAS_DUPLICATE_COLUMNS);
                 } else {
                     seen_numbers.push(index);

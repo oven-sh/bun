@@ -579,6 +579,9 @@ pub struct Resolver<'a> {
 
     /// Why "exports" or "imports" led to no file: the first time since this was last `None`.
     pub esm_failure: Option<crate::package_json::Status>,
+
+    /// `load_node_modules` stopped at a copy whose "exports" give no file. Node's `_findPath` does not catch that throw, so no later lookup directory answers: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L776
+    refused_in_node_modules: bool,
 }
 
 /// RAII guard returned by [`Resolver::scoped_log`]. Restores the previous
@@ -649,6 +652,7 @@ impl<'a> Resolver<'a> {
             resolves_for_code_from_disk: false,
             packages_of_code_from_disk: Vec::new(),
             esm_failure: None,
+            refused_in_node_modules: false,
         }
     }
 
@@ -1007,6 +1011,7 @@ impl<'a> Resolver<'a> {
             resolves_for_code_from_disk: false,
             packages_of_code_from_disk: Vec::new(),
             esm_failure: None,
+            refused_in_node_modules: false,
         }
     }
 
@@ -2406,11 +2411,26 @@ impl<'a> Resolver<'a> {
 
             if let Some(custom_paths) = self.custom_dir_paths {
                 bun_core::hint::cold();
+                let mut relative_in_cwd = false;
+                // Cleared here, one time for the list. The search of any folder sets it, and then no relative folder answers.
+                self.refused_in_node_modules = false;
                 for custom_path in custom_paths {
                     let custom_utf8 = custom_path.to_utf8();
                     // From each folder in its turn. From a folder on disk: the disk, as in an executable built without --aot, then what the executable
                     // holds there. From a folder of the executable: the executable first, as for a file of it that imports.
                     let given = custom_utf8.slice();
+                    if !bun_paths::is_absolute(given) {
+                        match self.look_from_relative_folder(
+                            given,
+                            import_path,
+                            kind,
+                            global_cache,
+                            &mut relative_in_cwd,
+                        ) {
+                            Some(answer) => return answer,
+                            None => continue,
+                        }
+                    }
                     let is_of_executable =
                         ::bun_options_types::standalone_path::is_bun_standalone_file_path(given);
                     if is_of_executable
@@ -2432,6 +2452,11 @@ impl<'a> Resolver<'a> {
                     {
                         return answer;
                     }
+                }
+                // Every folder missed. A relative folder installs only through this search, from the project of the cwd.
+                if relative_in_cwd && !self.refused_in_node_modules {
+                    let cwd = self.fs_ref().top_level_dir();
+                    return self.check_package_path(cwd, import_path, kind, global_cache);
                 }
             } else {
                 match self.check_package_path(source_dir, import_path, kind, global_cache) {
@@ -2463,6 +2488,61 @@ impl<'a> Resolver<'a> {
             return false;
         };
         rest.is_empty() || ResolvePath::is_sep_any(rest[rest.len() - 1])
+    }
+
+    /// Node's `path.resolve(entry)` for a relative `paths` entry, and whether that is in the cwd.
+    fn custom_dir<'b>(&self, entry: &[u8], buf: &'b mut PathBuffer) -> Option<(&'b [u8], bool)> {
+        use ::bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
+        let cwd = self.fs_ref().top_level_dir();
+        #[cfg(windows)]
+        let path: &'b [u8] = self.fs_ref().abs_buf_checked(&[entry], &mut buf[..])?;
+        #[cfg(not(windows))]
+        let path: &'b [u8] = {
+            use ::bun_paths::resolve_path::{join_z_buf_checked, platform};
+            join_z_buf_checked::<platform::Posix>(&mut buf[..], &[cwd, entry])?.as_bytes()
+        };
+        // The cache reads a NUL as the end of a path and, on POSIX, a backslash as a separator.
+        let misread: &[u8] = if cfg!(windows) { b"\0" } else { b"\\\0" };
+        if let Some(first) = strings::index_of_any(path, misread) {
+            #[cfg(windows)]
+            let root_len = bun_paths::windows_filesystem_root(path).len();
+            #[cfg(not(windows))]
+            let root_len = 1;
+            let separators: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+            let cut = strings::last_index_of_any(&path[..first], separators)
+                .map_or(root_len, |separator| separator.max(root_len));
+            return Some((&path[..cut], false));
+        }
+        let in_cwd = is_parent_or_equal(cwd, path) != ParentEqual::Unrelated;
+        Some((path, in_cwd))
+    }
+
+    /// The search from one relative folder of `paths`, which Node reads as `path.resolve(folder)`. `None`: it has no answer, and the search goes on.
+    #[cold]
+    #[inline(never)]
+    fn look_from_relative_folder<'r>(
+        &mut self,
+        folder: &[u8],
+        import_path: &'r [u8],
+        kind: ast::ImportKind,
+        global_cache: GlobalCache,
+        is_in_cwd: &mut bool,
+    ) -> Option<ResultUnion<'r>> {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let (on_disk, in_cwd) = self.custom_dir(folder, &mut buf)?;
+        *is_in_cwd |= in_cwd;
+        // A relative folder installs nothing, and a search under `force` always ends in an install.
+        if !self.refused_in_node_modules && global_cache != GlobalCache::force {
+            match self.check_package_path(on_disk, import_path, kind, GlobalCache::disable) {
+                ResultUnion::NotFound => {}
+                found => return Some(found),
+            }
+        }
+        // A refusal, by this folder or by one before it, is where Node throws. The executable and the folders after it do not answer.
+        if self.refused_in_node_modules {
+            return Some(ResultUnion::NotFound);
+        }
+        self.look_in_executable_from_given_folder(on_disk, import_path, kind)
     }
 
     pub(crate) fn check_relative_path(
@@ -2620,6 +2700,7 @@ impl<'a> Resolver<'a> {
         kind: ast::ImportKind,
         global_cache: GlobalCache,
     ) -> ResultUnion<'r> {
+        debug_assert!(bun_paths::is_absolute(source_dir));
         let mut import_path = unremapped_import_path;
         let mut source_dir_info: DirInfoRef = match self.dir_info_cached(source_dir) {
             Err(_) => return ResultUnion::NotFound,
@@ -3229,6 +3310,13 @@ impl<'a> Resolver<'a> {
                                     if let Some(d) = self.debug_logs.as_mut() {
                                         d.decrease_indent();
                                     }
+                                    // Node's walk reads a package at `<dir>/node_modules/<name>` only. The own package of the importing folder can lie elsewhere, and a `#` name is the caller's.
+                                    self.refused_in_node_modules |= !forbid_imports
+                                        && (!is_self_reference
+                                            || is_node_modules_copy(
+                                                package_json.source.path.text,
+                                                esm.name,
+                                            ));
                                     return MatchStatus::NotFound;
                                 }
                             }
@@ -7182,6 +7270,23 @@ fn primary_side_effects(
     } else {
         SideEffects::NoSideEffectsPackageJsonArray
     }
+}
+
+/// Whether `package_json` is `<dir>/node_modules/<name>/package.json`, the one place where Node's walk reads the package `name`.
+fn is_node_modules_copy(package_json: &[u8], name: &[u8]) -> bool {
+    let Some(mut rest) = bun_paths::dirname(package_json) else {
+        return false;
+    };
+    for part in strings::rsplit(name, b"/").chain([b"node_modules".as_slice()]) {
+        let Some((&separator, above)) = rest.strip_suffix(part).and_then(<[u8]>::split_last) else {
+            return false;
+        };
+        if !bun_paths::is_sep_native(separator) {
+            return false;
+        }
+        rest = above;
+    }
+    true
 }
 
 #[inline]

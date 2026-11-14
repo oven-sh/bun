@@ -10,6 +10,7 @@ mod generated {
     include!(concat!(env!("BUN_CODEGEN_DIR"), "/removable_features.rs"));
 }
 
+pub use entry_point::keep_call_of_entry_point;
 pub use feature_set::FeatureSet;
 pub use generated::{FEATURES_HASH, Feature, TrimFeature};
 pub use requirement::{

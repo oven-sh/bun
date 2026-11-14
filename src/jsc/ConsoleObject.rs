@@ -3853,6 +3853,15 @@ pub mod formatter {
                     C,
                 )
             })?;
+            // `this` as the result (from a hook, or from the C++ helper for a prototype object) prints without the hook.
+            if result == self.custom_formatted_object.this {
+                let tag = Tag::get_advanced(
+                    result,
+                    self.global_this,
+                    TagOptions::DISABLE_INSPECT_CUSTOM,
+                )?;
+                return self.format::<C>(tag, writer_, result, self.global_this);
+            }
             // Strings are printed directly, otherwise we recurse.
             if result.is_string() {
                 if writer_
@@ -3862,14 +3871,7 @@ pub mod formatter {
                     self.failed = true;
                 }
             } else {
-                // A custom inspector that returns its own `this` would recurse
-                // forever; re-tag without the custom hook so it falls through to
-                // default formatting (mirrors util.inspect's `ret !== context`).
-                let tag = if result == self.custom_formatted_object.this {
-                    Tag::get_advanced(result, self.global_this, TagOptions::DISABLE_INSPECT_CUSTOM)?
-                } else {
-                    Tag::get(result, self.global_this)?
-                };
+                let tag = Tag::get(result, self.global_this)?;
                 self.format::<C>(tag, writer_, result, self.global_this)?;
             }
             Ok(())

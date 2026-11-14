@@ -40,6 +40,34 @@ JSObject* createInspectOptionsObject(VM& vm, Zig::GlobalObject* globalObject, un
     return options;
 }
 
+// Node's formatValue, with the same reads: ObjectGetOwnPropertyDescriptor(value, 'constructor')?.value?.prototype === value
+static NEVER_INLINE bool isPrototypeOfItsConstructor(VM& vm, JSGlobalObject* globalObject, JSObject* object)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Through the method table: `constructor` of a WebCore prototype is a native custom value.
+    PropertySlot constructorSlot(object, PropertySlot::InternalMethodType::GetOwnProperty);
+    bool hasConstructor = object->methodTable()->getOwnPropertySlot(object, globalObject, vm.propertyNames->constructor, constructorSlot);
+    RETURN_IF_EXCEPTION(scope, false);
+    // An accessor has no `value`. That of `Iterator.prototype` is a native one.
+    if (!hasConstructor || constructorSlot.isAccessor() || (constructorSlot.attributes() & PropertyAttribute::CustomAccessor))
+        return false;
+    JSValue constructor = constructorSlot.getValue(globalObject, vm.propertyNames->constructor);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (constructor.isUndefinedOrNull())
+        return false;
+
+    // A class, and a function that has its `prototype`, hold it as a direct data property: no [[Get]] is needed.
+    if (auto* function = dynamicDowncast<JSFunction>(constructor)) {
+        JSValue direct = function->getDirect(vm, vm.propertyNames->prototype);
+        if (direct && direct.isObject())
+            return direct == JSValue(object);
+    }
+    JSValue prototype = constructor.get(globalObject, vm.propertyNames->prototype);
+    RETURN_IF_EXCEPTION(scope, false);
+    return prototype == JSValue(object);
+}
+
 extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     Zig::GlobalObject* globalObject,
     JSC::EncodedJSValue encodedFunctionValue,
@@ -52,6 +80,20 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     JSValue thisValue = JSValue::decode(encodedThisValue);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (JSObject* thisObject = thisValue.getObject()) {
+        // Most instances have no own `constructor`: the Structure of an ordinary object or a typed array (a Buffer) says so.
+        auto flags = thisObject->inlineTypeFlags();
+        bool structureListsOwnProperties = !TypeInfo::hasStaticPropertyTable(flags)
+            && (!TypeInfo::overridesGetOwnPropertySlot(flags) || isTypedArrayType(thisObject->type()));
+        if (!structureListsOwnProperties || thisObject->hasDirectProperty(globalObject, vm.propertyNames->constructor)) {
+            bool isPrototype = isPrototypeOfItsConstructor(vm, globalObject, thisObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            // The formatter prints a result that is the receiver itself without the hook.
+            if (isPrototype)
+                return JSValue::encode(thisValue);
+        }
+    }
 
     auto callData = JSC::getCallData(functionToCall);
     MarkedArgumentBuffer arguments;

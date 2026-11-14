@@ -1625,6 +1625,162 @@ describe("a value whose [nodejs.util.inspect.custom] cannot be read", () => {
   );
 });
 
+// util.inspect prints a prototype object without a call of its hook, because the hook of a class
+// takes an instance. The test is `Object.getOwnPropertyDescriptor(value, "constructor")?.value?.prototype === value`.
+describe("[nodejs.util.inspect.custom] of a prototype object is not called", () => {
+  let calls = 0;
+  function hook() {
+    calls++;
+    return "from the hook";
+  }
+  // A constructor whose `prototype` is `object`.
+  function prototypeOf(object) {
+    function Class() {}
+    Class.prototype = object;
+    Object.defineProperty(object, "constructor", { value: Class, writable: true, configurable: true });
+    Object.defineProperty(object, Bun.inspect.custom, { value: hook, writable: true, configurable: true });
+    return object;
+  }
+  const manyFields = () => Object.fromEntries(Array.from({ length: 200 }, (_, index) => ["field" + index, index]));
+  const manyFieldsPrinted = Array.from({ length: 200 }, (_, index) => `  field${index}: ${index},\n`).join("");
+
+  it.each([
+    ["a plain object", () => ({ a: 1 }), "Class {\n  a: 1,\n}"],
+    ["an object with 200 fields", manyFields, "Class {\n" + manyFieldsPrinted + "}"],
+    ["a Buffer", () => Buffer.from("hi"), "Buffer(2) [ 104, 105 ]"],
+    ["a Uint16Array", () => new Uint16Array(2), "Uint16Array(2) [ 0, 0 ]"],
+    ["an array", () => [1, 2], "[ 1, 2 ]"],
+    ["a function", () => function named() {}, "[Function: named]"],
+    ["a Map", () => new Map([[1, 2]]), "Map(1) {\n  1: 2,\n}"],
+    ["a Date", () => new Date(0), "1970-01-01T00:00:00.000Z"],
+    ["a String object", () => new String("s"), '"s"'],
+  ])("when the prototype is %s", (_, make, printed) => {
+    calls = 0;
+    // With the hook and no own `constructor`, the value is an instance.
+    expect(Bun.inspect(Object.defineProperty(make(), Bun.inspect.custom, { value: hook }))).toBe("from the hook");
+    expect(calls).toBe(1);
+    expect(Bun.inspect(prototypeOf(make()))).toBe(printed);
+    expect(calls).toBe(1);
+  });
+
+  it("when the hook is on String.prototype", () => {
+    calls = 0;
+    const withoutHook = Bun.inspect(String.prototype);
+    Object.defineProperty(String.prototype, Bun.inspect.custom, { value: hook, configurable: true });
+    try {
+      expect([Bun.inspect(new String("s")), Bun.inspect(String.prototype)]).toEqual(["from the hook", withoutHook]);
+    } finally {
+      delete String.prototype[Bun.inspect.custom];
+    }
+    expect(calls).toBe(1);
+  });
+
+  it("and a hook that returns its String object prints that object", () => {
+    const returnsItself = Object.defineProperty(new String("s"), Bun.inspect.custom, {
+      value() {
+        return this;
+      },
+    });
+    expect(Bun.inspect(returnsItself)).toBe('"s"');
+  });
+
+  // Node reads `constructor.prototype` with a [[Get]], which also finds a `prototype` that the
+  // constructor inherits.
+  it.each([
+    ["an object that inherits from the class", Class => Object.create(Class)],
+    ["an arrow function that inherits from the class", Class => Object.setPrototypeOf(() => {}, Class)],
+    ["a bound subclass", Class => class extends Class {}.bind(null)],
+  ])("when the constructor is %s", (_, constructorOf) => {
+    calls = 0;
+    class Class {}
+    Class.prototype.label = "own";
+    Object.defineProperty(Class.prototype, Bun.inspect.custom, { value: hook });
+    Class.prototype.constructor = constructorOf(Class);
+    expect(Object.hasOwn(Class.prototype.constructor, "prototype")).toBe(false);
+    expect(Bun.inspect(Class.prototype)).toBe('{\n  label: "own",\n}');
+    expect(calls).toBe(0);
+  });
+
+  // Node reads `constructor.prototype` with a [[Get]]: a getter or a `get` trap of the constructor answers.
+  it("when a getter or a Proxy trap of the constructor answers", () => {
+    let ran = 0;
+    const withGetter = object => ({
+      get prototype() {
+        ran++;
+        return object;
+      },
+    });
+    const proxy = object =>
+      new Proxy(function () {}, {
+        get(target, key, receiver) {
+          ran++;
+          return key === "prototype" ? object : Reflect.get(target, key, receiver);
+        },
+      });
+    const inherits = constructorOf => object => Object.create(constructorOf(object));
+
+    calls = 0;
+    const printed = [withGetter, proxy, inherits(withGetter), inherits(proxy)].map(constructorOf => {
+      const object = { label: "own" };
+      Object.defineProperty(object, Bun.inspect.custom, { value: hook });
+      Object.defineProperty(object, "constructor", { value: constructorOf(object) });
+      return Bun.inspect(object);
+    });
+    expect({ printed, calls, ran }).toEqual({ printed: Array(4).fill('{\n  label: "own",\n}'), calls: 0, ran: 4 });
+  });
+
+  it("and what that getter throws comes out of the print", () => {
+    const object = Object.defineProperty({}, Bun.inspect.custom, { value: hook });
+    Object.defineProperty(object, "constructor", {
+      value: {
+        get prototype() {
+          throw new RangeError("from the getter");
+        },
+      },
+    });
+    expect(() => Bun.inspect(object)).toThrow(new RangeError("from the getter"));
+  });
+
+  // The global of a node:vm context hands the [[GetOwnProperty]] of `constructor` on to its sandbox.
+  it("and a Proxy sandbox of a node:vm global answers for its own constructor", () => {
+    const globalOf = getOwnPropertyDescriptor =>
+      vm.runInContext(
+        "this",
+        vm.createContext(new Proxy({ [Bun.inspect.custom]: hook }, { getOwnPropertyDescriptor })),
+      );
+    const asked = [];
+    const recording = globalOf((target, key) => {
+      asked.push(key);
+      return Reflect.getOwnPropertyDescriptor(target, key);
+    });
+    const throwing = globalOf((target, key) => {
+      if (key === "constructor") throw new RangeError("from the trap");
+      return Reflect.getOwnPropertyDescriptor(target, key);
+    });
+
+    calls = 0;
+    asked.length = 0;
+    expect([Bun.inspect(recording), calls, asked]).toEqual(["from the hook", 1, ["constructor"]]);
+    expect(() => Bun.inspect(throwing)).toThrow(new RangeError("from the trap"));
+  });
+
+  it("in the message of a matcher", () => {
+    class Money {
+      #cents = 150;
+      [Bun.inspect.custom]() {
+        return "Money<" + this.#cents + ">";
+      }
+    }
+    let message;
+    try {
+      expect(Object.getPrototypeOf(new Money())).toBeNull();
+    } catch (error) {
+      message = Bun.stripANSI(error.message);
+    }
+    expect(message).toBe("expect(received).toBeNull()\n\nReceived: Money {}\n");
+  });
+});
+
 it("expect.objectContaining(fn) prints the function when it has no properties to list", () => {
   const f = () => {};
   expect(Bun.inspect(expect.objectContaining(f))).toBe("ObjectContaining [Function: f]");

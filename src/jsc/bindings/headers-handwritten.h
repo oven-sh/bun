@@ -456,6 +456,7 @@ struct DeepMatchState {
     JSC::MarkedArgumentBuffer gcBuffer;
     // If `records`, `recorded` gets 4 values per compared property (see recordIfAsked).
     // An undefined patternOfValue means `value` is the asymmetric matcher the property matched.
+    // A null one means `value` is the pattern's value, matched through an asymmetricMatch() method or a matcher in the received value.
     bool records { false };
     JSC::MarkedArgumentBuffer recorded;
     WTF::Vector<JSC::Identifier> recordedNames;

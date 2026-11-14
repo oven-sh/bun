@@ -287,6 +287,48 @@ describe("node:test", () => {
     });
   });
 
+  // 23 node:test cases in one child. Like the large fixtures at the top of this
+  // file, a debug+ASAN child can need more than the default timeout for them.
+  test("should check the options of a declaration in node's order", async () => {
+    const { exitCode, stderr } = await runTests(["41-option-validation.mjs"]);
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("\n 20 pass\n 1 skip\n 2 todo\n 0 fail\n"),
+    });
+  }, 30_000);
+
+  // The fixture states what one Node version does, so Node runs it too, when the
+  // installed node is the version bun reports. Bun's own `node` shim is not a
+  // node: it prints bun's version here.
+  const node = Bun.which("node");
+  const nodeIsReferenceVersion =
+    node !== null &&
+    Bun.spawnSync({ cmd: [node, "-p", "process.versions.bun ?? process.versions.node"], env: bunEnv, stderr: "ignore" })
+      .stdout.toString()
+      .trim() === process.versions.node;
+  test.skipIf(!nodeIsReferenceVersion)("should check the options of a declaration the same way on node", async () => {
+    await using proc = Bun.spawn({
+      cmd: [node!, "--test", "--test-reporter=tap", join(import.meta.dirname, "fixtures", "41-option-validation.mjs")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({
+      stdout: expect.stringContaining("\n# pass 42\n# fail 0\n# cancelled 0\n# skipped 2\n# todo 2\n"),
+      exitCode: 0,
+    });
+  });
+
+  // Bun only: node checks the count when the test starts, so the fixture has no node run.
+  test("should check a truthy plan when the test is declared", async () => {
+    const { exitCode, stderr } = await runTests(["42-plan-at-declaration.mjs"]);
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("\n 2 pass\n 0 fail\n"),
+    });
+  });
+
   test("should enforce a hook-level signal and install t.assert.ok separately", async () => {
     const { exitCode, stderr } = await runTests(["20-hook-signal-and-assert-ok.js"]);
     expect(stderr).toContain("2 pass");

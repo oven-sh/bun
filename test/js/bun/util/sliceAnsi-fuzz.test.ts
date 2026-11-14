@@ -5,18 +5,15 @@ import { describe, expect, test } from "bun:test";
 import { isASAN, isDebug } from "harness";
 
 // Seeded PRNG for reproducibility. Change seed to explore different cases.
+// Math.imul: the plain product exceeds 2^53. Dividing by 2^31 keeps every draw below 1.
 function makeRng(seed: number) {
   return () => {
-    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-    return seed / 0x7fffffff;
+    seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
+    return seed / 0x80000000;
   };
 }
 
-// Some random-string cases include orphaned C1 controls (0x90, 0x98, 0x9C,
-// 0x9E, 0x9F) that sliceAnsi consumes as control tokens but stripANSI leaves
-// in (they're not SGR/OSC). To avoid testing that minor inconsistency, strip
-// both before comparing. Everything else uses stringWidth directly now that
-// the ANSI-breaks-grapheme bug is fixed.
+// Width of the visible text: strip the escape sequences, then measure.
 const visibleWidth = (s: string) => Bun.stringWidth(Bun.stripANSI(s));
 
 // ============================================================================
@@ -97,18 +94,13 @@ describe("sliceAnsi invariants", () => {
   });
 
   // Property: identity. slice(s, 0, Infinity) == s (modulo ANSI normalization).
+  // The end is a finite column past any width: sliceAnsi(s, 0) returns `s` itself and tokenizes nothing.
   test("full slice preserves visible content", () => {
     const rng = makeRng(0x1234);
     for (let i = 0; i < 100; i++) {
       const s = randomString(rng, 0, 100);
-      const out = Bun.sliceAnsi(s, 0);
-      // Note: sliceAnsi consumes standalone C1 ST (0x9C) as a control token,
-      // but stripANSI leaves it in (it's not an SGR/OSC sequence). To avoid
-      // testing that inconsistency, strip 0x9C from both sides for comparison.
-      // Same for other standalone C1 controls (0x90, 0x98, 0x9E, 0x9F) which
-      // sliceAnsi will now fall-through as width-0 visible chars.
-      const normalize = (x: string) => x.replace(/[\u0090\u0098\u009C\u009E\u009F]/g, "");
-      expect(normalize(Bun.stripANSI(out))).toBe(normalize(Bun.stripANSI(s)));
+      const out = Bun.sliceAnsi(s, 0, s.length * 2 + 1);
+      expect(Bun.stripANSI(out)).toBe(Bun.stripANSI(s));
       expect(visibleWidth(out)).toBe(visibleWidth(s));
     }
   });
@@ -382,8 +374,6 @@ describe("sliceAnsi consistency with other Bun APIs", () => {
       const s = randomString(rng, 10, 80);
       const totalW = Bun.stringWidth(s);
       // Slice [0, totalW) should give back the full width.
-      // Use stripped width on both sides to avoid Bun.stringWidth's
-      // ANSI-breaks-grapheme-state bug (see visibleWidth comment at top).
       expect(visibleWidth(Bun.sliceAnsi(s, 0, totalW))).toBe(visibleWidth(s));
     }
   });
@@ -398,11 +388,48 @@ describe("sliceAnsi consistency with other Bun APIs", () => {
       expect(Bun.stripANSI(Bun.sliceAnsi(s, a, b))).toBe(Bun.sliceAnsi(plain, a, b));
     }
   });
+
+  // Exhaustive, not random: the random helpers rarely put an escape inside a
+  // cluster. Every order of up to three pieces goes between the two halves of
+  // a ZWJ sequence. ESC \ closes what the pieces leave open, so the "|" after
+  // it is a visible column for both APIs.
+  test("every short escape form inside a cluster keeps stringWidth's columns", () => {
+    // "\x1b\x9c" is one piece: a C1 ST with no ESC before it is one of the three
+    // inputs the APIs differ on (see the helpers below).
+    const pieces = [..."\x1b\x18\x1a\x07\x7f[]P(ma\x9b\x9d\x90\u200d\u0301", "\x1b\x9c", "8;"];
+    const mismatches: string[] = [];
+    const check = (inner: string, depth: number) => {
+      const s = `\u{1F614}\u200D${inner}\u{1F601}\x1b\\|`;
+      const column = Bun.stringWidth(s) - 1;
+      // The one-column slice holds "|". A control with no width can share its column; nothing wider can.
+      const slice = Bun.sliceAnsi(s, column, column + 1);
+      if (!slice.includes("|") || Bun.stringWidth(slice) !== 1) {
+        const dump = [...inner].map(c => c.codePointAt(0)!.toString(16)).join(" ");
+        mismatches.push(
+          `${dump}: stringWidth puts "|" at column ${column}, the slice there is ${JSON.stringify(slice)}`,
+        );
+      }
+      if (depth < 3) for (const piece of pieces) check(inner + piece, depth + 1);
+    };
+    check("", 0);
+    expect(mismatches).toEqual([]);
+  });
 });
 
 // ============================================================================
 // Helpers
 // ============================================================================
+
+// randomString() and randomStringNoC1() draw inputs on which Bun.sliceAnsi and
+// Bun.stringWidth count the same columns. The two differ on three inputs, and
+// the helpers never draw them:
+//   - an unterminated control string (ESC ] P X ^ _ or a C1 introducer with no
+//     terminator): sliceAnsi keeps the text after it visible, stringWidth and
+//     stripANSI consume it to the end of the string;
+//   - a standalone C1 ST (U+009C): an escape sequence for sliceAnsi, an
+//     ordinary zero-width control for stringWidth and stripANSI;
+//   - a lone surrogate: it ends the cluster for sliceAnsi only.
+// The "Control char" branch still draws a bare ESC.
 
 function randomString(rng: () => number, minLen: number, maxLen: number): string {
   const len = minLen + Math.floor(rng() * (maxLen - minLen + 1));
@@ -410,8 +437,9 @@ function randomString(rng: () => number, minLen: number, maxLen: number): string
   for (let i = 0; i < len;) {
     const r = rng();
     if (r < 0.4) {
-      // ASCII char
-      pieces.push(String.fromCharCode(0x20 + Math.floor(rng() * 95)));
+      // ASCII char. After a bare ESC, "a" replaces one that opens a control string.
+      const c = String.fromCharCode(0x20 + Math.floor(rng() * 95));
+      pieces.push(pieces.at(-1) === "\x1b" && "]PX^_".includes(c) ? "a" : c);
       i++;
     } else if (r < 0.55) {
       // SGR code
@@ -440,15 +468,10 @@ function randomString(rng: () => number, minLen: number, maxLen: number): string
       // Control char
       pieces.push(String.fromCharCode(Math.floor(rng() * 0x20)));
     } else if (r < 0.96) {
-      // C1 control. Remap the ANSI introducer bytes (0x90 DCS, 0x98 SOS,
-      // 0x9B CSI, 0x9D OSC, 0x9E PM, 0x9F APC) down by 0x10 so a lone
-      // introducer never opens an unterminated control string: sliceAnsi
-      // leaves the trailing bytes visible for those while stringWidth and
-      // stripANSI consume to EOF, and this generator is meant to produce
-      // inputs the three width models agree on.
+      // C1 control. The introducers (0x90 DCS, 0x98 SOS, 0x9B CSI, 0x9D OSC,
+      // 0x9E PM, 0x9F APC) and the terminator (0x9C ST) move down by 0x10.
       const c1 = 0x80 + Math.floor(rng() * 0x20);
-      const safe =
-        c1 === 0x90 || c1 === 0x98 || c1 === 0x9b || c1 === 0x9d || c1 === 0x9e || c1 === 0x9f ? c1 - 0x10 : c1;
+      const safe = c1 === 0x90 || c1 === 0x98 || (c1 >= 0x9b && c1 <= 0x9f) ? c1 - 0x10 : c1;
       pieces.push(String.fromCharCode(safe));
     } else {
       // Truecolor SGR
@@ -498,10 +521,7 @@ describe("sliceAnsi negative indices", () => {
   test("computeTotalWidth matches stringWidth for cluster-rich input", () => {
     // Negative indices with clustering (emoji, ZWJ, combining) stress the
     // pre-pass path. It should give the same totalWidth as stringWidth.
-    // randomString() excludes bare C1 escape introducers so the input never
-    // contains an unterminated control string (the one case where sliceAnsi's
-    // width model deliberately keeps the trailing bytes visible while
-    // stringWidth/stripANSI consume to EOF).
+    // randomString() never draws the inputs where the two differ.
     const rng = makeRng(0x70741);
     for (let i = 0; i < 100; i++) {
       const s = randomString(rng, 10, 80);
@@ -792,11 +812,7 @@ describe("sliceAnsi direct stringWidth invariant (post-fix)", () => {
     // Before the stringWidth fix, we used visibleWidth (stripANSI first).
     // Now stringWidth correctly preserves grapheme state across ANSI, so
     // we can test the direct invariant. Keep +1 for wide-at-boundary.
-    //
-    // Unterminated control strings are the one place sliceAnsi's width model
-    // and stringWidth deliberately diverge (sliceAnsi keeps the trailing
-    // bytes visible; stringWidth/stripANSI consume to EOF). This generator
-    // excludes C1 bytes entirely so a stray control byte can never open one.
+    // randomStringNoC1() never draws the inputs where the two differ.
     const rng = makeRng(0xd1ec7);
     for (let i = 0; i < 200; i++) {
       const s = randomStringNoC1(rng, 0, 100);
@@ -811,15 +827,16 @@ describe("sliceAnsi direct stringWidth invariant (post-fix)", () => {
   });
 });
 
-// Like randomString but excludes C1 control bytes (0x80-0x9F) entirely, so no
-// piece can combine with a neighbour into an unterminated control string.
+// Like randomString but with no C1 control bytes (0x80-0x9F) at all. A bare
+// ESC gets the same guard.
 function randomStringNoC1(rng: () => number, minLen: number, maxLen: number): string {
   const len = minLen + Math.floor(rng() * (maxLen - minLen + 1));
   const pieces: string[] = [];
   for (let i = 0; i < len;) {
     const r = rng();
     if (r < 0.4) {
-      pieces.push(String.fromCharCode(0x20 + Math.floor(rng() * 95)));
+      const c = String.fromCharCode(0x20 + Math.floor(rng() * 95));
+      pieces.push(pieces.at(-1) === "\x1b" && "]PX^_".includes(c) ? "a" : c);
       i++;
     } else if (r < 0.55) {
       pieces.push(`\x1b[${Math.floor(rng() * 108)}m`);

@@ -128,6 +128,7 @@ describe("Bun.wrapAnsi", () => {
           "\x1b]8;;http://x\x07ab\x1b]8;;\x07\n\x1b]8;;http://x\x07cd",
         ],
         ["CSI then SGR", "\x1b[2J\x1b[31m\tab cd", 2, "\x1b[2J\x1b[31mab\x1b[39m\n\x1b[31mcd"],
+        ["nF escape with an astral final character", "\x1b(\u{1F600}\tab cd", 2, "\x1b(\u{1F600}ab\ncd"],
       ];
 
       describe.each(trimCases)("%s", (_, input, columns, expected) => {

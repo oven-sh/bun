@@ -28,6 +28,7 @@ pub(crate) struct FdPipe {
     handle: bun_uws::TransportHandle,
     fd: Fd,
     /// Not opened `O_RDONLY`: `shutdown` closes it, since a pipe's peer sees EOF no other way.
+    #[cfg(unix)]
     writable: bool,
     /// `None` once closed or detached. `connect_finish` took the connection's ref on it, and `on_close` releases that ref.
     socket: Cell<Option<ThisPtr<TCPSocket>>>,
@@ -101,11 +102,10 @@ impl FdPipe {
         } else {
             true
         };
-        #[cfg(not(unix))]
-        let writable = true;
         let this = bun_core::heap::into_raw(Box::new(Self {
             handle: Default::default(),
             fd,
+            #[cfg(unix)]
             writable,
             socket: Cell::new(Some(socket)),
             is_shutdown: Cell::new(false),
@@ -190,9 +190,9 @@ impl FdPipe {
         let poll = match self.poll.get() {
             Some(poll) => poll,
             None => {
-                let owner = Owner::new(PollTag::FdPipe, core::ptr::from_ref(self).cast_mut().cast());
+                let owner =
+                    Owner::new(PollTag::FdPipe, core::ptr::from_ref(self).cast_mut().cast());
                 let mut fd = self.fd;
-                #[cfg(unix)]
                 if self.reader.is_some() {
                     let Ok(dup) = sys::dup(self.fd) else {
                         return false;
@@ -210,7 +210,6 @@ impl FdPipe {
         }
         // The socket's queued bytes are a pending write: like libuv's `uv_write_t`, they hold the
         // loop open however the socket is ref'd. The write-only pipe never did, and keeps that.
-        #[cfg(unix)]
         if self.reader.is_some() {
             // SAFETY: as above.
             unsafe { (*poll).enable_keeping_process_alive(ctx) };
@@ -225,7 +224,6 @@ impl FdPipe {
 
     #[cfg(unix)]
     pub(crate) fn on_poll(&self) {
-        #[cfg(unix)]
         if let Some(poll) = self.poll.get()
             && self.reader.is_some()
         {
@@ -244,12 +242,9 @@ impl FdPipe {
             // SAFETY: this pipe's live hive slot, given back here.
             unsafe { (*poll).deinit() };
         }
-        #[cfg(unix)]
-        {
-            let dup = self.poll_fd.replace(Fd::INVALID);
-            if dup != Fd::INVALID {
-                dup.close();
-            }
+        let dup = self.poll_fd.replace(Fd::INVALID);
+        if dup != Fd::INVALID {
+            dup.close();
         }
     }
 
@@ -519,7 +514,11 @@ impl bun_io::BufferedReaderParent for FdPipe {
     const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::FdPipe;
     const HAS_ON_READ_CHUNK: bool = true;
 
-    unsafe fn on_read_chunk(this: *mut Self, chunk: bun_io::Chunk<'_>, has_more: ReadState) -> bool {
+    unsafe fn on_read_chunk(
+        this: *mut Self,
+        chunk: bun_io::Chunk<'_>,
+        has_more: ReadState,
+    ) -> bool {
         bun_removable_features::removable_body!(Sockets, Abort, {
             Self::from_parent_ptr(this).on_read_chunk(&chunk, has_more)
         })

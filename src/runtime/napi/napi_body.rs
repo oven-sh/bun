@@ -2057,7 +2057,7 @@ impl napi_async_work {
         // Note: the "this" value here may already be freed by the user in `complete`
         // Note: KeepAlive is not `Copy`, so move it out (the original slot may
         // be freed under us by `complete`).
-        let mut poll_ref = core::mem::take(&mut self.poll_ref);
+        let poll_ref = core::mem::take(&mut self.poll_ref);
         // KeepAlive::unref needs an event-loop ctx so it cannot impl Drop
         // generically; this is a genuine one-off cleanup.
         scopeguard::defer! { poll_ref.unref(bun_io::js_vm_ctx()); }
@@ -2633,7 +2633,7 @@ pub(crate) struct ThreadSafeFunction {
 
 bun_jsc::impl_abort_handle_owner!(ThreadSafeFunction, abort_handle, |this, _cause| {
     // SAFETY: trait contract: `this` is live, and this is the JS thread.
-    unsafe { &mut *this }.unref()
+    unsafe { &*this }.unref()
 });
 
 pub(crate) enum TsfnCallback {
@@ -3212,7 +3212,7 @@ impl ThreadSafeFunction {
     }
 
     /// `napi_ref_threadsafe_function` — JS thread only (as in Node).
-    pub(crate) fn ref_(&mut self) {
+    pub(crate) fn ref_(&self) {
         let caller = VirtualMachine::get().context_of_caller();
         // Nothing of a context that has stopped holds the loop: not the function's own call_js
         // once its maker has stopped (that is where it runs), not a disposed graph's leftover
@@ -3224,7 +3224,7 @@ impl ThreadSafeFunction {
     }
 
     /// `napi_unref_threadsafe_function` — JS thread only (as in Node).
-    pub(crate) fn unref(&mut self) {
+    pub(crate) fn unref(&self) {
         self.poll_ref.unref(bun_io::js_vm_ctx());
     }
 
@@ -3477,7 +3477,7 @@ extern "C" fn napi_unref_threadsafe_function(
     }
     #[cfg(not(debug_assertions))]
     let _ = env_;
-    // SAFETY: `func` was null-checked above; exclusive borrow scoped to this call.
+    // SAFETY: `func` was null-checked above, and this is the JS thread.
     unsafe { (*func).unref() };
     NapiStatus::ok as napi_status
 }
@@ -3501,7 +3501,7 @@ extern "C" fn napi_ref_threadsafe_function(
     }
     #[cfg(not(debug_assertions))]
     let _ = env_;
-    // SAFETY: `func` was null-checked above; exclusive borrow scoped to this call.
+    // SAFETY: `func` was null-checked above, and this is the JS thread.
     unsafe { (*func).ref_() };
     NapiStatus::ok as napi_status
 }

@@ -3,6 +3,7 @@
 //   bun record.ts [--accept] [new-cases.json]
 //
 // The results in the repository come from the last Bun that read archives with libarchive (1.4.4).
+// Sparse maps that do not fit have been refused since.
 import { tempDir } from "harness";
 import { join } from "node:path";
 import { loadCases, observeExtract, observeFiles, recordArguments, type Case } from "./observe";

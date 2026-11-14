@@ -53,7 +53,7 @@ fn create_page_outputs(
         let mut page_log = Log::init();
         let transpiler = create_page_transpiler(context, heap, &raw mut page_log);
         let transpiler_pointer: *mut Transpiler<'_> = transpiler;
-        let mut any_loop = AnyEventLoop::default();
+        let any_loop = AnyEventLoop::default();
         let carrier = context.bundle();
 
         let result = BundleV2::init(
@@ -61,7 +61,7 @@ fn create_page_outputs(
             unsafe { &mut *transpiler_pointer },
             None,
             heap,
-            Some(NonNull::from(&mut any_loop)),
+            Some(NonNull::from(&any_loop)),
             false,
             NonNull::new(carrier.graph.pool().worker_pool),
             heap,

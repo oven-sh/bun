@@ -326,7 +326,7 @@ pub(crate) struct NewSocket<const SSL: bool> {
     /// wrapper cannot be garbage-collected out from under in-flight callbacks, and
     /// downgraded to weak once the socket is closed/inactive so GC can reclaim it.
     pub this_value: JsCell<JsRef>,
-    pub poll_ref: JsCell<KeepAlive>,
+    pub poll_ref: KeepAlive,
     pub(crate) ref_pollref_on_connect: Cell<bool>,
     pub(crate) connection: JsCell<Option<super::listener::UnixOrHost>>,
     /// `localAddress`/`localPort` from the connect options: the socket is
@@ -360,11 +360,7 @@ impl<const SSL: bool> Drop for NewSocket<SSL> {
         self.set_latest_session(ptr::null_mut());
         self.mark_inactive();
         self.detach_native_callback();
-        self.poll_ref.with_mut(|p| {
-            p.unref(bun_io::posix_event_loop::get_vm_ctx(
-                bun_io::AllocatorType::Js,
-            ))
-        });
+        self.poll_ref.unref(js_loop_ctx());
     }
 }
 
@@ -1096,8 +1092,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         this.socket.set(SocketHandler::<SSL>::DETACHED);
 
         let vm = handlers.vm;
-        this.poll_ref
-            .with_mut(|p| p.unref_on_next_tick(js_loop_ctx()));
+        this.poll_ref.unref_on_next_tick(js_loop_ctx());
 
         // The deferred `mark_inactive()` is gated on the `Handlers` captured
         // before the user callback runs: `onConnectError` can synchronously
@@ -1327,7 +1322,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             .with_mut(|b| b.clear_and_free());
         self.detach_native_callback();
         old.close(uws::CloseCode::Failure);
-        self.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
+        self.poll_ref.unref(js_loop_ctx());
         if self.flags.get().contains(Flags::IS_ACTIVE) {
             self.update_flags(|f| f.remove(Flags::IS_ACTIVE));
             if let Some(h) = self.handlers_opt() {
@@ -1366,7 +1361,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     self.handlers.set(None);
                 }
             }
-            self.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
+            self.poll_ref.unref(js_loop_ctx());
         }
     }
 
@@ -1419,7 +1414,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Stale if node:net reconnected through this wrapper while it was paused.
         this.update_flags(|f| f.remove(Flags::IS_PAUSED));
         if !this.ref_pollref_on_connect.replace(true) {
-            this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
+            this.poll_ref.unref(js_loop_ctx());
         }
         if !SSL {
             this.pause_on_connect_once();
@@ -1685,7 +1680,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let callback = handlers.on_end();
         if callback.is_empty() {
-            this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
+            this.poll_ref.unref(js_loop_ctx());
 
             // If you don't handle TCP fin, we assume you're done.
             this.mark_inactive();
@@ -2179,7 +2174,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
 
-        this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
+        this.poll_ref.unref(js_loop_ctx());
 
         let callback = handlers.on_close();
 
@@ -3150,11 +3145,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // defer behind its ciphertext write spill (`ssl_close_after_spill`).
         socket.close(uws::CloseCode::FastShutdown);
         self.socket.set(SocketHandler::<SSL>::DETACHED);
-        self.poll_ref.with_mut(|p| {
-            p.unref(bun_io::posix_event_loop::get_vm_ctx(
-                bun_io::AllocatorType::Js,
-            ))
-        });
+        self.poll_ref.unref(js_loop_ctx());
     }
 
     pub(crate) fn end(
@@ -3195,7 +3186,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     pub(crate) fn js_ref(&self) {
         if self.socket.get().is_established() {
-            self.poll_ref.with_mut(|p| p.ref_(js_loop_ctx()));
+            self.poll_ref.ref_(js_loop_ctx());
         } else {
             // `connect_finish` holds the loop until then; `on_open` applies this.
             self.ref_pollref_on_connect.set(true);
@@ -3204,7 +3195,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     pub(crate) fn js_unref(&self) {
         if self.socket.get().is_established() {
-            self.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
+            self.poll_ref.unref(js_loop_ctx());
         } else {
             self.ref_pollref_on_connect.set(false);
         }
@@ -3457,7 +3448,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             ),
             flags: Cell::new(initial_flags),
             this_value: JsCell::new(JsRef::empty()),
-            poll_ref: JsCell::new(KeepAlive::init()),
+            poll_ref: KeepAlive::init(),
             ref_pollref_on_connect: Cell::new(true),
             buffered_data_for_node_net: JsCell::new(Vec::new()),
             bytes_written: Cell::new(0),
@@ -3533,14 +3524,14 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Preserve `socket.unref()` across the upgrade — node:tls callers
         // that unref the underlying TCP socket before upgrading must not
         // suddenly hold the loop open via the TLS wrapper.
-        let was_reffed = self.poll_ref.get().is_active();
+        let was_reffed = self.poll_ref.is_active();
         // Capture before downgrade so the cached `data` (net.ts stores
         // `{self: net.Socket}` there) survives onto the raw twin.
         let original_data: JSValue =
             Self::data_get_cached(self.get_this_value(global)).unwrap_or(JSValue::UNDEFINED);
         original_data.ensure_still_alive();
         if self.flags.get().contains(Flags::IS_ACTIVE) {
-            self.poll_ref.with_mut(|p| p.disable());
+            self.poll_ref.disable();
             self.update_flags(|f| f.remove(Flags::IS_ACTIVE));
             // Do NOT mark_inactive raw_handlers — ownership of the
             // active_connections=1 it holds is transferring to `raw`.
@@ -3578,7 +3569,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // `self`.
             flags: Cell::new(Flags::BYPASS_TLS | Flags::IS_ACTIVE | Flags::OWNED_PROTOS),
             this_value: JsCell::new(JsRef::empty()),
-            poll_ref: JsCell::new(KeepAlive::init()),
+            poll_ref: KeepAlive::init(),
             ref_pollref_on_connect: Cell::new(true),
             buffered_data_for_node_net: JsCell::new(Vec::new()),
             bytes_written: Cell::new(0),
@@ -3602,11 +3593,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         tls.mark_active();
         if was_reffed {
-            tls.poll_ref.with_mut(|p| {
-                p.ref_(bun_io::posix_event_loop::get_vm_ctx(
-                    bun_io::AllocatorType::Js,
-                ))
-            });
+            tls.poll_ref.ref_(js_loop_ctx());
         }
 
         // A server-side adopted socket has no listen socket to hang an
@@ -4509,7 +4496,7 @@ pub(crate) fn upgrade_duplex_to_tls<'a>(
         ),
         flags: Cell::new(initial_flags),
         this_value: JsCell::new(JsRef::empty()),
-        poll_ref: JsCell::new(KeepAlive::init()),
+        poll_ref: KeepAlive::init(),
         ref_pollref_on_connect: Cell::new(true),
         buffered_data_for_node_net: JsCell::new(Vec::new()),
         bytes_written: Cell::new(0),

@@ -60,7 +60,7 @@ pub(crate) struct FSWatcher {
     signal: JsCell<Option<AbortSignalRef>>,
     persistent: Cell<bool>,
     path_watcher: Cell<Option<*mut path_watcher::PathWatcher>>,
-    poll_ref: JsCell<KeepAlive>,
+    poll_ref: KeepAlive,
     global_this: GlobalRef,
     /// The JS wrapper, held strong while the watcher is open so that the listener stays callable.
     js_this: JsCell<JsRef>,
@@ -728,7 +728,7 @@ impl FSWatcher {
         let this_ref = unsafe { &*this };
         if this_ref.persistent.get() {
             let vm_ctx = this_ref.ctx.loop_ctx();
-            this_ref.poll_ref.with_mut(|r| r.ref_(vm_ctx));
+            this_ref.poll_ref.ref_(vm_ctx);
         }
 
         // SAFETY: the GC wrapper takes over the ref `this` was created with.
@@ -919,7 +919,7 @@ impl FSWatcher {
         if !self.closed.get() && !self.persistent.get() {
             self.persistent.set(true);
             let vm_ctx = self.ctx.loop_ctx();
-            self.poll_ref.with_mut(|r| r.ref_(vm_ctx));
+            self.poll_ref.ref_(vm_ctx);
         }
     }
 
@@ -927,7 +927,7 @@ impl FSWatcher {
         if self.persistent.get() {
             self.persistent.set(false);
             let vm_ctx = self.ctx.loop_ctx();
-            self.poll_ref.with_mut(|r| r.unref(vm_ctx));
+            self.poll_ref.unref(vm_ctx);
         }
     }
 
@@ -1021,7 +1021,7 @@ impl FSWatcher {
         if self.persistent.get() {
             self.persistent.set(false);
             let vm_ctx = self.ctx.loop_ctx();
-            self.poll_ref.with_mut(|r| r.unref(vm_ctx));
+            self.poll_ref.unref(vm_ctx);
         }
 
         self.abort_handle.unfollow();
@@ -1084,7 +1084,7 @@ impl FSWatcher {
             encoding: args.encoding,
             closed: Cell::new(false),
             verbose: args.verbose,
-            poll_ref: JsCell::new(KeepAlive::default()),
+            poll_ref: KeepAlive::default(),
             ref_count: ThreadSafeRefCount::init(),
             abort_handle: bun_jsc::AbortHandle::for_owner::<FSWatcher>(),
         }));

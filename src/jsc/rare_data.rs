@@ -558,7 +558,7 @@ impl SocketGroups {
     }
 
     #[inline]
-    fn lazy(&self, group: fn(&Self) -> &SocketGroup, loop_: *mut uws::Loop) -> &SocketGroup {
+    fn lazy(&self, group: fn(&Self) -> &SocketGroup, loop_: &'static uws::Loop) -> &SocketGroup {
         let owner = core::ptr::from_ref(self).cast_mut().cast::<c_void>();
         let g = group(self);
         if g.loop_.get().is_null() {
@@ -570,42 +570,42 @@ impl SocketGroups {
     /// One shared group per (context, ssl) for every `Bun.connect` / `tls.connect`
     /// client socket. Replaces the old per-connection `us_socket_context_t`
     /// allocation that was the root of the SSL_CTX-per-connect leak.
-    pub fn bun_connect_group<const SSL: bool>(&self, loop_: *mut uws::Loop) -> &SocketGroup {
+    pub fn bun_connect_group<const SSL: bool>(&self, loop_: &'static uws::Loop) -> &SocketGroup {
         if SSL {
             self.lazy(|s| &s.bun_connect_group_tls, loop_)
         } else {
             self.lazy(|s| &s.bun_connect_group_tcp, loop_)
         }
     }
-    pub fn postgres_group<const SSL: bool>(&self, loop_: *mut uws::Loop) -> &SocketGroup {
+    pub fn postgres_group<const SSL: bool>(&self, loop_: &'static uws::Loop) -> &SocketGroup {
         if SSL {
             self.lazy(|s| &s.postgres_tls_group, loop_)
         } else {
             self.lazy(|s| &s.postgres_group, loop_)
         }
     }
-    pub fn mysql_group<const SSL: bool>(&self, loop_: *mut uws::Loop) -> &SocketGroup {
+    pub fn mysql_group<const SSL: bool>(&self, loop_: &'static uws::Loop) -> &SocketGroup {
         if SSL {
             self.lazy(|s| &s.mysql_tls_group, loop_)
         } else {
             self.lazy(|s| &s.mysql_group_, loop_)
         }
     }
-    pub fn valkey_group<const SSL: bool>(&self, loop_: *mut uws::Loop) -> &SocketGroup {
+    pub fn valkey_group<const SSL: bool>(&self, loop_: &'static uws::Loop) -> &SocketGroup {
         if SSL {
             self.lazy(|s| &s.valkey_tls_group, loop_)
         } else {
             self.lazy(|s| &s.valkey_group_, loop_)
         }
     }
-    pub fn ws_upgrade_group<const SSL: bool>(&self, loop_: *mut uws::Loop) -> &SocketGroup {
+    pub fn ws_upgrade_group<const SSL: bool>(&self, loop_: &'static uws::Loop) -> &SocketGroup {
         if SSL {
             self.lazy(|s| &s.ws_upgrade_tls_group, loop_)
         } else {
             self.lazy(|s| &s.ws_upgrade_group_, loop_)
         }
     }
-    pub fn ws_client_group<const SSL: bool>(&self, loop_: *mut uws::Loop) -> &SocketGroup {
+    pub fn ws_client_group<const SSL: bool>(&self, loop_: &'static uws::Loop) -> &SocketGroup {
         if SSL {
             self.lazy(|s| &s.ws_client_tls_group, loop_)
         } else {
@@ -810,7 +810,9 @@ impl RareData {
     /// `None` if the loop cannot be created; nothing is cached, so a later call retries.
     pub fn spawn_sync_event_loop(&self, vm: &VirtualMachine) -> Option<&SpawnSyncEventLoop> {
         if self.spawn_sync_event_loop_.get().is_none() {
-            let el = SpawnSyncEventLoop::init(core::ptr::from_ref(vm).cast_mut().cast())?;
+            let vm = core::ptr::from_ref(vm).cast_mut().cast();
+            // SAFETY: `self` keeps it, and is dropped with the VM.
+            let el = unsafe { SpawnSyncEventLoop::init(vm) }?;
             let _ = self.spawn_sync_event_loop_.set(el);
         }
         self.existing_spawn_sync_event_loop()
@@ -830,17 +832,17 @@ impl RareData {
 
     // ── socket groups: lazy init ──────────────────────────────────────────
     #[inline]
-    fn lazy_group(g: &SocketGroup, loop_: *mut uws::Loop) -> &SocketGroup {
+    fn lazy_group<'a>(g: &'a SocketGroup, loop_: &'static uws::Loop) -> &'a SocketGroup {
         if g.loop_.get().is_null() {
             g.init(loop_, None, core::ptr::null_mut());
         }
         g
     }
 
-    pub fn spawn_ipc_group(&self, loop_: *mut uws::Loop) -> &SocketGroup {
+    pub fn spawn_ipc_group(&self, loop_: &'static uws::Loop) -> &SocketGroup {
         Self::lazy_group(&self.spawn_ipc_group, loop_)
     }
-    pub fn test_parallel_ipc_group(&self, loop_: *mut uws::Loop) -> &SocketGroup {
+    pub fn test_parallel_ipc_group(&self, loop_: &'static uws::Loop) -> &SocketGroup {
         Self::lazy_group(&self.test_parallel_ipc_group, loop_)
     }
 
@@ -864,9 +866,7 @@ impl RareData {
         // build 49245).
         let mut rounds: u8 = 0;
         while rounds < 8 {
-            // `uws_loop_ref()` is the centralised BACKREF accessor for the
-            // per-VM uSockets loop (live for the VM lifetime).
-            if !vm.uws_loop_ref().close_all_groups() {
+            if !vm.uws_loop().close_all_groups() {
                 break;
             }
             rounds += 1;
@@ -881,7 +881,7 @@ impl RareData {
         // every us_socket_t is libc-allocated and otherwise becomes an LSAN leak
         // (the only pointer into it lives in mimalloc-backed RareData, which LSAN
         // can't trace once we unregister the root region).
-        vm.uws_loop_ref().drain_closed_sockets();
+        vm.uws_loop().drain_closed_sockets();
         result
     }
 }

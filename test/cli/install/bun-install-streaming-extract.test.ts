@@ -1981,7 +1981,6 @@ describe.concurrent("entries that npm skips or names differently", () => {
       tarball(...pax("linkpath", "日本"), ...entry("package/link", Buffer.alloc(0), type), ...other),
       { "other.js": "second" },
     ]),
-    ["a NUL in the path of a pax header", tarball(...pax("path", `${index}\0.js`), ...other), {}],
     [
       "the name of a sparse file in a pax header",
       tarball(...pax("GNU.sparse.name", index), ...other),
@@ -2030,6 +2029,13 @@ describe.concurrent("entries that npm skips or names differently", () => {
       ]);
     },
   );
+
+  // Versions of npm differ.
+  test.each(paths)("a NUL in the path of a pax header (%s)", async path => {
+    const [result] = await installStreamPkg(path, tarball(...pax("path", `${index}\0.js`), ...other));
+    const error = expect.stringContaining(path === "streaming" ? "Ambiguous tar header" : "Fail extracting tarball");
+    expect(result).toMatchObject({ error, installed: false, cached: 0, exitCode: 1 });
+  });
 
   // Two cases that do not follow npm, which loses files of archives that real tar writers make.
   // Old writers repeat the size of the file in the header of a hard link. npm takes what follows for its body.

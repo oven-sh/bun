@@ -93,7 +93,7 @@ impl SocketGroup {
     /// recovers inside handlers — pass the embedding struct so dispatch can
     /// find it from a raw `*us_socket_t`.
     // Callers cast to `*mut c_void` at the call site.
-    pub fn init(&self, loop_: *mut Loop, vt: Option<&'static VTable>, owner_ptr: *mut c_void) {
+    pub fn init(&self, loop_: &'static Loop, vt: Option<&'static VTable>, owner_ptr: *mut c_void) {
         // SAFETY: C initializes all fields of `self` in-place; `self` is a valid
         // `#[repr(C)]` slot embedded in the caller.
         unsafe {
@@ -304,7 +304,7 @@ impl SocketGroup {
 unsafe extern "C" {
     fn us_socket_group_init(
         group: *const SocketGroup,
-        loop_: *mut Loop,
+        loop_: &Loop,
         vt: *const VTable,
         ext: *mut c_void,
     );

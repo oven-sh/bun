@@ -529,7 +529,7 @@ impl BlobExt for Blob {
                     }
                 }
             }
-            let mut t = Box::new(Task::<H> {
+            let t = Box::new(Task::<H> {
                 ctx,
                 blob: self.dupe(),
                 poll: bun_io::KeepAlive::default(),
@@ -3930,8 +3930,7 @@ fn write_file_with_empty_source_to_destination(
                                         *err = e;
                                         break 'err;
                                     }
-                                    bun_sys::Result::Ok(f) => {
-                                        let _ = f.close(); // close error is non-actionable
+                                    bun_sys::Result::Ok(_) => {
                                         return Ok(JSPromise::resolved_promise_value(
                                             cx.global(),
                                             JSValue::js_number(0.0),
@@ -5296,7 +5295,7 @@ impl S3BlobDownloadTask {
         // The callback may read this.blob.content_type, which is heap-owned by the
         // source JS Blob and freed on finalize(). Take an owning dupe so the task
         // outliving the source can't dangle.
-        let mut this = Box::new(S3BlobDownloadTask {
+        let this = Box::new(S3BlobDownloadTask {
             global_this: bun_ptr::BackRef::new(cx.global()),
             blob: Blob::dupe(blob),
             promise: jsc::JSPromiseStrong::init(cx.global()),

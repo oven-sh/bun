@@ -931,8 +931,7 @@ fn ensure_debugger(vm: &VirtualMachine, block_until_connected: bool) {
 /// gates.
 fn auto_tick(vm: &VirtualMachine) {
     let el = vm.event_loop();
-    // SAFETY: nothing frees the uws loop during a tick.
-    let loop_ = unsafe { &*el.usockets_loop() };
+    let loop_ = el.usockets_loop();
 
     // ── tick_immediate_tasks ────────────────────────────────────────────
     // After this call `immediate_tasks` reflects next-tick immediates, so
@@ -1059,8 +1058,7 @@ fn run_pending_test_step(global: &JSGlobalObject) {
 /// hang shutdown.
 fn auto_tick_active(vm: &VirtualMachine) {
     let el = vm.event_loop();
-    // SAFETY: nothing frees the uws loop during a tick.
-    let loop_ = unsafe { &*el.usockets_loop() };
+    let loop_ = el.usockets_loop();
 
     el.tick_immediate_tasks();
     let has_yielded_tasks = el.promote_yield_tasks();
@@ -4820,12 +4818,12 @@ pub(crate) fn resolve_embedded_file_to_buf(
 
     // Write to a unique scratch name, then atomically rename it into place.
     let mut scratch_buf = bun_paths::path_buffer_pool::get();
-    let scratch_name = Fs::FileSystem::tmpname(extname, &mut scratch_buf[..], content_hash).ok()?;
+    let scratch_name =
+        &*Fs::FileSystem::tmpname(extname, &mut scratch_buf[..], content_hash).ok()?;
 
     // 0600: the file persists, only the owning euid ever dlopens it, and the
     // embedded bytes may come from a binary that is not world-readable.
     let mut tmpfile = bun_sys::Tmpfile::create_with_mode(tmpdir_fd, scratch_name, 0o600).ok()?;
-    let _close = bun_sys::CloseOnDrop::new(tmpfile.fd);
 
     let write_ok = bun_sys::File::borrow(&tmpfile.fd)
         .write_all(file_contents)
@@ -5048,14 +5046,9 @@ fn __bun_get_vm_ctx(kind: bun_io::AllocatorType) -> bun_io::EventLoopCtx {
             unsafe { (*event_loop).event_loop_ctx() }
         }
         bun_io::AllocatorType::Mini => {
-            // SAFETY: `GLOBAL` is set by `MiniEventLoop::init_global` before
-            // any caller asks for `AllocatorType::Mini` (the global mini loop
-            // is the only one and is init-once); `mini` is live
-            // for the process and `as_event_loop_ctx` only stores it as a tagged
-            // backref.
             let mini = bun_event_loop::MiniEventLoop::GLOBAL.with(|g| g.get());
-            // SAFETY: `mini` is the live process-global `MiniEventLoop` (see above).
-            bun_event_loop::MiniEventLoop::MiniEventLoop::as_event_loop_ctx(unsafe { &mut *mini })
+            // SAFETY: set before anything on this thread polls on a mini loop.
+            unsafe { mini.unwrap_unchecked() }.as_event_loop_ctx()
         }
     }
 }

@@ -136,7 +136,7 @@ impl RefState {
         self.sync();
     }
 
-    fn sync(&mut self) {
+    fn sync(&self) {
         if self.active && self.referenced {
             self.keep_alive.ref_(bun_io::js_vm_ctx());
         } else {

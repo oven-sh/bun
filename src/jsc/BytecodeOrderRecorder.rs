@@ -392,7 +392,6 @@ fn write_replacing(path: &[u8], text: &[u8]) -> bun_sys::Maybe<()> {
         bun_resolver::fs::FileSystem::tmpname(b".order", &mut tmpname_buf[..], u64::from(pid))
             .map_err(|_| bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open))?;
     let tmpfile = bun_sys::Tmpfile::create_with_mode(dir_fd, tmpname, 0o600)?;
-    let _close = bun_sys::CloseOnDrop::new(tmpfile.fd);
     // Not `Tmpfile::finish`: that removes an empty directory that is in the way.
     let result = bun_sys::File::borrow(&tmpfile.fd)
         .write_all(text)

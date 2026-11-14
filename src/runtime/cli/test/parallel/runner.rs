@@ -712,7 +712,7 @@ impl<'a> WorkerLoop<'a> {
 
         loop {
             // The channel holds no reference on the loop, and a loop that nothing holds polls without sleeping.
-            let mut waits_for_command = bun_io::KeepAlive::init();
+            let waits_for_command = bun_io::KeepAlive::init();
             waits_for_command.ref_(bun_io::js_vm_ctx());
             while self.cmds.pending_idx.is_none() && !self.cmds.done {
                 vm.event_loop().tick();
@@ -846,11 +846,9 @@ fn start_measuring_growth(vm: &VirtualMachine, is_written: bool) -> Option<Resid
         let [peak, all, of_files, of_shared_memory] =
             read_kilobytes([b"VmHWM:", b"VmRSS:", b"RssFile:", b"RssShmem:"])?;
         let flags = bun_sys::O::WRONLY | bun_sys::O::CLOEXEC;
-        let marks =
-            bun_sys::File::openat(bun_sys::Fd::cwd(), b"/proc/self/clear_refs", flags, 0).ok()?;
-        let written = marks.write_all(b"5");
-        let _ = marks.close();
-        written.ok()?;
+        bun_sys::File::openat(bun_sys::Fd::cwd(), b"/proc/self/clear_refs", flags, 0)
+            .and_then(|marks| marks.write_all(b"5"))
+            .ok()?;
         crate::cli::run_compiled::record_peak_rss_kb(peak);
         bun_spawn::LARGEST_REAPED_CHILD.store(0, core::sync::atomic::Ordering::Relaxed);
         return Some(ResidentAtStart {

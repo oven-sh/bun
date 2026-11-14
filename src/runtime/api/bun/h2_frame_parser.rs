@@ -4308,18 +4308,13 @@ impl DirectWriterStruct {
         let payload_size = 1 + data.len() + padding as usize;
         // Taken by value so a re-entrant call gets its own; see take_h2_padded_frame_buffer.
         let global = self.writer.global();
-        let mut buffer = global
-            .bun_vm()
-            .as_mut()
-            .rare_data()
-            .take_h2_padded_frame_buffer();
+        let mut buffer = global.bun_vm().rare_data().take_h2_padded_frame_buffer();
         buffer[0] = padding;
         buffer[1..=data.len()].copy_from_slice(data);
         buffer[1 + data.len()..payload_size].fill(0);
         let result = self.write_all(&buffer[..payload_size]);
         global
             .bun_vm()
-            .as_mut()
             .rare_data()
             .put_back_h2_padded_frame_buffer(buffer);
         result

@@ -570,7 +570,11 @@ fn spawn(
         argv.push(core::ptr::null());
 
         // SAFETY: `transpiler.env` is set during VM init and lives for VM lifetime.
-        let env = unsafe { (*vm.transpiler.env).map.create_null_delimited_env_map() }?;
+        let env = unsafe {
+            (*vm.transpiler.get().env)
+                .map
+                .create_null_delimited_env_map()
+        }?;
 
         let opts = SpawnOptions {
             stdin: Stdio::Ignore,
@@ -928,12 +932,10 @@ pub(crate) struct QueuedEvent {
 impl PipeEvent {
     fn post(self, generation: u32) {
         // Not dispatched from the read callback: C++ runs JS that may spin a nested event loop (bun:test does), and libuv re-arms the read only after the callback returns.
-        VirtualMachine::get()
-            .as_mut()
-            .enqueue_task(bun_jsc::Task::from_boxed(Box::new(QueuedEvent {
-                generation,
-                event: self,
-            })));
+        VirtualMachine::get().enqueue_task(bun_jsc::Task::from_boxed(Box::new(QueuedEvent {
+            generation,
+            event: self,
+        })));
     }
 }
 

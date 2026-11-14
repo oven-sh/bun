@@ -54,17 +54,6 @@ use bun_sys::FdDirExt as _;
 use bun_core::ZBox as ZString;
 use bun_sys::{self as sys, Fd, File};
 
-// ─── local shims (upstream-crate gaps; see PORTING.md §extension traits) ────
-
-/// Recover `&mut VirtualMachine` from the per-thread singleton.
-///
-/// Safe: delegates to [`VirtualMachine::as_mut`], which already encapsulates
-/// the single-JS-thread thread-local deref (provenance from `get_mut_ptr()`).
-#[inline]
-fn vm_mut<'a>() -> &'a mut VirtualMachine {
-    VirtualMachine::get_mut()
-}
-
 use crate::jsc_hooks::timer_all;
 
 // ============================================================================
@@ -177,7 +166,7 @@ trait CronJobBase: Sized + bun_ptr::AnyRefCounted {
         // `VirtualMachine::uv_loop` already returns the native loop on both
         // targets (jsc/VirtualMachine.rs:2975); the prior POSIX arm's
         // `bun_uws::Loop::get()` named the same per-thread singleton.
-        vm_mut().uv_loop()
+        VirtualMachine::get().uv_loop()
     }
 
     fn note_reader_done(&self) {
@@ -821,7 +810,7 @@ pub(crate) fn register_os_job(
         exit_status: JsCell::new(None),
         err_msg: JsCell::new(None),
         tmp_path: JsCell::new(None),
-        event_loop_handle: EventLoopHandle::init(vm_mut().event_loop_ptr()),
+        event_loop_handle: EventLoopHandle::init(VirtualMachine::get().event_loop_ptr()),
     });
     job.poll.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
     let promise_value = job.promise.get().value();
@@ -1259,7 +1248,7 @@ pub(crate) fn remove(cx: &mut JsScope<'_>, title: &[u8]) -> JsResult<JSValue> {
         exit_status: JsCell::new(None),
         err_msg: JsCell::new(None),
         tmp_path: JsCell::new(None),
-        event_loop_handle: EventLoopHandle::init(vm_mut().event_loop_ptr()),
+        event_loop_handle: EventLoopHandle::init(VirtualMachine::get().event_loop_ptr()),
     });
     job.poll.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
     let promise_value = job.promise.get().value();
@@ -1509,7 +1498,7 @@ impl CronJob {
     /// the tick's claim is left for onPromiseResolve/Reject to take.
     /// `.teardown`: worker exit — the event loop is dying, settle never
     /// happens, so take the claim back here to avoid leaking the struct.
-    pub(crate) fn clear_all_for_vm<const MODE: ClearMode>(vm: &mut VirtualMachine) {
+    pub(crate) fn clear_all_for_vm<const MODE: ClearMode>(vm: &VirtualMachine) {
         // Drain the list first so `stop_internal` (which re-enters the VM)
         // doesn't alias the list borrow.
         let Some(jobs) = crate::jsc_hooks::cron_jobs_mut() else {
@@ -1666,10 +1655,7 @@ impl CronJob {
                             jsc::JSPromise::opaque_mut(p).result(this.global.vm())
                         }
                     };
-                    let global_ref = vm.global();
-                    VirtualMachine::get()
-                        .as_mut()
-                        .unhandled_rejection(global_ref, reason, result);
+                    vm.unhandled_rejection(vm.global(), reason, result);
                 }
             }
         }
@@ -1714,7 +1700,7 @@ impl CronJob {
             }
         };
 
-        let vm = global.bun_vm().as_mut();
+        let vm = global.bun_vm();
 
         let job = RefPtr::new(CronJob {
             ref_count: Cell::new(1),
@@ -1744,7 +1730,7 @@ impl CronJob {
         // The cron_jobs list exists so --hot reload and worker teardown can
         // stop/release jobs. Main-thread VMs without --hot never enumerate it,
         // so skip the list ref + append entirely.
-        if vm.hot_reload == HotReload::Hot || vm.worker.is_some() {
+        if vm.hot_reload.get() == HotReload::Hot || vm.worker.get().is_some() {
             if let Some(jobs) = crate::jsc_hooks::cron_jobs_mut() {
                 jobs.push(job.clone());
             }
@@ -1801,15 +1787,13 @@ pub(crate) fn on_promise_reject(
     // SAFETY: the claim the cell handed back is a ref on the live job.
     let this = unsafe { ThisPtr::new(job.as_ptr()) };
     let _guard = scopeguard::guard(this, CronJob::tick_settled);
-    let vm = this.global.bun_vm().as_mut();
+    let vm = this.global.bun_vm();
     let err = reason.to_js();
     let mut promise_value = JSValue::UNDEFINED;
     if let Some(js_this) = this.this_value.get().try_get() {
         promise_value = js::pending_promise_get_cached(js_this).unwrap_or(JSValue::UNDEFINED);
         js::pending_promise_set_cached(js_this, &this.global, JSValue::UNDEFINED);
     }
-    // `vm.global()` returns `&'static`, so the borrow is already decoupled
-    // from `vm` and `unhandled_rejection(&mut self, ...)` can reborrow.
     let global_ref = vm.global();
     vm.unhandled_rejection(global_ref, err, promise_value);
     CronJob::schedule_next(this, vm);
@@ -1985,7 +1969,13 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
     #[cfg(windows)]
     {
         // Resolve the executable via bun.which, matching Bun.spawn's behavior.
-        let path_env = vm_mut().transpiler.env().map.get(b"PATH").unwrap_or(b"");
+        let path_env = VirtualMachine::get()
+            .transpiler
+            .get()
+            .env()
+            .map
+            .get(b"PATH")
+            .unwrap_or(b"");
         let argv0 = argv[0].to_bytes();
         match bun_which::which(&mut path_buf, path_env, b"", argv0) {
             Some(p) => resolved_argv0 = Some(p.as_ptr().cast()),
@@ -2006,8 +1996,9 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
     let env_strings: Vec<&CStr>;
     #[cfg(windows)]
     let env = {
-        match vm_mut()
+        match VirtualMachine::get()
             .transpiler
+            .get()
             .env_mut()
             .map
             .create_null_delimited_env_map()
@@ -2057,7 +2048,7 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
         argv0: resolved_argv0,
         #[cfg(windows)]
         windows: spawn::WindowsOptions {
-            loop_: EventLoopHandle::init(vm_mut().event_loop_ptr()),
+            loop_: EventLoopHandle::init(VirtualMachine::get().event_loop_ptr()),
             ..Default::default()
         },
         ..SpawnOptions::default()
@@ -2153,7 +2144,7 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
         }
     }
 
-    let ev_handle = EventLoopHandle::init(vm_mut().event_loop_ptr());
+    let ev_handle = EventLoopHandle::init(VirtualMachine::get().event_loop_ptr());
     Ok(spawned.to_process_handle(ev_handle))
 }
 
@@ -2174,15 +2165,14 @@ fn find_crontab() -> Option<ZString> {
 }
 
 fn resolve_path(global: &JSGlobalObject, path_: &[u8]) -> crate::Result<ZString> {
-    let vm = global.bun_vm().as_mut();
+    let vm = global.bun_vm();
     let srcloc = global.get_caller_src_loc();
     let caller_utf8 = srcloc.str.to_utf8();
     let raw_dir = path::resolve_path::dirname::<path::platform::Auto>(caller_utf8.slice());
     let source_dir: &[u8] = if raw_dir.is_empty() { b"." } else { raw_dir };
     let mut resolved = vm
         .transpiler
-        .resolver
-        .resolve(source_dir, path_, bun_ast::ImportKind::EntryPointRun)
+        .with_mut(|t| (t.resolver).resolve(source_dir, path_, bun_ast::ImportKind::EntryPointRun))
         .map_err(|_| crate::Error::ModuleNotFound)?;
     let entry_path = resolved.path().ok_or(crate::Error::ModuleNotFound)?;
     Ok(ZString::from_bytes(entry_path.text))

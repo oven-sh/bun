@@ -27,7 +27,7 @@ pub(crate) fn start_tls<T>(
     socket: AnySocket,
     (kind, group): (
         SocketKind,
-        fn(&mut SocketGroups, *mut uws::Loop) -> &mut SocketGroup,
+        fn(&SocketGroups, *mut uws::Loop) -> &SocketGroup,
     ),
     secure: Option<&OwnedSslCtx>,
     tls_config: &SSLConfig,

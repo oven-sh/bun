@@ -12,7 +12,6 @@
 use core::ptr::NonNull;
 
 use crate::dns_jsc::Order as DnsOrder;
-use bun_alloc::Arena;
 use bun_core::EncodedSlice;
 use bun_core::{Global, Output};
 use bun_jsc as jsc;
@@ -60,9 +59,6 @@ impl ReplCommand {
         });
 
         bun_ast::initialize_store();
-        // The arena is threaded into VirtualMachine (vm.arena). `bun_alloc::Arena`
-        // is `MimallocArena` (a per-heap mimalloc wrapper).
-        let arena = Arena::new();
 
         // Validate DNS result order before VM init; wired onto the VM
         // post-init below, like run_command.rs.
@@ -72,11 +68,9 @@ impl ReplCommand {
                 Global::exit(1);
             });
 
-        // Initialize the VM. `InitOptions` has no allocator field (the VM does
-        // not take a caller-provided allocator in the Rust port; `vm.arena` is
-        // set below).
-        let vm: *mut VirtualMachine = VirtualMachine::init(jsc::VirtualMachineInitOptions {
+        let vm = VirtualMachine::init(jsc::VirtualMachineInitOptions {
             transform_options: core::mem::take(&mut ctx.args),
+            argv: core::mem::take(&mut ctx.passthrough).leak(),
             debugger: core::mem::take(&mut ctx.runtime_options.debugger),
             log: core::ptr::NonNull::new(ctx.log),
             global_cache: ctx.debug.global_cache,
@@ -86,51 +80,40 @@ impl ReplCommand {
             ..Default::default()
         })?;
 
-        // SAFETY: vm is a freshly heap-allocated VirtualMachine valid for process lifetime.
-        let b = unsafe { &mut (*vm).transpiler };
-        // SAFETY: vm valid as above; preload/argv are disjoint from `b`'s transpiler borrow.
-        unsafe {
-            (*vm).preload = core::mem::take(&mut ctx.preloads);
-            (*vm).argv = core::mem::take(&mut ctx.passthrough);
-            // `vm.dns_result_order` is a `u8` (see VirtualMachine.rs); set
-            // post-init like run_command.rs since InitOptions doesn't carry it.
-            (*vm).dns_result_order = dns_order as u8;
-        }
-        // There is no per-VM allocator handle; the `vm.arena` assignment itself happens below
-        // ReplRunner construction to avoid a move-after-borrow.
+        vm.preload.set(core::mem::take(&mut ctx.preloads));
+        vm.dns_result_order.set(dns_order as u8);
 
         // Configure bundler options
         // `BundleOptions.install` is `Option<NonNull<_>>` so no
         // lifetime-extension cast is needed.
         let install_ptr = ctx.install.as_deref().map(core::ptr::NonNull::from);
-        b.options.install = install_ptr;
-        b.resolver.opts.install = install_ptr;
         let offline = ctx
             .debug
             .offline_mode_setting
             .unwrap_or(OfflineMode::Online);
-        b.resolver.opts.install_preference = offline;
-        b.options.install_preference = offline;
-        b.resolver.env_loader = NonNull::new(b.env);
-        b.options.env.behavior = EnvBehavior::LoadAllWithoutInlining;
-        b.options.dead_code_elimination = false; // REPL needs all code
-
-        if b.configure_defines().is_err() {
-            Self::dump_build_error(VirtualMachine::get());
+        let configured = vm.transpiler.with_mut(|b| {
+            b.options.install = install_ptr;
+            b.resolver.opts.install = install_ptr;
+            b.resolver.opts.install_preference = offline;
+            b.options.install_preference = offline;
+            b.resolver.env_loader = NonNull::new(b.env);
+            b.options.env.behavior = EnvBehavior::LoadAllWithoutInlining;
+            b.options.dead_code_elimination = false; // REPL needs all code
+            b.configure_defines()
+        });
+        if configured.is_err() {
+            Self::dump_build_error(vm);
             Global::exit(1);
         }
 
-        bun_http::async_http::load_env(VirtualMachine::get().log_mut().unwrap(), b.env());
-        VirtualMachine::get()
-            .as_mut()
-            .load_extra_env_and_source_code_printer();
+        bun_http::async_http::load_env(vm.log_mut().unwrap(), vm.transpiler.get().env());
+        vm.load_extra_env_and_source_code_printer();
 
-        VirtualMachine::get().as_mut().is_main_thread = true;
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
         // Store VM reference in REPL (safe - no JS allocation)
-        repl.vm = Some(VirtualMachine::get());
-        let global = VirtualMachine::get().global();
+        repl.vm = Some(vm);
+        let global = vm.global();
         repl.global = Some(global);
 
         // Create the ReplRunner and execute within the API lock
@@ -138,18 +121,9 @@ impl ReplCommand {
         // be done under the API lock, not before
         let mut runner = ReplRunner {
             repl,
-            vm,
-            arena,
             eval_script: ctx.runtime_options.eval.script,
             eval_and_print: ctx.runtime_options.eval.eval_and_print,
         };
-        // vm.arena stores a *mut Arena pointing at runner.arena;
-        // lifetime is that of `ReplRunner::start` (global_exit() never returns so the frame never
-        // unwinds). Assigned AFTER moving `arena` into `runner` — assigning from the pre-move
-        // local would dangle.
-        // SAFETY: vm is valid for process lifetime (see above); runner.arena is pinned on this
-        // stack frame for `ReplRunner::start` and global_exit() (`!`) prevents unwind past it.
-        unsafe { (*vm).arena = NonNull::new(&raw mut runner.arena) };
 
         let _api_lock = global.vm().get_api_lock();
         ReplRunner::start(&mut runner)
@@ -159,7 +133,7 @@ impl ReplCommand {
         Output::flush();
         let writer = Output::error_writer_buffered();
         let _flush = Output::flush_guard();
-        if let Some(log) = vm.log {
+        if let Some(log) = vm.log.get() {
             // SAFETY: log is a valid NonNull<Log> for the VM lifetime.
             // `Log::print` accepts `*mut io::Writer` (IntoLogWrite is impl'd for the raw ptr,
             // not the &mut), so coerce the `&mut Writer` from `error_writer_buffered`.
@@ -177,16 +151,13 @@ impl ReplCommand {
 // outlive the local, tripping the borrow checker against `Drop for Repl`.
 struct ReplRunner<'a, 'r> {
     repl: &'a mut Repl<'r>,
-    vm: *mut VirtualMachine,
-    arena: Arena,
     eval_script: &'a [u8],
     eval_and_print: bool,
 }
 
 impl<'a, 'r> ReplRunner<'a, 'r> {
     fn start(this: &mut ReplRunner<'a, 'r>) -> ! {
-        let _ = this.vm;
-        let vm = VirtualMachine::get().as_mut();
+        let vm = VirtualMachine::get();
 
         // Set up the REPL environment (now inside API lock)
         if this.setup_repl_environment().is_err() {
@@ -194,7 +165,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
             if let Some(exception) = vm.global().try_take_exception() {
                 vm.print_error_like_object_to_console(exception);
             }
-            vm.exit_handler.exit_code = 1;
+            vm.exit_handler.exit_code.set(1);
             vm.on_exit();
             vm.global_exit();
         }
@@ -207,7 +178,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
             if had_error {
                 // Only overwrite on error so `process.exitCode = N` in the
                 // script is preserved on success.
-                vm.exit_handler.exit_code = 1;
+                vm.exit_handler.exit_code.set(1);
             } else {
                 // Fire process.on("beforeExit") and re-drain as needed
                 // (matches bun -e / Node.js semantics).
@@ -226,7 +197,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
     }
 
     fn setup_repl_environment(&mut self) -> bun_jsc::JsResult<()> {
-        let vm = VirtualMachine::get().as_mut();
+        let vm = VirtualMachine::get();
         let global = vm.global();
 
         // Expose Node.js module globals (__dirname, __filename, require, etc.)
@@ -245,7 +216,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
 
         // Set timezone if specified
         // SAFETY: transpiler.env is a valid *mut Loader set during VM init.
-        if let Some(tz) = unsafe { (*vm.transpiler.env).get(b"TZ") } {
+        if let Some(tz) = unsafe { (*vm.transpiler.get().env).get(b"TZ") } {
             if !tz.is_empty() {
                 let _ = global.set_time_zone(&EncodedSlice::from_bytes(tz));
             }

@@ -945,7 +945,7 @@ pub use self::js_promise::Status as PromiseStatus;
 pub use bun_core::String;
 
 /// Legacy alias used by runtime drafts: `VirtualMachineRef` is just the
-/// `VirtualMachine` struct itself (callers hold `*mut VirtualMachineRef`).
+/// `VirtualMachine` struct itself.
 pub use self::virtual_machine::VirtualMachine as VirtualMachineRef;
 
 /// `jsc.AnyPromise` — `JSPromise | JSInternalPromise`.
@@ -1404,20 +1404,20 @@ pub struct Ref {
 }
 
 impl Ref {
-    pub fn unref(&mut self, vm: &mut virtual_machine::VirtualMachine) {
+    pub fn unref(&mut self, vm: &virtual_machine::VirtualMachine) {
         if !self.has {
             return;
         }
         self.has = false;
-        vm.active_tasks -= 1;
+        vm.active_tasks.update(|n| n - 1);
     }
 
-    pub fn r#ref(&mut self, vm: &mut virtual_machine::VirtualMachine) {
+    pub fn r#ref(&mut self, vm: &virtual_machine::VirtualMachine) {
         if self.has {
             return;
         }
         self.has = true;
-        vm.active_tasks += 1;
+        vm.active_tasks.update(|n| n + 1);
     }
 }
 

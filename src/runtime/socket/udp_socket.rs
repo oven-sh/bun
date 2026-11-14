@@ -801,7 +801,7 @@ impl UDPSocket {
         };
         let callback = js::on_error_get_cached(this_value).unwrap_or_default();
         let global_this = self.global_this.get();
-        let vm = global_this.bun_vm().as_mut();
+        let vm = global_this.bun_vm();
 
         // The `err` check below tests the *argument* (usually a freshly built
         // SystemError, never a termination); it says nothing about the VM's

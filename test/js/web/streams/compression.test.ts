@@ -782,8 +782,8 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     expect(out).toBe(input);
   });
 
-  // readable highWaterMark is 1 (matching Node.js and Chromium), so a single
-  // write completes before any reader is attached.
+  // The readable highWaterMark is 1 chunk, so a single write completes before any
+  // reader is attached (as test-webstreams-compression-buffer-source.js needs).
   test("a single write completes without a reader attached", async () => {
     const cs = new CompressionStream("gzip");
     const writer = cs.writable.getWriter();

@@ -169,7 +169,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTextDecoderStreamConst
             TextDecoder__destroyForStream(std::exchange(static_cast<JSTextDecoderStream*>(cell)->m_decoder, nullptr));
         }));
 
-    setUpNativeTransformStream(lexicalGlobalObject, stream, TransformerKind::TextDecoder);
+    setUpNativeTransformStream(lexicalGlobalObject, stream, TransformerKind::TextDecoder, transformStreamSetUpReadableHighWaterMark);
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(stream);

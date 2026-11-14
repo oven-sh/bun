@@ -698,6 +698,22 @@ expect.extend({
     return { pass: true, message: () => this.utils.matcherHint("toBeWithinRange", received, floor) };
   },
 });
+expect.extend({
+  toBeOfKind(received: unknown, kind: unknown) {
+    const { printDiffOrStringify } = this.utils;
+    expectType(printDiffOrStringify(kind, received, "Expected", "Received", false)).is<string>();
+    expectType(printDiffOrStringify(kind, received, "Expected", "Received")).is<string>();
+    expectType(printDiffOrStringify(received, kind)).is<string>();
+    expectType(printDiffOrStringify(received, kind, { aAnnotation: "Kind", bAnnotation: "Value", expand: true })).is<string>();
+    // @ts-expect-error
+    printDiffOrStringify(kind, received, "Expected");
+    // @ts-expect-error
+    printDiffOrStringify(received, kind, { aAnnotation: 1 });
+    // @ts-expect-error
+    printDiffOrStringify(received);
+    return { pass: true, message: () => printDiffOrStringify(kind, received, "Expected", "Received", false) };
+  },
+});
 expectType(expect(1).toBeWithinRange(0, 2)).is<void>();
 expectType(expect(Promise.resolve(1)).resolves.toBeWithinRange(0, 2)).is<Promise<void>>();
 expectType(expect(Promise.resolve(1)).resolves.not.toBeWithinRange(0, 2)).is<Promise<void>>();

@@ -3116,6 +3116,51 @@ declare module "bun:test" {
        * @param options accepted for compatibility with Jest, but ignored
        */
       diff(expected: unknown, received: unknown, options?: object): string | null;
+      /**
+       * Returns what a failed comparison of two values prints.
+       *
+       * For two different strings that aren't empty and of which one has a line break, and for two objects,
+       * arrays, maps or sets that print differently on more than one line, that is the lines that differ. A
+       * count of them for each label comes after those lines.
+       *
+       * For any other two values, each label is followed by its value as `printExpected()` or
+       * `printReceived()` prints it, on as many lines as that takes. Two errors, and an asymmetric matcher as
+       * either value, are printed that way too. If both values print alike, the text
+       * `serializes to the same string` follows the second label.
+       *
+       * A string as the third argument is Jest's call. Anything else is Vitest's call, where `received` is
+       * first. Both calls work in every test.
+       *
+       * @param expand `true` prints every unchanged line. Otherwise only the 5 unchanged lines before and
+       * after each change are printed. A line of more than 2048 bytes is printed without its middle in both
+       * cases. For an AI agent the two limits are 1 line and 1024 bytes.
+       */
+      printDiffOrStringify(
+        expected: unknown,
+        received: unknown,
+        expectedLabel: string,
+        receivedLabel: string,
+        expand?: boolean,
+      ): string;
+      /**
+       * Vitest's call of `printDiffOrStringify`: `received` is first, and the labels are options. It prints
+       * what Jest's call prints for the same values and labels.
+       *
+       * @param options Bun applies these three keys. A value that has other keys of Vitest's `DiffOptions` is
+       * accepted, and those keys do nothing.
+       */
+      printDiffOrStringify(
+        received: unknown,
+        expected: unknown,
+        options?: {
+          /** The label of `expected`. The default is `"Expected"`. */
+          aAnnotation?: string | undefined;
+          /** The label of `received`. The default is `"Received"`. */
+          bAnnotation?: string | undefined;
+          /** `true` prints every unchanged line, as the `expand` argument of Jest's call does. */
+          expand?: boolean | undefined;
+        },
+      ): string;
       /** Returns two lines. The first has `name` and `value`'s type. The second has `name` and `print(value)`. */
       printWithType<T>(name: string, value: T, print: (value: T) => string): string;
       /** Colors text like an expected value. The text isn't quoted. */

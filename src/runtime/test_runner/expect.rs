@@ -16,6 +16,7 @@ use bun_core::strings;
 use bun_ptr::RefPtr;
 
 use super::bun_test::{self};
+use super::diff::print_diff::{print_diff_main, DiffConfig};
 use super::diff_format::DiffFormatter;
 use self::expect_deferred::{Asked, ExpectDeferred, MatcherCall, Pass, Question};
 use super::execution::ExpectAssertions;
@@ -2828,7 +2829,7 @@ impl ExpectMatcherUtils {
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn ExpectMatcherUtils_createSigleton(global_this: &JSGlobalObject) -> JSValue {
         let utils = ExpectMatcherUtils::default().to_js(global_this);
-        let functions: [(&str, bun_jsc::JSHostFn, u32); 8] = [
+        let functions: [(&str, bun_jsc::JSHostFn, u32); 9] = [
             ("stringify", generated::Bun__ExpectMatcherUtils__stringify, 1),
             ("printExpected", generated::Bun__ExpectMatcherUtils__printExpected, 1),
             ("printReceived", generated::Bun__ExpectMatcherUtils__printReceived, 1),
@@ -2837,6 +2838,7 @@ impl ExpectMatcherUtils {
             ("matcherHint", generated::Bun__ExpectMatcherUtils__matcherHint, 1),
             ("printWithType", generated::Bun__ExpectMatcherUtils__printWithType, 3),
             ("diff", generated::Bun__ExpectMatcherUtils__diff, 2),
+            ("printDiffOrStringify", generated::Bun__ExpectMatcherUtils__printDiffOrStringify, 5),
         ];
         for (name, function, length) in functions {
             let function = JSFunction::create(global_this, name, function, length, Default::default());
@@ -2847,6 +2849,21 @@ impl ExpectMatcherUtils {
 
     pub(crate) fn singleton(global_this: &JSGlobalObject) -> JSValue {
         ExpectMatcherUtils__getSingleton(global_this)
+    }
+
+    /// The text of `stringify(value)`.
+    #[optimize(size)]
+    fn write_value(global_this: &JSGlobalObject, value: JSValue, out: &mut bun_core::MutableString) -> JsResult<()> {
+        if value.is_error() {
+            // Like Jest, print `[Error: message]` without the source frame and stack.
+            let _ = out.write_all(b"[");
+            let _ = out.write_all(value.to_bun_string(global_this)?.to_utf8().slice());
+            let _ = out.write_all(b"]");
+        } else {
+            let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
+            formatter.format_value::<false>(value, out)?;
+        }
+        Ok(())
     }
 
     #[optimize(size)]
@@ -2863,15 +2880,7 @@ impl ExpectMatcherUtils {
             }
         }
 
-        if value.is_error() {
-            // Like Jest, print `[Error: message]` without the source frame and stack.
-            let _ = mutable_string.write_all(b"[");
-            let _ = mutable_string.write_all(value.to_bun_string(global_this)?.to_utf8().slice());
-            let _ = mutable_string.write_all(b"]");
-        } else {
-            let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
-            formatter.format_value::<false>(value, &mut mutable_string)?;
-        }
+        Self::write_value(global_this, value, &mut mutable_string)?;
 
         if color_or_null.is_some() {
             if Output::enable_ansi_colors_stderr() {
@@ -3018,6 +3027,112 @@ impl ExpectMatcherUtils {
             return bun_string_jsc::create_utf8_for_js(global_this, &out);
         }
         bun_string_jsc::create_utf8_for_js(global_this, format!("{formatter}").as_bytes())
+    }
+
+    /// Modelled on `isLineDiffable` in jest-matcher-utils, for two values that aren't both strings. As in `diff`, a matcher as `expected` has no line diff either.
+    #[optimize(size)]
+    fn is_line_diffable(expected: JSValue, received: JSValue) -> bool {
+        let expected_type = Self::type_name(expected);
+        expected_type == Self::type_name(received)
+            && matches!(expected_type, "array" | "map" | "object" | "set")
+            && !(expected.is_error() && received.is_error())
+            && !Expect::is_asymmetric_matcher(expected)
+            && !Expect::is_asymmetric_matcher(received)
+    }
+
+    /// Modelled on `printDiffOrStringify` of jest-matcher-utils, for Jest's call and for Vitest's `(received, expected, options)`.
+    #[optimize(size)]
+    pub(crate) fn print_diff_or_stringify(cx: &mut JsScope<'_>, arguments: &[JsLocal<'_>]) -> JsResult<JSValue> {
+        let global_this = cx.global();
+        let arguments = JsLocal::to_js_slice(arguments);
+        let argument = |i: usize| arguments.get(i).copied().unwrap_or(JSValue::UNDEFINED);
+        let label = |value: JSValue, default: &'static str| match value.is_undefined() {
+            true => Ok(bun_core::String::static_(default)),
+            false => value.to_bun_string(global_this),
+        };
+
+        let (expected, received, expected_label, received_label, expand);
+        // A label here, also as a `String` object, is Jest's call. The test's runner doesn't decide: each runner's function throws for the other's call.
+        if argument(2).is_string() {
+            (expected, received) = (argument(0), argument(1));
+            expected_label = label(argument(2), "Expected")?;
+            received_label = label(argument(3), "Received")?;
+            expand = argument(4).to_boolean();
+        } else {
+            (received, expected) = (argument(0), argument(1));
+            let options = argument(2);
+            let option = |name: &'static str| -> JsResult<JSValue> {
+                match options.is_object() {
+                    true => Ok(options.get(global_this, name)?.unwrap_or(JSValue::UNDEFINED)),
+                    false => Ok(JSValue::UNDEFINED),
+                }
+            };
+            expected_label = label(option("aAnnotation")?, "Expected")?;
+            received_label = label(option("bAnnotation")?, "Received")?;
+            expand = option("expand")?.to_boolean();
+        }
+
+        // Like Jest's `getLabelPrinter`, the shorter label is padded by the count of UTF-16 code units.
+        let width = expected_label.length().max(received_label.length());
+        let padded = |label: &bun_core::String| {
+            let mut padded = label.to_owned_slice();
+            padded.resize(padded.len() + (width - label.length()), b' ');
+            padded
+        };
+        let line_diff = |received: &[u8], expected: &[u8]| {
+            let (expected_label, received_label) = (padded(&expected_label), padded(&received_label));
+            let config = DiffConfig {
+                expected_label: &expected_label,
+                received_label: &received_label,
+                // `expand` only decides whether unchanged runs are left out. The rest is as in a built-in matcher's diff.
+                min_bytes_before_chunking: if expand { usize::MAX } else { 0 },
+                ..DiffConfig::default(Output::is_ai_agent(), Output::enable_ansi_colors_stderr())
+            };
+            // Through `fmt::Formatter`, like `DiffFormatter`, so that the printer is compiled for one writer.
+            let diff = fmt::from_fn(|f| print_diff_main(false, received, expected, f, &config)).to_string();
+            bun_string_jsc::create_utf8_for_js(global_this, diff.as_bytes())
+        };
+
+        if expected.is_string_literal() && received.is_string_literal() {
+            let (expected, received) = (expected.to_bun_string(global_this)?, received.to_bun_string(global_this)?);
+            let has_lines = |text: &bun_core::String| text.index_of_ascii_char(b'\n').is_some();
+            if !expected.is_empty() && !received.is_empty() && (has_lines(&expected) || has_lines(&received)) {
+                // Equal strings, and strings that differ only in unpaired surrogates, are the same UTF-8 and get the two lines below.
+                let (expected, received) = (expected.to_utf8(), received.to_utf8());
+                if expected.slice() != received.slice() {
+                    return line_diff(received.slice(), expected.slice());
+                }
+            }
+        } else if Self::is_line_diffable(expected, received) {
+            let formatter = DiffFormatter::new(global_this, received, expected, false)?;
+            let (received, expected) = (&formatter.received_string, &formatter.expected_string);
+            // The printer has its own words for two values of one line each, so those get the two lines below.
+            if received != expected && (strings::contains_char(received, b'\n') || strings::contains_char(expected, b'\n')) {
+                return line_diff(received, expected);
+            }
+        }
+
+        let mut expected_text = bun_core::MutableString::init_2048()?;
+        Self::write_value(global_this, expected, &mut expected_text)?;
+        let mut received_text = bun_core::MutableString::init_2048()?;
+        Self::write_value(global_this, received, &mut received_text)?;
+
+        let mut out: Vec<u8> = Vec::new();
+        let label_of = |out: &mut Vec<u8>, label: &bun_core::String| {
+            out.extend_from_slice(label.to_utf8().slice());
+            out.extend_from_slice(b": ");
+            out.resize(out.len() + (width - label.length()), b' ');
+        };
+        label_of(&mut out, &expected_label);
+        HintColor::Expected.paint(&mut out, &expected_text.list);
+        out.push(b'\n');
+        label_of(&mut out, &received_label);
+        if expected_text.list == received_text.list {
+            out.extend_from_slice(b"serializes to the same string");
+        } else {
+            HintColor::Received.paint(&mut out, &received_text.list);
+        }
+        bun_string_jsc::create_utf8_for_js(global_this, &out)
     }
 
     #[optimize(size)]

@@ -59,6 +59,7 @@ public:
     JSC::WriteBarrier<JSC::Unknown> configuredMocks;
 
     // JSMaps from name to original value for `vi.stubEnv()` / `vi.stubGlobal()`, created on first use.
+    // A global's original value is its property descriptor, or a record of withWhatSpiesReplaced() that ends in it.
     JSC::WriteBarrier<JSC::Unknown> stubbedEnvs;
     JSC::WriteBarrier<JSC::Unknown> stubbedGlobals;
     // JSMaps from name to stub for what a preload stubbed. Reapplied when a test file ends, so the next one starts with them.
@@ -92,4 +93,10 @@ public:
     MockWithImplementationCleanupData(JSC::VM&, JSC::Structure*);
     void finishCreation(JSC::VM&, JSMockFunction* fn, JSValue impl, JSValue tail, JSValue fallback);
 };
+
+// For a saver of `own`, a property of `target` (the global object, not its proxy): `saved`, or a record of what each spy installed there replaced, which ends in `saved`.
+JSC::JSValue withWhatSpiesReplaced(JSC::JSGlobalObject*, JSC::JSObject* target, const JSC::Identifier& key, const JSC::PropertyDescriptor& own, JSC::JSValue saved);
+
+// Undoes the restored spies of `record`, the one that was installed last first, and returns empty. With none restored, returns `saved`. Throws what a define of `saved` throws.
+JSC::JSValue putBackWhatRestoredSpyReplaced(JSC::JSGlobalObject*, JSC::JSObject* target, const JSC::Identifier& key, JSC::InternalFieldTuple* record);
 }

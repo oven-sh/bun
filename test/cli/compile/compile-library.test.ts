@@ -1013,6 +1013,446 @@ export{first,second};
     expect(JSON.stringify(json(join(String(dir), "dist/package.json")))).not.toContain('"aot"');
   });
 
+  // A `declare namespace` makes no statement of the bundle. Where it holds a value, the JavaScript of its module reads
+  // that value under the name of the source, and the bundler leaves such a read as it is. So the namespace keeps its
+  // name where that module alone has the name. Every other namespace gets a number, as before.
+  const hosted = `declare namespace Host {
+  const version: number;
+}
+export function version() {
+  return Host.version;
+}
+`;
+  const hostedTyped = `// src/index.ts
+declare namespace Host {
+  const version: number;
+}
+function version() {
+  return Host.version;
+}
+export {
+  version
+};
+`;
+
+  test("a declared namespace that the code of its module reads keeps its name", async () => {
+    using dir = tempDir("library-typed-file-namespace", library({ "src/index.ts": hosted }));
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts");
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(typedFile(dir)).toBe(hostedTyped);
+  });
+
+  test("bun build --dts and Bun.build({ dts: true }) write a declared namespace under its name too", async () => {
+    const stated = { strict: true, lib: ["esnext"] };
+    using dir = tempDir("library-typed-file-namespace-entry-points", {
+      ...library({ "src/index.ts": hosted }),
+      "package.json": JSON.stringify({ name: "shapes", version: "1.0.0", compilerOptions: stated }),
+    });
+    const root = String(dir);
+    const built = await bun(root, "build", "./src/index.ts", "--outdir", "by-command", "--dts");
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    // The first line names the source by its path from where the build was started.
+    const withoutSource = (text: string) => text.slice(text.indexOf("\n") + 1);
+    expect(readFileSync(join(root, "by-command/index.aot.ts"), "utf8")).toBe(hostedTyped);
+    const build = await Bun.build({
+      entrypoints: [join(root, "src/index.ts")],
+      outdir: join(root, "by-api"),
+      tsconfig: join(root, "tsconfig.json"),
+      dts: true,
+    });
+    expect(build.logs).toEqual([]);
+    expect(withoutSource(readFileSync(join(root, "by-api/index.aot.ts"), "utf8"))).toBe(withoutSource(hostedTyped));
+  });
+
+  test("a declared namespace keeps its name whatever holds its value and wherever it is declared", async () => {
+    const declared = `declare namespace Levels {
+  const enum Level {
+    Low = 1,
+    High = 2,
+  }
+}
+declare namespace Outer.Inner {
+  const depth: number;
+}
+declare namespace Members {
+  function read(): number;
+  class Reader {
+    size: number;
+  }
+  enum Mode {
+    On,
+    Off,
+  }
+  let count: number;
+  var total: number;
+}
+`;
+    const later = `declare namespace Later {
+  const value: number;
+}
+declare namespace Twice {
+  const first: number;
+}
+declare namespace Twice {
+  const second: number;
+}
+interface Merged {
+  size: number;
+}
+declare namespace Merged {
+  const size: number;
+}
+`;
+    const code = [
+      `function read(merged: Merged) {`,
+      `  const reader = new Members.Reader();`,
+      `  const members = [Members.read(), reader.size, Members.Mode.On, Members.count, Members.total];`,
+      `  return [Levels.Level.High, Outer.Inner.depth, Later.value, Twice.first + Twice.second, Merged.size + merged.size, ...members];`,
+      `}`,
+    ].join("\n");
+    using dir = tempDir(
+      "library-typed-file-namespaces",
+      library({ "src/index.ts": `${declared}export ${code}\n${later}` }),
+    );
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts");
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(typedFile(dir)).toBe(
+      `// src/index.ts\n${declared}${later}${code.replace("new Members.Reader()", "new Members.Reader")}\nexport {\n  read\n};\n`,
+    );
+  });
+
+  // The build finds the module that reads a name through the source map of the bundle. Here three modules read what
+  // they declare in each way, and each way has a name of its own: a read that the build gave to no module, or to
+  // another module, would leave that name with a number.
+  const reads: [name: string, read: (name: string) => string][] = [
+    ["Started", name => name + ".tag`text`;"],
+    ["Member", name => `export const member = ${name}.value;`],
+    ["Argument", name => `export const argument = String(${name}.value);`],
+    ["Shorthand", name => `export const shorthand = { ${name} };`],
+    ["Template", name => "export const template = `${" + name + ".value}`;"],
+    ["TypeOf", name => `export const typeOf = typeof ${name};`],
+    ["Made", name => `export const made = new ${name}.Box();`],
+    ["Chained", name => `export const chained = ${name}?.value;`],
+    ["Indexed", name => `export const indexed = ${name}["value"];`],
+    ["Spread", name => `export const spread = [...${name}.list];`],
+    ["Default", name => `export function byDefault(value = ${name}.value) {\n  return value;\n}`],
+    ["Extended", name => `export class Extension extends ${name}.Box {}`],
+    ["Tagged", name => "export function tagged() {\n  return " + name + ".tag`text`;\n}"],
+    ["Exported", name => `export default ${name}.value;`],
+  ];
+  const moduleThatReads = (module: string) =>
+    reads
+      .map(
+        ([name]) => `declare namespace ${name + module} {
+  const value: number;
+  const list: number[];
+  class Box {}
+  function tag(strings: TemplateStringsArray): string;
+}
+`,
+      )
+      .join("") + reads.map(([name, read]) => read(name + module) + "\n").join("");
+
+  test.each([
+    ["nothing minified", []],
+    ["--minify-syntax --minify-whitespace", ["--minify-syntax", "--minify-whitespace"]],
+  ])("a declared namespace keeps its name however the code of its module reads it: %s", async (_, flags) => {
+    using dir = tempDir(
+      "library-typed-file-declared-reads",
+      library({
+        "src/first.ts": moduleThatReads("First"),
+        "src/second.ts": moduleThatReads("Second"),
+        "src/index.ts": `import first, * as First from "./first";
+import second, * as Second from "./second";
+${moduleThatReads("Entry")}globalThis.String([first, second, First, Second]);
+`,
+      }),
+    );
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts", ...flags);
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(
+      typedFile(dir)
+        .match(/^declare namespace \w+/gm)
+        ?.sort(),
+    ).toEqual(
+      ["First", "Second", "Entry"]
+        .flatMap(module => reads.map(([name]) => `declare namespace ${name + module}`))
+        .sort(),
+    );
+  });
+
+  // `lines`: the lines of the .aot.ts file that have `name`, or `name` with the number that sets another declaration
+  // of it apart.
+  type Named = { title: string; name: string; files: Record<string, string>; lines: string[]; flags?: string[] };
+  const other = (code: string) => `import { other } from "./other";\n${code}`;
+  const names: Named[] = [
+    {
+      title: "keeps its name beside a parameter of that name, which the bundle gives a number",
+      name: "Host",
+      files: {
+        "src/index.ts": `${hosted}export function length(Host: string) {\n  return Host.length;\n}\n`,
+      },
+      lines: [
+        "declare namespace Host {",
+        "return Host.version;",
+        "function length(Host2: string) {",
+        "return Host2.length;",
+      ],
+    },
+    {
+      title: "keeps its name in a module that the bundle starts when it is imported",
+      name: "Host",
+      files: {
+        "src/index.ts": `export async function version() {\n  const lazy = await import("./lazy");\n  return lazy.version();\n}\n`,
+        "src/lazy.ts": `${hosted}export const started = Host.version;\n`,
+      },
+      lines: ["declare namespace Host {", "return Host.version;", "started = Host.version;"],
+    },
+    {
+      title: "gets a number where it holds only types and another module reads a global of its name",
+      name: "Intl",
+      files: {
+        "src/index.ts": other(`declare namespace Intl {
+  interface Extra {
+    digits: number;
+  }
+}
+export function digits(extra: Intl.Extra) {
+  return other(extra.digits);
+}
+`),
+        "src/other.ts": `export function other(digits: number) {\n  return new Intl.NumberFormat(undefined, { minimumFractionDigits: digits }).format(1).length;\n}\n`,
+      },
+      lines: [
+        "return new Intl.NumberFormat(undefined, { minimumFractionDigits: digits }).format(1).length;",
+        "declare namespace Intl2 {",
+        "function digits(extra: Intl2.Extra) {",
+      ],
+    },
+    {
+      title: "gets a number where it holds no value of its own, only what it exports of another module",
+      name: "Host",
+      files: {
+        "src/index.ts": `import type { Shape } from "./other";
+import { other } from "./other";
+declare namespace Host {
+  export { Shape };
+}
+export function host() {
+  return [Host, other()] as const;
+}
+`,
+        "src/other.ts": `export interface Shape {\n  size: number;\n}\nexport function other(): Shape {\n  return { size: 1 };\n}\n`,
+      },
+      lines: ["declare namespace Host2 {", "return [Host, other()] as const;"],
+    },
+    {
+      title: "gets a number where two modules declare it and read it",
+      name: "Host",
+      files: {
+        "src/index.ts": other(hosted.replace("Host.version;", "Host.version + other();")),
+        "src/other.ts": hosted.replace("version()", "other()"),
+      },
+      lines: [
+        "declare namespace Host2 {",
+        "return Host.version;",
+        "declare namespace Host3 {",
+        "return Host.version + other();",
+      ],
+    },
+    {
+      title: "gets a number where a type of another module has its name",
+      name: "Host",
+      files: {
+        "src/index.ts": other(hosted.replace("Host.version;", "Host.version + other(1).length;")),
+        "src/other.ts": `type Host = string;\nexport function other(host: unknown) {\n  return host as Host;\n}\n`,
+      },
+      lines: [
+        "type Host2 = string;",
+        "return host as Host2;",
+        "declare namespace Host3 {",
+        "return Host.version + other(1).length;",
+      ],
+    },
+    {
+      title: "gets a number where a signature that the file copies from another module has its name",
+      name: "Host",
+      files: {
+        "src/index.ts": `import type { make } from "./made";
+${hosted}export const made: typeof make = options => options.size;
+`,
+        "src/made.ts": `declare global {
+  namespace Host {
+    const version: number;
+    interface Options {
+      size: number;
+    }
+  }
+}
+export function make(options: Host.Options): number {
+  return options.size;
+}
+`,
+      },
+      lines: [
+        "declare namespace Host2 {",
+        "namespace Host {",
+        "declare function make(options: Host.Options): number;",
+        "return Host.version;",
+      ],
+    },
+    {
+      title: "gets a number where a dependency that the bundle takes in as TypeScript declares it too",
+      name: "Host",
+      files: {
+        "package.json": JSON.stringify({ name: "shapes", version: "1.0.0", devDependencies: { dep: "1.0.0" } }),
+        "node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0", main: "./index.ts" }),
+        "node_modules/dep/index.ts": hosted.replace("version()", "fromDependency(): number"),
+        "src/index.ts": `import { fromDependency } from "dep";\n${hosted.replace("Host.version;", "Host.version + fromDependency();")}`,
+      },
+      lines: [
+        "declare namespace Host {",
+        "return Host.version;",
+        "declare namespace Host3 {",
+        "return Host.version + fromDependency();",
+      ],
+    },
+    {
+      title: "gets a number in a script, which declares a global",
+      name: "Host",
+      files: {
+        "src/index.ts": `import "./globals";\nexport function one() {\n  return 1;\n}\n`,
+        "src/globals.ts": `${hosted.slice(0, hosted.indexOf("export"))}globalThis.String(Host.version);\n`,
+      },
+      lines: ["declare namespace Host2 {", "globalThis.String(Host.version);"],
+    },
+    {
+      title: "gets a number where a function that calls eval keeps a parameter of its name",
+      name: "Host",
+      files: {
+        "src/index.ts": `${hosted}export function run(code: string) {\n  return ((Host: string): unknown => eval(code + Host))("1");\n}\n`,
+      },
+      lines: [
+        "declare namespace Host2 {",
+        "return Host.version;",
+        'return ((Host: string): unknown => eval(code + Host))("1");',
+      ],
+    },
+    {
+      title: "gets a number where only the JSX factory of the project reads it",
+      name: "Dom",
+      files: {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, jsx: "react", jsxFactory: "Dom.h" },
+        }),
+        "src/index.tsx": `declare namespace Dom {
+  function h(tag: unknown, props: unknown, ...children: unknown[]): JSX.Element;
+}
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      div: {};
+    }
+    interface Element {
+      tag: unknown;
+    }
+  }
+}
+export function view() {
+  return <div />;
+}
+`,
+      },
+      lines: ["declare namespace Dom2 {", 'return /* @__PURE__ */ Dom.h("div", null);'],
+    },
+    {
+      title: "gets a number where a banner reads its name",
+      name: "Host",
+      flags: ["--banner", "var seen = typeof Host;"],
+      files: { "src/index.ts": hosted },
+      lines: ["var seen = typeof Host;", "declare namespace Host2 {", "return Host.version;"],
+    },
+    {
+      title: "keeps its name by the rule for a declared function where one has that name too",
+      name: "Host",
+      files: {
+        "src/index.ts": other(
+          `declare function Host(selector: string): number;\n${hosted.replace("Host.version;", "Host.version + other();")}`,
+        ),
+        "src/other.ts": `declare function Host(selector: string): number;\nexport function other() {\n  return Host("a");\n}\n`,
+      },
+      lines: [
+        "declare function Host(selector: string): number;",
+        'return Host("a");',
+        "declare function Host(selector: string): number;",
+        "declare namespace Host {",
+        "return Host.version + other();",
+      ],
+    },
+  ];
+
+  test.each(names.map(named => [named.title, named] as const))("a declared namespace %s", async (_, named) => {
+    using dir = tempDir("library-typed-file-declared-names", library(named.files));
+    const entry = "src/index.tsx" in named.files ? "src/index.tsx" : "src/index.ts";
+    const built = await bun(String(dir), "compile", "--library", entry, ...(named.flags ?? []));
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    const hasName = new RegExp(`(?<![\\w$])${named.name}\\d*(?![\\w$])`);
+    const found = typedFile(dir)
+      .split(/\r?\n/)
+      .filter(line => hasName.test(line));
+    expect(found.map(line => line.trim())).toEqual(named.lines);
+  });
+
+  test("a declared namespace keeps its name in each of two entry points that declare it", async () => {
+    const entry = (name: string) => `declare namespace Host {
+  const version: number;
+  interface Options {
+    size: number;
+  }
+}
+export function ${name}(options: Host.Options) {
+  return Host.version + options.size;
+}
+`;
+    using dir = tempDir(
+      "library-typed-file-declared-entries",
+      library({ "src/index.ts": entry("one"), "src/extra.ts": entry("two") }),
+    );
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts", "src/extra.ts");
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    const named = (file: string) => readFileSync(join(String(dir), "dist", file), "utf8").match(/^.*\bHost\d*\b.*$/gm);
+    expect({ index: named("index.aot.ts"), extra: named("extra.aot.ts") }).toEqual({
+      index: [
+        "declare namespace Host {",
+        "function one(options: Host.Options) {",
+        "  return Host.version + options.size;",
+      ],
+      extra: [
+        "declare namespace Host {",
+        "function two(options: Host.Options) {",
+        "  return Host.version + options.size;",
+      ],
+    });
+  });
+
+  test("--splitting: a declared namespace keeps its name in the chunk that reads it", async () => {
+    using dir = tempDir(
+      "library-typed-file-declared-chunks",
+      library({
+        "src/index.ts": `import { shared } from "./shared";\nexport function one() {\n  return shared() + 1;\n}\n`,
+        "src/extra.ts": `import { shared } from "./shared";\nexport function two() {\n  return shared() + 2;\n}\n`,
+        "src/shared.ts": hosted.replace("version()", "shared()"),
+      }),
+    );
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts", "src/extra.ts", "--splitting");
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    const dist = join(String(dir), "dist");
+    const typed = filesIn(dist).filter(path => path.endsWith(".aot.ts"));
+    const naming = typed.map(path => readFileSync(join(dist, path), "utf8").match(/^.*\bHost\d*\b.*$/gm));
+    expect(typed).toHaveLength(3);
+    expect(naming.filter(lines => lines !== null)).toEqual([["declare namespace Host {", "  return Host.version;"]]);
+  });
+
   test("--splitting: an .aot.ts file imports the .aot.ts file of each chunk that its JavaScript imports", async () => {
     using dir = tempDir("library-typed-file-chunks", library(sources));
     const built = await bun(String(dir), "compile", "--library", "src/index.ts", "src/extra.ts", "--splitting");

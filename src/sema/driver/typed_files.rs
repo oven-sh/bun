@@ -1920,6 +1920,25 @@ impl<'a, 's> Syntax<'a, 's> {
         }
         declared
     }
+
+    /// A declared namespace is an object when the program runs where it holds a variable, a function, a class or an enum.
+    fn is_erased_object(&self, found: &Declared) -> bool {
+        let file = self.file;
+        let is_value = |inner: &Stmt| {
+            matches!(
+                inner.kind,
+                StmtKind::Var(_) | StmtKind::Fn(_) | StmtKind::Class(_) | StmtKind::Enum(_)
+            )
+        };
+        let holds_a_value = |&statement: &StmtId| {
+            let (start, end) = (file[statement].start, file[statement].loc.end);
+            let is_inside = |inner: &&Stmt| start < inner.start && inner.start < end;
+            matches!(file[statement].kind, StmtKind::Module(_))
+                && file.stmts.iter().filter(is_inside).any(is_value)
+        };
+        let is_erased = |&statement: &StmtId| file.is_erased_statement(statement);
+        found.statements.iter().all(is_erased) && found.statements.iter().any(holds_a_value)
+    }
 }
 
 struct NamespaceObject<'a> {
@@ -2162,11 +2181,101 @@ fn link(
         }
     }
 
-    let declared_in_output: FxHashSet<&[u8]> = output
+    let mut declared_in_output: FxHashSet<&[u8]> = output
         .top_level_value_names()
         .into_iter()
         .map(|at| output.word(at))
         .collect();
+    // No other text of the file names it: each type that has the word is a reference to this declaration.
+    let is_named_only_for = |keeper: usize, name: &[u8]| {
+        written.iter().enumerate().all(|(index, module)| {
+            let Some(module) = module else { return true };
+            let file = module.syntax.file;
+            let is_it = |target: &Target| {
+                matches!(target, Target::Declaration { path, name: of }
+                if index_of.get(&path[..]) == Some(&keeper) && &of[..] == name)
+            };
+            let is_its_name = |at: u32| {
+                (module.types.iter().flat_map(|types| &types.references))
+                    .any(|reference| reference.0 == at && is_it(&reference.1))
+            };
+            // Of a module of another output, the file has the `declare global` blocks and what its types need.
+            let is_written = |at: u32| {
+                let holds = |id: StmtId, at: u32| file[id].start <= at && at < file[id].loc.end;
+                let around = file.ids(file.body).find(|&id| holds(id, at));
+                let needed = wanted.iter().filter(|place| place.0 == index);
+                let mut needed = needed.filter_map(|place| declared[index].get(&place.1[..]));
+                index < mapped
+                    || around.is_some_and(|around| {
+                        augmentations.contains(&(index, around))
+                            || needed.any(|it| {
+                                let mut places = it.names.iter().chain(&it.bindings);
+                                places.any(|&place| holds(around, place))
+                            })
+                    })
+            };
+            let names = (file.names.iter())
+                .filter(|head| !head.is_qualified())
+                .map(|head| head.pos());
+            let queries = (file.exprs.iter())
+                .filter(|expr| matches!(expr.kind, ExprKind::Ident(_)))
+                .map(|expr| expr.pos)
+                .filter(|&at| is_inside(&module.type_ranges, at));
+            let mut heads = names
+                .chain(queries)
+                .filter(|&at| module.syntax.word(at) == name && is_written(at));
+            let keeps_its_text = index != keeper && module.types.is_none();
+            !(keeps_its_text && declared[index].contains_key(name)) && heads.all(is_its_name)
+        })
+    };
+    // The source that reads `name` at `at` of the bundle: the mapping there points at that name in the source.
+    let reader_at = |name: &[u8], at: u32| {
+        let until = mappings.entries.partition_point(|entry| entry.0 <= at);
+        let &(mapped_at, source, original) = mappings.entries[..until].last()?;
+        let module = written.get(source as usize)?.as_ref()?;
+        let between = &output.text[mapped_at as usize..at as usize];
+        let is_of_source = module.syntax.word(original) == name;
+        (is_of_source && !bun_core::strings::contains(between, name)).then_some(source)
+    };
+    // The sources whose JavaScript reads `name`, where the bundle binds no such name. `None`: text of no source.
+    let readers_of = |name: &[u8]| {
+        let mut readers: Vec<Option<u32>> = Vec::new();
+        let is_it = |at: &u32| output.word(*at) == name;
+        let mut bound = output.value_names().chain(output.imported_names());
+        if bound.any(|at| is_it(&at)) {
+            return readers;
+        }
+        for at in output.used_names().filter(is_it) {
+            let reader = reader_at(name, at);
+            if !readers.contains(&reader) {
+                readers.push(reader);
+            }
+        }
+        readers
+    };
+    // The bundler renames nothing that the bundle does not declare, so a read of a declared namespace keeps its name.
+    let mut pinned: Vec<(usize, &[u8])> = Vec::new();
+    for (index, module) in written.iter().enumerate().take(mapped) {
+        let is_module = |module: &&Written<'_, '_>| {
+            module.types.is_some_and(|types| !types.is_script) && !module.is_unchecked()
+        };
+        let Some(module) = module.as_ref().filter(is_module) else {
+            continue;
+        };
+        for (&name, found) in &declared[index] {
+            let is_pinned = found.bindings.is_empty()
+                && !found.is_ambient_value
+                && !emitted_from.contains_key(&index)
+                && taken.contains(name)
+                && module.syntax.is_erased_object(found)
+                && readers_of(name) == [Some(index as u32)]
+                && is_named_only_for(index, name);
+            if is_pinned {
+                pinned.push((index, name));
+                declared_in_output.insert(name);
+            }
+        }
+    }
     let mut names: Vec<FxHashMap<&[u8], Vec<u8>>> = vec![FxHashMap::default(); written.len()];
     let mut values: Vec<FxHashMap<&[u8], &[u8]>> = vec![FxHashMap::default(); written.len()];
     let mut imports: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
@@ -2347,6 +2456,10 @@ fn link(
                 );
                 imports.insert(key, local.clone());
                 names[index].insert(name, local);
+                continue;
+            }
+            if pinned.contains(&(index, name)) {
+                names[index].insert(name, name.to_vec());
                 continue;
             }
             if found.is_ambient_value
@@ -4124,6 +4237,7 @@ pub struct ModuleTypes {
     pub augmented_modules: Vec<(u32, Box<[u8]>)>,
     pub locals: Vec<(u32, u32)>,
     pub emitted_declarations: Box<[u8]>,
+    pub is_script: bool,
 }
 
 impl ModuleTypes {
@@ -4457,6 +4571,7 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
             augmented_modules,
             locals,
             emitted_declarations: Box::default(),
+            is_script: !hir.has_module_syntax || hir.is_script_for_project,
         }
     }))
 }

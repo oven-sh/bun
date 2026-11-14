@@ -84,6 +84,34 @@ describe.concurrent("a program compiled against a package that bun compile --lib
     });
   });
 
+  test("bun check --aot types a read of a namespace that the package declares, as bun check does", async () => {
+    using dir = tempDir("aot-library-typed-file-declared-namespace", {
+      ...library,
+      "library/src/version.ts": `declare namespace Host {
+  const version: number;
+}
+export function version() {
+  return Host.version;
+}
+`,
+      "app/main.ts": `import { version } from "shapes/version";\nexport const text: string = version();\n`,
+    });
+    await install(String(dir));
+    const errors = async (...flags: string[]) => {
+      const checked = await spawned(
+        [bunExe(), "check", ...flags, "--no-pretty", "main.ts"],
+        join(String(dir), "app"),
+        env,
+      );
+      return { errors: checked.stdout.match(/^.*: error TS\d+: .*$/gm), exitCode: checked.exitCode };
+    };
+    const expected = {
+      errors: ["main.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'."],
+      exitCode: 1,
+    };
+    expect({ plain: await errors(), aot: await errors("--aot") }).toEqual({ plain: expected, aot: expected });
+  });
+
   test.each([
     [
       "a member that is named like the variable it is cast from",

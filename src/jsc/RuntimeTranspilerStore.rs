@@ -29,7 +29,6 @@ use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 use bun_watcher::Watcher;
 
 use crate::event_loop::{ConcurrentTask, EventLoop};
-use crate::hot_reloader::ImportWatcher;
 use crate::resolved_source::PrintedAst;
 use crate::resolved_source_tag::ResolvedSourceTag;
 use crate::runtime_transpiler_cache::{ModuleType as CacheModuleType, RuntimeTranspilerCache};
@@ -340,7 +339,6 @@ impl RuntimeTranspilerStore {
                 _keep_alive: JsKeepAlive::active(),
                 resolved_source,
                 has_plugins: global_object.has_plugins(),
-                import_watcher: vm.bun_watcher_ptr(),
                 has_any_macro_remappings: vm.has_any_macro_remappings.get(),
                 use_isolation_source_provider_cache: vm.use_isolation_source_provider_cache(),
                 wants_inline_source_map: vm.wants_inline_source_map(),
@@ -407,7 +405,6 @@ pub struct TranspilerJob {
     /// Macros load through `Bun.plugin()` callbacks, which the pool thread's VM lacks, so the JS thread must run them.
     has_plugins: bool,
     // Read on the JS thread, which also writes them.
-    import_watcher: *mut ImportWatcher,
     has_any_macro_remappings: bool,
     use_isolation_source_provider_cache: bool,
     wants_inline_source_map: bool,
@@ -744,15 +741,13 @@ impl TranspilerJob {
         let parse_result = transpiler
             .parse_maybe_return_file_only_allow_shared_buffer::<false, false>(parse_options, None);
 
-        if !this.import_watcher.is_null()
+        if let Some(watcher) = &transpiler.resolver.watcher
             && input_file.is_some()
             && !is_node_override
             && bun_paths::is_absolute(path.text)
             && !strings::contains(path.text, b"node_modules")
         {
-            // SAFETY: teardown frees the watcher after waiting for `ticket`; `add_file` locks it.
-            let iw = unsafe { &mut *this.import_watcher };
-            let _ = iw.add_owned_file(input_file, path.text, Watcher::get_hash(path.text));
+            let _ = watcher.add_owned_file(input_file, path.text, Watcher::get_hash(path.text));
         }
 
         let Some(mut parse_result) = parse_result else {

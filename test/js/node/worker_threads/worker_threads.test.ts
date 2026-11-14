@@ -1,7 +1,6 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, isWindows, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
-import { unsupported as aotUnsupported } from "../../../aot/supported";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { Readable } from "node:stream";
@@ -23,6 +22,7 @@ import wt, {
   Worker,
   workerData,
 } from "worker_threads";
+import { unsupported as aotUnsupported } from "../../../aot/supported";
 
 // Worker startup under debug/ASAN is slow enough that several tests here cannot
 // finish inside the 5s default.

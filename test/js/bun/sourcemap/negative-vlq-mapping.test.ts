@@ -169,3 +169,121 @@ describe.concurrent("sourcemap: negative VLQ delta in mappings is rejected, not 
     expect(exitCode).toBe(0);
   });
 });
+
+// A segment that names a source the map does not have. ";;EAIE" maps generated
+// 3:3 to original 5:3 of source 0. ";;ECIE" maps it to source 1.
+describe.concurrent("sourcemap: a source index past `sources` is rejected", () => {
+  const map = { version: 3, sources: ["original.ts"], sourcesContent: [null], names: [], mappings: ";;ECIE" };
+  const maps = {
+    "last-source": { ...map, sources: ["other.ts", "original.ts"], sourcesContent: [null, null] },
+    "past-end": map,
+    "no-sources": { ...map, sources: [], sourcesContent: [], mappings: ";;EAIE" },
+    // Long enough for the SIMD decoder, which leaves the last segment of any input to the scalar loop.
+    "past-end-at-tail": { ...map, mappings: ";;EAIE" + Buffer.alloc(5 * 46, ",CAAC").toString() + ",CCAA" },
+    // ",CCAA" names source 1 and ",CDAA" goes back to source 0. The SIMD decoder has to refuse it mid-input.
+    "past-end-mid-input": {
+      ...map,
+      mappings:
+        ";;EAIE" + Buffer.alloc(5 * 20, ",CAAC").toString() + ",CCAA,CDAA" + Buffer.alloc(5 * 20, ",CAAC").toString(),
+    },
+    // The same with two-character VLQs, which take another path in the SIMD decoder.
+    "past-end-mid-input-wide": {
+      ...map,
+      mappings:
+        ";;EAIE" +
+        Buffer.alloc(7 * 20, ",gBAAgB").toString() +
+        ",CCAA,CDAA" +
+        Buffer.alloc(7 * 20, ",gBAAgB").toString(),
+    },
+  };
+  const throwsOnLine3 = `// @bun\nexport function t() {\n  throw new Error("SI");\n}\n`;
+  const files: Record<string, string> = {
+    "main.js": `
+      for (const file of process.argv.slice(2)) {
+        const { t } = await import("./" + file);
+        for (let i = 0; i < 2; i++) {
+          try {
+            t();
+          } catch (e) {
+            console.log(file + ": " + e.stack.split("\\n")[1].trim());
+          }
+        }
+      }
+    `,
+  };
+  for (const [name, map] of Object.entries(maps)) {
+    const json = JSON.stringify(map);
+    files[`${name}.js`] = throwsOnLine3 + `//# sourceMappingURL=${name}.js.map\n`;
+    files[`${name}.js.map`] = json;
+    files[`${name}.inline.js`] = throwsOnLine3 + `//# sourceMappingURL=data:application/json;base64,${btoa(json)}\n`;
+  }
+  const remapped = ["last-source.js", "last-source.inline.js"];
+  const refused = Object.keys(maps)
+    .filter(name => name !== "last-source")
+    .flatMap(name => [`${name}.js`, `${name}.inline.js`]);
+
+  for (const [decoder, env] of [
+    ["SIMD", {}],
+    ["scalar", { BUN_FEATURE_FLAG_DISABLE_SIMD_SOURCEMAP: "1" }],
+  ] as const) {
+    test(`${decoder} decoder: one warning for each file, and its frames keep their built position`, async () => {
+      using dir = tempDir("source-index-past-end", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.js", ...remapped, ...refused],
+        env: { ...bunEnv, ...env },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const clean = (text: string) => text.replaceAll(String(dir), "<dir>").replaceAll("\\", "/");
+      const twice = (line: string) => line + line;
+      expect({ stdout: clean(stdout), stderr: clean(stderr) }).toEqual({
+        stdout:
+          remapped.map(file => twice(`${file}: at t (<dir>/original.ts:5:3)\n`)).join("") +
+          refused.map(file => twice(`${file}: at t (<dir>/${file}:3:18)\n`)).join(""),
+        stderr: refused
+          .map(file => `warn: Could not decode sourcemap in '<dir>/${file}': InvalidSourceIndexValue\n`)
+          .join(""),
+      });
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  test("a throw in the last source of a `bun build --sourcemap=external` bundle is remapped", async () => {
+    using dir = tempDir("source-index-last-of-bundle", {
+      "first.ts": `export function first() {}\n`,
+      "second.ts": `export function second() {}\n`,
+      "entry.ts":
+        `import { first } from "./first";\n` +
+        `import { second } from "./second";\n` +
+        `first();\n` +
+        `second();\n` +
+        `function last() {\n` +
+        `  throw new Error("SI");\n` +
+        `}\n` +
+        `last();\n`,
+    });
+    const build = await Bun.build({
+      entrypoints: [join(String(dir), "entry.ts")],
+      outdir: join(String(dir), "out"),
+      target: "bun",
+      sourcemap: "external",
+    });
+    expect(build.success).toBe(true);
+    const { sources } = await Bun.file(join(String(dir), "out", "entry.js.map")).json();
+    expect(sources).toEqual(["../first.ts", "../second.ts", "../entry.ts"]);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join("out", "entry.js")],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(`at last (${join(String(dir), "entry.ts")}:6:9)`);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+});

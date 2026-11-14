@@ -73,6 +73,11 @@ bun test <patterns>
   Run only tests with a name that matches the given regex. Alias: <code>-t</code>
 </ParamField>
 
+<ParamField path="--changed" type="string">
+  Run only test files affected by changed files according to git — uncommitted changes compared against <code>HEAD</code>.
+  Optionally pass a commit or branch to compare against, e.g. <code>--changed=main</code>
+</ParamField>
+
 ### Reporting
 
 <ParamField path="--reporter" type="string">

@@ -1361,8 +1361,7 @@ pub fn update_lockfile_if_needed(
 ) -> Result<(), Error> {
     if let LoadResult::Ok(ok) = load_result {
         if ok.serializer_result.packages_need_update {
-            let mut slice = manager.lockfile.packages.slice();
-            for meta in slice.items_meta_mut() {
+            for meta in manager.lockfile.packages.items_meta_mut() {
                 // these are possibly updated later, but need to make sure non are zero
                 meta.set_has_install_script(false);
             }

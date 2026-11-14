@@ -41,6 +41,11 @@ fn dummy_filter_false(_val: &[u8]) -> bool {
     false
 }
 
+/// ENOENT or ENOTDIR: nothing is at the path, or what is there is no directory.
+fn is_gone(err: &SysError) -> bool {
+    matches!(err.get_errno(), E::ENOENT | E::ENOTDIR)
+}
+
 #[cfg(windows)]
 pub(crate) fn statat_windows(fd: Fd, path: &ZStr) -> Maybe<Stat> {
     use bun_paths::resolve_path::{self, platform};
@@ -74,6 +79,8 @@ pub trait Accessor {
     /// symlinked directory is reported as `Directory`, never `SymLink`), so the
     /// Directory descent arm must run the followed-link ancestor check itself.
     const ENTRY_KIND_FOLLOWS_SYMLINKS: bool = true;
+    /// Continue the walk without a listed directory or symlink that is gone when the walk opens it.
+    const SKIP_GONE_ENTRIES: bool = false;
     type Handle: AccessorHandle;
     type DirIter: AccessorDirIter<Handle = Self::Handle>;
 
@@ -163,6 +170,7 @@ impl Accessor for SyscallAccessor {
     // readdir / lstat report symlinks as `SymLink`, so every symlinked
     // directory flows through the (already checked) Symlink work-item arm.
     const ENTRY_KIND_FOLLOWS_SYMLINKS: bool = false;
+    const SKIP_GONE_ENTRIES: bool = true;
     type Handle = SyscallHandle;
     type DirIter = SyscallDirIter;
 
@@ -331,8 +339,9 @@ pub struct Directory<A: Accessor> {
     /// evaluates all of them instead of revisiting the directory.
     pub(crate) active: ComponentSet,
 
-    pub(crate) iter_closed: bool,
     pub(crate) at_cwd: bool,
+    /// The directory the walk starts in, which no listing reported.
+    pub(crate) is_root: bool,
 }
 
 impl<A: Accessor> Directory<A> {
@@ -384,15 +393,8 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             "Iterator init pattern={}",
             bstr::BStr::new(&self.walker.pattern)
         );
-        let mut was_absolute = false;
-        let root_work_item: WorkItem<A> = 'brk: {
-            let is_absolute = if cfg!(unix) {
-                bun_paths::is_absolute(&self.walker.pattern)
-            } else {
-                bun_paths::is_absolute(&self.walker.pattern)
-                    || bun_paths::is_absolute_posix(&self.walker.pattern)
-            };
-
+        let is_absolute = self.walker.is_pattern_absolute();
+        let mut root_work_item: WorkItem<A> = 'brk: {
             if !is_absolute {
                 break 'brk WorkItem::new(
                     self.walker.cwd.clone(),
@@ -401,20 +403,11 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 );
             }
 
-            was_absolute = true;
-
-            let mut path_without_special_syntax: &[u8] = &self.walker.pattern
-                [0..self.walker.end_byte_of_basename_excluding_special_syntax as usize];
+            let path_without_special_syntax: &[u8] = self.walker.start_path();
             let mut starting_component_idx =
                 self.walker.basename_excluding_special_syntax_component_idx;
 
-            if path_without_special_syntax.is_empty() {
-                path_without_special_syntax = if !IS_WINDOWS {
-                    b"/"
-                } else {
-                    resolve_path::windows_filesystem_root(&self.walker.cwd)
-                };
-            } else {
+            if self.walker.end_byte_of_basename_excluding_special_syntax != 0 {
                 // Skip the components associated with the literal path
                 starting_component_idx += 1;
 
@@ -499,12 +492,11 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
 
         self.cwd_fd = cwd_fd;
 
-        let trans = if was_absolute {
-            self.transition_to_dir_iter_state::<false>(root_work_item)?
-        } else {
-            self.transition_to_dir_iter_state::<true>(root_work_item)?
-        };
-        if let Err(err) = trans {
+        // The matches of a relative pattern are relative to `cwd` unless `absolute` is set.
+        if !is_absolute && !self.walker.absolute {
+            root_work_item.path = Box::default();
+        }
+        if let Err(err) = self.transition_to_dir_iter_state::<true>(root_work_item)? {
             return Ok(Err(err));
         }
 
@@ -559,13 +551,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         // Build the Directory in a local and assign at the end (borrowck:
         // mutating `iter_state` in place would overlap the `self.walker` borrow).
         let mut dir_path_buf = bun_paths::path_buffer_pool::get();
-        let mut dir_path_len: usize = 'dir_path: {
-            if ROOT {
-                if !self.walker.absolute {
-                    dir_path_buf[0] = 0;
-                    break 'dir_path 0;
-                }
-            }
+        let mut dir_path_len: usize = {
             // TODO Optimization: On posix systems filepaths are already null byte terminated so we can skip this if thats the case
             if work_item_path.len() >= dir_path_buf.len() {
                 if let Some(fd) = work_item.fd {
@@ -643,9 +629,17 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             }
 
             match A::openat(self.cwd_fd, dir_path)? {
-                Err(err) => {
-                    return Ok(Err(self.walker.handle_sys_err_with_path(&err, dir_path)));
-                }
+                Err(err) => match self.walker.open_listed_again(self.cwd_fd, &err, dir_path)? {
+                    Err(err) => return Ok(Err(err)),
+                    Ok(None) => {
+                        self.iter_state = IterState::GetNext;
+                        return Ok(Ok(()));
+                    }
+                    Ok(Some(fd_)) => {
+                        self.bump_open_fds();
+                        fd_
+                    }
+                },
                 Ok(fd_) => {
                     self.bump_open_fds();
                     fd_
@@ -736,8 +730,8 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             path: dir_path_buf,
             dir_path_len,
             active,
-            iter_closed: false,
             at_cwd,
+            is_root: ROOT,
         });
 
         Ok(Ok(()))
@@ -896,7 +890,13 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                         if err.get_errno() == E::ENOTDIR {
                                             break 'brk None;
                                         }
-                                        if self.walker.error_on_broken_symlinks {
+                                        if self.walker.error_on_broken_symlinks
+                                            && !self.walker.listed_link_is_gone(
+                                                self.cwd_fd,
+                                                &err,
+                                                work_item_path,
+                                            )
+                                        {
                                             return Ok(Err(self.walker.handle_sys_err_with_path(
                                                 &err,
                                                 symlink_full_path_z,
@@ -994,6 +994,14 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 }
                 IterState::Directory(dir) => {
                     let entry = match dir.iter.next() {
+                        // Removed after its open. libc's readdir also takes this ENOENT as the end.
+                        Err(err)
+                            if A::SKIP_GONE_ENTRIES
+                                && !dir.is_root
+                                && err.get_errno() == E::ENOENT =>
+                        {
+                            None
+                        }
                         Err(err) => {
                             let dir_fd = dir.fd;
                             let at_cwd = dir.at_cwd;
@@ -1003,9 +1011,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             if !at_cwd {
                                 self.close_disallowing_cwd(dir_fd);
                             }
-                            if let IterState::Directory(d) = &mut self.iter_state {
-                                d.iter_closed = true;
-                            }
+                            self.iter_state = IterState::GetNext;
                             return Ok(Err(err));
                         }
                         Ok(ent) => ent,
@@ -1015,9 +1021,6 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                         let at_cwd = dir.at_cwd;
                         if !at_cwd {
                             self.close_disallowing_cwd(dir_fd);
-                        }
-                        if let IterState::Directory(d) = &mut self.iter_state {
-                            d.iter_closed = true;
                         }
                         self.iter_state = IterState::GetNext;
                         continue;
@@ -1219,10 +1222,8 @@ impl<'a, A: Accessor, const SENTINEL: bool> Drop for Iterator<'a, A, SENTINEL> {
     fn drop(&mut self) {
         self.close_cwd_fd();
         if let IterState::Directory(dir) = &self.iter_state {
-            if !dir.iter_closed {
-                let fd = dir.fd;
-                self.close_disallowing_cwd(fd);
-            }
+            let fd = dir.fd;
+            self.close_disallowing_cwd(fd);
         }
 
         while let Some(work_item) = self.walker.workbuf.pop() {
@@ -1506,6 +1507,117 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             unsafe { core::ptr::copy(src.as_ptr(), dst, copy_len) };
         }
         err.with_path(&self.path_buf[0..copy_len])
+    }
+
+    fn is_pattern_absolute(&self) -> bool {
+        if cfg!(unix) {
+            bun_paths::is_absolute(&self.pattern)
+        } else {
+            bun_paths::is_absolute(&self.pattern) || bun_paths::is_absolute_posix(&self.pattern)
+        }
+    }
+
+    /// The directory a walk starts in: `cwd`, or the leading plain names of an absolute pattern.
+    fn start_path(&self) -> &[u8] {
+        if !self.is_pattern_absolute() {
+            return &self.cwd;
+        }
+        let literal = &self.pattern[..self.end_byte_of_basename_excluding_special_syntax as usize];
+        if !literal.is_empty() {
+            literal
+        } else if !IS_WINDOWS {
+            b"/"
+        } else {
+            resolve_path::windows_filesystem_root(&self.cwd)
+        }
+    }
+
+    /// With a `..`, a queued path can be wrong: the kernel resolves it through a symlink, the walker as text.
+    fn has_dot_dot(&self) -> bool {
+        self.pattern_components
+            .iter()
+            .any(|component| component.syntax_hint == SyntaxHint::DotBack)
+            || (self.absolute && strings::split_any(&self.cwd, b"/\\").any(|name| name == b".."))
+    }
+
+    /// `None` when a stat through `cwd_fd` finds no directory at the listed `dir_path`. One that is there is opened once more.
+    #[cold]
+    #[inline(never)]
+    fn open_listed_again(
+        &mut self,
+        cwd_fd: A::Handle,
+        err: &SysError,
+        dir_path: &ZStr,
+    ) -> Result<Maybe<Option<A::Handle>>, Error> {
+        if A::SKIP_GONE_ENTRIES && is_gone(err) {
+            let mut buf = bun_paths::path_buffer_pool::get();
+            if let Some(path) = self.through_start(dir_path.as_bytes(), &mut buf) {
+                match A::statat(cwd_fd, path) {
+                    Ok(now) if S::ISDIR(now.st_mode as u32) => {
+                        if let Ok(fd) = A::openat(cwd_fd, dir_path)? {
+                            return Ok(Ok(Some(fd)));
+                        }
+                    }
+                    Ok(_) => return Ok(Ok(None)),
+                    Err(now) if is_gone(&now) => return Ok(Ok(None)),
+                    Err(_) => {}
+                }
+            }
+        }
+        Ok(Err(self.handle_sys_err_with_path(err, dir_path)))
+    }
+
+    /// Whether an lstat through `cwd_fd` finds nothing at `path`, a listed symlink whose open failed with `err`.
+    #[cold]
+    #[inline(never)]
+    fn listed_link_is_gone(&self, cwd_fd: A::Handle, err: &SysError, path: &[u8]) -> bool {
+        // On Windows the accessor's `lstatat` follows the link, so it fails for a broken link too.
+        if !A::SKIP_GONE_ENTRIES || cfg!(windows) || err.get_errno() != E::ENOENT {
+            return false;
+        }
+        let mut buf = bun_paths::path_buffer_pool::get();
+        self.through_start(path, &mut buf)
+            .is_some_and(|path| A::lstatat(cwd_fd, path).is_err_and(|now| is_gone(&now)))
+    }
+
+    /// `path`, which this walk queued, as a path below the directory the walk started in.
+    fn through_start<'b>(&self, path: &[u8], buf: &'b mut PathBuffer) -> Option<&'b ZStr> {
+        if self.has_dot_dot() {
+            return None;
+        }
+        let below = if bun_paths::is_absolute(path) {
+            self.below_start(path)?
+        } else {
+            path
+        };
+        buf[..below.len()].copy_from_slice(below);
+        buf[below.len()] = 0;
+        Some(ZStr::from_buf(&buf[..], below.len()))
+    }
+
+    /// The part of the absolute `path` that is below the directory the walk started in.
+    fn below_start<'p>(&self, path: &'p [u8]) -> Option<&'p [u8]> {
+        let start = self.start_path();
+        // `join` normalizes every path of an `absolute` walk.
+        let normalized;
+        let start = if self.absolute {
+            normalized = bun_join::<false>(&[start]);
+            &normalized[..]
+        } else {
+            start
+        };
+        let is_sep = bun_core::path_sep::is_sep_native;
+        let mut below = path.strip_prefix(start)?;
+        if !start.last().is_some_and(|&c| is_sep(c)) && !below.first().is_some_and(|&c| is_sep(c)) {
+            return None;
+        }
+        while let Some((&first, rest)) = below.split_first() {
+            if !is_sep(first) {
+                break;
+            }
+            below = rest;
+        }
+        (!below.is_empty()).then_some(below)
     }
 
     pub fn walk(&mut self) -> Result<Maybe<()>, Error> {

@@ -347,10 +347,9 @@ pub(crate) fn post_process_js_chunk(
                 c,
                 to_common_js_ref,
                 to_esm_ref,
-                chunk.entry_point.source_index(),
+                chunk,
                 worker_arena,
                 &arena,
-                chunk.renamer.as_renamer(),
                 module_info.as_deref_mut(),
                 cross_chunk_exports,
             );
@@ -810,17 +809,88 @@ pub(crate) fn post_process_js_chunk(
     Ok(())
 }
 
+/// What an ES module entry point's tail exports under one alias.
+struct TailExport {
+    binding: crate::ImportTracker,
+    /// A property of a CommonJS module's exports: the tail exports a copy (`cjs_export_copies`).
+    is_cjs_property: bool,
+}
+
+/// `None`: the tail exports this `default` as the namespace object instead.
+fn tail_export(
+    c: &LinkerContext,
+    resolved_exports: &ResolvedExports,
+    imports_to_bind: &RefImportData,
+    default_is_namespace: bool,
+    alias: &[u8],
+) -> Option<TailExport> {
+    if default_is_namespace && *alias == *b"default" {
+        return None;
+    }
+
+    let mut binding = resolved_exports.get(alias).unwrap().data;
+
+    // An export of an import names the symbol that the import resolved to.
+    if let Some(import_data) = imports_to_bind.get(&binding.import_ref) {
+        binding.import_ref = import_data.data.import_ref;
+        binding.source_index = import_data.data.source_index;
+    }
+
+    let is_cjs_property = c
+        .graph
+        .symbols
+        .get_const(binding.import_ref)
+        .unwrap()
+        .namespace_alias
+        .is_some();
+    Some(TailExport {
+        binding,
+        is_cjs_property,
+    })
+}
+
+/// An entry point's `cjs_export_copies` in alias order, each with whether its tail declares it.
+pub(crate) fn tail_copies(
+    c: &LinkerContext,
+    source_index: IndexInt,
+) -> impl Iterator<Item = (Ref, bool)> {
+    let flags = c.graph.meta.items_flags()[source_index as usize];
+    let default_is_namespace = LinkerContext::chunk_default_export_is_namespace(
+        flags,
+        c.graph.ast.items_flags()[source_index as usize],
+    );
+    let resolved_exports = &c.graph.meta.items_resolved_exports()[source_index as usize];
+    let imports_to_bind = &c.graph.meta.items_imports_to_bind()[source_index as usize];
+    let aliases = &c.graph.meta.items_sorted_and_filtered_export_aliases()[source_index as usize];
+    let copies = &c.graph.meta.items_cjs_export_copies()[source_index as usize];
+    copies
+        .iter()
+        .zip(aliases.iter())
+        .map(move |(&copy, alias)| {
+            let declared = flags.wrap != crate::WrapKind::Cjs
+                && tail_export(
+                    c,
+                    resolved_exports,
+                    imports_to_bind,
+                    default_is_namespace,
+                    alias,
+                )
+                .is_some_and(|export| export.is_cjs_property);
+            (copy, declared)
+        })
+}
+
 pub(crate) fn generate_entry_point_tail_js(
     c: &LinkerContext,
     to_common_js_ref: Ref,
     to_esm_ref: Ref,
-    source_index: IndexInt,
+    chunk: &Chunk,
     arena: &Arena,
     temp_arena: &Arena,
-    r: js_printer::renamer::Renamer,
     module_info: Option<&mut ModuleInfo>,
     cross_chunk_exports: &[bun_ast::ClauseItem],
 ) -> CompileResult {
+    let source_index = chunk.entry_point.source_index();
     let flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index as usize];
     let mut stmts: Vec<Stmt> = Vec::new();
     // `MultiArrayList::get` returns `ManuallyDrop<BundledAst>`; the
@@ -926,41 +996,32 @@ pub(crate) fn generate_entry_point_tail_js(
                         let mut had_default_export = false;
 
                         for (i, alias) in sorted_and_filtered_export_aliases.iter().enumerate() {
-                            if default_is_namespace && **alias == *b"default" {
+                            let Some(TailExport {
+                                binding: resolved_export_data,
+                                is_cjs_property,
+                            }) = tail_export(
+                                c,
+                                resolved_exports,
+                                imports_to_bind,
+                                default_is_namespace,
+                                alias,
+                            )
+                            else {
                                 continue;
-                            }
-
-                            // Only `.data` (an `ImportTracker`, `Copy`) is
-                            // read/mutated below, so copy that field instead of
-                            // the whole `ExportData`.
-                            let mut resolved_export_data =
-                                resolved_exports.get(alias).unwrap().data;
+                            };
 
                             had_default_export = had_default_export || **alias == *b"default";
 
-                            // If this is an export of an import, reference the symbol that the import
-                            // was eventually resolved to. We need to do this because imports have
-                            // already been resolved by this point, so we can't generate a new import
-                            // and have that be resolved later.
-                            if let Some(import_data) =
-                                imports_to_bind.get(&resolved_export_data.import_ref)
-                            {
-                                resolved_export_data.import_ref = import_data.data.import_ref;
-                                resolved_export_data.source_index = import_data.data.source_index;
-                            }
-
                             // Exports of imports need EImportIdentifier in case they need to be re-
                             // written to a property access later on
-                            // SAFETY: symbol::Map::get returns a non-null `*mut Symbol` for a valid ref.
-                            if unsafe {
-                                (*c.graph
-                                    .symbols
-                                    .get(resolved_export_data.import_ref)
-                                    .unwrap())
-                                .namespace_alias
-                                .is_some()
-                            } {
+                            if is_cjs_property {
                                 let temp_ref = cjs_export_copies[i];
+                                debug_assert!(
+                                    c.options.minify_identifiers
+                                        || chunk.files_with_parts_in_chunk.contains(&source_index)
+                                        || c.cross_chunk_names.contains_key(&temp_ref),
+                                    "the chunk's renamer has no name for a copy that the entry point tail declares",
+                                );
 
                                 // Create both a local variable and an export clause for that variable.
                                 // The local variable is initialized with the initial value of the
@@ -1287,7 +1348,7 @@ pub(crate) fn generate_entry_point_tail_js(
                 stmts: bun_ast::StoreSlice::new_mut(stmts.as_mut_slice()),
                 ..Default::default()
             }],
-            r,
+            chunk.renamer.as_renamer(),
         ),
         source_index,
         // The exports were recorded straight into the chunk's ModuleInfo above.

@@ -2260,7 +2260,7 @@ interface BufferConstructor {
   byteLength(value: string | ArrayBufferView | ArrayBufferLike, encoding?: string | null): number;
   compare(first: Uint8Array, second: Uint8Array): -1 | 0 | 1;
   concat(list: readonly Uint8Array[], totalLength?: number): Buffer;
-  copyBytesFrom(view: ArrayBufferView, offset?: number, length?: number): Buffer;
+  copyBytesFrom(view: $Node.TypedArray, offset?: number, length?: number): Buffer;
   from(arrayBuffer: ArrayBufferLike, byteOffset?: number, length?: number): Buffer;
   from(data: ArrayLike<number>): Buffer;
   from(string: string, encoding?: string | null): Buffer;

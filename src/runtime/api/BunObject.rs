@@ -216,26 +216,10 @@ pub(crate) fn braces(
     let mut arena = bun_alloc::Arena::new();
     let _ = &mut arena;
 
-    let mut lexer_output = 'lexer_output: {
-        if strings::is_all_ascii(brace_slice) {
-            break 'lexer_output match Braces::Lexer::tokenize(brace_slice) {
-                Ok(v) => v,
-                Err(err) => {
-                    return Err(
-                        global.throw_error(crate::Error::from(err), "failed to tokenize braces")
-                    );
-                }
-            };
-        }
-
-        match Braces::NewLexer::<{ Braces::StringEncoding::Wtf8 }>::tokenize(brace_slice) {
-            Ok(v) => break 'lexer_output v,
-            Err(err) => {
-                return Err(
-                    global.throw_error(crate::Error::from(err), "failed to tokenize braces")
-                );
-            }
-        }
+    let mut lexer_output = if strings::is_all_ascii(brace_slice) {
+        Braces::Lexer::tokenize(brace_slice)
+    } else {
+        Braces::NewLexer::<{ Braces::StringEncoding::Wtf8 }>::tokenize(brace_slice)
     };
 
     let expansion_count = Braces::calculate_expanded_amount(&lexer_output.tokens[..]);

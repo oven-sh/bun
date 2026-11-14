@@ -23,6 +23,7 @@ mod js;
 pub mod json;
 pub mod markdown;
 pub mod options;
+pub mod plugins;
 pub mod pragma;
 pub mod range;
 pub mod sort;

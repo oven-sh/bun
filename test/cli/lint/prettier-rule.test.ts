@@ -209,6 +209,16 @@ describe.concurrent("prettier/prettier", () => {
       { ".prettierrc": `{ "plugins": ["prettier-plugin-of-theirs"] }` },
       "the Prettier config uses a plugin that bun fmt does not include",
     ],
+    [
+      "a plugin's language in a template",
+      installed(),
+      {
+        ".prettierrc": `{ "plugins": ["@prettier/plugin-pug"] }`,
+        "node_modules/@prettier/plugin-pug/package.json": "{}",
+        "a.js": "const a = markdown`\n\\`\\`\\`pug\ndiv\n  span hello\n\\`\\`\\`\n`;\n",
+      },
+      "the Prettier config uses a plugin that bun fmt does not include",
+    ],
   ])("runs the package's rule: %s", async (_, packages, more, why) => {
     const files = { "a.js": "const a = {b:1}\n", ...packages, ...more, "eslint.config.mjs": config() };
     // The note is only printed in the formats meant for people.
@@ -438,6 +448,31 @@ describe.concurrent("prettier/prettier", () => {
     expect(
       await reportsOf({ ...rest, ".prettierrc": `{ "plugins": ["${plugin}"], "tailwindPackageName": "@acme/tw" }` }),
     ).toEqual(["a.js:1:31: Delete `··` [Error/bun(format)]"]);
+  });
+
+  // With the packages installed `bun fmt --allow-unsupported` hands the file to Prettier, so the rule leaves it to the
+  // package's rule. Without them, both format it without the plugin.
+  test("bun/format with allowUnsupported: a template in a plugin's language", async () => {
+    const files = {
+      ".oxlintrc.json": '{ "rules": { "bun/format": "error" } }',
+      ".prettierrc": '{ "plugins": ["@prettier/plugin-pug"] }',
+      "bunfig.toml": "[fmt]\nallowUnsupported = true\n",
+      "a.js": "const a = markdown`\n\\`\\`\\`pug\ndiv\n  span hello\n\\`\\`\\`\n`  ;\n",
+    };
+    const reportsOf = async (files: Record<string, string>) =>
+      (await run(files, "-f", "unix")).stdout.split("\n").filter(it => it.includes("bun(format)"));
+    expect(await reportsOf(files)).toEqual([
+      "a.js:2:1: Replace `\\`\\`\\`` with `~~~` [Error/bun(format)]",
+      "a.js:5:1: Replace `\\`\\`\\`` with `~~~` [Error/bun(format)]",
+      "a.js:6:2: Delete `··` [Error/bun(format)]",
+    ]);
+    const packages = {
+      "node_modules/prettier/package.json": '{ "name": "prettier", "version": "3.9.9" }',
+      "node_modules/@prettier/plugin-pug/package.json": "{}",
+    };
+    expect(await reportsOf({ ...files, ...packages })).toEqual([
+      "a.js:1:1: This file was not checked because the Prettier config uses a plugin that bun fmt does not include. [Error/bun(format)]",
+    ]);
   });
 
   // A component is linted script by script, under the component's file name. `--fix` once turned this whole script into

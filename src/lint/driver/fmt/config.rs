@@ -21,6 +21,7 @@ use bun_collections::index_sort::sort_slice;
 use bun_core::strings;
 use bun_format::FormatOptions;
 use bun_format::json::{PackageJsonPlugin, SortPackageJson};
+use bun_format::plugins::{LANGUAGE_PLUGINS, PluginLanguages};
 use bun_format::sort_imports::{Settings as SortSettings, SortImports};
 use bun_format::tailwind::Oxc;
 use bun_lint::glob::Picomatch;
@@ -171,6 +172,8 @@ struct Plugins {
     missing: Vec<Vec<u8>>,
     /// The file name endings that they add to what Prettier formats.
     endings: Vec<&'static [u8]>,
+    /// The ones that add a language, as a bit per index into [`LANGUAGE_PLUGINS`].
+    languages: u32,
     /// The ones that are packages, as opposed to paths or objects.
     packages: Vec<Vec<u8>>,
 }
@@ -298,46 +301,14 @@ fn is_built_in(plugin: &Json) -> bool {
     name_of(plugin).is_some_and(is_built_in_plugin)
 }
 
-/// Plugins that add a language to Prettier and don't affect other languages, each with its file name endings. The rest
-/// of a project is formatted the same without them.
-const LANGUAGE_PLUGINS: [(&[u8], &[&[u8]]); 21] = [
-    (b"prettier-plugin-astro", &[b".astro"]),
-    (b"@prettier/plugin-pug", &[b".pug", b".jade"]),
-    (b"@prettier/plugin-php", &[b".php"]),
-    (
-        b"@prettier/plugin-ruby",
-        &[b".rb", b".rake", b".gemspec", b".rbs", b".haml"],
-    ),
-    (
-        b"@prettier/plugin-xml",
-        &[b".xml", b".svg", b".xsd", b".xsl", b".xslt", b".wsdl"],
-    ),
-    (b"prettier-plugin-toml", &[b".toml"]),
-    (b"prettier-plugin-java", &[b".java"]),
-    (b"prettier-plugin-kotlin", &[b".kt", b".kts"]),
-    (
-        b"prettier-plugin-sh",
-        &[b".sh", b".bash", b".zsh", b"Dockerfile", b".env"],
-    ),
-    (b"prettier-plugin-prisma", &[b".prisma"]),
-    (b"prettier-plugin-solidity", &[b".sol"]),
-    (b"prettier-plugin-sql", &[b".sql"]),
-    (b"prettier-plugin-rust", &[b".rs"]),
-    (b"prettier-plugin-nginx", &[b".nginx", b".nginxconf"]),
-    (b"prettier-plugin-ini", &[b".ini"]),
-    (b"prettier-plugin-properties", &[b".properties"]),
-    (b"prettier-plugin-gherkin", &[b".feature"]),
-    (b"prettier-plugin-apex", &[b".cls", b".trigger", b".apex"]),
-    (b"prettier-plugin-marko", &[b".marko"]),
-    (b"prettier-plugin-ejs", &[b".ejs"]),
-    (b"prettier-plugin-elm", &[b".elm"]),
-];
+/// The index into [`LANGUAGE_PLUGINS`] of the plugin `name`, if it adds a language.
+fn language_plugin(name: &[u8]) -> Option<usize> {
+    bun_format::plugins::index_of(package_of(name))
+}
 
+/// The file name endings that the plugin `name` adds to what Prettier formats, if it adds a language.
 fn plugin_endings(name: &[u8]) -> Option<&'static [&'static [u8]]> {
-    LANGUAGE_PLUGINS
-        .iter()
-        .find(|it| it.0 == package_of(name))
-        .map(|it| it.1)
+    language_plugin(name).map(|at| LANGUAGE_PLUGINS[at].endings)
 }
 
 /// True if formatting without the plugin `name` may give different output than with it.
@@ -854,6 +825,9 @@ impl Plugins {
                 .flatten()
                 .copied()
                 .collect(),
+            languages: (plugins.iter())
+                .filter_map(|it| language_plugin(it.as_str()?))
+                .fold(0, |mask, at| mask | 1 << at),
         })
     }
 }
@@ -1714,6 +1688,15 @@ impl<'c> Configs<'c> {
         (self.all_plugin_endings(scope, Some(path))).any(|ending| path.ends_with(ending))
     }
 
+    /// The plugins that add a language, among those the config or `--plugin` lists for the file at `path` in `scope`,
+    /// as a bit per index into [`LANGUAGE_PLUGINS`].
+    fn plugin_languages_for(&self, scope: &Scope, path: Option<&[u8]>) -> u32 {
+        let from_config = self.plugins_for(scope, path).map_or(0, |it| it.languages);
+        (self.options.plugins.iter())
+            .filter_map(|it| language_plugin(it))
+            .fold(from_config, |mask, at| mask | 1 << at)
+    }
+
     /// The packages that Prettier loads as plugins for the file at `path` in `scope`.
     pub(crate) fn plugin_packages<'s>(
         &'s self,
@@ -1958,6 +1941,10 @@ impl<'c> Configs<'c> {
         resolved.options.embedded_html = true;
         resolved.options.toml = self.is_native_in(scope);
         resolved.options.svelte.is_on = self.formats_svelte(scope, path);
+        if !is_oxfmt {
+            let listed = self.plugin_languages_for(scope, path);
+            resolved.options.plugin_languages = PluginLanguages::new(listed);
+        }
         if is_oxfmt {
             let _ = resolved.options.set(b"flavor", b"oxfmt");
             // oxfmt sorts `package.json` keys unless told not to.

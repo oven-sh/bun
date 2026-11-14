@@ -204,18 +204,47 @@ pub fn parse_to_mdast(text: &[u8], with: Extensions, tree: &mut ast::Tree) -> Op
     Some(root)
 }
 
-/// Prettier's `inferParser(options, { language })`: the parser for code in `language`.
+/// Prettier's `inferParser(options, { language })` over the languages Prettier has itself.
 pub(crate) fn infer_parser(language: &[u8]) -> Option<&'static [u8]> {
+    infer_parser_by_name(language).or_else(|| infer_parser_by_extension(language))
+}
+
+/// The first two passes of Prettier's `getLanguageByLanguageName`: a language's name, in lowercase, or an alias.
+/// `angular-ts` is what Markdown's `embed` maps to TypeScript itself.
+pub(crate) fn infer_parser_by_name(language: &[u8]) -> Option<&'static [u8]> {
     Some(match language {
-        // Language names, then their aliases, then file extensions.
-        b"json.stringify" | b"geojson" | b"jsonl" | b"sarif" | b"topojson" | b"importmap" => {
-            b"json-stringify"
-        }
-        b"json" | b"4DForm" | b"4DProject" | b"avsc" | b"gltf" | b"har" | b"ice"
-        | b"JSON-tmLanguage" | b"json.example" | b"mcmeta" | b"slnlaunch" | b"tact"
-        | b"tfstate" | b"tfstate.backup" | b"webapp" | b"webmanifest" | b"yy" | b"yyp" => b"json",
-        b"jsonc"
-        | b"code-snippets"
+        b"json.stringify" | b"geojson" | b"jsonl" | b"sarif" | b"topojson" => b"json-stringify",
+        b"json" => b"json",
+        b"jsonc" => b"jsonc",
+        b"json5" => b"json5",
+        b"javascript" | b"jsx" | b"js" | b"node" => b"babel",
+        b"typescript" | b"tsx" | b"ts" | b"typescriptreact" | b"angular-ts" => b"typescript",
+        b"graphql" => b"graphql",
+        b"handlebars" | b"hbs" | b"htmlbars" => b"glimmer",
+        b"mdx" => b"mdx",
+        b"html" => b"html",
+        // `xhtml` is an alias of two languages, and this is the first.
+        b"angular" | b"xhtml" => b"angular",
+        b"vue" => b"vue",
+        b"lightning web components" | b"LWC" | b"lwc" => b"lwc",
+        b"mjml" | b"MJML" => b"mjml",
+        b"markdown" | b"md" | b"pandoc" => b"markdown",
+        b"css" | b"postcss" => b"css",
+        b"less" | b"less-css" => b"less",
+        b"scss" => b"scss",
+        b"yaml" | b"yml" => b"yaml",
+        _ => return None,
+    })
+}
+
+/// The third pass: `language` is a file extension of a language.
+pub(crate) fn infer_parser_by_extension(language: &[u8]) -> Option<&'static [u8]> {
+    Some(match language {
+        b"importmap" => b"json-stringify",
+        b"4DForm" | b"4DProject" | b"avsc" | b"gltf" | b"har" | b"ice" | b"JSON-tmLanguage"
+        | b"json.example" | b"mcmeta" | b"slnlaunch" | b"tact" | b"tfstate" | b"tfstate.backup"
+        | b"webapp" | b"webmanifest" | b"yy" | b"yyp" => b"json",
+        b"code-snippets"
         | b"code-workspace"
         | b"sublime-build"
         | b"sublime-color-scheme"
@@ -231,30 +260,18 @@ pub(crate) fn infer_parser(language: &[u8]) -> Option<&'static [u8]> {
         | b"sublime-workspace"
         | b"sublime_metrics"
         | b"sublime_session" => b"jsonc",
-        b"json5" => b"json5",
-        b"javascript" | b"jsx" | b"js" | b"node" | b"_js" | b"bones" | b"cjs" | b"es" | b"es6"
-        | b"gs" | b"jake" | b"jsb" | b"jscad" | b"jsfl" | b"jslib" | b"jsm" | b"jspre" | b"jss"
-        | b"mjs" | b"njs" | b"pac" | b"sjs" | b"ssjs" | b"xsjs" | b"xsjslib" | b"start.frag"
-        | b"end.frag" | b"wxs" => b"babel",
-        b"typescript" | b"tsx" | b"ts" | b"typescriptreact" | b"cts" | b"mts" | b"angular-ts" => {
-            b"typescript"
-        }
-        b"graphql" | b"gql" | b"graphqls" => b"graphql",
-        b"handlebars" | b"hbs" | b"htmlbars" => b"glimmer",
-        b"mdx" => b"mdx",
-        b"html" | b"hta" | b"htm" | b"html.hl" | b"inc" | b"xht" => b"html",
-        // `xhtml` is an alias of two languages, and this is the first.
-        b"angular" | b"xhtml" | b"component.html" => b"angular",
-        b"vue" => b"vue",
-        b"lightning web components" | b"LWC" | b"lwc" => b"lwc",
-        b"mjml" | b"MJML" => b"mjml",
-        b"markdown" | b"md" | b"pandoc" | b"livemd" | b"mdown" | b"mdwn" | b"mkd" | b"mkdn"
-        | b"mkdown" | b"ronn" | b"scd" | b"workbook" => b"markdown",
-        b"css" | b"postcss" | b"wxss" | b"pcss" => b"css",
-        b"less" | b"less-css" => b"less",
-        b"scss" => b"scss",
-        b"yaml" | b"yml" | b"mir" | b"reek" | b"rviz" | b"sublime-syntax" | b"syntax"
-        | b"yaml-tmlanguage" | b"yaml.sed" | b"yml.mysql" => b"yaml",
+        b"_js" | b"bones" | b"cjs" | b"es" | b"es6" | b"gs" | b"jake" | b"jsb" | b"jscad"
+        | b"jsfl" | b"jslib" | b"jsm" | b"jspre" | b"jss" | b"mjs" | b"njs" | b"pac" | b"sjs"
+        | b"ssjs" | b"xsjs" | b"xsjslib" | b"start.frag" | b"end.frag" | b"wxs" => b"babel",
+        b"cts" | b"mts" => b"typescript",
+        b"gql" | b"graphqls" => b"graphql",
+        b"hta" | b"htm" | b"html.hl" | b"inc" | b"xht" => b"html",
+        b"component.html" => b"angular",
+        b"livemd" | b"mdown" | b"mdwn" | b"mkd" | b"mkdn" | b"mkdown" | b"ronn" | b"scd"
+        | b"workbook" => b"markdown",
+        b"wxss" | b"pcss" => b"css",
+        b"mir" | b"reek" | b"rviz" | b"sublime-syntax" | b"syntax" | b"yaml-tmlanguage"
+        | b"yaml.sed" | b"yml.mysql" => b"yaml",
         _ => return None,
     })
 }
@@ -314,7 +331,7 @@ fn format_embedded(
             parser
         }
         b"angular-html" => b"angular",
-        _ => infer_parser(language)?,
+        _ => crate::plugins::infer_parser_with(options, language)?,
     };
     let in_fragment;
     let code = match is_mdx_jsx {

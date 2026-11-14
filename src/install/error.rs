@@ -228,8 +228,6 @@ pub enum Error {
     #[error(transparent)]
     Bunfig(#[from] bun_bunfig::Error),
     #[error(transparent)]
-    Transpiler(#[from] bun_transpiler::Error),
-    #[error(transparent)]
     Paths(#[from] bun_paths::Error),
     #[error(transparent)]
     PathOptions(#[from] bun_paths::path_options::Error),
@@ -376,7 +374,6 @@ impl Error {
             Self::Parsers(e) => e.name(),
             Self::JsPrinter(e) => e.name(),
             Self::Bunfig(e) => e.name(),
-            Self::Transpiler(e) => e.name(),
             Self::Paths(e) => e.name(),
             Self::PathOptions(e) => <&'static str>::from(e),
             Self::Fmt(_) => "FmtError",

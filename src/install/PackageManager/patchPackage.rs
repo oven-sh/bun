@@ -519,16 +519,16 @@ pub fn do_patch_commit(
         None,
     );
     let cache_dir = cache_result.cache_dir;
-    let cache_dir_subpath = cache_result.cache_dir_subpath.as_bytes().to_vec();
+    let cache_dir_subpath = cache_result.cache_dir_subpath.as_bytes();
     let cache_path = cache_dir_path(cache_dir);
     let old_folder =
-        resolve_path::join::<platform::Posix>(&[&cache_path, &cache_dir_subpath]).to_vec();
+        resolve_path::join::<platform::Posix>(&[&cache_path, cache_dir_subpath]).to_vec();
     let new_folder = real_folder(&manager.lockfile, &cache_path, &target.folder, false);
     make_bins_executable(
         &manager.lockfile,
         &pkg,
         cache_dir,
-        &cache_dir_subpath,
+        cache_dir_subpath,
         &new_folder,
     );
 
@@ -614,7 +614,7 @@ pub fn do_patch_commit(
     // install fail.
     if !patch_applies(
         cache_dir,
-        &cache_dir_subpath,
+        cache_dir_subpath,
         &new_folder,
         &bun_ast::Source::init_path_string(&patch_filename[..], &patchfile_contents[..]),
     ) {

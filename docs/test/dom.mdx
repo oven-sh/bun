@@ -70,6 +70,16 @@ element instanceof HTMLElement; // true
 
 With [`--isolate=modules`](/test/parallel#--isolate) there is one global object, the package is loaded into it, and these are ordinary arrays.
 
+In both modes, the files' windows share that one copy of the package. Every happy-dom window has the package's own DOM classes, such as `HTMLElement`, and some of its objects, such as `NodeFilter`. Before Bun makes a file's window, it puts back the classes and objects that are properties of every window, and the classes that those inherit from, to what they were when the package was loaded. So a method that one file patches on `HTMLElement.prototype` is the original again in the next file.
+
+The restore has limits:
+
+- Bun can't tell who made a change. What happy-dom itself writes on those classes and objects while a file runs, such as a method that it installs on first use, is undone as well, and happy-dom doesn't install it again.
+- A class that a file reaches only through an object is not put back. The prototypes of `element.classList`, `element.dataset` and `document.implementation` keep what a file wrote on them.
+- jsdom makes most of its classes for each window, and Bun puts none of them back. jsdom 28 and older share their CSS classes, such as `CSSStyleSheet`, between windows.
+
+A file that needs a copy of the package that no other file has touched can [register happy-dom in a preload](#registering-happy-dom-in-a-preload): with `--isolate`, the preload loads the package again for each file.
+
 `require("jsdom")` in a test file loads a second copy of the package. The window's own `JSDOM` object is `globalThis.jsdom`.
 
 For the same reason, the timers that jsdom sets for itself are real while [fake timers](/test/dates-times) are on. `input.select()`, `input.focus()`, `window.postMessage()` and a click on a `#fragment` link each set one. With `--isolate`, they don't count in `vi.getTimerCount()`, and `vi.runAllTimers()` doesn't run them.

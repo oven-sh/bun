@@ -3,6 +3,7 @@ import { S3Client, s3 as defaultS3, file, randomUUIDv7 } from "bun";
 import { afterAll, describe, expect, it } from "bun:test";
 import { createHash, createHmac, randomUUID } from "crypto";
 import { bunEnv, bunExe, getSecret, isCI, tempDir, tempDirWithFiles } from "harness";
+import net from "node:net";
 import path from "path";
 import { spawnServer } from "s3-server";
 const s3 = (...args: Parameters<typeof defaultS3.file>) => defaultS3.file(...args);
@@ -2167,6 +2168,46 @@ describe("presigned url signature", () => {
       const presigned = client.presign("credentials-test");
       const { signature, expected } = verifyPresignedUrl(presigned, credentials);
       expect(signature).toBe(expected);
+    }
+  });
+});
+
+describe("fetch of an s3:// url", () => {
+  // fetch() takes the key from the URL parser. The scheme s3 is not special, so the parser keeps dots that a backslash
+  // follows: they are not dot segments. The signer then writes a backslash as a slash.
+  it("keeps dots that a backslash follows in the key", async () => {
+    const requestLines: string[] = [];
+    const server = net.createServer(socket => {
+      let received = "";
+      socket.on("data", chunk => {
+        received += chunk;
+        if (received.includes("\r\n\r\n")) {
+          requestLines.push(received.slice(0, received.indexOf("\r\n")));
+          socket.end("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        }
+      });
+      socket.on("error", () => {});
+    });
+    const { promise: listening, resolve } = Promise.withResolvers<void>();
+    server.listen(0, "127.0.0.1", resolve);
+    await listening;
+    try {
+      const s3 = {
+        endpoint: `http://127.0.0.1:${(server.address() as net.AddressInfo).port}`,
+        accessKeyId: "test",
+        secretAccessKey: "test",
+        region: "us-east-1",
+      };
+      for (const url of ["s3://bucket/dir/..\\x.txt", "s3://bucket/dir/.\\x.txt", "s3://bucket/dir/x.txt"]) {
+        await fetch(url, { s3 });
+      }
+      expect(requestLines).toEqual([
+        "GET /bucket/dir/../x.txt HTTP/1.1",
+        "GET /bucket/dir/./x.txt HTTP/1.1",
+        "GET /bucket/dir/x.txt HTTP/1.1",
+      ]);
+    } finally {
+      server.close();
     }
   });
 });

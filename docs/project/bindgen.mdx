@@ -552,7 +552,10 @@ from a buffer.
 **Copied** bytes are the body's. **Pinned** bytes are for a job on another thread to read after
 the call returns: a string is thread-isolated, a buffer is a GC-rooted `PinnedArrayBuffer`, and a
 resizable one is copied. A `PinnedBytes` is `Send`, derefs to `[u8]`, and is dropped on the JS
-thread.
+thread. A job that is done with the bytes calls `take_owned_for_pool_release()` and drops what it
+gets: its own copy of the bytes, if it has one that `bun_core::vec::releases_on_pool` accepts. That
+is the UTF-8 form of a string that is not ASCII or that is an atom, or the copy of a resizable
+buffer. The copy then does not wait for the JS thread.
 
 **A shared buffer** is borrowed like any other, as JSC's own `toBase64` and `indexOf` read one, and
 another thread that writes it during the call changes what the body reads. `shared: "copied"` is

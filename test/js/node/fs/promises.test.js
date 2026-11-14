@@ -1,4 +1,4 @@
-import { tempDir, tempDirWithFiles } from "harness";
+import { expectRssDeltaOfPendingCallsBelow, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 const assert = require("assert");
 const os = require("os");
@@ -550,5 +550,91 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
     expectNodeAbortError(readErr, signal.reason);
     const writeErr = await new Promise(resolve => fs.writeFile(join(dir, "o.txt"), "x", { signal }, resolve));
     expectNodeAbortError(writeErr, signal.reason);
+  });
+});
+
+// A write job reads a buffer or an ASCII string of the caller in place. It has its own copy of
+// the data when it cannot: a string that is not ASCII, a string literal, a string with an
+// encoding, and a view of a resizable ArrayBuffer or of a WebAssembly.Memory. The pool thread
+// frees a large copy when it is done with the write. If the copy stayed until the JS thread
+// completes the write, a caller that starts many writes before it returns to the event loop
+// would hold every copy.
+describe.concurrent("the write job's copy of the data", () => {
+  const size = 2 * 1024 * 1024;
+  // 48 copies of 2 MiB are 96 MiB, if every copy stays.
+  const count = 48;
+  const bounds = { release: 48, debug: 64 };
+  const text = `Buffer.alloc(${size}, "a").toString("latin1")`;
+  const wasmView = `new Uint8Array(new WebAssembly.Memory({ initial: ${size / 65536}, maximum: ${(2 * size) / 65536} }).buffer).fill(0x61)`;
+  const write = `fs.promises.writeFile(out, data)`;
+  it.each([
+    ["writeFile(path, string)", `${text} + "\\u4e2d"`, `Buffer.from(data)`, write],
+    ["writeFile(path, string literal)", `new Function('return "' + ${text} + '"')()`, `Buffer.from(data)`, write],
+    [
+      "writeFile(path, string, encoding)",
+      `Buffer.alloc(${size}, "a").toString("base64")`,
+      `Buffer.from(data, "base64")`,
+      `fs.promises.writeFile(out, data, "base64")`,
+    ],
+    [
+      "writeFile(path, view of a resizable ArrayBuffer)",
+      `new Uint8Array(new ArrayBuffer(${size}, { maxByteLength: ${2 * size} })).fill(0x61)`,
+      `Buffer.from(data)`,
+      write,
+    ],
+    ["writeFile(path, view of a WebAssembly.Memory)", wasmView, `Buffer.from(data)`, write],
+    ["appendFile(path, string)", `${text} + "\\u4e2d"`, `Buffer.from(data)`, `fs.promises.appendFile(out, data)`],
+  ])("of %s is freed when the write is done", async (_, data, written, call) => {
+    using dir = tempDir("fs-write-copy", {});
+    await expectRssDeltaOfPendingCallsBelow(
+      {
+        setup: `
+          const out = ${JSON.stringify(join(String(dir), "out"))};
+          const data = ${data};
+          const written = ${written};
+        `,
+        // The file is empty before each call. It has its last byte again when the pool thread has written the data.
+        call: `(fs.writeFileSync(out, ""), ${call})`,
+        done: `byteAt(out, written.length - 1) === written.at(-1)`,
+        verify: `fs.readFileSync(out).equals(written)`,
+        count,
+      },
+      bounds,
+    );
+  });
+
+  // On Windows these writes are libuv requests. They have no step on the thread pool of bun.
+  it.skipIf(isWindows).each([
+    ["FileHandle.write(string, position)", `${text} + "\\u4e2d"`, `Buffer.from(data)`, `handle.write(data, 0)`],
+    [
+      // The write is the part of the view that has the other byte.
+      "FileHandle.write(view of a resizable ArrayBuffer, offset, length, position)",
+      `new Uint8Array(new ArrayBuffer(${2 * size}, { maxByteLength: ${4 * size} })).fill(0x61).fill(0x62, ${size / 2}, ${size / 2 + size})`,
+      `Buffer.alloc(${size}, 0x62)`,
+      `handle.write(data, ${size / 2}, ${size}, 0)`,
+    ],
+    [
+      "FileHandle.writev([view of a WebAssembly.Memory], position)",
+      wasmView,
+      `Buffer.from(data)`,
+      `handle.writev([data], 0)`,
+    ],
+  ])("of %s is freed when the write is done", async (_, data, written, call) => {
+    using dir = tempDir("fs-write-copy", {});
+    await expectRssDeltaOfPendingCallsBelow(
+      {
+        setup: `
+          const out = ${JSON.stringify(join(String(dir), "out"))};
+          const data = ${data};
+          const written = ${written};
+          const handle = await fs.promises.open(out, "w");
+        `,
+        call: `(fs.ftruncateSync(handle.fd, 0), ${call})`,
+        done: `byteAt(out, written.length - 1) === written.at(-1)`,
+        verify: `(await handle.close(), results.every(result => result.bytesWritten === written.length) && fs.readFileSync(out).equals(written))`,
+        count,
+      },
+      bounds,
+    );
   });
 });

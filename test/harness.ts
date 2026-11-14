@@ -625,6 +625,99 @@ export function emptyProcessMaxRSS() {
   }).then(({ maxRSS }) => maxRSS));
 }
 
+/**
+ * Source for a fixture that keeps its JS thread out of the event loop while
+ * other threads work:
+ * - `waitFor(what, done)` polls `done()` and throws when it gives up.
+ * - `byteAt(path, position)` is that byte of the file, or -1 if the file does
+ *   not have it yet.
+ * - `noJobRuns()` is true when every other thread of the process sleeps.
+ *   Linux only: the thread states come from /proc.
+ */
+export const waitForOtherThreadsSource = /* js */ `
+  // Each poll sleeps 1 ms, so the limit is 10 seconds or more.
+  const waitFor = (what, done) => {
+    for (let polls = 0; !done(); polls++) {
+      if (polls === 10000) throw new Error("gave up waiting for " + what);
+      Bun.sleepSync(1);
+    }
+  };
+  const byteAt = (path, position) => {
+    const fs = require("fs");
+    let fd;
+    try {
+      fd = fs.openSync(path, "r");
+      const byte = Buffer.alloc(1);
+      return fs.readSync(fd, byte, 0, 1, position) === 1 ? byte[0] : -1;
+    } catch {
+      return -1;
+    } finally {
+      if (fd !== undefined) fs.closeSync(fd);
+    }
+  };
+  const noJobRuns = () => {
+    const fs = require("fs");
+    const self = fs.readlinkSync("/proc/thread-self").split("/").pop();
+    return fs.readdirSync("/proc/self/task").every(tid => {
+      if (tid === self) return true;
+      try {
+        // The state follows the thread name, which is in parentheses.
+        const stat = fs.readFileSync("/proc/self/task/" + tid + "/stat", "utf8");
+        return stat[stat.lastIndexOf(")") + 2] === "S";
+      } catch {
+        // The thread is gone.
+        return true;
+      }
+    });
+  };
+`;
+
+/**
+ * Asserts on the RSS that a bun process gains while `count` calls are pending.
+ *
+ * The process runs `setup` and awaits one call. Then it evaluates `call`
+ * `count` times. `call` is an expression that gives a promise, and `i` is the
+ * index of the call (-1 for the first one). The JS thread stays in that loop,
+ * so it completes no call, and it starts a call only when the thread pool is
+ * done with the call before it. What a call holds from that point until the JS
+ * thread completes it adds up in the RSS, which the process samples before
+ * and after the loop. At the end the process awaits the calls and evaluates
+ * `verify`, which must give true. `results` has what the calls resolved to.
+ *
+ * `done` is an expression that is true when the thread pool is done with call
+ * `i`, for example `byteAt(path, last) === 0x61`. The loop evaluates it many
+ * times, so it must change nothing. Without it the loop waits for
+ * `noJobRuns()`, which is Linux only.
+ */
+export async function expectRssDeltaOfPendingCallsBelow(
+  options: { setup?: string; call: string; done?: string; verify: string; count: number },
+  bounds: { release: number; debug: number },
+) {
+  const done = options.done ?? (isLinux ? "noJobRuns()" : undefined);
+  if (!done) throw new Error("expectRssDeltaOfPendingCallsBelow needs `done` on this platform");
+  const fixture = /* js */ `
+    const fs = require("fs");
+    ${waitForOtherThreadsSource}
+    ${options.setup ?? ""}
+    // The pool threads start with this call, before the first sample.
+    {
+      const i = -1;
+      await (${options.call});
+    }
+    const pending = [];
+    const before = process.memoryUsage.rss();
+    for (let i = 0; i < ${options.count}; i++) {
+      pending.push(${options.call});
+      waitFor("call " + i, () => ${done});
+    }
+    const deltaMiB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+    const results = await Promise.all(pending);
+    if (!(${options.verify})) throw new Error("the calls did not give the expected result");
+    console.log(JSON.stringify({ deltaMiB }));
+  `;
+  await expectRssDeltaBelow(["-e", fixture], bounds);
+}
+
 // we must ensure that finalizers are run
 // so that the reference-counting logic is exercised
 export function gcTick(traceForDebugging = false) {

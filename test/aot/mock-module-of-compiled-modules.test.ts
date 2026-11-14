@@ -615,3 +615,36 @@ test("a mock of a name that import and require() resolve to two files reaches th
   expect(await printed()).toEqual({ printed: "require() gets mock and an import mock", exitCode: 0 });
   expect(await printed("--debug-aot")).toEqual({ printed: "require() gets real cjs and an import mock", exitCode: 0 });
 });
+
+// The file of `__mocks__` is resolved as the name is: with compiled code for an import alone.
+test("a mock without a factory of such a name is made of the file of __mocks__ that an import resolves", async () => {
+  using dir = tempDir("mock-module-of-compiled-modules", {
+    "node_modules/dual/package.json": JSON.stringify({
+      name: "dual",
+      exports: { import: "./esm.mjs", require: "./cjs.cjs" },
+    }),
+    "node_modules/dual/esm.mjs": `export const which = "real esm";`,
+    "node_modules/dual/cjs.cjs": `exports.which = "real cjs";`,
+    "__mocks__/dual.mjs": `export const which = "manual esm";`,
+    "__mocks__/dual.cjs": `exports.which = "manual cjs";`,
+    "one.test.ts": `
+      import { jest, test } from "bun:test";
+      jest.mock("dual");
+      test("a name that the build cannot resolve", async () => {
+        const name = process.env.MOCKED!;
+        console.log("require() gets", require(name).which, "and an import", (await import(name)).which);
+      });`,
+  });
+  const printed = async (...flags: string[]) => {
+    const env = { ...bunEnv, MOCKED: "dual" };
+    const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], String(dir), env);
+    // A crash prints only there.
+    if (exitCode !== 0) console.error(stderr);
+    return { printed: stdout.match(/^require\(\) gets .*$/m)?.[0], exitCode };
+  };
+  expect(await printed()).toEqual({ printed: "require() gets manual cjs and an import manual cjs", exitCode: 0 });
+  expect(await printed("--debug-aot")).toEqual({
+    printed: "require() gets real cjs and an import manual esm",
+    exitCode: 0,
+  });
+});

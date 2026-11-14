@@ -489,6 +489,39 @@ export default function () {
     expect(exitCode).toBe(0);
   });
 
+  // Windows keeps a `\\?\` prefix in the working directory of a process that starts in a directory spelled with one.
+  // https://github.com/oven-sh/bun/issues/11953
+  test.skipIf(!isWindows)("builds from a working directory spelled with the \\\\?\\ prefix", async () => {
+    using dir = tempDir("bake-production-verbatim-cwd", {
+      "server.ts": `
+        export function render() {
+          return new Response("");
+        }
+        export async function prerender(meta) {
+          return { files: { "index.html": meta.pageModule.default() } };
+        }
+      `,
+      "routes/index.ts": `export default () => "homepage";`,
+      "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
+        export default { app: { framework: { fileSystemRouterTypes: [fsr] } } };
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--app", "./app.ts"],
+      env: bunEnv,
+      cwd: "\\\\?\\" + String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const page = await Bun.file(path.join(String(dir), "dist", "index.html"))
+      .text()
+      .catch(() => null);
+    expect({ page, stderr, exitCode }).toEqual({ page: "homepage", stderr: expect.any(String), exitCode: 0 });
+  });
+
   test("fails the build for a route file with an invalid name", async () => {
     using dir = tempDir("bake-production-invalid-route", {
       "app.ts": `export default { app: { framework: ${JSON.stringify(minimalFramework)} } };`,

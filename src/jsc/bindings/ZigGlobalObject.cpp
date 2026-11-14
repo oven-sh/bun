@@ -1244,6 +1244,38 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryEvaluatedKeys, (JSC::JSGlobalObject 
     return JSValue::encode(array);
 }
 
+// Whether `record` lies below a module that has an import still loading of which the loader has no module yet.
+static bool isBelowModuleWaitingForImport(JSC::VM& vm, JSC::JSModuleLoader* loader, JSC::AbstractModuleRecord* record)
+{
+    Vector<JSC::AbstractModuleRecord*, 8> importers;
+    Bun::forEachModuleRegistrySpecifier(loader, [&](UniquedStringImpl*, JSC::ModuleRegistryEntry* entry) {
+        auto* importer = entry->record();
+        if (!importer)
+            return;
+        for (auto& resolved : importer->resolvedRequests().values()) {
+            auto* requested = loader->registryEntry(JSC::Identifier::fromUid(vm, resolved.get()));
+            if (requested && !requested->record()) {
+                importers.append(importer);
+                return;
+            }
+        }
+    });
+    UncheckedKeyHashSet<JSC::AbstractModuleRecord*> seen;
+    while (!importers.isEmpty()) {
+        auto* importer = importers.takeLast();
+        if (!seen.add(importer).isNewEntry)
+            continue;
+        for (auto& loaded : importer->loadedModules().values()) {
+            auto* imported = loaded.m_module.get();
+            if (imported == record)
+                return true;
+            if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(imported))
+                importers.append(cyclic);
+        }
+    }
+    return false;
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
@@ -1278,6 +1310,13 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
         // reach loadModuleSync: Link() and Evaluate() reject that status.
         if (isModuleEvaluating(entry->record()))
             return JSValue::encode(throwException(globalObject, scope, Bun::createAsyncModuleRequiredError(globalObject, keyString)));
+        // While `bun test` runs a CommonJS import of a test file or preload (JSCommonJSModule.cpp, generateDeferredCommonJSModule), a synchronous load that has imported that file links and evaluates it once its own imports are made. A require() of the file that one of those imports makes meanwhile is refused, as that of a module whose load another load has yet to end.
+        if (globalObject->isRunningDeferredCommonJSModule && vm.synchronousModuleQueue()) [[unlikely]] {
+            auto* runnerLoad = Bun::liveRunnerLoad(globalObject, requirer ? requirer->moduleGraph() : nullptr);
+            auto* root = runnerLoad && runnerLoad->rootKey() == keyString ? dynamicDowncast<JSC::CyclicModuleRecord>(entry->record()) : nullptr;
+            if (root && root->status() == JSC::CyclicModuleRecord::Status::Unlinked && isBelowModuleWaitingForImport(vm, loader, root))
+                return JSValue::encode(throwException(globalObject, scope, Bun::createAsyncModuleRequiredError(globalObject, keyString)));
+        }
     }
 
     JSPromise* promise = loader->loadModuleSync(globalObject, key, nullptr, nullptr);

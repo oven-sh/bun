@@ -4381,7 +4381,7 @@ pub(crate) fn write_file_internal(
     // except if you're on Windows. Windows I/O is slower. Let's not even try.
     #[cfg(not(windows))]
     {
-        let mut needs_async = false;
+        let mut deferred: Option<Deferred> = None;
         let fast_path_ok = matches!(*path_or_blob, PathOrBlob::Path(_))
             || (matches!(*path_or_blob, PathOrBlob::Blob(ref b)
                 if b.offset.get() == 0 && !b.is_s3()
@@ -4408,18 +4408,20 @@ pub(crate) fn write_file_internal(
                             cx.global(),
                             pathlike,
                             &str,
-                            &mut needs_async,
+                            &mut deferred,
                         )
                     } else {
                         write_string_to_file_fast::<false>(
                             cx.global(),
                             pathlike,
                             &str,
-                            &mut needs_async,
+                            &mut deferred,
                         )
                     };
-                    if !needs_async {
-                        return Ok(result);
+                    if let Some(settled) =
+                        settle_sync_attempt(cx, path_or_blob, &options, result, deferred)
+                    {
+                        return settled;
                     }
                 }
             } else if let Some(buffer_view) = data.as_array_buffer(cx.global()) {
@@ -4439,18 +4441,20 @@ pub(crate) fn write_file_internal(
                             cx.global(),
                             pathlike,
                             buffer_view.byte_slice(),
-                            &mut needs_async,
+                            &mut deferred,
                         )
                     } else {
                         write_bytes_to_file_fast::<false>(
                             cx.global(),
                             pathlike,
                             buffer_view.byte_slice(),
-                            &mut needs_async,
+                            &mut deferred,
                         )
                     };
-                    if !needs_async {
-                        return Ok(result);
+                    if let Some(settled) =
+                        settle_sync_attempt(cx, path_or_blob, &options, result, deferred)
+                    {
+                        return settled;
                     }
                 }
             }
@@ -4462,12 +4466,7 @@ pub(crate) fn write_file_internal(
         PathOrBlob::Path(path) => {
             // What is written lies on the disk from then on, which is asked first.
             let new_blob = match is_held_at_source_path(path) {
-                true => {
-                    let empty = PathOrFileDescriptor::Path(PathLike::default());
-                    let path = core::mem::replace(path, empty).thread_isolated_copy();
-                    let store = bun_core::handle_oom(Store::init_file(path, None));
-                    Blob::init_with_store(store, cx.global())
-                }
+                true => file_blob_on_disk(path, cx.global()),
                 false => try_find_or_create_file_from_path(path, cx.global())?,
             };
             if new_blob.store.get().is_none() {
@@ -4829,12 +4828,85 @@ pub(crate) fn write(
 
 const WRITE_PERMISSIONS: bun_sys::Mode = 0o664;
 
+/// Why the synchronous attempt of `Bun.write` left the write to the async path.
+#[cfg(not(windows))]
+enum Deferred {
+    /// Nothing is written and nothing is open: the async path does the whole write.
+    Whole,
+    /// A write returned `EAGAIN` after some bytes: the async path does the rest.
+    Rest(Resume),
+}
+
+/// Where the synchronous attempt stopped. The async path gets only what is not written yet.
+#[cfg(not(windows))]
+struct Resume {
+    /// How many bytes are written. More than 0.
+    written: usize,
+    /// The bytes that are not written yet.
+    tail: Vec<u8>,
+    /// The fd the attempt opened for a path. It stays open: a close ends a FIFO reader's data.
+    fd: Option<bun_sys::CloseOnDrop>,
+}
+
+/// What `Bun.write` returns after its synchronous attempt, or `None` for the whole async path.
+#[cfg(not(windows))]
+#[inline]
+fn settle_sync_attempt(
+    cx: &bun_jsc::JsThread<'_>,
+    path_or_blob: &mut PathOrBlob,
+    options: &WriteFileOptions,
+    result: JSValue,
+    deferred: Option<Deferred>,
+) -> Option<JsResult<JSValue>> {
+    match deferred {
+        None => Some(Ok(result)),
+        Some(Deferred::Rest(resume)) => Some(write_file_after_would_block(
+            cx,
+            path_or_blob,
+            resume,
+            options,
+        )),
+        Some(Deferred::Whole) => None,
+    }
+}
+
+/// Schedules a `WriteFile` for `resume.tail`. Its promise resolves with the whole write's count.
+#[cfg(not(windows))]
+fn write_file_after_would_block(
+    cx: &bun_jsc::JsThread<'_>,
+    path_or_blob: &mut PathOrBlob,
+    resume: Resume,
+    options: &WriteFileOptions,
+) -> JsResult<JSValue> {
+    let destination_blob = match path_or_blob {
+        // The synchronous attempt opened the path on the disk, so the executable is not asked for it.
+        PathOrBlob::Path(path @ PathOrFileDescriptor::Path(_)) => {
+            file_blob_on_disk(path, cx.global())
+        }
+        // The store that Bun keeps for fd 0, 1 or 2 knows whether a write to it can wait.
+        PathOrBlob::Path(fd) => Blob::find_or_create_file_from_path(fd, cx.global(), false),
+        PathOrBlob::Blob(blob) => blob.dupe(),
+    };
+    let mut job = write_file::WriteFile::create(
+        destination_blob,
+        Blob::init(resume.tail, cx.global()),
+        options.mkdirp_if_not_exists.unwrap_or(true),
+    )
+    .expect("unreachable");
+    job.resume_from(resume.written, resume.fd);
+    let promise = jsc::JSPromiseStrong::init(cx.global());
+    let promise_value = promise.value();
+    promise_value.ensure_still_alive();
+    write_file::WriteFile::schedule(job, promise, cx);
+    Ok(promise_value)
+}
+
 #[cfg(not(windows))]
 fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     global_this: &JSGlobalObject,
     pathlike: &PathOrFileDescriptor,
     str: &BunString,
-    needs_async: &mut bool,
+    deferred: &mut Option<Deferred>,
 ) -> JSValue {
     let fd: Fd = if !NEEDS_OPEN {
         pathlike.fd()
@@ -4853,7 +4925,7 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
             }
             bun_sys::Result::Err(err) => {
                 if err.get_errno() == bun_sys::E::ENOENT {
-                    *needs_async = true;
+                    *deferred = Some(Deferred::Whole);
                     return JSValue::ZERO;
                 }
                 return JSPromise::rejected_promise(
@@ -4866,7 +4938,7 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     };
 
     // Declared before the truncate guard so it drops *after* it (close runs last).
-    let _close = NEEDS_OPEN.then(|| bun_sys::CloseOnDrop::new(fd));
+    let mut close = NEEDS_OPEN.then(|| bun_sys::CloseOnDrop::new(fd));
 
     // scopeguard's closure captures borrows at construction, conflicting
     // with later `written += ...` / `truncate = false`. Route through `Cell`
@@ -4897,7 +4969,14 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
                 bun_sys::Result::Err(err) => {
                     truncate.set(false);
                     if err.get_errno() == bun_sys::E::EAGAIN {
-                        *needs_async = true;
+                        *deferred = Some(match written.get() {
+                            0 => Deferred::Whole,
+                            written => Deferred::Rest(Resume {
+                                written,
+                                tail: remain.to_vec(),
+                                fd: close.take(),
+                            }),
+                        });
                         return JSValue::ZERO;
                     }
                     let err_js = if !NEEDS_OPEN {
@@ -4919,7 +4998,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     global_this: &JSGlobalObject,
     pathlike: &PathOrFileDescriptor,
     bytes: &[u8],
-    needs_async: &mut bool,
+    deferred: &mut Option<Deferred>,
 ) -> JSValue {
     let fd: Fd = if !NEEDS_OPEN {
         pathlike.fd()
@@ -4941,7 +5020,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
             }
             bun_sys::Result::Err(err) => {
                 if err.get_errno() == bun_sys::E::ENOENT {
-                    *needs_async = true;
+                    *deferred = Some(Deferred::Whole);
                     return JSValue::ZERO;
                 }
                 return JSPromise::rejected_promise(
@@ -4957,7 +5036,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
 
     let truncate = NEEDS_OPEN || bytes.is_empty();
     let mut written: usize = 0;
-    let _close = NEEDS_OPEN.then(|| bun_sys::CloseOnDrop::new(fd));
+    let mut close = NEEDS_OPEN.then(|| bun_sys::CloseOnDrop::new(fd));
 
     let mut remain = bytes;
     while !remain.is_empty() {
@@ -4971,7 +5050,14 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
             }
             bun_sys::Result::Err(err) => {
                 if err.get_errno() == bun_sys::E::EAGAIN {
-                    *needs_async = true;
+                    *deferred = Some(match written {
+                        0 => Deferred::Whole,
+                        written => Deferred::Rest(Resume {
+                            written,
+                            tail: remain.to_vec(),
+                            fd: close.take(),
+                        }),
+                    });
                     return JSValue::ZERO;
                 }
                 let err_js = if !NEEDS_OPEN {
@@ -5192,6 +5278,18 @@ fn is_held_at_source_path(path: &PathOrFileDescriptor<'static>) -> bool {
     !bun_standalone_graph::is_bun_standalone_file_path(path.slice())
         && bun_standalone_graph::Graph::get_ref()
             .is_some_and(|graph| graph.find_data(path.slice()).is_some())
+}
+
+/// A blob of the file at `path` on the disk, whatever the executable holds for that path.
+fn file_blob_on_disk(
+    path: &mut PathOrFileDescriptor<'static>,
+    global_this: &JSGlobalObject,
+) -> Blob {
+    debug_assert!(path.is_path());
+    let empty = PathOrFileDescriptor::Path(PathLike::default());
+    let path = core::mem::replace(path, empty).thread_isolated_copy();
+    let store = bun_core::handle_oom(Store::init_file(path, None));
+    Blob::init_with_store(store, global_this)
 }
 
 /// `find_or_create_file_from_path` with `check_s3`.

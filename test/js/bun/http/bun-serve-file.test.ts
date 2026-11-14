@@ -2070,3 +2070,62 @@ console.log(JSON.stringify({ status, later, pendingRequests: server.pendingReque
     expect(exitCode).toBe(0);
   },
 );
+
+// pipeThrough() and tee() are the first use of the file stream, inside fetch(): the open error is thrown before a response exists.
+describe("a body derived from a Bun.file() stream that fails to open", () => {
+  const path = join(import.meta.dir, "does-not-exist.txt");
+  const missing = () => Bun.file(path).stream();
+  const derived: [label: string, body: () => ReadableStream][] = [
+    ["pipeThrough(new TransformStream())", () => missing().pipeThrough(new TransformStream())],
+    ['pipeThrough(new CompressionStream("gzip"))', () => missing().pipeThrough(new CompressionStream("gzip"))],
+    ["tee()[0]", () => missing().tee()[0]],
+    // What a compression middleware does with a file response.
+    [
+      'new Response(Bun.file(path)).body.pipeThrough(new CompressionStream("gzip"))',
+      () => new Response(Bun.file(path)).body!.pipeThrough(new CompressionStream("gzip")),
+    ],
+  ];
+
+  describe.each(derived)("%s", (_label, body) => {
+    it.each(["GET", "HEAD"])("%s reaches error()", async method => {
+      const errors: string[] = [];
+      using server = Bun.serve({
+        port: 0,
+        development: false,
+        fetch: () => new Response(body()),
+        error(error: NodeJS.ErrnoException) {
+          errors.push(String(error.code));
+          return new Response("not found", { status: 404 });
+        },
+      });
+      const response = await fetch(server.url, { method });
+      expect({ status: response.status, body: await response.text(), errors }).toEqual({
+        status: 404,
+        body: method === "HEAD" ? "" : "not found",
+        errors: ["ENOENT"],
+      });
+    });
+
+    it.each(["GET", "HEAD"])("%s: a try/catch in the handler answers", async method => {
+      const caught: string[] = [];
+      using server = Bun.serve({
+        port: 0,
+        development: false,
+        fetch() {
+          try {
+            return new Response(body());
+          } catch (error) {
+            caught.push(String((error as NodeJS.ErrnoException).code));
+            return new Response("not found", { status: 404 });
+          }
+        },
+      });
+      const response = await fetch(server.url, { method });
+      expect({ status: response.status, body: await response.text(), caught }).toEqual({
+        status: 404,
+        body: method === "HEAD" ? "" : "not found",
+        caught: ["ENOENT"],
+      });
+    });
+  });
+});

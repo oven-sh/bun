@@ -2891,9 +2891,7 @@ fn remove_dangling_bins(bin: &Dir, parent: &Dir, global: Option<(&[u8], &[u8])>)
                 _ => continue,
             }
         } else {
-            let z = zname(name);
-            let z = ZStr::from_slice_with_nul(&z);
-            if let Ok(len) = sys::readlinkat(bin.fd(), z, link.as_mut_slice())
+            if let Ok(len) = sys::readlinkat(bin.fd(), entry.name.as_zstr(), link.as_mut_slice())
                 && (link[..len].strip_prefix(b"../"))
                     .is_some_and(|path| leads_into_package(parent, path))
             {
@@ -2902,7 +2900,6 @@ fn remove_dangling_bins(bin: &Dir, parent: &Dir, global: Option<(&[u8], &[u8])>)
         }
         dangling.push(name.into());
     }
-    drop(iter);
     let mut removed = false;
     for name in &dangling {
         removed |= remove_link(bin, name).is_ok();

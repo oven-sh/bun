@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, isDebug, normalizeBunSnapshot } from "harness";
 import DecoratedClass from "./decorator-export-default-class-fixture";
 import DecoratedAnonClass from "./decorator-export-default-class-fixture-anon";
 
@@ -1100,6 +1100,8 @@ test("removes decorated declare and abstract fields from a class expression", as
 test("lowering many decorated instance fields into a large constructor body stays linear", async () => {
   // Hold N fixed; compare M=100 vs M=50000. If the splice-after-super() were O(M*N)
   // instead of O(M+N), tLarge/tSmall would be ~5x (debug) / ~90x (release) here, not ~2x.
+  // One turn of the two sizes takes about 9 s on a debug build, and the child has 60 s.
+  const turns = isDebug ? 2 : 7;
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1129,7 +1131,7 @@ test("lowering many decorated instance fields into a large constructor body stay
         // The least of several runs, in turns and in time of the processor: what else the machine does can only add.
         const [small, large] = [gen(100), gen(50000)];
         let [tSmall, tLarge] = [Infinity, Infinity];
-        for (let i = 0; i < 7; i++) {
+        for (let i = 0; i < ${turns}; i++) {
           tSmall = Math.min(tSmall, time(100, small));
           tLarge = Math.min(tLarge, time(50000, large));
         }

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 8fb06b31947ce81c1307702391aa8cff4bc8c9b3fb892e40485784bb26664e3a.
+// Written against that file with the SHA-256 e151a35155db3aae23a8ea5d54ac43c208e42bbd797335658b3eecb12fd1c43d.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -1021,7 +1021,7 @@ function reportingHandlers<Handlers extends object>(handlers: Handlers): Handler
   }
   return wrapped;
 }
-function reportThrows(socket: $Node.Socket) {
+function reportThrowsOn(socket: $Node.Socket) {
   const handlers = socket[khandlers];
   socket[kReportsThrows] = true;
   return (socket[khandlers] =
@@ -1035,7 +1035,7 @@ function reportThrowsUnder(connection: $Node.Socket) {
   const data = handle?.data;
   let handlers: object;
   if (data == null || (data as ConnectData).self === connection) {
-    handlers = reportThrows(connection);
+    handlers = reportThrowsOn(connection);
   } else if (data === connection && !connection.isServer) {
     // connect({ fd }) made this handle. An accepted one has the table of its listener, for every socket of that listener.
     connection[kReportsThrows] = true;
@@ -2650,7 +2650,7 @@ function Socket(this: $Node.Socket, options?: $Node.SocketOptions): void {
       addAbortSignal ??= require("internal/streams/add-abort-signal").addAbortSignal;
       addAbortSignal(signal, this);
       // The 'error' listener that addAbortSignal() added would take what a listener of the caller throws: the native dispatch gives that to `error`.
-      reportThrows(this);
+      reportThrowsOn(this);
     }
   }
   const optsBlockList = opts.blockList;

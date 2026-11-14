@@ -644,7 +644,7 @@ function reportingHandlers<Handlers extends object>(handlers: Handlers): Handler
   }
   return wrapped;
 }
-function reportThrows(socket) {
+function reportThrowsOn(socket) {
   const handlers = socket[khandlers];
   socket[kReportsThrows] = true;
   return (socket[khandlers] =
@@ -658,7 +658,7 @@ function reportThrowsUnder(connection) {
   const data = handle?.data;
   let handlers;
   if (data == null || data.self === connection) {
-    handlers = reportThrows(connection);
+    handlers = reportThrowsOn(connection);
   } else if (data === connection && !connection.isServer) {
     // connect({ fd }) made this handle. An accepted one has the table of its listener, for every socket of that listener.
     connection[kReportsThrows] = true;
@@ -2263,7 +2263,7 @@ function Socket(options?): void {
       addAbortSignal ??= require("internal/streams/add-abort-signal").addAbortSignal;
       addAbortSignal(signal, this);
       // The 'error' listener that addAbortSignal() added would take what a listener of the caller throws: the native dispatch gives that to `error`.
-      reportThrows(this);
+      reportThrowsOn(this);
     }
   }
   const optsBlockList = opts.blockList;

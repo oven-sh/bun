@@ -292,11 +292,7 @@ pub(crate) fn codegen_function(
 
         // The body starts with the directives of the function. A directive only counts
         // while it comes first, so the memo cache is declared after them.
-        let directive_count = compiled
-            .body
-            .iter()
-            .take_while(|stmt| matches!(stmt.data, StmtData::SDirective(_)))
-            .count();
+        let directive_count = leading_directive_count(&compiled.body);
         compiled
             .body
             .splice(directive_count..directive_count, preface);
@@ -360,7 +356,8 @@ pub(crate) fn codegen_function(
                 },
                 Loc::EMPTY,
             );
-            compiled.body.insert(0, instrument_call);
+            let directive_count = leading_directive_count(&compiled.body);
+            compiled.body.insert(directive_count, instrument_call);
         }
     }
 
@@ -3255,6 +3252,12 @@ fn estring_utf8(s: &str) -> E::EString {
         let units: AstVec<u16> = AstAlloc::vec_from_iter(s.encode_utf16());
         E::EString::init_utf16(units.leak())
     }
+}
+
+fn leading_directive_count(body: &[Stmt]) -> usize {
+    body.iter()
+        .take_while(|stmt| matches!(stmt.data, StmtData::SDirective(_)))
+        .count()
 }
 
 #[inline]

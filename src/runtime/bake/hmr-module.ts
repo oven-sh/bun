@@ -813,7 +813,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
   /** Where the loads start, each with the self-accept callback of the body that is replaced. */
   const boundaries = new Map<HMRModule, HotAcceptFunction | null>();
   /** The `accept(dep)` registrations that the walk found, each with the accepted modules that are replaced. */
-  const toAccept = new Map<HotAccept, { importer: HMRModule; keys: Set<Id> }>();
+  const toAccept = new Map<HotAccept, { importer: HMRModule; evaluation: number; keys: Set<Id> }>();
   /** Client only. A changed module, with the path from it to a root that does not accept. */
   let failures: Map<Id, Id[]> | null = null;
   /** Client only. The roots that pass the update to their importers. */
@@ -848,7 +848,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
         }
         if (accept && !didNotLoad) {
           let entry = toAccept.get(accept);
-          if (!entry) toAccept.set(accept, (entry = { importer, keys: new Set() }));
+          if (!entry) toAccept.set(accept, (entry = { importer, evaluation: importer.evaluation, keys: new Set() }));
           entry.keys.add(mod.id);
         } else if (propagates) {
           if (!reached.has(importer)) {
@@ -1021,7 +1021,9 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
   }
 
   // Call all accept callbacks, once for each accepted module that was replaced.
-  for (const [{ cb, modules: accepted, single }, { keys }] of toAccept) {
+  for (const [{ cb, modules: accepted, single }, { importer, evaluation, keys }] of toAccept) {
+    // An update that overlaps this one evaluated the importer again: the callback is of its old code.
+    if (importer.evaluation !== evaluation) continue;
     for (const key of keys) {
       // Server only: the load of the accepted module can have failed.
       if (registry.get(key)!.state !== State.Loaded) continue;

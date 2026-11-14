@@ -2700,6 +2700,13 @@ pub mod bv2_impl {
                     if source_index >= max_valid_source_index.get() {
                         continue;
                     }
+                    // A second entry file of a package replaces the module of the default loader only.
+                    if import_record
+                        .flags
+                        .contains(bun_ast::ImportRecordFlags::KEYED_BY_LOADER)
+                    {
+                        continue;
+                    }
                     let secondary_path: &[u8] = &secondary_paths[source_index as usize];
                     if !secondary_path.is_empty() {
                         let Some(secondary_source_index) =

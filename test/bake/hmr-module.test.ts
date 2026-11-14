@@ -2790,6 +2790,34 @@ describe("an update that comes while another update is applied", () => {
     });
   }
 
+  for (const side of ["client", "server"] as const) {
+    test(`${side}: an accept(dep) callback is not called when the other update evaluates its importer again`, async () => {
+      const { log, take, define, load, save } = await loader(side);
+      const { promise: disposed, resolve: finish } = Promise.withResolvers<void>();
+      const app = (version: string) =>
+        esm(["dep"], (hmr, [dep]) => {
+          hmr.accept();
+          hmr.acceptSpecifiers("dep", (next: any) => log("app " + version + " accepted dep " + next.version));
+          log("app " + version + " ran with dep " + dep.version);
+        });
+      const dep = (version: string, dispose?: Promise<void>) =>
+        esm([], hmr => {
+          if (dispose) hmr.dispose(() => dispose);
+          hmr.exports = { version };
+        });
+      define({ app: app("v1"), dep: dep("v1", disposed) });
+      await load("app");
+      take();
+      // The first update waits for the dispose callback of `dep`.
+      const first = save({ dep: dep("v2") });
+      await settleJobs();
+      await save({ app: app("v2") });
+      finish();
+      await first;
+      expect(take()).toEqual(["app v2 ran with dep v2"]);
+    });
+  }
+
   test("client: the callbacks of two bodies that two updates replaced each get the module that is loaded last, once", async () => {
     const { log, take, define, load, save } = await loader("client");
     const gates = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];

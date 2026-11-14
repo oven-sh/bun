@@ -302,6 +302,24 @@ describe("bundler", async () => {
     run: { stdout: "string true" },
   });
 
+  // A package with `module` and `main`: `require()` makes every import of it use the `main` file.
+  // The text of the `module` file is another module. It used to become the exports of the `main` file.
+  itBundled("bun/loader-text-import-of-a-package-that-is-also-required", {
+    target: "browser",
+    files: {
+      "/entry.js": /* js */ `
+        import text from "pkg" with { type: "text" };
+        import "./required.js";
+        console.log(typeof text, String(text).trim());
+      `,
+      "/required.js": `console.log(require("pkg").from);`,
+      "/node_modules/pkg/package.json": JSON.stringify({ name: "pkg", main: "./main.js", module: "./module.js" }),
+      "/node_modules/pkg/main.js": `exports.from = "main";`,
+      "/node_modules/pkg/module.js": `export const from = "module";`,
+    },
+    run: { stdout: 'main\nstring export const from = "module";' },
+  });
+
   // package.json and tsconfig.json are jsonc by default. `with { type: "json" }`
   // on one of them is not a second loader: as before, there is one module.
   itBundled("bun/loader-package-json-with-type-json", {

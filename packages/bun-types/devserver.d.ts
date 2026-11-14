@@ -108,8 +108,8 @@ interface ImportMeta {
      *
      * If the same update also reaches this module through an import that it
      * does not accept, Bun does not call the callback. Bun re-evaluates this
-     * module when a module above it accepts the update, and reloads the page
-     * when none does.
+     * module when this module or a module above it accepts the update, and
+     * reloads the page when none does.
      *
      * When `import.meta.hot.accept` is not used, the page reloads when the
      * file updates, and a console message shows which files were checked.

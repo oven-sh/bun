@@ -129,7 +129,7 @@ import.meta.hot.accept("./foo", newModule => {
 
 Indicates that a dependency's module can be accepted. When the dependency is updated, Bun calls the callback with the new module. A save of a file that the dependency imports also updates the dependency: Bun re-evaluates the saved file, the dependency and every module between them, then calls the callback.
 
-If the same update also reaches this module through an import that it does not accept, Bun does not call the callback. Bun re-evaluates this module when a module above it accepts the update, and reloads the page when none does.
+If the same update also reaches this module through an import that it does not accept, Bun does not call the callback. Bun re-evaluates this module when this module or a module above it accepts the update, and reloads the page when none does.
 
 ### With multiple dependencies
 

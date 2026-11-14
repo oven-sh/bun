@@ -387,7 +387,7 @@ describe.concurrent('"use strict" in the eval entry point', () => {
   }
 
   test("bun -e honors a leading directive", async () => {
-    const { stdout, stderr, exitCode } = await runBun(["-e", `"use strict";` + strictModeProbe]);
+    const { stdout, stderr, exitCode } = await runBun(["-e", `"use strict"; module.exports;` + strictModeProbe]);
     expect(stderr).toBe("");
     expect(stdout).toBe(strictResult);
     expect(exitCode).toBe(0);
@@ -403,14 +403,20 @@ describe.concurrent('"use strict" in the eval entry point', () => {
   });
 
   test("bun -e is strict when the directive follows a comment", async () => {
-    const { stdout, stderr, exitCode } = await runBun(["-e", `// leading comment\n'use strict';` + strictModeProbe]);
+    const { stdout, stderr, exitCode } = await runBun([
+      "-e",
+      `// leading comment\n'use strict'; module.exports;` + strictModeProbe,
+    ]);
     expect(stderr).toBe("");
     expect(stdout).toBe(strictResult);
     expect(exitCode).toBe(0);
   });
 
   test("bun -e is strict when another directive comes first", async () => {
-    const { stdout, stderr, exitCode } = await runBun(["-e", `"use client"; "use strict";` + strictModeProbe]);
+    const { stdout, stderr, exitCode } = await runBun([
+      "-e",
+      `"use client"; "use strict"; module.exports;` + strictModeProbe,
+    ]);
     expect(stderr).toBe("");
     expect(stdout).toBe(strictResult);
     expect(exitCode).toBe(0);
@@ -429,7 +435,7 @@ describe.concurrent('"use strict" in the eval entry point', () => {
   test("bun -p honors a leading directive", async () => {
     const { stdout, stderr, exitCode } = await runBun([
       "-p",
-      `"use strict"; (function () { return this === undefined; })()`,
+      `"use strict"; module.exports; (function () { return this === undefined; })()`,
     ]);
     expect(stderr).toBe("");
     expect(stdout).toBe("true\n");
@@ -440,7 +446,7 @@ describe.concurrent('"use strict" in the eval entry point', () => {
     // Both directives are printed in source order, ahead of every statement.
     const { stdout, stderr, exitCode } = await runBun([
       "-p",
-      `"use client"; "use strict"; (function () { return this === undefined; })()`,
+      `"use client"; "use strict"; module.exports; (function () { return this === undefined; })()`,
     ]);
     expect(stderr).toBe("");
     expect(stdout).toBe("true\n");

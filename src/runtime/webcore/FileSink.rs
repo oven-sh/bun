@@ -1182,7 +1182,7 @@ impl FileSink {
         this
     }
 
-    pub fn write(&self, data: &streams::Result) -> streams::Writable {
+    pub fn write(&self, data: &streams::Result<'_>) -> streams::Writable {
         if self.done.get() {
             return streams::Writable::Done;
         }
@@ -1226,7 +1226,7 @@ impl FileSink {
         }
     }
 
-    pub(crate) fn write_latin1(&self, data: &streams::Result) -> streams::Writable {
+    pub(crate) fn write_latin1(&self, data: &streams::Result<'_>) -> streams::Writable {
         if self.done.get() {
             return streams::Writable::Done;
         }

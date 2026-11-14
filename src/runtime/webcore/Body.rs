@@ -938,9 +938,7 @@ impl Value {
                         // BACKREF: `Source::bytes()` payload is live for the
                         // ReadableStream JS wrapper's lifetime.
                         let mut blob = new.use_as_any_blob_allow_non_utf8_string();
-                        bytes.on_data(streams::Result::TemporaryAndDone(bun_ptr::RawSlice::new(
-                            blob.slice(),
-                        )));
+                        bytes.on_data(streams::Result::TemporaryAndDone(blob.slice()));
                         blob.detach();
                     });
 

@@ -1,7 +1,5 @@
 // https://github.com/nodejs/node/blob/bae03c4e30f927676203f61ff5a34fe0a0c0bbc9/lib/internal/fixed_queue.js
 
-const ArrayPrototypeFill = Array.prototype.fill;
-
 // Currently optimal queue size, tested on V8 6.0 - 6.6. Must be power of two.
 const kSize = 2048;
 const kMask = kSize - 1;
@@ -63,9 +61,10 @@ class FixedCircularBuffer<T> {
   constructor() {
     this.bottom = 0;
     this.top = 0;
-    // Filled rather than left holey: a holey array deoptimizes element access
-    // and is observable through the queue's backing list.
-    this.list = ArrayPrototypeFill.$call($newArrayWithSize<T | undefined>(kSize), undefined);
+    // Own data properties: a [[Set]] into a hole would hit an Array.prototype index setter.
+    const list = $newArrayWithSize<T | undefined>(kSize);
+    for (let i = 0; i < kSize; i++) $putByValDirect(list, i, undefined);
+    this.list = list;
     this.next = null;
   }
 
@@ -78,7 +77,7 @@ class FixedCircularBuffer<T> {
   }
 
   push(data) {
-    this.list[this.top] = data;
+    $putByValDirect(this.list, this.top, data);
     this.top = (this.top + 1) & kMask;
   }
 
@@ -86,7 +85,7 @@ class FixedCircularBuffer<T> {
     var { list, bottom } = this;
     const nextItem = list[bottom];
     if (nextItem === undefined) return null;
-    list[bottom] = undefined;
+    $putByValDirect(list, bottom, undefined);
     this.bottom = (bottom + 1) & kMask;
     return nextItem;
   }

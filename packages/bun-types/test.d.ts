@@ -17,17 +17,81 @@ declare module "bun:test" {
   export type Mock<T extends (...args: any[]) => any> = JestMock.Mock<T>;
 
   /**
-   * `T` with every nested function and class typed as a {@link Mock}.
+   * `T` with every nested function and class typed as a {@link Mock}. It's still a `T`, because `jest.mocked(value)`
+   * returns `value` itself.
+   *
+   * Where a member or an array element is a union of object types, only a method that every type of the union has
+   * gets the members of a mock, such as `mockReturnValue()`.
    */
-  export type Mocked<T> = T extends new (...args: infer Args) => infer Instance
-    ? Mock<(...args: Args) => Mocked<Instance>> & { prototype: Mocked<Instance> } & {
-        [K in Exclude<keyof T, "prototype">]: Mocked<T[K]>;
-      }
-    : T extends (...args: any[]) => any
-      ? Mock<T> & { [K in keyof T]: Mocked<T[K]> }
-      : T extends object
-        ? { [K in keyof T]: Mocked<T[K]> }
-        : T;
+  export type Mocked<T> = T extends readonly unknown[]
+    ? // The mocked elements come first, so that a callback of `forEach()` or `map()` receives them.
+      __internal.MockedArray<T> & T & __internal.MocksOf<T>
+    : T extends object
+      ? // `T` comes first, so that a call uses the signatures of `T`: its overloads, type parameters and `this`.
+        T & __internal.MocksOf<T>
+      : T;
+
+  export namespace __internal {
+    // What `Mocked<T>` adds to `T`. It isn't a `T` by itself: a mapped type has no private members, and a `Mock` has
+    // one call signature. A hand-made object of mocks fits it, which `mockImplementation()` of a mocked class takes.
+    type MocksOf<T> = T extends { _isMockFunction: true }
+      ? // A mock stays as it is, so that mocking a mocked value again adds nothing.
+        T
+      : T extends abstract new (...args: any) => any
+        ? // TypeScript treats a constructor type whose only parameter is `...args: any[]` as a mixin: `new` keeps the
+          // signatures of `T`, and this instance type is added to what each of them returns. `mock.instances` holds
+          // what `new` returned.
+          //
+          // The instance type is named in each member and not inferred in the condition above. So TypeScript works
+          // it out only for a class that is used, not for every class in a mocked module: for some that is costly.
+          { new (...args: any[]): MocksOf<InstanceType<T>> } & {
+            mock: { instances: Mocked<InstanceType<T>>[] };
+          } & jest.SpiedClass<new (...args: ConstructorParameters<T>) => MocksOf<InstanceType<T>>> & {
+              prototype: MocksOf<InstanceType<T>>;
+            } & { [K in Exclude<keyof T, "prototype">]: MocksOfMember<T[K]> }
+        : T extends (...args: any[]) => any
+          ? Mock<T> & { [K in keyof T]: MocksOfMember<T[K]> }
+          : T extends readonly unknown[]
+            ? // The elements, and the members that `Array` doesn't have. The `as` makes this an object type. If it
+              // were an array type, TypeScript would work out the element type at once, which doesn't end for a type
+              // like `type Tree = (Leaf | Tree)[]`. `Iterable` is for `for...of`.
+              {
+                [K in keyof T as K extends Exclude<keyof unknown[], number> ? never : K]: MocksOfMember<T[K]>;
+              } & Iterable<MocksOfMember<T[number]>>
+            : T extends object
+              ? { [K in keyof T]: MocksOfMember<T[K]> }
+              : T;
+    // What a member or an element adds to its own type.
+    type MocksOfMember<V> =
+      IsUnion<Extract<V, object>> extends false ? MocksOf<V> : MocksOfUnion<Extract<V, object>> | Exclude<V, object>;
+    // One type for a union of object types: the mock members of each method that all of them have. A union of N
+    // mocked types, intersected with the member of `T`, would make N * N types. `Keys` is a parameter, because
+    // TypeScript maps each type of a union by itself if a mapped type names `keyof U`.
+    //
+    // A `SpiedFunction` has no call signature. With one more signature in each type of the union, TypeScript
+    // can't call a method like `then()` of `Promise<A> | Promise<B>`.
+    type MocksOfUnion<U, Keys extends keyof U = keyof U> = [U] extends [(...args: any[]) => any]
+      ? jest.SpiedFunction<Extract<U, (...args: any[]) => any>>
+      : [U] extends [readonly unknown[]]
+        ? // A union of arrays is like one array: it has the elements, and the members of `Array` aren't mocks.
+          { [K in Keys as K extends Exclude<keyof unknown[], number> ? never : K]: MocksOfMember<U[K]> } & Iterable<
+            MocksOfMember<U[number & keyof U]>
+          >
+        : {
+            // A method can be optional in a type of the union: `undefined` stays in its type.
+            [K in Keys as NonNullable<U[K]> extends (...args: any[]) => any ? K : never]:
+              jest.SpiedFunction<Extract<U[K], (...args: any[]) => any>> | Exclude<U[K], (...args: any[]) => any>;
+          };
+    // An array type that is written with `[]`: TypeScript works out its element type only when that is used.
+    type MockedArray<T extends readonly unknown[]> = T extends unknown[]
+      ? MockedElement<T[number]>[]
+      : readonly MockedElement<T[number]>[];
+    // An element that is a union of object types stays as it is: with the elements of `T`, a union of mocked types
+    // would make N * N types too. `MocksOf<T>` has its mocks.
+    type MockedElement<E> = IsUnion<Extract<E, object>> extends false ? Mocked<E> : E;
+    // `boolean` for a union that has a type to which all its other types are assignable, such as `Base | Derived`.
+    type IsUnion<T, Whole = T> = T extends unknown ? ([Whole] extends [T] ? false : true) : never;
+  }
 
   /**
    * Returns a mocked module's exports, or a promise for them. Call `importOriginal()` to load the real module.
@@ -986,7 +1050,7 @@ declare module "bun:test" {
     repeats?: number;
   }
 
-  namespace __internal {
+  export namespace __internal {
     type IfNeverThenElse<T, Else> = [T] extends [never] ? Else : T;
 
     type IsTuple<T> = T extends readonly unknown[]

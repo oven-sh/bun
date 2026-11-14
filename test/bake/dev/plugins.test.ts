@@ -954,6 +954,60 @@ for (const [kind, specifier, plugin, reExporter] of [
   });
 }
 
+// The importer asks the barrel for a name only after the slow answer, when the barrel is parsed.
+devTest("barrel that re-exports twice from one file, with a slow onResolve answer in its importer", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      const parsed = Promise.withResolvers();
+      export default {
+        name: "slow",
+        setup(build) {
+          build.onResolve({ filter: /^(dup|slow)$/ }, async args => {
+            if (args.path === "slow") await parsed.promise;
+            return undefined;
+          });
+          // Asked for when the barrel is parsed.
+          build.onLoad({ filter: /star\\.js$/ }, () => {
+            parsed.resolve();
+            return undefined;
+          });
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { Beta } from "dup";
+      import slow from "slow";
+      console.log(Beta + " " + slow);
+    `,
+    "node_modules/dup/package.json": JSON.stringify({
+      name: "dup",
+      version: "1.0.0",
+      main: "./index.js",
+      sideEffects: false,
+    }),
+    "node_modules/dup/index.js": `
+      export { Alpha } from "./utils.js";
+      export { Beta } from "./utils.js";
+      export { Gamma } from "./gamma.js";
+      export * from "./star.js";
+    `,
+    "node_modules/dup/star.js": `export const Star = "STAR";`,
+    "node_modules/dup/utils.js": `export const Alpha = "ALPHA"; export const Beta = "BETA";`,
+    "node_modules/dup/gamma.js": `export const Gamma = "GAMMA";`,
+    "node_modules/slow/package.json": JSON.stringify({ name: "slow", version: "1.0.0", main: "./index.js" }),
+    "node_modules/slow/index.js": `export default "slow";`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("BETA slow");
+  },
+});
+
 // The first bundle of a route goes to the open tabs of other routes too. A
 // module that the new route shares with them is bundled again and has the
 // same output: it does not run again in those tabs.

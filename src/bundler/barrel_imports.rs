@@ -894,11 +894,31 @@ pub(crate) fn schedule_barrel_deferred_imports(
         };
 
         let barrel_ir = &mut this.graph.ast.items_import_records_mut()[barrel_idx as usize];
-        let went_live = un_defer_record(barrel_ir, resolution.import_record_index as usize);
+        let record_idx = resolution.import_record_index as usize;
+        let mut un_deferred: Vec<u32> = Vec::new();
+        // In the dev server the record can be a duplicate, and the one that is printed another record of the
+        // same specifier: they go live together, as they are needed together in `apply_barrel_optimization`.
+        if dev_handle.is_some() && record_idx < barrel_ir.len() {
+            let specifier = barrel_ir.as_slice()[record_idx].path.text;
+            let is_deferred = barrel_ir.as_slice()[record_idx]
+                .flags
+                .contains(import_record::Flags::IS_BARREL_DEFERRED);
+            for idx in 0..barrel_ir.len() {
+                if is_deferred
+                    && idx != record_idx
+                    && barrel_ir.as_slice()[idx].path.text == specifier
+                    && un_defer_record(barrel_ir, idx)
+                {
+                    un_deferred.push(idx as u32);
+                }
+            }
+        }
+        let went_live = un_defer_record(barrel_ir, record_idx);
         if went_live {
+            un_deferred.push(resolution.import_record_index);
+            un_deferred.sort_unstable();
             // Resolve now: propagation below needs the source index.
-            newly_scheduled +=
-                resolve_barrel_records(this, barrel_idx, &[resolution.import_record_index]);
+            newly_scheduled += resolve_barrel_records(this, barrel_idx, &un_deferred);
         }
 
         // `original_alias` is an arena-backed `StoreStr` valid for the

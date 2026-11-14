@@ -11078,6 +11078,10 @@ declare module "bun" {
     domain?: string;
     /** Defaults to '/'. To allow the browser to set the path, use an empty string. */
     path?: string;
+    /**
+     * A number is in seconds since the Unix epoch, not in milliseconds. For a value
+     * in milliseconds, such as `Date.now() + 60_000`, pass `new Date(ms)`.
+     */
     expires?: number | Date | string;
     secure?: boolean;
     /** Defaults to `lax`. */

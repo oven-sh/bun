@@ -539,6 +539,15 @@ fn finish(
         this_transpiler.options.jsx.development = false;
         this_transpiler.resolver.opts.jsx.development = false;
     }
+    // `bun --aot` and `bun test --aot` run the program in this process, like `bun run`.
+    let runs_in_place = ctx
+        .bundler_options
+        .aot
+        .as_ref()
+        .is_some_and(|aot| aot.runs_in_place);
+    if !runs_in_place {
+        this_transpiler.disable_jsx_development_unless_node_env_is_defined();
+    }
 
     match &ctx.debug.macros {
         MacroOptions::Disable => {

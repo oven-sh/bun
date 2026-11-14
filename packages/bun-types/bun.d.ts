@@ -3433,9 +3433,12 @@ declare module "bun" {
      * Can be one of:
      * - `"inline"`: Injects environment variables into the bundled output by converting `process.env.FOO`
      *   references to string literals containing the actual environment variable values
-     * - `"disable"`: Disables environment variable injection entirely
+     * - `"disable"`: Disables environment variable injection entirely. `process.env.NODE_ENV`,
+     *   `process.env.BUN_ENV` and `process.browser` also stay as written. Use `define` to replace one.
      * - A string ending in `*`: Inlines environment variables that match the given prefix.
      *   For example, `"MY_PUBLIC_*"` only includes env vars starting with "MY_PUBLIC_"
+     *
+     * Every other value, and a build that does not set `env`, still replaces those three.
      *
      * @example
      * ```ts

@@ -523,6 +523,16 @@ impl<'a> Transpiler<'a> {
         Ok(())
     }
 
+    /// For a build, after `configure_defines()` and `configure_linker()`. A bundle that reads
+    /// `process.env.NODE_ENV` when it runs lets React pick its build then, and only the development
+    /// build of React exports `jsxDEV`.
+    pub fn disable_jsx_development_unless_node_env_is_defined(&mut self) {
+        if !self.options.defines_node_env() {
+            self.options.jsx.development = false;
+            self.resolver.opts.jsx.development = false;
+        }
+    }
+
     /// The resolver
     /// crate carries a FORWARD_DECL subset of `BundleOptions`, so re-project
     /// rather than `Clone`. Called after `init_transpiler` mutates

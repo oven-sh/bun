@@ -1068,6 +1068,7 @@ impl CompletionStruct for JSBundleCompletionTask {
 
         transpiler.options.env.behavior = config.env_behavior;
         transpiler.options.env.prefix = Box::from(config.env_prefix.list.as_slice());
+        transpiler.options.env.implicit_defines = config.implicit_defines;
         // `BundleOptions.bundler_feature_flags: Option<Box<StringSet>>` owns
         // its set, so clone rather than alias `config.features`.
         transpiler.options.bundler_feature_flags = Some(Box::new(config.features.clone()?));
@@ -1290,6 +1291,9 @@ impl CompletionStruct for JSBundleCompletionTask {
 
         transpiler.configure_linker();
         transpiler.configure_defines()?;
+        if !config.jsx_development_stated {
+            transpiler.disable_jsx_development_unless_node_env_is_defined();
+        }
 
         // After configure_defines(): downloading the target reads proxy/TLS settings from the loaded env.
         transpiler.options.compile_target_builtins = match &config.compile {

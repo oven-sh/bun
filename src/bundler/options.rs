@@ -932,8 +932,6 @@ pub(crate) fn defines_from_transform_options(
 
     let mut environment_defines = defines::UserDefinesArray::default();
 
-    let mut behavior = api::DotEnvBehavior::disable;
-
     'load_env: {
         let Some(env) = env_loader else {
             break 'load_env;
@@ -944,7 +942,7 @@ pub(crate) fn defines_from_transform_options(
 
         debug_assert!(framework.behavior != api::DotEnvBehavior::None);
 
-        behavior = framework.behavior;
+        let behavior = framework.behavior;
         if behavior == api::DotEnvBehavior::LoadAllWithoutInlining
             || behavior == api::DotEnvBehavior::disable
         {
@@ -960,7 +958,7 @@ pub(crate) fn defines_from_transform_options(
         )?;
     }
 
-    if behavior != api::DotEnvBehavior::LoadAllWithoutInlining {
+    if framework_env.is_none_or(Env::has_implicit_defines) {
         let quoted_node_env: Box<[u8]> = 'brk: {
             if let Some(node_env) = node_env {
                 if !node_env.is_empty() {
@@ -1545,6 +1543,20 @@ impl<'a> BundleOptions<'a> {
             ForceNodeEnv::Production => false,
             ForceNodeEnv::Unspecified => self.jsx.development,
         }
+    }
+
+    /// Whether the defines replace `process.env.NODE_ENV` with a string. Without one the bundle reads
+    /// `NODE_ENV` when it runs.
+    pub(crate) fn defines_node_env(&self) -> bool {
+        self.define
+            .dots
+            .get(b"NODE_ENV".as_slice())
+            .is_some_and(|dots| {
+                dots.iter().any(|dot| {
+                    matches!(&*dot.parts, [process, env, _] if &**process == b"process" && &**env == b"env")
+                        && dot.data.value.e_string().is_some()
+                })
+            })
     }
 
     /// Per-worker deep clone — replaces the prior bitwise
@@ -2220,6 +2232,19 @@ pub struct Env {
 
     /// If true, disable loading of default .env files (from --no-env-file flag or bunfig)
     pub disable_default_env_files: bool,
+
+    pub implicit_defines: ImplicitDefines,
+}
+
+/// Who gives `process.env.NODE_ENV`, `process.env.BUN_ENV` and `process.browser` their values
+/// when no `define` names them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ImplicitDefines {
+    /// The bundler replaces them with the mode and the target of the build.
+    #[default]
+    BuildTime,
+    /// They stay as written and the program reads them when it runs.
+    LeftToRuntime,
 }
 
 impl Default for Env {
@@ -2229,7 +2254,17 @@ impl Default for Env {
             prefix: Box::default(),
             files: Box::default(),
             disable_default_env_files: false,
+            implicit_defines: ImplicitDefines::BuildTime,
         }
+    }
+}
+
+impl Env {
+    /// `LoadAllWithoutInlining` is the mode of the runtime and of `bun build --env=disable`,
+    /// which also leave them to the runtime.
+    pub fn has_implicit_defines(&self) -> bool {
+        self.behavior != api::DotEnvBehavior::LoadAllWithoutInlining
+            && self.implicit_defines == ImplicitDefines::BuildTime
     }
 }
 

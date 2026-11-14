@@ -650,6 +650,8 @@ The runtime and the bundler share Bun's plugin system. See [plugins](/bundler/pl
 
 Controls how environment variables are handled during bundling. Internally, this option uses `define` to inject environment variables into the bundle; `env` is a shorthand for specifying which ones.
 
+Every value of `env` except `"disable"` still replaces `process.env.NODE_ENV`, `process.env.BUN_ENV` and `process.browser`, and so does a build that does not set `env`. Use [`define`](#define) to choose a value, or `env: "disable"` to keep them as written.
+
 #### env: "inline"
 
 Injects environment variables into the bundled output by converting `process.env.FOO` references to string literals containing the actual environment variable values.
@@ -734,7 +736,49 @@ console.log(process.env.BAZ);
 
 #### env: "disable"
 
-Disables environment variable injection entirely.
+Disables environment variable injection entirely. The bundler also leaves `process.env.NODE_ENV`, `process.env.BUN_ENV` and `process.browser` as written, so the bundle reads them when it runs. To replace one of them, name it in [`define`](#define).
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      env: "disable",
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --env disable
+    ```
+  </Tab>
+</Tabs>
+
+For the input below:
+
+```js title="input.js" icon="/icons/javascript.svg"
+console.log(process.env.NODE_ENV);
+```
+
+The generated bundle keeps the read, so `NODE_ENV=production bun ./out/index.js` prints `production`:
+
+```js title="output.js" icon="/icons/javascript.svg"
+console.log(process.env.NODE_ENV);
+```
+
+A bundle that reads `NODE_ENV` when it runs does not know whether it runs in development, so its JSX calls `jsx` from `react/jsx-runtime` and not `jsxDEV`. Set [`jsx.development`](#jsx) to get `jsxDEV`.
+
+A browser has no `process` object, so a bundle for the `browser` target that keeps these reads throws `ReferenceError: process is not defined`. Give the browser a value with `define`:
+
+```ts title="build.ts" icon="/icons/typescript.svg"
+await Bun.build({
+  entrypoints: ["./index.tsx"],
+  outdir: "./out",
+  env: "disable",
+  define: { "process.env.NODE_ENV": JSON.stringify("production") },
+});
+```
 
 ### sourcemap
 
@@ -1902,9 +1946,12 @@ interface BuildConfig {
    * Can be one of:
    * - `"inline"`: Injects environment variables into the bundled output by converting `process.env.FOO`
    *   references to string literals containing the actual environment variable values
-   * - `"disable"`: Disables environment variable injection entirely
+   * - `"disable"`: Disables environment variable injection entirely. `process.env.NODE_ENV`,
+   *   `process.env.BUN_ENV` and `process.browser` also stay as written. Use `define` to replace one.
    * - A string ending in `*`: Inlines environment variables that match the given prefix.
    *   For example, `"MY_PUBLIC_*"` will only include env vars starting with "MY_PUBLIC_"
+   *
+   * Every other value, and a build that does not set `env`, still replaces those three.
    */
   env?: "inline" | "disable" | `${string}*`;
   minify?:

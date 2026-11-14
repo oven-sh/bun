@@ -236,11 +236,7 @@ impl Process {
         matches!(self.status(), Some(Status::Exited(_) | Status::Signaled(_)))
     }
 
-    /// The child has exited and the event loop has yet to report that. Nothing is reaped and nothing changes: the
-    /// loop reports the exit as always.
-    ///
-    /// False for a child that a thread waits for (Linux without a pidfd): that exit arrives as a task, and a
-    /// callback that is queued ahead of the task gets no answer here. False on FreeBSD, which is not wired.
+    /// The child has exited and the loop has yet to report it. Reaps nothing. False where a thread waits for the child, and on FreeBSD (not wired).
     #[cfg(unix)]
     pub fn has_unreported_exit(&self) -> bool {
         if self.has_exited() {
@@ -259,8 +255,7 @@ impl Process {
         #[cfg(target_os = "macos")]
         {
             let _ = poll;
-            // `proc_pidinfo` finds no process whose exit has begun (`proc_find` fails from then on), and the
-            // descriptors of the child close after that.
+            // `proc_pidinfo` fails with ESRCH once the exit has begun, and the descriptors of the child close after that.
             let mut info: bun_sys::c::struct_proc_bsdinfo = bun_core::ffi::zeroed();
             let size = core::mem::size_of::<bun_sys::c::struct_proc_bsdinfo>() as c_int;
             // SAFETY: `info` is writable for `size` bytes.

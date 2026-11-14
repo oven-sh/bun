@@ -764,8 +764,7 @@ impl EventLoop {
     /// next `tick()`, after a non-blocking poll (`has_pending_tasks`).
     const CONCURRENT_REFILLS_PER_TICK: u32 = 8;
 
-    /// Names the callback of this loop that is running, among those that it runs between two polls: each task has
-    /// its own number, and the immediates of one turn share one. It wraps around.
+    /// A number for the callback that runs: each task has its own, the immediates of one turn share one. It wraps around.
     #[inline]
     pub fn callback_number(&self) -> u32 {
         self.callback_number.get()

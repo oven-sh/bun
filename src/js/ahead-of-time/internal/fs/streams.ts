@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/fs/streams.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 6e092f01dac7b06d6eb1b74a18a4762bd81997b56088ca27c113aa230d39d97e.
+// Written against that file with the SHA-256 052373d2634161cbaf51bfc67c3ef87d065f81cd9286b6eed601f3b1f23adaf2.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // fs.ReadStream and fs.WriteStream are lazily loaded to avoid importing 'node:stream' until required
@@ -996,18 +996,13 @@ writeStreamPrototype._destroy = function (this: $Node.WriteStream, err: Error | 
   }
 };
 
-// _destroy of the stdin of a child. The EPIPE of a send can be for a child that has exited while the event loop has
-// had no poll since the spawn in which to report that (has_exited_before_first_poll, subprocess.rs). Under node that
-// exit has destroyed the stdin ahead of the callback that sends, and no 'error' follows:
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L277-L279
-// The stream then closes with no 'error'. The callbacks, `errored` and finished() keep the EPIPE, which destroy() has
-// stored. Only EPIPE: ECONNRESET is for a send that began while the child had its end open, and node reports that too.
+// _destroy of a child's stdin: no 'error' for the EPIPE of a child whose exit the event loop has yet to report (has_exited_before_first_poll, subprocess.rs).
 function destroyStdinOfChild(this: $Node.WriteStream, err: any, cb: ErrorCallback) {
   const child = this[kStdinOf];
   const hasExitedBeforeFirstPoll = this[kHasExitedBeforeFirstPoll]!;
   // A stream is destroyed once. It asks no more, and it must not keep the Subprocess.
   this[kStdinOf] = this[kHasExitedBeforeFirstPoll] = undefined;
-  // Asked ahead of sink.end(), which the _destroy below calls: the answer reads the sink.
+  // Asked ahead of the sink.end() of the _destroy below: the answer reads the sink. ECONNRESET stays an 'error', as in node.
   if (err?.code === "EPIPE" && hasExitedBeforeFirstPoll(child)) err = null;
   try {
     writeStreamPrototype._destroy.$call(this, err, cb);
@@ -1066,8 +1061,7 @@ function thenIfPromise<T>(maybePromise: Promise<T> | T, cb: ErrorCallback) {
   }
 }
 
-// The stdin of a child. `hasExitedBeforeFirstPoll` comes from child_process: this module is in every program, and must
-// not name a binding of Bun.spawn.
+// `hasExitedBeforeFirstPoll` comes from child_process: this module is in every program and must not name a binding of Bun.spawn.
 function writableFromFileSink(
   fileSink: FileSink,
   stdinOf: unknown,

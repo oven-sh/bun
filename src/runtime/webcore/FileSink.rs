@@ -41,8 +41,7 @@ pub struct FileSink {
     pub(crate) writer: JsCell<IOWriter>,
     pub(crate) event_loop_handle: EventLoopHandle,
     pub(crate) written: Cell<usize>,
-    /// `EventLoop::callback_number` when bytes last reached the descriptor. `Subprocess` reads it for its stdin: a
-    /// child that took bytes in a callback was alive in that callback.
+    /// `EventLoop::callback_number` when bytes last reached the descriptor: `Subprocess` reads it for its stdin.
     pub(crate) sent_in_callback: Cell<u32>,
     /// A write that the sink had held back failed: the error went to a caller that had returned. For `Subprocess`.
     pub(crate) held_write_failed: Cell<bool>,
@@ -971,8 +970,7 @@ impl FileSink {
     /// Bytes reached the descriptor in the callback of the event loop that is running.
     fn note_sent(&self) {
         if let Some(vm) = self.js_vm() {
-            self.sent_in_callback
-                .set(vm.event_loop().callback_number());
+            self.sent_in_callback.set(vm.event_loop().callback_number());
         }
     }
 

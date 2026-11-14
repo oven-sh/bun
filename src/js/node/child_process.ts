@@ -1655,8 +1655,7 @@ class ChildProcess extends EventEmitter {
     if (handle) {
       // Bun.spawn's `killed` is true once the process has exited or been
       // terminated by a signal. Node treats kill() on a dead process as
-      // ESRCH: return false and leave `.killed` untouched. So does an exit
-      // that node's loop has reported by now and this loop has not.
+      // ESRCH: return false and leave `.killed` untouched.
       if (handle.killed || hasExitedBeforeFirstPoll(handle)) {
         return false;
       }

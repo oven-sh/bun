@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { exec } from "node:child_process";
+import { join } from "node:path";
 
 test.concurrent("pipe does the right thing", async () => {
   // Note: Bun.spawnSync uses memfd_create on Linux for pipe, which means we see
@@ -678,6 +679,37 @@ describe.skipIf(isWindows)("pipe backpressure", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// resume() restarts the native reader. It read the pipe at once, inside resume(),
+// so the bytes written while stdin was paused were emitted ahead of the
+// immediates that were already queued. In Node resume() only starts the handle
+// (https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L1447-L1470)
+// and the next poll delivers the bytes: a 'data' listener that one of those
+// immediates attaches sees them. Linux only: elsewhere resume() still reads a
+// pipe that is not a socket, because kqueue does not report the end of a named
+// pipe and only a read finds it.
+test.skipIf(!isLinux)(
+  "resume() after pause() emits the bytes written meanwhile in a later turn of the event loop",
+  async () => {
+    const fixtures = join(import.meta.dir, "..", "child_process", "fixtures");
+    const items = Array.from({ length: 10 }, (_, i) => `item${i}`);
+    using dir = tempDir("stdin-pause-resume", {});
+    const { promise, resolve } = Promise.withResolvers<{ err: Error | null; stdout: string; stderr: string }>();
+    // The writer sends item i+1 once the reader acknowledged item i. The reader's 'data' listener waits until
+    // item i+1 is in the pipe, pauses, and resumes from a setImmediate.
+    exec(
+      `"${bunExe()}" "${join(fixtures, "stdio-handshake-writer-fixture.js")}" "${dir}" ${items.length} 1 | ` +
+        `"${bunExe()}" "${join(fixtures, "stdio-handshake-reader-fixture.js")}" process.stdin pause "${dir}" ${items.length}`,
+      { env: bunEnv },
+      (err, stdout, stderr) => resolve({ err, stdout, stderr }),
+    );
+    expect(await promise).toEqual({
+      err: null,
+      stdout: JSON.stringify({ all: items, seen: items }) + "\n",
+      stderr: "",
+    });
+  },
+);
 
 test("process.stdin over an anonymous pipe delivers each byte exactly once", async () => {
   const total = 10 * 1024 * 1024;

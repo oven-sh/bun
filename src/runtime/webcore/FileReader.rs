@@ -897,11 +897,10 @@ impl FileReader {
 
         if flag {
             self.reader().unpause();
-            if !self.reader().is_done() && !self.reader().has_pending_read() {
-                // Kick off a new read if needed
-                // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
+            if !self.reader().is_done() {
+                // SAFETY: the reader cell is live for `self`'s lifetime; `resume_reading` is
                 // the raw re-entrancy-safe entry (its dispatch runs user JS).
-                unsafe { IOReader::read(self.reader.get()) };
+                unsafe { IOReader::resume_reading(self.reader.get()) };
             }
         } else {
             self.reader().pause();
@@ -967,11 +966,10 @@ impl readable_stream::SourceContext for FileReader {
             return self.end_of_reader();
         }
 
-        if !self.reader().has_pending_read() && self.flowing.get() {
-            // A consumer is pulling again: undo the highwater pause from `on_read_chunk`.
-            self.reader().unpause();
-            // SAFETY: the reader cell is live for `self`'s lifetime; `read_into` is the raw re-entrancy-safe entry (EOF/error dispatch runs user JS).
-            let (amount_read, state) = unsafe { IOReader::read_into(self.reader.get(), buffer) };
+        if self.flowing.get() {
+            // A consumer is pulling again, which also undoes the highwater pause from `on_read_chunk`.
+            // SAFETY: the reader cell is live for `self`'s lifetime; `request_read` is the raw re-entrancy-safe entry (EOF/error dispatch runs user JS).
+            let (amount_read, state) = unsafe { IOReader::request_read(self.reader.get(), buffer) };
             bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer.len(), amount_read);
             let done = state == ReadState::Eof || self.reader_finished();
             if amount_read > 0 {
@@ -985,7 +983,7 @@ impl readable_stream::SourceContext for FileReader {
                     streams::Result::IntoArray(into)
                 };
             }
-            // A completion may have landed in `buffered` while `read_into` ran user JS.
+            // A completion may have landed in `buffered` while `request_read` ran user JS.
             let drained = self.drain();
             if !drained.is_empty() {
                 return if done {
@@ -1002,10 +1000,17 @@ impl readable_stream::SourceContext for FileReader {
         let buffer_len = buffer.len();
         let global = self.parent_const().global_this();
         self.pending_value.with_mut(|p| p.set(global, array));
-        #[cfg(windows)]
-        if self.flowing.get() {
-            self.reader().unpause();
-        }
+        #[cfg(unix)]
+        debug_assert!(
+            !self.flowing.get()
+                || buffer_len == 0
+                || self.reader().has_pending_read()
+                || self
+                    .reader()
+                    .flags
+                    .contains(bun_io::pipe_reader::PosixFlags::READ_FAILED),
+            "a pull parked with no poll armed and no read error on its way never settles"
+        );
 
         bun_core::scoped_log!(FileReader, "onPull({}) = pending", buffer_len);
 

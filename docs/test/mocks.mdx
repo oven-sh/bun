@@ -420,6 +420,8 @@ If another import is still fetching the module that the factory asks for, `impor
 
 When one import leads to several mocked modules, Bun calls their factories one at a time, in the order the modules are imported, as Vitest does. A factory that imports another mocked module gets that mock, whose factory is called first if it hasn't been.
 
+Bun calls the factories of an import once it has read the files that the import leads to. If an `onLoad()` or `build.module()` callback of a plugin returns a promise, the imports that lead to that module wait for the callback, and other imports don't.
+
 ### Getters and Missing Exports
 
 Bun reads an export from the object the factory returned every time it's used, so getters stay live. When a mock updates a loaded module in place, each getter is read once, at that moment.

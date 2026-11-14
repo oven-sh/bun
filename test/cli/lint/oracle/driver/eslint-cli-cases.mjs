@@ -442,6 +442,24 @@ export const cases = [
     },
     args: ["--color", "a.js"],
   },
+  {
+    // Every Node.js version removes these. Which other sequences `util.stripVTControlCharacters` removes depends on it.
+    name: "stylish escape sequences in the message",
+    files: {
+      "eslint.config.js": config({
+        "no-restricted-syntax": [
+          2,
+          { selector: "Literal[value=0]", message: "\x1b[31mred\x1b[39m" },
+          { selector: "Literal[value=1]", message: "\x1b]8;;https://example.com/\x07docs\x1b]8;;\x07" },
+          { selector: "Literal[value=2]", message: "\x1b]8;;https://example.com/\x1b\\docs\x1b]8;;\x1b\\" },
+          { selector: "Literal[value=3]", message: "\x1b]8;;https://example.com/\x9cdocs\x1b]8;;\x9c" },
+          { selector: "Literal[value=4]", message: "A message without a sequence" },
+        ],
+      }),
+      "a.js": "0;\n1;\n2;\n3;\n4;\n",
+    },
+    args: ["a.js"],
+  },
   { name: "-f stylish", files: project, args: ["-f", "stylish", "a.js"] },
   { name: "json", files: project, args: ["-f", "json", "."] },
   { name: "json --format=", files: project, args: ["--format=json", "a.js", "b.js"] },

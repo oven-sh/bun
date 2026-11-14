@@ -5197,7 +5197,7 @@ static JSValue getPropertyOnPath(JSGlobalObject* globalObject, JSValue base, Pro
     RELEASE_AND_RETURN(scope, object->getIfPropertyExists(globalObject, name));
 }
 
-JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue arg1)
+JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue arg1, bool isForVitest)
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
     VM& vm = globalObject->vm();
@@ -5298,26 +5298,28 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
         JSValue currProp = value;
         auto* pathObject = path.toObject(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        forEachInArrayLike(globalObject, pathObject, [&](JSValue item) -> bool {
-            if (!(item.isString() || item.isNumber())) {
-                currProp = {};
-                return false;
+        uint64_t length = toLength(globalObject, pathObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        for (uint64_t index = 0; index < length; index++) {
+            // As in Jest, the path ends here before the next element is read and converted.
+            if (currProp.isUndefinedOrNull()) {
+                return {};
             }
-
-            JSString* propNameString = item.toString(globalObject);
+            JSValue item = pathObject->getIndex(globalObject, index);
             RETURN_IF_EXCEPTION(scope, {});
-            Identifier propName = propNameString->toIdentifier(globalObject);
+            Identifier propName = item.toPropertyKey(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
+            // In Vitest a Symbol in the path matches no key.
+            if (isForVitest && propName.isSymbol()) {
+                return {};
+            }
 
             currProp = getPropertyOnPath(globalObject, currProp, propName);
             RETURN_IF_EXCEPTION(scope, {});
             if (currProp.isEmpty()) {
-                return false;
+                return {};
             }
-
-            return true;
-        });
-        RETURN_IF_EXCEPTION(scope, {});
+        }
         return JSValue::encode(currProp);
     }
 

@@ -2299,16 +2299,20 @@ declare module "bun:test" {
      * Asserts that a value has a property with the
      * expected name, and value if provided.
      *
+     * Under Vitest's rules, a Symbol in an array path matches no key.
+     * See [Importing from `vitest`](https://bun.com/docs/test/writing-tests#importing-from-vitest).
+     *
      * @example
      * expect(new Set()).toHaveProperty("size");
      * expect(new Uint8Array()).toHaveProperty("byteLength", 0);
      * expect({ kitchen: { area: 20 }}).toHaveProperty("kitchen.area", 20);
      * expect({ kitchen: { area: 20 }}).toHaveProperty(["kitchen", "area"], 20);
+     * expect({ [Symbol.iterator]: 1 }).toHaveProperty([Symbol.iterator], 1);
      *
      * @param keyPath the expected property name or path, or an index
      * @param value the expected property value, if provided
      */
-    toHaveProperty(keyPath: string | number | Array<string | number>, value?: unknown): R;
+    toHaveProperty(keyPath: string | number | Array<string | number | symbol>, value?: unknown): R;
 
     /**
      * Asserts that a value is "truthy".

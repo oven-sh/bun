@@ -2631,6 +2631,70 @@ describe("expect()", () => {
     expect(new Date()).toHaveProperty("getTime");
   });
 
+  // Vitest turns each element of an array path into a string.
+  test_skipIf(isVitest)("toHaveProperty() - symbol keys in an array path", () => {
+    const s = Symbol("k");
+    const other = Symbol("k");
+    expect({ [s]: 1 }).toHaveProperty([s]);
+    expect({ [s]: 1 }).toHaveProperty([s], 1);
+    expect({ [s]: 1 }).not.toHaveProperty([s], 2);
+    expect({ [s]: 1 }).not.toHaveProperty([other]);
+    expect({ [s]: undefined }).toHaveProperty([s]);
+    expect({ a: { [s]: { b: 2 } } }).toHaveProperty(["a", s]);
+    expect({ a: { [s]: { b: 2 } } }).toHaveProperty(["a", s, "b"], 2);
+    expect({ a: { [s]: { b: 2 } } }).not.toHaveProperty(["a", s, "c"]);
+    expect({ [Symbol.iterator]: 1 }).toHaveProperty([Symbol.iterator], 1);
+    expect([]).toHaveProperty([Symbol.iterator]);
+    expect({}).not.toHaveProperty([s]);
+    expect(() => expect({}).toHaveProperty([s])).toThrow("Unable to find property");
+    expect(() => expect({ [s]: 1 }).not.toHaveProperty([s])).toThrow("Expected path: not");
+    expect({ [s]: 1 }).toHaveProperty(ANY([{ [Symbol.toPrimitive]: () => s }]), 1);
+  });
+
+  // Jest reads `object[element]` and Vitest reads `String(element)`. Both give these elements the same key.
+  test("toHaveProperty() - an array path element that is not a string, a number or a symbol", () => {
+    const named = { toString: () => "a" };
+    const throws = {
+      toString() {
+        throw new RangeError("key");
+      },
+    };
+    const hasTheKey = isVitest ? "to not have property" : "Expected path: not";
+    expect({ true: 1 }).toHaveProperty(ANY([true]), 1);
+    expect({ 1: 1 }).toHaveProperty(ANY([1n]), 1);
+    expect({ null: 1 }).toHaveProperty(ANY([null]), 1);
+    expect({ undefined: 1 }).toHaveProperty(ANY([undefined]), 1);
+    expect({ a: 1 }).toHaveProperty(ANY([named]), 1);
+    expect({ true: { a: 1 } }).toHaveProperty(ANY([true, named]), 1);
+    expect({ a: 1 }).not.toHaveProperty(ANY([true]));
+    expect(() => expect({ true: 1 }).not.toHaveProperty(ANY([true]))).toThrow(hasTheKey);
+    expect(() => expect({ a: 1 }).toHaveProperty(ANY([throws]))).toThrow(RangeError);
+    expect(() => expect({ a: 1 }).not.toHaveProperty(ANY([throws]))).toThrow(RangeError);
+  });
+
+  // Vitest converts every element of the path before it looks one up.
+  test_skipIf(isVitest)("toHaveProperty() - an array path ends at null or undefined before its next element", () => {
+    let calls = 0;
+    const counts = { toString: () => (calls++, "q") };
+    const throws = {
+      toString() {
+        throw new RangeError("key");
+      },
+    };
+    for (const end of [null, undefined]) {
+      expect({ p: end }).not.toHaveProperty(ANY(["p", throws]));
+      expect({ p: { a: end } }).not.toHaveProperty(ANY(["p", "a", throws]));
+      expect({ p: end }).not.toHaveProperty(ANY(["p", counts]));
+    }
+    expect({}).not.toHaveProperty(ANY(["zz", throws]));
+    expect({}).not.toHaveProperty(ANY(["zz", counts]));
+    expect(calls).toBe(0);
+    // Below any other value the element is a key.
+    expect({ p: 1 }).not.toHaveProperty(ANY(["p", counts]));
+    expect(calls).toBe(1);
+    expect(() => expect({ p: 1 }).not.toHaveProperty(ANY(["p", throws]))).toThrow(RangeError);
+  });
+
   test("toHaveProperty() - all", () => {
     expect({ a: 1 }).toHaveProperty("a");
     expect({ a: 1 }).toHaveProperty("a", 1);

@@ -497,10 +497,10 @@ function normalize(name: string): string {
 }
 
 /**
- * The name of a source, as source-map-js makes it. The `sourceRoot` of the map is prepended,
- * unless both are absolute (a path from `/`, or a URL) and the source is in the root, or in a
- * folder above the root. `/` alone is not such a folder. One name is not as in source-map-js:
- * a URL of another host stays as it is, where source-map-js puts the root in front of it.
+ * The name of a source, as source-map-js 1.2.1 makes it (`normalize`, `relative` and
+ * `computeSourceURL` of its `util.js`). The `sourceRoot` of the map is prepended, unless both are
+ * absolute (a path from `/`, or a URL) and the source is in the root, or in a folder above the
+ * root. A scheme alone, or `/` alone, is not such a folder.
  */
 function sourceName(sourceRoot: string | null | undefined, source: string): string {
   source = normalize(source);
@@ -517,7 +517,7 @@ function sourceName(sourceRoot: string | null | undefined, source: string): stri
         return source;
       }
       folder = folder.slice(0, Math.max(folder.lastIndexOf("/"), 0));
-    } while (folder);
+    } while (!/^([^/]+:\/)?\/*$/.test(folder));
   }
   return normalize(root.endsWith("/") || source.startsWith("/") ? root + source : `${root}/${source}`);
 }

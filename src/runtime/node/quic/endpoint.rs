@@ -467,7 +467,7 @@ extern "C" fn on_data(
     }
     // This callback dispatches JS (provisional announce) before it feeds
     // packets; hold the send scope so that JS cannot flush lsquic underneath us.
-    this.send_scope_depth.set(this.send_scope_depth.get() + 1);
+    let _send_scope = this.send_scope();
     bun_boringssl_sys::ERR_clear_error();
     for i in 0..packets {
         let payload = uws::udp::PacketBuffer::opaque_mut(buf).get_payload(i);
@@ -636,7 +636,6 @@ extern "C" fn on_data(
     // during this dispatch must not join the same flight as the data the
     // handlers wrote (sessions stash it; the next depth-0 pass applies it).
     this.process(global);
-    this.send_scope_depth.set(this.send_scope_depth.get() - 1);
 }
 
 lsquic_callback! {
@@ -1427,7 +1426,7 @@ impl QuicEndpoint {
                 }
             }
         }
-        self.send_scope_depth.set(self.send_scope_depth.get() + 1);
+        let send_scope = self.send_scope();
         self.followup_due.set(false);
         // Not from the mid-turn drain pass: a deferred abort is dropped when
         // a later stream writes first, and node decides that over the whole
@@ -1514,7 +1513,7 @@ impl QuicEndpoint {
         {
             self.finish_close();
         }
-        self.send_scope_depth.set(self.send_scope_depth.get() - 1);
+        drop(send_scope);
         // Writes made by the dispatch above could not flush inline (the scope
         // was held). Send them at the pass's outer edge, where node's
         // SendPendingDataScope flushes, not a loop turn later.
@@ -1889,11 +1888,16 @@ impl QuicEndpoint {
         }
     }
 
+    fn send_scope(&self) -> SendScope<'_> {
+        self.send_scope_depth.update(|depth| depth + 1);
+        SendScope(&self.send_scope_depth)
+    }
+
     pub(super) fn drive_engines_once(&self) {
         if self.processing.replace(true) {
             return;
         }
-        self.send_scope_depth.set(self.send_scope_depth.get() + 1);
+        let send_scope = self.send_scope();
         bun_boringssl_sys::ERR_clear_error();
         for engine in [self.server_engine.get(), self.client_engine.get()] {
             if !engine.is_null() {
@@ -1906,7 +1910,7 @@ impl QuicEndpoint {
                 }
             }
         }
-        self.send_scope_depth.set(self.send_scope_depth.get() - 1);
+        drop(send_scope);
         self.processing.set(false);
     }
 
@@ -2345,7 +2349,7 @@ impl QuicEndpoint {
         };
         // engine_connect fires on_new_conn synchronously; hold the scope so a
         // schedule_process from inside it cannot re-enter the engine.
-        self.send_scope_depth.set(self.send_scope_depth.get() + 1);
+        let send_scope = self.send_scope();
         // SAFETY: engine is live; local/remote/sni/resume are valid for this
         // call (lsquic copies the resume blob); `session` is the
         // conn-ctx, at its final address in its wrapper.
@@ -2373,7 +2377,7 @@ impl QuicEndpoint {
             // object it builds, with these as own data properties, so no script runs there.
             lsquic::Conn::from_raw(conn)
         };
-        self.send_scope_depth.set(self.send_scope_depth.get() - 1);
+        drop(send_scope);
         let Some(conn) = conn else {
             session.teardown(global);
             return Ok(JSValue::UNDEFINED);
@@ -2630,6 +2634,14 @@ impl QuicEndpoint {
                 vt.on_conn_closed = QuicSession::on_closed_detached;
             }
         });
+    }
+}
+
+struct SendScope<'a>(&'a Cell<u32>);
+
+impl Drop for SendScope<'_> {
+    fn drop(&mut self) {
+        self.0.update(|depth| depth - 1);
     }
 }
 

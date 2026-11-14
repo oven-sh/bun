@@ -658,32 +658,21 @@ impl<'a> LinkerGraph<'a> {
         &mut self,
         entry_points: &[Index],
         sources: &[bun_ast::Source],
-        server_component_boundaries: &server_component_boundary::List,
+        scb: &server_component_boundary::List,
         dynamic_import_entry_points: &[index::Int],
         entry_point_original_names: &IndexStringMap,
     ) -> Result<(), crate::Error> {
-        let scb = server_component_boundaries.slice();
         self.files.set_capacity(sources.len())?;
-        self.files.zero();
+        for _ in sources {
+            self.files.append_assume_capacity(File::default());
+        }
         self.files_live = BitSet::init_empty(sources.len())?;
-        // SAFETY: capacity reserved above; columns zeroed by `zero()`.
-        unsafe { self.files.set_len(sources.len()) };
-
-        // Note: `Slice<T>` caches raw column pointers and does not borrow
-        // `self.files`, so the `split_mut()` borrows (tied to the local
-        // `files_slice`) can stay live across other `&mut self.*` accesses
-        // below. The columns are not reallocated during `load`.
-        let mut files_slice = self.files.slice();
-        let files_cols = files_slice.split_mut();
-        let entry_point_kinds: &mut [entry_point::Kind] = files_cols.entry_point_kind;
-        entry_point_kinds.fill(entry_point::Kind::None);
+        let entry_point_kinds = self.files.items_entry_point_kind_mut();
 
         // Setup entry points
         {
             self.entry_points.set_capacity(
-                entry_points.len()
-                    + server_component_boundaries.list.len()
-                    + dynamic_import_entry_points.len(),
+                entry_points.len() + scb.list.len() + dynamic_import_entry_points.len(),
             )?;
             for i in entry_points {
                 let source = &sources[i.get() as usize];
@@ -996,13 +985,11 @@ impl<'a> LinkerGraph<'a> {
 pub struct File {
     pub entry_bits: AutoBitSet,
 
-    pub(crate) input_file: Index,
-
     /// This file is an entry point if and only if this is not ".none".
     /// Note that dynamically-imported files are allowed to also be specified by
     /// the user as top-level entry points, so some dynamically-imported files
     /// may be ".user_specified" instead of ".dynamic_import".
-    pub entry_point_kind: EntryPoint::Kind,
+    pub entry_point_kind: entry_point::Kind,
 
     /// If "entry_point_kind" is not ".none", this is the index of the
     /// corresponding entry point chunk.
@@ -1019,11 +1006,9 @@ pub struct File {
 impl Default for File {
     fn default() -> Self {
         Self {
-            // Note: empty static-arm bitset; load() overwrites before any read.
             entry_bits: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
-            input_file: Index::source(0u32),
             entry_point_kind: EntryPoint::Kind::None,
-            entry_point_chunk_index: u32::MAX,
+            entry_point_chunk_index: 0,
             line_offset_table: bun_sourcemap::line_offset_table::List::new_in(bun_alloc::AstAlloc),
             quoted_source_contents: None,
         }
@@ -1035,7 +1020,6 @@ pub(crate) type FileList = MultiArrayList<File>;
 bun_collections::multi_array_columns! {
     pub trait FileColumns for File {
         entry_bits: AutoBitSet,
-        input_file: Index,
         entry_point_kind: EntryPoint::Kind,
         entry_point_chunk_index: u32,
         line_offset_table: bun_sourcemap::line_offset_table::List<bun_alloc::AstAlloc>,

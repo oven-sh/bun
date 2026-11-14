@@ -446,9 +446,21 @@ extern "C" JSC::EncodedJSValue Bun__encoding__constructFromUTF16(void*, const ch
 
 extern "C" void Bun__EventLoop__runCallback2(JSC::JSGlobalObject* global, JSC::EncodedJSValue callback, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2);
 
+namespace Bun {
+// The pairs that one comparison is inside of, and its equality testers (empty for none). Stack-only: the GC's conservative scan keeps them alive.
+struct DeepEqualsStack : Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16> {
+    const JSC::JSValue testers;
+
+    explicit DeepEqualsStack(JSC::JSValue testers)
+        : testers(testers)
+    {
+    }
+};
+}
+
 /// @note throws a JS exception and returns false if a stack overflow occurs
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity = false>
-bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JSValue v2, JSC::MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSC::ThrowScope& scope, bool addToStack);
+bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JSValue v2, JSC::MarkedArgumentBuffer&, Bun::DeepEqualsStack& stack, JSC::ThrowScope& scope, bool addToStack);
 
 namespace Bun {
 struct DeepMatchState {
@@ -459,6 +471,13 @@ struct DeepMatchState {
     bool records { false };
     JSC::MarkedArgumentBuffer recorded;
     WTF::Vector<JSC::Identifier> recordedNames;
+    // As in DeepEqualsStack.
+    const JSC::JSValue testers;
+
+    explicit DeepMatchState(JSC::JSValue testers)
+        : testers(testers)
+    {
+    }
 
     void recordIfAsked(JSC::JSObject* holder, JSC::JSObject* pattern, const JSC::Identifier& name, JSC::JSValue value, JSC::JSValue patternOfValue)
     {

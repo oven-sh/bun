@@ -896,7 +896,8 @@ impl PublishCommand {
         loop {
             match bun_sys::read(Fd::stdin(), &mut input) {
                 Ok(0) | Err(_) => return,
-                Ok(len) if strings::contains_char(&input[..len], b'\n') => break,
+                // Enter is a lone CR on a terminal that a parent process holds in raw mode.
+                Ok(len) if strings::index_of_any(&input[..len], b"\r\n").is_some() => break,
                 Ok(_) => continue,
             }
         }
@@ -1070,7 +1071,9 @@ impl PublishCommand {
             "\nThis operation requires a one-time password.\nEnter OTP: ",
             b"",
         ) {
-            Ok(v) => Ok(v.into()),
+            Ok(Some(v)) => Ok(v.into()),
+            // The user cancelled with Ctrl+C as a key. End as Ctrl+C as a signal ends a process.
+            Ok(None) => bun_spawn::ctrl_c::exit_like_child(),
             Err(crate::Error::Alloc(_)) => Err(AllocError),
             Err(e) => {
                 Output::err(e, "failed to read OTP input", ());

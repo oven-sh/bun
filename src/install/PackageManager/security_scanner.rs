@@ -392,6 +392,7 @@ pub(crate) fn prompt_for_warnings() -> bool {
         return false;
     }
 
+    let _line_mode = bun_core::tty::LineModeGuard::stdin();
     bun_core::pretty!("\n<yellow>Security warnings found.<r> Continue anyway? [y/N] ");
     Output::flush();
 

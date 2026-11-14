@@ -88,6 +88,81 @@ impl Drop for RawModeGuard {
     }
 }
 
+/// RAII guard for a blocking read of one typed line from stdin. Create it before the question is written (#5267).
+#[must_use]
+pub struct LineModeGuard {
+    #[cfg(unix)]
+    saved: Option<libc::termios>,
+    #[cfg(windows)]
+    saved: Option<crate::windows_sys::DWORD>,
+}
+
+impl LineModeGuard {
+    pub fn stdin() -> Self {
+        Self {
+            saved: if crate::output::is_stdin_tty() {
+                stdin_line_mode::enter()
+            } else {
+                None
+            },
+        }
+    }
+}
+
+impl Drop for LineModeGuard {
+    fn drop(&mut self) {
+        if let Some(saved) = &self.saved {
+            stdin_line_mode::leave(saved);
+        }
+    }
+}
+
+#[cfg(unix)]
+mod stdin_line_mode {
+    pub(super) fn enter() -> Option<libc::termios> {
+        let mut saved = core::mem::MaybeUninit::<libc::termios>::zeroed();
+        // SAFETY: `saved` is valid for one `termios`, and all-zero is a valid one.
+        unsafe {
+            (Bun__ttyEnterStdinLineMode(saved.as_mut_ptr()) != 0).then(|| saved.assume_init())
+        }
+    }
+
+    pub(super) fn leave(saved: &libc::termios) {
+        // SAFETY: `saved` is valid for one `termios`.
+        unsafe { Bun__ttyLeaveStdinLineMode(saved) }
+    }
+
+    unsafe extern "C" {
+        fn Bun__ttyEnterStdinLineMode(saved: *mut libc::termios) -> core::ffi::c_int;
+        fn Bun__ttyLeaveStdinLineMode(saved: *const libc::termios);
+    }
+}
+
+#[cfg(windows)]
+mod stdin_line_mode {
+    use crate::windows_sys as w;
+
+    pub(super) fn enter() -> Option<w::DWORD> {
+        let stdin = crate::Fd::stdin().native();
+        let mut found: w::DWORD = 0;
+        if w::GetConsoleMode(stdin, &mut found) == 0 {
+            return None;
+        }
+        // With `ENABLE_VIRTUAL_TERMINAL_INPUT`, backspace deletes the entire line.
+        let mut line = found & !w::ENABLE_VIRTUAL_TERMINAL_INPUT;
+        if found & w::ENABLE_LINE_INPUT == 0 {
+            line |= w::ENABLE_LINE_INPUT | w::ENABLE_ECHO_INPUT;
+        }
+        // This makes Ctrl+C a signal for the whole console, but without it Enter gives a lone CR and Backspace is a character.
+        line |= w::ENABLE_PROCESSED_INPUT;
+        (line != found && w::SetConsoleMode(stdin, line) != 0).then_some(found)
+    }
+
+    pub(super) fn leave(saved: &w::DWORD) {
+        let _ = w::SetConsoleMode(crate::Fd::stdin().native(), *saved);
+    }
+}
+
 unsafe extern "C" {
     unsafe fn Bun__ttySetMode(fd: c_int, mode: c_int, state: *mut c_void, drain: c_int) -> c_int;
 }

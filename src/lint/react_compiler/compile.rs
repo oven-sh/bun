@@ -42,6 +42,7 @@ fn config_of(flavor: Flavor, has_no_foreign_config: bool) -> EnvironmentConfig {
     let is_oxlint = flavor == Flavor::Oxlint;
     EnvironmentConfig {
         validate_ref_access_during_render: true,
+        functions_that_do_not_converge_read_refs: is_oxlint,
         joined_ref_values_keep_their_place: is_oxlint,
         effects_keep_their_place: is_oxlint,
         jsx_can_be_reordered: false,

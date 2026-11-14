@@ -1,14 +1,18 @@
 use bun_collections::VecExt;
 use core::fmt;
+use std::borrow::Cow;
 use std::io::Write as _;
 
 use crate::cli::publish_command as Publish;
+use crate::cli::run_command::{ConfigureEnvOptions, RunCommand};
 use crate::cli::{Command, cli_arena};
 use bun_alloc::AllocError;
 use bun_archive::tar;
 use bun_ast::{E, Expr, ExprData};
 use bun_collections::StringHashMap;
+use bun_core::ZBox;
 use bun_core::{Global, Output, Progress, fmt as bun_fmt};
+use bun_core::{ZStr, strings};
 use bun_glob as glob;
 use bun_install::PackageManager;
 use bun_install::package_manager::LogLevel;
@@ -16,13 +20,8 @@ use bun_install::package_manager::workspace_manifests::WorkspaceManifests;
 use bun_install::package_manager::workspace_package_json_cache as WorkspacePackageJSONCache;
 use bun_js_printer as js_printer;
 use bun_parsers::json as JSON;
-use bun_paths::{self as path, SEP_STR};
-use bun_ptr::cow_slice::CowSlice;
-type CowString = CowSlice<u8>;
-use crate::cli::run_command::{ConfigureEnvOptions, RunCommand};
-use bun_core::ZBox;
-use bun_core::{ZStr, strings};
 use bun_paths::resolve_path::{self, normalize_buf_z_spill};
+use bun_paths::{self as path, SEP_STR};
 use bun_sha_hmac::sha;
 use bun_sys::{
     self, CloseOnDrop, Dir, Fd, FdDirExt as _, FdExt as _, File, dir_iterator as DirIterator,
@@ -339,8 +338,8 @@ impl Drop for WalkedDir {
 fn iterate_included_project_tree(
     pack_queue: &mut PackQueue,
     bins: &[BinInfo],
-    includes: &[Pattern],
-    excludes: &[Pattern],
+    includes: &[Pattern<'_>],
+    excludes: &[Pattern<'_>],
     root_dir: &Dir,
     log_level: LogLevel,
 ) -> Result<(), AllocError> {
@@ -1022,12 +1021,12 @@ fn find_dependencies_to_bundle(
 fn iterate_project_tree(
     pack_queue: &mut PackQueue,
     bins: &[BinInfo],
-    files_excludes: Option<&[Pattern]>,
+    files_excludes: Option<&[Pattern<'_>]>,
     root_dir: DirInfo,
     log_level: LogLevel,
 ) -> Result<(), AllocError> {
     let root_depth = root_dir.2;
-    let mut ignores: Vec<IgnorePatterns> = Vec::new();
+    let mut ignores: Vec<IgnorePatterns<'_>> = Vec::new();
 
     if let Some(excludes) = files_excludes.filter(|excludes| !excludes.is_empty()) {
         ignores.push(IgnorePatterns {
@@ -1319,7 +1318,7 @@ fn is_excluded<'a>(
     entry: &DirIterator::IteratorResult,
     entry_subpath: &'a ZStr,
     dir_depth: usize,
-    ignores: &'a [IgnorePatterns],
+    ignores: &'a [IgnorePatterns<'_>],
     inherited: &'a InheritedIgnore,
 ) -> Exclusion<'a> {
     let entry_name = entry.name.slice_u8();
@@ -1417,7 +1416,7 @@ fn is_excluded<'a>(
 }
 
 /// Returns true if a negated pattern could match a path below the directory `dir_rel`.
-fn negation_reaches_below(pattern: &Pattern, dir_rel: &[u8]) -> bool {
+fn negation_reaches_below(pattern: &Pattern<'_>, dir_rel: &[u8]) -> bool {
     // Without a slash it un-ignores entries of the directories that are walked, and opens none.
     if !pattern.flags.contains(PatternFlags::REL_PATH) {
         return false;
@@ -1488,8 +1487,8 @@ pub(crate) fn published_files(
     let Some(mut files_array) = files.as_array() else {
         fail_files();
     };
-    let mut includes: Vec<Pattern> = Vec::new();
-    let mut excludes: Vec<Pattern> = Vec::new();
+    let mut includes: Vec<Pattern<'_>> = Vec::new();
+    let mut excludes: Vec<Pattern<'_>> = Vec::new();
     let mut path_buf = bun_paths::path_buffer_pool::get();
     let mut path_spill: Vec<u8> = Vec::new();
     while let Some(files_entry) = files_array.next() {
@@ -2740,8 +2739,8 @@ fn edit_root_package_json(
 
 /// A glob pattern used to ignore or include files in the project tree.
 /// Might come from .npmignore, .gitignore, or `files` in package.json
-pub(crate) struct Pattern {
-    pub(crate) glob: glob::Prepared<CowString>,
+pub(crate) struct Pattern<'a> {
+    pub(crate) glob: glob::Prepared<Cow<'a, [u8]>>,
     pub(crate) flags: PatternFlags,
 }
 
@@ -2757,8 +2756,8 @@ bitflags::bitflags! {
     }
 }
 
-impl Pattern {
-    pub(crate) fn from_utf8(pattern: &[u8]) -> Option<Pattern> {
+impl Pattern<'_> {
+    pub(crate) fn from_utf8(pattern: &[u8]) -> Option<Pattern<'static>> {
         let mut flags = PatternFlags::empty();
         // Any number of leading `!` counts as one.
         let mut remain = strings::trim_leading_char(pattern, b'!');
@@ -2785,26 +2784,24 @@ impl Pattern {
             false => b"",
         };
         Some(Pattern {
-            glob: glob::Prepared::new(CowString::init_owned(
-                [negation, remain].concat().into_boxed_slice(),
-            )),
+            glob: glob::Prepared::new(Cow::Owned([negation, remain].concat())),
             flags,
         })
     }
 
     /// Invert a negated pattern to a positive pattern
-    pub(crate) fn as_positive(&self) -> Pattern {
+    pub(crate) fn as_positive(&self) -> Pattern<'_> {
         debug_assert!(self.flags.contains(PatternFlags::NEGATED));
         Pattern {
             // remove the leading `!`
-            glob: glob::Prepared::new(self.glob.source().borrow_subslice(1, None)),
+            glob: glob::Prepared::new(Cow::Borrowed(&self.glob.pattern()[1..])),
             flags: self.flags.difference(PatternFlags::NEGATED),
         }
     }
 }
 
-struct IgnorePatterns {
-    pub list: Box<[Pattern]>,
+struct IgnorePatterns<'a> {
+    pub list: Box<[Pattern<'a>]>,
     pub kind: IgnorePatternsKind,
     pub depth: usize,
     /// At least one of the patterns has a leading or middle slash, so a relative path is needed.
@@ -2824,7 +2821,7 @@ pub(crate) enum IgnorePatternsKind {
     PackageJson,
 }
 
-impl IgnorePatterns {
+impl IgnorePatterns<'_> {
     /// Fatal, because otherwise the tarball would include the files that were supposed to be
     /// ignored.
     fn ignore_file_fail(
@@ -2881,7 +2878,7 @@ impl IgnorePatterns {
     }
 
     /// ignore files are always ignored, don't need to worry about opening or reading twice
-    fn read_from_disk(dir: &Dir, dir_depth: usize) -> Option<IgnorePatterns> {
+    fn read_from_disk(dir: &Dir, dir_depth: usize) -> Option<IgnorePatterns<'static>> {
         let mut opened: Option<(File, IgnorePatternsKind)> = None;
         for kind in [IgnorePatternsKind::Npmignore, IgnorePatternsKind::Gitignore] {
             match dir.open_file(<&str>::from(kind).as_bytes(), bun_sys::O::RDONLY, 0) {
@@ -2899,7 +2896,7 @@ impl IgnorePatterns {
             .read_to_end()
             .unwrap_or_else(|err| Self::ignore_file_fail(dir, ignore_kind, "read", err));
 
-        let mut patterns: Vec<Pattern> = Vec::new();
+        let mut patterns: Vec<Pattern<'_>> = Vec::new();
         let mut has_rel_path = false;
 
         for line in strings::split(strings::without_utf8_bom(&contents), b"\n") {

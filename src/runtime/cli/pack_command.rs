@@ -1275,12 +1275,12 @@ pub(crate) fn bin_kind_without_following_symlinks(
 /// `published_files` has already queued the bins, so the walks skip them.
 fn is_listed_bin(bins: &[BinInfo], ty: BinType, subpath: &ZStr) -> bool {
     bins.iter()
-        .any(|bin| bin.ty == ty && strings::eql_long(bin.path.as_bytes(), subpath.as_bytes(), true))
+        .any(|bin| bin.ty == ty && strings::eql_long(bin.path.as_bytes(), subpath.as_bytes()))
 }
 
 fn is_package_bin(bins: &[BinInfo], maybe_bin_path: &[u8]) -> bool {
     bins.iter().any(|bin| match bin.ty {
-        BinType::File => strings::eql_long(bin.path.as_bytes(), maybe_bin_path, true),
+        BinType::File => strings::eql_long(bin.path.as_bytes(), maybe_bin_path),
         BinType::Dir => (maybe_bin_path.strip_prefix(bin.path.as_bytes()))
             .and_then(|remain| remain.strip_prefix(b"/"))
             .is_some_and(|name| !name.is_empty() && !strings::contains_char(name, b'/')),

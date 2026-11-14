@@ -1462,15 +1462,15 @@ describe("bundler", () => {
       files: {
         "/index.tsx": /* js */ `
           import { Other, other } from "./other";
-          const registered = [];
-          globalThis.$RefreshSig$ = () => t => t;
-          globalThis.$RefreshReg$ = (type, id) => registered.push(id.split(":").pop());
           const memo = (f?: any) => ({ memo: f }), forwardRef = memo, createContext = (_: string) => ({});
           const React = { memo };
-          const useThing = () => 1;
+          const globals: any = globalThis;
+          globals.$RefreshSig$ = () => (t: unknown) => t;
+          globals.$RefreshReg$ = () => {};
+          function useThing() { return 1; }
           const Memo = memo(function Memo() { return useThing(); });
-          const Fwd = forwardRef((props, ref) => null);
-          const Both = memo(forwardRef((props, ref) => null));
+          const Fwd = forwardRef((props: unknown, ref: unknown) => null);
+          const Both = memo(forwardRef((props: unknown, ref: unknown) => null));
           const Dotted = React.memo(() => null);
           const Plain = () => null;
           const Wrapped = memo(Plain);
@@ -1480,14 +1480,17 @@ describe("bundler", () => {
           const Total = Math.max(1, 2);
           const Nothing = memo();
           const lower = memo(() => null);
-          console.log(registered.join());
-          if ([Memo, Fwd, Both, Dotted, Plain, Wrapped, Theme, Total, Nothing, lower, Imported, NotImported].length < 12) throw 0;
+          console.log([Memo, Fwd, Both, Dotted, Plain, Wrapped, Imported, NotImported, Theme, Total, Nothing, lower].length);
         `,
         "/other.ts": `export const Other = 1; export const other = 2;`,
       },
       backend: "cli",
       reactFastRefresh: true,
-      run: { stdout: "Memo,Fwd,Both,Dotted,Plain,Wrapped,Imported" },
+      onAfterBundle(api) {
+        const registered = [...api.readFile("out.js").matchAll(/:(\w+)"\);/g)].map(m => m[1]);
+        expect(registered).toEqual(["Memo", "Fwd", "Both", "Dotted", "Plain", "Wrapped", "Imported"]);
+      },
+      run: { stdout: "12" },
     });
 
     // Each component gets its own signature binding, in the scope its `var` is

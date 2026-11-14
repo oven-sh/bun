@@ -888,7 +888,7 @@ fn spawn_maybe_sync(
         }
     };
 
-    // A memfd left in `stdio` at any return is closed by `Stdio`'s Drop.
+    // A memfd left in `stdio` at any return is closed with it.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     for fd_index in 0..stdio.len() {
         if stdio[fd_index].can_use_memfd() && stdio[fd_index].use_memfd(fd_index as u32) {
@@ -1245,9 +1245,14 @@ fn spawn_maybe_sync(
     }
 
     let mut promise_for_stream: JSValue = JSValue::ZERO;
+    let [stdin, stdout, stderr] = stdio;
+    let stdin_stream = match &stdin {
+        Stdio::ReadableStream(stream) => Some(stream.value),
+        _ => None,
+    };
 
     match Writable::init(
-        &mut stdio[0],
+        stdin,
         event_loop,
         subprocess,
         spawned_stdin,
@@ -1279,7 +1284,7 @@ fn spawn_maybe_sync(
     }
 
     subprocess.stdout.set(Readable::init(
-        &stdio[1],
+        &stdout,
         event_loop,
         subprocess_nn,
         spawned_stdout,
@@ -1287,7 +1292,7 @@ fn spawn_maybe_sync(
         is_sync,
     ));
     subprocess.stderr.set(Readable::init(
-        &stdio[2],
+        &stderr,
         event_loop,
         subprocess_nn,
         spawned_stderr,
@@ -1454,8 +1459,8 @@ fn spawn_maybe_sync(
             Subprocess::js::ipc_callback_set_cached(out, cx.global(), ipc_callback);
         }
 
-        if let Stdio::ReadableStream(rs) = &stdio[0] {
-            Subprocess::js::stdin_set_cached(out, cx.global(), rs.value);
+        if let Some(stream) = stdin_stream {
+            Subprocess::js::stdin_set_cached(out, cx.global(), stream);
         }
 
         // Cache the terminal JS value if a terminal was created

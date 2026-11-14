@@ -974,6 +974,369 @@ describe.concurrent("the original of a mocked module", () => {
     );
   });
 
+  // A mock of a loaded builtin calls its factory at once, before the mock is registered. In the first mock of a run, no mock is registered yet.
+  test.each(isolationFlags)("importOriginal of a builtin that a preload loaded, in the first mock %j", async args => {
+    await expectFixturesToPass(
+      {
+        "preload.ts": `import "node:fs";`,
+        "original.test.ts": `
+          import { expect, jest, test, vi } from "bun:test";
+          import * as fs from "node:fs";
+
+          const given = vi.hoisted(() => ({}));
+          vi.mock("node:fs", async importOriginal => ({ ...(given.original = await importOriginal()), readFileSync: vi.fn(() => "mocked") }));
+
+          test("importOriginal, vi.importActual and jest.requireActual", async () => {
+            expect(fs.readFileSync("x")).toBe("mocked");
+            expect(fs.existsSync(import.meta.path)).toBe(true);
+            expect(require("node:fs").readFileSync).toBe(fs.readFileSync);
+            // What the factory got is not the module that the mock is laid over.
+            expect(given.original.readFileSync(import.meta.path, "utf8")).toContain("importOriginal");
+
+            const actual = await vi.importActual("node:fs");
+            expect(actual).toBe(given.original);
+            expect(actual.existsSync).toBe(fs.existsSync);
+            expect(jest.requireActual("node:fs")).toBe(actual.default);
+          });
+        `,
+      },
+      1,
+      ["--preload", "./preload.ts", ...args],
+    );
+  });
+
+  test("importOriginal of a builtin that the test file loaded, in the first mock", async () => {
+    await expectFixturesToPass(
+      {
+        "mock-module.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          import * as fs from "node:fs";
+
+          let original;
+          const patched = mock.module("node:fs", async importOriginal => ({ ...(original = await importOriginal()), readFileSync: () => "mocked" }));
+
+          test("mock.module() below the import", async () => {
+            await patched;
+            expect([fs.readFileSync("x"), fs.existsSync(import.meta.path)]).toEqual(["mocked", true]);
+            expect(original.readFileSync(import.meta.path, "utf8")).toContain("importOriginal");
+          });
+        `,
+        "do-mock.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import * as os from "node:os";
+
+          test("vi.doMock() in a test", async () => {
+            let original;
+            await vi.doMock("os", async importOriginal => ({ ...(original = await importOriginal()), platform: () => "mocked" }));
+            expect([os.platform(), original.platform(), os.arch()]).toEqual(["mocked", process.platform, process.arch]);
+          });
+        `,
+        "fake.cjs": `exports.fake = () => "mocked";`,
+        "loads-first.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          import * as fs from "node:fs";
+
+          let original;
+          const patched = mock.module("node:fs", async importOriginal => {
+            const { fake } = require("./fake.cjs");
+            return { ...(original = await importOriginal()), readFileSync: fake };
+          });
+
+          test("a factory that loads another module first", async () => {
+            await patched;
+            expect([fs.readFileSync("x"), fs.existsSync(import.meta.path)]).toEqual(["mocked", true]);
+            expect(original.readFileSync(import.meta.path, "utf8")).toContain("importOriginal");
+          });
+        `,
+        "not-awaited.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          import * as path from "node:path";
+
+          let original;
+          mock.module("node:path", importOriginal => ((original = importOriginal()), { basename: () => "mocked" }));
+
+          test("a factory that does not wait for importOriginal()", async () => {
+            expect(path.basename("a/b")).toBe("mocked");
+            expect((await original).basename("a/b")).toBe("b");
+          });
+        `,
+        "bun-builtin.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          import * as sqlite from "bun:sqlite";
+
+          let original;
+          const patched = mock.module("bun:sqlite", async importOriginal => ({ ...(original = await importOriginal()), Database: "mocked" }));
+
+          test("a bun: builtin", async () => {
+            await patched;
+            expect([sqlite.Database, typeof sqlite.Statement, typeof original.Database]).toEqual(["mocked", "function", "function"]);
+          });
+        `,
+        "native.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          import * as buffer from "node:buffer";
+
+          let original;
+          const patched = mock.module("node:buffer", async importOriginal => ({ ...(original = await importOriginal()), kMaxLength: "mocked" }));
+
+          test("a builtin that native code makes", async () => {
+            await patched;
+            expect([buffer.kMaxLength, buffer.Buffer, typeof original.kMaxLength]).toEqual(["mocked", Buffer, "number"]);
+          });
+        `,
+        "native-lazy.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          import * as proc from "node:process";
+
+          let original;
+          const patched = mock.module("node:process", async importOriginal => ({ ...(original = await importOriginal()), arch: "mocked" }));
+
+          test("a builtin that native code makes, with exports that are made on first use", async () => {
+            await patched;
+            expect([proc.arch, proc.platform, original.arch]).toEqual(["mocked", process.platform, process.arch]);
+          });
+        `,
+      },
+      7,
+      // Each file starts in a global object that has never mocked a module.
+      ["--isolate"],
+    );
+  });
+
+  test("importOriginal of a builtin that an earlier test file loaded, in the first mock", async () => {
+    await expectFixturesToPass(
+      {
+        "1-loads.test.ts": `
+          import { expect, test } from "bun:test";
+          import * as fs from "node:fs";
+
+          test("loads the builtin", () => expect(fs.existsSync(import.meta.path)).toBe(true));
+        `,
+        "2-mocks.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import * as fs from "node:fs";
+
+          const given = vi.hoisted(() => ({}));
+          vi.mock("node:fs", async importOriginal => ({ ...(given.original = await importOriginal()), readFileSync: () => "mocked" }));
+
+          test("mocks it", () => {
+            expect([fs.readFileSync("x"), fs.existsSync(import.meta.path)]).toEqual(["mocked", true]);
+            expect(given.original.readFileSync(import.meta.path, "utf8")).toContain("importOriginal");
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  test("importOriginal of a builtin with no mock registered, and while another original of it loads", async () => {
+    await expectFixturesToPass(
+      {
+        "clear-all.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          import * as os from "node:os";
+          import * as path from "node:path";
+
+          test("in a factory that Bun.plugin.clearAll() left running", async () => {
+            const platform = os.platform();
+            const cleared = Promise.withResolvers();
+            const original = Promise.withResolvers();
+            const patched = mock.module("node:os", async importOriginal => {
+              await cleared.promise;
+              original.resolve(importOriginal());
+              return { ...(await original.promise), platform: () => "mocked" };
+            });
+            Bun.plugin.clearAll();
+            cleared.resolve();
+            expect((await original.promise).platform()).toBe(platform);
+            await patched;
+            expect(os.platform()).toBe(platform);
+          });
+
+          test("by an importOriginal that is first called after Bun.plugin.clearAll()", async () => {
+            let importOriginal;
+            mock.module("node:path", original => ((importOriginal = original), { basename: () => "mocked" }));
+            expect(path.basename("a/b")).toBe("mocked");
+            Bun.plugin.clearAll();
+            expect((await importOriginal()).basename("a/b")).toBe("b");
+          });
+        `,
+        "same-tick.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          import * as os from "node:os";
+
+          test("two mocks of one builtin in the same tick", async () => {
+            const originals = {};
+            const factory = name => async importOriginal => ({ ...(originals[name] = await importOriginal()), platform: () => name });
+            await Promise.all([mock.module("node:os", factory("first")), mock.module("node:os", factory("second"))]);
+            expect([os.platform(), originals.first.platform(), originals.second.platform()]).toEqual(["second", process.platform, process.platform]);
+          });
+        `,
+        "copy.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          import * as os from "node:os";
+
+          // A mock is registered, so this is about the copy alone. The second factory asks while "node:os?actual" loads, and gets "node:os?actual&actual".
+          mock.module("not-a-builtin", () => ({}));
+
+          test("two mocks of one builtin, a microtask apart", async () => {
+            const originals = {};
+            const factory = name => async importOriginal => ({ ...(originals[name] = await importOriginal()), platform: () => name });
+            const first = mock.module("node:os", factory("first"));
+            await null;
+            const second = mock.module("node:os", factory("second"));
+            await Promise.all([first, second]);
+            expect([os.platform(), originals.first.platform(), originals.second.platform()]).toEqual(["second", process.platform, process.platform]);
+            expect(originals.second).not.toBe(originals.first);
+          });
+        `,
+        "require.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import * as sqlite from "bun:sqlite";
+
+          const given = vi.hoisted(() => ({}));
+          vi.mock("bun:sqlite", () => ({ ...(given.original = require("bun:sqlite")), Database: "mocked" }));
+
+          test("require() of the builtin in its own factory, which the first import calls", () => {
+            expect([sqlite.Database, typeof sqlite.Statement, typeof given.original.Database]).toEqual(["mocked", "function", "function"]);
+          });
+        `,
+      },
+      5,
+      ["--isolate"],
+    );
+  });
+
+  // Under bun test a plugin is asked before the builtins, so one that serves a builtin serves the original of its mock too.
+  test("importOriginal of a builtin that a plugin serves, and a module that a plugin names like an original", async () => {
+    const served = `
+      import { expect, test, vi } from "bun:test";
+      import * as os from "node:os";
+
+      const given = vi.hoisted(() => ({}));
+      vi.mock("node:os", async importOriginal => ({ ...(given.original = await importOriginal()), platform: () => "mocked" }));
+
+      test("the plugin is shown the path of the builtin, and what it serves has the name of the builtin", () => {
+        expect([os.platform(), given.original.platform(), given.original.shown]).toEqual(["mocked", "plugin", "os"]);
+        expect(given.original.frame).toMatch(/ node:os:\\d+:\\d+$/);
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        "preload.ts": `
+          import { plugin } from "bun";
+
+          plugin({
+            name: "serves node:os",
+            setup(build) {
+              build.onLoad({ filter: /^os$/, namespace: "node" }, args => ({
+                contents:
+                  'export const platform = () => "plugin"; export const shown = ' +
+                  JSON.stringify(args.path) +
+                  "; export const frame = new Error().stack.split(String.fromCharCode(10))[1];",
+                loader: "js",
+              }));
+            },
+          });
+          // After the plugin, so that it serves this one too.
+          await import("node:os");
+        `,
+        "first-mock.test.ts": served,
+        "later-mock.test.ts": served.replace("const given", `vi.mock("not-a-builtin", () => ({}));\n      const given`),
+        "named.test.ts": `
+          import { plugin } from "bun";
+          import { expect, test } from "bun:test";
+
+          plugin({
+            name: "names a module like an original",
+            setup: build => void build.module("node:zlib?actual", () => ({ exports: { from: "plugin" }, loader: "object" })),
+          });
+
+          test("import() asks the plugin for it, and require() of a node: name asks the builtins alone", async () => {
+            const required = require("node:zlib?actual");
+            expect([(await import("node:zlib?actual")).from, typeof required.gzipSync]).toEqual(["plugin", "function"]);
+          });
+        `,
+      },
+      3,
+      ["--preload", "./preload.ts", "--isolate"],
+    );
+  });
+
+  test("the original of a builtin, outside bun test", async () => {
+    using dir = tempDir("mock-module", {
+      "run.ts": `
+        import { plugin } from "bun";
+        import { mock, vi } from "bun:test";
+        import * as sqlite from "bun:sqlite";
+        import * as fs from "node:fs";
+        import * as os from "node:os";
+        import * as path from "node:path";
+
+        // Outside bun test no plugin is asked for a builtin, so none is asked for its original.
+        const asked = [];
+        plugin({
+          name: "records what it is asked for",
+          setup(build) {
+            for (const namespace of ["node", "bun"]) build.onLoad({ filter: /.*/, namespace }, args => void asked.push(args.path));
+          },
+        });
+
+        let original;
+        await mock.module("node:fs", async importOriginal => ({ ...(original = await importOriginal()), readFileSync: () => "mocked" }));
+
+        mock.module("node:os", () => ({ platform: () => "mocked" }));
+        const actual = await vi.importActual("node:os");
+
+        const required = {};
+        await mock.module("node:path", async () => {
+          await null;
+          required.path = require("node:path");
+          return { basename: () => "mocked" };
+        });
+        await mock.module("bun:sqlite", async () => {
+          await null;
+          required.sqlite = require("bun:sqlite");
+          return { Database: "mocked" };
+        });
+
+        // A module that a plugin names like the original of a builtin is still the plugin's.
+        plugin({
+          name: "names a module like an original",
+          setup: build => void build.module("node:zlib?actual", () => ({ exports: { from: "plugin" }, loader: "object" })),
+        });
+        const virtual = await import("node:zlib?actual");
+
+        console.log(JSON.stringify({
+          importOriginal: [fs.readFileSync("x"), original.readFileSync(import.meta.path, "utf8").includes("importOriginal")],
+          importActual: [os.platform(), actual.platform() === process.platform],
+          require: [path.basename("a/b"), required.path.basename("a/b"), sqlite.Database, typeof required.sqlite.Database],
+          asked,
+          virtual: virtual.from,
+        }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: JSON.stringify({
+        importOriginal: ["mocked", true],
+        importActual: ["mocked", true],
+        require: ["mocked", "b", "mocked", "function"],
+        asked: [],
+        virtual: "plugin",
+      }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test("require() returns the original until an async factory settles", async () => {
     await expectFixturesToPass(
       {

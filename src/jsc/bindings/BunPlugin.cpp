@@ -916,9 +916,12 @@ extern "C" int ModuleLoader__builtinAliasIndex(const Latin1Character*, size_t);
 
 static std::optional<ASCIILiteral> builtinModuleOfOriginalKey(const String& key)
 {
-    if (!key.is8Bit() || !key.endsWith("?actual"_s))
+    if (!key.is8Bit())
         return std::nullopt;
-    int index = ModuleLoader__builtinAliasIndex(key.span8().data(), key.length() - "?actual"_s.length());
+    String name = withoutOriginalModuleQuery(key);
+    if (name.isEmpty() || name.length() == key.length())
+        return std::nullopt;
+    int index = ModuleLoader__builtinAliasIndex(name.span8().data(), name.length());
     if (index < 0)
         return std::nullopt;
     return Bun::builtinModuleKeys[index];
@@ -1139,7 +1142,7 @@ __attribute__((minsize)) static JSObject* esmExportsBeforePatches(Zig::GlobalObj
     // Reading a builtin's exports would force its lazy ones, and the caller can load it again for free.
     String specifier = mock->specifier->value(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    if (builtinModuleOfOriginalKey(originalModuleKey(specifier)))
+    if (isBuiltinModuleKey(specifier))
         return nullptr;
 
     LoadedModule loaded;
@@ -8588,7 +8591,13 @@ Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObj
 JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specifier, bool& wasModuleMock, Zig::BunPlugin::OnLoad::Matches& onLoad)
 {
     auto fallback = [&]() -> JSC::JSValue {
-        return globalObject->onLoadPlugins.run(globalObject, specifier->toWTFString(BunString::ZeroCopy), onLoad);
+        JSC::JSValue answer = globalObject->onLoadPlugins.run(globalObject, specifier->toWTFString(BunString::ZeroCopy), onLoad);
+        // What a plugin serves for the original of a builtin has the builtin's name, as what it serves for the builtin has.
+        if (answer) [[unlikely]] {
+            if (auto builtin = Zig::builtinModuleOfOriginalKey(specifier->toWTFString(BunString::ZeroCopy)))
+                *specifier = Bun::toStringView(*builtin);
+        }
+        return answer;
     };
 
     if (isBunTest && !Zig::JSMock__isInPreload(globalObject)) {
@@ -8670,9 +8679,6 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
 
         return result;
     }
-
-    if (auto builtin = Zig::builtinModuleOfOriginalKey(specifierString))
-        *specifier = Bun::toStringView(*builtin);
 
     if (Zig::isModuleMockEvaluatorKey(specifierString)) {
         auto& vm = JSC::getVM(globalObject);

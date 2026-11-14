@@ -1,10 +1,22 @@
 import { describe, expect } from "bun:test";
-import { bunEnv, bunExe, isAndroid, isLinux, isMacOS, isWindows, libcPathForDlopen, tempDir } from "harness";
-import { copyFileSync, readdirSync } from "node:fs";
+import {
+  bunEnv,
+  bunExe,
+  isAndroid,
+  isASAN,
+  isDebug,
+  isLinux,
+  isMacOS,
+  isWindows,
+  libcPathForDlopen,
+  tempDir,
+} from "harness";
+import { copyFileSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isHardened, locksEnvironment } from "./hardened";
-import { unsupported, withoutCoreDump } from "./harness/commands";
+import { built, limitOfARun, limitWithASAN, slot, unsupported, withoutCoreDump } from "./harness/commands";
 import { afterAll, test } from "./harness/default-timeout";
+import { withoutDebugInformation } from "./harness/without-debug-information";
 
 const programs = join(import.meta.dir, "without-executable-memory");
 const control = "asks-for-executable-memory";
@@ -14,6 +26,19 @@ const names = readdirSync(programs)
   .map(name => name.slice(0, -3))
   .filter(name => name !== control)
   .sort();
+
+// What each program prints. A program that is added to the folder gets a line here.
+const printed: Record<string, string> = {
+  "callbacks-from-foreign-functions": "1,3,5,9\n",
+  "classes-maps-and-promises": 'TypeError\n707108.284 42 {"a":[1,2,{"b":"c"}]} 42\n',
+  "code-made-at-run-time": "60900000000 44999850000\n",
+  "foreign-functions": "5\n",
+  "hot-runtime-regexp": "(a+b|c)*d[0-9]{2,}x? 400000 4666660\n",
+  "many-runtime-regexps": "8000 a+b+c 1,22,333\n",
+  "regions-for-generated-code": "0\n",
+  "server-and-client": "hello /199 true 3\n",
+  "webassembly": "-1474936480\n",
+};
 
 const hasLinuxKernel = isLinux || isAndroid;
 
@@ -90,6 +115,9 @@ process.exit(exitCode[0]);
 `;
 const refuses = isWindows ? refusesOnWindows : refusesOnLinux;
 
+// Bun ends the children of a test that timed out only where the test ran alone. Here a command that hangs is ended at the limit that spawned() of the harness gives one, and what that leaves fails its test.
+const limitOfACommand = isASAN || isDebug ? limitWithASAN : limitOfARun;
+
 async function run(cmd: string[], cwd?: string) {
   await using proc = Bun.spawn({
     cmd,
@@ -97,10 +125,21 @@ async function run(cmd: string[], cwd?: string) {
     env: { ...bunEnv, ...(locksEnvironment ? { BUN_ENABLE_CRASH_REPORTING: "0" } : { BUN_CRASH_REPORT_URL: "" }) },
     stdout: "pipe",
     stderr: "pipe",
+    timeout: limitOfACommand,
+    killSignal: "SIGKILL",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode, signalCode: proc.signalCode };
 }
+type Run = Awaited<ReturnType<typeof run>>;
+
+/** What a run that prints `stdout` and nothing else comes to. */
+const prints = (stdout: string | ReturnType<typeof expect.stringMatching>) => ({
+  stdout,
+  stderr: "",
+  exitCode: 0,
+  signalCode: null,
+});
 
 const tsconfigWithTypesOfBun = JSON.stringify({
   compilerOptions: { strict: true, typeRoots: [join(import.meta.dir, "..", "..", "packages")], types: ["bun-types"] },
@@ -109,40 +148,50 @@ const tsconfigWithTypesOfBun = JSON.stringify({
 const folder = tempDir("aot-without-executable-memory", {
   "refuses.ts": refuses,
   "tsconfig.json": tsconfigWithTypesOfBun,
+  ...Object.fromEntries(
+    [control, ...names].map(name => [name + ".ts", readFileSync(join(programs, name + ".ts"), "utf8")]),
+  ),
 });
 afterAll(() => folder[Symbol.dispose]());
 const directory = String(folder);
 
+async function compile(name: string, outfile: string, ...flags: string[]) {
+  const executable = join(directory, outfile + (isWindows ? ".exe" : ""));
+  const source = join(directory, name + ".ts");
+  const cmd = [bunExe(), "build", "--compile", ...flags, ...withoutDebugInformation, source, "--outfile", executable];
+  // On macOS the builds start before the tests, where `--max-concurrency` bounds nothing: a slot does.
+  built(await slot(() => run(cmd, directory)));
+  return executable;
+}
+
 const executables = new Map<string, Promise<string>>();
-/** Each program is built once, for the first test that asks. */
-const build = (name: string) =>
-  executables.getOrInsertComputed(name, async () => {
-    const executable = join(directory, name + (isWindows ? ".exe" : ""));
-    await Bun.write(join(directory, name + ".ts"), Bun.file(join(programs, name + ".ts")));
-    const built = await run(
-      [bunExe(), "build", "--compile", "--aot", join(directory, name + ".ts"), "--outfile", executable],
-      directory,
-    );
-    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
-    return executable;
-  });
+/** Each program is built once with `--aot`, when it is first asked for. */
+const build = (name: string) => executables.getOrInsertComputed(name, () => compile(name, name, "--aot"));
 
 const isSupported = !unsupported;
 
-async function whereItIsRefused(executable: string, onLinux: "refuse" | "kill" = "kill") {
+const startedHardened = new Map<string, Promise<Run>>();
+function whereItIsRefused(executable: string, onLinux: "refuse" | "kill" = "kill") {
   if (hasLinuxKernel || isWindows)
     return run(withoutCoreDump([bunExe(), join(directory, "refuses.ts"), executable, onLinux]));
-  const hardened = executable + "-hardened";
-  copyFileSync(executable, hardened);
-  const signed = await run(["codesign", "--force", "--sign", "-", "--options", "runtime", hardened]);
-  expect(signed.exitCode).toBe(0);
-  return run([hardened]);
+  // One copy with the hardened runtime for each executable, signed and started once: the control is asked before the tests, and its test reads the same answer.
+  return startedHardened.getOrInsertComputed(executable, async () => {
+    const hardened = executable + "-hardened";
+    copyFileSync(executable, hardened);
+    const signed = await run(["codesign", "--force", "--sign", "-", "--options", "runtime", hardened]);
+    expect({ stderr: signed.stderr, exitCode: signed.exitCode }).toEqual({ stderr: signed.stderr, exitCode: 0 });
+    return run([hardened]);
+  });
 }
 
 // A Mac with System Integrity Protection off does not enforce the hardened runtime: nothing is refused there, so the control has nothing to show. The regions are counted all the same.
+// Only a run that prints `granted` and nothing else says so. Any other run is for the control to report.
 async function isRefusedNowhere() {
   if (!isMacOS || !isSupported) return false;
-  return (await whereItIsRefused(await build(control))).stdout === "granted\n";
+  // The tests wait for this answer, so the other builds start behind that of the control. A build that fails is reported by the test that asks for it.
+  const executable = build(control);
+  for (const name of names) build(name).catch(() => {});
+  return Bun.deepEquals(await whereItIsRefused(await executable), prints("granted\n"));
 }
 const refusedNowhere = await isRefusedNowhere();
 if (refusedNowhere)
@@ -151,57 +200,46 @@ if (refusedNowhere)
   );
 
 describe.skipIf(!isSupported)("an executable needs no permission to make memory executable", () => {
-  test.skipIf(refusedNowhere)(
+  test.concurrent.skipIf(refusedNowhere)(
     "the control: what asks for executable memory gets it, and is refused it there",
     async () => {
       const executable = await build(control);
-      const hasDeniedItself = isHardened || (await run([executable, "has-it-denied-itself"])).stdout === "yes\n";
-      expect(await run([executable])).toEqual({
-        stdout: hasDeniedItself ? "refused\n" : "granted\n",
-        stderr: "",
-        exitCode: 0,
-        signalCode: null,
-      });
-      expect(await whereItIsRefused(executable, "refuse")).toEqual({
-        stdout: "refused\n",
-        stderr: "",
-        exitCode: 0,
-        signalCode: null,
-      });
-      if (hasLinuxKernel)
-        expect(await whereItIsRefused(executable)).toMatchObject({ stdout: "", signalCode: "SIGSYS" });
+      // A hardened build has always denied itself such memory. Another has where the kernel has a request for that (Linux since 6.3), so it is asked there.
+      const [asked, free, refused, killed] = await Promise.all([
+        hasLinuxKernel && !isHardened ? run([executable, "has-it-denied-itself"]) : undefined,
+        run([executable]),
+        whereItIsRefused(executable, "refuse"),
+        hasLinuxKernel ? whereItIsRefused(executable) : undefined,
+      ]);
+      if (asked) expect(asked).toEqual(prints(expect.stringMatching(/^(yes|no)\n$/)));
+      const hasDeniedItself = isHardened || asked?.stdout === "yes\n";
+      expect(free).toEqual(prints(hasDeniedItself ? "refused\n" : "granted\n"));
+      expect(refused).toEqual(prints("refused\n"));
+      if (killed) expect(killed).toMatchObject({ stdout: "", stderr: "", signalCode: "SIGSYS" });
     },
     120_000,
   );
 
-  test("an executable has no region for generated code, and the same program with the JIT has", async () => {
-    expect(await run([await build(counts)])).toEqual({
-      stdout: "0\n",
-      stderr: "",
-      exitCode: 0,
-      signalCode: null,
-    });
-    const withTheJIT = join(directory, "with-the-jit");
-    const built = await run(
-      [bunExe(), "build", "--compile", join(directory, counts + ".ts"), "--outfile", withTheJIT],
-      directory,
-    );
-    expect(built.exitCode).toBe(0);
-    expect(Number((await run([withTheJIT])).stdout)).toBeGreaterThan(0);
-  }, 120_000);
+  test.concurrent(
+    "an executable has no region for generated code, and the same program with the JIT has",
+    async () => {
+      const [compiled, withTheJIT] = await Promise.all([
+        build(counts).then(executable => run([executable])),
+        compile(counts, "with-the-jit").then(executable => run([executable])),
+      ]);
+      expect(compiled).toEqual(prints("0\n"));
+      expect(withTheJIT).toEqual(prints(expect.stringMatching(/^[1-9][0-9]*\n$/)));
+    },
+    120_000,
+  );
 
   test.concurrent.each(names)(
     "%s",
     async name => {
       const executable = await build(name);
-      const free = await run([executable]);
-      expect({ stderr: free.stderr, exitCode: free.exitCode, signalCode: free.signalCode }).toEqual({
-        stderr: "",
-        exitCode: 0,
-        signalCode: null,
-      });
-      expect(free.stdout).not.toBe("");
-      expect(await whereItIsRefused(executable)).toEqual(free);
+      const [free, refused] = await Promise.all([run([executable]), whereItIsRefused(executable)]);
+      expect(free).toEqual(prints(printed[name]));
+      expect(refused).toEqual(prints(printed[name]));
     },
     120_000,
   );

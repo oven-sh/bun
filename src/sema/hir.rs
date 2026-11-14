@@ -26,8 +26,9 @@ mod tests;
 pub use crate::check::aot::DiagnosticClass;
 pub use expr_flags::{ExprFlags, MemberKey, TemplatePart, kind_flags};
 pub use runtime_syntax::{
-    find_runtime_constructor, find_super_call_statement, find_transpiled_mark, has_runtime_member,
-    is_marked_as_commonjs, is_moved_to_file_start, is_proto_setter, parameter_properties,
+    find_runtime_constructor, find_super_call_statement, find_transpiled_mark,
+    find_transpiled_mark_alone, has_runtime_member, is_marked_as_commonjs, is_moved_to_file_start,
+    is_proto_setter, parameter_properties,
 };
 
 macro_rules! define_id {

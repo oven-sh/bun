@@ -17,11 +17,11 @@ use bun_sema_driver::typed_files::{
     ModuleTypes, Output, annotate_implicit_any, build_typed_files, emitted_declarations_of,
     module_types, tsconfig_of_sources, typed_path_beside,
 };
-use bun_sema_driver::{Diagnostic, PlanOptions, Report, Request};
+use bun_sema_driver::{Category, Diagnostic, PlanOptions, Report, Request};
 use bun_threading::Guarded;
 
 use super::declarations::{LIBS_WITHOUT_CONFIGURATION, bundler_path};
-use super::{Entries, Paths, already_read, request, script_kinds_by_extension, with_pages};
+use super::{Entries, Paths, request, script_kinds_by_extension, with_pages};
 
 const SKIPPED_TYPED_FILES: &str =
     "the .aot.ts files that --aot compiles a package from are left out";
@@ -98,15 +98,16 @@ impl NotedModuleTypes {
 }
 
 // What costs a package its types in the build of a program that installs it.
+fn costs_types(reported: &Diagnostic) -> bool {
+    let origin = FileOrigin::DependencySource;
+    effect_of(origin, reported.class, reported.category) != Effect::Dropped
+}
+
 fn first_error(report: &Report) -> Option<&Diagnostic> {
-    report.diagnostics.iter().find(|reported| {
-        let effect = effect_of(
-            FileOrigin::DependencySource,
-            reported.class,
-            reported.category,
-        );
-        effect != Effect::Dropped
-    })
+    report
+        .diagnostics
+        .iter()
+        .find(|reported| costs_types(reported))
 }
 
 type Texts = Vec<(Vec<u8>, Vec<u8>)>;
@@ -276,6 +277,7 @@ pub(crate) fn typed_files_for_build(
     let sources_tsconfig = tsconfig;
     let tsconfig_path = without_sources.as_ref().map(|file| bundler_path(&file.0));
     let tsconfig = tsconfig_path.as_deref();
+    // Returns the report, and the errors of the first pass: after it, `annotate_implicit_any` writes into the files.
     let check = |typed: &mut Texts, declarations: &Texts, libs: &Texts| {
         let paths: Vec<Vec<u8>> = (typed.iter().chain(libs))
             .map(|file| file.0.clone())
@@ -287,23 +289,31 @@ pub(crate) fn typed_files_for_build(
             conditions,
         });
         let request = request(cwd, tsconfig, &entries, &[], 0, None);
+        let mut first_errors: Vec<(Vec<u8>, u32, u32)> = Vec::new();
         let mut rounds = 0;
         loop {
             let texts = typed.iter().chain(declarations).chain(libs);
-            let texts = texts.chain(&without_sources);
             let provided = Provided {
-                already_read: already_read(cwd, &mut texts.map(|file| (&file.0[..], &file.1[..]))),
+                already_read: texts.chain(&without_sources).cloned().collect(),
                 ..Default::default()
             };
             let provided = with_pages(cwd, provided);
             let report = bun_sema_driver::check_provided_then(&request, provided, |report| report);
             rounds += 1;
+            if rounds == 1 {
+                let is_error = |reported: &&Diagnostic| {
+                    reported.category == Category::Error || costs_types(reported)
+                };
+                let errors = report.diagnostics.iter().filter(is_error);
+                first_errors
+                    .extend(errors.map(|error| (error.path.clone(), error.start, error.code)));
+            }
             if rounds == 3 || !annotate_implicit_any(typed, &report.diagnostics) {
-                return report;
+                return (report, first_errors);
             }
         }
     };
-    let without_emitted_declarations = build_typed_files(outdir, &outputs, modules, &[]);
+    let without_emitted_declarations = build_typed_files(outdir, &outputs, modules, &[], true);
     let untyped_modules = without_emitted_declarations
         .as_ref()
         .map_or(&[][..], |found| &found.modules_of_untyped_values[..]);
@@ -336,9 +346,8 @@ pub(crate) fn typed_files_for_build(
             after_file: Some(&note),
             ..request(cwd, sources_tsconfig, &entries, options, 0, None)
         };
-        let mut texts = emitted.iter().map(|file| (&file.0[..], &file.1[..]));
         let provided = Provided {
-            already_read: already_read(cwd, &mut texts),
+            already_read: emitted.iter().cloned().collect(),
             ..Default::default()
         };
         bun_sema_driver::check_provided_then(&request, with_pages(cwd, provided), |_| ());
@@ -346,7 +355,7 @@ pub(crate) fn typed_files_for_build(
     let emitted_modules = emitted_modules.take();
     let found = match emitted_modules.is_empty() {
         true => without_emitted_declarations,
-        false => build_typed_files(outdir, &outputs, modules, &emitted_modules),
+        false => build_typed_files(outdir, &outputs, modules, &emitted_modules, true),
     };
     let mut warn = |why: core::fmt::Arguments<'_>| {
         log.add_warning_fmt(
@@ -360,11 +369,27 @@ pub(crate) fn typed_files_for_build(
         Ok(found) => found,
         Err(why) => return warn(format_args!("{why}")),
     };
-    let report = check(
+    let (mut report, errors) = check(
         &mut found.typed,
         &found.declarations_while_checked,
         &newest_lib,
     );
+    let passes = |report: &Report| first_error(report).is_none() && report.incomplete.is_empty();
+    // `export {}` makes what a script declares local. The text without it is written where `export {}` adds an error.
+    if (!errors.is_empty() || !report.incomplete.is_empty())
+        && found.empty_exports > 0
+        && let Ok(mut plain) = build_typed_files(outdir, &outputs, modules, &emitted_modules, false)
+    {
+        let declarations = &plain.declarations_while_checked;
+        let (plain_report, plain_errors) = check(&mut plain.typed, declarations, &newest_lib);
+        // `export {}` is the last line of its file, so an error that both texts have starts at the same offset in both.
+        let adds_an_error = !report.incomplete.is_empty()
+            || (errors.iter()).any(|error| !plain_errors.iter().any(|it| it == error));
+        let passes_alone = passes(&report) && !passes(&plain_report);
+        if adds_an_error && !passes_alone {
+            (found, report) = (plain, plain_report);
+        }
+    }
     if let Some(first) = first_error(&report) {
         let path = bundler_path(&first.path);
         let separator = std::path::MAIN_SEPARATOR_STR.as_bytes();
@@ -378,7 +403,8 @@ pub(crate) fn typed_files_for_build(
             &mut found.typed,
             &found.declarations_while_checked,
             &Vec::new(),
-        );
+        )
+        .0;
         let under = match first_error(&without_newest_lib) {
             None => {
                 " under \"lib\": [\"esnext\"], which a project that installs the package may have"

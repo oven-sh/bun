@@ -1738,15 +1738,30 @@ pub fn parse_windows_t<T: PathCharCwd>(path: &[T]) -> PathParsed<'_, T> {
 /// Based on Node v21.6.1 path.posix.relative:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1193
 pub fn relative_posix_t<'a, T: PathCharCwd>(
-    from: &[T], to: &[T], buf: &'a mut [T], from_buf: &mut [T], tmp_buf: &mut [T],
+    from: &[T],
+    to: &[T],
+    buf: &'a mut [T],
+    from_buf: &mut [T],
+    tmp_buf: &mut [T],
 ) -> &'a [T] {
     relative_posix_with_cwd::<T, core::convert::Infallible, _>(
-        from, to, buf, from_buf, tmp_buf, |buf| Ok(posix_cwd_t(buf)),
-    ).unwrap_or_else(|never| match never {})
+        from,
+        to,
+        buf,
+        from_buf,
+        tmp_buf,
+        |buf| Ok(posix_cwd_t(buf)),
+    )
+    .unwrap_or_else(|never| match never {})
 }
 
 pub fn relative_posix_with_cwd<'a, T: PathCharCwd, E, F>(
-    from: &[T], to: &[T], buf: &'a mut [T], from_buf: &mut [T], tmp_buf: &mut [T], mut get_cwd: F,
+    from: &[T],
+    to: &[T],
+    buf: &'a mut [T],
+    from_buf: &mut [T],
+    tmp_buf: &mut [T],
+    mut get_cwd: F,
 ) -> Result<&'a [T], E>
 where
     F: for<'b> FnMut(&'b mut [T]) -> Result<&'b mut [T], E>,
@@ -1758,10 +1773,23 @@ where
 
     // Trim leading forward slashes.
     // Backed by from_buf.
-    let from_orig = resolve_posix_with_cwd::<T, _, _, false>(&[from], from_buf, tmp_buf, MAX_PATH_SIZE_UPPER, &mut get_cwd)?;
+    let from_orig = resolve_posix_with_cwd::<T, _, _, false>(
+        &[from],
+        from_buf,
+        tmp_buf,
+        MAX_PATH_SIZE_UPPER,
+        &mut get_cwd,
+    )?;
     let from_orig_len = from_orig.len();
     // Backed by buf.
-    let to_orig_len = resolve_posix_with_cwd::<T, _, _, false>(&[to], buf, tmp_buf, MAX_PATH_SIZE_UPPER, &mut get_cwd)?.len();
+    let to_orig_len = resolve_posix_with_cwd::<T, _, _, false>(
+        &[to],
+        buf,
+        tmp_buf,
+        MAX_PATH_SIZE_UPPER,
+        &mut get_cwd,
+    )?
+    .len();
     let to_orig = &buf[0..to_orig_len];
 
     if from_orig == to_orig {
@@ -1877,15 +1905,30 @@ where
 /// Based on Node v21.6.1 path.win32.relative:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L500
 pub fn relative_windows_t<'a, T: PathCharCwd>(
-    from: &[T], to: &[T], buf: &'a mut [T], from_buf: &mut [T], tmp_buf: &mut [T],
+    from: &[T],
+    to: &[T],
+    buf: &'a mut [T],
+    from_buf: &mut [T],
+    tmp_buf: &mut [T],
 ) -> &'a [T] {
     relative_windows_with_cwd::<T, core::convert::Infallible, _>(
-        from, to, buf, from_buf, tmp_buf, |buf| Ok(get_cwd_t(buf)),
-    ).unwrap_or_else(|never| match never {})
+        from,
+        to,
+        buf,
+        from_buf,
+        tmp_buf,
+        |buf| Ok(get_cwd_t(buf)),
+    )
+    .unwrap_or_else(|never| match never {})
 }
 
 pub fn relative_windows_with_cwd<'a, T: PathCharCwd, E, F>(
-    from: &[T], to: &[T], buf: &'a mut [T], from_buf: &mut [T], tmp_buf: &mut [T], mut get_cwd: F,
+    from: &[T],
+    to: &[T],
+    buf: &'a mut [T],
+    from_buf: &mut [T],
+    tmp_buf: &mut [T],
+    mut get_cwd: F,
 ) -> Result<&'a [T], E>
 where
     F: for<'b> FnMut(&'b mut [T]) -> Result<&'b mut [T], E>,
@@ -1896,10 +1939,23 @@ where
     }
 
     // Backed by from_buf.
-    let from_orig = resolve_windows_with_cwd::<T, _, _, false>(&[from], from_buf, tmp_buf, MAX_PATH_SIZE_UPPER, &mut get_cwd)?;
+    let from_orig = resolve_windows_with_cwd::<T, _, _, false>(
+        &[from],
+        from_buf,
+        tmp_buf,
+        MAX_PATH_SIZE_UPPER,
+        &mut get_cwd,
+    )?;
     let from_orig_len = from_orig.len();
     // Backed by buf.
-    let to_orig_len = resolve_windows_with_cwd::<T, _, _, false>(&[to], buf, tmp_buf, MAX_PATH_SIZE_UPPER, &mut get_cwd)?.len();
+    let to_orig_len = resolve_windows_with_cwd::<T, _, _, false>(
+        &[to],
+        buf,
+        tmp_buf,
+        MAX_PATH_SIZE_UPPER,
+        &mut get_cwd,
+    )?
+    .len();
 
     if from_orig == &buf[0..to_orig_len] || eql_ignore_case_t(from_orig, &buf[0..to_orig_len]) {
         return Ok(&[]);
@@ -2066,8 +2122,13 @@ pub fn resolve_posix_t<'a, T: PathCharCwd>(
     buf2: &mut [T],
 ) -> &'a [T] {
     resolve_posix_with_cwd::<T, core::convert::Infallible, _, false>(
-        paths, buf, buf2, MAX_PATH_SIZE_UPPER, |buf| Ok(posix_cwd_t::<T>(buf)),
-    ).unwrap_or_else(|never| match never {})
+        paths,
+        buf,
+        buf2,
+        MAX_PATH_SIZE_UPPER,
+        |buf| Ok(posix_cwd_t::<T>(buf)),
+    )
+    .unwrap_or_else(|never| match never {})
 }
 
 pub fn resolve_posix_with_cwd<'a, T: PathCharCwd, E, F, const ALLOW_LONG_CWD: bool>(
@@ -2193,8 +2254,13 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
     buf2: &mut [T],
 ) -> &'a [T] {
     resolve_windows_with_cwd::<T, core::convert::Infallible, _, false>(
-        paths, buf, buf2, MAX_PATH_SIZE_UPPER, |buf| Ok(get_cwd_t::<T>(buf)),
-    ).unwrap_or_else(|never| match never {})
+        paths,
+        buf,
+        buf2,
+        MAX_PATH_SIZE_UPPER,
+        |buf| Ok(get_cwd_t::<T>(buf)),
+    )
+    .unwrap_or_else(|never| match never {})
 }
 
 pub fn resolve_windows_with_cwd<'a, T: PathCharCwd, E, F, const ALLOW_LONG_CWD: bool>(

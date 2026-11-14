@@ -762,9 +762,7 @@ fn native_path_result<'a>(
     result: Result<&[u8], NativePathError>,
 ) -> bindgen::Result<'a, Option<Text<'a>>> {
     match result {
-        Ok(answer) => heap
-            .create_utf8_string(answer)
-            .map(Some),
+        Ok(answer) => heap.create_utf8_string(answer).map(Some),
         Err(NativePathError::ObservableCwd) => Ok(None),
     }
 }
@@ -1295,7 +1293,9 @@ fn resolve_other_with_scope<'a, const WINDOWS: bool>(
     }
     let values: SmallVec<[JSValue; FEW]> = paths.iter().map(|path| path.to_js()).collect();
     let value = resolve_observable(cx.global(), WINDOWS, &values)?;
-    Ok(JsLocal::new(&cx.heap, value).as_string().expect("path resolution returns a string"))
+    Ok(JsLocal::new(&cx.heap, value)
+        .as_string()
+        .expect("path resolution returns a string"))
 }
 
 #[inline(always)]
@@ -1398,10 +1398,7 @@ pub(crate) fn resolve_posix<'a>(cx: &mut JsScope<'a>, paths: &'a [JsLocal<'a>]) 
 }
 
 #[inline(always)]
-pub(crate) fn resolve_win32<'a>(
-    cx: &mut JsScope<'a>,
-    paths: &'a [JsLocal<'a>],
-) -> TextResult<'a> {
+pub(crate) fn resolve_win32<'a>(cx: &mut JsScope<'a>, paths: &'a [JsLocal<'a>]) -> TextResult<'a> {
     resolve_with_scope::<true>(cx, paths)
 }
 

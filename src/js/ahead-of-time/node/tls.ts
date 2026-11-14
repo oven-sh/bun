@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/tls.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 ee5ac146f5e92a0a2950d437cd7548198b4a2f79feaf5905835737dbf1d982eb.
+// Written against that file with the SHA-256 9779eb92083d8138be587f9852f9929506e63c7d50ee20e856e8613b4706a47d.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:tls"
@@ -1172,15 +1172,10 @@ TLSSocket.prototype.getX509Certificate = function getX509Certificate(this: $Node
   return this._handle?.getX509Certificate?.();
 };
 
-TLSSocket.prototype[buntls] = function (this: $Node.TLSSocket, port: unknown, host: string | null | undefined) {
+TLSSocket.prototype[buntls] = function (this: $Node.TLSSocket) {
   const ctx = this[ksecureContext];
-  // RFC 6066 forbids IP literals in SNI. Match Node.js: only default servername to host
-  // when host is not an IP. For IP hosts, pass "" so the native layer skips SNI instead of
-  // falling back to the connection host.
-  let servername = this.servername || this[kservername] || ctx?.servername;
-  if (servername === undefined) {
-    servername = host && !net.isIP(host) ? host : "";
-  }
+  // An empty native serverName suppresses its connection-host fallback; tls.connect does not infer SNI.
+  const servername = this.servername || this[kservername] || "";
   return {
     ALPNProtocols: this.ALPNProtocols,
     checkServerIdentity: this[kcheckServerIdentity],

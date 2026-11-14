@@ -1,5 +1,6 @@
 use core::ffi::c_void;
 use core::fmt;
+use std::borrow::Cow;
 
 use crate::Ordinal;
 use crate::internal_source_map::ObjectBrace;
@@ -15,11 +16,8 @@ use crate::{
 pub struct ParsedSourceMap {
     pub mappings: mapping::List,
     /// Set when this map's mappings are backed by an InternalSourceMap blob
-    /// instead of a materialized `Mapping.List`. The blob is *owned* (freed in
-    /// `Drop`) unless [`Self::standalone_module_graph`] is set — in that case the
-    /// bytes live in the embedded `bun build --compile` section and are
-    /// borrowed.
-    pub(crate) internal: Option<InternalSourceMap>,
+    /// instead of a materialized `Mapping.List`.
+    internal: Option<Cow<'static, [u8]>>,
 
     /// If this is empty, this implies that the source code is a single file
     /// transpiled on-demand. If there are items, then it means this is a file
@@ -38,26 +36,6 @@ pub struct ParsedSourceMap {
 
     /// Set for a map of the standalone module graph: what its source code is read from.
     pub standalone_module_graph: Option<&'static crate::SerializedSourceMap::Loaded>,
-}
-
-impl Drop for ParsedSourceMap {
-    fn drop(&mut self) {
-        // When the mappings are backed
-        // by an `InternalSourceMap` blob the blob is *owned* (allocated by
-        // `SavedSourceMap::put_mappings`) unless this is the
-        // standalone-module-graph case where the bytes live in the embedded
-        // section. The doc on the `internal` field only describes that latter
-        // borrowed case; the owned case is the runtime-transpiler upgrade in
-        // `SavedSourceMap::get_with_content`, which previously stranded the
-        // blob and showed up as the `print_ast` LSan suppression.
-        //
-        // `mappings`/`external_source_names` free via their own `Drop`.
-        if let Some(ism) = self.internal.take() {
-            if self.standalone_module_graph.is_none() {
-                ism.free_owned();
-            }
-        }
-    }
 }
 
 impl Default for ParsedSourceMap {
@@ -101,7 +79,7 @@ unsafe fn erased_get_source_map<P: SourceProvider>(
 
 /// An erased source provider: the raw FFI handle plus the `get_source_map`
 /// dispatch monomorphized for its concrete type. Recovered from a
-/// [`SourceContentPtr`], or stored whole (boxed) where the pair must travel
+/// [`SourceContentPtr`], or stored whole where the pair must travel
 /// together (`bun_jsc::SavedSourceMap`'s provider entries).
 #[derive(Clone, Copy)]
 pub struct AnySourceProvider {
@@ -183,42 +161,19 @@ impl SourceContentPtr {
 }
 
 impl ParsedSourceMap {
-    /// Thread-safe ref-count helper.
-    ///
-    /// Every
-    /// table-stored `ParsedSourceMap` is allocated via `Arc::into_raw` (see
-    /// `SavedSourceMap::get_with_content` and `ParseUrl.map:
-    /// Option<Arc<ParsedSourceMap>>`), so the strong count lives in the `Arc`
-    /// header *before* the data pointer. Reconstituting that pointer with
-    /// `heap::take` would free an interior offset and trips
-    /// `mi_validate_block_from_ptr` (mimalloc free.c:123). Route through
-    /// `Arc::decrement_strong_count` instead — same observable
-    /// `deref()` semantics, with the allocator that
-    /// actually owns the bytes.
-    ///
-    /// # Safety
-    /// `this` must come from `Arc::<Self>::into_raw` and must still have at
-    /// least one strong ref. Drops the allocation when the count reaches 0.
-    #[inline]
-    pub unsafe fn deref(this: *mut Self) {
-        // SAFETY: caller contract — `this` is a live `Arc::into_raw` pointer.
-        unsafe { std::sync::Arc::decrement_strong_count(this.cast_const()) };
-    }
-
     /// Construct a `ParsedSourceMap` whose mappings are backed by an
     /// `InternalSourceMap` blob (e.g. one embedded in a `bun build --compile`
     /// executable's standalone module graph) instead of a materialized
-    /// `mapping::List`. Ownership of the blob transfers to the returned value
-    /// (freed in `Drop`) unless the caller subsequently sets
-    /// [`Self::standalone_module_graph`].
-    pub fn from_internal(internal: InternalSourceMap) -> Self {
+    /// `mapping::List`.
+    pub fn from_internal(blob: Cow<'static, [u8]>) -> Self {
         Self {
-            mappings: mapping::List::default(),
-            internal: Some(internal),
-            external_source_names: Vec::new(),
-            underlying_provider: SourceContentPtr::NONE,
-            standalone_module_graph: None,
+            internal: Some(blob),
+            ..Default::default()
         }
+    }
+
+    fn internal(&self) -> Option<InternalSourceMap<'_>> {
+        InternalSourceMap::new(self.internal.as_deref()?)
     }
 
     pub fn is_external(&self) -> bool {
@@ -226,7 +181,7 @@ impl ParsedSourceMap {
     }
 
     pub fn find_mapping(&self, line: Ordinal, column: Ordinal) -> Option<Mapping> {
-        if let Some(ism) = &self.internal {
+        if let Some(ism) = self.internal() {
             return ism.find(line, column);
         }
         self.mappings.find(line, column)
@@ -234,7 +189,7 @@ impl ParsedSourceMap {
 
     /// Every mapping, in generated order.
     pub fn for_each_mapping(&self, mut each: impl FnMut(Mapping)) {
-        if let Some(ism) = &self.internal {
+        if let Some(ism) = self.internal() {
             return ism.for_each(each);
         }
         let (generated, original, source_index) = (
@@ -254,14 +209,14 @@ impl ParsedSourceMap {
 
     /// The mappings of the braces of object literals, if the printer marked them.
     pub fn for_each_object_brace(&self, each: impl FnMut(ObjectBrace)) {
-        if let Some(ism) = &self.internal {
+        if let Some(ism) = self.internal() {
             ism.for_each_object_brace(each);
         }
     }
 
     pub fn memory_cost(&self) -> usize {
-        let mappings_cost = if let Some(ism) = &self.internal {
-            ism.memory_cost()
+        let mappings_cost = if let Some(blob) = &self.internal {
+            blob.len()
         } else {
             self.mappings.memory_cost()
         };
@@ -274,7 +229,7 @@ impl ParsedSourceMap {
         &self,
         writer: &mut W,
     ) -> bun_io::Result<()> {
-        if let Some(ism) = &self.internal {
+        if let Some(ism) = self.internal() {
             let mut buf = bun_core::MutableString::init_empty();
             ism.append_vlq_to(&mut buf);
             writer.write_all(buf.list.as_slice())?;

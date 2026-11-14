@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { inspect } from "node:util";
+import { EventEmitter } from "node:events";
+import { inspect, types } from "node:util";
 
 describe("DOMException in Node.js environment", () => {
   it("exists globally", () => {
@@ -68,6 +69,30 @@ describe("DOMException in Node.js environment", () => {
     const error = new DOMException("boom", "AbortError");
     expect(Error.isError(error)).toBe(true);
     expect(Object.prototype.toString.call(error)).toBe("[object DOMException]");
+  });
+
+  it("Error.isError checks the internal error brand rather than prototypes", () => {
+    const error = new DOMException("aborted", "AbortError");
+    Object.setPrototypeOf(error, null);
+    expect(Error.isError(error)).toBe(true);
+
+    expect(Error.isError(Object.create(DOMException.prototype))).toBe(false);
+    expect(Error.isError(new Proxy(new DOMException("wrapped"), {}))).toBe(false);
+  });
+
+  it("is a native error for util.types.isNativeError", () => {
+    expect(types.isNativeError(new DOMException("boom", "AbortError"))).toBe(true);
+  });
+
+  it("an 'error' event with no listener rethrows the DOMException itself", () => {
+    const error = new DOMException("boom", "AbortError");
+    let thrown;
+    try {
+      new EventEmitter().emit("error", error);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBe(error);
   });
 
   it("captures a stack trace", () => {
@@ -189,6 +214,27 @@ describe("DOMException in Node.js environment", () => {
       { stack: undefined, own: ["stack"] },
       { stack: undefined, own: ["stack"] },
     ]);
+  });
+
+  it("postMessage preserves a DOMException including its stack", async () => {
+    const original = new DOMException("boom", "AbortError");
+    const { port1, port2 } = new MessageChannel();
+    try {
+      const { promise, resolve } = Promise.withResolvers();
+      port2.onmessage = event => resolve(event.data);
+      port1.postMessage(original);
+      const received = await promise;
+      expect(received).toBeInstanceOf(DOMException);
+      expect(Error.isError(received)).toBe(true);
+      expect({ name: received.name, message: received.message, stack: received.stack }).toEqual({
+        name: "AbortError",
+        message: "boom",
+        stack: original.stack,
+      });
+    } finally {
+      port1.close();
+      port2.close();
+    }
   });
 
   it("works with Error.captureStackTrace", () => {

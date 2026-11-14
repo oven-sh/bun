@@ -43,6 +43,8 @@ test/js/bun/test/mock/mock-module.test.ts: the next --rerun-each run gets the or
 test/js/bun/test/mock/mock-module.test.ts: a running factory's imports don't wait for its own mock > while another running factory imports a module that waits for this one's mock
 # The next one never ends compiled: an import cycle is first loaded by vi.importActual() of the mocked module, whose factory takes importOriginal.
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > the cycle is first loaded by vi.importActual() of the mocked module
+# The next one never ends compiled: a module that a running factory loads imports the module that the factory mocks, and no file is that module.
+test/js/bun/test/mock/mock-module.test.ts: the original of a mocked module > of a module that the resolver does not find, for a module that the factory of its mock loads
 # This one: a require() gives up on a mock whose factory has not settled, and the mock is removed or replaced. Every test of the fixture passes. Plain runs what the require() had begun to load once more.
 test/js/bun/test/mock/mock-module.test.ts: a running factory's imports don't wait for its own mock > after it has removed its mock, or all of them
 # This one: the factory has a parameter, so compiled code has an original of its own for it, and the importers that get the original as they are run another. The closing notice names the file.

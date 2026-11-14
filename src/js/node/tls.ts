@@ -1,5 +1,5 @@
 // Hardcoded module "node:tls"
-const { isArrayBufferView } = require("node:util/types");
+const { isAnyArrayBuffer, isArrayBufferView } = require("node:util/types");
 const net = require("node:net");
 const Duplex = require("internal/streams/duplex");
 const EventEmitter = require("node:events");
@@ -725,7 +725,12 @@ function TLSSocket(socket?, options?) {
     validateFunction(checkServerIdentityOption, "options.checkServerIdentity");
   }
   this[kcheckServerIdentity] = checkServerIdentityOption || checkServerIdentity;
-  this[ksession] = options.session || null;
+  const session = options.session;
+  // Node's handle refuses the session here too: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/tls/wrap.js#L1000-L1001
+  if (session && typeof session !== "string" && !isArrayBufferView(session) && !isAnyArrayBuffer(session)) {
+    throw $ERR_INVALID_ARG_TYPE("options.session", ["string", "Buffer", "TypedArray", "DataView"], session);
+  }
+  this[ksession] = session || null;
 
   // Both upgrades live in net.ts (module-private state); _handle stays unset until one hands back the TLS handle.
   if (isNetSocketOrDuplex) {

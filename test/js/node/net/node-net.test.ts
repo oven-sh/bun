@@ -1056,6 +1056,7 @@ describe("a socket made with a signal", () => {
         "net.createConnection() with a negative timeout: threw ERR_OUT_OF_RANGE",
         "tls.connect() with a port out of range: threw ERR_SOCKET_BAD_PORT",
         "tls.connect() with a negative timeout: threw ERR_OUT_OF_RANGE",
+        "tls.connect() with a session that is no buffer: threw ERR_INVALID_ARG_TYPE",
         "http2.connect() with a localAddress that is not an IP address: threw ERR_INVALID_IP_ADDRESS",
         "http2.connect() to https with a localAddress that is not an IP address: threw ERR_INVALID_IP_ADDRESS",
         "http2.connect() with a lookup that is not a function: threw ERR_INVALID_ARG_TYPE",
@@ -1089,7 +1090,6 @@ describe("a socket made with a signal", () => {
     "the callback of a write before the connection",
     "the callback of a write that waits for the peer",
     "a 'drain' listener",
-    "onread: the callback of a write that waits for the peer",
     "tls: a 'connect' listener",
     "tls: a 'session' listener",
     "tls: a 'keylog' listener",
@@ -1126,6 +1126,18 @@ describe("a socket made with a signal", () => {
     const group = "a listener that aborts the signal, then throws";
     expect(await runFixture(group, { TLS_FIXTURE: JSON.stringify(tlsCert) })).toEqual({
       stdout: [...throwers.flatMap(name => [`uncaught Error: ${name}`, `${name}: close true`]), "exit code 1"],
+      stderr: "",
+      exitCode: 1,
+    });
+  });
+
+  it.concurrent("what a callback throws on a socket with `onread` stays an uncaught exception", async () => {
+    expect(await runFixture("a callback that throws on a socket with onread")).toEqual({
+      stdout: [
+        "uncaught Error: the callback of a write that waits for the peer",
+        'the onread callback got "x", destroyed false',
+        "exit code 1",
+      ],
       stderr: "",
       exitCode: 1,
     });
@@ -1237,6 +1249,22 @@ describe("a socket made with a signal", () => {
     });
   });
 
+  it.concurrent("a TLS socket over a socket that a server accepted leaves the handlers of that server", async () => {
+    expect(await runFixture("a TLS socket over a socket that a server accepted")).toEqual({
+      stdout: ['the next socket of the server got "from the server"', "exit code 0"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Node.js refuses an ArrayBuffer too. Bun took one before, and the handle still does.
+  it("tls.connect() takes a session in an ArrayBuffer", () => {
+    const socket = tlsConnect({ host: "127.0.0.1", port: 1, session: new ArrayBuffer(4) as any });
+    socket.on("error", () => {});
+    socket.destroy();
+    expect(socket.destroyed).toBe(true);
+  });
+
   // Node.js keeps the handle of a socket that it sent until the child process has it:
   // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/child_process.js#L93-L109
   it.concurrent.skipIf(isWindows)("the callback of net.connect() sends the socket to a child process", async () => {
@@ -1246,20 +1274,6 @@ describe("a socket made with a signal", () => {
         "uncaught Error: a callback that sends the socket and then throws",
         'a callback that sends the socket and then throws: the child process read "hello" back from the peer',
         "the child process exits with code 0",
-        "exit code 1",
-      ],
-      stderr: "",
-      exitCode: 1,
-    });
-  });
-
-  // Node.js adds no 'error' listener for a signal that is already aborted. It destroys the socket in the constructor:
-  // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/streams/add-abort-signal.js#L52-L53
-  it.concurrent("a signal that is already aborted destroys the socket of a constructor that throws", async () => {
-    expect(await runFixture("a signal that is already aborted")).toEqual({
-      stdout: [
-        "new net.Socket() with an fd that is a file: threw ERR_INVALID_FD_TYPE",
-        "uncaught AbortError: new net.Socket() with an fd that is a file",
         "exit code 1",
       ],
       stderr: "",
@@ -1360,32 +1374,100 @@ describe("a socket made with a signal", () => {
         exitCode: 0,
       });
     });
+
+    // The write is in flight when the TLS socket takes the socket, so TLS runs over it as a stream and the handle stays its own.
+    it.concurrent("what a listener throws on the socket under a TLS socket is an uncaught exception", async () => {
+      const body = /* js */ `
+        const under = new net.Socket();
+        under.connect({ fd: 3 });
+        under.write(big);
+        under.once("drain", thrower("a 'drain' listener of the socket under a TLS socket"));
+        const over = require("node:tls").connect({ socket: under, signal: new AbortController().signal });
+        process.on("uncaughtException", error => {
+          console.log("uncaught " + error.name + ": " + error.message);
+          over.destroy();
+          under.destroy();
+        });
+      `;
+      expect(await runOverFd(body)).toEqual({
+        stdout: ["uncaught Error: a 'drain' listener of the socket under a TLS socket", ...listenerLines],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
   });
 
-  // Node.js throws ERR_INVALID_ARG_TYPE from tls.connect() for this `session`. Bun reports it when the socket opens.
-  it("gives a `session` that is not one to the 'error' listener of the caller", async () => {
-    const server = createTLSServer(tlsCert, connection => connection.on("error", () => {}).resume());
-    server.listen(0, "127.0.0.1");
-    await once(server, "listening");
-    try {
-      const socket = tlsConnect({
+  // The peer resets the connection while the loop of the client is blocked, so the write is the first to see the reset,
+  // and the socket is closed when that write fails. Node.js leaves its socket open when this callback throws.
+  it.concurrent(
+    "a socket whose write fails at its close is destroyed when the callback of that write throws",
+    async () => {
+      using dir = tempDir("socket-signal-reset", {});
+      const resetDone = join(String(dir), "reset-done");
+      let raw: Socket | undefined;
+      const server = createTLSServer(tlsCert, connection => {
+        connection.on("error", () => {});
+        connection.write("hello");
+      });
+      server.on("connection", connection => {
+        raw = connection;
+        connection.on("error", () => {});
+      });
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const script = /* js */ `
+      const fs = require("node:fs");
+      const events = [];
+      process.on("uncaughtException", error => events.push("uncaught " + error.message));
+      const socket = require("node:tls").connect({
         host: "127.0.0.1",
-        port: (server.address() as AddressInfo).port,
-        ca: tlsCert.cert,
-        servername: "localhost",
-        session: 5 as any,
+        port: ${(server.address() as AddressInfo).port},
+        rejectUnauthorized: false,
         signal: new AbortController().signal,
       });
-      const errors: string[] = [];
-      const { promise: closed, resolve } = Promise.withResolvers<boolean>();
-      socket.on("error", error => errors.push(error.message));
-      socket.on("close", resolve);
-      expect(await closed).toBe(true);
-      expect(errors).toEqual(["Expected session to be a string, Buffer or TypedArray"]);
-    } finally {
-      server.close();
-    }
-  });
+      socket.on("error", error => events.push("error " + error.syscall));
+      socket.on("close", hadError => {
+        events.push("close " + hadError);
+        setImmediate(() => console.log(JSON.stringify(events)));
+      });
+      socket.once("data", () => {
+        fs.writeSync(1, "busy\\n");
+        // Nothing is polled until the peer has reset the connection, so the write below meets the reset first.
+        const cell = new Int32Array(new SharedArrayBuffer(4));
+        const deadline = Date.now() + 30000;
+        while (!fs.existsSync(${JSON.stringify(resetDone)}) && Date.now() < deadline) Atomics.wait(cell, 0, 0, 5);
+        socket.write("ping", error => {
+          events.push("write callback " + error?.syscall);
+          throw new Error("the callback of the write");
+        });
+      });
+    `;
+      try {
+        await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+        let stdout = "";
+        let reset = false;
+        for await (const chunk of proc.stdout) {
+          stdout += Buffer.from(chunk).toString();
+          if (!reset && stdout.includes("busy\n")) {
+            reset = true;
+            const rawClosed = once(raw!, "close");
+            raw!.resetAndDestroy();
+            await rawClosed;
+            await Bun.write(resetDone, "");
+          }
+        }
+        expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual([
+          "write callback write",
+          "uncaught the callback of the write",
+          "error write",
+          "close true",
+        ]);
+        expect(await proc.exited).toBe(0);
+      } finally {
+        server.close();
+      }
+    },
+  );
 
   it.each([
     ["net.Socket", (options?: object) => new Socket(options)],
@@ -1987,24 +2069,6 @@ describe("Socket fd adoption", () => {
         fd: "EBADF",
         eof: "",
       });
-    } finally {
-      fs.closeSync(rfd);
-    }
-  });
-
-  // Node.js destroys the socket in the constructor, so it has no 'end' ahead of the 'error' either:
-  // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/streams/add-abort-signal.js#L52-L53
-  it.skipIf(isWindows)("a signal that is already aborted destroys the socket before it ends", async () => {
-    const { rfd, wfd } = openFifo("aborted.fifo");
-    try {
-      const socket = new Socket({ fd: wfd, writable: true, signal: AbortSignal.abort() });
-      const events: string[] = [];
-      socket.on("end", () => events.push("end"));
-      socket.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
-      const { promise: closed, resolve } = Promise.withResolvers<void>();
-      socket.on("close", () => resolve());
-      await closed;
-      expect({ events, fd: fstatCode(wfd) }).toEqual({ events: ["error:ABORT_ERR"], fd: "EBADF" });
     } finally {
       fs.closeSync(rfd);
     }

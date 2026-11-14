@@ -174,9 +174,7 @@ interface TLSConnectOptions {
   servername: string;
 }
 
-interface InternalSocketHandler<Data> extends Omit<SocketHandler<Data>, "open"> {
-  /** The native dispatch takes an Error that this returns for one that it threw. */
-  open?(socket: Socket<Data>): unknown;
+interface InternalSocketHandler<Data> extends SocketHandler<Data> {
   session?(socket: Socket<Data>, session: Buffer): void;
   keylog?(socket: Socket<Data>, line: Buffer): void;
 }
@@ -410,7 +408,9 @@ function failWriteWith(self, er, callback) {
     // 'close' still fire even when every write had a callback. Only handing
     // the error to a callback that ignores it left the socket alive forever
     // (test-net-stream's server never observed its peer vanish).
-    callback(er);
+    // An open socket stays open when this throws, as in Node. A closed one has no other way to its destroy().
+    if (self[kclosed]) failWriteCallbackOf(self, callback, er);
+    else callback(er);
     if (!self.destroyed && !self._hadError) {
       // _hadError is the cross-path once-guard: the native error dispatch
       // (SocketHandlers.error) can deliver the same failure, and node emits
@@ -644,19 +644,29 @@ function reportingHandlers<Handlers extends object>(handlers: Handlers): Handler
   }
   return wrapped;
 }
+function reportThrows(socket) {
+  const handlers = socket[khandlers];
+  socket[kReportsThrows] = true;
+  return (socket[khandlers] =
+    handlers === SocketHandlers2
+      ? (signalHandlers ??= reportingHandlers(SocketHandlers2))
+      : reportingHandlers(handlers));
+}
 // onUpgradedError gives the 'error' of the socket under a TLS socket to the TLS socket, where the listener that addAbortSignal() added takes it.
 function reportThrowsUnder(connection) {
   const handle = connection._handle;
   const data = handle?.data;
-  // Only a handle that its socket dialed has the table of that socket, and `{ self }` for data. An accepted one has its listener's.
-  if (data != null && data.self !== connection) return;
-  const handlers = connection[khandlers];
-  connection[khandlers] =
-    handlers === SocketHandlers2
-      ? (signalHandlers ??= reportingHandlers(SocketHandlers2))
-      : reportingHandlers(handlers);
-  connection[kReportsThrows] = true;
-  if (data != null) handle.reload({ socket: connection[khandlers] });
+  let handlers;
+  if (data == null || data.self === connection) {
+    handlers = reportThrows(connection);
+  } else if (data === connection && !connection.isServer) {
+    // connect({ fd }) made this handle. An accepted one has the table of its listener, for every socket of that listener.
+    connection[kReportsThrows] = true;
+    handlers = signalFdHandlers ??= reportingHandlers(SocketHandlers);
+  } else {
+    return;
+  }
+  if (data != null) handle.reload({ socket: handlers });
 }
 // in node's code this callback is called 'onReadableStreamEnd' but that seemed confusing when `ReadableStream`s now exist
 function onSocketEnd() {
@@ -1728,13 +1738,8 @@ const SocketHandlers2 = {
       if (options) {
         const { session } = options;
         if (session) {
-          try {
-            // On the native socket: an fd upgrade assigns `_handle` after `open`.
-            socket.setSession(typeof session === "string" ? Buffer.from(session, "latin1") : session);
-          } catch (e) {
-            // No listener's throw: the native dispatch gives an error that `open` returns to `error`, and closes the socket.
-            return e;
-          }
+          // On the native socket: an fd upgrade assigns `_handle` after `open`.
+          socket.setSession(typeof session === "string" ? Buffer.from(session, "latin1") : session);
         }
       }
     }
@@ -2096,20 +2101,6 @@ function Socket(options?): void {
   this._sockname = null;
   this._closeAfterHandlingError = false;
 
-  if (signal) {
-    if (signal.aborted) {
-      // addAbortSignal() would destroy the socket at once, and the connect() that follows would un-destroy it and dial.
-      process.nextTick(destroyNT, this, $makeAbortError(undefined, { cause: signal.reason }));
-    } else {
-      // Node's Duplex constructor does this: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/streams/duplex.js#L123-L124
-      addAbortSignal ??= require("internal/streams/add-abort-signal").addAbortSignal;
-      addAbortSignal(signal, this);
-      // The 'error' listener that addAbortSignal() added would take what a listener of the caller throws: the native dispatch gives that to `error`.
-      this[khandlers] = signalHandlers ??= reportingHandlers(SocketHandlers2);
-      this[kReportsThrows] = true;
-    }
-  }
-
   // Shut down the socket when we're finished with it.
   this.on("end", onSocketEnd);
 
@@ -2249,7 +2240,7 @@ function Socket(options?): void {
     };
     // when the onread option is specified we use a different handlers object
     this[khandlers] = {
-      ...this[khandlers],
+      ...SocketHandlers2,
       data(socket, buffer) {
         const { self } = socket.data;
         if (!self) return;
@@ -2263,6 +2254,17 @@ function Socket(options?): void {
         self[kOnreadDeliver](buffer);
       },
     };
+  }
+  if (signal) {
+    if (signal.aborted) {
+      process.nextTick(destroyNT, this, $makeAbortError(undefined, { cause: signal.reason }));
+    } else {
+      // Node's Duplex constructor does this: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/streams/duplex.js#L123-L124
+      addAbortSignal ??= require("internal/streams/add-abort-signal").addAbortSignal;
+      addAbortSignal(signal, this);
+      // The 'error' listener that addAbortSignal() added would take what a listener of the caller throws: the native dispatch gives that to `error`.
+      reportThrows(this);
+    }
   }
   const optsBlockList = opts.blockList;
   if (optsBlockList) {

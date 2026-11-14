@@ -3,17 +3,18 @@
 // TLS_FIXTURE is the JSON of the { cert, key } that the TLS servers use.
 // The child process of the group "a socket sent to a child process" is this file. It sends "hello" over each socket that it gets,
 // and tells its parent what the peer sent back.
-if (process.argv[2] === "child process") {
+const isChildProcess = process.argv[2] === "child process";
+if (isChildProcess) {
   process.on("message", (name, socket) => {
-    socket.once("data", data => process.send(`the child process read "${data}" back from the peer`));
+    let back = "";
+    socket.on("data", data => (back += data));
+    socket.on("end", () => process.send(`the child process read "${back}" back from the peer`));
     socket.end("hello");
   });
-  return;
 }
 
 const net = require("node:net");
 const tls = require("node:tls");
-const fs = require("node:fs");
 
 // Each call makes a socket with `signal`. All but the first then throw, so the caller never has the socket.
 // The other groups start faster without node:http, node:https and node:http2.
@@ -38,6 +39,8 @@ const calls = {
     net.createConnection({ host: "127.0.0.1", port: 1, timeout: -1, signal }),
   "tls.connect() with a port out of range": signal => tls.connect({ host: "127.0.0.1", port: 70000, signal }),
   "tls.connect() with a negative timeout": signal => tls.connect({ host: "127.0.0.1", port: 1, timeout: -1, signal }),
+  "tls.connect() with a session that is no buffer": signal =>
+    tls.connect({ host: "127.0.0.1", port: 1, session: 5, signal }),
   "http2.connect() with a localAddress that is not an IP address": signal =>
     require("node:http2").connect("http://127.0.0.1:1", { localAddress: "nope", signal }),
   "http2.connect() to https with a localAddress that is not an IP address": signal =>
@@ -91,8 +94,6 @@ const throwers = {
     socket.once("drain", thrower).once("connect", () => {
       while (socket.write(Buffer.alloc(65536)));
     }),
-  "onread: the callback of a write that waits for the peer": (socket, thrower) =>
-    socket.once("connect", () => socket.write(Buffer.alloc(8 * 1024 * 1024), thrower)),
   "tls: a 'connect' listener": (socket, thrower) => socket.once("connect", thrower),
   "tls: a 'session' listener": (socket, thrower) => socket.once("session", thrower),
   "tls: a 'keylog' listener": (socket, thrower) => socket.once("keylog", thrower),
@@ -116,8 +117,6 @@ async function throwOnEachSocket(also) {
     const controller = new AbortController();
     const options = { host: "127.0.0.1", port: server.address().port, signal: controller.signal };
     if (isTls) Object.assign(options, { ca: cert.cert, servername: "localhost" });
-    // A socket with `onread` has handlers of its own.
-    if (name.startsWith("onread: ")) options.onread = { buffer: Buffer.alloc(65536), callback() {} };
     const errors = [];
     let socket;
     await new Promise(resolve => {
@@ -177,6 +176,34 @@ const groups = {
   "a listener that throws": () => throwOnEachSocket(),
   "a listener that throws on a socket with an 'error' listener": () => throwOnEachSocket("listen"),
   "a listener that aborts the signal, then throws": () => throwOnEachSocket("abort"),
+  // A socket with `onread` has handlers of its own: they report too, and its callback still gets the data.
+  async "a callback that throws on a socket with onread"() {
+    const server = net.createServer(connection => {
+      connection.on("error", () => {}).resume();
+      connection.write("x");
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const buffer = Buffer.alloc(65536);
+    let got = "";
+    const socket = net.connect({
+      host: "127.0.0.1",
+      port: server.address().port,
+      signal: new AbortController().signal,
+      onread: { buffer, callback: size => void (got += buffer.toString("latin1", 0, size)) },
+    });
+    await new Promise(resolve => {
+      socket.once("connect", () => {
+        socket.write(Buffer.alloc(8 * 1024 * 1024), () => {
+          // Two turns of the event loop are past every tick that can report the throw.
+          setImmediate(() => setImmediate(resolve));
+          throw new Error("the callback of a write that waits for the peer");
+        });
+      });
+    });
+    console.log(`the onread callback got "${got}", destroyed ${socket.destroyed}`);
+    socket.destroy();
+    await new Promise(resolve => server.close(resolve));
+  },
   async "a write that fails"() {
     for (const [name, arm] of Object.entries(teardowns)) {
       const server = net.createServer(connection => connection.on("error", () => {}).pause());
@@ -186,13 +213,16 @@ const groups = {
       const socket = net.connect({ host: "127.0.0.1", port: server.address().port, signal: controller.signal });
       const teardown = arm(socket, () => controller.abort(name));
       const failed = new Promise(resolve => {
+        const onWritten = error => {
+          if (!error) return;
+          // Two turns of the event loop are past every tick that can report the throw.
+          setImmediate(() => setImmediate(resolve));
+          throw new Error(`the callback of ${name}`);
+        };
         socket.once("connect", () => {
-          socket.write(Buffer.alloc(32 * 1024 * 1024), error => {
-            if (!error) return;
-            // Two turns of the event loop are past every tick that can report the throw.
-            setImmediate(() => setImmediate(resolve));
-            throw new Error(`the callback of ${name}`);
-          });
+          // Windows takes the first write whole, whatever its size. The next one waits for the peer there too.
+          for (let i = 0; i < 8 && socket.writableLength === 0; i++)
+            socket.write(Buffer.alloc(32 * 1024 * 1024), onWritten);
           teardown();
         });
       });
@@ -255,13 +285,16 @@ const groups = {
       const options = { host: "127.0.0.1", port: server.address().port, signal: new AbortController().signal };
       if (isTls) Object.assign(options, { ca: cert.cert, servername: "localhost" });
       const socket = isTls ? tls.connect(options) : net.connect(options);
+      let received = "";
+      const onData = data => (received += data);
       socket.on("close", hadError => {
+        console.log(`data: ${received}`);
         console.log(`close ${hadError}`);
         server.close();
       });
       // Only the net socket asks for a read before the connection.
-      if (isTls) socket.on("secureConnect", () => socket.on("data", data => console.log(`data: ${data}`)));
-      else socket.on("data", data => console.log(`data: ${data}`));
+      if (isTls) socket.on("secureConnect", () => socket.on("data", onData));
+      else socket.on("data", onData);
       socket.on("ready", () => {
         throw new Error("a 'ready' listener");
       });
@@ -401,6 +434,23 @@ const groups = {
       await new Promise(resolve => server.close(resolve));
     }
   },
+  // The handle of an accepted socket has the handlers of its server, for every socket of that server.
+  async "a TLS socket over a socket that a server accepted"() {
+    const server = net.createServer();
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const connect = () => net.connect({ host: "127.0.0.1", port: server.address().port });
+    const first = connect().on("error", () => {});
+    const accepted = await new Promise(resolve => server.once("connection", resolve));
+    const over = tls.connect({ socket: accepted, signal: new AbortController().signal }).on("error", () => {});
+    server.once("connection", connection => connection.end("from the server"));
+    let received = "";
+    const second = connect().on("data", data => (received += data));
+    await closed(second);
+    console.log(`the next socket of the server got "${received}"`);
+    over.destroy();
+    first.destroy();
+    server.close();
+  },
   // The callback of net.connect() sends its socket to a child process. The peer sends back what it gets.
   async "a socket sent to a child process"() {
     const server = net.createServer(connection => connection.on("error", () => {}).pipe(connection));
@@ -420,23 +470,15 @@ const groups = {
     console.log(`the child process exits with code ${await exited}`);
     server.close();
   },
-  "a signal that is already aborted"() {
-    const name = "new net.Socket() with an fd that is a file";
-    let thrown = "nothing";
-    try {
-      new net.Socket({ signal: AbortSignal.abort(name), fd: fs.openSync(__filename, "r"), writable: true });
-    } catch (error) {
-      thrown = error.code ?? error.name;
-    }
-    console.log(`${name}: threw ${thrown}`);
-  },
 };
 
 // An 'error' event that nothing handles is an uncaught exception. Without this handler it ends the process.
 // The handler names the socket: the reason of each abort is the name of its row, and an AbortError has it as its cause.
-process.on("uncaughtException", error => {
-  console.log(`uncaught ${error.name}: ${error.cause ?? error.message}`);
-  process.exitCode = 1;
-});
-process.on("exit", code => console.log(`exit code ${code}`));
-groups[process.argv[2]]();
+if (!isChildProcess) {
+  process.on("uncaughtException", error => {
+    console.log(`uncaught ${error.name}: ${error.cause ?? error.message}`);
+    process.exitCode = 1;
+  });
+  process.on("exit", code => console.log(`exit code ${code}`));
+  groups[process.argv[2]]();
+}

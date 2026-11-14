@@ -1793,6 +1793,17 @@ describe("s3 multipart upload id validation", () => {
 });
 
 describe("s3 upload stream body error", () => {
+  // The S3 client honors the proxy environment, and the stubs are on loopback.
+  const envWithoutProxy = {
+    ...bunEnv,
+    HTTP_PROXY: undefined,
+    HTTPS_PROXY: undefined,
+    ALL_PROXY: undefined,
+    http_proxy: undefined,
+    https_proxy: undefined,
+    all_proxy: undefined,
+  };
+
   // The readStreamIntoSink abrupt path dispatches a single-file PUT before
   // the pump promise rejects; the PUT's response callback must not read a
   // freed MultiPartUpload when fail() runs from the reject handler.
@@ -1905,8 +1916,7 @@ describe("s3 upload stream body error", () => {
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      // The S3 client honors the proxy environment; the stub is on loopback.
-      env: { ...bunEnv, HTTP_PROXY: undefined, HTTPS_PROXY: undefined, http_proxy: undefined, https_proxy: undefined },
+      env: envWithoutProxy,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -1967,8 +1977,7 @@ describe("s3 upload stream body error", () => {
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      // The S3 client honors the proxy environment; the stub is on loopback.
-      env: { ...bunEnv, HTTP_PROXY: undefined, HTTPS_PROXY: undefined, http_proxy: undefined, https_proxy: undefined },
+      env: envWithoutProxy,
       stdout: "pipe",
       stderr: "pipe",
     });

@@ -846,7 +846,7 @@ pub struct ParseOptions<'a, 'b> {
     pub file_descriptor: Option<FD>,
 
     /// On exception, we might still want to watch the file.
-    pub file_fd_ptr: Option<&'b mut FD>,
+    pub opened_file: Option<&'b mut Option<bun_sys::File>>,
 
     pub path: bun_paths::fs::Path<'a>,
     pub loader: options::Loader,
@@ -1337,8 +1337,11 @@ impl<'a> Transpiler<'a> {
                     return None;
                 }
             };
-            if let Some(file_fd_ptr) = this_parse.file_fd_ptr {
-                *file_fd_ptr = entry.fd;
+            if let Some(opened_file) = this_parse.opened_file
+                && entry.fd.is_valid()
+            {
+                debug_assert!(file_descriptor.is_none());
+                *opened_file = Some(bun_sys::File::from_fd(entry.fd));
             }
             // The bytes live either in the per-thread shared
             // buffer (`USE_SHARED_BUFFER` → `Contents::SharedBuffer`, no-op
@@ -2835,7 +2838,7 @@ impl<'a> Transpiler<'a> {
                     loader,
                     dirname_fd,
                     file_descriptor: None,
-                    file_fd_ptr: None,
+                    opened_file: None,
                     macro_remappings,
                     macro_js_ctx: default_macro_js_value(),
                     jsx,

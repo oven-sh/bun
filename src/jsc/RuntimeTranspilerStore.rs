@@ -24,7 +24,7 @@ use bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
 use bun_resolver::fs as Fs;
 use bun_resolver::node_fallbacks;
 use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
-use bun_sys::{self, Dir, Fd, FdExt as _, File, OpenDirOptions};
+use bun_sys::{self, Dir, Fd, File, OpenDirOptions};
 use bun_threading::Guarded;
 use bun_threading::unbounded_queue::{self, UnboundedQueue};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
@@ -766,13 +766,7 @@ impl TranspilerJob {
         // only, so skipping `Drop` is sound.
         let mut fallback_source = core::mem::MaybeUninit::<bun_ast::Source>::uninit();
 
-        // Close the input file automatically unless the watcher adopts the
-        // descriptor after the parse (`add_file` below).
-        let mut input_file_fd = scopeguard::guard(Fd::INVALID, |fd| {
-            if fd.is_valid() {
-                fd.close();
-            }
-        });
+        let mut input_file = None;
 
         // SAFETY: leaf scalar field reads on `*vm`; see `vm` note above.
         let (vm_main, vm_main_hash) = unsafe { ((*vm).main(), (*vm).main_hash.get()) };
@@ -794,7 +788,7 @@ impl TranspilerJob {
             loader,
             dirname_fd: Fd::INVALID,
             file_descriptor: None,
-            file_fd_ptr: Some(&mut *input_file_fd),
+            opened_file: Some(&mut input_file),
             macro_remappings,
             macro_js_ctx: transpiler::default_macro_js_value(),
             jsx: transpiler.options.jsx.clone(),
@@ -839,58 +833,26 @@ impl TranspilerJob {
         if let Some(own) = &this.aot_package_config {
             parse_options.apply_aot_package_config(own);
         }
-        let Some(mut parse_result) = transpiler
-            .parse_maybe_return_file_only_allow_shared_buffer::<false, false>(parse_options, None)
-        else {
-            if let Some(iw) = import_watcher
-                && input_file_fd.is_valid()
-            {
-                if !is_node_override
-                    && bun_paths::is_absolute(path.text)
-                    && !strings::contains(path.text, b"node_modules")
-                {
-                    // SAFETY: BACKREF — process-lifetime watcher; no other
-                    // `&ImportWatcher` is live here, and `add_file` is
-                    // thread-safe via watcher mutex.
-                    let added = unsafe { iw.assume_mut() }.add_file::<true>(
-                        *input_file_fd,
-                        path.text,
-                        hash,
-                        Fd::INVALID,
-                        package_json,
-                    );
-                    if matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
-                        *input_file_fd = Fd::INVALID;
-                    }
-                }
-            }
+        let parse_result = transpiler
+            .parse_maybe_return_file_only_allow_shared_buffer::<false, false>(parse_options, None);
 
+        if let Some(iw) = import_watcher
+            && input_file.is_some()
+            && !is_node_override
+            && bun_paths::is_absolute(path.text)
+            && !strings::contains(path.text, b"node_modules")
+        {
+            // SAFETY: BACKREF — process-lifetime watcher; no other
+            // `&ImportWatcher` is live here, and `add_file` is
+            // thread-safe via watcher mutex.
+            let iw = unsafe { iw.assume_mut() };
+            let _ = iw.add_owned_file(input_file, path.text, hash, package_json);
+        }
+
+        let Some(mut parse_result) = parse_result else {
             this.parse_error = Some(crate::CrateError::ParseError);
             return;
         };
-
-        if let Some(iw) = import_watcher
-            && input_file_fd.is_valid()
-        {
-            if !is_node_override
-                && bun_paths::is_absolute(path.text)
-                && !strings::contains(path.text, b"node_modules")
-            {
-                // SAFETY: BACKREF — process-lifetime watcher; no other
-                // `&ImportWatcher` is live here, and `add_file` is
-                // thread-safe via watcher mutex.
-                let added = unsafe { iw.assume_mut() }.add_file::<true>(
-                    *input_file_fd,
-                    path.text,
-                    hash,
-                    Fd::INVALID,
-                    package_json,
-                );
-                if matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
-                    *input_file_fd = Fd::INVALID;
-                }
-            }
-        }
 
         // SAFETY: leaf scalar field read; see `vm` note above. Inlined
         // `VirtualMachine::use_isolation_source_provider_cache` to avoid forming

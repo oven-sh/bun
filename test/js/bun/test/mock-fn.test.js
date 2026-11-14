@@ -4,6 +4,7 @@
  *  `bunx vitest test/js/bun/test/mock-fn.test.js`
  *  `NODE_OPTIONS=--experimental-vm-modules npx jest test/js/bun/test/mock-fn.test.js`
  */
+import { totalmem } from "node:os";
 import util from "node:util";
 import vm from "node:vm";
 import test_interop from "./test-interop.js";
@@ -2232,6 +2233,159 @@ describe("spyOn", () => {
         expect(spyOn(obj, "x", "set").name).toBe("set x");
         expect(spyOn(obj, symbol, "get").name).toBe("get [key]");
       });
+
+      test("the name comes from the key where the replaced function has another name, and where there is none", () => {
+        const symbol = Symbol("key");
+        for (const spy of [spyOn, jest.spyOn]) {
+          const obj = { value: 1, [symbol]: 2, get readonly() { return 1; } }; // prettier-ignore
+          Object.defineProperty(obj, "described", {
+            get: function other() {},
+            set: function another(value) {},
+            configurable: true,
+          });
+          expect({
+            "a getter with another name": spy(obj, "described", "get").name,
+            "a setter with another name": spy(obj, "described", "set").name,
+            "get on a data property": spy(obj, "value", "get").name,
+            "get on a data property under a symbol": spy(obj, symbol, "get").name,
+            "set where there is only a getter": spy(obj, "readonly", "set").name,
+          }).toEqual({
+            "a getter with another name": "get described",
+            "a setter with another name": "set described",
+            "get on a data property": "get value",
+            "get on a data property under a symbol": "get [key]",
+            "set where there is only a getter": "set readonly",
+          });
+        }
+      });
+
+      test("a spy does not read the name of the getter it replaces", () => {
+        const symbol = Symbol("key");
+        for (const spy of [spyOn, jest.spyOn]) {
+          const obj = { get [symbol]() { return 1; } }; // prettier-ignore
+          // A getter under a computed key has its name in the `name` property only.
+          const name = jest.fn(() => "custom");
+          Object.defineProperty(Object.getOwnPropertyDescriptor(obj, symbol).get, "name", { get: name });
+          expect(spy(obj, symbol, "get").name).toBe("get [key]");
+          expect(name).not.toHaveBeenCalled();
+        }
+      });
+
+      test("error messages show a symbol key as Symbol(description)", async () => {
+        const symbol = Symbol("key");
+        const namespace = await import("./test-interop.js");
+        expect(() => spyOn(namespace, symbol)).toThrow(
+          new TypeError("spyOn(target, prop) expects the module namespace object to export `Symbol(key)`"),
+        );
+        expect(() => spyOn(namespace, Symbol.toStringTag, "set")).toThrow(
+          new TypeError(
+            "Cannot spy on the setter of the `Symbol(Symbol.toStringTag)` export because the exports of a module namespace object are not accessors",
+          ),
+        );
+        const obj = { get [symbol]() { return 1; } }; // prettier-ignore
+        expect(() => spyOn(obj, symbol)).toThrow(
+          new TypeError("Cannot spy on the `Symbol(key)` property because it is not a function; number given instead"),
+        );
+      });
+
+      // A name or an error message that holds the key can be a string that cannot be created: it passes
+      // `String::MaxLength` (2 ** 31 - 1 characters), or its allocation fails. Building it aborted the process
+      // (`panic(main thread): abort() called`, exit code 134), also inside try / catch. It is now
+      // `RangeError: Out of memory`, which is what JSC reports for a string that it cannot create.
+      //
+      // One child runs every case, so the long string is allocated once. `repeat` of one character is used instead of
+      // `Buffer.alloc(n, fill).toString()`, which holds the characters twice.
+      const { bunEnv, bunExe, isASAN, isDebug, isLinux } = require("harness");
+      async function expectOutOfMemoryForEachJoin(launcher, { length, withStringKey, beforeTheSpies = "" }) {
+        const fixture = `
+          const { spyOn, jest, vi } = Bun.jest(import.meta.path);
+          const namespace = await import("node:os");
+          const long = "q".repeat(${length});
+          // A symbol shares the characters of its description.
+          const keys = ${withStringKey} ? [Symbol(long), long] : [Symbol(long)];
+          ${beforeTheSpies}
+
+          // Each case prints its line as soon as it finishes. If a case aborts the child, the diff shows which one.
+          function report(name, run, unchanged = () => true) {
+            let result;
+            try {
+              run();
+              result = "did not throw";
+            } catch (e) {
+              result = e.name + ": " + e.message;
+            }
+            console.log(name + ": " + result + (unchanged() ? "" : ", and the property changed"));
+          }
+
+          for (const [flavor, spy] of Object.entries({ spyOn, "jest.spyOn": jest.spyOn, "vi.spyOn": vi.spyOn })) {
+            for (const key of keys) {
+              // A spy reads the own keys of a Proxy that it replaces, and the length of a function. Each read tells that spyOn got that far.
+              let reads = 0;
+              const get = new Proxy(() => 1, { ownKeys: target => (reads++, Reflect.ownKeys(target)) });
+              const set = Object.defineProperty(value => {}, "length", { get: () => (reads++, 1) });
+              const target = Object.defineProperty({}, key, { get, set, configurable: true });
+              const unchanged = () => {
+                const now = Object.getOwnPropertyDescriptor(target, key);
+                return now.get === get && now.set === set && reads === 0;
+              };
+              const label = flavor + ", " + typeof key + " key, ";
+              report(label + "get", () => spy(target, key, "get"), unchanged);
+              report(label + "set", () => spy(target, key, "set"), unchanged);
+              report(label + "a getter that returns a number", () => spy(target, key), unchanged);
+              report(label + "a missing property", () => spy({}, key, "get"));
+              report(label + "a missing export", () => spy(namespace, key));
+            }
+          }
+        `;
+        await using proc = Bun.spawn({
+          cmd: [...launcher, bunExe(), "-e", fixture],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const expected = ["spyOn", "jest.spyOn", "vi.spyOn"].flatMap(flavor =>
+          (withStringKey ? ["symbol", "string"] : ["symbol"]).flatMap(key =>
+            ["get", "set", "a getter that returns a number", "a missing property", "a missing export"].map(
+              name => `${flavor}, ${key} key, ${name}: RangeError: Out of memory`,
+            ),
+          ),
+        );
+        expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+          stdout: expected,
+          stderr: "",
+          exitCode: 0,
+        });
+      }
+
+      // The length is what is under test, so the child holds a string of 2 GiB and the test skips on small machines.
+      // In a container totalmem() is the host's RAM and process.constrainedMemory() is the cgroup limit. The child
+      // takes 2 seconds in a debug ASAN build and more on a loaded machine. That is too close to the default limit
+      // of 5 seconds, so this one test carries its own ceiling. A string key is hashed, which takes a debug build
+      // too long.
+      const memoryForLongStrings = Math.min(totalmem(), process.constrainedMemory() || Infinity);
+      test.concurrent.skipIf(memoryForLongStrings < 10 * 1024 ** 3)(
+        "a key too long for the name of the spy or for an error message throws, and does not abort the process",
+        () => expectOutOfMemoryForEachJoin([], { length: 2 ** 31 - 2, withStringKey: !isDebug }),
+        30_000,
+      );
+
+      // Under `ulimit -v` the kernel refuses an allocation when the address space is taken, so a key of 64 MiB is
+      // long enough and the test runs on a small machine. ASAN's shadow memory does not fit under that limit. A debug
+      // build has mimalloc print each allocation that fails, and the child's stderr has to be empty.
+      test.concurrent.skipIf(!isLinux || isASAN || isDebug)(
+        "a name or an error message whose allocation fails throws, and does not abort the process",
+        () =>
+          expectOutOfMemoryForEachJoin(["sh", "-c", 'ulimit -c 0 && ulimit -v 4194304 && exec "$0" "$@"'], {
+            length: 64 * 1024 ** 2,
+            withStringKey: true,
+            beforeTheSpies: `
+              // Pages that are never written take address space without taking memory.
+              const held = [];
+              try { for (;;) held.push(new ArrayBuffer(long.length)); } catch {}
+            `,
+          }),
+      );
 
       test("using", () => {
         const obj = counter();

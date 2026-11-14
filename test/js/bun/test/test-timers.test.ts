@@ -1,5 +1,5 @@
 import { describe, expect, jest, setSystemTime, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isDebug } from "harness";
 import { once } from "node:events";
 import http from "node:http";
 import net from "node:net";
@@ -80,6 +80,56 @@ test("setSystemTime accepts pre-epoch and epoch times and resets with no argumen
     jest.useRealTimers();
   }
 });
+
+// The message holds the date string, so it can be a string that cannot be created. Building it aborted the process
+// (`panic(main thread): abort() called`, exit code 134), also inside try / catch. It is now `RangeError: Out of memory`.
+// `BUN_JSC_maxSingleAllocationSize` exists in debug WTF only. It makes every fallible WTF allocation above the cap
+// fail. The date string is 16-bit and 100 bytes under the cap. The message is 16-bit too and 77 characters longer,
+// so the message is the allocation that fails.
+test.concurrent.skipIf(!isDebug)(
+  "setSystemTime throws when the message for an invalid date string cannot be allocated",
+  async () => {
+    const cap = 4 * 1024 ** 2;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { vi, jest, setSystemTime } = Bun.jest(import.meta.path);
+        // The date parser needs a buffer over the cap for an 8-bit string of this length. A 16-bit string of ASCII it reads as it is.
+        const wide = "\\u0100" + Buffer.alloc(${(cap - 100) / 2}, "q").toString();
+        wide.charCodeAt(0);
+        const date = wide.slice(1);
+        const setters = { "vi.setSystemTime": vi.setSystemTime, "jest.setSystemTime": jest.setSystemTime, setSystemTime };
+        for (const [name, set] of Object.entries(setters)) {
+          set(5000);
+          let result;
+          try {
+            set(date);
+            result = "did not throw";
+          } catch (e) {
+            result = e.name + ": " + e.message.slice(0, 80);
+          }
+          console.log(name + ": " + result + ", and the time is " + Date.now());
+        }
+        `,
+      ],
+      env: { ...bunEnv, BUN_JSC_maxSingleAllocationSize: String(cap) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+      stdout: [
+        "vi.setSystemTime: RangeError: Out of memory, and the time is 5000",
+        "jest.setSystemTime: RangeError: Out of memory, and the time is 5000",
+        "setSystemTime: RangeError: Out of memory, and the time is 5000",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
 
 test("chainable timer functions return their receiver only when called as a method", () => {
   // When a closed-over or module binding is called bare, JSC passes the scope object as `this`.

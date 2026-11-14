@@ -158,7 +158,7 @@ public:
 
 private:
     DeferredPromise(JSDOMGlobalObject& globalObject, JSC::JSPromise& deferred, Mode mode)
-        : DOMGuarded<JSC::JSPromise>(globalObject, deferred)
+        : DOMGuarded<JSC::JSPromise>(globalObject, deferred, HasPendingActivity::Yes)
         , m_mode(mode)
     {
     }

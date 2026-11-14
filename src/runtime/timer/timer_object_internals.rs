@@ -135,14 +135,14 @@ enum TimerParent {
 }
 
 impl TimerObjectInternals {
-    fn emit_async_hooks_destroy(&self, timer: JSValue, global: *mut JSGlobalObject) {
+    fn emit_async_hooks_destroy(&self, timer: JSValue, global: &JSGlobalObject) {
         let async_hooks_id = self.async_hooks_id.get();
         if async_hooks_id & ASYNC_HOOKS_DESTROYED != 0 {
             return;
         }
         self.async_hooks_id
             .set(async_hooks_id | ASYNC_HOOKS_DESTROYED);
-        let vm = JSGlobalObject::opaque_ref(global).bun_vm();
+        let vm = global.bun_vm();
         // Hooks are shared by graphs, but not by retired test realms or a stopped VM.
         if self.generation != vm.test_isolation_generation.get()
             || vm.script_execution_status() != ScriptExecutionStatus::Running
@@ -150,7 +150,7 @@ impl TimerObjectInternals {
             return;
         }
         Bun__AsyncHooks__emitTimerLifecycle(
-            global,
+            global.as_ptr(),
             timer,
             async_hooks_id,
             AsyncHooksTimerLifecycleEvent::Destroy,
@@ -1070,7 +1070,7 @@ impl TimerObjectInternals {
     /// / `clearImmediate` / `Timeout#[Symbol.dispose]` body.
     pub(crate) fn cancel(&self, vm: &VirtualMachine) {
         if let Some(timer) = self.this_value.get().try_get() {
-            self.emit_async_hooks_destroy(timer, vm.global().as_ptr());
+            self.emit_async_hooks_destroy(timer, vm.global());
         }
         self.set_enable_keeping_event_loop_alive(vm, false);
         self.update_flags(|f| f.set_has_cleared_timer(true));

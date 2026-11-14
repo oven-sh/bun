@@ -166,6 +166,420 @@ describe("bundler", () => {
       assert(!out.includes("$newPromiseCapability"), "events polyfill must not reference a JSC builtin intrinsic");
     },
   });
+  // A second run makes bun like a page that is not cross-origin isolated. node:vm is its iframe: another realm.
+  const withoutNodeGlobals = {
+    "/without-node-globals.js": /* js */ `
+      import vm from "node:vm";
+      const isShared = buffer => Object.prototype.toString.call(buffer) === "[object SharedArrayBuffer]";
+      globalThis.anotherRealm = vm.runInNewContext("({ ArrayBuffer })");
+      for (const name of ["process", "Buffer", "global", "setImmediate", "clearImmediate", "SharedArrayBuffer"]) {
+        delete globalThis[name];
+      }
+      const getRandomValues = crypto.getRandomValues.bind(crypto);
+      crypto.getRandomValues = view => {
+        if (isShared(view.buffer)) throw new TypeError("The view must not be shared.");
+        if (view.byteLength > 65536) throw new DOMException("The quota is 65536 bytes.", "QuotaExceededError");
+        return getRandomValues(view);
+      };
+      await import("./out.js");
+    `,
+  };
+  const cryptoKnownAnswers = JSON.stringify({
+    sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+    sha256OfDataView: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+    md5OfUint8Array: "900150983cd24fb0d6963f7d28e17f72",
+    hmac: "4fd0b215276ef12f2b3e4c8ecac2811498b656fc",
+    hmacWithArrayBufferKey: "4fd0b215276ef12f2b3e4c8ecac2811498b656fc",
+    hmacWithDataViewKey: "4fd0b215276ef12f2b3e4c8ecac2811498b656fc",
+    hmacWithOtherKeys: Array.from({ length: 6 }, () => "4fd0b215276ef12f2b3e4c8ecac2811498b656fc"),
+    pbkdf2: "653cc888d937efe22810a5cbdb25a5bd",
+    encrypted: "4c55a6ffda2e565b40c2051d3d067614",
+    decrypted: "hello",
+    cbc: "f230676c38a7d716ebed81718e4fc8aa",
+    gcm: "3b817c0fa9:7ef3cdbe510337cbe05016fa1582e394",
+    ecdhSecretsAgree: true,
+    randomBytesDiffer: true,
+  });
+  itBundled("browser/NodeCryptoPolyfill", {
+    files: {
+      "/entry.js": /* js */ `
+        import { createHash, createHmac, randomBytes, pbkdf2Sync, createCipheriv, createDecipheriv, createECDH } from "node:crypto";
+        import { Buffer } from "node:buffer";
+        const abc = new TextEncoder().encode("abc");
+        const hmacKey = new TextEncoder().encode("key");
+        const key = Buffer.alloc(16, 1);
+        const cipher = createCipheriv("aes-128-ecb", key, "");
+        const decipher = createDecipheriv("aes-128-ecb", key, "");
+        const cbc = createCipheriv("aes-128-cbc", key, Buffer.alloc(16, 2));
+        const gcm = createCipheriv("aes-128-gcm", key, Buffer.alloc(12, 2));
+        const alice = createECDH("secp256k1");
+        const bob = createECDH("secp256k1");
+        alice.generateKeys();
+        bob.generateKeys();
+        // Only the second run has another realm. A page has no SharedArrayBuffer global unless it is isolated.
+        const realm = globalThis.anotherRealm ?? globalThis;
+        const SharedBuffer = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true }).buffer.constructor;
+        const padded = new Uint8Array(32);
+        const keyOfAnotherRealm = new Uint8Array(new realm.ArrayBuffer(3));
+        const sharedKey = new Uint8Array(new SharedBuffer(3));
+        for (const bytes of [padded.subarray(8), keyOfAnotherRealm, sharedKey]) bytes.set(hmacKey);
+        const hmacWith = (key, options) => createHmac("sha1", key, options).update("abc").digest("hex");
+        console.log(JSON.stringify({
+          sha256: createHash("sha256").update("abc").digest("hex"),
+          sha256OfDataView: createHash("sha256").update(new DataView(abc.buffer)).digest("hex"),
+          md5OfUint8Array: createHash("md5").update(abc).digest("hex"),
+          hmac: createHmac("sha1", "key").update("abc").digest("hex"),
+          hmacWithArrayBufferKey: createHmac("sha1", hmacKey.buffer).update("abc").digest("hex"),
+          hmacWithDataViewKey: createHmac("sha1", new DataView(hmacKey.buffer)).update("abc").digest("hex"),
+          hmacWithOtherKeys: [
+            hmacWith("6b6579", { encoding: "hex" }),
+            hmacWith("key", { encoding: "buffer" }),
+            hmacWith("key", { encoding: null }),
+            hmacWith(new DataView(padded.buffer, 8, 3)),
+            hmacWith(keyOfAnotherRealm.buffer),
+            hmacWith(sharedKey),
+          ],
+          pbkdf2: pbkdf2Sync("password", "salt", 10, 16, "sha256").toString("hex"),
+          encrypted: Buffer.concat([cipher.update("hello"), cipher.final()]).toString("hex"),
+          decrypted: Buffer.concat([decipher.update("4c55a6ffda2e565b40c2051d3d067614", "hex"), decipher.final()]).toString(),
+          cbc: Buffer.concat([cbc.update("hello"), cbc.final()]).toString("hex"),
+          gcm: Buffer.concat([gcm.update("hello"), gcm.final()]).toString("hex") + ":" + gcm.getAuthTag().toString("hex"),
+          ecdhSecretsAgree:
+            alice.computeSecret(bob.getPublicKey()).toString("hex") === bob.computeSecret(alice.getPublicKey()).toString("hex"),
+          randomBytesDiffer: randomBytes(16).toString("hex") !== randomBytes(16).toString("hex"),
+        }));
+      `,
+    },
+    runtimeFiles: withoutNodeGlobals,
+    target: "browser",
+    run: [{ stdout: cryptoKnownAnswers }, { file: "/without-node-globals.js", stdout: cryptoKnownAnswers }],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out.split("BN.wordSize = 26").length - 1, "one copy of bn.js 4 and one of bn.js 5").toBe(2);
+      expect(out).not.toContain("localStorage");
+    },
+  });
+  const cryptoDefaultImport = JSON.stringify({
+    createHash: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+    missing: [],
+    extra: [],
+    subtle: "function",
+    webcrypto: true,
+    timingSafeEqual: [true, false],
+    timingSafeEqualOfUnequalBytes: [false, false, false, false, false],
+    timingSafeEqualOfOtherBuffers: [true, true, true],
+    timingSafeEqualOfNoBuffers: Array.from({ length: 3 }, () => "TypeError ERR_INVALID_ARG_TYPE"),
+    randomFillSync: [false, true, false],
+    randomFillSyncOfElements: [false, true, false],
+    randomFillSyncOfSharedMemory: [false, true, false],
+    randomFillSyncReturnsItsBuffer: true,
+    randomFill: true,
+    randomFillFromOffset: [false, true],
+    randomBytes: 8,
+    errorCodes: ["ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH", "ERR_OUT_OF_RANGE", "ERR_OUT_OF_RANGE", "ERR_INVALID_ARG_TYPE"],
+    fills: {
+      "u8, 16.5, 16.9": ["16 to 32", "16 to 32"],
+      "u8, 63.5, 1": ["63 to 64", "63 to 64"],
+      "u8, 16.5": ["16 to 64", "16 to 63"],
+      "u8 with wrong properties, 16, 16": ["16 to 32", "16 to 32"],
+      "buffer, 16": ["16 to 64", "16 to 64"],
+      "new DataView(buffer, 16, 32), 8": ["24 to 48", "24 to 48"],
+      "new Uint16Array(buffer, 16, 16)": ["16 to 48", "16 to 48"],
+      "new Uint32Array(buffer), 4": ["16 to 64", "16 to 64"],
+      "new Float64Array(buffer), 2": ["16 to 64", "16 to 64"],
+      "buffer of another realm, 16, 16": ["16 to 32", "16 to 32"],
+      "70000 shared bytes": ["0 to 70000", "0 to 70000"],
+    },
+    errors: {
+      "randomBytes(NaN)": "RangeError ERR_OUT_OF_RANGE",
+      'randomBytes("8")': "TypeError ERR_INVALID_ARG_TYPE",
+      "randomBytes(2 ** 31)": "RangeError ERR_OUT_OF_RANGE",
+      "randomBytes(-1, callback)": "RangeError ERR_OUT_OF_RANGE",
+      "randomBytes(8, null)": "TypeError ERR_INVALID_ARG_TYPE",
+      "randomFillSync(u8, NaN)": "RangeError ERR_OUT_OF_RANGE",
+      "randomFillSync(u8, null)": "TypeError ERR_INVALID_ARG_TYPE",
+      "randomFill(u8, undefined, callback)": "TypeError ERR_INVALID_ARG_TYPE",
+      "randomFillSync(u8, -1)": "RangeError ERR_OUT_OF_RANGE",
+      'randomFill(u8, -1, 1, "callback")': "TypeError ERR_INVALID_ARG_TYPE",
+      'randomFill("buffer", -1, 1, callback)': "TypeError ERR_INVALID_ARG_TYPE",
+      'createHmac(5, "key")': "TypeError ERR_INVALID_ARG_TYPE",
+      'createHmac("sha256", "key", { encoding: 5 })': "TypeError ERR_INVALID_ARG_TYPE",
+      'createHmac("sha256", 5)': "TypeError ERR_INVALID_ARG_TYPE",
+      "randomFillSync(a Proxy of an ArrayBuffer)": "TypeError ERR_INVALID_ARG_TYPE",
+      "createHmac with a Proxy of an ArrayBuffer": "TypeError ERR_INVALID_ARG_TYPE",
+    },
+    callbacks: {
+      "randomBytes(8, callback)": "after the call",
+      "randomBytes(0, callback)": "in the call",
+      "randomFill(u8, callback)": "after the call",
+      "randomFill(u8, 10, callback)": "in the call",
+      "randomFill(u8, 0, 0.5, callback)": "in the call",
+      lengths: [0, 8, 10],
+      unexpectedCalls: [],
+    },
+  });
+  itBundled("browser/NodeCryptoPolyfillDefaultImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import crypto from "node:crypto";
+        import * as namespace from "node:crypto";
+        const named = Object.keys(namespace).filter(name => name !== "default");
+        const filled = (bytes, start, end) => bytes.subarray(start, end).some(byte => byte !== 0);
+        // Only the second run has another realm. A page has no SharedArrayBuffer global unless it is isolated.
+        const realm = globalThis.anotherRealm ?? globalThis;
+        const SharedBuffer = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true }).buffer.constructor;
+        const view = new Uint8Array(48);
+        crypto.randomFillSync(new Uint8Array(view.buffer, 16, 16));
+        const elements = new Uint8Array(48);
+        crypto.randomFillSync(new Uint16Array(elements.buffer, 16, 8), 2, 4);
+        const shared = new Uint8Array(new SharedBuffer(48));
+        crypto.randomFillSync(new Uint8Array(shared.buffer, 16, 16));
+        const codeOf = fn => {
+          try {
+            fn();
+          } catch (error) {
+            return error.code;
+          }
+        };
+        const errorOf = fn => {
+          try {
+            fn();
+            return "no error";
+          } catch (error) {
+            return error.name + " " + error.code;
+          }
+        };
+        const u8 = () => new Uint8Array(10);
+        const zeros = () => new Uint8Array(64);
+        // What fill() changes in zeros. Four rounds, so that no byte at an end stays zero by chance.
+        const range = async (fill, make = zeros) => {
+          let [start, end] = [Infinity, 0];
+          for (let round = 0; round < 4; round++) {
+            const bytes = make();
+            await fill(bytes);
+            if (!bytes.some(Boolean)) continue;
+            start = Math.min(start, bytes.findIndex(Boolean));
+            end = Math.max(end, bytes.findLastIndex(Boolean) + 1);
+          }
+          return start + " to " + end;
+        };
+        const unexpectedCalls = [];
+        const notCalled = () => unexpectedCalls.push("after an error");
+        // The value of the callback. A second call, and arguments that are not (null, value), are unexpected.
+        const calledBack = start =>
+          new Promise(resolve => {
+            let calls = 0;
+            start((...args) => {
+              if (++calls > 1 || args.length !== 2 || args[0] !== null)
+                unexpectedCalls.push(calls + ": " + args.length);
+              resolve(args[1]);
+            });
+          });
+        const when = start =>
+          new Promise(resolve => {
+            let inTheCall = true;
+            start(() => resolve(inTheCall ? "in the call" : "after the call"));
+            inTheCall = false;
+          });
+        // Views that lie about themselves. Node reads the internal slots, so the lies change nothing.
+        const wrongProperties = bytes =>
+          Object.defineProperties(bytes, {
+            buffer: { value: new ArrayBuffer(64) },
+            byteOffset: { value: 8 },
+            byteLength: { value: 4 },
+            BYTES_PER_ELEMENT: { value: 2 },
+          });
+        const notBuffers = [
+          new Proxy(new ArrayBuffer(8), {}),
+          { [Symbol.toStringTag]: "ArrayBuffer" },
+          Object.create(ArrayBuffer.prototype),
+        ];
+        // The arguments of randomFillSync, and of randomFill before its callback. Then: what each of the two fills.
+        const fills = {
+          "u8, 16.5, 16.9": [bytes => [bytes, 16.5, 16.9]],
+          "u8, 63.5, 1": [bytes => [bytes, 63.5, 1]],
+          "u8, 16.5": [bytes => [bytes, 16.5]],
+          "u8 with wrong properties, 16, 16": [bytes => [wrongProperties(bytes), 16, 16]],
+          "buffer, 16": [bytes => [bytes.buffer, 16]],
+          "new DataView(buffer, 16, 32), 8": [bytes => [new DataView(bytes.buffer, 16, 32), 8]],
+          "new Uint16Array(buffer, 16, 16)": [bytes => [new Uint16Array(bytes.buffer, 16, 16)]],
+          "new Uint32Array(buffer), 4": [bytes => [new Uint32Array(bytes.buffer), 4]],
+          "new Float64Array(buffer), 2": [bytes => [new Float64Array(bytes.buffer), 2]],
+          "buffer of another realm, 16, 16": [
+            bytes => [bytes.buffer, 16, 16],
+            () => new Uint8Array(new realm.ArrayBuffer(64)),
+          ],
+          "70000 shared bytes": [bytes => [bytes.buffer], () => new Uint8Array(new SharedBuffer(70000))],
+        };
+        const errors = {
+          "randomBytes(NaN)": () => crypto.randomBytes(NaN),
+          'randomBytes("8")': () => crypto.randomBytes("8"),
+          "randomBytes(2 ** 31)": () => crypto.randomBytes(2 ** 31),
+          "randomBytes(-1, callback)": () => crypto.randomBytes(-1, notCalled),
+          "randomBytes(8, null)": () => crypto.randomBytes(8, null),
+          "randomFillSync(u8, NaN)": () => crypto.randomFillSync(u8(), NaN),
+          "randomFillSync(u8, null)": () => crypto.randomFillSync(u8(), null),
+          "randomFill(u8, undefined, callback)": () => crypto.randomFill(u8(), undefined, notCalled),
+          "randomFillSync(u8, -1)": () => crypto.randomFillSync(u8(), -1),
+          'randomFill(u8, -1, 1, "callback")': () => crypto.randomFill(u8(), -1, 1, "callback"),
+          'randomFill("buffer", -1, 1, callback)': () => crypto.randomFill("buffer", -1, 1, notCalled),
+          'createHmac(5, "key")': () => crypto.createHmac(5, "key"),
+          'createHmac("sha256", "key", { encoding: 5 })': () => crypto.createHmac("sha256", "key", { encoding: 5 }),
+          'createHmac("sha256", 5)': () => crypto.createHmac("sha256", 5),
+          "randomFillSync(a Proxy of an ArrayBuffer)": () => crypto.randomFillSync(notBuffers[0]),
+          "createHmac with a Proxy of an ArrayBuffer": () => crypto.createHmac("sha256", notBuffers[0]),
+        };
+        for (const [label, [args, make]] of Object.entries(fills)) {
+          fills[label] = [
+            await range(bytes => crypto.randomFillSync(...args(bytes)), make),
+            await range(bytes => calledBack(callback => crypto.randomFill(...args(bytes), callback)), make),
+          ];
+        }
+        for (const [label, run] of Object.entries(errors)) errors[label] = errorOf(run);
+        console.log(JSON.stringify({
+          createHash: crypto.createHash("sha256").update("abc").digest("hex"),
+          missing: named.filter(name => crypto[name] !== namespace[name]),
+          extra: Object.keys(crypto).filter(name => !named.includes(name)),
+          subtle: typeof crypto.subtle.digest,
+          webcrypto: crypto.webcrypto === globalThis.crypto,
+          timingSafeEqual: [
+            crypto.timingSafeEqual(new Uint8Array([1, 0, 2, 0]), new Uint16Array([1, 2])),
+            crypto.timingSafeEqual(new Uint8Array([1]), new Uint8Array([2])),
+          ],
+          timingSafeEqualOfUnequalBytes: [
+            crypto.timingSafeEqual(new Uint8Array([9, 2, 3, 4]), new Uint8Array([1, 2, 3, 4])),
+            crypto.timingSafeEqual(new Uint8Array([1, 9, 3, 4]), new Uint8Array([1, 2, 3, 4])),
+            crypto.timingSafeEqual(new Uint8Array(33).fill(7, 32), new Uint8Array(33)),
+            crypto.timingSafeEqual(new Float64Array([0]), new Float64Array([-0])),
+            crypto.timingSafeEqual(new Uint8Array([1, 1]), new Uint8Array([2, 2])),
+          ],
+          timingSafeEqualOfOtherBuffers: [
+            crypto.timingSafeEqual(new realm.ArrayBuffer(4), new Uint8Array(4)),
+            crypto.timingSafeEqual(new SharedBuffer(4), new Uint8Array(new SharedBuffer(4))),
+            crypto.timingSafeEqual(wrongProperties(zeros().fill(1)), zeros().fill(1)),
+          ],
+          timingSafeEqualOfNoBuffers: notBuffers.map(value => errorOf(() => crypto.timingSafeEqual(value, value))),
+          randomFillSync: [filled(view, 0, 16), filled(view, 16, 32), filled(view, 32, 48)],
+          randomFillSyncOfElements: [filled(elements, 0, 20), filled(elements, 20, 28), filled(elements, 28, 48)],
+          randomFillSyncOfSharedMemory: [filled(shared, 0, 16), filled(shared, 16, 32), filled(shared, 32, 48)],
+          randomFillSyncReturnsItsBuffer: crypto.randomFillSync(view) === view,
+          randomFill: await new Promise(resolve => {
+            crypto.randomFill(new Uint8Array(16), (error, bytes) => resolve(error ?? filled(bytes, 0, 16)));
+          }),
+          randomFillFromOffset: await new Promise(resolve => {
+            crypto.randomFill(new Uint8Array(16), 8, (error, bytes) => {
+              resolve(error ?? [filled(bytes, 0, 8), filled(bytes, 8, 16)]);
+            });
+          }),
+          randomBytes: await new Promise(resolve => {
+            crypto.randomBytes(8, (error, bytes) => resolve(error ?? bytes.length));
+          }),
+          errorCodes: [
+            codeOf(() => crypto.timingSafeEqual(new Uint8Array(1), new Uint8Array(2))),
+            codeOf(() => crypto.randomFillSync(new Uint8Array(4), 5)),
+            codeOf(() => crypto.randomFillSync(new Uint8Array(4), 2, 3)),
+            codeOf(() => crypto.randomFillSync("not a buffer")),
+          ],
+          fills,
+          errors,
+          callbacks: {
+            "randomBytes(8, callback)": await when(callback => crypto.randomBytes(8, callback)),
+            "randomBytes(0, callback)": await when(callback => crypto.randomBytes(0, callback)),
+            "randomFill(u8, callback)": await when(callback => crypto.randomFill(u8(), callback)),
+            "randomFill(u8, 10, callback)": await when(callback => crypto.randomFill(u8(), 10, callback)),
+            "randomFill(u8, 0, 0.5, callback)": await when(callback => crypto.randomFill(u8(), 0, 0.5, callback)),
+            lengths: [
+              (await calledBack(callback => crypto.randomBytes(0, callback))).length,
+              (await calledBack(callback => crypto.randomBytes(8, callback))).length,
+              (await calledBack(callback => crypto.randomFill(u8(), 10, callback))).length,
+            ],
+            unexpectedCalls,
+          },
+        }));
+      `,
+    },
+    runtimeFiles: withoutNodeGlobals,
+    target: "browser",
+    run: [{ stdout: cryptoDefaultImport }, { file: "/without-node-globals.js", stdout: cryptoDefaultImport }],
+  });
+  itBundled("browser/NodeStreamTicksOnTheHostProcess", {
+    files: {
+      "/entry.js": /* js */ `
+        import { PassThrough } from "node:stream";
+        const order = [];
+        const stream = new PassThrough();
+        stream.on("data", chunk => order.push("data:" + chunk));
+        stream.on("end", () => order.push("end"));
+        setImmediate(() => console.log([...order, "immediate"].join(" ")));
+        stream.write("a");
+        stream.end("b");
+      `,
+    },
+    target: "browser",
+    run: { stdout: "data:a data:b end immediate" },
+  });
+  itBundled("browser/NodeHttpPolyfill", {
+    files: {
+      "/entry.js": /* js */ `
+        import http, { STATUS_CODES } from "node:http";
+        import https from "node:https";
+        import { PassThrough, pipeline } from "node:stream";
+        const finish = line => {
+          console.log([STATUS_CODES[404], http.STATUS_CODES[200], typeof https.STATUS_CODES, line].join("\\n"));
+          stopServer();
+        };
+        http
+          .get(location.href, response => {
+            const chunks = [];
+            const body = new PassThrough().on("data", chunk => chunks.push(chunk));
+            pipeline(response, body, error => finish(error ? String(error) : response.statusCode + " " + chunks.join("")));
+          })
+          .on("error", error => finish(String(error)));
+      `,
+    },
+    runtimeFiles: {
+      "/serve.js": /* js */ `
+        const server = Bun.serve({ port: 0, fetch: () => new Response("hello") });
+        globalThis.location = server.url;
+        globalThis.stopServer = () => server.stop(true);
+        await import("./out.js");
+      `,
+    },
+    target: "browser",
+    run: { file: "/serve.js", stdout: "Not Found\nOK\nobject\n200 hello" },
+  });
+  itBundled("browser/NodePunycodePolyfill", {
+    files: {
+      "/entry.js": /* js */ `
+        import punycode, { toASCII, toUnicode } from "node:punycode";
+        console.log([toASCII("mañana.com"), punycode.toASCII("mañana.com"), toUnicode("xn--maana-pta.com")].join(" "));
+      `,
+    },
+    target: "browser",
+    run: { stdout: "xn--maana-pta.com xn--maana-pta.com mañana.com" },
+  });
+  // src/node-fallbacks/build-fallbacks.ts keeps the builtins external with a plugin like this one.
+  itBundled("browser/PluginExternalWinsOverNodePolyfill", {
+    files: {
+      "/entry.js": /* js */ `
+        import { Buffer } from "buffer";
+        import { setTimeout } from "node:timers/promises";
+        import EventEmitter from "events";
+        console.log(Buffer, setTimeout, EventEmitter);
+      `,
+    },
+    target: "browser",
+    plugins(builder) {
+      builder.onResolve({ filter: /^(buffer|node:timers\/promises|events)$/ }, args => ({
+        path: args.path,
+        external: true,
+      }));
+    },
+    onAfterBundle(api) {
+      const imports = new Bun.Transpiler().scanImports(api.readFile("/out.js"));
+      expect(imports.map(({ path }) => path).sort()).toEqual(["buffer", "events", "node:timers/promises"]);
+    },
+  });
   itBundled("browser/NodeUrlProtocolTablesIgnorePrototype", {
     files: {
       "/entry.js": /* js */ `
@@ -264,7 +678,7 @@ describe("bundler", () => {
     target: "browser",
     run: {
       stdout:
-        "{\n  assert: {\n    AssertionError: [Getter/Setter],\n    CallTracker: [Getter/Setter],\n    deepEqual: [Getter/Setter],\n    deepStrictEqual: [Getter/Setter],\n    default: [Getter/Setter],\n    doesNotMatch: [Getter/Setter],\n    doesNotReject: [Getter/Setter],\n    doesNotThrow: [Getter/Setter],\n    equal: [Getter/Setter],\n    fail: [Getter/Setter],\n    ifError: [Getter/Setter],\n    match: [Getter/Setter],\n    notDeepEqual: [Getter/Setter],\n    notDeepStrictEqual: [Getter/Setter],\n    notEqual: [Getter/Setter],\n    notStrictEqual: [Getter/Setter],\n    ok: [Getter/Setter],\n    rejects: [Getter/Setter],\n    strict: [Getter/Setter],\n    strictEqual: [Getter/Setter],\n    throws: [Getter/Setter],\n  },\n  buffer: {\n    Blob: [Getter/Setter],\n    Buffer: [Getter/Setter],\n    File: [Getter/Setter],\n    INSPECT_MAX_BYTES: [Getter/Setter],\n    atob: [Getter/Setter],\n    btoa: [Getter/Setter],\n    constants: [Getter/Setter],\n    default: [Getter/Setter],\n    isAscii: [Getter/Setter],\n    isUtf8: [Getter/Setter],\n    kMaxLength: [Getter/Setter],\n    kStringMaxLength: [Getter/Setter],\n    resolveObjectURL: [Getter/Setter],\n    transcode: [Getter/Setter],\n  },\n  child_process: [Function: child_process],\n  cluster: [Function: cluster],\n  console2: {\n    default: [Getter/Setter],\n  },\n  constants: {\n    DH_CHECK_P_NOT_PRIME: [Getter/Setter],\n    DH_CHECK_P_NOT_SAFE_PRIME: [Getter/Setter],\n    DH_NOT_SUITABLE_GENERATOR: [Getter/Setter],\n    DH_UNABLE_TO_CHECK_GENERATOR: [Getter/Setter],\n    E2BIG: [Getter/Setter],\n    EACCES: [Getter/Setter],\n    EADDRINUSE: [Getter/Setter],\n    EADDRNOTAVAIL: [Getter/Setter],\n    EAFNOSUPPORT: [Getter/Setter],\n    EAGAIN: [Getter/Setter],\n    EALREADY: [Getter/Setter],\n    EBADF: [Getter/Setter],\n    EBADMSG: [Getter/Setter],\n    EBUSY: [Getter/Setter],\n    ECANCELED: [Getter/Setter],\n    ECHILD: [Getter/Setter],\n    ECONNABORTED: [Getter/Setter],\n    ECONNREFUSED: [Getter/Setter],\n    ECONNRESET: [Getter/Setter],\n    EDEADLK: [Getter/Setter],\n    EDESTADDRREQ: [Getter/Setter],\n    EDOM: [Getter/Setter],\n    EDQUOT: [Getter/Setter],\n    EEXIST: [Getter/Setter],\n    EFAULT: [Getter/Setter],\n    EFBIG: [Getter/Setter],\n    EHOSTUNREACH: [Getter/Setter],\n    EIDRM: [Getter/Setter],\n    EILSEQ: [Getter/Setter],\n    EINPROGRESS: [Getter/Setter],\n    EINTR: [Getter/Setter],\n    EINVAL: [Getter/Setter],\n    EIO: [Getter/Setter],\n    EISCONN: [Getter/Setter],\n    EISDIR: [Getter/Setter],\n    ELOOP: [Getter/Setter],\n    EMFILE: [Getter/Setter],\n    EMLINK: [Getter/Setter],\n    EMSGSIZE: [Getter/Setter],\n    EMULTIHOP: [Getter/Setter],\n    ENAMETOOLONG: [Getter/Setter],\n    ENETDOWN: [Getter/Setter],\n    ENETRESET: [Getter/Setter],\n    ENETUNREACH: [Getter/Setter],\n    ENFILE: [Getter/Setter],\n    ENGINE_METHOD_ALL: [Getter/Setter],\n    ENGINE_METHOD_CIPHERS: [Getter/Setter],\n    ENGINE_METHOD_DH: [Getter/Setter],\n    ENGINE_METHOD_DIGESTS: [Getter/Setter],\n    ENGINE_METHOD_DSA: [Getter/Setter],\n    ENGINE_METHOD_ECDH: [Getter/Setter],\n    ENGINE_METHOD_ECDSA: [Getter/Setter],\n    ENGINE_METHOD_NONE: [Getter/Setter],\n    ENGINE_METHOD_PKEY_ASN1_METHS: [Getter/Setter],\n    ENGINE_METHOD_PKEY_METHS: [Getter/Setter],\n    ENGINE_METHOD_RAND: [Getter/Setter],\n    ENGINE_METHOD_STORE: [Getter/Setter],\n    ENOBUFS: [Getter/Setter],\n    ENODATA: [Getter/Setter],\n    ENODEV: [Getter/Setter],\n    ENOENT: [Getter/Setter],\n    ENOEXEC: [Getter/Setter],\n    ENOLCK: [Getter/Setter],\n    ENOLINK: [Getter/Setter],\n    ENOMEM: [Getter/Setter],\n    ENOMSG: [Getter/Setter],\n    ENOPROTOOPT: [Getter/Setter],\n    ENOSPC: [Getter/Setter],\n    ENOSR: [Getter/Setter],\n    ENOSTR: [Getter/Setter],\n    ENOSYS: [Getter/Setter],\n    ENOTCONN: [Getter/Setter],\n    ENOTDIR: [Getter/Setter],\n    ENOTEMPTY: [Getter/Setter],\n    ENOTSOCK: [Getter/Setter],\n    ENOTSUP: [Getter/Setter],\n    ENOTTY: [Getter/Setter],\n    ENXIO: [Getter/Setter],\n    EOPNOTSUPP: [Getter/Setter],\n    EOVERFLOW: [Getter/Setter],\n    EPERM: [Getter/Setter],\n    EPIPE: [Getter/Setter],\n    EPROTO: [Getter/Setter],\n    EPROTONOSUPPORT: [Getter/Setter],\n    EPROTOTYPE: [Getter/Setter],\n    ERANGE: [Getter/Setter],\n    EROFS: [Getter/Setter],\n    ESPIPE: [Getter/Setter],\n    ESRCH: [Getter/Setter],\n    ESTALE: [Getter/Setter],\n    ETIME: [Getter/Setter],\n    ETIMEDOUT: [Getter/Setter],\n    ETXTBSY: [Getter/Setter],\n    EWOULDBLOCK: [Getter/Setter],\n    EXDEV: [Getter/Setter],\n    F_OK: [Getter/Setter],\n    NPN_ENABLED: [Getter/Setter],\n    O_APPEND: [Getter/Setter],\n    O_CREAT: [Getter/Setter],\n    O_DIRECTORY: [Getter/Setter],\n    O_EXCL: [Getter/Setter],\n    O_NOCTTY: [Getter/Setter],\n    O_NOFOLLOW: [Getter/Setter],\n    O_NONBLOCK: [Getter/Setter],\n    O_RDONLY: [Getter/Setter],\n    O_RDWR: [Getter/Setter],\n    O_SYMLINK: [Getter/Setter],\n    O_SYNC: [Getter/Setter],\n    O_TRUNC: [Getter/Setter],\n    O_WRONLY: [Getter/Setter],\n    POINT_CONVERSION_COMPRESSED: [Getter/Setter],\n    POINT_CONVERSION_HYBRID: [Getter/Setter],\n    POINT_CONVERSION_UNCOMPRESSED: [Getter/Setter],\n    RSA_NO_PADDING: [Getter/Setter],\n    RSA_PKCS1_OAEP_PADDING: [Getter/Setter],\n    RSA_PKCS1_PADDING: [Getter/Setter],\n    RSA_PKCS1_PSS_PADDING: [Getter/Setter],\n    RSA_SSLV23_PADDING: [Getter/Setter],\n    RSA_X931_PADDING: [Getter/Setter],\n    R_OK: [Getter/Setter],\n    SIGABRT: [Getter/Setter],\n    SIGALRM: [Getter/Setter],\n    SIGBUS: [Getter/Setter],\n    SIGCHLD: [Getter/Setter],\n    SIGCONT: [Getter/Setter],\n    SIGFPE: [Getter/Setter],\n    SIGHUP: [Getter/Setter],\n    SIGILL: [Getter/Setter],\n    SIGINT: [Getter/Setter],\n    SIGIO: [Getter/Setter],\n    SIGIOT: [Getter/Setter],\n    SIGKILL: [Getter/Setter],\n    SIGPIPE: [Getter/Setter],\n    SIGPROF: [Getter/Setter],\n    SIGQUIT: [Getter/Setter],\n    SIGSEGV: [Getter/Setter],\n    SIGSTOP: [Getter/Setter],\n    SIGSYS: [Getter/Setter],\n    SIGTERM: [Getter/Setter],\n    SIGTRAP: [Getter/Setter],\n    SIGTSTP: [Getter/Setter],\n    SIGTTIN: [Getter/Setter],\n    SIGTTOU: [Getter/Setter],\n    SIGURG: [Getter/Setter],\n    SIGUSR1: [Getter/Setter],\n    SIGUSR2: [Getter/Setter],\n    SIGVTALRM: [Getter/Setter],\n    SIGWINCH: [Getter/Setter],\n    SIGXCPU: [Getter/Setter],\n    SIGXFSZ: [Getter/Setter],\n    SSL_OP_ALL: [Getter/Setter],\n    SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION: [Getter/Setter],\n    SSL_OP_CIPHER_SERVER_PREFERENCE: [Getter/Setter],\n    SSL_OP_CISCO_ANYCONNECT: [Getter/Setter],\n    SSL_OP_COOKIE_EXCHANGE: [Getter/Setter],\n    SSL_OP_CRYPTOPRO_TLSEXT_BUG: [Getter/Setter],\n    SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS: [Getter/Setter],\n    SSL_OP_EPHEMERAL_RSA: [Getter/Setter],\n    SSL_OP_LEGACY_SERVER_CONNECT: [Getter/Setter],\n    SSL_OP_MICROSOFT_BIG_SSLV3_BUFFER: [Getter/Setter],\n    SSL_OP_MICROSOFT_SESS_ID_BUG: [Getter/Setter],\n    SSL_OP_MSIE_SSLV2_RSA_PADDING: [Getter/Setter],\n    SSL_OP_NETSCAPE_CA_DN_BUG: [Getter/Setter],\n    SSL_OP_NETSCAPE_CHALLENGE_BUG: [Getter/Setter],\n    SSL_OP_NETSCAPE_DEMO_CIPHER_CHANGE_BUG: [Getter/Setter],\n    SSL_OP_NETSCAPE_REUSE_CIPHER_CHANGE_BUG: [Getter/Setter],\n    SSL_OP_NO_COMPRESSION: [Getter/Setter],\n    SSL_OP_NO_QUERY_MTU: [Getter/Setter],\n    SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION: [Getter/Setter],\n    SSL_OP_NO_SSLv2: [Getter/Setter],\n    SSL_OP_NO_SSLv3: [Getter/Setter],\n    SSL_OP_NO_TICKET: [Getter/Setter],\n    SSL_OP_NO_TLSv1: [Getter/Setter],\n    SSL_OP_NO_TLSv1_1: [Getter/Setter],\n    SSL_OP_NO_TLSv1_2: [Getter/Setter],\n    SSL_OP_PKCS1_CHECK_1: [Getter/Setter],\n    SSL_OP_PKCS1_CHECK_2: [Getter/Setter],\n    SSL_OP_SINGLE_DH_USE: [Getter/Setter],\n    SSL_OP_SINGLE_ECDH_USE: [Getter/Setter],\n    SSL_OP_SSLEAY_080_CLIENT_DH_BUG: [Getter/Setter],\n    SSL_OP_SSLREF2_REUSE_CERT_TYPE_BUG: [Getter/Setter],\n    SSL_OP_TLS_BLOCK_PADDING_BUG: [Getter/Setter],\n    SSL_OP_TLS_D5_BUG: [Getter/Setter],\n    SSL_OP_TLS_ROLLBACK_BUG: [Getter/Setter],\n    S_IFBLK: [Getter/Setter],\n    S_IFCHR: [Getter/Setter],\n    S_IFDIR: [Getter/Setter],\n    S_IFIFO: [Getter/Setter],\n    S_IFLNK: [Getter/Setter],\n    S_IFMT: [Getter/Setter],\n    S_IFREG: [Getter/Setter],\n    S_IFSOCK: [Getter/Setter],\n    S_IRGRP: [Getter/Setter],\n    S_IROTH: [Getter/Setter],\n    S_IRUSR: [Getter/Setter],\n    S_IRWXG: [Getter/Setter],\n    S_IRWXO: [Getter/Setter],\n    S_IRWXU: [Getter/Setter],\n    S_IWGRP: [Getter/Setter],\n    S_IWOTH: [Getter/Setter],\n    S_IWUSR: [Getter/Setter],\n    S_IXGRP: [Getter/Setter],\n    S_IXOTH: [Getter/Setter],\n    S_IXUSR: [Getter/Setter],\n    UV_UDP_REUSEADDR: [Getter/Setter],\n    W_OK: [Getter/Setter],\n    X_OK: [Getter/Setter],\n  },\n  crypto: {\n    Cipher: [Getter/Setter],\n    Cipheriv: [Getter/Setter],\n    DEFAULT_ENCODING: [Getter/Setter],\n    Decipher: [Getter/Setter],\n    Decipheriv: [Getter/Setter],\n    DiffieHellman: [Getter/Setter],\n    DiffieHellmanGroup: [Getter/Setter],\n    Hash: [Getter/Setter],\n    Hmac: [Getter/Setter],\n    Sign: [Getter/Setter],\n    Verify: [Getter/Setter],\n    constants: [Getter/Setter],\n    createCipher: [Getter/Setter],\n    createCipheriv: [Getter/Setter],\n    createCredentials: [Getter/Setter],\n    createDecipher: [Getter/Setter],\n    createDecipheriv: [Getter/Setter],\n    createDiffieHellman: [Getter/Setter],\n    createDiffieHellmanGroup: [Getter/Setter],\n    createECDH: [Getter/Setter],\n    createHash: [Getter/Setter],\n    createHmac: [Getter/Setter],\n    createSign: [Getter/Setter],\n    createVerify: [Getter/Setter],\n    default: [Getter/Setter],\n    getCiphers: [Getter/Setter],\n    getCurves: [Getter/Setter],\n    getDiffieHellman: [Getter/Setter],\n    getHashes: [Getter/Setter],\n    getRandomValues: [Getter/Setter],\n    listCiphers: [Getter/Setter],\n    pbkdf2: [Getter/Setter],\n    pbkdf2Sync: [Getter/Setter],\n    privateDecrypt: [Getter/Setter],\n    privateEncrypt: [Getter/Setter],\n    prng: [Getter/Setter],\n    pseudoRandomBytes: [Getter/Setter],\n    publicDecrypt: [Getter/Setter],\n    publicEncrypt: [Getter/Setter],\n    randomBytes: [Getter/Setter],\n    randomFill: [Getter/Setter],\n    randomFillSync: [Getter/Setter],\n    randomUUID: [Getter/Setter],\n    rng: [Getter/Setter],\n    webcrypto: [Getter/Setter],\n  },\n  dgram: [Function: dgram],\n  dns: [Function: dns],\n  domain: {\n    create: [Getter/Setter],\n    createDomain: [Getter/Setter],\n  },\n  events: {\n    EventEmitter: [Getter/Setter],\n    addAbortListener: [Getter/Setter],\n    captureRejectionSymbol: [Getter/Setter],\n    default: [Getter/Setter],\n    getEventListeners: [Getter/Setter],\n    getMaxListeners: [Getter/Setter],\n    init: [Getter/Setter],\n    listenerCount: [Getter/Setter],\n    once: [Getter/Setter],\n    setMaxListeners: [Getter/Setter],\n  },\n  fs: [Function: fs],\n  http: {\n    Agent: [Getter/Setter],\n    ClientRequest: [Getter/Setter],\n    IncomingMessage: [Getter/Setter],\n    METHODS: [Getter/Setter],\n    STATUS_CODES: [Getter/Setter],\n    default: [Getter/Setter],\n    get: [Getter/Setter],\n    globalAgent: [Getter/Setter],\n    request: [Getter/Setter],\n  },\n  https: {\n    Agent: [Getter/Setter],\n    ClientRequest: [Getter/Setter],\n    IncomingMessage: [Getter/Setter],\n    METHODS: [Getter/Setter],\n    OutgoingMessage: [Getter/Setter],\n    STATUS_CODES: [Getter/Setter],\n    Server: [Getter/Setter],\n    ServerResponse: [Getter/Setter],\n    createServer: [Getter/Setter],\n    default: [Getter/Setter],\n    get: [Getter/Setter],\n    globalAgent: [Getter/Setter],\n    maxHeaderSize: [Getter/Setter],\n    request: [Getter/Setter],\n    setMaxIdleHTTPParsers: [Getter/Setter],\n    validateHeaderName: [Getter/Setter],\n    validateHeaderValue: [Getter/Setter],\n  },\n  module: [Function: module2],\n  net: {\n    default: [Getter/Setter],\n    isIP: [Getter/Setter],\n    isIPv4: [Getter/Setter],\n    isIPv6: [Getter/Setter],\n  },\n  os: {\n    EOL: [Getter/Setter],\n    arch: [Getter/Setter],\n    cpus: [Getter/Setter],\n    endianness: [Getter/Setter],\n    freemem: [Getter/Setter],\n    getNetworkInterfaces: [Getter/Setter],\n    homedir: [Getter/Setter],\n    hostname: [Getter/Setter],\n    loadavg: [Getter/Setter],\n    networkInterfaces: [Getter/Setter],\n    platform: [Getter/Setter],\n    release: [Getter/Setter],\n    tmpDir: [Getter/Setter],\n    tmpdir: [Getter/Setter],\n    totalmem: [Getter/Setter],\n    type: [Getter/Setter],\n    uptime: [Getter/Setter],\n  },\n  path: {\n    _makeLong: [Getter/Setter],\n    basename: [Getter/Setter],\n    default: [Getter/Setter],\n    delimiter: [Getter/Setter],\n    dirname: [Getter/Setter],\n    extname: [Getter/Setter],\n    format: [Getter/Setter],\n    isAbsolute: [Getter/Setter],\n    join: [Getter/Setter],\n    normalize: [Getter/Setter],\n    parse: [Getter/Setter],\n    posix: [Getter/Setter],\n    relative: [Getter/Setter],\n    resolve: [Getter/Setter],\n    sep: [Getter/Setter],\n  },\n  perf_hooks: [Function: perf_hooks],\n  process: {\n    addListener: [Getter/Setter],\n    argv: [Getter/Setter],\n    binding: [Getter/Setter],\n    browser: [Getter/Setter],\n    chdir: [Getter/Setter],\n    cwd: [Getter/Setter],\n    emit: [Getter/Setter],\n    env: [Getter/Setter],\n    listeners: [Getter/Setter],\n    nextTick: [Getter/Setter],\n    off: [Getter/Setter],\n    on: [Getter/Setter],\n    once: [Getter/Setter],\n    prependListener: [Getter/Setter],\n    prependOnceListener: [Getter/Setter],\n    removeAllListeners: [Getter/Setter],\n    removeListener: [Getter/Setter],\n    title: [Getter/Setter],\n    umask: [Getter/Setter],\n    version: [Getter/Setter],\n    versions: [Getter/Setter],\n  },\n  punycode: {\n    default: [Getter/Setter],\n  },\n  querystring: {\n    decode: [Getter/Setter],\n    default: [Getter/Setter],\n    encode: [Getter/Setter],\n    escape: [Getter/Setter],\n    parse: [Getter/Setter],\n    stringify: [Getter/Setter],\n    unescape: [Getter/Setter],\n    unescapeBuffer: [Getter/Setter],\n  },\n  readline: [Function: readline],\n  repl: [Function: repl],\n  stream: Function {\n    default: [Stream: Readable],\n    length: [Getter],\n    name: [Getter],\n    prototype: [Getter],\n    ReadableState: [Getter],\n    _fromList: [Getter],\n    from: [Getter],\n    fromWeb: [Getter],\n    toWeb: [Getter],\n    wrap: [Getter],\n    _uint8ArrayToBuffer: [Getter],\n    _isUint8Array: [Getter],\n    isDisturbed: [Getter],\n    isErrored: [Getter],\n    isReadable: [Getter],\n    Readable: [Getter],\n    Writable: [Getter],\n    Duplex: [Getter],\n    Transform: [Getter],\n    PassThrough: [Getter],\n    addAbortSignal: [Getter],\n    finished: [Getter],\n    destroy: [Getter],\n    pipeline: [Getter],\n    compose: [Getter],\n    Stream: [Getter],\n    isDestroyed: [Function: isDestroyed],\n    isWritable: [Function: isWritable],\n    setDefaultHighWaterMark: [Function: setDefaultHighWaterMark],\n    getDefaultHighWaterMark: [Function: getDefaultHighWaterMark],\n    promises: [Getter],\n  },\n  string_decoder: {\n    StringDecoder: [Getter/Setter],\n    default: [Getter/Setter],\n  },\n  sys: {\n    TextDecoder: [Getter/Setter],\n    TextEncoder: [Getter/Setter],\n    _extend: [Getter/Setter],\n    callbackify: [Getter/Setter],\n    callbackifyOnRejected: [Getter/Setter],\n    debuglog: [Getter/Setter],\n    default: [Getter/Setter],\n    deprecate: [Getter/Setter],\n    format: [Getter/Setter],\n    inherits: [Getter/Setter],\n    inspect: [Getter/Setter],\n    isArray: [Getter/Setter],\n    isBoolean: [Getter/Setter],\n    isBuffer: [Getter/Setter],\n    isDate: [Getter/Setter],\n    isError: [Getter/Setter],\n    isFunction: [Getter/Setter],\n    isNull: [Getter/Setter],\n    isNullOrUndefined: [Getter/Setter],\n    isNumber: [Getter/Setter],\n    isObject: [Getter/Setter],\n    isPrimitive: [Getter/Setter],\n    isRegExp: [Getter/Setter],\n    isString: [Getter/Setter],\n    isSymbol: [Getter/Setter],\n    isUndefined: [Getter/Setter],\n    log: [Getter/Setter],\n    promisify: [Getter/Setter],\n    types: [Getter/Setter],\n  },\n  timers: {\n    _unrefActive: [Getter/Setter],\n    clearImmediate: [Getter/Setter],\n    clearInterval: [Getter/Setter],\n    clearTimeout: [Getter/Setter],\n    promises: [Getter/Setter],\n    setImmediate: [Getter/Setter],\n    setInterval: [Getter/Setter],\n    setTimeout: [Getter/Setter],\n  },\n  tls: [Function: tls],\n  tty: {\n    ReadStream: [Getter/Setter],\n    WriteStream: [Getter/Setter],\n    default: [Getter/Setter],\n    isatty: [Getter/Setter],\n  },\n  url: {\n    URL: [Getter/Setter],\n    URLSearchParams: [Getter/Setter],\n    Url: [Getter/Setter],\n    default: [Getter/Setter],\n    format: [Getter/Setter],\n    parse: [Getter/Setter],\n    resolve: [Getter/Setter],\n    resolveObject: [Getter/Setter],\n  },\n  util: {\n    TextDecoder: [Getter/Setter],\n    TextEncoder: [Getter/Setter],\n    _extend: [Getter/Setter],\n    callbackify: [Getter/Setter],\n    callbackifyOnRejected: [Getter/Setter],\n    debuglog: [Getter/Setter],\n    default: [Getter/Setter],\n    deprecate: [Getter/Setter],\n    format: [Getter/Setter],\n    inherits: [Getter/Setter],\n    inspect: [Getter/Setter],\n    isArray: [Getter/Setter],\n    isBoolean: [Getter/Setter],\n    isBuffer: [Getter/Setter],\n    isDate: [Getter/Setter],\n    isError: [Getter/Setter],\n    isFunction: [Getter/Setter],\n    isNull: [Getter/Setter],\n    isNullOrUndefined: [Getter/Setter],\n    isNumber: [Getter/Setter],\n    isObject: [Getter/Setter],\n    isPrimitive: [Getter/Setter],\n    isRegExp: [Getter/Setter],\n    isString: [Getter/Setter],\n    isSymbol: [Getter/Setter],\n    isUndefined: [Getter/Setter],\n    log: [Getter/Setter],\n    promisify: [Getter/Setter],\n    types: [Getter/Setter],\n  },\n  v8: [Function: v8],\n  vm: [Function: vm],\n  zlib: {\n    default: [Getter/Setter],\n  },\n}",
+        "{\n  assert: {\n    AssertionError: [Getter/Setter],\n    CallTracker: [Getter/Setter],\n    deepEqual: [Getter/Setter],\n    deepStrictEqual: [Getter/Setter],\n    default: [Getter/Setter],\n    doesNotMatch: [Getter/Setter],\n    doesNotReject: [Getter/Setter],\n    doesNotThrow: [Getter/Setter],\n    equal: [Getter/Setter],\n    fail: [Getter/Setter],\n    ifError: [Getter/Setter],\n    match: [Getter/Setter],\n    notDeepEqual: [Getter/Setter],\n    notDeepStrictEqual: [Getter/Setter],\n    notEqual: [Getter/Setter],\n    notStrictEqual: [Getter/Setter],\n    ok: [Getter/Setter],\n    rejects: [Getter/Setter],\n    strict: [Getter/Setter],\n    strictEqual: [Getter/Setter],\n    throws: [Getter/Setter],\n  },\n  buffer: {\n    Blob: [Getter/Setter],\n    Buffer: [Getter/Setter],\n    File: [Getter/Setter],\n    INSPECT_MAX_BYTES: [Getter/Setter],\n    atob: [Getter/Setter],\n    btoa: [Getter/Setter],\n    constants: [Getter/Setter],\n    default: [Getter/Setter],\n    isAscii: [Getter/Setter],\n    isUtf8: [Getter/Setter],\n    kMaxLength: [Getter/Setter],\n    kStringMaxLength: [Getter/Setter],\n    resolveObjectURL: [Getter/Setter],\n    transcode: [Getter/Setter],\n  },\n  child_process: [Function: child_process],\n  cluster: [Function: cluster],\n  console2: {\n    default: [Getter/Setter],\n  },\n  constants: {\n    DH_CHECK_P_NOT_PRIME: [Getter/Setter],\n    DH_CHECK_P_NOT_SAFE_PRIME: [Getter/Setter],\n    DH_NOT_SUITABLE_GENERATOR: [Getter/Setter],\n    DH_UNABLE_TO_CHECK_GENERATOR: [Getter/Setter],\n    E2BIG: [Getter/Setter],\n    EACCES: [Getter/Setter],\n    EADDRINUSE: [Getter/Setter],\n    EADDRNOTAVAIL: [Getter/Setter],\n    EAFNOSUPPORT: [Getter/Setter],\n    EAGAIN: [Getter/Setter],\n    EALREADY: [Getter/Setter],\n    EBADF: [Getter/Setter],\n    EBADMSG: [Getter/Setter],\n    EBUSY: [Getter/Setter],\n    ECANCELED: [Getter/Setter],\n    ECHILD: [Getter/Setter],\n    ECONNABORTED: [Getter/Setter],\n    ECONNREFUSED: [Getter/Setter],\n    ECONNRESET: [Getter/Setter],\n    EDEADLK: [Getter/Setter],\n    EDESTADDRREQ: [Getter/Setter],\n    EDOM: [Getter/Setter],\n    EDQUOT: [Getter/Setter],\n    EEXIST: [Getter/Setter],\n    EFAULT: [Getter/Setter],\n    EFBIG: [Getter/Setter],\n    EHOSTUNREACH: [Getter/Setter],\n    EIDRM: [Getter/Setter],\n    EILSEQ: [Getter/Setter],\n    EINPROGRESS: [Getter/Setter],\n    EINTR: [Getter/Setter],\n    EINVAL: [Getter/Setter],\n    EIO: [Getter/Setter],\n    EISCONN: [Getter/Setter],\n    EISDIR: [Getter/Setter],\n    ELOOP: [Getter/Setter],\n    EMFILE: [Getter/Setter],\n    EMLINK: [Getter/Setter],\n    EMSGSIZE: [Getter/Setter],\n    EMULTIHOP: [Getter/Setter],\n    ENAMETOOLONG: [Getter/Setter],\n    ENETDOWN: [Getter/Setter],\n    ENETRESET: [Getter/Setter],\n    ENETUNREACH: [Getter/Setter],\n    ENFILE: [Getter/Setter],\n    ENGINE_METHOD_ALL: [Getter/Setter],\n    ENGINE_METHOD_CIPHERS: [Getter/Setter],\n    ENGINE_METHOD_DH: [Getter/Setter],\n    ENGINE_METHOD_DIGESTS: [Getter/Setter],\n    ENGINE_METHOD_DSA: [Getter/Setter],\n    ENGINE_METHOD_ECDH: [Getter/Setter],\n    ENGINE_METHOD_ECDSA: [Getter/Setter],\n    ENGINE_METHOD_NONE: [Getter/Setter],\n    ENGINE_METHOD_PKEY_ASN1_METHS: [Getter/Setter],\n    ENGINE_METHOD_PKEY_METHS: [Getter/Setter],\n    ENGINE_METHOD_RAND: [Getter/Setter],\n    ENGINE_METHOD_STORE: [Getter/Setter],\n    ENOBUFS: [Getter/Setter],\n    ENODATA: [Getter/Setter],\n    ENODEV: [Getter/Setter],\n    ENOENT: [Getter/Setter],\n    ENOEXEC: [Getter/Setter],\n    ENOLCK: [Getter/Setter],\n    ENOLINK: [Getter/Setter],\n    ENOMEM: [Getter/Setter],\n    ENOMSG: [Getter/Setter],\n    ENOPROTOOPT: [Getter/Setter],\n    ENOSPC: [Getter/Setter],\n    ENOSR: [Getter/Setter],\n    ENOSTR: [Getter/Setter],\n    ENOSYS: [Getter/Setter],\n    ENOTCONN: [Getter/Setter],\n    ENOTDIR: [Getter/Setter],\n    ENOTEMPTY: [Getter/Setter],\n    ENOTSOCK: [Getter/Setter],\n    ENOTSUP: [Getter/Setter],\n    ENOTTY: [Getter/Setter],\n    ENXIO: [Getter/Setter],\n    EOPNOTSUPP: [Getter/Setter],\n    EOVERFLOW: [Getter/Setter],\n    EPERM: [Getter/Setter],\n    EPIPE: [Getter/Setter],\n    EPROTO: [Getter/Setter],\n    EPROTONOSUPPORT: [Getter/Setter],\n    EPROTOTYPE: [Getter/Setter],\n    ERANGE: [Getter/Setter],\n    EROFS: [Getter/Setter],\n    ESPIPE: [Getter/Setter],\n    ESRCH: [Getter/Setter],\n    ESTALE: [Getter/Setter],\n    ETIME: [Getter/Setter],\n    ETIMEDOUT: [Getter/Setter],\n    ETXTBSY: [Getter/Setter],\n    EWOULDBLOCK: [Getter/Setter],\n    EXDEV: [Getter/Setter],\n    F_OK: [Getter/Setter],\n    NPN_ENABLED: [Getter/Setter],\n    O_APPEND: [Getter/Setter],\n    O_CREAT: [Getter/Setter],\n    O_DIRECTORY: [Getter/Setter],\n    O_EXCL: [Getter/Setter],\n    O_NOCTTY: [Getter/Setter],\n    O_NOFOLLOW: [Getter/Setter],\n    O_NONBLOCK: [Getter/Setter],\n    O_RDONLY: [Getter/Setter],\n    O_RDWR: [Getter/Setter],\n    O_SYMLINK: [Getter/Setter],\n    O_SYNC: [Getter/Setter],\n    O_TRUNC: [Getter/Setter],\n    O_WRONLY: [Getter/Setter],\n    POINT_CONVERSION_COMPRESSED: [Getter/Setter],\n    POINT_CONVERSION_HYBRID: [Getter/Setter],\n    POINT_CONVERSION_UNCOMPRESSED: [Getter/Setter],\n    RSA_NO_PADDING: [Getter/Setter],\n    RSA_PKCS1_OAEP_PADDING: [Getter/Setter],\n    RSA_PKCS1_PADDING: [Getter/Setter],\n    RSA_PKCS1_PSS_PADDING: [Getter/Setter],\n    RSA_SSLV23_PADDING: [Getter/Setter],\n    RSA_X931_PADDING: [Getter/Setter],\n    R_OK: [Getter/Setter],\n    SIGABRT: [Getter/Setter],\n    SIGALRM: [Getter/Setter],\n    SIGBUS: [Getter/Setter],\n    SIGCHLD: [Getter/Setter],\n    SIGCONT: [Getter/Setter],\n    SIGFPE: [Getter/Setter],\n    SIGHUP: [Getter/Setter],\n    SIGILL: [Getter/Setter],\n    SIGINT: [Getter/Setter],\n    SIGIO: [Getter/Setter],\n    SIGIOT: [Getter/Setter],\n    SIGKILL: [Getter/Setter],\n    SIGPIPE: [Getter/Setter],\n    SIGPROF: [Getter/Setter],\n    SIGQUIT: [Getter/Setter],\n    SIGSEGV: [Getter/Setter],\n    SIGSTOP: [Getter/Setter],\n    SIGSYS: [Getter/Setter],\n    SIGTERM: [Getter/Setter],\n    SIGTRAP: [Getter/Setter],\n    SIGTSTP: [Getter/Setter],\n    SIGTTIN: [Getter/Setter],\n    SIGTTOU: [Getter/Setter],\n    SIGURG: [Getter/Setter],\n    SIGUSR1: [Getter/Setter],\n    SIGUSR2: [Getter/Setter],\n    SIGVTALRM: [Getter/Setter],\n    SIGWINCH: [Getter/Setter],\n    SIGXCPU: [Getter/Setter],\n    SIGXFSZ: [Getter/Setter],\n    SSL_OP_ALL: [Getter/Setter],\n    SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION: [Getter/Setter],\n    SSL_OP_CIPHER_SERVER_PREFERENCE: [Getter/Setter],\n    SSL_OP_CISCO_ANYCONNECT: [Getter/Setter],\n    SSL_OP_COOKIE_EXCHANGE: [Getter/Setter],\n    SSL_OP_CRYPTOPRO_TLSEXT_BUG: [Getter/Setter],\n    SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS: [Getter/Setter],\n    SSL_OP_EPHEMERAL_RSA: [Getter/Setter],\n    SSL_OP_LEGACY_SERVER_CONNECT: [Getter/Setter],\n    SSL_OP_MICROSOFT_BIG_SSLV3_BUFFER: [Getter/Setter],\n    SSL_OP_MICROSOFT_SESS_ID_BUG: [Getter/Setter],\n    SSL_OP_MSIE_SSLV2_RSA_PADDING: [Getter/Setter],\n    SSL_OP_NETSCAPE_CA_DN_BUG: [Getter/Setter],\n    SSL_OP_NETSCAPE_CHALLENGE_BUG: [Getter/Setter],\n    SSL_OP_NETSCAPE_DEMO_CIPHER_CHANGE_BUG: [Getter/Setter],\n    SSL_OP_NETSCAPE_REUSE_CIPHER_CHANGE_BUG: [Getter/Setter],\n    SSL_OP_NO_COMPRESSION: [Getter/Setter],\n    SSL_OP_NO_QUERY_MTU: [Getter/Setter],\n    SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION: [Getter/Setter],\n    SSL_OP_NO_SSLv2: [Getter/Setter],\n    SSL_OP_NO_SSLv3: [Getter/Setter],\n    SSL_OP_NO_TICKET: [Getter/Setter],\n    SSL_OP_NO_TLSv1: [Getter/Setter],\n    SSL_OP_NO_TLSv1_1: [Getter/Setter],\n    SSL_OP_NO_TLSv1_2: [Getter/Setter],\n    SSL_OP_PKCS1_CHECK_1: [Getter/Setter],\n    SSL_OP_PKCS1_CHECK_2: [Getter/Setter],\n    SSL_OP_SINGLE_DH_USE: [Getter/Setter],\n    SSL_OP_SINGLE_ECDH_USE: [Getter/Setter],\n    SSL_OP_SSLEAY_080_CLIENT_DH_BUG: [Getter/Setter],\n    SSL_OP_SSLREF2_REUSE_CERT_TYPE_BUG: [Getter/Setter],\n    SSL_OP_TLS_BLOCK_PADDING_BUG: [Getter/Setter],\n    SSL_OP_TLS_D5_BUG: [Getter/Setter],\n    SSL_OP_TLS_ROLLBACK_BUG: [Getter/Setter],\n    S_IFBLK: [Getter/Setter],\n    S_IFCHR: [Getter/Setter],\n    S_IFDIR: [Getter/Setter],\n    S_IFIFO: [Getter/Setter],\n    S_IFLNK: [Getter/Setter],\n    S_IFMT: [Getter/Setter],\n    S_IFREG: [Getter/Setter],\n    S_IFSOCK: [Getter/Setter],\n    S_IRGRP: [Getter/Setter],\n    S_IROTH: [Getter/Setter],\n    S_IRUSR: [Getter/Setter],\n    S_IRWXG: [Getter/Setter],\n    S_IRWXO: [Getter/Setter],\n    S_IRWXU: [Getter/Setter],\n    S_IWGRP: [Getter/Setter],\n    S_IWOTH: [Getter/Setter],\n    S_IWUSR: [Getter/Setter],\n    S_IXGRP: [Getter/Setter],\n    S_IXOTH: [Getter/Setter],\n    S_IXUSR: [Getter/Setter],\n    UV_UDP_REUSEADDR: [Getter/Setter],\n    W_OK: [Getter/Setter],\n    X_OK: [Getter/Setter],\n  },\n  crypto: {\n    Cipher: [Getter/Setter],\n    Cipheriv: [Getter/Setter],\n    DEFAULT_ENCODING: [Getter/Setter],\n    Decipher: [Getter/Setter],\n    Decipheriv: [Getter/Setter],\n    DiffieHellman: [Getter/Setter],\n    DiffieHellmanGroup: [Getter/Setter],\n    Hash: [Getter/Setter],\n    Hmac: [Getter/Setter],\n    Sign: [Getter/Setter],\n    Verify: [Getter/Setter],\n    constants: [Getter/Setter],\n    createCipher: [Getter/Setter],\n    createCipheriv: [Getter/Setter],\n    createCredentials: [Getter/Setter],\n    createDecipher: [Getter/Setter],\n    createDecipheriv: [Getter/Setter],\n    createDiffieHellman: [Getter/Setter],\n    createDiffieHellmanGroup: [Getter/Setter],\n    createECDH: [Getter/Setter],\n    createHash: [Getter/Setter],\n    createHmac: [Getter/Setter],\n    createSign: [Getter/Setter],\n    createVerify: [Getter/Setter],\n    default: [Getter/Setter],\n    getCiphers: [Getter/Setter],\n    getCurves: [Getter/Setter],\n    getDiffieHellman: [Getter/Setter],\n    getHashes: [Getter/Setter],\n    getRandomValues: [Getter/Setter],\n    listCiphers: [Getter/Setter],\n    pbkdf2: [Getter/Setter],\n    pbkdf2Sync: [Getter/Setter],\n    privateDecrypt: [Getter/Setter],\n    privateEncrypt: [Getter/Setter],\n    prng: [Getter/Setter],\n    pseudoRandomBytes: [Getter/Setter],\n    publicDecrypt: [Getter/Setter],\n    publicEncrypt: [Getter/Setter],\n    randomBytes: [Getter/Setter],\n    randomFill: [Getter/Setter],\n    randomFillSync: [Getter/Setter],\n    randomUUID: [Getter/Setter],\n    rng: [Getter/Setter],\n    subtle: [Getter/Setter],\n    timingSafeEqual: [Getter/Setter],\n    webcrypto: [Getter/Setter],\n  },\n  dgram: [Function: dgram],\n  dns: [Function: dns],\n  domain: {\n    create: [Getter/Setter],\n    createDomain: [Getter/Setter],\n  },\n  events: {\n    EventEmitter: [Getter/Setter],\n    addAbortListener: [Getter/Setter],\n    captureRejectionSymbol: [Getter/Setter],\n    default: [Getter/Setter],\n    getEventListeners: [Getter/Setter],\n    getMaxListeners: [Getter/Setter],\n    init: [Getter/Setter],\n    listenerCount: [Getter/Setter],\n    once: [Getter/Setter],\n    setMaxListeners: [Getter/Setter],\n  },\n  fs: [Function: fs],\n  http: {\n    Agent: [Getter/Setter],\n    ClientRequest: [Getter/Setter],\n    IncomingMessage: [Getter/Setter],\n    METHODS: [Getter/Setter],\n    STATUS_CODES: [Getter/Setter],\n    default: [Getter/Setter],\n    get: [Getter/Setter],\n    globalAgent: [Getter/Setter],\n    request: [Getter/Setter],\n  },\n  https: {\n    Agent: [Getter/Setter],\n    ClientRequest: [Getter/Setter],\n    IncomingMessage: [Getter/Setter],\n    METHODS: [Getter/Setter],\n    OutgoingMessage: [Getter/Setter],\n    STATUS_CODES: [Getter/Setter],\n    Server: [Getter/Setter],\n    ServerResponse: [Getter/Setter],\n    createServer: [Getter/Setter],\n    default: [Getter/Setter],\n    get: [Getter/Setter],\n    globalAgent: [Getter/Setter],\n    maxHeaderSize: [Getter/Setter],\n    request: [Getter/Setter],\n    setMaxIdleHTTPParsers: [Getter/Setter],\n    validateHeaderName: [Getter/Setter],\n    validateHeaderValue: [Getter/Setter],\n  },\n  module: [Function: module2],\n  net: {\n    default: [Getter/Setter],\n    isIP: [Getter/Setter],\n    isIPv4: [Getter/Setter],\n    isIPv6: [Getter/Setter],\n  },\n  os: {\n    EOL: [Getter/Setter],\n    arch: [Getter/Setter],\n    cpus: [Getter/Setter],\n    endianness: [Getter/Setter],\n    freemem: [Getter/Setter],\n    getNetworkInterfaces: [Getter/Setter],\n    homedir: [Getter/Setter],\n    hostname: [Getter/Setter],\n    loadavg: [Getter/Setter],\n    networkInterfaces: [Getter/Setter],\n    platform: [Getter/Setter],\n    release: [Getter/Setter],\n    tmpDir: [Getter/Setter],\n    tmpdir: [Getter/Setter],\n    totalmem: [Getter/Setter],\n    type: [Getter/Setter],\n    uptime: [Getter/Setter],\n  },\n  path: {\n    _makeLong: [Getter/Setter],\n    basename: [Getter/Setter],\n    default: [Getter/Setter],\n    delimiter: [Getter/Setter],\n    dirname: [Getter/Setter],\n    extname: [Getter/Setter],\n    format: [Getter/Setter],\n    isAbsolute: [Getter/Setter],\n    join: [Getter/Setter],\n    normalize: [Getter/Setter],\n    parse: [Getter/Setter],\n    posix: [Getter/Setter],\n    relative: [Getter/Setter],\n    resolve: [Getter/Setter],\n    sep: [Getter/Setter],\n  },\n  perf_hooks: [Function: perf_hooks],\n  process: {\n    addListener: [Getter/Setter],\n    argv: [Getter/Setter],\n    binding: [Getter/Setter],\n    browser: [Getter/Setter],\n    chdir: [Getter/Setter],\n    cwd: [Getter/Setter],\n    emit: [Getter/Setter],\n    env: [Getter/Setter],\n    listeners: [Getter/Setter],\n    nextTick: [Getter/Setter],\n    off: [Getter/Setter],\n    on: [Getter/Setter],\n    once: [Getter/Setter],\n    prependListener: [Getter/Setter],\n    prependOnceListener: [Getter/Setter],\n    removeAllListeners: [Getter/Setter],\n    removeListener: [Getter/Setter],\n    title: [Getter/Setter],\n    umask: [Getter/Setter],\n    version: [Getter/Setter],\n    versions: [Getter/Setter],\n  },\n  punycode: {\n    decode: [Getter/Setter],\n    default: [Getter/Setter],\n    encode: [Getter/Setter],\n    toASCII: [Getter/Setter],\n    toUnicode: [Getter/Setter],\n    ucs2: [Getter/Setter],\n    version: [Getter/Setter],\n  },\n  querystring: {\n    decode: [Getter/Setter],\n    default: [Getter/Setter],\n    encode: [Getter/Setter],\n    escape: [Getter/Setter],\n    parse: [Getter/Setter],\n    stringify: [Getter/Setter],\n    unescape: [Getter/Setter],\n    unescapeBuffer: [Getter/Setter],\n  },\n  readline: [Function: readline],\n  repl: [Function: repl],\n  stream: Function {\n    default: [Stream: Readable],\n    length: [Getter],\n    name: [Getter],\n    prototype: [Getter],\n    ReadableState: [Getter],\n    _fromList: [Getter],\n    from: [Getter],\n    fromWeb: [Getter],\n    toWeb: [Getter],\n    wrap: [Getter],\n    _uint8ArrayToBuffer: [Getter],\n    _isUint8Array: [Getter],\n    isDisturbed: [Getter],\n    isErrored: [Getter],\n    isReadable: [Getter],\n    Readable: [Getter],\n    Writable: [Getter],\n    Duplex: [Getter],\n    Transform: [Getter],\n    PassThrough: [Getter],\n    addAbortSignal: [Getter],\n    finished: [Getter],\n    destroy: [Getter],\n    pipeline: [Getter],\n    compose: [Getter],\n    Stream: [Getter],\n    isDestroyed: [Function: isDestroyed],\n    isWritable: [Function: isWritable],\n    setDefaultHighWaterMark: [Function: setDefaultHighWaterMark],\n    getDefaultHighWaterMark: [Function: getDefaultHighWaterMark],\n    promises: [Getter],\n  },\n  string_decoder: {\n    StringDecoder: [Getter/Setter],\n    default: [Getter/Setter],\n  },\n  sys: {\n    TextDecoder: [Getter/Setter],\n    TextEncoder: [Getter/Setter],\n    _extend: [Getter/Setter],\n    callbackify: [Getter/Setter],\n    callbackifyOnRejected: [Getter/Setter],\n    debuglog: [Getter/Setter],\n    default: [Getter/Setter],\n    deprecate: [Getter/Setter],\n    format: [Getter/Setter],\n    inherits: [Getter/Setter],\n    inspect: [Getter/Setter],\n    isArray: [Getter/Setter],\n    isBoolean: [Getter/Setter],\n    isBuffer: [Getter/Setter],\n    isDate: [Getter/Setter],\n    isError: [Getter/Setter],\n    isFunction: [Getter/Setter],\n    isNull: [Getter/Setter],\n    isNullOrUndefined: [Getter/Setter],\n    isNumber: [Getter/Setter],\n    isObject: [Getter/Setter],\n    isPrimitive: [Getter/Setter],\n    isRegExp: [Getter/Setter],\n    isString: [Getter/Setter],\n    isSymbol: [Getter/Setter],\n    isUndefined: [Getter/Setter],\n    log: [Getter/Setter],\n    promisify: [Getter/Setter],\n    types: [Getter/Setter],\n  },\n  timers: {\n    _unrefActive: [Getter/Setter],\n    clearImmediate: [Getter/Setter],\n    clearInterval: [Getter/Setter],\n    clearTimeout: [Getter/Setter],\n    promises: [Getter/Setter],\n    setImmediate: [Getter/Setter],\n    setInterval: [Getter/Setter],\n    setTimeout: [Getter/Setter],\n  },\n  tls: [Function: tls],\n  tty: {\n    ReadStream: [Getter/Setter],\n    WriteStream: [Getter/Setter],\n    default: [Getter/Setter],\n    isatty: [Getter/Setter],\n  },\n  url: {\n    URL: [Getter/Setter],\n    URLSearchParams: [Getter/Setter],\n    Url: [Getter/Setter],\n    default: [Getter/Setter],\n    format: [Getter/Setter],\n    parse: [Getter/Setter],\n    resolve: [Getter/Setter],\n    resolveObject: [Getter/Setter],\n  },\n  util: {\n    TextDecoder: [Getter/Setter],\n    TextEncoder: [Getter/Setter],\n    _extend: [Getter/Setter],\n    callbackify: [Getter/Setter],\n    callbackifyOnRejected: [Getter/Setter],\n    debuglog: [Getter/Setter],\n    default: [Getter/Setter],\n    deprecate: [Getter/Setter],\n    format: [Getter/Setter],\n    inherits: [Getter/Setter],\n    inspect: [Getter/Setter],\n    isArray: [Getter/Setter],\n    isBoolean: [Getter/Setter],\n    isBuffer: [Getter/Setter],\n    isDate: [Getter/Setter],\n    isError: [Getter/Setter],\n    isFunction: [Getter/Setter],\n    isNull: [Getter/Setter],\n    isNullOrUndefined: [Getter/Setter],\n    isNumber: [Getter/Setter],\n    isObject: [Getter/Setter],\n    isPrimitive: [Getter/Setter],\n    isRegExp: [Getter/Setter],\n    isString: [Getter/Setter],\n    isSymbol: [Getter/Setter],\n    isUndefined: [Getter/Setter],\n    log: [Getter/Setter],\n    promisify: [Getter/Setter],\n    types: [Getter/Setter],\n  },\n  v8: [Function: v8],\n  vm: [Function: vm],\n  zlib: {\n    default: [Getter/Setter],\n  },\n}",
 
       validate(ctx) {},
     },

@@ -44,7 +44,7 @@ describe.concurrent("socket", () => {
               data,
               connectError,
             },
-          } as any),
+          }),
       ).toThrow();
       Bun.gc(true);
       await Bun.sleep(10);
@@ -78,7 +78,7 @@ describe.concurrent("socket", () => {
             close,
             data,
           },
-        } as any);
+        });
         Bun.gc(true);
         await Bun.sleep(10);
         Bun.gc(true);
@@ -1003,7 +1003,7 @@ it.skipIf(isWindows)("should not crash when a socket from a file descriptor is c
         close,
         data,
       },
-    } as any);
+    });
     Bun.gc(true);
     await Bun.sleep(10);
     closeSync(client);

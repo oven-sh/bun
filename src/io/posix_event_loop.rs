@@ -180,7 +180,7 @@ const EV_EOF: u16 = 0x8000;
 /// crates; `__bun_run_file_poll` (link-time, in `bun_runtime::dispatch`)
 /// matches on this and calls the per-kind handler directly — same enum-dispatch
 /// shape as `EventLoopCtx`, with the match on the runtime side because there
-/// are 13 variants × 1 dispatch fn (vs 2 × 9 for `EventLoopCtx`).
+/// are 14 variants × 1 dispatch fn (vs 2 × 9 for `EventLoopCtx`).
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum PollTag {
@@ -198,6 +198,8 @@ pub enum PollTag {
     ParentDeathWatchdog,
     LifecycleScriptSubprocessOutputReader,
     MemoryPressure,
+    /// An addon's `uv_poll_t` (`bun_runtime::napi::uv_posix::UvPoll`).
+    UvPoll,
 }
 
 /// Compatibility module — call sites in `bun_runtime`/`bun_install` still spell
@@ -221,6 +223,7 @@ pub mod poll_tag {
     pub const LIFECYCLE_SCRIPT_SUBPROCESS_OUTPUT_READER: PollTag =
         PollTag::LifecycleScriptSubprocessOutputReader;
     pub const MEMORY_PRESSURE: PollTag = PollTag::MemoryPressure;
+    pub const UV_POLL: PollTag = PollTag::UvPoll;
 }
 
 #[derive(Copy, Clone)]

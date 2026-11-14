@@ -29,7 +29,7 @@ use bun_ptr::{BackRef, RefPtr, Root, ThisPtr};
 use bun_uws::ssl_wrapper::{Handlers as SslHandlers, SSLWrapper as SslWrapper};
 use bun_uws::{NewSocketHandler, us_bun_verify_error_t};
 
-use crate::websocket_client::{CloseMode, ErrorCode, remote_address_of};
+use crate::websocket_client::{CloseMode, ErrorCode};
 
 use bun_boringssl::c::OwnedSslCtx;
 
@@ -494,14 +494,6 @@ impl WebSocketProxyTunnel {
     /// never sends it.
     pub(crate) fn has_socket(&self) -> bool {
         !matches!(self.socket.get(), SocketUnion::None)
-    }
-
-    pub(crate) fn remote_address(&self) -> Option<(core::net::IpAddr, u16)> {
-        match self.socket.get() {
-            SocketUnion::Tcp(s) => remote_address_of(s),
-            SocketUnion::Ssl(s) => remote_address_of(s),
-            SocketUnion::None => None,
-        }
     }
 
     pub(crate) fn us_socket(&self) -> Option<*mut bun_uws_sys::us_socket_t> {

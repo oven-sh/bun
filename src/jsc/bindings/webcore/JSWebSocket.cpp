@@ -71,6 +71,7 @@
 #include "ErrorCode.h"
 #include "blob.h"
 #include "ModuleGraph.h"
+#include "JSSocketAddressDTO.h"
 #include <JavaScriptCore/InternalFieldTuple.h>
 
 namespace WebCore {
@@ -1198,15 +1199,12 @@ JSC_DEFINE_HOST_FUNCTION(jsWebSocketRemoteAddressForWs, (JSGlobalObject * lexica
     auto* socket = dynamicDowncast<JSWebSocket>(callFrame->argument(0));
     if (!socket) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope, "Expected a WebSocket"_s);
-    auto remoteAddress = socket->wrapped().remoteAddress();
-    if (!remoteAddress)
+    // The peer, or the proxy when there is one. Not connected, or connected over a unix socket: undefined.
+    us_socket_t* connection = socket->wrapped().usSocket();
+    struct sockaddr_storage addr;
+    if (!connection || !us_socket_remote_sockaddr(connection, &addr))
         return JSValue::encode(jsUndefined());
-
-    auto* result = constructEmptyObject(lexicalGlobalObject);
-    Bun::putDirectNamed(vm, result, "address"_s, jsString(vm, remoteAddress->address));
-    Bun::putDirectNamed(vm, result, "family"_s, jsNontrivialString(vm, remoteAddress->isIPv6 ? "IPv6"_s : "IPv4"_s));
-    Bun::putDirectNamed(vm, result, "port"_s, jsNumber(remoteAddress->port));
-    return JSValue::encode(result);
+    RELEASE_AND_RETURN(throwScope, Bun__sockaddrToJS(defaultGlobalObject(lexicalGlobalObject), &addr));
 }
 
 JSC::JSValue createWebSocketBindingForWs(Zig::GlobalObject* globalObject)

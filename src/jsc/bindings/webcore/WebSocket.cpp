@@ -717,16 +717,6 @@ void WebSocket::setRef(bool ref)
     callClient<Bun__WebSocketClient__setRef, Bun__WebSocketClientTLS__setRef>(ref);
 }
 
-std::optional<WebSocket::RemoteAddress> WebSocket::remoteAddress() const
-{
-    BunString address { BunStringTag::Empty };
-    uint16_t port = 0;
-    bool isIPv6 = false;
-    if (callClient<Bun__WebSocketClient__remoteAddress, Bun__WebSocketClientTLS__remoteAddress>(&address, &port, &isIPv6))
-        return RemoteAddress { address.transferToWTFString(), port, isIPv6 };
-    return std::nullopt;
-}
-
 void WebSocket::feed(std::span<const uint8_t> bytes)
 {
     if (m_connectionType == ConnectionType::Stream && m_connectedWebSocketKind == ConnectedWebSocketKind::Client)

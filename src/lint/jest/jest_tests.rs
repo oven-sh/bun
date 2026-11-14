@@ -618,10 +618,8 @@ pub(crate) mod consistent_test_it {
                                 Some(b'x') => "x",
                                 _ => "",
                             };
-                            if !ctx.can_write([prefix, preferred].concat().as_bytes(), ident) {
-                                continue;
-                            }
-                            report.fix(|fixer| {
+                            let written = [prefix, preferred].concat();
+                            ctx.fix_writing(report, written.as_bytes(), ident, |fixer| {
                                 let prefix = match jest_fn_call.name.first() {
                                     _ if ident.is_ident("fit") => {
                                         return fixer.replace(ident, "test.only");
@@ -971,9 +969,10 @@ pub(crate) mod no_test_prefixes {
         let report = ctx
             .report(span, NO_TEST_PREFIXES)
             .data("preferred_node_name", preferred_node_name.clone());
-        if ctx.can_write(name.get(1..).unwrap_or_default(), callee) {
-            report.fix(|fixer| fixer.replace(span, preferred_node_name));
-        }
+        let written = name.get(1..).unwrap_or_default();
+        ctx.fix_writing(report, written, callee, |fixer| {
+            fixer.replace(span, preferred_node_name)
+        });
     }
 
     /// Returns the function's name as its module exports it, and the member names.

@@ -3943,20 +3943,23 @@ pub enum ResolveMode {
     Require,
     /// `require.resolve()`: returns the bare specifier for Node builtins.
     RequireResolve,
-    /// `import.meta.resolve()`, `Bun.resolveSync()`: ESM resolution that loads nothing.
+    /// `import.meta.resolveSync()`, `Bun.resolveSync()`: ESM resolution that loads nothing.
     EsmResolve,
+    /// `import.meta.resolve()`: `EsmResolve`, except that a file a package names is the answer even when it isn't
+    /// there, as in Node.js.
+    ImportMetaResolve,
 }
 
 impl ResolveMode {
     #[inline]
     pub fn is_esm(self) -> bool {
-        matches!(self, Self::Esm | Self::EsmResolve)
+        matches!(self, Self::Esm | Self::EsmResolve | Self::ImportMetaResolve)
     }
 
     #[inline]
     pub fn import_kind(self) -> bun_ast::ImportKind {
         match self {
-            Self::Esm | Self::EsmResolve => bun_ast::ImportKind::Stmt,
+            Self::Esm | Self::EsmResolve | Self::ImportMetaResolve => bun_ast::ImportKind::Stmt,
             Self::Require => bun_ast::ImportKind::Require,
             Self::RequireResolve => bun_ast::ImportKind::RequireResolve,
         }
@@ -3965,7 +3968,10 @@ impl ResolveMode {
     /// The caller only wants the path; nothing is loaded.
     #[inline]
     pub fn only_resolves(self) -> bool {
-        matches!(self, Self::RequireResolve | Self::EsmResolve)
+        matches!(
+            self,
+            Self::RequireResolve | Self::EsmResolve | Self::ImportMetaResolve
+        )
     }
 
     /// For functions that load nothing when they resolve as ESM (`import.meta.resolveSync()`).
@@ -5209,6 +5215,8 @@ impl VirtualMachine {
         let is_special_source = source == MAIN_FILE_NAME || Macro::is_macro_path(source);
         let mut query_string: &[u8] = b"";
         let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
+        // Set before resolving: `import.meta.resolve()` keeps the query when the file a package names is missing.
+        ret.query_string = query_string;
         let top_level_dir = self.top_level_dir();
         let source_to_use: &[u8] = if !is_special_source {
             if is_a_file_path {
@@ -5361,7 +5369,6 @@ impl VirtualMachine {
                     || self.transpiler.get().options.macro_remap.count() > 0,
             );
         }
-        ret.query_string = query_string;
         let result_path = result
             .path_const()
             .ok_or(crate::CrateError::ModuleNotFound)?;
@@ -5640,6 +5647,7 @@ impl VirtualMachine {
             let is_from_disk = jsc_vm.is_code_from_disk(source_utf8.slice());
             (jsc_vm.transpiler).with_mut(|t| t.resolver.resolves_for_code_from_disk = is_from_disk);
         }
+        jsc_vm.transpiler.resolver.missing_target = None;
         let resolve_result = jsc_vm._resolve(
             &mut result,
             specifier_utf8.slice(),
@@ -5651,7 +5659,13 @@ impl VirtualMachine {
         if mode == ResolveMode::Esm {
             (jsc_vm.transpiler).with_mut(|t| t.resolver.resolves_for_code_from_disk = false);
         }
-        if let Err(err) = resolve_result {
+        let missing_target = match resolve_result {
+            Err(_) if mode == ResolveMode::ImportMetaResolve => {
+                jsc_vm.transpiler.resolver.missing_target.take()
+            }
+            _ => None,
+        };
+        if let (Err(err), None) = (resolve_result, &missing_target) {
             let import_kind = mode.import_kind();
             // Find a `.resolve`-metadata msg if the log has one.
             let resolve_msg_index = log
@@ -5716,7 +5730,9 @@ impl VirtualMachine {
             *query = bun_core::String::clone_utf8(result.query_string);
         }
 
-        Ok(Ok(bun_core::String::clone_utf8(result.path)))
+        Ok(Ok(bun_core::String::clone_utf8(
+            missing_target.as_deref().unwrap_or(result.path),
+        )))
     }
     /// SAFETY: `this` is this thread's VM, and it runs nothing afterwards. The allocation stays.
     pub unsafe fn destroy(this: *mut Self) {

@@ -579,6 +579,10 @@ pub struct Resolver<'a> {
 
     /// Why "exports" or "imports" led to no file: the first time since this was last `None`.
     pub esm_failure: Option<crate::package_json::Status>,
+
+    /// The path that "exports", "imports" or a package subpath named when nothing is there: the first time since this
+    /// was last `None`. `import.meta.resolve()` returns it, as Node.js does.
+    pub missing_target: Option<Box<[u8]>>,
 }
 
 /// RAII guard returned by [`Resolver::scoped_log`]. Restores the previous
@@ -649,6 +653,7 @@ impl<'a> Resolver<'a> {
             resolves_for_code_from_disk: false,
             packages_of_code_from_disk: Vec::new(),
             esm_failure: None,
+            missing_target: None,
         }
     }
 
@@ -1007,6 +1012,7 @@ impl<'a> Resolver<'a> {
             resolves_for_code_from_disk: false,
             packages_of_code_from_disk: Vec::new(),
             esm_failure: None,
+            missing_target: None,
         }
     }
 
@@ -3062,6 +3068,7 @@ impl<'a> Resolver<'a> {
                     let prev_extension_order = self.extension_order;
                     // NOTE: defer restore reshaped — restored at end of block
 
+                    let mut is_package_found = false;
                     if let Some(ref esm) = esm_ {
                         // This join can fail even though `abs_path` fit, because `<name>/..` normalizes to a shorter path.
                         let abs_package_path: Option<&[u8]> = if is_self_reference {
@@ -3075,6 +3082,7 @@ impl<'a> Resolver<'a> {
                         if let Some(abs_package_path) = abs_package_path
                             && let Ok(Some(pkg_dir_info)) = self.dir_info_cached(abs_package_path)
                         {
+                            is_package_found = true;
                             self.extension_order = match kind {
                                 ast::ImportKind::Url
                                 | ast::ImportKind::AtConditional
@@ -3246,6 +3254,10 @@ impl<'a> Resolver<'a> {
                         return MatchStatus::Success;
                     }
                     self.extension_order = prev_extension_order;
+                    // Node.js takes the first folder of the package and names the file of a subpath without looking.
+                    if is_package_found && esm_.as_ref().is_some_and(|esm| esm.subpath != b".") {
+                        self.set_missing_target(&[dir_info.abs_path, b"node_modules", import_path]);
+                    }
                 }
 
                 match dir_info.get_parent() {
@@ -3773,6 +3785,9 @@ impl<'a> Resolver<'a> {
                                 }
                                 return MatchStatus::Success;
                             }
+                            if esm.subpath != b"." {
+                                self.set_missing_target(&[pkg_dir_info.abs_path, esm.subpath]);
+                            }
                         }
                     }
                     Err(err) => {
@@ -4062,6 +4077,11 @@ impl<'a> Resolver<'a> {
         package_subpath: &[u8],
         out: &mut MatchResult,
     ) -> MatchStatus {
+        use crate::package_json::Status;
+        let names_a_path = matches!(
+            esm_resolution.status,
+            Status::Inexact | Status::Exact | Status::ExactEndsWithStar
+        ) && esm_resolution.path.first() == Some(&SEP);
         let status = self.load_esm_resolution(
             &mut esm_resolution,
             abs_package_path,
@@ -4072,8 +4092,23 @@ impl<'a> Resolver<'a> {
         );
         if !status.is_success() {
             self.esm_failure.get_or_insert(esm_resolution.status);
+            if names_a_path {
+                let target = strings::without_leading_path_separator(&esm_resolution.path);
+                self.set_missing_target(&[abs_package_path, target]);
+            }
         }
         status
+    }
+
+    /// Records `parts`, joined, as `missing_target` unless one is recorded already.
+    fn set_missing_target(&mut self, parts: &[&[u8]]) {
+        if self.missing_target.is_some() {
+            return;
+        }
+        let mut buffer = bun_paths::path_buffer_pool::get();
+        if let Some(path) = self.fs_ref().abs_buf_checked(parts, &mut buffer[..]) {
+            self.missing_target = Some(Box::from(path));
+        }
     }
 
     fn load_esm_resolution(

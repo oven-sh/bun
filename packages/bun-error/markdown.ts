@@ -121,11 +121,7 @@ function exceptionToMarkdown(exception: JSException): string {
       // and we want to not hit the message limit
       const framesToDisplay = frames.slice(0, Math.min(frames.length, 8));
       for (let frame of framesToDisplay) {
-        const {
-          function_name = "",
-          position: { line = -1, column = -1 } = { line: -1, column: -1 },
-          scope = 0 as any,
-        } = frame;
+        const { function_name = "", scope = 0 as any } = frame;
         padding = Math.max(
           padding,
           StackFrameIdentifier({

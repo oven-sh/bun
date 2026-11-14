@@ -29,7 +29,6 @@ function stripAnsi(str: string) {
 
 class EditorStateManager {
   private diagnosticCollection: vscode.DiagnosticCollection;
-  private disposables: vscode.Disposable[] = [];
 
   public constructor() {
     this.diagnosticCollection = vscode.languages.createDiagnosticCollection("BunDiagnostics");
@@ -61,7 +60,6 @@ class EditorStateManager {
 
   dispose() {
     this.clearAll("Editor state was disposed");
-    this.disposables.forEach(d => d.dispose());
   }
 }
 

@@ -101,6 +101,21 @@ describe("TextEncoder/TextDecoder — simdutf runtime dispatch", () => {
     const emoji = "\u{1F600}".repeat(64);
     expect(decoder.decode(encoder.encode(emoji))).toBe(emoji);
   });
+
+  // The decoder keeps what simdutf converted in front of an ill-formed sequence.
+  test("ill-formed sequence after more than one SIMD block", () => {
+    const cjk = Buffer.alloc(300, "\u4e16").toString();
+    const bytes = encoder.encode(cjk);
+    const invalidByte = Buffer.concat([bytes, Buffer.from([0xff]), bytes]);
+    expect(decoder.decode(invalidByte)).toBe(cjk + "\ufffd" + cjk);
+    expect(invalidByte.toString("utf8")).toBe(cjk + "\ufffd" + cjk);
+    const cutTail = bytes.subarray(0, bytes.length - 1);
+    expect(decoder.decode(cutTail)).toBe(cjk.slice(0, -1) + "\ufffd");
+    expect(Buffer.from(cutTail).toString("utf8")).toBe(cjk.slice(0, -1) + "\ufffd");
+    const continuationBytes = Buffer.concat([bytes, Buffer.alloc(70, 0x80), bytes]);
+    const replaced = Buffer.alloc(70 * 2, "\ufffd", "utf16le").toString("utf16le");
+    expect(decoder.decode(continuationBytes)).toBe(cjk + replaced + cjk);
+  });
 });
 
 describe("decodeURIComponent — SIMD % scanning", () => {

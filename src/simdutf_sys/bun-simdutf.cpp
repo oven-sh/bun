@@ -34,6 +34,9 @@ bool simdutf__validate_utf16le(const char16_t* buf, size_t len)
     return simdutf::validate_utf16le(buf, len);
 }
 
+static_assert(simdutf::SIMDUTF_VERSION_MAJOR == 9 && simdutf::SIMDUTF_VERSION_MINOR == 0 && simdutf::SIMDUTF_VERSION_REVISION == 0,
+    "simdutf changed. keep_converted in src/simdutf_sys/simdutf.rs keeps what convert_utf8_to_utf16le_with_errors wrote in front of an ill-formed sequence, and simdutf does not document that output. Run test/js/bun/util/toUTF16Alloc.test.ts, then update this version. From simdutf 9.3, check if convert_utf8_to_utf16le_with_replacement can replace append_utf16_with_replacement.");
+
 SIMDUTFResult
 simdutf__convert_utf8_to_utf16le_with_errors(const char* buf, size_t len,
     char16_t* utf16_output)

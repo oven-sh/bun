@@ -3,6 +3,7 @@ use crate::string::immutable::{
     U3Fast, UNICODE_REPLACEMENT as unicode_replacement, eql_comptime_ignore_len as eql_ignore_len,
     first_non_ascii, first_non_ascii16,
 };
+use crate::strings_impl::first_non_ascii_usize;
 use bun_alloc::AllocError;
 
 use crate::string::immutable::CodePoint; // i32
@@ -238,6 +239,7 @@ impl UTF16Replacement {
     }
 }
 
+#[inline(always)]
 fn convert_utf8_bytes_into_utf16_with_length(
     sequence: [u8; 4],
     len: U3Fast,
@@ -396,7 +398,8 @@ fn convert_utf8_bytes_into_utf16_with_length(
 
 // This variation matches WebKit behavior.
 // fn convertUTF8BytesIntoUTF16(sequence: *const [4]u8, remaining_len: usize) UTF16Replacement {
-pub(super) fn convert_utf8_bytes_into_utf16(bytes: &[u8]) -> UTF16Replacement {
+#[inline(always)]
+fn convert_utf8_bytes_into_utf16(bytes: &[u8]) -> UTF16Replacement {
     let sequence: [u8; 4] = match bytes.len() {
         0 => unreachable!(),
         1 => [bytes[0], 0, 0, 0],
@@ -665,139 +668,128 @@ pub enum ToUTF16Error {
 
 crate::oom_from_alloc!(ToUTF16Error);
 
-pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: bool>(
-    bytes: &[u8],
-) -> Result<Option<(Vec<u16>, [u8; 3], u8)>, ToUTF16Error> {
-    let Some(first_non_ascii_idx) = first_non_ascii(bytes) else {
-        return Ok(None);
+/// How many bytes at the end of `bytes` (0 to 3) start a sequence that the end cuts, and that more bytes can complete.
+#[inline]
+pub fn incomplete_utf8_tail_len(bytes: &[u8]) -> usize {
+    match *bytes {
+        [] => 0,
+        [.., last] if last < 0x80 => 0,
+        // No lead byte is close enough to the end to need a byte that is not there.
+        [.., third, second, last] if last < 0xC0 && second < 0xE0 && third < 0xF0 => 0,
+        _ => incomplete_non_ascii_tail_len(bytes),
+    }
+}
+
+#[inline]
+fn incomplete_non_ascii_tail_len(bytes: &[u8]) -> usize {
+    let tail_start = bytes.len().saturating_sub(3);
+    let Some(lead) = (tail_start..bytes.len())
+        .rev()
+        .find(|&at| bytes[at] & 0xC0 != 0x80)
+    else {
+        return 0;
     };
-    let first_non_ascii_idx = first_non_ascii_idx as usize;
-
-    let mut output: Vec<u16> = if crate::FeatureFlags::USE_SIMDUTF {
-        'output: {
-            let out_length = simdutf::length::utf16::from::utf8(bytes);
-
-            if out_length == 0 {
-                break 'output Vec::new();
-            }
-
-            let mut out: Vec<u16> = Vec::new();
-            out.try_reserve_exact(out_length)
-                .map_err(|_| ToUTF16Error::OutOfMemory)?;
-            // SAFETY: `out` has >= `out_length` u16 of capacity (just reserved).
-            // simdutf never reads the output buffer and writes at most
-            // `out_length` code units, so passing uninitialised storage is
-            // sound; the length is only ever set to what simdutf has written.
-            let res = unsafe {
-                simdutf::simdutf__convert_utf8_to_utf16le_with_errors(
-                    bytes.as_ptr(),
-                    bytes.len(),
-                    out.as_mut_ptr(),
-                )
-            };
-            if res.is_successful() {
-                // SAFETY: on success simdutf initialised exactly `out_length` units.
-                unsafe { out.set_len(out_length) };
-                crate::scoped_log!(
-                    strings,
-                    "toUTF16 {} UTF8 -> {} UTF16",
-                    bytes.len(),
-                    out_length
-                );
-                return Ok(Some((out, [0; 3], 0)));
-            }
-
-            // SAFETY: simdutf converts sequentially and the first error is at or
-            // after the first non-ASCII byte, so the leading `first_non_ascii_idx`
-            // code units (one per ASCII prefix byte, `<= out_length`) are
-            // initialised; keep exactly those.
-            unsafe { out.set_len(first_non_ascii_idx) };
-            break 'output out;
-        }
-    } else {
-        Vec::new()
-    };
-    // errdefer output.deinit(allocator) — Vec drops on `?`
-
-    let start = if !output.is_empty() {
-        first_non_ascii_idx
+    let tail = &bytes[lead..];
+    if (non_ascii_sequence_length(tail[0]) as usize) <= tail.len() {
+        return 0;
+    }
+    // A tail that no byte can complete is ill-formed now: it is not held back.
+    let decoded = utf8_codepoint_with_fffd(tail);
+    if decoded.fail && decoded.can_buffer {
+        tail.len()
     } else {
         0
-    };
-    let mut remaining = &bytes[start..];
-    // The replacement decode emits at most one code unit per consumed byte, so
-    // `remaining.len()` bounds the tail's growth (the bound `to_utf16_alloc`'s
-    // slow path reserves too); the appends below stay inside this reservation.
-    output
-        .try_reserve(remaining.len())
-        .map_err(|_| ToUTF16Error::OutOfMemory)?;
+    }
+}
 
-    let mut non_ascii: Option<u32> = Some(0);
-    while let Some(i) = non_ascii {
-        let i = i as usize;
-        {
-            append_u8_as_u16(&mut output, &remaining[..i]);
-            remaining = &remaining[i..];
-        }
+/// The index of the first byte of `word` that is not ASCII.
+#[inline(always)]
+fn first_non_ascii_in_word(word: &[u8; 8]) -> Option<usize> {
+    let non_ascii = u64::from_le_bytes(*word) & 0x8080_8080_8080_8080;
+    (non_ascii != 0).then(|| (non_ascii.trailing_zeros() / 8) as usize)
+}
 
-        let sequence: [u8; 4] = match remaining.len() {
-            0 => unreachable!(),
-            1 => [remaining[0], 0, 0, 0],
-            2 => [remaining[0], remaining[1], 0, 0],
-            3 => [remaining[0], remaining[1], remaining[2], 0],
-            _ => remaining[..4].try_into().expect("infallible: size matches"),
+/// How many ASCII bytes `bytes` starts with.
+#[inline(always)]
+fn ascii_run_len(bytes: &[u8]) -> usize {
+    let mut rest = bytes;
+    // Most runs between two sequences end in 16 bytes, and two word tests cost less than a call into simdutf.
+    for _ in 0..2 {
+        let Some((word, after)) = rest.split_first_chunk::<8>() else {
+            break;
         };
-
-        let converted_length = non_ascii_sequence_length(sequence[0]);
-
-        let converted =
-            convert_utf8_bytes_into_utf16_with_length(sequence, converted_length, remaining.len());
-
-        if !FLUSH {
-            if converted.fail
-                && converted.can_buffer
-                && (converted_length as usize) > remaining.len()
-            {
-                let buffered: [u8; 3] = match remaining.len() {
-                    1 => [remaining[0], 0, 0],
-                    2 => [remaining[0], remaining[1], 0],
-                    3 => [remaining[0], remaining[1], remaining[2]],
-                    _ => unreachable!(),
-                };
-                return Ok(Some((
-                    output,
-                    buffered,
-                    u8::try_from(remaining.len()).expect("int cast"),
-                )));
-            }
+        if let Some(at) = first_non_ascii_in_word(word) {
+            return bytes.len() - rest.len() + at;
         }
+        rest = after;
+    }
+    bytes.len() - rest.len() + first_non_ascii_usize(rest).unwrap_or(rest.len())
+}
 
-        if FAIL_IF_INVALID {
-            if converted.fail {
-                debug_assert!(converted.code_point == unicode_replacement);
-                return Err(ToUTF16Error::InvalidByteSequence);
-            }
+/// Finishes `to_utf16_alloc` after simdutf stopped at `bytes[stopped_at]`: keeps what it converted, and leaves room for `extra` more units.
+/// SAFETY: the contract of `keep_converted`, with `out` as its output.
+#[cold]
+#[inline(never)]
+pub(super) unsafe fn finish_utf16_with_replacement(
+    out: &mut Vec<u16>,
+    bytes: &[u8],
+    ascii: usize,
+    stopped_at: usize,
+    extra: usize,
+) -> Result<(), ToUTF16Error> {
+    // SAFETY: the caller's contract.
+    let rest = unsafe {
+        simdutf::convert::utf8::to::utf16::with_errors::keep_converted(
+            bytes, ascii, stopped_at, out,
+        )
+    };
+    append_utf16_with_replacement(out, rest, extra)
+}
+
+/// Appends `bytes` to `out` as UTF-16 with U+FFFD for each ill-formed sequence, and leaves room for `extra` more units.
+#[inline]
+fn append_utf16_with_replacement(
+    out: &mut Vec<u16>,
+    mut bytes: &[u8],
+    extra: usize,
+) -> Result<(), ToUTF16Error> {
+    loop {
+        // A sequence that follows a sequence needs no search for an ASCII run.
+        while bytes.first().is_some_and(|&byte| byte >= 0x80) {
+            let decoded = convert_utf8_bytes_into_utf16(bytes);
+            reserve_for_rest(
+                out,
+                1 + usize::from(decoded.code_point > 0xFFFF),
+                bytes,
+                extra,
+            )?;
+            push_codepoint_utf16(out, decoded.code_point);
+            bytes = &bytes[(decoded.len as usize).max(1)..];
         }
-
-        remaining = &remaining[(converted.len as usize).max(1)..];
-
-        // #define U16_LENGTH(c) ((uint32_t)(c)<=0xffff ? 1 : 2)
-        push_codepoint_utf16(&mut output, converted.code_point);
-
-        non_ascii = first_non_ascii(remaining);
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        let ascii = ascii_run_len(bytes);
+        reserve_for_rest(out, ascii, bytes, extra)?;
+        append_u8_as_u16(out, &bytes[..ascii]);
+        bytes = &bytes[ascii..];
     }
+}
 
-    if !remaining.is_empty() {
-        append_u8_as_u16(&mut output, remaining);
+/// Gives `out` room for `units` and `extra` more units when it has none: then for all that `rest` can decode to.
+#[inline(always)]
+fn reserve_for_rest(
+    out: &mut Vec<u16>,
+    units: usize,
+    rest: &[u8],
+    extra: usize,
+) -> Result<(), ToUTF16Error> {
+    if out.capacity() - out.len() >= units + extra {
+        return Ok(());
     }
-
-    crate::scoped_log!(
-        strings,
-        "toUTF16 {} UTF8 -> {} UTF16",
-        bytes.len(),
-        output.len()
-    );
-    Ok(Some((output, [0; 3], 0)))
+    // No bytes decode to more units than one for each byte.
+    out.try_reserve_exact(rest.len() + extra)
+        .map_err(|_| ToUTF16Error::OutOfMemory)
 }
 
 #[inline]

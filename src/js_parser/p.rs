@@ -953,7 +953,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut shape_buf = BumpVec::new_in(self.arena);
         let shape = self.extract_dynamic_specifier_shape(arg, &mut shape_buf)?;
         if !self.options.allow_unresolved.allows(shape) {
-            let r = js_lexer::range_of_identifier(self.source, loc);
+            let r = self.source.range_of_identifier(loc);
             if !shape.is_empty() {
                 // Print a human-readable shape: replace \x00 with *
                 let display = self.arena.alloc_slice_copy(shape);
@@ -1513,7 +1513,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if self.options.warn_about_unbundled_modules {
             // Use a debug log so people can see this if they want to
-            let r = js_lexer::range_of_identifier(self.source, state.loc);
+            let r = self.source.range_of_identifier(state.loc);
             self.log()
                 .add_range_debug(
                     Some(self.source),
@@ -1547,7 +1547,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if self.options.warn_about_unbundled_modules {
             // Use a debug log so people can see this if they want to
-            let r = js_lexer::range_of_identifier(self.source, arg.loc);
+            let r = self.source.range_of_identifier(arg.loc);
             self.log()
                 .add_range_debug(
                     Some(self.source),
@@ -1963,13 +1963,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ),
                 location: bun_ast::Location::init_or_null(
                     Some(self.source),
-                    js_lexer::range_of_identifier(self.source, name.alias_loc),
+                    self.source.range_of_identifier(name.alias_loc),
                 ),
                 ..Default::default()
             }]);
             self.log().add_range_error_fmt_with_notes(
                 Some(self.source),
-                js_lexer::range_of_identifier(self.source, loc),
+                self.source.range_of_identifier(loc),
                 notes,
                 format_args!(
                     "Multiple exports with the same name \"{}\"",
@@ -2192,7 +2192,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && (opts.assign_target() != js_ast::AssignTarget::None || opts.is_delete_target())
             && self.symbols[ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Import
         {
-            let r = js_lexer::range_of_identifier(self.source, loc);
+            let r = self.source.range_of_identifier(loc);
             // SAFETY: original_name is an arena-owned slice valid for 'a.
             let original = self.symbols[ref_.inner_index() as usize]
                 .original_name
@@ -3640,8 +3640,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         != js_ast::symbol::Kind::HoistedFunction
                                 {
                                     if !is_sloppy_mode_block_level_fn_stmt {
-                                        let r =
-                                            js_lexer::range_of_identifier(self.source, value.loc);
+                                        let r = self.source.range_of_identifier(value.loc);
                                         let mut msg = Vec::<u8>::new();
                                         let _ = write!(
                                             &mut msg,
@@ -3656,10 +3655,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             )]);
                                         self.log().add_range_error_fmt_with_notes(
                                             Some(self.source),
-                                            js_lexer::range_of_identifier(
-                                                self.source,
-                                                member_in_scope.loc,
-                                            ),
+                                            self.source.range_of_identifier(member_in_scope.loc),
                                             notes,
                                             format_args!(
                                                 "{} has already been declared",
@@ -4718,7 +4714,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if decl.value.is_none() {
                 match &decl.binding.data {
                     js_ast::b::B::BIdentifier(ident) => {
-                        let r = js_lexer::range_of_identifier(self.source, decl.binding.loc);
+                        let r = self.source.range_of_identifier(decl.binding.loc);
                         let ident_ref = ident.r#ref;
                         // SAFETY: original_name is an arena-owned slice valid for 'a.
                         let name = self.symbols[ident_ref.inner_index() as usize]
@@ -5048,7 +5044,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             self.mark_strict_mode_feature(
                 StrictModeFeature::ReservedWord,
-                js_lexer::range_of_identifier(self.source, loc),
+                self.source.range_of_identifier(loc),
                 name,
             )?;
         }
@@ -5148,14 +5144,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if func.flags.contains(Flags::Function::IsAsync) && original_name == b"await" {
                 self.log().add_range_error(
                     Some(self.source),
-                    js_lexer::range_of_identifier(self.source, name.loc),
+                    self.source.range_of_identifier(name.loc),
                     b"An async function cannot be named \"await\"",
                 );
             } else if func.flags.contains(Flags::Function::IsGenerator) && original_name == b"yield"
             {
                 self.log().add_range_error(
                     Some(self.source),
-                    js_lexer::range_of_identifier(self.source, name.loc),
+                    self.source.range_of_identifier(name.loc),
                     b"An generator function expression cannot be named \"yield\"",
                 );
             }
@@ -8113,7 +8109,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             _scope = scope.parent;
         }
 
-        let r = js_lexer::range_of_identifier(self.source, loc);
+        let r = self.source.range_of_identifier(loc);
         self.log().add_range_error_fmt(
             Some(self.source),
             r,

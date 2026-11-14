@@ -622,6 +622,46 @@ describe("Bun.build", () => {
     }
   });
 
+  describe("a linker error covers the whole import name", () => {
+    // Each log as [message, the source text its position covers].
+    const logs = async (files: Record<string, string>) => {
+      const build = await Bun.build({ entrypoints: ["/entry.js"], files, throw: false });
+      return build.logs.map(({ message, position }) => {
+        const source = Buffer.from(files["/" + path.basename(position!.file)]);
+        return [message, source.subarray(position!.offset, position!.offset + position!.length).toString()];
+      });
+    };
+    const spellings = ["a\\u{62}", "\\u{61}b"];
+    const ambiguous = (specifier: string, local: string) => ({
+      "/entry.js": `import { ${specifier} } from "./both.js"; console.log(${local});`,
+      "/both.js": `export * from "./x.js"; export * from "./y.js";`,
+      "/x.js": `export const ab = 1;`,
+      "/y.js": `export const ab = 2;`,
+    });
+
+    test.each(spellings)("of an ambiguous import: %j", async name => {
+      expect(await logs(ambiguous(name, "ab"))).toEqual([
+        ['Ambiguous import "ab" has multiple matching exports', name],
+      ]);
+    });
+
+    test.each(spellings)("of an ambiguous import with a local name: %j", async name => {
+      expect(await logs(ambiguous(`${name} as zz`, "zz"))).toEqual([
+        ['Ambiguous import "ab" has multiple matching exports', name],
+      ]);
+    });
+
+    test.each(spellings)("of an import cycle: %j", async name => {
+      expect(
+        await logs({
+          "/entry.js": `import { ab } from "./x.js"; console.log(ab);`,
+          "/x.js": `export { ${name} } from "./y.js";`,
+          "/y.js": `export { ${name} } from "./x.js";`,
+        }),
+      ).toEqual([['Detected cycle while resolving import "ab"', name]]);
+    });
+  });
+
   // Runs in a child because the unfixed behavior was a process abort: the
   // disabled entry point was dropped without an error and the linker ran with
   // zero entry points.

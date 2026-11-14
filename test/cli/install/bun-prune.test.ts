@@ -5,6 +5,7 @@ import {
   chmodSync,
   closeSync,
   copyFileSync,
+  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -306,6 +307,17 @@ const storeEntries = (dir: string) =>
   readdirSync(join(dir, "node_modules", ".bun"))
     .filter(name => name !== "node_modules")
     .toSorted();
+
+// Copies the store entries `names` out of the project, so that they can be put back after an install removes them.
+// An install removes the entries it stops linking to, so the stale entries of an earlier install are planted by hand.
+function saveStoreEntries(dir: string, names: string[]) {
+  const saved = join(dir, ".saved-store");
+  const opts = { recursive: true, verbatimSymlinks: true };
+  for (const name of names) cpSync(join(dir, "node_modules", ".bun", name), join(saved, name), opts);
+  return () => {
+    for (const name of names) cpSync(join(saved, name), join(dir, "node_modules", ".bun", name), opts);
+  };
+}
 
 test.concurrent("removes extraneous packages, keeps everything the lockfile installs", async () => {
   const dir = await setup({
@@ -857,12 +869,16 @@ test.concurrent("isolated linker: prune removes the peer-hash variants a peer bu
   const peerEntries = () => storeEntries(dir).filter(entry => entry.startsWith("peer-deps-fixed@"));
   const [before] = peerEntries();
   expect(before).toMatch(/^peer-deps-fixed@1\.0\.0\+[0-9a-f]{16}$/);
+  const restore = saveStoreEntries(dir, [before, "no-deps@1.0.0"]);
 
   await write(
     join(dir, "package.json"),
     JSON.stringify({ name: "foo", dependencies: { "peer-deps-fixed": "1.0.0", "no-deps": "1.0.1" } }),
   );
   await install(dir, "--linker", "isolated");
+  expect(peerEntries()).toHaveLength(1);
+  expect(existsSync(join(store, "no-deps@1.0.0"))).toBeFalse();
+  restore();
   const variants = peerEntries();
   expect(variants).toHaveLength(2);
   expect(variants).toContain(before);
@@ -1019,16 +1035,18 @@ test.concurrent("isolated: removes staging leftovers inside a store entry it kee
     dir,
     "node_modules/.bun/@types+no-deps@1.0.0/node_modules/@types/.bun-tmp-fedcba9876543210",
   );
+  // A store entry that an install renamed aside before a delete that stopped midway.
+  const leftEntry = plant(dir, "node_modules/.bun/.bun-tmp-aaaabbbbccccdddd/node_modules/no-deps");
 
   const dry = await prune(dir, "--dry-run");
   expect(dry.stderr).toBe("");
   expect(dry.exitCode).toBe(0);
-  expect([left, leftInScope].map(path => existsSync(path))).toEqual([true, true]);
+  expect([left, leftInScope, leftEntry].map(path => existsSync(path))).toEqual([true, true, true]);
 
   const { stderr, exitCode } = await prune(dir);
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
-  expect([left, leftInScope].map(path => existsSync(path))).toEqual([false, false]);
+  expect([left, leftInScope, leftEntry].map(path => existsSync(path))).toEqual([false, false, false]);
   // The packages next to them are kept.
   expect(storeEntries(dir)).toStrictEqual(entries);
   expect(existsSync(join(store, "no-deps@1.0.0", "node_modules", "no-deps", "package.json"))).toBeTrue();
@@ -2526,9 +2544,13 @@ test.concurrent(
     await expectProductionInstallIsNoop(dir);
     expect(storeTree()).toStrictEqual(productionTree);
 
+    // A full install sweeps the store with the names of a full install, like `bun prune` without `--production`.
+    const restore = saveStoreEntries(dir, [productionEntry]);
     await install(dir, "--linker", "isolated");
-    const [fullEntry, ...others] = consumerEntries().filter(entry => entry !== productionEntry);
+    const [fullEntry, ...others] = consumerEntries();
     expect(others).toStrictEqual([]);
+    expect(fullEntry).not.toBe(productionEntry);
+    restore();
     expect(fullEntry).toMatch(/^peer-deps-fixed@1\.0\.0\+[0-9a-f]{16}$/);
     expect(storeEntries(dir)).toStrictEqual(
       ["a-dep@1.0.1", "no-deps@1.0.1", "no-deps@2.0.0", "one-dep@1.0.0", productionEntry, fullEntry].toSorted(),
@@ -2564,9 +2586,12 @@ test.concurrent("isolated: --production removes the stale peer-hash variant and 
   const peerEntries = () => storeEntries(dir).filter(entry => entry.startsWith("peer-deps-fixed@"));
   const [before] = peerEntries();
   expect(before).toMatch(/^peer-deps-fixed@1\.0\.0\+[0-9a-f]{16}$/);
+  const restore = saveStoreEntries(dir, [before, "no-deps@1.0.0"]);
 
   await write(join(dir, "package.json"), JSON.stringify(deps("1.0.1")));
   await install(dir, "--linker", "isolated");
+  expect(storeEntries(dir)).toStrictEqual(["a-dep@1.0.1", "no-deps@1.0.1", ...peerEntries()]);
+  restore();
   const variants = peerEntries();
   expect(variants).toHaveLength(2);
   const after = variants.find(entry => entry !== before)!;

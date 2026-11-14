@@ -122,6 +122,8 @@ To run test **files** across CPU cores, see [`--parallel`](/test/parallel). The 
 
 By default, Bun runs all tests sequentially within each test file. Concurrent execution runs async tests in parallel, which speeds up test suites with independent tests.
 
+Each concurrent test runs its own `beforeEach` and `afterEach` hooks. Its `afterEach` hooks start as soon as the test finishes, while other tests may still be running. See [Pending timers and callbacks](/test/lifecycle#pending-timers-and-callbacks).
+
 ### `--concurrent` flag
 
 Use the `--concurrent` flag to run all tests concurrently within their respective files:

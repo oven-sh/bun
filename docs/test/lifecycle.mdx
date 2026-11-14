@@ -338,6 +338,18 @@ describe("outer describe", () => {
 // File afterAll
 ```
 
+## Pending Timers and Callbacks
+
+When a test or hook finishes, Bun starts the next hook or test right away. A timer, immediate or I/O callback that is already due doesn't run in between, as in Jest and Vitest. When an uncaught error or a timeout ends a test, such callbacks can run before its `afterEach` hooks. Promise jobs that are ready run before the next hook or test.
+
+- **Leftover callbacks.** A callback that is still pending when its test finishes can run during a later hook or test, or after the last test of the file. Without [`--isolate`](/test/parallel#--isolate), the later test can be in another file. Bun doesn't wait for the callback: if `bun test` exits first, the callback never runs. To keep an error with its test, await or cancel the callback before the test ends.
+- **Errors from leftover callbacks.** If a leftover callback throws during the run, the error counts against the test that is running at that moment, not against the test that scheduled the callback. A [`test.todo`](/test/writing-tests#test-todo) test that runs under `--todo` takes the error as its expected failure. In these cases the error counts against no test, and Bun reports an ["Unhandled error between tests"](/test/runtime-behavior#unhandled-errors):
+  - During a hook
+  - While no test is running, for example after the last test of a file
+  - In a group of two or more concurrent tests, even if only one of them is still running
+  - During a [`test.failing()` or `test.fails()`](/test/writing-tests#test-failing) test
+- **Concurrent tests.** A [concurrent test](/test#concurrent-test-execution) starts its `afterEach` hooks as soon as it finishes, before any timer, immediate or I/O callback that resumes another test of its group. State that `afterEach` clears is gone for the tests that are still running, so give each concurrent test its own state.
+
 ## Error Handling
 
 If a `beforeAll` hook throws, the test runner skips every test in the hook's scope:

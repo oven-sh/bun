@@ -317,7 +317,7 @@ impl MimeType {
 
             match category_.len() {
                 len if len == b"application".len() => {
-                    if strings::eql_comptime_ignore_len(category_, b"application") {
+                    if category_ == b"application" {
                         if str == b"json" || str == b"geo+json" {
                             return JSON;
                         }
@@ -342,7 +342,7 @@ impl MimeType {
                     };
                 }
                 len if len == b"font".len() => {
-                    if strings::eql_comptime_ignore_len(category_, b"font") {
+                    if category_ == b"font" {
                         if let Some(a) = allocated {
                             if dupe {
                                 *a = true;
@@ -354,7 +354,7 @@ impl MimeType {
                         };
                     }
 
-                    if strings::eql_comptime_ignore_len(category_, b"text") {
+                    if category_ == b"text" {
                         if str == b"css" {
                             return CSS;
                         }
@@ -383,7 +383,7 @@ impl MimeType {
                     }
                 }
                 len if len == b"image".len() => {
-                    if strings::eql_comptime_ignore_len(category_, b"image") {
+                    if category_ == b"image" {
                         if let Some(a) = allocated {
                             if dupe {
                                 *a = true;
@@ -395,7 +395,7 @@ impl MimeType {
                         };
                     }
 
-                    if strings::eql_comptime_ignore_len(category_, b"audio") {
+                    if category_ == b"audio" {
                         if let Some(a) = allocated {
                             if dupe {
                                 *a = true;
@@ -407,7 +407,7 @@ impl MimeType {
                         };
                     }
 
-                    if strings::eql_comptime_ignore_len(category_, b"video") {
+                    if category_ == b"video" {
                         if let Some(a) = allocated {
                             if dupe {
                                 *a = true;

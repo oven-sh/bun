@@ -1652,10 +1652,9 @@ devTest("server: the files that come with text that JavaScriptCore refuses are l
   },
 });
 
-// Pins a known cost. The first request for /other makes a build in which the barrel has one more
-// re-export, so its code changed. That update reaches counter.ts, which imports the barrel, so
-// counter.ts runs again at that request, which imports it, and its count starts over.
-devTest("barrel optimization: server: the first request for a route evaluates the importers of its barrel again", {
+// The first request for /other makes a build in which the barrel has one more re-export. Nobody saved the barrel, so its
+// importers do not run again.
+devTest("barrel optimization: server: the first request for a route leaves the importers of its barrel as they are", {
   framework: minimalFramework,
   files: {
     "counter.ts": `
@@ -1689,11 +1688,11 @@ devTest("barrel optimization: server: the first request for a route evaluates th
     // The first request for a route that does not import the barrel leaves counter.ts as it is.
     await dev.fetch("/plain").equals("plain");
     await dev.fetch("/").equals("index BETA request 3");
-    // The first request for /other. Its build has the barrel again, so counter.ts runs again.
-    await dev.fetch("/other").equals("other ALPHA BETA request 1");
-    await dev.fetch("/").equals("index BETA request 2");
+    // The first request for /other. Its build has the barrel again.
+    await dev.fetch("/other").equals("other ALPHA BETA request 4");
+    await dev.fetch("/").equals("index BETA request 5");
     // The second request for /other makes no build.
-    await dev.fetch("/other").equals("other ALPHA BETA request 3");
+    await dev.fetch("/other").equals("other ALPHA BETA request 6");
   },
 });
 

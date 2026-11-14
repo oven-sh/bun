@@ -109,7 +109,7 @@ globalThis[Symbol.for("bun:hmr")] = (modules: any, bundledAgain: string[], id: s
   addMapping(url, map);
   if (map.refs === 0) derefMapping(map);
   script.remove();
-  replaceModules(modules, map).catch(e => {
+  replaceModules(modules, bundledAgain, map).catch(e => {
     console.error(e);
     fullReload();
   });

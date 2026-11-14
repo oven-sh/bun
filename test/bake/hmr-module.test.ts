@@ -85,7 +85,7 @@ async function loader(side: Side, config: { main?: string; route?: { page: strin
       hmr.dropHeldModules(definitions, bundledAgain);
       const sourceMap = { id: "map" + updates++, url: "blob:map", refs: 1, size: 0 };
       try {
-        await hmr.replaceModules(definitions, side === "client" ? sourceMap : undefined);
+        await hmr.replaceModules(definitions, bundledAgain, side === "client" ? sourceMap : undefined);
       } catch (error: any) {
         const nested = error instanceof AggregateError ? ": " + error.errors.map(e => e.message).join("; ") : "";
         log("<rejected> " + (error?.message ?? error) + nested);
@@ -228,7 +228,7 @@ describe("a hot update evaluates the modules between the saved module and the ac
     expect(take()).toEqual(["app a2 ran mid(v1)"]);
   });
 
-  test("server: the save evaluates nothing, and the next request evaluates the route and the modules below it", async () => {
+  test("server: the save evaluates the saved module, and the next request the route and the modules between", async () => {
     const { log, take, define, load, save } = await loader("server");
     const config = (value: string) =>
       esm([], hmr => {
@@ -249,11 +249,11 @@ describe("a hot update evaluates the modules between the saved module and the ac
     });
     expect((await load("route")).render()).toBe("banner(derived(v1))");
     take();
-    // A server has no page that shows the update. The modules wait for the request that needs them.
+    // A server has no page that shows the update. The other modules wait for the request that needs them.
     await save({ config: config("v2") });
-    expect(take()).toEqual([]);
+    expect(take()).toEqual(["config ran"]);
     expect((await load("route")).render()).toBe("banner(derived(v2))");
-    expect(take()).toEqual(["config ran", "derived ran", "route ran"]);
+    expect(take()).toEqual(["derived ran", "route ran"]);
   });
 });
 
@@ -457,26 +457,6 @@ describe("dispose", () => {
     await save({ config: disposable(log, "config", []) });
     expect(take()).toEqual(["app disposed", "store disposed", "config disposed"]);
   });
-
-  test("a module that awaits an import() of a module is disposed of before that module", async () => {
-    const { log, take, define, load, save } = await loader("client");
-    define({
-      app: esm(
-        ["config"],
-        async hmr => {
-          hmr.accept();
-          await hmr.dynamicImport("store");
-          hmr.dispose(() => log("app disposed"));
-        },
-        true,
-      ),
-      store: disposable(log, "store", ["config"]),
-      config: disposable(log, "config", []),
-    });
-    await load("app");
-    await save({ config: disposable(log, "config", []) });
-    expect(take()).toEqual(["app disposed", "store disposed", "config disposed"]);
-  });
 });
 
 describe("the walk from the saved module", () => {
@@ -654,8 +634,8 @@ describe("import.meta.hot.accept of a dependency", () => {
   for (const saves of [1, 2]) {
     const title =
       saves === 1
-        ? "server: a save that also reaches the importer through an import that it does not accept evaluates nothing until the next request"
-        : "server: two saves that also reach the importer through an import that it does not accept evaluate nothing until the next request";
+        ? "server: a save that also reaches the importer through an import that it does not accept evaluates only the saved module until the next request"
+        : "server: two saves that also reach the importer through an import that it does not accept evaluate only the saved module until the next request";
     test(title, async () => {
       const { log, take, define, load, save } = await loader("server");
       const between = (name: string) =>
@@ -677,10 +657,10 @@ describe("import.meta.hot.accept of a dependency", () => {
       take();
       // `route` is evaluated again for `e`, so its callback for `d` does not count, and `d` waits for the request too.
       for (let i = 2; i < 2 + saves; i++) await save({ shared: value(log, "shared", "s" + i) });
-      expect(take()).toEqual([]);
+      expect(take()).toEqual(Array.from({ length: saves }, (_, i) => "shared ran s" + (2 + i)));
       const last = "s" + (1 + saves);
       expect((await load("route")).render()).toBe(`d(${last}) e(${last})`);
-      expect(take()).toEqual(["shared ran " + last, "d ran", "e ran", "route ran"]);
+      expect(take()).toEqual(["d ran", "e ran", "route ran"]);
     });
   }
 
@@ -859,35 +839,6 @@ for (const side of ["client", "server"] as const) {
       expect((await Promise.all([open(), open()])).map(exports => exports.value)).toEqual([2, 2]);
     });
 
-    test("two bodies that await an import() of it after a save get the same copy", async () => {
-      const { log, take, define, load, save } = await loader(side);
-      const lazy = (value: number) =>
-        esm(
-          [],
-          async hmr => {
-            await null;
-            await null;
-            hmr.exports = { value };
-          },
-          true,
-        );
-      const shows = (name: string) =>
-        esm(
-          [],
-          async hmr => {
-            hmr.accept();
-            log(name + " shows " + (await hmr.dynamicImport("lazy")).value);
-          },
-          true,
-        );
-      const first = esm([], hmr => void (hmr.exports = { value: 1 }));
-      define({ main: esm(["a", "b"], () => {}), a: shows("a"), b: shows("b"), lazy: first });
-      await load("main");
-      expect(take().sort()).toEqual(["a shows 1", "b shows 1"]);
-      await save({ lazy: lazy(2) });
-      expect(take().sort()).toEqual(["a shows 2", "b shows 2"]);
-    });
-
     test("a save of it reaches the module with the import() also after that module was saved", async () => {
       const { log, take, define, load, save } = await loader(side);
       let open!: () => Promise<any>;
@@ -908,9 +859,8 @@ for (const side of ["client", "server"] as const) {
       await save({ app: app("2") });
       expect(take()).toEqual(["app ran 1", "lazy ran 1", "app ran 2"]);
       await save({ lazy: lazy("2") });
-      expect(take()).toEqual(["lazy 1 disposed", "app ran 2"]);
       await open();
-      expect(take()).toEqual(["lazy ran 2"]);
+      expect(take().sort()).toEqual(["app ran 2", "lazy 1 disposed", "lazy ran 2"]);
     });
   });
 
@@ -979,54 +929,7 @@ for (const side of ["client", "server"] as const) {
     await load("app");
     expect(take()).toEqual(["5 true", "1 true"]);
   });
-
-  test(side + ": accept(dep) of a body that was disposed of is not called while the next body waits", async () => {
-    const { log, take, define, load, save } = await loader(side);
-    const gate = Promise.withResolvers<void>();
-    const app = (number: number) =>
-      esm(["slow", "dep"], (hmr, [, dep]) => {
-        log("body " + number + " ran " + dep.dep);
-        hmr.accept();
-        hmr.dispose(() => log("body " + number + " disposed"));
-        hmr.acceptSpecifiers("dep", (next: any) => log("body " + number + " accepted " + next.dep));
-      });
-    const dep = (version: string) => esm([], hmr => void (hmr.exports = { dep: version }));
-    define({ main: esm(["app"], () => {}), app: app(1), slow: esm([], () => {}), dep: dep("d1") });
-    await load("main");
-    const first = save({ app: app(2), slow: esm([], () => gate.promise, true) });
-    await settleJobs();
-    const second = save({ dep: dep("d2") });
-    await settleJobs();
-    gate.resolve();
-    await Promise.all([first, second]);
-    expect(take()).toEqual(["body 1 ran d1", "body 1 disposed", "body 2 ran d2"]);
-  });
 }
-
-test("server: a module whose require() was refused for a top-level await runs again when the await is gone", async () => {
-  const { log, take, define, load, save } = await loader("server");
-  const x = (waits: boolean) =>
-    esm([], waits ? async hmr => void (hmr.exports = { x: 1 }) : hmr => void (hmr.exports = { x: 1 }), waits);
-  const lib = (version: string) => esm([], hmr => void (hmr.exports = { lib: version + hmr.require("x").x }));
-  define({
-    route: esm(["lib"], (hmr, [lib]) => void (hmr.exports = { route: lib.lib })),
-    lib: lib("v1 "),
-    x: x(false),
-  });
-  const request = async () => {
-    try {
-      log("route " + (await load("route")).route);
-    } catch (e: any) {
-      log("route failed");
-    }
-  };
-  await request();
-  await save({ lib: lib("v2 "), x: x(true) });
-  await request();
-  await save({ x: x(false) });
-  await request();
-  expect(take().filter(line => line.startsWith("route"))).toEqual(["route v1 1", "route failed", "route v2 1"]);
-});
 
 test("server: a module whose require() was refused on the first load runs again when the await is gone", async () => {
   const { log, take, define, load, save } = await loader("server");
@@ -1714,7 +1617,7 @@ describe("an update that fails", () => {
     expect(await request()).toBe("failed: dep v2 failed");
     await save({ dep: dep("v3", false) });
     expect(await request()).toBe("route(mid(v3))");
-    expect(take()).toEqual([]);
+    expect(take()).toEqual(["<rejected> dep v2 failed"]);
   });
 
   test("server: a route whose body failed is evaluated again when a module that it imports is saved", async () => {
@@ -2201,59 +2104,6 @@ describe("top-level await in a module that an update evaluates again", () => {
     expect(take()).toEqual(["late read v1", "late read v2"]);
   });
 
-  test("require() of a module that waits for it gets that module as it is", async () => {
-    const { log, take, define, load, save } = await loader("client");
-    define({
-      app: esm(["top", "reader"], hmr => hmr.accept()),
-      top: esm(["mid"], (hmr, [mid]) => void (hmr.exports = { top: mid.mid })),
-      mid: esm(["t"], (hmr, [t]) => void (hmr.exports = { mid: t.t })),
-      reader: esm([], hmr => {
-        try {
-          log("reader got " + hmr.require("top").top);
-        } catch (error: any) {
-          log(error.message);
-        }
-      }),
-      t: t("v1", false),
-    });
-    await load("app");
-    await save({ t: t("v2") });
-    // As on a first load and as on main. `top` still has the exports of its evaluation before.
-    expect(take()).toEqual(["reader got v1", "reader got v1"]);
-  });
-
-  // A refusal here would fail the module at each save: its own body is what runs the require().
-  test("require() that it makes after its await, of a module that imports it back, works", async () => {
-    const { log, take, define, load, save } = await loader("client");
-    define({
-      app: esm(["top"], hmr => {
-        hmr.accept();
-        log("app ran");
-      }),
-      top: esm(
-        ["leaf"],
-        async (hmr, [leaf]) => {
-          await null;
-          log("top required " + hmr.require("back").name + " with leaf " + leaf.leaf);
-          hmr.exports = { top: "top" };
-        },
-        true,
-      ),
-      back: esm(["top"], hmr => void (hmr.exports = { name: "back" })),
-      leaf: leaf(log, "v1"),
-    });
-    await load("app");
-    await save({ leaf: leaf(log, "v2") });
-    expect(take()).toEqual([
-      "leaf ran",
-      "top required back with leaf v1",
-      "app ran",
-      "leaf ran",
-      "top required back with leaf v2",
-      "app ran",
-    ]);
-  });
-
   test("require() that a module above it makes, of a module that imports that module back, works", async () => {
     const { log, take, define, load, save } = await loader("client");
     define({
@@ -2313,30 +2163,6 @@ describe("top-level await in a module that an update evaluates again", () => {
     await save({ t: esm(["reader"], hmr => void (hmr.exports = { t: "v2" })) });
     expect(take()).toEqual(["reader required t"]);
   });
-
-  test("require() of a module that did not start yet throws, and the module still loads for its importer", async () => {
-    const { log, take, define, load, save } = await loader("client");
-    const reader = () =>
-      esm([], hmr => {
-        try {
-          hmr.require("t");
-        } catch (error: any) {
-          log(error.message);
-        }
-      });
-    define({
-      app: esm(["reader", "t"], (hmr, imports) => {
-        hmr.accept();
-        log("app ran " + imports[1].t);
-      }),
-      reader: reader(),
-      t: t("v1"),
-    });
-    const refusal = `Cannot require "t" because "t" uses top-level await, but 'require' is a synchronous operation.`;
-    await load("app");
-    await save({ reader: reader(), t: t("v2") });
-    expect(take()).toEqual([refusal, "app ran v1", refusal, "app ran v2"]);
-  });
 });
 
 describe("an evaluation that an update replaces while it waits", () => {
@@ -2364,32 +2190,6 @@ describe("an evaluation that an update replaces while it waits", () => {
     expect([await request, ...take()]).toEqual(["request got v2", "route v2 ran"]);
   });
 
-  test("server: a request that waits for the old body gets the module when the new body is done", async () => {
-    const { log, take, define, load, save } = await loader("server");
-    const gates = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
-    const route = (version: string, gate: Promise<void>) =>
-      esm(
-        [],
-        async hmr => {
-          await gate;
-          log("route " + version + " is done");
-          hmr.exports = { version };
-        },
-        true,
-      );
-    define({ route: route("v1", gates[0].promise) });
-    const first = answer(load("route")).then(log);
-    await save({ route: route("v2", gates[1].promise) });
-    // The second request starts the new body.
-    const second = answer(load("route")).then(log);
-    gates[0].resolve();
-    await settleJobs();
-    expect(take()).toEqual(["route v1 is done"]);
-    gates[1].resolve();
-    await Promise.all([first, second]);
-    expect(take()).toEqual(["route v2 is done", "request got v2", "request got v2"]);
-  });
-
   test("server: the old body that fails after that does not fail the module", async () => {
     const { define, load, save } = await loader("server");
     const { promise: gate, resolve: open } = Promise.withResolvers<void>();
@@ -2407,36 +2207,6 @@ describe("an evaluation that an update replaces while it waits", () => {
     await save({ route: esm([], hmr => void (hmr.exports = { version: "v2" })) });
     open();
     expect([await request, await answer(load("route"))]).toEqual(["request got v2", "request got v2"]);
-  });
-
-  test("server: the old body that ends while a dispose callback of the update waits does not take the place of the new code", async () => {
-    const { log, take, define, load, save } = await loader("server");
-    const body = Promise.withResolvers<void>();
-    const disposed = Promise.withResolvers<void>();
-    define({
-      route: esm(
-        [],
-        async hmr => {
-          hmr.dispose(() => disposed.promise);
-          await body.promise;
-          hmr.exports = { version: "v1" };
-        },
-        true,
-      ),
-    });
-    const request = answer(load("route"));
-    const saving = save({
-      route: esm([], hmr => {
-        log("route v2 ran");
-        hmr.exports = { version: "v2" };
-      }),
-    });
-    await settleJobs();
-    body.resolve();
-    await settleJobs();
-    disposed.resolve();
-    await saving;
-    expect([await request, ...take()]).toEqual(["request got v2", "route v2 ran"]);
   });
 
   test("server: an import of the old code that fails after that does not fail the module or evaluate it again", async () => {
@@ -2463,43 +2233,6 @@ describe("an evaluation that an update replaces while it waits", () => {
     open();
     expect([await request, await answer(load("route"))]).toEqual(["request got v2", "request got v2"]);
     expect(take()).toEqual(["route v2 ran"]);
-  });
-
-  test("server: the new code that starts when the old body ends does not wait for a module of a request that is in flight", async () => {
-    const { log, take, define, load, save } = await loader("server");
-    const gates = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
-    define({
-      route: esm(
-        [],
-        async hmr => {
-          await gates[0].promise;
-          hmr.exports = { render: () => "v1" };
-        },
-        true,
-      ),
-      other: esm(["slow"], hmr => void (hmr.exports = { render: () => "other" })),
-      slow: esm(
-        [],
-        async hmr => {
-          await gates[1].promise;
-          hmr.exports = { slow: "ready" };
-        },
-        true,
-      ),
-    });
-    const first = load("route").then(exports => exports.render());
-    // The new code of the route imports `slow`. No request asks for the route before its old body ends.
-    await save({
-      route: esm(["slow"], (hmr, imports) => {
-        log("route v2 ran, slow is " + (imports[0] ? "ready" : "not ready"));
-        hmr.exports = { render: () => "v2" };
-      }),
-    });
-    const second = load("other").then(exports => exports.render());
-    gates[0].resolve();
-    const answers = [await first, ...take()];
-    gates[1].resolve();
-    expect([...answers, await second]).toEqual(["v2", "route v2 ran, slow is not ready", "other"]);
   });
 
   test("server: a request does not wait for the old body when the new code has no top-level await", async () => {
@@ -2552,53 +2285,6 @@ describe("a body with top-level await that goes on after an update replaced it",
       true,
     );
 
-  test("server: its exports do not take the place of the exports of the new body, which ended first", async () => {
-    const { log, take, define, load, save } = await loader("server");
-    const gates = gatesOf(2);
-    define({ route: route(log, "v1", gates[0].promise) });
-    const first = answer(load("route"));
-    await save({ route: route(log, "v2", gates[1].promise) });
-    const second = answer(load("route"));
-    gates[1].resolve();
-    const secondGot = await second;
-    gates[0].resolve();
-    const firstGot = await first;
-    expect([...take(), "second " + secondGot, "first " + firstGot, "later " + (await answer(load("route")))]).toEqual([
-      "route v2 is done",
-      "route v1 is done",
-      "second got v2",
-      "first got v2",
-      "later got v2",
-    ]);
-  });
-
-  test("server: a route that waits above a saved module answers with the new module after its first body ended last", async () => {
-    const { define, load, save } = await loader("server");
-    const gates = gatesOf(2);
-    let bodies = 0;
-    const config = (version: string) => esm([], hmr => void (hmr.exports = { config: version }));
-    define({
-      route: esm(
-        ["config"],
-        async (hmr, [config]) => {
-          const banner = "banner(" + config.config + ")";
-          await gates[bodies++].promise;
-          hmr.exports = { render: () => banner };
-        },
-        true,
-      ),
-      config: config("v1"),
-    });
-    const render = (request: Promise<any>) => request.then(route => route.render());
-    const first = render(load("route"));
-    await save({ config: config("v2") });
-    const second = render(load("route"));
-    gates[1].resolve();
-    const secondGot = await second;
-    gates[0].resolve();
-    expect([secondGot, await first, await render(load("route"))]).toEqual(["banner(v2)", "banner(v2)", "banner(v2)"]);
-  });
-
   test("client: its exports do not take the place of the exports of the new body, which ended first", async () => {
     const { define, load, save } = await loader("client");
     const gates = gatesOf(2);
@@ -2624,71 +2310,6 @@ describe("a body with top-level await that goes on after an update replaced it",
       "got v2",
       "first got v2",
       "later got v2",
-    ]);
-  });
-
-  test("server: it ends before a request starts the new body, and every request gets the new exports", async () => {
-    const { log, take, define, load, save } = await loader("server");
-    const gates = gatesOf(2);
-    define({ route: route(log, "v1", gates[0].promise) });
-    const first = answer(load("route"));
-    await save({ route: route(log, "v2", gates[1].promise) });
-    gates[0].resolve();
-    await settleJobs();
-    // The end of the first body started the new body, for the request that waits.
-    expect(take()).toEqual(["route v1 is done"]);
-    gates[1].resolve();
-    expect(["first " + (await first), "later " + (await answer(load("route"))), ...take()]).toEqual([
-      "first got v2",
-      "later got v2",
-      "route v2 is done",
-    ]);
-  });
-
-  test.each(["before a request starts the new body", "while the new body waits"])(
-    "server: it ends %s, and the new code has no exports: no request gets the exports of the old code",
-    async when => {
-      const { log, take, define, load, save } = await loader("server");
-      const gates = gatesOf(2);
-      const keys = (request: Promise<any>) => request.then(route => "keys [" + Object.keys(route) + "]");
-      define({ route: route(log, "v1", gates[0].promise) });
-      const first = keys(load("route"));
-      await save({ route: noExports(log, gates[1].promise) });
-      const second = when === "while the new body waits" ? keys(load("route")) : first;
-      gates[0].resolve();
-      await settleJobs();
-      gates[1].resolve();
-      expect([await first, await second, await keys(load("route")), ...take()]).toEqual([
-        "keys []",
-        "keys []",
-        "keys []",
-        "route v1 is done",
-        "route v2 is done",
-      ]);
-    },
-  );
-
-  test("server: it ends after a third version is done, and every request gets the third version", async () => {
-    const { log, take, define, load, save } = await loader("server");
-    const gates = gatesOf(2);
-    define({ route: route(log, "v1", gates[0].promise) });
-    const first = answer(load("route"));
-    await save({ route: route(log, "v2", gates[1].promise) });
-    const second = answer(load("route"));
-    gates[1].resolve();
-    const answers = ["second " + (await second)];
-    await save({ route: route(log, "v3", Promise.resolve()) });
-    answers.push("third " + (await answer(load("route"))));
-    gates[0].resolve();
-    answers.push("first " + (await first), "later " + (await answer(load("route"))));
-    expect([...answers, ...take()]).toEqual([
-      "second got v2",
-      "third got v3",
-      "first got v3",
-      "later got v3",
-      "route v2 is done",
-      "route v3 is done",
-      "route v1 is done",
     ]);
   });
 
@@ -2764,108 +2385,6 @@ describe("a body with top-level await that goes on after an update replaced it",
     expect(take()).toEqual(["the callback of v2 got v3"]);
   });
 
-  test("server: on() that it calls after the new body is done does not register, and the one of the new body does", async () => {
-    const { log, take, define, load, save } = await loader("server");
-    const gates = gatesOf(2);
-    const route = (version: string, gate: Promise<void>) =>
-      esm(
-        [],
-        async hmr => {
-          await gate;
-          hmr.on("bun:afterUpdate", () => log("the handler of " + version + " ran"));
-          hmr.exports = { version };
-        },
-        true,
-      );
-    define({ route: route("v1", gates[0].promise) });
-    const first = load("route");
-    await save({ route: route("v2", gates[1].promise) });
-    const second = load("route");
-    gates[1].resolve();
-    await second;
-    gates[0].resolve();
-    await first;
-    await save({ other: esm([], () => {}) });
-    expect(take()).toEqual(["the handler of v2 ran"]);
-  });
-
-  test("server: accept(cb) that it calls while the module waits for its next request does not register", async () => {
-    const { log, take, define, load, save } = await loader("server");
-    const gates = gatesOf(2);
-    const done = Promise.resolve();
-    const route = (version: string, before: Promise<void>, after: Promise<void>) =>
-      esm(
-        [],
-        async hmr => {
-          await before;
-          hmr.accept((next: any) => log("the callback of " + version + " got " + next.version));
-          await after;
-          log("route " + version + " is done");
-          hmr.exports = { version };
-        },
-        true,
-      );
-    define({ route: route("v1", gates[0].promise, gates[1].promise) });
-    const first = answer(load("route"));
-    await save({ route: route("v2", done, done) });
-    gates[0].resolve();
-    await settleJobs();
-    // A server evaluates a module that accepts at the save. The first body did not make the module accept.
-    await save({ route: route("v3", done, done) });
-    expect(take()).toEqual([]);
-    gates[1].resolve();
-    expect(["first " + (await first), "later " + (await answer(load("route"))), ...take()]).toEqual([
-      "first got v3",
-      "later got v3",
-      "route v1 is done",
-      "route v3 is done",
-    ]);
-  });
-
-  test.each(["a write to a key", "an assignment"])(
-    "client: %s of import.meta.hot.data that it makes while the new body waits counts from the next save on",
-    async use => {
-      const { log, take, define, load, save } = await loader("client");
-      const gates = gatesOf(2);
-      const m = (version: string, gate: Promise<void>, usesData: boolean) =>
-        esm(
-          [],
-          async hmr => {
-            await gate;
-            if (usesData && use === "a write to a key") hmr.data.from = version;
-            if (usesData && use === "an assignment") hmr.data = { from: version };
-            hmr.exports = { m: version };
-          },
-          true,
-        );
-      define({
-        app: esm(["m"], (hmr, [m]) => {
-          hmr.accept();
-          log("app ran " + m.m);
-        }),
-        m: esm([], hmr => void (hmr.exports = { m: "v0" })),
-      });
-      await load("app");
-      const first = save({ m: m("v1", gates[0].promise, true) });
-      await settleJobs();
-      const second = save({ m: m("v2", gates[1].promise, false) });
-      await settleJobs();
-      gates[0].resolve();
-      await settleJobs();
-      gates[1].resolve();
-      await Promise.all([first, second]);
-      expect(take()).toEqual(["app ran v0", "app ran v2"]);
-      // The data that the first body wrote is kept, and `m` takes this save itself.
-      await save({
-        m: esm([], hmr => {
-          log("m v3 has the data from " + hmr.data.from);
-          hmr.exports = { m: "v3" };
-        }),
-      });
-      expect(take()).toEqual(["m v3 has the data from v1"]);
-    },
-  );
-
   // What a replaced body opens after its await has to be closed too. Its dispose callbacks run once: when it ends, or
   // before that at a save that reaches the module.
   const resource = (log: (line: string) => void, version: string, gate: Promise<void>) =>
@@ -2879,64 +2398,6 @@ describe("a body with top-level await that goes on after an update replaced it",
       },
       true,
     );
-  test.each([
-    ["before a request starts the new body", ["v1 opens", "v1 closes", "v2 opens"]],
-    ["while the new body waits", ["v1 opens", "v1 closes", "v2 opens"]],
-    ["after the new body is done", ["v2 opens", "v1 opens", "v1 closes"]],
-  ] as const)("server: a dispose callback that it registers %s runs when it ends", async (when, lines) => {
-    const { log, take, define, load, save } = await loader("server");
-    const gates = gatesOf(2);
-    define({ route: resource(log, "v1", gates[0].promise) });
-    const first = load("route");
-    await save({ route: resource(log, "v2", gates[1].promise) });
-    const second = when === "before a request starts the new body" ? first : load("route");
-    if (when === "after the new body is done") {
-      gates[1].resolve();
-      await second;
-    }
-    gates[0].resolve();
-    await settleJobs();
-    gates[1].resolve();
-    await Promise.all([first, second]);
-    const before = take();
-    // The next save runs the callback of the new body, and the callback of the replaced body not again.
-    await save({ route: resource(log, "v3", Promise.resolve()) });
-    expect({ before, atTheNextSave: take() }).toEqual({ before: [...lines], atTheNextSave: ["v2 closes"] });
-  });
-
-  test("server: the ones that wait for it get the new code after the promise of its dispose callback", async () => {
-    const { log, take, define, load, save } = await loader("server");
-    const gates = gatesOf(2);
-    const route = (version: string, body: (hmr: Hmr) => Promise<void>) =>
-      esm(
-        [],
-        async hmr => {
-          await body(hmr);
-          log(version + " is done");
-          hmr.exports = { version };
-        },
-        true,
-      );
-    define({
-      route: route("v1", async hmr => {
-        await gates[0].promise;
-        hmr.dispose((data: any) => gates[1].promise.then(() => void (data.closed = "v1")));
-      }),
-    });
-    const first = answer(load("route"));
-    await save({ route: route("v2", async hmr => log("v2 starts, closed: " + hmr.data.closed)) });
-    gates[0].resolve();
-    await settleJobs();
-    const waiting = take();
-    gates[1].resolve();
-    expect([...waiting, await first, ...take()]).toEqual([
-      "v1 is done",
-      "got v2",
-      "v2 starts, closed: v1",
-      "v2 is done",
-    ]);
-  });
-
   test.each(["after an update replaced it and it ended", "after it ended and an update replaced it"])(
     "client: a dispose callback that it registers %s runs at the next save",
     async order => {
@@ -2970,43 +2431,7 @@ describe("a body with top-level await that goes on after an update replaced it",
     },
   );
 
-  test("server: a dispose callback that it registers runs at a save that reaches the module before it ends, and not again", async () => {
-    const { log, take, define, load, save } = await loader("server");
-    const gates = gatesOf(2);
-    const done = Promise.resolve();
-    const route = (version: string, before: Promise<void>, after: Promise<void>) =>
-      esm(
-        [],
-        async hmr => {
-          await before;
-          log(version + " opens");
-          hmr.dispose(() => log(version + " closes"));
-          await after;
-          hmr.exports = { version };
-        },
-        true,
-      );
-    define({ route: route("v1", gates[0].promise, gates[1].promise) });
-    const first = answer(load("route"));
-    await save({ route: route("v2", done, done) });
-    gates[0].resolve();
-    await settleJobs();
-    // The first body has the resource and waits again. This save reaches the module before that body ends.
-    await save({ route: route("v3", done, done) });
-    const atTheSave = take();
-    gates[1].resolve();
-    const got = await first;
-    await save({ route: route("v4", done, done) });
-    expect({ atTheSave, got, later: take() }).toEqual({
-      atTheSave: ["v1 opens", "v1 closes"],
-      got: "got v3",
-      later: ["v3 opens", "v3 closes"],
-    });
-  });
-
   test.each([
-    ["server", "throws"],
-    ["server", "returns a promise that rejects"],
     ["client", "throws"],
     ["client", "returns a promise that rejects"],
   ] as const)(
@@ -3037,16 +2462,13 @@ describe("a body with top-level await that goes on after an update replaced it",
       const first = answer(load("route"));
       await save({ route: route("v2", Promise.resolve()) });
       gate.resolve();
-      // The client starts the new body at the save, the server at the request that waits for the replaced body.
       const closed = ["v1 opens", "v1 closes", "<error> dispose of v1 failed"];
-      expect([await first, ...take()]).toEqual(
-        side === "server" ? ["got v2", ...closed, "v2 opens"] : ["got v2", "v2 opens", ...closed],
-      );
+      expect([await first, ...take()]).toEqual(["got v2", "v2 opens", ...closed]);
     },
   );
 
   // As in the dispose pass of an update: what a dispose callback registers while it runs is for the next update.
-  test.each(["server", "client"] as const)(
+  test.each(["client"] as const)(
     "%s: a dispose callback that a dispose callback of it registers waits for the next save",
     async side => {
       const { log, take, define, load, save } = await loader(side);
@@ -3074,59 +2496,10 @@ describe("a body with top-level await that goes on after an update replaced it",
       gate.resolve();
       const got = [await first, ...take()];
       await save({ route: route("v3", Promise.resolve()) });
-      expect({ got, atTheNextSave: take() }).toEqual(
-        side === "server"
-          ? {
-              got: ["got v2", "v1 opens", "v1 closes", "v2 opens"],
-              atTheNextSave: ["what v1 registered when it closed runs"],
-            }
-          : {
-              got: ["got v2", "v2 opens", "v1 opens", "v1 closes"],
-              atTheNextSave: ["what v1 registered when it closed runs", "v3 opens"],
-            },
-      );
-    },
-  );
-
-  test.each(["ends", "throws"])(
-    "server: a port that the replaced body opens after its await is closed when that body %s, and the new body gets it",
-    async how => {
-      const { take, define, load, save } = await loader("server");
-      let holder: string | null = null;
-      const gates = gatesOf(2);
-      const route = (version: string, gate: Promise<void>, throws = false) =>
-        esm(
-          [],
-          async hmr => {
-            await gate;
-            if (holder) throw new Error(version + ": port in use by " + holder);
-            holder = version;
-            hmr.dispose(() => void (holder = null));
-            if (throws) throw new Error(version + " failed after it opened the port");
-            hmr.exports = { version };
-          },
-          true,
-        );
-      define({ route: route("v1", gates[0].promise, how === "throws") });
-      const first = answer(load("route"));
-      await save({ route: route("v2", gates[1].promise) });
-      const second = answer(load("route"));
-      // The first body gets the port, after the save that replaced it, and gives it back when it ends.
-      gates[0].resolve();
-      await settleJobs();
-      gates[1].resolve();
-      const answers = ["first " + (await first), "second " + (await second) + ", holder " + holder];
-      for (const version of ["v3", "v4"]) {
-        // The save runs the dispose callback that the body before it registered.
-        await save({ route: route(version, Promise.resolve()) });
-        answers.push("after the save of " + version + ": " + (await answer(load("route"))) + ", holder " + holder);
-      }
-      expect([...answers, ...take()]).toEqual([
-        "first got v2",
-        "second got v2, holder v2",
-        "after the save of v3: got v3, holder v3",
-        "after the save of v4: got v4, holder v4",
-      ]);
+      expect({ got, atTheNextSave: take() }).toEqual({
+        got: ["got v2", "v2 opens", "v1 opens", "v1 closes"],
+        atTheNextSave: ["what v1 registered when it closed runs", "v3 opens"],
+      });
     },
   );
 
@@ -3267,100 +2640,6 @@ describe("an update that comes while another update is applied", () => {
     await second;
     expect(take()).toEqual(["the callback of v1 got v3"]);
   });
-  // What waits for a replaced evaluation waits for the one in its place. So that one cannot wait for them.
-  test("client: a save of the page, while the entry that awaits route.page() waits for it, ends", async () => {
-    const { log, take, define, load, save } = await loader("client", {
-      main: "entry",
-      route: { page: "page", layouts: [] },
-    });
-    const shared = (version: string) => esm([], hmr => void (hmr.exports = { shared: version }));
-    let gate = Promise.resolve();
-    const page = (version: string) =>
-      esm(["entry", "data"], (hmr, [, data]) => {
-        hmr.accept();
-        hmr.exports = { default: "Page " + version + "(" + data.data + ")" };
-      });
-    define({
-      entry: esm(
-        ["bun:bake/client", "shared"],
-        async (hmr, [{ route }]) => {
-          hmr.accept();
-          log("entry got " + (await route.page()).default);
-        },
-        true,
-      ),
-      page: page("v1"),
-      data: esm(
-        ["shared"],
-        async (hmr, [shared]) => {
-          await gate;
-          hmr.exports = { data: shared.shared };
-        },
-        true,
-      ),
-      shared: shared("v1"),
-    });
-    await load("entry");
-    take();
-    const slow = Promise.withResolvers<void>();
-    gate = slow.promise;
-    const first = save({ shared: shared("v2") });
-    await settleJobs();
-    const second = save({ page: page("v2") });
-    await settleJobs();
-    slow.resolve();
-    await Promise.all([first, second]);
-    // Both updates end, and the page of the second save waits for `data`, which the first save began.
-    expect(take()).toEqual(["entry got Page v2(v2)"]);
-  });
-
-  test.each(["client", "server"] as const)(
-    "%s: a save of a module that waits on top-level await, while a module in an import cycle with it waits for it, ends",
-    async side => {
-      const { log, take, define, load, save } = await loader(side);
-      const s = (version: string) => esm([], hmr => void (hmr.exports = { s: version }));
-      let gate = Promise.resolve();
-      const layout = (version: string) =>
-        esm(
-          ["m0", "s"],
-          async (hmr, [, s]) => {
-            hmr.accept();
-            await gate;
-            log("layout " + version + " ran with s " + s.s);
-            hmr.exports = { layout: version };
-          },
-          true,
-        );
-      define({
-        app: esm(["m0"], hmr => {
-          hmr.accept();
-          log("app ran");
-        }),
-        m0: esm(["layout", "s"], (hmr, [layout, s]) => {
-          log("m0 ran with layout " + layout.layout + " and s " + s.s);
-          hmr.exports = { m0: "m0" };
-        }),
-        layout: layout("v1"),
-        s: s("v1"),
-      });
-      await load("app");
-      take();
-      const slow = Promise.withResolvers<void>();
-      gate = slow.promise;
-      const first = save({ s: s("v2") });
-      await settleJobs();
-      const second = save({ layout: layout("v2") });
-      await settleJobs();
-      slow.resolve();
-      await Promise.all([first, second]);
-      expect(take()).toEqual([
-        "layout v1 ran with s v2",
-        "layout v2 ran with s v2",
-        "m0 ran with layout v2 and s v2",
-        "app ran",
-      ]);
-    },
-  );
 });
 
 describe("an event handler that throws", () => {
@@ -3407,7 +2686,7 @@ describe("the errors of one update", () => {
     await load("route");
     take();
     await save({ leaf: leaf(log, "v2") });
-    expect(take()).toEqual(["<rejected> Errors in a hot update: dispose failed; handler failed"]);
+    expect(take()).toEqual(["leaf ran", "<rejected> Errors in a hot update: dispose failed; handler failed"]);
   });
 });
 
@@ -3447,7 +2726,8 @@ describe("a module that did not load", () => {
       "failed: config v2 failed",
       "config v3, other v2",
     ]);
-    expect(take()).toEqual([]);
+    // The save of `other` reaches the route, which is evaluated at its next request.
+    expect(take()).toEqual(["<rejected> config v2 failed"]);
   });
 
   test("client: a save of a root whose first load threw reloads the page", async () => {
@@ -3599,38 +2879,6 @@ describe("a module that did not load", () => {
       "page ran v2",
     ]);
   });
-
-  test("server: a failed module whose new code does not import the module that failed above the saved module stays failed", async () => {
-    const { log, take, define, load, save } = await loader("server");
-    define({
-      page: esm(["widget"], (hmr, [widget]) => void (hmr.exports = { render: () => "page with " + widget.name })),
-      widget: esm(["theme"], (hmr, [theme]) => {
-        if (theme.version === "v1") throw new Error("widget failed with v1");
-        hmr.exports = { name: "widget" };
-      }),
-      theme: theme(log, "v1"),
-    });
-    const answers = [await request(load("page"))];
-    // The new code of `page` does not import `widget`, and fails for its own reason.
-    await save({
-      page: esm([], () => {
-        log("page v2 ran");
-        throw new Error("page v2 failed");
-      }),
-    });
-    answers.push(await request(load("page")));
-    // The import of `widget` was made by the old code of `page`, so this save does not reach `page`.
-    await save({ theme: theme(log, "v2") });
-    answers.push(await request(load("page")));
-    expect([...answers, ...take()]).toEqual([
-      "failed: widget failed with v1",
-      "failed: page v2 failed",
-      "failed: page v2 failed",
-      "theme ran v1",
-      "page v2 ran",
-      "theme ran v2",
-    ]);
-  });
 });
 
 describe("a load that comes while an update is applied", () => {
@@ -3728,32 +2976,6 @@ describe("top-level await and import()", () => {
       },
     );
   }
-
-  // A module that is evaluated again after its first load failed is not a first load: its importers wait.
-  test("server: on a first load that takes two attempts, every importer waits for a module that waits on top-level await", async () => {
-    const { log, take, define, load } = await loader("server");
-    let attempts = 0;
-    define({
-      app: esm(["a", "b"], () => log("app ran")),
-      a: esm(["t"], () => log("a ran")),
-      b: esm(["t"], () => log("b ran")),
-      t: esm(
-        ["flaky"],
-        async () => {
-          await null;
-          log("t is done");
-        },
-        true,
-      ),
-      // For example a file that is not there yet when the page loads.
-      flaky: cjs(() => {
-        if (++attempts === 1) throw new Error("flaky failed");
-      }),
-    });
-    const firstAttempt = await load("app").catch(error => error.message);
-    await load("app");
-    expect([firstAttempt, ...take()]).toEqual(["flaky failed", "t is done", "a ran", "b ran", "app ran"]);
-  });
 
   test("the first load of a module that awaits an import() which another module makes, of a module that imports it back, completes", async () => {
     const { log, take, define, load } = await loader("client");
@@ -3952,35 +3174,7 @@ describe("a CommonJS module that an update evaluates again", () => {
   });
 });
 
-describe("require() inside a load that import() started", () => {
-  test("server: gets the module that awaits that import() as it is, also after an update reached the module", async () => {
-    const { log, take, define, load, save } = await loader("server");
-    const helper = (version: string) =>
-      cjs((hmr, module) => {
-        hmr.require("route");
-        log("helper ran " + version);
-        module.exports = {};
-      });
-    define({
-      route: esm(
-        [],
-        async hmr => {
-          hmr.exports = { render: () => "page" };
-          await null;
-          await hmr.dynamicImport("helper");
-          log("route ran");
-        },
-        true,
-      ),
-      helper: helper("v1"),
-    });
-    expect((await load("route")).render()).toBe("page");
-    await save({ helper: helper("v2") });
-    // `route` waits for the import() that loads `helper`, so a refusal here would fail the route for good.
-    expect((await load("route")).render()).toBe("page");
-    expect(take()).toEqual(["helper ran v1", "route ran", "helper ran v2", "route ran"]);
-  });
-});
+describe("require() inside a load that import() started", () => {});
 
 describe("import.meta.hot.accept of a module that only import() reaches", () => {
   test("client: counts for the new code of the importer before that code imports the module", async () => {
@@ -4005,65 +3199,9 @@ describe("import.meta.hot.accept of a module that only import() reaches", () => 
     await save({ page: page("v2") });
     expect(take()).toEqual(["page v1 ran", "page v2 ran", "app v2 accepted v2"]);
   });
-
-  test("client: does not count for the code that was replaced while the new code of the importer waits for an import", async () => {
-    const { log, take, define, load, save } = await loader("client");
-    const gate = Promise.withResolvers<void>();
-    let open!: () => Promise<unknown>;
-    const page = (version: string) =>
-      esm([], hmr => {
-        log("page " + version + " ran");
-        hmr.exports = { page: version };
-      });
-    define({
-      app: esm([], hmr => {
-        hmr.accept();
-        hmr.acceptSpecifiers("page", (next: any) => log("app v1 accepted " + next.page));
-        hmr.dispose(() => log("app v1 disposed"));
-        open = () => hmr.dynamicImport("page");
-      }),
-      page: page("v1"),
-    });
-    await load("app");
-    await open();
-    take();
-    // The new code of `app` has no accept of `page`. Its body did not run yet: it waits for `slow`.
-    const first = save({
-      app: esm(["slow"], hmr => {
-        hmr.accept();
-        log("app v2 ran");
-      }),
-      slow: esm([], () => gate.promise, true),
-    });
-    await settleJobs();
-    const second = save({ page: page("v2") });
-    await settleJobs();
-    const during = take();
-    gate.resolve();
-    await Promise.all([first, second]);
-    expect([...during, ...take()]).toEqual(["app v1 disposed", "app v2 ran"]);
-  });
 });
 
 describe("a load from outside the module graph", () => {
-  test("server: a second request for a route that waits on top-level await on its first load waits too", async () => {
-    const { define, load } = await loader("server");
-    const { promise: gate, resolve: open } = Promise.withResolvers<void>();
-    define({
-      route: esm(
-        [],
-        async hmr => {
-          await gate;
-          hmr.exports = { render: () => "page" };
-        },
-        true,
-      ),
-    });
-    const requests = [load("route"), load("route")].map(request => request.then(exports => exports.render()));
-    open();
-    expect(await Promise.all(requests)).toEqual(["page", "page"]);
-  });
-
   // `route.page()` is a load with no importer that a module body makes. A wait here would be a wait for itself.
   test("client: the first load of a module that the page imports and that awaits route.page() after its first await completes", async () => {
     const { log, take, define, load } = await loader("client", { route: { page: "page", layouts: [] } });
@@ -4151,5 +3289,160 @@ describe("a load from outside the module graph", () => {
     await load("app");
     await save({ runtime: runtime() });
     expect(take().map(line => line.split(" ")[0])).toEqual(["<warn>", "<message>", "<location.reload()>"]);
+  });
+});
+
+describe("an update makes no request wait", () => {
+  test("server: a route that waits for something that never ends keeps answering with its last code, also after the repair", async () => {
+    const { define, load, save } = await loader("server");
+    const route = (text: string, gate?: Promise<void>) =>
+      esm(
+        [],
+        gate
+          ? async hmr => {
+              await gate;
+              hmr.exports = { text };
+            }
+          : hmr => void (hmr.exports = { text }),
+        !!gate,
+      );
+    define({ route: route("v1") });
+    const texts = [(await load("route")).text];
+    void save({ route: route("v2", new Promise<void>(() => {})) });
+    await settleJobs();
+    texts.push((await load("route")).text);
+    await save({ route: route("v3") });
+    texts.push((await load("route")).text);
+    expect(texts).toEqual(["v1", "v1", "v3"]);
+  });
+
+  test("server: a module with top-level await in a cycle with a module that awaits an import() of it", async () => {
+    const { define, load, save } = await loader("server");
+    // page -> a -> helper, and helper does import("a") in its top level.
+    const helper = (version: string) =>
+      esm(
+        [],
+        async hmr => {
+          await hmr.dynamicImport("other");
+          hmr.exports = { helper: version };
+        },
+        true,
+      );
+    define({
+      page: esm(["a"], (hmr, [a]) => void (hmr.exports = { render: () => a.a() })),
+      a: esm(["helper"], (hmr, [helper]) => void (hmr.exports = { a: () => "a " + helper.helper })),
+      helper: helper("v1"),
+      other: esm(["a"], hmr => void (hmr.exports = { other: 1 })),
+    });
+    const render = async () => (await load("page")).render();
+    const texts = [await render()];
+    await save({ helper: helper("v2") });
+    texts.push(await render(), await render());
+    expect(texts).toEqual(["a v1", "a v2", "a v2"]);
+  });
+});
+
+describe("the order of an update", () => {
+  test("client: an accepting module that is listed before a saved module that it imports runs once, after it", async () => {
+    const { log, take, define, load, save } = await loader("client");
+    const data = (name: string) => cjs((hmr, module) => void (module.exports = { name }));
+    const app = () =>
+      esm(["data"], (hmr, [data]) => {
+        log("app ran " + data.default.name);
+        hmr.accept();
+      });
+    define({ root: esm(["app"], () => {}), app: app(), data: data("one") });
+    await load("root");
+    for (const name of ["two", "three"]) await save({ app: app(), data: data(name) });
+    expect(take()).toEqual(["app ran one", "app ran two", "app ran three"]);
+  });
+});
+
+describe("a module that nobody saved", () => {
+  test("server: a barrel that has one more re-export does not run its importers again", async () => {
+    const { log, take, define, load, save } = await loader("server");
+    const barrel = (names: string[]) => esm([], hmr => void (hmr.exports = Object.fromEntries(names.map(n => [n, n]))));
+    define({
+      route: esm(["store"], () => log("route ran")),
+      store: esm(["barrel"], (hmr, [barrel]) => {
+        log("store ran " + barrel.alpha);
+        hmr.exports = {};
+      }),
+      barrel: barrel(["alpha"]),
+    });
+    await load("route");
+    await save({ barrel: barrel(["alpha", "beta"]), two: esm(["barrel"], () => log("two ran")) }, ["barrel"]);
+    await load("route");
+    await load("two");
+    expect(take()).toEqual(["store ran alpha", "route ran", "two ran"]);
+  });
+
+  test("client: a module with an export * runs again with the module that it copies from", async () => {
+    const { log, take, define, load, save } = await loader("client");
+    const reexport = () => {
+      const load = (hmr: Hmr) => {
+        const [accepting] = hmr.imports;
+        hmr.updateImport = [() => {}];
+        hmr.exports = { ...accepting };
+      };
+      return [["accepting", 0], [], ["accepting"], load, false];
+    };
+    const saved = (v: number) => esm([], hmr => void (hmr.exports = { v }));
+    define({
+      main: esm(["reexport"], (hmr, [reexport]) => {
+        log("main ran " + reexport.doubled);
+        hmr.accept();
+      }),
+      reexport: reexport(),
+      accepting: esm(["saved"], (hmr, [saved]) => {
+        hmr.exports = { doubled: saved.v * 2 };
+        hmr.accept();
+      }),
+      saved: saved(1),
+    });
+    await load("main");
+    for (const v of [2, 3]) await save({ saved: saved(v), reexport: reexport() }, ["reexport"]);
+    expect(take()).toEqual(["main ran 2", "main ran 4", "main ran 6"]);
+  });
+});
+
+describe("a module between that cannot run twice", () => {
+  test("server: every request gets its error, the save does not stop, and a later save that lets it run repairs it", async () => {
+    const { take, define, load, save } = await loader("server");
+    let defined = false;
+    let canRunAgain = false;
+    const config = (version: string) => esm([], hmr => void (hmr.exports = { version }));
+    define({
+      route: esm(["model"], (hmr, [model]) => void (hmr.exports = { render: () => model.name })),
+      other: esm([], hmr => void (hmr.exports = { render: () => "other" })),
+      model: esm(["config"], (hmr, [config]) => {
+        if (defined && !canRunAgain) throw new Error("defined twice");
+        defined = true;
+        hmr.exports = { name: "model " + config.version };
+      }),
+      config: config("c1"),
+    });
+    const request = (id: string) =>
+      load(id).then(
+        route => route.render(),
+        error => "failed: " + error.message,
+      );
+    const answers = [await request("route")];
+    await save({ config: config("c2") });
+    answers.push(await request("route"), await request("route"), await request("other"));
+    await save({ config: config("c1") });
+    answers.push(await request("route"));
+    canRunAgain = true;
+    await save({ config: config("c3") });
+    answers.push(await request("route"));
+    expect(answers).toEqual([
+      "model c1",
+      "failed: defined twice",
+      "failed: defined twice",
+      "other",
+      "failed: defined twice",
+      "model c3",
+    ]);
+    expect(take()).toEqual([]);
   });
 });

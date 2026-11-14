@@ -80,7 +80,7 @@ server_exports = {
   async registerUpdate([modules, bundledAgain], componentManifestAdd, componentManifestDelete) {
     dropHeldModules(modules, bundledAgain);
     // A module that fails to load here fails the same way for the next request that needs it.
-    replaceModules(modules).catch(err => console.error(err));
+    replaceModules(modules, bundledAgain).catch(err => console.error(err));
 
     if (componentManifestAdd) {
       for (const uid of componentManifestAdd) {

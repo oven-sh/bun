@@ -282,6 +282,15 @@ pub(crate) struct Literals<'a> {
     options: Options<'a>,
 }
 
+/// A call as it is written. The visit folds `import.meta["glob"]` and `Object["keys"]` only in some modes.
+#[derive(Clone, Copy)]
+pub(crate) enum CallAsWritten<'a> {
+    Other,
+    /// Lets `Object.keys(import.meta.glob(...))` skip the imports, if `is_object_keys_call` agrees after the visit.
+    ObjectKeys,
+    ImportMetaGlob(&'a Result<Literals<'a>, Invalid<'a>>),
+}
+
 /// Folds `-1`, `+1` and `!0` (a minifier's `true`) into literals.
 fn literal(expr: Expr) -> Expr {
     let mut operators = Vec::new();
@@ -968,7 +977,7 @@ fn is_import_meta_glob(expr: Expr) -> bool {
     )
 }
 
-/// Lets `Object.keys(import.meta.glob(...))` skip the imports. `call.target` must already be visited.
+/// Confirms after the visit that a `CallAsWritten::ObjectKeys` call is on the global `Object`.
 pub(crate) fn is_object_keys_call(symbols: &[js_ast::Symbol], call: &E::Call) -> bool {
     let ExprData::EDot(dot) = call.target.data else {
         return false;
@@ -1033,8 +1042,28 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         }
     }
 
-    /// Must run before `call` is visited, because afterwards `import.meta["glob"]()` looks the same.
-    pub(crate) fn is_import_meta_glob_call(&self, call: &E::Call) -> bool {
+    /// Must run before `call` is visited.
+    pub(crate) fn call_as_written(&mut self, call: &E::Call, loc: Loc) -> CallAsWritten<'a> {
+        let ExprData::EDot(dot) = call.target.data else {
+            return CallAsWritten::Other;
+        };
+        if self.is_import_meta_glob_call(call) {
+            return CallAsWritten::ImportMetaGlob(self.read_import_meta_glob_call(call, loc));
+        }
+        match dot.target.data {
+            ExprData::EIdentifier(object)
+                if dot.name == b"keys"
+                    && dot.optional_chain.is_none()
+                    && call.optional_chain.is_none()
+                    && self.load_name_from_ref(object.ref_) == b"Object" =>
+            {
+                CallAsWritten::ObjectKeys
+            }
+            _ => CallAsWritten::Other,
+        }
+    }
+
+    fn is_import_meta_glob_call(&self, call: &E::Call) -> bool {
         self.options.import_meta_glob.is_some()
             && self.import_meta_glob_use != ImportMetaGlobUse::Assigned
             && !self.is_revisit_for_substitution
@@ -1044,9 +1073,8 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             && !LEFT_AS_WRITTEN.get()
     }
 
-    /// Must run before `call` is visited, since `bun run` and `bun build` fold and inline different things into literals.
     #[cold]
-    pub(crate) fn read_import_meta_glob_call(
+    fn read_import_meta_glob_call(
         &mut self,
         call: &E::Call,
         loc: Loc,

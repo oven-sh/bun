@@ -516,6 +516,62 @@ describe.concurrent("import.meta.glob", () => {
     ).toEqual({ stdout: `["./effects/one.ts","./effects/two.ts"]`, stderr: "", exitCode: 0 });
   });
 
+  // Each of these folds and inlines different code, so none of that may decide what a call imports.
+  describe("the same files are imported by", () => {
+    const call = `import.meta.glob("./files/*.ts", { eager: true })`;
+    // prettier-ignore
+    const shapes: [code: string, imports: boolean][] = [
+      [`${call};`, true],
+      [`function unused() { ${call}; }`, true],
+      [`Object.keys(${call});`, false],
+      // Only `Object.keys(` written like that is the shortcut, as in Vite.
+      [`Object["keys"](${call});`, true],
+      ["Object[`keys`](" + call + ");", true],
+      [`const keys = "keys"; Object[keys](${call});`, true],
+      [`Object["ke" + "ys"](${call});`, true],
+      [`Object?.keys(${call});`, true],
+      [`Object.keys?.(${call});`, true],
+      [`DEFINED_AS_OBJECT.keys(${call});`, true],
+    ];
+    const flags = ["--define", "DEFINED_AS_OBJECT=Object"];
+    const files = {
+      ...Object.fromEntries(
+        shapes.flatMap(([code], i) => [
+          [`${i}/shape.ts`, code],
+          [`${i}/files/a.ts`, `(globalThis.imported ??= []).push(${i});`],
+        ]),
+      ),
+      "print.test.ts": `${shapes.map((_, i) => `import "./${i}/shape.ts";`).join("\n")}
+        const print = () => console.log("IMPORTED" + JSON.stringify(globalThis.imported ?? []));
+        if (typeof test === "function") test("print", print);
+        else print();`,
+    };
+    const build = (minify: string[]) => async (cwd: string) => {
+      const args = ["build", ...flags, ...minify, "--target=bun", "--outdir=out", "./print.test.ts"];
+      const built = await run(cwd, args);
+      if (built.exitCode !== 0) return built;
+      expect(built.stderr.split("\n").filter(line => line.startsWith("warn"))).toEqual([]);
+      return await run(cwd, ["out/print.test.js"]);
+    };
+
+    // `bun test` and the inspector write to stderr, the others don't.
+    test.each([
+      ["bun run", true, (cwd: string) => run(cwd, [...flags, "print.test.ts"])],
+      ["bun --inspect", false, (cwd: string) => run(cwd, ["--inspect=127.0.0.1:0", ...flags, "print.test.ts"])],
+      ["bun test", false, (cwd: string) => run(cwd, ["test", ...flags, "./print.test.ts"])],
+      ["bun test --coverage", false, (cwd: string) => run(cwd, ["test", "--coverage", ...flags, "./print.test.ts"])],
+      ["bun build", true, build([])],
+      ["bun build --minify", true, build(["--minify"])],
+    ])("%s", async (_, isQuiet, mode) => {
+      using dir = tempDir("import-meta-glob", files);
+      const { stdout, stderr, exitCode } = await mode(String(dir));
+      const line = stdout.split("\n").find(line => line.startsWith("IMPORTED"));
+      expect({ stderr: line && !isQuiet ? "" : stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const imported: number[] = JSON.parse(line!.slice("IMPORTED".length));
+      expect(shapes.map(([code], i) => [code, imported.includes(i)])).toEqual(shapes);
+    });
+  });
+
   test("a call in dead code imports nothing", async () => {
     expect(
       await runEntry(
@@ -604,6 +660,8 @@ describe.concurrent("import.meta.glob", () => {
             try { ${eager}; } catch (error) { thrown = error.name + ": " + error.message; }
             module.exports = [typeof import.meta.glob, Object.keys(import.meta.glob("./dir/a.ts")), thrown];`,
           "property.cjs": `module.exports = ${eager}["./dir/a.ts"];`,
+          // Not `Object.keys(` as written, so it imports.
+          "bracket-keys.cjs": `module.exports = Object["keys"](${eager});`,
           "imports-nothing.cjs": `
             module.exports = [typeof import.meta.glob, Object.keys(${eager}), import.meta.glob("./none/*.ts", { eager: true })];`,
           // A .cjs file with ESM syntax loads as ESM, so eager works.
@@ -615,6 +673,7 @@ describe.concurrent("import.meta.glob", () => {
         message,
         true,
         ["function", ["./dir/a.ts"], message],
+        message,
         message,
         ["function", ["./dir/a.ts", "./dir/b.ts"], {}],
         { default: { "./dir/a.ts": "a", "./dir/b.ts": "b" } },

@@ -289,6 +289,22 @@ await fetch("https://example.com", {
 
 This avoids SSL errors with self-signed certificates, but it disables TLS validation, so use it with caution.
 
+#### Legacy TLS 1.2 servers
+
+Like Node.js, Bun rejects a TLS 1.2 server that does not support secure renegotiation ([RFC 5746](https://www.rfc-editor.org/rfc/rfc5746)). The handshake fails with `UNSAFE_LEGACY_RENEGOTIATION_DISABLED`. To connect to such a server anyway, set `secureOptions` in `tls`, as in Node.js:
+
+```ts
+import { constants } from "node:crypto";
+
+await fetch("https://legacy.example.com", {
+  tls: {
+    secureOptions: constants.SSL_OP_LEGACY_SERVER_CONNECT,
+  },
+});
+```
+
+The same option works in `tls.connect()`, `Bun.connect()`, and the `tls` options of the SQL and Redis clients.
+
 ### Request options
 
 In addition to the standard fetch options, Bun provides several extensions:

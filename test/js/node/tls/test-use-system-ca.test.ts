@@ -419,9 +419,20 @@ describe.concurrent("--use-openssl-ca", () => {
       return Buffer.concat([uint(1, type), uint(3, body.length), body]);
     };
     const certificate = new X509Certificate(bundledRoot!).raw;
+    // An empty renegotiation_info: the client rejects a TLS 1.2 server without it before it looks at the certificate.
+    const extensions = Buffer.concat([uint(2, 0xff01), uint(2, 1), uint(1, 0)]);
     const messages = Buffer.concat([
-      // version 1.2, random, no session id, TLS_RSA_WITH_AES_128_GCM_SHA256, no compression
-      message(2, uint(2, 0x0303), Buffer.alloc(32), uint(1, 0), uint(2, 0x009c), uint(1, 0)),
+      // version 1.2, random, no session id, TLS_RSA_WITH_AES_128_GCM_SHA256, no compression, extensions
+      message(
+        2,
+        uint(2, 0x0303),
+        Buffer.alloc(32),
+        uint(1, 0),
+        uint(2, 0x009c),
+        uint(1, 0),
+        uint(2, extensions.length),
+        extensions,
+      ),
       message(11, uint(3, certificate.length + 3), uint(3, certificate.length), certificate),
       message(14),
     ]);

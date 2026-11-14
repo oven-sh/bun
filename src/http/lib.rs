@@ -1154,9 +1154,6 @@ pub fn configure_http_client_with_alpn(
         if !hostname.is_null() && *hostname != 0 {
             boringssl::c::SSL_set_tlsext_host_name(ssl, hostname);
         }
-        boringssl::c::SSL_clear_options(ssl, boringssl::c::SSL_OP_LEGACY_SERVER_CONNECT);
-        boringssl::c::SSL_set_options(ssl, boringssl::c::SSL_OP_LEGACY_SERVER_CONNECT);
-
         const ALPN_H1: &[u8] = &[8, b'h', b't', b't', b'p', b'/', b'1', b'.', b'1'];
         const ALPN_H2: &[u8] = &[2, b'h', b'2'];
         const ALPN_H2_H1: &[u8] = &[

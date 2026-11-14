@@ -263,6 +263,15 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
         let data_slice = get_entry_data(global, value, &mut array_buffer)?;
         let data = data_slice.slice();
 
+        // Readers take it for a directory, and its contents for more entries.
+        let last = bun_core::slice_to_nul(key_slice.slice()).last();
+        if !data.is_empty() && last.is_some_and(|&c| bun_paths::is_sep_native(c)) {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Failed to create tarball: {} is a directory and cannot have contents",
+                bun_core::fmt::quote(key_slice.slice())
+            )));
+        }
+
         writer
             .header(&tar::writer::File {
                 path: key_slice.slice(),
@@ -1185,7 +1194,7 @@ fn extract_to_disk_filtered(
     let mut count: u32 = 0;
     let mut write_strategy = bun_archive::WriteStrategy::default();
     #[cfg(unix)]
-    let mut symlink_join_buf = None;
+    let mut deferred_symlinks = Vec::new();
 
     loop {
         let entry_ref = match reader.next_entry() {
@@ -1268,42 +1277,22 @@ fn extract_to_disk_filtered(
                 count += 1;
             }
             bun_sys::FileKind::SymLink => {
-                let link_target = ZBox::from_bytes(entry_ref.symlink().unwrap_or_default());
-                let link_target_z = link_target.as_zstr();
-                // Validate symlink target is also safe
-                if !is_safe_path(link_target_z.as_bytes()) {
-                    continue;
-                }
-                // Symlinks are only extracted on POSIX systems (Linux/macOS).
                 // On Windows, symlinks are skipped since they require elevated privileges.
                 #[cfg(unix)]
                 {
-                    let mut symlinkat = || {
-                        beneath::symlinkat_where_safe(link_target_z, dir_fd, pathname, |path| {
-                            let target = link_target_z.as_bytes();
-                            bun_archive::is_symlink_target_safe(path, target, &mut symlink_join_buf)
-                        })
-                    };
-                    match symlinkat() {
-                        Err(err) => {
-                            if matches!(err.get_errno(), bun_sys::E::EPERM | bun_sys::E::ENOENT) {
-                                if let Some(parent) = bun_core::dirname(pathname) {
-                                    let _ = make_path(parent);
-                                }
-                                if symlinkat().is_err() {
-                                    continue;
-                                }
-                            } else {
-                                continue;
-                            }
-                        }
-                        Ok(()) => {}
+                    let target = entry_ref.symlink().unwrap_or_default();
+                    if is_safe_path(target) {
+                        deferred_symlinks.push(bun_archive::DeferredSymlink::new(pathname, target));
                     }
-                    count += 1;
                 }
             }
             _ => {}
         }
+    }
+
+    #[cfg(unix)]
+    {
+        count += bun_archive::create_deferred_symlinks(dir_fd, &deferred_symlinks, false);
     }
 
     Ok(count)

@@ -435,7 +435,7 @@ pub(crate) struct StatWatcher {
 
     this_value: JsCell<JsRef>,
 
-    poll_ref: JsCell<KeepAlive>,
+    poll_ref: KeepAlive,
 
     last_stat: Guarded<PosixStat>,
 
@@ -461,9 +461,9 @@ impl Drop for StatWatcher {
         // watcher is preceded by a JS-thread `close()` (the Strong `this_value`
         // self-ref keeps the wrapper alive until `close()` downgrades it, so
         // `finalize` cannot drop the wrapper ref first).
-        if self.poll_ref.get().is_active() {
+        if self.poll_ref.is_active() {
             debug_assert!(core::ptr::eq(VirtualMachine::get(), self.ctx.get())); // We cannot unref() on another thread this way.
-            self.poll_ref.with_mut(|p| p.unref(self.ctx.loop_ctx()));
+            self.poll_ref.unref(self.ctx.loop_ctx());
         }
     }
 }
@@ -575,7 +575,7 @@ impl StatWatcher {
         if !this.closed.load(Ordering::Relaxed) && !this.persistent.get() {
             this.persistent.set(true);
             let el_ctx = this.ctx.loop_ctx();
-            this.poll_ref.with_mut(|p| p.ref_(el_ctx));
+            this.poll_ref.ref_(el_ctx);
         }
     }
 
@@ -583,7 +583,7 @@ impl StatWatcher {
         if this.persistent.get() {
             this.persistent.set(false);
             let el_ctx = this.ctx.loop_ctx();
-            this.poll_ref.with_mut(|p| p.unref(el_ctx));
+            this.poll_ref.unref(el_ctx);
         }
     }
 
@@ -598,7 +598,7 @@ impl StatWatcher {
             self.persistent.set(false);
         }
         let el_ctx = self.ctx.loop_ctx();
-        self.poll_ref.with_mut(|p| p.unref(el_ctx));
+        self.poll_ref.unref(el_ctx);
         self.closed.store(true, Ordering::Relaxed);
         self.this_value.with_mut(|r| r.downgrade());
     }
@@ -792,7 +792,7 @@ impl StatWatcher {
             last_check: Cell::new(Instant::now()),
             global_this: args.global_this,
             this_value: JsCell::new(JsRef::empty()),
-            poll_ref: JsCell::new(KeepAlive::default()),
+            poll_ref: KeepAlive::default(),
             // InitStatTask is responsible for setting this
             // SAFETY: all-zero is a valid PosixStat (POD #[repr(C)])
             last_stat: Guarded::init(bun_core::ffi::zeroed::<PosixStat>()),
@@ -809,7 +809,7 @@ impl StatWatcher {
 
         if this_ref.persistent.get() {
             let el_ctx = this_ref.ctx.loop_ctx();
-            this_ref.poll_ref.with_mut(|p| p.ref_(el_ctx));
+            this_ref.poll_ref.ref_(el_ctx);
         }
 
         // SAFETY: `this_ptr` ownership transfers to the JS wrapper, which holds

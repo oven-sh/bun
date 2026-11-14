@@ -2561,7 +2561,7 @@ mod _async_tasks {
             context: bun_event_loop::ContextId,
             shelltask: Option<bun_ptr::ParentRef<ShellCpTask, bun_ptr::Mut>>,
         ) {
-            let mut task = Box::new(Self {
+            let task = Box::new(Self {
                 promise,
                 context,
                 args: cp_args,
@@ -2722,7 +2722,7 @@ mod _async_tasks {
         }
 
         #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
-        pub(crate) fn destroy(mut self: Box<Self>) {
+        pub(crate) fn destroy(self: Box<Self>) {
             if !IS_SHELL {
                 let ctx = event_loop_handle_to_ctx(self.evtloop);
                 self.r#ref.unref(ctx);

@@ -167,7 +167,7 @@ impl Context {
         let mut files: Vec<Vec<u8>> = Vec::new();
 
         let mut reader = archive_ok(
-            bun_archive::open_memory(&tarball_bytes, tar::Dialect::General),
+            bun_archive::open_memory(&tarball_bytes, tar::Dialect::Npm),
             "failed to read tarball",
         )?;
         let mut os_path_buf: Vec<OSPathChar> = Vec::new();

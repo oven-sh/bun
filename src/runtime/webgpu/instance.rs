@@ -132,7 +132,7 @@ pub(crate) struct Instance {
     is_queued_on_macro_loop: Cell<bool>,
     is_processing_events: Cell<bool>,
     operations: Cell<u32>,
-    keep_alive: RefCell<KeepAlive>,
+    keep_alive: KeepAlive,
 }
 
 impl Instance {
@@ -152,7 +152,7 @@ impl Instance {
             is_queued_on_macro_loop: Cell::new(false),
             is_processing_events: Cell::new(false),
             operations: Cell::new(0),
-            keep_alive: RefCell::default(),
+            keep_alive: KeepAlive::default(),
         });
         let address = Rc::as_ptr(&instance).cast_mut();
         instance.host.instance.store(address, Ordering::SeqCst);
@@ -356,7 +356,7 @@ impl Operation {
             (instance.host.operations_of_macros).fetch_add(1, Ordering::SeqCst);
         }
         if instance.operations.replace(instance.operations.get() + 1) == 0 {
-            instance.keep_alive.borrow_mut().ref_(bun_io::js_vm_ctx());
+            instance.keep_alive.ref_(bun_io::js_vm_ctx());
         }
         instance.schedule();
         Self {
@@ -389,7 +389,7 @@ impl Drop for Operation {
             (instance.host.operations_of_macros).fetch_sub(1, Ordering::SeqCst);
         }
         if instance.operations.replace(instance.operations.get() - 1) == 1 {
-            instance.keep_alive.borrow_mut().unref(bun_io::js_vm_ctx());
+            instance.keep_alive.unref(bun_io::js_vm_ctx());
         }
     }
 }

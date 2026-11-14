@@ -63,7 +63,7 @@ pub(crate) fn new_detached_socket(cx: &mut JsScope<'_>, is_ssl: bool) -> JSValue
             // policy in JS, so a hostname mismatch is never enforced natively.
             flags: Cell::new(SocketFlags::default() | SocketFlags::DEFERS_SERVER_IDENTITY),
             this_value: JsCell::new(jsc::JsRef::empty()),
-            poll_ref: JsCell::new(KeepAlive::init()),
+            poll_ref: KeepAlive::init(),
             ref_pollref_on_connect: Cell::new(true),
             connection: JsCell::new(None),
             server_name: JsCell::new(None),

@@ -145,3 +145,15 @@ dropped	ts	if (typeof late) {} else { enum E { A } } let late = 1;
 dropped	ts	if (typeof late) {} else l: enum E { A } let late = 1;
 dropped	ts	if (typeof late) {} else declare enum E { A } let late = 1;
 dropped	ts	(function () { if (typeof late) {} else enum E { A } let late = 1; })();
+# of the enums and namespaces of one name in the scope of the file, only the first that `bun run` visits is a var. It visits the enums that are statements of the file first
+dropped	ts	enum E { A } if (typeof late) {} else enum E { B } let late = 1;
+dropped	ts	if (typeof late) {} else enum E { B } enum E { A } let late = 1;
+dropped	mts	export enum E { A } if (typeof late) {} else enum E { B } let late = 1;
+dropped	ts	namespace E { export const a = 1; } if (typeof late) {} else enum E { B } let late = 1;
+kept	ts	if (typeof late) {} else enum E { B } namespace E { export const a = 1; } let late = 1;
+kept	ts	namespace E { export type T = 1; } if (typeof late) {} else enum E { B } let late = 1;
+dropped	ts	if (true) enum E { A } if (typeof late) {} else enum E { B } let late = 1;
+kept	ts	if (typeof late) {} else enum E { B } if (true) enum E { A } let late = 1;
+kept	ts	{ enum E { A } } if (typeof late) {} else enum E { B } let late = 1;
+kept	ts	declare enum E { A } if (typeof late) {} else enum E { B } let late = 1;
+kept	ts	enum F { A } if (typeof late) {} else enum E { B } let late = 1;

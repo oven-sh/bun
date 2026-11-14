@@ -1,5 +1,9 @@
+use crate::atom::Atom;
 use crate::bind::{Bound, Parent};
-use crate::hir::{File, Flags, FnBody, PatId, PatKind, StmtId, StmtKind, VarDeclId, VarKind};
+use crate::hir::{
+    Enum, File, Flags, FnBody, Module, ModuleName, PatId, PatKind, StmtId, StmtKind, VarDeclId,
+    VarKind,
+};
 use crate::module_format::find_scope_below_file;
 
 /// What `bun run` prints of a statement that never runs. `should_keep_stmt_in_dead_control_flow` of the parser decides it.
@@ -85,10 +89,13 @@ impl<'a, 's> NeverRun<'a, 's> {
                 }
             }
             // `s_enum` declares the enum with `var` in the scope of the file, and with `let` in every other one.
-            StmtKind::Enum(_) => match self.is_in_scope_of_file(statement) {
-                true => Left::InPlace,
-                false => Left::Nothing,
-            },
+            StmtKind::Enum(enumeration) => {
+                let name = hir[enumeration].name;
+                match self.is_in_scope_of_file(statement) && self.declares_name(statement, name) {
+                    true => Left::InPlace,
+                    false => Left::Nothing,
+                }
+            }
             StmtKind::Fn(_) => match self.becomes_let(statement) {
                 true => Left::Nothing,
                 false => Left::InPlace,
@@ -159,6 +166,24 @@ impl<'a, 's> NeverRun<'a, 's> {
                 _ => return false,
             }
         }
+    }
+
+    /// Of the enums and namespaces of one name in the scope of the file, only the first that the parser visits declares it.
+    fn declares_name(&self, statement: StmtId, name: Atom) -> bool {
+        let hir = self.hir;
+        let is_enum = |it: &&Enum| it.name == name && !it.flags.contains(Flags::AMBIENT);
+        let is_namespace = |it: &&Module| it.name == ModuleName::Ident(name) && !it.is_erased;
+        let enums = hir.enums.iter().filter(is_enum).map(|it| it.stmt);
+        let namespaces = hir.modules.iter().filter(is_namespace).map(|it| it.stmt);
+        // `_parse` and `visit_stmts` visit the enums that are statements of the file in front of its other statements.
+        let place_in_visit = |it: StmtId| {
+            let is_enum_of_list = matches!(hir[it].kind, StmtKind::Enum(_))
+                && matches!(self.bound.parent_of_stmt(it), Parent::File);
+            (!is_enum_of_list, hir[it].start)
+        };
+        let own_place = place_in_visit(statement);
+        let mut earlier = (enums.chain(namespaces)).filter(|&it| place_in_visit(it) < own_place);
+        !earlier.any(|it| self.is_in_scope_of_file(it))
     }
 
     /// `maybe_relocate_vars_to_top_level`: a `var` of the file below a scope is declared at the end of the file.

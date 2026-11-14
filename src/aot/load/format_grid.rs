@@ -454,7 +454,15 @@ const NEVER_RUN_BRANCHES: &[&str] = &[
     "enum E { A }", "while (unknown) enum E { A }", "label: enum E { A }",
 ];
 
-/// Each cell holds one `if` that is no part of a branch that never runs: at the level of the file, or in a function.
+/// What stands in front of or behind an `if` of the file whose never-run branch is `enum E { B }`: the parser declares a name once.
+#[rustfmt::skip]
+const BESIDE_NEVER_RUN_ENUM: &[&str] = &[
+    "enum E { A }", "const enum E { A }", "declare enum E { A }", "enum F { A }", "namespace E { export const a = 1; }", "namespace E { export type T = 1; }",
+    "namespace E.F { export const a = 1; }", "namespace F.E { export const a = 1; }", "declare namespace E {}", "if (true) enum E { A }", "while (unknown) enum E { A }",
+    "do enum E { A } while (unknown);", "{ enum E { A } }", "label: enum E { A }", "function g() { enum E { A } }", "namespace N { export enum E { A } }",
+];
+
+/// Each cell holds one `if` with a branch that never runs, and that `if` is no part of such a branch: at the level of the file, or in a function.
 fn write_never_run_cells() -> Vec<String> {
     let mut cells = Vec::new();
     for in_front in IN_FRONT_OF_NEVER_RUN {
@@ -465,6 +473,12 @@ fn write_never_run_cells() -> Vec<String> {
                     "{in_front}function g() {{ {before}{branch}{behind} }}"
                 ));
             }
+        }
+    }
+    for beside in BESIDE_NEVER_RUN_ENUM {
+        for (before, behind) in NEVER_RUN {
+            cells.push(format!("{beside} {before}enum E {{ B }}{behind}"));
+            cells.push(format!("{before}enum E {{ B }}{behind} {beside}"));
         }
     }
     cells

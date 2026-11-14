@@ -109,7 +109,12 @@ declare module "bun" {
     /**
      * Send a raw command to the Redis server
      * @param command The command to send
-     * @param args The arguments to the command
+     * @param args The arguments to the command. Bun sends each element as one argument and does not change the array.
+     * - A string is sent as UTF-8.
+     * - A number is sent as the string that `String(value)` returns.
+     * - A typed array, a `DataView`, an `ArrayBuffer` or a `SharedArrayBuffer` is sent as its bytes.
+     * - A `Blob` whose bytes are in memory is sent as its bytes. Bun does not read a `Blob` that is backed by a file or
+     *   by S3, such as `Bun.file()` or an `S3File`, so none of its content is sent: pass `await file.bytes()`.
      * @returns A promise that resolves with the command result
      *
      * The reply is converted as follows. See the type conversion section in
@@ -125,7 +130,10 @@ declare module "bun" {
      * - A map becomes a plain object with a null prototype.
      * - An error reply (`-` or `!`) rejects the promise with code ERR_REDIS_SERVER_ERROR.
      */
-    send(command: string, args: string[]): Promise<any>;
+    send(
+      command: string,
+      args: readonly (string | number | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike | Blob)[],
+    ): Promise<any>;
 
     /**
      * Get the value of a key

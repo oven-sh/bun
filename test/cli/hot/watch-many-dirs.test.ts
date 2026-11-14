@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, forEachLine, isASAN, isCI, isLinux, tempDir } from "harness";
-import { mkdirSync, readdirSync, readlinkSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 describe("--hot with many directories", () => {
@@ -98,6 +98,31 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
     },
     30000,
   ); // 30 second timeout
+
+  test.skipIf(!isLinux)("keeps watching after more events than one read holds", async () => {
+    await using dir = tempDir("hot-event-burst", {
+      "entry.js": `console.log("first"); setInterval(() => {}, 1e6);`,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "--hot", "entry.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      killSignal: "SIGKILL",
+    });
+    const iter = forEachLine(proc.stdout);
+    expect((await iter.next()).value).toBe("first");
+
+    proc.kill("SIGSTOP");
+    while (!readFileSync(`/proc/${proc.pid}/status`, "utf8").includes("State:\tT")) await Bun.sleep(1);
+    // 272 bytes per event, which does not divide the size of the buffer.
+    for (let i = 0; i < 1000; i++) writeFileSync(join(dir, String(i).padStart(250, "x")), "");
+    writeFileSync(join(dir, "entry.js"), `console.log("second");`);
+    proc.kill("SIGCONT");
+
+    expect((await iter.next()).value).toBe("second");
+  });
 
   // The watchlist owns one descriptor per watched file, closed only when the
   // entry is evicted or the watcher shuts down. Re-transpiles during a reload

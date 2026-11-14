@@ -1,0 +1,43 @@
+------------------
+{ printWidth: 80 }
+------------------
+const a = css`
+  color: red;
+  display: block;
+`;
+const b = gql`
+  {
+    a {
+      b
+    }
+  }
+`;
+const c = html`<div><p>a</p></div>`;
+const d = md`
+# a
+
+- b
+`;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const a = css`
+  color: red;
+  display: block;
+`;
+const b = gql`
+  {
+    a {
+      b
+    }
+  }
+`;
+const c = html`<div><p>a</p></div>`;
+const d = md`
+# a
+
+- b
+`;
+
+===================== End =====================

@@ -1480,6 +1480,61 @@ describe.concurrent("bun fmt", () => {
     });
   });
 
+  // The tag of a template is read by its name, whatever escapes it has in the source: `c\u{73}s` is `css`, on the
+  // first run as on the second. `--debug-check` knows that the text of such a template may change.
+  test("formats a template whose tag is an escaped name, and --debug-check accepts it", async () => {
+    const text = "const a = c\\u{73}s`color:red;   display:block`;\nconst b = gr\\u{61}phql(schema, `{ a { b } }`);\n";
+    const result = await formatChecked({ "a.js": text }, [], { reads: ["a.js"] });
+    expect(result.files["a.js"]).toBe(
+      "const a = css`\n  color: red;\n  display: block;\n`;\nconst b = graphql(\n  schema,\n  `\n    {\n      a {\n        b\n      }\n    }\n  `,\n);\n",
+    );
+    expect(result.exitCode).toBe(0);
+    const check = await format({ "a.js": result.files["a.js"] as string }, ["--check"]);
+    expect(check.stdout).toBe("");
+    expect(check.exitCode).toBe(0);
+  });
+
+  // Whether a property breaks after the `:` depends on the width of its key. Prettier 3.9.9 measures the key as
+  // printed: `\u{61}` is `a`, `[.5]` is `[0.5]`, `[ 5 ]` is `[5]`. oxfmt 0.72 measures the key as written, so it
+  // prints `[0.5]:` with the value on the next line, then `[0.5]: "..."` on one line the next time it runs. `bun fmt`
+  // measures the key as printed in both flavors, so a file that it wrote passes `bun fmt --check`.
+  describe("a key that is printed differently than it is written", () => {
+    const value = `"this string is too long to fit on one line, even when it is on a line by itself"`;
+    // A key narrower than the indentation plus 3 columns is short: the value stays on its line.
+    const rows: [key: string, printed: string, tabWidth: number, isShort: boolean][] = [
+      ["\\u{61}", "a", 2, true],
+      ["[.5]", "[0.5]", 2, false],
+      ["[ 5 ]", "[5]", 2, true],
+      ["[\\u{61}]", "[a]", 2, true],
+      ["['\\'']", `["'"]`, 3, true],
+      ["[!'\\'']", `[!"'"]`, 4, true],
+    ];
+    const flavors = [
+      ["Prettier", {}],
+      ["oxfmt", { ".oxfmtrc.json": `{ "printWidth": 80 }` }],
+    ] as const;
+    for (const [flavor, config] of flavors) {
+      for (const [key, printed, tabWidth, isShort] of rows) {
+        test(`${key} is measured as ${printed} (${flavor})`, async () => {
+          const indent = " ".repeat(tabWidth);
+          const property = isShort
+            ? `${indent}${printed}: ${value},\n`
+            : `${indent}${printed}:\n${indent}${indent}${value},\n`;
+          const expected = `const o = {\n${property}};\n`;
+          const args = [`--tab-width=${tabWidth}`];
+          const first = await format({ ...config, "key.js": `const o = { ${key}: ${value} };\n` }, args, {
+            reads: ["key.js"],
+          });
+          expect(first.files["key.js"]).toBe(expected);
+          expect(first.exitCode).toBe(0);
+          const check = await format({ ...config, "key.js": expected }, ["--check", ...args, "key.js"]);
+          expect(check.stdout).not.toContain("key.js");
+          expect(check.exitCode).toBe(0);
+        });
+      }
+    }
+  });
+
   test("copies a comment inside code under `prettier-ignore` once, along with the code", async () => {
     const text = "x = <a {\n  // prettier-ignore\n  ...b\n  // c1\n  .c} />;\n";
     const result = await format({ "a.jsx": text }, [], { reads: ["a.jsx"] });

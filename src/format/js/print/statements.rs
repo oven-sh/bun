@@ -192,7 +192,7 @@ fn semicolon_for_only_statement_in_html<'a>(
     // A function, or a path to one, which Vue calls.
     Some(match expression.kind() {
         ExprKind::Fn(_) | ExprKind::Dot { .. } | ExprKind::Index { .. } => true,
-        ExprKind::Ident(_) => expression.text() != b"undefined",
+        ExprKind::Ident(name) => !name.is("undefined"),
         _ => false,
     })
 }

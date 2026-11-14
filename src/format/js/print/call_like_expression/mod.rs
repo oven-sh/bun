@@ -92,21 +92,21 @@ fn keeps_arguments_on_one_line<'a>(e: Expr<'a>, call: Call<'a>, f: &Formatter<'a
     if !matches!(
         first.tag(),
         ExprTag::String | ExprTag::Template | ExprTag::TaggedTemplate
-    ) && !(callee.tag() == ExprTag::Ident
-        && matches!(
-            callee.text(),
-            b"require"
-                | b"define"
-                | b"async"
-                | b"inject"
-                | b"fakeAsync"
-                | b"waitForAsync"
-                | b"beforeEach"
-                | b"beforeAll"
-                | b"afterEach"
-                | b"afterAll"
-        ))
-    {
+    ) && !matches!(
+        callee.kind(),
+        ExprKind::Ident(name) if name.is_any(&[
+            "require",
+            "define",
+            "async",
+            "inject",
+            "fakeAsync",
+            "waitForAsync",
+            "beforeEach",
+            "beforeAll",
+            "afterEach",
+            "afterAll",
+        ])
+    ) {
         return false;
     }
     is_template_on_its_own_line_only_argument(call.args(), f)
@@ -205,8 +205,9 @@ fn is_lone_string_without_comments<'a>(args: List<'a, Expr<'a>>, f: &Formatter<'
         })
 }
 
-fn is_identifier(e: Expr<'_>, name: &[u8]) -> bool {
-    e.tag() == ExprTag::Ident && e.text() == name
+/// True if `e` is the name `name`, however it's escaped in the source.
+fn is_identifier(e: Expr<'_>, name: &str) -> bool {
+    matches!(e.kind(), ExprKind::Ident(it) if it.is(name))
 }
 
 /// Prettier's `isSimpleModuleImport` for a call: `require("a")`, `require.resolve("a")`, `require.resolve.paths("a")`,
@@ -223,14 +224,14 @@ fn is_simple_module_import<'a>(call: Call<'a>, f: &Formatter<'a>) -> bool {
     }
     let callee = call.callee();
     let is_module_function = match callee.kind() {
-        ExprKind::Ident(_) => callee.text() == b"require",
+        ExprKind::Ident(name) => name.is("require"),
         ExprKind::Dot { obj, name, .. } => match name.bytes() {
             b"resolve" => {
-                is_identifier(obj, b"require") || matches!(obj.kind(), ExprKind::ImportMeta)
+                is_identifier(obj, "require") || matches!(obj.kind(), ExprKind::ImportMeta)
             }
             b"paths" => matches!(
                 obj.kind(),
-                ExprKind::Dot { obj, name, .. } if is_identifier(obj, b"require") && name.bytes() == b"resolve"
+                ExprKind::Dot { obj, name, .. } if is_identifier(obj, "require") && name.bytes() == b"resolve"
             ),
             _ => false,
         },
@@ -251,13 +252,16 @@ fn is_commonjs_or_amd_module_definition<'a>(
     f: &Formatter<'a>,
 ) -> bool {
     let callee = call.callee();
-    if callee.tag() != ExprTag::Ident || call.is_optional() {
+    let ExprKind::Ident(callee_name) = callee.kind() else {
+        return false;
+    };
+    if call.is_optional() {
         return false;
     }
     let args = call.args();
     let is_string = |e: Option<Expr<'a>>| e.is_some_and(|e| e.tag() == ExprTag::String);
     let is_array = |e: Option<Expr<'a>>| e.is_some_and(|e| e.tag() == ExprTag::Array);
-    match callee.text() {
+    match callee_name.bytes() {
         // `require(path.join(__dirname, "a"))` can break.
         b"require" => {
             (args.len() > 1 || (args.len() == 1 && is_string(args.first())))

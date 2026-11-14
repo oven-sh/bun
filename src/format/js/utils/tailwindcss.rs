@@ -234,7 +234,7 @@ fn is_class_function(callee: Expr<'_>, tailwind: &Tailwind, f: &Formatter<'_>) -
         node = match node.kind() {
             ExprKind::Call(call) => call.callee(),
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
-            ExprKind::Ident(_) => return has(&tailwind.functions, node.text(), tailwind),
+            ExprKind::Ident(name) => return has(&tailwind.functions, name.bytes(), tailwind),
             _ => return false,
         };
     }

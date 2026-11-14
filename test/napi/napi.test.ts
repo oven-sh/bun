@@ -1376,6 +1376,20 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  describe("an index key stored on the global object", () => {
+    it("reaches a setter with the global object as `this`", async () => {
+      const output = await checkSameOutput("test_set_index_on_global", []);
+      expect(output.split("\n").filter(line => line.includes(": this is "))).toEqual(
+        [
+          "inherited setter for 0",
+          "inherited setter for 4294967295",
+          "own setter for 0",
+          "own setter for 4294967295",
+        ].flatMap(setter => Array(4).fill(`${setter}: this is globalThis`)),
+      );
+    });
+  });
+
   describe("napi_define_properties", () => {
     it("goes through [[DefineOwnProperty]] and validates the name", async () => {
       await checkSameOutput("test_define_properties", []);

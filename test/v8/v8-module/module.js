@@ -299,6 +299,40 @@ module.exports = debugMode => {
       console.log("uv_queue_work", rc);
     },
 
+    test_v8_object_set_index_on_global() {
+      // Made by the Function constructor: Bun's transpiler drops the "use strict" of a function in a CommonJS file
+      // (https://github.com/oven-sh/bun/issues/14251).
+      const makeSetter = new Function(
+        "label",
+        `return function (value) {
+          "use strict";
+          console.log(label + ": this is " + (this === globalThis ? "globalThis" : typeof this));
+        };`,
+      );
+      for (const [holderName, holder] of [
+        ["inherited", Object.prototype],
+        ["own", globalThis],
+      ]) {
+        // 4294967295 is the one uint32_t that is no array index.
+        for (const key of [0, 4294967295]) {
+          Object.defineProperty(holder, key, {
+            set: makeSetter(`${holderName} setter for ${key}`),
+            configurable: true,
+          });
+          try {
+            console.log("Object::Set(context, index, value)");
+            nativeModule.perform_object_set_by_index(globalThis, key, 1);
+            console.log("Object::Set(context, key, value) with a number");
+            nativeModule.perform_object_set_by_key(globalThis, key, 1);
+            console.log("Object::Set(context, key, value) with a string");
+            nativeModule.perform_object_set_by_key(globalThis, String(key), 1);
+          } finally {
+            delete holder[key];
+          }
+        }
+      }
+    },
+
     test_v8_object_get_set_exceptions() {
       for (const key of [0, "key"]) {
         for (const access of ["get", "set"]) {

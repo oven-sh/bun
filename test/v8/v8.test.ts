@@ -246,6 +246,9 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     it("correctly handles exceptions from get and set", async () => {
       await checkSameOutput("test_v8_object_get_set_exceptions");
     });
+    it("calls a setter for an index key of the global object with globalThis as `this`", async () => {
+      await checkSameOutput("test_v8_object_set_index_on_global");
+    });
   });
   describe("Array", () => {
     it("can create an array from a C array of Locals", async () => {

@@ -93,7 +93,7 @@ describe.each([
   });
 });
 
-test("a global shaped like jsdom's window", () => {
+function makeWindowShapedLikeJsdoms() {
   const window = createContext(constants.DONT_CONTEXTIFY);
   const namedElements = new Map<PropertyKey, object>([["byId", { id: "byId" }]]);
   const eventTargetPrototype = Object.create(window.Object.prototype, {
@@ -109,7 +109,11 @@ test("a global shaped like jsdom's window", () => {
   });
   Object.setPrototypeOf(window, Object.create(windowProperties));
   window.window = window;
+  return window;
+}
 
+test("a global shaped like jsdom's window", () => {
+  const window = makeWindowShapedLikeJsdoms();
   runInContext(
     `var a = 1;
     function f() { return a + 1; }
@@ -128,6 +132,30 @@ test("a global shaped like jsdom's window", () => {
     d: "byId",
     byId: "shadowed",
   });
+});
+
+// The set trap defines the property on its receiver, so it needs the window there for an index key too.
+test("index keys on a global shaped like jsdom's window", () => {
+  const window = makeWindowShapedLikeJsdoms();
+  expect(
+    runInContext(
+      `window[5] = "five";
+      (function () { "use strict"; window[6] = "six"; })();
+      window["7"] = "seven";
+      [Reflect.set(window, 8, "eight"), Object.assign(window, { 9: "nine" }) === window].join()`,
+      window,
+    ),
+  ).toBe("true,true");
+  window[10] = "ten";
+  const keys = [5, 6, 7, 8, 9, 10];
+  expect(keys.map(key => [Object.hasOwn(window, key), window[key]])).toEqual([
+    [true, "five"],
+    [true, "six"],
+    [true, "seven"],
+    [true, "eight"],
+    [true, "nine"],
+    [true, "ten"],
+  ]);
 });
 
 test.concurrent("the main realm: runInThisContext() and require()", async () => {

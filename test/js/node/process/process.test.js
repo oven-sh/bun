@@ -3336,6 +3336,91 @@ describe("default 'warning' listener is registered at startup", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The first warning that is printed picks the flag, and the hint is printed once:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/warning.js#L121-L127
+  it.concurrent.each([
+    ["--trace-deprecation", "DeprecationWarning", "Warning"],
+    ["--trace-warnings", "Warning", "DeprecationWarning"],
+  ])("the hint names %s when the first warning is a %s", async (flag, first, second) => {
+    const { stdout, stderr, exitCode } = await run([
+      "-e",
+      `process.emitWarning("first", ${JSON.stringify(first)});
+       process.emitWarning("second", ${JSON.stringify(second)});`,
+    ]);
+    expect({
+      stdout,
+      stderr: stderr.replace(/\(node:\d+\) /g, "").replace(/`.* --/, "`bun --"),
+      exitCode,
+    }).toEqual({
+      stdout: "",
+      stderr: `${first}: first\n(Use \`bun ${flag} ...\` to show where the warning was created)\n${second}: second\n`,
+      exitCode: 0,
+    });
+  });
+
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/warning.js#L124-L132
+  it.concurrent("the hint is written with its warning, in one write", async () => {
+    const { stdout, stderr, exitCode } = await run([
+      "-e",
+      `const written = [];
+       process.stderr.write = chunk => written.push(String(chunk));
+       process.emitWarning("old", "DeprecationWarning");
+       process.emitWarning("plain");
+       process.on("exit", () => console.log(JSON.stringify(written)));`,
+    ]);
+    const written = JSON.parse(stdout).map(chunk => chunk.replace(/\(node:\d+\) /, "").replace(/`.* --/, "`bun --"));
+    expect({ written, stderr, exitCode }).toEqual({
+      written: [
+        "DeprecationWarning: old\n(Use `bun --trace-deprecation ...` to show where the warning was created)\n",
+        "Warning: plain\n",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // process.argv0 is writable in Bun, and path.basename() throws for a name that is not a string.
+  it.concurrent("the first warning is written though its hint cannot be made", async () => {
+    const { stdout, stderr, exitCode } = await run([
+      "-e",
+      `process.on("uncaughtException", error => console.log("caught " + error.code));
+       process.argv0 = 5;
+       process.emitWarning("first");
+       process.emitWarning("second");`,
+    ]);
+    expect({ stdout, stderr: stderr.replace(/\(node:\d+\) /g, ""), exitCode }).toEqual({
+      stdout: "caught ERR_INVALID_ARG_TYPE\n",
+      stderr: "Warning: first\nWarning: second\n",
+      exitCode: 0,
+    });
+  });
+
+  // `basename(process.argv0 || 'node', '.exe')`. Each name is what path.basename() of node v26.3.0 answers for that argv0.
+  it.concurrent.each([
+    ["custom.exe", "custom"],
+    ["dir/custom.exe", "custom"],
+    ["custom.EXE", "custom.EXE"],
+    ["dir/.exe", ".exe"],
+    [".exe", ""],
+    ["C:\\dir\\custom.exe", isWindows ? "custom" : "C:\\dir\\custom"],
+    ["C:custom.exe", isWindows ? "custom" : "C:custom"],
+    ["C:.exe", isWindows ? ".exe" : "C:"],
+  ])("the hint names argv0 %p as %p", async (argv0, name) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `process.emitWarning("shown");`],
+      argv0,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr: stderr.replace(/\(node:\d+\) /, ""), exitCode }).toEqual({
+      stdout: "",
+      stderr: `Warning: shown\n(Use \`${name} --trace-warnings ...\` to show where the warning was created)\n`,
+      exitCode: 0,
+    });
+  });
+
   it.concurrent("a bare process.emit('warning') with no prior emitWarning() still prints", async () => {
     const { stdout, stderr, exitCode } = await run(["-e", `process.emit("warning", new Error("bare"));`]);
     expect(stderr).toMatch(/^\(node:\d+\) Error: bare\n\(Use `.*--trace-warnings/);

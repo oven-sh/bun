@@ -1613,6 +1613,89 @@ describe.concurrent("bun fmt", () => {
     expect(result).toMatchObject({ stderr: "", files, exitCode: 0 });
   });
 
+  // Prettier 3.9.9 prints a comma after the parameter. A setter takes one `FormalParameter`, with no trailing comma
+  // form, so JavaScriptCore rejects `set a(b,) {}`.
+  describe("a setter whose parameter breaks onto its own line", () => {
+    const value = "Settings.defaultTimeoutInMillisecondsForAllRequests";
+    const broken = (indent: string, param: string) => `(\n${indent}  ${param}\n${indent})`;
+    // Each row is the extension, the text, and what's printed. Prettier prints a `,` before the line break.
+    test.each([
+      [
+        "js",
+        `class Settings {\n  set timeout(milliseconds = ${value}) {}\n}\n`,
+        `class Settings {\n  set timeout${broken("  ", `milliseconds = ${value}`)} {}\n}\n`,
+      ],
+      [
+        "js",
+        `class Settings {\n  static set timeout(milliseconds = ${value}) {}\n}\n`,
+        `class Settings {\n  static set timeout${broken("  ", `milliseconds = ${value}`)} {}\n}\n`,
+      ],
+      [
+        "js",
+        `const settings = {\n  set timeout(milliseconds = ${value}AndThenSomeMore) {},\n};\n`,
+        `const settings = {\n  set timeout${broken("  ", `milliseconds = ${value}AndThenSomeMore`)} {},\n};\n`,
+      ],
+      [
+        "ts",
+        `class Settings {\n  set timeout(milliseconds: ${value}AndThenSomeMoreCharacters) {}\n}\n`,
+        `class Settings {\n  set timeout${broken("  ", `milliseconds: ${value}AndThenSomeMoreCharacters`)} {}\n}\n`,
+      ],
+    ])("%s: %j", async (extension, text, printed) => {
+      const name = `a.${extension}`;
+      const result = await formatChecked({ [name]: text }, [], { reads: [name] });
+      expect(result).toMatchObject({ stderr: "", files: { [name]: printed }, exitCode: 0 });
+      if (extension === "js") {
+        // What's printed parses. `bun run` would drop the comma, `eval` gives the text to JavaScriptCore as is.
+        using dir = tempDir("bun-format-setter", { [name]: printed });
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", `eval(await Bun.file("${name}").text()); console.log("parsed");`],
+          env,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout).toBe("parsed\n");
+        expect(exitCode).toBe(0);
+      }
+    });
+
+    test("in the oxfmt flavor", async () => {
+      const text = `class Settings {\n  set timeout(milliseconds = ${value}) {}\n}\n`;
+      const printed = `class Settings {\n  set timeout${broken("  ", `milliseconds = ${value}`)} {}\n}\n`;
+      const result = await format({ ".oxfmtrc.json": `{ "printWidth": 80 }`, "a.js": text }, [], { reads: ["a.js"] });
+      expect(result).toMatchObject({ stderr: "", files: { "a.js": printed }, exitCode: 0 });
+    });
+
+    // A method, a setter whose list is not the one parameter of the grammar (an error with or without the comma), and
+    // a setter signature, which no engine runs. TypeScript accepts the comma in all of them.
+    test.each([
+      ["js", `class Settings {\n  timeout(milliseconds = ${value}AndThenSomeMore) {}\n}\n`, " {}\n}\n"],
+      ["ts", `class Settings {\n  set timeout(milliseconds: ${value}, b: ${value}) {}\n}\n`, " {}\n}\n"],
+      [
+        "ts",
+        `class Settings {\n  set timeout(this: Settings, milliseconds: ${value}AndThenSomeMoreCharacters) {}\n}\n`,
+        " {}\n}\n",
+      ],
+      ["ts", `interface Settings {\n  set timeout(milliseconds: ${value}AndThenSomeMoreCharacters);\n}\n`, ";\n}\n"],
+      [
+        "ts",
+        `declare class Settings {\n  set timeout(milliseconds: ${value}AndThenSomeMoreCharacters);\n}\n`,
+        ";\n}\n",
+      ],
+      ["ts", `type Settings = {\n  set timeout(milliseconds: ${value}AndThenSomeMoreCharacters);\n};\n`, ";\n};\n"],
+    ])(
+      "keeps the comma where the list is not one setter parameter with a body: %s %j",
+      async (extension, text, end) => {
+        const name = `a.${extension}`;
+        const result = await formatChecked({ [name]: text }, [], { reads: [name] });
+        expect(result.files[name]).toEndWith(`,\n  )${end}`);
+        expect(result).toMatchObject({ stderr: "", exitCode: 0 });
+      },
+    );
+  });
+
   // Prettier 3.9.9 prints `yield // comment⏎(a as any).b;`, and so on, which yields nothing.
   test("keeps `yield` and its value together when the leftmost operand follows a comment", async () => {
     // What follows `yield (⏎// comment⏎a as any⏎)`, and what's printed after the comment.

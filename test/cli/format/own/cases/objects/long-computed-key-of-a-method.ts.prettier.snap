@@ -12,10 +12,6 @@ const a = {
     "ccccccccccccccccccccccccccccccccccc, dddddddddddddddddddddddddddd, eeeeeeeeeeeeeeeeeeeeeeee"]() {
     return 1;
   },
-  set ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb," +
-    "ccccccccccccccccccccccccccccccccccc, dddddddddddddddddddddddddddd, eeeeeeeeeeeeeeeeeeeeeeee"](
-    v,
-  ) {},
   async ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb," +
     "ccccccccccccccccccccccccccccccccccc, dddddddddddddddddddddddddddd, eeeeeeeeeeeeeeeeeeeeeeee"]() {},
   *["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb," +
@@ -47,10 +43,6 @@ const a = {
     "ccccccccccccccccccccccccccccccccccc, dddddddddddddddddddddddddddd, eeeeeeeeeeeeeeeeeeeeeeee"]() {
     return 1;
   },
-  set ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb," +
-    "ccccccccccccccccccccccccccccccccccc, dddddddddddddddddddddddddddd, eeeeeeeeeeeeeeeeeeeeeeee"](
-    v,
-  ) {},
   async ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb," +
     "ccccccccccccccccccccccccccccccccccc, dddddddddddddddddddddddddddd, eeeeeeeeeeeeeeeeeeeeeeee"]() {},
   *["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb," +

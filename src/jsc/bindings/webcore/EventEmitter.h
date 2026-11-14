@@ -36,6 +36,9 @@ class EventEmitter final : public ScriptWrappable, public CanMakeWeakPtr<EventEm
     WTF_MAKE_TZONE_ALLOCATED(EventEmitter);
 
 public:
+    enum class ExceptionHandling { Report,
+        Propagate };
+
     static Ref<EventEmitter> create(ScriptExecutionContext&);
     WEBCORE_EXPORT ~EventEmitter() = default;
 
@@ -50,7 +53,7 @@ public:
     WEBCORE_EXPORT void addListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&&, bool, bool);
     WEBCORE_EXPORT void removeListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&&);
     WEBCORE_EXPORT void removeAllListenersForBindings(const Identifier& eventType);
-    WEBCORE_EXPORT bool emitForBindings(const Identifier&, const MarkedArgumentBuffer&);
+    WEBCORE_EXPORT bool emitForBindings(const Identifier&, const MarkedArgumentBuffer&, ExceptionHandling = ExceptionHandling::Report);
 
     WEBCORE_EXPORT void addListener(const Identifier& eventType, Ref<EventListener>&&, bool, bool);
     WEBCORE_EXPORT bool removeListener(const Identifier& eventType, EventListener&);
@@ -73,7 +76,7 @@ public:
 
     void setMaxListeners(unsigned count);
 
-    bool fireEventListeners(const Identifier& eventName, const MarkedArgumentBuffer& arguments);
+    bool fireEventListeners(const Identifier& eventName, const MarkedArgumentBuffer& arguments, ExceptionHandling = ExceptionHandling::Report);
     bool isFiringEventListeners() const;
 
     const EventEmitterData* eventTargetData() const;
@@ -103,7 +106,7 @@ private:
     }
 
     bool removeListener(const Identifier& eventType, SimpleRegisteredEventListener&);
-    bool innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments);
+    bool innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments, ExceptionHandling);
 
     EventEmitterData m_eventTargetData;
     unsigned m_maxListeners { 10 };

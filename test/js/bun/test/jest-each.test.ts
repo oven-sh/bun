@@ -283,6 +283,31 @@ describe.concurrent("titles", () => {
     });
   });
 
+  it("%p, %o, %O, %s and $variable print a JSX element with its children", async () => {
+    expect(
+      await titlesOf(
+        [
+          ["%p|%o|%O|%s", `[text("a"), text("b"), list].map(value => [value, value, value, value])`],
+          ["$el", `[{ el: text("a") }, { el: list }]`],
+        ],
+        `
+          const element = (type: string, children: unknown) => ({ $$typeof: Symbol.for("react.element"), type, key: null, props: { children } });
+          const text = (children: string) => element("p", children);
+          const list = element("div", [element("span", "a"), "and", element("span", "b")]);
+        `,
+      ),
+    ).toEqual({
+      titles: [
+        "<p>a</p>|<p>a</p>|<p>a</p>|<p>a</p>",
+        "<p>b</p>|<p>b</p>|<p>b</p>|<p>b</p>",
+        "<div><span>a</span>and<span>b</span></div>|<div><span>a</span>and<span>b</span></div>|<div><span>a</span>and<span>b</span></div>|<div><span>a</span>and<span>b</span></div>",
+        "<p>a</p>",
+        "<div><span>a</span>and<span>b</span></div>",
+      ],
+      exitCode: 0,
+    });
+  });
+
   it("%#, %$ and %% take no value, and anything else after a % is kept", async () => {
     expect(
       await titlesOf([

@@ -1,9 +1,11 @@
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::{JSValue, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
+use super::super::pretty_format;
 use super::throw;
 use super::DiffFormatter;
 use super::Expect;
+use super::ExpectMatcherUtils;
 
 impl Expect {
     pub(crate) fn to_have_property(
@@ -38,8 +40,16 @@ impl Expect {
             )));
         }
 
-        if !expected_property_path.is_string() && !expected_property_path.is_iterable(global)? {
-            return Err(global.throw(format_args!("Expected path must be a string or an array")));
+        if !expected_property_path.is_string_literal() {
+            let (path, has_value) = (expected_property_path, expected_property.is_some());
+            if !pretty_format::is_array(global, path)? {
+                let path_type = ExpectMatcherUtils::type_name(path);
+                return this.throw_path_error(global, path, has_value, "be a string or array", path_type);
+            }
+            if pretty_format::length_of(global, path)? == 0 {
+                // `type_name` would say "object" for a Proxy of an array.
+                return this.throw_path_error(global, path, has_value, "not be an empty array", "array");
+            }
         }
 
         let not = this.flags.get().not();
@@ -131,6 +141,41 @@ impl Expect {
             signature,
             "\n\nExpected path: <green>{}<r>\n\nUnable to find property\n",
             expected_property_path.to_fmt(&mut formatter),
+        )
+    }
+
+    /// Jest's matcher error for a path that is not a string or an array with items.
+    #[cold]
+    fn throw_path_error(
+        &self,
+        global: &JSGlobalObject,
+        path: JSValue,
+        has_value: bool,
+        rule: &'static str,
+        path_type: &'static str,
+    ) -> JsResult<JSValue> {
+        let params = if has_value { "<green>path<r><d>, <r><green>value<r>" } else { "<green>path<r>" };
+        let signature = Expect::get_signature("toHaveProperty", params, self.flags.get().not());
+        let mut formatter = super::make_formatter(global);
+        // Like Jest's printWithType(), no type line for undefined and null.
+        if path.is_undefined_or_null() {
+            return throw!(
+                self,
+                global,
+                signature,
+                "\n\n<b>Matcher error<r>: <green>expected<r> path must {}\n\nExpected has value: <green>{}<r>\n",
+                rule,
+                path.to_fmt(&mut formatter),
+            );
+        }
+        throw!(
+            self,
+            global,
+            signature,
+            "\n\n<b>Matcher error<r>: <green>expected<r> path must {}\n\nExpected has type:  {}\nExpected has value: <green>{}<r>\n",
+            rule,
+            path_type,
+            path.to_fmt(&mut formatter),
         )
     }
 }

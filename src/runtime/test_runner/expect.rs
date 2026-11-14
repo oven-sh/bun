@@ -2921,7 +2921,7 @@ impl ExpectMatcherUtils {
 
     /// Mirrors `getType` in @jest/get-type.
     #[optimize(size)]
-    fn type_name(value: JSValue) -> &'static str {
+    pub(crate) fn type_name(value: JSValue) -> &'static str {
         if value.is_undefined() {
             "undefined"
         } else if value.is_null() {

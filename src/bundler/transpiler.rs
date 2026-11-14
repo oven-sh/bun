@@ -525,7 +525,7 @@ impl<'a> Transpiler<'a> {
             // Most of the time, this will already be cached
             let top_level_dir = Fs::FileSystem::get().top_level_dir();
             if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
-                if let Some(tsconfig) = self.resolver.tsconfig_json(&root_dir) {
+                if let Some(tsconfig) = self.resolver.tsconfig_json(root_dir) {
                     // If we don't explicitly pass JSX, try to get it from the root tsconfig
                     if self.options.transform_options.jsx.is_none() {
                         self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx);
@@ -599,7 +599,7 @@ impl<'a> Transpiler<'a> {
                     _ => return Ok(()),
                 };
 
-                if let Some(tsconfig) = self.resolver.tsconfig_json(&dir_info) {
+                if let Some(tsconfig) = self.resolver.tsconfig_json(dir_info) {
                     merge_tsconfig_jsx_into(&tsconfig, &mut self.options.jsx);
                 }
 

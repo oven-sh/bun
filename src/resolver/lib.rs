@@ -37,7 +37,6 @@ pub use bun_options_types::global_cache::GlobalCache;
 pub use data_url::DataURL;
 /// Re-export real `DirInfo`.
 pub use dir_info::DirInfo;
-pub use dir_info::DirInfoRef;
 /// Re-export real filesystem `Path`.
 pub use fs::Path;
 /// Re-export real `PackageJSON`.

@@ -309,8 +309,8 @@ fn ssl_ctx_cache_get_or_create(
 /// `vm.jsc_vm` already populated by `bun_jsc::VirtualMachine::init`.
 #[allow(
     clippy::large_stack_frames,
-    reason = "`Transpiler::init` returns a Transpiler by value (~216 KB: its Resolver embeds \
-              BSSMapInner<DirInfo, 2048>) and it is `ptr::write`n straight into `(*vm).transpiler`. \
+    reason = "`Transpiler::init` returns a Transpiler by value and it is \
+              `ptr::write`n straight into `(*vm).transpiler`. \
               The copy is elided in optimized builds, and this runs once per VM init."
 )]
 unsafe fn init_runtime_state(
@@ -1273,7 +1273,7 @@ mod vm_loader_ctx {
                 match (*(*this).transpiler.as_ptr()).resolver.read_dir_info(dir) {
                     Ok(Some(dir_info)) => {
                         dir_info
-                            .package_json()
+                            .package_json
                             .or(dir_info.enclosing_package_json)
                     }
                     _ => None,
@@ -2525,7 +2525,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                             (*transpiler).resolver.read_dir_info(source.path.name().dir)
                         } {
                             Ok(Some(dir_info)) => {
-                                dir_info.package_json().or(dir_info.enclosing_package_json)
+                                dir_info.package_json.or(dir_info.enclosing_package_json)
                             }
                             _ => None,
                         };
@@ -3568,7 +3568,7 @@ fn package_json_of<'a>(
     }
     // SAFETY: `read_dir_info` is re-entrant on the JS thread.
     match unsafe { (*jsc_vm.transpiler.as_ptr()).resolver.read_dir_info(dir) } {
-        Ok(Some(dir_info)) => dir_info.package_json().or(dir_info.enclosing_package_json),
+        Ok(Some(dir_info)) => dir_info.package_json.or(dir_info.enclosing_package_json),
         _ => None,
     }
 }

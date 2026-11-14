@@ -9,7 +9,7 @@ use bun_archive::tar;
 use bun_collections::VecExt as _;
 use bun_core::MutableString;
 use bun_core::fmt as bun_fmt;
-use bun_core::strings::{self, StringOrTinyString};
+use bun_core::strings;
 use bun_core::{Global, Output, pretty, prettyln};
 use bun_http as http;
 use bun_install::dependency::{self, TagExt as _};
@@ -937,7 +937,7 @@ fn fetch_registry_tree(
     if tarball_url.is_empty() {
         tarball_url = bun_install::extract_tarball::build_url_with_printer(
             scope.url.href(),
-            &StringOrTinyString::init_append_if_needed(name, &mut BumpAppender(&bump))?,
+            name,
             found.version,
             &manifest.string_buf,
             |args| -> Result<Vec<u8>, bun_alloc::AllocError> {
@@ -975,13 +975,6 @@ fn fetch_registry_tree(
     };
     read_tarball_into(tarball.list.as_slice(), &mut tree)?;
     Ok(tree)
-}
-
-struct BumpAppender<'a>(&'a Bump);
-impl bun_core::strings::Appender for BumpAppender<'_> {
-    fn append(&mut self, s: &[u8]) -> Result<&[u8], bun_alloc::AllocError> {
-        Ok(self.0.alloc_slice_copy(s))
-    }
 }
 
 fn registry_get(

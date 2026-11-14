@@ -183,6 +183,20 @@ async function disconnectAndClose(socket: Socket, server: Server) {
   await once(server, "close");
 }
 
+/** `orFail(p)` settles like `p`, or rejects when a watched socket errors or closes first, or when `fail` is called. */
+function failureWatcher() {
+  const { promise: failed, reject } = Promise.withResolvers<never>();
+  failed.catch(() => {}); // the teardown closes the sockets after the last race
+  return {
+    watch(what: string, socket: EventEmitter) {
+      socket.on("error", reject);
+      socket.on("close", () => reject(new Error(`${what} closed`)));
+    },
+    fail: reject,
+    orFail: <T>(promise: Promise<T>) => Promise.race([promise, failed]),
+  };
+}
+
 describe("request whose whole body arrived while it was paused, answered later on a keep-alive connection", () => {
   // In each test the connection goes on to serve a second request before it is
   // closed, so closing it does not tear down the first request as a side
@@ -449,6 +463,62 @@ describe("request that its handler pause()d, with a body below the highWaterMark
   });
 });
 
+// Both requests are in one segment. The listener of the second request queues
+// a microtask that resumes the first one. The first response stays pending
+// until both requests have ended.
+describe("request pipelined behind a request that its handler pause()d", () => {
+  const chunked = "POST /first HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\n\r\n";
+  const contentLength = "POST /first HTTP/1.1\r\nHost: a\r\nContent-Length: 3\r\n\r\nabc";
+
+  it.each([
+    ["in 'data', chunked body", chunked, "data"],
+    ["in 'data', Content-Length body", contentLength, "data"],
+    ["in the request listener", contentLength, "listener"],
+  ])("receives its body when its listener resumes that request: paused %s", async (_name, first, pauseIn) => {
+    const bodies: Record<string, string> = {};
+    const responses: Record<string, ServerResponse> = {};
+    const { promise: bothEnded, resolve: onBothEnded } = Promise.withResolvers<void>();
+    const { watch, fail, orFail } = failureWatcher();
+    let resumeFirst = () => {};
+    const server = createServer((req, res) => {
+      responses[req.url!] = res;
+      req.on("error", fail);
+      let received = "";
+      const pause = () => {
+        req.pause();
+        resumeFirst = () => req.resume();
+      };
+      req.on("data", chunk => {
+        received += chunk;
+        if (req.url === "/first" && pauseIn === "data") pause();
+      });
+      req.on("end", () => {
+        bodies[req.url!] = received;
+        if (Object.keys(bodies).length < 2) return;
+        responses["/first"].end("alpha");
+        responses["/second"].end("bravo");
+        onBothEnded();
+      });
+      if (req.url === "/first" && pauseIn === "listener") pause();
+      if (req.url === "/second") queueMicrotask(() => resumeFirst());
+    });
+    server.on("clientError", fail);
+    try {
+      const client = await connectTo(server);
+      watch("the client socket", client.socket);
+      client.socket.write(first + "POST /second HTTP/1.1\r\nHost: a\r\nContent-Length: 3\r\n\r\nxyz");
+      await orFail(bothEnded);
+      expect(bodies).toEqual({ "/first": "abc", "/second": "xyz" });
+      await orFail(client.receive("alpha"));
+      await orFail(client.receive("bravo"));
+      await disconnectAndClose(client.socket, server);
+    } finally {
+      server.closeAllConnections();
+      if (server.listening) server.close();
+    }
+  });
+});
+
 it("reading a request body does not reopen the read gate that queued pipelined responses closed", async () => {
   // Node's readStart() is a no-op while socket._paused, so only the drain of
   // the queued response bytes lets the parser reach the next pipelined request.
@@ -533,19 +603,6 @@ describe("upgrade request whose whole body arrived with its head", () => {
           await promise;
         }
       },
-    };
-  }
-
-  /** `orFail(p)` settles like `p`, or rejects when a watched socket errors or closes first. */
-  function failureWatcher() {
-    const { promise: failed, reject } = Promise.withResolvers<never>();
-    failed.catch(() => {}); // the teardown closes the sockets after the last race
-    return {
-      watch(what: string, socket: EventEmitter) {
-        socket.on("error", reject);
-        socket.on("close", () => reject(new Error(`${what} closed`)));
-      },
-      orFail: <T>(promise: Promise<T>) => Promise.race([promise, failed]),
     };
   }
 

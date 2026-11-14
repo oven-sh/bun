@@ -335,6 +335,92 @@ describe("Bun.semver.satisfies()", () => {
     }).toThrow("Cannot convert a symbol to a string");
   });
 
+  // https://github.com/oven-sh/bun/issues/47421
+  test("includePrerelease lets a prerelease satisfy a range without one, like node-semver", () => {
+    const cases: [version: string, range: string, options: any, expected: boolean][] = [
+      ["v27.0.0-alpha.0.0.0", ">=26.0.0", undefined, false],
+      ["v27.0.0-alpha.0.0.0", ">=26.0.0", { includePrerelease: true }, true],
+      ["v27.0.0-alpha.0.0.0", ">=26.0.0", { includePrerelease: false }, false],
+      ["v27.0.0-alpha.0.0.0", "*", { includePrerelease: true }, true],
+      ["v27.0.0-alpha.0.0.0", ">=27.0.0", { includePrerelease: true }, false],
+      ["v27.0.0-alpha.0.0.0", ">=27.0.0-0", { includePrerelease: true }, true],
+      ["v27.0.0-alpha.0.0.0", "<27.0.0", { includePrerelease: true }, true],
+      ["v27.0.0-alpha.0.0.0", "<27.0.0", undefined, false],
+      ["v27.0.0-alpha.0.0.0", "27.0.0-alpha.0.0.0", { includePrerelease: true }, true],
+      ["27.0.0", "27.0.0-alpha", { includePrerelease: true }, false],
+      // The option also changes how a range parses: `^26.0.0` and `26.x` end at `<27.0.0-0`.
+      ["27.0.0-alpha.0", "^26.0.0", { includePrerelease: true }, false],
+      ["27.0.0-alpha.0", "26.x", { includePrerelease: true }, false],
+      ["26.1.0-beta.1", "^26.0.0", { includePrerelease: true }, true],
+      ["26.0.0-beta.1", "26.x", { includePrerelease: true }, true],
+      ["1.0.0-a", "1.x || 2.x", { includePrerelease: true }, true],
+      ["3.0.0-a", "1.x || 2.x", { includePrerelease: true }, false],
+      // The option is read like node-semver reads it: ToBoolean of `options.includePrerelease`, and nothing else.
+      ["v27.0.0-alpha.0.0.0", ">=26.0.0", { includePrerelease: 1 }, true],
+      ["v27.0.0-alpha.0.0.0", ">=26.0.0", { includePrerelease: "yes" }, true],
+      ["v27.0.0-alpha.0.0.0", ">=26.0.0", { includePrerelease: 0 }, false],
+      ["v27.0.0-alpha.0.0.0", ">=26.0.0", { includePrerelease: "" }, false],
+      ["v27.0.0-alpha.0.0.0", ">=26.0.0", { includePrerelease: true, loose: true, rtl: true }, true],
+      ["v27.0.0-alpha.0.0.0", ">=26.0.0", { loose: true }, false],
+      ["v27.0.0-alpha.0.0.0", ">=26.0.0", Object.create({ includePrerelease: true }), true],
+      ["v27.0.0-alpha.0.0.0", ">=26.0.0", Object.assign([], { includePrerelease: true }), true],
+      // A third argument that is not an object is ignored.
+      ["v27.0.0-alpha.0.0.0", ">=26.0.0", Object.assign(() => {}, { includePrerelease: true }), false],
+      ["v27.0.0-alpha.0.0.0", ">=26.0.0", null, false],
+      ["v27.0.0-alpha.0.0.0", ">=26.0.0", true, false],
+      ["v27.0.0-alpha.0.0.0", ">=26.0.0", "includePrerelease", false],
+      ["v27.0.0-alpha.0.0.0", ">=26.0.0", 1, false],
+      // node-semver drops `>=0.0.0` without the option and `>=0.0.0-0` with it, so a prerelease of 0.0.0 only
+      // satisfies a written `>=0.0.0` without the option, and only next to a comparator with a prerelease.
+      ["0.0.0-a", ">=0.0.0", { includePrerelease: true }, false],
+      ["0.0.0-a", ">=0.0.0 <1", { includePrerelease: true }, false],
+      ["0.0.0-a", ">=0.0.0-0", { includePrerelease: true }, true],
+      ["0.0.0-a", "*", { includePrerelease: true }, true],
+      ["0.0.0-a", "0.x", { includePrerelease: true }, true],
+      ["0.0.0-a", "~0", { includePrerelease: true }, false],
+      ["0.0.0-b", ">=0.0.0-a >=0.0.0", undefined, true],
+      ["0.0.0-b", ">=0.0.0", undefined, false],
+      // A version that is invalid never satisfies, with or without the option.
+      ["not a version", "*", { includePrerelease: true }, false],
+    ];
+    expect(
+      cases.map(([version, range, options]) => ({
+        version,
+        range,
+        options,
+        satisfies: satisfies(version, range, options),
+      })),
+    ).toEqual(cases.map(([version, range, options, expected]) => ({ version, range, options, satisfies: expected })));
+    for (const [version, range, options, expected] of cases) {
+      expect(nodeSemver.satisfies(version, range, options), `node-semver: ${version} ${range}`).toBe(expected);
+    }
+  });
+
+  test("includePrerelease reads the option once and converts the strings first", () => {
+    const log: string[] = [];
+    const options = {
+      get includePrerelease() {
+        log.push("includePrerelease");
+        return true;
+      },
+    };
+    const stringLike = (label: string, value: string) => ({
+      toString() {
+        log.push(label);
+        return value;
+      },
+    });
+    expect(satisfies(stringLike("version", "2.0.0-a"), stringLike("range", ">=1"), options)).toBe(true);
+    expect(log).toEqual(["version", "range", "includePrerelease"]);
+    expect(() =>
+      satisfies("2.0.0-a", ">=1", {
+        get includePrerelease(): boolean {
+          throw new RangeError("boom");
+        },
+      }),
+    ).toThrow(expect.objectContaining({ name: "RangeError", message: "boom" }));
+  });
+
   test("failures does not cause weird memory issues", () => {
     for (let i = 0; i < 1e5; i++) {
       if (!satisfies("1.2.3", "1.2.3")) {
@@ -1058,7 +1144,7 @@ describe("Bun.semver.satisfies()", () => {
 
   test("range includes", () => {
     // https://github.com/npm/node-semver/blob/14d263faa156e408a033b9b12a2f87735c2df42c/test/fixtures/range-include.js#L3
-    var tests = [
+    const tests: [range: string, version: string, options?: { includePrerelease?: boolean }][] = [
       ["1.0.0 - 2.0.0", "1.2.3"],
       ["^1.2.3+build", "1.2.3"],
       ["^1.2.3+build", "1.3.0"],
@@ -1094,7 +1180,7 @@ describe("Bun.semver.satisfies()", () => {
       ["<=  2.0.0", "0.2.9"],
       ["<    2.0.0", "1.9999.9999"],
       ["<\t2.0.0", "0.2.9"],
-      [">=0.1.97", "v0.1.97", true],
+      [">=0.1.97", "v0.1.97"],
       [">=0.1.97", "0.1.97"],
       ["0.1.20 || 1.2.4", "1.2.4"],
       [">=0.2.3 || <0.0.1", "0.0.0"],
@@ -1168,38 +1254,38 @@ describe("Bun.semver.satisfies()", () => {
       ["1.x - x", "1.9.7"],
       ["<=7.x", "7.9.9"],
 
-      // ["2.x", "2.0.0-pre.0", { includePrerelease: true }],
-      // ["2.x", "2.1.0-pre.0", { includePrerelease: true }],
-      // ["1.1.x", "1.1.0-a", { includePrerelease: true }],
-      // ["1.1.x", "1.1.1-a", { includePrerelease: true }],
-      // ["*", "1.0.0-rc1", { includePrerelease: true }],
-      // ["^1.0.0-0", "1.0.1-rc1", { includePrerelease: true }],
-      // ["^1.0.0-rc2", "1.0.1-rc1", { includePrerelease: true }],
-      // ["^1.0.0", "1.0.1-rc1", { includePrerelease: true }],
-      // ["^1.0.0", "1.1.0-rc1", { includePrerelease: true }],
-      // ["1 - 2", "2.0.0-pre", { includePrerelease: true }],
-      // ["1 - 2", "1.0.0-pre", { includePrerelease: true }],
-      // ["1.0 - 2", "1.0.0-pre", { includePrerelease: true }],
+      ["2.x", "2.0.0-pre.0", { includePrerelease: true }],
+      ["2.x", "2.1.0-pre.0", { includePrerelease: true }],
+      ["1.1.x", "1.1.0-a", { includePrerelease: true }],
+      ["1.1.x", "1.1.1-a", { includePrerelease: true }],
+      ["*", "1.0.0-rc1", { includePrerelease: true }],
+      ["^1.0.0-0", "1.0.1-rc1", { includePrerelease: true }],
+      ["^1.0.0-rc2", "1.0.1-rc1", { includePrerelease: true }],
+      ["^1.0.0", "1.0.1-rc1", { includePrerelease: true }],
+      ["^1.0.0", "1.1.0-rc1", { includePrerelease: true }],
+      ["1 - 2", "2.0.0-pre", { includePrerelease: true }],
+      ["1 - 2", "1.0.0-pre", { includePrerelease: true }],
+      ["1.0 - 2", "1.0.0-pre", { includePrerelease: true }],
 
-      // ["=0.7.x", "0.7.0-asdf", { includePrerelease: true }],
-      // [">=0.7.x", "0.7.0-asdf", { includePrerelease: true }],
-      // ["<=0.7.x", "0.7.0-asdf", { includePrerelease: true }],
+      ["=0.7.x", "0.7.0-asdf", { includePrerelease: true }],
+      [">=0.7.x", "0.7.0-asdf", { includePrerelease: true }],
+      ["<=0.7.x", "0.7.0-asdf", { includePrerelease: true }],
 
-      // [">=1.0.0 <=1.1.0", "1.1.0-pre", { includePrerelease: true }],
+      [">=1.0.0 <=1.1.0", "1.1.0-pre", { includePrerelease: true }],
 
       // https://github.com/oven-sh/bun/issues/8040
       [">=3.3.0-beta.1 <3.4.0-beta.3", "3.3.1"],
       ["^3.3.0-beta.1", "3.4.0"],
     ];
 
-    for (const [range, version] of tests) {
-      expect(satisfies(version, range)).toBeTrue();
+    for (const [range, version, options] of tests) {
+      expect(satisfies(version, range, options)).toBeTrue();
     }
   });
 
   test("range excludes", () => {
     // https://github.com/npm/node-semver/blob/14d263faa156e408a033b9b12a2f87735c2df42c/test/fixtures/range-exclude.js#L3
-    const tests = [
+    const tests: [range: string, version: string | boolean, options?: { includePrerelease?: boolean }][] = [
       ["1.0.0 - 2.0.0", "2.2.3"],
       ["1.2.3+asdf - 2.4.3+asdf", "1.2.3-pre.2"],
       ["1.2.3+asdf - 2.4.3+asdf", "2.4.3-alpha"],
@@ -1275,13 +1361,13 @@ describe("Bun.semver.satisfies()", () => {
       [">=2", "glorp"],
       [">=2", false],
 
-      // ["2.x", "3.0.0-pre.0", { includePrerelease: true }],
-      // ["^1.0.0", "1.0.0-rc1", { includePrerelease: true }],
-      // ["^1.0.0", "2.0.0-rc1", { includePrerelease: true }],
-      // ["^1.2.3-rc2", "2.0.0", { includePrerelease: true }],
+      ["2.x", "3.0.0-pre.0", { includePrerelease: true }],
+      ["^1.0.0", "1.0.0-rc1", { includePrerelease: true }],
+      ["^1.0.0", "2.0.0-rc1", { includePrerelease: true }],
+      ["^1.2.3-rc2", "2.0.0", { includePrerelease: true }],
       ["^1.0.0", "2.0.0-rc1"],
 
-      // ["1 - 2", "3.0.0-pre", { includePrerelease: true }],
+      ["1 - 2", "3.0.0-pre", { includePrerelease: true }],
       ["1 - 2", "2.0.0-pre"],
       ["1 - 2", "1.0.0-pre"],
       ["1.0 - 2", "1.0.0-pre"],
@@ -1289,16 +1375,16 @@ describe("Bun.semver.satisfies()", () => {
       ["1.1.x", "1.0.0-a"],
       ["1.1.x", "1.1.0-a"],
       ["1.1.x", "1.2.0-a"],
-      // ["1.1.x", "1.2.0-a", { includePrerelease: true }],
-      // ["1.1.x", "1.0.0-a", { includePrerelease: true }],
+      ["1.1.x", "1.2.0-a", { includePrerelease: true }],
+      ["1.1.x", "1.0.0-a", { includePrerelease: true }],
       ["1.x", "1.0.0-a"],
       ["1.x", "1.1.0-a"],
       ["1.x", "1.2.0-a"],
-      // ["1.x", "0.0.0-a", { includePrerelease: true }],
-      // ["1.x", "2.0.0-a", { includePrerelease: true }],
+      ["1.x", "0.0.0-a", { includePrerelease: true }],
+      ["1.x", "2.0.0-a", { includePrerelease: true }],
 
       [">=1.0.0 <1.1.0", "1.1.0"],
-      // [">=1.0.0 <1.1.0", "1.1.0", { includePrerelease: true }],
+      [">=1.0.0 <1.1.0", "1.1.0", { includePrerelease: true }],
       [">=1.0.0 <1.1.0", "1.1.0-pre"],
       [">=1.0.0 <1.1.0-pre", "1.1.0-pre"],
 
@@ -1308,8 +1394,8 @@ describe("Bun.semver.satisfies()", () => {
       [">=3.3.0-beta.1 <3.4.0-beta.3", "3.4.5"],
     ];
 
-    for (const [range, version] of tests) {
-      expect(satisfies(version, range)).toBeFalse();
+    for (const [range, version, options] of tests) {
+      expect(satisfies(version, range, options)).toBeFalse();
     }
   });
 
@@ -1666,15 +1752,22 @@ test("well-formed ranges give the same answers as node-semver (seeded differenti
         break;
     }
     const version = `${major}.${minor}.${patch}${prerelease()}${build()}`;
+    const includePrerelease = next() < 0.5;
 
-    const parsed = new nodeSemver.Range(range);
+    const parsed = new nodeSemver.Range(range, { includePrerelease });
     // node-semver drops a `>=0.0.0` comparator. A range with an alternative that is only that becomes `*`, which no
     // prerelease satisfies whatever the other alternatives say, and next to another comparator it stops excluding
-    // the prereleases of 0.0.0. Bun keeps the comparator.
-    if (nodeSemver.prerelease(version) && (parsed.range === "" || version.startsWith("0.0.0-"))) continue;
-    const bun = satisfies(version, range);
+    // the prereleases of 0.0.0. Bun keeps the comparator. With includePrerelease it drops `>=0.0.0-0` instead, which
+    // changes nothing.
+    if (!includePrerelease && nodeSemver.prerelease(version) && (parsed.range === "" || version.startsWith("0.0.0-")))
+      continue;
+    // With includePrerelease, node-semver floors the left side of a hyphen range by appending `-0` to its text. A
+    // left side with build metadata swallows it: `1.2.3+b - 2` becomes `>=1.2.3+b-0`, that is `>=1.2.3`. Bun floors
+    // it to `>=1.2.3-0`, as it does `1.2.3 - 2`.
+    if (includePrerelease && /\+\S*\s+-\s/.test(range)) continue;
+    const bun = satisfies(version, range, { includePrerelease });
     const node = parsed.test(version);
-    if (bun !== node) disagreements.push({ satisfies: [version, range], bun, node });
+    if (bun !== node) disagreements.push({ satisfies: [version, range, { includePrerelease }], bun, node });
   }
   expect({ seed, disagreements }).toEqual({ seed, disagreements: [] });
 });

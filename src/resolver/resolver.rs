@@ -2305,9 +2305,7 @@ impl<'a> Resolver<'a> {
                     import_path
                 };
 
-                // The importer's package.json "browser" map wins over the builtin
-                // polyfill. A bare key covers both spellings, as the polyfill table
-                // does. A `node:` key matches only the specifier as written, and wins.
+                // The importer's "browser" map wins over the builtin: the key as written, then the bare key.
                 let browser_map_name = if self.care_about_browser_field
                     && let Ok(Some(info)) = self.dir_info_cached(source_dir)
                     && let Some(scope) = info.get_enclosing_browser_scope()
@@ -2329,8 +2327,7 @@ impl<'a> Resolver<'a> {
                 };
 
                 if let Some(name) = browser_map_name {
-                    // The `--external` check below and check_package_path, which re-runs
-                    // this lookup, use the name that matched.
+                    // `--external` and check_package_path, which re-runs this lookup, use this name.
                     import_path = name;
                 } else {
                     result.jsx = self.opts.jsx.clone();

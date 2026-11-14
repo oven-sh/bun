@@ -19,6 +19,7 @@ use crate::lexer as js_lexer;
 use crate::lower::hoist_test_mocks::{MockApi, is_test_module};
 use crate::parse::parse_entry::Options as ParserOptions;
 use crate::renamer;
+use crate::scan::scan_imports::{TsImportEquals, ts_import_equals};
 use crate::{
     ARGUMENTS_STR as arguments_str, DeferredArrowArgErrors, DeferredErrors,
     DeferredImportNamespace, EXPORTS_STRING_NAME as exports_string_name, ExprBindingTuple,
@@ -9954,6 +9955,12 @@ impl LowerUsingDeclarationsContext {
         stmts: &'a mut [Stmt],
         should_hoist_fns: bool,
     ) -> ListManaged<'a, Stmt> {
+        // Like the import scan, module scope only: an alias in a namespace body always stays.
+        let stmts = if T && should_hoist_fns {
+            remove_unused_ts_import_equals(&p.symbols, stmts)
+        } else {
+            stmts
+        };
         let mut result = BumpVec::new_in(p.arena);
         let mut exports = BumpVec::<js_ast::ClauseItem>::new_in(p.arena);
         let mut end: u32 = 0;
@@ -10253,6 +10260,62 @@ impl LowerUsingDeclarationsContext {
 
         result
     }
+}
+
+/// Removes each unused `import a = b.c`: the import scan does not look where `finalize` moves it.
+fn remove_unused_ts_import_equals<'a>(symbols: &[Symbol], stmts: &'a mut [Stmt]) -> &'a mut [Stmt] {
+    struct Alias {
+        at: usize,
+        root: Ref,
+        reads: u32,
+        removed: bool,
+    }
+    let mut aliases: Vec<Alias> = Vec::new();
+    let mut index_of: HashMap<Ref, u32> = HashMap::default();
+    for (at, stmt) in stmts.iter().enumerate() {
+        if let js_ast::StmtData::SLocal(local) = stmt.data
+            && let Some(TsImportEquals { alias, root }) = ts_import_equals(&local)
+        {
+            let reads = symbols[alias.inner_index() as usize].use_count_estimate;
+            index_of.insert(alias, aliases.len() as u32);
+            aliases.push(Alias {
+                at,
+                root,
+                reads,
+                removed: false,
+            });
+        }
+    }
+
+    // `reads` is a copy: `_parse` reads the use count of a root before the import scan runs.
+    for start in 0..aliases.len() {
+        let mut i = start;
+        while !aliases[i].removed && aliases[i].reads == 0 {
+            aliases[i].removed = true;
+            let Some(&root) = index_of.get(&aliases[i].root) else {
+                break;
+            };
+            i = root as usize;
+            aliases[i].reads = aliases[i].reads.saturating_sub(1);
+        }
+    }
+
+    let mut removed = aliases
+        .iter()
+        .filter(|alias| alias.removed)
+        .map(|alias| alias.at)
+        .peekable();
+    let Some(&first) = removed.peek() else {
+        return stmts;
+    };
+    let mut end = first;
+    for at in first..stmts.len() {
+        if removed.next_if_eq(&at).is_none() {
+            stmts[end] = stmts[at];
+            end += 1;
+        }
+    }
+    &mut stmts[..end]
 }
 
 // ─── Module-level constructor fns ───

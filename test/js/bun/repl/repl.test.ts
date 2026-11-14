@@ -838,6 +838,16 @@ describe.concurrent("Bun REPL", () => {
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
+
+    test("an `import a = b.c` of a type beside a `using` leaves no code", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "namespace N { export type T = number }; import T = N.T; using r = null; const x: T = 1; console.log(x)",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(["1\nundefined"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("-e / --eval and -p / --print", () => {

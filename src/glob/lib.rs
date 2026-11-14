@@ -37,6 +37,21 @@ impl<P: AsRef<[u8]>> Prepared<P> {
         let pattern = self.pattern.as_ref();
         matcher::match_prepared::<{ cfg!(windows) }>(pattern, &self.shape, path, Dots::Match)
     }
+
+    /// Returns true if the whole pattern is one `{...}` group with one alternative: `{a}` or `{a/{b,c}}`, not `{a,b}` or `{1..3}`.
+    pub fn is_one_braced_alternative(&self) -> bool {
+        let pattern = self.pattern.as_ref();
+        if pattern.first() != Some(&b'{') {
+            return false;
+        }
+        let (matcher::Token::Group { first }, end) = matcher::token_at(pattern, 0, &self.shape)
+        else {
+            return false;
+        };
+        end == pattern.len()
+            && !self.shape.is_sequence_at(first)
+            && self.shape.alternatives_at(first).nth(1).is_none()
+    }
 }
 
 // `ignore_filter_fn` is a runtime fn-pointer field supplied at `init()` rather than a type
@@ -112,4 +127,21 @@ pub fn detect_glob_syntax(potential_pattern: &[u8]) -> bool {
     }
 
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Prepared;
+
+    // Runs under Miri: `bun run rust:miri -p bun_glob`.
+    #[test]
+    fn is_one_braced_alternative() {
+        let ask = |pattern: &str| Prepared::new(pattern.as_bytes()).is_one_braced_alternative();
+        for pattern in ["{a}", "{a/{b,c}}", "{a\\,b}", "{[,]}", "{@(a,b)}"] {
+            assert!(ask(pattern), "{pattern}");
+        }
+        for pattern in ["{a,b}", "{1..3}", "{a}{b}", "{a,{b}", "{a,b}}", "@(a)", ""] {
+            assert!(!ask(pattern), "{pattern}");
+        }
+    }
 }

@@ -3012,7 +3012,7 @@ describe("install --filter", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("{dir} selects every workspace under a directory", async () => {
+  test.concurrent("{dir} selects every workspace under a directory, {a,b} selects by name", async () => {
     using ctx = await setupTest();
     const { packageDir, packageJson, env } = ctx;
     await Promise.all([
@@ -3075,6 +3075,17 @@ describe("install --filter", () => {
 
     expect(await installWithFilter("!{./packages}")).toBe(0);
     expect(await installed()).toStrictEqual([true, false, false, true]);
+
+    // braces around a list of names are a name glob, not a directory
+    expect(await installWithFilter("{pkg1,app1}")).toBe(0);
+    expect(await installed()).toStrictEqual([false, true, false, true]);
+
+    expect(await installWithFilter("!{pkg1,app1}")).toBe(0);
+    expect(await installed()).toStrictEqual([true, false, true, false]);
+
+    // a list below the directory is part of the directory
+    expect(await installWithFilter("{packages/{pkg1,pkg2}}")).toBe(0);
+    expect(await installed()).toStrictEqual([false, true, true, false]);
   });
 
   test.concurrent("isolated linker honors the same selectors", async () => {

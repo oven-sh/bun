@@ -1,44 +1,38 @@
 use bun_core::strings;
 
-use super::stack_reader::PacketReader;
-use crate::shared::Data;
+use super::new_reader::PacketReader;
 
-pub struct AuthSwitchRequest {
+pub struct AuthSwitchRequest<'a> {
     pub header: u8,
-    pub plugin_name: Data,
-    pub plugin_data: Data,
+    pub plugin_name: &'a [u8],
+    pub plugin_data: &'a [u8],
 }
 
-impl Default for AuthSwitchRequest {
+impl Default for AuthSwitchRequest<'_> {
     fn default() -> Self {
         Self {
             header: 0xfe,
-            plugin_name: Data::Empty,
-            plugin_data: Data::Empty,
+            plugin_name: b"",
+            plugin_data: b"",
         }
     }
 }
 
-// NOTE: `Data` owns its own cleanup via `Drop`, so no explicit `impl Drop` is needed here.
-
-impl AuthSwitchRequest {
-    pub fn decode_internal(&mut self, reader: PacketReader<'_>) -> crate::Result<()> {
+impl<'a> AuthSwitchRequest<'a> {
+    pub fn decode_internal(&mut self, reader: PacketReader<'a>) -> crate::Result<()> {
         self.header = reader.int::<u8>()?;
         if self.header != 0xfe {
             return Err(crate::Error::InvalidAuthSwitchRequest);
         }
 
         let remaining = reader.read(reader.peek().len())?;
-        let remaining_slice = remaining.slice();
-        debug_assert!(matches!(remaining, Data::Temporary(_)));
 
-        if let Some(zero) = strings::index_of_char(remaining_slice, 0) {
+        if let Some(zero) = strings::index_of_char(remaining, 0) {
             let zero = zero as usize;
             // EOF String
-            self.plugin_name = Data::Temporary(bun_ptr::RawSlice::new(&remaining_slice[0..zero]));
+            self.plugin_name = &remaining[0..zero];
             // End Of The Packet String
-            self.plugin_data =
-                Data::Temporary(bun_ptr::RawSlice::new(&remaining_slice[zero + 1..]));
+            self.plugin_data = &remaining[zero + 1..];
             return Ok(());
         }
         Err(crate::Error::InvalidAuthSwitchRequest)

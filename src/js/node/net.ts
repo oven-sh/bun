@@ -3895,8 +3895,11 @@ Server.prototype.getConnections = function getConnections(callback) {
   return this;
 };
 
-Server.prototype.listen = function listen(port, hostname, onListen) {
+Server.prototype.listen = function listen(port, hostname, backlogArg) {
   const argsLength = arguments.length;
+  // node's normalizeArgs: the last argument is the callback when it is a function.
+  const lastArg = argsLength > 0 ? arguments[argsLength - 1] : undefined;
+  let onListen = typeof lastArg === "function" ? lastArg : undefined;
   if (typeof port === "string") {
     const numPort = Number(port);
     if (!Number.isNaN(numPort)) port = numPort;
@@ -3916,9 +3919,6 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
         //hostname is backlog
         backlog = hostname;
       }
-    } else if (typeof hostname === "function") {
-      //hostname is callback
-      onListen = hostname;
     }
 
     path = port;
@@ -3926,18 +3926,16 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     port = undefined;
   } else {
     if (typeof hostname === "number") {
+      // (port, backlog[, cb])
       backlog = hostname;
       hostname = undefined;
-    } else if (typeof hostname === "function") {
-      onListen = hostname;
-      hostname = undefined;
-    } else if (typeof hostname === "string" && typeof onListen === "number") {
-      backlog = onListen;
-      onListen = argsLength > 3 ? arguments[3] : undefined;
+    } else {
+      // (port, host, backlog[, cb]) or (port, undefined, backlog[, cb])
+      if (typeof backlogArg === "number") backlog = backlogArg;
+      if (typeof hostname !== "string") hostname = undefined;
     }
 
     if (typeof port === "function") {
-      onListen = port;
       port = 0;
     } else if (port !== null && typeof port === "object") {
       const options = port;
@@ -3952,7 +3950,8 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       // constructor (it shapes accepted sockets' Duplex behavior); the native
       // listen always uses allowHalfOpen: true.
       reusePort = options.reusePort;
-      backlog = options.backlog;
+      // (options, backlog[, cb]): node reads the positional backlog when options.backlog is absent.
+      backlog = options.backlog ?? backlog;
       // For a unix-socket listen, readableAll/writableAll chmod the socket file
       // in kRealListen; threaded through as locals (not stashed on the instance).
       readableAll = options.readableAll;

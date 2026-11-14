@@ -105,7 +105,7 @@ const SIZE_OF_LOOP: usize = 64 * 1024;
 #[linkage = "weak"]
 extern "C" fn uws_get_loop() -> *mut c_void {
     thread_local! {
-        static LOOP: *mut c_void = Box::leak(vec![0u64; SIZE_OF_LOOP / 8].into_boxed_slice()).as_mut_ptr().cast();
+        static LOOP: *mut c_void = Box::leak(vec![0u128; SIZE_OF_LOOP / 16].into_boxed_slice()).as_mut_ptr().cast();
     }
     LOOP.with(|event_loop| *event_loop)
 }

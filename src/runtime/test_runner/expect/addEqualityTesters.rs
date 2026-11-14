@@ -44,7 +44,7 @@ impl Expect {
     /// register their equality testers and snapshot serializers again.
     #[optimize(size)]
     pub(crate) fn reset_for_test_isolation(global: &JSGlobalObject) {
-        if !global.bun_vm().test_isolation_state.shares_global {
+        if !global.bun_vm().test_isolation_state.shares_global.get() {
             return;
         }
         let utils_value = ExpectMatcherUtils::singleton(global);

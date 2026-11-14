@@ -82,10 +82,10 @@ pub(crate) struct NodeHTTPResponse {
 
     pub(crate) flags: Cell<Flags>,
 
-    pub poll_ref: JsCell<jsc::Ref>,
+    pub poll_ref: jsc::Ref,
 
     pub(crate) body_read_state: Cell<BodyReadState>,
-    pub(crate) body_read_ref: JsCell<jsc::Ref>,
+    pub(crate) body_read_ref: jsc::Ref,
     pub(crate) promise: JsCell<StrongOptional>, // Strong.Optional
     pub(crate) server: AnyServer,
 
@@ -263,24 +263,6 @@ unsafe extern "C" {
         keep_alive_timeout_secs: u32,
         response: *mut c_void,
     );
-}
-
-/// `VirtualMachine::get()` returns `*mut`; deref once for callers that need `&mut`.
-#[inline(always)]
-fn vm_get<'a>() -> &'a mut VirtualMachine {
-    // SAFETY: JS-thread only; the global VM pointer is non-null once the runtime is up.
-    VirtualMachine::get().as_mut()
-}
-
-/// `&mut` to this thread's VM for `Ref::ref/unref` etc. Takes `_global` for
-/// call-site symmetry but reads the thread-local directly:
-/// `VirtualMachine::as_mut()` ignores its receiver and re-reads the TLS slot,
-/// so routing through `global.bun_vm()` was pure overhead on the per-request
-/// path (`NodeHTTPResponse__createForJS` disasm showed the `bunVM` FFI result
-/// dropped on the floor).
-#[inline(always)]
-fn bun_vm_mut(_global: &JSGlobalObject) -> &mut VirtualMachine {
-    VirtualMachine::get_mut()
 }
 
 /// `globalObject.ERR(.CODE, msg, .{}).throw()` — the actual error-construction
@@ -623,8 +605,8 @@ impl NodeHTTPResponse {
         let ended_unfinished_body = self.leave_pending(BodyReadState::Upgraded);
         // Unref the poll_ref since the socket is now upgraded to WebSocket
         // and will have its own lifecycle management
-        let vm = self.server.global_this().bun_vm().as_mut();
-        self.poll_ref.with_mut(|r| r.unref(vm));
+        let vm = self.server.global_this().bun_vm();
+        self.poll_ref.unref(vm);
         // During the upgrade the connection counts as neither HTTP nor WebSocket. Hold a pending
         // request so a stopped server doesn't drain if this is its last connection.
         server.on_pending_request();
@@ -685,8 +667,8 @@ impl NodeHTTPResponse {
             self.release_body_slot();
         }
         self.body_read_state.set(to);
-        if self.body_read_ref.get().has {
-            self.body_read_ref.with_mut(|r| r.unref(vm_get()));
+        if self.body_read_ref.has.get() {
+            self.body_read_ref.unref(VirtualMachine::get());
         }
         true
     }
@@ -761,12 +743,12 @@ impl NodeHTTPResponse {
             had
         });
 
-        let vm = vm_get();
+        let vm = VirtualMachine::get();
         self.clear_on_data_callback(self.get_this_value(), vm.global());
         self.clear_pending_pinned_write(vm.global(), JSValue::ZERO);
 
         let server = self.server;
-        self.poll_ref.with_mut(|r| r.unref(vm));
+        self.poll_ref.unref(vm);
         self.unregister_auto_flush();
 
         server.on_request_complete();
@@ -864,13 +846,13 @@ impl NodeHTTPResponse {
 
     pub(crate) fn js_ref(&self) {
         if !self.is_done() {
-            self.poll_ref.with_mut(|r| r.r#ref(vm_get()));
+            self.poll_ref.r#ref(VirtualMachine::get());
         }
     }
 
     pub(crate) fn js_unref(&self) {
         if !self.is_done() {
-            self.poll_ref.with_mut(|r| r.unref(vm_get()));
+            self.poll_ref.unref(VirtualMachine::get());
         }
     }
 }
@@ -1465,7 +1447,7 @@ impl NodeHTTPResponse {
         };
         if let Some(on_aborted) = js::on_aborted_get_cached(js_this) {
             if on_aborted.is_cell() {
-                let vm = vm_get();
+                let vm = VirtualMachine::get();
                 let global_this = vm.global();
                 let event_loop = vm.event_loop();
 
@@ -1487,7 +1469,7 @@ impl NodeHTTPResponse {
             // Release the pin + owner + GC root atomically before any user JS
             // (on_data_or_aborted runs the ondata callback). Clearing the slot
             // alone would un-root `pinned_value` while it is still read later.
-            self.clear_pending_pinned_write(vm_get().global(), js_this);
+            self.clear_pending_pinned_write(VirtualMachine::get().global(), js_this);
             self.on_data_or_aborted(b"", true, AbortEvent::Abort, js_this);
         }
 
@@ -1658,7 +1640,7 @@ impl NodeHTTPResponse {
         }
         scoped_log!(NodeHTTPResponse, "onRequestComplete");
         self.update_flags(|f| f.insert(Flags::REQUEST_HAS_COMPLETED));
-        self.poll_ref.with_mut(|r| r.unref(vm_get()));
+        self.poll_ref.unref(VirtualMachine::get());
 
         self.mark_request_as_done_if_necessary();
     }
@@ -1745,7 +1727,7 @@ pub(crate) fn on_reject(
         this.on_request_complete();
     }
 
-    let _ = bun_vm_mut(global_object).uncaught_exception(global_object, err.to_js(), true);
+    let _ = VirtualMachine::get().uncaught_exception(global_object, err.to_js(), true);
     if had_promise {
         this.deref();
     }
@@ -1805,7 +1787,7 @@ impl NodeHTTPResponse {
             Ok(b) => b,
             Err(err) => {
                 let exc = global_this.take_exception(err);
-                let _ = bun_vm_mut(global_this).uncaught_exception(global_this, exc, false);
+                let _ = VirtualMachine::get().uncaught_exception(global_this, exc, false);
                 JSValue::UNDEFINED
             }
         }
@@ -1827,7 +1809,7 @@ impl NodeHTTPResponse {
 
         if let Some(callback) = js::on_data_get_cached(this_value) {
             if callback.is_cell() {
-                let vm = vm_get();
+                let vm = VirtualMachine::get();
                 let global_this = vm.global();
                 let event_loop = vm.event_loop();
 
@@ -1849,8 +1831,8 @@ impl NodeHTTPResponse {
 
         // The callback can run 'end' -> autoDestroy -> `ondata = undefined`, which drops the ref first.
         if last {
-            if self.body_read_ref.get().has {
-                self.body_read_ref.with_mut(|r| r.unref(vm_get()));
+            if self.body_read_ref.has.get() {
+                self.body_read_ref.unref(VirtualMachine::get());
             }
             self.mark_request_as_done_if_necessary();
         }
@@ -1966,7 +1948,7 @@ impl NodeHTTPResponse {
         if !on_writable.is_cell() {
             return;
         }
-        let vm = vm_get();
+        let vm = VirtualMachine::get();
         let global_this = vm.global();
         js::on_writable_set_cached(this_value, global_this, JSValue::ZERO);
 
@@ -2445,7 +2427,7 @@ impl NodeHTTPResponse {
         }
 
         // `body_read_ref` is still held from create(): every unref also leaves `.pending`.
-        debug_assert!(self.body_read_ref.get().has);
+        debug_assert!(self.body_read_ref.has.get());
     }
 
     pub(crate) fn write(
@@ -2490,7 +2472,7 @@ impl NodeHTTPResponse {
         debug_assert!(!self.auto_flusher.get().registered.get());
         self.auto_flusher.get().registered.set(true);
         let ctx = ptr::NonNull::new(self.as_ctx_ptr().cast::<c_void>());
-        let found_existing = vm_get()
+        let found_existing = VirtualMachine::get()
             .event_loop()
             .deferred_tasks
             .post_task(ctx, on_auto_flush_trampoline);
@@ -2503,7 +2485,10 @@ impl NodeHTTPResponse {
         }
         debug_assert!(self.auto_flusher.get().registered.get());
         let ctx = ptr::NonNull::new(self.as_ctx_ptr().cast::<c_void>());
-        let removed = vm_get().event_loop().deferred_tasks.unregister_task(ctx);
+        let removed = VirtualMachine::get()
+            .event_loop()
+            .deferred_tasks
+            .unregister_task(ctx);
         debug_assert!(removed);
         self.auto_flusher.get().registered.set(false);
         self.deref();
@@ -2702,8 +2687,8 @@ impl NodeHTTPResponse {
 
 impl Drop for NodeHTTPResponse {
     fn drop(&mut self) {
-        debug_assert!(!self.body_read_ref.get().has);
-        debug_assert!(!self.poll_ref.get().has);
+        debug_assert!(!self.body_read_ref.has.get());
+        debug_assert!(!self.poll_ref.has.get());
         debug_assert!(!self.pending_pinned_write.get().is_some());
         let flags = self.flags.get();
         debug_assert!(!flags.contains(Flags::IS_REQUEST_PENDING));
@@ -2714,8 +2699,8 @@ impl Drop for NodeHTTPResponse {
                 || flags.contains(Flags::TUNNELED)
         );
 
-        self.poll_ref.with_mut(|r| r.unref(vm_get()));
-        self.body_read_ref.with_mut(|r| r.unref(vm_get()));
+        self.poll_ref.unref(VirtualMachine::get());
+        self.body_read_ref.unref(VirtualMachine::get());
 
         self.promise.with_mut(|p| p.deinit());
     }
@@ -2757,7 +2742,7 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
     // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
     let request_ref = bun_opaque::opaque_deref(request.cast_const());
 
-    let vm = bun_vm_mut(global_object);
+    let vm = VirtualMachine::get();
     let method = HttpMethod::which(request_ref.method()).unwrap_or(HttpMethod::OPTIONS);
     // Like llhttp, the framing decides, not the method. CONNECT has no body: the parser tunnels every byte after its head.
     if method != HttpMethod::CONNECT {
@@ -2799,8 +2784,8 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
         } else {
             Flags::default()
         }),
-        poll_ref: JsCell::new(jsc::Ref::default()),
-        body_read_ref: JsCell::new(jsc::Ref::default()),
+        poll_ref: jsc::Ref::default(),
+        body_read_ref: jsc::Ref::default(),
         promise: JsCell::new(StrongOptional::empty()),
         request_trailers: JsCell::new(Vec::new()),
         armed_this_value: Cell::new(JSValue::ZERO),
@@ -2812,9 +2797,9 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
     });
 
     if *has_body {
-        response.body_read_ref.with_mut(|r| r.r#ref(vm));
+        response.body_read_ref.r#ref(vm);
     }
-    response.poll_ref.with_mut(|r| r.r#ref(vm));
+    response.poll_ref.r#ref(vm);
     let response = bun_core::heap::into_raw(response);
     // SAFETY: `response` is a fresh `heap::alloc` heap payload; ownership of
     // the +1 wrapper ref transfers to the GC.

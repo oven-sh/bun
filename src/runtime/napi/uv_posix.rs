@@ -136,7 +136,7 @@ impl RefState {
         self.sync();
     }
 
-    fn sync(&mut self) {
+    fn sync(&self) {
         if self.active && self.referenced {
             self.keep_alive.ref_(bun_io::js_vm_ctx());
         } else {
@@ -325,7 +325,7 @@ impl UvLoop {
     /// addon stops its threads in its cleanup hooks, which run before the second write.
     pub(crate) unsafe fn of_vm(vm: *const VirtualMachine) -> *mut UvLoop {
         // SAFETY: fn contract.
-        let state = unsafe { (*vm).runtime_state }.cast::<RuntimeState>();
+        let state = unsafe { (*vm).runtime_state.get() }.cast::<RuntimeState>();
         if state.is_null() {
             return core::ptr::null_mut();
         }

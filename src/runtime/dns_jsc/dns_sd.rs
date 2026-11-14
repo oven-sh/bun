@@ -459,10 +459,8 @@ impl SharedConnection {
         );
         // SAFETY: `FilePoll::init` returned a live pool slot; exclusive here.
         let poll = unsafe { &mut *poll_ptr };
-        // SAFETY: the event loop outlives every lookup made on it.
-        let loop_ = unsafe { &*ctx.loop_() };
         let rc = poll.register_with_fd(
-            loop_,
+            ctx.loop_(),
             Async::PollKind::Readable,
             Async::posix_event_loop::OneShotFlag::None,
             fd,
@@ -631,7 +629,7 @@ impl SharedConnection {
 
     /// Arm the timer for the nearest early-out deadline (JS thread only; daemon timeout otherwise).
     fn arm_early_out(&mut self) {
-        if VirtualMachine::get_or_null().is_none() {
+        if !VirtualMachine::is_loaded() {
             return;
         }
         let mut min_deadline: Option<i64> = None;
@@ -689,7 +687,7 @@ impl SharedConnection {
         let conn = unsafe { bun_core::heap::take(this) };
         debug_assert!(conn.inflight.is_empty());
         if conn.early_out_timer.state.get() == EventLoopTimerState::ACTIVE
-            && VirtualMachine::get_or_null().is_some()
+            && VirtualMachine::is_loaded()
         {
             crate::jsc_hooks::timer_all().remove(&conn.early_out_timer);
         }
@@ -773,8 +771,7 @@ impl SharedConnection {
 }
 
 fn event_loop_scope() -> Option<bun_jsc::event_loop::EventLoopEnterGuard<'static>> {
-    // SAFETY: the current thread's VM, if any, is live for the callback.
-    VirtualMachine::get_or_null().map(|vm| unsafe { (*vm).enter_event_loop_scope() })
+    VirtualMachine::get_or_null().map(VirtualMachine::enter_event_loop_scope)
 }
 
 pub(crate) fn lookup(

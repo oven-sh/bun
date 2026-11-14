@@ -945,7 +945,7 @@ pub use self::js_promise::Status as PromiseStatus;
 pub use bun_core::String;
 
 /// Legacy alias used by runtime drafts: `VirtualMachineRef` is just the
-/// `VirtualMachine` struct itself (callers hold `*mut VirtualMachineRef`).
+/// `VirtualMachine` struct itself.
 pub use self::virtual_machine::VirtualMachine as VirtualMachineRef;
 
 /// `jsc.AnyPromise` — `JSPromise | JSInternalPromise`.
@@ -1400,24 +1400,24 @@ pub trait JsClass: Sized {
 /// Track whether an object should keep the event loop alive
 #[derive(Default)]
 pub struct Ref {
-    pub has: bool,
+    pub has: core::cell::Cell<bool>,
 }
 
 impl Ref {
-    pub fn unref(&mut self, vm: &mut virtual_machine::VirtualMachine) {
-        if !self.has {
+    pub fn unref(&self, vm: &virtual_machine::VirtualMachine) {
+        if !self.has.get() {
             return;
         }
-        self.has = false;
-        vm.active_tasks -= 1;
+        self.has.set(false);
+        vm.active_tasks.update(|n| n - 1);
     }
 
-    pub fn r#ref(&mut self, vm: &mut virtual_machine::VirtualMachine) {
-        if self.has {
+    pub fn r#ref(&self, vm: &virtual_machine::VirtualMachine) {
+        if self.has.get() {
             return;
         }
-        self.has = true;
-        vm.active_tasks += 1;
+        self.has.set(true);
+        vm.active_tasks.update(|n| n + 1);
     }
 }
 

@@ -1,5 +1,6 @@
 // For module-identity-*.test.ts. Each case of module-identity-cases.ts and module-identity-held-cases.ts is a project of its own. It runs under `bun test` and under `bun test --aot`, each run in a folder and a process
 // of its own: beside other cases most of what goes wrong here looks right. What `bun test` says is the specification: the SAID lines, how each test ends, the counts and the exit code.
+// Nothing else is held against that run, so it has to be whole: every test file that the command names has run, each test has its line, and the exit code is that of the failures counted.
 //
 // ../module-identity.known.txt has one line for each case whose compiled run is not yet what it should be:
 //   <variant> | <case> | <class> | <first column that differs> | <number of columns that differ>
@@ -36,6 +37,9 @@ const error = /(^|\s)error:|^\s*\w*Error:|^warn(ing)?:|[Uu]nhandled/;
 const crash =
   /panic|Segmentation fault|Bun has crashed|ASSERTION FAILED|Illegal instruction|SIG(SEGV|ABRT|ILL|TRAP|BUS)|AddressSanitizer|RELEASE_ASSERT|internal error/i;
 
+/** The test files that the command of a case names, among its flags. */
+const testFilesOf = ({ args }: Case) => args.filter(arg => /\.test\.\w+$/.test(arg));
+
 /** The files in the lists that follow the notices. */
 function filesNamed(lines: string[], isNotice: RegExp) {
   const named = new Set<string>();
@@ -68,6 +72,7 @@ async function outcomeOf({ variant, files, args, env: ownEnv }: Case, ...flags: 
   const isNotice = variant === "held" ? heldNotice : notice;
   const runnerLines = lines.filter(line => !line.startsWith("SAID"));
   const count = (word: string) => lines.find(line => new RegExp(`^\\s*\\d+ ${word}$`).test(line))?.trim();
+  const summary = lines.map(line => /^Ran (\d+) tests? across (\d+) files?\./.exec(line)).find(Boolean);
   return {
     answer: {
       said: lines.filter(line => line.startsWith("SAID")),
@@ -75,6 +80,8 @@ async function outcomeOf({ variant, files, args, env: ownEnv }: Case, ...flags: 
       counts: [count("pass"), count("fail")],
       exitCode,
     },
+    /** What the last line of a run that came to its end counts. */
+    ran: summary ? { tests: Number(summary[1]), files: Number(summary[2]) } : undefined,
     hasNotice: lines.some(line => isNotice.test(line)),
     filesNamed: filesNamed(lines, isNotice),
     errors: runnerLines.filter(line => error.test(line) && !notice.test(line)),
@@ -164,27 +171,36 @@ function judge(cases: Case[], allCases: Case[], checksList: boolean) {
     if (!outcome) outcomes.set(key, (outcome = outcomeOf(project, ...flags)));
     return outcome;
   }
-  const known = new Map(
-    readFileSync(list, "utf8")
-      .split("\n")
-      .filter(isEntry)
-      .map(line => [keyOf(line), line]),
-  );
+  const entries = readFileSync(list, "utf8").split("\n").filter(isEntry);
+  const known = new Map(entries.map(line => [keyOf(line), line]));
   const judged = new Map<string, string | undefined>();
 
+  // Of two lines for one case the later one is the one that `known` keeps, and nothing says so.
   if (checksList && !rewrite)
-    test("every listed case exists", () => {
-      expect([...known.keys()].filter(key => !keys.has(key))).toEqual([]);
+    test("every listed case exists, and is listed once", () => {
+      const listed = entries.map(keyOf);
+      expect({
+        unknown: listed.filter(key => !keys.has(key)),
+        listedTwice: listed.filter((key, at) => listed.indexOf(key) !== at),
+      }).toEqual({ unknown: [], listedTwice: [] });
     });
 
   for (const project of cases) {
     const key = keyOfCase(project);
     test.concurrent(key, async () => {
       const [plain, compiled] = await Promise.all([outcomeOnce(project), outcomeOnce(project, "--aot")]);
-      // A project that prints nothing under `bun test` would pass for the wrong reason.
-      expect({ said: plain.answer.said.length > 0, hasCrashed: plain.hasCrashed }).toEqual({
+      // A project that prints nothing under `bun test`, or whose run there ends before its last test file, would pass for the wrong reason: a compiled run that
+      // ends where it does answers the same.
+      expect({
+        said: plain.answer.said.length > 0,
+        hasCrashed: plain.hasCrashed,
+        ran: plain.ran,
+        exitCode: plain.answer.exitCode,
+      }).toEqual({
         said: true,
         hasCrashed: false,
+        ran: { tests: plain.answer.tests.length, files: testFilesOf(project).length },
+        exitCode: plain.answer.counts[1] === "0 fail" ? 0 : 1,
       });
       if (compiled.hasCrashed)
         throw new Error(`${key}: crashed with exit code ${compiled.answer.exitCode}\n${compiled.lastLines.join("\n")}`);
@@ -219,16 +235,13 @@ function judge(cases: Case[], allCases: Case[], checksList: boolean) {
       if (rewrite) return;
 
       const listed = known.get(key);
-      if (found !== listed)
-        console.error(
-          [
-            `${key}: was ${classOf(listed)}, is ${classOf(found)}`,
-            ...differing
-              .slice(0, 12)
-              .map(column => `  ${column.name}: bun test ${column.expected} | --aot ${column.printed}`),
-          ].join("\n"),
-        );
-      expect(found ?? `${key} | same`).toBe(listed ?? `${key} | same`);
+      const change = [
+        `${key}: was ${classOf(listed)}, is ${classOf(found)}`,
+        ...differing
+          .slice(0, 12)
+          .map(column => `  ${column.name}: bun test ${column.expected} | --aot ${column.printed}`),
+      ].join("\n");
+      expect(found ?? `${key} | same`, change).toBe(listed ?? `${key} | same`);
     });
   }
 

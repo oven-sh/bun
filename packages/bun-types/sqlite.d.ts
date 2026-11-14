@@ -737,6 +737,29 @@ declare module "bun:sqlite" {
      * @link https://www.sqlite.org/c3ref/file_control.html
      */
     fileControl(zDbName: string, op: number, arg?: ArrayBufferView | number | null): number;
+
+    /**
+     * Call `sqlite3_db_status` on this connection. It reads one counter.
+     *
+     * `op` is one of the `SQLITE_DBSTATUS_*` constants. Where the value lands depends on the op:
+     *
+     * - `SQLITE_DBSTATUS_LOOKASIDE_USED`: `current` is the number of lookaside slots in use, `highwater` is its peak. `reset` sets `highwater` back to `current`.
+     * - `SQLITE_DBSTATUS_LOOKASIDE_HIT`, `_LOOKASIDE_MISS_SIZE`, `_LOOKASIDE_MISS_FULL`: the count is in `highwater`, `current` is always `0`. `reset` sets the count to `0`.
+     * - `SQLITE_DBSTATUS_CACHE_USED`, `_CACHE_USED_SHARED`, `_SCHEMA_USED`, `_STMT_USED`: `current` is the bytes in use now, `highwater` is always `0`. `reset` does nothing.
+     * - `SQLITE_DBSTATUS_CACHE_HIT`, `_CACHE_MISS`, `_CACHE_WRITE`, `_CACHE_SPILL`, `_TEMPBUF_SPILL`: `current` is the count since the connection opened, `highwater` is always `0`. `reset` sets the count to `0`. `CACHE_WRITE` and `TEMPBUF_SPILL` overlap: a reset of one lowers the other.
+     * - `SQLITE_DBSTATUS_DEFERRED_FKS`: `current` is `1` while the open transaction has an unresolved foreign key constraint, else `0`. `highwater` is always `0`.
+     *
+     * Throws a `RangeError` if the SQLite library does not know `op`. Throws if the database is closed.
+     *
+     * @example
+     * ```ts
+     * const { current } = db.status(constants.SQLITE_DBSTATUS_CACHE_USED);
+     * console.log(`page cache: ${current} bytes`);
+     * ```
+     *
+     * @link https://www.sqlite.org/c3ref/db_status.html
+     */
+    status(op: number, reset?: boolean): { current: number; highwater: number };
   }
 
   /**
@@ -1462,6 +1485,65 @@ declare module "bun:sqlite" {
      * @constant 42
      */
     const SQLITE_FCNTL_RESET_CACHE: number;
+
+    /**
+     * @constant 0
+     */
+    const SQLITE_DBSTATUS_LOOKASIDE_USED: number;
+    /**
+     * @constant 1
+     */
+    const SQLITE_DBSTATUS_CACHE_USED: number;
+    /**
+     * @constant 2
+     */
+    const SQLITE_DBSTATUS_SCHEMA_USED: number;
+    /**
+     * @constant 3
+     */
+    const SQLITE_DBSTATUS_STMT_USED: number;
+    /**
+     * @constant 4
+     */
+    const SQLITE_DBSTATUS_LOOKASIDE_HIT: number;
+    /**
+     * @constant 5
+     */
+    const SQLITE_DBSTATUS_LOOKASIDE_MISS_SIZE: number;
+    /**
+     * @constant 6
+     */
+    const SQLITE_DBSTATUS_LOOKASIDE_MISS_FULL: number;
+    /**
+     * @constant 7
+     */
+    const SQLITE_DBSTATUS_CACHE_HIT: number;
+    /**
+     * @constant 8
+     */
+    const SQLITE_DBSTATUS_CACHE_MISS: number;
+    /**
+     * @constant 9
+     */
+    const SQLITE_DBSTATUS_CACHE_WRITE: number;
+    /**
+     * A flag, not a count: `current` is `1` while the open transaction has an unresolved foreign key constraint.
+     * @constant 10
+     */
+    const SQLITE_DBSTATUS_DEFERRED_FKS: number;
+    /**
+     * @constant 11
+     */
+    const SQLITE_DBSTATUS_CACHE_USED_SHARED: number;
+    /**
+     * @constant 12
+     */
+    const SQLITE_DBSTATUS_CACHE_SPILL: number;
+    /**
+     * The bundled SQLite knows this op. On macOS, Bun uses the system SQLite library, which may not. Then `status()` throws a `RangeError`.
+     * @constant 13
+     */
+    const SQLITE_DBSTATUS_TEMPBUF_SPILL: number;
   }
 
   export type SQLQueryBindings =

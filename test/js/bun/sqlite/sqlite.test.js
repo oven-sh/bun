@@ -2904,6 +2904,171 @@ it("run() reports a closed database when a bound parameter's getter closes it", 
   });
 });
 
+describe("Database#status", () => {
+  const dbStatusOps = Object.keys(constants).filter(name => name.startsWith("SQLITE_DBSTATUS_"));
+  const filler = Buffer.alloc(120, "v").toString();
+  // toThrow(new X("m")) compares the message only. This checks the class too.
+  function expectThrows(fn, ErrorClass, message) {
+    let error;
+    try {
+      fn();
+    } catch (thrown) {
+      error = thrown;
+    }
+    expect(error).toBeInstanceOf(ErrorClass);
+    expect(error.message).toBe(message);
+  }
+  function openFilled() {
+    const db = new Database(":memory:");
+    db.run("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)");
+    const insert = db.prepare("INSERT INTO t (v) VALUES (?)");
+    for (let i = 0; i < 500; i++) insert.run(filler + i);
+    expect(db.query("SELECT count(*) AS n FROM t").get().n).toBe(500);
+    return db;
+  }
+
+  it("reads the sqlite3_db_status counters of the connection", () => {
+    using db = openFilled();
+
+    // The page cache holds the pages the inserts and the scan touched. SQLite keeps no high-water mark for it.
+    const cacheUsed = db.status(constants.SQLITE_DBSTATUS_CACHE_USED);
+    expect(cacheUsed.current).toBeGreaterThan(0);
+    expect(cacheUsed.highwater).toBe(0);
+    expect(db.status(constants.SQLITE_DBSTATUS_CACHE_USED_SHARED)).toEqual(cacheUsed);
+    expect(db.status(constants.SQLITE_DBSTATUS_SCHEMA_USED).current).toBeGreaterThan(0);
+    expect(db.status(constants.SQLITE_DBSTATUS_STMT_USED).current).toBeGreaterThan(0);
+
+    // `reset` is the default `false`, so two reads agree.
+    expect(db.status(constants.SQLITE_DBSTATUS_CACHE_USED)).toEqual(cacheUsed);
+
+    // An integral double is an op. -0 is op 0.
+    expect(db.status(new Float64Array([constants.SQLITE_DBSTATUS_CACHE_USED])[0])).toEqual(cacheUsed);
+    expect(db.status(-0)).toEqual(db.status(constants.SQLITE_DBSTATUS_LOOKASIDE_USED));
+
+    // Every op the bundled library knows answers with the same shape.
+    const shape = { current: expect.any(Number), highwater: expect.any(Number) };
+    const ops = dbStatusOps.filter(name => !isMacOS || name !== "SQLITE_DBSTATUS_TEMPBUF_SPILL");
+    const all = Object.fromEntries(ops.map(name => [name, db.status(constants[name])]));
+    expect(all).toEqual(Object.fromEntries(ops.map(name => [name, shape])));
+    if (isMacOS) {
+      // The system library reports 3.51 on some macOS versions and still does not know TEMPBUF_SPILL.
+      let result;
+      let threw = false;
+      try {
+        result = db.status(constants.SQLITE_DBSTATUS_TEMPBUF_SPILL);
+      } catch (error) {
+        threw = true;
+        result = error;
+      }
+      if (threw) {
+        expect(result).toBeInstanceOf(RangeError);
+        expect(result.message).toBe("Unknown sqlite3_db_status op: 13");
+      } else {
+        expect(result).toStrictEqual(shape);
+      }
+    }
+  });
+
+  // macOS uses the system SQLite, which does not know TEMPBUF_SPILL.
+  it.skipIf(isMacOS)("TEMPBUF_SPILL counts the bytes written to temporary files, and reset sets it to 0", () => {
+    using dir = tempDir("sqlite-tempbuf-spill", {});
+    using db = new Database(path.join(String(dir), "spill.db"));
+    // A two-page cache for the TEMP database forces a temp table onto disk.
+    db.exec("PRAGMA temp_store = FILE; PRAGMA temp.cache_size = 2;");
+    db.run("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)");
+    const insert = db.prepare("INSERT INTO t (v) VALUES (?)");
+    const page = Buffer.alloc(1000, "v").toString();
+    db.run("BEGIN");
+    for (let i = 0; i < 1000; i++) insert.run(page + i);
+    db.run("COMMIT");
+    expect(db.status(constants.SQLITE_DBSTATUS_TEMPBUF_SPILL)).toEqual({ current: 0, highwater: 0 });
+
+    db.exec("CREATE TEMP TABLE tt AS SELECT * FROM t");
+    const spilled = db.status(constants.SQLITE_DBSTATUS_TEMPBUF_SPILL);
+    expect(spilled.current).toBeGreaterThan(0);
+    expect(spilled.highwater).toBe(0);
+
+    // The read with `reset` still reports the count. The next read starts from 0.
+    expect(db.status(constants.SQLITE_DBSTATUS_TEMPBUF_SPILL, true)).toEqual(spilled);
+    expect(db.status(constants.SQLITE_DBSTATUS_TEMPBUF_SPILL)).toEqual({ current: 0, highwater: 0 });
+  });
+
+  it("a cumulative counter is in `current`, and reset sets it to 0", () => {
+    using db = openFilled();
+    const hits = db.status(constants.SQLITE_DBSTATUS_CACHE_HIT);
+    expect(hits.current).toBeGreaterThan(0);
+    expect(hits.highwater).toBe(0);
+
+    // The read with `reset` still reports the count. The next read starts from 0.
+    expect(db.status(constants.SQLITE_DBSTATUS_CACHE_HIT, true)).toEqual(hits);
+    expect(db.status(constants.SQLITE_DBSTATUS_CACHE_HIT)).toEqual({ current: 0, highwater: 0 });
+
+    // `reset` is coerced to a boolean.
+    db.query("SELECT * FROM t").all();
+    expect(db.status(constants.SQLITE_DBSTATUS_CACHE_HIT, "yes").current).toBeGreaterThan(0);
+    expect(db.status(constants.SQLITE_DBSTATUS_CACHE_HIT)).toEqual({ current: 0, highwater: 0 });
+  });
+
+  // Bun turns lookaside off where it routes SQLite through fastMalloc (enableFastMallocForSQLite in JSSQLStatement.cpp).
+  it.skipIf(isMacOS && isASAN)("a lookaside counter keeps a high-water mark, and reset lowers it", () => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)");
+    // Prepared statements check lookaside slots out, and finalize gives them back.
+    const statements = Array.from({ length: 50 }, (_, i) => db.prepare(`SELECT * FROM t WHERE id = ${i}`));
+    const peak = db.status(constants.SQLITE_DBSTATUS_LOOKASIDE_USED);
+    expect(peak.current).toBeGreaterThan(0);
+    for (const stmt of statements) stmt.finalize();
+
+    const afterFinalize = db.status(constants.SQLITE_DBSTATUS_LOOKASIDE_USED);
+    expect(afterFinalize.current).toBeLessThan(peak.current);
+    expect(afterFinalize.highwater).toBeGreaterThanOrEqual(peak.current);
+
+    // The read with `reset` still reports the old high-water mark. The next read starts from `current`.
+    expect(db.status(constants.SQLITE_DBSTATUS_LOOKASIDE_USED, true)).toEqual(afterFinalize);
+    expect(db.status(constants.SQLITE_DBSTATUS_LOOKASIDE_USED)).toEqual({
+      current: afterFinalize.current,
+      highwater: afterFinalize.current,
+    });
+
+    // The lookaside hit count is in `highwater`. reset sets it to 0.
+    const lookasideHits = db.status(constants.SQLITE_DBSTATUS_LOOKASIDE_HIT, true);
+    expect(lookasideHits.current).toBe(0);
+    expect(lookasideHits.highwater).toBeGreaterThan(0);
+    expect(db.status(constants.SQLITE_DBSTATUS_LOOKASIDE_HIT)).toEqual({ current: 0, highwater: 0 });
+  });
+
+  it("DEFERRED_FKS is a flag for an unresolved foreign key in the open transaction", () => {
+    using db = new Database(":memory:");
+    db.exec(`
+      PRAGMA foreign_keys = ON;
+      CREATE TABLE parent (id INTEGER PRIMARY KEY);
+      CREATE TABLE child (id INTEGER PRIMARY KEY, pid INTEGER REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED);
+    `);
+    const deferred = () => db.status(constants.SQLITE_DBSTATUS_DEFERRED_FKS);
+    expect(deferred()).toEqual({ current: 0, highwater: 0 });
+    db.run("BEGIN");
+    db.run("INSERT INTO child (id, pid) VALUES (1, 999)");
+    expect(deferred()).toEqual({ current: 1, highwater: 0 });
+    db.run("INSERT INTO child (id, pid) VALUES (2, 998)");
+    expect(deferred()).toEqual({ current: 1, highwater: 0 });
+    db.run("INSERT INTO parent (id) VALUES (999), (998)");
+    expect(deferred()).toEqual({ current: 0, highwater: 0 });
+    db.run("COMMIT");
+  });
+
+  it("throws for an unknown op, a non-integer op, and a closed database", () => {
+    using db = new Database(":memory:");
+    expectThrows(() => db.status(999), RangeError, "Unknown sqlite3_db_status op: 999");
+    expectThrows(() => db.status(2 ** 40), RangeError, "Unknown sqlite3_db_status op: 1099511627776");
+    expectThrows(() => db.status("SQLITE_DBSTATUS_CACHE_USED"), TypeError, "Expected op to be an integer");
+    expectThrows(() => db.status(1.5), TypeError, "Expected op to be an integer");
+    expectThrows(() => db.status(Infinity), TypeError, "Expected op to be an integer");
+    expectThrows(() => db.status(), TypeError, "Expected op to be an integer");
+    db.close();
+    expect(() => db.status(constants.SQLITE_DBSTATUS_CACHE_USED)).toThrow("Database has closed");
+  });
+});
+
 // Several SQLITE_FCNTL_* opcodes (VFSNAME, MMAP_SIZE, FILE_POINTER, ...) write
 // a full pointer or int64 through the result argument, so the result buffer
 // must be at least 8 bytes. A 1-byte Uint8Array used to be passed through
@@ -5512,6 +5677,7 @@ describe("db.function()", () => {
       "db.inTransaction": ({ db }) => db.inTransaction,
       "db.transaction()()": ({ db }) => db.transaction(() => 1)(),
       "db.fileControl()": ({ db }) => db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0),
+      "db.status()": ({ db }) => db.status(constants.SQLITE_DBSTATUS_STMT_USED),
       "db.loadExtension()": ({ db }) => db.loadExtension("nothing"),
     };
 

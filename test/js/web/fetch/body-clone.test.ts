@@ -523,11 +523,12 @@ test("ReadableStream with mixed content (starting with ArrayBuffer) can be conve
   expect(text).toContain("Здравствуй, мир!");
 });
 
-// The tee behind Request/Response.clone() enqueues the same chunk object into both
-// branches (cloneForBranch2 = false, matching Node and browsers). The cloned branch
-// must not hold a copy of the chunk at all.
+// The tee behind Request/Response.clone() keeps one shared chunk in both branch queues and
+// hands script a copy when a branch delivers it (the fetch spec's ReadableStreamTee(stream,
+// true), with the copy deferred to delivery). A native drain (.bytes(), .text()) of either
+// branch is zero-copy, and a script read on one branch never aliases the other.
 test.each(["Request", "Response"])(
-  "%s.clone(): the cloned branch receives the same chunk object, not a copy",
+  "%s.clone(): a script read on the clone gets a right-sized copy, a native drain of the original does not copy",
   async kind => {
     const backing = new Uint8Array(1 << 20);
     const chunk = backing.subarray(17, 17 + 64);
@@ -547,12 +548,469 @@ test.each(["Request", "Response"])(
     const clonedChunk = clonedRead.value as Uint8Array<ArrayBuffer>;
 
     expect(originalBytes).toEqual(chunk);
-    expect(clonedChunk).toBe(chunk);
-    expect(clonedChunk.buffer).toBe(backing.buffer);
+    expect(clonedChunk).toEqual(chunk);
+    expect(clonedChunk).not.toBe(chunk);
+    expect(clonedChunk.buffer).not.toBe(backing.buffer);
+    expect(clonedChunk.buffer.byteLength).toBe(64);
+    chunk[0] = 99;
+    expect(clonedChunk[0]).toBe(7);
   },
 );
 
-test("fetch().clone(): chunks buffered for the unread clone share the original branch's buffers", async () => {
+// #45782: the reporter's case, on every body-clone entry point.
+describe("#45782: a chunk read from one body is not aliased by its clone", () => {
+  const makeStream = () =>
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1, 2, 3]));
+        controller.close();
+      },
+    });
+
+  async function expectIsolated(original: Request | Response, clone: Request | Response) {
+    const a = (await original.body!.getReader().read()).value as Uint8Array;
+    const b = (await clone.body!.getReader().read()).value as Uint8Array;
+    a[0] = 99;
+    expect([a[0], b[0], a.buffer === b.buffer]).toEqual([99, 1, false]);
+  }
+
+  test("Response.clone()", async () => {
+    const original = new Response(makeStream());
+    await expectIsolated(original, original.clone());
+  });
+
+  test("Request.clone()", async () => {
+    const original = new Request("https://example.com", { method: "POST", body: makeStream() });
+    await expectIsolated(original, original.clone());
+  });
+
+  test("new Request(url, request)", async () => {
+    const original = new Request("https://example.com", { method: "POST", body: makeStream() });
+    await expectIsolated(original, new Request("https://example.com/other", original));
+  });
+
+  test("the clone read first", async () => {
+    const original = new Response(makeStream());
+    const clone = original.clone();
+    const b = (await clone.body!.getReader().read()).value as Uint8Array;
+    const a = (await original.body!.getReader().read()).value as Uint8Array;
+    b[0] = 99;
+    expect([a[0], b[0], a.buffer === b.buffer]).toEqual([1, 99, false]);
+  });
+
+  test("an await between clone() and the first read (the chunk sits in the queue, the branch closes on dequeue)", async () => {
+    const original = new Response(makeStream());
+    const clone = original.clone();
+    await Bun.sleep(0);
+    await expectIsolated(original, clone);
+  });
+
+  test("for await on the clone", async () => {
+    const original = new Response(makeStream());
+    const clone = original.clone();
+    const a = (await original.body!.getReader().read()).value as Uint8Array;
+    let b!: Uint8Array;
+    for await (const chunk of clone.body!) b = chunk;
+    a[0] = 99;
+    expect([a[0], b[0], a.buffer === b.buffer]).toEqual([99, 1, false]);
+  });
+
+  test("pipeTo on the clone", async () => {
+    const original = new Response(makeStream());
+    const clone = original.clone();
+    const a = (await original.body!.getReader().read()).value as Uint8Array;
+    let b!: Uint8Array;
+    await clone.body!.pipeTo(
+      new WritableStream({
+        write(chunk) {
+          b = chunk;
+        },
+      }),
+    );
+    a[0] = 99;
+    expect([a[0], b[0], a.buffer === b.buffer]).toEqual([99, 1, false]);
+  });
+
+  test("reader.readMany() on the clone", async () => {
+    const original = new Response(makeStream());
+    const clone = original.clone();
+    const a = (await original.body!.getReader().read()).value as Uint8Array;
+    const many = await clone.body!.getReader().readMany();
+    const b = many.value[0] as Uint8Array;
+    a[0] = 99;
+    expect([a[0], b[0], a.buffer === b.buffer]).toEqual([99, 1, false]);
+  });
+
+  test("fetch().clone()", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(makeStream()),
+    });
+    const original = await fetch(server.url);
+    await expectIsolated(original, original.clone());
+  });
+
+  test("Bun.serve request.clone()", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const clone = request.clone();
+        const a = (await request.body!.getReader().read()).value as Uint8Array;
+        const b = (await clone.body!.getReader().read()).value as Uint8Array;
+        a[0] = 99;
+        return Response.json([a[0], b[0], a.buffer === b.buffer]);
+      },
+    });
+    const response = await fetch(server.url, { method: "POST", body: new Uint8Array([1, 2, 3]) });
+    expect(await response.json()).toEqual([99, 1, false]);
+  });
+
+  test("a clone chain: each body's script read is its own copy", async () => {
+    const original = new Response(makeStream());
+    const clone1 = original.clone();
+    const clone2 = clone1.clone();
+    const values = await Promise.all(
+      [original, clone1, clone2].map(async body => (await body.body!.getReader().read()).value as Uint8Array),
+    );
+    values[0][0] = 10;
+    values[1][0] = 20;
+    expect(values.map(v => v[0])).toEqual([10, 20, 1]);
+    expect(new Set(values.map(v => v.buffer)).size).toBe(3);
+  });
+
+  test.each(["clone1 first", "original first"])(
+    "a clone chain with the leaf canceled still isolates the other two bodies (%s)",
+    async order => {
+      // The chunk the leaf's tee forwarded by reference still sits in the original's queue, so a
+      // canceled sibling is no reason to hand out the shared object.
+      const original = new Response(makeStream());
+      const clone1 = original.clone();
+      const clone2 = clone1.clone();
+      clone2.body!.cancel();
+      const first = order === "clone1 first" ? clone1 : original;
+      const second = order === "clone1 first" ? original : clone1;
+      const a = (await first.body!.getReader().read()).value as Uint8Array;
+      a[0] = 99;
+      const b = (await second.body!.getReader().read()).value as Uint8Array;
+      expect([a[0], b[0], a.buffer === b.buffer]).toEqual([99, 1, false]);
+    },
+  );
+
+  test("Bun.readableStreamToArray() on both bodies", async () => {
+    const original = new Response(makeStream());
+    const clone = original.clone();
+    const [a] = await Bun.readableStreamToArray(original.body!);
+    const [b] = await Bun.readableStreamToArray(clone.body!);
+    a[0] = 99;
+    expect([a[0], b[0], a.buffer === b.buffer]).toEqual([99, 1, false]);
+  });
+
+  test("non-byte chunks: strings pass through, other values are structured clones with their own type", async () => {
+    const object = { a: 1 };
+    const floats = new Float32Array([1.5, 2.5]);
+    const original = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue("text");
+          controller.enqueue(object);
+          controller.enqueue(floats);
+          controller.enqueue(new DataView(new ArrayBuffer(4)));
+          controller.enqueue(new ArrayBuffer(8));
+          controller.close();
+        },
+      }),
+    );
+    const clone = original.clone();
+    const reader = clone.body!.getReader();
+    const values: unknown[] = [];
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      values.push(value);
+    }
+    expect(values[0]).toBe("text");
+    expect(values[1]).toEqual(object);
+    expect(values[1]).not.toBe(object);
+    expect(values[2]).toBeInstanceOf(Float32Array);
+    expect(values[2]).toEqual(floats);
+    expect(values[2]).not.toBe(floats);
+    expect(values[3]).toBeInstanceOf(DataView);
+    expect(values[4]).toBeInstanceOf(ArrayBuffer);
+    expect((values[4] as ArrayBuffer).byteLength).toBe(8);
+  });
+
+  const unclonable = () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(() => {});
+          controller.close();
+        },
+      }),
+    );
+
+  test("an unclonable chunk errors both bodies (read waiting when the chunk arrives)", async () => {
+    const original = unclonable();
+    const clone = original.clone();
+    await expect(clone.body!.getReader().read()).rejects.toMatchObject({ name: "DataCloneError" });
+    await expect(original.body!.getReader().read()).rejects.toMatchObject({ name: "DataCloneError" });
+  });
+
+  test("an unclonable chunk errors both bodies (chunk already queued)", async () => {
+    const original = unclonable();
+    const clone = original.clone();
+    await Bun.sleep(0);
+    await expect(clone.body!.getReader().read()).rejects.toMatchObject({ name: "DataCloneError" });
+    await expect(original.body!.getReader().read()).rejects.toMatchObject({ name: "DataCloneError" });
+  });
+
+  test("an unclonable chunk errors both bodies (readMany on a queued chunk)", async () => {
+    const original = unclonable();
+    const clone = original.clone();
+    await Bun.sleep(0);
+    // readMany() on a queue it can drain now is synchronous, so the failed copy throws.
+    expect(() => clone.body!.getReader().readMany()).toThrow(expect.objectContaining({ name: "DataCloneError" }));
+    await expect(original.body!.getReader().read()).rejects.toMatchObject({ name: "DataCloneError" });
+  });
+
+  test("a failed copy cancels the source from a microtask, so cancel() can release the reader", async () => {
+    let reader!: ReadableStreamDefaultReader;
+    let cancelReason: unknown;
+    const source = new ReadableStream({
+      start(controller) {
+        controller.enqueue(() => {});
+      },
+      cancel(reason) {
+        cancelReason = reason;
+        reader.releaseLock();
+      },
+    });
+    const clone = new Response(source).clone();
+    reader = clone.body!.getReader();
+    await Bun.sleep(0);
+    await expect(reader.read()).rejects.toMatchObject({ name: "DataCloneError" });
+    await Bun.sleep(0);
+    expect(cancelReason).toMatchObject({ name: "DataCloneError" });
+  });
+
+  test("a Buffer chunk, a Uint8Array subclass chunk and a resizable ArrayBuffer keep their kind", async () => {
+    class Bytes extends Uint8Array {}
+    const resizable = new ArrayBuffer(8, { maxByteLength: 64 });
+    const clone = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(Buffer.from("hi"));
+          controller.enqueue(new Bytes([1, 2]));
+          controller.enqueue(resizable);
+          controller.close();
+        },
+      }),
+    ).clone();
+    const reader = clone.body!.getReader();
+    const buffer = (await reader.read()).value as Buffer;
+    const bytes = (await reader.read()).value as Bytes;
+    const copy = (await reader.read()).value as ArrayBuffer;
+    expect(Buffer.isBuffer(buffer)).toBe(true);
+    expect(buffer.toString()).toBe("hi");
+    expect(bytes).toBeInstanceOf(Bytes);
+    expect(copy).not.toBe(resizable);
+    expect([copy.resizable, copy.maxByteLength, copy.byteLength]).toEqual([true, 64, 8]);
+  });
+
+  // The copy of an object chunk runs its getters. That user code can touch the branch reader
+  // while a read is on the stack.
+  test("a getter that reads the rest of the queue during readMany()", async () => {
+    let reader!: ReadableStreamDefaultReader;
+    const chunk = () => ({
+      get x() {
+        reader.read();
+        return 1;
+      },
+    });
+    const clone = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(chunk());
+          controller.enqueue(chunk());
+          controller.enqueue(chunk());
+          controller.close();
+        },
+      }),
+    ).clone();
+    await Bun.sleep(0);
+    reader = clone.body!.getReader();
+    // The getter's nested read() calls take the other two chunks and close the branch.
+    const result = await reader.readMany();
+    expect(result).toEqual({ value: [{ x: 1 }], size: 1, done: false });
+    expect((await reader.read()).done).toBe(true);
+  });
+
+  test("a getter that releases the reader and then throws during read()", async () => {
+    let reader!: ReadableStreamDefaultReader;
+    const clone = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue({
+            get x() {
+              reader.releaseLock();
+              throw new Error("boom");
+            },
+          });
+          controller.close();
+        },
+      }),
+    ).clone();
+    await Bun.sleep(0);
+    reader = clone.body!.getReader();
+    await expect(reader.read()).rejects.toMatchObject({ name: "TypeError" });
+  });
+
+  test("a getter that cancels the branch during readMany()", async () => {
+    let reader!: ReadableStreamDefaultReader;
+    const chunk = () => ({
+      get x() {
+        reader.cancel();
+        return 1;
+      },
+    });
+    const clone = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(chunk());
+          controller.enqueue(chunk());
+          controller.close();
+        },
+      }),
+    ).clone();
+    await Bun.sleep(0);
+    reader = clone.body!.getReader();
+    const result = await reader.readMany();
+    expect(result).toEqual({ value: [{ x: 1 }], size: 1, done: false });
+    expect((await reader.read()).done).toBe(true);
+  });
+
+  test("a getter that cancels the branch and then throws during readMany()", async () => {
+    let reader!: ReadableStreamDefaultReader;
+    const clone = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue({
+            get x() {
+              reader.cancel();
+              throw new Error("boom");
+            },
+          });
+          controller.close();
+        },
+      }),
+    ).clone();
+    await Bun.sleep(0);
+    reader = clone.body!.getReader();
+    const result = await reader.readMany();
+    expect(result).toEqual({ value: [], size: 0, done: false });
+    expect((await reader.read()).done).toBe(true);
+  });
+
+  test("a typed-array chunk with an own property copies with its prototype and no crash", async () => {
+    const chunk = Buffer.from("hi") as Buffer & { id: number };
+    chunk.id = 1;
+    const view = new DataView(new ArrayBuffer(4)) as DataView & { id: number };
+    view.id = 2;
+    const clone = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(chunk);
+          controller.enqueue(view);
+          controller.close();
+        },
+      }),
+    ).clone();
+    const reader = clone.body!.getReader();
+    const copy = (await reader.read()).value as Buffer & { id?: number };
+    const viewCopy = (await reader.read()).value as DataView & { id?: number };
+    expect(Buffer.isBuffer(copy)).toBe(true);
+    expect(copy.toString()).toBe("hi");
+    expect(Object.keys(copy)).toEqual(["0", "1"]);
+    expect(copy.id).toBeUndefined();
+    expect(viewCopy).toBeInstanceOf(DataView);
+    expect(viewCopy.id).toBeUndefined();
+  });
+
+  test("a failed copy with a tee read pending on the source reports no unhandled rejection", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const source = new ReadableStream({ start(c) { c.enqueue(() => {}); }, pull() { return new Promise(() => {}); }, cancel() { throw new Error("cancel fails"); } });
+         const response = new Response(source);
+         const clone = response.clone();
+         await Bun.sleep(0);
+         clone.text().catch(e => console.log("clone", e.name));
+         await response.body.getReader().read().catch(e => console.log("original", e.name));
+         await Bun.sleep(0);
+         console.log("done");`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("original DataCloneError\nclone DataCloneError\ndone\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a failed copy whose source cancel() throws reports no unhandled rejection", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const source = new ReadableStream({ start(c) { c.enqueue(() => {}); }, cancel() { throw new Error("cancel fails"); } });
+         const clone = new Response(source).clone();
+         try { await clone.body.getReader().read(); } catch (e) { console.log(e.name); }
+         await Bun.sleep(0);
+         console.log("done");`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("DataCloneError\ndone\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a Symbol chunk is unclonable", async () => {
+    const clone = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(Symbol("chunk"));
+          controller.close();
+        },
+      }),
+    ).clone();
+    await expect(clone.body!.getReader().read()).rejects.toMatchObject({ name: "DataCloneError" });
+  });
+
+  test("clone.body.tee(): the sub-branches do not alias the original body", async () => {
+    const original = new Response(makeStream());
+    const clone = original.clone();
+    const [x, y] = clone.body!.tee();
+    const a = (await x.getReader().read()).value as Uint8Array;
+    a[0] = 99;
+    const b = (await y.getReader().read()).value as Uint8Array;
+    const c = (await original.body!.getReader().read()).value as Uint8Array;
+    expect([a[0], b[0], c[0]]).toEqual([99, 1, 1]);
+  });
+
+  test("ReadableStream.prototype.tee() still shares the chunk object per spec", async () => {
+    const [a, b] = makeStream().tee();
+    const x = (await a.getReader().read()).value as Uint8Array;
+    const y = (await b.getReader().read()).value as Uint8Array;
+    expect(y).toBe(x);
+  });
+});
+
+test("fetch().clone(): both branches read by script deliver equal bytes, never the same buffer", async () => {
   const total = 8 * 1024 * 1024;
   const chunk = new Uint8Array(64 * 1024).fill(42);
   await using server = Bun.serve({
@@ -574,8 +1032,6 @@ test("fetch().clone(): chunks buffered for the unread clone share the original b
   const response = await fetch(server.url);
   const clone = response.clone();
 
-  // Drain both branches in lockstep: the clone must receive the exact same chunk
-  // object the original branch does (no per-chunk copy).
   const r0 = response.body!.getReader();
   const r1 = clone.body!.getReader();
   let bytes = 0;
@@ -585,7 +1041,8 @@ test("fetch().clone(): chunks buffered for the unread clone share the original b
       expect(b.done).toBe(true);
       break;
     }
-    expect(b.value).toBe(a.value);
+    expect(b.value).toEqual(a.value);
+    expect(b.value!.buffer).not.toBe(a.value!.buffer);
     bytes += a.value!.byteLength;
   }
   expect(bytes).toBe(total);
@@ -1403,10 +1860,11 @@ test("Blob type from a consumed Response keeps the original content-type after c
   expect(exitCode).toBe(0);
 });
 
-describe("Response.clone() of a stream body shares chunk references between tee branches", () => {
-  // Node, Chrome, and Firefox enqueue the same chunk object into both tee branches when cloning
-  // a body (cloneForBranch2 = false). Deep-copying every chunk per branch turns an N-deep clone
-  // chain into O(N * body bytes) of retained memory.
+describe("Response.clone() of a stream body keeps one chunk in both tee branch queues", () => {
+  // The tee behind clone() enqueues the same chunk object into both branches and copies it only
+  // when a branch hands it to script. Each level of a clone chain reads its source through the
+  // tee's own (native) reader, and the leaf's .arrayBuffer() is a native drain, so an N-deep
+  // chain drained natively retains O(body bytes), not O(N * body bytes).
   test("deep clone chain does not retain O(depth * bytes)", async () => {
     // A 4 MB streaming body cloned 50 deep previously retained ~50 separate copies of every
     // 64 KB chunk (~200 MB). With shared chunk references only one copy of the body bytes is

@@ -1732,7 +1732,7 @@ impl EString {
 
 // ── live EString accessor surface ──────────────────────────────────────────
 // Subset of the gated impl below adapted to the current `bun_core` API
-// (`eql_long::<CHECK_LEN>`, no bump-arena `to_utf8_alloc`). Heavy
+// (no bump-arena `to_utf8_alloc`). Heavy
 // transcode/rope-clone paths stay gated.
 impl EString {
     #[inline]
@@ -1761,7 +1761,7 @@ impl EString {
 
     pub fn eql_bytes(&self, other: &[u8]) -> bool {
         if self.is_utf8() {
-            strings::eql_long(&self.data, other, true)
+            strings::eql_long(&self.data, other)
         } else {
             strings::utf16_eql_string(self.slice16(), other)
         }
@@ -1786,7 +1786,7 @@ impl EString {
         let mut i = 0usize;
         let mut next: Option<&EString> = Some(self);
         while let Some(cur) = next {
-            if !strings::eql_long(&cur.data, &value[i..i + cur.data.len()], false) {
+            if !strings::eql_long(&cur.data, &value[i..i + cur.data.len()]) {
                 return false;
             }
             i += cur.data.len();
@@ -1903,7 +1903,7 @@ impl EString {
     pub fn eql_string(&self, other: &EString) -> bool {
         if self.is_utf8() {
             if other.is_utf8() {
-                strings::eql_long(&self.data, &other.data, true)
+                strings::eql_long(&self.data, &other.data)
             } else {
                 strings::utf16_eql_string(other.slice16(), &self.data)
             }

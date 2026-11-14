@@ -597,11 +597,12 @@ impl Lockfile {
         let buf = self.buffers.string_bytes.as_slice();
         let resolved =
             (self.packages.items_resolution()).get(self.buffers.resolutions[at] as usize);
-        let is_in_range = version.tag == VersionTag::Npm
-            && resolved.is_none_or(|resolved| {
+        let is_in_range = version.try_npm().is_some_and(|range| {
+            resolved.is_none_or(|resolved| {
                 resolved.tag == ResolutionTag::Npm
-                    && (version.npm().version).satisfies(resolved.npm().version, buf, buf)
-            });
+                    && (range.version).satisfies(resolved.npm().version, buf, buf)
+            })
+        });
         if !is_in_range || (resolved.is_none() && !is_peer) {
             return Ok(());
         }

@@ -11,8 +11,8 @@ use std::sync::Arc;
 use crate::{
     Adapter, AllLimits, Buffer, CallbackMode, Chain, Device, DeviceDescriptor,
     DeviceLostCallbackInfo, DeviceLostReason, ErrorType, FeatureLevel, FeatureName, Instance,
-    LoggingCallbackInfo, LoggingType, PowerPreference, QueueDescriptor, Ref, RequestDeviceStatus,
-    StringView, Texture, UncapturedErrorCallbackInfo,
+    LoggingCallbackInfo, LoggingType, PowerPreference, Queue, QueueDescriptor, Ref,
+    RequestDeviceStatus, StringView, Texture, UncapturedErrorCallbackInfo,
 };
 
 bun_core::declare_scope!(Dawn, hidden);
@@ -98,6 +98,21 @@ bun_opaque::opaque_ffi! {
     struct QueueWatcher;
 }
 
+/// Dawn numbers what it submits to a queue.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(transparent)]
+pub struct Serial(u64);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Wake {
+    /// The GPU is idle, the device is lost, or the system is out of resources.
+    None,
+    Follows,
+    /// What it was for has happened already.
+    Missed,
+}
+
 unsafe extern "C" {
     fn BunDawn__createInstance(host: &BunDawnHost) -> Option<NonNull<Instance>>;
     fn BunDawn__releaseInstance(instance: NonNull<Instance>);
@@ -116,7 +131,9 @@ unsafe extern "C" {
     safe fn BunDawn__bufferMemorySize(buffer: &Buffer) -> u64;
     safe fn BunDawn__textureMemorySize(texture: &Texture) -> u64;
     safe fn BunDawn__createQueueWatcher(device: &Device) -> NonNull<QueueWatcher>;
-    fn BunDawn__armQueueWatcher(watcher: NonNull<QueueWatcher>) -> bool;
+    fn BunDawn__armQueueWatcher(watcher: NonNull<QueueWatcher>, serial: Serial) -> Wake;
+    safe fn BunDawn__serialOfLastUse(buffer: &Buffer) -> Serial;
+    safe fn BunDawn__serialOfScheduledWork(queue: &Queue) -> Serial;
     fn BunDawn__destroyDevice(device: &Device, watcher: NonNull<QueueWatcher>);
 }
 
@@ -338,12 +355,21 @@ impl OwnedDevice {
         self.device.clone()
     }
 
-    /// Whether `Host::wake` is called once the GPU has finished everything submitted so far.
-    pub fn wake_after_submitted_work(&self) -> bool {
-        self.watcher.get().is_some_and(|watcher| {
+    /// Asks for `Host::wake` once the GPU has finished `serial`, or else all that was submitted. It replaces the last request.
+    pub fn wake_after(&self, serial: Option<Serial>) -> Wake {
+        self.watcher.get().map_or(Wake::None, |watcher| {
             // SAFETY: only `destroy` frees it, which takes it out first.
-            unsafe { BunDawn__armQueueWatcher(watcher) }
+            unsafe { BunDawn__armQueueWatcher(watcher, serial.unwrap_or(Serial(u64::MAX))) }
         })
+    }
+
+    /// From now on it is the result that destroys the device.
+    pub fn take(&self) -> Self {
+        Self {
+            device: self.handle(),
+            watcher: Cell::new(self.watcher.take()),
+            _instance: Rc::clone(&self._instance),
+        }
     }
 
     /// Waits for the GPU.
@@ -373,6 +399,18 @@ impl Buffer {
     /// 0 for an invalid buffer.
     pub fn memory_size(&self) -> u64 {
         BunDawn__bufferMemorySize(self)
+    }
+
+    /// What the last `map_async` waits for.
+    pub fn serial_of_last_use(&self) -> Serial {
+        BunDawn__serialOfLastUse(self)
+    }
+}
+
+impl Queue {
+    /// What the last `on_submitted_work_done` waits for.
+    pub fn serial_of_scheduled_work(&self) -> Serial {
+        BunDawn__serialOfScheduledWork(self)
     }
 }
 

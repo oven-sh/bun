@@ -26,15 +26,17 @@ impl GPUQueue {
 
     pub(crate) fn on_submitted_work_done<'a>(&self, cx: &mut JsScope<'a>) -> Result<'a, JSValue> {
         let (deferred, promise) = Deferred::new(&self.state.instance, cx);
-        let wait = self.state.wait_for_queue();
-        let callback = dawn::QueueWorkDoneCallbackInfo::new(move |_, _| {
-            let device = wait.finish();
-            deferred.complete(move |global, promise| {
-                drop(device);
-                promise.resolve(global, JSValue::UNDEFINED)
+        self.state.wait_for_queue(|wait| {
+            let callback = dawn::QueueWorkDoneCallbackInfo::new(move |_, _| {
+                let device = wait.finish();
+                deferred.complete(move |global, promise| {
+                    drop(device);
+                    promise.resolve(global, JSValue::UNDEFINED)
+                });
             });
+            self.handle.on_submitted_work_done(callback);
+            self.handle.serial_of_scheduled_work()
         });
-        self.handle.on_submitted_work_done(callback);
         Ok(promise)
     }
 

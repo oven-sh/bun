@@ -20,6 +20,14 @@ private:
         m_device->GetQueue()->TrackSerialTask(QueuePriority::UserVisible, serial, [host = m_host] { host->wake(); });
         return true;
     }
+
+    // That thread takes the tasks before it raises the serial. This waits until it has done both.
+    bool resume(ExecutionSerial serial) override
+    {
+        QueueBase* queue = m_device->GetQueue();
+        IgnoreErrors(queue->UpdateCompletedSerial(QueuePriority::UserVisible));
+        return serial > queue->GetCompletedCommandSerial();
+    }
 };
 
 std::unique_ptr<QueueWatcher> QueueWatcher::create(DeviceBase* device)

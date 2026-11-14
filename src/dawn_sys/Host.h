@@ -39,14 +39,20 @@ private:
     const BunDawnHost m_host;
 };
 
+enum class Wake : uint8_t {
+    None,
+    Follows,
+    Missed,
+};
+
 // Wakes the host when the GPU has finished what a device submitted. Dawn's own wait holds a lock that the next submit needs.
 class QueueWatcher {
 public:
     static std::unique_ptr<QueueWatcher> create(dawn::native::DeviceBase*);
     virtual ~QueueWatcher() = default;
 
-    // Returns whether a wake follows once everything submitted so far has finished.
-    bool arm();
+    // Asks for a wake at this serial, or at the last one submitted if that comes first. It replaces what was asked for before.
+    Wake arm(dawn::native::ExecutionSerial);
 
     // Called before the device is destroyed. The watcher is deleted after.
     virtual void stop() {}
@@ -58,10 +64,10 @@ protected:
     {
     }
 
-    // Called once per serial, in increasing order.
+    // Called when the serial changes.
     virtual bool wakeAfter(dawn::native::ExecutionSerial) = 0;
-    // Called on every arm() that finds work in flight, after wakeAfter(). False if the last wake has come already.
-    virtual bool resume() { return true; }
+    // Called on every arm(), after wakeAfter(). False if it is too late to count on the wake.
+    virtual bool resume(dawn::native::ExecutionSerial) = 0;
 
     dawn::native::DeviceBase* const m_device;
     const dawn::Ref<Host> m_host;

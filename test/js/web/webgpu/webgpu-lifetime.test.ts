@@ -1,11 +1,16 @@
 // Runs alone: its last tests disturb other processes that use the GPU of a macOS virtual machine.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, libcPathForDlopen, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, libcPathForDlopen, tempDir } from "harness";
 import { hasAdapter, runWithDriverOfChrome } from "./driver";
 
 runWithDriverOfChrome(import.meta.path);
 
 const helpers = `
+  import { readdirSync, readFileSync } from "node:fs";
+  /** On Linux, the devices that have waited for the GPU and are not destroyed. */
+  export const countWatchers = () => readdirSync("/proc/self/task").filter(thread => {
+    try { return readFileSync(\`/proc/self/task/\${thread}/comm\`, "utf8") === "GPUQueue\\n"; } catch {}
+  }).length;
   export const requestDevice = async () => (await navigator.gpu.requestAdapter()).requestDevice();
   export const slowModule = (device, seed) => device.createShaderModule({ code: \`
     @group(0) @binding(0) var<storage, read_write> out: array<u32, 64>;
@@ -16,8 +21,8 @@ const helpers = `
     }\` });
   export const compile = (device, seed) =>
     device.createComputePipelineAsync({ layout: "auto", compute: { module: slowModule(device, seed) } });
-  /** A buffer to map once the GPU is done. */
-  export function keepBusy(device) {
+  /** Submits when it is called, and returns a buffer to map once the GPU is done. */
+  export function prepare(device, workgroups = 100) {
     const pipeline = device.createComputePipeline({ layout: "auto", compute: { module: slowModule(device, 0) } });
     const resource = device.createBuffer({ size: 256, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
     const result = device.createBuffer({ size: 256, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
@@ -25,12 +30,13 @@ const helpers = `
     const pass = encoder.beginComputePass();
     pass.setPipeline(pipeline);
     pass.setBindGroup(0, device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource }] }));
-    pass.dispatchWorkgroups(100);
+    pass.dispatchWorkgroups(workgroups);
     pass.end();
     encoder.copyBufferToBuffer(resource, result);
-    device.queue.submit([encoder.finish()]);
-    return result;
+    const commands = encoder.finish();
+    return () => (device.queue.submit([commands]), result);
   }
+  export const keepBusy = (device, workgroups) => prepare(device, workgroups)();
   /** One of each thing that can be under way. */
   export function startEverything(device) {
     device.onuncapturederror = event => event.preventDefault();
@@ -47,13 +53,16 @@ const helpers = `
       navigator.gpu.requestAdapter(),
     ];
   }`;
-const imports = `import { compile, keepBusy, requestDevice, slowModule, startEverything } from "./helpers.js";\n`;
+const imports = `import { compile, countWatchers, keepBusy, prepare, requestDevice, slowModule, startEverything } from "./helpers.js";\n`;
 
-async function run(files: Record<string, string>, args = ["index.js"], env = bunEnv) {
-  using dir = tempDir("webgpu", {
+const withHelpers = (files: Record<string, string>) =>
+  tempDir("webgpu", {
     ...Object.fromEntries(Object.entries(files).map(([name, source]) => [name, imports + source])),
     "helpers.js": helpers,
   });
+
+async function run(files: Record<string, string>, args = ["index.js"], env = bunEnv) {
+  using dir = withHelpers(files);
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...args],
     cwd: String(dir),
@@ -64,6 +73,127 @@ async function run(files: Record<string, string>, args = ["index.js"], env = bun
   return { stdout, stderr, exitCode };
 }
 const printed = (stdout: string) => ({ stdout: stdout + "\n", stderr: "", exitCode: 0 });
+
+/** Two files for `require()`, which runs a macro on the thread and in the realm of the program. */
+const withMacro = (name: string, macro: string) => ({
+  [`${name}.js`]: `
+    import { macro } from "./${name}-macro.js" with { type: "macro" };
+    console.log(macro());`,
+  [`${name}-macro.js`]: `export const macro = ${macro};`,
+});
+// A debug build prints a line for each call of a macro.
+const withoutMacroLog = (stdout: string) => stdout.replaceAll("[macro] call macro\n", "");
+
+describe.concurrent("with or without a driver", () => {
+  const noAdapter = `navigator.gpu.requestAdapter({ featureLevel: "none" })`;
+
+  test("timers and immediates run while a script waits for nothing else", async () => {
+    const script = `
+      let pending = 2;
+      setTimeout(() => pending--, 1);
+      setImmediate(() => pending--);
+      while (pending > 0) await ${noAdapter};
+      console.log("done");`;
+    expect(await run({ "index.js": script })).toEqual(printed("done"));
+  });
+
+  test("promises settle after an unhandled error under --hot", async () => {
+    const script = `
+      setImmediate(() => {
+        require("node:fs").stat(".", () => ${noAdapter}.then(adapter => (console.log(adapter), process.exit(0))));
+        throw new Error("unhandled");
+      });`;
+    const { stdout, stderr, exitCode } = await run({ "index.js": script }, ["--hot", "index.js"]);
+    expect(stderr).toContain("error: unhandled");
+    expect({ stdout, exitCode }).toEqual({ stdout: "null\n", exitCode: 0 });
+  });
+
+  test("a macro does not continue the program", async () => {
+    const files = {
+      "index.js": `
+        const started = ${noAdapter}.then(() => console.log("program")).then(() => new Promise(setImmediate));
+        require("./inlined.js");
+        await started;
+        console.log("done");`,
+      ...withMacro("inlined", `async () => String(await ${noAdapter})`),
+    };
+    const { stdout, exitCode } = await run(files);
+    expect(withoutMacroLog(stdout)).toBe("null\nprogram\ndone\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a macro waits while the program has yet to finish what another one left", async () => {
+    const files = {
+      "index.js": `
+        new PerformanceObserver(() => require("./second.js")).observe({ type: "mark" });
+        setImmediate(() => {
+          performance.mark("queues a task");
+          require("./first.js");
+        });`,
+      ...withMacro("first", `() => (${noAdapter}.then(() => console.log("left")), "first")`),
+      ...withMacro("second", `async () => (await ${noAdapter}, "second")`),
+    };
+    const { stdout, exitCode } = await run(files);
+    expect(withoutMacroLog(stdout).split("\n").sort()).toEqual(["", "first", "left", "second"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a macro waits for what another one left", async () => {
+    const files = {
+      "index.js": `
+        const { port1, port2 } = new MessageChannel();
+        port2.onmessage = () => (port2.close(), require("./second.js"));
+        setImmediate(() => {
+          require("./first.js");
+          port1.postMessage("posts a task");
+        });`,
+      ...withMacro("first", `() => ((globalThis.left = ${noAdapter}), "first")`),
+      ...withMacro("second", `async () => (await left, "second")`),
+    };
+    const { stdout, exitCode } = await run(files);
+    expect(withoutMacroLog(stdout)).toBe("first\nsecond\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("the program finishes what a macro left when node:vm ended it", async () => {
+    const files = {
+      "index.js": `
+        globalThis.load = () => require("./inlined.js");
+        try {
+          require("node:vm").runInThisContext("load()", { timeout: 1000 });
+        } catch {}
+        console.log(await globalThis.left);`,
+      ...withMacro(
+        "inlined",
+        `async () => {
+          const first = ${noAdapter};
+          globalThis.left = ${noAdapter};
+          await first;
+          for (;;);
+        }`,
+      ),
+    };
+    const { stdout, exitCode } = await run(files);
+    expect(withoutMacroLog(stdout)).toMatch(/^(null|undefined)\n$/);
+    expect(exitCode).toBe(0);
+  });
+
+  test("timers and immediates run while a macro waits for nothing else", async () => {
+    const files = withMacro(
+      "inlined",
+      `async () => {
+        let pending = 2;
+        setTimeout(() => pending--, 1);
+        setImmediate(() => pending--);
+        while (pending > 0) await ${noAdapter};
+        return "done";
+      }`,
+    );
+    const { stdout, exitCode } = await run({ "index.js": `require("./inlined.js");`, ...files });
+    expect(withoutMacroLog(stdout)).toBe("done\n");
+    expect(exitCode).toBe(0);
+  });
+});
 
 describe.skipIf(!hasAdapter).concurrent("the process", () => {
   test("ends while a device is idle", async () => {
@@ -160,6 +290,51 @@ describe.skipIf(!hasAdapter).concurrent("the process", () => {
       console.log(getEventLoopStats().iteration - before < 50);`;
     expect(await run({ "index.js": script })).toEqual(printed("true"));
   });
+
+  test.each([
+    ["mapAsync() before the next submit", "[early().mapAsync(GPUMapMode.READ), late()]"],
+    ["mapAsync() after the next submit", "[[early(), late()][0].mapAsync(GPUMapMode.READ)]"],
+    ["mapAsync() in a later task", "[[early(), late(), await new Promise(setImmediate)][0].mapAsync(GPUMapMode.READ)]"],
+    ["onSubmittedWorkDone()", "[(early(), device.queue.onSubmittedWorkDone()), late()]"],
+  ])("does not wait for what was submitted later: %s", async (_, start) => {
+    const script = `
+      const device = await requestDevice();
+      // A finalizer would look at the queue by chance.
+      const createBuffer = device.createBuffer.bind(device);
+      globalThis.buffers = [];
+      device.createBuffer = descriptor => buffers[buffers.push(createBuffer(descriptor)) - 1];
+      await keepBusy(device).mapAsync(GPUMapMode.READ);
+      // More each time, as the GPU may finish all of it before this thread gets to run.
+      for (let workgroups = 1000; workgroups <= 64000; workgroups *= 4) {
+        const [early, late] = [prepare(device, 400), prepare(device, workgroups)];
+        const [first] = ${start};
+        const last = device.queue.onSubmittedWorkDone();
+        await first;
+        await new Promise(setImmediate);
+        console.log(Bun.peek.status(last));
+        if (Bun.peek.status(last) === "pending") break;
+      }`;
+    const { stdout, stderr, exitCode } = await run({ "index.js": script });
+    expect(stdout).toEndWith("pending\n");
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  });
+
+  test("destroys a device even if node:vm ends the script meanwhile", async () => {
+    const script = `
+      const buffer = (device, usage, mappedAtCreation) => device.createBuffer({ size: 4, usage, mappedAtCreation });
+      for (let timeout = 1; timeout <= 4; timeout++) {
+        const device = await requestDevice();
+        const pending = Array.from({ length: 2000 }, () => buffer(device, GPUBufferUsage.MAP_READ).mapAsync(GPUMapMode.READ));
+        const range = buffer(device, GPUBufferUsage.COPY_SRC, true).getMappedRange();
+        try {
+          require("node:vm").runInNewContext("device.destroy()", { device }, { timeout });
+        } catch {}
+        device.destroy();
+        const results = await Promise.allSettled(pending);
+        console.log(range.byteLength, [...new Set(results.map(result => result.reason.name))].join());
+      }`;
+    expect(await run({ "index.js": script })).toEqual(printed(Array(4).fill("0 AbortError").join("\n")));
+  });
 });
 
 describe.skipIf(!hasAdapter).concurrent("the garbage collector", () => {
@@ -178,6 +353,40 @@ describe.skipIf(!hasAdapter).concurrent("the garbage collector", () => {
         "undefined,undefined,[object GPUComputePipeline],[object GPUComputePipeline],[object GPUCompilationInfo],null,[object GPUAdapter]",
       ),
     );
+  });
+
+  test("does not make the process miss the end of what it waits for", async () => {
+    const script = `
+      const device = await requestDevice();
+      for (let i = 0; i < 8; i++) {
+        const mapped = keepBusy(device, 600).mapAsync(GPUMapMode.READ);
+        await new Promise(setImmediate);
+        await new Promise(setImmediate);
+        // Its finalizers run when the event loop is about to sleep.
+        Bun.gc(false);
+        await mapped;
+      }
+      console.log("done");`;
+    const env = { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" };
+    expect(await run({ "index.js": script }, undefined, env)).toEqual(printed("done"));
+  });
+
+  test.skipIf(!isLinux)("does not wait for the GPU to destroy a device", async () => {
+    const script = `
+      let outlived = false;
+      // More each time, as the GPU may be done by then.
+      for (let workgroups = 1000; workgroups <= 64000 && !outlived; workgroups *= 4) {
+        await requestDevice().then(device => void keepBusy(device, workgroups));
+        await new Promise(setImmediate);
+        Bun.gc(true);
+        outlived = countWatchers() > 0;
+      }
+      while (countWatchers() > 0) {
+        await new Promise(setImmediate);
+        Bun.gc(true);
+      }
+      console.log(outlived);`;
+    expect(await run({ "index.js": script })).toEqual(printed("true"));
   });
 
   test("leaves the listeners of a device while something can report an error to it", async () => {
@@ -285,6 +494,63 @@ describe.skipIf(!hasAdapter).concurrent("a worker", () => {
   ])("%s", async (_, inWorker, onMessage) => {
     expect(await run(withBusyWorker(inWorker, onMessage))).toEqual(printed("closed"));
   });
+
+  test.skipIf(!isLinux)("leaves nothing of a device that it uses after its Bun.ModuleGraph is disposed", async () => {
+    const files = {
+      "index.js": `
+        const count = () => require("node:fs").readdirSync("/proc/self/fd").length;
+        const runWorker = () => new Promise(resolve => new Worker("./worker.js").addEventListener("close", resolve));
+        await runWorker();
+        const before = count();
+        for (let i = 0; i < 4; i++) await runWorker();
+        console.log(count() - before);`,
+      "worker.js": `
+        const graph = new Bun.ModuleGraph();
+        const { queue } = (await graph.import(import.meta.dir + "/device.js")).device;
+        graph.dispose();
+        await new Promise(setImmediate);
+        queue.submit([]);
+        process.exit(0);`,
+      "device.js": `export const device = await requestDevice();`,
+    };
+    expect(await run(files)).toEqual(printed("0"));
+  });
+
+  // See test/js/web/workers/worker-late-completion.test.ts.
+  test.skipIf(!isDebug && !isASAN)("is woken while it is torn down", async () => {
+    using dir = withHelpers({
+      "index.js": `
+        // An import would wait at the gate.
+        const worker = new (require("node:worker_threads").Worker)(\`
+          const { compile, requestDevice } = require("./helpers.js");
+          requestDevice().then(async device => {
+            // One that is done before the worker first looks needs no wake.
+            for (let seed = 0, pipeline; Bun.peek.status(pipeline) !== "pending"; seed++) {
+              pipeline = compile(device, seed);
+              await new Promise(setImmediate);
+            }
+            process.exit(0);
+          });\`, { eval: true });
+        await Promise.all([new Promise(resolve => worker.on("exit", resolve)), Bun.stdin.text()]);
+        console.log("closed");`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE: "1" },
+      stdin: "pipe",
+      stderr: "pipe",
+    });
+    const latePost = "[vm] late post: WebGpuProcessEvents (";
+    let stderr = "";
+    for await (const chunk of proc.stderr) {
+      stderr += Buffer.from(chunk).toString();
+      if (stderr.includes(latePost)) proc.stdin.end();
+    }
+    expect(stderr).toContain(latePost);
+    expect(await proc.stdout.text()).toBe("closed\n");
+    expect(await proc.exited).toBe(0);
+  });
 });
 
 describe.skipIf(!hasAdapter).concurrent("what can compile a shader", () => {
@@ -373,14 +639,98 @@ describe.skipIf(!hasAdapter).concurrent("other contexts", () => {
         const outer = keepBusy(await requestDevice()).mapAsync(GPUMapMode.READ);
         require("./inlined.js");
         console.log(await outer);`,
-      "inlined.js": `
-        import { macro } from "./macro.js" with { type: "macro" };
-        console.log(macro());`,
-      "macro.js": `export const macro = async () => (await Promise.all(startEverything(await requestDevice()))).length;`,
+      ...withMacro("inlined", `async () => (await Promise.all(startEverything(await requestDevice()))).length`),
     };
     const { stdout, exitCode } = await run(files);
-    // A debug build prints "[macro] call macro" first.
-    expect(stdout).toEndWith("7\nundefined\n");
+    expect(withoutMacroLog(stdout)).toBe("7\nundefined\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a macro waits after another one left the GPU busy", async () => {
+    const files = {
+      "index.js": `
+        require("./first.js");
+        await globalThis.left;
+        require("./second.js");`,
+      ...withMacro(
+        "first",
+        `async () => {
+          const device = await requestDevice();
+          globalThis.left = keepBusy(device, 2000).mapAsync(GPUMapMode.READ);
+          await new Promise(setImmediate);
+          await new Promise(setImmediate);
+          return "first";
+        }`,
+      ),
+      ...withMacro("second", `async () => (await requestDevice(), "second")`),
+    };
+    const { stdout, exitCode } = await run(files);
+    expect(withoutMacroLog(stdout)).toBe("first\nsecond\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a macro hears what it makes a device of the program report", async () => {
+    const files = {
+      "index.js": `
+        globalThis.device = await requestDevice();
+        device.onuncapturederror = event => (event.preventDefault(), console.log(event.error.message.match(/""(.*)""/)[1]));
+        require("./inlined.js");`,
+      ...withMacro(
+        "inlined",
+        `async () => {
+          for (const label of ["one", "two"]) {
+            device.createBuffer({ label, size: 4, usage: 0 });
+            await device.queue.onSubmittedWorkDone();
+          }
+          device.destroy();
+          return (await device.lost).reason;
+        }`,
+      ),
+    };
+    const { stdout, exitCode } = await run(files);
+    expect(withoutMacroLog(stdout)).toBe("one\ntwo\ndestroyed\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a macro does not hear what the program makes a device of another macro report", async () => {
+    const files = {
+      "index.js": `
+        require("./first.js");
+        device.onuncapturederror = event => (event.preventDefault(), console.log(event.error.message.match(/""(.*)""/)[1]));
+        for (const label of ["one", "two"]) {
+          device.createBuffer({ label, size: 4, usage: 0 });
+          require("./" + label + ".js");
+        }`,
+      ...withMacro("first", `async () => ((globalThis.device = await requestDevice()), "first")`),
+      ...withMacro("one", `async () => (await device.queue.onSubmittedWorkDone(), "second")`),
+      ...withMacro("two", `async () => (await device.queue.onSubmittedWorkDone(), "third")`),
+    };
+    const { stdout, exitCode } = await run(files);
+    expect(withoutMacroLog(stdout)).toBe("first\nsecond\nthird\none\ntwo\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a macro of Bun.build(), which has a thread of the bundler", async () => {
+    const files = {
+      "index.js": `
+        for (let i = 0; i < 2; i++) {
+          const { outputs } = await Bun.build({ entrypoints: ["./inlined.js"], target: "bun" });
+          console.log((await outputs[0].text()).includes("console.log(7)"));
+        }
+        while (process.platform === "linux" && countWatchers() > 0) await new Promise(setImmediate);`,
+      ...withMacro(
+        "inlined",
+        `async () => {
+          const device = await requestDevice();
+          const { length } = await Promise.all(startEverything(device));
+          globalThis.range = undefined;
+          keepBusy(device);
+          return length;
+        }`,
+      ),
+    };
+    const { stdout, exitCode } = await run(files);
+    expect(withoutMacroLog(stdout)).toBe("true\ntrue\n");
     expect(exitCode).toBe(0);
   });
 
@@ -410,14 +760,19 @@ describe.skipIf(!hasAdapter)("the process ends while a pipeline compiles", () =>
   });
 
   test("for a file of bun test --isolate, which drops what that leaves under way", async () => {
-    const file = `
+    const file = (name: string) => `
       import { test } from "bun:test";
+      console.log("load ${name}");
       test("starts", async () => {
         const device = await requestDevice();
-        for (const promise of [device.lost, ...startEverything(device).slice(0, 4)]) promise.finally(() => console.log("settled"));
+        device.lost.then(() => console.log("lost"));
+        keepBusy(device, 1000);
+        for (const promise of startEverything(device).slice(0, 4)) promise.then(() => console.log("${name}"), () => console.log("aborted"));
       });`;
-    const { stdout, stderr, exitCode } = await run({ "a.test.js": file, "b.test.js": file }, ["test", "--isolate"]);
-    expect(stdout).not.toContain("settled");
+    const files = { "a.test.js": file("a"), "b.test.js": file("b") };
+    const { stdout, stderr, exitCode } = await run(files, ["test", "--isolate"]);
+    // What is done before the file ends is fulfilled.
+    expect(stdout).toMatch(/\nload (a|b)\n(\1\n){0,4}load (a|b)\n(\3\n){0,4}$/);
     expect(stderr).toContain(" 2 pass");
     expect(exitCode).toBe(0);
   });

@@ -4,18 +4,19 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
+use bun_collections::ArrayHashMap;
 use bun_collections::smallvec::SmallVec;
 use bun_core::String;
 use bun_dawn_sys::{
     self as dawn, AllLimits, Chain, DeviceLostReason, ErrorType, FeatureName, Host as _,
-    LoggingType, OwnedAdapter, OwnedDevice,
+    LoggingType, OwnedAdapter, OwnedDevice, Serial, Wake,
 };
 use bun_jsc::bindgen::{Error, EventBase, JsHeap, JsPayload as _, JsScope, JsWrapper, Result};
 use bun_jsc::console_object::{self, MessageLevel, MessageType};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     AbortCause, AbortHandle, DOMExceptionCode, JSGlobalObject, JSPromise, JSValue, JsCell,
-    JsClass as _, JsError, JsResult, StopReason, Strong,
+    JsClass as _, JsError, JsResult, LoopKind, StopReason, Strong,
 };
 use bun_threading::Guarded;
 
@@ -53,7 +54,8 @@ enum Event {
 }
 
 struct Events {
-    queue: Guarded<Vec<Event>>,
+    /// With the loop of the script that caused it, if one did.
+    queue: Guarded<Vec<(Event, Option<LoopKind>)>>,
     host: Arc<Host>,
     /// Only the JS thread follows it. Null while nobody is there to tell.
     device: AtomicPtr<Device>,
@@ -61,14 +63,14 @@ struct Events {
 
 impl Events {
     fn push(&self, event: Event) {
-        self.queue.lock().push(event);
         if !self.host.is_js_thread() {
+            self.queue.lock().push((event, None));
             return self.host.wake();
         }
         // SAFETY: a device clears this before it is dropped, on this thread.
-        if let Some(device) = unsafe { self.device.load(Ordering::Relaxed).as_ref() } {
-            device.stay_alive_for_events();
-        }
+        let device = unsafe { self.device.load(Ordering::SeqCst).as_ref() };
+        let loop_kind = device.map(Device::stay_alive_for_events);
+        self.queue.lock().push((event, loop_kind));
     }
 }
 
@@ -100,7 +102,9 @@ pub(crate) struct Device {
     /// From an event to the next `complete_events`.
     pending_events: RefCell<Option<(Strong, Operation)>>,
     mapped_buffers: RefCell<Vec<Weak<Buffer>>>,
-    waits_for_queue: Cell<u32>,
+    /// By the id of a [`QueueWait`].
+    queue_waits: RefCell<ArrayHashMap<u32, Serial>>,
+    last_queue_wait: Cell<u32>,
     warnings: Cell<u32>,
     queue_label: String,
     abort_handle: AbortHandle,
@@ -136,18 +140,21 @@ bun_jsc::impl_abort_handle_owner!(
 impl Drop for Device {
     fn drop(&mut self) {
         self.stop_events();
+        self.instance.retire_device(&self.dawn);
     }
 }
 
 /// An operation that ends when the GPU has come to it.
-pub(super) struct QueueWait(Rc<Device>);
+pub(super) struct QueueWait {
+    device: Rc<Device>,
+    id: u32,
+}
 
 impl QueueWait {
     /// The device is not to be dropped while Dawn calls back.
     pub(super) fn finish(self) -> Rc<Device> {
-        let waits = &self.0.waits_for_queue;
-        waits.set(waits.get() - 1);
-        self.0
+        self.device.queue_waits.borrow_mut().swap_remove(&self.id);
+        self.device
     }
 }
 
@@ -167,14 +174,22 @@ impl Device {
         ))
     }
 
-    pub(super) fn wait_for_queue(self: &Rc<Self>) -> QueueWait {
-        self.waits_for_queue.set(self.waits_for_queue.get() + 1);
-        QueueWait(Rc::clone(self))
+    /// `start` hands the wait to Dawn, and returns what that waits for.
+    pub(super) fn wait_for_queue(self: &Rc<Self>, start: impl FnOnce(QueueWait) -> Serial) {
+        let id = self.last_queue_wait.get().wrapping_add(1);
+        self.last_queue_wait.set(id);
+        let device = Rc::clone(self);
+        let serial = start(QueueWait { device, id });
+        self.queue_waits.borrow_mut().insert(id, serial);
     }
 
-    /// Whether something waits for the queue and no wake is to come.
-    pub(super) fn has_to_be_polled(&self) -> bool {
-        !self.dawn.wake_after_submitted_work() && self.waits_for_queue.get() > 0
+    pub(super) fn watch_queue(&self) {
+        let first = self.queue_waits.borrow().values().iter().min().copied();
+        match self.dawn.wake_after(first) {
+            Wake::Follows => {}
+            Wake::None if first.is_none() => {}
+            Wake::None | Wake::Missed => self.instance.schedule(),
+        }
     }
 
     pub(super) fn add_mapped_buffer(&self, buffer: &Rc<Buffer>) {
@@ -201,36 +216,40 @@ impl Device {
             .inspect(|buffer| buffer.is_listed_by_device.set(false))
     }
 
-    fn stay_alive_for_events(&self) {
+    /// Returns the loop that is going to look at them.
+    fn stay_alive_for_events(&self) -> LoopKind {
+        let loop_kind = VirtualMachine::get().current_loop_kind();
         let mut pending = self.pending_events.borrow_mut();
-        if pending.is_none()
+        if (pending.as_ref()).is_none_or(|(_, operation)| operation.loop_kind() != loop_kind)
             && let Some(wrapper) = self.wrapper.get().get()
         {
             *pending = Some((
                 Strong::create(wrapper, &self.origin.global),
-                Operation::new(&self.instance, self.origin),
+                Operation::new(&self.instance, self.origin.on(loop_kind)),
             ));
         }
+        loop_kind
     }
 
     fn stop_events(&self) {
-        (self.events.device).store(ptr::null_mut(), Ordering::Relaxed);
+        (self.events.device).store(ptr::null_mut(), Ordering::SeqCst);
         self.pending_events.take();
     }
 
     pub(super) fn complete_events(self: &Rc<Self>) {
         let _pending = self.pending_events.take();
         let events = core::mem::take(&mut *self.events.queue.lock());
-        if events.is_empty() || self.events.device.load(Ordering::Relaxed).is_null() {
+        if events.is_empty() || self.events.device.load(Ordering::SeqCst).is_null() {
             return;
         }
         let Some(wrapper) = self.wrapper.get().get() else {
             return;
         };
-        for event in events {
+        for (event, loop_kind) in events {
             let device = Rc::clone(self);
             let wrapper = Strong::create(wrapper, &self.origin.global);
-            Operation::new(&self.instance, self.origin)
+            let origin = loop_kind.map_or(self.origin, |kind| self.origin.on(kind));
+            Operation::new(&self.instance, origin)
                 .complete(move |global| device.deliver(global, wrapper.get(), event));
         }
     }
@@ -350,7 +369,8 @@ impl GPUDevice {
             wrapper: JsCell::default(),
             pending_events: RefCell::default(),
             mapped_buffers: RefCell::default(),
-            waits_for_queue: Cell::new(0),
+            queue_waits: RefCell::default(),
+            last_queue_wait: Cell::new(0),
             warnings: Cell::new(0),
             queue_label: descriptor.default_queue.label.clone(),
             abort_handle: AbortHandle::for_owner::<Device>(),
@@ -358,7 +378,7 @@ impl GPUDevice {
         instance.add_device(&device);
 
         let address = Rc::as_ptr(&device).cast_mut();
-        device.events.device.store(address, Ordering::Relaxed);
+        device.events.device.store(address, Ordering::SeqCst);
         device.abort_handle.set_only_waits_to_be_closed();
         // SAFETY: what an `Rc` holds does not move, and dropping the handle disarms it.
         unsafe { AbortHandle::arm_owner(address, cx.js_thread().context()) };
@@ -410,12 +430,16 @@ impl GPUDevice {
 
     pub(crate) fn destroy<'a>(&self, cx: &mut JsScope<'a>) -> Result<'a, ()> {
         let device = &self.state;
+        let mut result = Ok(());
         for buffer in device.take_mapped_buffers() {
-            buffer.unmap_for_destroyed_device(cx.global())?;
+            match result {
+                Ok(()) => result = buffer.unmap_for_destroyed_device(cx.global()),
+                Err(_) => buffer.detach_views(cx.global().vm()),
+            }
         }
         device.dawn.destroy();
         device.instance.schedule();
-        Ok(())
+        Ok(result?)
     }
 
     pub(crate) fn create_buffer<'a>(

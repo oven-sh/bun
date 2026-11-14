@@ -38,10 +38,10 @@ private:
     }
 
     // A wait ends with its first callback. The one that this replaces may have reset the event for the last time.
-    bool resume() override
+    bool resume(ExecutionSerial serial) override
     {
         SetThreadpoolWait(m_wait, m_event, nullptr);
-        return fence()->GetCompletedValue() < static_cast<uint64_t>(m_device->GetQueue()->GetLastSubmittedCommandSerial());
+        return fence()->GetCompletedValue() < static_cast<uint64_t>(serial);
     }
 
     void stop() override

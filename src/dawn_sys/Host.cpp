@@ -37,22 +37,29 @@ std::unique_ptr<dawn::platform::WorkerTaskPool> Host::CreateWorkerTaskPool()
     return std::make_unique<WorkerTaskPool>(this);
 }
 
-bool QueueWatcher::arm()
+Wake QueueWatcher::arm(ExecutionSerial serial)
 {
-    if (m_device->IsLost())
-        return false;
-
     QueueBase* queue = m_device->GetQueue();
     ExecutionSerial submitted = queue->GetLastSubmittedCommandSerial();
-    if (submitted <= queue->GetCompletedCommandSerial())
-        return false;
+    ExecutionSerial completed = queue->GetCompletedCommandSerial();
 
-    if (submitted > m_armedSerial) {
-        if (!wakeAfter(submitted))
-            return false;
-        m_armedSerial = submitted;
+    // Another thread found the device lost, and the next tick reports it.
+    DeviceBase::State state = m_device->GetState();
+    if (state == DeviceBase::State::Disconnecting)
+        return Wake::Missed;
+    if (state != DeviceBase::State::Alive || submitted <= completed)
+        return Wake::None;
+
+    serial = std::min(serial, submitted);
+    if (serial <= completed)
+        return Wake::Missed;
+
+    if (serial != m_armedSerial) {
+        if (!wakeAfter(serial))
+            return Wake::None;
+        m_armedSerial = serial;
     }
-    return resume();
+    return resume(serial) ? Wake::Follows : Wake::Missed;
 }
 
 extern "C" WGPUInstance BunDawn__createInstance(const BunDawnHost* descriptor)
@@ -143,9 +150,19 @@ extern "C" QueueWatcher* BunDawn__createQueueWatcher(WGPUDevice device)
     return QueueWatcher::create(FromAPI(device)).release();
 }
 
-extern "C" bool BunDawn__armQueueWatcher(QueueWatcher* watcher)
+extern "C" Wake BunDawn__armQueueWatcher(QueueWatcher* watcher, uint64_t serial)
 {
-    return watcher->arm();
+    return watcher->arm(ExecutionSerial(serial));
+}
+
+extern "C" uint64_t BunDawn__serialOfLastUse(WGPUBuffer buffer)
+{
+    return static_cast<uint64_t>(FromAPI(buffer)->GetLastUsageSerial());
+}
+
+extern "C" uint64_t BunDawn__serialOfScheduledWork(WGPUQueue queue)
+{
+    return static_cast<uint64_t>(FromAPI(queue)->GetScheduledWorkDoneSerial());
 }
 
 extern "C" void BunDawn__destroyDevice(WGPUDevice device, QueueWatcher* watcher)

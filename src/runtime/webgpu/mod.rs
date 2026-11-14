@@ -27,7 +27,7 @@ pub(crate) use encoder::{
     GPUCommandEncoder, GPUComputePassEncoder, GPURenderBundleEncoder, GPURenderPassEncoder,
 };
 pub(crate) use error::{GPUDeviceLostInfo, GPUError, GPUPipelineError, GPUUncapturedErrorEvent};
-pub(crate) use instance::Host;
+pub(crate) use instance::{Host, Instance};
 pub(crate) use pipeline::{
     GPUCompilationInfo, GPUCompilationMessage, GPUComputePipeline, GPURenderPipeline,
     GPUShaderModule,

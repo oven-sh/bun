@@ -1,10 +1,8 @@
 #include "Host.h"
 
 #include <condition_variable>
-#include <deque>
 #include <mutex>
 #include <pthread.h>
-#include <vector>
 
 #include "src/dawn/native/vulkan/DeviceVk.h"
 #include "src/dawn/native/vulkan/QueueVk.h"
@@ -13,7 +11,7 @@ namespace Bun::Dawn {
 
 using namespace dawn::native;
 
-// A submit without commands signals its fence once everything before it has finished. A thread waits for the fences.
+// A thread waits for one submit after the other, so that it can be asked for an earlier serial meanwhile.
 class QueueWatcherVulkan final : public QueueWatcher {
 public:
     explicit QueueWatcherVulkan(DeviceBase* device)
@@ -22,9 +20,7 @@ public:
     }
 
 private:
-    vulkan::Device* device() const { return vulkan::ToBackend(m_device); }
-
-    bool wakeAfter(ExecutionSerial) override
+    bool wakeAfter(ExecutionSerial serial) override
     {
         if (!m_hasThread) {
             auto run = [](void* watcher) -> void* {
@@ -36,73 +32,44 @@ private:
             m_hasThread = true;
         }
 
-        vulkan::VkFence fence = takeUnusedFence();
-        if (fence == VK_NULL_HANDLE)
-            return false;
-
-        VkQueue queue = vulkan::ToBackend(m_device->GetQueue())->GetVkQueue();
-        bool submitted = device()->fn.QueueSubmit(queue, 0, nullptr, fence) == VK_SUCCESS;
-
         std::lock_guard lock(m_mutex);
-        if (submitted) {
-            m_pending.push_back(fence);
-            m_changed.notify_one();
-        } else
-            m_signaled.push_back(fence);
-        return submitted;
+        m_wanted = serial;
+        m_changed.notify_one();
+        return true;
     }
 
-    // Nothing orders our fence after the one Dawn polls.
-    bool resume() override
+    bool resume(ExecutionSerial serial) override
     {
         std::lock_guard lock(m_mutex);
-        return !m_pending.empty();
-    }
-
-    vulkan::VkFence takeUnusedFence()
-    {
-        vulkan::VkFence fence = VK_NULL_HANDLE;
-        {
-            std::lock_guard lock(m_mutex);
-            if (!m_signaled.empty()) {
-                fence = m_signaled.back();
-                m_signaled.pop_back();
-            }
-        }
-        if (fence != VK_NULL_HANDLE) {
-            if (device()->fn.ResetFences(device()->GetVkDevice(), 1, &*fence) == VK_SUCCESS)
-                return fence;
-            device()->fn.DestroyFence(device()->GetVkDevice(), fence, nullptr);
-        }
-
-        VkFenceCreateInfo createInfo {};
-        createInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-        if (device()->fn.CreateFence(device()->GetVkDevice(), &createInfo, nullptr, &*fence) != VK_SUCCESS)
-            return VK_NULL_HANDLE;
-        return fence;
+        return serial > m_passed;
     }
 
     void run()
     {
         pthread_setname_np(pthread_self(), "GPUQueue");
 
+        vulkan::Device* device = vulkan::ToBackend(m_device);
+        vulkan::Queue* queue = vulkan::ToBackend(device->GetQueue());
+
         std::unique_lock lock(m_mutex);
         while (true) {
-            m_changed.wait(lock, [&] { return m_stopping || !m_pending.empty(); });
-            if (m_pending.empty())
+            m_changed.wait(lock, [&] { return m_stopping || m_wanted > m_passed; });
+            if (m_stopping)
                 return;
 
-            vulkan::VkFence fence = m_pending.front();
             lock.unlock();
+            auto [fence, serial] = queue->LendFenceAfter(m_passed);
             // A signal can end the wait early. An error means that the device is lost, which Dawn finds out when woken.
-            while (device()->fn.WaitForFences(device()->GetVkDevice(), 1, &*fence, true, UINT64_MAX) == VK_TIMEOUT) {
+            while (fence != VK_NULL_HANDLE && device->fn.WaitForFences(device->GetVkDevice(), 1, &*fence, true, UINT64_MAX) == VK_TIMEOUT) {
             }
             lock.lock();
-            m_pending.pop_front();
-            m_signaled.push_back(fence);
-            lock.unlock();
-            m_host->wake();
-            lock.lock();
+
+            m_passed = serial;
+            if (m_wanted <= m_passed) {
+                lock.unlock();
+                m_host->wake();
+                lock.lock();
+            }
         }
     }
 
@@ -116,8 +83,6 @@ private:
             m_changed.notify_one();
         }
         pthread_join(m_thread, nullptr);
-        for (vulkan::VkFence fence : m_signaled)
-            device()->fn.DestroyFence(device()->GetVkDevice(), fence, nullptr);
     }
 
     pthread_t m_thread;
@@ -125,8 +90,9 @@ private:
 
     std::mutex m_mutex;
     std::condition_variable m_changed;
-    std::deque<vulkan::VkFence> m_pending;
-    std::vector<vulkan::VkFence> m_signaled;
+    ExecutionSerial m_wanted { kBeginningOfGPUTime };
+    // Only the thread writes it.
+    ExecutionSerial m_passed { kBeginningOfGPUTime };
     bool m_stopping { false };
 };
 

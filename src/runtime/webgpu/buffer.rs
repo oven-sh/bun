@@ -325,14 +325,16 @@ impl GPUBuffer {
             range: offset..offset + size,
         };
         let operation = Operation::new(&device.instance, Origin::of_caller(cx));
-        let wait = device.wait_for_queue();
-        let callback = dawn::BufferMapCallbackInfo::new(move |status, message| {
-            wait.finish();
-            let message = message.as_bytes().to_vec();
-            operation.complete(move |global| request.complete(global, status, &message));
+        device.wait_for_queue(|wait| {
+            let callback = dawn::BufferMapCallbackInfo::new(move |status, message| {
+                wait.finish();
+                let message = message.as_bytes().to_vec();
+                operation.complete(move |global| request.complete(global, status, &message));
+            });
+            let mode = dawn::MapMode::from_bits(mode);
+            (self.handle).map_async(mode, offset as usize, size as usize, callback);
+            self.handle.serial_of_last_use()
         });
-        let mode = dawn::MapMode::from_bits(mode);
-        (self.handle).map_async(mode, offset as usize, size as usize, callback);
         Ok(result)
     }
 

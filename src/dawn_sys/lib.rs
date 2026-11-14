@@ -9,7 +9,8 @@ mod host;
 
 pub use generated::*;
 pub use host::{
-    DeviceEvents, DeviceOptions, Host, OwnedAdapter, OwnedDevice, OwnedInstance, WorkerTask,
+    DeviceEvents, DeviceOptions, Host, OwnedAdapter, OwnedDevice, OwnedInstance, Serial, Wake,
+    WorkerTask,
 };
 
 pub type Ref<T> = bun_core::ExternalShared<T>;

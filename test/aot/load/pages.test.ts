@@ -97,7 +97,8 @@ console.log(names.length > 0 && new Set(names).size === names.length);
 };
 const TWO_PAGES_OUTPUT = "css file html js true true\ncss file html js true true\ntrue true\ntrue\n";
 
-async function expectInBothModes(command: Command, files: Files, output: string) {
+/** `warning`: what each build says on stderr. */
+async function expectInBothModes(command: Command, files: Files, output: string, warning = "") {
   using dir = tempDir("aot-pages", { ...sharedFiles, ...files });
   const folder = String(dir);
   for (const mode of MODES) {
@@ -106,7 +107,7 @@ async function expectInBothModes(command: Command, files: Files, output: string)
     expect({ mode, ...built }).toEqual({
       mode,
       stdout: expect.any(String),
-      stderr: expect.any(String),
+      stderr: expect.stringContaining(warning),
       exitCode: 0,
       signal: null,
     });
@@ -118,6 +119,20 @@ async function expectInBothModes(command: Command, files: Files, output: string)
 const twoPagesBuilds: [name: string, flags: string[]][] = [
   ["two pages share a stylesheet and an image, one page imported twice", []],
   ["two pages with source maps", ["--sourcemap=external"]],
+];
+
+const servedPages: [name: string, script: string, files: Files, warning: string][] = [
+  ["served page", 'document.title = "script of a";\n', {}, ""],
+  // Two composed classes of different files set one property. That is a warning, which stops neither build.
+  [
+    "served page whose CSS module has a composes conflict",
+    '// @ts-ignore\nimport styles from "./a.module.css";\ndocument.title = styles.foo;\n',
+    {
+      "a.module.css": '.foo { composes: bar from "./b.module.css"; color: red }\n',
+      "b.module.css": ".bar { color: blue }\n",
+    },
+    "warn: The value of color in the class foo is undefined.",
+  ],
 ];
 
 const failures: [name: string, script: string, files: Files, message: RegExp][] = [
@@ -132,15 +147,16 @@ describe.concurrent("compile/aot/load/pages", () => {
     600_000,
   );
 
-  test(
-    "served page",
-    () =>
+  test.each(servedPages)(
+    "%s",
+    (_, script, files, warning) =>
       slot(() =>
         expectInBothModes(
           commandLine(),
           {
+            ...files,
             "a.html": page("A", "a.ts"),
-            "a.ts": 'document.title = "script of a";\n',
+            "a.ts": script,
             "main.ts":
               importPage("a") +
               `declare const Bun: any;
@@ -150,6 +166,7 @@ server.stop(true);
 `,
           },
           "true\n",
+          warning,
         ),
       ),
     600_000,

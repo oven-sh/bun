@@ -693,7 +693,9 @@ describe("bundler", () => {
     },
     entryPoints: ["/entry.js"],
     outdir: "/out",
-    bundleWarnings: true,
+    bundleWarnings: {
+      "/styles.module.css": ["The value of color in the class button is undefined."],
+    },
     onAfterBundle(api) {
       // Check that the output files were generated correctly
       api.expectFile("/out/entry.js").toMatchSnapshot();

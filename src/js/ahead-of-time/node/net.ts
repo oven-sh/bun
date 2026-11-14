@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 2154fd428ebaeca19060f01766cdd79e24a169b401a0247afbd6e8b8f6edc7f7.
+// Written against that file with the SHA-256 f5fec8334354ae806aa54476c27629a37db0f82cef6cc100d439c4ab2e65306d.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -876,6 +876,7 @@ function linkUpgraded(self: $Node.TLSSocket, connection: $Node.Socket) {
   destroyWhenUpgradedCloses(self, connection);
   connection.on("error", onUpgradedError.bind(null, self));
   self.connecting = isSocket && (connection.connecting || !connection._handle);
+  if (self[kReportsThrows] && isSocket && !connection[kReportsThrows]) reportThrowsUnder(connection);
 }
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L964-L973
 function onUpgradedConnect(self: $Node.Socket, connection: $Node.Socket) {
@@ -884,8 +885,8 @@ function onUpgradedConnect(self: $Node.Socket, connection: $Node.Socket) {
   try {
     self.emit("connect");
   } catch (e) {
-    // Under the handlers of `connection`: they would give the throw to its 'error', which onUpgradedError passes on to this socket.
-    if (!self[kReportsThrows]) throw e;
+    // Under the handlers of `connection`. Unless they report, they give the throw to its 'error', which onUpgradedError passes on to this socket.
+    if (!self[kReportsThrows] || connection[kReportsThrows]) throw e;
     reportError(e);
   }
 }
@@ -1025,6 +1026,20 @@ function reportingHandlers<Handlers extends object>(handlers: Handlers): Handler
     if ($isCallable(handlers[name])) wrapped[name] = reportingHandler(handlers[name]);
   }
   return wrapped;
+}
+// onUpgradedError gives the 'error' of the socket under a TLS socket to the TLS socket, where the listener that addAbortSignal() added takes it.
+function reportThrowsUnder(connection: $Node.Socket) {
+  const handle = connection._handle;
+  const data = handle?.data;
+  // Only a handle that its socket dialed has the table of that socket, and `{ self }` for data. An accepted one has its listener's.
+  if (connection.isServer || (data != null && (data as ConnectData).self !== connection)) return;
+  const handlers = connection[khandlers];
+  connection[khandlers] =
+    handlers === SocketHandlers2
+      ? (signalHandlers ??= reportingHandlers(SocketHandlers2))
+      : reportingHandlers(handlers);
+  connection[kReportsThrows] = true;
+  if (data != null) handle!.reload({ socket: connection[khandlers] });
 }
 // in node's code this callback is called 'onReadableStreamEnd' but that seemed confusing when `ReadableStream`s now exist
 function onSocketEnd(this: $Node.Socket) {
@@ -4133,12 +4148,13 @@ function afterConnect(
       connectListenersRan = true;
       self.emit("ready");
     } catch (e) {
+      if (!self[kReportsThrows]) throw e;
       // Node has not started to read, and so does not hold the loop. Its TLS socket starts from a 'connect' listener:
       // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/tls/wrap.js#L598-L616
-      if (self[kReportsThrows] && !self._readableState.reading && !(self.encrypted && connectListenersRan)) {
-        readStop(self, self._handle);
-      }
-      throw e;
+      if (!self._readableState.reading && !(self.encrypted && connectListenersRan)) readStop(self, self._handle);
+      // A listener can have put a TLS socket made with a `signal` over this one. The handler that called this does not report then.
+      reportError(e);
+      return;
     }
 
     if (self[kPerfHooksNetConnectContext] && hasObserver("net")) {

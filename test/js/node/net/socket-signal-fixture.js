@@ -285,6 +285,45 @@ const groups = {
       await new Promise(resolve => server.close(resolve));
     }
   },
+  // The socket under the TLS socket is the caller's, made without a signal. Its 'error' goes on to the TLS socket.
+  // Each row arms `thrower` on the socket under the TLS socket.
+  async "a listener that throws on the socket under a TLS socket"() {
+    const cert = JSON.parse(process.env.TLS_FIXTURE);
+    const rows = {
+      "the socket under a TLS socket: a 'connect' listener": (under, thrower) => under.once("connect", thrower),
+      "the socket under a TLS socket: a 'ready' listener": (under, thrower) => under.once("ready", thrower),
+      "the socket under a TLS socket: the callback of a write before the connection": (under, thrower) =>
+        under.write("", thrower),
+      "the socket under a TLS socket: the listener that makes the TLS socket": undefined,
+    };
+    for (const [name, arm] of Object.entries(rows)) {
+      const server = tls.createServer(cert, connection => connection.on("error", () => {}).resume());
+      await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+      const under = net.connect({ host: "127.0.0.1", port: server.address().port });
+      const over = () =>
+        tls.connect({ socket: under, ca: cert.cert, servername: "localhost", signal: new AbortController().signal });
+      let socket;
+      await new Promise(resolve => {
+        const thrower = () => {
+          // Two turns of the event loop are past every tick that can report the throw.
+          setImmediate(() => setImmediate(resolve));
+          throw new Error(name);
+        };
+        if (arm) {
+          socket = over().resume();
+          arm(under, thrower);
+        } else {
+          under.once("connect", () => {
+            socket = over().resume();
+            thrower();
+          });
+        }
+      });
+      console.log(`${name}: ${socket.destroyed || under.destroyed ? "destroyed" : "open"}`);
+      socket.destroy();
+      await new Promise(resolve => server.close(resolve));
+    }
+  },
   // new tls.TLSSocket(socket, { isServer: true, signal }) over a socket that a net.Server accepted.
   async "a listener that throws on a server-side TLS socket over a socket"() {
     const cert = JSON.parse(process.env.TLS_FIXTURE);

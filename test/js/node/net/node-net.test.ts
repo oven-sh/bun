@@ -1205,6 +1205,22 @@ describe("a socket made with a signal", () => {
     });
   });
 
+  // The socket under the TLS socket is the caller's, made without a signal. Its 'error' goes on to the TLS socket.
+  it.concurrent("what a listener throws on the socket under a TLS socket stays an uncaught exception", async () => {
+    const group = "a listener that throws on the socket under a TLS socket";
+    const rows = [
+      "the socket under a TLS socket: a 'connect' listener",
+      "the socket under a TLS socket: a 'ready' listener",
+      "the socket under a TLS socket: the callback of a write before the connection",
+      "the socket under a TLS socket: the listener that makes the TLS socket",
+    ];
+    expect(await runFixture(group, { TLS_FIXTURE: JSON.stringify(tlsCert) })).toEqual({
+      stdout: [...rows.flatMap(name => [`uncaught Error: ${name}`, `${name}: open`]), "exit code 1"],
+      stderr: "",
+      exitCode: 1,
+    });
+  });
+
   // The handlers of new tls.TLSSocket(socket, { isServer: true, signal }) are those of a socket that a server accepted.
   it.concurrent("what a listener throws on a server-side TLS socket stays an uncaught exception", async () => {
     const group = "a listener that throws on a server-side TLS socket over a socket";

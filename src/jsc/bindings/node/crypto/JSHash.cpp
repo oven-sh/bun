@@ -177,12 +177,15 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
 
     JSValue hashWrapper = callFrame->argument(0);
 
+    // Hash.prototype._transform passes `false` to get Node's native update(): none of the checks of Hash.prototype.update(), and `false` instead of a throw.
+    // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/hash.js#L168-L194
+    bool checked = !callFrame->argument(3).isFalse();
+    auto updateFailed = [&]() -> EncodedJSValue {
+        return checked ? Bun::ERR::CRYPTO_HASH_UPDATE_FAILED(scope, globalObject) : JSValue::encode(jsBoolean(false));
+    };
+
     // Check if the Hash is already finalized
-    if (hash->m_finalized) {
-        // Hash.prototype._transform passes `false`. Node drops a chunk written after digest().
-        if (callFrame->argument(3).isFalse()) {
-            return JSValue::encode(jsUndefined());
-        }
+    if (checked && hash->m_finalized) {
         return Bun::ERR::CRYPTO_HASH_FINALIZED(scope, globalObject);
     }
 
@@ -201,7 +204,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
         RETURN_IF_EXCEPTION(scope, {});
 
         // Validate encoding
-        if (encoding == WebCore::BufferEncodingType::hex && inputString->length() % 2 != 0) {
+        if (checked && encoding == WebCore::BufferEncodingType::hex && inputString->length() % 2 != 0) {
             return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "encoding"_s, encodingValue, makeString("is invalid for data of length "_s, inputString->length()));
         }
 
@@ -210,7 +213,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
 
         if (encoding == WebCore::BufferEncodingType::utf8 && inputView->is8Bit() && WTF::charactersAreAllASCII(inputView->span8())) {
             if (!hash->update(byteCast<uint8_t>(inputView->span8()))) {
-                return Bun::ERR::CRYPTO_HASH_UPDATE_FAILED(scope, globalObject);
+                return updateFailed();
             }
             return JSValue::encode(hashWrapper);
         }
@@ -221,13 +224,13 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
         auto* convertedView = dynamicDowncast<JSC::JSArrayBufferView>(converted);
 
         if (!hash->update(std::span { reinterpret_cast<const uint8_t*>(convertedView->vector()), convertedView->byteLength() })) {
-            return Bun::ERR::CRYPTO_HASH_UPDATE_FAILED(scope, globalObject);
+            return updateFailed();
         }
 
         return JSValue::encode(hashWrapper);
     } else if (auto* view = dynamicDowncast<JSArrayBufferView>(inputValue)) {
         if (!hash->update(view->span())) {
-            return Bun::ERR::CRYPTO_HASH_UPDATE_FAILED(scope, globalObject);
+            return updateFailed();
         }
 
         return JSValue::encode(hashWrapper);

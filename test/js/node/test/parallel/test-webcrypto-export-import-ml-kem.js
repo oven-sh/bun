@@ -5,9 +5,9 @@ const common = require('../common');
 if (!common.hasCrypto)
   common.skip('missing crypto');
 
-const { hasOpenSSL } = require('../common/crypto');
+const { hasOpenSSL, isBoringSSL } = require('../common/crypto');
 
-if (!hasOpenSSL(3, 5) && !process.features.openssl_is_boringssl)
+if (!hasOpenSSL(3, 5) && !isBoringSSL)
   common.skip('requires OpenSSL >= 3.5 or BoringSSL');
 
 const assert = require('assert');
@@ -105,12 +105,10 @@ async function testImportPkcs8({ name, privateUsages }, extractable) {
       extractable,
       privateUsages);
   } catch (err) {
-    if (process.features.openssl_is_boringssl) {
+    if (isBoringSSL) {
       assert.strictEqual(err.name, 'DataError');
-      // It should really only be ERR_OSSL_EVP_PRIVATE_KEY_WAS_NOT_SEED
-      // but BoringSSL is inconsistent between handling ML-KEM and ML-DSA
-      // Fixed in https://github.com/google/boringssl/commit/94c4c7f9e0eeeff72ea1ac6abf1aed5bd2a82c0c
-      assert.match(err.cause.code, /ERR_OSSL_EVP_UNSUPPORTED_ALGORITHM|ERR_OSSL_EVP_PRIVATE_KEY_WAS_NOT_SEED/);
+      assert.strictEqual(err.cause.code,
+                         'ERR_OSSL_EVP_PRIVATE_KEY_WAS_NOT_SEED');
       common.printSkipMessage('Skipping unsupported private key format test');
       return;
     }
@@ -239,6 +237,11 @@ async function testImportRawPublic({ name, publicUsages }, extractable) {
       name: 'NotSupportedError',
       message: `Unable to export ${publicKey.algorithm.name} public key using raw format`,
     });
+
+    await assert.rejects(subtle.exportKey('raw-seed', publicKey), {
+      name: 'InvalidAccessError',
+      message: 'Key must be a private key',
+    });
   }
 
   await assert.rejects(
@@ -278,6 +281,11 @@ async function testImportRawSeed({ name, privateUsages }, extractable) {
   if (extractable) {
     const value = await subtle.exportKey('raw-seed', privateKey);
     assert.deepStrictEqual(Buffer.from(value), seed);
+
+    await assert.rejects(subtle.exportKey('raw-public', privateKey), {
+      name: 'InvalidAccessError',
+      message: 'Key must be a public key',
+    });
   }
 
   await assert.rejects(
@@ -471,7 +479,7 @@ async function testImportJwk({ name, publicUsages, privateUsages }, extractable)
 (async function() {
   const tests = [];
   for (const vector of testVectors) {
-    if (process.features.openssl_is_boringssl && vector.name === 'ML-KEM-512') {
+    if (isBoringSSL && vector.name === 'ML-KEM-512') {
       common.printSkipMessage('Skipping unsupported ML-KEM-512 test');
       continue;
     }
@@ -498,20 +506,36 @@ async function testImportJwk({ name, publicUsages, privateUsages }, extractable)
   });
 })().then(common.mustCall());
 
-// Regression test: JWK `key_ops` validation must recognize ML-KEM operations
-// (encapsulateKey, encapsulateBits, decapsulateKey, decapsulateBits) so that
-// duplicate entries are rejected
+// JWK key usage validation precedes `key_ops` validation.
 (async function() {
-  for (const op of ['encapsulateKey', 'encapsulateBits',
-                    'decapsulateKey', 'decapsulateBits']) {
-    const jwk = { ...keyData['ML-KEM-768'].jwk, key_ops: [op, op] };
+  const privateJwk = keyData['ML-KEM-768'].jwk;
+  const encapsulationOps = ['encapsulateKey', 'encapsulateBits'];
+  const decapsulationOps = ['decapsulateKey', 'decapsulateBits'];
+
+  for (const op of encapsulationOps) {
+    const jwk = { ...privateJwk, key_ops: [op, op] };
+    await assert.rejects(
+      subtle.importKey('jwk', jwk, { name: 'ML-KEM-768' }, true, [op]),
+      { name: 'SyntaxError', message: /Unsupported key usage/ });
+  }
+
+  // Duplicate entries are still rejected when the requested usages are valid.
+  for (const op of encapsulationOps) {
+    const jwk = { ...privateJwk, priv: undefined, key_ops: [op, op] };
+    await assert.rejects(
+      subtle.importKey('jwk', jwk, { name: 'ML-KEM-768' }, true, [op]),
+      { name: 'DataError', message: /Duplicate key operation/ });
+  }
+
+  for (const op of decapsulationOps) {
+    const jwk = { ...privateJwk, key_ops: [op, op] };
     await assert.rejects(
       subtle.importKey('jwk', jwk, { name: 'ML-KEM-768' }, true, [op]),
       { name: 'DataError', message: /Duplicate key operation/ });
   }
 })().then(common.mustCall());
 
-if (!process.features.openssl_is_boringssl) {
+if (!isBoringSSL) {
   (async function() {
     for (const { name, privateUsages } of testVectors) {
       const pem = fixtures.readKey(getKeyFileName(name.toLowerCase(), 'private_priv_only'), 'ascii');

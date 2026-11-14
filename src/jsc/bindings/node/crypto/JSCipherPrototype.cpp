@@ -60,7 +60,8 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
         encoding = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, encodingValue).value_or(BufferEncodingType::utf8);
         RETURN_IF_EXCEPTION(scope, {});
         unsigned length = asString(dataValue)->length();
-        if (encoding == BufferEncodingType::hex && length % 2 != 0) {
+        // _transform passes `false`: in Node it calls the native update(), without validateEncoding().
+        if (!callFrame->argument(2).isFalse() && encoding == BufferEncodingType::hex && length % 2 != 0) {
             return Bun::ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "encoding"_s, encodingValue, makeString("is invalid for data of length "_s, length));
         }
     } else if (!dataValue.inherits<JSArrayBufferView>()) {

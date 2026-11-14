@@ -129,12 +129,14 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
         return Bun::ERR::INVALID_THIS(scope, globalObject, "Hmac"_s);
     }
 
+    // `false` comes from Hash.prototype._transform, which Hmac shares: see jsHashProtoFuncUpdate.
+    bool checked = !callFrame->argument(3).isFalse();
+    auto updateFailed = [&]() -> EncodedJSValue {
+        return checked ? Bun::ERR::CRYPTO_HASH_UPDATE_FAILED(scope, globalObject) : JSValue::encode(jsBoolean(false));
+    };
+
     // Check if the HMAC is already finalized
-    if (hmac->m_finalized) {
-        // Hmac.prototype._transform passes `false`. Node drops a chunk written after digest().
-        if (callFrame->argument(3).isFalse()) {
-            return JSValue::encode(jsUndefined());
-        }
+    if (checked && hmac->m_finalized) {
         return Bun::ERR::CRYPTO_HASH_FINALIZED(scope, globalObject);
     }
 
@@ -152,7 +154,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
         RETURN_IF_EXCEPTION(scope, {});
 
         // validateEncoding()
-        if (encoding == WebCore::BufferEncodingType::hex && inputString->length() % 2 != 0) {
+        if (checked && encoding == WebCore::BufferEncodingType::hex && inputString->length() % 2 != 0) {
             return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "encoding"_s, encodingValue, makeString("is invalid for data of length "_s, inputString->length()));
         }
 
@@ -165,13 +167,13 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
         auto* convertedView = dynamicDowncast<JSC::JSArrayBufferView>(converted);
 
         if (!hmac->update(std::span { reinterpret_cast<const uint8_t*>(convertedView->vector()), convertedView->byteLength() })) {
-            return Bun::ERR::CRYPTO_HASH_UPDATE_FAILED(scope, globalObject);
+            return updateFailed();
         }
 
         return JSValue::encode(wrappedHmac);
     } else if (auto* view = dynamicDowncast<JSArrayBufferView>(inputValue)) {
         if (!hmac->update(std::span { reinterpret_cast<const uint8_t*>(view->vector()), view->byteLength() })) {
-            return Bun::ERR::CRYPTO_HASH_UPDATE_FAILED(scope, globalObject);
+            return updateFailed();
         }
 
         return JSValue::encode(wrappedHmac);

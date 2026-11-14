@@ -98,13 +98,35 @@ public:
     // KeyObject.prototype.toCryptoKey also reuses the usage-bitmap mapping.
     static CryptoKeyUsageBitmap toCryptoKeyUsageBitmap(const Vector<CryptoKeyUsage>&);
 
+    // For ScriptExecutionContext::prepareForDestruction().
+    void unrootPendingPromises();
+
 private:
     explicit SubtleCrypto(ScriptExecutionContext*);
 
     inline friend RefPtr<DeferredPromise> getPromise(DeferredPromise*, WeakPtr<SubtleCrypto>);
 
+    // Each promise is a GC root until it is taken out. A DeferredPromise is only held by its realm, which nothing else may hold while the thread pool works.
+    class PendingPromises {
+    public:
+        void add(DeferredPromise*, Ref<DeferredPromise>&&);
+        RefPtr<DeferredPromise> get(DeferredPromise*) const;
+        RefPtr<DeferredPromise> take(DeferredPromise*);
+        void remove(DeferredPromise*);
+        // For good: script of a retired context still runs for a while. The entries stay: the operations under way find their promises by address.
+        void unroot();
+
+    private:
+        struct Entry {
+            RefPtr<DeferredPromise> promise;
+            JSC::Strong<JSC::Unknown> root;
+        };
+        HashMap<DeferredPromise*, Entry> m_entries;
+        bool m_isUnrooted { false };
+    };
+
     Ref<WorkQueue> m_workQueue;
-    HashMap<DeferredPromise*, Ref<DeferredPromise>> m_pendingPromises;
+    PendingPromises m_pendingPromises;
 };
 
 }

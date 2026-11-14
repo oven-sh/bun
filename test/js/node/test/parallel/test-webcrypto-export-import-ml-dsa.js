@@ -5,9 +5,9 @@ const common = require('../common');
 if (!common.hasCrypto)
   common.skip('missing crypto');
 
-const { hasOpenSSL } = require('../common/crypto');
+const { hasOpenSSL, isBoringSSL } = require('../common/crypto');
 
-if (!hasOpenSSL(3, 5) && !process.features.openssl_is_boringssl)
+if (!hasOpenSSL(3, 5) && !isBoringSSL)
   common.skip('requires OpenSSL >= 3.5 or BoringSSL');
 
 const assert = require('assert');
@@ -105,7 +105,7 @@ async function testImportPkcs8({ name, privateUsages }, extractable) {
       extractable,
       privateUsages);
   } catch (err) {
-    if (process.features.openssl_is_boringssl) {
+    if (isBoringSSL) {
       assert.strictEqual(err.name, 'DataError');
       assert.strictEqual(err.cause.code, 'ERR_OSSL_EVP_PRIVATE_KEY_WAS_NOT_SEED');
       common.printSkipMessage('Skipping unsupported private key format test');
@@ -414,6 +414,11 @@ async function testImportRawPublic({ name, publicUsages }, extractable) {
       name: 'NotSupportedError',
       message: `Unable to export ${publicKey.algorithm.name} public key using raw format`,
     });
+
+    await assert.rejects(subtle.exportKey('raw-seed', publicKey), {
+      name: 'InvalidAccessError',
+      message: 'Key must be a private key',
+    });
   }
 
   await assert.rejects(
@@ -453,6 +458,11 @@ async function testImportRawSeed({ name, privateUsages }, extractable) {
   if (extractable) {
     const value = await subtle.exportKey('raw-seed', privateKey);
     assert.deepStrictEqual(Buffer.from(value), seed);
+
+    await assert.rejects(subtle.exportKey('raw-public', privateKey), {
+      name: 'InvalidAccessError',
+      message: 'Key must be a public key',
+    });
   }
 
   await assert.rejects(
@@ -491,7 +501,41 @@ async function testImportRawSeed({ name, privateUsages }, extractable) {
   });
 })().then(common.mustCall());
 
-if (!process.features.openssl_is_boringssl) {
+// JWK key usage validation precedes `key_ops` validation.
+(async function() {
+  const privateJwk = keyData['ML-DSA-65'].jwk;
+  const publicJwk = { ...privateJwk, priv: undefined };
+
+  for (const [jwk, usage] of [
+    [privateJwk, 'verify'],
+    [publicJwk, 'sign'],
+  ]) {
+    await assert.rejects(
+      subtle.importKey(
+        'jwk',
+        { ...jwk, key_ops: [usage, usage] },
+        'ML-DSA-65',
+        true,
+        [usage]),
+      { name: 'SyntaxError', message: /Unsupported key usage/ });
+  }
+
+  for (const [jwk, usage] of [
+    [privateJwk, 'sign'],
+    [publicJwk, 'verify'],
+  ]) {
+    await assert.rejects(
+      subtle.importKey(
+        'jwk',
+        { ...jwk, key_ops: [usage, usage] },
+        'ML-DSA-65',
+        true,
+        [usage]),
+      { name: 'DataError', message: /Duplicate key operation/ });
+  }
+})().then(common.mustCall());
+
+if (!isBoringSSL) {
   (async function() {
     for (const { name, privateUsages } of testVectors) {
       const pem = fixtures.readKey(getKeyFileName(name.toLowerCase(), 'private_priv_only'), 'ascii');

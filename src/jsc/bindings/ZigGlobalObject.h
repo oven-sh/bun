@@ -335,6 +335,7 @@ public:
     bool isThreadLocalDefaultGlobalObject = false;
 
     JSObject* subtleCrypto() { return m_subtleCryptoObject.getInitializedOnMainThread(this); }
+    WebCore::SubtleCrypto* existingSubtleCrypto() const { return m_subtleCrypto; }
 
     WebCore::EventTarget& eventTarget();
 

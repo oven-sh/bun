@@ -20,6 +20,9 @@ const test_skipIf = (/** @type {boolean} */ cond) => (cond ? test.skip : test);
 /** Helper function which just type-casts to any */
 const ANY = (/** @type {any} */ arg) => arg;
 
+// The message of a failed toMatchObject(), as Jest and Bun write it and as Vitest writes it.
+const toMatchObjectFailed = /toMatchObject|match object/;
+
 describe("expect()", () => {
   if (typeof Bun !== "undefined") {
     test("()", () => {
@@ -3838,6 +3841,32 @@ describe("expect()", () => {
         expect(Bun.deepMatch({ a: shared, b: shared }, { a: { v: 1 }, b: { v: 2 } })).toBe(false);
         expect(Bun.deepMatch({ a: shared, b: shared }, { a: { v: 1 }, b: { v: 1 } })).toBe(true);
       });
+      test("Bun.deepMatch asks no matcher", () => {
+        let calls = 0;
+        const always = () => ({ asymmetricMatch: () => (calls++, true) });
+        class Always {
+          asymmetricMatch() {
+            calls++;
+            return true;
+          }
+        }
+        // To Bun.deepMatch a matcher is the object that its keys show: an expect matcher has none, a literal has its method.
+        expect([
+          Bun.deepMatch({ k: always() }, { k: { a: 1 } }),
+          Bun.deepMatch({ k: { a: 1 } }, { k: always() }),
+          Bun.deepMatch({ k: new Always() }, { k: 1 }),
+          Bun.deepMatch({ k: 1 }, { k: new Always() }),
+          Bun.deepMatch({ k: expect.any(Number) }, { k: 1 }),
+          Bun.deepMatch({ k: 1 }, { k: expect.any(Number) }),
+          Bun.deepMatch({ k: expect.objectContaining({ a: 2 }) }, { k: { a: 1 } }),
+          Bun.deepMatch([expect.any(Number)], [1]),
+          Bun.deepMatch(always(), { a: 1 }),
+          Bun.deepMatch({ a: 1 }, always()),
+          Bun.deepMatch(expect.any(Array), { a: 1 }),
+          Bun.deepMatch({ a: 1 }, expect.any(Object)),
+        ]).toEqual([false, false, false, false, false, false, true, false, false, false, true, false]);
+        expect(calls).toBe(0);
+      });
     }
     test("compares an object that occurs twice with each of its patterns", () => {
       const shared = { v: 1 };
@@ -3846,6 +3875,166 @@ describe("expect()", () => {
       expect({ a: shared, b: shared }).toMatchObject({ a: { v: 1 }, b: { v: 1 } });
       expect({ a: shared, b: [shared, { c: shared }] }).not.toMatchObject({ a: {}, b: [{}, { c: { v: 2 } }] });
     });
+    test("an asymmetric matcher as the whole expected value is applied", async () => {
+      expect({ a: 1, b: 2 }).toMatchObject(expect.objectContaining({ a: 1 }));
+      expect({ a: 1, b: 2 }).not.toMatchObject(expect.objectContaining({ c: 1 }));
+      expect({ a: 1 }).toMatchObject(expect.not.objectContaining({ b: 1 }));
+      expect({ a: 1 }).not.toMatchObject(expect.not.objectContaining({ a: 1 }));
+      expect([1]).toMatchObject(expect.any(Array));
+      expect({ a: 1 }).not.toMatchObject(expect.any(Array));
+      expect([1, 2]).toMatchObject(expect.arrayContaining([1]));
+      expect([1, 2]).not.toMatchObject(expect.arrayContaining([3]));
+      expect({ a: 1 }).toMatchObject(expect.anything());
+      expect({ a: 1 }).toMatchObject(expect.any(Object));
+      expect(() => expect({ a: 1 }).toMatchObject(expect.objectContaining({ c: 1 }))).toThrow(toMatchObjectFailed);
+      expect(() => expect({ a: 1 }).not.toMatchObject(expect.objectContaining({ a: 1 }))).toThrow(toMatchObjectFailed);
+      expect(() => expect({ a: 1 }).toMatchObject(expect.any(Array))).toThrow(toMatchObjectFailed);
+      expect(() => expect({ a: 1 }).not.toMatchObject(expect.any(Object))).toThrow(toMatchObjectFailed);
+      // matchers inside the matcher
+      expect({ a: { b: 1 }, c: "x" }).toMatchObject(expect.objectContaining({ a: { b: expect.any(Number) } }));
+      expect({ a: { b: 1 }, c: "x" }).not.toMatchObject(expect.objectContaining({ a: { b: expect.any(String) } }));
+      // To these matchers a member or a value with more keys is another one. Vitest compared them as subsets before vitest-dev/vitest#11071.
+      expect([{ id: 1 }]).not.toMatchObject(expect.arrayContaining([{ id: 1, required: "x" }]));
+      expect([{ id: 1, extra: true }]).not.toMatchObject(expect.arrayContaining([{ id: 1 }]));
+      expect({ k: { id: 1, extra: true } }).not.toMatchObject(expect.objectContaining({ k: { id: 1 } }));
+      // a Response is an object of the type that the built-in matchers have
+      expect(new Response("")).toMatchObject(expect.any(Response));
+      expect(new Response("")).not.toMatchObject(expect.any(URL));
+      // what the matcher throws is what the assertion throws
+      class Throws {
+        static [Symbol.hasInstance]() {
+          throw new Error("from the matcher");
+        }
+      }
+      expect(() => expect({ a: 1 }).toMatchObject(expect.any(Throws))).toThrow("from the matcher");
+      await expect(Promise.resolve({ a: 1 })).resolves.not.toMatchObject(expect.any(Array));
+    });
+
+    test("an asymmetric matcher as the whole received value is applied", async () => {
+      expect(expect.any(Object)).toMatchObject({ a: 1 });
+      expect(expect.any(Array)).not.toMatchObject({ a: 1 });
+      expect(expect.objectContaining({ a: 1 })).toMatchObject({ a: 1, b: 2 });
+      expect(expect.objectContaining({ a: 2 })).not.toMatchObject({ a: 1, b: 2 });
+      expect(expect.arrayContaining([1])).toMatchObject([1, 2]);
+      expect(() => expect(expect.any(Array)).toMatchObject({ a: 1 })).toThrow(toMatchObjectFailed);
+      expect(() => expect(expect.any(Object)).not.toMatchObject({ a: 1 })).toThrow(toMatchObjectFailed);
+      await expect(Promise.resolve(expect.any(Object))).resolves.toMatchObject({ a: 1 });
+    });
+
+    // Each kind as [a matcher that says no about an object, one that says yes about it].
+    test.each(
+      /** @type {[string, (() => unknown) | undefined, (() => unknown) | undefined][]} */ ([
+        ["any", () => expect.any(Array), () => expect.any(Object)],
+        ["anything", undefined, () => expect.anything()],
+        ["arrayContaining", () => expect.arrayContaining([3]), () => expect.not.arrayContaining([3])],
+        ["objectContaining", () => expect.objectContaining({ a: 2 }), () => expect.objectContaining({})],
+        ["stringContaining", () => expect.stringContaining("x"), () => expect.not.stringContaining("x")],
+        ["stringMatching", () => expect.stringMatching(/x/), () => expect.not.stringMatching(/x/)],
+        ["closeTo", () => expect.closeTo(1, 2), undefined],
+      ]),
+    )("expect.%s() is asked as the whole expected value and as the whole received value", (_, no, yes) => {
+      if (no) {
+        expect({ a: 1 }).not.toMatchObject(no());
+        expect(no()).not.toMatchObject({});
+        expect(() => expect({ a: 1 }).toMatchObject(no())).toThrow(toMatchObjectFailed);
+      }
+      if (yes) {
+        expect({ a: 1 }).toMatchObject(yes());
+        expect(yes()).toMatchObject({ a: 1 });
+        expect(() => expect(yes()).not.toMatchObject({ a: 1 })).toThrow(toMatchObjectFailed);
+      }
+    });
+
+    test("an asymmetric matcher as the whole expected value, against a matcher", () => {
+      // one object on both sides is not applied to itself
+      const number = expect.any(Number);
+      expect(number).toMatchObject(number);
+      const containing = expect.objectContaining({ a: 1 });
+      expect(containing).toMatchObject(containing);
+      const holder = { a: expect.any(Number) };
+      expect(holder).toMatchObject(holder);
+      // two matchers that differ
+      expect(expect.any(Number)).not.toMatchObject(expect.any(String));
+      expect(expect.objectContaining({ a: 1 })).not.toMatchObject(expect.objectContaining({ a: 2 }));
+      expect(expect.any(Object)).not.toMatchObject(expect.any(Number));
+      // the received value is an object with an asymmetricMatch() method
+      expect({ asymmetricMatch: () => true }).not.toMatchObject(expect.any(Number));
+    });
+
+    if (isBun) {
+      test("details of a matcher as the whole expected value", () => {
+        const messageOf = (/** @type {() => void} */ fn) => {
+          try {
+            fn();
+          } catch (e) {
+            return stripVTControlCharacters(/** @type {Error} */ (e).message);
+          }
+          return "no error";
+        };
+        // the message shows the matcher
+        expect(messageOf(() => expect({ a: 1 }).toMatchObject(expect.any(Array)))).toBe(
+          'expect(received).toMatchObject(expected)\n\n- Any<Array>\n+ {\n+   "a": 1,\n+ }\n\n- Expected  - 1\n+ Received  + 3\n',
+        );
+        expect(messageOf(() => expect({ a: 1 }).not.toMatchObject(expect.any(Object)))).toBe(
+          "expect(received).not.toMatchObject(expected)\n\nExpected: not Any<Object>\n",
+        );
+        // expect.toSatisfy() has an enumerable asymmetricMatch, as a matcher of expect.extend has: the key walk never matched it
+        expect({ a: 1 }).toMatchObject(expect.toSatisfy((/** @type {any} */ value) => value.a === 1));
+        expect({ a: 1 }).not.toMatchObject(expect.toSatisfy((/** @type {any} */ value) => value.a === 2));
+        expect(expect.toSatisfy((/** @type {any} */ value) => value.a === 1)).toMatchObject({ a: 1 });
+        expect(expect.toSatisfy((/** @type {any} */ value) => value.a === 2)).not.toMatchObject({ a: 1 });
+        // a URL is an object of the type that the built-in matchers have. As the expected value it is still walked.
+        expect(new URL("http://a/")).toMatchObject(new URL("http://a/"));
+        expect(new URL("http://a/")).not.toMatchObject(new URL("http://b/"));
+      });
+    }
+    test("an expect.not matcher throws what its check throws, as a whole value too", () => {
+      const throws = {
+        get x() {
+          throw new RangeError("thrown by the pattern");
+        },
+      };
+      const thrown = new RangeError("thrown by the pattern");
+      expect(() => expect({ x: 1 }).toMatchObject(expect.not.objectContaining(throws))).toThrow(thrown);
+      expect(() => expect(expect.not.objectContaining(throws)).toMatchObject({ x: 1 })).toThrow(thrown);
+      expect(() => expect({ a: expect.not.objectContaining(throws) }).toMatchObject({ a: { x: 1 } })).toThrow(thrown);
+    });
+    if (isBun) {
+      test("a matcher that is all the property matchers of an inline snapshot answers for them", () => {
+        const says = (/** @type {boolean} */ answer) =>
+          Object.defineProperty({ id: expect.any(Number) }, "asymmetricMatch", { value: () => answer });
+        expect({ id: Math.random(), name: "a" }).toMatchInlineSnapshot(
+          says(true),
+          `
+{
+  "id": Any<Number>,
+  "name": "a",
+}
+`,
+        );
+        // It says yes, so no key is compared. The matcher under "id" is still what the snapshot shows.
+        expect({ id: "no number", name: "a" }).toMatchInlineSnapshot(
+          says(true),
+          `
+{
+  "id": Any<Number>,
+  "name": "a",
+}
+`,
+        );
+        expect(() =>
+          expect({ id: 1, name: "a" }).toMatchInlineSnapshot(
+            says(false),
+            `
+{
+  "id": Any<Number>,
+  "name": "a",
+}
+`,
+          ),
+        ).toThrow("to match properties from received object");
+      });
+    }
     test("ends on cycles", () => {
       const received = { v: 1, other: { v: 2 } };
       received.self = received;
@@ -5383,6 +5572,334 @@ describe("expect()", () => {
       test("toBe() ignores asymmetricMatch()", () => {
         expect(2).not.toBe(isEven);
         expect(isEven).toBe(isEven);
+      });
+
+      test("an asymmetricMatch() that returns undefined decides nothing", () => {
+        let calls = 0;
+        class Undecided {
+          constructor(/** @type {object} */ own) {
+            Object.assign(this, own);
+          }
+          asymmetricMatch() {
+            calls++;
+          }
+        }
+        expect({ a: 1 }).toEqual(new Undecided({ a: 1 }));
+        expect([{ a: 2 }]).not.toEqual([new Undecided({ a: 1 })]);
+        expect({ k: { a: 1, b: 2 } }).toMatchObject({ k: new Undecided({ a: 1 }) });
+        expect({ k: { a: 2, b: 2 } }).not.toMatchObject({ k: new Undecided({ a: 1 }) });
+        expect({ a: 1, b: 2 }).toMatchObject(new Undecided({ a: 1 }));
+        expect({ a: 2, b: 2 }).not.toMatchObject(new Undecided({ a: 1 }));
+        expect(new Undecided({ a: 1, b: 2 })).toMatchObject({ a: 1 });
+        expect([{ a: 1 }]).toContainEqual(new Undecided({ a: 1 }));
+        const called = (jest ?? vi).fn();
+        called({ a: 1 });
+        expect(called).toHaveBeenCalledWith(new Undecided({ a: 1 }));
+        // Vitest asks twice in toMatchObject().
+        if (isBun) expect(calls).toBe(9);
+        else expect(calls).toBeGreaterThanOrEqual(9);
+      });
+
+      describe("as a whole value of toMatchObject()", () => {
+        const isOdd = (/** @type {{ n: number }} */ other) => other.n % 2 === 1;
+        class IsOdd {
+          asymmetricMatch(/** @type {{ n: number }} */ other) {
+            return other.n % 2 === 1;
+          }
+        }
+        /** @type {[string, object][]} */
+        const matchers = [
+          ["a literal", { asymmetricMatch: isOdd }],
+          ["a class instance", new IsOdd()],
+          ["an instance of a subclass", new (class extends IsOdd {})()],
+          // A walk of its keys finds no method, and its one key matches every number.
+          [
+            "a method that isn't enumerable",
+            Object.defineProperty({ n: expect.any(Number) }, "asymmetricMatch", { value: isOdd }),
+          ],
+          ["an object without a prototype", Object.assign(Object.create(null), { asymmetricMatch: isOdd })],
+        ];
+
+        test.each(matchers)("%s is asked as the expected value", (_, matcher) => {
+          expect({ n: 1 }).toMatchObject(matcher);
+          expect({ n: 2 }).not.toMatchObject(matcher);
+          expect(() => expect({ n: 2 }).toMatchObject(matcher)).toThrow(toMatchObjectFailed);
+          expect(() => expect({ n: 1 }).not.toMatchObject(matcher)).toThrow(toMatchObjectFailed);
+        });
+
+        test.each(matchers)("%s is asked as the received value", (_, matcher) => {
+          expect(matcher).toMatchObject({ n: 1 });
+          expect(matcher).not.toMatchObject({ n: 2 });
+          expect(() => expect(matcher).toMatchObject({ n: 2 })).toThrow(toMatchObjectFailed);
+          expect(() => expect(matcher).not.toMatchObject({ n: 1 })).toThrow(toMatchObjectFailed);
+        });
+
+        test("it is called as a method, with the other value", () => {
+          /** @type {unknown[]} */
+          const calls = [];
+          const matcher = {
+            asymmetricMatch(/** @type {unknown} */ other) {
+              calls.push(this, other);
+              return true;
+            },
+          };
+          const other = { a: 1 };
+          expect(other).toMatchObject(matcher);
+          expect(matcher).toMatchObject(other);
+          // Vitest asks twice.
+          if (isBun) expect(calls.length).toBe(4);
+          for (let i = 0; i < calls.length; i += 2) {
+            expect(calls[i]).toBe(matcher);
+            expect(calls[i + 1]).toBe(other);
+          }
+        });
+
+        test("it is asked whatever the other value is", () => {
+          for (const other of [new Error("e"), new Map(), new Date(0), [1], new (class Box {})()]) {
+            const isTheOther = { asymmetricMatch: (/** @type {unknown} */ asked) => asked === other };
+            expect(other).toMatchObject(isTheOther);
+            expect(isTheOther).toMatchObject(other);
+            expect({}).not.toMatchObject(isTheOther);
+          }
+        });
+
+        test("an error that it throws fails the assertion, with .not too", () => {
+          const throws = {
+            asymmetricMatch() {
+              throw new RangeError("thrown by the matcher");
+            },
+          };
+          expect(() => expect({ a: 1 }).toMatchObject(throws)).toThrow(new RangeError("thrown by the matcher"));
+          expect(() => expect({ a: 1 }).not.toMatchObject(throws)).toThrow(new RangeError("thrown by the matcher"));
+          expect(() => expect(throws).not.toMatchObject({ a: 1 })).toThrow(new RangeError("thrown by the matcher"));
+        });
+
+        test("two matchers are compared as plain objects", () => {
+          let calls = 0;
+          const count = () => (calls++, true);
+          const matcher = { asymmetricMatch: count, id: 1 };
+          expect(matcher).toMatchObject({ asymmetricMatch: count, id: 1 });
+          expect(matcher).not.toMatchObject({ asymmetricMatch: count, id: 2 });
+          expect(matcher).toMatchObject(matcher);
+          expect(calls).toBe(0);
+        });
+
+        test("nothing of the pair is compared after it has answered", () => {
+          let calls = 0;
+          const inner = { asymmetricMatch: () => (calls++, true) };
+          const says = (/** @type {boolean} */ answer) =>
+            Object.defineProperty({ inner }, "asymmetricMatch", { value: () => answer });
+          expect({ inner: 1 }).toMatchObject(says(true));
+          expect({ inner: 1 }).not.toMatchObject(says(false));
+          // Vitest walks the pair for its failure message before it needs one.
+          if (!isVitest) expect(calls).toBe(0);
+        });
+
+        test("nothing of the pair is read after it has answered", () => {
+          let read = 0;
+          // Not enumerable, so no message prints it.
+          const received = Object.defineProperty({}, "k", {
+            get() {
+              read++;
+              return { a: 1 };
+            },
+          });
+          const says = (/** @type {boolean} */ answer) =>
+            Object.defineProperty({ k: { a: expect.any(Number) } }, "asymmetricMatch", { value: () => answer });
+          expect(received).toMatchObject(says(true));
+          expect(received).not.toMatchObject(says(false));
+          expect(() => expect(received).not.toMatchObject(says(true))).toThrow(toMatchObjectFailed);
+          expect(() => expect(received).toMatchObject(says(false))).toThrow(toMatchObjectFailed);
+          // Jest and Vitest read it for the message of a failure.
+          if (isBun) expect(read).toBe(0);
+          // Under a key too: the matcher answers for its pair, and the assertion passes on the other key.
+          const throws = {
+            get g() {
+              throw new RangeError("read");
+            },
+          };
+          expect({ k: expect.any(Object), other: 1 }).not.toMatchObject({ k: throws, other: 2 });
+        });
+
+        test("with .resolves and .rejects", async () => {
+          const [, matcher] = matchers[1];
+          await expect(Promise.resolve({ n: 1 })).resolves.toMatchObject(matcher);
+          await expect(Promise.resolve({ n: 2 })).resolves.not.toMatchObject(matcher);
+          await expect(Promise.reject({ n: 1 })).rejects.toMatchObject(matcher);
+          await expect(Promise.reject({ n: 2 })).rejects.not.toMatchObject(matcher);
+        });
+
+        if (isBun) {
+          /** Runs `source` as a test file of its own, and returns the lines that it printed with a `|` in front. */
+          const rowsOf = async (/** @type {string} */ source) => {
+            const { bunEnv, bunExe, tempDir } = require("harness");
+            using dir = tempDir("expect-whole-matcher", { "rows.test.js": source });
+            await using proc = Bun.spawn({
+              cmd: [bunExe(), "test", "rows.test.js"],
+              // A new snapshot is written only outside CI.
+              env: { ...bunEnv, CI: "false" },
+              cwd: String(dir),
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+            const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+            const rows = stdout.split("\n").filter(line => line.startsWith("| "));
+            return { rows, failed: stderr.split("\n").filter(line => line.startsWith("(fail)")), exitCode };
+          };
+
+          // No text of the test file holds the name, so nothing looks for the method before an object has it.
+          test.concurrent("a method whose name is made while the tests run is asked", async () => {
+            const result = await rowsOf(`
+              import { test, expect } from "bun:test";
+              import vm from "node:vm";
+              const name = ["asymmetric", "Match"].join("");
+              const outcome = fn => { try { fn(); return "passes"; } catch { return "fails"; } };
+              test("asked", () => {
+                console.log("| before:", outcome(() => expect({ a: 1 }).toMatchObject({ a: 1 })), outcome(() => expect({ a: 1 }).not.toMatchObject({ a: 2 })));
+                const ways = {
+                  "computed key": answer => ({ [name]: () => answer }),
+                  "added later": answer => { const object = { a: 1 }; object[name] = () => answer; return object; },
+                  "class method": answer => new (class { [name]() { return answer; } })(),
+                  "inherited method": answer => new (class extends (class extends (class { [name]() { return answer; } }) {}) {})(),
+                  "added to a prototype later": answer => { class Late {} const object = new Late(); Late.prototype[name] = () => answer; return object; },
+                  "not enumerable": answer => Object.defineProperty({ a: 1 }, name, { value: () => answer }),
+                  "other realm": answer => vm.runInNewContext("(name, answer) => ({ [name]: () => answer })")(name, answer),
+                };
+                for (const [way, make] of Object.entries(ways)) {
+                  console.log("| " + way + ":", outcome(() => expect({ a: 1 }).toMatchObject(make(true))), outcome(() => expect({ a: 1 }).not.toMatchObject(make(false))), outcome(() => expect(make(true)).toMatchObject({ b: 2 })));
+                }
+              });
+            `);
+            expect(result).toEqual({
+              rows: [
+                "| before: passes passes",
+                "| computed key: passes passes passes",
+                "| added later: passes passes passes",
+                "| class method: passes passes passes",
+                "| inherited method: passes passes passes",
+                "| added to a prototype later: passes passes passes",
+                "| not enumerable: passes passes passes",
+                "| other realm: passes passes passes",
+              ],
+              failed: [],
+              exitCode: 0,
+            });
+          });
+
+          test.concurrent("it answers before the equality testers, which nothing calls after it", async () => {
+            const result = await rowsOf(`
+              import { test, expect } from "bun:test";
+              let tested = 0;
+              const marked = { marked: true };
+              expect.addEqualityTesters([a => { tested++; return a === marked ? true : undefined; }]);
+              const isOne = { asymmetricMatch: other => other.n === 1 };
+              test("testers", () => {
+                expect({ n: 1 }).toMatchObject(isOne);
+                expect({ n: 2 }).not.toMatchObject(isOne);
+                expect(isOne).toMatchObject({ n: 1 });
+                expect({ n: 1 }).toMatchObject(expect.any(Object));
+                expect({ n: 1 }).not.toMatchObject(expect.any(Array));
+                // A tester that says "equal" for the value does not answer in place of the matcher.
+                expect(marked).not.toMatchObject(expect.any(Array));
+                expect(marked).not.toMatchObject({ asymmetricMatch: () => false });
+                console.log("| tester calls where the matcher answered:", tested);
+                expect({ n: 1 }).toMatchObject({ n: 1 });
+                console.log("| tester calls for one pair without a matcher:", tested);
+                console.log("| Bun.deepMatch() calls no tester:", Bun.deepMatch({ n: 1 }, { n: 1 }), Bun.deepMatch({ n: 2 }, marked), tested);
+              });
+            `);
+            expect(result).toEqual({
+              rows: [
+                "| tester calls where the matcher answered: 0",
+                "| tester calls for one pair without a matcher: 2",
+                "| Bun.deepMatch() calls no tester: true false 2",
+              ],
+              failed: [],
+              exitCode: 0,
+            });
+          });
+
+          test.concurrent("a matcher that waits for a promise is asked as a whole value", async () => {
+            const result = await rowsOf(`
+              import { test, expect } from "bun:test";
+              const later = value => new Promise(resolve => setTimeout(resolve, 1, value));
+              const laterReject = value => new Promise((_, reject) => setTimeout(reject, 1, value));
+              expect.extend({
+                async toHaveLater(received, key) {
+                  await later();
+                  return { pass: key in received, message: () => "toHaveLater" };
+                },
+              });
+              const outcome = async run => { try { await run(); return "passes"; } catch { return "fails"; } };
+              test("waits", async () => {
+                const matcher = expect(later({ a: 1, b: 2 })).toMatchObject(expect.resolvesTo.objectContaining({ a: 1 }));
+                console.log("| returns a promise:", matcher instanceof Promise, await matcher);
+                const stored = expect({ a: 1 }).toMatchSnapshot(expect.toHaveLater("a"));
+                console.log("| property matchers return a promise:", stored instanceof Promise, await stored);
+                const rows = {
+                  "resolvesTo says yes": () => expect(later({ a: 1 })).toMatchObject(expect.resolvesTo.objectContaining({ a: 1 })),
+                  "resolvesTo says no": () => expect(later({ a: 1 })).toMatchObject(expect.resolvesTo.objectContaining({ a: 2 })),
+                  "not, resolvesTo says no": () => expect(later({ a: 1 })).not.toMatchObject(expect.resolvesTo.objectContaining({ a: 2 })),
+                  "rejectsTo says yes": () => expect(laterReject({ a: 1 })).toMatchObject(expect.rejectsTo.objectContaining({ a: 1 })),
+                  "rejectsTo, and the promise resolves": () => expect(later({ a: 1 })).toMatchObject(expect.rejectsTo.anything()),
+                  "an async matcher of expect.extend says yes": () => expect({ a: 1 }).toMatchObject(expect.toHaveLater("a")),
+                  "an async matcher of expect.extend says no": () => expect({ a: 1 }).toMatchObject(expect.toHaveLater("b")),
+                  "not, an async matcher of expect.extend says no": () => expect({ a: 1 }).not.toMatchObject(expect.toHaveLater("b")),
+                  "property matchers, an async matcher says no": () => expect({ a: 1 }).toMatchSnapshot(expect.toHaveLater("b")),
+                  "property matchers, resolvesTo says no": () => expect(later({ a: 1 })).toMatchSnapshot(expect.resolvesTo.objectContaining({ a: 2 })),
+                };
+                for (const [row, run] of Object.entries(rows)) console.log("| " + row + ":", await outcome(run));
+              });
+            `);
+            expect(result).toEqual({
+              rows: [
+                "| returns a promise: true undefined",
+                "| property matchers return a promise: true undefined",
+                "| resolvesTo says yes: passes",
+                "| resolvesTo says no: fails",
+                "| not, resolvesTo says no: passes",
+                "| rejectsTo says yes: passes",
+                "| rejectsTo, and the promise resolves: fails",
+                "| an async matcher of expect.extend says yes: passes",
+                "| an async matcher of expect.extend says no: fails",
+                "| not, an async matcher of expect.extend says no: passes",
+                "| property matchers, an async matcher says no: fails",
+                "| property matchers, resolvesTo says no: fails",
+              ],
+              failed: [],
+              exitCode: 0,
+            });
+          });
+
+          test.concurrent('a matcher as a whole value is asked in a "vitest" test too', async () => {
+            const result = await rowsOf(`
+              import * as bun from "bun:test";
+              import * as vitest from "vitest";
+              const outcome = fn => { try { fn(); return "passes"; } catch { return "fails"; } };
+              for (const [name, { test, expect }] of Object.entries({ bun, vitest })) {
+                test(name, () => {
+                  const isOdd = { asymmetricMatch: other => other.n % 2 === 1 };
+                  console.log("| " + name + ":", [
+                    outcome(() => expect({ a: 1, b: 2 }).toMatchObject(expect.objectContaining({ a: 1 }))),
+                    outcome(() => expect({ a: 1, b: 2 }).toMatchObject(expect.objectContaining({ a: 2 }))),
+                    outcome(() => expect({ a: 1 }).not.toMatchObject(expect.any(Array))),
+                    outcome(() => expect({ n: 1 }).toMatchObject(isOdd)),
+                    outcome(() => expect({ n: 1 }).not.toMatchObject(isOdd)),
+                    outcome(() => expect(isOdd).toMatchObject({ n: 2 })),
+                  ].join(" "));
+                });
+              }
+            `);
+            expect(result).toEqual({
+              rows: [
+                "| bun: passes fails passes passes fails fails",
+                "| vitest: passes fails passes passes fails fails",
+              ],
+              failed: [],
+              exitCode: 0,
+            });
+          });
+        }
       });
     });
   });

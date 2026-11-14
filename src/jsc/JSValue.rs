@@ -2797,15 +2797,22 @@ impl JSValue {
     /// `JSValue.jestDeepMatch` — `expect(a).toMatchObject(b)` /
     /// snapshot-property-matcher subset comparison. Also returns the value to print for `self`. If the result
     /// equals `replace_when`, that's a copy with `subset`'s asymmetric matchers in place of what they matched.
+    /// `None` is for a caller that prints nothing of `self`: no copy is made.
     pub fn jest_deep_match(
         self,
         subset: JSValue,
         global: &JSGlobalObject,
-        replace_when: bool,
+        replace_when: Option<bool>,
     ) -> JsResult<(bool, JSValue)> {
         let mut shown = self;
         let matched = host_fn::from_js_host_call_generic(global, || {
-            JSC__JSValue__jestDeepMatch(self, subset, global, replace_when, &mut shown)
+            JSC__JSValue__jestDeepMatch(
+                self,
+                subset,
+                global,
+                replace_when == Some(true),
+                replace_when.map(|_| &mut shown),
+            )
         })?;
         Ok((matched, shown))
     }
@@ -2919,7 +2926,7 @@ unsafe extern "C" {
         subset: JSValue,
         global: &JSGlobalObject,
         replace_when: bool,
-        shown: &mut JSValue,
+        shown: Option<&mut JSValue>,
     ) -> bool;
     safe fn JSC__JSValue__asBigIntCompare(this: JSValue, other: JSValue) -> ComparisonResult;
     safe fn JSC__JSValue__keys(global: &JSGlobalObject, value: JSValue) -> JSValue;

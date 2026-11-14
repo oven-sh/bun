@@ -457,6 +457,8 @@ struct DeepMatchState {
     // If `records`, `recorded` gets 4 values per compared property (see recordIfAsked).
     // An undefined patternOfValue means `value` is the asymmetric matcher the property matched.
     bool records { false };
+    // Set for snapshot property matchers, which print the copy of a match (see recordMatchersOfAnsweredRootPair).
+    bool printsCopyOfMatch { false };
     JSC::MarkedArgumentBuffer recorded;
     WTF::Vector<JSC::Identifier> recordedNames;
 

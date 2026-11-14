@@ -351,6 +351,15 @@ bool readFlagsAndProcessPromise(JSValue& instanceValue, ExpectFlags& flags, JSGl
     return false;
 }
 
+// Whether matchAsymmetricMatcher() asks `cell`: other DOM wrappers share the cell type. Out of line to keep the eight addresses out of the callers' hot paths.
+static NEVER_INLINE bool isExpectMatcher(JSCell* cell)
+{
+    using namespace Bun::Bindgen::Generated;
+    const ClassInfo* info = cell->classInfo();
+    return info == JSExpectAny::info() || info == JSExpectAnything::info() || info == JSExpectObjectContaining::info() || info == JSExpectStringContaining::info()
+        || info == JSExpectArrayContaining::info() || info == JSExpectStringMatching::info() || info == JSExpectCloseTo::info() || info == JSExpectCustomAsymmetricMatcher::info();
+}
+
 AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* globalObject, JSValue matcherProp, JSValue otherProp, ThrowScope& throwScope, ExpectFlags& flags)
 {
     using namespace Bun::Bindgen::Generated;
@@ -617,6 +626,7 @@ AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSV
 {
     ExpectFlags flags = ExpectFlags();
     AsymmetricMatcherResult result = matchAsymmetricMatcherAndGetFlags(globalObject, matcherProp, otherProp, throwScope, flags);
+    ASSERT((result != AsymmetricMatcherResult::NOT_MATCHER) == isExpectMatcher(matcherProp.asCell()));
     if (result != AsymmetricMatcherResult::NOT_MATCHER && (flags & FLAG_NOT)) {
         result = (result == AsymmetricMatcherResult::PASS) ? AsymmetricMatcherResult::FAIL : AsymmetricMatcherResult::PASS;
     }
@@ -768,7 +778,7 @@ static JSValue asymmetricMatchMethod(JSGlobalObject* globalObject, JSValue value
     return {};
 }
 
-// Jest and Vitest treat any object with an asymmetricMatch() method as a matcher. Returns nullopt if neither or both are.
+// Jest and Vitest treat any object with an asymmetricMatch() method as a matcher. Returns nullopt if neither or both are, or if the method returns undefined.
 static NEVER_INLINE std::optional<bool> matchUserAsymmetricMatcher(JSGlobalObject* globalObject, ThrowScope& scope, JSValue a, JSValue b)
 {
     JSValue methodOfA = asymmetricMatchMethod(globalObject, a);
@@ -781,7 +791,56 @@ static NEVER_INLINE std::optional<bool> matchUserAsymmetricMatcher(JSGlobalObjec
     arguments.append(other ? other : jsUndefined());
     JSValue matched = JSC::call(globalObject, method, JSC::getCallData(method), methodOfA ? a : b, arguments);
     RETURN_IF_EXCEPTION(scope, false);
+    if (matched.isUndefined())
+        return std::nullopt;
     return matched.toBoolean(globalObject);
+}
+
+// What asymmetricMatchMethod() walks, read from the names that each Structure has seen. mayHaveAsymmetricMatchMethod() says yes to every class instance.
+static bool mayHaveAsymmetricMatchMethodOnPrototypeChain(JSGlobalObject* globalObject, JSCell* cell)
+{
+    VM& vm = globalObject->vm();
+#if ENABLE(AOT)
+    // No Structure has the properties of a compiled object, or the ones that are still lazy.
+    if (vm.hasCompiledCode())
+        return true;
+#endif
+    auto name = CompactPtr<UniquedStringImpl>::encode(WebCore::builtinNames(vm).asymmetricMatchPublicName().impl());
+    for (JSObject* object = asObject(cell); object != globalObject->objectPrototype();) {
+        if (object->type() != FinalObjectType && object->type() != ObjectType)
+            return false;
+        Structure* structure = object->structure();
+        if (!structure->seenProperties().ruleOut(name))
+            return true;
+        JSValue prototype = structure->storedPrototype(object);
+        if (!prototype.isObject())
+            return false;
+        object = asObject(prototype);
+    }
+    return false;
+}
+
+static NEVER_INLINE bool oneOfRootPairMayHaveAsymmetricMatchMethod(JSGlobalObject* globalObject, JSValue value, JSValue pattern)
+{
+    if (!oneMayHaveAsymmetricMatchMethod(globalObject, value, pattern))
+        return false;
+    return mayHaveAsymmetricMatchMethodOnPrototypeChain(globalObject, value.asCell()) || mayHaveAsymmetricMatchMethodOnPrototypeChain(globalObject, pattern.asCell());
+}
+
+// Whether the two whole values of toMatchObject() or of snapshot property matchers need the matcher step.
+static ALWAYS_INLINE bool rootPairMayHaveAsymmetricMatcher(JSGlobalObject* globalObject, JSValue value, JSValue pattern)
+{
+    ASSERT(value.isObject() && pattern.isObject());
+    JSCell* valueCell = value.asCell();
+    JSCell* patternCell = pattern.asCell();
+    if ((patternCell->type() == JSC::JSType(JSDOMWrapperType) && isExpectMatcher(patternCell)) || (valueCell->type() == JSC::JSType(JSDOMWrapperType) && isExpectMatcher(valueCell))) {
+        // A matcher is not asked about itself: to Jest and Vitest the two values are identical.
+        return value != pattern;
+    }
+    // Any property or script that names `asymmetricMatch` refs this atom, so a single ref means no object has the method.
+    if (WebCore::builtinNames(globalObject->vm()).asymmetricMatchPublicName().impl()->hasOneRef())
+        return false;
+    return oneOfRootPairMayHaveAsymmetricMatchMethod(globalObject, value, pattern);
 }
 
 // jsdom and happy-dom nodes are class instances, sometimes wrapped in a Proxy.
@@ -2490,77 +2549,143 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
 // only reached from `Bun.deepEquals(a, b, true, true)` in BunObject.cpp.
 template bool Bun__deepEquals<true, false, false, true>(JSC::JSGlobalObject*, JSValue, JSValue, MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>&, ThrowScope&, bool);
 
-/**
- * @brief `Bun.deepMatch(a, b)`
- */
-#if ENABLE(AOT)
-// What the loop of Bun__deepMatch does with a property. A private field has no name to record.
-template<bool enableAsymmetricMatchers>
-static bool matchesPrivateFieldOfCompiledClass(JSGlobalObject* globalObject, ThrowScope& throwScope, Bun::DeepMatchState& state, bool isMatchingObjectContaining, JSValue prop, JSValue subsetProp)
+// Records the Expect matchers under the own enumerable string keys of `pattern` that `value` has too, at any depth. Compares nothing.
+static void recordMatchersOfAnsweredPattern(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, std::set<std::pair<JSC::EncodedJSValue, JSC::EncodedJSValue>>& visited, JSObject* value, JSObject* pattern)
 {
-    JSCell* subsetPropCell = !subsetProp.isEmpty() && subsetProp.isCell() ? subsetProp.asCell() : nullptr;
-    JSCell* propCell = prop.isCell() ? prop.asCell() : nullptr;
-
-    if constexpr (enableAsymmetricMatchers) {
-        if (subsetPropCell && subsetPropCell->type() == JSC::JSType(JSDOMWrapperType)) {
-            switch (matchAsymmetricMatcher(globalObject, subsetProp, prop, throwScope)) {
-            case AsymmetricMatcherResult::FAIL:
-                return false;
-            case AsymmetricMatcherResult::PASS:
-                return true;
-            case AsymmetricMatcherResult::NOT_MATCHER:
-                break;
-            }
-        } else if (propCell && propCell->type() == JSC::JSType(JSDOMWrapperType)) {
-            switch (matchAsymmetricMatcher(globalObject, prop, subsetProp, throwScope)) {
-            case AsymmetricMatcherResult::FAIL:
-                return false;
-            case AsymmetricMatcherResult::PASS:
-                return true;
-            case AsymmetricMatcherResult::NOT_MATCHER:
-                break;
-            }
-        } else if (oneMayHaveAsymmetricMatchMethod(globalObject, prop, subsetProp)) {
-            if (auto matched = matchUserAsymmetricMatcher(globalObject, throwScope, prop, subsetProp)) [[unlikely]] {
-                if (!*matched)
-                    return false;
-                return true;
-            }
-        }
+    VM& vm = globalObject->vm();
+    if (!vm.isSafeToRecurse()) [[unlikely]] {
+        throwStackOverflowError(globalObject, scope);
+        return;
     }
-
-    if (subsetProp.isObject() and prop.isObject()) {
-        if (enableAsymmetricMatchers && isMatchingObjectContaining) {
-            Vector<std::pair<JSValue, JSValue>, 16> stack;
-            MarkedArgumentBuffer gcBuffer;
-            auto eql = Bun__deepEquals<false, true, false>(globalObject, prop, subsetProp, gcBuffer, stack, throwScope, true);
-            RETURN_IF_EXCEPTION(throwScope, false);
-            if (!eql) return false;
-        } else {
-            state.gcBuffer.append(prop);
-            state.gcBuffer.append(subsetProp);
-            if (!state.seen.insert({ JSC::JSValue::encode(prop), JSC::JSValue::encode(subsetProp) }).second) return true;
-            bool matched = Bun__deepMatch<enableAsymmetricMatchers>(prop, subsetProp, globalObject, throwScope, state, isMatchingObjectContaining);
-            RETURN_IF_EXCEPTION(throwScope, false);
-            if (!matched) return false;
+    PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    pattern->methodTable()->getOwnPropertyNames(pattern, globalObject, names, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, void());
+    for (const auto& name : names) {
+        JSValue ofPattern = pattern->get(globalObject, name);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (mayBeAsymmetricMatcher(ofPattern) && isExpectMatcher(ofPattern.asCell())) {
+            bool valueHasIt = value->hasProperty(globalObject, name);
+            RETURN_IF_EXCEPTION(scope, void());
+            if (valueHasIt)
+                state.recordIfAsked(value, pattern, name, ofPattern, jsUndefined());
+            continue;
         }
-    } else {
-        if constexpr (enableAsymmetricMatchers) {
-            if (hasEqualityTesters(globalObject)) [[unlikely]] {
-                if (auto verdict = runEqualityTesters(globalObject, throwScope, prop, subsetProp)) {
-                    if (!*verdict) return false;
+        if (!ofPattern.isObject() || ofPattern.isCallable())
+            continue;
+        JSValue ofValue = value->getIfPropertyExists(globalObject, name);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (!ofValue || !ofValue.isObject())
+            continue;
+        state.recordIfAsked(value, pattern, name, ofValue, ofPattern);
+        if (!visited.insert({ JSValue::encode(ofValue), JSValue::encode(ofPattern) }).second)
+            continue;
+        recordMatchersOfAnsweredPattern(globalObject, scope, state, visited, asObject(ofValue), asObject(ofPattern));
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+}
+
+// A matcher said yes for the two whole values of snapshot property matchers, so no key was compared or recorded. Returns false if this threw.
+static NEVER_INLINE bool recordMatchersOfAnsweredRootPair(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, JSValue value, JSValue pattern)
+{
+    // An expect.not matcher turns the answer of a check that threw into a yes.
+    RETURN_IF_EXCEPTION(scope, false);
+    std::set<std::pair<JSC::EncodedJSValue, JSC::EncodedJSValue>> visited { { JSValue::encode(value), JSValue::encode(pattern) } };
+    recordMatchersOfAnsweredPattern(globalObject, scope, state, visited, asObject(value), asObject(pattern));
+    RETURN_IF_EXCEPTION(scope, false);
+    return true;
+}
+
+// Which (value, pattern) pair subsetPairMatches() compares.
+enum class SubsetPair : uint8_t {
+    // The two whole values of toMatchObject() or of snapshot property matchers. Both are objects.
+    Root,
+    Property,
+    // Of a compiled class. No list has its name, so nothing is recorded for it.
+    PrivateField,
+};
+
+// One (value, pattern) pair of the subset walk. With `enableAsymmetricMatchers`, a matcher on either side answers before anything is compared.
+template<bool enableAsymmetricMatchers, SubsetPair pair>
+static ALWAYS_INLINE bool subsetPairMatches(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, bool isMatchingObjectContaining, JSValue value, JSValue pattern, JSObject* holder = nullptr, JSObject* patternHolder = nullptr, const Identifier* name = nullptr)
+{
+    if constexpr (enableAsymmetricMatchers) {
+        if (pair != SubsetPair::Root || rootPairMayHaveAsymmetricMatcher(globalObject, value, pattern)) {
+            JSCell* patternCell = !pattern.isEmpty() && pattern.isCell() ? pattern.asCell() : nullptr;
+            JSCell* valueCell = value.isCell() ? value.asCell() : nullptr;
+
+            if (patternCell && patternCell->type() == JSC::JSType(JSDOMWrapperType)) {
+                switch (matchAsymmetricMatcher(globalObject, pattern, value, scope)) {
+                case AsymmetricMatcherResult::FAIL:
+                    return false;
+                case AsymmetricMatcherResult::PASS:
+                    if constexpr (pair == SubsetPair::Property)
+                        state.recordIfAsked(holder, patternHolder, *name, pattern, jsUndefined());
                     return true;
+                case AsymmetricMatcherResult::NOT_MATCHER:
+                    break;
+                }
+            } else if (valueCell && valueCell->type() == JSC::JSType(JSDOMWrapperType)) {
+                switch (matchAsymmetricMatcher(globalObject, value, pattern, scope)) {
+                case AsymmetricMatcherResult::FAIL:
+                    return false;
+                case AsymmetricMatcherResult::PASS:
+                    if constexpr (pair == SubsetPair::Root) {
+                        if (state.printsCopyOfMatch)
+                            return recordMatchersOfAnsweredRootPair(globalObject, scope, state, value, pattern);
+                    }
+                    return true;
+                case AsymmetricMatcherResult::NOT_MATCHER:
+                    break;
+                }
+            } else if (oneMayHaveAsymmetricMatchMethod(globalObject, value, pattern)) {
+                if (auto matched = matchUserAsymmetricMatcher(globalObject, scope, value, pattern)) [[unlikely]] {
+                    if constexpr (pair == SubsetPair::Root) {
+                        if (*matched && state.printsCopyOfMatch)
+                            return recordMatchersOfAnsweredRootPair(globalObject, scope, state, value, pattern);
+                    }
+                    return *matched;
                 }
             }
         }
-        auto same = JSC::sameValue(globalObject, prop, subsetProp);
-        RETURN_IF_EXCEPTION(throwScope, false);
-        if (!same) return false;
     }
-    return true;
-}
-#endif
 
+    if (pair == SubsetPair::Root || (pattern.isObject() && value.isObject())) {
+        if constexpr (pair != SubsetPair::Root) {
+            // Inside expect.objectContaining() a nested object has to be equal. A subset there needs its own objectContaining().
+            if (enableAsymmetricMatchers && isMatchingObjectContaining) {
+                Vector<std::pair<JSValue, JSValue>, 16> stack;
+                MarkedArgumentBuffer gcBuffer;
+                bool equal = Bun__deepEquals<false, true, false>(globalObject, value, pattern, gcBuffer, stack, scope, true);
+                RETURN_IF_EXCEPTION(scope, false);
+                return equal;
+            }
+            state.gcBuffer.append(value);
+            state.gcBuffer.append(pattern);
+            if constexpr (pair == SubsetPair::Property)
+                state.recordIfAsked(holder, patternHolder, *name, value, pattern);
+            // This (value, pattern) pair already matched, or is still being compared (a cycle).
+            if (!state.seen.insert({ JSValue::encode(value), JSValue::encode(pattern) }).second)
+                return true;
+        }
+        bool matched = Bun__deepMatch<enableAsymmetricMatchers>(value, pattern, globalObject, scope, state, isMatchingObjectContaining);
+        // JSC__JSValue__jestDeepMatch() checks for the two whole values.
+        if constexpr (pair != SubsetPair::Root)
+            RETURN_IF_EXCEPTION(scope, false);
+        return matched;
+    }
+
+    if constexpr (enableAsymmetricMatchers) {
+        if (hasEqualityTesters(globalObject)) [[unlikely]] {
+            if (auto verdict = runEqualityTesters(globalObject, scope, value, pattern))
+                return *verdict;
+        }
+    }
+    bool same = JSC::sameValue(globalObject, value, pattern);
+    RETURN_IF_EXCEPTION(scope, false);
+    return same;
+}
+
+// `Bun.deepMatch(a, b)`
 template<bool enableAsymmetricMatchers>
 bool Bun__deepMatch(
     JSValue objValue,
@@ -2648,80 +2773,15 @@ bool Bun__deepMatch(
         JSValue subsetProp = subsetObj->get(globalObject, property);
         RETURN_IF_EXCEPTION(throwScope, false);
 
-        JSCell* subsetPropCell = !subsetProp.isEmpty() && subsetProp.isCell() ? subsetProp.asCell() : nullptr;
-        JSCell* propCell = prop.isCell() ? prop.asCell() : nullptr;
-
-        if constexpr (enableAsymmetricMatchers) {
-            if (subsetPropCell && subsetPropCell->type() == JSC::JSType(JSDOMWrapperType)) {
-                switch (matchAsymmetricMatcher(globalObject, subsetProp, prop, throwScope)) {
-                case AsymmetricMatcherResult::FAIL:
-                    return false;
-                case AsymmetricMatcherResult::PASS:
-                    state.recordIfAsked(obj, subsetObj, property, subsetProp, jsUndefined());
-                    // continue to next subset prop
-                    continue;
-                case AsymmetricMatcherResult::NOT_MATCHER:
-                    break;
-                }
-            } else if (propCell && propCell->type() == JSC::JSType(JSDOMWrapperType)) {
-                switch (matchAsymmetricMatcher(globalObject, prop, subsetProp, throwScope)) {
-                case AsymmetricMatcherResult::FAIL:
-                    return false;
-                case AsymmetricMatcherResult::PASS:
-                    // continue to next subset prop
-                    continue;
-                case AsymmetricMatcherResult::NOT_MATCHER:
-                    break;
-                }
-            } else if (oneMayHaveAsymmetricMatchMethod(globalObject, prop, subsetProp)) {
-                if (auto matched = matchUserAsymmetricMatcher(globalObject, throwScope, prop, subsetProp)) [[unlikely]] {
-                    if (!*matched)
-                        return false;
-                    continue;
-                }
-            }
-        }
-
-        if (subsetProp.isObject() and prop.isObject()) {
-            // if this is called from inside an objectContaining asymmetric matcher, it should behave slightly differently:
-            // in such case, it expects exhaustive matching of any nested object properties, not just a subset,
-            // and the user would need to opt-in to subset matching by using another nested objectContaining matcher
-            if (enableAsymmetricMatchers && isMatchingObjectContaining) {
-                Vector<std::pair<JSValue, JSValue>, 16> stack;
-                MarkedArgumentBuffer gcBuffer;
-                auto eql = Bun__deepEquals<false, true, false>(globalObject, prop, subsetProp, gcBuffer, stack, throwScope, true);
-                RETURN_IF_EXCEPTION(throwScope, false);
-                if (!eql) return false;
-            } else {
-                state.gcBuffer.append(prop);
-                state.gcBuffer.append(subsetProp);
-                state.recordIfAsked(obj, subsetObj, property, prop, subsetProp);
-                // This (value, pattern) pair already matched, or is still being compared (a cycle).
-                if (!state.seen.insert({ JSC::JSValue::encode(prop), JSC::JSValue::encode(subsetProp) }).second) continue;
-                bool matched = Bun__deepMatch<enableAsymmetricMatchers>(prop, subsetProp, globalObject, throwScope, state, isMatchingObjectContaining);
-                RETURN_IF_EXCEPTION(throwScope, false);
-                if (!matched) return false;
-            }
-        } else {
-            if constexpr (enableAsymmetricMatchers) {
-                if (hasEqualityTesters(globalObject)) [[unlikely]] {
-                    if (auto verdict = runEqualityTesters(globalObject, throwScope, prop, subsetProp)) {
-                        if (!*verdict) return false;
-                        continue;
-                    }
-                }
-            }
-            auto same = JSC::sameValue(globalObject, prop, subsetProp);
-            RETURN_IF_EXCEPTION(throwScope, false);
-            if (!same) return false;
-        }
+        if (!subsetPairMatches<enableAsymmetricMatchers, SubsetPair::Property>(globalObject, throwScope, state, isMatchingObjectContaining, prop, subsetProp, obj, subsetObj, &property))
+            return false;
     }
 
 #if ENABLE(AOT)
     // No list shows the private fields that compiled classes laid. The engine hands over what each holds, beside what the same field of the other object holds.
     if (vm.aotState().someClassHasPrivateNames) [[unlikely]] {
         bool matched = JSC::AOT::PropertyWalk::matchPrivateFieldsOfCompiledClasses(globalObject, obj, subsetObj, [&](JSValue prop, JSValue subsetProp) -> bool {
-            return matchesPrivateFieldOfCompiledClass<enableAsymmetricMatchers>(globalObject, throwScope, state, isMatchingObjectContaining, prop, subsetProp);
+            return subsetPairMatches<enableAsymmetricMatchers, SubsetPair::PrivateField>(globalObject, throwScope, state, isMatchingObjectContaining, prop, subsetProp);
         });
         RETURN_IF_EXCEPTION(throwScope, false);
         if (!matched) return false;
@@ -3765,7 +3825,8 @@ bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSVal
 
     Bun::DeepMatchState state;
     state.records = !!replaced;
-    bool matched = Bun__deepMatch<true>(obj, subset, globalObject, scope, state, false);
+    state.printsCopyOfMatch = replaced && replaceWhen;
+    bool matched = subsetPairMatches<true, SubsetPair::Root>(globalObject, scope, state, false, obj, subset);
     RETURN_IF_EXCEPTION(scope, false);
     if (replaced) {
         JSValue shown = matched == replaceWhen ? replaceMatchedProperties(globalObject, scope, state, obj, subset) : obj;

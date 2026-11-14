@@ -172,10 +172,8 @@ pub struct VirtualMachine {
     // self-referential and cannot carry `<'a>`, so we erase to `'static` and the
     // owner guarantees the borrowed `log` outlives the VM (see `init`).
     pub transpiler: JsCell<Transpiler<'static>>,
-    /// Hot-reload import watcher (heap `Box`, installed by
-    /// [`crate::hot_reloader::HotReloaderCtx::install_bun_watcher`]); null when
-    /// hot reload is disabled. Read via [`Self::bun_watcher_ptr`].
-    pub bun_watcher: Cell<*mut crate::hot_reloader::ImportWatcher>,
+    /// `None` when hot reload is disabled.
+    pub bun_watcher: JsCell<Option<std::sync::Arc<bun_watcher::Watcher>>>,
     pub(crate) console: Box<crate::console_object::ConsoleObject>,
     // BORROW_PARAM (`&'a mut bun_ast::Log` per LIFETIMES.tsv) — raw NonNull
     // used because VM is self-referential and cannot carry `<'a>`.
@@ -1432,44 +1430,12 @@ impl VirtualMachine {
         VM::opaque_ref(self.jsc_vm.get())
     }
 
-    /// Raw accessor for the hot-reload import watcher. `bun_watcher` is the
-    /// `*mut ImportWatcher` installed by
-    /// [`crate::hot_reloader::HotReloaderCtx::install_bun_watcher`] (separate
-    /// `Box` heap allocation), or null when hot reload is disabled.
-    ///
-    /// NOTE: unlike `event_loop`, the pointee is **not** JS-thread-only —
-    /// the inner `Box<Watcher>` is held as `&mut Watcher` for the lifetime of
-    /// the spawned file-watcher thread (`Watcher::thread_main`), and
-    /// `RuntimeTranspilerStore` reads it from transpiler workers. The pointee
-    /// guards itself with an internal mutex, so we
-    /// return the raw pointer and leave the `unsafe` deref at the call site to
-    /// keep the cross-thread hazard visible. Callers must scope any reborrow to
-    /// a single mutex-guarded `Watcher` operation.
-    #[inline]
-    pub(crate) fn bun_watcher_ptr(&self) -> *mut crate::hot_reloader::ImportWatcher {
-        self.bun_watcher.get()
-    }
-
-    /// Shuts down the file watcher. Its thread reads this VM while handling a change, so this waits
-    /// for the current change to finish and prevents new ones.
+    /// Waits for the watcher thread to finish the current change and prevents new ones.
     fn stop_import_watcher(&self) {
-        use crate::hot_reloader::ImportWatcher;
-        if self.bun_watcher.get().is_null() {
-            return;
+        if let Some(watcher) = self.bun_watcher.replace(None) {
+            watcher.shutdown(false);
+            self.transpiler.with_mut(|t| t.resolver.watcher = None);
         }
-        // SAFETY: `install_bun_watcher` leaked this box, and the other threads that read it have finished.
-        // Keep it installed until `shutdown` returns because the in-progress change still reads it.
-        let (ImportWatcher::Hot(w) | ImportWatcher::Watch(w)) =
-            unsafe { &mut *self.bun_watcher.get() };
-        // SAFETY: the box is the one `Watcher::init` returned.
-        unsafe { bun_watcher::Watcher::shutdown(&raw mut **w, false) };
-        self.transpiler.with_mut(|t| t.resolver.watcher = None);
-        let watcher = self.bun_watcher.replace(core::ptr::null_mut());
-        // SAFETY: as above.
-        let watcher = unsafe { bun_core::heap::take(watcher) };
-        let (ImportWatcher::Hot(w) | ImportWatcher::Watch(w)) = *watcher;
-        // `shutdown` transferred ownership to the watcher thread.
-        let _ = Box::into_raw(w);
     }
 
     /// `event_loop().enter()` now, `.exit()` on drop.
@@ -1990,7 +1956,7 @@ impl VirtualMachine {
     }
 
     pub fn is_watcher_enabled(&self) -> bool {
-        !self.bun_watcher.get().is_null()
+        self.bun_watcher.get().is_some()
     }
 
     /// Thin setter so callers don't need `.with` plumbing on the thread-local.
@@ -3128,6 +3094,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).console).write(console);
             // `log` is a fresh leaked Box; outlives the VM.
             addr_of_mut!((*vm).log).write(Cell::new(NonNull::new(log)));
+            addr_of_mut!((*vm).bun_watcher).write(JsCell::new(None));
             addr_of_mut!((*vm).main).write(JsCell::new(None));
             addr_of_mut!((*vm).main_entry_point).write(Cell::new(MainEntryPoint::File));
             addr_of_mut!((*vm).main_resolved_path).write(JsCell::new(bun_core::String::EMPTY));
@@ -4327,7 +4294,7 @@ impl VirtualMachine {
             if !self.hot_reload_deferred.get() {
                 break;
             }
-            self.reload(None);
+            self.reload();
             // This reload wasn't started by a task, so run its microtasks here before the loop sleeps.
             self.tick();
         }
@@ -4344,46 +4311,9 @@ impl VirtualMachine {
     /// Adds a file that the module loader has not loaded to the file watcher when watch mode is
     /// enabled.
     pub fn add_to_watcher_if_needed(&self, path: &[u8]) {
-        if !self.is_watcher_enabled() || path.is_empty() {
-            return;
+        if let Some(watcher) = self.bun_watcher.get() {
+            let _ = watcher.add_file_by_path_slow(path);
         }
-        let watcher = self.bun_watcher_ptr();
-        if !watcher.is_null() {
-            // SAFETY: `bun_watcher` is a live `Box<ImportWatcher>` leaked in
-            // `enable_hot_module_reloading`. The pointee is shared with the
-            // file-watcher thread (see `bun_watcher_ptr` doc) — the enum
-            // discriminant is write-once at install and read-only thereafter,
-            // and `add_file_by_path_slow` serializes the inner watchlist write
-            // via `Watcher.mutex`. Borrow is scoped to this single
-            // mutex-guarded call.
-            let _ = unsafe { (*watcher).add_file_by_path_slow(path) };
-        }
-    }
-
-    /// `add_to_watcher_if_needed`, for threads that work for this one. `None` unless watch mode is
-    /// enabled.
-    pub fn watcher_for_threads(&self) -> Option<impl Fn(&[u8]) + Send + Sync + 'static> {
-        struct Shared {
-            watcher: *mut crate::hot_reloader::ImportWatcher,
-            _ticket: crate::Ticket,
-        }
-        // SAFETY: it carries a `Ticket` for the VM that has the watcher. The pointee is made to be
-        // shared with other threads (see `bun_watcher_ptr`).
-        unsafe impl Send for Shared {}
-        if !self.is_watcher_enabled() {
-            return None;
-        }
-        // One of these threads at a time has the `&mut`.
-        let shared = bun_threading::Guarded::new(Shared {
-            watcher: self.bun_watcher_ptr(),
-            _ticket: self.ticket(),
-        });
-        Some(move |path: &[u8]| {
-            let shared = shared.lock();
-            let watcher = shared.watcher;
-            // SAFETY: as in `add_to_watcher_if_needed`.
-            let _ = unsafe { (*watcher).add_file_by_path_slow(path) };
-        })
     }
 
     /// `bun_resolver` holds the manager as an opaque forward-decl (it cannot
@@ -4421,7 +4351,7 @@ impl VirtualMachine {
     }
 
     /// Performs a hot reload: re-evaluates the entry point once any pending entry-point load settles.
-    pub(crate) fn reload(&self, _: Option<&mut crate::hot_reloader::HotReloadTask>) {
+    pub(crate) fn reload(&self) {
         if self.hot_reload.get() == HotReload::Watch {
             // Watch reload replaces the process: never defer on a pending
             // entry promise (node restarts regardless of child state).

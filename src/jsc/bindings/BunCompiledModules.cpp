@@ -964,10 +964,7 @@ bool requireCompiledModule(Zig::GlobalObject* globalObject, JSCommonJSModule* ta
         bool isAdopted = tryAdoptModuleObject(globalObject, target, *module, key);
         RETURN_IF_EXCEPTION(scope, false);
         SetForScope isHanded(s_transferredRequire, TransferredRequire { target, &path, module->index(), isAdopted });
-        MarkedArgumentBuffer arguments;
-        arguments.append(target);
-        arguments.append(key);
-        JSC::profiledCall(globalObject, ProfilingReason::API, loader, getCallData(loader), target, arguments);
+        JSCommonJSExtensions::callHandler(globalObject, loader, target, key);
         if (scope.exception()) [[unlikely]] {
             // Remove the object from the cache. If the file can still run, the next require() creates its `module`.
             if (isAdopted)

@@ -188,6 +188,19 @@ test.concurrent("resolution errors escape a file: path", async () => {
   expect(exitCode).toBe(1);
 });
 
+test.concurrent("resolution errors escape the resolution of the package that declared the dependency", async () => {
+  // The workspace's resolution is its path. Its package.json asks for a dist-tag that does not exist.
+  using dir = tempDir("escape-controls-declared-by", {
+    "package.json": JSON.stringify({ name: "app", version: "1.0.0", workspaces: ["packages/*"] }),
+    "bunfig.toml": `[install]\nregistry = "${registryUrl}"\n`,
+    [`packages/ws-${C1}/package.json`]: JSON.stringify({ name: "ws", version: "1.0.0", dependencies: { dep: "nope" } }),
+  });
+  const { stdout, stderr, exitCode } = await run(String(dir), "install");
+  expect(stderr).toContain(`error: dep@nope failed to resolve (declared by ws@workspace:packages/ws-${C1_ESCAPED})\n`);
+  expect(stdout + stderr).not.toMatch(RAW_CONTROL);
+  expect(exitCode).toBe(1);
+});
+
 test.concurrent("bun patch lists the candidate resolutions escaped", async () => {
   // Two lockfile entries named `dep`: the root's tarball and the registry's
   // 1.0.0 that `needs-dep` depends on, so `bun patch dep` has to ask which one.

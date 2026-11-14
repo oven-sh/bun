@@ -551,12 +551,15 @@ describe("junit reporter", () => {
     expect(proc.exitCode).toBe(1);
   });
 
-  it("reports an attempt that failed without an error like any other failed attempt", async () => {
+  it.each([
+    ["vitest", "fails", "test marked with .fails() did not fail"],
+    ["vitest", "failing", "test marked with .failing() did not throw"],
+    ["bun:test", "failing", "test marked with .failing() did not throw"],
+  ])("reports a %s test.%s attempt that failed without an error like any failed attempt", async (from, fails, why) => {
     await using tmpDir = tempDir("junit-retry-no-error", {
       "package.json": "{}",
-      // bun:test doesn't retry these failures.
       "no-error.test.js": `
-        import { expect, test } from "vitest";
+        import { expect, test } from "${from}";
         const attempts = {};
         const attempt = name => (attempts[name] = (attempts[name] ?? 0) + 1);
 
@@ -575,8 +578,8 @@ describe("junit reporter", () => {
           expect.hasAssertions();
           if (attempt("b") === 2) expect(1).toBe(1);
         });
-        test.fails("never fails", { retry: 1 }, () => {});
-        test.fails("fails the second time", { retry: 1 }, () => {
+        test.${fails}("never fails", { retry: 1 }, () => {});
+        test.${fails}("fails the second time", { retry: 1 }, () => {
           if (attempt("c") === 2) throw new Error("second attempt");
         });
       `,
@@ -600,7 +603,7 @@ describe("junit reporter", () => {
     );
     const tooFew = count => ["AssertionError", `Expected more assertions, but only received ${count}`];
     const none = ["AssertionError", "Expected to have assertions, but none were run"];
-    const didNotFail = ["AssertionError", "test marked with .fails() did not fail"];
+    const didNotFail = ["AssertionError", why];
     expect(attemptsOf).toEqual({
       "never has enough assertions": [
         ["failure", ...tooFew(1)],
@@ -618,6 +621,38 @@ describe("junit reporter", () => {
       ],
       "fails the second time": [["flakyFailure", ...didNotFail]],
     });
+    expect(proc.exitCode).toBe(1);
+  });
+
+  it("reports a test with repeats that fails without an error in a run before the last", async () => {
+    await using tmpDir = tempDir("junit-repeats-no-error", {
+      "package.json": "{}",
+      "no-error.test.js": `
+        import { expect, test } from "bun:test";
+        let runs = 0;
+        test("has no assertion in run 2 of 3", { repeats: 2 }, () => {
+          expect.assertions(1);
+          if (++runs !== 2) expect(1).toBe(1);
+        });
+      `,
+    });
+
+    const junitPath = `${tmpDir}/junit.xml`;
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: String(tmpDir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    await proc.exited;
+
+    const xmlContent = await file(junitPath).text();
+    // A run that passed is not an attempt: the failed run is the only child.
+    expect(xmlContent.match(/<\w*[fF]ailure [^>]*>/g)).toEqual([
+      '<failure type="AssertionError" message="Expected more assertions, but only received 0" />',
+    ]);
+    // The count of assertions is that of the last run only, which this test does not pin.
+    expect(xmlContent).toMatch(/<testsuites name="bun test" tests="1" assertions="\d+" failures="1" skipped="0"/);
     expect(proc.exitCode).toBe(1);
   });
 

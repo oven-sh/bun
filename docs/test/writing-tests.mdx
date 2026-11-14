@@ -99,7 +99,7 @@ test(
 
 ### test.repeats
 
-Use the `repeats` option to run a test multiple times regardless of pass/fail status; the test fails if any iteration fails. Use it to detect flaky tests or for stress testing. `repeats: N` runs the test N+1 times total (1 initial run + N repeats).
+Use the `repeats` option to run a test multiple times. The test fails if any run fails, and Bun stops at the first run that fails. The checks that Bun makes when a test ends, such as `expect.assertions()`, `expect.hasAssertions()`, and `test.failing`, apply to every run. Use `repeats` to detect flaky tests or for stress testing. `repeats: N` runs a passing test N+1 times in total (1 initial run + N repeats).
 
 ```ts title="example.test.ts" icon="/icons/typescript.svg"
 import { expect, test } from "bun:test";

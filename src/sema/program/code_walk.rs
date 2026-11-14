@@ -2141,8 +2141,6 @@ fn share_modules_among_types<'r>(
     entry_points: VecDeque<u32>,
     builds_executable: bool,
 ) {
-    // An executable has no text to read again, so a call that fails to read the file as its type has to
-    // find what another type made of it.
     let is_call_with_written_type = |target: &CodeTarget<'_>| {
         builds_executable
             && !target.has_shared_type
@@ -2157,42 +2155,37 @@ fn share_modules_among_types<'r>(
         return;
     }
     let mut first_forms: FxHashMap<&'r [u8], u32> = FxHashMap::default();
-    let mut first_forms_of_calls: FxHashMap<&'r [u8], u32> = FxHashMap::default();
     let mut seen = vec![false; files.len()];
-    let (mut level, mut later) = (VecDeque::new(), entry_points);
-    while let Some(index) = level.pop_front().or_else(|| later.pop_front()) {
-        if std::mem::replace(&mut seen[index as usize], true) {
-            continue;
-        }
-        for next in 0..files[index as usize].code_targets().len() {
-            let target = files[index as usize].code_targets()[next];
-            let asked_for = files[index as usize].targets[next];
-            if target.has_shared_type {
-                share_form(host, files, &mut first_forms, index, next);
-            } else if is_call_with_written_type(&target) {
-                let path = target.key.path;
-                if !cannot_be_read(host, files, asked_for) {
-                    first_forms_of_calls.entry(path).or_insert(asked_for);
-                } else if let Some(&form) = first_forms
-                    .get(path)
-                    .or_else(|| first_forms_of_calls.get(path))
-                {
-                    load_form(files, index, next, form);
+    let mut later = entry_points;
+    // What one load reaches by statements runs before the calls in it do.
+    while let Some(root) = later.pop_front() {
+        let mut level = VecDeque::from([root]);
+        let mut loaded_together = Vec::new();
+        while let Some(index) = level.pop_front() {
+            if std::mem::replace(&mut seen[index as usize], true) {
+                continue;
+            }
+            loaded_together.push(index);
+            for next in 0..files[index as usize].code_targets().len() {
+                let target = files[index as usize].code_targets()[next];
+                if target.has_shared_type {
+                    share_form(host, files, &mut first_forms, index, next);
+                }
+                let reached = files[index as usize].targets[next];
+                match target.is_loaded_with_importer {
+                    true => level.push_back(reached),
+                    false => later.push_back(reached),
                 }
             }
-            let reached = files[index as usize].targets[next];
-            match target.is_loaded_with_importer {
-                true => level.push_back(reached),
-                false => later.push_back(reached),
+        }
+        for index in loaded_together {
+            for next in 0..files[index as usize].code_targets().len() {
+                if is_call_with_written_type(&files[index as usize].code_targets()[next]) {
+                    share_form(host, files, &mut first_forms, index, next);
+                }
             }
         }
     }
-}
-
-fn cannot_be_read(host: &dyn CodeHost, files: &[WalkedFile<'_, '_>], file: u32) -> bool {
-    let parsed = files[file as usize].parsed.as_ref();
-    let payload = parsed.and_then(|it| it.payload.as_ref());
-    payload.is_some_and(|it| host.stands_for_text_that_cannot_be_read(it))
 }
 
 fn share_form<'r>(
@@ -2205,17 +2198,18 @@ fn share_form<'r>(
     let file = &files[index as usize];
     let path = file.code_targets()[next].key.path;
     let asked_for = file.targets[next];
-    if !first_forms.contains_key(path) && cannot_be_read(host, files, asked_for) {
+    let cannot_be_read = || {
+        let parsed = files[asked_for as usize].parsed.as_ref();
+        let payload = parsed.and_then(|it| it.payload.as_ref());
+        payload.is_some_and(|it| host.stands_for_text_that_cannot_be_read(it))
+    };
+    if !first_forms.contains_key(path) && cannot_be_read() {
         return;
     }
     let reached = *first_forms.entry(path).or_insert(asked_for);
-    load_form(files, index, next, reached);
-}
-
-fn load_form(files: &mut [WalkedFile<'_, '_>], index: u32, next: usize, form: u32) {
-    let key = files[form as usize].target.key;
+    let key = files[reached as usize].target.key;
     let file = &mut files[index as usize];
-    file.targets[next] = form;
+    file.targets[next] = reached;
     if let Some(parsed) = &mut file.parsed {
         parsed.code.targets[next].key = key;
     }

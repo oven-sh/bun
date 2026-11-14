@@ -11,6 +11,7 @@
 #include "NodeAsyncHooks.h"
 
 #include <JavaScriptCore/ErrorInstance.h>
+#include <JavaScriptCore/FrameTracers.h>
 #include <JavaScriptCore/FunctionCodeBlock.h>
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSBoundFunction.h>
@@ -1154,9 +1155,21 @@ __attribute__((minsize)) static JSObject* esmExportsBeforePatches(Zig::GlobalObj
 
     Vector<JSC::Identifier, 4> names;
     MarkedArgumentBuffer values;
+#if ENABLE(AOT)
+    bool hasKeptPlaces = vm.hasCompiledCode();
+#endif
     for (auto& name : properties) {
         JSValue value = overwritten->getIfPropertyExists(globalObject, name);
         RETURN_IF_EXCEPTION(scope, nullptr);
+#if ENABLE(AOT)
+        // What was kept out of compiled code is the value of its place. Once the module that holds the export was loaded again, the export is read where it is.
+        if (value && hasKeptPlaces) [[unlikely]] {
+            bool isOfLoadBefore = loaded.esmNamespace->hasCompiledExportLeftKeptPlace(globalObject, name, overwritten);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            if (isOfLoadBefore)
+                value = JSValue();
+        }
+#endif
         if (value == overwritten)
             continue;
         if (!value) {
@@ -3124,6 +3137,23 @@ bool JSModuleMock::defineOwnProperty(JSObject* object, JSC::JSGlobalObject* glob
     return exports && exports->methodTable()->defineOwnProperty(exports, globalObject, propertyName, descriptor, shouldThrow);
 }
 
+#if ENABLE(AOT)
+// The stores of a mock of a module that runs from source and hands on names of compiled files. Before them the table of the mock, `kept`, got each value that
+// compiled code holds, with its place. Such a value is replaced in its place. Any other name is stored as in a plain run.
+__attribute__((minsize)) static void storeExportsWhereTheyWereKept(Zig::GlobalObject* globalObject, JSC::JSModuleNamespaceObject* moduleNamespace, JSObject* kept, const Vector<JSC::Identifier, 4>& names, const MarkedArgumentBuffer& values)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    for (size_t i = 0; i < names.size(); ++i) {
+        bool isStored = JSC::AOT::storeIntoKeptPlace(globalObject, kept, names[i].impl(), values.at(i));
+        RETURN_IF_EXCEPTION(scope, );
+        if (isStored)
+            continue;
+        moduleNamespace->overrideExportValue(globalObject, names[i], values.at(i));
+        RETURN_IF_EXCEPTION(scope, );
+    }
+}
+#endif
+
 __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObject* globalObject, JSModuleMock* mock, const LoadedModule& loaded)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -3235,6 +3265,7 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
 
         if (moduleNamespaceObject && mock->originalExports && !mock->originalExportsOfEvictedModule)
             mock->patchedNamespace.set(vm, mock, moduleNamespaceObject);
+        size_t namesStoredWhereKept = 0;
 #if ENABLE(AOT)
         // A getter above may have evicted it.
         bool mocksCompiledModule = loaded.compiledModule && !JSC::AOT::isEvicted(globalObject, *loaded.compiledModule);
@@ -3243,6 +3274,17 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
             if (hasBegunToLay)
                 JSC::AOT::didStopInstallingMock(globalObject, *loaded.compiledModule);
         });
+        // A module that runs from source may hand on names whose values compiled code holds. The table of the mock keeps each of them with its place
+        // before any name is stored: to find a place can run code, and compiled code refuses some names. A mock of a compiled file keeps them itself.
+        JSObject* keptOutOfCompiledCode = !mocksCompiledModule && moduleNamespaceObject && vm.hasCompiledCode() ? mock->originalExports.get() : nullptr;
+        if (keptOutOfCompiledCode) {
+            for (auto& name : names) {
+                moduleNamespaceObject->keepCompiledExportValue(globalObject, name, keptOutOfCompiledCode);
+                RETURN_IF_EXCEPTION(scope, );
+                if (!isStillRegisteredModuleMock(globalObject, specifier, registered))
+                    return;
+            }
+        }
         if (mocksCompiledModule) {
             // Two mocks may patch a variable that two modules export. The last patch is undone first, as above.
             if (!mock->patchOrder)
@@ -3257,8 +3299,13 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
             JSC::AOT::willMockModule(globalObject, *loaded.compiledModule, requireReturnValue, !!commonJSExports, ownFactory && ownFactory.isCallable(), mock);
             RETURN_IF_EXCEPTION(scope, );
         }
+        if (keptOutOfCompiledCode) {
+            storeExportsWhereTheyWereKept(globalObject, moduleNamespaceObject, keptOutOfCompiledCode, names, values);
+            RETURN_IF_EXCEPTION(scope, );
+            namesStoredWhereKept = names.size();
+        }
 #endif
-        for (size_t i = 0; i < names.size(); ++i) {
+        for (size_t i = namesStoredWhereKept; i < names.size(); ++i) {
             if (moduleNamespaceObject) {
                 moduleNamespaceObject->overrideExportValue(globalObject, names[i], values.at(i));
                 RETURN_IF_EXCEPTION(scope, );
@@ -3932,7 +3979,19 @@ static void restoreOverwrittenExports(Zig::GlobalObject* globalObject, JSC::JSMo
     JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
     overwritten->getOwnPropertyNames(overwritten, globalObject, names, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(scope, );
+#if ENABLE(AOT)
+    bool hasKeptPlaces = vm.hasCompiledCode();
+#endif
     for (auto& name : names) {
+#if ENABLE(AOT)
+        // What the table keeps out of compiled code goes back into its place, whatever the name resolves to by now.
+        if (hasKeptPlaces) [[unlikely]] {
+            bool isBackInItsPlace = JSC::AOT::putBackKeptExport(globalObject, overwritten, name.impl());
+            RETURN_IF_EXCEPTION(scope, );
+            if (isBackInItsPlace)
+                continue;
+        }
+#endif
         JSValue original = overwritten->get(globalObject, name);
         RETURN_IF_EXCEPTION(scope, );
         if (original != overwritten) {
@@ -4612,6 +4671,16 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionPatchedModuleDidRun, __attrib
                 continue;
             ExportVariable variable = findExportVariable(globalObject, loaded.esmNamespace, name);
             RETURN_IF_EXCEPTION(scope, {});
+#if ENABLE(AOT)
+            // Compiled code holds the value: its place is read again, as the variable is below.
+            if (!variable.record && vm.hasCompiledCode()) {
+                if (JSValue original = JSC::AOT::readKeptPlace(globalObject, overwritten, name.impl())) {
+                    overwritten->putDirectMayBeIndex(globalObject, name, original);
+                    RETURN_IF_EXCEPTION(scope, {});
+                }
+                continue;
+            }
+#endif
             JSValue original = variable.record ? variable.record->moduleEnvironment()->readVariable(vm, variable.offset) : JSValue();
             if (!original)
                 continue;

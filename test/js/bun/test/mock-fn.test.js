@@ -3420,10 +3420,11 @@ if (isBun) {
         class List extends Array {
           sum() {}
         }
-        // A method of the class that is a function of the base class.
+        // Methods of the class that are functions of the base class, one of them under the name that the base class has for it.
         List.prototype.all = Array.prototype.every;
+        List.prototype.includes = Array.prototype.includes;
         const first = vi.mockObject({ List }, { spy: true });
-        expect(ownMocks(new first.List())).toEqual(["sum", "all"]);
+        expect(ownMocks(new first.List())).toEqual(["sum", "all", "includes"]);
 
         List.prototype.added = function added() {};
         List.prototype.mocked = vi.fn();
@@ -3431,7 +3432,7 @@ if (isBun) {
         List.prototype.late = function late() {};
         const third = vi.mockObject({ List }, { spy: true });
 
-        const own = ["sum", "all", "added", "mocked", "late"];
+        const own = ["sum", "all", "includes", "added", "mocked", "late"];
         expect({
           first: ownMocks(new first.List()),
           second: ownMocks(new second.List()),
@@ -3483,6 +3484,58 @@ if (isBun) {
           first: ["method"],
           second: ["method", "inherited"],
         });
+      });
+
+      test("{ spy: true } again: a mock that the test puts on the prototype between two mocks of the class is a method of the class", () => {
+        class Base {
+          inherited() {}
+        }
+        class Klass extends Base {
+          method() {}
+        }
+        const first = vi.mockObject({ Klass }, { spy: true });
+        // Mocks that the automocker made, as the spies of the inherited methods are.
+        Klass.prototype.spied = vi.mockObject(() => 1, { spy: true });
+        Klass.prototype.borrowed = vi.mockObject({ serialize() {} }, { spy: true }).serialize;
+        Klass.prototype.mocked = vi.mockObject(function mocked() {});
+        const second = vi.mockObject({ Klass }, { spy: true });
+
+        const own = ["method", "spied", "borrowed", "mocked"];
+        const [a, b] = [new second.Klass(), new second.Klass()];
+        expect({ first: ownMocks(new first.Klass()), second: ownMocks(a) }).toEqual({ first: own, second: own });
+        a.spied.mockReturnValue(2);
+        expect([a.spied(), b.spied()]).toEqual([2, 1]);
+      });
+
+      // A later mock tells the spies that the first one left for inherited methods by what the class inherits then.
+      test.each(
+        Object.entries({
+          "spyOn() of the method on the base class": [Base => spyOn(Base.prototype, "inherited"), ["method"]],
+          "vi.spyOn() of the method on the base class": [Base => vi.spyOn(Base.prototype, "inherited"), ["method"]],
+          "{ spy: true } of the base class": [Base => vi.mockObject({ Base }, { spy: true }), ["method"]],
+          "another function in the place of the method on the base class": [
+            Base => (Base.prototype.inherited = function () {}),
+            ["method"],
+          ],
+          // A mock of the automocker that the test puts under the name of an inherited method is not told from the spy of that method.
+          "a mock of the automocker in the place of the spy on the class": [
+            (Base, Klass) => (Klass.prototype.inherited = vi.mockObject(() => 1, { spy: true })),
+            ["method"],
+          ],
+          // The spy that the first mock left is of a method that the class inherits no more. It counts as a method of the class.
+          "the method deleted from the base class": [Base => delete Base.prototype.inherited, ["method", "inherited"]],
+        }),
+      )("{ spy: true } again, after %s", (_, [change, own]) => {
+        class Base {
+          inherited() {}
+        }
+        class Klass extends Base {
+          method() {}
+        }
+        vi.mockObject({ Klass }, { spy: true });
+        change(Base, Klass);
+        const second = vi.mockObject({ Klass }, { spy: true });
+        expect(ownMocks(new second.Klass())).toEqual(own);
       });
 
       test("mockImplementation on an automocked class", () => {
@@ -3668,25 +3721,27 @@ if (isBun) {
         expect({ stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }).toEqual({ stdout: "", exitCode: 0 });
       });
 
-      test("{ spy: true } gives an instance its own mock for the methods of its class only, whichever function mocks the module", async () => {
-        const { bunEnv, bunExe, tempDir } = require("harness");
-        const classes = `
+      test.concurrent(
+        "{ spy: true } gives an instance its own mock for the methods of its class only, whichever function mocks the module",
+        async () => {
+          const { bunEnv, bunExe, tempDir } = require("harness");
+          const classes = `
           class Base { inherited() { return "inherited"; } }
           class Klass extends Base { method() { return "method"; } }
           class List extends Array { sum() { return this.reduce((a, b) => a + b, 0); } }
           module.exports = { Klass, List };
         `;
-        using dir = tempDir("mock-object-instance-methods", {
-          "vi-mock.cjs": classes,
-          "vi-mock-spy.cjs": classes,
-          "vi-do-mock.cjs": classes,
-          "vi-do-mock-spy.cjs": classes,
-          "jest-mock.cjs": classes,
-          "jest-mock-spy.cjs": classes,
-          "jest-do-mock.cjs": classes,
-          "jest-do-mock-spy.cjs": classes,
-          "unmocked.cjs": classes,
-          "instances.test.js": `
+          using dir = tempDir("mock-object-instance-methods", {
+            "vi-mock.cjs": classes,
+            "vi-mock-spy.cjs": classes,
+            "vi-do-mock.cjs": classes,
+            "vi-do-mock-spy.cjs": classes,
+            "jest-mock.cjs": classes,
+            "jest-mock-spy.cjs": classes,
+            "jest-do-mock.cjs": classes,
+            "jest-do-mock-spy.cjs": classes,
+            "unmocked.cjs": classes,
+            "instances.test.js": `
             import { expect, jest, test, vi } from "bun:test";
             vi.mock("./vi-mock.cjs");
             vi.mock("./vi-mock-spy.cjs", { spy: true });
@@ -3736,35 +3791,38 @@ if (isBun) {
               });
             });
           `,
-        });
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "test", "instances.test.js"],
-          env: bunEnv,
-          cwd: String(dir),
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect(stderr).toContain(" 1 pass\n 0 fail\n");
-        expect({ stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }).toEqual({ stdout: "", exitCode: 0 });
-      });
+          });
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "test", "instances.test.js"],
+            env: bunEnv,
+            cwd: String(dir),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toContain(" 1 pass\n 0 fail\n");
+          expect({ stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }).toEqual({ stdout: "", exitCode: 0 });
+        },
+      );
 
-      test("vi.mock(package, { spy: true }) over a loaded package: an instance has its own mock for the methods of its class only", async () => {
-        const { bunEnv, bunExe, tempDir } = require("harness");
-        using dir = tempDir("mock-object-instance-methods-loaded", {
-          "node_modules/lists/package.json": JSON.stringify({ name: "lists", version: "1.0.0", main: "index.js" }),
-          "node_modules/lists/index.js": `
+      test.concurrent(
+        "vi.mock(package, { spy: true }) over a loaded package: an instance has its own mock for the methods of its class only",
+        async () => {
+          const { bunEnv, bunExe, tempDir } = require("harness");
+          using dir = tempDir("mock-object-instance-methods-loaded", {
+            "node_modules/lists/package.json": JSON.stringify({ name: "lists", version: "1.0.0", main: "index.js" }),
+            "node_modules/lists/index.js": `
             class List extends Array {
               sum() { return this.reduce((a, b) => a + b, 0); }
             }
             module.exports = { List };
           `,
-          // The test file has linked the package when this runs, so the mock leaves the package's own objects alone.
-          "mock-lists.js": `
+            // The test file has linked the package when this runs, so the mock leaves the package's own objects alone.
+            "mock-lists.js": `
             import { vi } from "bun:test";
             vi.mock("lists", { spy: true });
           `,
-          "loaded.test.js": `
+            "loaded.test.js": `
             import { expect, test, vi } from "bun:test";
             import { List } from "lists";
             import "./mock-lists.js";
@@ -3788,13 +3846,13 @@ if (isBun) {
               expect(List.prototype.map).toHaveBeenCalledTimes(1);
             });
           `,
-          "spy-in-place.js": `
+            "spy-in-place.js": `
             import { vi } from "bun:test";
             import { List } from "lists";
             export const inPlace = vi.mockObject({ List }, { spy: true });
             List.prototype.later = vi.fn();
           `,
-          "in-place-first.test.js": `
+            "in-place-first.test.js": `
             import { expect, test, vi } from "bun:test";
             import { List } from "lists";
             import { inPlace } from "./spy-in-place.js";
@@ -3810,44 +3868,47 @@ if (isBun) {
               expect(ownMocks(new inPlace.List())).toEqual(["sum"]);
             });
           `,
-        });
-        // A process for each file: the second one writes to the class of the package.
-        for (const file of ["loaded.test.js", "in-place-first.test.js"]) {
-          await using proc = Bun.spawn({
-            cmd: [bunExe(), "test", file],
-            env: bunEnv,
-            cwd: String(dir),
-            stdout: "pipe",
-            stderr: "pipe",
           });
-          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-          expect(stderr).toContain(" 1 pass\n 0 fail\n");
-          expect({ file, stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }).toEqual({
-            file,
-            stdout: "",
-            exitCode: 0,
-          });
-        }
-      });
+          // A process for each file: the second one writes to the class of the package.
+          for (const file of ["loaded.test.js", "in-place-first.test.js"]) {
+            await using proc = Bun.spawn({
+              cmd: [bunExe(), "test", file],
+              env: bunEnv,
+              cwd: String(dir),
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+            const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+            expect(stderr).toContain(" 1 pass\n 0 fail\n");
+            expect({ file, stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }).toEqual({
+              file,
+              stdout: "",
+              exitCode: 0,
+            });
+          }
+        },
+      );
 
       // Every `{ spy: true }` mock of a module spies the same classes: the spies of the mock before are still on them.
-      test("vi.mock(path, { spy: true }) of a module that was spied before: an instance has the same mocks, and the mock of an inherited method is the one from before", async () => {
-        const { bunEnv, bunExe, tempDir } = require("harness");
-        const classes = `
+      test.concurrent(
+        "vi.mock(path, { spy: true }) of a module that was spied before: an instance has the same mocks, and the mock of an inherited method is the one from before",
+        async () => {
+          const { bunEnv, bunExe, tempDir } = require("harness");
+          const classes = `
           class Base { inherited() { return "inherited"; } }
           class Klass extends Base { method() { return "method"; } }
           class List extends Array { sum() { return this.reduce((a, b) => a + b, 0); } }
           module.exports = { Klass, List };
         `;
-        using dir = tempDir("mock-object-instance-methods-again", {
-          "classes.cjs": classes,
-          "preloaded.cjs": classes,
-          "cycle.cjs": classes,
-          "preload.js": `
+          using dir = tempDir("mock-object-instance-methods-again", {
+            "classes.cjs": classes,
+            "preloaded.cjs": classes,
+            "cycle.cjs": classes,
+            "preload.js": `
             import { vi } from "bun:test";
             vi.mock("./preloaded.cjs", { spy: true });
           `,
-          "first.test.js": `
+            "first.test.js": `
             import { expect, test, vi } from "bun:test";
             vi.mock("./classes.cjs", { spy: true });
 
@@ -3859,7 +3920,7 @@ if (isBun) {
               new (require("./preloaded.cjs").Klass)().inherited.mockReturnValue("stub of the first file");
             });
           `,
-          "second.test.js": `
+            "second.test.js": `
             import { expect, test, vi } from "bun:test";
             vi.mock("./classes.cjs", { spy: true });
 
@@ -3883,7 +3944,7 @@ if (isBun) {
               expect(new (require("./preloaded.cjs").Klass)().inherited()).toBe("stub of the first file");
             });
           `,
-          "third.test.js": `
+            "third.test.js": `
             import { afterEach, beforeEach, expect, test, vi } from "bun:test";
 
             let first;
@@ -3914,26 +3975,27 @@ if (isBun) {
               expect(instance.inherited()).toBe("stub of the first test");
             });
           `,
-        });
-        await using proc = Bun.spawn({
-          cmd: [
-            bunExe(),
-            "test",
-            "--preload",
-            "./preload.js",
-            "./first.test.js",
-            "./second.test.js",
-            "./third.test.js",
-          ],
-          env: bunEnv,
-          cwd: String(dir),
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect(stderr).toContain(" 4 pass\n 0 fail\n");
-        expect({ stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }).toEqual({ stdout: "", exitCode: 0 });
-      });
+          });
+          await using proc = Bun.spawn({
+            cmd: [
+              bunExe(),
+              "test",
+              "--preload",
+              "./preload.js",
+              "./first.test.js",
+              "./second.test.js",
+              "./third.test.js",
+            ],
+            env: bunEnv,
+            cwd: String(dir),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toContain(" 4 pass\n 0 fail\n");
+          expect({ stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }).toEqual({ stdout: "", exitCode: 0 });
+        },
+      );
 
       test("vi.mock(builtin) mocks the exports that are accessors", async () => {
         const { bunEnv, bunExe, tempDir } = require("harness");

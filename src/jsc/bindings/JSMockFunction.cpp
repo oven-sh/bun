@@ -2652,6 +2652,27 @@ AutomockKind Automocker::kindOf(JSValue value)
     return AutomockKind::Keep;
 }
 
+// Whether the class of `prototype` inherits a method under `key`. Reads the prototypes above as Automocker::mockMembers() does, which leaves a spy of each such method on `prototype`.
+static bool inheritsMethod(Zig::GlobalObject* globalObject, JSObject* prototype, PropertyName key)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    for (JSObject* holder = prototype;;) {
+        JSValue next = holder->getPrototype(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!next.isObject())
+            return false;
+        holder = asObject(next);
+        if (holder == globalObject->objectPrototype() || holder == globalObject->functionPrototype() || holder == globalObject->regExpPrototype())
+            return false;
+        JSC::PropertyDescriptor descriptor;
+        bool found = holder->getOwnPropertyDescriptor(globalObject, key, descriptor);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (found)
+            return descriptor.isDataDescriptor() && descriptor.value().isCallable();
+    }
+}
+
 // The methods that a class defines on its own prototype. With `spy`, the prototype of its mock holds a spy for each inherited method too, so they are read from the class.
 __attribute__((minsize)) void Automocker::recordInstanceMethodKeys(JSMockFunction* mock, JSObject* function)
 {
@@ -2668,7 +2689,7 @@ __attribute__((minsize)) void Automocker::recordInstanceMethodKeys(JSMockFunctio
     prototype->methodTable()->getOwnPropertyNames(prototype, globalObject, keys, JSC::DontEnumPropertiesMode::Include);
     RETURN_IF_EXCEPTION(scope, );
 
-    // An earlier `{ spy: true }` in place left a spy for each inherited method here too. Its mock of the class, now `constructor`, has the keys that were the class's own.
+    // An earlier `{ spy: true }` in place left its mock of the class as `constructor`. That mock has the keys that were the class's own then.
     JSValue constructor = ownDataValue(globalObject, prototype, vm.propertyNames->constructor);
     RETURN_IF_EXCEPTION(scope, );
     auto* earlier = constructor ? dynamicDowncast<JSMockFunction>(constructor) : nullptr;
@@ -2691,9 +2712,14 @@ __attribute__((minsize)) void Automocker::recordInstanceMethodKeys(JSMockFunctio
         RETURN_IF_EXCEPTION(scope, );
         if (!method || !method.isCallable())
             continue;
+        // The earlier pass also left a spy here for each method that the class inherits. A mock under any other key is a method that the class got later.
         auto* left = earlier ? dynamicDowncast<JSMockFunction>(method) : nullptr;
-        if (left && left->isAutomock && !wereOwn.contains(key.impl()))
-            continue;
+        if (left && left->isAutomock && !wereOwn.contains(key.impl())) {
+            bool isInherited = inheritsMethod(globalObject, prototype, key);
+            RETURN_IF_EXCEPTION(scope, );
+            if (isInherited)
+                continue;
+        }
         own.append(identifierToJSValue(vm, key));
     }
 

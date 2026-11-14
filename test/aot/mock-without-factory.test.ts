@@ -3,7 +3,8 @@
 // What else a mock without a factory once got wrong stands in ./fixed-runs: closed/automock-* and open/automock-behind-a-factory-and-a-reset. This case is silent beside others.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { test } from "./supported";
+// One by one: with a debug build of Bun, a compiled run that has the build of the other case beside it often stops in the link step of the compiler.
+import { testOneByOne as test } from "./supported";
 
 const files = {
   "package.json": `{ "name": "mock-without-factory" }`,

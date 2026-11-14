@@ -353,7 +353,7 @@ test("spy on a class", () => {
 });
 ```
 
-A later `{ spy: true }` mock of the same class gives its instances the same mocks. The exception is a class whose `prototype.constructor` is not the class itself, for example after `Klass.prototype = Object.create(Base.prototype)`. From the second mock of such a class on, an instance also gets its own mock for each inherited method.
+A later `{ spy: true }` mock of the same class gives its instances the same mocks. The exception is a class whose `prototype.constructor` is not the class itself or is read-only, for example after `Klass.prototype = Object.create(Base.prototype)`. From the second mock of such a class on, an instance also gets its own mock for each inherited method.
 
 ## Module Mocks with mock.module()
 

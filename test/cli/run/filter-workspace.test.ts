@@ -817,6 +817,30 @@ describe("bun", () => {
     });
   });
 
+  // `--filter` reads the workspaces through the resolver's cache, which shows a link only when it has no target.
+  test("a workspace glob whose brace alternative names a dangling link is skipped", () => {
+    using dir = tempDir("filter-dangling-brace", {
+      packages: {
+        pkga: {
+          "package.json": JSON.stringify({ name: "pkga", scripts: { present: "echo scripta" } }),
+        },
+      },
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["{dangling,packages}/*"] }),
+    });
+    symlinkSync(join(String(dir), "nowhere"), join(String(dir), "dangling"), "junction");
+
+    const { exitCode, stdout, stderr } = spawnSync({
+      cwd: String(dir),
+      cmd: [bunExe(), "run", "--filter", "*", "present"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stderr.toString()).not.toContain("error:");
+    expect(stdout.toString()).toContain("scripta");
+    expect(exitCode).toBe(0);
+  });
+
   test("warning names which package.json failed to parse", async () => {
     await using dir = tempDir("filter-bad-pkgjson", {
       packages: {

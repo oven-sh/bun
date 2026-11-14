@@ -24,7 +24,17 @@ import { Glob, GlobScanOptions } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { execSync } from "child_process";
 import fg from "fast-glob";
-import { bunEnv, bunExe, isLinux, isRoot, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  dtUnknownReaddir,
+  isLinux,
+  isRoot,
+  isWindows,
+  tempDir,
+  tempDirWithFiles,
+  tmpdirSync,
+} from "harness";
 import * as fs from "node:fs";
 import * as path from "path";
 import { createTempDirectoryWithBrokenSymlinks, prepareEntries, tempFixturesDir } from "./util";
@@ -1015,6 +1025,145 @@ describe("explicit dotfile segments match without dot:true", () => {
     const result = await Array.fromAsync(new Glob(".dotdir/inner.txt").scan({ cwd: String(dir) }));
     expect(norm(result)).toEqual([".dotdir/inner.txt"]);
   });
+
+  // The rule applies to each alternative of a group, like minimatch after
+  // brace expansion: `{.a,*}` is `.a` (explicit) or `*` (hidden).
+  const groupFiles = {
+    "flat/.a": "x",
+    "flat/.b": "x",
+    "flat/.ca": "x",
+    "flat/a.b": "x",
+    "flat/c": "x",
+    ".env": "x",
+    ".eslintrc.js": "x",
+    "package.json": "x",
+    ".github/ci.yml": "x",
+    ".github/.secret": "x",
+    ".github/workflows/test.yml": "x",
+    "src/index.ts": "x",
+    "src/.keep": "x",
+    "sub/.npmrc": "x",
+    "sub/package.json": "x",
+  };
+
+  test.each([
+    ["flat/{.a,.b}", ["flat/.a", "flat/.b"]],
+    ["flat/{c,.a}", ["flat/.a", "flat/c"]],
+    ["flat/{*,.a}", ["flat/.a", "flat/a.b", "flat/c"]],
+    ["flat/{.,}a", ["flat/.a"]],
+    ["flat/{,.}a", ["flat/.a"]],
+    ["flat/{.c,x}*", ["flat/.ca"]],
+    ["flat/{a,.c}?", ["flat/.ca"]],
+    ["flat/{x,{.b,c}}", ["flat/.b", "flat/c"]],
+    ["flat/{.a,c}{,x}", ["flat/.a", "flat/c"]],
+    ["flat/{,x}.a", ["flat/.a"]],
+    ["flat/{{,x},y}.a", ["flat/.a"]],
+    ["flat/{**,.a}", ["flat/.a", "flat/a.b", "flat/c"]],
+    ["flat/+(.a|c)", ["flat/.a", "flat/c"]],
+    ["flat/@(.a|.b)", ["flat/.a", "flat/.b"]],
+    ["flat/?(.)a", ["flat/.a"]],
+    // A dotfile or a dot directory at any depth.
+    ["{.env,package.json}", [".env", "package.json"]],
+    ["{.env,.eslintrc.js}", [".env", ".eslintrc.js"]],
+    ["{.github,src}/*", [".github/ci.yml", "src/index.ts"]],
+    ["{.github,src}/**", [".github/ci.yml", ".github/workflows/test.yml", "src/index.ts"]],
+    ["{.github,src}/{*,.keep}", [".github/ci.yml", "src/.keep", "src/index.ts"]],
+    ["**/{.npmrc,package.json}", ["package.json", "sub/.npmrc", "sub/package.json"]],
+    ["**/{.github,sub}/*", [".github/ci.yml", "sub/package.json"]],
+    // No alternative spells out the dot: dotfiles stay hidden.
+    ["flat/{*,?a}", ["flat/a.b", "flat/c"]],
+    ["flat/*{.a,c}", ["flat/c"]],
+    ["flat/{,x}*", ["flat/a.b", "flat/c"]],
+    ["flat/{[!x],c}a", []],
+    ["flat/[.a]a", []],
+    ["{src,sub}/*", ["src/index.ts", "sub/package.json"]],
+    ["{*,src}/*", ["flat/a.b", "flat/c", "src/index.ts", "sub/package.json"]],
+    // A negated segment never opts dotfiles in.
+    ["flat/!*", []],
+    ["flat/!{.a,c}", ["flat/a.b"]],
+  ])("pattern %j applies the dotfile rule to each alternative", async (pattern, expected) => {
+    using dir = tempDir("glob-scan-group-dot", groupFiles);
+    const cwd = String(dir);
+    const glob = new Glob(pattern);
+    expect(norm(Array.from(glob.scanSync({ cwd })))).toEqual(expected);
+    expect(norm(await Array.fromAsync(glob.scan({ cwd })))).toEqual(expected);
+    // `dot: true` only adds entries.
+    expect(norm(Array.from(glob.scanSync({ cwd, dot: true })))).toEqual(expect.arrayContaining(expected));
+  });
+
+  test.skipIf(isWindows)("an escaped dot in an alternative is explicit", () => {
+    using dir = tempDir("glob-scan-group-dot-escaped", groupFiles);
+    const result = Array.from(new Glob("flat/{\\.a,c}").scanSync({ cwd: String(dir) }));
+    expect(result.sort()).toEqual(["flat/.a", "flat/c"]);
+  });
+
+  test("a dot directory that an alternative names is returned with onlyFiles: false", () => {
+    using dir = tempDir("glob-scan-group-dot-dirs", groupFiles);
+    const scan = (p: string) => norm(Array.from(new Glob(p).scanSync({ cwd: String(dir), onlyFiles: false })));
+    expect(scan("{.github,src}")).toEqual([".github", "src"]);
+    expect(scan("{src,sub}")).toEqual(["src", "sub"]);
+    expect(scan("{*,.x}")).toEqual(["flat", "package.json", "src", "sub"]);
+  });
+
+  test("an absolute pattern applies the same rule", () => {
+    using dir = tempDir("glob-scan-group-dot-absolute", groupFiles);
+    const result = Array.from(new Glob(path.join(String(dir), "{.env,package.json}")).scanSync());
+    expect(result.sort()).toEqual([path.join(String(dir), ".env"), path.join(String(dir), "package.json")]);
+  });
+
+  test("a group of 65 dotfiles returns each of them", () => {
+    const names = Array.from({ length: 65 }, (_, i) => `.f${i}`).sort();
+    using dir = tempDir("glob-scan-group-dot-65", Object.fromEntries(names.map(name => [name, "x"])));
+    const result = Array.from(new Glob(`{${names.join(",")}}`).scanSync({ cwd: String(dir) }));
+    expect(result.sort()).toEqual(names);
+  });
+
+  // Differential check. A dotfile is returned exactly when `dot: true` returns
+  // it and one expansion of the pattern that starts with `.` matches it. Every
+  // other name does not depend on `dot`.
+  test("generated brace patterns agree with their expansions", () => {
+    const names = [".a", ".b", ".ca", ".x", ".xa", "a", "c", "ca", "xa", "a.a", "x.a"];
+    using dir = tempDir("glob-scan-group-dot-generated", Object.fromEntries(names.map(name => [name, "x"])));
+    const cwd = String(dir);
+
+    let seed = 0x2f6e2b1;
+    const rand = (n: number) => {
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) % n;
+    };
+    type Part = [text: string, expansions: string[]];
+    const atoms = [".a", ".", "a", "c", "x", "*", "?", "", ".*", "?a"];
+    const atom = (): Part => {
+      const text = atoms[rand(atoms.length)];
+      return [text, [text]];
+    };
+    const group = (depth: number): Part => {
+      const alternatives = Array.from({ length: 2 + rand(2) }, () =>
+        depth < 2 && rand(4) === 0 ? group(depth + 1) : atom(),
+      );
+      return [`{${alternatives.map(a => a[0]).join(",")}}`, alternatives.flatMap(a => a[1])];
+    };
+
+    const failures: { pattern: string; actual: string[]; expected: string[] }[] = [];
+    for (let i = 0; i < 50; i++) {
+      const parts = Array.from({ length: 1 + rand(3) }, () => (rand(3) === 0 ? atom() : group(0)));
+      const pattern = parts.map(p => p[0]).join("");
+      const expansions = parts.reduce((acc, p) => acc.flatMap(a => p[1].map(b => a + b)), [""]);
+      const withDot = new Set(new Glob(pattern).scanSync({ cwd, dot: true }));
+      const expected = names
+        .filter(
+          name =>
+            withDot.has(name) &&
+            (!name.startsWith(".") || expansions.some(e => e.startsWith(".") && new Glob(e).match(name))),
+        )
+        .sort();
+      const actual = Array.from(new Glob(pattern).scanSync({ cwd })).sort();
+      if (!Bun.deepEquals(actual, expected)) failures.push({ pattern, actual, expected });
+    }
+    expect(failures).toEqual([]);
+  });
 });
 
 // Directory entries on Linux are bytes that need not be valid UTF-8. The
@@ -1113,6 +1262,299 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
 
     expect(scan("*/file.txt")).toEqual(["linkdir/file.txt", "plain/file.txt", "realdir/file.txt"]);
     expect(scan("linkdir/file.txt")).toEqual(["linkdir/file.txt"]);
+  });
+
+  // A segment without a wildcard names each entry that it matches, as a
+  // literal segment does: its text and one alternative of each `{a,b}` spell
+  // the name out. A wildcard anywhere in the segment names nothing.
+  describe("segment without a wildcard", () => {
+    function makeNamedTree(prefix: string) {
+      const dir = tempDir(prefix, {
+        "realdir/file.txt": "x",
+        "src/file.txt": "x",
+        "package.json": "{}",
+        "pkg/realdir/file.txt": "x",
+      });
+      const link = (target: string, name: string, type: "dir" | "file") =>
+        fs.symlinkSync(target, path.join(String(dir), name), type);
+      for (const name of [
+        "linkdir",
+        "link2",
+        "!linkdir",
+        "!(linkdir",
+        ".dotlink",
+        "my!link",
+        "un[closed",
+        "un{closed",
+      ]) {
+        link("realdir", name, "dir");
+      }
+      link("realdir", path.join("pkg", "linkdir"), "dir");
+      link("realdir", "[id]", "dir");
+      link("package.json", "link.json", "file");
+      link("package.json", ".link.json", "file");
+      link("nowhere", ".broken", "dir");
+      return dir;
+    }
+    const scanSync = (cwd: string, pattern: string, opts: GlobScanOptions = {}) =>
+      norm(Array.from(new Glob(pattern).scanSync({ cwd, followSymlinks: false, ...opts })));
+    const thrown = (cwd: string, pattern: string, opts: GlobScanOptions = {}) => {
+      try {
+        return scanSync(cwd, pattern, opts);
+      } catch (err: any) {
+        return { code: err.code, syscall: err.syscall };
+      }
+    };
+
+    test.each([
+      ["{linkdir,src}/*", ["linkdir/file.txt", "src/file.txt"]],
+      ["link{dir,x}/*", ["linkdir/file.txt"]],
+      ["{link.json,package.json}", ["link.json", "package.json"]],
+      ["lin{k,}dir/*", ["linkdir/file.txt"]],
+      ["{link,x}{dir,y}/*", ["linkdir/file.txt"]],
+      ["{l{ink,x}dir,src}/*", ["linkdir/file.txt", "src/file.txt"]],
+      // A sequence value and a group of one alternative are spelled out too.
+      ["link{1..3}/*", ["link2/file.txt"]],
+      ["{linkdir}/*", ["linkdir/file.txt"]],
+      ["**/pkg/{linkdir,realdir}/*", ["pkg/linkdir/file.txt", "pkg/realdir/file.txt"]],
+      // With the dotfile rule: an alternative that spells the dot names a hidden link.
+      ["{.dotlink,src}/*", [".dotlink/file.txt", "src/file.txt"]],
+      [".dot{link,x}/*", [".dotlink/file.txt"]],
+      ["{.link.json,package.json}", [".link.json", "package.json"]],
+      // No group: text that the walker does not take for a literal segment.
+      ["my!link/*", ["my!link/file.txt"]],
+      ["un[closed/*", ["un[closed/file.txt"]],
+      ["un{closed/*", ["un{closed/file.txt"]],
+    ])("%j follows the link that it names", async (pattern, expected) => {
+      using dir = makeNamedTree("glob-scan-symlink-named");
+      const cwd = String(dir);
+      expect(scanSync(cwd, pattern)).toEqual(expected);
+      expect(norm(await Array.fromAsync(new Glob(pattern).scan({ cwd, followSymlinks: false })))).toEqual(expected);
+    });
+
+    test.each([
+      ["{link*,src}/*", ["src/file.txt"]],
+      ["{link?ir,src}/*", ["src/file.txt"]],
+      ["{[l]inkdir,src}/*", ["src/file.txt"]],
+      ["@(linkdir|src)/*", ["src/file.txt"]],
+      ["+(linkdir|src)/*", ["src/file.txt"]],
+      // A class is a wildcard, also one that holds a single `[`.
+      ["[[]id]/*", []],
+      // A negated segment names nothing, not even the link `!linkdir`.
+      ["!{linkdir,x}/*", ["realdir/file.txt", "src/file.txt"]],
+      // An unclosed `!(` is text for the matcher. The segment still starts with `!`.
+      ["!(linkdir/*", []],
+      // `**` reaches the segment, so nothing names the link.
+      ["**/{linkdir,src}/*", ["src/file.txt"]],
+      // A wildcard in one alternative: the segment names nothing. Node follows `linkdir` in the first three, fast-glob does not.
+      ["{linkdir,link*}/*", []],
+      ["{link.json,pack*}", ["package.json"]],
+      ["{l{ink*,x}dir,linkdir}/*", []],
+      ["{l*,*(,linkdir}/*", []],
+    ])("%j does not follow a link", (pattern, expected) => {
+      using dir = makeNamedTree("glob-scan-symlink-unnamed");
+      expect(scanSync(String(dir), pattern)).toEqual(expected);
+    });
+
+    // Not on Windows: a `\` in a pattern is a path separator there, and a file name cannot hold `*`.
+    test.skipIf(isWindows)("an escaped wildcard or class is text", () => {
+      using dir = makeNamedTree("glob-scan-symlink-named-escape");
+      const cwd = String(dir);
+      fs.symlinkSync("realdir", path.join(cwd, "link*"), "dir");
+      fs.symlinkSync("package.json", path.join(cwd, "[link].json"), "file");
+      expect(scanSync(cwd, "\\[id\\]/*")).toEqual(["[id]/file.txt"]);
+      expect(scanSync(cwd, "\\[id\\]/file.txt")).toEqual(["[id]/file.txt"]);
+      expect(scanSync(cwd, "\\[link\\].json")).toEqual(["[link].json"]);
+      expect(scanSync(cwd, "{link\\*,src}/*")).toEqual(["link*/file.txt", "src/file.txt"]);
+    });
+
+    test("the matcher reads the segments above as their rows say", () => {
+      expect(new Glob("!(linkdir").match("!(linkdir")).toBe(true);
+      expect(new Glob("{l*,*(,linkdir}").match("linkdir")).toBe(true);
+      expect(new Glob("{q*,*(,linkdir}").match("linkdir")).toBe(false);
+      expect(new Glob("[[]id]").match("[id]")).toBe(true);
+    });
+
+    test("options do not change what a segment names", () => {
+      using dir = makeNamedTree("glob-scan-symlink-named-options");
+      const cwd = String(dir);
+      expect(scanSync(cwd, "{.dotlink,src}/*", { dot: true })).toEqual([".dotlink/file.txt", "src/file.txt"]);
+      expect(scanSync(cwd, "{linkdir,src}/*", { absolute: true })).toEqual(
+        norm([path.join(cwd, "linkdir", "file.txt"), path.join(cwd, "src", "file.txt")]),
+      );
+      expect(scanSync(cwd, "{link*,src}/*", { followSymlinks: true })).toEqual([
+        "link2/file.txt",
+        "linkdir/file.txt",
+        "src/file.txt",
+      ]);
+      expect(scanSync(cwd, "{linkdir,src}/*", { followSymlinks: true })).toEqual(["linkdir/file.txt", "src/file.txt"]);
+    });
+
+    test("a named link to a directory is a match itself with onlyFiles:false", () => {
+      using dir = makeNamedTree("glob-scan-symlink-named-dirs");
+      const cwd = String(dir);
+      expect(scanSync(cwd, "{linkdir,src}", { onlyFiles: false })).toEqual(["linkdir", "src"]);
+      // With a trailing separator only a directory matches, so the link has to be resolved.
+      expect(scanSync(cwd, "{linkdir,src}/", { onlyFiles: false })).toEqual(["linkdir", "src"]);
+      expect(scanSync(cwd, "{link*,src}/", { onlyFiles: false })).toEqual(["src"]);
+    });
+
+    // In `a/a` three components are active: `**`, the group and `*`. The group names a link there, and `*` matches it as an entry.
+    test("a link that one component names is still an entry for the other components", () => {
+      using dir = tempDir("glob-scan-symlink-named-entry", { "a/a/f.txt": "x", "a/sub/s.txt": "x" });
+      const cwd = String(dir);
+      fs.symlinkSync("f.txt", path.join(cwd, "a", "a", "lf"), "file");
+      fs.symlinkSync("nowhere", path.join(cwd, "a", "a", "broken"), "file");
+      fs.symlinkSync(path.join("..", "sub"), path.join(cwd, "a", "a", "ld"), "dir");
+      const entries = ["a/a/broken", "a/a/f.txt", "a/a/ld", "a/a/lf"];
+      expect(scanSync(cwd, "**/a/{a,lf}/*", { onlyFiles: false })).toEqual(entries);
+      expect(scanSync(cwd, "**/a/{a,broken}/*", { onlyFiles: false })).toEqual(entries);
+      expect(scanSync(cwd, "**/a/{a,ld}/*", { onlyFiles: false })).toEqual([...entries, "a/a/ld/s.txt"].sort());
+      expect(scanSync(cwd, "**/a/{a,ld}/*")).toEqual(["a/a/f.txt", "a/a/ld/s.txt"]);
+      // The same for a literal segment: `a/a/a` is a link that `a` names and `*` matches.
+      fs.symlinkSync(path.join("..", "sub"), path.join(cwd, "a", "a", "a"), "dir");
+      expect(scanSync(cwd, "**/a/a/*", { onlyFiles: false })).toEqual([
+        "a/a/a",
+        "a/a/a/s.txt",
+        "a/a/broken",
+        "a/a/f.txt",
+        "a/a/ld",
+        "a/a/lf",
+      ]);
+    });
+
+    // Not on Windows: the rows pin the POSIX error of the failed open (`ENOENT` from `open`), as "error broken symlinks" above is POSIX only.
+    test.skipIf(isWindows)("a broken link that a segment names throws with throwErrorOnBrokenSymlink", () => {
+      using dir = makeNamedTree("glob-scan-symlink-named-broken");
+      const cwd = String(dir);
+      fs.symlinkSync("nowhere", path.join(cwd, "broken"), "dir");
+      const enoent = { code: "ENOENT", syscall: "open" };
+      expect(scanSync(cwd, "{broken,src}/*")).toEqual(["src/file.txt"]);
+      expect(thrown(cwd, "broken/*", { throwErrorOnBrokenSymlink: true })).toEqual(enoent);
+      expect(thrown(cwd, "{broken,src}/*", { throwErrorOnBrokenSymlink: true })).toEqual(enoent);
+      expect(thrown(cwd, "{.broken,src}/*", { throwErrorOnBrokenSymlink: true })).toEqual(enoent);
+      expect(thrown(cwd, "{brok*,src}/*", { throwErrorOnBrokenSymlink: true })).toEqual(["src/file.txt"]);
+      // As the last segment: the literal form looks the name up and finds nothing, the group opens the link.
+      expect(thrown(cwd, "broken", { throwErrorOnBrokenSymlink: true })).toEqual([]);
+      expect(thrown(cwd, "{broken,package.json}", { throwErrorOnBrokenSymlink: true })).toEqual(enoent);
+    });
+
+    // What is behind a named link is read as behind a literal segment, errors included.
+    // Not on Windows: the row pins `ELOOP`, the POSIX error for a link that points at itself.
+    test.skipIf(isWindows)("an error behind a named link is the error of the literal form", () => {
+      using dir = tempDir("glob-scan-symlink-named-eloop", { "realdir/file.txt": "x", "src/loop.txt": "x" });
+      const cwd = String(dir);
+      fs.symlinkSync("realdir", path.join(cwd, "linkdir"), "dir");
+      fs.symlinkSync("loop.txt", path.join(cwd, "realdir", "loop.txt"), "file");
+      const literal = thrown(cwd, "linkdir/loop.txt");
+      expect(literal).toMatchObject({ code: "ELOOP" });
+      expect(thrown(cwd, "{linkdir,src}/loop.txt")).toEqual(literal);
+      expect(scanSync(cwd, "{link*,src}/loop.txt")).toEqual(["src/loop.txt"]);
+    });
+
+    // `loop` leads back to `top`. The walk goes through a followed link once, for a literal segment too.
+    test("a named link that leads back above itself is followed once", () => {
+      using dir = tempDir("glob-scan-symlink-named-cycle", { "top/file.txt": "x" });
+      const cwd = String(dir);
+      fs.symlinkSync(".", path.join(cwd, "top", "loop"), "dir");
+      expect(scanSync(cwd, "top/{loop,x}/**/*.txt")).toEqual(["top/loop/file.txt"]);
+      expect(scanSync(cwd, "top/{loop,x}/file.txt")).toEqual(["top/loop/file.txt"]);
+      // Node and fast-glob return `top/loop/loop/file.txt` for these two.
+      expect(scanSync(cwd, "top/loop/loop/file.txt")).toEqual([]);
+      expect(scanSync(cwd, "top/{loop,x}/{loop,x}/file.txt")).toEqual([]);
+    });
+
+    test("packages that are links are found by a group of their names", () => {
+      using dir = tempDir("glob-scan-symlink-named-packages", {
+        "store/react/package.json": "{}",
+        "store/react-dom/package.json": "{}",
+        "store/left-pad/package.json": "{}",
+        "node_modules/.keep": "",
+      });
+      const cwd = String(dir);
+      for (const name of ["react", "react-dom", "left-pad"]) {
+        fs.symlinkSync(path.join("..", "store", name), path.join(cwd, "node_modules", name), "dir");
+      }
+      const both = ["node_modules/react-dom/package.json", "node_modules/react/package.json"];
+      expect(scanSync(cwd, "node_modules/{react,react-dom}/package.json")).toEqual(both);
+      expect(scanSync(cwd, "node_modules/react{,-dom}/package.json")).toEqual(both);
+      expect(scanSync(cwd, "node_modules/{react,left-*}/package.json")).toEqual([]);
+    });
+
+    // Differential check. A pattern without a wildcard returns what its expansions return, and each expansion is a literal path.
+    test("generated patterns without a wildcard agree with their expansions", () => {
+      using dir = tempDir("glob-scan-symlink-named-generated", { "real/f": "x", "na/f": "x", "nab/f": "x" });
+      const cwd = String(dir);
+      for (const name of ["nb", "nl", "nla", "nlab", "nba"]) fs.symlinkSync("real", path.join(cwd, name), "dir");
+
+      let seed = 0x51f15e;
+      const rand = (n: number) => {
+        seed = (seed + 0x6d2b79f5) | 0;
+        let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) % n;
+      };
+      type Part = [text: string, expansions: string[]];
+      const atoms = ["a", "b", "l", "la", "ab", "", "x"];
+      const atom = (): Part => {
+        const text = atoms[rand(atoms.length)];
+        return [text, [text]];
+      };
+      const group = (depth: number): Part => {
+        const alternatives = Array.from({ length: 1 + rand(3) }, () =>
+          depth < 2 && rand(4) === 0 ? group(depth + 1) : atom(),
+        );
+        return [`{${alternatives.map(a => a[0]).join(",")}}`, alternatives.flatMap(a => a[1])];
+      };
+
+      const failures: { pattern: string; actual: string[]; expected: string[] }[] = [];
+      let throughLinks = 0;
+      for (let i = 0; i < 60; i++) {
+        const parts = Array.from({ length: 1 + rand(3) }, () => (rand(3) === 0 ? atom() : group(0)));
+        if (!parts.some(p => p[0].includes("{"))) parts.push(group(0));
+        const pattern = "n" + parts.map(p => p[0]).join("") + "/f";
+        const expansions = parts.reduce((acc, p) => acc.flatMap(a => p[1].map(b => a + b)), ["n"]);
+        const expected = [...new Set(expansions.flatMap(e => scanSync(cwd, e + "/f")))].sort();
+        const actual = scanSync(cwd, pattern);
+        if (!Bun.deepEquals(actual, expected)) failures.push({ pattern, actual, expected });
+        throughLinks += expected.filter(p => p !== "na/f" && p !== "nab/f").length;
+      }
+      expect(failures).toEqual([]);
+      // The check means something only if many of the paths are behind a link.
+      expect(throughLinks).toBeGreaterThan(20);
+    });
+
+    describe.skipIf(!dtUnknownReaddir.available)("where readdir does not report the entry type", () => {
+      let env: NodeJS.Dict<string>;
+      // This compiles the shim. A C compiler on a busy machine can take longer than the default hook timeout.
+      beforeAll(async () => {
+        env = await dtUnknownReaddir.env();
+      }, 30_000);
+
+      test("the same segments name the same links", async () => {
+        using dir = makeNamedTree("glob-scan-symlink-named-dt-unknown");
+        const cwd = String(dir);
+        fs.mkdirSync(path.join(cwd, "a", "a"), { recursive: true });
+        fs.writeFileSync(path.join(cwd, "a", "a", "f.txt"), "x");
+        fs.symlinkSync("f.txt", path.join(cwd, "a", "a", "lf"), "file");
+        const rows: [string, GlobScanOptions, string[]][] = [
+          ["linkdir/*", {}, ["linkdir/file.txt"]],
+          ["{linkdir,src}/*", {}, ["linkdir/file.txt", "src/file.txt"]],
+          ["{link.json,package.json}", {}, ["link.json", "package.json"]],
+          ["{link*,src}/*", {}, ["src/file.txt"]],
+          ["**/a/{a,lf}/*", { onlyFiles: false }, ["a/a/f.txt", "a/a/lf"]],
+        ];
+        const script = `const rows = ${JSON.stringify(rows.map(([pattern, opts]) => [pattern, opts]))};
+          console.log(JSON.stringify(rows.map(([p, o]) => [...new Bun.Glob(p).scanSync({ followSymlinks: false, ...o })].sort())));`;
+
+        await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], cwd, env, stdout: "pipe", stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        expect(stderr).toContain(dtUnknownReaddir.marker);
+        expect(JSON.parse(stdout)).toEqual(rows.map(row => row[2]));
+        expect(exitCode).toBe(0);
+      });
+    });
   });
 
   // The SymLink (and DT_UNKNOWN) readdir arms pre-filter entries through

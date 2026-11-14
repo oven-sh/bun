@@ -52,8 +52,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             graph_safety_lock: _,
             client_graph: _,
             server_graph: _,
-            barrel_files_with_deferrals: _,
-            barrel_needed_exports: _,
+            tracked_barrels: _,
             incremental_result: _,
             route_lookup: _,
             html_router: _,
@@ -146,8 +145,8 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
         js_code += cost.code;
         source_maps += cost.source_maps;
     }
-    // .barrel_files_with_deferrals
-    // .barrel_needed_exports
+    // .tracked_barrels
+    other_bytes += dev.tracked_barrels.memory_cost();
     // .assets
     assets += dev.assets.memory_cost();
     // .active_websocket_connections

@@ -8,7 +8,7 @@ use super::*;
 
 bun_bundler::link_impl_DevServerHandle! {
     Bake for DevServer => |this| {
-        barrel_needed_exports() => &raw mut (*this).barrel_needed_exports,
+        tracked_barrels() => &raw mut (*this).tracked_barrels,
         log_for_resolution_failures(abs_path, graph) => {
             match (*this).get_log_for_resolution_failures(abs_path, graph) {
                 Ok(log) => log,
@@ -54,6 +54,7 @@ bun_bundler::link_impl_DevServerHandle! {
                 }
             })
         },
+        has_file(abs_path, side) => (*this).has_file(abs_path, side),
         asset_hash(abs_path) => (*this).assets.get_hash(abs_path),
         current_bundle_start_data() => {
             (*this)
@@ -61,20 +62,6 @@ bun_bundler::link_impl_DevServerHandle! {
                 .as_mut()
                 .map(|c| (&raw mut c.start_data).cast::<()>())
                 .unwrap_or(core::ptr::null_mut())
-        },
-        register_barrel_with_deferrals(path) => {
-            let _ = (*this)
-                .barrel_files_with_deferrals
-                .get_or_put(path)
-                .map_err(|_| bun_alloc::out_of_memory());
-            Ok(())
-        },
-        register_barrel_export(barrel_path, alias) => {
-            // Silently drop on alloc failure.
-            let Ok(gop) = (*this).barrel_needed_exports.get_or_put(barrel_path) else {
-                return;
-            };
-            let _ = gop.value_ptr.get_or_put(alias);
         },
     }
 }

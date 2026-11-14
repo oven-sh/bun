@@ -4678,7 +4678,6 @@ pub mod bv2_impl {
                                 file,
                                 &load.path,
                                 bun_wyhash::hash(load.path.as_ref()) as u32,
-                                None,
                             );
                         }
                     }
@@ -7040,15 +7039,9 @@ pub mod bv2_impl {
                         // only when it is interned for the process lifetime
                         // (`dupe_alloc` leaves other paths in the bundle arena).
                         let added = if Fs::as_interned_path(source_path).is_some() {
-                            bun_watcher.add_file::<{ cfg!(windows) }>(
-                                fd,
-                                source_path,
-                                hash,
-                                dir_fd,
-                                None,
-                            )
+                            bun_watcher.add_file::<{ cfg!(windows) }>(fd, source_path, hash, dir_fd)
                         } else {
-                            bun_watcher.add_file::<true>(fd, source_path, hash, dir_fd, None)
+                            bun_watcher.add_file::<true>(fd, source_path, hash, dir_fd)
                         };
                         adopted = matches!(added, Ok(bun_watcher::FdOwnership::Watcher));
                     }

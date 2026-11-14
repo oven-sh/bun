@@ -301,8 +301,7 @@ pub struct VirtualMachine {
     /// macro JS may be executing — both `MacroContext::call` and `Macro::init`
     /// (whose `load_macro_entry_point` runs the macro module's top-level via
     /// `wait_for_promise`) hold a guard. `enable_/disable_macro_mode` are gated
-    /// on the 0↔1 transition so the guard is reentrant; this is the signal
-    /// [`drop_source_code_printer_if_macro_owned`] uses.
+    /// on the 0↔1 transition so the guard is reentrant.
     pub(crate) macro_guard_depth: Cell<u32>,
     pub auto_killer: ProcessAutoKiller::ProcessAutoKiller,
 
@@ -1579,20 +1578,9 @@ impl VirtualMachine {
 
     /// Returns a small adaptor whose `get()` produces the erased
     /// `js_printer::SourceMapHandler` for `print_with_source_map`.
-    ///
-    /// Note: takes `*mut BufferPrinter` (raw), not `&'a mut`, because the
-    /// SAME `BufferPrinter` is also passed as the live `writer` to
-    /// `print_with_source_map`. Creating an `&'a mut` here would alias with
-    /// that writer borrow for the entire print; instead we stash the raw
-    /// pointer and only reborrow inside `on_source_map_chunk` once the
-    /// writer's last use (`print_slice`) has retired. See jsc_hooks.rs
-    /// `print_with_source_map` call-site Note.
     #[inline]
-    pub fn source_map_handler<'a>(
-        &'a self,
-        printer: *mut bun_js_printer::BufferPrinter,
-    ) -> SourceMapHandlerGetter<'a> {
-        SourceMapHandlerGetter::new(&self.source_mappings, self.debugger.get(), printer)
+    pub fn source_map_handler(&self) -> SourceMapHandlerGetter<'_> {
+        SourceMapHandlerGetter::new(&self.source_mappings, self.debugger.get())
     }
 
     #[inline]
@@ -1841,16 +1829,6 @@ impl VirtualMachine {
                 .global
                 .set(NonNull::new(self.global.get()));
         }
-        // Idempotent; outside the `has_enabled_macro_mode` guard because
-        // `__bun_macro_context_deinit` runs per-job (RuntimeTranspilerStore
-        // job, JSTranspiler TransformTask, bundler `Worker::deinit`) and
-        // frees the printer while this VM survives with the flag still set —
-        // the next macro on the same pool thread would otherwise skip re-init
-        // and panic at `SOURCE_CODE_PRINTER.get().expect(...)`.
-        if SOURCE_CODE_PRINTER.get().is_none() {
-            SOURCE_CODE_PRINTER_FROM_MACRO.set(true);
-        }
-        ensure_source_code_printer();
         self.transpiler.with_mut(|t| {
             t.options.target = bun_ast::Target::BunMacro;
             t.resolver.caches.fs.use_alternate_source_cache = true;
@@ -3723,18 +3701,12 @@ pub fn process_fetch_log(
 // SourceMapHandlerGetter
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Holds two fields of the VM and the active `BufferPrinter` so that `get()` can
+/// Holds two fields of the VM so that `get()` can
 /// return an erased `js_printer::SourceMapHandler` borrowing either the VM's
 /// `source_mappings` (fast path) or `self` (debugger / inline-sourcemap path).
-///
-/// `printer` is accepted and stored as a
-/// raw pointer (NOT `&'a mut`) because the same `BufferPrinter` is also the
-/// live `writer` inside `print_with_source_map`; holding an `&'a mut` here
-/// would alias it for the whole print.
 pub struct SourceMapHandlerGetter<'a> {
     source_mappings: &'a SavedSourceMap,
     debugger: Option<&'a crate::debugger::Debugger>,
-    printer: *mut bun_js_printer::BufferPrinter,
 }
 
 impl<'a> SourceMapHandlerGetter<'a> {
@@ -3743,12 +3715,10 @@ impl<'a> SourceMapHandlerGetter<'a> {
     pub(crate) fn new(
         source_mappings: &'a SavedSourceMap,
         debugger: Option<&'a crate::debugger::Debugger>,
-        printer: *mut bun_js_printer::BufferPrinter,
     ) -> Self {
         Self {
             source_mappings,
             debugger,
-            printer,
         }
     }
 
@@ -3776,6 +3746,7 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
         &self,
         chunk: bun_sourcemap::Chunk,
         source: &bun_ast::Source,
+        output: &mut bun_core::MutableString,
     ) -> bun_js_printer::Result<()> {
         let mut temp_json_buffer = bun_core::MutableString::init_empty();
         // `defer temp_json_buffer.deinit()` → Drop.
@@ -3794,58 +3765,22 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
             .put_mappings(source, chunk.buffer)
             .map_err(|_| bun_js_printer::Error::WriteFailed)?;
 
-        // SAFETY: `printer` is the raw `*mut BufferPrinter` passed in by the
-        // caller (jsc_hooks.rs), with the SAME provenance as the `writer` arg
-        // to `print_with_source_map`. By the time `on_source_map_chunk` runs
-        // (js_printer/lib.rs `print_ast` tail), the writer
-        // has emitted its last byte; we reborrow from the raw pointer here
-        // rather than from a stashed `&'a mut` so no Unique tag is held across
-        // the writer's lifetime. The caller MUST rederive its own
-        // `&mut BufferPrinter` from the raw pointer after
-        // `print_with_source_map` returns (see jsc_hooks.rs). See
-        // `SourceMapHandlerGetter` doc for why `printer` is not stored as `&'a mut`.
-        let printer = unsafe { &mut *self.printer };
-
         let encode_len = bun_base64::encode_len(temp_json_buffer.list.as_slice());
-        printer
-            .ctx
-            .buffer
-            .grow_if_needed(encode_len + prefix_len + 2)?;
-        printer.ctx.buffer.append_assume_capacity(b"\n");
-        printer
-            .ctx
-            .buffer
-            .append_assume_capacity(SOURCE_MAP_URL_PREFIX_START);
-        {
-            // `MutableString::list` is a `Vec<u8>`; write into spare capacity,
-            // then commit the written length.
-            let buf = &mut printer.ctx.buffer.list;
-            // SAFETY: `grow_if_needed` reserved ≥encode_len spare; encode writes
-            // `wrote<=encode_len` bytes.
-            let wrote = unsafe {
-                bun_base64::encode(
-                    &mut bun_core::vec::spare_bytes_mut(buf)[..encode_len],
-                    temp_json_buffer.list.as_slice(),
-                )
-            };
-            // SAFETY: `wrote <= encode_len` bytes were just initialized in the
-            // spare capacity reserved by `grow_if_needed` above.
-            unsafe { bun_core::vec::commit_spare(buf, wrote) };
-        }
-        printer
-            .ctx
-            .buffer
-            .append_assume_capacity(SOURCE_MAPPING_URL);
+        output.grow_if_needed(encode_len + prefix_len + 2)?;
+        output.append_assume_capacity(b"\n");
+        output.append_assume_capacity(SOURCE_MAP_URL_PREFIX_START);
+        bun_base64::encode_append(&mut output.list, &temp_json_buffer.list);
+        output.append_assume_capacity(SOURCE_MAPPING_URL);
         // TODO: do we need to %-encode the path?
-        printer.ctx.buffer.append_assume_capacity(source.path.text);
-        printer.ctx.buffer.append(b"\n")?;
+        output.append_assume_capacity(source.path.text);
+        output.append(b"\n")?;
         Ok(())
     }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // ──────────────────────────────────────────────────────────────────────────
-// Options / IPC / per-thread printer — supporting types referenced by the
+// Options / IPC — supporting types referenced by the
 // impl below.
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -3944,21 +3879,6 @@ pub struct ResolveFunctionResult<'r> {
     pub(crate) query_string: &'r [u8],
 }
 
-/// Per-thread `BufferPrinter` used when printing transpiled module source.
-#[thread_local]
-pub(crate) static SOURCE_CODE_PRINTER: Cell<Option<NonNull<bun_js_printer::BufferPrinter>>> =
-    Cell::new(None);
-
-/// `true` when [`enable_macro_mode`](VirtualMachine::enable_macro_mode)
-/// allocated [`SOURCE_CODE_PRINTER`] on this thread and no runtime VM has since
-/// claimed it via [`VirtualMachine::load_extra_env_and_source_code_printer`]
-/// (i.e. a bundler worker thread running a macro). Lets
-/// `__bun_macro_context_deinit` free the printer on worker teardown without
-/// touching the runtime VM's printer when an inline `Bun.build()` macro ran on
-/// the JS thread.
-#[thread_local]
-static SOURCE_CODE_PRINTER_FROM_MACRO: Cell<bool> = Cell::new(false);
-
 fn normalize_specifier_for_resolution<'a>(
     specifier_: &'a [u8],
     query_string: &mut &'a [u8],
@@ -3974,54 +3894,6 @@ fn normalize_specifier_for_resolution<'a>(
     } else {
         specifier_
     }
-}
-
-fn ensure_source_code_printer() {
-    if SOURCE_CODE_PRINTER.get().is_none() {
-        let writer = bun_js_printer::BufferWriter::init();
-        let printer = Box::new(bun_js_printer::BufferPrinter::init(writer));
-        SOURCE_CODE_PRINTER.set(NonNull::new(bun_core::heap::into_raw(printer)));
-    }
-}
-
-/// Free this thread's [`SOURCE_CODE_PRINTER`] Box (if any).
-fn drop_source_code_printer() {
-    if let Some(printer) = SOURCE_CODE_PRINTER.take() {
-        // SAFETY: `printer` was produced by `heap::into_raw` in
-        // `ensure_source_code_printer` and is exclusively owned by this thread.
-        drop(unsafe { bun_core::heap::take(printer.as_ptr()) });
-    }
-    SOURCE_CODE_PRINTER_FROM_MACRO.set(false);
-}
-
-/// Free this thread's [`SOURCE_CODE_PRINTER`] Box only if
-/// [`enable_macro_mode`](VirtualMachine::enable_macro_mode) allocated it.
-/// Called from `js_parser_jsc::Macro::__bun_macro_context_deinit` on bundler
-/// worker teardown — the macro VM never reaches `VirtualMachine::deinit`, so
-/// the box would otherwise leak when the worker thread's TLS block is torn down
-/// before LSan scans (issue 03830 on debian-13-asan after the
-/// `leak:bun_js_parser_jsc::Macro` suppression was removed in #30875). A no-op
-/// on threads where the runtime VM had already initialized the printer (e.g. an
-/// inline `Bun.build()` macro on the JS thread), so subsequent module loads
-/// keep their printer.
-///
-/// Also a no-op while a [`MacroModeGuard`] is still active on this thread:
-/// `__bun_macro_context_deinit` can fire *inside* the guard scope (e.g. a
-/// macro that calls `new Bun.Transpiler().transformSync(...)` —
-/// `TranspilerStateGuard::drop` drops the nested `MacroContext`), and freeing
-/// here would panic the next module fetch at
-/// `SOURCE_CODE_PRINTER.get().expect(...)` with no intervening
-/// `enable_macro_mode()`. Gated on `macro_guard_depth`: nonzero exactly while a
-/// guard is on the stack (both `MacroContext::call` and `Macro::init` hold one,
-/// so the macro module's top-level is covered too).
-pub fn drop_source_code_printer_if_macro_owned() {
-    if !SOURCE_CODE_PRINTER_FROM_MACRO.get() {
-        return;
-    }
-    if VirtualMachine::get_or_null().is_some_and(|vm| vm.macro_guard_depth.get() > 0) {
-        return;
-    }
-    drop_source_code_printer();
 }
 
 /// Run a synchronous GC sweep on this thread's VM iff it was created for a
@@ -4231,14 +4103,9 @@ impl VirtualMachine {
         bun_http::MimeType::by_name_static(str_)
     }
 
-    /// Applies env-derived runtime settings, claims the per-thread source code printer, and adopts `NODE_CHANNEL_FD` for IPC.
-    pub fn load_extra_env_and_source_code_printer(&self) {
+    /// Applies env-derived runtime settings and adopts `NODE_CHANNEL_FD` for IPC.
+    pub fn load_extra_env(&self) {
         let map = &self.transpiler.get().env().map;
-
-        ensure_source_code_printer();
-        // The runtime VM owns the printer from here on — even if a macro had
-        // allocated it first, `__bun_macro_context_deinit` must not free it.
-        SOURCE_CODE_PRINTER_FROM_MACRO.set(false);
 
         if map.get(b"BUN_SHOW_BUN_STACKFRAMES").is_some() {
             self.hide_bun_stackframes.set(false);
@@ -4954,10 +4821,6 @@ impl VirtualMachine {
         }
         let mut guard = ArenaReset(jsc_vm, flags != FetchFlags::PrintSource);
 
-        let printer = SOURCE_CODE_PRINTER
-            .get()
-            .expect("source_code_printer not initialized");
-
         let extra = ModuleLoader::TranspileExtra {
             path: lr.path,
             loader: Cell::new(loader.or(lr.loader).unwrap_or(if lr.is_main {
@@ -4966,7 +4829,6 @@ impl VirtualMachine {
                 bun_ast::Loader::File
             })),
             module_type: Cell::new(module_type),
-            source_code_printer: printer.as_ptr(),
         };
         let args = ModuleLoader::TranspileArgs {
             specifier: lr.specifier,
@@ -4978,7 +4840,7 @@ impl VirtualMachine {
             flags,
             extra: &extra,
         };
-        // SAFETY: `log` and `printer` outlive the call.
+        // SAFETY: `log` outlives the call.
         let result = unsafe { ModuleLoader::__bun_transpile_source_code(guard.0, &args) };
         if result.is_err() && flags == FetchFlags::PrintSource {
             guard.1 = true; // errdefer
@@ -5568,7 +5430,6 @@ impl VirtualMachine {
 
             // A graph context whose release was still queued: teardown stopped what it owned.
             drop((*this).graph_contexts.take());
-            drop_source_code_printer();
 
             drop(core::mem::take(&mut (*this).source_mappings));
 

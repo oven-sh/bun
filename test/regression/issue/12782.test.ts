@@ -34,12 +34,12 @@ test("12782", async () => {
     (fail) (unnamed)
 
     test/regression/issue/12782.bar.fixture.ts:
-    (pass) bar > should not run
-    (pass) bar > inner describe > should not run
 
-     2 pass
+     0 pass
      1 fail
-    Ran 3 tests across 2 files."
+    Ran 1 test across 2 files."
   `);
+  // Each test of both fixtures logs that it should not run.
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"bun test <version> (<revision>)"`);
   expect(exitCode).toBe(1);
 });

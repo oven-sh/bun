@@ -401,6 +401,32 @@ describe.concurrent("--timings", () => {
     expect(ran).toEqual(["f1", "f0", "f3", "f2"]);
     expect(exitCode).toBe(0);
   });
+
+  // No file runs a test then, so the time up to the end of a file says nothing about it either.
+  test("--update-timings keeps the time of each file after the beforeAll of a preload failed", async () => {
+    const passes = `import {test} from "bun:test"; test("t", () => {});`;
+    using dir = tempDir("timings-preload-fails", {
+      "preload.ts": `import {beforeAll} from "bun:test"; beforeAll(() => { throw new Error("set-up failed"); });`,
+      "first.test.ts": passes,
+      "known.test.ts": passes,
+      "new.test.ts": passes,
+      "t.json": JSON.stringify({ version: 1, files: { "known.test.ts": 54321, "first.test.ts": 12345 } }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--preload=./preload.ts", "--timings=t.json", "--update-timings"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const written = await Bun.file(`${dir}/t.json`).json();
+    expect({ files: written.files, counts: stderr.match(/^ \d+ (pass|fail)$/gm), exitCode }).toEqual({
+      files: { "known.test.ts": 54321, "first.test.ts": 12345 },
+      counts: [" 0 pass", " 1 fail"],
+      exitCode: 1,
+    });
+  });
 });
 
 // Compares two files' measured wall-clock durations, so keep it away from the concurrent block's CPU contention.

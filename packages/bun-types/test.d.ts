@@ -818,7 +818,12 @@ declare module "bun:test" {
    * Use this for setup, like initializing a global variable or
    * connecting to a database.
    *
-   * If the function throws, no tests in the file run.
+   * If the function throws, no tests in its scope run. The scope is the
+   * `describe()` block or the file that calls `beforeAll()`. In a
+   * `--preload` script, the scope is every test file of the run.
+   *
+   * With `--isolate`, and on a `--parallel` worker, the hook of a
+   * `--preload` script runs for each test file, and its scope is that file.
    *
    * @example
    * ```ts
@@ -915,6 +920,9 @@ declare module "bun:test" {
    *
    * `runSuite()` runs the block's `beforeAll` hooks, its tests and nested blocks, and its `afterAll` hooks, in the
    * async context `runSuite()` is called in. If the hook fails before it calls `runSuite()`, none of them run.
+   *
+   * In a `--preload` script, the hook wraps every test file of the run. With `--isolate`, and on a `--parallel`
+   * worker, it wraps each test file.
    *
    * Nesting, failures and the timeout work as in {@link aroundEach}. The hook doesn't run if every test in the block is skipped.
    *

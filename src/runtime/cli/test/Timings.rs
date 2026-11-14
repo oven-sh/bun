@@ -215,7 +215,7 @@ impl Timings {
 
     /// For a file that did not run to its end: its worker crashed. How long that took says nothing about the
     /// file, and a time that is too short starts it late in the next run, where it runs alone at the end. It keeps the time that
-    /// the table has, if any.
+    /// the table has, if any. So does a file that ran no test after the preload's set-up failed.
     pub(crate) fn keep(&mut self, abs_path: &[u8]) {
         let key = Self::key_for(abs_path);
         if let Some(&ms) = self.map.get(&key) {

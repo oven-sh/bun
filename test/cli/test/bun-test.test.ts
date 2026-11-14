@@ -3538,6 +3538,293 @@ describe.concurrent("a test file that fails to load", () => {
   });
 });
 
+// The preload's beforeAll runs with the first file, and the whole run is its scope.
+describe.concurrent("a preload whose beforeAll fails", () => {
+  const failures = {
+    "throws": `() => { console.log("beforeAll 1"); throw new Error("set-up failed"); }`,
+    "rejects": `async () => { console.log("beforeAll 1"); throw new Error("set-up failed"); }`,
+    "fails an expect()": `() => { console.log("beforeAll 1"); expect(1).toBe(2); }`,
+    "times out": `() => { console.log("beforeAll 1"); return new Promise(() => {}); }, 1`,
+    "fails on its first call only": `() => {
+      console.log("beforeAll 1");
+      if (globalThis.wasCalled) return;
+      globalThis.wasCalled = true;
+      throw new Error("set-up failed");
+    }`,
+    // Stands for a set-up that can't run twice, such as a server on a fixed port.
+    "passes on its first call only": `() => {
+      console.log("beforeAll 1");
+      if (globalThis.wasCalled) throw new Error("set-up failed");
+      globalThis.wasCalled = true;
+    }`,
+  };
+  const files = (failure: keyof typeof failures) => ({
+    "preload.ts": `
+      import { afterAll, afterEach, beforeAll, beforeEach, expect } from "bun:test";
+      beforeAll(${failures[failure]});
+      beforeAll(() => console.log("beforeAll 2"));
+      beforeEach(() => console.log("beforeEach"));
+      afterEach(() => console.log("afterEach"));
+      afterAll(() => console.log("afterAll"));
+    `,
+    ...Object.fromEntries(
+      ["a", "b", "c"].map(name => [
+        `${name}.test.ts`,
+        `
+          import { afterAll, beforeAll, describe, test } from "bun:test";
+          console.log("module of ${name}");
+          beforeAll(() => console.log("beforeAll of ${name}"));
+          afterAll(() => console.log("afterAll of ${name}"));
+          describe("${name}", () => {
+            console.log("describe of ${name}");
+            test("test", () => console.log("test of ${name}"));
+          });
+        `,
+      ]),
+    ),
+    "missing.test.ts": `import "./missing.ts";`,
+    "empty.test.ts": `console.log("module of empty");`,
+  });
+  // What a file runs, not whether it is loaded. A worker's output reaches the coordinator's stderr.
+  const ran = (output: string) =>
+    output.split(/\r?\n/).filter(line => /^(describe|test|before(All|Each)|after(All|Each))\b/.test(line));
+  const failsWith = (name: string) => [`describe of ${name}`, "beforeAll 1"];
+  const runsAll = (name: string) => [
+    `beforeAll of ${name}`,
+    "beforeEach",
+    `test of ${name}`,
+    "afterEach",
+    `afterAll of ${name}`,
+  ];
+  const oneWorker = ["--parallel=2", "--parallel-delay=1000000"];
+
+  test.each([
+    // No file after the one the hook failed with runs a describe() callback, a hook of its own or a test.
+    ["throws", ["a", "b", "c"], [...failsWith("a"), "afterAll"], [" 0 pass", " 1 fail"]],
+    ["rejects", ["a", "b", "c"], [...failsWith("a"), "afterAll"], [" 0 pass", " 1 fail"]],
+    ["fails an expect()", ["a", "b"], [...failsWith("a"), "afterAll"], [" 0 pass", " 1 fail"]],
+    ["times out", ["a", "b"], [...failsWith("a"), "afterAll"], [" 0 pass", " 1 fail"]],
+    // The first file has no test to run.
+    ["throws", ["missing", "b"], ["beforeAll 1", "afterAll"], [" 0 pass", " 2 fail"]],
+    ["throws", ["empty", "b"], ["beforeAll 1", "afterAll"], [" 0 pass", " 1 fail"]],
+    ["throws", ["--test-name-pattern=^b ", "a", "b"], [...failsWith("a"), "afterAll"], [" 0 pass", " 1 fail"]],
+    // One process and one global, so the hook runs with the first file only.
+    ["throws", ["--parallel=1", "--no-isolate", "a", "b"], [...failsWith("a"), "afterAll"], [" 0 pass", " 1 fail"]],
+    // Each repeat of the first file runs the hook again.
+    [
+      "throws",
+      ["--rerun-each=2", "a", "b"],
+      [...failsWith("a"), ...failsWith("a"), "afterAll", "afterAll"],
+      [" 0 pass", " 2 fail"],
+    ],
+    // Once the hook has passed, the files after the first one run, whatever another repeat of it does.
+    [
+      "fails on its first call only",
+      ["--rerun-each=2", "a", "b"],
+      [
+        ...failsWith("a"),
+        ...[...failsWith("a"), "beforeAll 2", ...runsAll("a")],
+        ...["describe of b", ...runsAll("b"), "afterAll"],
+        ...["describe of b", ...runsAll("b"), "afterAll"],
+      ],
+      [" 3 pass", " 1 fail"],
+    ],
+    [
+      "passes on its first call only",
+      ["--rerun-each=2", "a", "b"],
+      [
+        ...[...failsWith("a"), "beforeAll 2", ...runsAll("a")],
+        ...failsWith("a"),
+        ...["describe of b", ...runsAll("b"), "afterAll"],
+        ...["describe of b", ...runsAll("b"), "afterAll"],
+      ],
+      [" 3 pass", " 1 fail"],
+    ],
+    // Where the hook runs for each file, it fails that file only.
+    [
+      "fails on its first call only",
+      [...oneWorker, "--no-isolate", "a", "b"],
+      [...failsWith("a"), "afterAll", ...failsWith("b"), "beforeAll 2", ...runsAll("b"), "afterAll"],
+      [" 1 pass", " 1 fail"],
+    ],
+    [
+      "throws",
+      ["--isolate", "a", "b"],
+      [...failsWith("a"), "afterAll", ...failsWith("b"), "afterAll"],
+      [" 0 pass", " 2 fail"],
+    ],
+    [
+      "throws",
+      ["--parallel=1", "a", "b"],
+      [...failsWith("a"), "afterAll", ...failsWith("b"), "afterAll"],
+      [" 0 pass", " 2 fail"],
+    ],
+    [
+      "throws",
+      [...oneWorker, "a", "b"],
+      [...failsWith("a"), "afterAll", ...failsWith("b"), "afterAll"],
+      [" 0 pass", " 2 fail"],
+    ],
+    [
+      "throws",
+      [...oneWorker, "--no-isolate", "a", "b"],
+      [...failsWith("a"), "afterAll", ...failsWith("b"), "afterAll"],
+      [" 0 pass", " 2 fail"],
+    ],
+    ["throws", ["--bail=1", "a", "b"], failsWith("a"), null],
+  ] as const)("that %s: %j", async (failure, args, expected, expectedCounts) => {
+    const { stdout, stderr, counts, exitCode } = await runFiles(
+      files(failure),
+      "--preload=./preload.ts",
+      ...args.map(arg => (arg.startsWith("-") ? arg : `./${arg}.test.ts`)),
+    );
+    expect({ ran: ran(stdout + stderr), counts, exitCode }).toEqual({
+      ran: [...expected],
+      counts: expectedCounts && [...expectedCounts],
+      exitCode: 1,
+    });
+  });
+
+  test("whichever file --randomize puts first", async () => {
+    const { stdout, counts, exitCode } = await runFiles(
+      files("throws"),
+      "--preload=./preload.ts",
+      "--randomize",
+      "./a.test.ts",
+      "./b.test.ts",
+      "./c.test.ts",
+    );
+    expect({ ran: ran(stdout), counts, exitCode }).toEqual({
+      ran: [expect.stringMatching(/^describe of [abc]$/), "beforeAll 1", "afterAll"],
+      counts: [" 0 pass", " 1 fail"],
+      exitCode: 1,
+    });
+  });
+
+  // The last file hosts the preload's afterAll, so each file after the failure is still entered. Only this test pins that.
+  test("a file after the failure is still loaded, and reports nothing of its own but a failure to load", async () => {
+    using dir = tempDir("bun-test-preload-fails", files("throws"));
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "test",
+        "--preload=./preload.ts",
+        "--reporter=junit",
+        "--reporter-outfile=out.xml",
+        "./a.test.ts",
+        "./b.test.ts",
+        "./missing.test.ts",
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const report = await Bun.file(join(String(dir), "out.xml")).text();
+    expect({
+      stdout: stdout.split(/\r?\n/).filter(line => line && !line.startsWith("bun test ")),
+      headers: stderr.match(/^\w+\.test\.ts:$/gm),
+      errors: stderr.match(/^error: [^'\r\n]+/gm),
+      counts: stderr.match(/^ \d+ (pass|fail)$/gm),
+      suites: report.match(/<testsuite name="[^"]*" file="[^"]*" tests="\d+" assertions="\d+" failures="\d+"/g),
+      exitCode,
+    }).toEqual({
+      stdout: ["module of a", "describe of a", "beforeAll 1", "module of b", "afterAll"],
+      headers: ["a.test.ts:", "b.test.ts:", "missing.test.ts:"],
+      errors: ["error: set-up failed", "error: Cannot find module "],
+      counts: [" 0 pass", " 2 fail"],
+      suites: [
+        '<testsuite name="a.test.ts" file="a.test.ts" tests="1" assertions="0" failures="1"',
+        '<testsuite name="b.test.ts" file="b.test.ts" tests="0" assertions="0" failures="0"',
+        '<testsuite name="missing.test.ts" file="missing.test.ts" tests="1" assertions="0" failures="1"',
+      ],
+      exitCode: 1,
+    });
+  });
+
+  // Here the preload's hooks passed. A record that took a hook of the first file for one of them would stop b.
+  test.each([
+    ["fails in", `beforeAll(() => { throw new Error("of a"); });`, ["error: of a"], [" 1 pass", " 1 fail"]],
+    [
+      "is abandoned in",
+      `beforeAll(() => new Promise(() => {}), 0);`,
+      [
+        'error: A test or hook with no timeout never settled in "a.test.ts"',
+        "note: the event loop is empty, so nothing can settle it anymore",
+      ],
+      [" 1 pass", " 0 fail"],
+    ],
+  ])(
+    "a first file that %s a hook of its own keeps no later file from running",
+    async (_, hook, expectedErrors, expectedCounts) => {
+      const { stdout, errors, counts, exitCode } = await runFiles(
+        {
+          "preload.ts": `
+            import { afterAll, aroundAll, beforeAll } from "bun:test";
+            aroundAll(async runSuite => { console.log("aroundAll >"); await runSuite(); console.log("aroundAll <"); }, 0);
+            beforeAll(() => console.log("beforeAll"), 0);
+            afterAll(() => console.log("afterAll"));
+          `,
+          "a.test.ts": `
+            import { beforeAll, test } from "bun:test";
+            ${hook}
+            test("a", () => console.log("test of a"));
+          `,
+          "b.test.ts": `import { test } from "bun:test"; test("b", () => console.log("test of b"));`,
+        },
+        "--preload=./preload.ts",
+        "./a.test.ts",
+        "./b.test.ts",
+      );
+      expect({
+        stdout: stdout.split(/\r?\n/).filter(line => line && !line.startsWith("bun test ")),
+        errors,
+        counts,
+        exitCode,
+      }).toEqual({
+        stdout: ["aroundAll >", "beforeAll", "test of b", "afterAll", "aroundAll <"],
+        errors: expectedErrors,
+        counts: expectedCounts,
+        exitCode: 1,
+      });
+    },
+  );
+
+  // The listener takes the runner's "never settled" error, so only the tests of the later files can fail this run.
+  test("a hook that the runner gives up on is not a failed hook, and the later files run", async () => {
+    const { stdout, counts, exitCode } = await runFiles(
+      {
+        "preload.js": `
+          import { beforeAll, vi } from "vitest";
+          vi.setConfig({ hookTimeout: 0 });
+          process.on("unhandledRejection", () => {});
+          beforeAll(async () => {
+            await new Promise(() => {});
+            globalThis.isReady = true;
+          });
+        `,
+        "a.test.js": `import { test } from "vitest"; test("a", () => console.log("test of a"));`,
+        "b.test.js": `
+          import { expect, test } from "vitest";
+          test("b", () => {
+            console.log("test of b");
+            expect(globalThis.isReady).toBe(true);
+          });
+        `,
+      },
+      "--preload=./preload.js",
+      "./a.test.js",
+      "./b.test.js",
+    );
+    expect({ ran: ran(stdout), counts, exitCode }).toEqual({
+      ran: ["test of b"],
+      counts: [" 0 pass", " 1 fail"],
+      exitCode: 1,
+    });
+  });
+});
+
 describe.concurrent("an error whose message getter throws", () => {
   test.each(
     Object.entries({

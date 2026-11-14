@@ -26,6 +26,8 @@ interface Config {
    * of the route this bundle is for.
    */
   route?: { page: Id | null; layouts: Id[] };
+  /** For the page of an HTML route: the index that List 1 of a hot update names the route by. */
+  htmlRouteIndex?: number;
   /**
    * A list of "roots" that the client is aware of. This includes
    * the framework entry point, as well as every client component.

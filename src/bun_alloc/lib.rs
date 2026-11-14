@@ -2363,8 +2363,10 @@ mod bss_map_tests {
         map.put(&mut first, 1).unwrap();
         assert_eq!(slots(&map), 1);
 
+        // A trailing separator of the host is not part of the key.
+        let a_with_sep = [b"/a", SEP_STR.as_bytes()].concat();
         for round in 1..=100u32 {
-            assert!(map.invalidate(b"/a/"));
+            assert!(map.invalidate(&a_with_sep));
             // The key is kept: a second bust, from any thread, answers true.
             assert!(map.invalidate(b"/a"));
             assert!(map.get(b"/a").is_none());

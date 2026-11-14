@@ -239,6 +239,16 @@ impl Entry {
             && (memo.is_empty() || (memo.ends_with(name) && is_in_dir(memo, dir, name.len())))
     }
 
+    /// A stat that failed leaves the target unknown. Caller holds `mutex`.
+    fn forget_symlink(&self) {
+        let mut c = self.cache.get();
+        if !c.symlink.is_empty() {
+            c.symlink = Interned::EMPTY;
+            c.symlink_is_derived = false;
+            self.cache.set(c);
+        }
+    }
+
     /// Stat-on-first-use.
     // `Entry` lives in the EntryStore BSSMap singleton. The lazy-stat rewrite
     // of `need_stat` / `cache` is serialized on the per-entry `mutex` here
@@ -254,6 +264,7 @@ impl Entry {
                 match fs.resolve_kind(self.dir, self.base(), self.cache(), store_fd) {
                     Ok(c) => self.cache.set(c),
                     Err(_) => {
+                        self.forget_symlink();
                         self.need_stat.store(false, Ordering::Release);
                         return self.cache().kind;
                     }
@@ -284,6 +295,7 @@ impl Entry {
                 match fs.resolve_kind(self.dir, self.base(), self.cache(), store_fd) {
                     Ok(c) => self.cache.set(c),
                     Err(_) => {
+                        self.forget_symlink();
                         self.need_stat.store(false, Ordering::Release);
                         return b"";
                     }

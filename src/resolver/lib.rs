@@ -1829,9 +1829,11 @@ pub mod dir_entry_accessor {
                     // The walker gets to apply its own broken-symlink handling.
                     EntryKind::Dangling => bun_sys::FileKind::SymLink,
                 };
-                // `Entry::kind` resolved through symlinks above; a non-empty
-                // cached realpath is what records the entry as a symlink.
-                let symlink_target = entry.cache().symlink;
+                // `Entry::kind` resolved through symlinks above.
+                let symlink_target = entry
+                    .cache()
+                    .symlink_target()
+                    .unwrap_or(bun_ptr::Interned::EMPTY);
                 // BACKREF: wrap the HashMap key's bytes in a `RawSlice`
                 // instead of fabricating `&'static [u8]` (PORTING.md §Forbidden).
                 // The key is a `Box<[u8]>` owned by `DirEntry.data` and valid

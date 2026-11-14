@@ -1,7 +1,9 @@
 //! `--analyze` runs the bundler, which `bun_install` cannot depend on, so that branch lives here.
 
 use crate::Error;
-use bun_bundler::bundle_v2::{DependenciesScanner, DependenciesScannerResult};
+use bun_bundler::bundle_v2::{
+    DependenciesScanner, DependenciesScannerReads, DependenciesScannerResult,
+};
 use bun_core::Global;
 use bun_install::package_manager_real::command_line_arguments::CommandLineArguments;
 use bun_install::package_manager_real::{Subcommand, update_package_json_and_install_and_cli};
@@ -45,6 +47,8 @@ pub(crate) fn analyze_dependencies_and_install(
         install: &'a mut dyn FnMut(&mut ContextData, &CommandLineArguments) -> Result<(), Error>,
     }
     impl bun_bundler::bundle_v2::OnDependenciesAnalyze for Analyzer<'_> {
+        const READS: DependenciesScannerReads = DependenciesScannerReads::ImportRecords;
+
         fn on_analyze(
             &mut self,
             result: &mut DependenciesScannerResult<'_, '_>,

@@ -4280,6 +4280,27 @@ if (isBun) {
           expect(other.prototype.constructor).toBe(other);
         });
 
+        // The native setter behind a fresh `prototype` refuses an object that is not the mock, such as the Proxy.
+        test.each([
+          ["a Proxy", mocked => new Proxy(mocked, {})],
+          ["a Proxy of a Proxy", mocked => new Proxy(new Proxy(mocked, {}), {})],
+          ["a Proxy made in a node:vm context", mocked => vm.runInNewContext("new Proxy(mocked, {})", { mocked })],
+        ])("assignment through %s", (_, wrap) => {
+          const assigned = {};
+          const mocked = fresh();
+          wrap(mocked).prototype = assigned;
+          expect(Object.getOwnPropertyDescriptor(mocked, "prototype")).toEqual({ value: assigned, ...attributes });
+          expect(Object.getPrototypeOf(new mocked())).toBe(assigned);
+
+          const viaReflect = fresh();
+          expect(Reflect.set(wrap(viaReflect), "prototype", assigned)).toBe(true);
+          expect(viaReflect.prototype).toBe(assigned);
+
+          const asReceiver = fresh();
+          expect(Reflect.set({}, "prototype", assigned, wrap(asReceiver))).toBe(true);
+          expect(asReceiver.prototype).toBe(assigned);
+        });
+
         test("defineProperty", () => {
           const value = {};
           const mocked = fresh();

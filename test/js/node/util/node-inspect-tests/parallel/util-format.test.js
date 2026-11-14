@@ -452,7 +452,18 @@ test("no assertion failures", () => {
   customError.stack;
   delete customError.originalLine;
   delete customError.originalColumn;
-  assert.strictEqual(util.format(customError), customError.stack.replace(/^Error/, "Custom$&")); //! temp bug workaround
+  assert.strictEqual(util.format(customError), customError.stack);
+  // The message of an error is cleared after its stack is made.
+  {
+    const cleared = new Error("foo");
+    const stack = cleared.stack;
+    cleared.message = "";
+    assert.strictEqual(util.format(cleared), stack);
+    assert.strictEqual(util.format("%s", cleared), stack);
+    assert.strictEqual(util.format("%O", cleared), stack);
+    assert.strictEqual(util.format("%o", cleared).split("\n")[0], "Error: foo");
+    assert.strictEqual(util.format("a", cleared), `a ${stack}`);
+  }
   // Doesn't capture stack trace
   function BadCustomError(msg) {
     Error.call(this);

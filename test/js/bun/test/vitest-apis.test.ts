@@ -1031,6 +1031,20 @@ describe("expect.addEqualityTesters", () => {
     expect(seen).toHaveLength(1);
   });
 
+  test("an asymmetric matcher that is the whole expected value of toMatchObject comes first", () => {
+    seen.length = 0;
+    expect(litre()).toMatchObject(expect.any(Volume));
+    expect(litre()).not.toMatchObject(expect.any(Array));
+    expect(seen).toHaveLength(0);
+    // a tester that says "equal" does not decide for the matcher
+    const marked = { marked: true };
+    expect.addEqualityTesters([a => (a === marked ? true : undefined)]);
+    expect(marked).not.toMatchObject(expect.any(Array));
+    // a pair with no matcher still goes to the testers
+    expect(litre()).toMatchObject(thousandMillilitres());
+    expect(seen).toHaveLength(1);
+  });
+
   test("the sample of expect.objectContaining is a pattern, not a value for a tester", () => {
     expect(litre()).toEqual(thousandMillilitres());
     expect(litre()).not.toEqual(expect.objectContaining(thousandMillilitres()));

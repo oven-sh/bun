@@ -86,16 +86,14 @@ describe("net.Server", () => {
 
 describe("net.Server.prototype", () => {
   it("has the expected methods", () => {
-    expect(net.Server.prototype).toMatchObject(
-      expect.objectContaining({
-        address: expect.any(Function),
-        close: expect.any(Function),
-        getConnections: expect.any(Function),
-        listen: expect.any(Function),
-        ref: expect.any(Function),
-        unref: expect.any(Function),
-      }),
-    );
+    expect(net.Server.prototype).toMatchObject({
+      address: expect.any(Function),
+      close: expect.any(Function),
+      getConnections: expect.any(Function),
+      listen: expect.any(Function),
+      ref: expect.any(Function),
+      unref: expect.any(Function),
+    });
   });
 
   it("is disposable", () => {

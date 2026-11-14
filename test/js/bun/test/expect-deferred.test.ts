@@ -1268,6 +1268,74 @@ describe.concurrent("matchers that have to wait for a promise", () => {
     expect({ exitCode, signalCode }).toEqual({ exitCode: 1, signalCode: null });
   });
 
+  test("a matcher that waits, as the whole expected value of toMatchObject", async () => {
+    const source = `
+      expect.extend({
+        async toHaveLater(received, key) {
+          await later();
+          return { pass: key in received, message: () => "toHaveLater" };
+        },
+      });
+      test("passes", async () => {
+        const matcher = expect(later({ a: 1, b: 2 })).toMatchObject(expect.resolvesTo.objectContaining({ a: 1 }));
+        console.log(matcher instanceof Promise, await matcher);
+        console.log(expect(Promise.resolve({ a: 1 })).toMatchObject(expect.resolvesTo.objectContaining({ a: 1 })));
+        await expect(later({ a: 1 })).not.toMatchObject(expect.resolvesTo.objectContaining({ a: 2 }));
+        await expect(laterReject({ a: 1 })).toMatchObject(expect.rejectsTo.objectContaining({ a: 1 }));
+        await expect({ a: 1 }).toMatchObject(expect.toHaveLater("a"));
+        await expect({ a: 1 }).not.toMatchObject(expect.toHaveLater("b"));
+      });
+      test("fails", async () => {
+        await expect(later({ a: 1 })).toMatchObject(expect.resolvesTo.objectContaining({ a: 2 }));
+      });
+      test("fails, not awaited", () => {
+        expect(later({ a: 1 })).toMatchObject(expect.rejectsTo.anything());
+      });
+      test("fails, expect.extend", async () => {
+        await expect({ a: 1 }).toMatchObject(expect.toHaveLater("b"));
+      });
+      test("property matchers", async () => {
+        const matcher = expect({ a: 1 }).toMatchSnapshot(expect.toHaveLater("a"));
+        console.log(matcher instanceof Promise, await matcher);
+        await expect({ a: 1 }).toMatchInlineSnapshot(expect.toHaveLater("a"), \`
+          {
+            "a": 1,
+          }
+        \`);
+      });
+      test("fails, property matchers", async () => {
+        await expect(later({ a: 1 })).toMatchSnapshot(expect.resolvesTo.objectContaining({ a: 2 }));
+      });
+      test("times out", async () => {
+        await expect(never()).toMatchObject(expect.resolvesTo.anything());
+      }, 50);
+    `;
+    const { stdout, stderr, results, exitCode, signalCode, written } = await runTests(source, [
+      "__snapshots__/a.test.js.snap",
+    ]);
+    expect(stdout).toEqual(["true undefined", "undefined", "true undefined"]);
+    expect(results).toEqual([
+      "(pass) passes",
+      "(fail) fails",
+      "(fail) fails, not awaited",
+      "(fail) fails, expect.extend",
+      "(pass) property matchers",
+      "(fail) fails, property matchers",
+      "(fail) times out",
+    ]);
+    // the matcher that waited and matched stored the received value, and the one that failed stored nothing
+    expect(written).toEqual([
+      '// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n\nexports[`property matchers 1`] = `\n{\n  "a": 1,\n}\n`;\n',
+    ]);
+    expect(failingLines(stderr, source)).toEqual([
+      "await expect(later({ a: 1 })).toMatchObject(expect.resolvesTo.objectContaining({ a: 2 }));",
+      "expect(later({ a: 1 })).toMatchObject(expect.rejectsTo.anything());",
+      'await expect({ a: 1 }).toMatchObject(expect.toHaveLater("b"));',
+      "await expect(later({ a: 1 })).toMatchSnapshot(expect.resolvesTo.objectContaining({ a: 2 }));",
+    ]);
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 1, signalCode: null });
+  });
+
   test("a matcher that re-runs after a wait reuses the values from its first run", async () => {
     const { stdout, exitCode, signalCode } = await runTests(`
       const calls = {};

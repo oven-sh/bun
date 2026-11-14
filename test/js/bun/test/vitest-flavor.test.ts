@@ -2568,6 +2568,29 @@ describe.concurrent("behavior depends on the module a function is imported from"
     expect({ log, exitCode }).toEqual({ log: ["bun:test false 0", "vitest true 0"], exitCode: 0 });
   });
 
+  test("toMatchObject() applies a matcher that is the whole expected value under both imports", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import * as bun from "bun:test";
+        import * as vitest from "vitest";
+        const outcome = fn => { try { fn(); return "passes"; } catch { return "fails"; } };
+        for (const [name, { test, expect }] of Object.entries({ bun, vitest })) {
+          test(name, () => {
+            console.log(name, "expected:", [
+              outcome(() => expect({ a: 1, b: 2 }).toMatchObject(expect.objectContaining({ a: 1 }))),
+              outcome(() => expect({ a: 1, b: 2 }).toMatchObject(expect.objectContaining({ a: 2 }))),
+              outcome(() => expect({ a: 1 }).not.toMatchObject(expect.any(Array))),
+            ].join(" "));
+          });
+        }
+      `,
+    });
+    expect({ log, exitCode }).toEqual({
+      log: ["bun expected: passes fails passes", "vitest expected: passes fails passes"],
+      exitCode: 0,
+    });
+  });
+
   test("not.toMatchObject() with a value that isn't an object", async () => {
     const { log, exitCode } = await runTests({
       "a.test.js": `

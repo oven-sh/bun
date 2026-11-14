@@ -26,8 +26,7 @@ use super::add_remove_with_filter::{
 };
 use super::options::LogLevel;
 use super::package_json_editor::{self as PackageJSONEditor, EditOptions};
-use super::update_package_json_and_install::save_entry;
-use super::workspace_package_json_cache::MapEntry;
+use super::update_package_json_and_install::{package_json_entry_or_crash, save_entry};
 use super::{PackageManager, Subcommand, UpdateRequest};
 
 type ExprDisabler = bun_ast::expr::Disabler;
@@ -964,14 +963,15 @@ fn other_users_of(
 
 pub(crate) fn edit_root_entry_before_install(
     manager: &mut PackageManager,
-    root_package_json: &mut MapEntry,
+    root: Expr,
+    path: &[u8],
 ) -> Result<(), crate::Error> {
     if manager.catalog_add.adds.is_empty() {
         return Ok(());
     }
-    let root = root_package_json.root;
     edit_root_before_install(manager, &root)?;
-    save_entry(root_package_json, root, manager.log_mut());
+    let log = manager.log_mut();
+    save_entry(package_json_entry_or_crash(manager, path), root, log);
     Ok(())
 }
 

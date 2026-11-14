@@ -2391,7 +2391,7 @@ pub fn init(
         let this_cwd: &[u8];
         let mut created_package_json = false;
         let mut walk = PackageJsonWalk::new(original_cwd);
-        let child_json: bun_sys::File = 'child: {
+        let child_json: Option<bun_sys::File> = 'child: {
             // --dry-run and --no-save clear `Do::WRITE_PACKAGE_JSON` once the options load.
             let need_write = subcommand.writes_package_json(cli.positionals.len() > 1)
                 && !cli.dry_run
@@ -2410,7 +2410,7 @@ pub fn init(
                 match opened {
                     Ok(f) => {
                         this_cwd = without_trailing_slash_windows_path(dir);
-                        break 'child f;
+                        break 'child Some(f);
                     }
                     Err(e) if e.get_errno() == bun_sys::E::ENOENT => {}
                     Err(e) if e.get_errno() == bun_sys::E::EACCES => {
@@ -2454,7 +2454,7 @@ pub fn init(
                 )?;
                 this_cwd = original_cwd;
                 no_project = true;
-                break 'child bun_sys::File::from_fd(bun_sys::Fd::INVALID);
+                break 'child None;
             }
             if subcommand == Subcommand::Install {
                 if cli.positionals.len() > 1 && cli.filters.is_empty() {
@@ -2464,14 +2464,14 @@ pub fn init(
                     // `bun add <pkg>` works in an empty directory.
                     this_cwd = original_cwd;
                     created_package_json = true;
-                    break 'child attempt_to_create_package_json_and_open()?;
+                    break 'child Some(attempt_to_create_package_json_and_open()?);
                 }
             }
             if cli.no_project_ok {
                 // Registry-only commands (`bun pm diff a b`) run fine from any folder: no root file, no workspaces.
                 this_cwd = original_cwd;
                 no_project = true;
-                break 'child bun_sys::File::from_fd(bun_sys::Fd::INVALID);
+                break 'child None;
             }
             return Err(crate::Error::MissingPackageJSON);
         };
@@ -2513,7 +2513,6 @@ pub fn init(
                 // Intern via the resolver's DirnameStore so the slice is
                 // process-lifetime (`set_top_level_dir` requires `'static`).
                 fs.set_top_level_dir(fs.dirname_store().append(parent)?);
-                let _ = child_json.close();
                 workspace_name_hash = Some(name_hash);
                 // The root was found above the path as the user typed it. The root reads the
                 // workspace's package.json under that path, so the same spelling is used here.
@@ -2522,7 +2521,7 @@ pub fn init(
                     push_package_json(&mut typed);
                     original_package_json_path_buf = typed;
                 }
-                break 'root_package_json_file json_file;
+                break 'root_package_json_file Some(json_file);
             }
         }
 
@@ -2562,7 +2561,7 @@ pub fn init(
     };
     // From here on, package.json is read by path, and written by path by the commands that write
     // it.
-    let _ = root_package_json_file.close();
+    drop(root_package_json_file);
 
     let top_level_dir = fs.top_level_dir();
     // Returns the resolver's BSSMap-owned

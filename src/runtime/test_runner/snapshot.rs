@@ -455,9 +455,7 @@ impl Snapshots {
             self.open_to_append(files)?;
             if let Some(file) = self._current_file.as_mut() {
                 file.dirty = true;
-                if let Some(opened) = file.file.take() {
-                    let _ = opened.close();
-                }
+                file.file = None;
             }
         }
         if written_by_earlier_attempt.is_none() {
@@ -687,7 +685,6 @@ impl Snapshots {
                 file.write_all(&self.file_buf)
                     .and_then(|()| bun_sys::ftruncate(file.handle, self.file_buf.len() as i64))
                     .map_err(|_| crate::Error::FailedToWriteSnapshotFile)?;
-                let _ = file.close();
             }
             self.file_buf.clear();
             self.file_buf.shrink_to_fit();

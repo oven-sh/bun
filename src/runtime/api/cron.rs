@@ -513,11 +513,10 @@ impl CronRegisterJob {
             }
         };
         if file.write_all(&result).is_err() {
-            let _ = file.close(); // close error is non-actionable
             self.set_err(format_args!("Failed to write temp file"));
             return Err(());
         }
-        let _ = file.close(); // close error is non-actionable
+        drop(file);
 
         self.state.set(RegisterState::InstallingCrontab);
         self.stdout_reader
@@ -650,11 +649,9 @@ impl CronRegisterJob {
             }
         };
         if file.write_all(&plist).is_err() {
-            let _ = file.close(); // close error is non-actionable
             self.set_err(format_args!("Failed to write plist"));
             return Err(());
         }
-        let _ = file.close(); // close error is non-actionable
         Ok(())
     }
 
@@ -907,11 +904,9 @@ impl CronRegisterJob {
             }
         };
         if file.write_all(&xml).is_err() {
-            let _ = file.close(); // close error is non-actionable
             self.set_err(format_args!("Failed to write temp XML file"));
             return Err(());
         }
-        let _ = file.close(); // close error is non-actionable
 
         Ok((task_name, xml_path))
     }
@@ -1195,11 +1190,10 @@ impl CronRemoveJob {
             }
         };
         if file.write_all(&result).is_err() {
-            let _ = file.close(); // close error is non-actionable
             self.set_err(format_args!("Failed to write temp file"));
             return Err(());
         }
-        let _ = file.close(); // close error is non-actionable
+        drop(file);
 
         self.state.set(RemoveState::InstallingCrontab);
         self.stdout_reader

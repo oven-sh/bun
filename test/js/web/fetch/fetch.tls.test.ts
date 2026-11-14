@@ -747,6 +747,51 @@ describe.concurrent("fetch-tls", () => {
     });
   });
 
+  // The fixtures are described in test/js/node/tls/node-tls-connect-hostname-verification.test.ts.
+  it("applies CA name constraints to the subject CN of a certificate without a DNS subjectAltName", async () => {
+    const pem = (name: string) =>
+      readFileSync(join(import.meta.dir, "../../node/tls/fixtures", `name-constraints-${name}.pem`), "utf8");
+    // `ca` is what the client trusts. `chain` is what the server sends after its leaf.
+    const permittingCa = { ca: pem("ca-cert"), chain: pem("intermediate-cert") };
+    const excludingCa = { ca: pem("excluding-ca-cert"), chain: "" };
+    const outcomes: Record<string, string> = {};
+    const attempt = (leaf: string, servername: string, issuer = permittingCa) =>
+      createServer({ key: pem("leaf-key"), cert: pem(`${leaf}-cert`) + issuer.chain }, async port => {
+        outcomes[leaf] = await fetch(`https://127.0.0.1:${port}`, {
+          keepalive: false,
+          tls: { ca: issuer.ca, servername },
+        }).then(
+          res => res.text(),
+          error => `${error.code}: ${error.message}`,
+        );
+      });
+    await Promise.all([
+      attempt("inside", "host.allowed.test"),
+      attempt("outside", "outside.example.test"),
+      attempt("wildcard", "www.example.test"),
+      attempt("partial-wildcard", "www.example.test"),
+      attempt("nosan", "legacy.allowed.test"),
+      attempt("excluded", "host.blocked.test", excludingCa),
+      attempt("not-excluded", "host.allowed.test", excludingCa),
+      attempt("excluded-dns-san", "host.allowed.test", excludingCa),
+      attempt("excluded-dns-san-blocked", "host.blocked.test", excludingCa),
+    ]);
+    expect(outcomes).toEqual({
+      inside: "Hello World",
+      outside: "PERMITTED_VIOLATION: permitted subtree violation",
+      // As in node: OpenSSL does not read a CN with a wildcard as a host name, so the constraints do not apply to it.
+      wildcard: "Hello World",
+      "partial-wildcard": "Hello World",
+      // Bun only: node accepts a leaf that has no subjectAltName extension and a CN inside the permitted subtree.
+      nosan: "NAME_CONSTRAINTS_WITHOUT_SANS: Issuer has name constraints but leaf has no SANs",
+      excluded: "EXCLUDED_VIOLATION: excluded subtree violation",
+      "not-excluded": "Hello World",
+      // The DNS name is the name of these two certificates. Their CN is not checked.
+      "excluded-dns-san": "Hello World",
+      "excluded-dns-san-blocked": "EXCLUDED_VIOLATION: excluded subtree violation",
+    });
+  });
+
   it("fetch with invalid tls should throw", async () => {
     await createServer(CERT_EXPIRED, async port => {
       await Promise.all(

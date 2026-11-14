@@ -14,6 +14,19 @@ To configure `bun test` in `bunfig.toml`, add a `[test]` section:
 # Options go here
 ```
 
+### How `bun test` finds `bunfig.toml`
+
+`bun test` reads configuration from:
+
+1. The global user config — `$XDG_CONFIG_HOME/.bunfig.toml`, falling back to `$HOME/.bunfig.toml` when `XDG_CONFIG_HOME` is not set. This is loaded once per process.
+2. Project config files — `bunfig.toml` in the current working directory, then in each parent directory up to the project root. All of them are read and merged.
+
+Pass `--config` to load a specific file instead of the auto-discovered project files (the global user config is still read):
+
+```sh terminal icon="terminal"
+bun test --config=./config/test.bunfig.toml
+```
+
 ## Test Discovery
 
 ### root

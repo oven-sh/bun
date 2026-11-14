@@ -3676,8 +3676,7 @@ bool JSC__JSValue__jestStrictDeepEquals(JSC::EncodedJSValue JSValue0, JSC::Encod
     return deepEqualsOfMatcher<true>(JSValue0, JSValue1, globalObject);
 }
 
-// `this.equals(a, b, customTesters, strictCheck)`. The comparison carries `testers`, which is empty for none, and no
-// registered tester.
+// `this.equals(a, b, customTesters, strictCheck)`: the comparison carries `testers` (empty for none) and no registered tester.
 bool JSC__JSValue__jestDeepEqualsWithTesters(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue testers, bool isStrict)
 {
     if (isStrict)

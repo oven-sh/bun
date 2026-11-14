@@ -138,8 +138,7 @@ impl Expect {
         Ok(None)
     }
 
-    /// Called by C++ deep equality with the testers that the comparison carries. Returns 1 for equal, 0 for not equal
-    /// or threw, -1 if no tester decided.
+    /// Called by C++ deep equality. Returns 1 for equal, 0 for not equal or threw, -1 if no tester decided.
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Expect__runEqualityTesters(global: &JSGlobalObject, testers: JSValue, a: JSValue, b: JSValue) -> i8 {
         match Self::run_equality_testers(global, testers, a, b) {

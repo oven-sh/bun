@@ -447,8 +447,7 @@ extern "C" JSC::EncodedJSValue Bun__encoding__constructFromUTF16(void*, const ch
 extern "C" void Bun__EventLoop__runCallback2(JSC::JSGlobalObject* global, JSC::EncodedJSValue callback, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2);
 
 namespace Bun {
-// The pairs that one comparison is inside of, and the array of equality testers that it asks: empty for none.
-// Must stay on the stack, where the GC's conservative scan keeps the array alive.
+// The pairs that one comparison is inside of, and its equality testers (empty for none). Stack-only: the GC's conservative scan keeps them alive.
 struct DeepEqualsStack : Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16> {
     const JSC::JSValue testers;
 

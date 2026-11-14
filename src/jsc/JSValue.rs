@@ -2794,8 +2794,7 @@ impl JSValue {
             JSC__JSValue__jestStrictDeepEquals(self, other, global)
         })
     }
-    /// `this.equals(a, b, customTesters, strictCheck)` of a custom matcher or an equality tester: like the two
-    /// above, but the comparison asks `testers` (an array, or `ZERO` for none) and no registered tester.
+    /// `this.equals(a, b, customTesters, strictCheck)`: asks `testers` (an array, or `ZERO` for none) and no registered tester.
     pub fn jest_deep_equals_with_testers(
         self,
         other: JSValue,

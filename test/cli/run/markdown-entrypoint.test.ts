@@ -347,6 +347,97 @@ describe("bun <file.md>", () => {
     expect(openers).toBeGreaterThanOrEqual(2);
   });
 
+  // The path of an image is what its destination means: `\_` is `_`. A file
+  // can also have the name that is written: `..\..\x.png` has worked so far.
+  test("a local image is found by the path that its destination means, or by the path as written", async () => {
+    // Windows has no file names with a tab.
+    const withTab = isPosix ? { file: { "x/y/t\tb.png": "6" }, image: ["![6](<t\tb.png>)"], shown: ["6"] } : undefined;
+    using dir = tempDir("md-local-img-", {
+      "img/logo.png": "1",
+      ".github/logo.png": "2",
+      "x/y/a_b.png": "3",
+      "x/y/img_1/a.png": "4",
+      "x/y/c_d.png": "5",
+      "x/y/c/_d.png": "not this one",
+      ...withTab?.file,
+      "x/y/doc.md": [
+        String.raw`![1](..\..\img\logo.png)`,
+        String.raw`![2](..\..\.github\logo.png)`,
+        String.raw`![3](a\_b.png)`,
+        String.raw`![4](.\img_1\a.png)`,
+        String.raw`![5](c\_d.png)`,
+        ...(withTab?.image ?? []),
+        "",
+      ].join("\n\n"),
+    });
+    const cwd = join(String(dir), "x", "y");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.stdout.write(Bun.markdown.ansi(require("fs").readFileSync("doc.md"), { kittyGraphics: true }))`,
+      ],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Kitty is told to show the file at each of these paths.
+    const shown = Array.from(stdout.matchAll(/\x1b_Ga=T,t=f,f=100,q=2;([A-Za-z0-9+/=]+)\x1b\\/g), ([, path]) =>
+      readFileSync(Buffer.from(path, "base64").toString(), "utf8"),
+    );
+    expect(shown).toEqual(["1", "2", "3", "4", "5", ...(withTab?.shown ?? [])]);
+    expect(exitCode).toBe(0);
+  });
+
+  // The URL of an image is what its destination means: `&amp;` is `&`. The
+  // image is downloaded from that URL, and the renderer finds the download
+  // under it.
+  // Kitty graphics need a terminal, and `Bun.spawn` has one on POSIX only.
+  test.skipIf(!isPosix)("a remote image is downloaded from the URL that its destination means", async () => {
+    const requested: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        requested.push(new URL(req.url).search);
+        return new Response(Buffer.alloc(64, "z"), { headers: { "content-type": "image/png" } });
+      },
+    });
+    using dir = tempDir("md-remote-img-url-", {
+      "doc.md": `![img](http://127.0.0.1:${server.port}/img.png?a=1&amp;b=2)\n`,
+      "tmp/keep": "",
+    });
+    const tmp = join(String(dir), "tmp");
+    const decoder = new TextDecoder();
+    const closed = Promise.withResolvers<void>();
+    let output = "";
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "./doc.md"],
+      env: { ...bunEnv, FORCE_COLOR: "1", TERM: "xterm-kitty", KITTY_WINDOW_ID: "1", BUN_TMPDIR: tmp, TMPDIR: tmp },
+      cwd: String(dir),
+      terminal: {
+        cols: 80,
+        rows: 24,
+        data(_terminal, chunk) {
+          output += decoder.decode(chunk, { stream: true });
+        },
+        // The terminal closes when the child is gone: all of its output has been read.
+        exit: () => closed.resolve(),
+      },
+    });
+    const [exitCode] = await Promise.all([proc.exited, closed.promise]);
+    proc.terminal?.close();
+
+    expect(requested).toEqual(["?a=1&b=2"]);
+    const staged = readdirSync(tmp).filter(name => name.startsWith("bun-md-"));
+    expect(staged).toHaveLength(1);
+    expect(output).toContain(
+      "\x1b_Ga=T,t=f,f=100,q=2;" + Buffer.from(join(tmp, staged[0])).toString("base64") + "\x1b\\",
+    );
+    expect(exitCode).toBe(0);
+  });
+
   test.skipIf(!isPosix || !(isDebug || isASAN))(
     "prefetched remote images are staged into fresh temp files and never written through a pre-existing entry at the staged path",
     async () => {

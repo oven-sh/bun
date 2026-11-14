@@ -220,6 +220,37 @@ const entries: Entry[] = [
       "server.ts": server(pathsImport),
     }),
   },
+  {
+    // The bundler resolves what a page names, so the page need not write the extension.
+    name: "an HTML page with a TypeScript file that it names without the extension",
+    wrong: "client.ts",
+    isIncluded: true,
+    target: "bun",
+    commands: everyCommand,
+    main: () => ["server.ts"],
+    files: (isCorrect, pathsImport) => ({
+      "html.d.ts": html,
+      "index.html": page("./client"),
+      "client.ts": `${pathsImport}export const n: number = ${value(isCorrect)};\n`,
+      "server.ts": server(pathsImport),
+    }),
+  },
+  {
+    // `--loader` says what a script of a page is, as it does for every other file.
+    name: "an HTML page with a file that --loader makes a TypeScript file",
+    wrong: "client.script",
+    isIncluded: true,
+    loader: [".script", "ts"],
+    target: "bun",
+    commands: withLoader,
+    main: () => ["server.ts"],
+    files: (isCorrect, pathsImport) => ({
+      "html.d.ts": html,
+      "index.html": page("./client.script"),
+      "client.script": `${pathsImport}export const n: number = ${value(isCorrect)};\n`,
+      "server.ts": server(pathsImport),
+    }),
+  },
 ];
 
 function argumentsOf(command: Command, kind: Kind, entry: Entry, main: string[]) {

@@ -1266,7 +1266,7 @@ impl<'a> PackageInstaller<'a> {
             // Placing a trusted package and listing its scripts is one step, because a failed
             // install removes the listed packages.
             && !(self.trusted_dependencies_from_update_requests).contains(&package_id)
-            && !(self.lockfile()).has_trusted_dependency(alias, pkg_name, resolution)
+            && !(self.lockfile()).has_trusted_dependency(&self.manager().options, alias, pkg_name, resolution)
     }
 
     fn defer_link(&mut self, job: package_install::LinkJob) {
@@ -1817,6 +1817,7 @@ impl<'a> PackageInstaller<'a> {
             package_version,
             node_modules: node_modules_ref.get(),
             lockfile: self.lockfile(),
+            total_tasks: &self.manager().total_tasks,
             cache_dir_subpath: ZStr::EMPTY,
         };
         bun_output::scoped_log!(
@@ -2394,6 +2395,7 @@ impl<'a> PackageInstaller<'a> {
                     .is_some_and(|added| {
                         **added == *trusted_name.slice(string_buf!())
                             && self.lockfile().has_trusted_dependency(
+                                &self.manager().options,
                                 alias.slice(string_buf!()),
                                 pkg_name.slice(string_buf!()),
                                 resolution,
@@ -2461,6 +2463,7 @@ impl<'a> PackageInstaller<'a> {
                     (self.trusted_dependencies_from_update_requests).contains(&package_id);
                 let is_trusted = is_trusted_through_update_request
                     || self.lockfile().has_trusted_dependency(
+                        &self.manager().options,
                         alias.slice(string_buf!()),
                         pkg_name.slice(string_buf!()),
                         resolution,
@@ -2715,9 +2718,12 @@ impl<'a> PackageInstaller<'a> {
             self.lockfile().packages.items_scripts()[package_id as usize];
         // Only a workspace gets here without being trusted.
         let trusted = resolution.tag != resolution::Tag::Workspace
-            || self
-                .lockfile()
-                .has_trusted_dependency(folder_name, folder_name, resolution);
+            || (self.lockfile()).has_trusted_dependency(
+                &self.manager().options,
+                folder_name,
+                folder_name,
+                resolution,
+            );
         let log = self.manager().log_mut();
         let scripts_list =
             match scripts.get_list(log, package_path, folder_name, resolution, trusted) {

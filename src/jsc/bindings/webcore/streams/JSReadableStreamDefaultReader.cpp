@@ -692,7 +692,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamDefaultReaderPrototypeGetter_closed, (J
 {
     const auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(JSValue::decode(thisValue));
     if (!reader) [[unlikely]]
-        return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "The 'closed' getter can only be used on a ReadableStreamDefaultReader"_s)));
+        return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createInvalidThisErrorForType(lexicalGlobalObject, "ReadableStreamDefaultReader"_s)));
     return JSValue::encode(reader->m_closedPromise.get());
 }
 
@@ -702,7 +702,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamDefaultReaderPrototypeFunction_cancel, 
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(callFrame->thisValue());
     if (!reader) [[unlikely]]
-        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "ReadableStreamDefaultReader.prototype.cancel can only be called on a ReadableStreamDefaultReader"_s))));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createInvalidThisErrorForType(lexicalGlobalObject, "ReadableStreamDefaultReader"_s))));
     if (!reader->m_stream)
         RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The reader is not attached to a stream"_s))));
     auto* promise = readableStreamReaderGenericCancel(lexicalGlobalObject, reader, callFrame->argument(0));
@@ -716,7 +716,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamDefaultReaderPrototypeFunction_read, (J
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(callFrame->thisValue());
     if (!reader) [[unlikely]]
-        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "ReadableStreamDefaultReader.prototype.read can only be called on a ReadableStreamDefaultReader"_s))));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createInvalidThisErrorForType(lexicalGlobalObject, "ReadableStreamDefaultReader"_s))));
     if (!reader->m_stream)
         RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The reader is not attached to a stream"_s))));
 

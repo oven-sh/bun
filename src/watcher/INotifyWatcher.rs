@@ -9,7 +9,9 @@ use bun_paths::MAX_PATH_BYTES;
 use bun_sys::{self, Fd};
 use bun_threading::Futex;
 
-use crate::watcher_impl::{MAX_COUNT as max_count, Op, WatchEvent, WatchItemIndex, Watcher};
+use crate::watcher_impl::{
+    MAX_COUNT as max_count, Op, WatchEvent, WatchItemIndex, Watcher, WatcherThread,
+};
 use bun_collections::index_sort;
 
 bun_core::declare_scope!(watcher, visible);
@@ -79,7 +81,7 @@ impl<'a> Iterator for Events<'a> {
 }
 
 impl INotifyWatcher {
-    pub(crate) fn watch_path(&mut self, pathname: &ZStr) -> bun_sys::Result<EventListIndex> {
+    pub(crate) fn watch_path(&self, pathname: &ZStr) -> bun_sys::Result<EventListIndex> {
         use bun_sys::linux::IN;
         let old_count = self.watch_count.fetch_add(1, Ordering::Release);
         let watch_file_mask =
@@ -100,7 +102,7 @@ impl INotifyWatcher {
         result
     }
 
-    pub(crate) fn watch_dir(&mut self, pathname: &ZStr) -> bun_sys::Result<EventListIndex> {
+    pub(crate) fn watch_dir(&self, pathname: &ZStr) -> bun_sys::Result<EventListIndex> {
         use bun_sys::linux::IN;
         let old_count = self.watch_count.fetch_add(1, Ordering::Release);
         let watch_dir_mask = IN::EXCL_UNLINK
@@ -237,17 +239,15 @@ impl INotifyWatcher {
             }
         }
     }
+}
 
-    pub(crate) fn stop(&mut self) {
-        bun_core::scoped_log!(watcher, "{} stop", self.fd);
-        if self.fd != Fd::INVALID {
-            let _ = bun_sys::close(self.fd);
-            self.fd = Fd::INVALID;
-        }
+impl Drop for INotifyWatcher {
+    fn drop(&mut self) {
+        let _ = bun_sys::close(self.fd);
     }
 }
 
-pub(crate) fn watch_loop(this: &mut Watcher) -> bun_sys::Result<()> {
+pub(crate) fn watch_loop(this: &Watcher, thread: &mut WatcherThread) -> bun_sys::Result<()> {
     let mut bytes = vec![0u8; EVENTLIST_BYTES_SIZE].into_boxed_slice();
     let mut eventlist_indexes = Vec::new();
     while this.running.load() {
@@ -255,35 +255,23 @@ pub(crate) fn watch_loop(this: &mut Watcher) -> bun_sys::Result<()> {
         let mut events = Events(&bytes[..len]);
         // More than one batch only under load, see `watch-many-dirs.test.ts`.
         while !events.0.is_empty() && this.running.load() {
-            process_inotify_event_batch(this, &mut events, &mut eventlist_indexes);
+            process_inotify_event_batch(this, thread, &mut events, &mut eventlist_indexes);
         }
     }
     Ok(())
 }
 
 fn process_inotify_event_batch(
-    this: &mut Watcher,
+    this: &Watcher,
+    thread: &mut WatcherThread,
     events: &mut Events<'_>,
     eventlist_indexes: &mut Vec<EventListIndex>,
 ) {
     use crate::watcher_impl::WatchItemColumns;
     let _flush = Output::flush_guard();
 
-    // The snapshot is taken locked. `on_file_update` may evict watchlist entries via
-    // `remove_at_index` + `flush_evictions` (the dir-event path appends *and*
-    // evicts the matched file watch). The enqueued reload then re-imports the
-    // module on the JS thread, whose `add_file` re-appends the entry under
-    // `this.mutex`, potentially reallocating the MultiArrayList backing while
-    // this thread is mid-`items_eventlist_index()` on the next cycle. Under
-    // load (`watch-many-dirs.test.ts` writes 129 files concurrently, > the
-    // 128 `max_count` batch size, so the dir-event-only batch is common) the
-    // unlocked read raced the realloc and the process occasionally died with
-    // a non-zero exit code. Snapshot under the same mutex `add_file` takes.
-    {
-        let _guard = this.mutex.lock_guard();
-        eventlist_indexes.clear();
-        eventlist_indexes.extend_from_slice(this.watchlist.items_eventlist_index());
-    }
+    eventlist_indexes.clear();
+    eventlist_indexes.extend_from_slice(this.watched.lock().list.items_eventlist_index());
 
     let mut event_count: usize = 0;
     let mut temp_name_list: [&[u8]; max_count] = [b""; max_count];
@@ -296,7 +284,7 @@ fn process_inotify_event_batch(
         else {
             continue;
         };
-        let watch_event = &mut this.watch_events[event_count];
+        let watch_event = &mut thread.watch_events[event_count];
         *watch_event =
             watch_event_from_inotify_event(&event, WatchItemIndex::try_from(idx).unwrap());
         if let Some(name) = event.name() {
@@ -313,7 +301,7 @@ fn process_inotify_event_batch(
 
     let mut changed_filepaths: [&[u8]; max_count] = [b""; max_count];
     let mut name_off: u8 = 0;
-    let watch_events = &mut this.watch_events[..event_count];
+    let watch_events = &mut thread.watch_events[..event_count];
     index_sort::sort_slice_unstable_by(watch_events, |a, b| WatchEvent::sort_by_index(*a, *b));
 
     let mut last_event_index: usize = 0;
@@ -338,6 +326,7 @@ fn process_inotify_event_batch(
     }
 
     this.dispatch_file_updates(
+        thread,
         last_event_index + 1,
         &changed_filepaths[..name_off as usize],
     );

@@ -19,7 +19,7 @@ pub(crate) use bun_event_loop::EventLoopTimer::{
 };
 // bun_event_loop carries a local `Timespec` stub instead of
 // `bun_core::Timespec`. Same `{sec: i64, nsec: i64}` shape; alias it here so
-// `fire()`/`next` accesses type-check without a transmute.
+// `fire_timer()`/`next` accesses type-check without a transmute.
 // TODO: remove this alias once the lower tier switches to `bun_core::Timespec`.
 pub(crate) use bun_event_loop::EventLoopTimer::Timespec as ElTimespec;
 
@@ -35,11 +35,7 @@ pub(crate) mod timer;
 // `Timer.bind.ts` class over `{ref_count, event_loop_timer, internals}` whose
 // JS-facing host-fns are pure forwarders to `TimerObjectInternals`. The macro
 // emits the parts shared by both types so each `*.rs` file holds only its
-// type-specific surface (`init`, `refresh`, the `_idleStart` accessors,
-// `run_immediate_task`).
-//
-// Type-specific items (`init`, `refresh`, `close`, `_idleStart` get/set,
-// `run_immediate_task`) go in a *second* `impl $T` block in the caller's file.
+// type-specific surface (`init`, `refresh`, `close`, the `_idleStart` accessors).
 //
 // Paths in the body are written `super::…` / `::crate_name::…` because the
 // macro is invoked *from the child module* (`super::impl_timer_object!(…)`),
@@ -452,7 +448,7 @@ impl EventLoopDelayMonitor {
 // ─── TimerObjectInternals / TimeoutObject / ImmediateObject ─────────────────
 
 pub(crate) mod timer_object_internals;
-pub(crate) use timer_object_internals::{Flags as TimerFlags, TimerObjectInternals};
+pub(crate) use timer_object_internals::{Flags as TimerFlags, Popped, TimerObjectInternals};
 
 /// `jsc.WebCore.AbortSignal.Timeout` — real struct lives in `bun_jsc` (which
 /// this crate depends on). Re-exported here so `All::update`'s

@@ -323,17 +323,14 @@ impl Drop for FinishPass<'_> {
 
 struct ReturnResolveTask {
     manager: *mut PackageManager,
-    task: *mut Task::Task<'static>,
+    task: *mut Task::Task,
 }
 
 impl Drop for ReturnResolveTask {
     fn drop(&mut self) {
         // SAFETY: `manager` is the provenance root for every body access
         // to the manager; `task` is the sole live handle to this pool slot.
-        unsafe {
-            (*self.task).deinit_payload();
-            (*self.manager).preallocated_resolve_tasks.put(self.task);
-        }
+        unsafe { (*self.manager).preallocated_resolve_tasks.put(self.task) };
     }
 }
 
@@ -1157,7 +1154,7 @@ fn run_tasks_erased(
         manager.decrement_pending_tasks();
 
         // An error in a manifest is reported by the dependency that needs it, if there is one.
-        let holds_log = task.tag == Task::Tag::PackageManifest
+        let holds_log = matches!(task.job, Task::Job::PackageManifest { .. })
             && task.status == Task::Status::Fail
             && !cb.has_on_package_manifest_error;
         if !task.log.msgs.is_empty() && !holds_log {
@@ -1171,31 +1168,26 @@ fn run_tasks_erased(
             task.log.reset();
         }
 
-        match task.tag {
-            Task::Tag::PackageManifest => {
-                // capture the `*mut NetworkTask` up front — the
-                // `&'a mut NetworkTask` field can't be moved out through
-                // `ManuallyDrop`'s immutable `Deref` inside the guard.
+        match &mut task.job {
+            Task::Job::PackageManifest {
+                name,
+                network,
+                manifest,
+            } => {
                 let _return_network_task = ReturnNetworkTask {
                     manager: manager_ptr,
-                    task: &raw mut *task.request_package_manifest_mut().network,
+                    task: &raw mut **network,
                 };
-                if task.status == Task::Status::Fail {
+                let Some(manifest) = manifest.take() else {
                     let log_mark = manager.log_mut().msgs.len();
                     if holds_log {
                         task.log.append_to(manager.log_mut());
                     }
-                    let req = task.request_package_manifest();
-                    let name = req.name.slice();
+                    let name = name.slice();
                     let err = task.err.unwrap_or(crate::Error::Failed);
 
                     if cb.has_on_package_manifest_error {
-                        (cb.on_package_manifest_error)(
-                            extract_ctx,
-                            name,
-                            err,
-                            &req.network.url_buf,
-                        );
+                        (cb.on_package_manifest_error)(extract_ctx, name, err, &network.url_buf);
                         let _ = (manager.manifest_failures)
                             .insert(task.id, ManifestFailure::already_reported());
                     } else {
@@ -1223,14 +1215,6 @@ fn run_tasks_erased(
                     }
 
                     continue;
-                }
-                debug_assert!(task.tag == Task::Tag::PackageManifest);
-                // SAFETY: tag-guarded read of the active union arm; default placeholder restored immediately.
-                let manifest: npm::PackageManifest = unsafe {
-                    let m = core::mem::ManuallyDrop::take(&mut task.data.package_manifest);
-                    task.data.package_manifest =
-                        core::mem::ManuallyDrop::new(npm::PackageManifest::default());
-                    m
                 };
                 let name_hash = manifest.pkg.name.hash;
                 let progress_name: Option<Vec<u8>> = (log_level.show_progress()
@@ -1266,46 +1250,32 @@ fn run_tasks_erased(
                     has_updated_this_run.set(true);
                 }
             }
-            Task::Tag::Extract | Task::Tag::LocalTarball => {
-                // capture the `*mut NetworkTask` up front (only for the
-                // Extract arm) so the guard need not move the `&mut` out
-                // through `ManuallyDrop`'s immutable `Deref`.
+            Task::Job::Extract {
+                tarball,
+                source,
+                data,
+            } => {
                 let _return_network_task = ReturnNetworkTask {
                     manager: manager_ptr,
-                    task: if task.tag == Task::Tag::Extract {
-                        &raw mut *task.request_extract_mut().network
-                    } else {
-                        core::ptr::null_mut()
+                    task: match source {
+                        Task::TarballSource::Network(network) => &raw mut **network,
+                        Task::TarballSource::Local { .. } => core::ptr::null_mut(),
                     },
                 };
 
-                // SAFETY: `task.tag` selects the active `task.request` union arm.
-                let tarball = unsafe {
-                    match task.tag {
-                        Task::Tag::Extract => &task.request.extract.tarball,
-                        Task::Tag::LocalTarball => &task.request.local_tarball.tarball,
-                        _ => unreachable!(),
-                    }
-                };
                 let dependency_id = tarball.dependency_id;
                 let mut package_id = manager.lockfile.buffers.resolutions[dependency_id as usize];
                 let alias = tarball.name.slice();
                 let resolution = &tarball.resolution;
 
-                if task.status == Task::Status::Fail {
+                let Some(data) = data else {
                     let err = task.err.unwrap_or(crate::Error::TarballFailedToExtract);
 
-                    // SAFETY: `task.tag` selects the active `task.request` union arm.
-                    let fail_url: &[u8] = unsafe {
-                        match task.tag {
-                            Task::Tag::Extract => &(*task.request.extract.network).url_buf,
-                            Task::Tag::LocalTarball => {
-                                task.request.local_tarball.tarball.url.slice()
-                            }
-                            _ => unreachable!(),
-                        }
+                    let fail_url: &[u8] = match source {
+                        Task::TarballSource::Network(network) => &network.url_buf,
+                        Task::TarballSource::Local { .. } => tarball.url.slice(),
                     };
-                    // A linker's `local_tarball` task is not in the map, so it gets no mark.
+                    // A linker's task for a local tarball is not in the map, so it gets no mark.
                     let Some(is_required) = cb.dispatch_tarball_error(
                         manager,
                         extract_ctx,
@@ -1334,7 +1304,7 @@ fn run_tasks_erased(
                     let _ = manager.task_queue.remove(&task.id);
 
                     continue;
-                }
+                };
 
                 manager.extracted_count += 1;
                 bun_core::analytics::Features::extracted_packages_inc();
@@ -1347,27 +1317,22 @@ fn run_tasks_erased(
                             extract_ctx,
                             task.id,
                             dependency_id,
-                            // SAFETY: `task.tag` is Extract/LocalTarball — `data.extract`
-                            // is the active union arm.
-                            unsafe { &mut task.data.extract },
+                            data,
                             log_level,
                         );
                     } else if cb.is_store_installer {
-                        (cb.on_extract_store_installer)(extract_ctx, task.id, task.data_extract());
+                        (cb.on_extract_store_installer)(extract_ctx, task.id, data);
                     } else {
                         unreachable!("unexpected context type");
                     }
                 } else if manager.defers_remote_package(task.id, resolution) {
-                    manager.keep_arrived_package(task.id, resolution, task.data_extract());
+                    manager.keep_arrived_package(task.id, resolution, data);
                     name_progress(manager, alias, EXTRACT);
                     continue;
                 } else if let Some(pkg) = manager.process_extracted_tarball_package(
                     &mut package_id,
                     resolution,
-                    // Tag-checked accessor (debug_asserts Extract|LocalTarball);
-                    // shared `&task` here coexists with the field-disjoint
-                    // `&task.request` borrow held via `resolution` above.
-                    task.data_extract(),
+                    data,
                     log_level,
                 ) {
                     resolve_waiters_and_notify(
@@ -1395,9 +1360,10 @@ fn run_tasks_erased(
 
                 name_progress(manager, alias, EXTRACT);
             }
-            Task::Tag::GitClone => {
-                let clone = task.request_git_clone();
-                let repo_fd: bun_sys::Fd = task.data_git_clone();
+            &mut Task::Job::GitClone {
+                request: ref clone,
+                repo: repo_fd,
+            } => {
                 let name = clone.name.slice();
                 let url = clone.url.slice();
 
@@ -1542,8 +1508,10 @@ fn run_tasks_erased(
 
                 name_progress(manager, name, DOWNLOAD);
             }
-            Task::Tag::GitCommit => {
-                let commit = task.request_git_commit();
+            Task::Job::GitCommit {
+                request: commit,
+                sha,
+            } => {
                 let name = commit.name.slice();
                 let url = commit.url.slice();
                 // Pending while it ran, but not one of the N downloads the summary prints.
@@ -1574,9 +1542,7 @@ fn run_tasks_erased(
                     continue;
                 }
 
-                manager
-                    .git_commits
-                    .insert(task.id, task.data_git_commit().clone());
+                manager.git_commits.insert(task.id, core::mem::take(sha));
 
                 // Each waiter re-enters the enqueue path and now finds the commit.
                 let dependency_list = manager
@@ -1591,14 +1557,15 @@ fn run_tasks_erased(
                     install_peer,
                 )?;
             }
-            Task::Tag::GitCheckout => {
-                // SAFETY: `task.tag == GitCheckout` — active union arm.
-                let git_checkout = unsafe { &*task.request.git_checkout };
+            Task::Job::GitCheckout {
+                request: git_checkout,
+                data,
+            } => {
                 let alias = &git_checkout.name;
                 let resolution = &git_checkout.resolution;
                 let mut package_id: PackageID = INVALID_PACKAGE_ID;
 
-                if task.status == Task::Status::Fail {
+                let Some(data) = data else {
                     let err = task.err.unwrap_or(crate::Error::Failed);
 
                     if cb.has_on_package_download_error && cb.is_store_installer {
@@ -1627,7 +1594,7 @@ fn run_tasks_erased(
                     }
 
                     continue;
-                }
+                };
 
                 manager.extracted_count += 1;
                 bun_core::analytics::Features::extracted_packages_inc();
@@ -1645,29 +1612,20 @@ fn run_tasks_erased(
                             extract_ctx,
                             task.id,
                             git_checkout.dependency_id,
-                            // SAFETY: `task.tag == GitCheckout` — `data.git_checkout`
-                            // is the active union arm.
-                            unsafe { &mut task.data.git_checkout },
+                            data,
                             log_level,
                         );
                     } else if cb.is_store_installer {
-                        (cb.on_extract_store_installer)(
-                            extract_ctx,
-                            task.id,
-                            task.data_git_checkout(),
-                        );
+                        (cb.on_extract_store_installer)(extract_ctx, task.id, data);
                     } else {
                         unreachable!("unexpected context type");
                     }
                 } else if manager.defers_remote_package(task.id, resolution) {
-                    manager.keep_arrived_package(task.id, resolution, task.data_git_checkout());
+                    manager.keep_arrived_package(task.id, resolution, data);
                 } else if let Some(pkg) = manager.process_extracted_tarball_package(
                     &mut package_id,
                     resolution,
-                    // Tag-checked accessor (debug_asserts GitCheckout); shared
-                    // `&task` here coexists with the field-disjoint
-                    // `&task.request` borrow held via `git_checkout` above.
-                    task.data_git_checkout(),
+                    data,
                     log_level,
                 ) {
                     resolve_waiters_and_notify(

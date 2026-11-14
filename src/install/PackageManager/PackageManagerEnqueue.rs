@@ -1,5 +1,4 @@
 use crate::lockfile::package::PackageColumns as _;
-use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
@@ -562,19 +561,12 @@ pub unsafe fn enqueue_parse_npm_package(
     // SAFETY: `network_task` is a live pool slot, and it is not returned to the pool
     // before this task is done, which is what the `'static` stands for.
     let network = unsafe { &mut *network_task };
-    let task_value = Task::Task {
-        package_manager: Some(bun_ptr::ParentRef::from_ref_mut(&mut *this)),
-        log: bun_ast::Log::init(),
-        tag: crate::package_manager_task::Tag::PackageManifest,
-        request: crate::package_manager_task::Request {
-            package_manifest: ManuallyDrop::new(
-                crate::package_manager_task::PackageManifestRequest { network, name },
-            ),
-        },
-        id: task_id,
-        ..Task::uninit()
+    let job = Task::Job::PackageManifest {
+        name,
+        network,
+        manifest: None,
     };
-    let task = this.preallocated_resolve_tasks.get_init(task_value);
+    let task = Task::Task::create(this, task_id, job);
     // SAFETY: `task` points to a freshly initialized pool slot.
     unsafe { &raw mut (*task.as_ptr()).threadpool_task }
 }
@@ -2810,30 +2802,20 @@ pub(crate) fn create_extract_task_for_streaming(
     this: &mut PackageManager,
     tarball: &ExtractTarball,
     network_task: *mut NetworkTask,
-) -> *mut Task::Task<'static> {
+) -> *mut Task::Task {
     // SAFETY: `network_task` is a live pool slot, and it is not returned to the pool
     // before this task is done, which is what the `'static` stands for.
     let network = unsafe { &mut *network_task };
     let id = network.task_id;
-    let task_value = Task::Task {
-        package_manager: Some(bun_ptr::ParentRef::from_ref_mut(&mut *this)),
-        log: bun_ast::Log::init(),
-        tag: crate::package_manager_task::Tag::Extract,
-        request: crate::package_manager_task::Request {
-            extract: ManuallyDrop::new(crate::package_manager_task::ExtractRequest {
-                network,
-                tarball: ExtractTarball {
-                    skip_verify: this.skips_verify(tarball.resolution.tag),
-                    ..*tarball
-                },
-            }),
+    let job = Task::Job::Extract {
+        tarball: ExtractTarball {
+            skip_verify: this.skips_verify(tarball.resolution.tag),
+            ..*tarball
         },
-        id,
-        ..Task::uninit()
+        source: Task::TarballSource::Network(network),
+        data: None,
     };
-    this.preallocated_resolve_tasks
-        .get_init(task_value)
-        .as_ptr()
+    Task::Task::create(this, id, job).as_ptr()
 }
 
 pub fn enqueue_extract_npm_package(
@@ -2851,21 +2833,15 @@ fn enqueue_git_clone(
     task_id: Task::Id,
     name: &[u8],
     repository: &Repository,
-) -> NonNull<Task::Task<'static>> {
-    let value = Task::Task {
-        package_manager: Some(bun_ptr::ParentRef::from_ref_mut(&mut *this)),
-        log: bun_ast::Log::init(),
-        tag: crate::package_manager_task::Tag::GitClone,
-        request: crate::package_manager_task::Request {
-            git_clone: ManuallyDrop::new(crate::package_manager_task::GitCloneRequest {
-                name: stored_string(name),
-                url: stored_string(this.lockfile.str(&repository.repo)),
-            }),
+) -> NonNull<Task::Task> {
+    let job = Task::Job::GitClone {
+        request: Task::GitCloneRequest {
+            name: stored_string(name),
+            url: stored_string(this.lockfile.str(&repository.repo)),
         },
-        id: task_id,
-        ..Task::uninit()
+        repo: Fd::invalid(),
     };
-    this.preallocated_resolve_tasks.get_init(value)
+    Task::Task::create(this, task_id, job)
 }
 
 /// `git log`: resolves `committish` in the bare repository of `clone_id`.
@@ -2876,23 +2852,17 @@ fn enqueue_git_commit(
     name: &[u8],
     url: &[u8],
     committish: &[u8],
-) -> NonNull<Task::Task<'static>> {
-    let value = Task::Task {
-        package_manager: Some(bun_ptr::ParentRef::from_ref_mut(&mut *this)),
-        log: bun_ast::Log::init(),
-        tag: crate::package_manager_task::Tag::GitCommit,
-        request: crate::package_manager_task::Request {
-            git_commit: ManuallyDrop::new(crate::package_manager_task::GitCommitRequest {
-                clone_id,
-                name: stored_string(name),
-                url: stored_string(url),
-                committish: stored_string(committish),
-            }),
+) -> NonNull<Task::Task> {
+    let job = Task::Job::GitCommit {
+        request: Task::GitCommitRequest {
+            clone_id,
+            name: stored_string(name),
+            url: stored_string(url),
+            committish: stored_string(committish),
         },
-        id: task_id,
-        ..Task::uninit()
+        sha: Vec::new(),
     };
-    this.preallocated_resolve_tasks.get_init(value)
+    Task::Task::create(this, task_id, job)
 }
 
 pub fn enqueue_git_checkout(
@@ -2905,7 +2875,7 @@ pub fn enqueue_git_checkout(
     resolved: &[u8],
     // the package to patch and its name-and-version hash, if an apply step follows the checkout
     patch: Option<(PackageID, u64)>,
-) -> NonNull<Task::Task<'static>> {
+) -> NonNull<Task::Task> {
     // The patched-dependency entry can be missing (or its hash not yet
     // computed) when install state went stale — e.g. the patch was removed
     // from package.json, leaving the hash only in
@@ -2921,31 +2891,23 @@ pub fn enqueue_git_checkout(
                 .patchfile_hash()?,
         ))
     });
-    let task_value = Task::Task {
-        package_manager: Some(bun_ptr::ParentRef::from_ref_mut(&mut *this)),
-        log: bun_ast::Log::init(),
-        tag: crate::package_manager_task::Tag::GitCheckout,
-        request: crate::package_manager_task::Request {
-            git_checkout: ManuallyDrop::new(crate::package_manager_task::GitCheckoutRequest {
-                repo_dir: dir,
-                resolution: *resolution,
-                dependency_id,
-                name: stored_string(name),
-                url: stored_string(this.lockfile.str(&resolution.git().repo)),
-                resolved: stored_string(resolved),
+    let job = Task::Job::GitCheckout {
+        request: Task::GitCheckoutRequest {
+            repo_dir: dir,
+            resolution: *resolution,
+            dependency_id,
+            name: stored_string(name),
+            url: stored_string(this.lockfile.str(&resolution.git().repo)),
+            resolved: stored_string(resolved),
+            apply_patch_task: patch.map(|(pkg_id, h, patch_hash)| {
+                let mut pt = PatchTask::new_apply_patch_hash(this, pkg_id, patch_hash, h);
+                pt.callback.apply_mut().task_id = Some(task_id);
+                pt
             }),
         },
-        apply_patch_task: if let Some((pkg_id, h, patch_hash)) = patch {
-            let mut pt = PatchTask::new_apply_patch_hash(this, pkg_id, patch_hash, h);
-            pt.callback.apply_mut().task_id = Some(task_id);
-            Some(pt)
-        } else {
-            None
-        },
-        id: task_id,
-        ..Task::uninit()
+        data: None,
     };
-    this.preallocated_resolve_tasks.get_init(task_value)
+    Task::Task::create(this, task_id, job)
 }
 
 fn enqueue_local_tarball(
@@ -2976,35 +2938,29 @@ fn enqueue_local_tarball(
             ),
         };
 
-    let value = Task::Task {
-        package_manager: Some(bun_ptr::ParentRef::from_ref_mut(&mut *this)),
-        log: bun_ast::Log::init(),
-        tag: crate::package_manager_task::Tag::LocalTarball,
-        request: crate::package_manager_task::Request {
-            local_tarball: ManuallyDrop::new(crate::package_manager_task::LocalTarballRequest {
-                tarball: ExtractTarball {
-                    package_manager: bun_ptr::BackRef::new(this),
-                    name: stored_string(name),
-                    resolution: *resolution,
-                    cache_dir: get_cache_directory(this),
-                    temp_dir: get_temporary_directory(this).handle.fd(),
-                    dependency_id,
-                    integrity: locked_integrity.copied().unwrap_or_default(),
-                    stays_unpinned: locked_integrity.is_some() && !this.pins_tarballs(),
-                    url: stored_string(path),
-                    skip_verify: false,
-                    in_trusted_dependencies: false,
-                    github_resolved: StringOrTinyString::init(b""),
-                },
-                tarball_path,
-                normalize,
-            }),
+    let job = Task::Job::Extract {
+        tarball: ExtractTarball {
+            package_manager: bun_ptr::BackRef::new(this),
+            name: stored_string(name),
+            resolution: *resolution,
+            cache_dir: get_cache_directory(this),
+            temp_dir: get_temporary_directory(this).handle.fd(),
+            dependency_id,
+            integrity: locked_integrity.copied().unwrap_or_default(),
+            stays_unpinned: locked_integrity.is_some() && !this.pins_tarballs(),
+            url: stored_string(path),
+            skip_verify: false,
+            in_trusted_dependencies: false,
+            github_resolved: StringOrTinyString::init(b""),
         },
-        id: task_id,
-        ..Task::uninit()
+        source: Task::TarballSource::Local {
+            path: tarball_path,
+            normalize,
+        },
+        data: None,
     };
-    let task = this.preallocated_resolve_tasks.get_init(value).as_ptr();
-    // SAFETY: `get_init` just fully initialized the slot.
+    let task = Task::Task::create(this, task_id, job).as_ptr();
+    // SAFETY: `task` points to a freshly initialized pool slot.
     unsafe { &raw mut (*task).threadpool_task }
 }
 

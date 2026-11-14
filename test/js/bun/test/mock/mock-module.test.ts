@@ -1909,9 +1909,6 @@ describe.concurrent("a module mocked without a factory", () => {
 });
 
 describe.concurrent("a name that import and require() resolve to two files", () => {
-  // No project of these tests has an ES module `x.ts`, so none gets a twin: mock-module-two-files.test.ts would only
-  // repeat these tests, and leaves them out.
-  if (twoFiles) return;
   const esm = (name: string) =>
     `(globalThis.loaded ??= []).push("${name} esm"); export const which = "real esm"; export const fn = () => "real esm"; export default { which, fn };`;
   const cjs = (name: string) =>
@@ -4456,13 +4453,13 @@ describe.concurrent("a name that import and require() resolve to two files", () 
 
   // Each sequence runs on two packages of its own, against a model of the table of mocks. On one, its mocks are then
   // ended and it runs once more, now on loaded files. On the other its mocks stay. The next test file reads both.
-  // There are six parts so that no process runs for long in a debug build.
+  // There are six parts, and each runs as two processes at once, so that no test takes long in a debug build.
   test.each([1, 2, 3, 4, 5, 6])(
     "every sequence of up to three calls of require(), import(), mock.module() and jest.unmock(), part %d of 6",
     async part => {
-      const mine = walks.filter(walk => walk.at % 6 === part - 1);
-      await expectFixturesToPass(
-        {
+      const ofPart = walks.filter(walk => walk.at % 6 === part - 1);
+      const run = (mine: typeof walks) => {
+        const project = {
           ...Object.fromEntries(
             mine.flatMap(walk =>
               [`ended-${walk.at}`, `left-${walk.at}`].flatMap(pkg => [
@@ -4560,9 +4557,10 @@ describe.concurrent("a name that import and require() resolve to two files", () 
               for (const pkg of ["ended-" + at, "left-" + at]) await walk(pkg, [...reads(names), ...originals(names)]);
             });
           `,
-        },
-        3 * mine.length,
-      );
+        };
+        return expectFixturesToPass(project, 3 * mine.length);
+      };
+      await Promise.all([0, 1].map(half => run(ofPart.filter((_, nth) => nth % 2 === half))));
     },
   );
 });

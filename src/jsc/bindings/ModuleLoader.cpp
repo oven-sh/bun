@@ -30,6 +30,7 @@
 
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/ModuleRegistryEntry.h>
+#include <JavaScriptCore/SyntheticModuleRecord.h>
 #include <JavaScriptCore/Completion.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSMap.h>
@@ -825,7 +826,11 @@ static JSValue requireFromIsolatedModuleCache(Zig::GlobalObject* globalObject, J
 static bool hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice(JSC::VM& vm, JSC::JSModuleLoader* loader, const String& specifier)
 {
     auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, specifier));
-    return entry && entry->status() >= JSC::ModuleRegistryEntry::Status::Fetched;
+    if (!entry || entry->status() < JSC::ModuleRegistryEntry::Status::Fetched)
+        return false;
+    // `bun test` registers a CommonJS import of a test file or preload before its body has run (JSCommonJSModule.cpp, generateDeferredCommonJSModule). Until that record has its exports, require() runs the file itself, as it does while the file is being fetched.
+    auto* record = entry->record();
+    return !(record && record->inherits<JSC::SyntheticModuleRecord>() && !record->moduleEnvironmentMayBeNull());
 }
 
 static JSValue requireVirtualModule(

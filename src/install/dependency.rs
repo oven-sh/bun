@@ -742,11 +742,8 @@ impl VersionExt for Version {
             // if the two versions are identical as strings, it should often be faster to compare that than the actual semver version
             // semver ranges involve a ton of pointer chasing
             (Value::Npm(l), Value::Npm(r)) => {
-                strings::eql_long(
-                    self.literal.slice(lhs_buf),
-                    rhs.literal.slice(rhs_buf),
-                    true,
-                ) || l.eql(r, lhs_buf, rhs_buf)
+                strings::eql_long(self.literal.slice(lhs_buf), rhs.literal.slice(rhs_buf))
+                    || l.eql(r, lhs_buf, rhs_buf)
             }
             (Value::Folder(_), Value::Folder(_))
             | (Value::DistTag(_), Value::DistTag(_))

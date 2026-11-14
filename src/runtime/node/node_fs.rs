@@ -6,7 +6,6 @@ use bun_paths::strings;
 #[cfg(windows)]
 use core::ffi::c_void;
 use core::ffi::{c_char, c_int, c_uint};
-use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::api::bun::process::event_loop_handle_to_ctx;
@@ -518,7 +517,7 @@ pub(crate) fn note_opened_for_write(path: &[u8], is_whole: bool) {
         && bun_standalone_graph::has_descriptors()
         && let Some(graph) = graph_after_disk(path).filter(|graph| graph.may_answer_for(path))
     {
-        graph.move_descriptors_to_disk(path, VirtualMachine::get_or_null().is_some());
+        graph.move_descriptors_to_disk(path, VirtualMachine::is_loaded());
     }
     #[cfg(windows)]
     let _ = is_whole;
@@ -881,12 +880,9 @@ fn source_path_stats(path: &[u8], big_int: bool) -> Option<StatOrNotFound> {
 
 /// A read-only descriptor of an unnamed file that holds `contents`.
 fn create_unnamed_file(contents: &[u8]) -> Maybe<FD> {
-    fn fill_and_reopen(writable: FD, contents: &[u8], path: &ZStr) -> Maybe<FD> {
-        let reopened = sys::File::borrow(&writable)
-            .write_all(contents)
-            .and_then(|()| sys::open(path, sys::O::RDONLY | sys::O::CLOEXEC, 0));
-        writable.close();
-        reopened
+    fn fill_and_reopen(writable: &sys::File, contents: &[u8], path: &ZStr) -> Maybe<FD> {
+        writable.write_all(contents)?;
+        sys::open(path, sys::O::RDONLY | sys::O::CLOEXEC, 0)
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     if sys::can_use_memfd()
@@ -895,7 +891,7 @@ fn create_unnamed_file(contents: &[u8]) -> Maybe<FD> {
     {
         let path =
             bun_core::ZBox::from_vec(format!("/proc/self/fd/{}", writable.native()).into_bytes());
-        if let Ok(fd) = fill_and_reopen(writable, contents, &path) {
+        if let Ok(fd) = fill_and_reopen(&sys::File::from_fd(writable), contents, &path) {
             return Ok(fd);
         }
     }
@@ -914,8 +910,8 @@ fn create_unnamed_file(contents: &[u8]) -> Maybe<FD> {
         ]
         .concat(),
     );
-    let writable = sys::open(&path, sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL, 0o600)?;
-    let reopened = fill_and_reopen(writable, contents, &path);
+    let flags = sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL;
+    let reopened = fill_and_reopen(&sys::File::open(&path, flags, 0o600)?, contents, &path);
     let _ = sys::unlink(&path);
     reopened
 }
@@ -1404,7 +1400,7 @@ mod _async_tasks {
             cx: &bun_jsc::JsThread<'_>,
             binding: &Binding,
             task_args: ThreadIsolated<A>,
-            vm: &mut VirtualMachine,
+            vm: &VirtualMachine,
             callback: Option<JSValue>,
         ) -> JSValue {
             let task = Box::new(Self {
@@ -1472,7 +1468,7 @@ mod _async_tasks {
                         let task_ptr: *mut Self = task;
                         task.global_object()
                             .bun_vm()
-                            .event_loop_mut()
+                            .event_loop()
                             .enqueue_task(bun_jsc::Task::init(task_ptr));
                         return task.completion.value();
                     }
@@ -1603,7 +1599,7 @@ mod _async_tasks {
                         let task_ptr: *mut Self = task;
                         task.global_object()
                             .bun_vm()
-                            .event_loop_mut()
+                            .event_loop()
                             .enqueue_task(bun_jsc::Task::init(task_ptr));
                         return task.completion.value();
                     }
@@ -1669,7 +1665,7 @@ mod _async_tasks {
             let this_ptr: *mut Self = this;
             this.global_object()
                 .bun_vm()
-                .event_loop_mut()
+                .event_loop()
                 .enqueue_task(bun_jsc::Task::init(this_ptr));
         }
 
@@ -1690,7 +1686,7 @@ mod _async_tasks {
             let this_ptr: *mut Self = this;
             this.global_object()
                 .bun_vm()
-                .event_loop_mut()
+                .event_loop()
                 .enqueue_task(bun_jsc::Task::init(this_ptr));
         }
 
@@ -2158,7 +2154,7 @@ mod _async_tasks {
         }
 
         fn call(global: &JSGlobalObject, callback: JSValue, arguments: &[JSValue]) {
-            global.bun_vm().event_loop_mut().run_callback(
+            global.bun_vm().event_loop().run_callback(
                 bun_event_loop::ContextId::NONE,
                 callback,
                 global,
@@ -2247,7 +2243,7 @@ mod _async_tasks {
             cx: &bun_jsc::JsThread<'_>,
             _binding: &Binding,
             args: ThreadIsolated<A>,
-            vm: &mut VirtualMachine,
+            vm: &VirtualMachine,
             callback: Option<JSValue>,
         ) -> JSValue {
             Self::schedule(cx, args, vm, callback)
@@ -2257,7 +2253,7 @@ mod _async_tasks {
         pub(crate) fn schedule(
             cx: &bun_jsc::JsThread<'_>,
             args: ThreadIsolated<A>,
-            vm: &mut VirtualMachine,
+            vm: &VirtualMachine,
             callback: Option<JSValue>,
         ) -> JSValue {
             let tracker = AsyncTaskTracker::init(vm);
@@ -2517,7 +2513,7 @@ mod _async_tasks {
             cx: &bun_jsc::JsThread<'_>,
             _binding: &Binding,
             cp_args: ThreadIsolated<args::Cp<'static>>,
-            vm: &mut VirtualMachine,
+            vm: &VirtualMachine,
         ) -> JSValue {
             let tracker = AsyncTaskTracker::init(vm);
             tracker.did_schedule(cx.global());
@@ -2526,7 +2522,7 @@ mod _async_tasks {
             Self::schedule_new(
                 promise,
                 cp_args,
-                EventLoopHandle::init(vm.event_loop.cast()),
+                EventLoopHandle::init(vm.event_loop_ptr()),
                 bun_jsc::ConcurrentPoster::Js(vm.ticket()),
                 tracker,
                 cx.context().id(),
@@ -2565,7 +2561,7 @@ mod _async_tasks {
             context: bun_event_loop::ContextId,
             shelltask: Option<bun_ptr::ParentRef<ShellCpTask, bun_ptr::Mut>>,
         ) {
-            let mut task = Box::new(Self {
+            let task = Box::new(Self {
                 promise,
                 context,
                 args: cp_args,
@@ -2726,7 +2722,7 @@ mod _async_tasks {
         }
 
         #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
-        pub(crate) fn destroy(mut self: Box<Self>) {
+        pub(crate) fn destroy(self: Box<Self>) {
             if !IS_SHELL {
                 let ctx = event_loop_handle_to_ctx(self.evtloop);
                 self.r#ref.unref(ctx);
@@ -2975,9 +2971,10 @@ mod _async_tasks {
             }
 
             let open_flags = sys::O::DIRECTORY | sys::O::RDONLY | sys::O::NOFOLLOW;
-            let fd = openat_os_path(FD::cwd(), src, open_flags, 0)
+            let dir = openat_os_path(FD::cwd(), src, open_flags, 0)
+                .map(sys::File::from_fd)
                 .map_err(|err| err.with_path(nodefs.os_path_into_sync_error_buf(src)))?;
-            let _close = scopeguard::guard(fd, |fd| fd.close());
+            let fd = dir.fd();
 
             #[cfg(windows)]
             let mut buf = bun_paths::os_path_buffer_pool::get();
@@ -3270,7 +3267,7 @@ mod _async_tasks {
         pub(crate) fn create(
             cx: &bun_jsc::JsThread<'_>,
             args: ThreadIsolated<args::Readdir<'static>>,
-            vm: &mut VirtualMachine,
+            vm: &VirtualMachine,
             callback: Option<JSValue>,
         ) -> JSValue {
             let tag = args.tag();
@@ -5460,7 +5457,7 @@ pub(crate) mod ret {
 pub(crate) struct NodeFS {
     /// Scratch for a temporary file path that might appear in a returned error message.
     pub(crate) sync_error_buf: bun_paths::path_buffer_pool::Guard,
-    pub(crate) vm: Option<NonNull<VirtualMachine>>,
+    pub(crate) vm: Option<&'static VirtualMachine>,
 }
 
 impl Default for NodeFS {
@@ -5795,9 +5792,7 @@ impl NodeFS {
                 sys::O::WRONLY | sys::O::CREAT | overwrite_flag,
                 0o644,
             )?;
-            let written = sys::File::borrow(&fd).write_all(file.utf8_contents());
-            fd.close();
-            written
+            sys::File::from_fd(fd).write_all(file.utf8_contents())
         })();
         copied.map_err(|err: sys::Error| sys::Error {
             errno: err.errno,
@@ -5861,11 +5856,11 @@ impl NodeFS {
                         return Ok(());
                     }
                 } else {
-                    let src_fd = match Syscall::open(src, sys::O::RDONLY, 0o644) {
-                        Ok(result) => result,
+                    let src_file = match Syscall::open(src, sys::O::RDONLY, 0o644) {
+                        Ok(result) => sys::File::from_fd(result),
                         Err(err) => return Err(err.with_path(args.src.slice())),
                     };
-                    let _close_src = scopeguard::guard(src_fd, |fd| fd.close());
+                    let src_fd = src_file.fd();
 
                     let mut flags: i32 = sys::O::CREAT | sys::O::WRONLY;
                     // VERIFY-FIX(round1): was `usize` then passed as `&mut (wrote as u64)` —
@@ -5929,11 +5924,11 @@ impl NodeFS {
                 });
             }
 
-            let src_fd = match Syscall::open(src, sys::O::RDONLY, 0) {
-                Ok(result) => result,
+            let src_file = match Syscall::open(src, sys::O::RDONLY, 0) {
+                Ok(result) => sys::File::from_fd(result),
                 Err(err) => return Err(err.with_path(args.src.slice())),
             };
-            let _close_src = scopeguard::guard(src_fd, |fd| fd.close());
+            let src_fd = src_file.fd();
 
             let stat_ = match Syscall::fstat(src_fd) {
                 Ok(result) => result,
@@ -6030,8 +6025,8 @@ impl NodeFS {
             let src = args.src.slice_z(&mut src_buf);
             let dest = args.dest.slice_z(&mut dest_buf);
 
-            let src_fd = Syscall::open(src, sys::O::RDONLY, 0o644)?;
-            let _close_src = scopeguard::guard(src_fd, |fd| fd.close());
+            let src_file = sys::File::from_fd(Syscall::open(src, sys::O::RDONLY, 0o644)?);
+            let src_fd = src_file.fd();
 
             let stat_ = Syscall::fstat(src_fd)?;
 
@@ -7423,11 +7418,7 @@ impl NodeFS {
         if is_root {
             async_task.root_fd = fd;
         }
-        let _close = scopeguard::guard((fd, is_root), |(fd, is_root)| {
-            if !is_root {
-                fd.close();
-            }
-        });
+        let _subdir = (!is_root).then(|| sys::File::from_fd(fd));
 
         let mut iterator = DirIterator::WrappedIterator::init(fd);
         let mut dirent_path_prev = BunString::EMPTY;
@@ -7542,18 +7533,11 @@ impl NodeFS {
         stack.push_back(Vec::new()); // empty == root marker (handled below)
         let mut first_is_root = true;
 
-        let mut root_fd = FD::INVALID;
-        let mut _close_root = scopeguard::guard(&mut root_fd, |root_fd| {
-            // all other paths are relative to the root directory
-            // so we can only close it once we're 100% done
-            if *root_fd != FD::INVALID {
-                root_fd.close();
-            }
-        });
-        // Re-borrow through the guard so `root_fd` stays observable at drop.
-        let root_fd: &mut FD = *_close_root;
-        // The close guard captures `&mut root_fd`, so all reads below go
-        // through the same place.
+        let flags = sys::O::DIRECTORY | sys::O::RDONLY;
+        // all other paths are relative to the root directory, so it stays open until the end
+        let root = Syscall::openat(FD::cwd(), root_basename, flags, 0)
+            .map(sys::File::from_fd)
+            .map_err(|err| err.with_path(args.path.slice()))?;
 
         let mut spill: Vec<u8> = Vec::new();
         let mut dirent_spill: Vec<u8> = Vec::new();
@@ -7572,44 +7556,18 @@ impl NodeFS {
                 &item[..item.len().saturating_sub(1)]
             };
 
-            let flags = sys::O::DIRECTORY | sys::O::RDONLY;
-            let atfd = if *root_fd == FD::INVALID {
-                FD::cwd()
-            } else {
-                *root_fd
-            };
-            // root_basename is already NUL-terminated; queued items are pushed
-            // below with the join_z_buf NUL kept intact (`from_slice_with_nul`
-            // debug-asserts the trailing NUL).
-            let basename_z: &ZStr = if is_root {
-                root_basename
+            let subdir = if is_root {
+                None
             } else {
                 // item was stored with trailing NUL (see push site).
-                ZStr::from_slice_with_nul(&item)
-            };
-            let fd = match Syscall::openat(atfd, basename_z, flags, 0) {
-                Err(err) => {
-                    if *root_fd == FD::INVALID {
-                        return Err(err.with_path(args.path.slice()));
-                    }
-                    match err.get_errno() {
-                        errno if Self::readdir_skips_subdir(errno) => continue,
-                        _ => {
-                            // TODO: propagate file path (removed previously because it leaked the path)
-                            return Err(err);
-                        }
-                    }
+                match Syscall::openat(root.fd(), ZStr::from_slice_with_nul(&item), flags, 0) {
+                    Ok(fd) => Some(sys::File::from_fd(fd)),
+                    Err(err) if Self::readdir_skips_subdir(err.get_errno()) => continue,
+                    // TODO: propagate file path (removed previously because it leaked the path)
+                    Err(err) => return Err(err),
                 }
-                Ok(fd_) => fd_,
             };
-            if *root_fd == FD::INVALID {
-                *root_fd = fd;
-            }
-            let _close_fd = scopeguard::guard((fd, *root_fd), |(fd, rfd)| {
-                if fd != rfd {
-                    fd.close();
-                }
-            });
+            let fd = subdir.as_ref().unwrap_or(&root).fd();
 
             let mut iterator = DirIterator::WrappedIterator::init(fd);
             let mut dirent_path_prev = BunString::DEAD;
@@ -7774,14 +7732,13 @@ impl NodeFS {
                 ..Default::default()
             },
         );
-        let fd = match open_res {
+        let dir = match open_res {
             Err(err) => return Err(err.with_path(args.path.slice())),
-            Ok(fd_) => fd_,
+            Ok(fd_) => sys::File::from_fd(fd_),
         };
-        let _close = scopeguard::guard(fd, |fd| fd.close());
 
         let mut entries: Vec<T> = Vec::new();
-        Self::readdir_with_entries::<T>(args, fd, path, &mut entries)?;
+        Self::readdir_with_entries::<T>(args, dir.fd(), path, &mut entries)?;
         Ok(T::into_readdir(entries))
     }
 
@@ -7961,11 +7918,7 @@ impl NodeFS {
                 });
             }
         };
-        let _close = scopeguard::guard((fd, path_is_path), |(fd, is_path)| {
-            if is_path {
-                fd.close();
-            }
-        });
+        let _opened = path_is_path.then(|| sys::File::from_fd(fd));
 
         if args.aborted() {
             return Err(abort_err());
@@ -7989,10 +7942,7 @@ impl NodeFS {
         // `Syscall::read` hands it straight to the kernel.
         use bun_collections::vec_ext::VecExt as _;
         let mut scratch = match self.vm {
-            // SAFETY: `self.vm` is the live owning `*mut VirtualMachine` (single-threaded VM), which outlives this call.
-            Some(vm) if flavor == Flavor::Sync => unsafe {
-                (*(*vm.as_ptr()).rare_data_ptr()).pipe_read_scratch.claim()
-            },
+            Some(vm) if flavor == Flavor::Sync => vm.rare_data().pipe_read_scratch.claim(),
             _ => None,
         };
         let mut heap_buffer: Vec<u8> = Vec::new();
@@ -8028,10 +7978,9 @@ impl NodeFS {
             return match args.encoding {
                 Encoding::Buffer => {
                     if flavor == Flavor::Sync && string_type == ReadFileStringType::Default {
-                        if let Some(vm) = self.vm.map(bun_ptr::BackRef::from) {
+                        if let Some(vm) = self.vm {
                             // Attempt to create the buffer in JSC's heap.
                             // This avoids creating a WastefulTypedArray.
-                            // `self.vm` is the live owning `VirtualMachine` (per-thread singleton) — `BackRef` invariant holds.
                             let global = vm.global();
                             let Ok(array_buffer) = bun_jsc::ArrayBuffer::create_buffer(
                                 global,
@@ -8948,8 +8897,8 @@ impl NodeFS {
                     ..Default::default()
                 });
             };
-            let _close = scopeguard::guard(fd, |fd| fd.close());
-            return match Syscall::ftruncate(fd, len_i64) {
+            let file = sys::File::from_fd(fd);
+            return match Syscall::ftruncate(file.fd(), len_i64) {
                 Ok(r) => Ok(r),
                 Err(err) => Err(err.with_path_and_syscall(path.slice(), sys::Tag::truncate)),
             };
@@ -9350,16 +9299,16 @@ impl NodeFS {
             }
         }
 
-        let fd = match openat_os_path(
+        let dir = match openat_os_path(
             FD::cwd(),
             src,
             sys::O::DIRECTORY | sys::O::RDONLY | sys::O::NOFOLLOW,
             0,
         ) {
             Err(err) => return Err(err.with_path(self.os_path_into_sync_error_buf(&src_buf[..sd]))),
-            Ok(fd_) => fd_,
+            Ok(fd_) => sys::File::from_fd(fd_),
         };
-        let _close = scopeguard::guard(fd, |fd| fd.close());
+        let fd = dir.fd();
 
         match self.mkdir_recursive_os_path(dest, args::Mkdir::DEFAULT_MODE, false) {
             Err(err) => return Err(err),
@@ -9600,14 +9549,14 @@ impl NodeFS {
                     return Ok(());
                 }
             } else {
-                let src_fd = match Syscall::open(src, sys::O::RDONLY, 0o644) {
-                    Ok(result) => result,
+                let src_file = match Syscall::open(src, sys::O::RDONLY, 0o644) {
+                    Ok(result) => sys::File::from_fd(result),
                     Err(err) => {
                         self.sync_error_buf[..src.len()].copy_from_slice(src.as_bytes());
                         return Err(err.with_path(&self.sync_error_buf[..src.len()]));
                     }
                 };
-                let _close_src = scopeguard::guard(src_fd, |fd| fd.close());
+                let src_fd = src_file.fd();
 
                 let mut flags: i32 = sys::O::CREAT | sys::O::WRONLY;
                 let wrote: core::cell::Cell<u64> = core::cell::Cell::new(0);
@@ -9677,8 +9626,8 @@ impl NodeFS {
                 return Err(sys::Error::todo());
             }
 
-            let src_fd = match Syscall::open(src, sys::O::RDONLY | sys::O::NOFOLLOW, 0o644) {
-                Ok(result) => result,
+            let src_file = match Syscall::open(src, sys::O::RDONLY | sys::O::NOFOLLOW, 0o644) {
+                Ok(result) => sys::File::from_fd(result),
                 Err(err) => {
                     if err.get_errno() == E::ELOOP {
                         // ELOOP is returned when you open a symlink with NOFOLLOW.
@@ -9688,7 +9637,7 @@ impl NodeFS {
                     return Err(err);
                 }
             };
-            let _close_src = scopeguard::guard(src_fd, |fd| fd.close());
+            let src_fd = src_file.fd();
 
             let stat_ = match Syscall::fstat(src_fd) {
                 Ok(result) => result,
@@ -9842,8 +9791,8 @@ impl NodeFS {
                 });
             }
 
-            let src_fd = match Syscall::open(src, sys::O::RDONLY | sys::O::NOFOLLOW, 0o644) {
-                Ok(result) => result,
+            let src_file = match Syscall::open(src, sys::O::RDONLY | sys::O::NOFOLLOW, 0o644) {
+                Ok(result) => sys::File::from_fd(result),
                 Err(err) => {
                     // O_NOFOLLOW on a symlink → recreate the link. FreeBSD's
                     // open(2) returns EMLINK for this case, though POSIX
@@ -9854,7 +9803,7 @@ impl NodeFS {
                     return Err(err);
                 }
             };
-            let _close_src = scopeguard::guard(src_fd, |fd| fd.close());
+            let src_fd = src_file.fd();
 
             let stat_ = match Syscall::fstat(src_fd) {
                 Ok(result) => result,
@@ -10577,8 +10526,7 @@ pub(crate) unsafe extern "C" fn Bun__mkdirp(
     let path_bytes = unsafe { bun_core::ffi::cstr(path) }.to_bytes();
     // SAFETY: `bun_vm()` returns the live VM; `node_fs()` returns its cached
     // `*NodeFS` (type-erased to `*mut c_void` in `bun_jsc` to break the dep cycle).
-    let node_fs: &mut NodeFS =
-        unsafe { &mut *global_this.bun_vm().as_mut().node_fs().cast::<NodeFS>() };
+    let node_fs: &mut NodeFS = unsafe { &mut *global_this.bun_vm().node_fs().cast::<NodeFS>() };
     node_fs
         .mkdir_recursive(&args::Mkdir {
             path: PathLike::borrowed(path_bytes),
@@ -10703,16 +10651,35 @@ fn dt_delete_dir(parent: &sys::Dir, name: &[u8]) -> Result<(), E> {
     }
 }
 
+/// Iterates a directory and closes it on drop.
+struct OwnedDirIterator(DirIterator::WrappedIterator);
+
+impl OwnedDirIterator {
+    fn new(dir: sys::Dir) -> Self {
+        Self(DirIterator::WrappedIterator::init(dir.into_raw()))
+    }
+
+    fn fd(&self) -> FD {
+        self.0.iter.dir
+    }
+}
+
+impl Drop for OwnedDirIterator {
+    fn drop(&mut self) {
+        self.fd().close();
+    }
+}
+
 struct DeleteTreeStackItem {
     /// Owned copy of the entry name (lives until popped). The very first item
     /// borrows `sub_path` instead — see `name_is_borrowed`.
     name: Vec<u8>,
     name_is_borrowed: bool,
     /// Non-owning alias of either `self_` (first item) or the previous stack
-    /// frame's `iter.iter.dir`. Ownership of the descriptor stays with the
+    /// frame's `iter.fd()`. Ownership of the descriptor stays with the
     /// owner; this is just the raw fd for `Dir::borrow` at call sites.
     parent_dir: FD,
-    iter: DirIterator::WrappedIterator,
+    iter: OwnedDirIterator,
 }
 
 pub(crate) fn zig_delete_tree(
@@ -10731,26 +10698,19 @@ pub(crate) fn zig_delete_tree(
     // with the bonus that the iterator buffers (8 KB each)
     // live on the heap instead of the stack.
     let mut stack: Vec<DeleteTreeStackItem> = Vec::with_capacity(16);
-    let close_all = |stack: &mut Vec<DeleteTreeStackItem>| {
-        for item in stack.drain(..) {
-            item.iter.iter.dir.close();
-        }
-    };
-    let mut _close_all = scopeguard::guard(&mut stack, close_all);
-    let stack: &mut Vec<DeleteTreeStackItem> = *_close_all;
 
     stack.push(DeleteTreeStackItem {
         name: Vec::new(),
         name_is_borrowed: true,
         parent_dir: self_.fd,
-        iter: DirIterator::WrappedIterator::init(initial_iterable_dir.into_raw()),
+        iter: OwnedDirIterator::new(initial_iterable_dir),
     });
 
     'process_stack: while !stack.is_empty() {
         let top_idx = stack.len() - 1;
         loop {
             // Re-borrow `top` each iteration so pushing to `stack` below is allowed.
-            let entry = match stack[top_idx].iter.next() {
+            let entry = match stack[top_idx].iter.0.next() {
                 Ok(Some(e)) => e,
                 Ok(None) => break,
                 Err(err) => return Err(dt_err(err.get_errno())),
@@ -10764,16 +10724,14 @@ pub(crate) fn zig_delete_tree(
             'handle_entry: loop {
                 if treat_as_dir {
                     if stack.len() < stack.capacity() {
-                        let top_fd = stack[top_idx].iter.iter.dir;
+                        let top_fd = stack[top_idx].iter.fd();
                         match dt_open_dir(sys::Dir::borrow(&top_fd), &entry_name) {
                             Ok(iterable_dir) => {
                                 stack.push(DeleteTreeStackItem {
                                     name: entry_name,
                                     name_is_borrowed: false,
                                     parent_dir: top_fd,
-                                    iter: DirIterator::WrappedIterator::init(
-                                        iterable_dir.into_raw(),
-                                    ),
+                                    iter: OwnedDirIterator::new(iterable_dir),
                                 });
                                 continue 'process_stack;
                             }
@@ -10806,7 +10764,7 @@ pub(crate) fn zig_delete_tree(
                             Err(e) => return Err(dt_err(e)),
                         }
                     } else {
-                        let top_fd = stack[top_idx].iter.iter.dir;
+                        let top_fd = stack[top_idx].iter.fd();
                         zig_delete_tree_min_stack_size_with_kind_hint(
                             sys::Dir::borrow(&top_fd),
                             &entry_name,
@@ -10815,7 +10773,7 @@ pub(crate) fn zig_delete_tree(
                         break 'handle_entry;
                     }
                 } else {
-                    let top_fd = stack[top_idx].iter.iter.dir;
+                    let top_fd = stack[top_idx].iter.fd();
                     match dt_delete_file(sys::Dir::borrow(&top_fd), &entry_name) {
                         Ok(()) => break 'handle_entry,
                         Err(E::EISDIR) => {
@@ -10859,11 +10817,8 @@ pub(crate) fn zig_delete_tree(
         // On Windows, we can't delete until the dir's handle has been closed, so
         // close it before we try to delete.
         let top = stack.pop().unwrap();
-        top.iter.iter.dir.close();
+        drop(top.iter);
 
-        // In order to avoid double-closing the directory when cleaning up
-        // the stack in the case of an error, we save the relevant portions and
-        // pop the value from the stack.
         let parent_dir = top.parent_dir;
         let name: &[u8] = if top.name_is_borrowed {
             sub_path
@@ -10947,7 +10902,7 @@ pub(crate) fn zig_delete_tree(
                 name: top.name,
                 name_is_borrowed: top.name_is_borrowed,
                 parent_dir,
-                iter: DirIterator::WrappedIterator::init(iterable_dir.into_raw()),
+                iter: OwnedDirIterator::new(iterable_dir),
             });
             continue 'process_stack;
         }
@@ -11064,7 +11019,7 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
             }
             // Reached the end of the directory entries, which means we successfully deleted all of them.
             // Now to remove the directory itself.
-            dir.close();
+            drop(dir);
 
             let dir_name: &[u8] = if dir_name_is_sub_path {
                 sub_path

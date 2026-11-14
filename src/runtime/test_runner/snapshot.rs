@@ -71,11 +71,18 @@ impl Format {
     }
 }
 
+#[derive(Default)]
 struct Entry {
     value: Box<[u8]>,
     checked: bool,
     /// Its test was skipped or failed, so `remove_obsolete` keeps it even if unchecked.
     stays: bool,
+    /// This run wrote it, so it is not an older Bun's.
+    written: bool,
+    /// A snapshot of this run found it under Bun's key.
+    found_under_key_of_bun: bool,
+    /// Its last snapshot of this run differed from it in the file's format.
+    differs: bool,
 }
 
 pub(crate) enum Outcome {
@@ -241,17 +248,18 @@ fn snapshot_file_path(files: &FileList, file_id: FileId, buf: &mut [u8]) -> Opti
     Some((dir_path, dir_len, pos - 1))
 }
 
-/// jest-snapshot's `printBacktickString`.
+/// jest-snapshot's `printBacktickString`. Like Vitest's, it writes a carriage return as `\r`: the character would read back as a line feed.
 #[optimize(size)]
 fn write_backtick_string(out: &mut Vec<u8>, text: &[u8]) {
     out.push(b'`');
     let mut rest = text;
-    while let Some(i) = strings::index_of_any(rest, b"`\\$") {
+    while let Some(i) = strings::index_of_any(rest, b"`\\$\r") {
         out.extend_from_slice(&rest[..i]);
-        if rest[i] != b'$' || rest.get(i + 1) == Some(&b'{') {
-            out.push(b'\\');
+        match rest[i] {
+            b'\r' => out.extend_from_slice(b"\\r"),
+            b'$' if rest.get(i + 1) != Some(&b'{') => out.push(b'$'),
+            byte => out.extend_from_slice(&[b'\\', byte]),
         }
-        out.push(rest[i]);
         rest = &rest[i + 1..];
     }
     out.extend_from_slice(rest);
@@ -411,28 +419,31 @@ impl Snapshots {
         let mut key_in_file = None;
         if self.values.contains(&key) {
             key_in_file = Some(key.clone());
-        } else if format != Format::Bun && self.may_hold_entries_of_bun() {
+        } else if format != Format::Bun && !self.update_snapshots && self.may_hold_entries_of_bun() {
+            // Not with `--update-snapshots`: it adds the entry under the file's key, and `remove_obsolete` drops the older one.
             let mut key_of_bun = Self::name_of(expect, Format::Bun, hint)?;
             key_of_bun.push(b' ');
             key_of_bun.extend_from_slice(counter);
-            key_in_file = Some(key_of_bun).filter(|key| self.values.contains(key));
+            // An entry that this run wrote is not an older Bun's.
+            if let Some(entry) = self.values.get_mut(&key_of_bun).filter(|entry| !entry.written) {
+                entry.found_under_key_of_bun = true;
+                key_in_file = Some(key_of_bun);
+            }
         }
 
         if let Some(key_in_file) = key_in_file
             && let Some(entry) = self.values.get_mut(&key_in_file)
         {
             entry.checked = true;
-            let is_to_be_renamed = self.update_snapshots && key_in_file != key;
-            if format.matches(&entry.value, received) && !is_to_be_renamed {
+            entry.differs = !format.matches(&entry.value, received);
+            if !entry.differs {
                 self.passed += 1;
                 return Ok(Outcome::Passed);
             }
             if !self.update_snapshots {
                 return Ok(Outcome::Mismatch { saved: entry.value.clone() });
             }
-            if is_to_be_renamed {
-                self.values.swap_remove(&key_in_file);
-            } else if format == Format::Bun {
+            if format == Format::Bun {
                 written_by_earlier_attempt = Some(entry.value.clone());
             }
         } else if bun_core::ci_info::is_ci() && !self.update_snapshots {
@@ -461,7 +472,7 @@ impl Snapshots {
         if written_by_earlier_attempt.is_none() {
             self.added += 1;
         }
-        self.values.insert(&key, Entry { value: Box::<[u8]>::from(received), checked: true, stays: false });
+        self.values.insert(&key, Entry { value: Box::<[u8]>::from(received), checked: true, written: true, ..Default::default() });
         Ok(Outcome::Written)
     }
 
@@ -529,7 +540,7 @@ impl Snapshots {
                                                 let value = value_string.slice(&arena);
                                                 self.values.insert(
                                                     key,
-                                                    Entry { value: Box::<[u8]>::from(value), checked: false, stays: false },
+                                                    Entry { value: Box::<[u8]>::from(value), ..Default::default() },
                                                 );
                                             }
                                         }
@@ -715,11 +726,16 @@ impl Snapshots {
         let keys = self.values.keys();
         // Insertion sort: `natural_compare` may not be a total order, and `sort_by` can panic on one that isn't.
         let mut order: Vec<usize> = Vec::with_capacity(keys.len());
-        // Unchecked entries may be an older Bun's. Stay unsorted so the next run still sets `may_hold_entries_of_bun`.
-        let stays_as_it_is = file.may_hold_entries_of_bun && self.values.values().iter().any(|entry| !entry.checked);
+        // An entry with no test, under Bun's key, or that differs may be an older Bun's. Stay unsorted so the next run still sets `may_hold_entries_of_bun`.
+        let may_be_of_bun = |entry: &Entry| !entry.checked || entry.found_under_key_of_bun || entry.differs;
+        let stays_as_it_is = file.may_hold_entries_of_bun && self.values.values().iter().any(may_be_of_bun);
         for (i, key) in keys.iter().enumerate() {
             let at = if stays_as_it_is { i } else { order.partition_point(|other| natural_compare(&keys[*other], key).is_le()) };
             order.insert(at, i);
+        }
+        // `remove_obsolete` can leave the kept keys in order. One key out of its place keeps them unsorted.
+        if stays_as_it_is && order.len() > 1 && self.keys_are_sorted() {
+            order.rotate_right(1);
         }
 
         let mut contents = file.format.header().to_vec();

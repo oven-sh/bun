@@ -193,7 +193,7 @@ pub(crate) fn with_test_context<R>(
     static OUTPUT: std::sync::Once = std::sync::Once::new();
     OUTPUT.call_once(bun_core::output::stdio::init);
     let mut log = Log::init();
-    let mut event_loop = bun_event_loop::AnyEventLoop::default();
+    let event_loop = bun_event_loop::AnyEventLoop::default();
     let arena = Arena::new();
     let transform_options = crate::options::TransformOptions {
         absolute_working_dir: Some(Box::from(&b"/project"[..])),
@@ -209,7 +209,7 @@ pub(crate) fn with_test_context<R>(
         transpiler,
         None,
         &arena,
-        Some(NonNull::from(&mut event_loop)),
+        Some(NonNull::from(&event_loop)),
         false,
         None,
         &arena,
@@ -328,9 +328,10 @@ fn list_files_below(folder: &[u8]) -> Vec<Vec<u8>> {
 
 /// The paths of the files and the folders in `folder` itself.
 fn list_folder(folder: &[u8]) -> Option<(Vec<Vec<u8>>, Vec<Vec<u8>>)> {
-    let directory = bun_sys::open_dir_for_iteration(bun_sys::Fd::cwd(), folder).ok()?;
-    let _close = scopeguard::guard(directory, bun_sys::FdExt::close);
-    let mut entries = bun_sys::dir_iterator::iterate(directory);
+    let directory = bun_sys::open_dir_for_iteration(bun_sys::Fd::cwd(), folder)
+        .map(bun_sys::File::from_fd)
+        .ok()?;
+    let mut entries = bun_sys::dir_iterator::iterate(directory.fd());
     let (mut files, mut folders) = (Vec::new(), Vec::new());
     while let Some(entry) = entries.next().ok()? {
         let path = [folder, &[bun_paths::SEP], entry.name.slice_u8()].concat();
@@ -1049,6 +1050,15 @@ impl SourceProvider for BundlerServices {
         let source_path = &*with_platform_separators(source_path);
         let files = self.files_for_file_system.lock();
         files.is_embedded(source_path, is_query)
+    }
+
+    fn list_files_embedded_implicitly(&self) -> Vec<Vec<u8>> {
+        let files = self.files_for_file_system.lock();
+        let embedded = files.implicitly_embedded.iter().chain(&files.asked_about);
+        let mut paths: Vec<Vec<u8>> = embedded.map(|it| it.to_vec()).collect();
+        paths.sort_unstable();
+        paths.dedup();
+        paths
     }
 
     fn fill_package_json_gaps(&self, module_paths: &[&[u8]]) -> Vec<(Vec<u8>, Vec<u8>)> {

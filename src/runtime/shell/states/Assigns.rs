@@ -128,13 +128,11 @@ impl Assigns {
             merged
         };
 
-        let value_ref = EnvStr::init_ref_counted(value.into_boxed_slice());
         interp.as_assigns_mut(this).base.shell_mut().assign_var(
             EnvStr::init_slice(label),
-            value_ref,
+            EnvStr::init_ref_counted(value.into_boxed_slice()),
             ctx,
         );
-        value_ref.deref();
 
         Yield::Next(this)
     }

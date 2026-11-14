@@ -1325,37 +1325,33 @@ fn stat_descriptor(fd: Fd) -> Maybe<PosixStat> {
 /// `fd` reads the file at `path` from here on, from the same offset, if it still is what `is_meant` asks for when that is open.
 #[cfg(not(windows))]
 fn reopen_at(fd: Fd, path: &ZStr, is_meant: impl FnOnce() -> bool) -> Maybe<bool> {
-    use bun_sys::FdExt as _;
-    let opened = bun_sys::open(path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)?;
-    let reopened = (|| {
-        let offset = bun_sys::lseek(fd, 0, libc::SEEK_CUR)?;
-        bun_sys::lseek(opened, offset, libc::SEEK_SET)?;
-        if !is_meant() {
-            return Ok(false);
+    let file = bun_sys::File::open(path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)?;
+    let opened = file.fd();
+    let offset = bun_sys::lseek(fd, 0, libc::SEEK_CUR)?;
+    bun_sys::lseek(opened, offset, libc::SEEK_SET)?;
+    if !is_meant() {
+        return Ok(false);
+    }
+    // With FD_CLOEXEC from the start, so that a child of that moment has it no longer than it would have.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        // For Android, libc has the number of the call alone.
+        let (from, to) = (opened.native(), fd.native());
+        // SAFETY: both are descriptors of this process.
+        let moved = unsafe { libc::syscall(libc::SYS_dup3, from, to, libc::O_CLOEXEC) };
+        match moved {
+            -1 => Err(bun_sys::Error::from_code(
+                bun_sys::E::EIO,
+                bun_sys::Tag::dup,
+            )),
+            _ => Ok(true),
         }
-        // With FD_CLOEXEC from the start, so that a child of that moment has it no longer than it would have.
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            // For Android, libc has the number of the call alone.
-            let (from, to) = (opened.native(), fd.native());
-            // SAFETY: both are descriptors of this process.
-            let moved = unsafe { libc::syscall(libc::SYS_dup3, from, to, libc::O_CLOEXEC) };
-            match moved {
-                -1 => Err(bun_sys::Error::from_code(
-                    bun_sys::E::EIO,
-                    bun_sys::Tag::dup,
-                )),
-                _ => Ok(true),
-            }
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        {
-            bun_sys::dup2(opened, fd)?;
-            bun_sys::set_close_on_exec(fd).map(|()| true)
-        }
-    })();
-    opened.close();
-    reopened
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    {
+        bun_sys::dup2(opened, fd)?;
+        bun_sys::set_close_on_exec(fd).map(|()| true)
+    }
 }
 
 impl StandaloneModuleGraph {
@@ -1607,7 +1603,7 @@ impl StandaloneModuleGraph {
         let path = key;
         let key = under_own_root.as_deref().unwrap_or(key);
         if program.entry_point_by_source_path(key).is_some() || program.holds_module_at(key) {
-            let is_gone = Self::has_other_source_on_disk(program, key, path);
+            let is_gone = self.has_other_source_on_disk(program, key, path);
             return (!is_gone).then_some(SourcePathKind::File);
         }
         let mut entry_points = program.entry_points_in_directory(key);
@@ -2452,65 +2448,157 @@ impl StandaloneModuleGraph {
         let Some(program) = self.compiled_program.as_ref() else {
             return false;
         };
-        let mut cut = bun_paths::basename(key).len() + 1;
-        if cut >= key.len() || !bun_sys::exists(&key[..key.len() - cut]) {
-            return false;
-        }
-        while cut < key.len() && cut < key_in_graph.len() {
-            let folder = &key[..key.len() - cut];
-            let folder_in_graph = &key_in_graph[..key_in_graph.len() - cut];
-            let mut entry_points = program.entry_points_in_directory(folder_in_graph);
-            let mut source = entry_points.next().map(|it| it.source_path.to_vec());
-            program.for_each_module_below(folder_in_graph, &mut |path| {
-                source = Some(path.to_vec());
-                false
-            });
-            if let Some(source) = source {
-                return is_file_on_disk(&[folder, &source[folder_in_graph.len()..]].concat());
-            }
-            let name = bun_paths::basename(folder);
-            if name != bun_paths::basename(folder_in_graph) {
-                return false;
-            }
-            cut += name.len() + 1;
-        }
-        false
+        Self::folders_around(key_in_graph, key)
+            .find_map(|(folder_in_graph, folder)| {
+                let is_known =
+                    self.knows_source_on_disk(program, folder_in_graph, folder, key_in_graph)?;
+                Some(is_known || self.lists_source(program, folder_in_graph, folder, key_in_graph))
+            })
+            .unwrap_or(false)
     }
 
     fn has_other_source_on_disk(
+        &self,
         program: &CompiledProgram,
         key_in_graph: &[u8],
         key: &[u8],
     ) -> bool {
+        let mut outermost = None;
+        for (folder_in_graph, folder) in Self::folders_around(key_in_graph, key) {
+            match self.knows_source_on_disk(program, folder_in_graph, folder, key_in_graph) {
+                Some(true) => return true,
+                Some(false) => outermost = Some((folder_in_graph, folder)),
+                None => {}
+            }
+        }
+        outermost.is_some_and(|(folder_in_graph, folder)| {
+            self.lists_source(program, folder_in_graph, folder, key_in_graph)
+        })
+    }
+
+    fn folders_around<'a>(
+        key_in_graph: &'a [u8],
+        key: &'a [u8],
+    ) -> impl Iterator<Item = (&'a [u8], &'a [u8])> {
         let mut cut = bun_paths::basename(key).len() + 1;
-        if cut >= key.len() || !bun_sys::exists(&key[..key.len() - cut]) {
+        let is_on_disk = cut < key.len() && bun_sys::exists(&key[..key.len() - cut]);
+        core::iter::from_fn(move || {
+            if !is_on_disk || cut >= key.len() || cut >= key_in_graph.len() {
+                return None;
+            }
+            let folder_in_graph = &key_in_graph[..key_in_graph.len() - cut];
+            let folder = &key[..key.len() - cut];
+            let name = bun_paths::basename(folder);
+            cut = match name == bun_paths::basename(folder_in_graph) {
+                true => cut + name.len() + 1,
+                false => key.len(),
+            };
+            Some((folder_in_graph, folder))
+        })
+    }
+
+    fn knows_source_on_disk(
+        &self,
+        program: &CompiledProgram,
+        folder_in_graph: &[u8],
+        folder: &[u8],
+        key_in_graph: &[u8],
+    ) -> Option<bool> {
+        let is_on_disk =
+            |source: &[u8]| is_file_on_disk(&[folder, &source[folder_in_graph.len()..]].concat());
+        let mut entry_points = program.entry_points_in_directory(folder_in_graph);
+        let entry_point = entry_points.find(|it| it.source_path != key_in_graph);
+        let mut module: Option<Vec<u8>> = None;
+        program.for_each_module_below(folder_in_graph, &mut |path| {
+            module = (path != key_in_graph).then(|| path.to_vec());
+            module.is_none()
+        });
+        if entry_point.is_none() && module.is_none() {
+            return None;
+        }
+        let found = self.sources_on_disk.lock().get(folder).cloned();
+        let found = found
+            .flatten()
+            .map(|it| [folder_in_graph, &it].concat())
+            .filter(|it| !is_at_or_below(key_in_graph, it));
+        Some(
+            entry_point.is_some_and(|it| is_on_disk(it.source_path))
+                || module.is_some_and(|it| is_on_disk(&it))
+                || found.is_some_and(|it| is_on_disk(&it)),
+        )
+    }
+
+    fn lists_source(
+        &self,
+        program: &CompiledProgram,
+        folder_in_graph: &[u8],
+        folder: &[u8],
+        key_in_graph: &[u8],
+    ) -> bool {
+        if matches!(self.sources_on_disk.lock().get(folder), Some(None)) {
             return false;
         }
-        while cut < key.len() && cut < key_in_graph.len() {
-            let folder = &key[..key.len() - cut];
-            let folder_in_graph = &key_in_graph[..key_in_graph.len() - cut];
-            let is_on_disk = |source: &[u8]| {
-                is_file_on_disk(&[folder, &source[folder_in_graph.len()..]].concat())
-            };
-            let mut entry_points = program.entry_points_in_directory(folder_in_graph);
-            let entry_point = entry_points.find(|it| it.source_path != key_in_graph);
-            let mut module: Option<Vec<u8>> = None;
-            program.for_each_module_below(folder_in_graph, &mut |path| {
-                module = (path != key_in_graph).then(|| path.to_vec());
-                module.is_none()
-            });
-            if entry_point.is_some_and(|it| is_on_disk(it.source_path))
-                || module.is_some_and(|it| is_on_disk(&it))
-            {
-                return true;
-            }
-            let name = bun_paths::basename(folder);
-            if name != bun_paths::basename(folder_in_graph) {
-                return false;
-            }
-            cut += name.len() + 1;
+        let mut is_complete = true;
+        let found = Self::find_listed_source(
+            program,
+            folder_in_graph,
+            folder,
+            key_in_graph,
+            &mut is_complete,
+        );
+        let below = found.map(|path| Box::from(&path[folder.len()..]));
+        let is_found = below.is_some();
+        let mut sources = self.sources_on_disk.lock();
+        if is_found || is_complete && !sources.contains(folder) {
+            let _ = sources.put(folder, below);
         }
-        false
+        is_found
+    }
+
+    fn find_listed_source(
+        program: &CompiledProgram,
+        folder_in_graph: &[u8],
+        folder: &[u8],
+        key_in_graph: &[u8],
+        is_complete: &mut bool,
+    ) -> Option<Vec<u8>> {
+        #[cfg(test)]
+        tests::FOLDERS_READ.set(tests::FOLDERS_READ.get() + 1);
+        let directory = match bun_sys::Dir::open(folder) {
+            Ok(directory) => directory,
+            Err(error) => {
+                *is_complete &=
+                    matches!(error.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR);
+                return None;
+            }
+        };
+        let mut entries = bun_sys::iterate_dir(directory.fd());
+        while let Some(entry) = entries.next().unwrap_or_else(|_| {
+            *is_complete = false;
+            None
+        }) {
+            let name = entry.name.slice_u8();
+            let [in_graph, path] = [folder_in_graph, folder].map(|it| [it, b"/", name].concat());
+            if in_graph == key_in_graph {
+                *is_complete = false;
+                continue;
+            }
+            let is_source = program.entry_point_by_source_path(&in_graph).is_some()
+                || program.holds_module_at(&in_graph);
+            if is_source && !is_at_or_below(key_in_graph, &in_graph) && is_file_on_disk(&path) {
+                return Some(path);
+            }
+            let mut entry_points = program.entry_points_in_directory(&in_graph);
+            let holds_sources =
+                entry_points.next().is_some() || program.holds_module_below(&in_graph);
+            if holds_sources
+                && let Some(found) =
+                    Self::find_listed_source(program, &in_graph, &path, key_in_graph, is_complete)
+            {
+                return Some(found);
+            }
+        }
+        None
     }
 
     pub(crate) fn directory_key<'a>(
@@ -3722,6 +3810,44 @@ pub(crate) mod tests {
         }
         assert!(graph.may_answer_for(&folder.join("one/two")));
         assert!(graph.may_answer_for(&folder.join("one")));
+    }
+
+    std::thread_local! {
+        pub(super) static FOLDERS_READ: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn folders_without_sources_are_read_once() {
+        fn list_modules(start: &[u8], each: &mut dyn FnMut(&[u8]) -> bool) {
+            for path in [
+                "/$bunfs/root/src/a/one.js",
+                "/$bunfs/root/src/a/two.js",
+                "/$bunfs/root/src/b/deep/one.js",
+                "/$bunfs/root/src/c/one.js",
+            ] {
+                let path = path.as_bytes();
+                if path.starts_with(start) && !each(path) {
+                    return;
+                }
+            }
+        }
+        let folder = TemporaryFolder::create("read-once");
+        let mut graph = with_request(&folder, false, read_graph);
+        let program = graph.compiled_program.take().unwrap();
+        program.set_module_listing(list_modules);
+        let root: &'static [u8] = folder.0.clone().leak();
+        graph.compiled_program = Some(program.with_root_on_build_machine(Some(root)));
+        for name in ["src/a", "src/b/deep", "src/c"] {
+            bun_sys::mkdir_recursive(&folder.join(name)).unwrap();
+        }
+        for _ in 0..100 {
+            for name in ["src/a/one.js", "src/b/deep/one.js", "src/c/one.js"] {
+                let kind = graph.source_path_kind(&folder.join(name));
+                assert_eq!(kind, Some(SourcePathKind::File), "{name}");
+            }
+        }
+        assert_eq!(FOLDERS_READ.get(), 6);
     }
 
     #[test]

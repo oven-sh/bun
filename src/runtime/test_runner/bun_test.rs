@@ -99,7 +99,7 @@ pub(crate) mod js_fns {
         signature: Signature<'_>,
     ) -> JsResult<BunTestPtr> {
         let bun_test_root = get_test_root(global_this, signature)?;
-        if global_this.bun_vm().is_in_preload {
+        if global_this.bun_vm().is_in_preload.get() {
             return Err(global_this.throw(format_args!(
                 "Cannot use {} during preload.",
                 signature
@@ -663,7 +663,7 @@ impl BunTestRoot {
     }
 
     pub(crate) fn get_active_file_unless_in_preload(&mut self, vm: &VirtualMachine) -> Option<&mut BunTest> {
-        if vm.is_in_preload {
+        if vm.is_in_preload.get() {
             return None;
         }
         // SAFETY: single-threaded; caller (js_fns::generic_hook) holds the only
@@ -982,11 +982,11 @@ impl BunTest {
                 // and `on_before_exit()` doesn't drain the event loop of a file that failed.
                 this.add_result(*entry);
                 Self::run_next_tick(&Rc::downgrade(&strong), global_this, *entry);
-                global_this.bun_vm().as_mut().unhandled_error_counter += 1;
+                global_this.bun_vm().unhandled_error_counter.update(|n| n + 1);
                 return;
             }
         }
-        let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, error, false);
+        let _ = global_this.bun_vm().uncaught_exception(global_this, error, false);
     }
 
     pub(crate) fn bun_test_done_callback(
@@ -1071,7 +1071,7 @@ impl BunTest {
     }
 
     pub(crate) fn run_next_tick(weak: &BunTestPtrWeak, global_this: &JSGlobalObject, phase: RefDataValue) {
-        let vm = global_this.bun_vm().as_mut();
+        let vm = global_this.bun_vm();
         // Check liveness before allocating so the early return doesn't strand a Box.
         let Some(strong) = weak.upgrade() else {
             debug_assert!(false); // shouldn't be calling runNextTick after moving on to the next file
@@ -1362,7 +1362,7 @@ impl BunTest {
         let result: JSValue = match vm
             .event_loop()
             .run_callback_with_result_and_forcefully_drain_microtasks(
-                vm.test_isolation_state.file_context,
+                vm.test_isolation_state.file_context.get(),
                 cfg_callback,
                 global_this,
                 JSValue::UNDEFINED,
@@ -1397,9 +1397,9 @@ impl BunTest {
                 }
             }
 
-            let prev_unhandled_count = vm.unhandled_error_counter;
+            let prev_unhandled_count = vm.unhandled_error_counter.get();
             let _ = global_this.handle_rejected_promises();
-            if vm.unhandled_error_counter == prev_unhandled_count {
+            if vm.unhandled_error_counter.get() == prev_unhandled_count {
                 break;
             }
         }
@@ -1571,7 +1571,7 @@ impl BunTest {
         if let (Phase::Execution, Some(thrown)) = (self.phase, exception)
             && let Err(err) = self.execution.record_error(global_this, user_data, thrown)
         {
-            global_this.bun_vm().as_mut().run_error_handler(global_this.take_exception(err), None);
+            global_this.bun_vm().run_error_handler(global_this.take_exception(err), None);
         }
 
         if handle_status == HandleUncaughtExceptionResult::HideError {
@@ -1623,16 +1623,15 @@ impl BunTest {
             Output::flush();
         }
 
-        let vm = global_this.bun_vm().as_mut();
+        let vm = global_this.bun_vm();
         if !failure_ctx.is_null() {
-            vm.on_print_error_zig_exception =
-                Some(crate::cli::test_command::TestFailure::record_cb);
-            vm.on_print_error_zig_exception_ctx = failure_ctx;
+            vm.on_print_error_zig_exception.set(Some(crate::cli::test_command::TestFailure::record_cb));
+            vm.on_print_error_zig_exception_ctx.set(failure_ctx);
         }
         print_error(vm, global_this, exception, None);
         if !failure_ctx.is_null() {
-            vm.on_print_error_zig_exception = None;
-            vm.on_print_error_zig_exception_ctx = core::ptr::null_mut();
+            vm.on_print_error_zig_exception.set(None);
+            vm.on_print_error_zig_exception_ctx.set(core::ptr::null_mut());
             // SAFETY: `failure_ctx` is one of the two `Option<TestFailure>` above, and the callback is done with it.
             let slot: &mut Option<crate::cli::test_command::TestFailure> =
                 unsafe { &mut *failure_ctx.cast() };
@@ -1687,7 +1686,7 @@ impl Drop for OnStack {
 
 /// Prints `error`, then prints any exception the error's getters or `toString` threw during the print.
 pub(crate) fn print_error(
-    vm: &mut VirtualMachine,
+    vm: &VirtualMachine,
     global_this: &JSGlobalObject,
     error: JSValue,
     exception_list: Option<&mut bun_jsc::virtual_machine::ExceptionList>,

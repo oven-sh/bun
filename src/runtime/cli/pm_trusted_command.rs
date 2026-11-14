@@ -689,7 +689,7 @@ impl TrustCommand {
             .pwrite_all(new_package_json_contents, 0)
             .map_err(crate::Error::from)?;
         let _ = bun_sys::ftruncate(root_file.handle, new_package_json_contents.len() as i64);
-        let _ = root_file.close();
+        drop(root_file);
 
         if total_scripts_ran > 0 {
             bun_core::pretty!(

@@ -224,7 +224,7 @@ impl YesTask {
                     owner.enqueue_task_after_yield(bun_jsc::Task::init(this));
                 }
                 EventLoopHandle::Mini(mini) => {
-                    (*mini.loop_).tick();
+                    mini.loop_.tick();
                     let at =
                         core::ptr::NonNull::new_unchecked(match &mut (*this).concurrent_task {
                             EventLoopTask::Mini(at) => {

@@ -53,7 +53,6 @@ use bun_http_jsc::method_jsc;
 use bun_http_types::Method::Method;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{HTTPHeaderName, StringJsc as _, SysErrorJsc as _, URLJsc as _};
-use bun_sys::FdExt as _;
 // `FromJsEnum for FetchRedirect` lives in bun_http_jsc; importing the impl crate
 // brings the trait impl into scope for `JSValue::get_optional_enum::<FetchRedirect>`.
 use crate::node;
@@ -137,8 +136,8 @@ fn s3_credentials_for_fetch(global_this: &JSGlobalObject) -> bun_s3_signing::S3C
     s3_credentials_from_env(
         global_this
             .bun_vm()
-            .as_mut()
             .transpiler
+            .get()
             .env_mut()
             .get_s3_credentials(),
     )
@@ -383,9 +382,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     jsc::mark_binding();
     let global_this = ctx;
     bun_core::analytics::Features::FETCH.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-    // SAFETY: `VirtualMachine::get()` returns the live thread-local VM pointer; it
-    // outlives this call frame.
-    let vm = VirtualMachine::get().as_mut();
+    let vm = VirtualMachine::get();
 
     let mut upgraded_connection = false;
     let mut forced_protocol: Option<http::Protocol> = None;
@@ -1342,10 +1339,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 #[cfg(not(windows))]
                 let cwd = bun_resolver::fs::FileSystem::get().top_level_dir();
 
-                // SAFETY: bun_vm() returns the live thread-local VM pointer.
                 // Relative to the folder of the entry module, or to the working directory when there
                 // is none (`bun bake`).
-                let parts: &[&[u8]] = match global_this.bun_vm().as_mut().main() {
+                let parts: &[&[u8]] = match vm.main() {
                     Some(main) => &[main, b"../", url_path_decoded],
                     None => &[url_path_decoded],
                 };
@@ -1582,13 +1578,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
             }
 
-            // The sendfile path above moves `opened_fd` into `SendFile` (which
-            // owns its lifecycle and breaks out of `'prepare_body`). On this
-            // read-file path we are the sole owner of the fresh fd: `read_file`
-            // is handed it as an `Fd` and never takes ownership. Wrap it in an
-            // RAII guard so any future early return between here and the read
-            // can't leak it.
-            let opened_fd = scopeguard::guard(opened_fd, |fd| fd.close());
+            // Only the sendfile path above hands `opened_fd` on.
+            let opened_file = bun_sys::File::from_fd(opened_fd);
 
             // TODO: make this async + lazy
             let blob_offset = body.any_blob().blob().offset.get();
@@ -1600,14 +1591,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // `ReadFile` has `Drop`; can't use FRU `..Default::default()`.
             let mut rf_args = node::fs::args::ReadFile::default();
             rf_args.encoding = Encoding::Buffer;
-            rf_args.path = PathOrFileDescriptor::Fd(*opened_fd);
+            rf_args.path = PathOrFileDescriptor::Fd(opened_file.fd());
             rf_args.offset = blob_offset;
             rf_args.max_size = Some(blob_size);
             let res = node_fs.read_file(&rf_args, node::fs::Flavor::Sync);
 
-            // Eagerly close before constructing the (potentially large) JS
-            // result. Dropping the guard runs the close exactly once.
-            drop(opened_fd);
+            // Eagerly close before constructing the (potentially large) JS result.
+            drop(opened_file);
 
             match res {
                 Err(err) => {

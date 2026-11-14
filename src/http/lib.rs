@@ -3054,6 +3054,16 @@ impl<'a> HTTPClient<'a> {
         count
     }
 
+    /// Call after each write that advances `request_sent_len` through `head`.
+    fn hold_partial_request_head(&mut self, head: &[u8]) {
+        let held = &mut self.state.partial_request_head;
+        if self.state.request_sent_len >= head.len() {
+            *held = Vec::new();
+        } else if held.is_empty() {
+            held.extend_from_slice(head);
+        }
+    }
+
     // This exists as a separate function to reduce the amount of time the request body buffer is kept around.
     #[inline(never)]
     fn send_initial_request_payload<const IS_FIRST_CALL: bool, const IS_SSL: bool>(
@@ -3064,25 +3074,31 @@ impl<'a> HTTPClient<'a> {
 
         let mut temporary_send_buffer = self.get_request_body_send_buffer();
 
-        let writer = &mut temporary_send_buffer; // Vec<u8> impls bun_io::Write
-
-        let request = self.build_request(self.body_len_for_send());
-
-        if self.http_proxy.is_some() {
-            if self.url.is_https() {
-                bun_core::scoped_log!(fetch, "start proxy tunneling (https proxy)");
-                // DO the tunneling!
-                self.flags.proxy_tunneling = true;
-                write_proxy_connect(writer, self)?;
-            } else {
-                bun_core::scoped_log!(fetch, "start proxy request (http proxy)");
-                // HTTP do not need tunneling with CONNECT just a slightly different version of the request
-                write_proxy_request(writer, &request, self)?;
-            }
+        let mut rendered = None;
+        if !self.state.partial_request_head.is_empty() {
+            temporary_send_buffer.extend_from_slice(&self.state.partial_request_head);
         } else {
-            bun_core::scoped_log!(fetch, "normal request");
-            validate_request_target(self.url.host)?;
-            write_request(writer, &request)?;
+            let writer = &mut temporary_send_buffer; // Vec<u8> impls bun_io::Write
+
+            let request = self.build_request(self.body_len_for_send());
+
+            if self.http_proxy.is_some() {
+                if self.url.is_https() {
+                    bun_core::scoped_log!(fetch, "start proxy tunneling (https proxy)");
+                    // DO the tunneling!
+                    self.flags.proxy_tunneling = true;
+                    write_proxy_connect(writer, self)?;
+                } else {
+                    bun_core::scoped_log!(fetch, "start proxy request (http proxy)");
+                    // HTTP do not need tunneling with CONNECT just a slightly different version of the request
+                    write_proxy_request(writer, &request, self)?;
+                }
+            } else {
+                bun_core::scoped_log!(fetch, "normal request");
+                validate_request_target(self.url.host)?;
+                write_request(writer, &request)?;
+            }
+            rendered = Some(request);
         }
 
         let headers_len = temporary_send_buffer.len();
@@ -3108,6 +3124,8 @@ impl<'a> HTTPClient<'a> {
             return Err(crate::Error::ConnectionClosed);
         }
         let amount = write_to_socket::<IS_SSL>(socket, to_send)?;
+        self.state.request_sent_len += amount;
+        self.hold_partial_request_head(&temporary_send_buffer[..headers_len]);
         if IS_FIRST_CALL {
             if amount == 0 {
                 // don't worry about it
@@ -3120,10 +3138,10 @@ impl<'a> HTTPClient<'a> {
             }
         }
 
-        self.state.request_sent_len += amount;
         let has_sent_headers = self.state.request_sent_len >= headers_len;
 
         if has_sent_headers && self.verbose != HTTPVerboseLevel::None {
+            let request = rendered.unwrap_or_else(|| self.build_request(self.body_len_for_send()));
             print_request(
                 Protocol::Http1_1,
                 &request,
@@ -3566,12 +3584,14 @@ impl<'a> HTTPClient<'a> {
                         return;
                     }
                     let mut temporary_send_buffer: Vec<u8> = Vec::with_capacity(16 * 1024);
-                    let writer = &mut temporary_send_buffer;
-
-                    let request = self.build_request(self.body_len_for_send());
-                    if let Err(e) = write_request(writer, &request) {
-                        self.close_and_fail::<IS_SSL>(e, socket);
-                        return;
+                    if !self.state.partial_request_head.is_empty() {
+                        temporary_send_buffer.extend_from_slice(&self.state.partial_request_head);
+                    } else {
+                        let request = self.build_request(self.body_len_for_send());
+                        if let Err(e) = write_request(&mut temporary_send_buffer, &request) {
+                            self.close_and_fail::<IS_SSL>(e, socket);
+                            return;
+                        }
                     }
 
                     let headers_len = temporary_send_buffer.len();
@@ -3610,6 +3630,7 @@ impl<'a> HTTPClient<'a> {
 
                     self.state.request_sent_len += amount;
                     let has_sent_headers = self.state.request_sent_len >= headers_len;
+                    self.hold_partial_request_head(&temporary_send_buffer[..headers_len]);
 
                     if has_sent_headers && !self.request_body().is_empty() {
                         self.state.request_body = bun_ptr::RawSlice::new(

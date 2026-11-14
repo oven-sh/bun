@@ -1254,7 +1254,7 @@ pub fn write_json_string<W: Write + ?Sized, const ENCODING: Encoding>(
 pub struct SourceMapHandler<'a> {
     pub(crate) ctx: NonNull<()>,
     pub(crate) callback: fn(*mut (), SourceMap::Chunk, &bun_ast::Source) -> crate::Result<()>,
-    _marker: core::marker::PhantomData<&'a mut ()>,
+    _marker: core::marker::PhantomData<&'a ()>,
 }
 
 /// PORTING.md §Dispatch — manual vtable. Rust cannot bake a *runtime* fn pointer
@@ -1262,19 +1262,19 @@ pub struct SourceMapHandler<'a> {
 /// and the thunk is monomorphized over `T: OnSourceMapChunk`.
 pub trait OnSourceMapChunk {
     fn on_source_map_chunk(
-        &mut self,
+        &self,
         chunk: SourceMap::Chunk,
         source: &bun_ast::Source,
     ) -> crate::Result<()>;
 }
 
-impl OnSourceMapChunk for Option<SourceMap::Chunk> {
+impl OnSourceMapChunk for core::cell::Cell<Option<SourceMap::Chunk>> {
     fn on_source_map_chunk(
-        &mut self,
+        &self,
         chunk: SourceMap::Chunk,
         _: &bun_ast::Source,
     ) -> crate::Result<()> {
-        *self = Some(chunk);
+        self.set(Some(chunk));
         Ok(())
     }
 }
@@ -1288,16 +1288,15 @@ impl<'a> SourceMapHandler<'a> {
         (self.callback)(self.ctx.as_ptr(), chunk, source)
     }
 
-    pub fn for_<T: OnSourceMapChunk>(ctx: &'a mut T) -> SourceMapHandler<'a> {
+    pub fn for_<T: OnSourceMapChunk>(ctx: &'a T) -> SourceMapHandler<'a> {
         // Monomorphized erased thunk: cast `*mut ()` back to `*mut T` and forward to the trait.
         fn thunk<T: OnSourceMapChunk>(
             p: *mut (),
             chunk: SourceMap::Chunk,
             source: &bun_ast::Source,
         ) -> crate::Result<()> {
-            // SAFETY: `p` was constructed from `&'a mut T` in `for_` below; the `'a` lifetime
-            // on `SourceMapHandler` ties the handler's lifetime to the borrow, so `p` is a
-            // valid, exclusive `*mut T` for as long as the handler exists.
+            // SAFETY: `p` was constructed from `&'a T` in `for_` below; the `'a` lifetime
+            // on `SourceMapHandler` ties the handler's lifetime to the borrow.
             unsafe { (*p.cast::<T>()).on_source_map_chunk(chunk, source) }
         }
         SourceMapHandler {

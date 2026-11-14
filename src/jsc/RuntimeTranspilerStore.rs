@@ -39,6 +39,7 @@ use crate::runtime_transpiler_cache::{
     Entry as CacheEntry, ModuleType as CacheModuleType,
     RuntimeTranspilerCache as JscRuntimeTranspilerCache,
 };
+use crate::saved_source_map::SavedSourceMap;
 use crate::strong::Optional as StrongOptional;
 use crate::virtual_machine::{SourceMapHandlerGetter, VirtualMachine};
 use crate::{JSGlobalObject, JSInternalPromise, JSValue, JsResult, ResolvedSource};
@@ -55,18 +56,12 @@ bun_core::declare_scope!(RuntimeTranspilerStore, hidden);
 // Debug source dumping (debug-only helpers; no-ops in release)
 // ──────────────────────────────────────────────────────────────────────────
 
-// Note: takes `NonNull<VirtualMachine>` (not `&mut`) — these are called
-// from the transpiler worker thread while the JS thread is concurrently live on
-// the same VM, so a `&mut VirtualMachine` would be a data race AND would alias
-// the caller's `&mut TranspilerJob` (which is stored inside
-// `vm.transpiler_store`). Only the `source_mappings` leaf field is touched,
-// under its own internal lock.
-fn dump_source(vm: NonNull<VirtualMachine>, specifier: &[u8], printer: &BufferPrinter) {
-    dump_source_string(vm, specifier, printer.ctx.get_written());
+fn dump_source(maps: &SavedSourceMap, specifier: &[u8], printer: &BufferPrinter) {
+    dump_source_string(maps, specifier, printer.ctx.get_written());
 }
 
-pub(crate) fn dump_source_string(vm: NonNull<VirtualMachine>, specifier: &[u8], written: &[u8]) {
-    if let Err(e) = dump_source_string_failiable(vm, specifier, written) {
+pub(crate) fn dump_source_string(maps: &SavedSourceMap, specifier: &[u8], written: &[u8]) {
+    if let Err(e) = dump_source_string_failiable(maps, specifier, written) {
         bun_core::debug_warn!("Failed to dump source string: {}", e.name());
     }
 }
@@ -77,7 +72,7 @@ pub(crate) fn dump_source_string(vm: NonNull<VirtualMachine>, specifier: &[u8], 
 static BUN_DEBUG_HOLDER: Guarded<Option<Dir>> = Guarded::new(None);
 
 fn dump_source_string_failiable(
-    vm: NonNull<VirtualMachine>,
+    maps: &SavedSourceMap,
     specifier: &[u8],
     written: &[u8],
 ) -> crate::CrateResult<()> {
@@ -131,10 +126,7 @@ fn dump_source_string_failiable(
             return Ok(());
         }
 
-        // SAFETY: `vm` outlives this debug-only call (BACKREF — VM owns the
-        // transpiler store); only the `source_mappings` leaf field is borrowed,
-        // and `SavedSourceMap::get` takes its own internal mutex.
-        if let Some(mappings) = unsafe { (*vm.as_ptr()).source_mappings.get(specifier) } {
+        if let Some(mappings) = maps.get(specifier) {
             // `defer mappings.deref()` → Arc::drop.
             let mut map_path = Vec::with_capacity(base.len() + b".map".len());
             map_path.extend_from_slice(base);
@@ -199,11 +191,11 @@ pub fn set_break_point_on_first_line() -> bool {
 pub struct RuntimeTranspilerStore {
     pub(crate) generation_number: AtomicU32,
     pub(crate) store: TranspilerJobStore,
-    pub enabled: bool,
+    pub enabled: Cell<bool>,
     pub(crate) queue: Queue,
     /// JS thread only.
-    pub jobs_scheduled: u64,
-    pub jobs_completed: u64,
+    pub jobs_scheduled: Cell<u64>,
+    pub jobs_completed: Cell<u64>,
 }
 
 pub type Queue = UnboundedQueue<TranspilerJob>;
@@ -213,10 +205,10 @@ impl Default for RuntimeTranspilerStore {
         Self {
             generation_number: AtomicU32::new(0),
             store: TranspilerJobStore::init(),
-            enabled: true,
+            enabled: Cell::new(true),
             queue: Queue::new(),
-            jobs_scheduled: 0,
-            jobs_completed: 0,
+            jobs_scheduled: Cell::new(0),
+            jobs_completed: Cell::new(0),
         }
     }
 }
@@ -244,7 +236,7 @@ impl RuntimeTranspilerStore {
     /// run release their source, log and module promise here instead. Queued ⇒
     /// the pool thread's last touch of the slot was the push (its ticket was
     /// moved out first), so the slot is this thread's again.
-    pub fn release_queued_jobs_for_teardown(&mut self) {
+    pub fn release_queued_jobs_for_teardown(&self) {
         let batch = self.queue.pop_batch();
         let mut iter = batch.iterator();
         loop {
@@ -267,11 +259,8 @@ impl RuntimeTranspilerStore {
     /// folded here and the drain goes on; the VM's termination ends it, with
     /// the rest of the batch back on the queue (each still has its own posted
     /// task, or the teardown release, to pick it up).
-    // Note: takes `NonNull` rather than `&mut` for `vm`
-    // because `&mut self` already aliases `vm.transpiler_store` (this `Self` is
-    // a field of `VirtualMachine`). Field-level derefs only.
     pub fn run_from_js_thread(
-        &mut self,
+        &self,
         event_loop: &EventLoop,
         global: &JSGlobalObject,
         vm: NonNull<VirtualMachine>,
@@ -294,7 +283,7 @@ impl RuntimeTranspilerStore {
             first = false;
             // SAFETY: `job` is a live job popped from the intrusive queue.
             let fulfilled = unsafe { (*job).run_from_js_thread() };
-            self.jobs_completed += 1;
+            self.jobs_completed.update(|n| n + 1);
             job = iter.next();
             if let Err(err) = fulfilled {
                 if crate::task::report_error_or_terminate(global, err).is_err() {
@@ -309,7 +298,7 @@ impl RuntimeTranspilerStore {
     /// Put `job` and the rest of a popped batch back: each still has its posted
     /// task (or the teardown release) to pick it up.
     fn requeue(
-        &mut self,
+        &self,
         mut job: *mut TranspilerJob,
         iter: &mut unbounded_queue::BatchIterator<TranspilerJob>,
     ) {
@@ -320,8 +309,8 @@ impl RuntimeTranspilerStore {
     }
 
     pub fn transpile(
-        &mut self,
-        vm: *mut VirtualMachine,
+        &self,
+        vm: &VirtualMachine,
         global_object: &JSGlobalObject,
         input_specifier: String,
         path: &Fs::Path<'_>,
@@ -393,7 +382,7 @@ impl RuntimeTranspilerStore {
                 <&'static str>::from(loader)
             );
         }
-        self.jobs_scheduled += 1;
+        self.jobs_scheduled.update(|n| n + 1);
         // SAFETY: job fully initialized above
         unsafe { (*job).schedule() };
         promise.cast::<c_void>()
@@ -429,7 +418,7 @@ pub struct TranspilerJob {
     // Note: struct is stored in a HiveArray and crosses to a worker thread;
     // raw pointers/BackRefs are used (BACKREF — VM owns the
     // store and outlives every job).
-    pub(crate) vm: *mut VirtualMachine,
+    pub(crate) vm: *const VirtualMachine,
     /// Held from `schedule` until the pool thread has dispatched the job back:
     /// the job's own slot, the transpiler it copies and the store queue it
     /// pushes to are all VM-owned, and the VM's teardown waits for the ticket.
@@ -501,7 +490,7 @@ impl TranspilerJob {
     /// `ResolvedSource`, `Log`, `StrongOptional` — are torn down
     /// *there*, not here. This function handles only the teardown that field
     /// drop glue does **not** cover: `poll_ref.disable()`.
-    fn reset_for_pool(&mut self) {
+    fn reset_for_pool(&self) {
         self.poll_ref.disable();
         // Fields with Drop glue are handled by `store.put()` →
         // `drop_in_place`; do NOT `take()` them here (would drop the empty
@@ -513,20 +502,20 @@ impl TranspilerJob {
     fn dispatch_to_main_thread(&mut self, ticket: &crate::Ticket) {
         let vm = self.vm;
         // SAFETY: the VM outlives the ticket (it owns the store).
-        let transpiler_store: *mut RuntimeTranspilerStore =
-            unsafe { ptr::addr_of_mut!((*vm).transpiler_store) };
+        let transpiler_store = unsafe { &raw const (*vm).transpiler_store };
         let job = NonNull::from(&mut *self);
         // SAFETY: queue is concurrent-safe (UnboundedQueue uses atomics).
         unsafe { (*transpiler_store).queue.push(job) };
-        ticket.post(ConcurrentTask::create_from(transpiler_store));
+        ticket.post(ConcurrentTask::create_from(transpiler_store.cast_mut()));
     }
 
     fn run_from_js_thread(&mut self) -> JsResult<()> {
-        let vm = self.vm;
+        // SAFETY: the VM outlives the job, and this is its thread.
+        let vm = unsafe { &*self.vm };
         let promise = self.promise.swap();
         let module_loader = self.module_loader.swap();
         // Copy the BackRef out (it is `Copy`) so the borrow of `*self` ends
-        // before `reset_for_pool`/`put` need `&mut *self` below; deref at the
+        // before `put` needs `&mut *self` below; deref at the
         // `fulfill` call site instead.
         let global_this = self.global_this;
         // Note: the KeepAlive takes an `EventLoopCtx`
@@ -536,9 +525,8 @@ impl TranspilerJob {
         let referrer = core::mem::take(&mut self.non_threadsafe_referrer);
         let mut log = core::mem::replace(&mut self.log, bun_ast::Log::init());
         let loader = self.loader;
-        // SAFETY: JS thread; leaf scalar field read on the VM that owns this job.
         let calls_macro = self.has_plugins
-            && !unsafe { (*vm).transpiler.options.no_macros }
+            && !vm.transpiler.get().options.no_macros
             && log
                 .msgs
                 .iter()
@@ -555,8 +543,7 @@ impl TranspilerJob {
                 debug_assert!(resolved_source.source_url.is_empty());
                 resolved_source.source_url = out.create_if_different(&self.path_text);
                 // A job reads a file: `Bun__transpileFile` gives it no blob and no plugin's text.
-                // SAFETY: vm outlives the job, and this is its thread. One field: `self` is in `vm.transpiler_store`.
-                let in_standalone_executable = unsafe { (*vm).standalone_module_graph.is_some() };
+                let in_standalone_executable = vm.standalone_module_graph.is_some();
                 resolved_source.is_static = VirtualMachine::is_file_on_disk_static(
                     in_standalone_executable,
                     &self.path_text,
@@ -569,10 +556,9 @@ impl TranspilerJob {
         self.module_loader.deinit();
         self.reset_for_pool();
 
-        // SAFETY: vm outlives the job; transpiler_store.store.put recycles the slot.
+        // SAFETY: `self` came from this store and is not used again.
         unsafe {
-            (*vm)
-                .transpiler_store
+            vm.transpiler_store
                 .store
                 .put(std::ptr::from_mut::<TranspilerJob>(self))
         };
@@ -580,8 +566,7 @@ impl TranspilerJob {
         if calls_macro {
             log = bun_ast::Log::init();
             result = VirtualMachine::fetch_without_on_load_plugins(
-                // SAFETY: JS thread; the job's slot, which is inside the VM, was given back above.
-                unsafe { &mut *vm },
+                vm,
                 &global_this,
                 &specifier,
                 &referrer,
@@ -655,15 +640,12 @@ impl TranspilerJob {
         let this: &mut TranspilerJob = &mut job;
 
         // SAFETY contract: `vm` outlives the job (BACKREF — VM owns the store).
-        // Note: kept as a raw pointer — never form `&mut VirtualMachine`
-        // here. (a) the JS thread is concurrently live on the same VM, so a
-        // `&mut` would be a data race; (b) `self` is stored *inside*
-        // `(*vm).transpiler_store.store` (HiveArray inline slot), so a
-        // `&mut VirtualMachine` would retag `self`'s memory and every
-        // subsequent `this.* = …` write would be Stacked-Borrows UB. All
-        // accesses below dereference per-field via `(*vm).field` (place
-        // expressions / leaf-field borrows) only.
-        let vm: *mut VirtualMachine = this.vm;
+        // A raw pointer, because the JS thread is live on the same VM.
+        let vm: *const VirtualMachine = this.vm;
+        // SAFETY: a leaf field, which takes its own lock.
+        let source_mappings = unsafe { &(*vm).source_mappings };
+        // SAFETY: leaf-field read. Only the fields that are not cells are read through it.
+        let debugger = || unsafe { (*vm).debugger.get() };
 
         // SAFETY: `vm` is the live owning VM (BACKREF — see note above);
         // atomic load on a leaf field, no `&VirtualMachine` formed.
@@ -708,13 +690,13 @@ impl TranspilerJob {
         // The whole Transpiler is copied by value here.
         // `Transpiler<'static>` is not `Clone` (it holds raw self-referential pointers); we do
         // a bytewise copy. SAFETY: `vm.transpiler` is read via
-        // `addr_of!` (no `&VirtualMachine` formed); every internal raw pointer in the copy
+        // a raw pointer; every internal raw pointer in the copy
         // still targets memory owned by `vm.transpiler` (resolver caches, define, env) which
         // outlives this stack frame; `vm.transpiler` is not concurrently mutated.
         // The by-value copy must not be deinitialized; `ManuallyDrop` suppresses Drop so owned
         // fields aren't double-freed against `vm.transpiler`.
         let mut transpiler_storage =
-            core::mem::ManuallyDrop::new(unsafe { ptr::read(ptr::addr_of!((*vm).transpiler)) });
+            core::mem::ManuallyDrop::new(unsafe { ptr::read((*vm).transpiler.as_ptr()) });
         let transpiler: &mut Transpiler<'_> = &mut transpiler_storage;
         transpiler.set_arena(&arena);
         transpiler.set_log(&raw mut *log_clone_guard.1);
@@ -754,7 +736,7 @@ impl TranspilerJob {
         // holds for this transpile job's duration). Raw `(*vm)` field
         // projection avoids forming `&VirtualMachine` per the `vm` note.
         let import_watcher: Option<bun_ptr::ParentRef<ImportWatcher, bun_ptr::Mut>> =
-            unsafe { bun_ptr::ParentRef::from_nullable_mut((*vm).bun_watcher.cast()) };
+            unsafe { bun_ptr::ParentRef::from_nullable_mut((*vm).bun_watcher.get().cast()) };
         if let Some(iw) = import_watcher {
             // Never read through the watchlist's stored fd; see
             // `ImportWatcher::snapshot_package_json`.
@@ -765,21 +747,17 @@ impl TranspilerJob {
         let is_node_override = strings::has_prefix_comptime(specifier, node_fallbacks::IMPORT_PATH);
 
         // SAFETY: leaf scalar field read on `*vm`; see `vm` note above.
-        let macro_remappings = if !unsafe { (*vm).has_any_macro_remappings } || is_node_override {
-            MacroRemap::default()
-        } else {
-            // Note: `MacroRemap` (StringArrayHashMap of StringArrayHashMap)
-            // has no nested `Clone` impl (the inherent `clone()` requires
-            // `V: Clone`). Re-key shallowly here
-            // matching the build-command conversion (transpiler.rs:2616).
-            // OOM during the
-            // inner `clone()` must abort — never silently drop a remapping.
-            let mut m = MacroRemap::default();
-            for (k, v) in transpiler.options.macro_remap.iter() {
-                m.insert(k, bun_core::handle_oom(v.clone()));
-            }
-            m
-        };
+        let macro_remappings =
+            if !unsafe { (*vm).has_any_macro_remappings.get() } || is_node_override {
+                MacroRemap::default()
+            } else {
+                // The inner maps have only a fallible `clone()`.
+                let mut m = MacroRemap::default();
+                for (k, v) in transpiler.options.macro_remap.iter() {
+                    m.insert(k, bun_core::handle_oom(v.clone()));
+                }
+                m
+            };
 
         // Only
         // initialised on the `is_node_override` branch and only read through
@@ -797,7 +775,7 @@ impl TranspilerJob {
         });
 
         // SAFETY: leaf scalar field reads on `*vm`; see `vm` note above.
-        let (vm_main, vm_main_hash) = unsafe { ((*vm).main(), (*vm).main_hash) };
+        let (vm_main, vm_main_hash) = unsafe { ((*vm).main(), (*vm).main_hash.get()) };
         let is_main = vm_main.is_some_and(|vm_main| {
             vm_main.len() == path.text.len()
                 && vm_main_hash == hash
@@ -829,11 +807,8 @@ impl TranspilerJob {
             allow_commonjs: true,
             inject_jest_globals: transpiler.options.rewrite_jest_for_tests,
             is_test_entry_point: false,
-            // SAFETY: leaf-field `&` borrow on `*vm.debugger`; see `vm` note above.
-            set_breakpoint_on_first_line: unsafe { &(*vm).debugger }
-                .as_ref()
-                .map(|d| d.set_breakpoint_on_first_line)
-                .unwrap_or(false)
+            set_breakpoint_on_first_line: debugger()
+                .is_some_and(|d| d.set_breakpoint_on_first_line)
                 && is_main
                 && set_break_point_on_first_line(),
             runtime_transpiler_cache: if !JscRuntimeTranspilerCache::is_disabled() {
@@ -843,7 +818,7 @@ impl TranspilerJob {
             },
             // SAFETY: leaf-field read on `*vm.module_loader`; see `vm` note above.
             remove_cjs_module_wrapper: is_main
-                && unsafe { (*vm).module_loader.eval_source.is_some() },
+                && unsafe { (*vm).module_loader.eval_source.get().is_some() },
             module_type,
             keep_json_and_toml_as_one_statement: false,
             allow_bytecode_cache: true,
@@ -920,7 +895,7 @@ impl TranspilerJob {
         // SAFETY: leaf scalar field read; see `vm` note above. Inlined
         // `VirtualMachine::use_isolation_source_provider_cache` to avoid forming
         // `&VirtualMachine`.
-        let use_isolation_source_provider_cache = unsafe { (*vm).test_isolation_enabled }
+        let use_isolation_source_provider_cache = unsafe { (*vm).test_isolation_enabled.get() }
             && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE::get()
                 .unwrap_or(false);
 
@@ -930,9 +905,7 @@ impl TranspilerJob {
             let mut entry: Box<CacheEntry> =
                 unsafe { bun_core::heap::take(entry_ptr.cast::<CacheEntry>()) };
 
-            // SAFETY: leaf-field `&mut` borrow on `*vm.source_mappings`;
-            // `SavedSourceMap` takes its own internal mutex.
-            let _ = unsafe { &mut (*vm).source_mappings }.put_mappings(
+            let _ = source_mappings.put_mappings(
                 &parse_result.source,
                 MutableString {
                     list: core::mem::take(&mut entry.sourcemap).into_vec(),
@@ -940,9 +913,7 @@ impl TranspilerJob {
             );
 
             if bun_core::env::DUMP_SOURCE {
-                // SAFETY: `vm` is the live owning VM (BACKREF — see `vm` note above).
-                let vm = unsafe { NonNull::new_unchecked(vm) };
-                dump_source_string(vm, specifier, entry.output_code.byte_slice());
+                dump_source_string(source_mappings, specifier, entry.output_code.byte_slice());
             }
 
             let module_info = if use_isolation_source_provider_cache
@@ -1049,11 +1020,11 @@ impl TranspilerJob {
         }
 
         let print_result = {
-            // SAFETY: see `vm` note above — `from_raw` stores `vm` as a raw
-            // pointer and only borrows leaf fields (`source_mappings`, `debugger`)
-            // inside `get()`. No `&mut VirtualMachine` is ever formed.
-            let mut mapper =
-                unsafe { SourceMapHandlerGetter::from_raw(vm, &raw mut *source_code_printer) };
+            let mapper = SourceMapHandlerGetter::new(
+                source_mappings,
+                debugger(),
+                &raw mut *source_code_printer,
+            );
             transpiler.print_with_source_map(
                 // Same per-call `arena` that `transpiler.set_arena(&arena)`
                 // and `parse_options.arena` used to build `parse_result.ast`.
@@ -1072,9 +1043,7 @@ impl TranspilerJob {
         }
 
         if bun_core::env::DUMP_SOURCE {
-            // SAFETY: `vm` is the live owning VM (BACKREF — see `vm` note above).
-            let vm = unsafe { NonNull::new_unchecked(vm) };
-            dump_source(vm, specifier, source_code_printer);
+            dump_source(source_mappings, specifier, source_code_printer);
         }
 
         let source_code = 'brk: {

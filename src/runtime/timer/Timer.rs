@@ -338,9 +338,9 @@ impl All {
     ) -> JsResult<()> {
         bun_jsc::mark_binding!();
 
-        let vm = global_this.bun_vm_ptr();
+        let vm = global_this.bun_vm();
         // `clearTimeout` / `clearInterval` / `clearImmediate`, C++ host functions, call this.
-        let context = global_this.bun_vm().context_of_caller();
+        let context = vm.context_of_caller();
         let all = timer_all();
 
         let timer: &TimerObjectInternals = 'brk: {
@@ -351,7 +351,7 @@ impl All {
                     return Ok(());
                 };
                 // Immediates don't have numeric IDs in Node.js so we only have to look up timeouts and intervals
-                let Some(t) = all.remove_timer_by_id(global_this.bun_vm(), context, id) else {
+                let Some(t) = all.remove_timer_by_id(vm, context, id) else {
                     return Ok(());
                 };
                 // SAFETY: t is a valid TimeoutObject pointer
@@ -411,7 +411,7 @@ impl All {
                 if parsed > Self::MAX_ID {
                     return Ok(());
                 }
-                let Some(t) = all.remove_timer_by_id(global_this.bun_vm(), context, parsed) else {
+                let Some(t) = all.remove_timer_by_id(vm, context, parsed) else {
                     return Ok(());
                 };
                 // SAFETY: t is a valid TimeoutObject pointer
@@ -481,7 +481,7 @@ impl DateHeaderTimer {
         if elapsed >= 1000 {
             // Update the date immediately since it's stale
             // updateDate() is an expensive function.
-            vm.uws_loop_ref().update_date();
+            vm.uws_loop().update_date();
 
             self.event_loop_timer.next.set(now.add_ms(1000));
         }

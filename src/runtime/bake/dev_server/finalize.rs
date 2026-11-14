@@ -705,9 +705,7 @@ fn finalize_bundle_inner(
                 Err(err) => {
                     // JavaScriptCore can refuse text that Bun's parser takes, such as `/(/`. The error is printed,
                     // the module stays as it was, and the others of the chunk are loaded without it.
-                    // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime;
-                    // `print_error_like_object_to_console` needs `&mut`.
-                    dev.vm_mut()
+                    dev.vm()
                         .print_error_like_object_to_console(global.take_exception(err));
                     if !leave_out_refused_modules(dev) {
                         break 'load;
@@ -715,8 +713,7 @@ fn finalize_bundle_inner(
                     match load_server_chunk(dev)? {
                         Ok(modules) => modules,
                         Err(err) => {
-                            // SAFETY: as above.
-                            dev.vm_mut()
+                            dev.vm()
                                 .print_error_like_object_to_console(global.take_exception(err));
                             break 'load;
                         }
@@ -740,8 +737,7 @@ fn finalize_bundle_inner(
             ) {
                 Ok(v) => v,
                 Err(err) => {
-                    // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
-                    dev.vm_mut()
+                    dev.vm()
                         .print_error_like_object_to_console(global.take_exception(err));
                     break 'load;
                 }
@@ -1060,14 +1056,8 @@ fn finalize_bundle_inner(
             let rb = dev.route_bundle_ptr(req.route_bundle_index);
             rb.server_state = route_bundle::State::PossibleBundlingFailures;
 
-            let resp: AnyResponse = match &mut req.handler {
-                Handler::Aborted => continue,
-                Handler::ServerHandler(saved) => 'brk: {
-                    let resp = saved.response;
-                    saved.deinit();
-                    break 'brk resp;
-                }
-                Handler::BundledHtmlPage(ram) => ram.response,
+            let Some(resp) = req.response_for_error_page() else {
+                continue;
             };
 
             dev.send_serialized_failures(
@@ -1195,7 +1185,7 @@ fn finalize_bundle_inner(
     // so the outer unlock guard sees a locked state again.
     scopeguard::defer! { unsafe { (*dev_ptr).graph_safety_lock.lock() } };
 
-    // Set all the deferred routes to the .loaded state up front
+    // Set the state of all the deferred routes up front
     {
         let mut node = current_bundle!().requests.first;
         while !node.is_null() {
@@ -1203,8 +1193,16 @@ fn finalize_bundle_inner(
             // `data` was initialized by `defer_request`.
             let n = unsafe { &*node };
             // SAFETY: `data` was initialized by `defer_request` before being linked.
-            let rb = dev.route_bundle_ptr(unsafe { n.data.assume_init_ref() }.route_bundle_index);
-            rb.server_state = route_bundle::State::Loaded;
+            let route_bundle_index = unsafe { n.data.assume_init_ref() }.route_bundle_index;
+            let reaches_failure = !dev.bundling_failures.is_empty()
+                && !trace_route_failures(dev, route_bundle_index)?
+                    .failures
+                    .is_empty();
+            dev.route_bundle_ptr(route_bundle_index).server_state = if reaches_failure {
+                route_bundle::State::PossibleBundlingFailures
+            } else {
+                route_bundle::State::Loaded
+            };
             node = n.next;
         }
     }
@@ -1216,6 +1214,18 @@ fn finalize_bundle_inner(
         let req_ptr = std::ptr::from_mut::<DeferredRequest>(req);
         // SAFETY: the node stays alive until `deref_()` releases it below.
         scopeguard::defer! { unsafe { (*req_ptr).deref_() } };
+
+        if dev.route_bundle_ptr(req.route_bundle_index).server_state
+            == route_bundle::State::PossibleBundlingFailures
+        {
+            let failures = trace_route_failures(dev, req.route_bundle_index)?.failures;
+            if !failures.is_empty() {
+                if let Some(resp) = req.response_for_error_page() {
+                    dev.send_serialized_failures(resp, &failures, None)?;
+                }
+                continue;
+            }
+        }
 
         let rb = dev.route_bundle_ptr(req.route_bundle_index);
         rb.server_state = route_bundle::State::Loaded;

@@ -138,7 +138,7 @@ impl FilePoll {
         // Stacked-Borrows: `self` may live inside `Store.hive`'s inline buffer,
         // so `&mut Store` is materialised only *after* `&mut self` is retired
         // inside `deinit_possibly_defer` (via `file_polls_mut()`).
-        let loop_ = vm.platform_event_loop();
+        let loop_ = vm.loop_();
         self.deinit_possibly_defer(vm, loop_);
     }
 

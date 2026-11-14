@@ -17,6 +17,7 @@
 
 use core::cell::Cell;
 use core::ffi::{c_char, c_void};
+use core::marker::PhantomData;
 use core::ptr::NonNull;
 
 pub use bun_jsc::{
@@ -174,13 +175,10 @@ pub use bun_jsc::virtual_machine::VirtualMachine;
 // depends on this crate, so importing it would be a cycle. This crate defines the table of
 // function pointers, `bun_runtime::hw_exports::sql_hooks` the one instance.
 pub struct SqlRuntimeHooks {
-    /// `&mut runtime_state().sql_rare` — this crate's [`RareData`] storage.
-    pub sql_rare: unsafe fn(*mut VirtualMachine) -> *mut RareData,
-    /// `&mut runtime_state().ssl_ctx_cache` — opaque `SSLContextCache`.
-    pub ssl_ctx_cache: unsafe fn(*mut VirtualMachine) -> *mut c_void,
+    /// `&runtime_state().sql_rare` — this crate's [`RareData`] storage.
+    pub sql_rare: fn(&VirtualMachine) -> &RareData,
     /// `SSLContextCache::getOrCreateOpts` — digest-keyed weak `SSL_CTX*` cache.
-    pub ssl_ctx_get_or_create: unsafe fn(
-        cache: *mut c_void,
+    pub ssl_ctx_get_or_create: fn(
         opts: &bun_uws::us_bun_socket_context_options_t,
         err: &mut bun_uws::create_bun_socket_error_t,
     ) -> Option<OwnedSslCtx>,
@@ -220,17 +218,20 @@ fn hooks() -> &'static SqlRuntimeHooks {
 /// in bun_runtime::jsc_hooks::RuntimeState.sql_rare and is reached via
 /// [VirtualMachineSqlExt::sql_state].
 #[repr(C)]
+#[derive(Default)]
 pub struct RareData {
-    pub mysql_context: crate::mysql::MySQLContext,
-    pub postgresql_context: crate::postgres::PostgresSQLContext,
+    pub mysql_context: JsCell<crate::mysql::MySQLContext>,
+    pub postgresql_context: JsCell<crate::postgres::PostgresSQLContext>,
+    _not_send: PhantomData<*mut ()>,
 }
 
 impl RareData {
     /// The functions that the `bun:sql` of a realm handed over are functions of that realm, and
     /// keep it alive. The next realm that loads `bun:sql` hands over its own.
-    pub fn forget_callbacks(&mut self) {
-        self.mysql_context = Default::default();
-        self.postgresql_context = Default::default();
+    pub fn forget_callbacks(&self) {
+        self.mysql_context.with_mut(|c| *c = Default::default());
+        self.postgresql_context
+            .with_mut(|c| *c = Default::default());
     }
 }
 
@@ -240,53 +241,43 @@ pub(crate) trait VirtualMachineSqlExt {
     /// RareData.{mysql,postgresql}_context. Named sql_state to avoid
     /// shadowing the inherent VirtualMachine::rare_data() (which returns the
     /// bun_jsc RareData holding the per-protocol SocketGroups).
-    fn sql_state(&mut self) -> &mut RareData;
-    /// RareData.ssl_ctx_cache — owned by RuntimeState.
-    fn ssl_ctx_cache(&mut self) -> &mut SslCtxCache;
+    fn sql_state(&self) -> &RareData;
     /// bun_io::EventLoopCtx for the JS-thread VM, for KeepAlive::{ref_,unref}.
     fn vm_ctx(&self) -> bun_io::EventLoopCtx;
     /// `context`'s per-protocol uws [`bun_uws::SocketGroup`], for a new connection its script opens.
-    fn postgres_socket_group<const SSL: bool>(
-        &mut self,
-        context: &bun_jsc::ScriptExecutionContext,
-    ) -> &mut bun_uws::SocketGroup;
+    fn postgres_socket_group<'a, const SSL: bool>(
+        &'a self,
+        context: &'a bun_jsc::ScriptExecutionContext,
+    ) -> &'a bun_uws::SocketGroup;
     /// See [`Self::postgres_socket_group`].
-    fn mysql_socket_group<const SSL: bool>(
-        &mut self,
-        context: &bun_jsc::ScriptExecutionContext,
-    ) -> &mut bun_uws::SocketGroup;
+    fn mysql_socket_group<'a, const SSL: bool>(
+        &'a self,
+        context: &'a bun_jsc::ScriptExecutionContext,
+    ) -> &'a bun_uws::SocketGroup;
 }
 impl VirtualMachineSqlExt for VirtualMachine {
     #[inline]
-    fn sql_state(&mut self) -> &mut RareData {
-        // SAFETY: hook returns `&mut runtime_state().sql_rare`; non-null on
-        // the JS thread once `init_runtime_state` has run.
-        unsafe { &mut *(hooks().sql_rare)(self) }
-    }
-    #[inline]
-    fn ssl_ctx_cache(&mut self) -> &mut SslCtxCache {
-        // SAFETY: hook returns `&mut runtime_state().ssl_ctx_cache`; non-null
-        // after `init_runtime_state`.
-        unsafe { &mut *(hooks().ssl_ctx_cache)(self).cast::<SslCtxCache>() }
+    fn sql_state(&self) -> &RareData {
+        (hooks().sql_rare)(self)
     }
     #[inline]
     fn vm_ctx(&self) -> bun_io::EventLoopCtx {
         bun_io::js_vm_ctx()
     }
     #[inline]
-    fn postgres_socket_group<const SSL: bool>(
-        &mut self,
-        context: &bun_jsc::ScriptExecutionContext,
-    ) -> &mut bun_uws::SocketGroup {
+    fn postgres_socket_group<'a, const SSL: bool>(
+        &'a self,
+        context: &'a bun_jsc::ScriptExecutionContext,
+    ) -> &'a bun_uws::SocketGroup {
         let loop_ = self.uws_loop();
         self.client_socket_groups_in(context)
             .postgres_group::<SSL>(loop_)
     }
     #[inline]
-    fn mysql_socket_group<const SSL: bool>(
-        &mut self,
-        context: &bun_jsc::ScriptExecutionContext,
-    ) -> &mut bun_uws::SocketGroup {
+    fn mysql_socket_group<'a, const SSL: bool>(
+        &'a self,
+        context: &'a bun_jsc::ScriptExecutionContext,
+    ) -> &'a bun_uws::SocketGroup {
         let loop_ = self.uws_loop();
         self.client_socket_groups_in(context)
             .mysql_group::<SSL>(loop_)
@@ -441,20 +432,12 @@ pub mod api {
     }
 }
 
-// Opaque handle to `bun_runtime::api::SSLContextCache` (owned by
-// `RuntimeState`). Reached via [`VirtualMachineSqlExt::ssl_ctx_cache`]; backed
-// by [`SqlRuntimeHooks::ssl_ctx_cache`] / `ssl_ctx_get_or_create`.
 use bun_boringssl_sys::OwnedSslCtx;
 
-bun_opaque::opaque_ffi! { pub struct SslCtxCache; }
-impl SslCtxCache {
-    pub(crate) fn get_or_create_opts(
-        &mut self,
-        opts: &bun_uws::us_bun_socket_context_options_t,
-        err: &mut bun_uws::create_bun_socket_error_t,
-    ) -> Option<OwnedSslCtx> {
-        // SAFETY: `self` is `&mut runtime_state().ssl_ctx_cache`; `opts`/`err`
-        // are caller stack locals.
-        unsafe { (hooks().ssl_ctx_get_or_create)(self._p.get().cast::<c_void>(), opts, err) }
-    }
+/// The `SSL_CTX` for `opts` from the `SSLContextCache` of this thread's VM.
+pub(crate) fn ssl_ctx_get_or_create(
+    opts: &bun_uws::us_bun_socket_context_options_t,
+    err: &mut bun_uws::create_bun_socket_error_t,
+) -> Option<OwnedSslCtx> {
+    (hooks().ssl_ctx_get_or_create)(opts, err)
 }

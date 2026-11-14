@@ -274,27 +274,22 @@ pub use posix_event_loop::{FilePoll, Loop};
 #[cfg(windows)]
 pub use windows_event_loop::{FilePoll, Loop};
 
-/// Project a `*mut bun_uws_sys::Loop` (the uws wrapper — `PosixLoop` /
-/// `WindowsLoop`) to the platform-native [`Loop`] (`us_loop_t*` on POSIX,
-/// `uv_loop_t*` on Windows).
-///
-/// On POSIX `bun_io::Loop` **is** `bun_uws_sys::Loop` (nominal identity), so
-/// this is the identity. On Windows the wrapper stores the libuv loop in its
-/// `uv_loop` field — set once in C at `us_create_loop` and immutable
-/// thereafter — which we project here so callers needn't open an `unsafe`
-/// block per site just to read a set-once field.
+/// How a [`Loop`] is handed around: libuv's functions take a pointer.
+#[cfg(not(windows))]
+pub type LoopRef = &'static Loop;
+#[cfg(windows)]
+pub type LoopRef = *mut Loop;
+
+/// The platform-native [`Loop`] of a uws loop: itself on POSIX, the libuv loop it wraps on Windows.
 #[inline]
-pub fn uws_to_native(uws: *mut bun_uws_sys::Loop) -> *mut Loop {
+pub fn uws_to_native(uws: &'static bun_uws_sys::Loop) -> LoopRef {
     #[cfg(not(windows))]
     {
         uws
     }
     #[cfg(windows)]
-    // SAFETY: `uws` is the live `us_loop` allocated by `us_create_loop`;
-    // `uv_loop` is initialised in C before any Rust caller can observe the
-    // handle and is never mutated.
     {
-        unsafe { (*uws).uv_loop() }
+        uws.uv_loop()
     }
 }
 
@@ -306,14 +301,14 @@ pub type OpaqueCallback = unsafe extern "C" fn(*mut core::ffi::c_void);
 // macro emits (and the impl-macro reads back) actually resolve from impl
 // crates. `Store`/`FilePoll` here are the *platform* re-exports above.
 //
-// `platform_event_loop_ptr` is typed `*mut bun_uws_sys::Loop` (the uws
+// `loop_` is typed `&bun_uws_sys::Loop` (the uws
 // wrapper — `PosixLoop`/`WindowsLoop`), NOT the cfg-aliased `crate::Loop`
 // re-export. On POSIX those coincide, but on Windows `crate::Loop` is the raw
 // `uv_loop_t` whereas the impl bodies
-// (`VirtualMachine::uws_loop` / `MiniEventLoop::loop_ptr`) hand back the wrapper.
+// (`VirtualMachine::uws_loop` / `MiniEventLoop::loop_`) hand back the wrapper.
 bun_dispatch::link_interface! {
     pub EventLoopCtx[Js, Mini, SpawnSync] {
-        fn platform_event_loop_ptr() -> *mut bun_uws_sys::Loop;
+        fn loop_() -> &'static bun_uws_sys::Loop;
         fn file_polls_ptr() -> *mut Store;
         // `alloc_file_poll() -> *mut FilePoll` was removed — it
         // returned an *uninitialized* hive slot, and any caller forming
@@ -331,13 +326,6 @@ bun_dispatch::link_interface! {
 }
 
 impl EventLoopCtx {
-    /// Private: spawnSync's loop has no uWS `LoopData`, which `update_date` and `flush_pending_writes` need.
-    #[inline]
-    fn platform_event_loop(&self) -> &bun_uws_sys::Loop {
-        // SAFETY: the loop the owner runs on, which stays live while anything counts or polls on it.
-        // Its fields are `Cell`s, so C and the callbacks it dispatches may write them meanwhile.
-        unsafe { &*self.platform_event_loop_ptr() }
-    }
     /// Single backref-deref accessor for the per-thread `Store`:
     /// `pub(crate)`, `&self → &mut`, must NOT be called while
     /// another `&mut Store` (or a `&mut FilePoll` that lives inside the inline
@@ -361,25 +349,25 @@ impl EventLoopCtx {
     }
     #[inline]
     pub(crate) fn loop_ref(&self) {
-        self.platform_event_loop().ref_();
+        self.loop_().ref_();
     }
     #[inline]
     #[cfg(not(windows))]
     pub(crate) fn loop_unref(&self) {
-        self.platform_event_loop().unref();
+        self.loop_().unref();
     }
     #[inline]
     #[cfg(windows)]
     pub(crate) fn loop_dec(&self) {
-        self.platform_event_loop().dec();
+        self.loop_().dec();
     }
     #[inline]
     pub(crate) fn loop_add_active(&self, n: u32) {
-        self.platform_event_loop().add_active(n);
+        self.loop_().add_active(n);
     }
     #[inline]
     pub(crate) fn loop_sub_active(&self, n: u32) {
-        self.platform_event_loop().sub_active(n);
+        self.loop_().sub_active(n);
     }
     #[cfg(not(windows))]
     #[inline]
@@ -397,15 +385,10 @@ impl EventLoopCtx {
             EventLoopCtxKind::SpawnSync => AllocatorType::SpawnSync,
         }
     }
+    /// See [`uws_to_native`].
     #[inline]
-    pub fn loop_(&self) -> *mut bun_uws_sys::Loop {
-        self.platform_event_loop_ptr()
-    }
-    /// Platform-native loop pointer (`us_loop_t*` / `uv_loop_t*`); see
-    /// [`uws_to_native`].
-    #[inline]
-    pub fn native_loop(&self) -> *mut Loop {
-        uws_to_native(self.platform_event_loop_ptr())
+    pub fn native_loop(&self) -> LoopRef {
+        uws_to_native(self.loop_())
     }
 }
 #[cfg(not(windows))]
@@ -481,7 +464,7 @@ bun_dispatch::link_interface! {
         fn on_read_chunk(chunk: pipes::Chunk<'_>, has_more: pipes::ReadState) -> bool;
         fn on_reader_done();
         fn on_reader_error(err: bun_sys::Error);
-        fn loop_ptr() -> *mut Loop;
+        fn loop_() -> LoopRef;
         fn event_loop() -> EventLoopCtx;
         fn ref_();
         fn deref();
@@ -604,7 +587,7 @@ macro_rules! __impl_buffered_reader_parent_body {
                 unsafe { $crate::__buffered_reader_callback!($feature $re) }
             }
             #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
-            unsafe fn loop_($l_this: *mut Self) -> *mut $crate::pipe_reader::Loop {
+            unsafe fn loop_($l_this: *mut Self) -> $crate::LoopRef {
                 unsafe { $lp }
             }
             #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
@@ -646,7 +629,7 @@ macro_rules! buffered_reader_parent_link {
                     <$T as $crate::pipe_reader::BufferedReaderParent>::on_reader_done(this),
                 on_reader_error(err) =>
                     <$T as $crate::pipe_reader::BufferedReaderParent>::on_reader_error(this, err),
-                loop_ptr() =>
+                loop_() =>
                     <$T as $crate::pipe_reader::BufferedReaderParent>::loop_(this),
                 event_loop() =>
                     <$T as $crate::pipe_reader::BufferedReaderParent>::event_loop(this),
@@ -1884,36 +1867,22 @@ impl FilePollRef {
     pub(crate) fn deinit_force_unregister(self) {
         self.inner().deinit_force_unregister();
     }
-    /// Type invariant (encapsulated `unsafe`): every caller of
-    /// [`unregister`](Self::unregister) / [`register_with_fd`](Self::register_with_fd)
-    /// passes the loop the poll's owner runs on, live while the poll is. Collapses
-    /// the two identical `&*loop_` deref blocks in those wrappers into one.
-    #[inline(always)]
-    fn uws_loop<'a>(loop_: *mut bun_uws_sys::Loop) -> &'a bun_uws_sys::Loop {
-        debug_assert!(!loop_.is_null());
-        // SAFETY: type invariant — see doc comment above.
-        unsafe { &*loop_ }
-    }
     #[inline]
-    pub(crate) fn unregister(self, loop_: *mut bun_uws_sys::Loop, force: bool) -> sys::Result<()> {
-        let loop_ = Self::uws_loop(loop_);
+    pub(crate) fn unregister(self, loop_: LoopRef, force: bool) -> sys::Result<()> {
         #[cfg(not(windows))]
         {
             self.inner().unregister(loop_, force)
         }
         #[cfg(windows)]
         {
-            let _ = force;
-            // The windows `FilePoll::unregister` always returns true — the
-            // bool is vestigial, so there is no error path to surface here.
-            let _ = self.inner().unregister(loop_);
-            Ok(())
+            let _ = (loop_, force);
+            unreachable!("FilePoll fd registration is POSIX-only");
         }
     }
     #[inline]
     pub(crate) fn register_with_fd(
         self,
-        loop_: *mut bun_uws_sys::Loop,
+        loop_: LoopRef,
         kind: FilePollKind,
         fd: Fd,
     ) -> sys::Result<()> {
@@ -1924,7 +1893,7 @@ impl FilePollRef {
         #[cfg(not(windows))]
         {
             self.inner()
-                .register_with_fd(Self::uws_loop(loop_), flag, OneShotFlag::Dispatch, fd)
+                .register_with_fd(loop_, flag, OneShotFlag::Dispatch, fd)
         }
         #[cfg(windows)]
         {
@@ -2184,10 +2153,7 @@ pub mod waker {
 
         pub fn init() -> crate::error::Result<Self> {
             Ok(Self {
-                loop_: Some(bun_ptr::BackRef::from(
-                    core::ptr::NonNull::new(bun_uws_sys::WindowsLoop::get())
-                        .expect("WindowsLoop::get() singleton"),
-                )),
+                loop_: Some(bun_ptr::BackRef::new(bun_uws_sys::WindowsLoop::get())),
             })
         }
 

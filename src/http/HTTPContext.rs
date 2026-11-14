@@ -558,8 +558,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         };
         ssl_ctx_setup(self.secure.insert(ctx));
         let owner_ptr = std::ptr::from_mut::<Self>(self).cast::<c_void>();
-        self.group
-            .init(http::http_thread().uws_loop(), None, owner_ptr);
+        self.group.init(uws::Loop::get(), None, owner_ptr);
         Ok(())
     }
 
@@ -588,8 +587,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
 
     pub(crate) fn init(&mut self) {
         let owner_ptr = std::ptr::from_mut::<Self>(self).cast::<c_void>();
-        self.group
-            .init(http::http_thread().uws_loop(), None, owner_ptr);
+        self.group.init(uws::Loop::get(), None, owner_ptr);
         if SSL {
             let mut err = uws::create_bun_socket_error_t::none;
             let ctx = self.secure.insert(
@@ -1020,7 +1018,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
 
         bun_removable_features::call_removable!(HttpClient, Abort, need_socket_handlers);
         let socket = HTTPSocket::<SSL>::connect_unix_group(
-            &mut self.group,
+            &self.group,
             Self::KIND,
             if SSL {
                 self.secure.as_ref().map(OwnedSslCtx::as_ptr)
@@ -1176,7 +1174,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
 
         bun_removable_features::call_removable!(HttpClient, Abort, need_socket_handlers);
         let socket = HTTPSocket::<SSL>::connect_group(
-            &mut self.group,
+            &self.group,
             Self::KIND,
             if SSL {
                 self.secure.as_ref().map(OwnedSslCtx::as_ptr)
@@ -1302,14 +1300,14 @@ impl<const SSL: bool> Drop for HTTPContext<SSL> {
         // cache-miss error path frees the half-init context); tolerate that
         // here by skipping group teardown when it was never linked into the
         // loop.
-        if !self.group.loop_.is_null() {
+        if !self.group.loop_.get().is_null() {
             // Force-close any remaining sockets before unlinking the group so
             // the loop never dereferences a freed `*Context` via `group->ext`.
             self.group.close_all();
             // Note: SocketGroup deinit must run before the embedding struct
             // is freed (it unlinks from the loop's group list).
             // SAFETY: group was init()'d in `init`/`init_with_opts`; HTTP-thread-only.
-            unsafe { uws::SocketGroup::destroy(&raw mut self.group) };
+            unsafe { uws::SocketGroup::destroy(&raw const self.group) };
         }
     }
 }

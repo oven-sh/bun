@@ -323,7 +323,8 @@ impl PackageInstall<'_> {
 /// cache directory it walks.
 struct InstallDirState {
     walker: Walker,
-    /// Not opened on Windows; the copy loops there work from `buf`/`buf2`.
+    /// The copy loops on Windows work from `buf`/`buf2`.
+    #[cfg(not(windows))]
     subdir: Dir,
     // A by-value `WPathBuffer` here would
     // memset+move ~128 KB through `Default::default()` per package. Use the
@@ -1689,7 +1690,6 @@ impl PackageFiles<'_> {
             };
             Ok(InstallDirState {
                 walker,
-                subdir: Dir::from_fd(Fd::INVALID),
                 buf,
                 buf2,
                 to_copy_buf_off,
@@ -1852,7 +1852,7 @@ impl PackageFiles<'_> {
         // `&mut [u16]`, which is UB — pass head buffer + tail offset and
         // reslice inside.
         fn copy(
-            destination_dir: &Dir,
+            #[cfg(not(windows))] destination_dir: &Dir,
             walker: &mut Walker,
             to_copy_into1_offset: WinOffset,
             head1: WinSlice<'_>,
@@ -1861,8 +1861,6 @@ impl PackageFiles<'_> {
         ) -> crate::Result<()> {
             #[cfg(not(windows))]
             let _ = (to_copy_into1_offset, head1, to_copy_into2_offset, head2);
-            #[cfg(windows)]
-            let _ = destination_dir;
             #[cfg(windows)]
             let queue = HardLinkWindowsInstallTask::init_queue();
             // Workers are already running the tasks that were pushed, so remember any loop error
@@ -1979,7 +1977,6 @@ impl PackageFiles<'_> {
 
         #[cfg(windows)]
         let result = copy(
-            &state.subdir,
             &mut state.walker,
             state.to_copy_buf_off,
             &mut state.buf[..],

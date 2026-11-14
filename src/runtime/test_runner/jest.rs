@@ -311,8 +311,7 @@ pub(crate) mod Jest {
     /// `&BunTestRoot`, `&mut BunTest`) is already live — see
     /// `BunTestRoot::on_before_print` / `BunTest::enter_file`.
     pub(crate) fn runner_ptr() -> Option<NonNull<TestRunner<'static>>> {
-        // SAFETY: a thread's VM outlives the code running on it.
-        if VirtualMachine::get_or_null().is_some_and(|vm| unsafe { (*vm).worker_ref().is_some() }) {
+        if VirtualMachine::get_or_null().is_some_and(|vm| vm.worker_ref().is_some()) {
             return None;
         }
         // SAFETY: only written and read on the thread that runs the test files.
@@ -552,7 +551,7 @@ fn is_loading_under_vitest(vm: &VirtualMachine) -> bool {
     thread_local! {
         static LAST_TEST_FILE: core::cell::RefCell<(Vec<u8>, bool)> = const { core::cell::RefCell::new((Vec::new(), false)) };
     }
-    if vm.has_globals_of_vitest() || vm.is_in_preload {
+    if vm.has_globals_of_vitest() || vm.is_in_preload.get() {
         return vm.has_globals_of_vitest();
     }
     let Some(main) = vm.main() else {
@@ -577,7 +576,7 @@ pub(crate) fn jest(cx: &mut JsScope<'_>, path: Option<&[u8]>) -> JsResult<JSValu
     let global_object = cx.global();
     let vm = global_object.bun_vm();
 
-    if vm.is_in_preload || Jest::runner().is_none() {
+    if vm.is_in_preload.get() || Jest::runner().is_none() {
         // in preload, no arguments needed
     } else {
         let Some(path) = path else {
@@ -600,7 +599,7 @@ pub(crate) fn jest(cx: &mut JsScope<'_>, path: Option<&[u8]>) -> JsResult<JSValu
 pub(crate) fn asked_by_compiled_test_file(own_globals: bool) -> u32 {
     let vm = VirtualMachine::get();
     match own_globals {
-        true => vm.transpiler.options.own_test_globals,
+        true => vm.transpiler.get().options.own_test_globals,
         false => u32::from(is_loading_under_vitest(vm)),
     }
 }
@@ -667,7 +666,7 @@ pub(crate) mod on_unhandled_rejection {
 
     #[optimize(size)]
     pub(crate) fn on_unhandled_rejection(
-        jsc_vm: &mut VirtualMachine,
+        jsc_vm: &VirtualMachine,
         global_object: &JSGlobalObject,
         rejection: JSValue,
     ) {
@@ -721,7 +720,7 @@ pub(crate) mod on_unhandled_rejection {
         // live `NonNull<ExceptionList>` owned by the VM; reborrow as `&mut`
         // for the duration of `run_error_handler` (single-threaded JS thread).
         let exception_list = jsc_vm
-            .on_unhandled_rejection_exception_list
+            .on_unhandled_rejection_exception_list.get()
             .map(|p| unsafe { &mut *p.as_ptr() });
         bun_test::print_error(jsc_vm, global_object, rejection, exception_list);
     }

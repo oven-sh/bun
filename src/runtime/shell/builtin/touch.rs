@@ -259,7 +259,6 @@ impl ShellTouchTask {
     /// fall back to `open(O_CREAT|O_WRONLY, 0o664)`.
     pub(crate) fn run_from_thread_pool(this: &mut ShellTouchTask) {
         use bun_paths::resolve_path::{self, Platform, platform};
-        use bun_sys::FdExt as _;
         // We have to give an absolute path. An operand that does not fit the
         // path buffer is still passed on whole, so the OS reports ENAMETOOLONG
         // for it like for any other operand.
@@ -294,11 +293,8 @@ impl ShellTouchTask {
                 if err.get_errno() == bun_sys::E::ENOENT {
                     const PERM: bun_sys::Mode = 0o664;
                     let flags = bun_sys::O::CREAT | bun_sys::O::WRONLY;
-                    match bun_sys::open(filepath, flags, PERM) {
-                        Ok(fd) => {
-                            fd.close();
-                            break 'out;
-                        }
+                    match bun_sys::File::open(filepath, flags, PERM) {
+                        Ok(_) => break 'out,
                         Err(e) => {
                             this.err = Some(e.with_path(filepath.as_bytes()));
                             break 'out;

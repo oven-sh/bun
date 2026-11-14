@@ -37,13 +37,13 @@ pub use error::{Error, Result};
 pub use bun_event_loop::EventLoopHandle;
 
 // Raw OS-spawn types from the leaf -sys crate.
-pub use bun_spawn_sys::{Argv, CStrPtr, Envp, ffi};
+pub use bun_spawn_sys::ffi;
 
 pub use bun_spawn_sys::RusageFields;
 #[cfg(unix)]
 pub use bun_spawn_sys::posix_spawn::posix_spawn::LARGEST_REAPED_CHILD;
 pub use process::{
-    Dup2, Exited, ExtraPipe, PidT, Process, ProcessHandle, Rusage, SpawnEnv, SpawnOptions,
+    Dup2, Exited, ExtraPipe, PidT, Process, ProcessHandle, Rusage, SpawnOptions,
     SpawnProcessResult, SpawnResultExt, Status, StdioKind, spawn_process, spawn_process_cstr,
 };
 
@@ -109,7 +109,7 @@ pub type SpawnResult = process::WindowsSpawnResult;
 pub mod sync {
     #[cfg(windows)]
     pub use crate::process::WindowsOptions;
-    pub use crate::process::sync::{Options, Result, SyncStdio as Stdio, spawn, spawn_with_argv};
+    pub use crate::process::sync::{Options, Result, SyncStdio as Stdio, spawn};
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -3,10 +3,10 @@
 //! and `run_as_worker` (the `--test-worker` side that reads framed commands
 //! from stdin, runs each file under isolation, and streams results to fd 3).
 
-use core::ffi::c_char;
+use core::ffi::CStr;
 use std::io::Write as _;
 
-use bun_core::{Global, Output};
+use bun_core::{CStrRef, Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_options_types::context::MacroOptions;
 use bun_ptr::Interned;
@@ -80,7 +80,7 @@ pub(crate) fn run_as_coordinator(
     // env map once per worker after .put() — appending after the fact would
     // create duplicate entries when the parent already has the variable set,
     // and POSIX getenv() returns the first match.
-    let mut envps: Vec<bun_dotenv::NullDelimitedEnvMap> = Vec::with_capacity(k as usize);
+    let mut envps: Vec<bun_core::CStringList> = Vec::with_capacity(k as usize);
     for i in 0..k {
         let mut id = Vec::new();
         write!(&mut id, "{}", i + 1).unwrap();
@@ -250,29 +250,25 @@ pub(crate) fn run_as_coordinator(
 /// (`--path-ignore-patterns`, `--changed`), `--reporter-outfile`,
 /// `--pass-with-no-tests`, `--parallel` itself — are intentionally not
 /// forwarded.
-fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn::CStrPtr]>> {
+fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[Option<CStrRef<'static>>]>> {
     // Null-sentinel slice of C-string pointers. String storage routes through
     // the process-lifetime CLI arena (bulk-freed on exit).
-    let mut argv: Vec<bun_spawn::CStrPtr> = Vec::new();
+    let mut argv: Vec<Option<CStrRef<'static>>> = Vec::new();
     let opts = &ctx.test_options;
 
-    // Helper: format → NUL-terminated, return raw ptr (arena-owned).
-    let print_z = |args: core::fmt::Arguments<'_>| -> crate::Result<*const c_char> {
+    let dupe_z = |s: &[u8]| Some(crate::cli::cli_dupe_z(s));
+    let lit = |s: &'static CStr| Some(CStrRef::from(s));
+    let print_z = |args: core::fmt::Arguments<'_>| -> crate::Result<_> {
         let mut buf = Vec::<u8>::new();
         buf.write_fmt(args)
             .map_err(|_| crate::Error::FormatFailed)?;
-        Ok(crate::cli::cli_dupe_z(&buf))
+        Ok(dupe_z(&buf))
     };
-    let dupe_z = |s: &[u8]| -> *const c_char { crate::cli::cli_dupe_z(s) };
-    let lit = |s: &'static [u8]| -> *const c_char { s.as_ptr().cast::<c_char>() };
 
-    argv.push(
-        bun_core::self_exe_path()
-            .map_err(|_| crate::Error::SelfExePathFailed)?
-            .as_ptr(),
-    );
-    argv.push(lit(b"test\0"));
-    argv.push(lit(b"--test-worker\0"));
+    let exe = bun_core::self_exe_path().map_err(|_| crate::Error::SelfExePathFailed)?;
+    argv.push(Some(exe.into()));
+    argv.push(lit(c"test"));
+    argv.push(lit(c"--test-worker"));
     // Not everything in the file has a flag below.
     if let Some(config_file) = &opts.config_file {
         argv.push(print_z(format_args!(
@@ -281,11 +277,11 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
         ))?);
     }
     argv.push(if opts.isolate_modules {
-        lit(b"--isolate=modules\0")
+        lit(c"--isolate=modules")
     } else if opts.isolate {
-        lit(b"--isolate\0")
+        lit(c"--isolate")
     } else {
-        lit(b"--no-isolate\0")
+        lit(c"--no-isolate")
     });
 
     argv.push(print_z(format_args!(
@@ -293,28 +289,28 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
         opts.default_timeout_ms
     ))?);
     if opts.run_todo {
-        argv.push(lit(b"--todo\0"));
+        argv.push(lit(c"--todo"));
     }
     if opts.only {
-        argv.push(lit(b"--only\0"));
+        argv.push(lit(c"--only"));
     }
     if opts.reporters.dots {
-        argv.push(lit(b"--dots\0"));
+        argv.push(lit(c"--dots"));
     }
     if opts.reporters.only_failures {
-        argv.push(lit(b"--only-failures\0"));
+        argv.push(lit(c"--only-failures"));
     }
     if opts.reporters.junit {
-        argv.push(lit(b"--reporter=junit\0"));
+        argv.push(lit(c"--reporter=junit"));
     }
     if opts.update_snapshots {
-        argv.push(lit(b"--update-snapshots\0"));
+        argv.push(lit(c"--update-snapshots"));
     }
     if opts.concurrent {
-        argv.push(lit(b"--concurrent\0"));
+        argv.push(lit(c"--concurrent"));
     }
     if opts.randomize {
-        argv.push(lit(b"--randomize\0"));
+        argv.push(lit(c"--randomize"));
     }
     if let Some(seed) = opts.seed {
         argv.push(print_z(format_args!("--seed={}", seed))?);
@@ -334,20 +330,20 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
         opts.max_concurrency
     ))?);
     if let Some(pattern) = &opts.test_filter_pattern {
-        argv.push(lit(b"-t\0"));
+        argv.push(lit(c"-t"));
         argv.push(dupe_z(pattern));
     }
     // No `--cpu-prof-name` or `--heap-prof-name`: every worker writes a profile, and the default names have the pid in them.
     let cpu_prof = &ctx.runtime_options.cpu_prof;
     if cpu_prof.enabled {
         if cpu_prof.json_format {
-            argv.push(lit(b"--cpu-prof\0"));
+            argv.push(lit(c"--cpu-prof"));
         }
         if cpu_prof.md_format {
-            argv.push(lit(b"--cpu-prof-md\0"));
+            argv.push(lit(c"--cpu-prof-md"));
         }
         if !cpu_prof.dir.is_empty() {
-            argv.push(lit(b"--cpu-prof-dir\0"));
+            argv.push(lit(c"--cpu-prof-dir"));
             argv.push(dupe_z(cpu_prof.dir));
         }
         argv.push(print_z(format_args!(
@@ -358,23 +354,23 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     let heap_prof = &ctx.runtime_options.heap_prof;
     if heap_prof.enabled {
         argv.push(lit(if heap_prof.text_format {
-            b"--heap-prof-md\0"
+            c"--heap-prof-md"
         } else {
-            b"--heap-prof\0"
+            c"--heap-prof"
         }));
         if !heap_prof.dir.is_empty() {
-            argv.push(lit(b"--heap-prof-dir\0"));
+            argv.push(lit(c"--heap-prof-dir"));
             argv.push(dupe_z(heap_prof.dir));
         }
     }
     for preload in ctx.preloads.iter() {
-        argv.push(lit(b"--preload\0"));
+        argv.push(lit(c"--preload"));
         argv.push(dupe_z(preload));
     }
     if let Some(define) = &ctx.args.define {
         debug_assert_eq!(define.keys.len(), define.values.len());
         for (key, value) in define.keys.iter().zip(define.values.iter()) {
-            argv.push(lit(b"--define\0"));
+            argv.push(lit(c"--define"));
             argv.push(print_z(format_args!(
                 "{}={}",
                 bstr::BStr::new(key),
@@ -385,7 +381,7 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     if let Some(loaders) = &ctx.args.loaders {
         debug_assert_eq!(loaders.extensions.len(), loaders.loaders.len());
         for (ext, loader) in loaders.extensions.iter().zip(loaders.loaders.iter()) {
-            argv.push(lit(b"--loader\0"));
+            argv.push(lit(c"--loader"));
             argv.push(print_z(format_args!(
                 "{}:{}",
                 bstr::BStr::new(ext),
@@ -394,63 +390,63 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
         }
     }
     if let Some(tsconfig) = &ctx.args.tsconfig_override {
-        argv.push(lit(b"--tsconfig-override\0"));
+        argv.push(lit(c"--tsconfig-override"));
         argv.push(dupe_z(tsconfig));
     }
     // Was `inline for` over a heterogeneous-ish tuple; all elements are
-    // (&'static [u8], &[Box<[u8]>]) so a const array + plain for suffices.
+    // (&'static CStr, &[Box<[u8]>]) so a const array + plain for suffices.
     // No `--env-file`: a worker loads no env file (see `TestCommand::exec`).
-    let multi_value_flags: [(&'static [u8], &[Box<[u8]>]); 5] = [
-        (b"--conditions\0", &ctx.args.conditions),
-        (b"--drop\0", &ctx.args.drop),
-        (b"--main-fields\0", &ctx.args.main_fields),
-        (b"--extension-order\0", &ctx.args.extension_order),
-        (b"--feature\0", &ctx.args.feature_flags),
+    let multi_value_flags: [(&'static CStr, &[Box<[u8]>]); 5] = [
+        (c"--conditions", &ctx.args.conditions),
+        (c"--drop", &ctx.args.drop),
+        (c"--main-fields", &ctx.args.main_fields),
+        (c"--extension-order", &ctx.args.extension_order),
+        (c"--feature", &ctx.args.feature_flags),
     ];
     for (flag, values) in multi_value_flags {
         for value in values {
-            argv.push(flag.as_ptr().cast::<c_char>());
+            argv.push(lit(flag));
             argv.push(dupe_z(value));
         }
     }
     if ctx.args.preserve_symlinks.unwrap_or(false) {
-        argv.push(lit(b"--preserve-symlinks\0"));
+        argv.push(lit(c"--preserve-symlinks"));
     }
     if crate::cli::run_compiled::is_checked() {
-        argv.push(lit(b"--aot-checked=-\0"));
+        argv.push(lit(c"--aot-checked=-"));
     }
     if let Some(flag) = crate::cli::run_compiled::graph_flag_of_test_worker() {
         argv.push(dupe_z(&flag));
     }
     if ctx.runtime_options.smol {
-        argv.push(lit(b"--smol\0"));
+        argv.push(lit(c"--smol"));
     }
     if ctx.runtime_options.experimental_http2_fetch {
-        argv.push(lit(b"--experimental-http2-fetch\0"));
+        argv.push(lit(c"--experimental-http2-fetch"));
     }
     if ctx.runtime_options.experimental_http3_fetch {
-        argv.push(lit(b"--experimental-http3-fetch\0"));
+        argv.push(lit(c"--experimental-http3-fetch"));
     }
     if ctx.args.allow_addons == Some(false) {
-        argv.push(lit(b"--no-addons\0"));
+        argv.push(lit(c"--no-addons"));
     }
     if ctx.args.allow_ffi_cc == Some(false) {
-        argv.push(lit(b"--no-ffi-cc\0"));
+        argv.push(lit(c"--no-ffi-cc"));
     }
     match bun_core::code_generation_from_strings_by_flags() {
         bun_core::CodeGenerationFromStrings::Allowed => {}
         bun_core::CodeGenerationFromStrings::DisallowedLikeNode => {
-            argv.push(lit(b"--disallow-code-generation-from-strings\0"));
+            argv.push(lit(c"--disallow-code-generation-from-strings"));
         }
         bun_core::CodeGenerationFromStrings::Strict => {
-            argv.push(lit(b"--disallow-code-generation-from-strings=strict\0"));
+            argv.push(lit(c"--disallow-code-generation-from-strings=strict"));
         }
     }
     if let Some(flag) = bun_core::Global::ca_store_flag() {
-        argv.push(flag.as_ptr().cast());
+        argv.push(Some(flag.into()));
     }
     if matches!(ctx.debug.macros, MacroOptions::Disable) {
-        argv.push(lit(b"--no-macros\0"));
+        argv.push(lit(c"--no-macros"));
     }
     if let Some(jsx) = &ctx.args.jsx {
         if !jsx.factory.is_empty() {
@@ -476,11 +472,11 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
             jsx_runtime_tag_name(jsx.runtime)
         ))?);
         if jsx.side_effects {
-            argv.push(lit(b"--jsx-side-effects\0"));
+            argv.push(lit(c"--jsx-side-effects"));
         }
     }
     if opts.coverage.enabled {
-        argv.push(lit(b"--coverage\0"));
+        argv.push(lit(c"--coverage"));
     }
     if let Some(environment) = opts.environment {
         argv.push(print_z(format_args!(
@@ -493,10 +489,10 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     }
     // Each worker reads `include` and `exclude` from bunfig.toml itself.
     if opts.react_compiler.is_some() {
-        argv.push(lit(b"--react-compiler\0"));
+        argv.push(lit(c"--react-compiler"));
     }
 
-    argv.push(core::ptr::null());
+    argv.push(None);
     // Callers index by .len(), so keep the trailing null in the boxed slice.
     Ok(argv.into_boxed_slice())
 }

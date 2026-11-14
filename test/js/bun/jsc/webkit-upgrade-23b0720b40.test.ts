@@ -1,5 +1,6 @@
 import { numberOfDFGCompiles } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import vm from "node:vm";
 
 // Coverage for the WebKit 23b0720b40 sync. Each case pins an observable difference between
@@ -102,6 +103,34 @@ describe.concurrent("WebKit 23b0720b40 upgrade", () => {
       result = f(2147483647, 2147483647);
     for (let i = 0; i < 100 && result === -2; i++) result = f(2147483647, 2147483647);
     expect(result).toBe(-2);
+  });
+
+  test("optimized code does not truncate the operand of `!` under a bitwise operator (96115d8717)", async () => {
+    // `!0.5` and `!-4294967296` are false. The DFG took the quotient for the integer 0 and let the sum wrap to 0.
+    // With the concurrent JIT off, the DFG's code is in place after a fixed number of calls, whatever the load.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { noInline, numberOfDFGCompiles } = require("bun:jsc");
+        function quotient(x, y) { return !(x / y) | 0; }
+        function sum(x, y) { return !(x + y) | 0; }
+        noInline(quotient);
+        noInline(sum);
+        for (let i = 0; i < 20000; ++i) { quotient(1, 2); sum(-2147483648, -2147483648); }
+        // Read before the two calls below, so that it tells what runs them.
+        const compiled = numberOfDFGCompiles(quotient) > 0 && numberOfDFGCompiles(sum) > 0;
+        console.log(JSON.stringify({ quotient: quotient(1, 2), sum: sum(-2147483648, -2147483648), compiled }));
+        `,
+      ],
+      env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(JSON.stringify({ quotient: 0, sum: 0, compiled: true }) + "\n");
+    expect(exitCode).toBe(0);
   });
 
   // JavaScriptCore no longer captures a stack in its Exception for a throw that a `catch` clause is certain to handle

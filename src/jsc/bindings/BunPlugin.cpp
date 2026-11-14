@@ -47,6 +47,7 @@
 #include "JSCommonJSModule.h"
 #include "ModuleGraph.h"
 #include "ModuleLoader.h"
+#include "RunnerLoadFetcher.h"
 #include "PathInlines.h"
 #include "isBuiltinModule.h"
 #include "AsyncContextFrame.h"
@@ -3368,6 +3369,17 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             auto* imported = dynamicDowncast<JSC::CyclicModuleRecord>(loaded.m_module.get());
             if (imported && imported->status() == JSC::CyclicModuleRecord::Status::New && asks.add(imported).isNewEntry)
                 asking.append({ imported, pendingLoad });
+        }
+    }
+
+    // A CommonJS import that `bun test` runs right before the link finds the load promises above settled: the runner's load, pending until the graph has run, pins what its imports fetched.
+    if (globalObject->isRunningDeferredCommonJSModule) [[unlikely]] {
+        auto* runnerLoad = Bun::liveRunnerLoad(globalObject, Bun::testFileModuleGraph(globalObject));
+        JSC::JSPromise* pendingLoad = runnerLoad ? runnerLoad->promise() : nullptr;
+        if (pendingLoad && pendingLoad->status() == JSC::JSPromise::Status::Pending) {
+            pendingLoads.append(pendingLoad);
+            for (auto& key : runnerLoad->keys())
+                loading.add(key, pendingLoad);
         }
     }
 

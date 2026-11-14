@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/fs/streams.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 4c73ad1978cefd870065b89eaf36d4c329a29a24f0008fcb06e721058f973a51.
+// Written against that file with the SHA-256 6e092f01dac7b06d6eb1b74a18a4762bd81997b56088ca27c113aa230d39d97e.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // fs.ReadStream and fs.WriteStream are lazily loaded to avoid importing 'node:stream' until required
@@ -97,6 +97,8 @@ declare global {
       bytesWritten: number;
       destroySoon: Writable["end"];
       [kWriteMonkeyPatchDefense]?: boolean;
+      [kStdinOf]?: unknown;
+      [kHasExitedBeforeFirstPoll]?: (subprocess: unknown) => boolean;
     }
   }
 }
@@ -112,6 +114,9 @@ const kIoDone = Symbol("kIoDone");
 // Bun supports a fast path for `createWriteStream("path.txt")` where instead of
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
+// The Subprocess whose stdin the stream is, and the question that child_process hands over to ask about it.
+const kStdinOf = Symbol("kStdinOf");
+const kHasExitedBeforeFirstPoll = Symbol("kHasExitedBeforeFirstPoll");
 const kFs = Symbol("kFs");
 
 let FileHandle: FileHandleInternals["FileHandle"] | undefined;
@@ -991,6 +996,28 @@ writeStreamPrototype._destroy = function (this: $Node.WriteStream, err: Error | 
   }
 };
 
+// _destroy of the stdin of a child. The EPIPE of a send can be for a child that has exited while the event loop has
+// had no poll since the spawn in which to report that (has_exited_before_first_poll, subprocess.rs). Under node that
+// exit has destroyed the stdin ahead of the callback that sends, and no 'error' follows:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L277-L279
+// The stream then closes with no 'error'. The callbacks, `errored` and finished() keep the EPIPE, which destroy() has
+// stored. Only EPIPE: ECONNRESET is for a send that began while the child had its end open, and node reports that too.
+function destroyStdinOfChild(this: $Node.WriteStream, err: any, cb: ErrorCallback) {
+  const child = this[kStdinOf];
+  const hasExitedBeforeFirstPoll = this[kHasExitedBeforeFirstPoll]!;
+  // A stream is destroyed once. It asks no more, and it must not keep the Subprocess.
+  this[kStdinOf] = this[kHasExitedBeforeFirstPoll] = undefined;
+  // Asked ahead of sink.end(), which the _destroy below calls: the answer reads the sink.
+  if (err?.code === "EPIPE" && hasExitedBeforeFirstPoll(child)) err = null;
+  try {
+    writeStreamPrototype._destroy.$call(this, err, cb);
+  } catch (e: any) {
+    // destroy() sends what a write() left in the sink, and that send fails the same way.
+    if (e?.code !== "EPIPE" || !hasExitedBeforeFirstPoll(child)) throw e;
+    cb(err);
+  }
+}
+
 writeStreamPrototype.close = function (this: $Node.WriteStream, cb?: ErrorCallback) {
   if (cb) {
     if (this.closed) {
@@ -1039,7 +1066,13 @@ function thenIfPromise<T>(maybePromise: Promise<T> | T, cb: ErrorCallback) {
   }
 }
 
-function writableFromFileSink(fileSink: FileSink) {
+// The stdin of a child. `hasExitedBeforeFirstPoll` comes from child_process: this module is in every program, and must
+// not name a binding of Bun.spawn.
+function writableFromFileSink(
+  fileSink: FileSink,
+  stdinOf: unknown,
+  hasExitedBeforeFirstPoll: (subprocess: unknown) => boolean,
+) {
   $assert(typeof fileSink === "object", "fileSink is not an object");
   $assert(typeof fileSink.write === "function", "fileSink.write is not a function");
   $assert(typeof fileSink.end === "function", "fileSink.end is not a function");
@@ -1047,6 +1080,9 @@ function writableFromFileSink(fileSink: FileSink) {
   $assert(w[kWriteStreamFastPath] === true, "fast path not enabled");
   w[kWriteStreamFastPath] = fileSink;
   w.path = undefined;
+  w[kStdinOf] = stdinOf;
+  w[kHasExitedBeforeFirstPoll] = hasExitedBeforeFirstPoll;
+  w._destroy = destroyStdinOfChild;
   return w;
 }
 

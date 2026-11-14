@@ -33,6 +33,8 @@ type FSStream = Omit<import("node:fs").ReadStream & import("node:fs").WriteStrea
    * sink = FileSink
    */
   [kWriteStreamFastPath]?: undefined | true | FileSink;
+  [kStdinOf]?: unknown;
+  [kHasExitedBeforeFirstPoll]?: (subprocess: unknown) => boolean;
 };
 type FD = number;
 
@@ -46,6 +48,9 @@ const kIoDone = Symbol("kIoDone");
 // Bun supports a fast path for `createWriteStream("path.txt")` where instead of
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
+// The Subprocess whose stdin the stream is, and the question that child_process hands over to ask about it.
+const kStdinOf = Symbol("kStdinOf");
+const kHasExitedBeforeFirstPoll = Symbol("kHasExitedBeforeFirstPoll");
 const kFs = Symbol("kFs");
 
 const {
@@ -821,6 +826,28 @@ writeStreamPrototype._destroy = function (err, cb) {
   }
 };
 
+// _destroy of the stdin of a child. The EPIPE of a send can be for a child that has exited while the event loop has
+// had no poll since the spawn in which to report that (has_exited_before_first_poll, subprocess.rs). Under node that
+// exit has destroyed the stdin ahead of the callback that sends, and no 'error' follows:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L277-L279
+// The stream then closes with no 'error'. The callbacks, `errored` and finished() keep the EPIPE, which destroy() has
+// stored. Only EPIPE: ECONNRESET is for a send that began while the child had its end open, and node reports that too.
+function destroyStdinOfChild(this: FSStream, err: any, cb: (err?: Error | null) => void) {
+  const child = this[kStdinOf];
+  const hasExitedBeforeFirstPoll = this[kHasExitedBeforeFirstPoll]!;
+  // A stream is destroyed once. It asks no more, and it must not keep the Subprocess.
+  this[kStdinOf] = this[kHasExitedBeforeFirstPoll] = undefined;
+  // Asked ahead of sink.end(), which the _destroy below calls: the answer reads the sink.
+  if (err?.code === "EPIPE" && hasExitedBeforeFirstPoll(child)) err = null;
+  try {
+    writeStreamPrototype._destroy.$call(this, err, cb);
+  } catch (e) {
+    // destroy() sends what a write() left in the sink, and that send fails the same way.
+    if (e?.code !== "EPIPE" || !hasExitedBeforeFirstPoll(child)) throw e;
+    cb(err);
+  }
+}
+
 writeStreamPrototype.close = function (this: FSStream, cb) {
   if (cb) {
     if (this.closed) {
@@ -869,7 +896,13 @@ function thenIfPromise<T>(maybePromise: Promise<T> | T, cb: any) {
   }
 }
 
-function writableFromFileSink(fileSink: any) {
+// The stdin of a child. `hasExitedBeforeFirstPoll` comes from child_process: this module is in every program, and must
+// not name a binding of Bun.spawn.
+function writableFromFileSink(
+  fileSink: any,
+  stdinOf: unknown,
+  hasExitedBeforeFirstPoll: (subprocess: unknown) => boolean,
+) {
   $assert(typeof fileSink === "object", "fileSink is not an object");
   $assert(typeof fileSink.write === "function", "fileSink.write is not a function");
   $assert(typeof fileSink.end === "function", "fileSink.end is not a function");
@@ -877,6 +910,9 @@ function writableFromFileSink(fileSink: any) {
   $assert(w[kWriteStreamFastPath] === true, "fast path not enabled");
   w[kWriteStreamFastPath] = fileSink;
   w.path = undefined;
+  w[kStdinOf] = stdinOf;
+  w[kHasExitedBeforeFirstPoll] = hasExitedBeforeFirstPoll;
+  w._destroy = destroyStdinOfChild;
   return w;
 }
 

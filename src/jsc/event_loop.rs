@@ -103,6 +103,8 @@ pub struct EventLoop {
     uws_loop: Cell<Option<&'static uws::Loop>>,
 
     entered_event_loop_count: Cell<isize>,
+    /// See [`callback_number`](Self::callback_number).
+    callback_number: Cell<u32>,
     /// How many times `tasks` was drained. One uws loop iteration drains it several times, so a
     /// `fetch` can start and finish within one iteration. Atomic because a Worker may read it.
     task_drains: AtomicU64,
@@ -148,6 +150,7 @@ impl EventLoop {
             deferred_tasks: DeferredTaskQueue::DeferredTaskQueue::default(),
             uws_loop: Cell::new(None),
             entered_event_loop_count: Cell::new(0),
+            callback_number: Cell::new(0),
             task_drains: AtomicU64::new(0),
             concurrent_ref: AtomicI32::new(0),
             imminent_gc_timer: AtomicPtr::new(core::ptr::null_mut()),
@@ -761,6 +764,20 @@ impl EventLoop {
     /// next `tick()`, after a non-blocking poll (`has_pending_tasks`).
     const CONCURRENT_REFILLS_PER_TICK: u32 = 8;
 
+    /// Names the callback of this loop that is running, among those that it runs between two polls: each task has
+    /// its own number, and the immediates of one turn share one. It wraps around.
+    #[inline]
+    pub fn callback_number(&self) -> u32 {
+        self.callback_number.get()
+    }
+
+    /// A task is about to run, or the immediates of a turn are.
+    #[inline]
+    pub fn begin_callback(&self) {
+        self.callback_number
+            .set(self.callback_number.get().wrapping_add(1));
+    }
+
     /// Work is queued that the next `tick()` will run: the poll before it must
     /// not block.
     pub fn has_pending_tasks(&self) -> bool {
@@ -1082,6 +1099,7 @@ impl EventLoop {
     /// observe the post-swap `immediate_tasks` (next-tick immediates), not the
     /// un-drained current batch (busy-spin hazard).
     pub fn tick_immediate_tasks(&self) {
+        self.begin_callback();
         let virtual_machine = self.vm_ref();
         let mut to_run_now = self
             .immediate_tasks

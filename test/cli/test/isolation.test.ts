@@ -1616,6 +1616,16 @@ describe.concurrent("bun test --isolate=modules", () => {
     expect(lines).toEqual(Array(2).fill(JSON.stringify(["fetch", true, false])));
   });
 
+  test("--help says that the restore undoes changes to globals, and that deeper ones carry over", async () => {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "test", "--help"], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const isolate = stdout.split("\n").find(line => line.includes("--isolate=")) ?? "";
+    expect(isolate.trim().replace(/ {2,}/g, " ")).toBe(
+      `--isolate=<val> Run each test file in a fresh global object. Leaked handles from one file cannot affect another. "modules": keep the global object, load each file's modules afresh and undo its changes to globals (faster; a change deeper in a built-in, like process.stdout.write, carries over).`,
+    );
+    expect(exitCode).toBe(0);
+  });
+
   test("keeps what node:perf_hooks and node:worker_threads add to the builtins when they load", async () => {
     const file = `
       import "node:perf_hooks";
@@ -2969,7 +2979,7 @@ describe.concurrent("the SourceProvider cache tells a test file that is the entr
 });
 
 describe.concurrent("mocks and spies do not outlive their test file", () => {
-  const modes = ["--no-isolate", "--isolate", "--rerun-each=2", "--parallel=1 --no-isolate"];
+  const modes = ["--no-isolate", "--isolate", "--isolate=modules", "--rerun-each=2", "--parallel=1 --no-isolate"];
   const results = (stderr: string) => [
     ...new Set(
       stderr

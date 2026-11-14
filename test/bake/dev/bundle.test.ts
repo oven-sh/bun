@@ -1578,6 +1578,9 @@ devTest("a route whose import throws on load throws that error again on the next
     "sync-import-dep.ts": `throw new Error("sync-import-dep.ts failed to load"); export const value = 1;`,
     "sync-import.ts": `export { value } from "./sync-import-dep.ts";`,
     "sync-import.cjs": `module.exports = require("./sync-import.ts").value;`,
+    // An import statement in a file with module.exports also goes through the synchronous loader.
+    "mixed-import-dep.ts": `throw new Error("mixed-import-dep.ts failed to load"); export const value = 1;`,
+    "mixed-import.js": `import { value } from "./mixed-import-dep.ts"; module.exports = value;`,
     "routes/index.ts": `
       import dep from "../dep.cjs";
       export default function () {
@@ -1608,6 +1611,12 @@ devTest("a route whose import throws on load throws that error again on the next
         return new Response("sync-import: " + value);
       }
     `,
+    "routes/mixed-import.ts": `
+      import value from "../mixed-import.js";
+      export default function () {
+        return new Response("mixed-import: " + value);
+      }
+    `,
   },
   async test(dev) {
     for (const [url, message] of [
@@ -1616,6 +1625,7 @@ devTest("a route whose import throws on load throws that error again on the next
       ["/tla", "tla-dep.ts failed to load"],
       ["/sync-body", "sync-body.ts failed to load"],
       ["/sync-import", "sync-import-dep.ts failed to load"],
+      ["/mixed-import", "mixed-import-dep.ts failed to load"],
     ]) {
       for (let i = 0; i < 2; i++) {
         const response = await dev.fetch(url);
@@ -1637,6 +1647,8 @@ devTest("a route whose import throws on load throws that error again on the next
     await dev.fetch("/sync-body").equals("sync-body: fixed");
     await dev.write("sync-import-dep.ts", `export const value = "fixed";`);
     await dev.fetch("/sync-import").equals("sync-import: fixed");
+    await dev.write("mixed-import-dep.ts", `export const value = "fixed";`);
+    await dev.fetch("/mixed-import").equals("mixed-import: fixed");
   },
 });
 devTest("a route module that throws when a save reloads it is reported and recovers", {

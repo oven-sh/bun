@@ -961,6 +961,12 @@ var exports = {};
 __reExport(exports, targetModule, module.exports); // module.exports gets __esModule
 ```
 
+An ES module that a `require()` inside the bundle reads has such an object too: the copy that `__toCommonJS` caches. A `require()` that runs while the module is still loading gets that copy before the re-exports exist, so they are written to it as well:
+
+```javascript
+__reExport(exports, targetModule, __toCommonJS(exports));
+```
+
 **Example: Complex Module Transformation**
 
 Input file with mixed imports/exports:

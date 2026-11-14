@@ -364,6 +364,7 @@ pub(crate) fn scan_imports_and_exports(
                         if !this.is_external_dynamic_import(record, id as u32) {
                             if other_kind == ExportsKind::Esm {
                                 col!(flags)[other_file].wrap = WrapKind::Esm;
+                                col!(flags)[other_file].has_commonjs_view = true;
                             } else {
                                 // TODO: introduce a NamedRequire for require("./foo").Bar AST nodes to support tree-shaking those.
                                 col!(flags)[other_file].wrap = WrapKind::Cjs;
@@ -1274,6 +1275,7 @@ pub(crate) fn scan_imports_and_exports(
                                     .flags
                                     .insert(ImportRecordFlags::WRAP_WITH_TO_COMMONJS);
                                 to_common_js_uses += 1;
+                                debug_assert!(other_flags.has_commonjs_view);
                             }
                         }
                     } else if kind == ImportKind::Stmt
@@ -1379,6 +1381,11 @@ pub(crate) fn scan_imports_and_exports(
                             .insert(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN);
                         re_export_uses += 1;
                     }
+                }
+
+                // "__reExport(exports, source, __toCommonJS(exports))"
+                if flag.has_commonjs_view {
+                    to_common_js_uses += re_export_uses;
                 }
 
                 if output_format != Format::InternalBakeDev {

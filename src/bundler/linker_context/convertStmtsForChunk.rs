@@ -87,6 +87,21 @@ pub(crate) fn convert_stmts_for_chunk(
             },
             Loc::EMPTY,
         ));
+    } else if c.graph.meta.items_flags()[source_index as usize].has_commonjs_view {
+        // The same for the copy that "__toCommonJS" caches for a "require()" in the bundle:
+        // a "require()" that runs while this file is loading gets that copy before the re-exports.
+        module_exports_for_export = Some(Expr::allocate(
+            bump,
+            E::Call {
+                target: Expr::init_identifier(c.runtime_function(b"__toCommonJS"), Loc::EMPTY),
+                args: ExprNodeList::from_slice(&[Expr::init_identifier(
+                    ast.exports_ref,
+                    Loc::EMPTY,
+                )]),
+                ..Default::default()
+            },
+            Loc::EMPTY,
+        ));
     }
 
     'stmt_loop: for stmt_ in part_stmts {

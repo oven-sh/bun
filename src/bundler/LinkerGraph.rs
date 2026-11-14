@@ -147,6 +147,8 @@ pub mod js_meta {
         pub(crate) is_async_or_has_async_dependency: bool,
         pub(crate) needs_exports_variable: bool,
         pub(crate) force_include_exports_for_entry_point: bool,
+        /// A `require()` in the bundle reads this ES module through the copy that `__toCommonJS` caches.
+        pub(crate) has_commonjs_view: bool,
         pub(crate) needs_export_symbol_from_runtime: bool,
         pub(crate) did_wrap_dependencies: bool,
         pub(crate) needs_synthetic_default_export: bool,

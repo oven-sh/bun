@@ -610,6 +610,459 @@ describe("bundler", () => {
   });
 
   // ============================================================================
+  // `require()` of an ES module while that module is still loading.
+  //
+  // `__toCommonJS` caches the CommonJS view it builds from the names the
+  // module has at that moment. An `export *` whose names are only known at run
+  // time adds its names later, so `__reExport` adds them to that view too.
+  // ============================================================================
+
+  // `const e = exports` keeps the file CommonJS in every output format, so the
+  // bundler only learns its names when the file runs.
+  const runTimeNames = /* js */ `
+    const e = exports;
+    e.fromD = "d";
+  `;
+  const starBarrel = {
+    "/b.ts": /* js */ `
+      import "./c.cjs";
+      export * from "./d.cjs";
+      export const own = 1;
+    `,
+    "/c.cjs": /* js */ `globalThis.early = require("./b.ts");`,
+    "/d.cjs": runTimeNames,
+  };
+  const logBarrel = /* js */ `
+    const b = require("./b.ts");
+    console.log(Object.keys(b).join(","), b.fromD, b === globalThis.early);
+  `;
+
+  // A CommonJS import of the barrel requires it back before the star
+  for (const target of ["node", "bun", "browser"] as const) {
+    for (const format of ["esm", "cjs"] as const) {
+      itBundled(`cjs/__reExport_required_while_loading_${target}_${format}`, {
+        files: { "/entry.cjs": logBarrel, ...starBarrel },
+        target,
+        format,
+        run: { stdout: "own,fromD d true" },
+      });
+    }
+  }
+  itBundled("cjs/__reExport_required_while_loading_cli", {
+    files: { "/entry.cjs": logBarrel, ...starBarrel },
+    target: "node",
+    backend: "cli",
+    run: { stdout: "own,fromD d true" },
+  });
+  itBundled("cjs/__reExport_required_while_loading_minify", {
+    files: { "/entry.cjs": logBarrel, ...starBarrel },
+    target: "node",
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    run: { stdout: "own,fromD d true" },
+  });
+  itBundled("cjs/__reExport_required_while_loading_compile", {
+    files: { "/entry.cjs": logBarrel, ...starBarrel },
+    compile: true,
+    run: { stdout: "own,fromD d true" },
+  });
+  itBundled("cjs/__reExport_required_while_loading_bytecode", {
+    files: { "/entry.js": logBarrel, ...starBarrel },
+    target: "bun",
+    format: "cjs",
+    bytecode: true,
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "own,fromD d true" },
+  });
+
+  // The star target requires the barrel back
+  itBundled("cjs/__reExport_required_while_loading_by_star_target", {
+    files: {
+      "/entry.cjs": logBarrel,
+      "/b.ts": /* js */ `
+        export * from "./d.cjs";
+        export const own = 1;
+      `,
+      "/d.cjs": /* js */ `
+        globalThis.early = require("./b.ts");
+        ${runTimeNames}
+      `,
+    },
+    target: "node",
+    run: { stdout: "own,fromD d true" },
+  });
+
+  // An ES module that the barrel imports requires it back. The imports of a
+  // wrapped module run before its stars, whatever the source order.
+  itBundled("cjs/__reExport_required_while_loading_by_es_module_import", {
+    files: {
+      "/entry.cjs": logBarrel,
+      "/b.ts": /* js */ `
+        export * from "./d.cjs";
+        import "./c.ts";
+        export const own = 1;
+      `,
+      "/c.ts": /* js */ `
+        globalThis.early = require("./b.ts");
+        export {};
+      `,
+      "/d.cjs": runTimeNames,
+    },
+    target: "node",
+    run: { stdout: "own,fromD d true" },
+  });
+
+  // Two stars, and the cycle runs between them
+  itBundled("cjs/__reExport_required_while_loading_between_stars", {
+    files: {
+      "/entry.cjs": /* js */ `
+        const b = require("./b.ts");
+        console.log(Object.keys(b).join(","), b.one, b.two, b === globalThis.early, "in the cycle: " + globalThis.inCycle);
+      `,
+      "/b.ts": /* js */ `
+        export * from "./d1.cjs";
+        import "./c.cjs";
+        export * from "./d2.cjs";
+        export const own = 1;
+      `,
+      "/c.cjs": /* js */ `
+        globalThis.early = require("./b.ts");
+        globalThis.inCycle = Object.keys(globalThis.early).join(",");
+      `,
+      "/d1.cjs": /* js */ `
+        const e = exports;
+        e.one = 1;
+      `,
+      "/d2.cjs": /* js */ `
+        const e = exports;
+        e.two = 2;
+      `,
+    },
+    target: "node",
+    run: { stdout: "own,one,two 1 2 true in the cycle: own,one" },
+  });
+
+  // The star names come through a second ES module
+  itBundled("cjs/__reExport_required_while_loading_star_chain", {
+    files: {
+      "/entry.cjs": /* js */ `
+        const a = require("./a.ts");
+        console.log(Object.keys(a).sort().join(","), a.fromD, a === globalThis.early);
+      `,
+      "/a.ts": /* js */ `
+        import "./c.cjs";
+        export * from "./b.ts";
+        export const ownA = 1;
+      `,
+      "/b.ts": /* js */ `
+        export * from "./d.cjs";
+        export const ownB = 1;
+      `,
+      "/c.cjs": /* js */ `globalThis.early = require("./a.ts");`,
+      "/d.cjs": runTimeNames,
+    },
+    target: "node",
+    run: { stdout: "fromD,ownA,ownB d true" },
+  });
+
+  // The star target is an external module
+  itBundled("cjs/__reExport_required_while_loading_external_star", {
+    files: {
+      "/entry.cjs": /* js */ `
+        const b = require("./b.ts");
+        console.log(typeof b.join, b.own, b === globalThis.early);
+      `,
+      "/b.ts": /* js */ `
+        import "./c.cjs";
+        export * from "node:path";
+        export const own = 1;
+      `,
+      "/c.cjs": starBarrel["/c.cjs"],
+    },
+    target: "node",
+    format: "cjs",
+    run: { stdout: "function 1 true" },
+  });
+
+  // The star target stays an `import` in the output: the "bun" builtin
+  itBundled("cjs/__reExport_required_while_loading_builtin_star", {
+    files: {
+      "/entry.cjs": /* js */ `
+        const b = require("./b.ts");
+        console.log(typeof b.serve, b.own, b === globalThis.early);
+      `,
+      "/b.ts": /* js */ `
+        import "./c.cjs";
+        export * from "bun";
+        export const own = 1;
+      `,
+      "/c.cjs": starBarrel["/c.cjs"],
+    },
+    target: "bun",
+    run: { stdout: "function 1 true" },
+  });
+
+  // An entry point in the output of another entry point is an ordinary module
+  // there: `module.exports` of that output is not its view
+  itBundled("cjs/__reExport_required_while_loading_entry_in_other_output", {
+    files: {
+      "/main.cjs": logBarrel,
+      ...starBarrel,
+    },
+    entryPoints: ["/main.cjs", "/b.ts"],
+    outputPaths: ["/out/main.js", "/out/b.js"],
+    target: "node",
+    format: "cjs",
+    outdir: "/out",
+    run: { file: "/out/main.js", stdout: "own,fromD d true" },
+  });
+
+  // The requirers are in two chunks, the barrel is in a third
+  itBundled("cjs/__reExport_required_while_loading_splitting", {
+    files: {
+      "/e1.js": /* js */ `
+        const b = require("./b.ts");
+        console.log("e1", Object.keys(b).join(","), b.fromD, b === globalThis.early);
+        module.exports = b;
+      `,
+      "/e2.js": /* js */ `
+        const b = require("./b.ts");
+        console.log("e2", Object.keys(b).join(","), b.fromD, b === globalThis.early);
+        module.exports = b;
+      `,
+      ...starBarrel,
+      "/run.mjs": /* js */ `
+        const { default: one } = await import("./out/e1.js");
+        const { default: two } = await import("./out/e2.js");
+        console.log(one === two);
+      `,
+    },
+    entryPoints: ["/e1.js", "/e2.js"],
+    target: "node",
+    splitting: true,
+    outdir: "/out",
+    run: { file: "/run.mjs", stdout: "e1 own,fromD d true\ne2 own,fromD d true\ntrue" },
+  });
+
+  // Every source form of require()
+  itBundled("cjs/__reExport_required_while_loading_require_forms", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import b1 = require("./b.ts");
+        const b2 = module.require("./b.ts");
+        const { fromD } = require("./b.ts");
+        console.log(Object.keys(b1).join(","), fromD, require("./b.ts").fromD, b1 === b2, b1 === globalThis.early);
+      `,
+      ...starBarrel,
+    },
+    target: "node",
+    run: { stdout: "own,fromD d d true true" },
+  });
+
+  // The requirer inside the cycle keeps its object. No later require() is
+  // needed: an import starts the load here.
+  itBundled("cjs/__reExport_required_while_loading_holder_in_cycle", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import * as b from "./b.ts";
+        import c from "./c.cjs";
+        console.log(Object.keys(b).sort().join(","), c.keys(), c.read(), c.sameInCycle);
+      `,
+      "/b.ts": starBarrel["/b.ts"],
+      "/c.cjs": /* js */ `
+        const b = require("./b.ts");
+        exports.sameInCycle = b === require("./b.ts");
+        exports.keys = () => Object.keys(b).join(",");
+        exports.read = () => b.fromD;
+      `,
+      "/d.cjs": runTimeNames,
+    },
+    target: "node",
+    run: { stdout: "fromD,own own,fromD d true" },
+  });
+
+  // The linker reaches the barrel before every file that requires it
+  itBundled("cjs/__reExport_required_while_loading_barrel_linked_first", {
+    files: {
+      "/entry.cjs": /* js */ `
+        exports.later = () => require("./c.cjs");
+        ${logBarrel}
+      `,
+      ...starBarrel,
+    },
+    target: "node",
+    run: { stdout: "own,fromD d true" },
+  });
+
+  // ES code reads the barrel too. Its namespace object is not the CommonJS
+  // view: it has no "__esModule".
+  itBundled("cjs/__reExport_required_while_loading_es_importers", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import * as ns from "./b.ts";
+        import { fromD } from "./b.ts";
+        const dynamic = await import("./b.ts");
+        const list = object => Object.keys(object).sort().join(",") + " " + ("__esModule" in object);
+        console.log(fromD, list({ ...ns }), list(dynamic), list(globalThis.early), globalThis.early.__esModule);
+      `,
+      ...starBarrel,
+    },
+    target: "node",
+    run: { stdout: "d fromD,own false fromD,own false fromD,own true true" },
+  });
+
+  // A module that throws after the cycle throws again on every require(). The
+  // requirer inside the cycle keeps the names of the star that ran.
+  itBundled("cjs/__reExport_required_while_loading_module_throws", {
+    files: {
+      "/entry.cjs": /* js */ `
+        const seen = [];
+        for (let i = 0; i < 2; i++) {
+          try {
+            require("./b.ts");
+            seen.push("loaded");
+          } catch (e) {
+            seen.push(e.message);
+          }
+        }
+        console.log(seen.join(","), Object.keys(globalThis.early).join(","));
+      `,
+      "/b.ts": /* js */ `
+        import "./c.cjs";
+        export * from "./d.cjs";
+        export const own = 1;
+        throw new Error("boom");
+      `,
+      "/c.cjs": starBarrel["/c.cjs"],
+      "/d.cjs": runTimeNames,
+    },
+    target: "node",
+    run: { stdout: "boom,boom own,fromD" },
+  });
+
+  // ----------------------------------------------------------------------------
+  // What must stay as it is
+  // ----------------------------------------------------------------------------
+
+  // No cycle
+  itBundled("cjs/__reExport_required_without_cycle", {
+    files: {
+      "/entry.cjs": /* js */ `
+        const b = require("./b.ts");
+        console.log(Object.keys(b).join(","), b.fromD, b === require("./b.ts"));
+      `,
+      "/b.ts": /* js */ `
+        export * from "./d.cjs";
+        export const own = 1;
+      `,
+      "/d.cjs": runTimeNames,
+    },
+    target: "node",
+    run: { stdout: "own,fromD d true" },
+  });
+
+  // The star runs before the cycle
+  itBundled("cjs/__reExport_required_while_loading_after_star", {
+    files: {
+      "/entry.cjs": logBarrel,
+      "/b.ts": /* js */ `
+        export * from "./d.cjs";
+        import "./c.cjs";
+        export const own = 1;
+      `,
+      "/c.cjs": starBarrel["/c.cjs"],
+      "/d.cjs": runTimeNames,
+    },
+    target: "node",
+    run: { stdout: "own,fromD d true" },
+  });
+
+  // A module with no star. What the requirer inside the cycle stores on its
+  // object is there for every later require().
+  itBundled("cjs/__toCommonJS_required_while_loading_without_star", {
+    files: {
+      "/entry.cjs": /* js */ `
+        const b = require("./b.ts");
+        console.log(Object.keys(b).join(","), b.patched, b === globalThis.early, globalThis.sameInCycle);
+      `,
+      "/b.ts": /* js */ `
+        import "./c.cjs";
+        export const own = 1;
+      `,
+      "/c.cjs": /* js */ `
+        const b = require("./b.ts");
+        b.patched = "yes";
+        globalThis.early = b;
+        globalThis.sameInCycle = b === require("./b.ts");
+      `,
+    },
+    target: "node",
+    run: { stdout: "own,patched yes true true" },
+  });
+
+  // No cycle, and the barrel is in a chunk that two entry points share. The
+  // helpers are in another chunk, which a third entry point shares too.
+  itBundled("cjs/__reExport_required_barrel_in_shared_chunk", {
+    files: {
+      "/e1.js": /* js */ `
+        const b = require("./b.ts");
+        console.log("e1", Object.keys(b).join(","), b.fromD);
+      `,
+      "/e2.js": /* js */ `
+        import * as b from "./b.ts";
+        console.log("e2", Object.keys(b).sort().join(","), b.fromD);
+      `,
+      "/e3.js": /* js */ `
+        import other from "./other.cjs";
+        console.log("e3", other.x);
+      `,
+      "/b.ts": /* js */ `
+        export * from "./d.cjs";
+        export const own = 1;
+      `,
+      "/d.cjs": runTimeNames,
+      "/other.cjs": /* js */ `
+        const e = exports;
+        e.x = 1;
+      `,
+      "/run.mjs": /* js */ `
+        await import("./out/e2.js");
+        await import("./out/e1.js");
+        await import("./out/e3.js");
+      `,
+    },
+    entryPoints: ["/e1.js", "/e2.js", "/e3.js"],
+    target: "node",
+    splitting: true,
+    outdir: "/out",
+    run: { file: "/run.mjs", stdout: "e2 fromD,own d\ne1 own,fromD d\ne3 1" },
+  });
+
+  // In CommonJS output the view of the entry point is `module.exports`, and it
+  // stays that object
+  itBundled("cjs/__reExport_required_while_loading_entry_format_cjs", {
+    files: {
+      "/entry.ts": /* js */ `
+        import "./c.cjs";
+        export * from "./d.cjs";
+        export const own = 1;
+        export const self = () => require("./lazy.cjs").get();
+      `,
+      "/c.cjs": /* js */ `globalThis.early = require("./entry.ts");`,
+      "/d.cjs": runTimeNames,
+      "/lazy.cjs": /* js */ `exports.get = () => require("./entry.ts");`,
+      "/run.cjs": /* js */ `
+        const m = require("./out.js");
+        console.log(Object.keys(m).sort().join(","), m.fromD, m.self() === m, globalThis.early === m);
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    run: { file: "/run.cjs", stdout: "fromD,own,self d true true" },
+  });
+
+  // ============================================================================
   // isNodeMode follows the importer's module type: the file extension first,
   // then the nearest package.json "type". One test per importer kind.
   //

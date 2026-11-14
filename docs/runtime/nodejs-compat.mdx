@@ -17,7 +17,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:buffer`](https://nodejs.org/api/buffer.html)
 
-🟢 Fully implemented. A single `Buffer` is capped at 4 GiB (`buffer.constants.MAX_LENGTH` is `2**32`).
+🟢 Fully implemented. A single `Buffer` is capped at 4 GiB (`buffer.constants.MAX_LENGTH` is `2**32`). Missing `Buffer.stringLength()`, `isLatin1()` and `blob.textStream()`. `Buffer.allocUnsafe()` and `Buffer.allocUnsafeSlow()` ignore the `alignment` argument.
 
 ### [`node:console`](https://nodejs.org/api/console.html)
 
@@ -25,11 +25,11 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:dgram`](https://nodejs.org/api/dgram.html)
 
-🟢 Fully implemented. 99% of Node.js's test suite passes. `addMembership()` does not implicitly bind an unbound socket; call `bind()` first.
+🟢 Fully implemented. 99% of Node.js's test suite passes. `addMembership()` does not implicitly bind an unbound socket; call `bind()` first. Missing `socket.bindSync()` and `socket.connectSync()`.
 
 ### [`node:diagnostics_channel`](https://nodejs.org/api/diagnostics_channel.html)
 
-🟡 `channel()`, `subscribe()`, `tracingChannel()` and the `http` client, `http2` and `dgram` built-in channels are implemented. Missing `boundedChannel()` and the `http.server.*`, `net`, `module`, `console`, `child_process` and `worker_threads` built-in channels. Subscribers do not keep a `Channel` alive, so hold a reference to it.
+🟡 `channel()`, `subscribe()`, `tracingChannel()` and the `http` client, `http2` and `dgram` built-in channels are implemented. Missing `boundedChannel()` and the `http.server.*`, `net`, `module`, `console`, `child_process`, `worker_threads` and `sqlite` built-in channels. Subscribers do not keep a `Channel` alive, so hold a reference to it.
 
 ### [`node:dns`](https://nodejs.org/api/dns.html)
 
@@ -41,11 +41,11 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:fs`](https://nodejs.org/api/fs.html)
 
-🟢 Fully implemented. 98% of Node.js's test suite passes. `Stats` objects lack the `Temporal.Instant` getters (`atimeInstant` and friends).
+🟢 Fully implemented. 98% of Node.js's test suite passes. `Stats` objects lack the `Temporal.Instant` getters (`atimeInstant` and friends). Missing `openAsBlobSync()` and the `UV_FS_O_TEMPORARY`, `UV_FS_O_SHORT_LIVED`, `UV_FS_O_SEQUENTIAL` and `UV_FS_O_RANDOM` constants (Windows-only open flags).
 
 ### [`node:http`](https://nodejs.org/api/http.html)
 
-🟢 Fully implemented. `http.Server` does not extend `net.Server`. Bun ignores `listen(handle)` and the `fd`, `ipv6Only` and `signal` options of `listen()`. `keepAlive`/`keepAliveInitialDelay` on the server are no-ops.
+🟢 Fully implemented. `http.Server` does not extend `net.Server`. Bun ignores `listen(handle)` and the `fd`, `ipv6Only` and `signal` options of `listen()`. `keepAlive`/`keepAliveInitialDelay` on the server are no-ops. Missing `isValidHeaderName()`, `isValidHeaderValue()`, `websocketMask()` and `websocketUnmask()`.
 
 ### [`node:https`](https://nodejs.org/api/https.html)
 
@@ -73,7 +73,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:stream`](https://nodejs.org/api/stream.html)
 
-🟢 Fully implemented. `isReadable`, `isWritable`, `isErrored` and `Readable.isDisturbed` only understand Node.js streams, not web streams.
+🟢 Fully implemented. `isReadable`, `isWritable`, `isErrored` and `Readable.isDisturbed` only understand Node.js streams, not web streams. `node:stream/web` is missing `ReadableStreamTee` (experimental in Node.js).
 
 ### [`node:string_decoder`](https://nodejs.org/api/string_decoder.html)
 
@@ -85,7 +85,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:tty`](https://nodejs.org/api/tty.html)
 
-🟢 Fully implemented. `ReadStream` and `WriteStream` extend the `fs` streams rather than `net.Socket`, and constructing them on a non-TTY fd returns a stream with `isTTY` set to `false` instead of throwing.
+🟢 Fully implemented. `ReadStream` and `WriteStream` extend the `fs` streams rather than `net.Socket`, and constructing them on a non-TTY fd returns a stream with `isTTY` set to `false` instead of throwing. Missing `readStream.rawMode`, and `setRawMode()` treats the `'io'` mode as `true`.
 
 ### [`node:url`](https://nodejs.org/api/url.html)
 
@@ -93,7 +93,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:zlib`](https://nodejs.org/api/zlib.html)
 
-🟢 Fully implemented. 98% of Node.js's test suite passes.
+🟢 Fully implemented. 98% of Node.js's test suite passes. Missing the zip archive API, which is in early development in Node.js: `ZipFile`, `ZipBuffer`, `ZipEntry`, `createZipArchive()`, `createZipArchiveSync()`, `zipFiles()`, `getMaxZipContentSize()` and `setMaxZipContentSize()`.
 
 ### [`node:async_hooks`](https://nodejs.org/api/async_hooks.html)
 
@@ -109,7 +109,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:crypto`](https://nodejs.org/api/crypto.html)
 
-🟡 Missing `encapsulate`/`decapsulate` (you can use ML-KEM keys through `crypto.subtle`). `argon2()` and `argon2Sync()` are implemented. Custom engines (`setEngine()`) throw, `setFips()` is a no-op and `secureHeapUsed()` returns `undefined`. Bun's crypto is backed by BoringSSL, which lacks the `ed448`, `x448`, `rsa-pss`, `dsa`, `dh` and `ml-kem-512` key types, EC curves other than P-224/256/384/521 (no `secp256k1`), and the CCM, OCB, XTS and `chacha20-poly1305` ciphers. The `DiffieHellman` class (`createDiffieHellman()`, `getDiffieHellman()`) works.
+🟡 Missing `encapsulate`/`decapsulate` (you can use ML-KEM keys through `crypto.subtle`), `createMac`/`getMacs`, `parsePKCS12` and the `RSA_SSLV23_PADDING` constant. `argon2()` and `argon2Sync()` are implemented. Custom engines (`setEngine()`) throw, `setFips()` is a no-op and `secureHeapUsed()` returns `undefined`. Bun's crypto is backed by BoringSSL, which lacks the `ed448`, `x448`, `rsa-pss`, `dsa`, `dh` and `ml-kem-512` key types, EC curves other than P-224/256/384/521 (no `secp256k1`), and the CCM, OCB, XTS and `chacha20-poly1305` ciphers. The `DiffieHellman` class (`createDiffieHellman()`, `getDiffieHellman()`) works.
 
 ### [`node:domain`](https://nodejs.org/api/domain.html)
 
@@ -125,7 +125,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:net`](https://nodejs.org/api/net.html)
 
-🟢 Fully implemented, including `BlockList`, `SocketAddress`, `autoSelectFamily`, Unix domain sockets and `server.listen({ fd })`. `new net.Socket({ fd })` cannot read from an existing file descriptor (only write-only wrapping works). `server.listen(handle)` only accepts `{ fd }`. Missing `blockList.toJSON()`/`fromJSON()`.
+🟢 Fully implemented, including `BlockList`, `SocketAddress`, `autoSelectFamily`, Unix domain sockets and `server.listen({ fd })`. `new net.Socket({ fd })` cannot read from an existing file descriptor (only write-only wrapping works). `server.listen(handle)` only accepts `{ fd }`. `socket.setKeepAlive()` does not accept an options object and ignores `interval` and `count`. Missing `net.BoundSocket`, `BlockList.PRIVATE_RANGES` and these `blockList` members: `toJSON()`/`fromJSON()`, `addAddresses()`, `addCIDR()`/`addCIDRs()`, `removeAddress()`, `removeRange()`, `removeSubnet()`, `removeCIDR()`, `clear()` and `size`.
 
 ### [`node:perf_hooks`](https://nodejs.org/api/perf_hooks.html)
 
@@ -141,15 +141,15 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:tls`](https://nodejs.org/api/tls.html)
 
-🟡 Missing `pskCallback`, OCSP stapling (`requestOCSP`), the server `'newSession'`/`'resumeSession'` events and session ticket keys (`ticketKeys` is ignored). As a result, session resumption does not work across processes. Bun uses BoringSSL, so `tlsSocket.renegotiate()` always fails and `getEphemeralKeyInfo()`/`getSharedSigalgs()` return no information.
+🟡 Missing `pskCallback`, OCSP stapling (`requestOCSP`), certificate compression (`getCertificateCompressionAlgorithms()` and the `certificateCompression` option), the server `'newSession'`/`'resumeSession'` events and session ticket keys (`ticketKeys` is ignored). As a result, session resumption does not work across processes. Bun uses BoringSSL, so `tlsSocket.renegotiate()` always fails and `getEphemeralKeyInfo()`/`getSharedSigalgs()` return no information.
 
 ### [`node:util`](https://nodejs.org/api/util.html)
 
-🟢 Fully implemented. Missing `diff` (experimental in Node.js), `transferableAbortSignal` and `transferableAbortController`. `debuglog()` ignores its `callback` argument and the returned function has no `enabled` property.
+🟢 Fully implemented. Missing `diff` (experimental in Node.js), `transferableAbortSignal`, `transferableAbortController`, `isPartialDeepStrictEqual`, `debounce`, `throttle`, `markPromiseAsHandled` and `MIMEType.parse`. `debuglog()` ignores its `callback` argument and the returned function has no `enabled` property.
 
 ### [`node:v8`](https://nodejs.org/api/v8.html)
 
-🟡 `writeHeapSnapshot`, `getHeapSnapshot`, `getHeapStatistics`, `getHeapSpaceStatistics`, `GCProfiler` and `startupSnapshot` are implemented. The heap statistics describe JavaScriptCore's single heap, and `setFlagsFromString` ignores the flags it is given. `serialize` and `deserialize` use JavaScriptCore's wire format instead of V8's. Missing `queryObjects`, `startCpuProfile`, `startHeapProfile`, `Serializer`/`Deserializer`, `takeCoverage`/`stopCoverage` and `promiseHooks`. For profiling, use [`bun:jsc`](/project/benchmarking#javascript-heap-stats) instead.
+🟡 `writeHeapSnapshot`, `getHeapSnapshot`, `getHeapStatistics`, `getHeapSpaceStatistics`, `GCProfiler` and `startupSnapshot` are implemented. The heap statistics describe JavaScriptCore's single heap, and `setFlagsFromString` ignores the flags it is given. `serialize` and `deserialize` use JavaScriptCore's wire format instead of V8's. Missing `queryObjects`, `startCpuProfile`, `startHeapProfile`, `setHeapProfileNearHeapLimit`, `Serializer`/`Deserializer`, `takeCoverage`/`stopCoverage` and `promiseHooks`. For profiling, use [`bun:jsc`](/project/benchmarking#javascript-heap-stats) instead.
 
 ### [`node:vm`](https://nodejs.org/api/vm.html)
 
@@ -173,11 +173,11 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:sqlite`](https://nodejs.org/api/sqlite.html)
 
-🟢 Fully implemented. `backup()` runs synchronously and blocks the event loop for the duration of the copy (Node runs it on a worker thread). A `Buffer`/`Uint8Array` database path must be valid UTF-8 (Node passes the raw bytes through; Bun rejects non-UTF-8 with `ERR_INVALID_ARG_VALUE`). On macOS, Bun uses the system `libsqlite3.dylib`. `loadExtension()` requires a full SQLite build, and so do `createSession()`/`applyChangeset()` on older macOS releases. To use a full SQLite build, call `require("bun:sqlite").Database.setCustomSQLite(path)` before opening a database.
+🟢 Fully implemented. Missing the `Database` and `Statement` exports (the names Node.js now uses for `DatabaseSync` and `StatementSync`), `database.createModule()`, and `close()`, `[Symbol.dispose]()`, `stat()` and `resetStats()` on statements. `backup()` runs synchronously and blocks the event loop for the duration of the copy (Node runs it on a worker thread). A `Buffer`/`Uint8Array` database path must be valid UTF-8 (Node passes the raw bytes through; Bun rejects non-UTF-8 with `ERR_INVALID_ARG_VALUE`). On macOS, Bun uses the system `libsqlite3.dylib`. `loadExtension()` requires a full SQLite build, and so do `createSession()`/`applyChangeset()` on older macOS releases. To use a full SQLite build, call `require("bun:sqlite").Database.setCustomSQLite(path)` before opening a database.
 
 ### [`node:test`](https://nodejs.org/api/test.html)
 
-🟡 Partially implemented. The in-process API works when test files run under `bun test`: tests, suites, subtests, hooks, `t.plan()`, `t.assert`, `assert.register()`, `t.waitFor()`, `getTestContext()`, `expectFailure`, and `t.mock` (function/method/getter/setter/property mocks and mock timers). `run()` requires an explicit `files` list and runs each file in a `bun test` child process. Most of its options (`globPatterns`, `watch`, `coverage`, `shard`, `only`, `testNamePatterns`, ...) throw `ERR_NOT_IMPLEMENTED`. Missing `node:test/reporters`, snapshot testing, `mock.module()`, `t.runOnly()`, code coverage, `--test-only`, test-level `signal` abort, and Node's `--test` CLI runner mode. `test.only()` / `{only: true}` are accepted but do not filter. `concurrency` is validated but subtests always run serially. Use [`bun:test`](/test) instead.
+🟡 Partially implemented. The in-process API works when test files run under `bun test`: tests, suites, subtests, hooks, `t.plan()`, `t.assert`, `assert.register()`, `t.waitFor()`, `getTestContext()`, `expectFailure`, and `t.mock` (function/method/getter/setter/property mocks and mock timers). `run()` requires an explicit `files` list and runs each file in a `bun test` child process. Most of its options (`globPatterns`, `watch`, `coverage`, `shard`, `only`, `testNamePatterns`, ...) throw `ERR_NOT_IMPLEMENTED`. Missing `node:test/reporters`, snapshot testing, `mock.module()`, `t.runOnly()`, `t.log()`, the `t.assert` mock assertions (`called()`, `callCount()`, `lastCalledWith()` and `nthCalledWith()`), code coverage, `--test-only`, test-level `signal` abort, and Node's `--test` CLI runner mode. `test.only()` / `{only: true}` are accepted but do not filter. `concurrency` is validated but subtests always run serially. Use [`bun:test`](/test) instead.
 
 ### [`node:trace_events`](https://nodejs.org/api/tracing.html)
 
@@ -190,6 +190,10 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 ### [`node:sea`](https://nodejs.org/api/single-executable-applications.html)
 
 🔴 Not implemented. Use [`bun build --compile`](/compiler/executables) to build single-file executables instead.
+
+### [`node:ffi`](https://nodejs.org/api/ffi.html)
+
+🔴 Not implemented. The module is experimental in Node.js. Use [`bun:ffi`](/runtime/ffi) instead.
 
 ## Node.js globals
 
@@ -205,11 +209,11 @@ The following list covers the globals implemented by Node.js and Bun's compatibi
 
 ### [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob)
 
-🟢 Fully implemented. The `endings` constructor option is ignored, and `blob.stream()` does not support BYOB readers.
+🟢 Fully implemented. The `endings` constructor option is ignored, and `blob.stream()` does not support BYOB readers. Missing `textStream()`.
 
 ### [`Buffer`](https://nodejs.org/api/buffer.html#class-buffer)
 
-🟢 Fully implemented. A single `Buffer` is capped at 4 GiB (`buffer.constants.MAX_LENGTH` is `2**32`).
+🟢 Fully implemented. A single `Buffer` is capped at 4 GiB (`buffer.constants.MAX_LENGTH` is `2**32`). Missing `Buffer.stringLength()`. `Buffer.allocUnsafe()` and `Buffer.allocUnsafeSlow()` ignore the `alignment` argument.
 
 ### [`ByteLengthQueuingStrategy`](https://developer.mozilla.org/en-US/docs/Web/API/ByteLengthQueuingStrategy)
 
@@ -361,7 +365,7 @@ The following list covers the globals implemented by Node.js and Bun's compatibi
 
 ### [`PerformanceObserver`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceObserver)
 
-🟡 Observing `mark` and `measure` entries works. Bun only delivers Node-only entry types (`function`, `http`, `net`, ...) to the `node:perf_hooks` `PerformanceObserver`, and never emits `gc`, `dns` or `resource` entries.
+🟡 Observing `mark` and `measure` entries works. Bun only delivers Node-only entry types (`function`, `http`, `net`, ...) to the `node:perf_hooks` `PerformanceObserver`, and never emits `gc`, `dns` or `resource` entries. `perf_hooks.constants` lacks the `gc` kind `NODE_PERFORMANCE_GC_MINOR_MARK_SWEEP`.
 
 ### [`PerformanceObserverEntryList`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceObserverEntryList)
 
@@ -369,11 +373,11 @@ The following list covers the globals implemented by Node.js and Bun's compatibi
 
 ### [`PerformanceResourceTiming`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceResourceTiming)
 
-🟡 The class exists, but no entries are ever created: `fetch()` does not record resource timing and `performance.markResourceTiming()` is a no-op.
+🟡 The class exists, but no entries are ever created: `fetch()` does not record resource timing and `performance.markResourceTiming()` is a no-op. Missing the `contentType`, `contentEncoding`, `finalResponseHeadersStart`, `firstInterimResponseStart` and `renderBlockingStatus` getters.
 
 ### [`performance`](https://developer.mozilla.org/en-US/docs/Web/API/performance)
 
-🟡 `now()`, `timeOrigin`, `mark()`, `measure()` and `getEntries()` are implemented. The Node.js additions (`eventLoopUtilization()`, `nodeTiming`, `timerify()`) only exist once `node:perf_hooks` has been loaded. `eventLoopUtilization()` always returns zeros and `nodeTiming` holds placeholder values.
+🟡 `now()`, `timeOrigin`, `mark()`, `measure()` and `getEntries()` are implemented. The Node.js additions (`eventLoopUtilization()`, `nodeTiming`, `timerify()`) only exist once `node:perf_hooks` has been loaded. `eventLoopUtilization()` always returns zeros and `nodeTiming` holds placeholder values. `nodeTiming` lacks `uvMetricsInfo` and `uvMetricsInfoBigInt`.
 
 ### [`process`](https://nodejs.org/api/process.html)
 

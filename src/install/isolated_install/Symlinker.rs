@@ -157,15 +157,14 @@ impl Symlinker {
                 current_link = strings::without_trailing_slash(current_link);
 
                 if !self.is_absolute
-                    && strings::eql_long(current_link, self.target.slice_z().as_bytes(), true)
+                    && strings::eql_long(current_link, self.target.slice_z().as_bytes())
                 {
                     return Ok(false);
                 }
 
                 #[cfg(windows)]
                 {
-                    if strings::eql_long(current_link, self.fallback_junction_target.slice(), true)
-                    {
+                    if strings::eql_long(current_link, self.fallback_junction_target.slice()) {
                         return Ok(false);
                     }
                 }

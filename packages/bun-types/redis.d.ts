@@ -135,11 +135,11 @@ declare module "bun" {
     get(key: RedisClient.KeyLike): Promise<string | null>;
 
     /**
-     * Get the value of a key as a Uint8Array
+     * Get the value of a key as a Buffer
      * @param key The key to get
-     * @returns Promise that resolves with the key's value as a Uint8Array, or null if the key doesn't exist
+     * @returns Promise that resolves with the key's value as a Buffer, or null if the key doesn't exist
      */
-    getBuffer(key: RedisClient.KeyLike): Promise<Uint8Array<ArrayBuffer> | null>;
+    getBuffer(key: RedisClient.KeyLike): Promise<Buffer<ArrayBuffer> | null>;
 
     /**
      * Set key to hold the string value
@@ -893,7 +893,8 @@ declare module "bun" {
     /**
      * Get all the fields and values in a hash
      * @param key The hash key
-     * @returns Promise that resolves with an object containing all fields and values, or empty object if key does not exist
+     * @returns Promise that resolves with an object containing all fields and values, or empty object if key does not exist.
+     * The object has a null prototype.
      */
     hgetall(key: RedisClient.KeyLike): Promise<Record<string, string>>;
 

@@ -1,4 +1,5 @@
 import fastDeepEquals from "fast-deep-equal/es6/index";
+import vm from "node:vm";
 import { bench, group, run } from "../runner.mjs";
 // const Date = globalThis.Date;
 
@@ -501,5 +502,111 @@ for (let { tests, description } of fixture) {
     // }
   }
 }
+
+// Bun.deepEquals(a, b, true) is what expect().toStrictEqual() runs.
+class Point {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+  }
+}
+class Tags extends Set {}
+// A Date of @sinonjs/fake-timers owns its constructor.
+class ClockDate extends Date {
+  constructor(time) {
+    super(time);
+    Object.defineProperty(this, "constructor", { value: Date, enumerable: false });
+  }
+}
+const record = () => ({ id: 1, name: "n", email: "e", createdAt: 1, updatedAt: 2, role: "r", active: true, tags: 0 });
+const manyKinds = () => [new Date(5), new Map([[1, 2]]), /a/, new Uint8Array(1), new Error("x"), { a: 1 }, [1]];
+const otherRealm = vm.createContext({});
+
+const strictFixture = [
+  { description: "equal objects", value1: { a: 1, b: "2" }, value2: { a: 1, b: "2" }, equal: true },
+  {
+    description: 'equal objects (different properties "order")',
+    value1: { a: 1, b: "2" },
+    value2: { b: "2", a: 1 },
+    equal: true,
+  },
+  {
+    description: "object literal and JSON.parse()",
+    value1: { a: 1, b: "2", c: 3 },
+    value2: JSON.parse('{"a":1,"b":"2","c":3}'),
+    equal: true,
+  },
+  { description: "equal objects (8 keys)", value1: record(), value2: record(), equal: true },
+  {
+    description: "object literal and JSON.parse() (8 keys)",
+    value1: record(),
+    value2: JSON.parse(JSON.stringify(record())),
+    equal: true,
+  },
+  { description: "equal arrays", value1: [1, 2, 3], value2: [1, 2, 3], equal: true },
+  {
+    description: "array literal and computed array",
+    value1: [1, 2, 3],
+    value2: Array.from({ length: 3 }, (_, i) => i + 1),
+    equal: true,
+  },
+  {
+    description: "equal arrays of objects",
+    value1: Array.from({ length: 1000 }, (_, i) => ({ id: i, name: "n" })),
+    value2: Array.from({ length: 1000 }, (_, i) => ({ id: i, name: "n" })),
+    equal: true,
+  },
+  { description: "equal class instances", value1: new Point(1, 2), value2: new Point(1, 2), equal: true },
+  { description: "class instance and object literal", value1: new Point(1, 2), value2: { x: 1, y: 2 }, equal: false },
+  { description: "equal date objects", value1: new Date(5), value2: new Date(5), equal: true },
+  { description: "equal RegExp objects", value1: /foo/, value2: /foo/, equal: true },
+  { description: "equal maps", value1: new Map([[1, 2]]), value2: new Map([[1, 2]]), equal: true },
+  { description: "equal sets", value1: new Set([1]), value2: new Set([1]), equal: true },
+  { description: "equal typed arrays", value1: new Uint8Array(8), value2: new Uint8Array(8), equal: true },
+  { description: "equal errors", value1: new Error("x"), value2: new Error("x"), equal: true },
+  { description: "subclass of Set and Set", value1: new Tags([1]), value2: new Set([1]), equal: false },
+  { description: "map and set", value1: new Map(), value2: new Set(), equal: false },
+  { description: "equal sets of many kinds", value1: new Set(manyKinds()), value2: new Set(manyKinds()), equal: true },
+  {
+    description: "equal maps with keys of many kinds",
+    value1: new Map(manyKinds().map(key => [key, 1])),
+    value2: new Map(manyKinds().map(key => [key, 1])),
+    equal: true,
+  },
+  {
+    description: "equal dates that own their constructor",
+    value1: new ClockDate(5),
+    value2: new ClockDate(5),
+    equal: true,
+  },
+  {
+    description: "typed array of another realm",
+    value1: vm.runInContext("new Uint8Array(8)", otherRealm),
+    value2: new Uint8Array(8),
+    equal: true,
+  },
+  {
+    description: "map of another realm",
+    value1: vm.runInContext("new Map([[1, 2]])", otherRealm),
+    value2: new Map([[1, 2]]),
+    equal: true,
+  },
+  {
+    description: "object of another realm",
+    value1: vm.runInContext('({ a: 1, b: "2" })', otherRealm),
+    value2: { a: 1, b: "2" },
+    equal: true,
+  },
+];
+
+group("strict", () => {
+  for (const { description, value1, value2, equal } of strictFixture) {
+    bench(`strict ${description}`, () => {
+      if (Bun.deepEquals(value1, value2, true) !== equal) {
+        throw new Error(`Expected ${equal} for strict ${description}`);
+      }
+    });
+  }
+});
 
 await run();

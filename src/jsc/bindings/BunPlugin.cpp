@@ -2596,23 +2596,6 @@ static bool isBeingFetchedWithoutFactory(Zig::GlobalObject* globalObject, JSC::M
 
 extern "C" int32_t Bun__onLoadNamespaceLength(const BunString* key);
 
-static bool isLoadedByPlugin(Zig::GlobalObject* globalObject, const String& key)
-{
-    auto& plugins = globalObject->onLoadPlugins;
-    if (plugins.isEmpty())
-        return false;
-    BunString keyString = Bun::toString(key);
-    int32_t namespaceLength = Bun__onLoadNamespaceLength(&keyString);
-    auto* group = namespaceLength < 0 ? nullptr : plugins.group(namespaceLength ? key.substringSharingImpl(0, namespaceLength) : String());
-    if (!group)
-        return false;
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
-    String path = withoutOriginalModuleQuery(namespaceLength ? key.substringSharingImpl(namespaceLength + 1) : key);
-    bool isLoadedByPlugin = group->find(globalObject, path);
-    (void)scope.tryClearException();
-    return isLoadedByPlugin;
-}
-
 JSC_DECLARE_HOST_FUNCTION(jsFunctionGiveTurnsToModuleMocks);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionResumeImportsAfterFetches);
 static void releaseImportsAfterFetches(Zig::GlobalObject*);
@@ -2643,6 +2626,7 @@ __attribute__((noinline, minsize)) static void rankWaitingModuleMocks(Zig::Globa
     plugins.timesRanked++;
     plugins.loadsBeingFetched = 0;
     plugins.hasNewLoad = false;
+    plugins.modulesOfLoadsBehindScript.clear();
     releaseImportsAfterFetches(globalObject);
 
     Vector<JSC::Identifier> keys;
@@ -2682,7 +2666,7 @@ __attribute__((noinline, minsize)) static void rankWaitingModuleMocks(Zig::Globa
     Vector<String> finished;
     Vector<JSC::JSPromise*> fetches;
     // If a factory imports a module that's still being read, we can't tell yet whether that module imports the mock, so the factory gets a private copy.
-    // To avoid that, don't start a factory while any load is reading a file. Don't wait for onLoad() callbacks, which may depend on the test's progress.
+    // To avoid that, don't start a factory while the loader has a fetch to settle by itself, in any load.
     bool isReadingFile = false;
 #if ENABLE(AOT)
     Vector<JSC::JSPromise*> heldFetches;
@@ -2696,8 +2680,16 @@ __attribute__((noinline, minsize)) static void rankWaitingModuleMocks(Zig::Globa
         }
 #endif
         fetches.append(fetch);
-        isReadingFile = isReadingFile || !isLoadedByPlugin(globalObject, key);
+        isReadingFile = true;
     };
+    // The registered modules whose fetch script holds (fetchesLeftToScript), with the promise that settles once the loader has the module.
+    // Such a fetch may wait for the test's progress, or never settle. Only the loads that import its module wait for it.
+    UncheckedKeyHashMap<UniquedStringImpl*, JSC::JSPromise*> fetchesOfScript;
+    for (auto& key : plugins.fetchesLeftToScript.keys()) {
+        auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, key));
+        if (entry && isBeingFetchedWithoutFactory(globalObject, entry) && entry->ensureFetchPromise(globalObject)->status() == JSC::JSPromise::Status::Pending)
+            fetchesOfScript.add(entry->key().impl(), entry->ensureModulePromise(globalObject));
+    }
     // A mock passed to import() gets its own turn right away, even if another load also imports it and already has a factory running. Vitest does the same.
     Vector<bool> isDirectlyRequested;
     isDirectlyRequested.fill(false, plugins.waitingModuleMocks.size());
@@ -2722,17 +2714,18 @@ __attribute__((noinline, minsize)) static void rankWaitingModuleMocks(Zig::Globa
         else if (auto fetch = plugins.loadRootFetches.find(key); fetch != plugins.loadRootFetches.end())
             unregisteredFetch = uncheckedDowncast<JSC::JSPromise>(fetch->value.get());
         if (unregisteredFetch && isFetchedWithoutFactory(globalObject, key)) {
-            // After it settles, JSC registers the module in a microtask that's already queued.
-            if (unregisteredFetch->status() == JSC::JSPromise::Status::Pending)
-                addFetch(key, unregisteredFetch);
-            else if (plugins.modulesGivenTimeToRequestImports.add(key).isNewEntry)
+            // After it settles, JSC registers the module in a microtask that's already queued. Nothing waits for it while script holds it.
+            if (unregisteredFetch->status() == JSC::JSPromise::Status::Pending) {
+                if (!plugins.fetchesLeftToScript.contains(key))
+                    addFetch(key, unregisteredFetch);
+            } else if (plugins.modulesGivenTimeToRequestImports.add(key).isNewEntry)
                 isReadingFile = true;
             else
                 finished.append(key);
         } else if (!entry || (entry->record() && !unfinishedRecord(entry)))
             finished.append(key);
         else if (!entry->record()) {
-            if (isBeingFetchedWithoutFactory(globalObject, entry))
+            if (isBeingFetchedWithoutFactory(globalObject, entry) && !fetchesOfScript.contains(entry->key().impl()))
                 addFetch(key, entry->ensureModulePromise(globalObject));
         } else if (!plugins.loadRootsDuringFactories.contains(key) && plugins.runningModuleMocks.containsIf([&](auto& running) { return running.importChain.contains(key); }))
             loads.insert(0, entry->key().impl());
@@ -2747,9 +2740,8 @@ __attribute__((noinline, minsize)) static void rankWaitingModuleMocks(Zig::Globa
     if (!fetches.isEmpty() || isReadingFile)
         rerankAfter(globalObject, fetches);
 
-    // Loads that share a module are fetched together: none is ready before all are.
     // A load that a factory started shares that factory's turn. Two import() calls of a test don't, as in Vitest.
-    Vector<size_t> fetchedWith, sharesTurnWith;
+    Vector<size_t> sharesTurnWith;
     auto first = [](Vector<size_t>& group, size_t load) {
         while (group[load] != load)
             load = group[load];
@@ -2776,31 +2768,65 @@ __attribute__((noinline, minsize)) static void rankWaitingModuleMocks(Zig::Globa
         }
         return found.containsIf([&](auto& pair) { return !hasFreeLoad[pair.first]; });
     };
-    Vector<bool> isBeingFetched;
     bool hasOtherLoads = false;
-    for (size_t load = 0;; ++load) {
-        if (load == loads.size() && !hasOtherLoads && (mocksFound + directlyRequested < mockKeyCount || hasMockBehindTurns())) {
-            // The imports of a test file or a preload, which import() didn't ask for: they start at a module that nothing unfinished imports.
-            hasOtherLoads = true;
-            UncheckedKeyHashSet<UniquedStringImpl*> imported;
-            for (auto& [key, entry] : loader->moduleMap()) {
-                auto* record = unfinishedRecord(entry.get());
-                if (!record)
+    // The unfinished modules that import each module. Only known if a fetch is left to script.
+    UncheckedKeyHashMap<UniquedStringImpl*, Vector<UniquedStringImpl*>> importersOf;
+    // Adds the imports of a test file or a preload, which import() didn't ask for: they start at a module that nothing unfinished imports.
+    auto addOtherLoads = [&](size_t firstNewLoad, bool isBeforeWalk) {
+        hasOtherLoads = true;
+        // After the walk, `seen` has the loads that are known.
+        UncheckedKeyHashSet<UniquedStringImpl*> imported, known;
+        for (size_t load = 0; isBeforeWalk && load < loads.size(); ++load)
+            known.add(loads[load]);
+        for (auto& [key, entry] : loader->moduleMap()) {
+            auto* record = unfinishedRecord(entry.get());
+            if (!record)
+                continue;
+            if (!seen.contains(key.first) && !known.contains(key.first))
+                loads.append(key.first);
+            for (auto& request : record->requestedModules()) {
+                auto* import = importOf(record, request);
+                if (!import)
                     continue;
-                if (!seen.contains(key.first))
-                    loads.append(key.first);
-                for (auto& request : record->requestedModules()) {
-                    if (auto* import = importOf(record, request))
-                        imported.add(import);
-                }
+                imported.add(import);
+                if (isBeforeWalk)
+                    importersOf.add(import, Vector<UniquedStringImpl*>()).iterator->value.append(key.first);
             }
-            loads.removeAllMatching([&](auto* key) { return imported.contains(key); }, load);
         }
+        loads.removeAllMatching([&](auto* key) { return imported.contains(key); }, firstNewLoad);
+    };
+    // The modules whose fetch is left to script, and the modules that import them, through unfinished ones. A load that starts at one of
+    // them waits for script, and only such a load does.
+    UncheckedKeyHashSet<UniquedStringImpl*> behindScript;
+    if (!fetchesOfScript.isEmpty()) [[unlikely]] {
+        addOtherLoads(loads.size(), true);
+        Vector<UniquedStringImpl*> modules;
+        for (auto* key : fetchesOfScript.keys())
+            modules.append(key);
+        for (size_t i = 0; i < modules.size(); ++i) {
+            if (!behindScript.add(modules[i]).isNewEntry)
+                continue;
+            if (auto importers = importersOf.find(modules[i]); importers != importersOf.end())
+                modules.appendVector(importers->value);
+        }
+        // Those loads are walked last, so that a module which such a load shares with another one is walked for the load that can call the mocks below it.
+        Vector<UniquedStringImpl*> loadsBehindScript;
+        loads.removeAllMatching([&](auto* key) {
+            if (!behindScript.contains(key))
+                return false;
+            loadsBehindScript.append(key);
+            return true;
+        });
+        loads.appendVector(loadsBehindScript);
+    }
+    // What the loader has to settle by itself in the loads that wait for script.
+    Vector<std::pair<size_t, Vector<JSC::JSPromise*>>> loaderFetchesBehindScript;
+    for (size_t load = 0;; ++load) {
+        if (load == loads.size() && !hasOtherLoads && (mocksFound + directlyRequested < mockKeyCount || hasMockBehindTurns()))
+            addOtherLoads(load, false);
         if (load == loads.size())
             break;
-        fetchedWith.append(load);
         sharesTurnWith.append(load);
-        isBeingFetched.append(false);
         bool needsTime = false;
         auto enter = [&](UniquedStringImpl* key) {
             // A mock waits for each load that reaches it. It is no module that those loads fetch together.
@@ -2813,17 +2839,17 @@ __attribute__((noinline, minsize)) static void rankWaitingModuleMocks(Zig::Globa
                     mocksFound++;
                 return;
             }
-            if (auto added = seen.add(key, load); !added.isNewEntry) {
-                join(fetchedWith, added.iterator->value, load);
+            if (!seen.add(key, load).isNewEntry)
                 return;
-            }
             auto* entry = loader->registryEntry(JSC::Identifier::fromUid(vm, key));
             if (!entry)
                 return;
             if (auto* record = unfinishedRecord(entry))
                 stack.append({ record, 0 });
-            else if (isBeingFetchedWithoutFactory(globalObject, entry))
-                addFetch(String(key), entry->ensureModulePromise(globalObject));
+            else if (isBeingFetchedWithoutFactory(globalObject, entry)) {
+                if (!fetchesOfScript.contains(key))
+                    addFetch(String(key), entry->ensureModulePromise(globalObject));
+            }
             // A mock that is about to ask for its turn, from a microtask that is already queued. It may come before the ones that wait.
             else if (plugins.moduleMocksBeingLoaded.contains(String(key)) && plugins.modulesGivenTimeToRequestImports.add(String(key)).isNewEntry)
                 needsTime = true;
@@ -2843,14 +2869,13 @@ __attribute__((noinline, minsize)) static void rankWaitingModuleMocks(Zig::Globa
                 needsTime = true;
         }
         if (!fetches.isEmpty() || needsTime) {
-            isBeingFetched[load] = true;
-            isReadingFile = isReadingFile || needsTime;
-            rerankAfter(globalObject, fetches);
+            isReadingFile = true;
+            // Who waits for these is known after the walk.
+            if (behindScript.contains(loads[load])) [[unlikely]]
+                loaderFetchesBehindScript.append({ load, std::exchange(fetches, {}) });
+            else
+                rerankAfter(globalObject, fetches);
         }
-    }
-    for (size_t load = 0; load < loads.size(); ++load) {
-        if (isBeingFetched[load])
-            isBeingFetched[first(fetchedWith, load)] = true;
     }
 #if ENABLE(AOT)
 
@@ -2873,13 +2898,67 @@ __attribute__((noinline, minsize)) static void rankWaitingModuleMocks(Zig::Globa
             holder.load = String(loads[first(sharesTurnWith, load)]);
     }
     unsigned rank = 0;
+    Vector<size_t> loadsOfMocksBehindScript;
     for (auto [index, load] : found) {
-        if (isReadingFile || isBeingFetched[first(fetchedWith, load)])
+        // Such a load has yet to fetch all it can. The mock keeps waiting for it, unless another load also asks for the mock.
+        if (behindScript.contains(loads[load])) [[unlikely]] {
+            if (!loadsOfMocksBehindScript.contains(load))
+                loadsOfMocksBehindScript.append(load);
+            continue;
+        }
+        if (isReadingFile)
             continue;
         String root = String(loads[first(sharesTurnWith, load)]);
         auto& places = plugins.waitingModuleMocks[index].places;
         if (!places.containsIf([&](auto& place) { return place.load == root; }))
             places.append({ root, ++rank });
+    }
+    // A mock of a load that doesn't wait for script goes on once the loader has read every file, also the files of the loads that do.
+    if (isReadingFile && found.containsIf([&](auto& pair) { return !behindScript.contains(loads[pair.second]); })) {
+        for (auto& fetchesOfLoad : loaderFetchesBehindScript)
+            rerankAfter(globalObject, fetchesOfLoad.second);
+    } else if (!loadsOfMocksBehindScript.isEmpty()) [[unlikely]] {
+        // Else only script or a new load can change what the mocks wait for. A load behind script ranks again once its fetches have settled:
+        // the ones that script holds, and the ones that the loader settles. No other load counts on that.
+        for (size_t load : loadsOfMocksBehindScript) {
+            Vector<JSC::JSPromise*> fetchesOfLoad;
+            for (auto& fetchesOfOther : loaderFetchesBehindScript) {
+                if (fetchesOfOther.first == load)
+                    fetchesOfLoad.appendVector(fetchesOfOther.second);
+            }
+            UncheckedKeyHashSet<UniquedStringImpl*> visited;
+            Vector<UniquedStringImpl*> below { loads[load] };
+            while (!below.isEmpty()) {
+                auto* key = below.takeLast();
+                if (!visited.add(key).isNewEntry)
+                    continue;
+                if (auto fetch = fetchesOfScript.find(key); fetch != fetchesOfScript.end()) {
+                    fetchesOfLoad.append(fetch->value);
+                    continue;
+                }
+                auto* entry = loader->registryEntry(JSC::Identifier::fromUid(vm, key));
+                auto* record = entry ? unfinishedRecord(entry) : nullptr;
+                if (!record)
+                    continue;
+                for (auto& request : record->requestedModules()) {
+                    if (auto* import = importOf(record, request); import && behindScript.contains(import))
+                        below.append(import);
+                }
+            }
+            ASSERT(!fetchesOfLoad.isEmpty());
+            if (fetchesOfLoad.isEmpty())
+                continue;
+            rerankAfter(globalObject, fetchesOfLoad);
+            plugins.loadsBeingFetched--;
+#if ASSERT_ENABLED
+            plugins.rankingThatWaitsForScript = plugins.timesRanked;
+#endif
+        }
+        // What those loads go on to fetch is theirs too. If another load comes to import one of their modules, a mock below it may get its turn there.
+        for (auto& [key, load] : seen) {
+            if (loadsOfMocksBehindScript.contains(load))
+                plugins.modulesOfLoadsBehindScript.add(String(key));
+        }
     }
 
 #if ENABLE(AOT)
@@ -2952,6 +3031,20 @@ __attribute__((minsize)) static void giveTurns(Zig::GlobalObject* globalObject)
         uncheckedDowncast<JSC::JSPromise>(waiting.turn.get())->fulfill(globalObject->vm(), jsUndefined());
     }
     plugins.hasModuleMockBehindTurn = plugins.waitingModuleMocks.containsIf([](auto& waiting) { return !waiting.places.isEmpty(); });
+#if ASSERT_ENABLED
+    // Every mock that still waits gets here again: the factory that has the turn returns it, a fetch that the loader settles ends, or script answers.
+    bool isRanked = true;
+#if ENABLE(AOT)
+    // What compiled code loads is ranked by other means.
+    isRanked = !globalObject->vm().hasCompiledCode();
+#endif
+    for (auto& waiting : plugins.waitingModuleMocks) {
+        if (waiting.places.isEmpty())
+            ASSERT(!isRanked || plugins.loadsBeingFetched || plugins.willGiveTurns || plugins.rankingThatWaitsForScript == plugins.timesRanked);
+        else
+            ASSERT(!plugins.moduleMocksWithTurn.isEmpty());
+    }
+#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionGiveTurnsToModuleMocks, __attribute__((minsize)), (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
@@ -3081,7 +3174,9 @@ __attribute__((minsize)) static JSC::JSPromise* waitForTurn(Zig::GlobalObject* g
     JSC::JSPromise* turn = JSC::JSPromise::create(vm, globalObject->promiseStructure());
     plugins.waitingModuleMocks.append({ JSC::Strong<JSC::JSObject> { vm, mock }, JSC::Strong<JSC::JSObject> { vm, turn }, {} });
     // A module is only fetched for a load that is being fetched. If the ranks know of all such loads, the end of that one ranks again.
-    if (!isBeingFetched || !plugins.loadsBeingFetched || plugins.hasNewLoad)
+    // So do the fetches that script holds, for a mock of a load that waits for them.
+    bool willBeRanked = isBeingFetched && ((plugins.loadsBeingFetched && !plugins.hasNewLoad) || plugins.modulesOfLoadsBehindScript.contains(mock->specifier->tryGetValue().data));
+    if (!willBeRanked)
         plugins.ranksAreStale = true;
     if (plugins.ranksAreStale)
         giveTurnsSoon(globalObject);
@@ -9093,18 +9188,40 @@ bool moduleMockImportsByKey(Zig::GlobalObject* globalObject, const String& key)
     return mock && mock->importsOriginal;
 }
 
-void didResolveImportWhileModuleMockIsHeldBack(Zig::GlobalObject* globalObject, const String& key)
+void didResolveImportWhileModuleMockIsHeldBack(Zig::GlobalObject* globalObject, const String& key, const String& importer)
 {
     auto& plugins = globalObject->onLoadPlugins;
+    auto& behindScript = plugins.modulesOfLoadsBehindScript;
+    // A load that waits for script goes on: the module that it asks for is its own, unless another load has it.
+    if (!behindScript.isEmpty() && !importer.isNull() && behindScript.contains(importer)) {
+        if (!Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(globalObject->vm(), key)))
+            behindScript.add(key);
+        return;
+    }
     // The load that asks is one more place for the mock, in which it may have its turn.
-    bool isBehindTurn = plugins.waitingModuleMocks.containsIf([&](auto& waiting) {
+    bool isHeldBack = behindScript.contains(key) || plugins.waitingModuleMocks.containsIf([&](auto& waiting) {
         return !waiting.places.isEmpty() && uncheckedDowncast<Zig::JSModuleMock>(waiting.mock.get())->specifier->tryGetValue().data == key;
     });
-    if (!isBehindTurn)
+    if (!isHeldBack)
         return;
     plugins.hasModuleMockBehindTurn = false;
+    behindScript.clear();
     plugins.ranksAreStale = true;
     Zig::giveTurnsSoon(globalObject);
+}
+
+void didLeaveModuleFetchToScript(Zig::GlobalObject* globalObject, const String& key)
+{
+    globalObject->onLoadPlugins.fetchesLeftToScript.add(key, 0).iterator->value++;
+}
+
+void didAnswerModuleFetch(Zig::GlobalObject* globalObject, const String& key)
+{
+    auto& fetches = globalObject->onLoadPlugins.fetchesLeftToScript;
+    if (key.isNull())
+        return;
+    if (auto fetch = fetches.find(key); fetch != fetches.end() && !--fetch->value)
+        fetches.remove(fetch);
 }
 
 bool isModuleMockWaitingForFactory(Zig::GlobalObject* globalObject, const String& key)

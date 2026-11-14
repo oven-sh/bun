@@ -171,6 +171,16 @@ public:
         bool willGiveTurns = false;
         // Something has happened that the ranks don't know of: a mock or a factory asks for a module, or a module has left the registry.
         bool ranksAreStale = false;
+        // The fetches that script holds: a callback of onLoad() or build.module() returned a promise for the module and has yet to answer.
+        // Counted by key. Bun.plugin.clearAll() keeps them, because the callbacks still hold the fetches.
+        WTF::UncheckedKeyHashMap<String, unsigned> fetchesLeftToScript = {};
+        // The last ranking found a mock in loads that wait for such a fetch. These are the modules of those loads, and what they have asked for
+        // since. The end of those fetches ranks again. If another load comes to import one of these modules, moduleLoaderResolve() ranks again.
+        WTF::UncheckedKeyHashSet<String> modulesOfLoadsBehindScript = {};
+#if ASSERT_ENABLED
+        // The ranking that left the mocks of a load to the fetches that script holds: their end ranks again.
+        unsigned rankingThatWaitsForScript = 0;
+#endif
         WTF::UncheckedKeyHashSet<String> modulesGivenTimeToRequestImports = {};
         // The first module of each load that import() or a factory started, oldest first.
         WTF::ListHashSet<String> loadRoots = {};
@@ -229,6 +239,7 @@ public:
             waitingModuleMocks.clear();
             moduleMocksWithTurn.clear();
             hasModuleMockBehindTurn = false;
+            modulesOfLoadsBehindScript.clear();
             importsWaitingForFetches.clear();
             moduleAheadOfImport = String();
             modulesGivenTimeToRequestImports.clear();
@@ -408,8 +419,12 @@ String keyOfImportWhileModuleMocksRun(Zig::GlobalObject*, const String& key, con
 JSC::JSPromise* waitForFetchBeforeImportCall(Zig::GlobalObject*, const String& specifier, RefPtr<JSC::ScriptFetchParameters>, const JSC::SourceOrigin&);
 String packageImportKey(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
 bool isModuleMockWaitingForFactory(Zig::GlobalObject*, const String& key);
-// An import has been resolved to `key` while hasModuleMockBehindTurn.
-void didResolveImportWhileModuleMockIsHeldBack(Zig::GlobalObject*, const String& key);
+// `importer` has resolved an import to `key` while hasModuleMockBehindTurn, or while modulesOfLoadsBehindScript has modules.
+void didResolveImportWhileModuleMockIsHeldBack(Zig::GlobalObject*, const String& key, const String& importer);
+// A callback of onLoad() or build.module() has returned a promise for the fetch of `key`: script holds the fetch.
+void didLeaveModuleFetchToScript(Zig::GlobalObject*, const String& key);
+// That callback has given its answer, so the loader settles the fetch by itself.
+void didAnswerModuleFetch(Zig::GlobalObject*, const String& key);
 JSC::JSObject* objectHoldingExportOfModuleMock(JSC::JSGlobalObject*, JSC::JSModuleNamespaceObject*, const JSC::Identifier& name);
 #if ENABLE(AOT)
 // The same for the namespace object of a compiled module. Null for any other object.

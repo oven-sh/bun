@@ -912,6 +912,29 @@ console.log(typeof url, url.endsWith(".html"));
     },
   });
 
+  for (const plugins of [false, true]) {
+    for (const [name, code] of [
+      ["require-only", `export {}; const page = require("./page.html"); console.log((page.default ?? page).index);`],
+      [
+        "import-and-dynamic-import",
+        `import page from "./page.html"; const again = await import("./page.html"); console.log(page === again.default && page.index);`,
+      ],
+    ]) {
+      itBundled(`html-import/${name}${plugins ? "-onresolve-and-onload" : ""}`, {
+        outdir: "out/",
+        files: { ...pluginResolvedHtmlFiles, "/server.js": code },
+        entryPoints: ["/server.js"],
+        target: "bun",
+        plugins(builder) {
+          if (!plugins) return;
+          builder.onResolve({ filter: /.*/ }, () => undefined);
+          builder.onLoad({ filter: /\.html$/ }, () => undefined);
+        },
+        run: { stdout: "./page.html" },
+      });
+    }
+  }
+
   // Of a page that nothing else imports.
   for (const splitting of [false, true]) {
     for (const plugin of [false, true]) {

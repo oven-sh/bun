@@ -923,4 +923,35 @@ describe("bundler files option", () => {
       forBun: false,
     });
   });
+
+  for (const plugins of ["none", "onResolve", "onResolve and onLoad"]) {
+    test(`an html page in files is a page of a server build, with plugins: ${plugins}`, async () => {
+      using dir = tempDir("files-html-server", {
+        "entry.ts": `import page from "./page.html"; console.log(page.index);`,
+      });
+      const result = await Bun.build({
+        entrypoints: [`${dir}/entry.ts`],
+        outdir: `${dir}/out`,
+        target: "bun",
+        files: { [`${dir}/page.html`]: "<!doctype html><p>hi</p>" },
+        plugins:
+          plugins === "none"
+            ? []
+            : [
+                {
+                  name: "declines",
+                  setup(build) {
+                    build.onResolve({ filter: /.*/ }, () => undefined);
+                    if (plugins === "onResolve and onLoad") build.onLoad({ filter: /\.html$/ }, () => undefined);
+                  },
+                },
+              ],
+      });
+      expect(result.success).toBe(true);
+      await using proc = Bun.spawn({ cmd: [bunExe(), `${dir}/out/entry.js`], env: bunEnv, stderr: "pipe" });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("./page.html\n");
+      expect(exitCode).toBe(0);
+    });
+  }
 });

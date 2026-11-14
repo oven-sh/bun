@@ -1366,9 +1366,15 @@ pub mod bv2_impl {
             }
             impl Load {
                 pub(crate) fn init(bv2: &mut BundleV2<'_>, parse: &mut ParseTask) -> Self {
-                    let default_loader = parse
-                        .path
-                        .loader(&bv2.transpiler.options.loaders)
+                    use crate::Graph::InputFileColumns as _;
+                    // The module of a `with { type }` import is asked for by its type.
+                    let key_loader = match parse.source_index.is_valid() {
+                        true => bv2.graph.input_files.items_key_loader()
+                            [parse.source_index.get() as usize],
+                        false => None,
+                    };
+                    let default_loader = key_loader
+                        .or_else(|| parse.path.loader(&bv2.transpiler.options.loaders))
                         .unwrap_or(Loader::Js);
                     Self {
                     bv2: std::ptr::from_mut::<BundleV2<'_>>(bv2).cast::<BundleV2<'static>>(),
@@ -6662,6 +6668,22 @@ pub mod bv2_impl {
                             continue;
                         }
 
+                        let html_import = if import_record_loader != Loader::Html
+                            || !target.is_server_side()
+                            || self.dev_server.is_some()
+                        {
+                            HtmlImport::No
+                        } else if self
+                            .on_load_decides_html_import(&ctx.plugin_answer, &path_primary)
+                        {
+                            HtmlImport::AfterOnLoad
+                        } else {
+                            if import_record.kind == ImportKind::Stmt {
+                                import_record.kind = ImportKind::HtmlManifest;
+                            }
+                            HtmlImport::Manifest
+                        };
+
                         // For virtual files, use the path text as-is (no relative path computation needed).
                         path_primary.pretty = self.graph.heap.alloc_slice_copy(path_primary.text);
                         import_record.path = path_primary;
@@ -6680,7 +6702,28 @@ pub mod bv2_impl {
                             self,
                         );
                         let resolve_task: &mut ParseTask = self.arena().alloc(resolve_task_val);
-                        resolve_task.known_target = target;
+                        resolve_task.known_target = match html_import {
+                            HtmlImport::Manifest => Target::Browser,
+                            _ => target,
+                        };
+                        match html_import {
+                            HtmlImport::No => {}
+                            HtmlImport::Manifest => {
+                                if self
+                                    .generate_server_html_module(
+                                        &path_primary,
+                                        target,
+                                        import_record,
+                                    )
+                                    .is_err()
+                                {
+                                    bun_core::out_of_memory();
+                                }
+                            }
+                            HtmlImport::AfterOnLoad => {
+                                resolve_task.on_load_decides_html_import = true
+                            }
+                        }
                         // Use transpiler JSX options, applying force_node_env like the disk path does
                         resolve_task.jsx = transpiler.options.jsx.clone();
                         resolve_task.jsx.development = transpiler.options.forced_jsx_development();
@@ -6932,6 +6975,11 @@ pub mod bv2_impl {
                     continue;
                 }
 
+                // A module in a plugin's namespace has no path that `require.resolve()` could give.
+                if import_record.kind == ImportKind::RequireResolve && !path.is_file() {
+                    continue;
+                }
+
                 let mut html_import = HtmlImport::No;
                 if let Some(dev_server) = self.dev_server_handle() {
                     'brk: {
@@ -7069,8 +7117,8 @@ pub mod bv2_impl {
                 if html_import == HtmlImport::Manifest {
                     if self.on_load_decides_html_import(&ctx.plugin_answer, path) {
                         html_import = HtmlImport::AfterOnLoad;
-                    } else if import_record.kind != ImportKind::Dynamic {
-                        // The linker wraps or splits what an `import()` loads, and looks at its kind for that.
+                    } else if import_record.kind == ImportKind::Stmt {
+                        // The linker wraps or splits what a `require()` or an `import()` loads, and looks at its kind for that.
                         import_record.kind = ImportKind::HtmlManifest;
                     }
                 }

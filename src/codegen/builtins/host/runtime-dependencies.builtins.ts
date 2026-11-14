@@ -621,7 +621,6 @@ const nativeCalls = [
       { file: "src/jsc/VirtualMachine.rs" },
       { file: inBindings("BunProcess.cpp"), times: 6 },
       { file: inBindings("BunProcess.h"), times: 2 },
-      { file: inBindings("webcore/MessagePort.cpp") },
     ],
     callers: [
       { file: "src/jsc/VirtualMachine.rs", caller: "unhandled_rejection_owned", times: 4, onBehalfOf: promises },

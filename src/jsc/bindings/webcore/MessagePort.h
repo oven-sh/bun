@@ -85,10 +85,33 @@ public:
     TransferredMessagePort disentangle();
 
     bool started() const { return m_started; }
-    bool isDetached() const { return m_isDetached; }
+    bool isDetached() const { return m_state == State::Detached; }
 
     // Called by the pipe on this port's context thread with one dequeued message.
     void dispatchOneMessage(ScriptExecutionContext&, MessageWithMessagePorts&&);
+
+    // Held by a loop that delivers this port's inbox. The loop keeps the port alive.
+    class DispatchScope {
+        WTF_MAKE_NONCOPYABLE(DispatchScope);
+
+    public:
+        explicit DispatchScope(MessagePort& port)
+            : m_port(port)
+            , m_wasDispatching(std::exchange(port.m_isDispatching, true))
+        {
+        }
+
+        ~DispatchScope()
+        {
+            m_port.m_isDispatching = m_wasDispatching;
+            if (!m_wasDispatching && m_port.isClosing())
+                m_port.closeNow();
+        }
+
+    private:
+        MessagePort& m_port;
+        const bool m_wasDispatching;
+    };
 
     // Only here for JSMessagePortCustom's GC optimization; always null.
     MessagePort* locallyEntangledPort() { return nullptr; }
@@ -118,20 +141,25 @@ private:
     bool addEventListener(const AtomString& eventType, Ref<EventListener>&&, const AddEventListenerOptions&) final;
     bool removeEventListener(const AtomString& eventType, EventListener&, const EventListenerOptions&) final;
 
-    // ActiveDOMObject.
+    // ActiveDOMObject. Teardown closes at once, also under a DispatchScope.
     void contextDestroyed() final;
-    void stop() final { close(); }
+    void stop() final { closeNow(); }
     bool virtualHasPendingActivity() const final;
 
-    // Deliver messages already queued when close() is called, before teardown.
+    // close() without the DispatchScope deferral. Runs no script.
+    void closeNow();
+    // The port is still closing when an event loop turn runs inside its DispatchScope: deliver the rest there and close.
+    void closeInNestedTurn();
+
+    // Deliver what is queued ahead of a 'close' that cannot wait for the drain: the peer closed, or closeInNestedTurn().
     void flushQueuedMessagesBeforeClose();
 
-    bool isEntangled() const { return !m_isDetached; }
+    bool isEntangled() const { return m_state != State::Detached; }
 
 public:
-    // Checked by the transfer path so a closing-but-not-yet-detached port
-    // (inside close()'s flush window) is rejected the same as a detached one.
-    bool isClosing() const { return m_isClosing; }
+    // Closing: close() ran under a DispatchScope. The port receives, and does not send or transfer, until that close completes.
+    bool isClosing() const { return m_state == State::Closing; }
+    bool isOpen() const { return m_state == State::Open; }
 
 private:
     // Held for the port's entire lifetime — never nulled — so that the GC
@@ -140,12 +168,13 @@ private:
     const Ref<MessagePortPipe> m_pipe;
     const uint8_t m_side { 0 };
 
+    enum class State : uint8_t { Open,
+        Closing,
+        Detached };
+
     bool m_started { false };
-    bool m_isDetached { false };
-    bool m_isClosing { false };
-    // True while a 'message' handler is on the stack. close() called from inside one
-    // must finish delivering the in-flight drain (node does); a close from anywhere
-    // else drops whatever is still queued.
+    State m_state { State::Open };
+    // True while a DispatchScope is on the stack. close() then defers to it.
     bool m_isDispatching { false };
     bool m_closeEventDispatched { false };
     bool m_hasMessageEventListener { false };

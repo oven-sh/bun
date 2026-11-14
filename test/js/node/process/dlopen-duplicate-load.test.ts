@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { copyFileSync } from "fs";
-import { bunEnv, bunExe, canBuildNodeAddons, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, canBuildNodeAddons, isWindows, noCoreCmd, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 // These tests share one node-gyp build of two V8 addons (the compile
@@ -409,7 +409,7 @@ if (!isMainThread) {
         `;
 
           await using proc = Bun.spawn({
-            cmd: [bunExe(), "-e", testScript],
+            cmd: noCoreCmd([bunExe(), "-e", testScript]),
             env: { ...bunEnv, BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1" },
             stdout: "pipe",
             stderr: "pipe",

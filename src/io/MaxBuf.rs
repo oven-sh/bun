@@ -29,7 +29,8 @@ const OVERREAD_ALLOWANCE: u64 = 64 * 1024;
 pub struct OwnerRef(RefPtr<MaxBuf>);
 
 impl OwnerRef {
-    pub fn new(bytes: i64, kind: Kind, owner: Owner) -> OwnerRef {
+    /// SAFETY: `owner.on_overflow` can be called with `owner.ptr` until the returned ref is dropped.
+    pub unsafe fn new(bytes: i64, kind: Kind, owner: Owner) -> OwnerRef {
         OwnerRef(RefPtr::new(MaxBuf {
             ref_count: Cell::new(1),
             kind,
@@ -61,7 +62,7 @@ impl MaxBuf {
         let Some(owner) = self.owner.take() else {
             return false;
         };
-        // SAFETY: the owner holds an `OwnerRef`, whose drop would have cleared `self.owner`.
+        // SAFETY: `OwnerRef::new`'s contract. Its drop would have cleared `self.owner`.
         unsafe { (owner.on_overflow)(owner.ptr, self.kind) };
         true
     }
@@ -85,4 +86,45 @@ impl MaxBuf {
 pub enum Kind {
     Stdout,
     Stderr,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn budget(bytes: i64, overflows: &Cell<u32>) -> OwnerRef {
+        unsafe fn count(overflows: NonNull<()>, _: Kind) {
+            // SAFETY: the cell that `budget` was given.
+            unsafe { overflows.cast::<Cell<u32>>().as_ref() }.update(|n| n + 1);
+        }
+        let owner = Owner {
+            ptr: NonNull::from(overflows).cast(),
+            on_overflow: count,
+        };
+        // SAFETY: every test declares the cell first.
+        unsafe { OwnerRef::new(bytes, Kind::Stdout, owner) }
+    }
+
+    #[test]
+    fn two_readers_outlive_the_owner() {
+        let overflows = Cell::new(0);
+        let owner = budget(1, &overflows);
+        let (a, b) = (owner.for_reader(), owner.for_reader());
+        drop(owner);
+        drop(a);
+        assert!(!b.on_read_bytes(2));
+        assert_eq!(overflows.get(), 0);
+    }
+
+    #[test]
+    fn two_readers_share_the_budget_and_overflow_once() {
+        let overflows = Cell::new(0);
+        let owner = budget(1, &overflows);
+        let (a, b) = (owner.for_reader(), owner.for_reader());
+        assert!(!a.on_read_bytes(1));
+        assert!(b.on_read_bytes(1));
+        assert!(!a.on_read_bytes(1));
+        drop((a, b));
+        assert_eq!(overflows.get(), 1);
+    }
 }

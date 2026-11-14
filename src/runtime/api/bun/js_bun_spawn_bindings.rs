@@ -1322,7 +1322,8 @@ fn spawn_maybe_sync(
             ptr: subprocess_nn.cast::<()>(),
             on_overflow: SubprocessT::on_max_buffer,
         };
-        let new = |kind| Some(max_buf::OwnerRef::new(max_buffer, kind, owner));
+        // SAFETY: both refs are fields of the owner.
+        let new = |kind| Some(unsafe { max_buf::OwnerRef::new(max_buffer, kind, owner) });
         subprocess.stderr_maxbuf.set(new(max_buf::Kind::Stderr));
         subprocess.stdout_maxbuf.set(new(max_buf::Kind::Stdout));
     }

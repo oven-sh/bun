@@ -51,6 +51,21 @@ test("most types", () => {
   expect(new Set([1, 2, 3, 4, 5, 6, 7, 8, 9])).toMatchSnapshot("Set2");
   expect(new WeakMap()).toMatchSnapshot("WeakMap");
   expect(new WeakSet()).toMatchSnapshot("WeakSet");
+  // Bun 1.4.4 wrote these two, and a snapshot keeps that text. A failure message prints the values another way
+  // (printing/diffexample.test.ts).
+  expect({
+    emptyMap: new Map(),
+    emptySet: new Set(),
+    map: new Map([["k", 1]]),
+    set: new Set([1]),
+    stringObject: new String("ab"),
+    text: "a\nb",
+    weakMap: new WeakMap(),
+    weakSet: new WeakSet(),
+  }).toMatchSnapshot("Object with Map, Set, String and multi-line string");
+  expect([Buffer.alloc(90, "x").toString(), new Promise(() => {})]).toMatchSnapshot(
+    "Array with Promise after a long string",
+  );
   expect(new Promise(() => {})).toMatchSnapshot("Promise");
   expect(new RegExp("hello")).toMatchSnapshot("RegExp");
 

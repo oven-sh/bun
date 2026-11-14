@@ -766,6 +766,7 @@ pub(crate) struct BunTest {
     /// Callback-less entry that runs last in the file. `defer_to_file_end` links its entries after it.
     file_end: Option<Box<ExecutionEntry>>,
     pub(crate) unclaimed: super::expect::expect_deferred::Unclaimed,
+    pub(crate) file_task: Option<test_context::FileTask>,
 
     pub(crate) phase: Phase,
     pub(crate) collection: Collection,
@@ -809,6 +810,7 @@ impl BunTest {
             is_loading: true,
             file_end: None,
             unclaimed: Default::default(),
+            file_task: None,
         }
     }
 
@@ -2125,7 +2127,8 @@ pub(crate) struct DescribeScope {
     /// if true, the describe callback threw an error. do not run any tests declared in this scope.
     pub(crate) failed: bool,
 
-    pub(crate) task: Option<Strong>,
+    /// In a box, so that a scope that has none pays for one pointer.
+    pub(crate) task: Option<Box<test_context::SuiteTask>>,
     pub(crate) inherited: ScopeFunctions::InheritedOptions,
 }
 

@@ -609,6 +609,20 @@ JSPromise* clickSelector(JSGlobalObject* g, JSWebView* view, const WTF::String& 
         payload.span().data(), static_cast<uint32_t>(payload.size()));
 }
 
+JSPromise* mouseMove(JSGlobalObject* g, JSWebView* view, float x, float y)
+{
+    auto payload = encode(MouseMovePayload { x, y });
+    return sendOp(g, view, view->m_pendingMisc, Op::MouseMove,
+        payload.span().data(), static_cast<uint32_t>(payload.size()));
+}
+
+JSPromise* hover(JSGlobalObject* g, JSWebView* view, const WTF::String& selector, uint32_t timeout)
+{
+    auto payload = encode(HoverPayload { timeout }, selector);
+    return sendOp(g, view, view->m_pendingMisc, Op::Hover,
+        payload.span().data(), static_cast<uint32_t>(payload.size()));
+}
+
 JSPromise* type(JSGlobalObject* g, JSWebView* view, const WTF::String& text)
 {
     auto payload = encodeStr(text);

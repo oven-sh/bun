@@ -71,13 +71,15 @@ Object.assign(globalThis, {
     closeSync(COMMANDS);
     setInterval(() => {}, 2 ** 30);
   },
-  // Returns every Input.dispatchMouseEvent this process has received, in order.
+  // Returns every Input.dispatchMouseEvent this process has received, in
+  // order, with the fields Bun put on the wire (a move frame has no button).
   __fake_mouse_events() {
     return mouseEvents;
   },
 });
 
-const mouseEvents: { type: string; x: number; y: number }[] = [];
+const mouseEvents: { type: string; x: number; y: number; modifiers?: number; button?: string; clickCount?: number }[] =
+  [];
 
 function sendBytes(bytes: Buffer) {
   let written = 0;
@@ -135,9 +137,11 @@ async function handle(command: { id: number; method: string; params?: any; sessi
     }
     case "Page.captureScreenshot":
       return reply({ data: screenshotBase64 });
-    case "Input.dispatchMouseEvent":
-      mouseEvents.push({ type: params.type, x: params.x, y: params.y });
+    case "Input.dispatchMouseEvent": {
+      const { type, x, y, modifiers, button, clickCount } = params;
+      mouseEvents.push({ type, x, y, modifiers, ...(button !== undefined && { button, clickCount }) });
       return reply({});
+    }
     case "Runtime.evaluate": {
       if (params.expression === "document.title") {
         if (noTitleReply) return;

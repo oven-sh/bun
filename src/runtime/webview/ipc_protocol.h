@@ -67,6 +67,9 @@ enum class Op : uint8_t {
     // fires (isTrusted:true — browser-driven), scrollY updates,
     // IntersectionObserver triggers.
     ScrollTo = 15, // ScrollToPayload + str selector
+
+    MouseMove = 16, // MouseMovePayload
+    Hover = 17, // HoverPayload + str selector; ClickSelector's check, then a move
 };
 
 // Mouse button: 0=left, 1=right, 2=middle.
@@ -128,6 +131,16 @@ struct ScrollToPayload {
     // str selector follows
 };
 
+struct MouseMovePayload {
+    float x; // viewport coords, y-down
+    float y;
+};
+
+struct HoverPayload {
+    uint32_t timeout; // ms; page-time, same as ClickSelectorPayload
+    // str selector follows
+};
+
 #pragma pack(pop)
 
 static_assert(sizeof(CreatePayload) == 9);
@@ -137,6 +150,8 @@ static_assert(sizeof(PressPayload) == 2);
 static_assert(sizeof(ScrollPayload) == 8);
 static_assert(sizeof(ClickSelectorPayload) == 7);
 static_assert(sizeof(ScrollToPayload) == 5);
+static_assert(sizeof(MouseMovePayload) == 8);
+static_assert(sizeof(HoverPayload) == 4);
 
 // Encode: POD head + optional trailing string (u32 len + utf8). 64 bytes
 // inline covers every head; strings that overflow it heap-allocate, which
@@ -196,6 +211,28 @@ enum class VirtualKey : uint8_t {
     End,
     PageUp,
     PageDown,
+};
+
+// Each backend has one native mouse send keyed on this.
+enum class MouseAction : uint8_t {
+    Click, // press + release
+    Move, // one button-less move
+};
+
+// What the selector continuation does once the page-side wait resolves.
+enum class SelMode : uint8_t {
+    Click,
+    ScrollTo,
+    Hover,
+};
+
+// Written whole by every selector-op starter, so a hover after
+// click(selector, { modifiers }) cannot inherit those modifiers.
+struct SelectorContinuation {
+    SelMode mode = SelMode::Click;
+    uint8_t button = 0;
+    uint8_t modifiers = 0;
+    uint8_t clickCount = 1;
 };
 
 // Child → parent. Reply type determines the WriteBarrier slot on JSWebView:

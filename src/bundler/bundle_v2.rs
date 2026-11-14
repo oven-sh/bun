@@ -69,9 +69,7 @@ pub struct BundleV2<'a> {
     /// For the linker's source map tasks. Here because the linker may move while they run.
     pub(crate) line_offset_wait_group: WaitGroup,
     pub(crate) quoted_contents_wait_group: WaitGroup,
-    // The hot reloader (`jsc::hot_reloader::NewHotReloader<BundleV2, …>`) owns the
-    // boxed `Watcher`; bundler only ever calls `Watcher::add_file` on it.
-    pub bun_watcher: Option<NonNull<bun_watcher::Watcher>>,
+    pub bun_watcher: Option<std::sync::Arc<bun_watcher::Watcher>>,
     pub plugins: Option<NonNull<JSBundlerPlugin>>,
     pub completion: Option<dispatch::CompletionHandle<'a>>,
     /// When this bundle's owning loop is a JS event loop (bake / dev server):
@@ -239,19 +237,6 @@ impl<'a> BundleV2<'a> {
         // SAFETY: BACKREF — see `plugins_ref`. `&mut self` ensures no other
         // `&JSBundlerPlugin` projection from this `BundleV2` overlaps.
         self.plugins.map(|mut p| unsafe { p.as_mut() })
-    }
-
-    /// Mutable projection of the `bun_watcher` backref for `Watcher::add_file`.
-    /// Centralises the two open-coded `unsafe { ptr.as_mut() }` sites so the
-    /// liveness/exclusivity argument lives in one place.
-    #[inline]
-    pub(crate) fn bun_watcher_mut(&mut self) -> Option<&mut bun_watcher::Watcher> {
-        // SAFETY: BACKREF — heap-owned by hot_reloader / DevServer (set via
-        // `install_bun_watcher`), live for the process under `--watch`. The
-        // watcher storage is disjoint from `self`; `&mut self` excludes any
-        // other safe projection from this `BundleV2`, and `add_file` is only
-        // ever driven from the single bundle thread (`thread_lock`-asserted).
-        self.bun_watcher.map(|mut p| unsafe { p.as_mut() })
     }
 
     #[inline]
@@ -1586,34 +1571,6 @@ pub mod bv2_impl {
         #[inline]
         pub(crate) fn wtf_string_hash(wtf8: &[u8]) -> u32 {
             __bun_jsc_wtf_string_hash(wtf8)
-        }
-
-        unsafe extern "Rust" {
-            /// Defined `#[no_mangle]` in `bun_jsc::hot_reloader`. Installs a
-            /// `NewHotReloader<BundleV2, AnyEventLoop, true>` watcher on the given
-            /// `BundleV2`. The bundler can't name the
-            /// reloader generic (T6), so this is a definer-prefixed extern hook.
-            /// `'static` matches the impl-side signature; the sole caller
-            /// (`bun build --watch`) leaks the `Box<BundleV2>` via
-            /// `Box::into_raw` once `generate_from_cli` returns. The watcher is
-            /// installed after the last fallible step in `BundleV2::init`, so the
-            /// box is never dropped while the watcher holds a pointer to it.
-            fn __bun_jsc_enable_hot_module_reloading_for_bundler(
-                bv2: core::ptr::NonNull<super::BundleV2<'static>>,
-            );
-        }
-
-        /// `Watcher.enableHotModuleReloading(this, null)` for `bun build --watch`.
-        #[inline]
-        pub(crate) fn enable_hot_module_reloading_for_bundler(bv2: *mut super::BundleV2<'_>) {
-            let bv2 = core::ptr::NonNull::new(bv2.cast::<super::BundleV2<'static>>())
-                .expect("BundleV2 watcher: bv2 is non-null");
-            // SAFETY: link-time-resolved Rust-ABI fn in `bun_jsc::hot_reloader`.
-            // Not `safe fn`: the callee dereferences `bv2`, so it must point to a
-            // live `BundleV2` whose backing allocation outlives the watcher (sole
-            // caller is `BundleV2::init`; the box is leaked on the success path —
-            // see the watch-mode caveat above).
-            unsafe { __bun_jsc_enable_hot_module_reloading_for_bundler(bv2) }
         }
 
         /// Bytecode generation entry point for the linker: marks the calling
@@ -3023,7 +2980,6 @@ pub mod bv2_impl {
             bake_options: Option<BakeOptions<'a>>,
             alloc: &bun_alloc::Arena,
             event_loop: EventLoop,
-            cli_watch_flag: bool,
             thread_pool: Option<NonNull<ThreadPoolLib>>,
             heap: &'a ThreadLocalArena,
         ) -> Result<Box<BundleV2<'a>>, Error> {
@@ -3032,7 +2988,6 @@ pub mod bv2_impl {
                 bake_options,
                 alloc,
                 event_loop,
-                cli_watch_flag,
                 thread_pool,
                 heap,
             )?;
@@ -3047,7 +3002,6 @@ pub mod bv2_impl {
             bake_options: Option<BakeOptions<'a>>,
             _alloc: &bun_alloc::Arena,
             event_loop: EventLoop,
-            cli_watch_flag: bool,
             // Raw `NonNull` (not `&mut`): the JS-API path threads `WorkPool::get()`
             // (a `&'static` from `OnceLock`, concurrently read by workers) through
             // here into `ThreadPool::init`, which stores it as `*mut`. Creating a
@@ -3186,16 +3140,6 @@ pub mod bv2_impl {
             let tp = ThreadPool::init(&*this, thread_pool)?;
             // errdefer this.graph.heap.deinit() — Drop handles arena teardown.
             this.graph.pool = bun_ptr::BackRef::new_mut(this.arena().alloc(tp));
-            // Install the watcher only after `ThreadPool::init()` has succeeded —
-            // the `?` above is the last early-return in this fn, so the watcher's
-            // raw `*mut BundleV2` can't outlive the box it points at (the caller
-            // drops the box on every error path until `generate_from_cli` leaks it).
-            if cli_watch_flag {
-                // CYCLEBREAK GENUINE: hot_reloader is T6; runtime constructs the
-                // `dispatch::WatcherHandle` (erased owner + `&'static WatcherVTable`)
-                // via this extern hook and writes `bun_watcher`.
-                dispatch::enable_hot_module_reloading_for_bundler(core::ptr::from_mut(&mut *this));
-            }
             Ok(this)
         }
 
@@ -4036,21 +3980,14 @@ pub mod bv2_impl {
             transpiler: &'a mut Transpiler<'a>,
             alloc: &'a bun_alloc::Arena,
             event_loop: EventLoop,
-            enable_reloading: bool,
             reachable_files_count: &mut usize,
             minify_duration: &mut u64,
             source_code_size: &mut u64,
             fetcher: Option<&mut DependenciesScanner<'_>>,
         ) -> Result<BuildResult, Error> {
-            let mut this = BundleV2::init(
-                transpiler,
-                None,
-                alloc,
-                event_loop,
-                enable_reloading,
-                None,
-                alloc,
-            )?;
+            let mut this = BundleV2::init(transpiler, None, alloc, event_loop, None, alloc)?;
+            this.bun_watcher
+                .clone_from(&this.transpiler.resolver.watcher);
             this.unique_key = generate_unique_key();
 
             // Wrap so every exit path (incl. `?`) hits the cleanup below.
@@ -4139,15 +4076,7 @@ pub mod bv2_impl {
                 })
             })();
 
-            // Under `--watch` the watcher thread holds `*mut BundleV2` (via the
-            // reloader's `ctx`) and dereferences it in `on_file_update` after this
-            // function returns, so leak the Box to keep the pointee alive.
-            // Bounded leak: the next file change `execve()`s the process anyway.
-            if enable_reloading {
-                let _ = Box::into_raw(this);
-            } else {
-                this.deinit_without_freeing_arena();
-            }
+            this.deinit_without_freeing_arena();
 
             result
         }
@@ -4170,7 +4099,7 @@ pub mod bv2_impl {
             event_loop: EventLoop,
             entry_points: &[&[u8]],
         ) -> Result<Box<BundleV2<'a>>, Error> {
-            let mut this = BundleV2::init(transpiler, None, alloc, event_loop, false, None, alloc)?;
+            let mut this = BundleV2::init(transpiler, None, alloc, event_loop, None, alloc)?;
             this.unique_key = generate_unique_key();
 
             if this.transpiler.log().has_errors() {
@@ -4205,7 +4134,6 @@ pub mod bv2_impl {
                 Some(bake_options),
                 alloc,
                 event_loop,
-                false,
                 None,
                 alloc,
             )?;
@@ -4665,7 +4593,7 @@ pub mod bv2_impl {
                     parse_task.contents_or_fd = parse_task::ContentsOrFd::Contents(source_code);
                     this.graph.pool().schedule(parse_task);
 
-                    if this.bun_watcher.is_some() {
+                    if let Some(bun_watcher) = &this.bun_watcher {
                         'add_watchers: {
                             if !this.should_add_watcher_plugin(&load.namespace, &load.path) {
                                 break 'add_watchers;
@@ -4692,7 +4620,7 @@ pub mod bv2_impl {
 
                             // Failures to watch are intentionally ignored.
                             if !matches!(
-                                this.bun_watcher_mut().unwrap().add_file(
+                                bun_watcher.add_file(
                                     fd,
                                     &load.path,
                                     bun_wyhash::hash(load.path.as_ref()) as u32,
@@ -7059,7 +6987,7 @@ pub mod bv2_impl {
             }
 
             // To minimize contention, watchers are appended on the bundle thread.
-            if this.bun_watcher.is_some() {
+            if let Some(bun_watcher) = &this.bun_watcher {
                 if parse_result.watcher_data.fd != bun_sys::Fd::INVALID {
                     let source_index = parse_result.value.source_index();
                     // borrowck — read the source path before
@@ -7072,7 +7000,6 @@ pub mod bv2_impl {
                     if this.should_add_watcher(source_path) {
                         let dir_fd = parse_result.watcher_data.dir_fd;
                         let hash = bun_wyhash::hash(source_path) as u32;
-                        let bun_watcher = this.bun_watcher_mut().unwrap();
                         let added = match Fs::as_interned_path(source_path) {
                             Some(path) if !cfg!(windows) => {
                                 bun_watcher.add_file_static(fd, path, hash, dir_fd)
@@ -7453,11 +7380,6 @@ pub mod bv2_impl {
             if diff < 0 {
                 this.on_after_decrement_scan_counter();
             }
-        }
-
-        /// To satisfy the interface from NewHotReloader()
-        pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
-            self.transpiler.resolver.bust_dir_cache(path)
         }
     }
 

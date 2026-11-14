@@ -80,7 +80,7 @@ impl Mutex {
 
     /// Debug-only check that the calling thread already holds this mutex.
     /// Intended for `debug_assert!`-ing a "caller must hold the lock" contract
-    /// (e.g. `Watcher::flush_evictions`). In release builds the locking-thread
+    /// (e.g. the resolver's `entries_mutex`). In release builds the locking-thread
     /// id is not tracked, so this just returns `true` to make the assert a
     /// no-op there.
     #[inline]

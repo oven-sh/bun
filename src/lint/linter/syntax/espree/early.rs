@@ -4,7 +4,7 @@
 //! Working code has none of these errors, so the common case of finding nothing has to be cheap. Each check scans the
 //! nodes of one kind, and most files have few or none of that kind.
 
-use super::{Checks, Tops};
+use super::{Checks, Tops, is_identifier_byte};
 use crate::ast::{
     BinOp, Chain, Class, Expr, ExprKind, ExprTag, FnKind, Func, Handle, KeyKind, Member,
     MemberKind, Node, Param, PatElem, PatKind, PatProp, Prop, PropKind, Stmt, StmtKind, StmtTag,
@@ -57,9 +57,23 @@ fn has_lone_surrogate(source: &[u8]) -> bool {
     is_after_high
 }
 
+/// See [`Checks::record_owner`].
+enum RecordOwner {
+    /// acorn throws once it has read to this offset, and the token after it.
+    ReadTo(u32),
+    /// The literal is parsed with no record. acorn reports the offending token itself.
+    None,
+    /// The literal is the left operand of an operator inside a list that shares the record. acorn ends the expression
+    /// at the end of the operand, the first offset, and the list doesn't expect the operator, at the second.
+    Unexpected(u32, u32),
+}
+
 impl<'a> Checks<'a, '_> {
     pub(super) fn early_errors(&mut self) {
         self.decorators();
+        // Before `assignment_targets`: acorn's `parseMaybeUnary` stops at a literal with a shorthand default, and never
+        // sees the `++` after it.
+        self.object_literals();
         self.assignment_targets();
         self.rest_elements();
         self.declarations();
@@ -80,7 +94,6 @@ impl<'a> Checks<'a, '_> {
         self.switches_and_throws();
         self.awaits();
         self.arrows();
-        self.object_literals();
         self.string_module_names();
         self.async_before_of();
         if self.is_babel {
@@ -477,7 +490,8 @@ impl<'a> Checks<'a, '_> {
             }) == Some(true);
             match arrow.filter(|_| is_parameter && it.default().is_some()) {
                 Some(arrow) => {
-                    let noticed = arrow.arrow_span().map_or(raw.end, |it| it.start);
+                    // acorn converts the parameters after it has read the `=>`.
+                    let noticed = arrow.arrow_span().map_or(raw.end, |it| it.end);
                     self.when_read_to(noticed, |checks| {
                         checks.fail(
                             pat.span().start,
@@ -561,20 +575,17 @@ impl<'a> Checks<'a, '_> {
             {
                 continue;
             }
-            match raw.kind {
-                VarKind::Const => self.unexpected(raw.loc.end),
-                VarKind::Using => {
-                    self.fail(raw.loc.end, "Missing initializer in using declaration")
+            let message = match raw.kind {
+                VarKind::Const => {
+                    self.unexpected(raw.loc.end);
+                    continue;
                 }
-                VarKind::AwaitUsing => self.fail(
-                    raw.loc.end,
-                    "Missing initializer in await using declaration",
-                ),
-                _ => self.fail(
-                    raw.loc.end,
-                    "Complex binding patterns require an initialization value",
-                ),
-            }
+                VarKind::Using => "Missing initializer in using declaration",
+                VarKind::AwaitUsing => "Missing initializer in await using declaration",
+                _ => "Complex binding patterns require an initialization value",
+            };
+            // acorn has declared the names and read the next token when it looks for the `=`.
+            self.when_read_to(raw.loc.end, |checks| checks.fail(raw.loc.end, message));
         }
         for it in file.stmts_of_kind(StmtTag::Var) {
             let Some(list) = it.as_var() else {
@@ -582,7 +593,11 @@ impl<'a> Checks<'a, '_> {
             };
             // For oxc see `declaration_list`, here and below.
             if list.is_empty() && !self.is_oxc {
-                self.unexpected(self.after_token(it.span().start));
+                let next = self.after_token(it.span().start);
+                // acorn reads a word there as the name, and rejects a keyword once it has read it.
+                if !(self.token_at(next).first()).is_some_and(|&it| is_identifier_byte(it)) {
+                    self.unexpected(next);
+                }
             }
             if matches!(
                 list.first().map(|it| it.var_kind()),
@@ -963,12 +978,14 @@ impl<'a> Checks<'a, '_> {
             // The parser compares the raw text, so an escaped `meta` fails. The diagnostic's argument is the decoded
             // name.
             let is_meta = it.code == 17012 && it.args.first().is_some_and(|it| **it == *b"meta");
+            // acorn checks the property once it has read it, and the token after it.
+            let end = name + self.token_at(name).len() as u32;
             match self.token_at(keyword) {
-                b"import" if is_meta && !self.is_babel => {
-                    self.fail(keyword, "'import.meta' must not contain escaped characters");
-                }
-                b"import" => self.fail(name, import_message),
-                b"new" => self.fail(name, new_message),
+                b"import" if is_meta && !self.is_babel => self.when_read_to(end, |checks| {
+                    checks.fail(keyword, "'import.meta' must not contain escaped characters")
+                }),
+                b"import" => self.when_read_to(end, |checks| checks.fail(name, import_message)),
+                b"new" => self.when_read_to(end, |checks| checks.fail(name, new_message)),
                 _ => {}
             }
         }
@@ -993,8 +1010,10 @@ impl<'a> Checks<'a, '_> {
                 self.report(SyntaxError::oxc_error(it.span(), message).stage(Stage::Fatal));
                 continue;
             }
+            // acorn checks the property once it has read it, and the token after it.
+            let end = it.span().end;
             if !is_target || self.is_babel && self.token_at(name) != b"target" {
-                self.fail(name, new_message);
+                self.when_read_to(end, |checks| checks.fail(name, new_message));
                 continue;
             }
             if self.token_at(name) != b"target" && self.is_oxc {
@@ -1004,10 +1023,12 @@ impl<'a> Checks<'a, '_> {
                 continue;
             }
             if self.token_at(name) != b"target" {
-                self.fail(
-                    it.span().start,
-                    "'new.target' must not contain escaped characters",
-                );
+                self.when_read_to(end, |checks| {
+                    checks.fail(
+                        it.span().start,
+                        "'new.target' must not contain escaped characters",
+                    )
+                });
                 continue;
             }
             // `allowNewDotTarget`: in a non-arrow function, a field initializer or a static block.
@@ -1021,10 +1042,13 @@ impl<'a> Checks<'a, '_> {
                         .stage(Stage::Parser),
                 );
             } else if !is_allowed && self.source_type() != SourceType::CommonJs {
-                self.fail(
-                    it.span().start,
-                    "'new.target' can only be used in functions and class static block",
-                );
+                // acorn checks it once it has parsed `new.target`.
+                self.when_read_to(it.span().end, |checks| {
+                    checks.fail(
+                        it.span().start,
+                        "'new.target' can only be used in functions and class static block",
+                    )
+                });
             }
         }
     }
@@ -1040,17 +1064,21 @@ impl<'a> Checks<'a, '_> {
                 self.oxc_regular_expression_errors(it.span(), pattern, flags);
                 continue;
             }
-            let is_valid = |flag: &u8| strings::contains_char(b"dgimsuvy", *flag);
-            if !flags.iter().all(is_valid) {
-                self.fail(at, "Invalid regular expression flag");
-            } else if flags
-                .iter()
-                .enumerate()
-                .any(|(i, flag)| flags[i + 1..].iter().any(|it| it == flag))
-            {
-                self.fail(at, "Duplicate regular expression flag");
+            let token = it.span().start;
+            // acorn checks each flag in turn: unknown first, then repeated.
+            let flag_error = flags.iter().enumerate().find_map(|(i, flag)| {
+                if !strings::contains_char(b"dgimsuvy", *flag) {
+                    Some("Invalid regular expression flag")
+                } else if strings::contains_char(&flags[i + 1..], *flag) {
+                    Some("Duplicate regular expression flag")
+                } else {
+                    None
+                }
+            });
+            let message: Vec<u8> = if let Some(flag_error) = flag_error {
+                flag_error.as_bytes().to_vec()
             } else if strings::contains_char(flags, b'u') && strings::contains_char(flags, b'v') {
-                self.fail(at, "Invalid regular expression flag");
+                b"Invalid regular expression flag".to_vec()
             } else if let Err(error) = regex::validate_pattern(
                 pattern,
                 regex::Mode::from_flags(flags),
@@ -1065,16 +1093,57 @@ impl<'a> Checks<'a, '_> {
                     "Invalid empty flags" => "Invalid regular expression modifiers",
                     reason => reason,
                 };
-                let message = [
+                [
                     b"Invalid regular expression: /",
                     pattern,
                     b"/: ",
                     reason.as_bytes(),
                 ]
-                .concat();
-                self.fail(at, message);
+                .concat()
+            } else {
+                continue;
+            };
+            // Babel reads a `/` at the start of an expression as a regular expression whatever comes before it.
+            if !self.is_babel && Self::is_division_for_acorn(it) {
+                continue;
             }
+            self.tokenizer_error(token, at, message);
         }
+    }
+
+    /// True if acorn's tokenizer reads the `/` of the regular expression `it` as division: after a `]` or a `)`,
+    /// unless the `)` closes the head of an `if`, a `while`, a `for`, a `with` or a `do`. TypeScript's parser starts
+    /// a new statement after a line break there, so acorn never sees this regular expression.
+    fn is_division_for_acorn(it: Expr<'a>) -> bool {
+        let file = it.file();
+        let start = it.span().start;
+        let before = file.end_of_token_before(start);
+        if !matches!(
+            file.text().get(before.wrapping_sub(1) as usize),
+            Some(b']' | b')')
+        ) {
+            return false;
+        }
+        let statement = (Node::Expr(it).ancestors()).find_map(|node| match node {
+            Node::Stmt(stmt) => Some(stmt),
+            _ => None,
+        });
+        let Some(statement) = statement.filter(|stmt| stmt.span().start == start) else {
+            return false;
+        };
+        if matches!(statement.parent(), Node::Stmt(head) if matches!(
+            head.kind(),
+            StmtKind::If { .. }
+                | StmtKind::While { .. }
+                | StmtKind::For { .. }
+                | StmtKind::ForIn { .. }
+                | StmtKind::ForOf { .. }
+                | StmtKind::With { .. }
+        )) {
+            return false;
+        }
+        // `do .. while (a)` with no `;`: its `)` ends the statement before.
+        !(file.stmts_of_kind(StmtTag::DoWhile)).any(|it| it.span().end == before)
     }
 
     /// oxc's errors for the regular expression at `literal`. Its lexer reads the flags, and lexer errors are printed
@@ -1292,10 +1361,11 @@ impl<'a> Checks<'a, '_> {
         }
         for it in file.stmts_of_kind(StmtTag::Throw) {
             if matches!(it.kind(), StmtKind::Throw(thrown) if thrown.is_missing()) {
-                self.fail(
-                    it.span().start + "throw".len() as u32,
-                    "Illegal newline after throw",
-                );
+                // acorn has read the token on the next line.
+                let end = it.span().start + "throw".len() as u32;
+                self.when_read_to(end, |checks| {
+                    checks.fail(end, "Illegal newline after throw")
+                });
             }
         }
     }
@@ -1593,6 +1663,8 @@ impl<'a> Checks<'a, '_> {
         }
         // Collect each class's private names once, since there can be as many names as uses.
         let mut names_of: IdMap<Class<'a>, FxHashSet<&'a [u8]>> = IdMap::default();
+        // acorn reports the undeclared names of a class body in source order: `(noticed, at, message)`.
+        let mut undeclared_names: SmallVec<[(u32, u32, Vec<u8>); 2]> = SmallVec::new();
         let mut is_declared = |tops: &mut Tops<'a>, node: Node<'a>, name: &[u8]| {
             let mut inside = node;
             tops.outward(node).any(|it| {
@@ -1649,16 +1721,7 @@ impl<'a> Checks<'a, '_> {
                     _ => self.unexpected(name.start()),
                 }
             } else if !is_declared(&mut self.tops, Node::Expr(it), name.bytes()) {
-                // acorn notices it at the end of the outermost class.
-                let mut inside = Node::Expr(it);
-                let outermost = (self.tops.outward(Node::Expr(it)))
-                    .filter(|&outer| {
-                        let from = std::mem::replace(&mut inside, outer);
-                        // For oxc, a class's `extends` expression and decorators are outside the class.
-                        matches!(outer, Node::Class(_))
-                            && (!is_oxc || matches!(from, Node::Member(_)))
-                    })
-                    .last();
+                let outermost = self.outermost_class_body(Node::Expr(it));
                 if self.is_oxc && outermost.is_none() {
                     let message = [
                         b"Private identifier '",
@@ -1674,10 +1737,11 @@ impl<'a> Checks<'a, '_> {
                     self.report(error.help(help));
                     continue;
                 }
-                let noticed = outermost.map_or(0, |it| it.span().end);
-                self.when_read_to(noticed, |checks| {
-                    checks.fail(name.start(), undeclared(name.bytes()))
-                });
+                // acorn collects the names a class body uses, and when it leaves the body it hands the undeclared
+                // ones to the enclosing class body, or throws if there is none. Outside a class it throws once it
+                // has read the name.
+                let noticed = outermost.map_or_else(|| it.span().end, |it| it.span().end);
+                undeclared_names.push((noticed, name.start(), undeclared(name.bytes())));
             }
         }
         for it in self.exprs_of(ExprTag::PrivateIdentifier) {
@@ -1694,12 +1758,8 @@ impl<'a> Checks<'a, '_> {
             if !is_left_of_in {
                 self.unexpected(it.span().start);
             } else if !is_declared(&mut self.tops, Node::Expr(it), name.bytes()) {
-                let mut inside = Node::Expr(it);
-                let is_in_class_body = self.tops.outward(Node::Expr(it)).any(|outer| {
-                    let from = std::mem::replace(&mut inside, outer);
-                    matches!(outer, Node::Class(_)) && matches!(from, Node::Member(_))
-                });
-                if is_oxc && !is_in_class_body {
+                let outermost = self.outermost_class_body(Node::Expr(it));
+                if is_oxc && outermost.is_none() {
                     let message = [
                         b"Private identifier '",
                         name.bytes(),
@@ -1714,9 +1774,33 @@ impl<'a> Checks<'a, '_> {
                     self.report(error.help(help));
                     continue;
                 }
-                self.fail(it.span().start, undeclared(name.bytes()));
+                // Outside a class body, `parseMaybeUnary` rejects the token before it reads the name.
+                let Some(outermost) = outermost else {
+                    self.unexpected(it.span().start);
+                    continue;
+                };
+                let noticed = outermost.span().end;
+                undeclared_names.push((noticed, it.span().start, undeclared(name.bytes())));
             }
         }
+        crate::utils::sort::sort_by_key(&mut undeclared_names, |it| it.1);
+        for (noticed, at, message) in undeclared_names {
+            self.when_read_to(noticed, |checks| checks.fail(at, message));
+        }
+    }
+
+    /// The outermost class whose body contains `node`. A class's `extends` expression isn't in its body: acorn parses
+    /// it before it enters the body, and so does oxc.
+    fn outermost_class_body(&mut self, node: Node<'a>) -> Option<Class<'a>> {
+        let mut inside = node;
+        let classes = self.tops.outward(node).filter_map(|outer| {
+            let from = std::mem::replace(&mut inside, outer);
+            match (outer, from) {
+                (Node::Class(class), Node::Member(_)) => Some(class),
+                _ => None,
+            }
+        });
+        classes.last()
     }
 
     /// For oxc: "Did you mean '#a'?", if a class enclosing `node` declares a private name similar to `name`. On a tie,
@@ -1743,6 +1827,211 @@ impl<'a> Checks<'a, '_> {
             Some(it) => format!("Did you mean '{}'?", bstr::BStr::new(it)),
             None => String::new(),
         }
+    }
+
+    /// How acorn reports what `parseObj` records in `refDestructuringErrors` for the literal `object`: a shorthand
+    /// default or a second `__proto__`. acorn passes the record down through array elements, object property values
+    /// and spreads, call arguments, and the items of a parenthesized sequence or a `for` statement's head.
+    /// `checkExpressionErrors` throws the error when the expression that created the record is complete. Babel has no
+    /// such record and reports at once.
+    fn record_owner(&self, object: Expr<'a>) -> RecordOwner {
+        if self.is_babel {
+            return RecordOwner::ReadTo(object.outer_span().end);
+        }
+        if Self::has_no_record(object) {
+            return RecordOwner::None;
+        }
+        let mut node = object;
+        // The node below `node` on the way up.
+        let mut inner = object;
+        loop {
+            if node.is_parenthesized() {
+                return RecordOwner::ReadTo(node.outer_span().end);
+            }
+            // Inside an operand with no record, a list passes none down, so the `parseMaybeAssign` of each of its
+            // items creates one.
+            if node != object && Self::has_no_record(node) {
+                return RecordOwner::ReadTo(inner.span().end);
+            }
+            inner = node;
+            let parent = match node.parent() {
+                Node::Expr(parent) => parent,
+                Node::Prop(prop) if Self::is_property_value(prop, node) => {
+                    let Node::Expr(outer) = prop.parent() else {
+                        return RecordOwner::ReadTo(node.span().end);
+                    };
+                    node = outer;
+                    continue;
+                }
+                _ => return RecordOwner::ReadTo(node.span().end),
+            };
+            match parent.kind() {
+                ExprKind::Array(_) => node = parent,
+                ExprKind::Spread(_) if Self::passes_record_to_spread(parent) => node = parent,
+                ExprKind::Call(call) if call.callee() != node => {
+                    return RecordOwner::ReadTo(parent.span().end);
+                }
+                ExprKind::Binary {
+                    op: BinOp::Comma, ..
+                } => {
+                    let top = Self::top_of_sequence(parent);
+                    return RecordOwner::ReadTo(match top.parent() {
+                        _ if top.is_parenthesized() => top.outer_span().end,
+                        Node::Stmt(stmt) if Self::is_for_init(stmt, top) => top.span().end,
+                        _ => node.span().end,
+                    });
+                }
+                // `parseExprSubscripts` checks the record after the whole chain.
+                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj == node => {
+                    return self.subscript_chain_owner(object, node, parent);
+                }
+                ExprKind::Call(call) | ExprKind::TaggedTemplate(call) if call.callee() == node => {
+                    return self.subscript_chain_owner(object, node, parent);
+                }
+                // `parseExprOps` stops at the operand once the record has an error. The expression that owns the
+                // record then throws, unless it's a list that expects a `,` or its closing token first.
+                ExprKind::Binary { left, .. } if left == node => {
+                    return self.after_left_operand(node, parent);
+                }
+                ExprKind::Cond { test, .. } if test == node => {
+                    return self.after_left_operand(node, parent);
+                }
+                ExprKind::Unary { .. } => return self.after_left_operand(node, parent),
+                _ => return RecordOwner::ReadTo(node.span().end),
+            }
+        }
+    }
+
+    /// True if acorn parses `expr` with no record: `parseMaybeUnary`, `parseAwait`, `parseExprOp`, `parseNew` and
+    /// `parseClassSuper` pass none for an operand.
+    fn has_no_record(expr: Expr<'a>) -> bool {
+        match expr.parent() {
+            _ if expr.is_parenthesized() => false,
+            Node::Class(_) => true,
+            Node::Expr(parent) => match parent.kind() {
+                ExprKind::Unary { op, .. } => !matches!(op, UnOp::PostInc | UnOp::PostDec),
+                ExprKind::Await(_) => true,
+                ExprKind::New(call) => call.callee() == expr,
+                ExprKind::Binary { op, right, .. } => op != BinOp::Comma && right == expr,
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    /// `operand` is the left operand of `operator`, which acorn doesn't read as part of the expression, nor the
+    /// operators after it.
+    fn after_left_operand(&self, operand: Expr<'a>, operator: Expr<'a>) -> RecordOwner {
+        let end = operand.span().end;
+        let mut top = operator;
+        while let Node::Expr(parent) = top.parent()
+            && !top.is_parenthesized()
+            && match parent.kind() {
+                ExprKind::Binary { op, left, .. } => op != BinOp::Comma && left == top,
+                ExprKind::Cond { test, .. } => test == top,
+                ExprKind::Unary { op, .. } => matches!(op, UnOp::PostInc | UnOp::PostDec),
+                _ => false,
+            }
+        {
+            top = parent;
+        }
+        match Self::is_list_item(top) {
+            true => RecordOwner::Unexpected(end, skip_trivia(self.file.text(), end)),
+            false => RecordOwner::ReadTo(end),
+        }
+    }
+
+    /// For the literal `object` in `node`, whose subscript chain starts at `first`: the end of the chain. `new` parses
+    /// its callee with no record, so inside one, the literal's own `parseMaybeAssign` creates the record.
+    fn subscript_chain_owner(
+        &self,
+        object: Expr<'a>,
+        node: Expr<'a>,
+        first: Expr<'a>,
+    ) -> RecordOwner {
+        let mut top = first;
+        loop {
+            if top.is_parenthesized() {
+                return RecordOwner::ReadTo(top.outer_span().end);
+            }
+            let Node::Expr(parent) = top.parent() else {
+                break;
+            };
+            let continues = match parent.kind() {
+                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj == top,
+                ExprKind::Call(call) | ExprKind::TaggedTemplate(call) => call.callee() == top,
+                ExprKind::New(call) if call.callee() == top => {
+                    return match node == object {
+                        true => RecordOwner::None,
+                        false => RecordOwner::ReadTo(object.span().end),
+                    };
+                }
+                _ => false,
+            };
+            if !continues {
+                break;
+            }
+            top = parent;
+        }
+        RecordOwner::ReadTo(top.span().end)
+    }
+
+    /// True if `expr` is an item of a list that shares its record with it and expects a `,` or its closing token
+    /// after it: an array, an object, a call's arguments or a parenthesized sequence.
+    fn is_list_item(expr: Expr<'a>) -> bool {
+        if expr.is_parenthesized() {
+            return true;
+        }
+        let parent = match expr.parent() {
+            Node::Expr(parent) => parent,
+            Node::Prop(prop) => return Self::is_property_value(prop, expr),
+            _ => return false,
+        };
+        match parent.kind() {
+            ExprKind::Array(_) => true,
+            ExprKind::Spread(_) => Self::passes_record_to_spread(parent),
+            ExprKind::Call(call) => call.callee() != expr,
+            ExprKind::Binary {
+                op: BinOp::Comma, ..
+            } => Self::top_of_sequence(parent).is_parenthesized(),
+            _ => false,
+        }
+    }
+
+    /// `parseExprList` passes its record to a spread in an array or a call. `new` and JSX don't have one.
+    fn passes_record_to_spread(spread: Expr<'a>) -> bool {
+        matches!(spread.parent(), Node::Expr(outer)
+            if matches!(outer.kind(), ExprKind::Array(_) | ExprKind::Call(_)))
+    }
+
+    /// True if `expr` is the value of `prop` in an object literal, or spread into it.
+    fn is_property_value(prop: Prop<'a>, expr: Expr<'a>) -> bool {
+        !prop.is_jsx_attribute()
+            && matches!(prop.kind(), PropKind::Init | PropKind::Spread)
+            && prop.value() == Some(expr)
+    }
+
+    /// The outermost comma expression of the sequence that `comma` is part of.
+    fn top_of_sequence(mut comma: Expr<'a>) -> Expr<'a> {
+        while let Node::Expr(parent) = comma.parent()
+            && matches!(
+                parent.kind(),
+                ExprKind::Binary {
+                    op: BinOp::Comma,
+                    ..
+                }
+            )
+            && !comma.is_parenthesized()
+        {
+            comma = parent;
+        }
+        comma
+    }
+
+    /// True if `expr` is the initializer in the head of the `for` statement `stmt`.
+    fn is_for_init(stmt: Stmt<'a>, expr: Expr<'a>) -> bool {
+        matches!(stmt.kind(), StmtKind::For { init: Some(init), .. }
+            if matches!(init.kind(), StmtKind::Expr(it) if it == expr))
     }
 
     /// `parseClass`, `parseClassElement`
@@ -1791,10 +2080,17 @@ impl<'a> Checks<'a, '_> {
                         _ => {}
                     }
                     if has_constructor && !is_oxc {
-                        self.fail(
-                            member.span().start,
-                            "Duplicate constructor in the same class",
-                        );
+                        // acorn reports it once it has parsed the whole member. Babel reports it at the key.
+                        let noticed = match self.is_babel {
+                            true => member.span().start,
+                            false => member.span().end,
+                        };
+                        self.when_read_to(noticed, |checks| {
+                            checks.fail(
+                                member.span().start,
+                                "Duplicate constructor in the same class",
+                            )
+                        });
                     }
                     has_constructor = true;
                 }
@@ -1839,7 +2135,9 @@ impl<'a> Checks<'a, '_> {
                                 b"' has already been declared",
                             ]
                             .concat();
-                            self.fail(key.span(file).start, message);
+                            self.when_read_to(member.span().end, |checks| {
+                                checks.fail(key.span(file).start, message)
+                            });
                         }
                     }
                 }
@@ -1871,47 +2169,53 @@ impl<'a> Checks<'a, '_> {
             }
             return;
         };
-        let start = key.span(self.file).start;
+        let crate::span::Span { start, end } = key.span(self.file);
+        if matches!(key.kind(), KeyKind::Private(name) if name.is("#constructor")) {
+            return self.fail(start, "Classes can't have an element named '#constructor'");
+        }
         // `checkKeyName`
         let is_named = |name: &str| matches!(key.kind(), KeyKind::Ident(it) | KeyKind::String(it) if it.is(name));
-        let is_field = member.kind() == MemberKind::Property;
+        // Before ES2022 acorn parses every member as a method, and `newer_classes` expects its parameters.
+        let has_fields = self.older_edition.is_none_or(|it| it >= 13);
+        let is_field = has_fields && member.kind() == MemberKind::Property;
         // oxc checks an `accessor`'s name only if it's private.
         let skips_name_check = self.is_oxc && member.flags().contains(Flags::ACCESSOR);
-        if matches!(key.kind(), KeyKind::Private(name) if name.is("#constructor")) {
-            self.fail(start, "Classes can't have an element named '#constructor'");
-        } else if skips_name_check || is_declared && !(is_field && is_named("constructor")) {
-            // Its name isn't checked.
-        } else if is_field && is_named("constructor") {
-            self.fail(start, "Classes can't have a field named 'constructor'");
-        } else if self.is_oxc && member.is_static() && is_named("prototype") {
-            self.fail(
-                start,
-                "Classes may not have a static property named 'prototype'",
-            );
-        } else if is_field && member.is_static() && is_named("prototype") {
-            self.fail(start, "Classes can't have a static field named 'prototype'");
-        } else if !is_field && member.is_static() && is_named("prototype") {
-            self.fail(
-                start,
-                "Classes may not have a static property named prototype",
-            );
-        } else if member.is_static() || !is_named("constructor") {
-            // Not a constructor.
-        } else if matches!(member.kind(), MemberKind::Getter | MemberKind::Setter) {
-            self.fail(start, "Constructor can't have get/set modifier");
-        } else if self.is_oxc {
-            // oxc reports both errors for `async *constructor() {}`.
-            if member.func().is_some_and(Func::is_async) {
-                self.fail(start, "Constructor can't be an async method");
+        // acorn checks the name once it has read the key, and the token after it.
+        self.when_read_to(end, |checks| {
+            if skips_name_check || is_declared && !(is_field && is_named("constructor")) {
+                // Its name isn't checked.
+            } else if is_field && is_named("constructor") {
+                checks.fail(start, "Classes can't have a field named 'constructor'");
+            } else if checks.is_oxc && member.is_static() && is_named("prototype") {
+                checks.fail(
+                    start,
+                    "Classes may not have a static property named 'prototype'",
+                );
+            } else if is_field && member.is_static() && is_named("prototype") {
+                checks.fail(start, "Classes can't have a static field named 'prototype'");
+            } else if !is_field && member.is_static() && is_named("prototype") {
+                checks.fail(
+                    start,
+                    "Classes may not have a static property named prototype",
+                );
+            } else if member.is_static() || !is_named("constructor") {
+                // Not a constructor.
+            } else if matches!(member.kind(), MemberKind::Getter | MemberKind::Setter) {
+                checks.fail(start, "Constructor can't have get/set modifier");
+            } else if checks.is_oxc {
+                // oxc reports both errors for `async *constructor() {}`.
+                if member.func().is_some_and(Func::is_async) {
+                    checks.fail(start, "Constructor can't be an async method");
+                }
+                if member.func().is_some_and(Func::is_generator) {
+                    checks.fail(start, "Constructor can't be a generator");
+                }
+            } else if member.func().is_some_and(Func::is_generator) {
+                checks.fail(start, "Constructor can't be a generator");
+            } else if member.func().is_some_and(Func::is_async) {
+                checks.fail(start, "Constructor can't be an async method");
             }
-            if member.func().is_some_and(Func::is_generator) {
-                self.fail(start, "Constructor can't be a generator");
-            }
-        } else if member.func().is_some_and(Func::is_generator) {
-            self.fail(start, "Constructor can't be a generator");
-        } else if member.func().is_some_and(Func::is_async) {
-            self.fail(start, "Constructor can't be an async method");
-        }
+        });
     }
 
     // ───────────────────────────── more expressions ─────────────────────────────
@@ -1936,17 +2240,22 @@ impl<'a> Checks<'a, '_> {
             let start = it.span().start;
             match enclosing {
                 Some(Node::Func(func)) if func.is_async() => {}
+                // acorn reads `await` as an identifier here, and checks it once it has read the next token.
                 Some(Node::Func(func)) if func.kind() == FnKind::StaticBlock => {
-                    self.fail(
-                        start,
-                        "Cannot use await in class static initialization block",
-                    );
+                    self.after_identifier(start, |checks| {
+                        checks.fail(
+                            start,
+                            "Cannot use await in class static initialization block",
+                        )
+                    });
                 }
                 None if is_module => {}
-                _ if is_module => self.fail(
-                    start,
-                    "Cannot use keyword 'await' outside an async function",
-                ),
+                _ if is_module => self.after_identifier(start, |checks| {
+                    checks.fail(
+                        start,
+                        "Cannot use keyword 'await' outside an async function",
+                    )
+                }),
                 // After an identifier, these characters continue the expression.
                 _ if matches!(
                     self.token_at(operand.outer_span().start).first(),
@@ -2006,6 +2315,8 @@ impl<'a> Checks<'a, '_> {
             let key = crate::span::Span::new(at, at + name.len() as u32);
             SyntaxError::oxc_error(key, message.concat()).stage(Stage::Parser)
         };
+        // `checkExpressionErrors` throws a shorthand default before a second `__proto__` recorded with it.
+        let mut proto_errors: SmallVec<[(RecordOwner, u32, u32); 2]> = SmallVec::new();
         for (i, raw) in file.hir.props.iter().enumerate() {
             let is_default = raw.kind == PropKind::Shorthand
                 && matches!(
@@ -2054,9 +2365,16 @@ impl<'a> Checks<'a, '_> {
                 let equals = skip_trivia(file.text(), target.span().end);
                 let message =
                     "Shorthand property assignments are valid only in destructuring patterns";
-                self.when_read_to(object.outer_span().end, |checks| {
-                    checks.fail(equals, message)
-                });
+                match self.record_owner(object) {
+                    // With no record, `parseObj` reads the key as the whole property.
+                    RecordOwner::None => self.unexpected(equals),
+                    RecordOwner::Unexpected(end, at) => {
+                        self.when_read_to(end, |checks| checks.unexpected(at));
+                    }
+                    RecordOwner::ReadTo(noticed) => {
+                        self.when_read_to(noticed, |checks| checks.fail(equals, message));
+                    }
+                }
             }
             let is_proto = |it: Prop<'a>| {
                 it.kind() == PropKind::Init
@@ -2079,9 +2397,22 @@ impl<'a> Checks<'a, '_> {
                     let error = self.redeclared("Identifier", b"__proto__", first, again);
                     self.report(error);
                 } else if first.is_some() {
-                    self.when_read_to(object.outer_span().end, |checks| {
-                        checks.fail(raw.pos, "Redefinition of __proto__ property")
-                    });
+                    proto_errors.push((self.record_owner(object), raw.pos, prop.span().end));
+                }
+            }
+        }
+        for (owner, key, property_end) in proto_errors {
+            let message = "Redefinition of __proto__ property";
+            match owner {
+                // With no record, `checkPropClash` throws at the key once the property has been parsed.
+                RecordOwner::None => {
+                    self.when_read_to(property_end, |checks| checks.fail(key, message));
+                }
+                RecordOwner::Unexpected(end, at) => {
+                    self.when_read_to(end, |checks| checks.unexpected(at));
+                }
+                RecordOwner::ReadTo(noticed) => {
+                    self.when_read_to(noticed, |checks| checks.fail(key, message));
                 }
             }
         }
@@ -2119,18 +2450,22 @@ impl<'a> Checks<'a, '_> {
         if !self.is_babel && file.language().source_type != SourceType::Module {
             return;
         }
-        let mut exported: Vec<(&'a [u8], u32)> = Vec::new();
+        // Each exported name, where it is, and where acorn checks it: after the `default` keyword, after the name in a
+        // list, or after the whole declaration.
+        let mut exported: Vec<(&'a [u8], u32, u32)> = Vec::new();
         for it in file.body() {
             match it.kind() {
                 StmtKind::ExportDefault(_) => {
-                    exported.push((&b"default"[..], self.after_token(it.span().start)))
+                    let keyword = self.after_token(it.span().start);
+                    exported.push((&b"default"[..], keyword, keyword + "default".len() as u32));
                 }
                 StmtKind::ExportStar {
                     alias: Some(alias), ..
-                } => exported.push((alias.bytes(), alias.start())),
+                } => exported.push((alias.bytes(), alias.start(), alias.span().end)),
                 StmtKind::ExportNamed(export) => {
                     for item in export.items() {
-                        exported.push((item.exported().bytes(), item.exported().start()));
+                        let name = item.exported();
+                        exported.push((name.bytes(), name.start(), name.span().end));
                         let local = item.local();
                         if export.has_from() {
                             continue;
@@ -2145,40 +2480,43 @@ impl<'a> Checks<'a, '_> {
                         {
                             let message =
                                 [b"Export '", local.bytes(), b"' is not defined"].concat();
-                            self.when_read_to(file.text().len() as u32, |checks| {
-                                checks.fail(local.start(), message)
-                            });
+                            self.at_end.push((local.start(), message));
                         }
                     }
                 }
                 _ if !it.is_exported() => {}
-                _ if it.is_default_export() => exported.push((
-                    &b"default"[..],
-                    self.after_token(it.export_span().map_or(0, |it| it.start)),
-                )),
+                _ if it.is_default_export() => {
+                    let keyword = self.after_token(it.export_span().map_or(0, |it| it.start));
+                    exported.push((&b"default"[..], keyword, keyword + "default".len() as u32));
+                }
                 StmtKind::Var(list) => {
                     for declaration in list {
-                        declaration.pat().for_each_binding(&mut |it| {
-                            if let PatKind::Ident(name) = it.kind() {
-                                exported.push((name.bytes(), it.span().start));
+                        declaration.pat().for_each_binding(&mut |pat| {
+                            if let PatKind::Ident(name) = pat.kind() {
+                                exported.push((name.bytes(), pat.span().start, it.span().end));
                             }
                         });
                     }
                 }
-                StmtKind::Fn(func) => {
-                    exported.extend(func.name().map(|it| (it.bytes(), it.start())))
-                }
-                StmtKind::Class(class) => {
-                    exported.extend(class.name().map(|it| (it.bytes(), it.start())))
-                }
+                StmtKind::Fn(func) => exported
+                    .extend((func.name()).map(|name| (name.bytes(), name.start(), it.span().end))),
+                StmtKind::Class(class) => exported
+                    .extend((class.name()).map(|name| (name.bytes(), name.start(), it.span().end))),
                 _ => {}
             }
         }
         crate::utils::sort::sort_unstable(&mut exported);
+        // acorn reports the duplicates in source order.
+        let mut duplicates: SmallVec<[(&'a [u8], u32, u32); 2]> = SmallVec::new();
         for (first, second) in exported.iter().zip(exported.iter().skip(1)) {
             if first.0 == second.0 {
-                self.fail(second.1, [b"Duplicate export '", second.0, b"'"].concat());
+                duplicates.push(*second);
             }
+        }
+        crate::utils::sort::sort_by_key(&mut duplicates, |it| it.1);
+        for (name, at, noticed) in duplicates {
+            let message = [b"Duplicate export '", name, b"'"].concat();
+            self.when_read_to(noticed, |checks| checks.fail(at, message));
         }
     }
 
@@ -2220,14 +2558,14 @@ impl<'a> Checks<'a, '_> {
                 if !has_target && self.is_oxc {
                     self.oxc_jump_error(it, is_break);
                 } else if !has_target {
-                    self.fail(
-                        it.span().start,
-                        if is_break {
-                            "Unsyntactic break"
-                        } else {
-                            "Unsyntactic continue"
-                        },
-                    );
+                    let message = match is_break {
+                        true => "Unsyntactic break",
+                        false => "Unsyntactic continue",
+                    };
+                    // acorn checks the label once it has parsed the statement.
+                    self.when_read_to(it.span().end, |checks| {
+                        checks.fail(it.span().start, message)
+                    });
                 }
             }
         }
@@ -2323,10 +2661,10 @@ impl<'a> Checks<'a, '_> {
                 let error = self.redeclared("Label", label.bytes(), first, again);
                 self.report(error);
             } else {
-                self.fail(
-                    it.span().start,
-                    [b"Label '", label.bytes(), b"' is already declared"].concat(),
-                );
+                let message = [b"Label '", label.bytes(), b"' is already declared"].concat();
+                // acorn checks the label once it has read the `:`.
+                let colon = self.after_token(it.span().start);
+                self.when_read_to(colon + 1, |checks| checks.fail(it.span().start, message));
             }
         }
     }

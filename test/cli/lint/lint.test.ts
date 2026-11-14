@@ -1211,6 +1211,261 @@ describe.concurrent("bun lint", () => {
     expect(exitCode).toBe(1);
   });
 
+  // Each file has two syntax errors. The expected error is the one ESLint 10.12.0 reports, with espree. acorn throws
+  // at the first error it meets: it reads one token ahead, and it checks some rules only once it has parsed the whole
+  // node, so the error that comes first in the text doesn't always come first.
+  test("reports the same error as espree when a file has several", async () => {
+    const cases: [code: string, error: string][] = [
+      // A `try` without `catch` or `finally` is noticed after its block.
+      ["try { x = 08; }", "1:11: Parsing error: Invalid number"],
+      ["try {} 08", "1:8: Parsing error: Invalid number"],
+      ["try {} @", "1:8: Parsing error: Unexpected character '@'"],
+      ["try {} }", "1:1: Parsing error: Missing catch or finally clause"],
+      // `{ a = 1 }` is noticed at the end of the expression that owns acorn's `refDestructuringErrors`.
+      ["var x = [{ b = 1 }, 08];", "1:21: Parsing error: Invalid number"],
+      ["var x = { a: { b = 1 }, c: 08 };", "1:28: Parsing error: Invalid number"],
+      ["var x = ({ b = 1 }, 08);", "1:21: Parsing error: Invalid number"],
+      ["f({ b = 1 }, 08);", "1:14: Parsing error: Invalid number"],
+      ["var x = [{ b = 1 }][08];", "1:21: Parsing error: Invalid number"],
+      ["var x = [{ b = 1 }] 08", "1:21: Parsing error: Invalid number"],
+      [
+        "var x = [{ b = 1 }]; 08;",
+        "1:14: Parsing error: Shorthand property assignments are valid only in destructuring patterns",
+      ],
+      ["var x = [{ b = 1 } + 1];", "1:20: Parsing error: Unexpected token +"],
+      ["var x = [{ b = 1 } + 1 + 2];", "1:20: Parsing error: Unexpected token +"],
+      ["var x = !{ b = 1 };", "1:14: Parsing error: Unexpected token ="],
+      ["var x = a + { b = 1 };", "1:17: Parsing error: Unexpected token ="],
+      [
+        "var x = new X({ b = 1 }, 08);",
+        "1:19: Parsing error: Shorthand property assignments are valid only in destructuring patterns",
+      ],
+      ["for ({ b = 1 }, 08; ;) {}", "1:17: Parsing error: Invalid number"],
+      ["var x = [{ __proto__: 1, __proto__: 2 }, 08];", "1:42: Parsing error: Invalid number"],
+      [
+        "var x = { __proto__: 1, __proto__: 2, b = 1 };",
+        "1:41: Parsing error: Shorthand property assignments are valid only in destructuring patterns",
+      ],
+      ["var x = !{ __proto__: 1, __proto__: 2 }; 08", "1:26: Parsing error: Redefinition of __proto__ property"],
+      // Duplicate parameters are checked after an expression body and before a block body.
+      ["var f = (a, a) => 08;", "1:19: Parsing error: Invalid number"],
+      ["var f = (a, a) => a + 08", "1:23: Parsing error: Invalid number"],
+      ["var f = (a, a) => { 08 }", "1:13: Parsing error: Argument name clash"],
+      ["var f = (a, a) => a; 08", "1:13: Parsing error: Argument name clash"],
+      ["([...a = 1]) => 08", "1:17: Parsing error: Invalid number"],
+      // A class member is checked once it has been parsed.
+      ["class A { constructor() {} constructor() { 08; } }", "1:44: Parsing error: Invalid number"],
+      ["class A { constructor() {} constructor() {} 08 }", "1:45: Parsing error: Invalid number"],
+      [
+        "class A { constructor() {} constructor() {} } 08",
+        "1:28: Parsing error: Duplicate constructor in the same class",
+      ],
+      ["class A { #x; #x = 08; }", "1:20: Parsing error: Invalid number"],
+      ["class A { #x; get #x() { return 08 } }", "1:33: Parsing error: Invalid number"],
+      ["class A { #x; #x } 08", "1:15: Parsing error: Identifier '#x' has already been declared"],
+      ["class A { static prototype 08 }", "1:28: Parsing error: Invalid number"],
+      ["class A { get constructor() { 08 } }", "1:15: Parsing error: Constructor can't have get/set modifier"],
+      // An undeclared private name is noticed at the end of the outermost class body around it. A class in an
+      // `extends` clause isn't in the body of the class it extends.
+      [
+        "class A extends (class B { m() { this.#x } }) { n() { return 08; } }",
+        "1:39: Parsing error: Private field '#x' must be declared in an enclosing class",
+      ],
+      [
+        "class A { m() { class B extends (class C { n() { this.#x } }) {} 08 } }",
+        "1:66: Parsing error: Invalid number",
+      ],
+      ["class A { m() { #x in this } n() { 08 } }", "1:36: Parsing error: Invalid number"],
+      ["class A { m(a, a) 08; }", "1:19: Parsing error: Invalid number"],
+      ["function f(a, a) 08 {}", "1:18: Parsing error: Invalid number"],
+      ["function f(eval, 08) {}", "1:18: Parsing error: Invalid number"],
+      // A list that shares the record doesn't expect the operator after the literal.
+      ["var x = [{ b = 1 }++];", "1:19: Parsing error: Unexpected token ++"],
+      ["f({ b = 1 }++);", "1:12: Parsing error: Unexpected token ++"],
+      ["var x = [{ b = 1 } ? a : b];", "1:20: Parsing error: Unexpected token ?"],
+      [
+        "var x = { b = 1 }++;",
+        "1:13: Parsing error: Shorthand property assignments are valid only in destructuring patterns",
+      ],
+      ["x = !{ __proto__: 1, __proto__: 08 }", "1:33: Parsing error: Invalid number"],
+      ["x = !{ __proto__: 1, __proto__: 2, 08 }", "1:22: Parsing error: Redefinition of __proto__ property"],
+      // The `try` that lacks a clause is the one whose block ends before the error.
+      ["try { try {} catch {} } 08", "1:25: Parsing error: Invalid number"],
+      ["try { try {} catch {} }", "1:1: Parsing error: Missing catch or finally clause"],
+      // acorn reads the token after an identifier before it checks the identifier.
+      ["this.#x 08", "1:9: Parsing error: Invalid number"],
+      ["this.#x\n}", "1:6: Parsing error: Private field '#x' must be declared in an enclosing class"],
+      ["function f() { await 08 }", "1:22: Parsing error: Invalid number"],
+      ["class A { static { await 08 } }", "1:26: Parsing error: Invalid number"],
+      ["enum 08", "1:6: Parsing error: Invalid number"],
+      ["var enum = 08;", "1:5: Parsing error: The keyword 'enum' is reserved"],
+      ["var enum @", "1:10: Parsing error: Unexpected character '@'"],
+      ["var if = 08;", "1:5: Parsing error: Unexpected keyword 'if'"],
+      ["a: a: 08", "1:7: Parsing error: Invalid number"],
+      ["a: a: }", "1:4: Parsing error: Label 'a' is already declared"],
+      ["break a; 08", "1:10: Parsing error: Invalid number"],
+      ["function f() { delete a\n08 }", "2:1: Parsing error: Invalid number"],
+      ["new.target 08", "1:12: Parsing error: Invalid number"],
+      ["let [a] 08", "1:9: Parsing error: Invalid number"],
+      ["let [a]\n}", "1:8: Parsing error: Complex binding patterns require an initialization value"],
+      ["export let a; export let a;", "1:26: Parsing error: Identifier 'a' has already been declared"],
+      ["export var a; export var a = eval = 1", "1:30: Parsing error: Assigning to eval in strict mode"],
+      [
+        'export { missing }; export { x as a } from "m"; export const a = 1;',
+        "1:62: Parsing error: Duplicate export 'a'",
+      ],
+      ["export { missing }; var f = (a, a) => a", "1:33: Parsing error: Argument name clash"],
+      ["export { missing }; const a", "2:1: Parsing error: Unexpected token"],
+      // After a `]`, acorn reads a `/` as division, and never sees a regular expression there.
+      ["let [a]\n/a/gg", "1:8: Parsing error: Complex binding patterns require an initialization value"],
+      ["if (ready) /a/gg.test(value);", "1:13: Parsing error: Duplicate regular expression flag"],
+      ["while (x) /a/gg.test(y);", "1:12: Parsing error: Duplicate regular expression flag"],
+      ["do {} while (x)\n/a/gg", "2:2: Parsing error: Duplicate regular expression flag"],
+      // Two errors deferred to one token come in source order.
+      ["export var a; export var b; export var b, a;", "1:40: Parsing error: Duplicate export 'b'"],
+      [
+        "class A { m() { #y in this; this.#x } }",
+        "1:17: Parsing error: Private field '#y' must be declared in an enclosing class",
+      ],
+      ["#x in o;", "1:1: Parsing error: Unexpected token #x"],
+      ["new.foo\n08", "2:1: Parsing error: Invalid number"],
+      ["new.foo\n}", "1:5: Parsing error: The only valid meta property for new is 'new.target'"],
+      // Inside an operand with no record, each item of a list gets its own.
+      ["void [{p: {a = 0}, q: /x/gg}]", "1:24: Parsing error: Duplicate regular expression flag"],
+      [
+        "void [{p: {a = 0}}, 08]",
+        "1:14: Parsing error: Shorthand property assignments are valid only in destructuring patterns",
+      ],
+      [
+        "new ({a = 1}.x)()",
+        "1:9: Parsing error: Shorthand property assignments are valid only in destructuring patterns",
+      ],
+      ["export var a; export var a\n08", "2:1: Parsing error: Invalid number"],
+      // Two checks deferred to one token: acorn's order is the inner node's first.
+      [
+        "var f = (a, a) => class { m() { this.#x } }",
+        "1:38: Parsing error: Private field '#x' must be declared in an enclosing class",
+      ],
+      [
+        'function f(a, a = 1) { "use strict" }',
+        "1:1: Parsing error: Illegal 'use strict' directive in function with non-simple parameter list",
+      ],
+      // acorn has read the token after the class before it checks the class's private names.
+      ["class A { m() { this.#x } } 08;", "1:29: Parsing error: Invalid number"],
+      ['class A { m() { this.#x } } "\\8"', "1:31: Parsing error: Invalid escape sequence"],
+      ["class A { m() { this.#x } } /a/x", "1:30: Parsing error: Invalid regular expression flag"],
+      ["var x = /a/ggx;", "1:10: Parsing error: Duplicate regular expression flag"],
+      ["class A { m() { this.#x } } 1_", "1:30: Parsing error: Numeric separator is not allowed at the last of digits"],
+      ["class A { m() { this.#x } } 3in", "1:30: Parsing error: Identifier directly after number"],
+      [
+        "class A { m() { this.#x } } a.3in",
+        "1:22: Parsing error: Private field '#x' must be declared in an enclosing class",
+      ],
+      ['class A { m() { this.#x } } "\\01"', "1:30: Parsing error: Octal literal in strict mode"],
+      // acorn reads a template's text only after the parser has consumed the backtick.
+      [
+        "class A { m() { this.#x } } `\\01`",
+        "1:22: Parsing error: Private field '#x' must be declared in an enclosing class",
+      ],
+      [
+        "class A { m() { this.#x } } }",
+        "1:22: Parsing error: Private field '#x' must be declared in an enclosing class",
+      ],
+    ];
+    // In a script, `08` is only an error in strict code, so the file still parses.
+    const scripts: [code: string, error: string][] = [
+      ['function f() { "use strict"; let a; let a\n08 }', "2:1: Parsing error: Invalid number"],
+      ['function f() { "use strict"; let a; let a\n}', "1:41: Parsing error: Identifier 'a' has already been declared"],
+      // A name in a pattern is declared once the whole pattern has been read.
+      ['"use strict"; let [a, a]\n08', "2:1: Parsing error: Invalid number"],
+      ['"use strict"; let [a, a] = x\n08', "1:23: Parsing error: Identifier 'a' has already been declared"],
+      ['"use strict"; try {} catch ([e, e]) { 08 }', "1:33: Parsing error: Identifier 'e' has already been declared"],
+      // acorn declares the names before it looks for the `=`.
+      ['"use strict"; let [a, a];', "1:23: Parsing error: Identifier 'a' has already been declared"],
+      ['"use strict"; let a, b; let [b, a] = x;', "1:30: Parsing error: Identifier 'b' has already been declared"],
+      ['"use strict"; import.meta\n08', "2:1: Parsing error: Invalid number"],
+      // acorn reads the parameters before the directive in the body makes it strict.
+      [
+        'function f(a = 08) { "use strict" }',
+        "1:1: Parsing error: Illegal 'use strict' directive in function with non-simple parameter list",
+      ],
+      [
+        'function g(a = function h() { "use strict"; return (b = 08) => 1 }) { "use strict" }',
+        "1:57: Parsing error: Invalid number",
+      ],
+      // A name or parameter that only the function's own directive makes strict is checked with the parameters.
+      ['function f(yield) { "use strict"; }\n08', "1:12: Parsing error: Binding yield in strict mode"],
+      ['function yield(yield) { "use strict" }', "1:16: Parsing error: Binding yield in strict mode"],
+      ['var f = function static() { "use strict" }', "1:18: Parsing error: Binding static in strict mode"],
+      [
+        'function f(a = static) { "use strict" }',
+        "1:1: Parsing error: Illegal 'use strict' directive in function with non-simple parameter list",
+      ],
+      ['function f(yield) { return function() { "use strict"; 08 } }', "1:55: Parsing error: Invalid number"],
+      [
+        'function f(a = delete b) { "use strict" }',
+        "1:1: Parsing error: Illegal 'use strict' directive in function with non-simple parameter list",
+      ],
+      [
+        'function f(a = (yield) => 1) { "use strict" }',
+        "1:1: Parsing error: Illegal 'use strict' directive in function with non-simple parameter list",
+      ],
+      [
+        'function f(a = function (b, b) {}) { "use strict" }',
+        "1:1: Parsing error: Illegal 'use strict' directive in function with non-simple parameter list",
+      ],
+      ['function f(a = function g(yield) { "use strict" }) { }', "1:27: Parsing error: Binding yield in strict mode"],
+      ['function f(a, a) { "use strict" }', "1:15: Parsing error: Argument name clash"],
+      ['function f(a = (b, b) => 1) { "use strict" }', "1:20: Parsing error: Argument name clash"],
+    ];
+    // With an older `ecmaVersion`, newer syntax is a tokenizer error, which comes before a deferred check.
+    const editions: [ecmaVersion: number, code: string, error: string][] = [
+      [2021, "class A { constructor(){} constructor(){} #x }", "1:43: Parsing error: Unexpected character '#'"],
+      [2020, "class A { #x; #x = 1_000 }", "1:11: Parsing error: Unexpected character '#'"],
+      [2020, "try {} 1_000", "1:9: Parsing error: Identifier directly after number"],
+      [2020, "var f = (a, a) => 1_000", "1:20: Parsing error: Identifier directly after number"],
+      [5, "try {} `a`", "1:8: Parsing error: Unexpected character '`'"],
+      [2015, "try {} /a/s", "1:9: Parsing error: Invalid regular expression flag"],
+      // Before ES2022 every member is a method.
+      [
+        2021,
+        "class A { static prototype }",
+        "1:18: Parsing error: Classes may not have a static property named prototype",
+      ],
+      [2021, 'class A { "constructor" }', "1:25: Parsing error: Unexpected token }"],
+    ];
+    const name = (i: number, extension: string) => `b${String(i).padStart(2, "0")}.${extension}`;
+    const files = Object.fromEntries([
+      ...cases.map(([code], i) => [name(i, "js"), code + "\n"]),
+      ...scripts.map(([code], i) => [name(i, "cjs"), code + "\n"]),
+      ...editions.map(([ecmaVersion, code], i) => [`e${ecmaVersion}/${name(i, "js")}`, code + "\n"]),
+    ]);
+    const versions = [...new Set(editions.map(([ecmaVersion]) => ecmaVersion))];
+    const settings = `export default [
+      { files: ["*.js", "*.cjs"], rules: {} },
+      ${versions.map(it => `{ files: ["e${it}/*.js"], languageOptions: { ecmaVersion: ${it}, sourceType: "script" } },`).join("\n")}
+    ];`;
+    const { stdout, exitCode } = await lint({ "eslint.config.js": settings, ...files }, [
+      "-f",
+      "unix",
+      ...Object.keys(files),
+    ]);
+    expect(
+      stdout
+        .split("\n")
+        .filter(line => line.includes("Parsing error"))
+        .map(line => line.replace(/^.*?(?=(?:e\d+\/)?b\d\d\.c?js:)/, "").replace(" [Error]", ""))
+        .sort(),
+    ).toEqual(
+      [
+        ...cases.map(([, error], i) => `${name(i, "js")}:${error}`),
+        ...scripts.map(([, error], i) => `${name(i, "cjs")}:${error}`),
+        ...editions.map(([ecmaVersion, , error], i) => `e${ecmaVersion}/${name(i, "js")}:${error}`),
+      ].sort(),
+    );
+    expect(exitCode).toBe(1);
+  });
+
   // Each position is what ESLint 10.12.0 reports.
   describe("no-useless-assignment matches ESLint", () => {
     const positions = async (lines: string[]) => {

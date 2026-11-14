@@ -97,24 +97,27 @@ fn newer_in_string(source: &[u8], edition: u32) -> Option<&'static str> {
 
 impl<'a> Checks<'a, '_> {
     /// Reports acorn's errors for syntax newer than the configured edition.
-    pub(super) fn editions(&mut self) {
+    /// The edition of ECMAScript that espree parses the file as, if it's older than the latest. `None` with oxlint,
+    /// which has no editions, and with invalid options, which `invalid_parser_options` reports without looking at
+    /// the file.
+    fn find_older_edition(&self) -> Option<u32> {
         let (file, language) = (self.file, self.file.language());
         let edition = match language.eslint_8.as_deref() {
-            Some(eslint_8) => eslint_8.edition(&environments_in_comments(file)),
-            // oxlint has no editions.
-            None if language.is_oxlint => return,
-            None => Ok(match language.ecma_version {
+            Some(eslint_8) => eslint_8.edition(&environments_in_comments(file)).ok()?,
+            None if language.is_oxlint => return None,
+            None => match language.ecma_version {
                 edition @ (3 | 5) => edition,
                 year => year.saturating_sub(2009),
-            }),
+            },
         };
-        // Invalid options are reported by `invalid_parser_options`, without looking at the file.
-        let Ok(edition) = edition else {
+        (edition < LanguageOptions::LATEST_ECMA_VERSION - 2009).then_some(edition)
+    }
+
+    pub(super) fn editions(&mut self) {
+        self.older_edition = self.find_older_edition();
+        let Some(edition) = self.older_edition else {
             return;
         };
-        if edition >= LanguageOptions::LATEST_ECMA_VERSION - 2009 {
-            return;
-        }
         self.newer_declarations(edition);
         self.newer_statements(edition);
         self.newer_functions(edition);
@@ -373,7 +376,7 @@ impl<'a> Checks<'a, '_> {
                 };
                 let span = key.span(file);
                 if key.is_private() {
-                    self.fail(span.start, "Unexpected character '#'");
+                    self.tokenizer_error(span.start, span.start, "Unexpected character '#'");
                 }
                 // acorn expects a method's parameters after the key.
                 if member.kind() == MemberKind::Property {
@@ -528,11 +531,12 @@ impl<'a> Checks<'a, '_> {
                 if it.is_private_member()
                     && let Some(name) = it.member_name_start()
                 {
-                    self.fail(name, "Unexpected character '#'");
+                    self.tokenizer_error(name, name, "Unexpected character '#'");
                 }
             }
             for it in self.exprs_of(ExprTag::PrivateIdentifier) {
-                self.fail(it.span().start, "Unexpected character '#'");
+                let at = it.span().start;
+                self.tokenizer_error(at, at, "Unexpected character '#'");
             }
         }
         if file.language().source_type == SourceType::Module {
@@ -563,13 +567,15 @@ impl<'a> Checks<'a, '_> {
             return;
         }
         for it in file.exprs_of_kind(ExprTag::Template) {
-            self.fail(it.span().start, "Unexpected character '`'");
+            let at = it.span().start;
+            self.tokenizer_error(at, at, "Unexpected character '`'");
         }
         for it in self.exprs_of(ExprTag::TaggedTemplate) {
             if let ExprKind::TaggedTemplate(call) = it.kind()
                 && let Some(template) = call.template()
             {
-                self.fail(template.span().start, "Unexpected character '`'");
+                let at = template.span().start;
+                self.tokenizer_error(at, at, "Unexpected character '`'");
             }
         }
         for it in file.exprs_of_kind(ExprTag::Spread) {
@@ -647,7 +653,7 @@ impl<'a> Checks<'a, '_> {
                 };
                 if let Some(end) = end {
                     let message = "Identifier directly after number";
-                    self.fail(it.span().start + end as u32, message);
+                    self.tokenizer_error(it.span().start, it.span().start + end as u32, message);
                 }
             }
         }
@@ -687,7 +693,7 @@ impl<'a> Checks<'a, '_> {
             };
             let (pattern, flags, at) = (literal.pattern(), literal.flags(), it.span().start + 1);
             if flags.iter().any(|flag| since(*flag) > edition) {
-                self.fail(at, "Invalid regular expression flag");
+                self.tokenizer_error(it.span().start, at, "Invalid regular expression flag");
             } else if let Err(error) = regex::validate_pattern(
                 pattern,
                 regex::Mode::from_flags(flags),
@@ -701,7 +707,7 @@ impl<'a> Checks<'a, '_> {
                     error.reason().as_bytes(),
                 ]
                 .concat();
-                self.fail(at, message);
+                self.tokenizer_error(it.span().start, at, message);
             }
         }
     }

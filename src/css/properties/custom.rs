@@ -431,7 +431,7 @@ impl<'bump> TokenList<'bump> {
                         // Its short form would run into a name or a number written right after it.
                         let next = input.input.tokenizer.next_byte();
                         if next.is_some_and(|b| JOINS_A_COLOR[usize::from(b)]) {
-                            push_blank(tokens);
+                            push_blank_after_color(tokens);
                         }
                         continue;
                     }
@@ -1491,8 +1491,12 @@ const JOINS_A_COLOR: [bool; 256] = {
     table
 };
 
-/// Out of line: few colors touch a token.
+/// Stores a blank after the color that ends `tokens`. Out of line: few colors touch a token.
 #[cold]
-fn push_blank(tokens: &mut Vec<TokenOrValue>) {
+fn push_blank_after_color(tokens: &mut Vec<TokenOrValue>) {
+    // A `light-dark()` prints with `)` last at every target, which joins nothing.
+    if let Some(TokenOrValue::Color(CssColor::LightDark { .. })) = tokens.last() {
+        return;
+    }
     tokens.push(TokenOrValue::Token(Token::Whitespace(b" ")));
 }

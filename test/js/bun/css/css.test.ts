@@ -8535,6 +8535,8 @@ describe("a folded color function next to the token it touches", () => {
       ["--x:rgb(0 0 0)[a]", "--x: #000[a]", "--x:#000[a]"],
       // Not folded: it prints as a function.
       ["--x:hsl(var(--a))inset", "--x: hsl(var(--a))inset", "--x:hsl(var(--a))inset"],
+      // A light-dark() prints with `)` last.
+      ["--x:light-dark(#fff,#000)0 5px", "--x: light-dark(#fff, #000)0 5px", "--x:light-dark(#fff,#000)0 5px"],
       // Utility-class text writes a blank as `_`. UnoCSS reads such text from this property.
       [
         "--at-apply:shadow-[rgba(0,0,0,0.5)_0_0_10px]",
@@ -8543,10 +8545,14 @@ describe("a folded color function next to the token it touches", () => {
       ],
     ])("%s", declaration);
 
-    test("@apply shadow-[rgba(0,0,0,0.5)_0_0_10px]", () => {
-      expect(cssInternals.minifyTest("@apply shadow-[rgba(0,0,0,0.5)_0_0_10px];", "")).toBe(
-        "@apply shadow-[#00000080_0_0_10px];",
-      );
+    test.each([
+      ["@apply shadow-[rgba(0,0,0,0.5)_0_0_10px];", "@apply shadow-[#00000080_0_0_10px];"],
+      [
+        "@apply bg-[linear-gradient(light-dark(#fff,#000)0%,#000)];",
+        "@apply bg-[linear-gradient(light-dark(#fff,#000)0%,#000)];",
+      ],
+    ])("%s", (source, minified) => {
+      expect(cssInternals.minifyTest(source, "")).toBe(minified);
     });
   });
 
@@ -8560,9 +8566,9 @@ describe("a folded color function next to the token it touches", () => {
     );
   });
 
-  test("light-dark() is still lowered", () => {
+  test("a lowered light-dark() gets no blank either", () => {
     expect(cssInternals.minifyTest(".c{--x:light-dark(#fff,#000)solid}", "", { chrome: 100 << 16 })).toBe(
-      ".c{--x:var(--buncss-light,#fff)var(--buncss-dark,#000) solid}",
+      ".c{--x:var(--buncss-light,#fff)var(--buncss-dark,#000)solid}",
     );
   });
 });

@@ -3,7 +3,12 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { isPhaseGroupHeader } from "../../scripts/ci-log-phase.mjs";
 import { parseLog } from "../../scripts/ci-slowest-tests";
-import { entryOfProgram, parseLog as parseDurations } from "../../scripts/update-test-durations.mjs";
+import {
+  entryOfProgram,
+  parseLog as parseDurations,
+  ranEveryShard,
+  refreshedRows,
+} from "../../scripts/update-test-durations.mjs";
 
 // Buildkite prefixes each line with an APC timestamp: ESC `_bk;t=<ms>` BEL.
 const bk = (ts: number, body: string) => `\x1b_bk;t=${ts}\x07${body}`;
@@ -243,4 +248,101 @@ describe("scripts/update-test-durations.mjs parseLog", () => {
     // It shares a build since it has the entry, and takes little there.
     expect(entryOfProgram({ default: 300, asan: 1200 }, { default: 900 })).toEqual({ default: 900 });
   });
+});
+
+describe("scripts/update-test-durations.mjs refreshedRows", () => {
+  const isFile = () => true;
+  // The rows as the file holds them. toEqual() does not look at the order of keys, and a diff of the file does.
+  const text = (rows: object) => JSON.stringify(rows, null, 2);
+
+  test("a row keeps its place, and a file without a row follows in sorted order", () => {
+    const before = {
+      _meta: { generated_at: "2026-08-31T22:56:36.074Z" },
+      "z/first-in-the-file.test.ts": { default: 10_000, asan: 40_000 },
+      "a/second-in-the-file.test.ts": { default: 10_000, asan: 40_000 },
+    };
+    const measured = {
+      "m/new.test.ts": { default: 300 },
+      "a/second-in-the-file.test.ts": { default: 30_000, asan: 90_000 },
+      "b/new.test.ts": { asan: 700, default: 200 },
+    };
+    const { rows, counts } = refreshedRows(before, measured, isFile);
+    expect(text(rows)).toBe(
+      text({
+        "z/first-in-the-file.test.ts": { default: 10_000, asan: 40_000 },
+        "a/second-in-the-file.test.ts": { default: 30_000, asan: 90_000 },
+        "b/new.test.ts": { default: 200, asan: 700 },
+        "m/new.test.ts": { default: 300 },
+      }),
+    );
+    expect(counts).toEqual({ kept: 1, changed: 1, added: 2, dropped: 0 });
+  });
+
+  test("a lane that timed the file in no source build keeps its number", () => {
+    // Of the lanes that the script reads only asan runs this file. The Ubuntu lanes run it too, and deal by `default`.
+    const before = { "aot/frameworks/angular.test.ts": { musl: 66_600, default: 47_900, asan: 400 } };
+    const measured = { "aot/frameworks/angular.test.ts": { asan: 90_000 } };
+    expect(text(refreshedRows(before, measured, isFile).rows)).toBe(
+      text({ "aot/frameworks/angular.test.ts": { default: 47_900, asan: 90_000, musl: 66_600 } }),
+    );
+  });
+
+  test("a row that moved on no lane is left as it is, and a row that moved on one lane takes every new median", () => {
+    const before = {
+      "within-two-seconds.test.ts": { asan: 400, default: 100 },
+      "within-a-fifth.test.ts": { default: 60_000, asan: 240_000 },
+      "asan-moved.test.ts": { default: 60_000, asan: 240_000 },
+      "timed-on-a-new-lane.test.ts": { default: 100 },
+    };
+    const measured = {
+      "within-two-seconds.test.ts": { default: 2_100, asan: 2_400 },
+      "within-a-fifth.test.ts": { default: 72_000, asan: 192_000 },
+      "asan-moved.test.ts": { default: 55_000, asan: 765_000 },
+      "timed-on-a-new-lane.test.ts": { default: 100, musl: 90 },
+    };
+    const { rows, counts } = refreshedRows(before, measured, isFile);
+    expect(text(rows)).toBe(
+      text({
+        "within-two-seconds.test.ts": { asan: 400, default: 100 },
+        "within-a-fifth.test.ts": { default: 60_000, asan: 240_000 },
+        "asan-moved.test.ts": { default: 55_000, asan: 765_000 },
+        "timed-on-a-new-lane.test.ts": { default: 100, musl: 90 },
+      }),
+    );
+    expect(counts).toEqual({ kept: 2, changed: 2, added: 0, dropped: 0 });
+  });
+
+  test("a row leaves with its file, a row that no build timed stays, and a file of another branch gets no row", () => {
+    const before = {
+      "removed.test.ts": { default: 5_000 },
+      "in-no-source-build.test.ts": { default: 60_000, asan: 240_000 },
+    };
+    const measured = { "removed.test.ts": { default: 9_000 }, "only-on-a-branch.test.ts": { default: 900 } };
+    const { rows, counts } = refreshedRows(before, measured, path => path === "in-no-source-build.test.ts");
+    expect(rows).toEqual({ "in-no-source-build.test.ts": { default: 60_000, asan: 240_000 } });
+    expect(counts).toEqual({ kept: 1, changed: 0, added: 0, dropped: 1 });
+  });
+
+  test("a program compiled ahead of time has a row by its own rule", () => {
+    const before = { "aot/parallel/has-a-row.ts": { default: 900 } };
+    const measured = {
+      "aot/parallel/has-a-row.ts": { default: 300, asan: 1200 },
+      "aot/parallel/quick.ts": { default: 400, asan: 2100 },
+      "aot/parallel/slow.ts": { default: 900, asan: 4000 },
+    };
+    expect(refreshedRows(before, measured, isFile).rows).toEqual({
+      "aot/parallel/has-a-row.ts": { default: 900 },
+      "aot/parallel/slow.ts": { default: 900, asan: 4000 },
+    });
+  });
+});
+
+test("a build is a source of durations only if every shard of the lane ran to its end", () => {
+  const ran = { started_at: "2026-11-14T00:32:38.953Z", finished_at: "2026-11-14T01:07:12.000Z", state: "passed" };
+  expect(ranEveryShard([ran, { ...ran, state: "failed" }])).toBe(true);
+  // The job time limit ended the shard: the files behind the one under way have no time.
+  expect(ranEveryShard([ran, { ...ran, state: "timed_out" }])).toBe(false);
+  expect(ranEveryShard([ran, { ...ran, state: "canceled" }])).toBe(false);
+  expect(ranEveryShard([ran, { ...ran, finished_at: null, state: "running" }])).toBe(false);
+  expect(ranEveryShard([])).toBe(false);
 });

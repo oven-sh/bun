@@ -9,16 +9,19 @@
  * Usage: BUILDKITE_API_TOKEN=... node scripts/update-test-durations.mjs [--builds N]
  * Intended to be run by a scheduled Buildkite job on oven-sh/bun; it only
  * reads public build metadata and writes one file in the repo.
+ * Run it in a checkout of main: the file is rewritten in place (see
+ * refreshedRows), and a row stays only while its test file exists there.
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { isPhaseGroupHeader } from "./ci-log-phase.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const outputPath = join(__dirname, "..", "test", "expected-durations.json");
+const testDir = join(__dirname, "..", "test");
+const outputPath = join(testDir, "expected-durations.json");
 
 const { values: opts } = parseArgs({
   strict: false,
@@ -135,11 +138,83 @@ export function entryOfProgram(medians, before) {
   return medians.default >= 700 ? medians : before;
 }
 
+// A row has moved when a lane that timed the file is further from the table
+// than the larger of these two. Medians of five builds differ from the medians
+// of the five before them in nearly every row, by noise. A refresh that wrote
+// every such difference would change every row, and then every pull request
+// that edits or removes a row conflicts with it.
+const unmoved = { ms: 2000, share: 0.2 };
+
+/**
+ * The rows of the table after a refresh, and how many rows the refresh kept,
+ * changed, added and dropped.
+ *
+ * - A row keeps its place. A file that had no row gets one behind the others,
+ *   in sorted order.
+ * - A lane that timed the file in none of the builds keeps its number. A file
+ *   of test/aot that only the Ubuntu lanes run is timed by no lane read here
+ *   but `asan`, and the Ubuntu shards are dealt by `default`.
+ * - A row that has not moved (`unmoved`) keeps its numbers.
+ * - A row whose file is not in this checkout leaves, and a file that only a
+ *   branch of a source build has gets no row.
+ *
+ * @param {Record<string, Record<string, number>>} before the table as it is checked in
+ * @param {Record<string, Record<string, number>>} measured path -> lane -> median ms over the source builds
+ * @param {(path: string) => boolean} isFile whether a path under test/ is a file of this checkout
+ */
+export function refreshedRows(before, measured, isFile) {
+  const rows = {};
+  const counts = { kept: 0, changed: 0, added: 0, dropped: 0 };
+  const hasMoved = (old, now) =>
+    Object.entries(now).some(
+      ([lane, ms]) => !(Math.abs(ms - old[lane]) <= Math.max(unmoved.ms, unmoved.share * old[lane])),
+    );
+  // In the order of `lanes`, whichever lanes timed the file in which refresh.
+  const merged = (old, now) => {
+    const row = {};
+    for (const lane of Object.keys(lanes)) {
+      const ms = now[lane] ?? old[lane];
+      if (ms !== undefined) row[lane] = ms;
+    }
+    return row;
+  };
+  const isProgram = path => path.startsWith("aot/parallel/");
+
+  for (const [path, old] of Object.entries(before)) {
+    if (path === "_meta") continue;
+    if (!isFile(path)) {
+      counts.dropped++;
+      continue;
+    }
+    const now = Object.hasOwn(measured, path) ? measured[path] : undefined;
+    let row = old;
+    if (now !== undefined && isProgram(path)) row = entryOfProgram(now, old);
+    else if (now !== undefined && hasMoved(old, now)) row = merged(old, now);
+    rows[path] = row;
+    counts[row === old ? "kept" : "changed"]++;
+  }
+  for (const path of Object.keys(measured).sort()) {
+    if (Object.hasOwn(before, path) || !isFile(path)) continue;
+    const row = isProgram(path) ? entryOfProgram(measured[path], undefined) : merged({}, measured[path]);
+    if (row === undefined) continue;
+    rows[path] = row;
+    counts.added++;
+  }
+  return { rows, counts };
+}
+
 function median(arr) {
   const s = [...arr].sort((a, b) => a - b);
   const m = Math.floor(s.length / 2);
   return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2);
 }
+
+// The files of a lane are all timed only when each of its shards ran to its
+// end. The job time limit ends a shard in the middle of one file and before
+// the files behind it (state `timed_out`), as a cancel does.
+export const ranEveryShard = laneJobs =>
+  laneJobs.length > 0 &&
+  laneJobs.every(j => j.started_at && j.finished_at && j.state !== "canceled" && j.state !== "timed_out");
 
 // Find recent builds where both lanes finished every shard (so the set of
 // files is complete). We search passed-or-failed builds because a single
@@ -152,10 +227,7 @@ async function findSourceBuilds(want) {
   const picked = [];
   for (const b of candidates) {
     const jobs = b.jobs || [];
-    const ok = Object.values(lanes).every(step => {
-      const laneJobs = jobs.filter(j => j.step_key === step);
-      return laneJobs.length > 0 && laneJobs.every(j => j.started_at && j.finished_at && j.state !== "canceled");
-    });
+    const ok = Object.values(lanes).every(step => ranEveryShard(jobs.filter(j => j.step_key === step)));
     if (ok) picked.push(b.number);
     if (picked.length >= want) break;
   }
@@ -230,7 +302,15 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     );
     process.exit(1);
   }
+  const measured = {};
+  for (const p of paths) {
+    measured[p] = {};
+    for (const lane of Object.keys(lanes)) {
+      if (samples[lane][p]?.length) measured[p][lane] = median(samples[lane][p]);
+    }
+  }
   const before = JSON.parse(readFileSync(outputPath, "utf8"));
+  const { rows, counts } = refreshedRows(before, measured, path => existsSync(join(testDir, path)));
   const out = {
     // Consumers should tolerate missing paths (new tests) and missing lanes.
     _meta: {
@@ -238,16 +318,12 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       source_builds: builds,
       lanes,
     },
+    ...rows,
   };
-  for (const p of [...paths].sort()) {
-    const entry = {};
-    for (const lane of Object.keys(lanes)) {
-      if (samples[lane][p]?.length) entry[lane] = median(samples[lane][p]);
-    }
-    const kept = p.startsWith("aot/parallel/") ? entryOfProgram(entry, before[p]) : entry;
-    if (kept) out[p] = kept;
-  }
 
   writeFileSync(outputPath, JSON.stringify(out, null, 2) + "\n");
-  console.error(`wrote ${paths.size} entries to ${outputPath}`);
+  console.error(
+    `wrote ${Object.keys(rows).length} rows to ${outputPath}: ` +
+      `${counts.kept} kept, ${counts.changed} changed, ${counts.added} added, ${counts.dropped} dropped`,
+  );
 }

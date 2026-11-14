@@ -31,17 +31,22 @@ const thrower = {
     throw new Error("boom");
   },
 };
+const supports = (...args: unknown[]): boolean => (SubtleCrypto as any).supports(...args);
 
 const cases: Record<string, () => Promise<unknown>> = {
   "encrypt ok": () => crypto.subtle.encrypt({ name: "AES-GCM", iv }, aes, new Uint8Array(8)),
   "encrypt bogus": () => crypto.subtle.encrypt(bad, aes, new Uint8Array(8)),
   "encrypt thrower": () => crypto.subtle.encrypt(thrower, aes, new Uint8Array(8)),
+  "encrypt supports": async () => supports("encrypt", { name: "AES-GCM", iv }),
+  "encrypt supports rejected value": async () => supports("encrypt", { name: "AES-GCM", iv, tagLength: 33 }),
 
   "decrypt ok": () => crypto.subtle.decrypt({ name: "AES-GCM", iv }, aes, ct),
   "decrypt bogus": () => crypto.subtle.decrypt(bad, aes, ct),
+  "decrypt supports rejected value": async () => supports("decrypt", { name: "AES-CBC", iv }),
 
   "sign ok": () => crypto.subtle.sign("HMAC", hm, new Uint8Array(8)),
   "sign bogus": () => crypto.subtle.sign(bad, hm, new Uint8Array(8)),
+  "sign supports rejected context": async () => supports("sign", { name: "ML-DSA-65", context: new Uint8Array(256) }),
 
   "verify ok": () => crypto.subtle.verify("HMAC", hm, sig, new Uint8Array(8)),
   "verify bogus": () => crypto.subtle.verify(bad, hm, sig, new Uint8Array(8)),
@@ -54,6 +59,9 @@ const cases: Record<string, () => Promise<unknown>> = {
   "generateKey bogus": () => crypto.subtle.generateKey(bad, false, ["sign"]),
   "generateKey nested bogus hash": () => crypto.subtle.generateKey(badHash, false, ["sign"]),
   "generateKey thrower": () => crypto.subtle.generateKey(thrower, false, ["sign"]),
+  "generateKey supports rejected length": async () => supports("generateKey", { name: "AES-GCM", length: 100 }),
+  "generateKey supports rejected HMAC length": async () =>
+    supports("generateKey", { name: "HMAC", hash: "SHA-256", length: 7 }),
 
   "deriveKey ok": () => crypto.subtle.deriveKey(pbkdf2, pb, { name: "AES-GCM", length: 256 }, false, ["encrypt"]),
   "deriveKey bogus algorithm": () =>
@@ -71,6 +79,7 @@ const cases: Record<string, () => Promise<unknown>> = {
   "importKey bogus": () => crypto.subtle.importKey("raw", new Uint8Array(16), bad, false, ["sign"]),
   "importKey nested bogus hash": () => crypto.subtle.importKey("raw", new Uint8Array(16), badHash, false, ["sign"]),
   "importKey thrower": () => crypto.subtle.importKey("raw", new Uint8Array(16), thrower, false, ["sign"]),
+  "importKey supports rejected curve": async () => supports("importKey", { name: "ECDSA", namedCurve: "P-51" }),
 
   "exportKey raw": () => crypto.subtle.exportKey("raw", aes),
   "exportKey jwk": () => crypto.subtle.exportKey("jwk", aes),
@@ -80,6 +89,7 @@ const cases: Record<string, () => Promise<unknown>> = {
   "wrapKey via encrypt": () => crypto.subtle.wrapKey("raw", hm, aes, { name: "AES-GCM", iv }),
   "wrapKey bogus": () => crypto.subtle.wrapKey("raw", hm, kw, bad),
   "wrapKey thrower": () => crypto.subtle.wrapKey("raw", hm, kw, thrower),
+  "wrapKey supports rejected value": async () => supports("wrapKey", { name: "AES-CBC", iv }, "AES-GCM"),
   // wrapKey("jwk", ...) serializes the exported JWK with JSON.stringify, which invokes an
   // inherited Object.prototype.toJSON. That throw lands between the synchronous export
   // callback's toJS<IDLDictionary<JsonWebKey>> and the AES-KW wrap.

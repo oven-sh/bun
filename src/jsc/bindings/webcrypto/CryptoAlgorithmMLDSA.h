@@ -38,6 +38,8 @@ class CryptoKeyAKP;
 class CryptoAlgorithmMLDSA : public CryptoAlgorithm {
 public:
     static constexpr size_t s_maxContextLength = 255;
+    // The step of sign and verify that needs neither the key nor the data. SubtleCrypto.supports runs it too.
+    static bool contextLengthIsValid(size_t length) { return length <= s_maxContextLength; }
 
     void generateKey(const CryptoAlgorithmParameters&, bool extractable, CryptoKeyUsageBitmap, KeyOrKeyPairCallback&&, ExceptionCallback&&, ScriptExecutionContext&) final;
     void sign(const CryptoAlgorithmParameters&, Ref<CryptoKey>&&, Vector<uint8_t>&&, VectorCallback&&, ExceptionCallback&&, ScriptExecutionContext&, WorkQueue&) final;

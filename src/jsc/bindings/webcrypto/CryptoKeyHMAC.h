@@ -52,6 +52,8 @@ public:
     CryptoAlgorithmIdentifier hashAlgorithmIdentifier() const { return m_hash; }
 
     static ExceptionOr<std::optional<size_t>> getKeyLength(const CryptoAlgorithmParameters&);
+    // The step of generate and of importKey that needs only the length. SubtleCrypto.supports runs it too.
+    static bool lengthIsValid(size_t lengthBits) { return lengthBits && !(lengthBits % 8); }
 
 private:
     CryptoKeyHMAC(Vector<uint8_t>&& key, CryptoAlgorithmIdentifier hash, bool extractable, CryptoKeyUsageBitmap);

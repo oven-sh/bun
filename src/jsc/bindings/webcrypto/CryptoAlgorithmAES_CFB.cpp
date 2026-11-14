@@ -57,12 +57,18 @@ CryptoAlgorithmIdentifier CryptoAlgorithmAES_CFB::identifier() const
     return s_identifier;
 }
 
+bool CryptoAlgorithmAES_CFB::ivLengthIsValid(size_t ivLength)
+{
+    using namespace CryptoAlgorithmAES_CFBInternal;
+    return ivLength == IVSIZE;
+}
+
 void CryptoAlgorithmAES_CFB::encrypt(const CryptoAlgorithmParameters& parameters, Ref<CryptoKey>&& key, Vector<uint8_t>&& plainText, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)
 {
     using namespace CryptoAlgorithmAES_CFBInternal;
 
     auto& aesParameters = downcast<CryptoAlgorithmAesCbcCfbParams>(parameters);
-    if (aesParameters.ivVector().size() != IVSIZE) {
+    if (!ivLengthIsValid(aesParameters.ivVector().size())) {
         exceptionCallback(OperationError, "algorithm.iv must contain exactly 16 bytes"_s);
         return;
     }
@@ -78,7 +84,7 @@ void CryptoAlgorithmAES_CFB::decrypt(const CryptoAlgorithmParameters& parameters
     using namespace CryptoAlgorithmAES_CFBInternal;
 
     auto& aesParameters = downcast<CryptoAlgorithmAesCbcCfbParams>(parameters);
-    if (aesParameters.ivVector().size() != IVSIZE) {
+    if (!ivLengthIsValid(aesParameters.ivVector().size())) {
         exceptionCallback(OperationError, "algorithm.iv must contain exactly 16 bytes"_s);
         return;
     }

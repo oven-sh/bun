@@ -257,7 +257,7 @@ impl Resolver<'_> {
         let written_subpaths = |resolver: &mut Self, directory: &[u8]| {
             let manifest = resolver
                 .read_dir_info_ignore_error(directory)
-                .and_then(|directory| directory.package_json());
+                .and_then(|directory| directory.package_json);
             let exports = manifest.and_then(|manifest| manifest.exports.as_ref());
             exports.map(|exports| -> Vec<Vec<u8>> {
                 let subpaths = exports.written_subpaths().into_iter();
@@ -307,7 +307,7 @@ impl Resolver<'_> {
         while let Some(place) = own_folder {
             let manifest = self
                 .read_dir_info_ignore_error(place)
-                .and_then(|directory| directory.package_json());
+                .and_then(|directory| directory.package_json);
             if let Some(manifest) = manifest {
                 let own = manifest.name.to_vec();
                 if !own.is_empty() {
@@ -627,7 +627,7 @@ impl Resolver<'_> {
             .iter()
             .filter_map(|&place| {
                 let directory = self.read_dir_info_ignore_error(place.source_path)?;
-                Some((place, self.enclosing_tsconfig_json(&directory)?))
+                Some((place, self.enclosing_tsconfig_json(directory)?))
             })
             .collect();
         let mut aliases: Vec<PathAlias> = Vec::new();
@@ -728,7 +728,7 @@ impl Resolver<'_> {
         for place in &folders_of_entry_points {
             let names_main_file = self
                 .read_dir_info_ignore_error(place.source_path)
-                .and_then(|directory| directory.package_json())
+                .and_then(|directory| directory.package_json)
                 .is_some_and(|manifest| manifest.main_fields.count() > 0);
             if !names_main_file {
                 continue;
@@ -774,7 +774,7 @@ impl Resolver<'_> {
                 continue;
             };
             let exports = directory
-                .package_json()
+                .package_json
                 .and_then(|manifest| manifest.exports.as_ref());
             let real_directory = match directory.abs_real_path {
                 b"" => directory.abs_path,

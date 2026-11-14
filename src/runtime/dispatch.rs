@@ -124,7 +124,7 @@ use crate::webcore::file_sink::Poll as FileSinkPoll;
 use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
 use crate::webcore::s3::multipart::WriterCollected as S3UploadWriterCollected;
 use crate::webcore::s3::simple_request::{RefusedRequest as S3RefusedRequest, S3HttpSimpleTask};
-use crate::webcore::streams::Pending as StreamPending;
+use crate::webcore::streams::{PendingRead as StreamPending, StreamResult};
 
 use crate::api::bun_subprocess::Subprocess;
 #[cfg(not(windows))]
@@ -760,8 +760,8 @@ pub(crate) fn run_task(
                 }
             )
         }
-        task_tag::StreamPending => boxed_arm!(task, [WebStreams], |mut pending: StreamPending| {
-            pending.run();
+        task_tag::StreamPending => boxed_arm!(task, [WebStreams], |pending: StreamPending| {
+            (*pending).run(StreamResult::Done);
         }),
 
         _ => {

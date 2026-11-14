@@ -10,12 +10,16 @@ use bun_paths::{self as resolve_path, MAX_PATH_BYTES, platform};
 use bun_sys as syscall;
 
 use crate::generated_bindgen::glob::{GlobScanArgument, GlobScanOptions};
+use bun_lint::glob::{Minimatch, MinimatchOptions};
+use std::cell::OnceCell;
 
 /// `Bun.Glob`, declared in `Glob.bind.ts`.
 pub(crate) struct Glob {
     /// An ASCII pattern is the JavaScript string's own buffer, not a copy.
     pattern: bun_core::Utf8Bytes<'static>,
     shape: bun_glob::matcher::Shape,
+    /// The pattern as minimatch reads it for Node, made at the first [`Glob::match_node`]: posix, then win32.
+    node: [OnceCell<Box<Minimatch>>; 2],
 }
 
 pub(crate) enum ScanError<'a> {
@@ -455,6 +459,7 @@ impl Glob {
         Glob {
             shape: bun_glob::matcher::Shape::of(pattern.slice()),
             pattern,
+            node: [OnceCell::new(), OnceCell::new()],
         }
     }
 
@@ -466,6 +471,26 @@ impl Glob {
             bun_glob::Dots::Match,
         )
         .matches()
+    }
+
+    /// `match` as Node's `path.matchesGlob` and the `ignore` of `fs.watch` match: minimatch with the options Node
+    /// passes. `windows` is minimatch's `platform: "win32"`.
+    pub(crate) fn match_node<'a>(&self, str: &'a [u8], windows: bool) -> bool {
+        self.node[usize::from(windows)]
+            .get_or_init(|| {
+                Box::new(Minimatch::with(
+                    self.pattern.slice(),
+                    MinimatchOptions {
+                        nonegate: true,
+                        nocomment: true,
+                        optimization_level_2: true,
+                        windows_paths_no_escape: true,
+                        is_windows: windows,
+                        ..MinimatchOptions::default()
+                    },
+                ))
+            })
+            .matches(str)
     }
 
     pub(crate) fn scan<'a>(

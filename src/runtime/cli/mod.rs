@@ -294,20 +294,14 @@ pub(crate) fn cli_dupe(s: &[u8]) -> &'static [u8] {
     cli_arena().alloc_slice_copy(s)
 }
 
-/// Adopt an already-owned `Box<[u8]>` into a process-lifetime side-table and
-/// return a `&'static [u8]` borrow — zero-copy (the `Box`'s heap allocation has
-/// a stable address; only the `Box` value moves into the table). Use when the
-/// caller already owns a large buffer (e.g. tarball, request body) so
-/// [`cli_dupe`]'s memcpy + transient double-peak is avoided. Thread-safe.
+/// [`cli_dupe`] without the copy, for a large buffer that the caller owns. Thread-safe.
 fn cli_adopt(b: Box<[u8]>) -> &'static [u8] {
-    static ADOPTED: bun_threading::Guarded<Vec<Box<[u8]>>> =
+    /// Keeps them reachable for LeakSanitizer.
+    static ADOPTED: bun_threading::Guarded<Vec<&'static [u8]>> =
         bun_threading::Guarded::new(Vec::new());
-    let (ptr, len) = (b.as_ptr(), b.len());
-    ADOPTED.lock().push(b);
-    // SAFETY: `ADOPTED` is never cleared/drained for the process lifetime; the
-    // `Box<[u8]>` pointee address is stable across `Vec` reallocs (only the
-    // `Box` pointer-value moves), so the returned slice stays valid `'static`.
-    unsafe { core::slice::from_raw_parts(ptr, len) }
+    let bytes = &*Box::leak(b);
+    ADOPTED.lock().push(bytes);
+    bytes
 }
 
 /// Dupe `s` into the process-lifetime CLI arena with a trailing NUL.

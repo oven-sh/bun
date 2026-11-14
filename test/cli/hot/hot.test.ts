@@ -14,6 +14,7 @@ import {
 } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
+import { probeStall } from "./hot-stall-probe";
 
 const timeout = isDebug ? Infinity : 10_000;
 const longTimeout = isDebug ? Infinity : 30_000;
@@ -937,6 +938,11 @@ it.each([
     stdout: ["first load", "collected", "third load", ""],
     stderr: [],
   });
+});
+
+// Temporary probe, not for merge: the program that stops on windows 11 aarch64, three times in a row.
+it.if(isWindows).each([1, 2, 3])("probe %d: the rejected promises are made first", async run => {
+  expect(await probeStall("run " + run)).toEqual([]);
 });
 
 /** Returns a function that resolves to `true` once the stream's text includes `wanted`, or to the full text at EOF. */

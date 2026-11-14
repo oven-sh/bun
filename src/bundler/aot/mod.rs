@@ -173,7 +173,6 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         None,
         arena,
         event_loop,
-        false,
         worker_pool,
         arena,
     );

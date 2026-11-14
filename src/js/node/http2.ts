@@ -2594,7 +2594,8 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
           this.emit("aborted");
         }
         // Set first: with nothing left to write, end() calls _final() before it returns.
-        this[bunHTTP2StreamStatus] |= StreamState.EndedByClose;
+        // Not while pending: _final() then runs late because it waits for 'ready', not because a write is in flight.
+        if (!this.pending) this[bunHTTP2StreamStatus] |= StreamState.EndedByClose;
         this.end();
       }
       this.rstCode = code;
@@ -5397,7 +5398,8 @@ class ClientHttp2Session extends Http2Session {
     wantTrailers: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream) => {
       if (!self || typeof stream !== "object") return;
       const status = stream[bunHTTP2StreamStatus];
-      if ((status & StreamState.WantTrailer) !== 0) return;
+      // Like node's onStreamTrailers. close() sets Closed as it returns, so this covers an ask that arrives after it.
+      if ((status & (StreamState.WantTrailer | StreamState.Closed)) !== 0) return;
       stream[bunHTTP2StreamStatus] = status | StreamState.WantTrailer;
       if (stream.listenerCount("wantTrailers") === 0) {
         self[bunHTTP2Native]?.noTrailers(stream.id);

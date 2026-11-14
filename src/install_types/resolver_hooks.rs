@@ -342,7 +342,7 @@ impl URI {
     pub(crate) fn eql(lhs: URI, rhs: URI, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool {
         match (lhs, rhs) {
             (URI::Local(l), URI::Local(r)) | (URI::Remote(l), URI::Remote(r)) => {
-                strings::eql_long(l.slice(lhs_buf), r.slice(rhs_buf), true)
+                strings::eql_long(l.slice(lhs_buf), r.slice(rhs_buf))
             }
             _ => false,
         }

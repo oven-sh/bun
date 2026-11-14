@@ -1,0 +1,18 @@
+vi.doMock() in a function of another file, for a file that is imported under a query, called by the body of a member of an import cycle that imports it. The member has begun its body and keeps what it imported.
+#### a.test.js
+import { test } from "bun:test";
+import { read } from "./root.js";
+test("t", async () => console.log("| CASE", read(), (await import("./dep.js?v")).who()));
+#### dep.js
+export const who = () => "real";
+#### member.js
+import { who } from "./dep.js?v";
+import "./root.js";
+import { mockModule } from "./wrap.js";
+mockModule(import.meta.dir + "/dep.js?v", () => ({ who: () => "mock" }));
+export const read = () => who();
+#### root.js
+export { read } from "./member.js";
+#### wrap.js
+import { vi } from "bun:test";
+export const mockModule = (path, factory) => { vi.doMock(path, factory); };

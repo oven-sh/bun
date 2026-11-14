@@ -1,0 +1,17 @@
+vi.doMock() in a function of another file, for a file that is imported under a query, called by the body of a helper that imports it. The test file imports the helper through another file. The helper has begun its body and keeps what it imported.
+#### a.test.js
+import { test } from "bun:test";
+import { read } from "./mid.js";
+test("t", async () => console.log("| CASE", read(), (await import("./dep.js?v")).who()));
+#### dep.js
+export const who = () => "real";
+#### mid.js
+export { read } from "./mocks.js";
+#### mocks.js
+import { mockModule } from "./wrap.js";
+import { who } from "./dep.js?v";
+mockModule(import.meta.dir + "/dep.js?v", () => ({ who: () => "mock" }));
+export const read = () => who();
+#### wrap.js
+import { vi } from "bun:test";
+export const mockModule = (path, factory) => { vi.doMock(path, factory); };

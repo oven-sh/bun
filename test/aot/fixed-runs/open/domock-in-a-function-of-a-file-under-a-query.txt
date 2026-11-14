@@ -1,0 +1,16 @@
+vi.doMock() in a function of another file, for a file that is imported under a query and so runs from its source, called by the body of a test file that imports it. The test file has begun its body and keeps what it imported.
+#### a.test.js
+import { test } from "bun:test";
+import { mockModule } from "./wrap.js";
+import { who } from "./dep.js?v";
+import { via } from "./user.js";
+mockModule(import.meta.dir + "/dep.js?v", () => ({ who: () => "mock" }));
+test("t", async () => console.log("| CASE", who(), via(), (await import("./dep.js?v")).who()));
+#### dep.js
+export const who = () => "real";
+#### user.js
+import { who } from "./dep.js?v";
+export const via = () => who();
+#### wrap.js
+import { vi } from "bun:test";
+export const mockModule = (path, factory) => { vi.doMock(path, factory); };

@@ -1,0 +1,16 @@
+vi.doMock() in a function of another file, called by the body of a test file that also imports a file under a query and a data: URL. No table of the program marks those two as evaluated, and the test file has begun its body all the same.
+#### a.test.js
+import { test } from "bun:test";
+import { mockModule } from "./wrap.js";
+import { other } from "./other.js?v";
+import inline from "data:text/javascript,export default 'inline'";
+import { who } from "./dep.js";
+mockModule(import.meta.dir + "/dep.js", () => ({ who: () => "mock" }));
+test("t", async () => console.log("| CASE", who(), (await import("./dep.js")).who(), other, inline));
+#### dep.js
+export const who = () => "real";
+#### other.js
+export const other = "other";
+#### wrap.js
+import { vi } from "bun:test";
+export const mockModule = (path, factory) => { vi.doMock(path, factory); };

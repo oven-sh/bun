@@ -1,0 +1,18 @@
+Two calls of vi.doMock() in a function of another file for one file. A test file makes the first call and then loads a helper by import(). The helper imports the mocked file, so it gets the first mock, and its body makes the second call. The helper has begun its body and keeps the first mock, and the next import() gets the second.
+#### a.test.js
+import { test } from "bun:test";
+import { mockModule } from "./wrap.js";
+mockModule(import.meta.dir + "/dep.js", () => ({ who: () => "first" }));
+const { read } = await import("./helper.js");
+test("t", async () => console.log("| CASE", read(), (await import("./dep.js")).who(), read()));
+#### dep.js
+export const who = () => "real";
+#### helper.js
+import { mockModule } from "./wrap.js";
+import { who } from "./dep.js";
+mockModule(import.meta.dir + "/dep.js", () => ({ who: () => "second" }));
+console.log("| CASE the second call has returned, the helper reads", who());
+export const read = () => who();
+#### wrap.js
+import { vi } from "bun:test";
+export const mockModule = (path, factory) => { vi.doMock(path, factory); };

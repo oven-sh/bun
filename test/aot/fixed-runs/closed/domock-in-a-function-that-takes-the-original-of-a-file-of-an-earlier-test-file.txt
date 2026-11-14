@@ -1,0 +1,33 @@
+vi.doMock() in a function of another file with a factory that takes the original, called by the body of a test file, for a file that an earlier test file loaded. The test file keeps what it imported, and the call runs nothing. The factory gets the file loaded again, and an import() of another importer of the file loads that importer again too. The next test file gets the file itself, loaded once more.
+#### 1.test.js
+import { test } from "bun:test";
+import { who } from "./dep.js";
+test("first", () => console.log("| CASE first", who(), "runs of dep:", globalThis.runsOfDepLoadedAgain));
+#### 2.test.js
+import { test } from "bun:test";
+import { mockDep } from "./wrap.js";
+import { who } from "./dep.js";
+import { via } from "./user.js";
+let original;
+mockDep(async importOriginal => ({ ...(original = await importOriginal()), extra: "mock" }));
+console.log("| CASE the call has returned, runs of dep:", globalThis.runsOfDepLoadedAgain);
+test("second", async () => {
+  const mocked = await import("./dep.js");
+  console.log("| CASE second", who(), via(), mocked.extra, "runs of dep:", globalThis.runsOfDepLoadedAgain);
+  console.log("| CASE the mock holds the who that was imported:", mocked.who === who, "and the original does:", original.who === who);
+  console.log("| CASE an import() of user gets the one that was imported:", (await import("./user.js")).via === via, "runs of dep:", globalThis.runsOfDepLoadedAgain, "of user:", globalThis.runsOfUserLoadedAgain);
+});
+#### 3.test.js
+import { test } from "bun:test";
+import { who } from "./dep.js";
+test("third", async () => console.log("| CASE third", who(), (await import("./dep.js")).who(), "runs of dep:", globalThis.runsOfDepLoadedAgain, "of user:", globalThis.runsOfUserLoadedAgain));
+#### dep.js
+globalThis.runsOfDepLoadedAgain = (globalThis.runsOfDepLoadedAgain ?? 0) + 1;
+export const who = () => "real";
+#### user.js
+import { who } from "./dep.js";
+globalThis.runsOfUserLoadedAgain = (globalThis.runsOfUserLoadedAgain ?? 0) + 1;
+export const via = () => who();
+#### wrap.js
+import { vi } from "bun:test";
+export const mockDep = factory => { vi.doMock("./dep.js", factory); };

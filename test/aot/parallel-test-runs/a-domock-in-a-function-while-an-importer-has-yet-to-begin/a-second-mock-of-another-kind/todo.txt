@@ -1,0 +1,1 @@
+"real real second" | "second second second": the second call is mock.module(), which does not ask the engine to pass over the module whose body runs, so the compiled run updates the loaded module in place where `bun test` lets the second mock wait like the first

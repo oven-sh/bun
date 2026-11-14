@@ -1,0 +1,25 @@
+vi.doMock() in functions of another file that name a CommonJS package and a CommonJS file by written texts, called by the body of a helper that imports both. The helper has begun its body and keeps what it imported.
+#### a.test.js
+import { test } from "bun:test";
+import { read } from "./mocks.js";
+test("t", async () => {
+  console.log("| CASE", read());
+  console.log("| CASE", (await import("held-commonjs-package")).who(), (await import("./dep.cjs")).who(), read());
+});
+#### dep.cjs
+exports.who = () => "real file";
+#### mocks.js
+import { mockFile, mockPackage } from "./wrap.js";
+import { who as ofPackage } from "held-commonjs-package";
+import { who as ofFile } from "./dep.cjs";
+mockPackage(() => ({ who: () => "mock package" }));
+mockFile(() => ({ who: () => "mock file" }));
+export const read = () => ofPackage() + ", " + ofFile();
+#### node_modules/held-commonjs-package/index.js
+exports.who = () => "real package";
+#### node_modules/held-commonjs-package/package.json
+{ "name": "held-commonjs-package", "main": "index.js" }
+#### wrap.js
+import { vi } from "bun:test";
+export const mockPackage = factory => { vi.doMock("held-commonjs-package", factory); };
+export const mockFile = factory => { vi.doMock("./dep.cjs", factory); };

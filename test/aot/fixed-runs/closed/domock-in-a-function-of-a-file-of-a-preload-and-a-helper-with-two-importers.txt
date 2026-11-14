@@ -1,0 +1,34 @@
+A helper imports a file and mocks it in its body, through a function of a file that a preload has loaded. Another module imports the helper too. The helper runs and mocks again for each later test file, and the call that it made for an earlier test file is not made again.
+preload: setup.js
+#### 1.test.js
+import { test } from "bun:test";
+import { read } from "./mocks.js";
+import { viaLater } from "./later.js";
+test("first", async () => console.log("| CASE first", read(), viaLater(), (await import("./dep.js")).who()));
+#### 2.test.js
+import { test } from "bun:test";
+import { read } from "./mocks.js";
+import { viaLater } from "./later.js";
+test("second", async () => console.log("| CASE second", read(), viaLater(), (await import("./dep.js")).who()));
+#### 3.test.js
+import { test } from "bun:test";
+import { read } from "./mocks.js";
+import { viaLater } from "./later.js";
+test("third", async () => console.log("| CASE third", read(), viaLater(), (await import("./dep.js")).who()));
+#### dep.js
+export const who = () => "real";
+#### later.js
+import { read } from "./mocks.js";
+export const viaLater = () => read();
+#### mocks.js
+import { mockDep } from "./wrap.js";
+import { who } from "./dep.js";
+const run = (globalThis.runsOfTheHelperWithTwoImporters = (globalThis.runsOfTheHelperWithTwoImporters ?? 0) + 1);
+console.log("| CASE the helper runs", run);
+mockDep(() => ({ who: () => "mock of run " + run }));
+export const read = () => who();
+#### setup.js
+import "./wrap.js";
+#### wrap.js
+import { vi } from "bun:test";
+export const mockDep = factory => { vi.doMock("./dep.js", factory); };

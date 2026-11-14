@@ -1,0 +1,33 @@
+A helper imports a data file twice, as an object and with the type "text", and mocks it in its body, through a function that a preload put on globalThis. The helper has begun its body and keeps both, and it runs and mocks again for each later test file that imports it.
+preload: setup.js
+#### 1.test.js
+import { test } from "bun:test";
+import { read } from "./mocks.js";
+test("first", async () => console.log("| CASE first", read(), (await import("./data.json")).default.who));
+#### 2.test.js
+import { test } from "bun:test";
+import data from "./data.json";
+test("second", async () => console.log("| CASE second", data.who, (await import("./data.json")).default.who));
+#### 3.test.js
+import { test } from "bun:test";
+import { read } from "./mocks.js";
+test("third", async () => console.log("| CASE third", read(), (await import("./data.json")).default.who));
+#### 4.test.js
+import { test } from "bun:test";
+import data from "./data.json";
+test("fourth", async () => console.log("| CASE fourth", data.who, (await import("./data.json")).default.who));
+#### 5.test.js
+import { test } from "bun:test";
+import { read } from "./mocks.js";
+test("fifth", async () => console.log("| CASE fifth", read(), (await import("./data.json")).default.who));
+#### data.json
+{ "who": "real" }
+#### mocks.js
+import data from "./data.json";
+import text from "./data.json" with { type: "text" };
+console.log("| CASE the helper runs");
+globalThis.mockDataOfSetup(() => ({ default: { who: "mock" } }));
+export const read = () => data.who + "/" + JSON.parse(text).who;
+#### setup.js
+import { vi } from "bun:test";
+globalThis.mockDataOfSetup = factory => { vi.doMock("./data.json", factory); };

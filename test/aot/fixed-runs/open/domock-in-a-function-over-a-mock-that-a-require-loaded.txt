@@ -1,0 +1,18 @@
+A second vi.doMock() in a function of another file, over a mock that a require() has loaded, called by the body of a test file that imports the mocked file. The test file keeps what it imported, the mock that was loaded stays what it is, and the next import() gets the second mock.
+#### a.test.js
+import { test } from "bun:test";
+import { mockModule } from "./wrap.js";
+import { who } from "./dep.js";
+import { via } from "./user.js";
+mockModule(import.meta.dir + "/dep.js", () => ({ who: () => "first" }));
+const first = require("./dep.js");
+mockModule(import.meta.dir + "/dep.js", () => ({ who: () => "second" }));
+test("t", async () => console.log("| CASE", who(), via(), first.who(), (await import("./dep.js")).who(), first.who()));
+#### dep.js
+export const who = () => "real";
+#### user.js
+import { who } from "./dep.js";
+export const via = () => who();
+#### wrap.js
+import { vi } from "bun:test";
+export const mockModule = (path, factory) => { vi.doMock(path, factory); };

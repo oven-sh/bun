@@ -1,0 +1,16 @@
+vi.doMock() in the body of a helper that imports the mocked file, while another importer of that file has yet to run. That importer is imported under a query and so runs from its source. It has yet to begin its body, so the loaded file is updated in place.
+#### a.test.js
+import { test } from "bun:test";
+import { read } from "./mocks.js";
+import { via } from "./user.js?v";
+test("t", async () => console.log("| CASE", read(), via(), (await import("./dep.js")).who()));
+#### dep.js
+export const who = () => "real";
+#### mocks.js
+import { vi } from "bun:test";
+import { who } from "./dep.js";
+vi.doMock(import.meta.dir + "/dep.js", () => ({ who: () => "mock" }));
+export const read = () => who();
+#### user.js
+import { who } from "./dep.js";
+export const via = () => who();

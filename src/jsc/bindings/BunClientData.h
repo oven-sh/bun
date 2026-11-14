@@ -265,6 +265,10 @@ public:
     // `bun test --isolate` loads DOM packages into this global, which outlives the test files. gcProtect'ed for the VM's life.
     JSC::JSGlobalObject* testEnvironmentRealm { nullptr };
 
+    // For `bun test` without --isolate. See Bun__TestEnvironment__willLoadTestFile().
+    bool testFilesHaveStarted { false };
+    RefPtr<JSC::PropertyNameArray> namesBeforeTestFiles;
+
     // Idle full collections GarbageCollectionController requested that have not finished (see
     // Bun__JSC_onBeforeWait). Counted up on the JS thread, down at the end of each one's end phase, on either thread.
     std::atomic<unsigned> idleCollectionsPending { 0 };

@@ -69,7 +69,7 @@ pub(crate) fn add_typed_files(
             path: path_of(file),
             text,
             source_map,
-            entry_point: is_entry_point.then_some(file.src_path.text),
+            entry_point: is_entry_point.then_some(&*file.src_path),
         });
     }
     let javascript: Vec<WrittenJavaScript<'_>> = written

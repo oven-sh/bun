@@ -142,6 +142,28 @@ describe("mv", async () => {
     expect(exitCode).toBe(0);
   });
 
+  // An empty operand names nothing. On Windows it used to resolve to the
+  // shell's cwd itself: as the source, mv tried to rename the cwd; as the
+  // destination, it moved the file "into" the cwd and reported success.
+  TestBuilder.command`mv ${""} b`
+    .ensureTempDir()
+    .file("a", "file")
+    .exitCode(2 /* ENOENT */)
+    .stderr("mv: No such file or directory\n")
+    .fileEquals("a", "file")
+    .doesNotExist("b")
+    .runAsTest("empty source fails");
+
+  // The POSIX renameat() wrapper attaches the source path to its errors; the
+  // Windows one does not yet, so the message differs by platform.
+  TestBuilder.command`mv a ${""}`
+    .ensureTempDir()
+    .file("a", "file")
+    .exitCode(2 /* ENOENT */)
+    .stderr(isWindows ? "mv: No such file or directory\n" : "mv: a: No such file or directory\n")
+    .fileEquals("a", "file")
+    .runAsTest("empty destination fails");
+
   // POSIX `mv` must fall back to copy+unlink when `rename()` returns EXDEV
   // (source and destination on different filesystems). Requires a writable
   // mount on a different device from the harness temp dir.

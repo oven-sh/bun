@@ -18,7 +18,8 @@ export type WorkerNote = [entry: string, mode: CallMode] | { notStarted: string 
 // `failure`: the test itself threw, which says nothing about the built-in.
 export type WorkerReport = CallReport & { entry: string; failure?: string };
 
-const [requestPath, reportsPath] = process.env.AOT_BUILTINS_WORKER_FILES?.split("\n") ?? process.argv.slice(2);
+// The two paths are taken out of process.argv: a built-in that reads it would be handed them, and util.parseArgs refuses them as positionals before it answers.
+const [requestPath, reportsPath] = process.env.AOT_BUILTINS_WORKER_FILES?.split("\n") ?? process.argv.splice(2);
 const { tablePath, calls }: WorkerRequest = JSON.parse(readFileSync(requestPath, "utf8"));
 
 process.on("unhandledRejection", () => {});

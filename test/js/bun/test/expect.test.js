@@ -5521,6 +5521,85 @@ describe("expect()", () => {
     });
   });
 
+  describe("a value whose [nodejs.util.inspect.custom] method throws", () => {
+    const thrown = new Error("thrown while printing");
+    let calls = 0;
+    const hostile = (/** @type {object} */ target = { a: 1 }) =>
+      Object.assign(target, {
+        [Symbol.for("nodejs.util.inspect.custom")]() {
+          calls++;
+          throw thrown;
+        },
+      });
+    const caught = async (/** @type {() => unknown} */ run) => {
+      try {
+        await run();
+      } catch (error) {
+        return error;
+      }
+      return "did not throw";
+    };
+
+    // Vitest 5.1.0 throws the method's error for these too. Jest 30.5.2 keeps its own message: its printer never calls the method.
+    test_skipIf(isJest).each([
+      ["toBeNull()", v => expect(v).toBeNull()],
+      ["toBe(1)", v => expect(v).toBe(1)],
+      ["toBe(value) on 1", v => expect(1).toBe(v)],
+      ["not.toBe(value)", v => expect(v).not.toBe(v)],
+      ["toBeNull() with a label", v => expect(v, "label").toBeNull()],
+      ["toContain(1) on [value]", v => expect([v]).toContain(1)],
+      ["toBeNull() on { k: value }", v => expect({ k: v }).toBeNull()],
+      ["resolves.toBeNull()", v => expect(Promise.resolve(v)).resolves.toBeNull()],
+      ["rejects.toBeNull()", v => expect(Promise.reject(v)).rejects.toBeNull()],
+    ])("a failing %s throws that error", async (_, run) => {
+      expect(await caught(() => run(hostile()))).toBe(thrown);
+    });
+
+    expect.extend({ _toReturnItsArgument: (_received, argument) => argument });
+
+    // The messages of the checks a matcher makes before it compares: each prints the value once.
+    test_skipIf(!isBun).each([
+      ["toHaveLength(1)", v => expect(v).toHaveLength(1)],
+      ["toHaveLength(value) on [1]", v => expect([1]).toHaveLength(v)],
+      ["not.toHaveLength(1) with a label", v => expect(v, "label").not.toHaveLength(1)],
+      ["toMatch(/a/)", v => expect(v).toMatch(/a/)],
+      ["toMatch(value) on a string", v => expect("a").toMatch(v)],
+      ["toBeInstanceOf(value) on 1", v => expect(1).toBeInstanceOf(v)],
+      ["toHaveBeenCalled()", v => expect(v).toHaveBeenCalled()],
+      ["toHaveReturned()", v => expect(v).toHaveReturned()],
+      ["resolves.toBe(1)", v => expect(v).resolves.toBe(1)],
+      ["rejects.toBe(1)", v => expect(v).rejects.toBe(1)],
+      ["rejects.toBe(1) on a promise that resolved", () => expect(hostile(Promise.resolve(1))).rejects.toBe(1)],
+      ["resolves.toBe(1) on a promise that rejected", () => expect(hostile(Promise.reject(1))).resolves.toBe(1)],
+      ["expect.assertions(value)", v => expect.assertions(v)],
+      ["a custom matcher that returns the value", v => ANY(expect(1))._toReturnItsArgument(v)],
+      [
+        "an asymmetric custom matcher that returns the value",
+        v => expect(1).toEqual(ANY(expect)._toReturnItsArgument(v)),
+      ],
+      [
+        "toHaveReturned() on a mock whose results hold the value",
+        v => {
+          const fn = mock(() => 1);
+          fn();
+          fn.mock.results.push(v);
+          expect(fn).toHaveReturned();
+        },
+      ],
+    ])("%s throws that error", async (_, run) => {
+      calls = 0;
+      expect(await caught(() => run(hostile()))).toBe(thrown);
+      expect(calls).toBe(1);
+    });
+
+    test("a matcher that passes does not print the value", () => {
+      calls = 0;
+      expect(hostile()).not.toBeNull();
+      expect(hostile()).toBeDefined();
+      expect(calls).toBe(0);
+    });
+  });
+
   test("expect.hasAssertions doesn't throw when valid", () => {
     expect.hasAssertions();
     expect("a").toEqual("a");

@@ -66,6 +66,47 @@ Keep the diff between upstream and the port as small as the type substitution
 allows — the `/sync-react-compiler` skill re-ports upstream changes hunk by
 hunk, so gratuitous restructuring makes that harder.
 
+### A local that is one of several functions
+
+Upstream's InferTypes gives a phi of functions that return one type the type of the first of them. Where a loop
+assigns a local under a condition, `try_resolve_type` takes what the loop assigns out of the phi at the head of the
+loop, and what reads the local after the loop gets the type of what the local was before it. A call of that local
+then has the effects of a function that it may not be: `Math.max` only reads, and the other function writes to its
+argument. `EnvironmentConfig::joined_functions_are_refused` (on for `bun build`, off for `bun lint`) does not change
+a type. `Unifier::bind_variable_to` finds the two cases, and `infer_types` then returns a Todo, so the function is
+left as written. A function that is compiled has upstream's types. The cases:
+
+- What the type of the first operand says is not so for another one (`is_taken_for_another`). A shape that has a
+  name holds for itself only. Two shapes of `next_anon_id` are one where their signatures are equal. A function
+  expression has no signature, so its type says nothing of a call: it holds for each function that is no hook and
+  that writes to none of its parameters. An operand that is a function expression that does nothing is not
+  compared: it keeps to each signature.
+- A phi has lost an operand, and a local then gets the type of a function anywhere but at the equation of its own
+  phi, where it has each operand.
+
+The rule is for a wrong type and not for a memo block, so it holds for each output mode: the pass for the server
+leaves out a function that calls what InferTypes takes for a state setter. For that pass a function expression
+that does nothing is compared too, because a render can call what calls it. The equation of what the outermost
+function returns does not refuse: nothing reads that type. A sync that adds a reader of it takes the exemption out
+of `generate`.
+
+The first operand of a phi is the path that comes first. That is the first branch of a conditional, and the body of
+an `if` that has no `else`. Two shapes are left as written and are right without the rule. One has a function with
+a signature on the first path, and on another a function expression that does something:
+`cond ? setOpen : value => { report(value); }`, and `let f = value => { report(value); }; if (cond) f = setOpen;`.
+The other is a local that a loop assigns under a condition, where the type after the loop is right. The rule is for
+the type of a function. A local that is an array, an object or a primitive before such a loop is compiled wrong as
+before, and so is one of two function expressions that writes to what it captures:
+`react-compiler/LocalThatALoopMakesOneOfTwoObjects` and `react-compiler/OneOfTwoFunctionsWritesToWhatItCaptures` in
+`test/bundler/transpiler/react-compiler.test.ts`.
+
+The flag can go when upstream refuses these functions too. If a sync changes the types instead, the tests of that
+file say what is left. `a component with a joined function is compiled as before or not at all` builds each
+component with the rule and without it. A name that leaves its list `rendersOtherwiseWithoutTheRule` no longer
+needs the rule. A render line of `react-compiler/LocalThatIsOneOfTwoFunctions` or
+`react-compiler/LocalThatALoopMakesOneOfTwoFunctions` that fails is a join that the new types get wrong, and that
+the rule no longer sees.
+
 ### Type mapping (input: lowering)
 
 | upstream `react_compiler_ast`                                            | `bun_ast`                                                                      |

@@ -236,6 +236,7 @@ test/js/bun/import-attributes/import-attributes.test.ts: ?url > require abcd.txt
 test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a match whose relative path would be too long throws
 test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a null byte in imports in package.json
 test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a null byte in paths in tsconfig.json
+test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a pattern or base that is too long
 test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > feature detection falls back in modules whose calls can't be replaced
 # test/bundler. Nearly all of it is what an executable does otherwise on purpose:
 #   a fixture in TypeScript with a type error . what asks about bytecode, the JIT, the engine's loader log, chunks or the bundle's own text . the files and names of source maps . cross-compiling .

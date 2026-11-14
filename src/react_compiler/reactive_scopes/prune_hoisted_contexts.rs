@@ -99,7 +99,7 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
         // Clean up uninitialized after scope
         let scope_data = &self.env.scopes[scope.scope.0 as usize];
         for (_, decl) in &scope_data.declarations {
-            state.uninitialized.remove(decl.identifier);
+            state.uninitialized.swap_remove(decl.identifier);
         }
         Ok(())
     }
@@ -167,7 +167,7 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
                             }
                             // References to hoisted functions are now "safe" as
                             // variable assignments have finished.
-                            state.uninitialized.remove(lvalue_id);
+                            state.uninitialized.swap_remove(lvalue_id);
                         }
                     } else {
                         return Err(cold_todo(

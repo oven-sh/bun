@@ -49,7 +49,8 @@ fn validate_use_memo_impl(
             // Remove used operands from unused_use_memos
             if !unused_use_memos.is_empty() {
                 for operand in operands(value, functions) {
-                    unused_use_memos.remove(operand.identifier);
+                    // The order of what is left does not show: `bun lint` sorts the report by position.
+                    unused_use_memos.swap_remove(operand.identifier);
                 }
             }
 
@@ -119,7 +120,7 @@ fn validate_use_memo_impl(
         // Check terminal operands for unused_use_memos
         if !unused_use_memos.is_empty() {
             for operand in terminal_operands(&block.terminal) {
-                unused_use_memos.remove(operand.identifier);
+                unused_use_memos.swap_remove(operand.identifier);
             }
         }
     }

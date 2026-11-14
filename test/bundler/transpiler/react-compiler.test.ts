@@ -4597,6 +4597,79 @@ describe("bundler", () => {
   });
 });
 
+// ValidateUseMemo keeps the `useMemo` calls whose result nothing has read yet in a map that keeps their order, and
+// took a call out of it with the remove that moves every later entry. The results of the calls below all stay unread
+// until the array takes them, so N calls took N^2 steps. EnterSSA stops each component at `const y = f(y)`, soon
+// after the pass, so the pass is most of the build: 30,000 calls in one component took 6 to 7 times the CPU time of
+// the same calls in 1,500 components. Now the two take the same time.
+// Not on a debug or ASAN build, where the rest of the build takes most of the time.
+test.skipIf(isDebug || isASAN)(
+  "react-compiler ValidateUseMemo time does not grow with the square of the number of useMemo calls",
+  async () => {
+    const calls = 30_000;
+    const perComponent = 20;
+    const call = "useMemo(() => 1, []), ";
+    const source = (components: number, callsEach: number) =>
+      `import { useMemo } from "react";\n` +
+      Array.from(
+        { length: components },
+        (_, c) =>
+          `export function App${c}(props) {\n  const x = (0, [${Buffer.alloc(callsEach * call.length, call)}]);\n` +
+          `  const y = f(y);\n  return <div>{x}{y}</div>;\n}\n`,
+      ).join("");
+    using dir = tempDir("react-compiler-use-memo-time", {
+      "large.jsx": source(1, calls),
+      "control.jsx": source(calls / perComponent, perComponent),
+      "small.jsx": source(1, 2),
+      ".oxlintrc.json": JSON.stringify({
+        plugins: ["react"],
+        categories: { correctness: "off" },
+        rules: { "react/todo": "error" },
+      }),
+    });
+
+    // What stops a component is EnterSSA, so ValidateUseMemo ran before.
+    await using lint = Bun.spawn({
+      cmd: [bunExe(), "lint", "-f", "json", "small.jsx"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [linted, lintErrors, lintExitCode] = await Promise.all([lint.stdout.text(), lint.stderr.text(), lint.exited]);
+    expect(lintErrors).toBe("");
+    expect(
+      JSON.parse(linted).diagnostics.map((it: { code: string; message: string }) => [it.code, it.message]),
+    ).toEqual([["react(todo)", "[hoisting] EnterSSA: Expected identifier to be defined before being used"]]);
+    expect(lintExitCode).toBe(1);
+
+    // The user CPU time of one build. The page faults of a build are system time, which changes from run to run.
+    const userTime = async (entry: string) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).not.toContain("react/compiler-runtime");
+      expect(exitCode).toBe(0);
+      return Number(proc.resourceUsage()!.cpuTime.user);
+    };
+
+    // The least time of each build counts, because other load only adds to a time. A round takes half a second.
+    let large = Infinity;
+    let control = Infinity;
+    for (let round = 0; round < 2 && !(large / control < 2); round++) {
+      large = Math.min(large, await userTime("large.jsx"));
+      control = Math.min(control, await userTime("control.jsx"));
+    }
+    expect(large / control).toBeLessThan(4);
+  },
+);
+
 // Three passes kept one copy of their work per basic block or per nesting
 // level of a value, so memory grew with the square of the size of a component
 // that has no loop at all. The fixpoint in InferMutationAliasingEffects kept

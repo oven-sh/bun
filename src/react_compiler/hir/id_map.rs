@@ -286,8 +286,8 @@ impl<K: Copy + Into<u32>, V, A: MapAllocator> IdMap<K, V, A> {
             at,
         }
     }
-    /// Order-preserving remove. O(n).
-    pub(crate) fn remove(&mut self, k: K) -> Option<V> {
+    /// Order-preserving remove. O(n): for a `remove` of upstream's `HashMap`, use [`Self::swap_remove`].
+    pub(crate) fn shift_remove(&mut self, k: K) -> Option<V> {
         let at = self.index.position(k)?;
         self.index.shift_remove_at(at);
         Some(self.values.remove(at))

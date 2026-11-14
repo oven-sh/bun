@@ -66,6 +66,11 @@ Keep the diff between upstream and the port as small as the type substitution
 allows — the `/sync-react-compiler` skill re-ports upstream changes hunk by
 hunk, so gratuitous restructuring makes that harder.
 
+An upstream `HashMap` or `FxHashMap` that is keyed by an id is an `IdMap` here.
+Port its `remove` as `IdMap::swap_remove`, which takes one step.
+`IdMap::shift_remove` keeps the order of the other entries and moves each later
+one: use it only where upstream calls `IndexMap::shift_remove`.
+
 ### Type mapping (input: lowering)
 
 | upstream `react_compiler_ast`                                            | `bun_ast`                                                                      |

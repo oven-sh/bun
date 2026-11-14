@@ -204,6 +204,19 @@ static void delegateDidFinishNavigation(id self, SEL, id /*webView*/, id /*navig
     if (auto* host = objc::NavigationDelegate(self).host()) host->onNavigationFinished();
 }
 
+static void delegateDidStartProvisionalNavigation(id self, SEL, id /*webView*/, id /*navigation*/)
+{
+    ObjCRuntime::ARPool pool;
+    if (auto* host = objc::NavigationDelegate(self).host()) host->onProvisionalNavigationStarted();
+}
+
+// WKNavigationDelegatePrivate. The navigation argument is the old document's (or nil), so it is not read.
+static void delegateDidSameDocumentNavigation(id self, SEL, id /*webView*/, id /*navigation*/, long type)
+{
+    ObjCRuntime::ARPool pool;
+    if (auto* host = objc::NavigationDelegate(self).host()) host->onSameDocumentNavigation(type);
+}
+
 static void delegateDidFailNavigation(id self, SEL, id /*webView*/, id /*navigation*/, id error)
 {
     ObjCRuntime::ARPool pool;
@@ -530,10 +543,15 @@ bool ObjCRuntime::load()
     // Type encodings: v = void, @ = id, : = SEL.
     addMethod(NavigationDelegate::cls, sel("webView:didFinishNavigation:"),
         reinterpret_cast<IMP>(delegateDidFinishNavigation), "v@:@@");
+    addMethod(NavigationDelegate::cls, sel("webView:didStartProvisionalNavigation:"),
+        reinterpret_cast<IMP>(delegateDidStartProvisionalNavigation), "v@:@@");
     addMethod(NavigationDelegate::cls, sel("webView:didFailNavigation:withError:"),
         reinterpret_cast<IMP>(delegateDidFailNavigation), "v@:@@@");
     addMethod(NavigationDelegate::cls, sel("webView:didFailProvisionalNavigation:withError:"),
         reinterpret_cast<IMP>(delegateDidFailProvisionalNavigation), "v@:@@@");
+    // q = NSInteger (_WKSameDocumentNavigationType); WebKit checks respondsToSelector: for this SPI.
+    addMethod(NavigationDelegate::cls, sel("_webView:navigation:didSameDocumentNavigation:"),
+        reinterpret_cast<IMP>(delegateDidSameDocumentNavigation), "v@:@@q");
     // Also adopt WKUIDelegate to suppress context menus. The method is
     // in WKUIDelegatePrivate but protocol adoption isn't checked for it;
     // WebKit does respondsToSelector:.

@@ -9,6 +9,7 @@
 #include <wtf/RefCounted.h>
 #include <wtf/Ref.h>
 #include <wtf/text/WTFString.h>
+#include <wtf/URL.h>
 
 namespace Bun {
 
@@ -57,6 +58,10 @@ public:
 
     // Delegate IMP / block callbacks — fire inside CFRunLoop.
     void onNavigationFinished();
+    // webView:didStartProvisionalNavigation: — a document load began.
+    void onProvisionalNavigationStarted();
+    // _webView:navigation:didSameDocumentNavigation:, type is a _WKSameDocumentNavigationType.
+    void onSameDocumentNavigation(long type);
     void onNavigationFailed(const WTF::String& err);
     void onEvalComplete(id result, id error);
     void onScreenshotComplete(id nsimage, id error);
@@ -73,10 +78,16 @@ private:
     void doNativeClick(float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount);
 
     uint32_t m_viewId = 0;
+    // NavEvent, then NavDone when the navigate() in the slot ends here.
+    void reportNavigation(bool endsNavigation);
     // One-at-a-time: the parent's WriteBarrier slot enforces serialization
     // (INVALID_STATE on overlap), and the block correlation in ObjCRuntime
     // (single m_evalTarget) requires it.
     bool m_navPending = false;
+    // A document load started since navigateIPC, so didFinishNavigation: ends the navigation.
+    bool m_navProvisional = false;
+    // The URL the pending navigate() asked for; its document correlates a same-document commit.
+    WTF::URL m_navTargetUrl;
     bool m_evalPending = false;
     bool m_screenshotPending = false;
     // Stashed by screenshotIPC; read by onScreenshotComplete to pick the

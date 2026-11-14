@@ -49,11 +49,81 @@ const malformed = process.argv.find(a => a.startsWith("--malformed="))?.slice("-
 // JSON.stringify can't emit invalid UTF-8.
 const BAD_UTF8 = "not-utf8";
 
+// `--subframe-navigation`: every document load commits a subframe navigation
+// too, the way a page holding an <iframe> does.
+const subframeNavigation = process.argv.includes("--subframe-navigation");
+
 const NO_REPLY = Symbol("no reply");
 let commandsClosed = false;
+// The session of the command being handled, so a __fake_* global that an
+// evaluate() runs can emit events on it.
+let currentSessionId: string | undefined;
+// One script per CDP method, run once as the next command of that method is
+// read and before it is handled (see __fake_on_next).
+const onNext = new Map<string, string>();
+// How many document.title fetches the runtime has sent: one per navigation.
+let titleFetches = 0;
+let failNextTitleFetch = false;
+// What document.title answers.
+let documentTitle = "fake chrome";
 Object.assign(globalThis, {
   __fake_exit(code: number): never {
     process.exit(code);
+  },
+  // The page does something of its own while a command of the runtime's is on
+  // its way: `script` runs as the next `method` command is read, before the
+  // fake handles or answers it. That is how an event that was already in the
+  // pipe reaches the runtime after it wrote the command.
+  __fake_on_next(method: string, script: string) {
+    onNext.set(method, script);
+  },
+  // The page commits a same-document navigation of its own, the way
+  // history.pushState() and history.replaceState() do:
+  // Page.navigatedWithinDocument with nothing before it, no new history entry.
+  __fake_replace_state(url: string) {
+    if (historyIndex >= 0) history[historyIndex].url = url;
+    event("Page.navigatedWithinDocument", { frameId: mainFrameId(), url, navigationType: "historyApi" });
+  },
+  // The page follows a #fragment link of its own, or assigns location.hash:
+  // a new history entry, and a commit that reports "fragment" the way a
+  // traversal's does.
+  __fake_hash_change(url: string) {
+    pushEntry(url);
+    commitSameDocument(url);
+  },
+  // An <iframe> follows a #fragment link of its own.
+  __fake_subframe_hash_change(url: string) {
+    commitSameDocument(url, "SUB");
+  },
+  // The next document.title fetch fails, the way one does when the document
+  // it was sent to is gone by the time the renderer runs it.
+  __fake_fail_next_title_fetch() {
+    failNextTitleFetch = true;
+  },
+  // The page navigates itself to a new document (a link, `location.href = ...`):
+  // it commits, and only __fake_load_event() finishes it. The new document
+  // has a title of its own.
+  __fake_page_commit(url: string) {
+    loads++;
+    documentTitle = "page's own";
+    pushEntry(url);
+    event("Page.frameNavigated", {
+      frame: { id: mainFrameId(), loaderId: "P" + loads, url, mimeType: "text/html" },
+      type: "Navigation",
+    });
+  },
+  // The load event of the document that is live, the way one arrives for a
+  // document the page itself navigated to. It names no frame and no loader.
+  __fake_load_event() {
+    event("Page.loadEventFired", { timestamp: ++loads });
+  },
+  // The main frame has nothing left to load.
+  __fake_frame_stopped_loading() {
+    event("Page.frameStoppedLoading", { frameId: mainFrameId() });
+  },
+  // How many document.title fetches the runtime has sent so far.
+  __fake_title_fetches() {
+    return titleFetches;
   },
   // The command gets no reply, ever.
   __fake_no_reply() {
@@ -96,13 +166,97 @@ function sendWithInvalidUtf8(message: unknown) {
   sendBytes(bytes);
 }
 
+// An event on the session of the command being handled.
+function event(method: string, params: unknown) {
+  send({ method, params, sessionId: currentSessionId });
+}
+
+// The main frame's id is the target's id, as in Chrome. Session "S<n>" is
+// attached to target "T<n>".
+function mainFrameId() {
+  return "T" + currentSessionId?.slice(1);
+}
+
 let targets = 0;
 let loads = 0;
+let entries = 0;
+
+// Session history, the way the browser keeps it: Page.navigate appends,
+// Page.getNavigationHistory reports it, Page.navigateToHistoryEntry moves
+// inside it. Two URLs that differ only after the '#' are the same document.
+const history: { id: number; url: string }[] = [];
+let historyIndex = -1;
+const documentOf = (url: string) => url.split("#")[0];
+const fragmentOf = (url: string) => (url.includes("#") ? url.slice(url.indexOf("#")) : "");
+// A URL with "never-load" in it starts loading and never commits, the way a
+// server that accepts the connection and then says nothing looks. One with
+// "stall-on-return" loads when navigated to, but a history traversal back to
+// it starts and never commits. One with "bfcached" in it comes back whole
+// from the back-forward cache when a history traversal returns to it. One
+// with "intercepted" in it is a page whose Navigation API handles every
+// same-document navigation, so those commit with navigationType "other". One
+// with "cancelled" in it is such a page that calls preventDefault(): the
+// navigation is answered, never commits, and the frame goes idle. One with
+// "restarts" in it is a <frameset> page, where the renderer turns a
+// same-document navigation into a document load. One with "boot-hash" in it
+// sets location.hash as it loads. One with "no-navigation-type" in it is an
+// older Chrome that sends Page.navigatedWithinDocument without the field.
+const neverLoads = (url: string) => url.includes("never-load");
+const stallsOnReturn = (url: string) => url.includes("stall-on-return");
+const bfcached = (url: string) => url.includes("bfcached");
+const intercepted = (url: string) => url.includes("intercepted");
+const cancelled = (url: string) => url.includes("cancelled");
+const restarts = (url: string) => url.includes("restarts");
+const bootHash = (url: string) => url.includes("boot-hash");
+const noNavigationType = (url: string) => url.includes("no-navigation-type");
+
+function pushEntry(url: string) {
+  history.length = historyIndex + 1;
+  history.push({ id: ++entries, url });
+  historyIndex = history.length - 1;
+}
+
+// A document commits: Page.frameNavigated, with the fragment split off into
+// frame.urlFragment. A fresh load ("Navigation") ends with the load event. A
+// page restored from the back-forward cache is whole as it commits, so
+// nothing follows.
+function commitDocument(url: string, type: "Navigation" | "BackForwardCacheRestore") {
+  const fragment = fragmentOf(url);
+  const frame = { id: mainFrameId(), loaderId: "L" + loads, url: documentOf(url), mimeType: "text/html" };
+  event("Page.frameNavigated", { frame: fragment ? { ...frame, urlFragment: fragment } : frame, type });
+  if (type === "BackForwardCacheRestore") return;
+  if (subframeNavigation) {
+    const subframe = { id: "SUB", parentId: mainFrameId(), loaderId: "S" + loads, url: "http://fake/subframe" };
+    event("Page.frameNavigated", { frame: { ...subframe, mimeType: "text/html" }, type });
+  }
+  if (bootHash(url)) commitSameDocument(url + "#booted");
+  event("Page.loadEventFired", { timestamp: loads });
+  // Send one stray event per load, with a missing or unusable sessionId.
+  if (malformed === "detach-no-session-id") send({ method: "Target.detachedFromTarget", params: {} });
+  if (malformed === "event-bad-utf8") {
+    sendWithInvalidUtf8({ method: "Page.loadEventFired", params: {}, sessionId: BAD_UTF8 });
+  }
+}
+
+// A same-document navigation of the runtime's commits. A #fragment target and
+// a history traversal both report "fragment", or "other" when the page's
+// Navigation API intercepted them. No load event follows.
+function commitSameDocument(url: string, frameId = mainFrameId()) {
+  const navigationType = intercepted(url) ? "other" : "fragment";
+  if (noNavigationType(url)) return event("Page.navigatedWithinDocument", { frameId, url });
+  event("Page.navigatedWithinDocument", { frameId, url, navigationType });
+}
 
 async function handle(command: { id: number; method: string; params?: any; sessionId?: string }) {
   const { id, method, params = {}, sessionId } = command;
+  currentSessionId = sessionId;
   const reply = (result: unknown) => send(sessionId ? { id, result, sessionId } : { id, result });
-  const event = (name: string, eventParams: unknown) => send({ method: name, params: eventParams, sessionId });
+
+  const script = onNext.get(method);
+  if (script !== undefined) {
+    onNext.delete(method);
+    (0, eval)(script);
+  }
 
   if (method === cdpErrorOn) {
     const error = { code: -32000, message: "Cannot navigate to invalid URL" };
@@ -118,20 +272,40 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       if (malformed === "attach-non-ascii") return reply({ sessionId: "S\u0100" });
       return reply({ sessionId: "S" + params.targetId.slice(1) });
     case "Page.navigate": {
-      if (navigateError) return reply({ frameId: "F", errorText: navigateError });
+      const url: string = params.url;
+      if (navigateError) return reply({ frameId: mainFrameId(), errorText: navigateError });
       if (malformed === "navigate-bad-utf8") {
-        return sendWithInvalidUtf8({ id, result: { frameId: "F", errorText: BAD_UTF8 }, sessionId });
+        return sendWithInvalidUtf8({ id, result: { frameId: mainFrameId(), errorText: BAD_UTF8 }, sessionId });
       }
-      const loaderId = "L" + ++loads;
-      reply({ frameId: "F", loaderId });
-      event("Page.frameNavigated", { frame: { id: "F", loaderId, url: params.url, mimeType: "text/html" } });
-      event("Page.loadEventFired", { timestamp: loads });
-      // Send one stray event per load, with a missing or unusable sessionId.
-      if (malformed === "detach-no-session-id") send({ method: "Target.detachedFromTarget", params: {} });
-      if (malformed === "event-bad-utf8") {
-        sendWithInvalidUtf8({ method: "Page.loadEventFired", params: {}, sessionId: BAD_UTF8 });
+      // A #fragment target of the current document keeps that document.
+      const current = history[historyIndex]?.url;
+      const sameDocument = current !== undefined && documentOf(current) === documentOf(url) && fragmentOf(url) !== "";
+      if (!sameDocument) loads++;
+      // The reply names a loaderId only for a navigation that loads a document.
+      reply(sameDocument ? { frameId: mainFrameId() } : { frameId: mainFrameId(), loaderId: "L" + loads });
+      if (neverLoads(url)) return;
+      if (sameDocument && cancelled(url)) return event("Page.frameStoppedLoading", { frameId: mainFrameId() });
+      pushEntry(url);
+      if (sameDocument && restarts(url)) {
+        loads++;
+        return commitDocument(url, "Navigation");
       }
-      return;
+      return sameDocument ? commitSameDocument(url) : commitDocument(url, "Navigation");
+    }
+    case "Page.getNavigationHistory":
+      return reply({ currentIndex: historyIndex, entries: history });
+    case "Page.navigateToHistoryEntry": {
+      const target = history.findIndex(entry => entry.id === params.entryId);
+      if (target === -1) return reply({});
+      const url = history[target].url;
+      const sameDocument = documentOf(history[historyIndex].url) === documentOf(url);
+      reply({});
+      if (neverLoads(url) || stallsOnReturn(url)) return;
+      historyIndex = target;
+      if (sameDocument) return commitSameDocument(url);
+      if (bfcached(url)) return commitDocument(url, "BackForwardCacheRestore");
+      loads++;
+      return commitDocument(url, "Navigation");
     }
     case "Page.captureScreenshot":
       return reply({ data: screenshotBase64 });
@@ -140,8 +314,14 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       return reply({});
     case "Runtime.evaluate": {
       if (params.expression === "document.title") {
+        titleFetches++;
         if (noTitleReply) return;
-        return reply({ result: { type: "string", value: "fake chrome" } });
+        if (failNextTitleFetch) {
+          failNextTitleFetch = false;
+          const error = { code: -32000, message: "Cannot find context with specified id" };
+          return send({ id, error, sessionId });
+        }
+        return reply({ result: { type: "string", value: documentTitle } });
       }
       // This is the click(selector) actionability check. It needs a DOM, so
       // reply with a fixed [cx, cy] instead of running it.

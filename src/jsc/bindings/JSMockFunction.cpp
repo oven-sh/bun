@@ -33,6 +33,7 @@
 #include <JavaScriptCore/PropertyNameArray.h>
 #include <JavaScriptCore/ButterflyInlines.h>
 #include <JavaScriptCore/CustomGetterSetter.h>
+#include <JavaScriptCore/JSCellButterfly.h>
 #include "JavaScriptCore/AOTHost.h"
 #include "BunPlugin.h"
 #include "BunCompiledModules.h"
@@ -790,6 +791,34 @@ public:
         this->putDirect(vm, vm.propertyNames->prototype, value, prototypeAttributes);
     }
 
+    // The mock whose list instanceMethodKeys() reads: this one, or the first mock of a class that `{ spy: true }` spied in place again.
+    JSMockFunction* instanceMethodKeysHolder()
+    {
+        JSCell* cell = m_instanceMethodKeys.get();
+        auto* first = cell ? dynamicDowncast<JSMockFunction>(cell) : nullptr;
+        return first ? first : this;
+    }
+
+    // The keys of the methods that a spied class defines on its own prototype. `new` gives the instance a mock of its own for these only. Null when none were recorded.
+    JSC::JSCellButterfly* instanceMethodKeys()
+    {
+        if (!m_instanceMethodKeys)
+            return nullptr;
+        JSCell* cell = instanceMethodKeysHolder()->m_instanceMethodKeys.get();
+        return cell ? dynamicDowncast<JSC::JSCellButterfly>(cell) : nullptr;
+    }
+
+    void setInstanceMethodKeys(JSC::VM& vm, JSC::JSCellButterfly* keys)
+    {
+        m_instanceMethodKeys.set(vm, this, keys);
+    }
+
+    void shareInstanceMethodKeysOf(JSC::VM& vm, JSMockFunction* holder)
+    {
+        ASSERT(holder != this && holder->instanceMethodKeysHolder() == holder);
+        m_instanceMethodKeys.set(vm, this, holder);
+    }
+
     void materializePrototype(JSC::VM& vm)
     {
         JSObject* prototype = JSC::constructEmptyObject(this->globalObject());
@@ -1035,6 +1064,8 @@ private:
     JSC::Identifier m_spyIdentifier;
     unsigned m_spyAttributes { 0 };
     uint8_t m_lists { 0 };
+    // A JSCellButterfly of keys, or the JSMockFunction that holds it. See instanceMethodKeys().
+    JSC::WriteBarrier<JSC::JSCell> m_instanceMethodKeys;
 };
 
 template<typename Visitor>
@@ -1058,6 +1089,7 @@ void JSMockFunction::visitAdditionalChildrenInGCThread(Visitor& visitor)
     visitor.append(fn->ownPrototype);
     visitor.append(fn->ownPrototypeParent);
     visitor.append(fn->m_initialImplementation);
+    visitor.append(fn->m_instanceMethodKeys);
 }
 
 template<typename Visitor>
@@ -1667,6 +1699,26 @@ static ALWAYS_INLINE JSC::JSValue runMockImplementation(JSC::JSGlobalObject* glo
     RELEASE_AND_RETURN(scope, JSC::call(globalObject, function, callData, thisValue, args));
 }
 
+// The value of an own data property, or empty. Not getDirect(), which does not see what a built-in prototype serves from its static table.
+static NEVER_INLINE JSValue ownDataValue(JSGlobalObject* globalObject, JSObject* holder, PropertyName key)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSC::PropertySlot slot(holder, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
+    bool found = holder->methodTable()->getOwnPropertySlot(holder, globalObject, key, slot);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!found || !slot.isValue())
+        return {};
+    RELEASE_AND_RETURN(scope, slot.getValue(globalObject, key));
+}
+
+static NEVER_INLINE Identifier instanceMethodKey(JSGlobalObject* globalObject, JSC::JSCellButterfly* keys, unsigned index)
+{
+    JSValue key = keys->get(index);
+    if (key.isSymbol())
+        return Identifier::fromUid(asSymbol(key)->privateName());
+    return asString(key)->toIdentifier(globalObject);
+}
+
 static void mockInstanceMethods(Zig::GlobalObject* globalObject, JSMockFunction* fn, JSC::JSObject* instance)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1678,9 +1730,18 @@ static void mockInstanceMethods(Zig::GlobalObject* globalObject, JSMockFunction*
         return;
     JSObject* prototype = asObject(prototypeValue);
 
+    // The keys that `{ spy: true }` recorded leave out the spies of inherited methods. Without them, every mock on the prototype gets one on the instance.
     JSC::PropertyNameArrayBuilder keys(vm, JSC::PropertyNameMode::StringsAndSymbols, JSC::PrivateSymbolMode::Exclude);
-    prototype->methodTable()->getOwnPropertyNames(prototype, globalObject, keys, JSC::DontEnumPropertiesMode::Include);
-    RETURN_IF_EXCEPTION(scope, );
+    if (JSC::JSCellButterfly* recorded = fn->instanceMethodKeys()) {
+        for (unsigned i = 0; i < recorded->length(); ++i) {
+            Identifier key = instanceMethodKey(globalObject, recorded, i);
+            RETURN_IF_EXCEPTION(scope, );
+            keys.addUnchecked(key.impl());
+        }
+    } else {
+        prototype->methodTable()->getOwnPropertyNames(prototype, globalObject, keys, JSC::DontEnumPropertiesMode::Include);
+        RETURN_IF_EXCEPTION(scope, );
+    }
 
     for (const auto& key : keys) {
         if (key == vm.propertyNames->constructor)
@@ -2539,9 +2600,12 @@ struct Automocker {
     // Work list of (original, replacement, AutomockKind) triples.
     JSC::MarkedArgumentBuffer pending {};
     JSC::JSFunction* accessor { nullptr };
+    // What recordInstanceMethodKeys() gives every class that defines no method.
+    JSC::JSCellButterfly* noInstanceMethodKeys { nullptr };
 
     AutomockKind kindOf(JSValue);
     JSValue replacementFor(JSValue, AutomockRole = AutomockRole::Member);
+    void recordInstanceMethodKeys(JSMockFunction* mock, JSObject* function);
     void mockElements(JSObject* original, JSC::JSArray* replacement);
     void mockMembers(JSObject* original, JSObject* replacement, AutomockKind);
 };
@@ -2586,6 +2650,97 @@ AutomockKind Automocker::kindOf(JSValue value)
     if (value.isCallable() && tagView->contains("Function"_s))
         return AutomockKind::Function;
     return AutomockKind::Keep;
+}
+
+// Whether the class of `prototype` inherits a method under `key`. Reads the prototypes above as Automocker::mockMembers() does, which leaves a spy of each such method on `prototype`.
+static bool inheritsMethod(Zig::GlobalObject* globalObject, JSObject* prototype, PropertyName key)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    for (JSObject* holder = prototype;;) {
+        JSValue next = holder->getPrototype(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!next.isObject())
+            return false;
+        holder = asObject(next);
+        if (holder == globalObject->objectPrototype() || holder == globalObject->functionPrototype() || holder == globalObject->regExpPrototype())
+            return false;
+        JSC::PropertyDescriptor descriptor;
+        bool found = holder->getOwnPropertyDescriptor(globalObject, key, descriptor);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (found)
+            return descriptor.isDataDescriptor() && descriptor.value().isCallable();
+    }
+}
+
+// The methods that a class defines on its own prototype. With `spy`, the prototype of its mock holds a spy for each inherited method too, so they are read from the class.
+__attribute__((minsize)) void Automocker::recordInstanceMethodKeys(JSMockFunction* mock, JSObject* function)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue prototypeValue = ownDataValue(globalObject, function, vm.propertyNames->prototype);
+    RETURN_IF_EXCEPTION(scope, );
+    JSObject* prototype = prototypeValue ? prototypeValue.getObject() : nullptr;
+    if (!prototype)
+        return;
+
+    JSC::PropertyNameArrayBuilder keys(vm, JSC::PropertyNameMode::StringsAndSymbols, JSC::PrivateSymbolMode::Exclude);
+    prototype->methodTable()->getOwnPropertyNames(prototype, globalObject, keys, JSC::DontEnumPropertiesMode::Include);
+    RETURN_IF_EXCEPTION(scope, );
+
+    // An earlier `{ spy: true }` in place left its mock of the class as `constructor`. That mock has the keys that were the class's own then.
+    JSValue constructor = ownDataValue(globalObject, prototype, vm.propertyNames->constructor);
+    RETURN_IF_EXCEPTION(scope, );
+    auto* earlier = constructor ? dynamicDowncast<JSMockFunction>(constructor) : nullptr;
+    if (earlier && earlier->getDirect(vm, vm.propertyNames->prototype) != JSValue(prototype))
+        earlier = nullptr;
+    JSC::IdentifierSet wereOwn;
+    if (auto* earlierKeys = earlier ? earlier->instanceMethodKeys() : nullptr) {
+        for (unsigned i = 0; i < earlierKeys->length(); ++i) {
+            Identifier key = instanceMethodKey(globalObject, earlierKeys, i);
+            RETURN_IF_EXCEPTION(scope, );
+            wereOwn.add(key.impl());
+        }
+    }
+
+    JSC::MarkedArgumentBuffer own;
+    for (const auto& key : keys) {
+        if (key == vm.propertyNames->constructor)
+            continue;
+        JSValue method = ownDataValue(globalObject, prototype, key);
+        RETURN_IF_EXCEPTION(scope, );
+        if (!method || !method.isCallable())
+            continue;
+        // The earlier pass also left a spy here for each method that the class inherits. A mock under any other key is a method that the class got later.
+        auto* left = earlier ? dynamicDowncast<JSMockFunction>(method) : nullptr;
+        if (left && left->isAutomock && !wereOwn.contains(key.impl())) {
+            bool isInherited = inheritsMethod(globalObject, prototype, key);
+            RETURN_IF_EXCEPTION(scope, );
+            if (isInherited)
+                continue;
+        }
+        own.append(identifierToJSValue(vm, key));
+    }
+
+    JSC::JSCellButterfly* list = own.isEmpty() ? noInstanceMethodKeys : nullptr;
+    if (!list) {
+        list = own.hasOverflowed() ? nullptr : JSC::JSCellButterfly::tryCreateFromArgList(vm, own);
+        if (!list) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return;
+        }
+        if (own.isEmpty())
+            noInstanceMethodKeys = list;
+    }
+    // A prototype that is spied in place has one list: `constructor` stays the earlier mock, which also constructs what the class makes through Symbol.species.
+    if (earlier && !leaveOriginalAlone) {
+        JSMockFunction* holder = earlier->instanceMethodKeysHolder();
+        holder->setInstanceMethodKeys(vm, list);
+        mock->shareInstanceMethodKeysOf(vm, holder);
+        return;
+    }
+    mock->setInstanceMethodKeys(vm, list);
 }
 
 __attribute__((minsize)) JSValue Automocker::replacementFor(JSValue value, AutomockRole role)
@@ -2645,6 +2800,8 @@ __attribute__((minsize)) JSValue Automocker::replacementFor(JSValue value, Autom
         RETURN_IF_EXCEPTION(scope, {});
         if (spy) {
             mock->setInitialImplementation(globalObject, value);
+            RETURN_IF_EXCEPTION(scope, {});
+            recordInstanceMethodKeys(mock, original);
             RETURN_IF_EXCEPTION(scope, {});
         }
         replacement = mock;

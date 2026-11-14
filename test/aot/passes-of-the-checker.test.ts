@@ -42,7 +42,7 @@ console.log(f.kind, other);
 // padding padding padding padding padding padding padding padding padding padding
 `;
 
-describe.skipIf(!!unsupported)("--aot-testing=Passes=2", () => {
+describe.concurrent.skipIf(!!unsupported)("--aot-testing=Passes=2", () => {
   // The IR of the program and the counts of what was proven, built in that many passes.
   async function build(folder: string, passes: number) {
     const wire = join(folder, `passes-${passes}.ir`);

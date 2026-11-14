@@ -130,7 +130,7 @@ Use the `--concurrent` flag to run all tests concurrently within their respectiv
 bun test --concurrent
 ```
 
-When this flag is enabled, all tests run in parallel unless marked with `test.serial`.
+When this flag is enabled, all tests run in parallel unless marked with `test.serial` or placed in a `describe.serial` group.
 
 ### `--max-concurrency` flag
 
@@ -172,7 +172,7 @@ test("sequential test", () => {
 
 ### `test.serial`
 
-Force tests to run sequentially, even when the `--concurrent` flag is enabled:
+Force tests to run sequentially, even when the `--concurrent` flag is enabled. Use `describe.serial` to do the same for a group of tests. A test or a nested group that you mark `.concurrent` still runs concurrently.
 
 ```ts title="math.test.ts" icon="/icons/typescript.svg"
 import { test, expect } from "bun:test";

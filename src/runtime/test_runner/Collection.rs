@@ -45,7 +45,7 @@ pub(crate) struct QueuedDescribe {
 
 impl Collection {
     /// `hook_scope` (`BunTestRoot::hook_scope`) becomes the parent of the file's root scope.
-    pub(crate) fn init(hook_scope: *mut DescribeScope) -> Collection {
+    pub(crate) fn init(hook_scope: *mut DescribeScope, default_concurrent: bool) -> Collection {
         let _g = group::begin();
 
         let only = if let Some(runner) = Jest::runner() {
@@ -57,7 +57,8 @@ impl Collection {
         let mut root_scope = DescribeScope::create(bun_test::BaseScope {
             parent: Some(hook_scope),
             name: None,
-            concurrent: false,
+            // The file's default. A scope without `.concurrent` or `.serial` inherits it.
+            concurrent: default_concurrent,
             mode: bun_test::ScopeMode::Normal,
             only,
             has_callback: false,

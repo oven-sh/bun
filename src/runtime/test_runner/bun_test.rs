@@ -749,8 +749,6 @@ pub(crate) struct BunTest {
     pub(crate) reporter: Option<NonNull<CommandLineReporter>>,
     pub(crate) timer: EventLoopTimer,
     pub(crate) result_queue: ResultQueue,
-    /// Whether tests in this file should default to concurrent execution
-    pub(crate) default_concurrent: bool,
     pub(crate) first_last: FirstLast,
     pub(crate) extra_execution_entries: Vec<*mut ExecutionEntry>,
     /// Heap-boxed bitwise clones of hook entries from `Order::generate_order_test`.
@@ -792,11 +790,10 @@ impl BunTest {
             in_run_loop: false,
             phase: Phase::Collection,
             file_id,
-            collection: Collection::init(hook_scope),
+            collection: Collection::init(hook_scope, default_concurrent),
             execution: Execution::Execution::init(),
             reporter,
             result_queue: ResultQueue::init(),
-            default_concurrent,
             first_last,
             extra_execution_entries: Vec::new(),
             cloned_hook_entries: Vec::new(),

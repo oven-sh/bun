@@ -166,6 +166,366 @@ describe("bundler", () => {
       assert(!out.includes("$newPromiseCapability"), "events polyfill must not reference a JSC builtin intrinsic");
     },
   });
+  // The polyfill (src/node-fallbacks/events.js) is a hand copy of src/js/node/events.ts. One script runs against both:
+  // as a browser bundle it gets the polyfill, as a bun bundle it gets the runtime module. Both must print the same.
+  // Node prints other values in two places, where the runtime does not follow it: the event of
+  // "removeAllListeners(name)" carries the once() wrapper of `g`, and "a listener that removes another listener of
+  // the list" throws. Node 26.3.0 also runs the listener twice in "a once() wrapper called again by a removeListener
+  // listener". Node 26.12.1 runs it once, like the runtime.
+  const removeListenerEntry = /* js */ `
+    import { EventEmitter } from "events";
+    import { once } from "node:events";
+    const log = (label, value) => console.log(label + ": " + JSON.stringify(value));
+    function f() {}
+    function g() {}
+    function h() {}
+    const label = listener => (listener === f ? "f" : listener === g ? "g" : listener === h ? "h" : listener.name);
+    // Records each "removeListener" event of the emitter as "<event name>:<listener>".
+    function watch(emitter) {
+      const seen = [];
+      emitter.on("removeListener", (name, listener) => seen.push(String(name) + ":" + label(listener)));
+      return seen;
+    }
+    {
+      const e = new EventEmitter();
+      const seen = watch(e);
+      e.once("x", f);
+      e.emit("x");
+      e.on("z", g);
+      e.off("z", g);
+      log("off() and a once() listener that ran", seen);
+    }
+    {
+      const e = new EventEmitter();
+      const seen = watch(e);
+      e.on("x", f);
+      e.on("x", h);
+      e.off("x", g);
+      e.off("nothing", f);
+      e.off("x", f);
+      e.off("x", f);
+      e.off("x", h);
+      e.off("x", h);
+      log("off() of a function that is not attached", [seen, e.eventNames()]);
+    }
+    {
+      const e = new EventEmitter();
+      const states = [];
+      e.on("removeListener", name => states.push([e.listenerCount(name), e.eventNames()]));
+      e.on("x", f);
+      e.on("x", g);
+      e.off("x", f);
+      e.off("x", g);
+      log("listenerCount() and eventNames() inside the listener", states);
+    }
+    {
+      const e = new EventEmitter();
+      const order = [];
+      e.on("removeListener", name => order.push("removed " + name));
+      e.once("x", () => order.push("ran once"));
+      e.prependOnceListener("x", () => order.push("ran prependOnce"));
+      e.emit("x");
+      log("a once() listener leaves before it runs", order);
+    }
+    {
+      const e = new EventEmitter();
+      let calls = 0;
+      const count = () => ++calls;
+      e.once("x", count);
+      e.on("x", count);
+      e.emit("x");
+      e.emit("x");
+      e.emit("x");
+      log("once(fn) then on(fn), 3 emits: calls, listeners left", [calls, e.listenerCount("x")]);
+    }
+    {
+      const e = new EventEmitter();
+      const calls = [];
+      e.once("x", () => {
+        calls.push("a");
+        if (calls.length === 1) e.emit("x");
+      });
+      e.once("x", () => calls.push("b"));
+      e.emit("x");
+      log("a once() listener that emits the event again", calls);
+    }
+    {
+      const e = new EventEmitter();
+      let calls = 0;
+      const listener = function (value) {
+        calls++;
+        return [this === e, value];
+      };
+      const returnsEmitter = e.once("x", listener) === e;
+      const wrapper = e.rawListeners("x")[0];
+      log("a once() wrapper called twice", [returnsEmitter, wrapper("a"), wrapper("b"), calls]);
+    }
+    {
+      const e = new EventEmitter();
+      let calls = 0;
+      e.once("x", () => ++calls);
+      const wrapper = e.rawListeners("x")[0];
+      e.on("removeListener", () => wrapper());
+      e.emit("x");
+      log("a once() wrapper called again by a removeListener listener", calls);
+    }
+    {
+      const e = new EventEmitter();
+      const seen = watch(e);
+      e.on("x", f);
+      e.once("x", g);
+      e.on("y", h);
+      e.removeAllListeners("x");
+      log("removeAllListeners(name)", [seen, e.eventNames()]);
+    }
+    {
+      const e = new EventEmitter();
+      const seen = [];
+      e.on("removeListener", function first(name, listener) {
+        seen.push(String(name) + ":" + label(listener));
+      });
+      e.on("removeListener", function second() {});
+      e.on("x", f);
+      e.on(Symbol("s"), g);
+      e.removeAllListeners();
+      log("removeAllListeners()", [seen, e.eventNames(), e._eventsCount]);
+    }
+    {
+      const e = new EventEmitter();
+      e.on("keep", f);
+      for (const name of ["", 0, undefined, null, false]) {
+        e.on(name, g);
+        e.removeAllListeners(name);
+      }
+      const seen = watch(e);
+      for (const name of ["", 0, undefined, null, false]) {
+        e.on(name, g);
+        e.removeAllListeners(name);
+      }
+      log("removeAllListeners(falsy name) removes that event only", [e.eventNames(), seen]);
+    }
+    {
+      const e = new EventEmitter();
+      e.on("removeListener", (name, listener) => e.on("again", listener));
+      e.on("x", f);
+      e.removeAllListeners();
+      log("removeAllListeners() also drops what a removeListener listener adds", [
+        e.eventNames(),
+        e.listenerCount("again"),
+        e._eventsCount,
+      ]);
+    }
+    {
+      const e = new EventEmitter();
+      const seen = watch(e);
+      e.on("x", () => e.removeAllListeners("nothing"));
+      e.emit("x");
+      log("removeAllListeners(name without listeners)", [seen, e.listenerCount("x")]);
+    }
+    {
+      const e = new EventEmitter();
+      const seen = [];
+      e.on("removeListener", (name, listener) => {
+        seen.push(name + ":" + label(listener));
+        if (listener === h) e.off("x", f);
+      });
+      e.on("x", f);
+      e.on("x", g);
+      e.on("x", h);
+      e.removeAllListeners("x");
+      log("a listener that removes another listener of the list", [seen, e.listenerCount("x")]);
+    }
+    {
+      const e = new EventEmitter();
+      e.on("x", f);
+      e.on("y", g);
+      e.removeAllListeners("nothing");
+      e.removeAllListeners("x");
+      const afterName = [e.eventNames(), e._eventsCount];
+      e.removeAllListeners();
+      log("removeAllListeners while nothing listens for removeListener", [afterName, e.eventNames(), e._eventsCount]);
+    }
+    {
+      const e = Object.create(EventEmitter.prototype);
+      log("removeAllListeners() before the constructor ran", [e.removeAllListeners() === e, typeof e._events]);
+    }
+    {
+      // Nothing listens for "removeListener": the calls are the ones below, and on() and removeListener() from once().
+      const calls = [];
+      class Spy extends EventEmitter {
+        on(name, listener) {
+          calls.push("on " + name);
+          return super.on(name, listener);
+        }
+        addListener(name, listener) {
+          calls.push("addListener " + name);
+          return super.addListener(name, listener);
+        }
+        emit(name, ...args) {
+          calls.push("emit " + name);
+          return super.emit(name, ...args);
+        }
+        removeListener(name, listener) {
+          calls.push("removeListener " + name);
+          return super.removeListener(name, listener);
+        }
+      }
+      const e = new Spy();
+      e.on("x", f);
+      e.removeListener("x", f);
+      e.once("y", f);
+      e.emit("y");
+      e.on("z", f);
+      e.on("z", g);
+      e.removeAllListeners("z");
+      e.on("z", f);
+      e.removeAllListeners();
+      log("calls while nothing listens for removeListener", calls);
+    }
+    {
+      // Something listens for "removeListener": each removal is a removeListener() call, and each event an emit() call.
+      // The log has each emit() that reaches a listener. When the last listener of an emitter is a "removeListener"
+      // listener, Node and the runtime also call emit() for its removal, and nothing receives the event. The polyfill
+      // does not make that call.
+      const calls = [];
+      class Spy extends EventEmitter {
+        emit(name, ...args) {
+          const delivered = super.emit(name, ...args);
+          if (delivered) calls.push("emit " + name);
+          return delivered;
+        }
+        removeListener(name, listener) {
+          calls.push("removeListener " + name);
+          return super.removeListener(name, listener);
+        }
+        removeAllListeners(...names) {
+          calls.push("removeAllListeners(" + names.join() + ")");
+          return super.removeAllListeners(...names);
+        }
+      }
+      const e = new Spy();
+      e.on("removeListener", h);
+      e.on("keep", f);
+      e.on("z", g);
+      e.removeAllListeners("z");
+      log("calls of removeAllListeners(name) while something listens", calls.splice(0));
+      e.removeAllListeners();
+      log("calls of removeAllListeners() while something listens", calls);
+    }
+    {
+      // A "newListener" listener that replaces _events does not lose the listener that is added.
+      const state = e => [e.listenerCount("x"), e.eventNames(), e._eventsCount, e.emit("x")];
+      const a = new EventEmitter();
+      a.on("newListener", () => a.removeAllListeners());
+      a.on("x", f);
+      const b = new EventEmitter();
+      b.on("newListener", () => b.removeAllListeners());
+      b.prependListener("x", f);
+      const c = new EventEmitter();
+      c.on("removeListener", () => c.removeAllListeners());
+      c.once("newListener", () => {});
+      c.on("x", f);
+      log("on() while a newListener listener removes every listener", [state(a), state(b), state(c)]);
+    }
+    {
+      const e = new EventEmitter();
+      e.on("y", f);
+      e.on("y", g);
+      e.once("y", f);
+      log("listenerCount(name, listener)", {
+        all: e.listenerCount("y"),
+        f: e.listenerCount("y", f),
+        g: e.listenerCount("y", g),
+        h: e.listenerCount("y", h),
+        null: e.listenerCount("y", null),
+        otherName: e.listenerCount("none", f),
+        length: e.listenerCount.length,
+      });
+    }
+    {
+      const e = new EventEmitter();
+      const names = [];
+      e.on("removeListener", name => names.push(name));
+      const promise = once(e, "x");
+      e.emit("x", 1);
+      log("events.once()", [await promise, names, e.eventNames()]);
+    }
+    {
+      const e = new EventEmitter();
+      const errors = new Set();
+      let toStringCalls = 0;
+      const withToString = { toString: () => ++toStringCalls };
+      const notFunctions = [null, undefined, "s", Symbol("s"), { __proto__: null }, withToString];
+      for (const method of ["on", "once", "prependListener", "prependOnceListener", "off"]) {
+        for (const value of notFunctions) {
+          try {
+            e[method]("x", value);
+            errors.add(method + " does not throw");
+          } catch (error) {
+            errors.add(error.name + " " + error.code);
+          }
+        }
+      }
+      let received;
+      try {
+        e.off("x", null);
+      } catch (error) {
+        received = error.message.slice(error.message.indexOf("Received"));
+      }
+      log("a listener that is not a function", [[...errors], received, toStringCalls]);
+    }
+    {
+      // The last block: its line is printed from the "error" listener, when captureRejections has both rejections.
+      const e = new EventEmitter({ captureRejections: true });
+      const errors = [];
+      e.on("error", error => {
+        if (errors.push(error.message) === 2) log("a once() listener that rejects, with captureRejections", errors);
+      });
+      e.once("x", async () => {
+        throw new Error("once");
+      });
+      e.prependOnceListener("x", async () => {
+        throw new Error("prependOnce");
+      });
+      e.emit("x");
+    }
+  `;
+  const removeListenerStdout = `
+    off() and a once() listener that ran: ["x:f","z:g"]
+    off() of a function that is not attached: [["x:f","x:h"],["removeListener"]]
+    listenerCount() and eventNames() inside the listener: [[1,["removeListener","x"]],[0,["removeListener"]]]
+    a once() listener leaves before it runs: ["removed x","ran prependOnce","removed x","ran once"]
+    once(fn) then on(fn), 3 emits: calls, listeners left: [4,1]
+    a once() listener that emits the event again: ["a","b"]
+    a once() wrapper called twice: [true,[true,"a"],null,1]
+    a once() wrapper called again by a removeListener listener: 1
+    removeAllListeners(name): [["x:g","x:f"],["removeListener","y"]]
+    removeAllListeners(): [["x:f","Symbol(s):g","removeListener:second"],[],0]
+    removeAllListeners(falsy name) removes that event only: [["keep","removeListener"],[":g","0:g","undefined:g","null:g","false:g"]]
+    removeAllListeners() also drops what a removeListener listener adds: [[],0,0]
+    removeAllListeners(name without listeners): [[],1]
+    a listener that removes another listener of the list: [["x:h","x:f","x:g"],0]
+    removeAllListeners while nothing listens for removeListener: [[["y"],1],[],0]
+    removeAllListeners() before the constructor ran: [true,"undefined"]
+    calls while nothing listens for removeListener: ["on x","removeListener x","on y","emit y","removeListener y","on z","on z","on z"]
+    calls of removeAllListeners(name) while something listens: ["removeAllListeners(z)","removeListener z","emit removeListener"]
+    calls of removeAllListeners() while something listens: ["removeAllListeners()","removeAllListeners(keep)","removeListener keep","emit removeListener","removeAllListeners(removeListener)","removeListener removeListener"]
+    on() while a newListener listener removes every listener: [[1,["x"],1,true],[1,["x"],1,true],[1,["x"],1,true]]
+    listenerCount(name, listener): {"all":3,"f":2,"g":1,"h":0,"null":3,"otherName":0,"length":2}
+    events.once(): [[1],["x","error"],["removeListener"]]
+    a listener that is not a function: [["TypeError ERR_INVALID_ARG_TYPE"],"Received null",0]
+    a once() listener that rejects, with captureRejections: ["prependOnce","once"]
+  `;
+  itBundled("browser/NodeEventsRemoveListener", {
+    files: { "/entry.js": removeListenerEntry },
+    target: "browser",
+    run: { stdout: removeListenerStdout },
+  });
+  itBundled("browser/NodeEventsRemoveListenerInRuntime", {
+    files: { "/entry.js": removeListenerEntry },
+    target: "bun",
+    run: { stdout: removeListenerStdout },
+  });
   itBundled("browser/NodeUrlProtocolTablesIgnorePrototype", {
     files: {
       "/entry.js": /* js */ `

@@ -46,6 +46,24 @@ pub enum CmdState {
     Done,
 }
 
+/// Why a Cmd ends before its command ran.
+#[derive(Clone, Copy)]
+pub(crate) enum CmdFailure {
+    /// An expansion, a redirect or the stdio setup failed, or the shell refused an argument.
+    Setup,
+    /// No command of that name exists. POSIX 2.8.2 and sh: 127.
+    NotFound,
+}
+
+impl CmdFailure {
+    pub(crate) const fn exit_code(self) -> ExitCode {
+        match self {
+            CmdFailure::Setup => 1,
+            CmdFailure::NotFound => 127,
+        }
+    }
+}
+
 #[derive(Default)]
 pub(crate) enum Exec {
     #[default]
@@ -303,7 +321,7 @@ impl Cmd {
 
     /// IOWriter completion callback for the error message written in
     /// `WaitingWriteErr`: throw on write failure, otherwise finish the Cmd
-    /// with exit code 1.
+    /// with the status `Builtin::cmd_write_failing_error` stored in `exit_code`.
     pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         this: NodeId,
@@ -314,12 +332,10 @@ impl Cmd {
             interp.throw(crate::shell::ShellErr::from_system(err));
             return Yield::Failed(this);
         }
-        debug_assert!(matches!(
-            interp.as_cmd(this).state,
-            CmdState::WaitingWriteErr
-        ));
-        let parent = interp.as_cmd(this).base.parent;
-        interp.child_done(parent, this, 1)
+        let me = interp.as_cmd_mut(this);
+        debug_assert!(matches!(me.state, CmdState::WaitingWriteErr));
+        me.state = CmdState::Done;
+        Yield::Next(this)
     }
 
     pub(crate) fn child_done(
@@ -343,7 +359,12 @@ impl Cmd {
             };
             interp.deinit_node(child);
             if let Some(err) = err {
-                return Builtin::cmd_write_failing_error(interp, this, format_args!("{}\n", err));
+                return Builtin::cmd_write_failing_error(
+                    interp,
+                    this,
+                    CmdFailure::Setup,
+                    format_args!("{}\n", err),
+                );
             }
             let me = interp.as_cmd_mut(this);
             me.exit_code = Some(1);
@@ -490,12 +511,11 @@ impl Cmd {
             }
         };
         let Some(mut resolved) = resolved else {
-            // writeFailingError("bun: command not found: {s}\n") →
-            // `.waiting_write_err` → onIOWriterChunk → `parent.childDone(this, 1)`.
             drop(spawn_args);
             return Builtin::cmd_write_failing_error(
                 interp,
                 this,
+                CmdFailure::NotFound,
                 format_args!("bun: command not found: {}\n", bstr::BStr::new(&first_arg)),
             );
         };
@@ -516,6 +536,7 @@ impl Cmd {
                 return Builtin::cmd_write_failing_error(
                     interp,
                     this,
+                    CmdFailure::Setup,
                     format_args!(
                         "bun: refusing to pass argument with cmd.exe special characters to a batch file: {}\n",
                         bstr::BStr::new(&arg)
@@ -627,7 +648,12 @@ impl Cmd {
             drop(arena);
             // Revert exec so `deinit` doesn't free a null `child`.
             interp.as_cmd_mut(this).exec = Exec::None;
-            return Builtin::cmd_write_failing_error(interp, this, format_args!("{}\n", e));
+            return Builtin::cmd_write_failing_error(
+                interp,
+                this,
+                CmdFailure::Setup,
+                format_args!("{}\n", e),
+            );
         }
 
         // Read the subprocess back via the arena instead of holding `child_out`
@@ -795,6 +821,7 @@ impl Cmd {
                     return Ok(Some(Builtin::cmd_write_failing_error(
                         interp,
                         this,
+                        CmdFailure::Setup,
                         format_args!(
                             "bun: ambiguous redirect: at `{}`\n",
                             bstr::BStr::new(&argv0)
@@ -834,6 +861,7 @@ impl Cmd {
                         return Ok(Some(Builtin::cmd_write_failing_error(
                             interp,
                             this,
+                            CmdFailure::Setup,
                             format_args!(
                                 "bun: {}: {}",
                                 sys_err.message,

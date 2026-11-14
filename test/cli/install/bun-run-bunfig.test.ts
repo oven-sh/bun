@@ -129,7 +129,8 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
       const err = result.stderr.toString().trim();
       expect(err).toContain(command_not_found);
       expect(err).toContain("this-should-start-with-bun-in-the-error-message");
-      expect(result.success).toBeFalse();
+      // The Bun shell and the system shell agree: 127 is "command not found".
+      expect(result.exitCode).toBe(127);
     });
   });
 

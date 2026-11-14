@@ -637,6 +637,7 @@ const serverOptionNames = [
   "hmr",
   "console",
   "chromeDevToolsAutomaticWorkspaceFolders",
+  "allowedHosts",
   "routes",
   "static",
   "dir",

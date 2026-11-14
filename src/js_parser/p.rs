@@ -471,7 +471,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) chai_imports: crate::parser::ChaiImports,
     /// Only read by a debug assertion that `uses_test_api()` covers every test-only transform.
     pub(crate) did_apply_test_feature: bool,
-    /// Also computed outside `bun test`, for `uses_test_api()`.
+    /// For `uses_test_api()`, so it is also computed outside `bun test` and is the same with and without Vitest globals.
     pub(crate) has_hoisted_mock_stmt: bool,
 
     pub(crate) import_meta_glob_use: crate::lower::import_meta_glob::ImportMetaGlobUse,

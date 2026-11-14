@@ -989,6 +989,49 @@ describe.concurrent("`bun test` and `bun run`", () => {
       `import { a } from "./dep.js"; const vi = { mock() {}, hoisted() {}, doMock() {} }; vi.mock("./dep.js"); vi.hoisted(() => 1); vi.doMock(import("./dep.js")); export function f() { return a(); }`,
       false,
     ],
+
+    // `bun test` keeps the frame of an inline snapshot matcher that ends a function. The matcher is known by its name alone.
+    "returned inline snapshot matcher": [
+      "js",
+      `export function f(e, x) { return e(x).toMatchInlineSnapshot(); }`,
+      false,
+    ],
+    "returned inline snapshot matcher, ts": [
+      "ts",
+      `export function f(e: any, x: unknown) { return e(x).toMatchInlineSnapshot(); }`,
+      false,
+    ],
+    "arrow that ends in an inline snapshot matcher": [
+      "js",
+      `export const f = (e, x) => e(x).toThrowErrorMatchingInlineSnapshot();`,
+      false,
+    ],
+    "inline snapshot matcher in CommonJS": ["cjs", `module.exports = (e, x) => e(x).toMatchInlineSnapshot();`, false],
+    "inline snapshot matcher in a variable that is used once": [
+      "js",
+      `export function f(e, x) { const r = e(x).toMatchInlineSnapshot(); return [r]; }`,
+      false,
+    ],
+    "returned inline snapshot matcher of an expect of another module": [
+      "js",
+      `import { a as expect } from "./dep.js"; export function f(x) { return expect(x).toMatchInlineSnapshot(); }`,
+      false,
+    ],
+    "returned inline snapshot matcher of an imported expect": [
+      "js",
+      `import { expect } from "bun:test"; export function f(x) { return expect(x).toMatchInlineSnapshot(); }`,
+      true,
+    ],
+    "returned inline snapshot matcher of the global expect": [
+      "js",
+      `export function f(x) { return expect(x).toMatchInlineSnapshot(); }`,
+      true,
+    ],
+    "returned inline snapshot matcher before a global": [
+      "js",
+      `export function f(e, x) { return e(x).toMatchInlineSnapshot(); } export function g() { return describe; }`,
+      true,
+    ],
   };
 
   test.each(["import", "require"] as const)(
@@ -1045,6 +1088,7 @@ describe.concurrent("`bun test` and `bun run`", () => {
       expect(differs).toContain("import vitest");
       expect(differs).toContain("vi.doMock(import()), imported");
       expect(differs).toContain("vi.mock(import()) that is pure");
+      expect(differs).toContain("returned inline snapshot matcher of an imported expect");
 
       for (const { first, second, afterFirst, afterSecond } of pairs) {
         const differ = (entries: typeof afterFirst, mode: Mode) =>
@@ -1074,6 +1118,8 @@ describe.concurrent("`bun test` and `bun run`", () => {
     ["named=describe", `export const g = () => named;`],
     ["named.dot=expect", `export const g = () => named.dot;`],
     ["named=vi", `export const g = () => named.doMock(import("./dep.js"), () => ({}));`],
+    // Vitest globals leave out `jest`, so only `bun test` without them hoists this.
+    ["jest.mock=replaced", `jest.mock("./dep.js", () => ({ a() {} }));`],
   ])(
     "keep apart the entries of a file that uses it only without, or only with, --define %s",
     async (define, statement) => {
@@ -1084,11 +1130,12 @@ describe.concurrent("`bun test` and `bun run`", () => {
         ...loader(["source.js", "nothing.js"], "import"),
       });
       const flags = ["--define", define];
-      const [runFirst, testFirst] = await Promise.all(
+      const [runFirst, testFirst, vitestFirst] = await Promise.all(
         (
           [
             ["run", "test"],
             ["test", "run"],
+            ["test --globals=vitest", "test"],
           ] as const
         ).map(async ([first, second], i) => {
           const cache = join(String(dir), `.cache-${i}`);
@@ -1098,14 +1145,15 @@ describe.concurrent("`bun test` and `bun run`", () => {
           return { afterFirst, afterSecond: readEntries(cache) };
         }),
       );
-      const fresh = { run: runFirst.afterFirst, test: testFirst.afterFirst };
+      const fresh = { run: runFirst.afterFirst, test: testFirst.afterFirst, vitest: vitestFirst.afterFirst };
       expect({
         differs: !fresh.run.get(0)!.output.equals(fresh.test.get(0)!.output),
-        keys: new Set([fresh.run.get(0)!.key, fresh.test.get(0)!.key, fresh.run.get(1)!.key, fresh.test.get(1)!.key])
-          .size,
+        // One for each mode of the file that uses it, and one that the other file has in every mode.
+        keys: new Set(Object.values(fresh).flatMap(entries => [entries.get(0)!.key, entries.get(1)!.key])).size,
         testAfterRun: runFirst.afterSecond.get(0)!.bytes.equals(fresh.test.get(0)!.bytes),
         runAfterTest: testFirst.afterSecond.get(0)!.bytes.equals(fresh.run.get(0)!.bytes),
-      }).toEqual({ differs: true, keys: 3, testAfterRun: true, runAfterTest: true });
+        testAfterVitest: vitestFirst.afterSecond.get(0)!.bytes.equals(fresh.test.get(0)!.bytes),
+      }).toEqual({ differs: true, keys: 4, testAfterRun: true, runAfterTest: true, testAfterVitest: true });
     },
     60_000,
   );

@@ -1,0 +1,51 @@
+# One constructor function makes the objects of four interfaces that a literal `kind` tells apart. All four have `note`; two of them, a smaller family inside, have `label` too, and store it first.
+# `note` lies at one offset in all four kinds and in the maker's own layout, where it is a name that comes late: a read off the wide family is one load. `label` comes behind it. No cell grows.
+# -- source: makers.ts
+# declare function sink(...values: unknown[]): void;
+# interface Base { kind: number; tint: number; owner: Base }
+# interface Noted extends Base { note: string }
+# interface Named extends Noted { label: string }
+# interface Num extends Noted { kind: 1; value: number }
+# interface Str extends Named { kind: 2; text: string }
+# interface Word extends Named { kind: 3; width: number }
+# interface Mark extends Noted { kind: 4; sign: string }
+# function NodeMaker(this: Base, kind: number) { this.kind = kind; this.tint = 0; this.owner = undefined!; }
+# const Node = NodeMaker as unknown as new (kind: number) => Base;
+# function str(text: string): Str { const node = new Node(2) as Str; node.label = text; node.note = "s"; node.text = text; return node; }
+# function word(label: string): Word { const node = new Node(3) as Word; node.label = label; node.note = "w"; node.width = 1; return node; }
+# function num(value: number): Num { const node = new Node(1) as Num; node.note = "n"; node.value = value; return node; }
+# function mark(sign: string): Mark { const node = new Node(4) as Mark; node.note = "m"; node.sign = sign; return node; }
+# function noteOf(node: Noted): string { return node.note; }
+# function labelOf(node: Named): string { return node.label; }
+# const a = num(1), b = str("b"), c = word("c"), d = mark("d"); b.owner = a; c.owner = b; d.owner = c;
+# sink(noteOf(a) + noteOf(b) + noteOf(c) + noteOf(d), labelOf(b) + labelOf(c), a.tint + d.tint);
+# -- end of source
+# RUN: plan layouts mechanisms=all
+# CHECK: layout L0 CompiledObject size=80
+# CHECK-NEXT: "kind"
+# CHECK-NEXT: "tint"
+# CHECK-NEXT: "owner"
+# CHECK-NEXT: "label" appended {{*}}Inline offset=[[label]]
+# CHECK-NEXT: "note" appended {{*}}Inline offset=[[note]]
+# CHECK: layout [[num]] CompiledObject size=64
+# CHECK-NEXT: "kind"
+# CHECK-NEXT: "tint"
+# CHECK-NEXT: "owner"
+# CHECK-NEXT: "note" {{*}}Inline offset=[[note]]
+# CHECK: layout [[str]] CompiledObject size=64
+# CHECK-NEXT: "kind"
+# CHECK-NEXT: "tint"
+# CHECK-NEXT: "owner"
+# CHECK-NEXT: "label" {{*}}Inline offset=[[label]]
+# CHECK-NEXT: "note" {{*}}Inline offset=[[note]]
+# CHECK: layout [[word]] CompiledObject size=64
+# CHECK-NEXT: "kind"
+# CHECK-NEXT: "tint"
+# CHECK-NEXT: "owner"
+# CHECK-NEXT: "label" {{*}}Inline offset=[[label]]
+# CHECK-NEXT: "note" {{*}}Inline offset=[[note]]
+# CHECK: layout [[mark]] CompiledObject size=64
+# CHECK-NEXT: "kind"
+# CHECK-NEXT: "tint"
+# CHECK-NEXT: "owner"
+# CHECK-NEXT: "note" {{*}}Inline offset=[[note]]

@@ -104,31 +104,7 @@ pub fn init_global(
         // materialized here (see fn doc — avoids aliased `&'static mut` UB).
         return GLOBAL.with(|g| g.get());
     }
-    let loop_ = MiniEventLoop::init();
-    // §Forbidden bans `Box::leak` for `&'static`; this is a
-    // thread-lifetime singleton, so use `heap::alloc` (intrusive ownership)
-    // and store the raw pointer in the thread-local.
-    let global_ptr: *mut MiniEventLoop = bun_core::heap::into_raw(Box::new(loop_));
-    // SAFETY: `global_ptr` was just allocated via `heap::alloc`; this thread
-    // holds the only reference for the duration of first-init. The `GLOBAL`
-    // thread-local is NOT yet published (set below, after this `&mut` is dropped),
-    // so no reader of `GLOBAL` nor a re-entrant `init_global()` can observe
-    // the pointer while this exclusive borrow is live. The `&mut` is scoped to
-    // this function body — NOT `'static` — and ends before we publish/return the
-    // raw ptr.
-    let global = unsafe { &mut *global_ptr };
-
-    // sys-level API is `set_parent_raw(tag, ptr)`. Tag 1 = JS,
-    // tag 2 = mini (`EventLoopHandle` discriminant + 1).
-    {
-        let (tag, ptr) = EventLoopHandle::init_mini(global_ptr).into_tag_ptr();
-        // SAFETY: see `loop_ptr()` invariant.
-        unsafe {
-            (*global.loop_ptr())
-                .internal_loop_data
-                .set_parent_raw(tag, ptr)
-        };
-    }
+    let mut global = MiniEventLoop::init();
 
     // The process-global loader is stored as `AtomicPtr<Loader>`.
     global.env = env
@@ -144,7 +120,7 @@ pub fn init_global(
         // Dupe to keep Box<[u8]> ownership uniform.
         global.top_level_dir = Box::<[u8]>::from(dir);
     } else if global.top_level_dir.is_empty() {
-        let mut buf = bun_paths::PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         match sys::getcwd(&mut buf[..]) {
             Ok(len) => {
                 global.top_level_dir = Box::<[u8]>::from(&buf[..len]);
@@ -155,11 +131,20 @@ pub fn init_global(
         }
     }
 
-    // Publish the thread-local pointer only AFTER the scoped `&mut *global_ptr`
-    // above is no longer used — publishing earlier would let a callee that reads
-    // `GLOBAL` re-derive a `&mut` aliasing `global` (UB). Nothing between the
-    // `&mut` borrow and here reads `GLOBAL` (`EventLoopHandle::init_mini` /
-    // `into_tag_ptr` only copy the pointer value).
+    let uws_loop = global.loop_ptr();
+    // §Forbidden bans `Box::leak` for `&'static`; this is a
+    // thread-lifetime singleton, so use `heap::alloc` (intrusive ownership)
+    // and store the raw pointer in the thread-local.
+    let global_ptr: *mut MiniEventLoop = bun_core::heap::into_raw(Box::new(global));
+
+    // sys-level API is `set_parent_raw(tag, ptr)`. Tag 1 = JS,
+    // tag 2 = mini (`EventLoopHandle` discriminant + 1).
+    {
+        let (tag, ptr) = EventLoopHandle::init_mini(global_ptr).into_tag_ptr();
+        // SAFETY: see `loop_ptr()` invariant.
+        unsafe { (*uws_loop).internal_loop_data.set_parent_raw(tag, ptr) };
+    }
+
     GLOBAL.with(|g| g.set(global_ptr));
     GLOBAL_INITIALIZED.with(|g| g.set(true));
     global_ptr
@@ -182,14 +167,6 @@ impl MiniEventLoop {
     #[inline]
     pub fn loop_ptr(&self) -> *mut UwsLoop {
         self.loop_
-    }
-
-    /// Make a poll in progress (or the next one) return immediately, so the
-    /// `is_done` predicate a `tick` loop spins on is evaluated again. Any thread.
-    pub fn wakeup(&self) {
-        // SAFETY: `loop_` is the live uws loop; `us_wakeup_loop` is thread-safe
-        // and takes the raw pointer (no `&mut Loop` formed).
-        unsafe { bun_uws::us_wakeup_loop(self.loop_) };
     }
 
     /// Raw pointer to the `DotEnv::Loader` backref.
@@ -328,21 +305,6 @@ impl MiniEventLoop {
         }
     }
 
-    /// Run everything already delivered (concurrent + local queues) without
-    /// blocking for more.
-    pub fn run_ready(&mut self, context: *mut c_void) {
-        loop {
-            let _ = self.tick_concurrent_with_count();
-            if self.tasks.readable_length() == 0 {
-                break;
-            }
-            while let Some(task) = self.tasks.read_item() {
-                // SAFETY: see tick_once.
-                unsafe { (*task).run(context) };
-            }
-        }
-    }
-
     pub(crate) fn tick_without_idle(&mut self, context: *mut c_void) {
         loop {
             let _ = self.tick_concurrent_with_count();
@@ -374,7 +336,7 @@ impl MiniEventLoop {
 
     /// `task` must outlive the queued work item; ownership of the intrusive
     /// node stays with the caller until the callback runs.
-    pub fn enqueue_task_concurrent(&mut self, task: NonNull<AnyTaskWithExtraContext>) {
+    pub fn enqueue_task_concurrent(&self, task: NonNull<AnyTaskWithExtraContext>) {
         self.concurrent_tasks.push(task);
         // SAFETY: see `loop_ptr()` invariant.
         unsafe { (*self.loop_ptr()).wakeup() };
@@ -388,7 +350,7 @@ impl MiniEventLoop {
     /// and `ctx` is non-null and outlives the queued task (intrusive node; ownership stays
     /// with caller).
     pub unsafe fn enqueue_task_concurrent_with_extra_ctx<C, P>(
-        &mut self,
+        &self,
         ctx: *mut C,
         callback: fn(*mut C, *mut P),
         field_offset: usize,

@@ -1,0 +1,19 @@
+# `place` enters as an int32 and comes round as `2 * place + 1`, that plus one, or itself: a whole number by the plain walk, held as a double.
+# A product with a whole number is a step of a counter like a sum: the typed copy holds the place as an int32 where it comes round (a position inside the list: no test at the back edge),
+# so its keys are integers made without a test, and the list, which the turns store into, is asked once in front: 91,760 instructions a sort of 48 fractions become 29,840.
+# The other copy, which takes the place as any whole number, stands first.
+# -- source: main.js
+# function sift(heap, from, size) { let place = from; for (;;) { let greatest = place; const left = 2 * place + 1, right = left + 1; if (left < size && heap[left] > heap[greatest]) greatest = left; if (right < size && heap[right] > heap[greatest]) greatest = right; if (greatest === place) return; const moved = heap[place]; heap[place] = heap[greatest]; heap[greatest] = moved; place = greatest; } }
+# const heap = [0.5, 7.5, 3.5, 9.5, 1.5, 8.5, 2.5, 6.5, 4.5]; for (let place = heap.length >> 1; place >= 0; place--) sift(heap, place, Number(JSON.parse("9"))); console.log(heap.join());
+# -- end of source
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: int|whole @Double) frequency=Rare isLoopHead=true
+# CHECK: = Mul {{*}}form=Numbers
+# CHECK: i32 @Int32) isInLoop=true isLoopHead=true
+# CHECK: = Mul {{*}}form=Integers
+# CHECK-NOT: level=Expected
+# CHECK: = PutDoubleIndex
+# CHECK: = PutDoubleIndex
+# CHECK: = TypeTest {{*}}testedType=i32
+# CHECK-NOT: = TypeTest

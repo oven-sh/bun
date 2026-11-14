@@ -1,0 +1,42 @@
+# `joins: boolean | undefined`, `quiet: boolean | null`, each in one byte: the byte is the low byte of the value, whichever of true, false, undefined and null it is: the read gives the value as it lies, and its truth is one compare.
+# A look that asked for a boolean there sent every object whose field holds undefined to the read by name. `strict: boolean`, `loud: boolean`: the source says that neither undefined nor null is read: a boolean is asked for as before.
+# f1 = joined, f2 = hushed
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: : undefined|null|boolean @JSValue = GetSlot {{*}}key="joins" receivers=[L0] level=Proven
+# CHECK: = ToBoolean {{*}}form=Bits
+# CHECK: : boolean @Boolean = GetSlot {{*}}key="strict" receivers=[L0] level=Proven [holdsDeclaredType]
+# RUN(NULL): walk f2 mechanisms=all
+# NULL-LABEL: code f2:Body
+# NULL: : undefined|null|boolean @JSValue = GetSlot {{*}}key="quiet" receivers=[L0] level=Proven
+# NULL: = ToBoolean {{*}}form=Bits
+# NULL: : boolean @Boolean = GetSlot {{*}}key="loud" receivers=[L0] level=Proven [holdsDeclaredType]
+# RUN(LOOK): walk f1 f2 mechanisms=all
+# LOOK-NOT: key="joins" {{*}}[holdsDeclaredType]
+# LOOK-NOT: key="quiet" {{*}}[holdsDeclaredType]
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: "joins" OptionalBoolean
+# PLAN: "strict" OptionalBoolean
+# PLAN: "quiet" OptionalBoolean
+# PLAN: "loud" OptionalBoolean
+# -- source: a-boolean-slot-written-with-undefined-is-asked-only-whether-it-is-filled.ts
+# declare function sink(...values: unknown[]): void;
+# interface Options { joins?: boolean; strict?: boolean; quiet?: boolean; loud?: boolean; count?: number }
+# class Server {
+#   joins: boolean | undefined;
+#   strict: boolean;
+#   quiet: boolean | null;
+#   loud: boolean;
+#   count: number | undefined;
+#   constructor(options: Options) {
+#     this.joins = options.joins;
+#     this.strict = options.strict === true;
+#     this.quiet = options.quiet ?? null;
+#     this.loud = !options.loud;
+#     this.count = options.count;
+#   }
+# }
+# function joined(first: Server | undefined, second: Server): number { const server = first ?? second; if (server.joins) return 1; return server.strict ? 2 : 3; }
+# function hushed(first: Server | undefined, second: Server): number { const server = first ?? second; if (server.quiet) return 1; return server.loud ? 2 : 3; }
+# sink(joined, hushed, new Server({}), new Server({ joins: true, strict: true, quiet: false, loud: true, count: 1 }));
+# -- end of source

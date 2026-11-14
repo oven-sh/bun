@@ -1,0 +1,24 @@
+# -- source: main.cjs
+# var wholes = function (n) { var l = []; for (var k = 0; k < n; k++) l.push(k); return l; };
+# function copy(from, into, also, n) { for (var i = 0; i < n; i++) { into[i] = from[i]; also[i] = i; } return also.length + ":" + also[15]; }
+# print(copy(wholes(16), wholes(16), wholes(globalThis.fails ? 10 : 16), 16));
+# -- end of source
+# Every iteration of an unrolled loop trusts what the loop's entry checks have found. With testing=CheckBoundsInEmittersOnly the walk adds nothing,
+# the loop is unrolled as in an executable, and each access checks the facts that it was given against memory.
+# The entry checks test whether the bound exceeds the length of an array that is read or stored into at the counter. For an array of ten elements and sixteen iterations, the loop as written runs.
+# The walk compares the lengths of `from` and `into` before the loop itself; `also`, a second array that is stored into, is left to the entry checks.
+# Fault injection, testing=SkipUnrollEntryChecks: the eleventh iteration stores past the end of the array.
+# RUN(RIGHT): run-in-shell mechanisms=all globalThis.fails = true;
+# RIGHT: 16:15
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly globalThis.fails = true;
+# HELD: 16:15
+# HELD-NEXT: exited with 0
+# The injected fault does not harm an input that would have passed the entry checks. So the crash in the last run comes from this check and from no other.
+# RUN(PASSES): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly,SkipUnrollEntryChecks
+# PASSES: 16:15
+# PASSES-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly,SkipUnrollEntryChecks globalThis.fails = true;
+# LIE: bun: internal AOT error: redundancy elimination check failed
+# LIE-NEXT: a load or check that the compiler removed as redundant gives a different result here
+# LIE: crashed with

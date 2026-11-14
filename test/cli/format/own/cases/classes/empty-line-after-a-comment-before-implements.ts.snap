@@ -1,0 +1,29 @@
+------------------
+{ printWidth: 80 }
+------------------
+class A
+  extends B
+  // 1
+
+  implements C, D {}
+class E
+  extends F
+  // 2
+
+  implements G, H {}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+class A
+  extends B
+  // 1
+
+  implements C, D {}
+class E
+  extends F
+  // 2
+
+  implements G, H {}
+
+===================== End =====================

@@ -16,7 +16,7 @@ bun prune v1.4.0 (abc12345)
 
 - @types/node@20.11.5
 - left-pad@1.3.0
-2 packages removed (checked 948) [22.00ms]
+2 packages removed (checked 948 installed packages) [22.00ms]
 ```
 
 Packages removed from a workspace or nested `node_modules` folder show the folder in parentheses, e.g. `- typescript@5.4.0 (packages/app/node_modules)`.
@@ -47,8 +47,16 @@ bun prune --production --dry-run
 bun prune v1.4.0 (abc12345)
 
 - typescript@5.4.0
-1 package can be removed (checked 948) [9.00ms]
+1 package can be removed (checked 948 installed packages) [9.00ms]
   bun prune --production
+```
+
+### `--check`
+
+Print the same report as `--dry-run`, but exit `1` if anything would be removed. Use it in CI:
+
+```bash terminal icon="terminal"
+bun prune --production --check
 ```
 
 ### `--filter`
@@ -63,11 +71,13 @@ bun prune --production --filter app
 
 - Always runs from the workspace root and covers every workspace's `node_modules`, even when invoked inside a workspace package.
 - Requires `bun.lock` to match `package.json`. If you edited dependencies since the last install, run `bun install` first.
-- Uses the same linker as `bun install` would. If `node_modules` was created with the other linker, `bun prune` refuses to run. Pass the matching `--linker`, or run `bun install`.
+- Detects whether `node_modules` was laid out by the hoisted or the isolated linker and prunes it as it is. If the folders hold both layouts (for example a tree left by a switch of linkers under Bun 1.4 or older), Bun uses the linker `bun install` would use. Pass `--linker` to choose.
 - Matches packages by name. If a package is at the wrong version, Bun leaves it for `bun install` to replace. Bun only removes a nested copy (`node_modules/a/node_modules/b`) once the correct version is installed above it; otherwise Bun keeps it and prints a warning.
 - Never removes workspace folders, `.bin` entries still in use, dot-directories like `.cache`, plain files, or anything outside `node_modules`.
-- Removes packages disabled for the current `os`/`cpu`. Pass `--os`/`--cpu` to prune for another platform.
+- Removes nothing and exits `1` if the `node_modules` of the project or of a workspace, or `node_modules/.bun`, is a symlink. Remove the link and run `bun install` first.
+- Removes what an interrupted `bun install` left behind (`.bun-tmp-*`) and the trees a switch of linkers set aside (`.old_modules-*`), unless an install is running.
+- Removes packages disabled for the current `os`/`cpu`/`libc`. Pass `--os`/`--cpu`/`--libc` to prune for another platform.
 - Works on a pruned monorepo checkout (e.g. `turbo prune` output) the same way `bun install --frozen-lockfile` does.
 - If any entry fails to delete, the command still removes the rest and exits `1`.
 - `--global` is not supported.
-- To clean the global cache instead, use [`bun pm cache rm`](/pm/cli/pm#cache).
+- To clean the global cache instead, use [`bun pm cache rm`](/pm/cli/pm#cache) or [`bun pm cache prune`](/pm/cli/pm#cache).

@@ -33,11 +33,14 @@ pub enum Angle {
 impl Angle {
     // ~toCssImpl
 
-    pub(crate) fn parse(input: &mut Parser) -> Result<Angle> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> Result<'bump, Angle> {
         Angle::parse_internal(input, false)
     }
 
-    fn parse_internal(input: &mut Parser, allow_unitless_zero: bool) -> Result<Angle> {
+    fn parse_internal<'bump>(
+        input: &mut Parser<'_, 'bump>,
+        allow_unitless_zero: bool,
+    ) -> Result<'bump, Angle> {
         if let Ok(calc_value) = input.try_parse(Calc::<Angle>::parse) {
             if let Calc::Value(value) = calc_value {
                 return Ok(*value);
@@ -47,7 +50,7 @@ impl Angle {
         }
 
         let location = input.current_source_location();
-        let token = input.next()?.clone();
+        let token = *input.next()?;
         match &token {
             Token::Dimension(dim) => {
                 let value = dim.num.value;
@@ -70,7 +73,9 @@ impl Angle {
         Err(location.new_unexpected_token_error(token))
     }
 
-    pub(crate) fn parse_with_unitless_zero(input: &mut Parser) -> Result<Angle> {
+    pub(crate) fn parse_with_unitless_zero<'bump>(
+        input: &mut Parser<'_, 'bump>,
+    ) -> Result<'bump, Angle> {
         Angle::parse_internal(input, true)
     }
 
@@ -176,10 +181,6 @@ impl Angle {
 
     pub(crate) fn try_add(self, rhs: Angle) -> Option<Angle> {
         Some(Angle::Deg(self.to_degrees() + rhs.to_degrees()))
-    }
-
-    pub(crate) fn eql(self, rhs: Angle) -> bool {
-        self.to_degrees() == rhs.to_degrees()
     }
 
     pub(crate) fn mul_f32(self, other: f32) -> Angle {

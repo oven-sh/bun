@@ -1,0 +1,38 @@
+The text of a file comes in a later turn, behind every job that waits, also for an import() in the turn right behind the one in which an earlier text came.
+#### one.js
+export const name = "one";
+#### timer.js
+globalThis.order.push("body of timer.js");
+#### settled.js
+globalThis.order.push("body of settled.js");
+#### two.js
+export const name = "two";
+#### m.test.js
+import { test, vi } from "bun:test";
+const say = (...all) => console.log("| CASE", ...all);
+const thirtyJobs = async () => {
+  for (let job = 0; job < 30; job++) await null;
+  globalThis.order.push("thirty jobs");
+};
+test("t", async () => {
+  globalThis.order = [];
+  import("./one.js").then(() => {});
+  await vi.dynamicImportSettled();
+  import("./settled.js");
+  await thirtyJobs();
+  await vi.dynamicImportSettled();
+  say("behind a settling:", globalThis.order.join());
+
+  globalThis.order = [];
+  const timer = new Promise(done =>
+    import("./two.js").then(() =>
+      setTimeout(() => {
+        import("./timer.js");
+        thirtyJobs().then(done);
+      }, 0),
+    ),
+  );
+  await timer;
+  await vi.dynamicImportSettled();
+  say("in a timer that the import's reaction started:", globalThis.order.join());
+});

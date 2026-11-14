@@ -1,0 +1,15 @@
+# the same program without the knowledge of fresh objects: the literal is made, and the built-in reads it
+# RUN: walk f1 mechanisms=all-ParameterGuards-EscapeAnalysis
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewObject
+# CHECK-NOT: DefineOwnProperty
+# -- source: definition-by-a-written-descriptor-is-one-operation.ts
+# declare function sink(...values: unknown[]): void;
+# function plain(o: object, v: number) { return Object.defineProperty(o, "x", { value: v, enumerable: false }); }
+# function accessor(o: object, g: () => number) { return Object.defineProperty(o, "y", { get: g, configurable: true }); }
+# function handed(o: object, d: PropertyDescriptor) { return Object.defineProperty(o, "x", d); }
+# function openFlag(o: object, v: number, e: boolean) { return Object.defineProperty(o, "x", { value: v, enumerable: e }); }
+# function otherName(o: object, v: number) { return Object.defineProperty(o, "x", { value: v, extra: 1 } as PropertyDescriptor); }
+# sink(plain, accessor, handed, openFlag, otherName);
+# -- end of source
+# f1 = plain, f2 = accessor, f3 = handed, f4 = openFlag, f5 = otherName

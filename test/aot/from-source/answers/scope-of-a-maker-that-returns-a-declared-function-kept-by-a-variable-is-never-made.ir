@@ -1,0 +1,17 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function makeRunner(seed: number) { var text = "k" + seed; var box = { n: seed }; return run; function run() { bump(); return text + more(); } function bump() { text += "!"; } function more() { return ++box.n; } }
+# const runner = makeRunner(1);
+# function all() { return runner() + " " + runner(); }
+# print(all());
+# -- end of source
+# The maker declares its functions behind the return and hands one of them back; they call one another through the scope. The one call stores the answer into a variable of the module that holds nothing else,
+# so the scope, which holds a text and an object, is never made. f1 = makeRunner
+# RUN(COUNT): compile EnvironmentsPromotedToVariables mechanisms=all
+# COUNT: statistic EnvironmentsPromotedToVariables 1
+# RUN(MAKER): walk f1 mechanisms=all
+# MAKER: EnterBodyThatRunsOnce
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: k1!2 k1!!3
+# RUN(HELD): run-in-shell mechanisms=all-PromotedEnvironments
+# HELD: k1!2 k1!!3

@@ -1,0 +1,74 @@
+# process.env.LIMIT = hidden + 1; .HALF = hidden * 2; .LOW = hidden | 0; then - / % ** & ^ << >> beside 2; hidden >>> hidden; the number that `hidden` makes; hidden + "made up"; hidden - "made up"; hidden + undefined | null | true
+# The object warns about a value that is stored into it and is no string, number or boolean. Nothing is known of `hidden`. But an operator gives a primitive, and beside a written number it gives no
+# bigint: the two do not mix, the operator throws. So `+` gives a text or a number and the others a number, whatever arrives: native code calls neither function of the library.
+# `>>>` and the conversion to a number refuse a bigint whatever stands beside them; beside a written text, undefined, null or a boolean no operator gives one either.
+# The controls: store-of-what-an-operator-gives-of-two-values-nobody-knows-brings-the-warning-printer.ir, store-of-a-key-made-of-a-value-that-nobody-knows-brings-the-warning-printer.ir, and at run time test/aot/what-an-operator-gives-may-be-a-bigint-that-the-environment-warns-about.test.ts.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f1 unreached
+# CHECK: function f2 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/ProcessObjectInternals.ts" displayPath="/$bun/js/builtins/ProcessObjectInternals.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ProcessObjectInternalsCreateOnWarning function=f1
+runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="env"
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="hidden" [isFreeName]
+    v4 = Integer integer=1
+    v5 = Add v3, v4
+    PropSet v1, v5 key="LIMIT"
+    v7 = Integer integer=2
+    v8 = Mul v3, v7
+    PropSet v1, v8 key="HALF"
+    v10 = Integer
+    v11 = BitOr v3, v10
+    PropSet v1, v11 key="LOW"
+    v13 = Sub v3, v7
+    PropSet v1, v13 key="SUB"
+    v15 = Div v3, v7
+    PropSet v1, v15 key="DIV"
+    v17 = Mod v3, v7
+    PropSet v1, v17 key="MOD"
+    v19 = Pow v3, v7
+    PropSet v1, v19 key="POW"
+    v21 = BitAnd v3, v7
+    PropSet v1, v21 key="BITAND"
+    v23 = BitXor v3, v7
+    PropSet v1, v23 key="BITXOR"
+    v25 = LShift v3, v7
+    PropSet v1, v25 key="LSHIFT"
+    v27 = RShift v3, v7
+    PropSet v1, v27 key="RSHIFT"
+    v29 = URShift v3, v3
+    PropSet v1, v29 key="URSHIFT"
+    v31 = ToNumber v3
+    PropSet v1, v31 key="NUMBER"
+    v33 = String string="made up"
+    v34 = Add v3, v33
+    PropSet v1, v34 key="TEXT"
+    v36 = Sub v3, v33
+    PropSet v1, v36 key="LESS"
+    v38 = Undefined
+    v39 = Add v3, v38
+    PropSet v1, v39 key="NOTHING"
+    v41 = Null
+    v42 = Add v3, v41
+    PropSet v1, v42 key="NULL"
+    v44 = Boolean boolean=true
+    v45 = Add v3, v44
+    PropSet v1, v45 key="TRUTH"
+    Return v45
+}
+function f1 name="createOnWarning" module=m1 kind=Method role=Library flags=[HasExplicitName] length=4 enclosingRuntimeFunction=ProcessObjectInternalsCreateOnWarning thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    Return v0
+}
+function f2 name="initializeNextTickQueue" module=m1 kind=Method role=Library flags=[HasExplicitName] length=3 enclosingRuntimeFunction=ProcessObjectInternalsInitializeNextTickQueue thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v0
+}

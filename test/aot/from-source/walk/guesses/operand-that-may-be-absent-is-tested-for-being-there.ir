@@ -1,0 +1,12 @@
+# the rows that take a RegExp refuse undefined and null in its place, so in a loop an operand that may be null is tested for being there: behind the test the call goes by its row, and where it fails the call is made as it is written
+# f1 = strip
+# -- source: operand-that-may-be-absent-is-tested-for-being-there.ts
+# declare function sink(...values: unknown[]): void;
+# function strip(text: string, pattern: RegExp | null, n: number) { let out = ""; for (let i = 0; i < n; i++) out = text.replace(pattern as RegExp, ""); return out; }
+# sink(strip);
+# -- end of source
+# RUN: walk f1 mechanisms=all-LoopInvariants
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# CHECK: = TypeTest
+# CHECK: frequency=Rare

@@ -1,0 +1,72 @@
+#!/usr/bin/env bun
+import { resolve } from "node:path";
+import { parseArgs } from "node:util";
+import { Registry } from "./src/registry.ts";
+
+const usage = `Usage: bun cli.ts [options]
+
+  --storage <dir>          packages to serve: <name>/package.json and the tarballs
+  --port <n>               default 4873, 0 takes a free port
+  --hostname <address>     default 127.0.0.1
+  --public-url <url>       base of the tarball URLs, default: the origin of each request
+  --user <name:password>   create a user and print a token for it, repeatable
+  --restricted <pattern>   packages that only a logged in user can read, repeatable (@scope/*)
+  --verbose                print each request
+`;
+
+/** Starts the registry that the arguments describe. Throws when it refuses one of them. */
+function run() {
+  const { values } = parseArgs({
+    options: {
+      storage: { type: "string" },
+      port: { type: "string", default: "4873" },
+      hostname: { type: "string" },
+      "public-url": { type: "string" },
+      user: { type: "string", multiple: true, default: [] },
+      restricted: { type: "string", multiple: true, default: [] },
+      verbose: { type: "boolean", default: false },
+      help: { type: "boolean", short: "h", default: false },
+    },
+  });
+
+  if (values.help) {
+    console.log(usage);
+    return;
+  }
+
+  // Only digits: Number() makes 0 of "" and of " ", and it takes "0x50" and "1e3".
+  const port = /^[0-9]+$/.test(values.port) ? Number(values.port) : NaN;
+  if (!(port <= 65535)) {
+    throw new Error(`--port must be a number from 0 to 65535, got "${values.port}"`);
+  }
+
+  const registry = new Registry({
+    storage: values.storage === undefined ? undefined : resolve(values.storage),
+    port,
+    hostname: values.hostname,
+    publicUrl: values["public-url"],
+    access: Object.fromEntries(values.restricted.map(pattern => [pattern, { read: "authenticated" as const }])),
+    intercept: values.verbose
+      ? request => console.log(`${request.method} ${new URL(request.url).pathname}`)
+      : undefined,
+  });
+
+  const tokens: string[] = [];
+  for (const entry of values.user) {
+    const colon = entry.indexOf(":");
+    if (colon <= 0) throw new Error(`--user must be name:password, got "${entry}"`);
+    const user = registry.auth.addUser(entry.slice(0, colon), entry.slice(colon + 1));
+    tokens.push(`token for ${user.name}: ${registry.auth.createToken(user).token}`);
+  }
+
+  registry.start();
+  for (const token of tokens) console.log(token);
+  console.log(`registry: ${registry.url}`);
+}
+
+try {
+  run();
+} catch (error) {
+  console.error(`${error instanceof Error ? error.message : error}\n\n${usage}`);
+  process.exit(1);
+}

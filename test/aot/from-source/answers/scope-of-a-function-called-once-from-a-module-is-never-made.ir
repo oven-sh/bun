@@ -1,0 +1,32 @@
+# -- source: main.ts
+# function createCounter(limit: number) {
+#     let count = 0;
+#     function next() { return ++count; }
+#     function isDone() { return count >= limit; }
+#     return { next, isDone };
+# }
+# const counter = createCounter(2); // @ts-expect-error
+# print(counter.next(), counter.isDone(), counter.next(), counter.isDone(), counter.next === counter.next, counter.next === counter.isDone);
+# declare function print(...values: unknown[]): void;
+# -- end of source
+# count and limit are fields of one scope, and both lie among the variables of the module: numbers, which nobody could have let go.
+# The literal holds two closures that are made where they are written: a closure that is left unmade in a literal is made over a scope, and there is none.
+# RUN(COUNT): compile EnvironmentsPromotedToVariables mechanisms=all
+# COUNT: statistic EnvironmentsPromotedToVariables 1
+# RUN(UNITS): plan units mechanisms=all
+# UNITS: unit f2:Body (Void) ->
+# UNITS: unit f3:Body (Void) ->
+# RUN(MAKER): walk f1 mechanisms=all
+# MAKER-LABEL: code f1:Body
+# MAKER: EnterBodyThatRunsOnce
+# MAKER: PutEnvironmentField
+# RUN(READER): walk f2 mechanisms=all
+# READER-LABEL: code f2:Body
+# READER-NOT: GetCapture
+# READER: GetEnvironmentField
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 1 false 2 true true false
+# RUN(MADE): run-in-shell mechanisms=all-PromotedEnvironments
+# MADE: 1 false 2 true true false
+# RUN(CALLED): run-in-shell mechanisms=all-Inlining
+# CALLED: 1 false 2 true true false

@@ -19,11 +19,14 @@ enum class DisconnectReason;
 
 using AnyServerPtr = void*;
 
-class InspectorHTTPServerAgent final : public InspectorAgentBase, public Inspector::HTTPServerBackendDispatcherHandler {
+class InspectorHTTPServerAgent final : public InspectorAgentBase, public Inspector::HTTPServerBackendDispatcherHandler, public CanMakeThreadSafeCheckedPtr<InspectorHTTPServerAgent> {
     WTF_MAKE_NONCOPYABLE(InspectorHTTPServerAgent);
     WTF_MAKE_TZONE_ALLOCATED(InspectorHTTPServerAgent);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(InspectorHTTPServerAgent);
 
 public:
+    OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeThreadSafeCheckedPtr);
+
     InspectorHTTPServerAgent(JSC::JSGlobalObject&);
     virtual ~InspectorHTTPServerAgent();
 
@@ -34,10 +37,6 @@ public:
     // HTTPServerBackendDispatcherHandler
     virtual Inspector::CommandResult<void> enable() final;
     virtual Inspector::CommandResult<void> disable() final;
-    virtual Inspector::CommandResult<void> startListening(int serverId) final;
-    virtual Inspector::CommandResult<void> stopListening(int serverId) final;
-    virtual Inspector::CommandResult<void> getRequestBody(int requestId, int serverId) final;
-    virtual Inspector::CommandResult<void> getResponseBody(int requestId, int serverId) final;
 
     // Events API
     void serverStarted(int serverId, const String& url, double startTime, AnyServerPtr serverInstance);

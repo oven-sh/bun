@@ -21,7 +21,6 @@ test("23865", async () => {
 
      0 pass
      1 fail
-     1 expect() calls
     Ran 1 test across 1 file."
   `);
 });

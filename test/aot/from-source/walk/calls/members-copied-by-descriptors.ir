@@ -1,0 +1,17 @@
+# -- source: main.cjs
+# "use strict";
+# const Swim = { get wet() { return this.depth > 0; }, swim(n) { this.depth = n; return this; } };
+# function C(name) { this.name = name; this.depth = 0; }
+# Object.defineProperties(C.prototype, Object.getOwnPropertyDescriptors(Swim));
+# function run(count) { let n = 0; for (let k = 0; k < count; k++) { const c = new C(k & 1); n += c.swim(k & 3).wet ? 1 : 0; } return n; }
+# print(run(10));
+# -- end of source
+# Nobody has seen the literal: its members are laid under their names. f3, f4 = wet, swim.
+# RUN(KNOWN): link functions mechanisms=all
+# KNOWN: function f3 callers-known
+# KNOWN: function f4 callers-known
+# RUN(COPIED): walk f2 mechanisms=all
+# COPIED: frame {{*}} callee=f4
+# COPIED: frame {{*}} callee=f3
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 7

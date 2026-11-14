@@ -1,0 +1,33 @@
+# `"rank" in thing`, hasOwnProperty.call(thing, "rank") and Object.hasOwn(thing, "rank") are asked of the record that the place keeps, as a read by name is:
+# the answer's form says whether the name is there and whether it is the object's own; no value is loaded and no getter runs.
+# Which of the two answers is asked first hangs on the file of the asker alone, as for reads: the shape where a layout written in that file has a field under the name.
+# f1 = isInBesideTheLayouts, f2 = isOwnBesideTheLayouts, f8 = isInElsewhere, f9 = isOwnElsewhere, f7 = hasOwnElsewhere
+# -- source: main.js
+# import { make, isInBesideTheLayouts, isOwnBesideTheLayouts } from "./parts.js";
+# import { isInElsewhere, isOwnElsewhere, hasOwnElsewhere } from "./elsewhere.js";
+# sink(isInBesideTheLayouts, isOwnBesideTheLayouts, isInElsewhere, isOwnElsewhere, hasOwnElsewhere, make(1));
+# -- source: parts.js
+# class Part { constructor(rank) { this.rank = rank; } }
+# class Pair { constructor(rank) { this.left = 0; this.rank = rank; } }
+# export function make(rank) { return [new Part(rank), new Pair(rank)]; }
+# export function isInBesideTheLayouts(thing) { return "rank" in thing; }
+# export function isOwnBesideTheLayouts(thing) { return Object.hasOwn(thing, "rank"); }
+# -- source: elsewhere.js
+# export function isInElsewhere(thing) { return "rank" in thing; }
+# export function isOwnElsewhere(thing) { return Object.prototype.hasOwnProperty.call(thing, "rank"); }
+# export function hasOwnElsewhere(thing) { return Object.hasOwn(thing, "rank"); }
+# -- end of source
+# RUN: bytes f1:Body mechanisms=all
+# CHECK-NOT: AskingStructureFirst
+# CHECK: Stub FindsNameAtSite.In
+# CHECK-NOT: AskingStructureFirst
+# RUN(OWN): bytes f2:Body mechanisms=all
+# OWN-NOT: AskingStructureFirst
+# OWN: Stub FindsNameAtSite.HasOwn
+# OWN-NOT: AskingStructureFirst
+# RUN(ELSEWHERE): bytes f8:Body mechanisms=all
+# ELSEWHERE: Stub FindsNameAtSite.InAskingStructureFirst
+# RUN(APART): bytes f9:Body mechanisms=all
+# APART: Stub FindsNameAtSite.HasOwnAskingStructureFirst
+# RUN(STATIC): bytes f7:Body mechanisms=all
+# STATIC: Stub FindsNameAtSite.HasOwnAskingStructureFirst

@@ -1,0 +1,13 @@
+# -- source: main.cjs
+# 'use strict';
+# function shape(x, { width = "", height, depth }) { return x + width.length + (depth === undefined ? 10 : depth) + height; }
+# const table = { shape }, key = JSON.parse('"shape"'), given = { width: 'q', height: 1 };
+# function run(turns) { let s = 0; const h = table[key]; for (let i = 0; i < turns; i++) s += h(i, given); return s; }
+# console.log(run(3));
+# -- end of source
+# An object of options lacks the names that were left out. shape() has escaped, so beside the layout that was seen to arrive the proving reading lists every primitive, and such a word was kept only where a
+# layout answers EVERY name used off the value: `depth` is none of the literal's, so the word was dropped whole and `width` and `height` went by name too. The held reading says of the parameter nothing
+# but that layout: it is kept.
+# RUN: walk f1 mechanisms=all
+# CHECK: GetSlot {{*}} key="width" receivers=[L{{*}}] level=Expected
+# CHECK: GetSlot {{*}} key="height" receivers=[L{{*}}] level=Expected

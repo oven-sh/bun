@@ -8,7 +8,7 @@ use crate::shell::yield_::Yield;
 use bun_event_loop::{EventLoopTask, TaskTag, Taskable, task_tag};
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub enum State {
+pub(crate) enum State {
     #[default]
     Idle,
     WaitingWriteErr,
@@ -17,7 +17,7 @@ pub enum State {
 }
 
 #[derive(Default)]
-pub struct Yes {
+pub(crate) struct Yes {
     pub(crate) state: State,
     /// One repetition of the output (`"y\n"` or joined argv + `'\n'`), tiled
     /// out to ~BUFSIZ.
@@ -93,7 +93,7 @@ impl Yes {
         // which matters for `yes` throughput.
         let err = {
             let cmd_node = interp.as_cmd_mut(cmd);
-            let shell = cmd_node.base.shell;
+            let shell = cmd_node.base.shell_mut();
             let Exec::Builtin(me) = &mut cmd_node.exec else {
                 unreachable!()
             };
@@ -101,8 +101,7 @@ impl Yes {
             let chunk = &yes.buffer[..yes.buffer_used];
             let mut err = None;
             for _ in 0..4 {
-                // SAFETY: `shell` is `cmd_node.base.shell`, live for the Cmd.
-                if let Err(e) = unsafe { stdout.write_no_io_to(shell, chunk) } {
+                if let Err(e) = stdout.write_no_io_to(shell, chunk) {
                     err = Some(e);
                     break;
                 }
@@ -189,7 +188,7 @@ impl Yes {
 /// Re-queues `yes` onto the event loop after a burst of no-IO writes so we
 /// don't block the main thread forever.
 #[repr(C)]
-pub struct YesTask {
+pub(crate) struct YesTask {
     /// Back-ref to the owning [`Interpreter`].
     pub(crate) interp: *mut Interpreter,
     pub(crate) cmd: NodeId,
@@ -202,6 +201,10 @@ impl Taskable for YesTask {
     /// Lives inside the builtin's `Box<Yes>` (freed with the interpreter) and
     /// took nothing for the bounce; nothing to do.
     unsafe fn release_unrun(_: *mut Self) {}
+    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 
 impl YesTask {
@@ -220,7 +223,7 @@ impl YesTask {
                 EventLoopHandle::Js { owner } => {
                     owner.enqueue_task_after_yield(bun_jsc::Task::init(this));
                 }
-                EventLoopHandle::Mini(mut mini) => {
+                EventLoopHandle::Mini(mini) => {
                     (*mini.loop_).tick();
                     let at =
                         core::ptr::NonNull::new_unchecked(match &mut (*this).concurrent_task {
@@ -229,7 +232,7 @@ impl YesTask {
                             }
                             EventLoopTask::Js(_) => unreachable!(),
                         });
-                    mini.get_mut().enqueue_task_concurrent(at);
+                    mini.enqueue_task_concurrent(at);
                 }
             }
         }

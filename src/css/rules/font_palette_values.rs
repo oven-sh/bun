@@ -8,16 +8,16 @@ use crate::{PrintErr, Printer};
 use super::ArrayList;
 
 /// A [@font-palette-values](https://drafts.csswg.org/css-fonts-4/#font-palette-values) rule.
-pub struct FontPaletteValuesRule {
+pub struct FontPaletteValuesRule<'bump> {
     /// The name of the font palette.
-    pub name: DashedIdent,
+    pub name: DashedIdent<'bump>,
     /// Declarations in the `@font-palette-values` rule.
-    pub(crate) properties: ArrayList<FontPaletteValuesProperty>,
+    pub(crate) properties: ArrayList<FontPaletteValuesProperty<'bump>>,
     /// The location of the rule in the source file.
     pub(crate) loc: Location,
 }
 
-impl FontPaletteValuesRule {
+impl FontPaletteValuesRule<'_> {
     pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
@@ -41,12 +41,12 @@ impl FontPaletteValuesRule {
     }
 }
 
-impl FontPaletteValuesRule {
+impl<'bump> FontPaletteValuesRule<'bump> {
     pub(crate) fn parse(
-        name: DashedIdent,
-        input: &mut css::Parser,
+        name: DashedIdent<'bump>,
+        input: &mut css::Parser<'_, 'bump>,
         loc: Location,
-    ) -> css::Result<FontPaletteValuesRule> {
+    ) -> css::Result<'bump, FontPaletteValuesRule<'bump>> {
         let mut decl_parser = FontPaletteValuesDeclarationParser {};
         let mut parser = css::css_parser::RuleBodyParser::new(input, &mut decl_parser);
         let mut properties: ArrayList<FontPaletteValuesProperty> = ArrayList::new();
@@ -67,19 +67,19 @@ impl FontPaletteValuesRule {
 /// A property within an `@font-palette-values` rule.
 ///
 /// See [FontPaletteValuesRule](FontPaletteValuesRule).
-pub enum FontPaletteValuesProperty {
+pub enum FontPaletteValuesProperty<'bump> {
     /// The `font-family` property.
-    FontFamily(crate::css_properties::font::FontFamily),
+    FontFamily(ArrayList<crate::css_properties::font::FontFamily<'bump>>),
     /// The `base-palette` property.
     BasePalette(BasePalette),
     /// The `override-colors` property.
     OverrideColors(ArrayList<OverrideColors>),
     /// An unknown or unsupported property.
-    Custom(crate::css_properties::custom::CustomProperty),
+    Custom(crate::css_properties::custom::CustomProperty<'bump>),
 }
 
-impl FontPaletteValuesRule {
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+impl<'bump> FontPaletteValuesRule<'bump> {
+    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
         Self {
             name: self.name.deep_clone(bump),
             properties: self.properties.iter().map(|p| p.deep_clone(bump)).collect(),
@@ -88,13 +88,13 @@ impl FontPaletteValuesRule {
     }
 }
 
-impl FontPaletteValuesProperty {
+impl<'bump> FontPaletteValuesProperty<'bump> {
     fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             FontPaletteValuesProperty::FontFamily(f) => {
                 dest.write_str("font-family")?;
                 dest.delim(b':', false)?;
-                f.to_css(dest)
+                css::to_css::from_list(f.as_slice(), dest)
             }
             FontPaletteValuesProperty::BasePalette(b) => {
                 dest.write_str("base-palette")?;
@@ -109,12 +109,12 @@ impl FontPaletteValuesProperty {
             FontPaletteValuesProperty::Custom(custom) => {
                 custom.name.to_css(dest)?;
                 dest.delim(b':', false)?;
-                custom.value.to_css(dest, true)
+                custom.value.to_css(dest)
             }
         }
     }
 
-    fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
         match self {
             Self::FontFamily(f) => Self::FontFamily(f.deep_clone(bump)),
             Self::BasePalette(b) => Self::BasePalette(b.deep_clone(bump)),
@@ -136,7 +136,7 @@ pub struct OverrideColors {
 }
 
 impl OverrideColors {
-    fn parse(input: &mut css::Parser) -> css::Result<OverrideColors> {
+    fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, OverrideColors> {
         use crate::css_values::number::CSSIntegerFns;
         let index = CSSIntegerFns::parse(input)?;
         // Palette entry indices are stored as u16; reject negatives and values
@@ -187,7 +187,7 @@ pub enum BasePalette {
 }
 
 impl BasePalette {
-    fn parse(input: &mut css::Parser) -> css::Result<BasePalette> {
+    fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, BasePalette> {
         use crate::css_values::number::CSSIntegerFns;
         if let Ok(i) = input.try_parse(CSSIntegerFns::parse) {
             // Palette indices are stored as u16; reject negatives and values
@@ -199,7 +199,7 @@ impl BasePalette {
         }
 
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
         crate::match_ignore_ascii_case! { ident, {
             b"light" => Ok(BasePalette::Light),
             b"dark" => Ok(BasePalette::Dark),
@@ -233,28 +233,25 @@ const _: () = {
     use css::css_parser::{
         AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser,
     };
-    use css::{
-        BasicParseErrorKind, Maybe, Parser, ParserError, ParserOptions, ParserState, Result,
-    };
+    use css::{Parser, ParserError, ParserOptions, Result};
 
-    impl DeclarationParser for FontPaletteValuesDeclarationParser {
-        type Declaration = FontPaletteValuesProperty;
+    impl<'bump> DeclarationParser<'bump> for FontPaletteValuesDeclarationParser {
+        type Declaration = FontPaletteValuesProperty<'bump>;
 
         fn parse_value(
             _this: &mut Self,
-            name: &[u8],
-            input: &mut Parser,
-        ) -> Result<Self::Declaration> {
+            name: &'bump [u8],
+            input: &mut Parser<'_, 'bump>,
+        ) -> Result<'bump, Self::Declaration> {
             let state = input.state();
             crate::match_ignore_ascii_case! { name, {
                 b"font-family" => {
                     // https://drafts.csswg.org/css-fonts-4/#font-family-2-desc
-                    if let Ok(font_family) = FontFamily::parse(input) {
-                        if matches!(font_family, FontFamily::Generic(_)) {
-                            return Err(input.new_custom_error(ParserError::invalid_declaration));
-                        }
-                        return Ok(FontPaletteValuesProperty::FontFamily(font_family));
+                    let families = input.parse_comma_separated(FontFamily::parse)?;
+                    if families.iter().any(|f| matches!(f, FontFamily::Generic(_))) {
+                        return Err(input.new_custom_error(ParserError::invalid_declaration));
                     }
+                    return Ok(FontPaletteValuesProperty::FontFamily(families));
                 },
                 b"base-palette" => {
                     // https://drafts.csswg.org/css-fonts-4/#base-palette-desc
@@ -278,7 +275,7 @@ const _: () = {
         }
     }
 
-    impl RuleBodyItemParser for FontPaletteValuesDeclarationParser {
+    impl RuleBodyItemParser<'_> for FontPaletteValuesDeclarationParser {
         fn parse_qualified(_this: &Self) -> bool {
             false
         }
@@ -288,55 +285,13 @@ const _: () = {
         }
     }
 
-    impl AtRuleParser for FontPaletteValuesDeclarationParser {
+    impl<'bump> AtRuleParser<'bump> for FontPaletteValuesDeclarationParser {
         type Prelude = ();
-        type AtRule = FontPaletteValuesProperty;
-
-        fn parse_prelude(
-            _this: &mut Self,
-            name: &[u8],
-            input: &mut Parser,
-        ) -> Result<Self::Prelude> {
-            Err(
-                input.new_error(BasicParseErrorKind::at_rule_invalid(std::ptr::from_ref::<
-                    [u8],
-                >(name))),
-            )
-        }
-
-        fn parse_block(
-            _this: &mut Self,
-            _prelude: Self::Prelude,
-            _start: &ParserState,
-            input: &mut Parser,
-        ) -> Result<Self::AtRule> {
-            Err(input.new_error(BasicParseErrorKind::at_rule_body_invalid))
-        }
-
-        fn rule_without_block(
-            _this: &mut Self,
-            _prelude: Self::Prelude,
-            _start: &ParserState,
-        ) -> Maybe<Self::AtRule, ()> {
-            Err(())
-        }
+        type AtRule = FontPaletteValuesProperty<'bump>;
     }
 
-    impl QualifiedRuleParser for FontPaletteValuesDeclarationParser {
+    impl<'bump> QualifiedRuleParser<'bump> for FontPaletteValuesDeclarationParser {
         type Prelude = ();
-        type QualifiedRule = FontPaletteValuesProperty;
-
-        fn parse_prelude(_this: &mut Self, input: &mut Parser) -> Result<Self::Prelude> {
-            Err(input.new_error(BasicParseErrorKind::qualified_rule_invalid))
-        }
-
-        fn parse_block(
-            _this: &mut Self,
-            _prelude: Self::Prelude,
-            _start: &ParserState,
-            input: &mut Parser,
-        ) -> Result<Self::QualifiedRule> {
-            Err(input.new_error(BasicParseErrorKind::qualified_rule_invalid))
-        }
+        type QualifiedRule = FontPaletteValuesProperty<'bump>;
     }
 };

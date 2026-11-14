@@ -1,0 +1,4 @@
+export type ResponseOfTheFirstEndpoint = /** status 200 successful operation */ {
+  [key: string]: number
+}
+export type Short = /** status 200 */ { a: 1 }

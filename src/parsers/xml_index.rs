@@ -37,7 +37,8 @@ impl<'c, U: crate::xml::Unit> StructuralIndex<'c, U> {
     }
 
     fn with_producer(contents: &'c [U], use_scalar: bool) -> Self {
-        debug_assert!(contents.len() <= i32::MAX as usize);
+        // Positions are stored as `u32`; transcoding can double the parser's `i32::MAX` bound.
+        debug_assert!(contents.len() <= u32::MAX as usize);
         let win_cap = contents.len().min(REFILL_INPUT) + 64 + SENTINELS + LOOKBEHIND;
         StructuralIndex {
             contents,
@@ -55,11 +56,12 @@ impl<'c, U: crate::xml::Unit> StructuralIndex<'c, U> {
     /// Byte position of index `logical`, producing more of the index as needed.
     #[inline(always)]
     pub fn at(&mut self, logical: usize) -> usize {
-        if logical.wrapping_sub(self.base) >= self.win.len() {
+        loop {
+            if let Some(&p) = self.win.get(logical.wrapping_sub(self.base)) {
+                return p as usize;
+            }
             self.fill_to(logical);
         }
-        // SAFETY: `fill_to` returns only once `logical - base < win.len()`.
-        unsafe { *self.win.get_unchecked(logical - self.base) as usize }
     }
 
     /// The first index `>= logical` whose position is `>= pos`, and that position.
@@ -69,9 +71,8 @@ impl<'c, U: crate::xml::Unit> StructuralIndex<'c, U> {
         let win = self.win.as_slice();
         // The window ends with the sentinels once the input is exhausted, so
         // within it this loop needs no end check beyond the length.
-        while rel < win.len() {
-            // SAFETY: `rel < win.len()`.
-            let p = unsafe { *win.get_unchecked(rel) } as usize;
+        while let Some(&p) = win.get(rel) {
+            let p = p as usize;
             if p >= pos {
                 return (self.base + rel, p);
             }
@@ -121,21 +122,7 @@ impl<'c, U: crate::xml::Unit> StructuralIndex<'c, U> {
         if bun_core::env::IS_NATIVE && !self.use_scalar {
             let filled = self.win.len();
             let out = &mut self.win.spare_capacity_mut()[..chunk_len + 64];
-            let n = if U::WIDE {
-                bun_highway::xml_structural_index16_chunk(
-                    bytemuck::cast_slice(U::bytes(chunk)),
-                    self.src_off,
-                    out,
-                    &mut self.kernel_state,
-                )
-            } else {
-                bun_highway::xml_structural_index_chunk(
-                    U::bytes(chunk),
-                    self.src_off,
-                    out,
-                    &mut self.kernel_state,
-                )
-            };
+            let n = U::structural_index_chunk(chunk, self.src_off, out, &mut self.kernel_state);
             // SAFETY: the kernel initialized `n` entries of the spare capacity it was given.
             unsafe { self.win.set_len(filled + n) };
         } else {

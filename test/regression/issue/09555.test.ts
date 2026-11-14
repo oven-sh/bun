@@ -46,8 +46,8 @@ describe("#09555", () => {
     using server = Bun.serve({
       port: 0,
       async fetch(req) {
-        const readable = Readable.fromWeb(req.body);
-        let chunks = [];
+        const readable = Readable.fromWeb(req.body!);
+        let chunks: Buffer[] = [];
 
         for await (const chunk of readable) {
           chunks.push(chunk);
@@ -59,11 +59,11 @@ describe("#09555", () => {
       },
     });
 
-    const { promise, resolve } = Promise.withResolvers();
-    const chunks = [];
+    const { promise, resolve } = Promise.withResolvers<string>();
+    const chunks: Buffer[] = [];
     await Bun.connect({
       hostname: server.url.hostname,
-      port: server.url.port,
+      port: server.url.port as any,
 
       socket: {
         async open(socket) {
@@ -104,8 +104,8 @@ describe("#09555", () => {
     using server = Bun.serve({
       port: 0,
       async fetch(req) {
-        const readable = Readable.fromWeb(req.body);
-        let chunks = [];
+        const readable = Readable.fromWeb(req.body!);
+        let chunks: Buffer[] = [];
 
         for await (const chunk of readable) {
           chunks.push(chunk);
@@ -128,13 +128,13 @@ describe("#09555", () => {
     const full = crypto.getRandomValues(new Uint8Array(1024 * 3));
     const sha = Bun.CryptoHasher.hash("sha256", full, "base64");
     await using dir = tempDir("09555", {
-      "/file.blob": full,
+      "/file.blob": full as any,
     });
     await Bun.write(join(dir, "file.blob"), full);
     const web = Bun.file(join(dir, "file.blob")).stream();
     const stream = Readable.fromWeb(web);
 
-    const chunks = [];
+    const chunks: Buffer[] = [];
     let total = 0;
     for await (const chunk of stream) {
       chunks.push(chunk);
@@ -152,7 +152,7 @@ describe("#09555", () => {
 
     const web = response.body;
     expect(response.bodyUsed).toBe(false);
-    const stream = Readable.fromWeb(web);
+    const stream = Readable.fromWeb(web!);
     expect(response.bodyUsed).toBe(true);
     expect(() => response.body?.getReader()).toThrow();
     const methods = ["arrayBuffer", "blob", "formData", "json", "text"];

@@ -1,0 +1,19 @@
+# -- source: main.js
+# function sumOf(node, depth) {
+#   if (typeof node === "string") return node;
+#   let sum = 1;
+#   for (const child of node.children) sum = (sum + sumOf(child, depth + 1)) | 0;
+#   return sum;
+# }
+# function make(depth) { const node = { value: depth, children: [] }; if (depth < 4) for (let i = 0; i < 3; i++) node.children.push(make(depth + 1)); return node; }
+# globalThis.keep = [sumOf, make];
+# print(sumOf(make(0), 0), sumOf("text", 0));
+# -- end of source
+# sumOf is proven to give a number or a text, and that is all that it is seen to give. A word that tells no more than the proof is no word: the rules that stand behind "is anything expected?" are asked,
+# and the sum in the loop is told apart in line instead of going to the stub for any two values. f1 = sumOf
+# RUN(WALK): walk f1 mechanisms=all
+# WALK: = Add {{*}}form=Integers
+# WALK-NOT: = Add {{*}}form=Generic
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 121 text
+# ANSWERS-NEXT: exited with 0

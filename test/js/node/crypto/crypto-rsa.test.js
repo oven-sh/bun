@@ -314,10 +314,104 @@ test(`RSA with RSA_PKCS1_OAEP_PADDING`, () => {
   test_rsa("RSA_PKCS1_OAEP_PADDING", "sha512", "sha512");
 });
 
+test.each([null, 0, -0, false, "", NaN, 0n])("padding: %p is the default padding", padding => {
+  const input = Buffer.from("input");
+  expect(crypto.privateDecrypt(rsaKeyPem, crypto.publicEncrypt({ key: rsaPubPem, padding }, input))).toEqual(input);
+  expect(crypto.privateDecrypt({ key: rsaKeyPem, padding }, crypto.publicEncrypt(rsaPubPem, input))).toEqual(input);
+  expect(crypto.publicDecrypt(rsaPubPem, crypto.privateEncrypt({ key: rsaKeyPem, padding }, input))).toEqual(input);
+  expect(crypto.publicDecrypt({ key: rsaPubPem, padding }, crypto.privateEncrypt(rsaKeyPem, input))).toEqual(input);
+});
+
 test(`RSA with hash mismatch`, () => {
   expect(() => {
     test_rsa("RSA_PKCS1_OAEP_PADDING", "sha256", "sha512");
   }).toThrow(expect.objectContaining(decryptError));
+});
+
+test("RSA-OAEP with an mgf1Hash other than oaepHash", () => {
+  const input = Buffer.from("Hello Node.js");
+  const decodingError = expect.objectContaining({ code: "ERR_OSSL_RSA_OAEP_DECODING_ERROR" });
+
+  // publicEncrypt({ key: rsaPubPem, oaepHash: "sha256", mgf1Hash: "sha1" }, input) in Node.js v26.12.1.
+  const fromNode = Buffer.from(
+    "C582UzGmT/stl/cSxOtvfMXt2jOR4L/XUxXRN2PngRLMqrfbJCdqyLv8Z4dLLs0ajL9QL8NIgJYOaxbmstzCIk" +
+      "9GNfN30b83Aun3/TxMCB4bfdFRKPwRCy2ObGWLyo6ictk90VmdReBinQDYiJhBA116pczFakKkKQTIjBO2fKxK" +
+      "b3ZRXbdmflrtjj4MtHTLjoLvsV9oCkWk+R5HX86yS91Kpcz+8lZ15wIbOIt775XY4NR8qXZAYJRggtLSxYdToc" +
+      "jpYSBNkxBhgKXvWUstqYx7TDhyx0KsdmOgorT+9dZ8rCkIrDKGXBsZeoF5+hxGYthmvKH1u41Gkk+0SI/ZaQ==",
+    "base64",
+  );
+  expect(crypto.privateDecrypt({ key: rsaKeyPem, oaepHash: "sha256", mgf1Hash: "sha1" }, fromNode)).toEqual(input);
+  expect(() => crypto.privateDecrypt({ key: rsaKeyPem, oaepHash: "sha1", mgf1Hash: "sha256" }, fromNode)).toThrow(
+    decodingError,
+  );
+});
+
+test("the OAEP options under another padding", () => {
+  const options = { oaepHash: "sha256", mgf1Hash: "sha256", oaepLabel: Buffer.from("label") };
+  const block = Buffer.alloc(rsaKeySize / 8, 1);
+  const signed = crypto.privateEncrypt(rsaKeyPem, block.subarray(0, 32));
+  expect(crypto.publicDecrypt(rsaPubPem, signed)).toEqual(block.subarray(0, 32));
+  for (const [name, value] of Object.entries(options)) {
+    // Encryption and decryption ignore them.
+    const noPadding = { padding: constants.RSA_NO_PADDING, [name]: value };
+    const encrypted = crypto.publicEncrypt({ key: rsaPubPem, ...noPadding }, block);
+    expect(crypto.privateDecrypt({ key: rsaKeyPem, ...noPadding }, encrypted)).toEqual(block);
+    expect(
+      crypto.publicEncrypt(
+        { key: rsaPubPem, padding: constants.RSA_PKCS1_PADDING, [name]: value },
+        block.subarray(0, 32),
+      ),
+    ).toHaveLength(block.length);
+
+    expect(() => crypto.privateEncrypt({ key: rsaKeyPem, [name]: value }, block.subarray(0, 32))).toThrow(
+      expect.objectContaining({ code: expect.stringMatching(/^ERR_OSSL_/) }),
+    );
+    expect(() => crypto.publicDecrypt({ key: rsaPubPem, [name]: value }, signed)).toThrow(
+      expect.objectContaining({ code: expect.stringMatching(/^ERR_OSSL_/) }),
+    );
+  }
+});
+
+describe("RSA PKCS#1 v1.5 signatures", () => {
+  const data = Buffer.from("data");
+
+  // These signatures are deterministic. Each fingerprint is the SHA-256 of the one Node makes.
+  test.each([
+    ["sha512-224", "0c742fc54f244df03bd3a1276a3ec8ee5d8bb338ff5ab8b281735843a867bbd6"],
+    ["sha512-256", "4000024a0e99559a2948ddd8a97d0c2d5bd12cff7c68f999d47912e31f46a69d"],
+    ["sha3-224", "1cc8289800225af9af529fb5e6f83a341931a4620d182cb986f81eb831e974ac"],
+    ["sha3-256", "68a3c81111e4c9c36b79f6092f631808b448afacaa386f9911d91ba50aa53519"],
+    ["sha3-384", "17260672f13c4cc8fc00dada4bb2fecb24e088dc670f51695a4f416e6e508139"],
+    ["sha3-512", "a83acf60398ef4079e9afc4c0bbf4deb82a931acf68ea55b2a985da490b543f0"],
+    ["ripemd160", "b79ab8f388a91288b2effc784863f170b365e5b9d9451846b2a6bbdd03707f6b"],
+  ])("with %s", (digest, fingerprint) => {
+    const signature = crypto.sign(digest, data, rsaKeyPem);
+    expect(crypto.hash("sha256", signature)).toBe(fingerprint);
+    expect(crypto.createSign(digest).update(data).sign(rsaKeyPem)).toEqual(signature);
+    expect(crypto.verify(digest, data, rsaPubPem, signature)).toBe(true);
+    expect(crypto.createVerify(digest).update(data).verify(rsaPubPem, signature)).toBe(true);
+    expect(crypto.verify(digest, Buffer.from("other"), rsaPubPem, signature)).toBe(false);
+    expect(crypto.createVerify(digest).update("other").verify(rsaPubPem, signature)).toBe(false);
+  });
+
+  test.each(["SHA3-256", "SHA3-384", "SHA3-512"])("with %s in WebCrypto", async hash => {
+    const algorithm = { name: "RSASSA-PKCS1-v1_5", hash };
+    const privateKey = crypto.createPrivateKey(rsaKeyPem).toCryptoKey(algorithm, false, ["sign"]);
+    const publicKey = crypto.createPublicKey(rsaPubPem).toCryptoKey(algorithm, false, ["verify"]);
+    const signature = await crypto.subtle.sign(algorithm, privateKey, data);
+    expect(Buffer.from(signature)).toEqual(crypto.sign(hash.toLowerCase(), data, rsaKeyPem));
+    expect(await crypto.subtle.verify(algorithm, publicKey, signature, data)).toBe(true);
+    expect(await crypto.subtle.verify(algorithm, publicKey, signature, Buffer.from("other"))).toBe(false);
+  });
+});
+
+test.each(["hash", "mgf1Hash"])("rsa-pss keys are no longer generated with options.%s", option => {
+  expect(() => crypto.generateKeyPairSync("rsa-pss", { modulusLength: 2048, [option]: "sha256" })).toThrow(
+    expect.objectContaining({
+      code: "ERR_INVALID_ARG_VALUE",
+      message: `The property 'options.${option}' is no longer supported. Received 'sha256'`,
+    }),
+  );
 });
 
 test("RSA-OAEP test vectors", () => {
@@ -351,7 +445,7 @@ test("RSA-OAEP test vectors", () => {
   }
 });
 
-describe("Invalid oaepHash and oaepLabel options", () => {
+describe("Invalid oaepHash, mgf1Hash and oaepLabel options", () => {
   const testCases = [
     { fn: crypto.publicEncrypt, name: "publicEncrypt", key: rsaPubPem },
     { fn: crypto.privateDecrypt, name: "privateDecrypt", key: rsaKeyPem },
@@ -388,6 +482,20 @@ describe("Invalid oaepHash and oaepLabel options", () => {
           }),
         );
       });
+    });
+
+    test(`${name} with invalid mgf1Hash`, () => {
+      expect(() => fn({ key, mgf1Hash: "Hello world" }, Buffer.alloc(10))).toThrow(
+        expect.objectContaining({ code: "ERR_OSSL_EVP_INVALID_DIGEST" }),
+      );
+      for (const mgf1Hash of [0, false, null, Symbol(), () => {}]) {
+        expect(() => fn({ key, mgf1Hash }, Buffer.alloc(10))).toThrow(
+          expect.objectContaining({
+            code: "ERR_INVALID_ARG_TYPE",
+            message: expect.stringContaining('The "key.mgf1Hash" property must be of type string.'),
+          }),
+        );
+      }
     });
 
     test(`${name} with invalid oaepLabel`, () => {

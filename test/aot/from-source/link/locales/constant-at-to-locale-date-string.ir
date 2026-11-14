@@ -1,0 +1,10 @@
+# a written tag at the method that Link finds on what `new Date` makes
+# -- source: constant-at-to-locale-date-string.ts
+# declare function sink(...values: unknown[]): void;
+# sink(new Date(0).toLocaleDateString("fr"));
+# -- end of source
+# RUN: locales
+# CHECK: locale constant "fr" DatePrototypeToLocaleDateString
+# RUN(NEVER): locales
+# NEVER-NOT: locale unknown
+# NEVER-NOT: efault

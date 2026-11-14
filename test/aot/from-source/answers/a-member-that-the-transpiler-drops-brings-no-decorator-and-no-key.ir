@@ -1,0 +1,55 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare let dec: any;
+# declare function key(): string;
+# abstract class Dropped {
+#     // @ts-ignore
+#     @dec(1) abstract accessor first: number;
+#     // @ts-ignore
+#     @dec(2) abstract accessor ["second"]: number;
+#     // @ts-ignore
+#     @dec(3) abstract accessor [key()]: number;
+#     // @ts-ignore
+#     @dec(4) declare accessor fourth: number;
+#     // @ts-ignore
+#     @dec(5) abstract method(): void;
+#     // @ts-ignore
+#     @dec(6) abstract get getter(): number;
+#     // @ts-ignore
+#     @dec(7) overloaded(value: number): void;
+#     overloaded(value: unknown) { return value; }
+#     // @ts-ignore
+#     abstract [key()]: number;
+# }
+# print(Object.getOwnPropertyNames(Dropped.prototype).join());
+# const log: string[] = [];
+# function note(name: string): any {
+#     log.push("evaluated " + name);
+#     return function (_value: unknown, context: { kind: string; name: string | symbol }) {
+#         log.push("applied " + name + " as " + context.kind + " " + String(context.name));
+#     };
+# }
+# abstract class Mixed {
+#     // @ts-ignore
+#     @note("a") abstract accessor a: number;
+#     @note("b") accessor b = 1;
+#     // @ts-ignore
+#     @note("c") abstract c(): void;
+#     @note("d") d() { return 3; }
+# }
+# class Made extends Mixed {
+#     accessor a = 2;
+#     c() {}
+# }
+# const made = new Made();
+# print(log.join());
+# print(String(made.a) + String(made.b) + String(made.d()));
+# -- end of source
+# `dec` and `key` are only declared: whoever evaluates a decorator or a key of `Dropped` ends the program with a ReferenceError. The transpiler drops an abstract or declared `accessor`, an abstract method or getter, an overload and an abstract field without a decorator, each with its decorators and its computed key.
+# In `Mixed` the dropped members stand between members that stay: only the decorators of `b` and `d` are evaluated and applied.
+# The lines under `@ts-ignore` are the ones that the checker has a word to say about (1206, 1249, 1166, 1243).
+# RUN(ANSWER): run-in-shell globalThis.unused = 0;
+# ANSWER: constructor,overloaded
+# ANSWER-NEXT: evaluated b,evaluated d,applied b as accessor b,applied d as method d
+# ANSWER-NEXT: 213
+# ANSWER-NEXT: exited with 0

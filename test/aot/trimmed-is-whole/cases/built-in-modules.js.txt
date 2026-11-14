@@ -1,0 +1,133 @@
+// One static import of a built-in module and one call into it. Loading the module runs its native half.
+//// fs
+import fs from "node:fs";
+console.log(fs.existsSync("/"), typeof fs.constants.O_RDONLY);
+//// fs-promises
+import { stat } from "node:fs/promises";
+console.log((await stat("/")).isDirectory());
+//// tty-required
+//@ ext cjs
+const tty = require("tty");
+console.log(tty.isatty(99));
+//// events
+import { EventEmitter } from "node:events";
+const emitter = new EventEmitter();
+emitter.on("x", value => console.log("got", value));
+emitter.emit("x", 1);
+//// path
+import path from "node:path";
+console.log(path.join("a", "..", "b"), path.basename("/x/y.js", ".js"));
+//// os
+import os from "node:os";
+console.log(typeof os.cpus().length, os.EOL === "\n");
+//// util
+import util from "node:util";
+console.log(util.format("%s:%d", "a", 1), util.inspect({ a: [1, { b: 2 }] }), util.isDeepStrictEqual({ a: 1 }, { a: 1 }));
+//// util-types
+import { types } from "node:util";
+console.log(types.isPromise(Promise.resolve()), types.isRegExp(/x/));
+//// crypto
+import crypto from "node:crypto";
+console.log(crypto.createHash("sha256").update("a").digest("hex").slice(0, 8), crypto.randomBytes(4).length);
+//// zlib
+import zlib from "node:zlib";
+console.log(zlib.gunzipSync(zlib.gzipSync("hello")).toString());
+//// buffer
+import { Buffer } from "node:buffer";
+console.log(Buffer.from("aGk=", "base64").toString(), Buffer.byteLength("é"));
+//// stream
+import { Readable } from "node:stream";
+for await (const chunk of Readable.from(["a", "b"])) console.log(chunk);
+//// url
+import { URL, fileURLToPath } from "node:url";
+console.log(new URL("http://a/b?c=1").searchParams.get("c"), fileURLToPath("file:///x/y"));
+//// querystring
+import querystring from "node:querystring";
+console.log(querystring.stringify({ a: [1, 2] }), querystring.parse("a=1&b=2").b);
+//// string-decoder
+import { StringDecoder } from "node:string_decoder";
+console.log(new StringDecoder("utf8").write(Buffer.from([0xc3, 0xa9])));
+//// child-process
+import { execFileSync } from "node:child_process";
+console.log(execFileSync("/bin/echo", ["hi"]).toString().trim());
+//// net
+import net from "node:net";
+console.log(net.isIP("127.0.0.1"), net.isIPv6("::1"));
+//// http
+import http from "node:http";
+const server = http.createServer((request, response) => response.end("ok"));
+await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+console.log(await (await fetch(`http://127.0.0.1:${server.address().port}/`)).text());
+server.close();
+//// https
+import https from "node:https";
+console.log(typeof https.request, https.globalAgent.defaultPort);
+//// http2
+import http2 from "node:http2";
+console.log(http2.constants.HTTP2_HEADER_STATUS);
+//// tls
+import tls from "node:tls";
+console.log(typeof tls.connect, tls.DEFAULT_MIN_VERSION);
+//// dns
+import dns from "node:dns";
+console.log(typeof dns.lookup, Array.isArray(dns.getServers()));
+//// dgram
+import dgram from "node:dgram";
+const socket = dgram.createSocket("udp4");
+console.log(typeof socket.send);
+socket.close();
+//// readline
+import readline from "node:readline";
+import { Readable } from "node:stream";
+for await (const line of readline.createInterface({ input: Readable.from(["a\nb\n"]) })) console.log(line);
+//// vm
+import vm from "node:vm";
+console.log(vm.runInNewContext("a + 1", { a: 1 }));
+//// assert
+import assert from "node:assert";
+try { assert.deepStrictEqual({ a: 1 }, { a: 2 }); } catch (error) { console.log(error.code); }
+//// perf-hooks
+import { performance, createHistogram } from "node:perf_hooks";
+console.log(typeof performance.now(), createHistogram().count);
+//// async-hooks
+import { AsyncLocalStorage } from "node:async_hooks";
+const storage = new AsyncLocalStorage();
+storage.run(7, () => console.log(storage.getStore()));
+//// worker-threads
+import { isMainThread, MessageChannel } from "node:worker_threads";
+const { port1, port2 } = new MessageChannel();
+port2.once("message", value => { console.log(isMainThread, value); port1.close(); });
+port1.postMessage("hi");
+//// timers-promises
+import { setTimeout as wait } from "node:timers/promises";
+console.log(await wait(1, "done"));
+//// module
+import { builtinModules, createRequire } from "node:module";
+console.log(builtinModules.includes("fs"), createRequire(import.meta.url)("node:path").sep);
+//// diagnostics-channel
+import diagnostics from "node:diagnostics_channel";
+const channel = diagnostics.channel("x");
+channel.subscribe(message => console.log(message));
+channel.publish("hi");
+//// v8
+import v8 from "node:v8";
+console.log(v8.deserialize(v8.serialize({ a: 1 })).a);
+//// process
+import process from "node:process";
+console.log(typeof process.pid, process.argv.length > 0);
+//// bun-sqlite
+import { Database } from "bun:sqlite";
+console.log(new Database(":memory:").query("select 1 + 1 as two").get().two);
+//// node-sqlite
+import { DatabaseSync } from "node:sqlite";
+console.log(new DatabaseSync(":memory:").prepare("select 1 + 1 as two").get().two);
+//// bun-jsc
+import { heapSize } from "bun:jsc";
+console.log(typeof heapSize());
+//// wasi
+//@ exit 1
+import { WASI } from "node:wasi";
+console.log(typeof new WASI({ version: "preview1" }).getImportObject());
+//// repl
+import repl from "node:repl";
+console.log(typeof repl.start);

@@ -60,9 +60,9 @@ pub struct GenericBorder<S, const P: u8> {
 
 impl<S, const P: u8> super::GenericBorderImpl for GenericBorder<S, P>
 where
-    S: css::generic::Parse + css::generic::ToCss + Default + PartialEq,
+    S: for<'bump> css::generic::Parse<'bump> + css::generic::ToCss + Default + PartialEq,
 {
-    fn parse(input: &mut Parser) -> CssResult<Self> {
+    fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         // Order doesn't matter
         let mut color: Option<CssColor> = None;
         let mut style: Option<S> = None;
@@ -139,8 +139,7 @@ where
 
 impl<S, const P: u8> GenericBorder<S, P>
 where
-    S: css::generic::Parse
-        + css::generic::ToCss
+    S: css::generic::ToCss
         + Default
         + PartialEq
         + for<'b> css::generics::DeepClone<'b>
@@ -260,7 +259,6 @@ macro_rules! impl_fallbacks {
                 arena: &Bump,
                 targets: &Targets,
             ) -> SmallList<$T, 2> {
-                let _ = arena;
                 let mut fallbacks = ColorFallbackKind::empty();
                 $(
                     fallbacks.insert(self.$field.get_necessary_fallbacks(targets));
@@ -596,7 +594,7 @@ impl BorderProperty {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
-pub struct BorderHandler {
+pub struct BorderHandler<'bump> {
     border_top: BorderShorthand,
     border_bottom: BorderShorthand,
     border_left: BorderShorthand,
@@ -606,9 +604,11 @@ pub struct BorderHandler {
     border_inline_start: BorderShorthand,
     border_inline_end: BorderShorthand,
     category: PropertyCategory,
-    border_image_handler: BorderImageHandler,
-    border_radius_handler: BorderRadiusHandler,
+    border_image_handler: BorderImageHandler<'bump>,
+    border_radius_handler: BorderRadiusHandler<'bump>,
     flushed_properties: BorderProperty,
+    /// `border` also resets `border-image`, so `flush` writes one only if the rule did.
+    has_border_shorthand: bool,
     has_any: bool,
 }
 
@@ -626,13 +626,16 @@ mod border_handler_body {
     // callee so each temporary lives in the helper's frame, not in
     // `flush_logical`'s 146 KB monolith (clippy::large_stack_frames).
     #[inline(never)]
-    fn dest_push_with(dest: &mut DeclarationList, mk: impl FnOnce() -> Property) {
+    fn dest_push_with<'bump>(
+        dest: &mut DeclarationList<'bump>,
+        mk: impl FnOnce() -> Property<'bump>,
+    ) {
         dest.push(mk());
     }
     #[inline(never)]
-    fn ctx_add_logical_with(
-        ctx: &mut PropertyHandlerContext,
-        mk: impl FnOnce() -> (Property, Property),
+    fn ctx_add_logical_with<'bump>(
+        ctx: &mut PropertyHandlerContext<'_, 'bump>,
+        mk: impl FnOnce() -> (Property<'bump>, Property<'bump>),
     ) {
         let (a, b) = mk();
         ctx.add_logical_rule(a, b);
@@ -643,12 +646,13 @@ mod border_handler_body {
         // BorderShorthand pointers are passed separately.
         flushed_properties: &'a mut BorderProperty,
         dest: &'a mut DeclarationList<'bump>,
-        ctx: &'a mut PropertyHandlerContext<'ctx>,
+        ctx: &'a mut PropertyHandlerContext<'ctx, 'bump>,
         // `arena` field dropped from PropertyHandlerContext; the
         // arena is recovered once via `dest.bump()` and threaded here.
         arena: &'bump Bump,
         logical_supported: bool,
         logical_shorthand_supported: bool,
+        has_border_shorthand: bool,
     }
 
     // `f.logicalProp(ltr, ltr_key, rtl, rtl_key, val)` — ltr_key/rtl_key were unused.
@@ -1039,11 +1043,12 @@ mod border_handler_body {
             }};
         }
 
-        if block_start.is_valid()
+        let all_valid = block_start.is_valid()
             && block_end.is_valid()
             && inline_start.is_valid()
-            && inline_end.is_valid()
-        {
+            && inline_end.is_valid();
+
+        if all_valid && f.has_border_shorthand {
             let top_eq_bottom = block_start.eql(block_end);
             let left_eq_right = inline_start.eql(inline_end);
             let top_eq_left = block_start.eql(inline_start);
@@ -1135,16 +1140,37 @@ mod border_handler_body {
                 }, true);
             } else {
                 prop_diff!(block_start, {
-                    fc_prop!(f, $block_start_prop, block_start.to_border(f.arena));
                     fc_prop!(f, $block_end_prop, block_end.to_border(f.arena));
-                    fc_prop!(f, $inline_start_prop, inline_start.to_border(f.arena));
-                    fc_prop!(f, $inline_end_prop, inline_end.to_border(f.arena));
-                }, false);
+                    if !top_eq_left {
+                        fc_prop!(f, $inline_start_prop, inline_start.to_border(f.arena));
+                    }
+                    if !top_eq_right {
+                        fc_prop!(f, $inline_end_prop, inline_end.to_border(f.arena));
+                    }
+                }, true);
             }
+        } else if all_valid
+            && !$is_logical
+            && !(is_eq!(width) || is_eq!(style) || is_eq!(color))
+            && !(block_start.eql(block_end) && inline_start.eql(inline_end))
+        {
+            // Shorter than `border-style`, `border-width` and `border-color` of several values.
+            fc_prop!(f, $block_start_prop, block_start.to_border(f.arena));
+            fc_prop!(f, $block_end_prop, block_end.to_border(f.arena));
+            fc_prop!(f, $inline_start_prop, inline_start.to_border(f.arena));
+            fc_prop!(f, $inline_end_prop, inline_end.to_border(f.arena));
         } else {
-            shorthand!(BorderStyle, BorderStyle, style);
-            shorthand!(BorderWidth, BorderWidth, width);
-            shorthand!(BorderColor, BorderColor, color);
+            // Complete logical sides that differ are shorter as `border-block` and `border-inline`.
+            if !$is_logical
+                || !all_valid
+                || (block_start.eql(block_end)
+                    && block_start.eql(inline_start)
+                    && block_start.eql(inline_end))
+            {
+                shorthand!(BorderStyle, BorderStyle, style);
+                shorthand!(BorderWidth, BorderWidth, width);
+                shorthand!(BorderColor, BorderColor, color);
+            }
 
             if $is_logical && block_start.eql(block_end) && block_start.is_valid() {
                 if f.logical_supported {
@@ -1206,12 +1232,12 @@ mod border_handler_body {
     }};
 }
 
-    impl BorderHandler {
+    impl<'bump> BorderHandler<'bump> {
         pub(crate) fn handle_property(
             &mut self,
-            property: &Property,
-            dest: &mut DeclarationList,
-            context: &mut PropertyHandlerContext,
+            property: &Property<'bump>,
+            dest: &mut DeclarationList<'bump>,
+            context: &mut PropertyHandlerContext<'_, 'bump>,
         ) -> bool {
             // `arena` field dropped from PropertyHandlerContext; the
             // arena is recovered via `dest.bump()` (DeclarationList = bumpalo::Vec).
@@ -1424,14 +1450,21 @@ mod border_handler_body {
 
                     // Setting the `border` property resets `border-image`
                     self.border_image_handler.reset();
+                    self.has_border_shorthand = true;
                     self.has_any = true;
                 }
                 Property::Unparsed(val) => {
                     if is_border_property(val.property_id.tag()) {
                         self.flush(dest, context);
+                        if val.property_id.tag() == PropertyIdTag::Border {
+                            self.border_image_handler.reset();
+                        }
                         self.flush_unparsed(val, dest, context);
                     } else {
-                        if self.border_image_handler.will_flush(property) {
+                        if self
+                            .border_image_handler
+                            .will_flush(property, &context.targets)
+                        {
                             self.flush(dest, context);
                         }
                         return self
@@ -1443,7 +1476,10 @@ mod border_handler_body {
                     }
                 }
                 _ => {
-                    if self.border_image_handler.will_flush(property) {
+                    if self
+                        .border_image_handler
+                        .will_flush(property, &context.targets)
+                    {
                         self.flush(dest, context);
                     }
                     return self
@@ -1460,8 +1496,8 @@ mod border_handler_body {
 
         pub(crate) fn finalize(
             &mut self,
-            dest: &mut DeclarationList,
-            context: &mut PropertyHandlerContext,
+            dest: &mut DeclarationList<'bump>,
+            context: &mut PropertyHandlerContext<'_, 'bump>,
         ) {
             self.flush(dest, context);
             self.flushed_properties = BorderProperty::empty();
@@ -1469,15 +1505,22 @@ mod border_handler_body {
             self.border_radius_handler.finalize(dest, context);
         }
 
-        fn flush(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
+        fn flush(
+            &mut self,
+            dest: &mut DeclarationList<'bump>,
+            context: &mut PropertyHandlerContext<'_, 'bump>,
+        ) {
             if !self.has_any {
                 return;
             }
 
             self.has_any = false;
 
+            // A whole `border-image` behind it undoes the reset.
+            self.has_border_shorthand |= self.border_image_handler.will_flush_shorthand();
             self.flush_physical(dest, context);
             self.flush_logical(dest, context);
+            self.has_border_shorthand = false;
 
             let arena = dest.bump();
             self.border_top.reset(arena);
@@ -1493,8 +1536,8 @@ mod border_handler_body {
         #[inline(never)]
         fn flush_physical(
             &mut self,
-            dest: &mut DeclarationList,
-            context: &mut PropertyHandlerContext,
+            dest: &mut DeclarationList<'bump>,
+            context: &mut PropertyHandlerContext<'_, 'bump>,
         ) {
             let logical_supported = !context.should_compile_logical(Feature::LogicalBorders);
             let logical_shorthand_supported =
@@ -1510,6 +1553,7 @@ mod border_handler_body {
                 arena,
                 logical_supported,
                 logical_shorthand_supported,
+                has_border_shorthand: self.has_border_shorthand,
             };
 
             flush_category!(
@@ -1541,8 +1585,8 @@ mod border_handler_body {
         #[inline(never)]
         fn flush_logical(
             &mut self,
-            dest: &mut DeclarationList,
-            context: &mut PropertyHandlerContext,
+            dest: &mut DeclarationList<'bump>,
+            context: &mut PropertyHandlerContext<'_, 'bump>,
         ) {
             let logical_supported = !context.should_compile_logical(Feature::LogicalBorders);
             let logical_shorthand_supported =
@@ -1556,6 +1600,7 @@ mod border_handler_body {
                 arena,
                 logical_supported,
                 logical_shorthand_supported,
+                has_border_shorthand: self.has_border_shorthand,
             };
 
             flush_category!(
@@ -1586,9 +1631,9 @@ mod border_handler_body {
 
         fn flush_unparsed(
             &mut self,
-            unparsed: &UnparsedProperty,
-            dest: &mut DeclarationList,
-            context: &mut PropertyHandlerContext,
+            unparsed: &UnparsedProperty<'bump>,
+            dest: &mut DeclarationList<'bump>,
+            context: &mut PropertyHandlerContext<'_, 'bump>,
         ) {
             let arena = dest.bump();
             let logical_supported = !context.should_compile_logical(Feature::LogicalBorders);
@@ -1603,12 +1648,11 @@ mod border_handler_body {
 
             macro_rules! prop {
                 ($id:ident) => {{
-                    let _ = &dest; // autofix
-                    let mut upppppppppp = unparsed.with_property_id(arena, PropertyId::$id);
-                    context.add_unparsed_fallbacks(arena, &mut upppppppppp);
+                    let mut up = unparsed.with_property_id(arena, PropertyId::$id);
+                    context.add_unparsed_fallbacks(arena, &mut up);
                     self.flushed_properties
                         .insert(BorderProperty::try_from_property_id(PropertyIdTag::$id).unwrap());
-                    // Intentionally not pushed to dest (preserves existing behavior; likely a bug).
+                    dest.push(Property::Unparsed(up));
                 }};
             }
 

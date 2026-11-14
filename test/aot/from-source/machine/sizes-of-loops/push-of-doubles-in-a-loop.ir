@@ -1,0 +1,18 @@
+# f1 = halves
+# -- source: push-of-doubles-in-a-loop.ts
+# function halves(limit: number): number[] {
+#   const list: number[] = [];
+#   for (let k = 0; k < limit; k++) list.push(k * 0.5);
+#   return list;
+# }
+# declare const input: any;
+# (globalThis as any).answer = halves(input | 0);
+# -- end of source
+# The compiler before this one: 6 instructions, 0 of them patches ; 43 instructions, 0 of them patches ; 13 instructions, 1 of them patches.
+# Eight turns stand in the first loop: 60 operations. The storage, the length and the kind of the list come round in registers in the last: the turns load none of them, and the moves at its head are four more than 38.
+# RUN(X64): loops most:60,12,42 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 60
+# X64-NEXT: loop: at most 12
+# X64-NEXT: loop: at most 42

@@ -1,0 +1,9 @@
+# typeof, name and length: the function is read and tested
+# -- source: a-function-that-is-only-asked-about-uses-none-of-its-features.ts
+# console.log(typeof Bun.color, Bun.color.name, Bun.color.length);
+# new URLPattern("/a");
+# -- end of source
+# RUN: features
+# CHECK: by URLPattern named
+# RUN(NEVER): features
+# NEVER-NOT: by BunColor

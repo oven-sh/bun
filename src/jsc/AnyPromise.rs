@@ -114,6 +114,10 @@ impl AnyPromise {
     where
         F: FnOnce(&JSGlobalObject) -> JsResult<JSValue>,
     {
+        // As `JSPromise::resolve`: nothing is settled for a `Bun.ModuleGraph` that was disposed.
+        if global_object.bun_vm().reports_to_nobody() {
+            return Ok(());
+        }
         struct Wrapper<F> {
             f: Option<F>,
         }

@@ -28,15 +28,8 @@ pub enum Time {
 impl Time {
     // css.implementDeepClone / css.implementEql / css.implementHash — provided
     // by `#[derive(DeepClone, CssEql, CssHash)]` above (POD f32 payload).
-    // Kept as an inherent assoc fn for `protocol::CalcValue` callers that
-    // forward via UFCS (`Time::eql(a, b)`) — does not conflict with the
-    // derived trait method (that one has a `&self` receiver).
-    #[inline]
-    pub fn eql(lhs: Self, rhs: Self) -> bool {
-        lhs == rhs
-    }
 
-    pub fn parse(input: &mut css::Parser) -> Result<Time> {
+    pub fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> Result<'bump, Time> {
         match input.try_parse(Calc::<Time>::parse) {
             Ok(vv) => match vv {
                 Calc::Value(v) => {
@@ -50,7 +43,7 @@ impl Time {
         }
 
         let location = input.current_source_location();
-        let token = input.next()?.clone();
+        let token = *input.next()?;
         match &token {
             Token::Dimension(dim) => {
                 if bun_core::strings::eql_case_insensitive_ascii_check_length(b"s", dim.unit) {

@@ -478,8 +478,7 @@ impl<T> ThreadCell<T> {
 impl<T: ?Sized> ThreadCell<T> {
     /// Bind this cell to the calling thread. Idempotent on the owner; panics
     /// if a *different* thread has already claimed it. Call once from the
-    /// owning thread's entry point (e.g. `HTTPThread::on_start`,
-    /// `IoRequestLoop::on_spawn_io_thread`).
+    /// owning thread's entry point (e.g. `HTTPThread::on_start`).
     #[inline]
     pub fn claim(&self) {
         #[cfg(debug_assertions)]
@@ -520,16 +519,6 @@ impl<T: ?Sized> ThreadCell<T> {
     #[inline]
     pub fn get(&self) -> *mut T {
         self.assert_owner();
-        self.inner.get()
-    }
-
-    /// Raw pointer **without** the owner assertion. Use only on paths that
-    /// touch fields which are *themselves* cross-thread-safe (lock-free
-    /// queue + waker), pending a refactor that moves those fields out of the
-    /// thread-confined struct. Every call site must say which fields it
-    /// touches and why that's sound.
-    #[inline]
-    pub fn get_unchecked(&self) -> *mut T {
         self.inner.get()
     }
 }

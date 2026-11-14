@@ -629,7 +629,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 "src_index={:?} side={} src={} dest={} - {:?}\n",
                 file.source_index,
                 file.side.map(side_name).unwrap_or("null"),
-                BStr::new(&file.src_path.text),
+                BStr::new(&file.src_path),
                 BStr::new(&file.dest_path),
                 file.entry_point_index,
             );
@@ -753,7 +753,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     if let Some(runtime_file_index) = maybe_runtime_file_index {
         let any_client_chunks = bundled_outputs_list.iter().any(|file| {
             file.side == Some(bun_bundler::options::Side::Client)
-                && file.src_path.text != b"bun-framework-react/client.tsx"
+                && &*file.src_path != b"bun-framework-react/client.tsx"
         });
         if any_client_chunks {
             let runtime_file: &OutputFile = &bundled_outputs_list[runtime_file_index as usize];

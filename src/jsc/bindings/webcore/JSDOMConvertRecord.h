@@ -66,19 +66,7 @@ template<typename K, typename V> struct Converter<IDLRecord<K, V>> : DefaultConv
     using KeyType = typename K::ImplementationType;
     using ValueType = typename V::ImplementationType;
 
-    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSDOMGlobalObject& globalObject)
-    {
-        return convertRecord<JSDOMGlobalObject&>(lexicalGlobalObject, value, globalObject);
-    }
-
     static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
-    {
-        return convertRecord(lexicalGlobalObject, value);
-    }
-
-private:
-    template<class... Args>
-    static ReturnType convertRecord(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, Args... args)
     {
         auto& vm = JSC::getVM(&lexicalGlobalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -171,7 +159,7 @@ private:
                 }
 
                 // 3. Let typedValue be value converted to an IDL value of type V.
-                auto typedValue = Converter<V>::convert(lexicalGlobalObject, value, args...);
+                auto typedValue = Converter<V>::convert(lexicalGlobalObject, value);
                 RETURN_IF_EXCEPTION(scope, {});
 
                 // 4. Set result[typedKey] to typedValue.
@@ -236,7 +224,7 @@ private:
                         RETURN_IF_EXCEPTION(scope, {});
                     }
                     mayHaveChanged |= fieldValue.isObject();
-                    auto typedValue = Converter<V>::convert(lexicalGlobalObject, fieldValue, args...);
+                    auto typedValue = Converter<V>::convert(lexicalGlobalObject, fieldValue);
                     RETURN_IF_EXCEPTION(scope, {});
                     if constexpr (std::is_same_v<K, IDLUSVString>) {
                         if (!typedKey.is8Bit()) {
@@ -284,7 +272,7 @@ private:
                 RETURN_IF_EXCEPTION(scope, {});
 
                 // 3. Let typedValue be value converted to an IDL value of type V.
-                auto typedValue = Converter<V>::convert(lexicalGlobalObject, subValue, args...);
+                auto typedValue = Converter<V>::convert(lexicalGlobalObject, subValue);
                 RETURN_IF_EXCEPTION(scope, {});
 
                 // 4. Set result[typedKey] to typedValue.

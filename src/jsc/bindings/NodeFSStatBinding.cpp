@@ -172,16 +172,6 @@ Structure* getStructure(Zig::GlobalObject* globalObject)
 }
 
 template<bool isBigInt>
-JSObject* getPrototype(Zig::GlobalObject* globalObject)
-{
-    if (isBigInt) {
-        return globalObject->m_JSStatsBigIntClassStructure.prototypeInitializedOnMainThread(globalObject);
-    }
-
-    return globalObject->m_JSStatsClassStructure.prototypeInitializedOnMainThread(globalObject);
-}
-
-template<bool isBigInt>
 JSObject* getConstructor(Zig::GlobalObject* globalObject)
 {
     if (isBigInt) {

@@ -1193,8 +1193,8 @@ pub(crate) fn migrate_pnpm_lockfile(
     }
 
     // pnpm records `os`/`cpu` for every `packages:` entry whose manifest
-    // declares them, including `file:` folders, tarballs, and git packages.
-    crate::migration::clear_non_registry_platform_constraints(lockfile);
+    // declares them, including workspace members.
+    crate::migration::clear_workspace_platform_constraints(lockfile);
     declare_folder_dependencies_relative_to_their_package(lockfile)?;
 
     lockfile.tag_workspace_links(manager.options.link_workspace_packages);

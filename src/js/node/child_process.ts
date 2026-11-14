@@ -69,7 +69,10 @@ interface SpawnSyncResult {
 
 const kFromNode = Symbol("kFromNode");
 
-const setStdioBlocking: (fd: number, blocking: boolean) => number = $bindgen("node_process.bind.ts", "setStdioBlocking");
+const setStdioBlocking: (fd: number, blocking: boolean) => number = $bindgen(
+  "node_process.bind.ts",
+  "setStdioBlocking",
+);
 
 // Stand-in for Node's `Pipe` handle on piped child stdio, shaped like
 // `process.stdout._handle`: consumers read `fd` and call `setBlocking` for

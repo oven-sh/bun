@@ -152,6 +152,17 @@ pub enum MainEntryPoint {
     Bake,
 }
 
+/// Who looks for a server in the exports of the entry (`export default { fetch }`), once it has evaluated.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ServerLook {
+    /// Nobody: the look is done, or this kind of entry gets none.
+    None,
+    /// `moduleLoaderEvaluate`, when it has evaluated `bun:main`.
+    BehindBunMain,
+    /// The compiled program, which runs a compiled entry with no `bun:main` above it.
+    BehindCompiledEntry,
+}
+
 /// The built-in module that `Bun__loadBuiltinEntryPoint` runs. Mirrors
 /// `Bun::BuiltinEntryPoint` in `BuiltinEntryPoint.cpp`.
 #[repr(u8)]
@@ -186,7 +197,7 @@ pub struct VirtualMachine {
     /// `main()`.
     main: JsCell<Option<bun_ptr::RawSlice<u8>>>,
     pub main_entry_point: Cell<MainEntryPoint>,
-    pub did_look_for_server: Cell<bool>,
+    pub(crate) server_look: Cell<ServerLook>,
     pub main_resolved_path: JsCell<bun_core::String>,
     pub main_hash: Cell<u32>,
     /// Set if code overrides Bun.main to a custom value.
@@ -825,14 +836,26 @@ impl ExitHandler {
 
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__VM__shouldLookForServer(vm: &VirtualMachine) -> bool {
-        vm.main_entry_point.get() == MainEntryPoint::Compiled
-            && !vm.did_look_for_server.get()
-            && !vm.transpiler.get().options.disable_transpilation
+        vm.server_look.get() == ServerLook::BehindCompiledEntry
+    }
+
+    /// `moduleLoaderEvaluate` asks for every module that evaluates.
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__VM__shouldLookForServerBehindBunMain(
+        vm: &VirtualMachine,
+    ) -> bool {
+        vm.server_look.get() == ServerLook::BehindBunMain
     }
 
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__VM__didLookForServer(vm: &VirtualMachine) {
-        vm.did_look_for_server.set(true);
+        vm.server_look.set(ServerLook::None);
+    }
+
+    /// The path of the entry module, empty when there is none. Borrowed.
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__VM__entryPath(vm: &VirtualMachine) -> bun_core::StringView<'_> {
+        bun_core::StringView::borrow_utf8(vm.main().unwrap_or_default())
     }
 
     #[unsafe(no_mangle)]
@@ -2780,10 +2803,10 @@ pub struct RuntimeHooks {
     /// `heap::take`s it and clears its thread-local cache. Without this slot
     /// every worker leaked one box.
     pub deinit_runtime_state: unsafe fn(vm: *mut VirtualMachine, state: RuntimeState),
-    /// `ServerEntryPoint.generate(watch, entry_path)` — produces the synthetic
+    /// `ServerEntryPoint.generate(entry_path)` — produces the synthetic
     /// `bun:main` module body for `entry_path`. Returns `false` on error
     /// (error already logged into `vm.log`).
-    pub generate_entry_point: fn(vm: &VirtualMachine, watch: bool, entry_path: &[u8]) -> bool,
+    pub generate_entry_point: fn(vm: &VirtualMachine, entry_path: &[u8]) -> bool,
     /// `loadPreloads()` — runs `--preload` scripts. Returns the first rejected
     /// preload promise if any, else null. Errors propagate
     /// (resolver failures / `ModuleNotFound`).
@@ -3191,6 +3214,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).main).write(JsCell::new(None));
             addr_of_mut!((*vm).main_hash).write(Cell::new(0));
             addr_of_mut!((*vm).main_entry_point).write(Cell::new(MainEntryPoint::File));
+            addr_of_mut!((*vm).server_look).write(Cell::new(ServerLook::None));
             addr_of_mut!((*vm).main_resolved_path).write(JsCell::new(bun_core::String::EMPTY));
             addr_of_mut!((*vm).bake_config_plugin_names).write(JsCell::default());
             addr_of_mut!((*vm).bake_pages).write(Cell::new(false));
@@ -3514,13 +3538,18 @@ impl VirtualMachine {
             self.main_entry_point.get() == MainEntryPoint::Compiled
                 && crate::compiled_program::runs_in_place(),
         );
-        self.did_look_for_server.set(false);
+        self.server_look.set(match self.main_entry_point.get() {
+            MainEntryPoint::File => ServerLook::BehindBunMain,
+            MainEntryPoint::Compiled if !self.transpiler.get().options.disable_transpilation => {
+                ServerLook::BehindCompiledEntry
+            }
+            _ => ServerLook::None,
+        });
 
         if let (MainEntryPoint::File, Some(entry_path)) = (self.main_entry_point.get(), entry_path)
         {
             if let Some(hooks) = hooks {
-                let watch = self.is_watcher_enabled();
-                if !(hooks.generate_entry_point)(self, watch, entry_path) {
+                if !(hooks.generate_entry_point)(self, entry_path) {
                     return Err(crate::CrateError::ServerEntryPointGenerate);
                 }
             }

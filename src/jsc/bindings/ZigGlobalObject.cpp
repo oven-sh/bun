@@ -169,6 +169,7 @@
 #include "streams/JSWritableStreamDefaultWriter.h"
 #include "libusockets.h"
 #include "ModuleLoader.h"
+#include "BunCompiledEntryPoint.h"
 #include "BunCompiledModules.h"
 #include "DLHandleMap.h"
 #include "napi_external.h"
@@ -5057,7 +5058,10 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObj
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
     Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, Bun::moduleGraphOfLoader(lexicalGlobalObject, moduleLoader));
     RETURN_IF_EXCEPTION(scope, {});
-    noteModuleEvaluation(defaultGlobalObject(lexicalGlobalObject), moduleLoader);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    if (Bun::isEntryPointWrapper(globalObject, moduleLoader, key, moduleRecordValue)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, Bun::evaluateEntryPointWrapper(globalObject, moduleLoader, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode));
+    noteModuleEvaluation(globalObject, moduleLoader);
     RELEASE_AND_RETURN(scope, moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode));
 }
 
@@ -5077,8 +5081,9 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, Bun::moduleGraphOfLoader(lexicalGlobalObject, moduleLoader));
     RETURN_IF_EXCEPTION(scope, {});
     noteModuleEvaluation(globalObject, moduleLoader);
-    JSC::JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
-        WTF::move(scriptFetcher), sentValue, resumeMode);
+    JSC::JSValue result = Bun::isEntryPointWrapper(globalObject, moduleLoader, key, moduleRecordValue)
+        ? Bun::evaluateEntryPointWrapper(globalObject, moduleLoader, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode)
+        : moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode);
     // The new C++ loader propagates the module body's throw out of
     // evaluateNonVirtual; the old JS-side ModuleLoader.js swallowed it before
     // dispatching here. Don't call back into native code (which opens an

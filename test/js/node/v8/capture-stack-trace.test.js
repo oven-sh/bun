@@ -2,8 +2,9 @@ import { nativeFrameForTesting } from "bun:internal-for-testing";
 import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import assert from "node:assert";
 import { totalmem } from "node:os";
-import { isDeepStrictEqual } from "node:util";
+import { inspect, isDeepStrictEqual } from "node:util";
 import { createContext, runInContext } from "node:vm";
 import storesThatEndInADefinition from "../../bun/jsc/stores-that-end-in-a-definition-fixture.js";
 
@@ -2737,4 +2738,305 @@ test.concurrent("a collection that formats the frames of an Error keeps what use
     results: [["5 WEC", "none", '"input.css" -E-', ["line", "sourceURL"]]],
   });
   expect(exitCode).toBe(0);
+});
+
+// A `line`, `column` or `sourceURL` that user code stores on an Error is an ordinary property, as every property that
+// user code stores on an Error is in Node: writable, enumerable and configurable.
+test("line, column and sourceURL that a constructor assigns are enumerable own properties", () => {
+  // The shape of postcss's CssSyntaxError.
+  class CssSyntaxError extends Error {
+    constructor(message, line, column) {
+      super(message);
+      this.name = "CssSyntaxError";
+      this.line = line;
+      this.column = column;
+      this.sourceURL = "input.css";
+      Error.captureStackTrace(this, CssSyntaxError);
+    }
+  }
+  const error = new CssSyntaxError("Unclosed block", 1, 2);
+  const own = { name: "CssSyntaxError", line: 1, column: 2, sourceURL: "input.css" };
+  expect(positionNames.map(name => describeOwn(error, name))).toEqual(["1 WEC", "2 WEC", '"input.css" WEC']);
+  expect(Object.keys(error)).toEqual(["name", "line", "column", "sourceURL"]);
+  expect(JSON.parse(JSON.stringify(error))).toEqual(own);
+  expect({ ...error }).toEqual(own);
+  expect(inspect(error)).toContain("line: 1");
+  expect(error.stack).toStartWith("CssSyntaxError: Unclosed block");
+  // The first read of the stack changes nothing.
+  expect(positionNames.map(name => describeOwn(error, name))).toEqual(["1 WEC", "2 WEC", '"input.css" WEC']);
+});
+
+test("an error that copies the enumerable properties of another gets its line and column", () => {
+  // The shape of TypeORM's QueryFailedError around the error of a database driver.
+  class QueryFailedError extends Error {
+    constructor(driverError) {
+      super(driverError.message);
+      Object.assign(this, driverError);
+    }
+  }
+  const driverError = new Error("null value in column");
+  driverError.column = "email";
+  driverError.line = "2006";
+  const error = new QueryFailedError(driverError);
+  expect([error.column, error.line, Object.keys(error)]).toEqual(["email", "2006", ["column", "line"]]);
+});
+
+const positionStores = {
+  "an assignment": (error, name, value) => void (error[name] = value),
+  "Reflect.set": (error, name, value) => void Reflect.set(error, name, value),
+  "Object.assign": (error, name, value) => void Object.assign(error, { [name]: value }),
+};
+const errorsToStoreOn = {
+  "a new Error": () => new Error("m"),
+  "an Error whose stack was read": () => {
+    const error = new RangeError("m");
+    void error.stack;
+    return error;
+  },
+  "an Error that captured its stack": () => {
+    const error = new Error("m");
+    Error.captureStackTrace(error);
+    return error;
+  },
+  "an Error whose constructor captures its stack": () => {
+    class Captured extends Error {
+      constructor(message) {
+        super(message);
+        Error.captureStackTrace(this, Captured);
+      }
+    }
+    return new Captured("m");
+  },
+  "a TypeError that the engine threw": () => {
+    try {
+      null.property;
+    } catch (error) {
+      return error;
+    }
+  },
+  "a SyntaxError of the parser": () => {
+    try {
+      new Function("{");
+    } catch (error) {
+      return error;
+    }
+  },
+  "an AggregateError": () => new AggregateError([], "m"),
+  "an Error that structuredClone made": () => structuredClone(new Error("m")),
+};
+for (const [how, store] of Object.entries(positionStores)) {
+  test.each(Object.keys(errorsToStoreOn))(`${how} makes line, column or sourceURL an ordinary property of %s`, kind => {
+    for (const name of positionNames) {
+      const error = errorsToStoreOn[kind]();
+      store(error, name, 5);
+      expect([name, describeOwn(error, name), Object.keys(error)]).toEqual([name, "5 WEC", [name]]);
+      void error.stack;
+      store(error, name, 6);
+      expect([name, describeOwn(error, name), Object.keys(error)]).toEqual([name, "6 WEC", [name]]);
+    }
+  });
+}
+
+test("the keys of an Error list line, column and sourceURL in the order of the assignments", () => {
+  const error = new Error("m");
+  void error.stack;
+  error.sourceURL = "input.css";
+  error.other = true;
+  error.column = 2;
+  error.line = 1;
+  expect(Object.keys(error)).toEqual(["sourceURL", "other", "column", "line"]);
+  const seen = [];
+  for (const key in error) seen.push(key);
+  expect(seen).toEqual(["sourceURL", "other", "column", "line"]);
+});
+
+test("an assignment to line leaves the column and the sourceURL of the engine", () => {
+  const error = new Error("m");
+  error.line = 5;
+  expect([describeOwn(error, "line"), typeof error.column, describeOwn(error, "column").slice(-3)]).toEqual([
+    "5 WEC",
+    "number",
+    "W-C",
+  ]);
+  expect([typeof error.sourceURL, Object.keys(error)]).toEqual(["string", ["line"]]);
+});
+
+test("a store of line meets the prototype chain and the extensibility of the Error as in Node", () => {
+  class WithSetter extends Error {
+    set line(value) {
+      this.stored = value;
+    }
+    get line() {
+      return this.stored;
+    }
+  }
+  const withSetter = new WithSetter("m");
+  withSetter.line = 5;
+  expect([withSetter.line, describeOwn(withSetter, "line"), Object.keys(withSetter)]).toEqual([5, "none", ["stored"]]);
+
+  class ReadOnly extends Error {}
+  Object.defineProperty(ReadOnly.prototype, "line", { value: 1, writable: false });
+  const readOnly = new ReadOnly("m");
+  expect(() => {
+    readOnly.line = 5;
+  }).toThrow(TypeError);
+  expect([readOnly.line, describeOwn(readOnly, "line")]).toEqual([1, "none"]);
+
+  const closed = Object.preventExtensions(new Error("m"));
+  expect(() => {
+    closed.line = 5;
+  }).toThrow(TypeError);
+  expect(describeOwn(closed, "line")).toBe("none");
+});
+
+test.each([Object.preventExtensions, Object.seal, Object.freeze])(
+  "a store of line succeeds when Error.prepareStackTrace calls %p on the Error during the store",
+  close => {
+    Error.prepareStackTrace = error => (close(error), "prepared");
+    const error = new Error("m");
+    error.line = 5;
+    expect([error.stack, describeOwn(error, "line")]).toEqual(["prepared", "5 W-C"]);
+  },
+);
+
+test("what Error.prepareStackTrace does to line during a store of line stays as the hook left it", () => {
+  // Bun formats the stack at the first store of line, so the hook runs inside that store.
+  class WithSetter extends Error {
+    set line(value) {
+      this.fromSetter = value;
+    }
+    get line() {
+      return "prototype";
+    }
+  }
+  // A line that the hook defines is not the engine's: the store replaces its value and leaves its attributes.
+  for (const make of [() => new Error("m"), () => new WithSetter("m")]) {
+    Error.prepareStackTrace = error => (
+      Object.defineProperty(error, "line", { value: "hook", writable: true, enumerable: false, configurable: true }),
+      "prepared"
+    );
+    const error = make();
+    error.line = "stored";
+    expect([describeOwn(error, "line"), Object.keys(error)]).toEqual(['"stored" W-C', []]);
+  }
+  // A line that the hook stores is an ordinary property, and the store that ran the hook replaces its value.
+  Error.prepareStackTrace = error => ((error.line = "hook"), "prepared");
+  const error = new Error("m");
+  error.line = "stored";
+  expect([describeOwn(error, "line"), Object.keys(error), error.stack]).toEqual(['"stored" WEC', ["line"], "prepared"]);
+});
+
+test("a deep comparison sees the line that user code assigned", () => {
+  const make = line => {
+    const error = new Error("m");
+    error.line = line;
+    return error;
+  };
+  const [five, alsoFive, six, untouched] = [make(5), make(5), make(6), new Error("m")];
+  expect([isDeepStrictEqual(five, alsoFive), Bun.deepEquals(five, alsoFive, true)]).toEqual([true, true]);
+  for (const [left, right] of [
+    [five, six],
+    [five, untouched],
+    [untouched, five],
+  ]) {
+    expect([isDeepStrictEqual(left, right), Bun.deepEquals(left, right), Bun.deepEquals(left, right, true)]).toEqual([
+      false,
+      false,
+      false,
+    ]);
+    expect(() => assert.deepStrictEqual(left, right)).toThrow(assert.AssertionError);
+    expect(() => assert.deepEqual(left, right)).toThrow(assert.AssertionError);
+    expect(left).not.toEqual(right);
+    expect(left).not.toStrictEqual(right);
+  }
+  expect(five).toEqual(alsoFive);
+});
+
+test("a position that a constructor assigns as undefined compares like no position", () => {
+  // The shape of an error class with an optional position.
+  class ParseError extends Error {
+    constructor(message, position = {}) {
+      super(message);
+      this.line = position.line;
+      this.column = position.column;
+    }
+  }
+  const withoutPosition = new ParseError("boom");
+  expect(Object.keys(withoutPosition)).toEqual(["line", "column"]);
+  expect(withoutPosition).toEqual(new Error("boom"));
+  expect(new Error("boom")).toEqual(withoutPosition);
+  expect([withoutPosition]).toContainEqual(new Error("boom"));
+  expect(withoutPosition).not.toStrictEqual(new Error("boom"));
+  expect(new ParseError("boom", { line: 5 })).not.toEqual(new Error("boom"));
+});
+
+test("a store site that runs hot makes an ordinary property on every Error", () => {
+  function storeLine(error, value) {
+    error.line = value;
+  }
+  function storeByValue(error, name, value) {
+    error[name] = value;
+  }
+  const wrong = [];
+  for (let i = 0; i < 2000; i++) {
+    const name = positionNames[i % 3];
+    const error = new Error("m");
+    if (i & 1) void error.stack;
+    storeLine(error, i);
+    storeByValue(error, name, i);
+    const keys = Object.keys(error);
+    if (describeOwn(error, "line") !== `${i} WEC` || describeOwn(error, name) !== `${i} WEC` || !keys.includes(name))
+      wrong.push(i);
+  }
+  expect(wrong).toEqual([]);
+});
+
+test("an Error with so many properties that its shape is a dictionary gets an ordinary line", () => {
+  const error = new Error("m");
+  for (let i = 0; i < 600; i++) error["property" + i] = i;
+  delete error.property7;
+  void error.stack;
+  error.line = 5;
+  expect([describeOwn(error, "line"), Object.keys(error).at(-1)]).toEqual(["5 WEC", "line"]);
+});
+
+test("a copy of every own name of an Error lists the line, column and sourceURL of the engine", () => {
+  // The shape of the error that a sandboxed processor of BullMQ sends to its parent, which makes an Error of it again.
+  // An Error that nobody wrote to has the three names as own properties, so the copy gets them. Node has none to copy.
+  const source = new Error("job failed");
+  const sent = {};
+  for (const name of Object.getOwnPropertyNames(source)) sent[name] = source[name];
+  const received = Object.assign(new Error(), sent);
+  expect(Object.keys(received).filter(key => positionNames.includes(key))).toEqual(positionNames);
+  expect(positionNames.map(name => received[name])).toEqual(positionNames.map(name => source[name]));
+});
+
+test("Bun.inspect lists the line and column that user code assigned and shows the frame of the Error", () => {
+  function fail() {
+    const error = new Error("Unclosed block");
+    error.line = 1;
+    error.column = 2;
+    return error;
+  }
+  const inspected = Bun.inspect(fail());
+  expect(inspected).toContain("line: 1,");
+  expect(inspected).toContain("column: 2,");
+  expect(inspected).toMatch(/\n\s+at fail \(.*capture-stack-trace\.test\.js:\d+:\d+\)/);
+});
+
+test("Bun.inspect of a SyntaxError whose line user code stored leaves the stack to Error.prepareStackTrace", () => {
+  let calls = 0;
+  Error.prepareStackTrace = () => (calls++, "prepared");
+  // The parser gives the error its line. The error has no frames until Error.captureStackTrace gives it some.
+  const error = withoutFrames(() => {
+    try {
+      new Function("(");
+    } catch (thrown) {
+      return thrown;
+    }
+  });
+  error.line = 5;
+  Error.captureStackTrace(error);
+  expect(Bun.inspect(error)).toContain("line: 5");
+  expect([calls, error.stack, calls]).toEqual([0, "prepared", 1]);
 });

@@ -11,7 +11,12 @@ impl<T> AliasableBox<T> {
 
     /// As [`Box::into_raw`].
     pub fn into_raw(self) -> *mut T {
-        core::mem::ManuallyDrop::new(self).as_ptr()
+        self.into_non_null().as_ptr()
+    }
+
+    /// As [`Box::into_non_null`].
+    pub fn into_non_null(self) -> NonNull<T> {
+        core::mem::ManuallyDrop::new(self).0
     }
 
     /// Valid until `self` is dropped.

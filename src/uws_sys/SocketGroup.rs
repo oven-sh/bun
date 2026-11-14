@@ -12,8 +12,8 @@ use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 
 use crate::{
-    ConnectingSocket, LIBUS_SOCKET_DESCRIPTOR, ListenSocket, Loop, SocketKind, SslCtx,
-    us_bun_verify_error_t, us_socket_t,
+    ConnectingSocket, LIBUS_SOCKET_DESCRIPTOR, ListenSocket, Loop, OwnedListenSocket, SocketKind,
+    SslCtx, us_bun_verify_error_t, us_socket_t,
 };
 
 #[repr(C)]
@@ -150,7 +150,7 @@ impl SocketGroup {
         options: c_int,
         socket_ext_size: c_int,
         err: &mut c_int,
-    ) -> *mut ListenSocket {
+    ) -> Option<OwnedListenSocket> {
         // SAFETY: forwarding to C; all pointers are valid or null as documented.
         unsafe {
             us_socket_group_listen(
@@ -174,7 +174,7 @@ impl SocketGroup {
         options: c_int,
         socket_ext_size: c_int,
         err: &mut c_int,
-    ) -> *mut ListenSocket {
+    ) -> Option<OwnedListenSocket> {
         // SAFETY: forwarding to C; `path` ptr+len derived from a valid slice.
         unsafe {
             us_socket_group_listen_unix(
@@ -199,7 +199,7 @@ impl SocketGroup {
         options: c_int,
         socket_ext_size: c_int,
         err: &mut c_int,
-    ) -> *mut ListenSocket {
+    ) -> Option<OwnedListenSocket> {
         // SAFETY: forwarding to C; all pointers are valid or null as documented.
         unsafe {
             us_socket_group_listen_fd(
@@ -319,7 +319,7 @@ unsafe extern "C" {
         options: c_int,
         socket_ext_size: c_int,
         err: *mut c_int,
-    ) -> *mut ListenSocket;
+    ) -> Option<OwnedListenSocket>;
     fn us_socket_group_listen_unix(
         group: *const SocketGroup,
         kind: u8,
@@ -329,7 +329,7 @@ unsafe extern "C" {
         options: c_int,
         socket_ext_size: c_int,
         err: *mut c_int,
-    ) -> *mut ListenSocket;
+    ) -> Option<OwnedListenSocket>;
     fn us_socket_group_listen_fd(
         group: *const SocketGroup,
         kind: u8,
@@ -339,7 +339,7 @@ unsafe extern "C" {
         options: c_int,
         socket_ext_size: c_int,
         err: *mut c_int,
-    ) -> *mut ListenSocket;
+    ) -> Option<OwnedListenSocket>;
     /// Returns `us_socket_t*` (fast path) OR `us_connecting_socket_t*` (slow
     /// path), discriminated by `*is_connecting`. The public `connect()` method
     /// turns this into the typed `ConnectResult` enum — call that, not this.

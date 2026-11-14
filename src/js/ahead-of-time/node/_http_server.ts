@@ -7493,11 +7493,7 @@ function writeInFullBehindHead(
       written += written.toString(16).length + 4;
     }
   }
-  return countWritten(res, exchange, fromSocket ? 0 : written);
-}
-
-function countWritten(res: $Node.ServerResponse, exchange: Exchange | undefined, written: number): boolean {
-  if (written > 0 && !res[kReplayingPipelinedOps]) {
+  if (!fromSocket && written > 0 && !res[kReplayingPipelinedOps]) {
     res[kBytesBuffered] = (res[kBytesBuffered] ?? 0) + written;
     scheduleWriteAccountingFlush(res);
   }

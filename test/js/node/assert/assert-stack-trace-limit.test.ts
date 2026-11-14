@@ -13,14 +13,19 @@ import { promisify } from "node:util";
 
 const isNode = process.versions.bun === undefined;
 
+// Not 0 and not the default: a limit that another test file of the same process left cannot pass for it.
+const limitOfTest = 7;
+
 /**
- * What `fn` threw, and the Error.stackTraceLimit that it left. Error.prepareStackTrace and Error.stackTraceLimit are
- * put back: they belong to the process, so every later test would see them.
+ * Calls `fn` with Error.stackTraceLimit at `limitOfTest`. What `fn` threw, and the limit that it left.
+ * Error.prepareStackTrace and Error.stackTraceLimit are put back: they belong to the process, so every later test
+ * would see them.
  */
 function run(fn: () => unknown): { thrown: unknown; limit: unknown } {
   const { prepareStackTrace, stackTraceLimit } = Error;
   let thrown: unknown;
   let limit: unknown;
+  Error.stackTraceLimit = limitOfTest;
   try {
     fn();
   } catch (error) {
@@ -34,8 +39,6 @@ function run(fn: () => unknown): { thrown: unknown; limit: unknown } {
 }
 
 describe("a failed assertion that throws something else leaves Error.stackTraceLimit as it was", () => {
-  const before = Error.stackTraceLimit;
-
   // In Bun the hook throws for an operand, while the message is built. In node that throw is ignored or there is none,
   // and the hook throws for the stack of the AssertionError, after the limit is back.
   const fromHook = new Error("from the hook");
@@ -56,7 +59,7 @@ describe("a failed assertion that throws something else leaves Error.stackTraceL
         fail();
       });
       assert.strictEqual(thrown, fromHook);
-      assert.strictEqual(limit, before);
+      assert.strictEqual(limit, limitOfTest);
     });
   }
 
@@ -67,15 +70,13 @@ describe("a failed assertion that throws something else leaves Error.stackTraceL
       assert.deepStrictEqual({ error: new Error("actual") }, { error: null });
     });
     assert.ok(thrown instanceof Error);
-    assert.strictEqual(limit, before);
+    assert.strictEqual(limit, limitOfTest);
   });
 
   // node restores the limit with no `finally`: each of these leaves 0 there, and every later Error has no frames.
   const fromOperand = new Error("from the operand");
   const revocable = Proxy.revocable({}, {});
   revocable.revoke();
-  const ownCause: Error = new Error("actual");
-  ownCause.cause = ownCause;
   const throwing: [string, () => unknown, (thrown: unknown) => boolean][] = [
     [
       "the message getter of an Error operand",
@@ -129,7 +130,11 @@ describe("a failed assertion that throws something else leaves Error.stackTraceL
     ["a revoked Proxy operand", () => assert.strictEqual(revocable.proxy, {}), thrown => thrown instanceof TypeError],
     [
       "an Error operand that is its own cause",
-      () => assert.strictEqual(ownCause, new Error("expected")),
+      () => {
+        const actual = new Error("actual");
+        actual.cause = actual;
+        assert.strictEqual(actual, new Error("expected"));
+      },
       thrown => thrown instanceof RangeError,
     ],
   ];
@@ -138,7 +143,7 @@ describe("a failed assertion that throws something else leaves Error.stackTraceL
     test(`${name} throws`, { skip: isNode && "node leaves Error.stackTraceLimit at 0" }, () => {
       const { thrown, limit } = run(fail);
       assert.ok(isExpected(thrown), `threw ${thrown}`);
-      assert.strictEqual(limit, before);
+      assert.strictEqual(limit, limitOfTest);
     });
   }
 
@@ -146,7 +151,7 @@ describe("a failed assertion that throws something else leaves Error.stackTraceL
   test("an operand is the reason of an aborted AbortSignal", () => {
     const { thrown, limit } = run(() => assert.deepStrictEqual(AbortSignal.abort().reason, new Error("expected")));
     assert.ok(thrown instanceof Error);
-    assert.strictEqual(limit, before);
+    assert.strictEqual(limit, limitOfTest);
   });
 });
 

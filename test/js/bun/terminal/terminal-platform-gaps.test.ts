@@ -8,7 +8,7 @@
 // "SAME" tests assert identical behaviour and exist to lock that in.
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, nodeExeAtLeast } from "harness";
 import { release } from "node:os";
 
 // Windows build number ("10.0.17763" is Server 2019, "10.0.26100" is 11 24H2).
@@ -21,6 +21,8 @@ async function runInTerminal(
   opts: {
     cols?: number;
     rows?: number;
+    /** The runtime the child runs under. Bun when absent. */
+    exe?: string;
     done: (output: string) => boolean;
     afterReady?: (terminal: Bun.Terminal, output: () => string) => void | Promise<void>;
     readyMarker?: string;
@@ -36,7 +38,7 @@ async function runInTerminal(
   // Use an inline terminal so the child becomes the session leader on POSIX
   // (setsid + TIOCSCTTY), which is required for SIGINT/SIGWINCH delivery.
   const proc = Bun.spawn({
-    cmd: [bunExe(), "-e", childScript],
+    cmd: [opts.exe ?? bunExe(), "-e", childScript],
     env: bunEnv,
     terminal: {
       cols: opts.cols ?? 80,
@@ -140,11 +142,105 @@ describe("Bun.Terminal platform behaviour", () => {
 
   test("SAME: child sees the configured terminal dimensions", async () => {
     const { output } = await runInTerminal(
-      `process.stdout.write('READY cols=' + process.stdout.columns + ' rows=' + process.stdout.rows)`,
-      { cols: 87, rows: 19, done: o => o.includes("rows=") },
+      `process.stdout.write('READY cols=' + process.stdout.columns + ' rows=' + process.stdout.rows +
+         ' stderr=' + process.stderr.columns + 'x' + process.stderr.rows + ' DONE')`,
+      { cols: 87, rows: 19, done: o => o.includes("DONE") },
     );
     expect(output).toContain("cols=87");
     expect(output).toContain("rows=19");
+    expect(output).toContain("stderr=87x19");
+  });
+
+  // Opened by path, the terminal is a descriptor above 2.
+  const terminalPath = JSON.stringify(isWindows ? "\\\\.\\CONOUT$" : "/dev/tty");
+
+  // Node.js is the reference for node:tty. A child that uses no Bun API runs
+  // under it too and must print the same lines. Before v24 its fs cannot open
+  // a Windows console device by name (nodejs/node#54161).
+  for (const [runtime, exe] of [
+    ["Bun", bunExe()],
+    ["Node.js", nodeExeAtLeast("24.0.0")],
+  ] as const) {
+    test.skipIf(!exe)(
+      `SAME: a tty.WriteStream on the terminal opened by path sees its dimensions and a resize (${runtime})`,
+      async () => {
+        const { output } = await runInTerminal(
+          `const { openSync } = require('node:fs');
+           const stream = new (require('node:tty').WriteStream)(openSync(${terminalPath}, 'r+'));
+           // The binding's TTY closes its descriptor on Windows, so it gets one of its own.
+           const wrap = new (process.binding('tty_wrap').TTY)(openSync(${terminalPath}, 'r+'));
+           const viaBinding = () => {
+             const size = [0, 0];
+             wrap.getWindowSize(size);
+             return size;
+           };
+           const seen = [stream.isTTY, stream.columns, stream.rows, stream.getWindowSize(), viaBinding()];
+           process.stdout.write('READY=' + JSON.stringify(seen), () => {
+             // Without a size to begin with there is no resize to wait for.
+             if (stream.columns !== 87) process.exit(1);
+           });
+           let resized = false;
+           stream.on('resize', () => (resized = true));
+           const poll = setInterval(() => {
+             stream._refreshSize();
+             if (stream.columns !== 133 || stream.rows !== 41) return;
+             clearInterval(poll);
+             const saw = [stream.getWindowSize(), resized, viaBinding()];
+             process.stdout.write(' SAW=' + JSON.stringify(saw) + ' DONE', () => process.exit(0));
+           }, 50);`,
+          {
+            exe: exe!,
+            cols: 87,
+            rows: 19,
+            done: o => o.includes("DONE"),
+            afterReady: t => void t.resize(133, 41),
+          },
+        );
+        const shown = Bun.stripANSI(output);
+        expect(shown).toContain("READY=[true,87,19,[87,19],[87,19]]");
+        expect(shown).toContain("SAW=[[133,41],true,[133,41]]");
+      },
+    );
+
+    // A pty is one device for both directions. A Windows console input handle
+    // has no screen buffer, so it has no window size.
+    test.skipIf(!exe)(`GAP: stdin has a window size on POSIX only (${runtime})`, async () => {
+      const { output } = await runInTerminal(
+        `const size = [0, 0];
+         new (process.binding('tty_wrap').TTY)(0).getWindowSize(size);
+         process.stdout.write('READY stdin=' + size.join('x') + ' DONE')`,
+        { exe: exe!, cols: 87, rows: 19, done: o => o.includes("DONE") },
+      );
+      expect(output).toContain(isWindows ? "stdin=0x0" : "stdin=87x19");
+    });
+  }
+
+  // SetStdHandle points a standard handle of the process somewhere else. The
+  // descriptors a stream is built on stay the terminal, as they do for writes.
+  test.skipIf(!isWindows)("the window size of fd 1 and fd 2 follows the descriptor after SetStdHandle", async () => {
+    const { output } = await runInTerminal(
+      `const k32 = require('bun:ffi').dlopen('kernel32.dll', {
+         GetStdHandle: { args: ['i32'], returns: 'ptr' },
+         SetStdHandle: { args: ['i32', 'ptr'], returns: 'i32' },
+       }).symbols;
+       const { WriteStream } = require('node:tty');
+       const [STD_INPUT, STD_OUTPUT, STD_ERROR] = [-10, -11, -12];
+       const saved = [STD_OUTPUT, STD_ERROR].map(slot => [slot, k32.GetStdHandle(slot)]);
+       // The console's input handle is not a screen buffer: it has no window size.
+       for (const [slot] of saved) {
+         if (!k32.SetStdHandle(slot, k32.GetStdHandle(STD_INPUT))) throw new Error('SetStdHandle');
+       }
+       const seen = [1, 2].map(fd => {
+         const stream = new WriteStream(fd);
+         return [stream.isTTY, stream.columns, stream.rows];
+       });
+       seen.push([process.stdout.columns, process.stdout.rows]);
+       for (const [slot, handle] of saved) k32.SetStdHandle(slot, handle);
+       process.stdout.write('READY=' + JSON.stringify(seen) + ' DONE');
+       process.exit(0);`,
+      { cols: 87, rows: 19, done: o => o.includes("DONE") },
+    );
+    expect(Bun.stripANSI(output)).toContain("READY=[[true,87,19],[true,87,19],[87,19]]");
   });
 
   // (Bun.Terminal stores `name` but does not inject TERM= into the child env

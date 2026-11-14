@@ -398,6 +398,15 @@ function failWriteCallbackOf(self, callback, er) {
     process.nextTick(reportError, e);
   }
 }
+// The handlers of the socket under a TLS socket made with a `signal` are not wrapped, so what a 'session' or 'keylog' listener throws is reported here.
+function emitUnderHandle(self, name, value) {
+  try {
+    self.emit(name, value);
+  } catch (e) {
+    if (!self[kReportsThrows]) throw e;
+    reportError(e);
+  }
+}
 function failWriteWith(self, er, callback) {
   self._pendingData = null;
   self[kwriteCallback] = null;
@@ -516,8 +525,9 @@ function linkUpgraded(self, connection: SocketInstance) {
   destroyWhenUpgradedCloses(self, connection);
   connection.on("error", onUpgradedError.bind(null, self));
   self.connecting = isSocket && (connection.connecting || !connection._handle);
-  // Its 'error' goes on to `self`, where the listener that addAbortSignal() added takes it. Its handlers stay: the catch blocks that test the marker report.
-  if (self[kReportsThrows] && isSocket) connection[kReportsThrows] = true;
+  // The 'error' of each socket under `self` goes on to `self`, where the listener that addAbortSignal() added takes it. Their handlers stay: the catch blocks that test the marker report.
+  if (self[kReportsThrows])
+    for (let under = connection; under instanceof Socket; under = under[kupgraded]) under[kReportsThrows] = true;
 }
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L964-L973
 function onUpgradedConnect(self, connection) {
@@ -918,7 +928,7 @@ const SocketHandlers = {
     const self = socket.data;
     if (!self) return;
     if (self._secureEstablished) {
-      self.emit("session", session);
+      emitUnderHandle(self, "session", session);
     } else {
       self[kpendingSession] = session;
     }
@@ -926,7 +936,7 @@ const SocketHandlers = {
   keylog(socket, line) {
     const self = socket.data;
     if (!self) return;
-    self.emit("keylog", line);
+    emitUnderHandle(self, "keylog", line);
     if (tlsKeylogPath !== undefined) appendTlsKeylog(tlsKeylogPath, line);
     self.server?.emit?.("keylog", line, self);
   },
@@ -1219,7 +1229,7 @@ const ServerHandlers = {
   keylog(socket, line) {
     const { data: self } = socket;
     if (!self) return;
-    self.emit("keylog", line);
+    emitUnderHandle(self, "keylog", line);
     if (tlsKeylogPath !== undefined) appendTlsKeylog(tlsKeylogPath, line);
     self.server?.emit?.("keylog", line, self);
   },
@@ -1793,7 +1803,7 @@ const SocketHandlers2 = {
     const { self } = socket.data;
     if (!self) return;
     if (self._secureEstablished) {
-      self.emit("session", session);
+      emitUnderHandle(self, "session", session);
     } else {
       self[kpendingSession] = session;
     }
@@ -1801,7 +1811,7 @@ const SocketHandlers2 = {
   keylog(socket, line) {
     const { self } = socket.data;
     if (!self) return;
-    self.emit("keylog", line);
+    emitUnderHandle(self, "keylog", line);
     if (tlsKeylogPath !== undefined) appendTlsKeylog(tlsKeylogPath, line);
   },
   close(socket, err?: NativeSocketError) {
@@ -1904,7 +1914,12 @@ const SocketHandlers2 = {
     // after destroy(err)'s 'error'. Not deferred here: it would land on a connect() made right
     // after destroy() and fail that one.
     // An attempt that timed out was closed with its `oncomplete` cleared.
-    req.oncomplete?.(error.errno, self._handle, req, true, true);
+    try {
+      req.oncomplete?.(error.errno, self._handle, req, true, true);
+    } catch (e) {
+      if (!self[kReportsThrows]) throw e;
+      reportError(e);
+    }
   },
 } satisfies InternalSocketHandler<ConnectData>;
 

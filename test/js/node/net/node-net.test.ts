@@ -1268,12 +1268,54 @@ describe("a socket made with a signal", () => {
     });
   });
 
+  // Nothing listens on the port. The listener runs under the callback of the handle that reports the failure.
+  it.concurrent(
+    "what a listener throws on a socket under a TLS socket that does not connect stays uncaught",
+    async () => {
+      const name = "the socket under a TLS socket: a 'connectionAttemptFailed' listener";
+      expect(await runFixture("a listener that throws on a socket under a TLS socket that does not connect")).toEqual({
+        stdout: [`uncaught Error: ${name}`, `${name}: open`, "exit code 1"],
+        stderr: "",
+        exitCode: 1,
+      });
+    },
+  );
+
+  // The 'error' of every socket under the TLS socket that has the signal goes on to that TLS socket.
+  it.concurrent("what a listener throws under a TLS socket over a TLS socket stays an uncaught exception", async () => {
+    const group = "a listener that throws under a TLS socket over a TLS socket";
+    const rows = [
+      "a TLS socket under a TLS socket: a 'session' listener",
+      "a TLS socket under a TLS socket: a 'keylog' listener",
+      "the socket under two TLS sockets: a 'connect' listener",
+    ];
+    expect(await runFixture(group, { TLS_FIXTURE: JSON.stringify(tlsCert) })).toEqual({
+      stdout: [...rows.flatMap(name => [`uncaught Error: ${name}`, `${name}: open`]), "exit code 1"],
+      stderr: "",
+      exitCode: 1,
+    });
+  });
+
+  // New handlers for the handle of that socket would run in the async context of the tls.connect() call.
+  it.concurrent("the socket under a TLS socket keeps its async context", async () => {
+    expect(await runFixture("the socket under a TLS socket keeps its async context")).toEqual({
+      stdout: ["the callback of a write of the socket under ran in the store of net.connect()", "exit code 0"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   // Node.js refuses an ArrayBuffer too. Bun took one before, and the handle still does.
   it("tls.connect() takes a session in an ArrayBuffer", () => {
-    const socket = tlsConnect({ host: "127.0.0.1", port: 1, session: new ArrayBuffer(4) as any });
-    socket.on("error", () => {});
-    socket.destroy();
-    expect(socket.destroyed).toBe(true);
+    let socket: TLSSocket | undefined;
+    try {
+      expect(() => {
+        socket = tlsConnect({ host: "127.0.0.1", port: 1, session: new ArrayBuffer(4) as any });
+        socket.on("error", () => {});
+      }).not.toThrow();
+    } finally {
+      socket?.destroy();
+    }
   });
 
   // Node.js does not read `session` from the options of connect(). Bun does, and refuses there what setSession() refuses.

@@ -16,6 +16,16 @@ if (isChildProcess) {
 const net = require("node:net");
 const tls = require("node:tls");
 
+// Windows takes the first write whole, whatever its size. This writes until one write waits for the peer, and that write
+// gets `callback`: it then runs under the callback of the handle, on every platform.
+function writeThatWaits(socket, callback) {
+  for (let i = 0; i < 8; i++) {
+    let waits = false;
+    socket.write(Buffer.alloc(8 * 1024 * 1024), error => waits && callback(error));
+    if ((waits = socket.writableLength > 0)) return;
+  }
+}
+
 // Each call makes a socket with `signal`. All but the first then throw, so the caller never has the socket.
 // The other groups start faster without node:http, node:https and node:http2.
 const calls = {
@@ -373,8 +383,10 @@ const groups = {
         over,
         thrower,
       ) => {
-        under.write(Buffer.alloc(8 * 1024 * 1024), thrower);
-        process.nextTick(over);
+        under.once("connect", () => {
+          writeThatWaits(under, thrower);
+          process.nextTick(over);
+        });
       },
       "the socket under a TLS socket: the listener that makes the TLS socket": (under, over, thrower) =>
         under.once("connect", () => {
@@ -386,10 +398,12 @@ const groups = {
         over,
         thrower,
       ) =>
-        under.write(Buffer.alloc(8 * 1024 * 1024), () => {
-          over();
-          thrower();
-        }),
+        under.once("connect", () =>
+          writeThatWaits(under, () => {
+            over();
+            thrower();
+          }),
+        ),
     };
     for (const [name, arm] of Object.entries(rows)) {
       // No row waits for the handshake: the peer only reads.
@@ -470,7 +484,7 @@ const groups = {
     const under = await new Promise(resolve => server.once("connection", resolve));
     let secure;
     await new Promise(resolve => {
-      under.write(Buffer.alloc(8 * 1024 * 1024), () => {
+      writeThatWaits(under, () => {
         // Two turns of the event loop are past every tick that can report the throw.
         setImmediate(() => setImmediate(resolve));
         throw new Error(name);
@@ -482,6 +496,81 @@ const groups = {
     secure.destroy();
     third.destroy();
     server.close();
+  },
+  // Nothing listens on the port. Node.js emits 'connectionAttemptFailed' under the callback of the handle.
+  async "a listener that throws on a socket under a TLS socket that does not connect"() {
+    const name = "the socket under a TLS socket: a 'connectionAttemptFailed' listener";
+    const server = net.createServer();
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address();
+    await new Promise(resolve => server.close(resolve));
+    const under = net.connect({ host: "127.0.0.1", port });
+    const socket = tls.connect({ socket: under, signal: new AbortController().signal });
+    await new Promise(resolve => {
+      under.once("connectionAttemptFailed", () => {
+        // Two turns of the event loop are past every tick that can report the throw.
+        setImmediate(() => setImmediate(resolve));
+        throw new Error(name);
+      });
+    });
+    console.log(`${name}: ${socket.destroyed || under.destroyed ? "destroyed" : "open"}`);
+    socket.destroy();
+    under.destroy();
+  },
+  // The peer is a TLS server that runs a second TLS session inside the first one.
+  async "a listener that throws under a TLS socket over a TLS socket"() {
+    const cert = JSON.parse(process.env.TLS_FIXTURE);
+    const rows = {
+      "a TLS socket under a TLS socket: a 'session' listener": (inner, thrower) => inner.once("session", thrower),
+      "a TLS socket under a TLS socket: a 'keylog' listener": (inner, thrower) => inner.once("keylog", thrower),
+      // The two TLS sockets are over it before it connects.
+      "the socket under two TLS sockets: a 'connect' listener": (inner, thrower, under) =>
+        under.once("connect", thrower),
+    };
+    for (const [name, arm] of Object.entries(rows)) {
+      const server = tls.createServer(cert, connection => {
+        connection.on("error", () => {});
+        new tls.TLSSocket(connection, { isServer: true, ...cert }).on("error", () => {}).resume();
+      });
+      await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+      const under = net.connect({ host: "127.0.0.1", port: server.address().port });
+      const inner = tls.connect({ socket: under, rejectUnauthorized: false });
+      const outer = tls.connect({ socket: inner, rejectUnauthorized: false, signal: new AbortController().signal });
+      outer.resume();
+      await new Promise(resolve => {
+        arm(
+          inner,
+          () => {
+            // Two turns of the event loop are past every tick that can report the throw.
+            setImmediate(() => setImmediate(resolve));
+            throw new Error(name);
+          },
+          under,
+        );
+      });
+      console.log(`${name}: ${outer.destroyed || inner.destroyed || under.destroyed ? "destroyed" : "open"}`);
+      outer.destroy();
+      inner.destroy();
+      under.destroy();
+      await new Promise(resolve => server.close(resolve));
+    }
+  },
+  // The socket is made in one AsyncLocalStorage store and the TLS socket in another one.
+  async "the socket under a TLS socket keeps its async context"() {
+    const storage = new (require("node:async_hooks").AsyncLocalStorage)();
+    const server = net.createServer(connection => connection.on("error", () => {}).resume());
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const under = storage.run("net.connect()", () => net.connect({ host: "127.0.0.1", port: server.address().port }));
+    await new Promise(resolve => under.once("connect", resolve));
+    const seen = new Promise(resolve =>
+      storage.run("net.connect()", () => writeThatWaits(under, () => resolve(storage.getStore()))),
+    );
+    const socket = storage.run("tls.connect()", () =>
+      tls.connect({ socket: under, signal: new AbortController().signal }),
+    );
+    console.log(`the callback of a write of the socket under ran in the store of ${await seen}`);
+    socket.destroy();
+    await new Promise(resolve => server.close(resolve));
   },
   // The callback of net.connect() sends its socket to a child process. The peer sends back what it gets.
   async "a socket sent to a child process"() {

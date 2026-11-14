@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 e9072283e758fb7568b16162757adf9739d78c37318e96e48c1ec5508f5ad9aa.
+// Written against that file with the SHA-256 c4db118b140632dc8e009c9ee728a1b1b4c5d92f4dd2def75e9284898e25be71.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -758,6 +758,15 @@ function failWriteCallbackOf(self: $Node.Socket, callback: WriteCallback, er: Er
     process.nextTick(reportError, e);
   }
 }
+// The handlers of the socket under a TLS socket made with a `signal` are not wrapped, so what a 'session' or 'keylog' listener throws is reported here.
+function emitUnderHandle(self: $Node.Socket, name: "session" | "keylog", value: unknown) {
+  try {
+    self.emit(name, value);
+  } catch (e) {
+    if (!self[kReportsThrows]) throw e;
+    reportError(e);
+  }
+}
 function failWriteWith(self: $Node.Socket, er: Error, callback: WriteCallback | null | undefined) {
   self._pendingData = null;
   self[kwriteCallback] = null;
@@ -876,8 +885,10 @@ function linkUpgraded(self: $Node.TLSSocket, connection: $Node.Socket) {
   destroyWhenUpgradedCloses(self, connection);
   connection.on("error", onUpgradedError.bind(null, self));
   self.connecting = isSocket && (connection.connecting || !connection._handle);
-  // Its 'error' goes on to `self`, where the listener that addAbortSignal() added takes it. Its handlers stay: the catch blocks that test the marker report.
-  if (self[kReportsThrows] && isSocket) connection[kReportsThrows] = true;
+  // The 'error' of each socket under `self` goes on to `self`, where the listener that addAbortSignal() added takes it. Their handlers stay: the catch blocks that test the marker report.
+  if (self[kReportsThrows])
+    for (let under: $Node.Socket | null = connection; under instanceof Socket; under = under[kupgraded])
+      under[kReportsThrows] = true;
 }
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L964-L973
 function onUpgradedConnect(self: $Node.Socket, connection: $Node.Socket) {
@@ -1305,7 +1316,7 @@ const SocketHandlers = {
     const self = socket.data;
     if (!self) return;
     if (self._secureEstablished) {
-      self.emit("session", session);
+      emitUnderHandle(self, "session", session);
     } else {
       self[kpendingSession] = session;
     }
@@ -1313,7 +1324,7 @@ const SocketHandlers = {
   keylog(socket, line) {
     const self = socket.data;
     if (!self) return;
-    self.emit("keylog", line);
+    emitUnderHandle(self, "keylog", line);
     if (tlsKeylogPath !== undefined) appendTlsKeylog(tlsKeylogPath, line);
     self.server?.emit?.("keylog", line, self);
   },
@@ -1606,7 +1617,7 @@ const ServerHandlers = {
   keylog(socket, line) {
     const { data: self } = socket;
     if (!self) return;
-    self.emit("keylog", line);
+    emitUnderHandle(self, "keylog", line);
     if (tlsKeylogPath !== undefined) appendTlsKeylog(tlsKeylogPath, line);
     self.server?.emit?.("keylog", line, self);
   },
@@ -2180,7 +2191,7 @@ const SocketHandlers2 = {
     const { self } = socket.data;
     if (!self) return;
     if (self._secureEstablished) {
-      self.emit("session", session);
+      emitUnderHandle(self, "session", session);
     } else {
       self[kpendingSession] = session;
     }
@@ -2188,7 +2199,7 @@ const SocketHandlers2 = {
   keylog(socket, line) {
     const { self } = socket.data;
     if (!self) return;
-    self.emit("keylog", line);
+    emitUnderHandle(self, "keylog", line);
     if (tlsKeylogPath !== undefined) appendTlsKeylog(tlsKeylogPath, line);
   },
   close(socket, err?: NativeSocketError) {
@@ -2291,7 +2302,12 @@ const SocketHandlers2 = {
     // after destroy(err)'s 'error'. Not deferred here: it would land on a connect() made right
     // after destroy() and fail that one.
     // An attempt that timed out was closed with its `oncomplete` cleared.
-    req.oncomplete?.(error.errno, self._handle, req, true, true);
+    try {
+      req.oncomplete?.(error.errno, self._handle, req, true, true);
+    } catch (e) {
+      if (!self[kReportsThrows]) throw e;
+      reportError(e);
+    }
   },
 } satisfies InternalSocketHandler<ConnectData>;
 

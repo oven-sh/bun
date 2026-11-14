@@ -255,7 +255,6 @@ dependencies = [
  "bun_alloc",
  "bun_collections",
  "bun_core",
- "bun_dispatch",
  "bun_paths",
  "bun_perf",
  "bun_ptr",

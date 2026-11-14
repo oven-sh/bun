@@ -67,6 +67,8 @@ pub(crate) struct InjectionAdditions<'a> {
     pub(crate) has_code: bool,
     pub(crate) symbols: Option<ImageSymbols<'a>>,
     pub(crate) has_symbols: bool,
+    /// On Linux, a section names the word that holds the payload's address, so that GNU `strip` keeps it.
+    pub(crate) has_pointer: bool,
     build_id: Option<[u8; bun_exe_format::build_id::SIZE]>,
     trim: Option<&'a bun_trim::TrimPlan>,
     trim_summary: Option<bun_trim::TrimSummary>,
@@ -87,6 +89,7 @@ impl<'a> ExecutableAdditions<'a, '_> {
             has_code: self.compiled_program.is_some(),
             symbols,
             has_symbols: false,
+            has_pointer: true,
             build_id: None,
             trim: self.trim,
             trim_summary: None,
@@ -156,6 +159,11 @@ impl InjectionAdditions<'_> {
     pub(crate) fn into_details(self, file: Fd) -> ExecutableDetails {
         if self.symbols.is_some() && !self.has_symbols {
             bun_core::warn!("could not add symbols of compiled functions to this executable");
+        }
+        if !self.has_pointer {
+            bun_core::warn!(
+                "could not name the address of the program in this executable. GNU strip makes it start as bun."
+            );
         }
         ExecutableDetails {
             trim_summary: self.trim_summary,

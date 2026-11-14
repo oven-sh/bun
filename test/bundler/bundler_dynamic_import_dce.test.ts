@@ -3809,8 +3809,8 @@ describe("bundler", () => {
     },
   });
 
-  // `init_x()` of an importee with top-level await is a promise: the object
-  // is built after it settles. (CJS output has no top-level await.)
+  // The object of an importee with top-level await is built after it has
+  // settled. (CJS output has no top-level await.)
   itElides("TopLevelAwaitInImportee", {
     variants: ["esm", "esmMinify"],
     files: {
@@ -3833,7 +3833,7 @@ describe("bundler", () => {
     },
     stdout: "before\nt start\nt end\ngot u late\nthen late",
     output(out) {
-      expect(out).toContain("await init_t().then(() => ({}))");
+      expect(out).toContain("await __tlaImport(init_t, 0, () => ({}))");
     },
   });
 

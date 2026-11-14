@@ -3681,8 +3681,9 @@ describe.concurrent("bundler", () => {
       "/c.js": `console.log(await 0)`,
     },
     format: "esm",
+    // As unbundled: import() starts nothing before the code that calls it suspends.
     run: {
-      stdout: "0\n1",
+      stdout: "1\n0",
     },
   });
   itBundled("default/TopLevelAwaitImport", {

@@ -2,7 +2,9 @@ import { describe, expect } from "bun:test";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
-  itBundled("bundler/__promiseAll is tree-shaken when only one async import exists but __esm remains", {
+  // Without code splitting, the modules behind an import() that reach a top-level await are `__tlaModule` records
+  // (see bundler_tla.test.ts). Neither `__esm` nor `__promiseAll` is involved.
+  itBundled("bundler/__promiseAll and __esm are not used for a cycle that reaches one top-level await", {
     files: {
       "/entry.ts": `
         const { AsyncEntryPoint } = await import("./AsyncEntryPoint");
@@ -74,32 +76,20 @@ describe("bundler", () => {
     onAfterBundle(api) {
       const bundled = api.readFile("out.js");
 
-      expect(bundled).toMatchInlineSnapshot(`
-        "var __esm = (fn, res, err) => () => {
-          if (fn)
-            try {
-              res = fn(fn = 0);
-            } catch (e) {
-              err = [e];
-            }
-          if (err)
-            throw err[0];
-          return res;
-        };
-        var __promiseAll = (args) => Promise.all(args);
-
-        // StoreDependencyAsync.ts
+      expect(bundled.slice(bundled.indexOf("// StoreDependencyAsync.ts"), bundled.indexOf("//# debugId")))
+        .toMatchInlineSnapshot(`
+        "// StoreDependencyAsync.ts
         var somePromise;
-        var init_StoreDependencyAsync = __esm(async () => {
+        var init_StoreDependencyAsync = __tlaModule(async () => {
           somePromise = await Promise.resolve("Hello World");
-        });
+        }, 1, () => {});
 
         // StoreDependency.ts
         function StoreDependency() {
           return "A string from StoreFunc" + somePromise;
         }
-        var init_StoreDependency = __esm(async () => {
-          await init_StoreDependencyAsync();
+        var init_StoreDependency = __tlaModule(() => {}, 0, () => {
+          __tlaVisit(init_StoreDependencyAsync);
         });
 
         // SecondElementImport.ts
@@ -107,8 +97,8 @@ describe("bundler", () => {
           console.log("SecondElementImport called", formValue.key);
           return formValue.key;
         }
-        var init_SecondElementImport = __esm(async () => {
-          await init_BaseElement();
+        var init_SecondElementImport = __tlaModule(() => {}, 0, () => {
+          __tlaVisit(init_BaseElement);
         });
 
         // BaseElementImport.ts
@@ -116,8 +106,8 @@ describe("bundler", () => {
           console.log("BaseElementImport called", SecondElementImport());
           return SecondElementImport();
         }
-        var init_BaseElementImport = __esm(async () => {
-          await init_SecondElementImport();
+        var init_BaseElementImport = __tlaModule(() => {}, 0, () => {
+          __tlaVisit(init_SecondElementImport);
         });
 
         // BaseElement.ts
@@ -126,11 +116,7 @@ describe("bundler", () => {
           return BaseElementImport();
         }
         var depValue, formValue, listValue;
-        var init_BaseElement = __esm(async () => {
-          await __promiseAll([
-            init_StoreDependency(),
-            init_BaseElementImport()
-          ]);
+        var init_BaseElement = __tlaModule(() => {
           depValue = StoreDependency();
           formValue = {
             key: depValue
@@ -138,11 +124,14 @@ describe("bundler", () => {
           listValue = {
             key: depValue + "value"
           };
+        }, 0, () => {
+          __tlaVisit(init_StoreDependency);
+          __tlaVisit(init_BaseElementImport);
         });
 
         // AsyncEntryPoint.ts
         async function AsyncEntryPoint() {
-          await init_BaseElement();
+          await __tlaImport(init_BaseElement);
           console.log("Launching AsyncEntryPoint", BaseElement());
         }
 
@@ -150,26 +139,15 @@ describe("bundler", () => {
         await Promise.resolve();
         AsyncEntryPoint();
 
-        //# debugId=B9EF7E5F2ACBD11D64756E2164756E21
-        //# sourceMappingURL=out.js.map
         "
       `);
 
-      // MUST have __esm because of circular dependency requiring wrapping
-      expect(bundled).toContain("__esm");
-      expect(bundled).toContain("var init_");
-
-      // Should have __promiseAll because BaseElement has multiple dependencies
-      // even though only one is async (due to circular deps both need to be awaited)
-      expect(bundled).toContain("__promiseAll");
-      expect(bundled).toContain("var __promiseAll = ");
-
-      // Verify it's used with both dependencies
-      expect(bundled).toMatch(/await\s+__promiseAll\s*\(\s*\[/);
+      expect(bundled).not.toContain("__esm");
+      expect(bundled).not.toContain("__promiseAll");
     },
   });
 
-  itBundled("bundler/__promiseAll is included when multiple async imports exist with __esm", {
+  itBundled("bundler/__promiseAll and __esm are not used for a cycle that reaches two top-level awaits", {
     files: {
       "/entry.ts": `
         const { AsyncEntryPoint } = await import("./AsyncEntryPoint");
@@ -253,16 +231,12 @@ describe("bundler", () => {
     onAfterBundle(api) {
       const bundled = api.readFile("out.js");
 
-      // MUST have __esm because of circular dependency requiring wrapping
-      expect(bundled).toContain("__esm");
-      expect(bundled).toContain("var init_");
-
-      // MUST have __promiseAll since there are TWO async dependencies
-      expect(bundled).toContain("__promiseAll");
-      expect(bundled).toContain("var __promiseAll = ");
-
-      // Verify it's actually used in the code with multiple async deps
-      expect(bundled).toMatch(/await\s+__promiseAll\s*\(\s*\[/);
+      // The imports of BaseElement, in source order
+      expect(bundled).toMatch(
+        /\}, 0, \(\) => \{\s+__tlaVisit\(init_StoreDependency\);\s+__tlaVisit\(init_StoreDependency2\);\s+__tlaVisit\(init_BaseElementImport\);\s+\}\);/,
+      );
+      expect(bundled).not.toContain("__esm");
+      expect(bundled).not.toContain("__promiseAll");
     },
   });
 

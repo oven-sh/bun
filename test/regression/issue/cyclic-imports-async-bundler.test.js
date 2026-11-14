@@ -90,32 +90,24 @@ test("cyclic imports with async dependencies should generate async wrappers", as
   const bundledPath = join(dir, "dist", "entryBuild.js");
   const bundled = await Bun.file(bundledPath).text();
 
-  expect(bundled).toMatchInlineSnapshot(`
-    "var __esm = (fn, res, err) => () => {
-      if (fn)
-        try {
-          res = fn(fn = 0);
-        } catch (e) {
-          err = [e];
-        }
-      if (err)
-        throw err[0];
-      return res;
-    };
-    var __promiseAll = (args) => Promise.all(args);
-
-    // src/RecursiveDependencies/StoreDependencyAsync.ts
+  expect(
+    bundled.slice(
+      bundled.indexOf("// src/RecursiveDependencies/StoreDependencyAsync.ts"),
+      bundled.indexOf("//# debugId"),
+    ),
+  ).toMatchInlineSnapshot(`
+    "// src/RecursiveDependencies/StoreDependencyAsync.ts
     var somePromise;
-    var init_StoreDependencyAsync = __esm(async () => {
+    var init_StoreDependencyAsync = __tlaModule(async () => {
       somePromise = await Promise.resolve("Hello World");
-    });
+    }, 1, () => {});
 
     // src/RecursiveDependencies/StoreDependency.ts
     function StoreDependency() {
       return "A string from StoreFunc" + somePromise;
     }
-    var init_StoreDependency = __esm(async () => {
-      await init_StoreDependencyAsync();
+    var init_StoreDependency = __tlaModule(() => {}, 0, () => {
+      __tlaVisit(init_StoreDependencyAsync);
     });
 
     // src/RecursiveDependencies/SecondElementImport.ts
@@ -123,8 +115,8 @@ test("cyclic imports with async dependencies should generate async wrappers", as
       console.log("SecondElementImport called", formValue.key);
       return formValue.key;
     }
-    var init_SecondElementImport = __esm(async () => {
-      await init_BaseElement();
+    var init_SecondElementImport = __tlaModule(() => {}, 0, () => {
+      __tlaVisit(init_BaseElement);
     });
 
     // src/RecursiveDependencies/BaseElementImport.ts
@@ -132,8 +124,8 @@ test("cyclic imports with async dependencies should generate async wrappers", as
       console.log("BaseElementImport called", SecondElementImport());
       return SecondElementImport();
     }
-    var init_BaseElementImport = __esm(async () => {
-      await init_SecondElementImport();
+    var init_BaseElementImport = __tlaModule(() => {}, 0, () => {
+      __tlaVisit(init_SecondElementImport);
     });
 
     // src/RecursiveDependencies/BaseElement.ts
@@ -142,11 +134,7 @@ test("cyclic imports with async dependencies should generate async wrappers", as
       return BaseElementImport();
     }
     var depValue, formValue, listValue;
-    var init_BaseElement = __esm(async () => {
-      await __promiseAll([
-        init_StoreDependency(),
-        init_BaseElementImport()
-      ]);
+    var init_BaseElement = __tlaModule(() => {
       depValue = StoreDependency();
       formValue = {
         key: depValue
@@ -154,11 +142,14 @@ test("cyclic imports with async dependencies should generate async wrappers", as
       listValue = {
         key: depValue + "value"
       };
+    }, 0, () => {
+      __tlaVisit(init_StoreDependency);
+      __tlaVisit(init_BaseElementImport);
     });
 
     // src/RecursiveDependencies/AsyncEntryPoint.ts
     async function AsyncEntryPoint() {
-      await init_BaseElement();
+      await __tlaImport(init_BaseElement);
       console.log("Launching AsyncEntryPoint", BaseElement());
     }
 
@@ -166,8 +157,6 @@ test("cyclic imports with async dependencies should generate async wrappers", as
     await Promise.resolve();
     AsyncEntryPoint();
 
-    //# debugId=5B573DC06E466ACE64756E2164756E21
-    //# sourceMappingURL=entryBuild.js.map
     "
   `);
 
@@ -177,8 +166,8 @@ test("cyclic imports with async dependencies should generate async wrappers", as
   //   await init_StoreDependency();  // ERROR: await in non-async function
   // });
 
-  // All __esm wrappers that contain await should be async
-  const esmWrapperRegex = /var\s+(\w+)\s*=\s*__esm\s*\((async\s*)?\(\)\s*=>\s*\{([^}]+)\}/g;
+  // All wrappers that contain await should be async
+  const esmWrapperRegex = /var\s+(\w+)\s*=\s*__(?:esm|tlaModule|tlaNode)\s*\((async\s*)?\(\)\s*=>\s*\{([^}]+)\}/g;
   let match;
 
   while ((match = esmWrapperRegex.exec(bundled)) !== null) {

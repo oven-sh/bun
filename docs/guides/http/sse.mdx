@@ -35,7 +35,7 @@ Bun.serve({
 
           // Emit a tick every 5 seconds until the client disconnects.
           // When the client goes away, the generator is returned
-          // (cancelled) and this loop stops automatically.
+          // (canceled) and this loop stops automatically.
           while (true) {
             await Bun.sleep(5000);
             yield `data: tick ${Date.now()}\n\n`;

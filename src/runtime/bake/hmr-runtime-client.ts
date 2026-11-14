@@ -3,7 +3,14 @@
 import { editCssArray, editCssContent } from "./client/css-reloader";
 import { DataViewReader } from "./client/data-view";
 import { inspect } from "./client/inspect";
-import { hasFatalError, onRuntimeError, onServerErrorPayload } from "./client/overlay";
+import {
+  awaitedBuildErrorIsGone,
+  hasBuildErrorIn,
+  hasFatalError,
+  onRuntimeError,
+  onServerErrorPayload,
+  waitForBuildErrorIn,
+} from "./client/overlay";
 import {
   addMapping,
   clearDisconnectedSourceMaps,
@@ -15,12 +22,14 @@ import { initWebSocket } from "./client/websocket";
 import "./debug";
 import { MessageId } from "./generated";
 import {
+  BuildErrorImport,
   emitEvent,
   fullReload,
   loadModuleAsync,
   onEvent,
   onServerSideReload,
   replaceModules,
+  setBuildErrorLookup,
   setRefreshRuntime,
 } from "./hmr-module";
 import { td } from "./shared";
@@ -105,10 +114,17 @@ globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string) => {
   addMapping(url, map);
   script.remove();
   replaceModules(modules, map).catch(e => {
+    // A module can throw this again after the fix, so the overlay decides if the tab waits.
+    if (e instanceof BuildErrorImport && waitForBuildErrorIn(e.id)) {
+      emitEvent("bun:afterUpdate", null);
+      return;
+    }
     console.error(e);
     fullReload();
   });
 };
+
+setBuildErrorLookup(hasBuildErrorIn);
 
 let isFirstRun = true;
 const handlers = {
@@ -191,7 +207,7 @@ const handlers = {
         editCssContent(identifier, code);
       }
     }
-    if (hasFatalError && (isServerSideRouteUpdate || reader.hasMoreData())) {
+    if (hasFatalError && (isServerSideRouteUpdate || reader.hasMoreData() || awaitedBuildErrorIsGone())) {
       fullReload();
       return;
     }

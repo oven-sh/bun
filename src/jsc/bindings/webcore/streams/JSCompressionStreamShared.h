@@ -12,8 +12,10 @@ extern "C" void* CompressionStreamCoder__create(uint8_t format, bool decompress,
 extern "C" void CompressionStreamCoder__destroy(void* coder);
 extern "C" JSC::EncodedJSValue CompressionStreamCoder__transform(void* coder, JSC::JSGlobalObject* global, const uint8_t* input, size_t input_len, bool finish, bool* more);
 extern "C" JSC::EncodedJSValue CompressionStreamCoder__transformInto(void* coder, JSC::JSGlobalObject* global, const uint8_t* input, size_t input_len, bool finish, void* sinkController, bool* more);
-// Off-thread step, completed by Bun__CompressionStream__deliverAsync.
+// Off-thread step: it settles the promise of Bun__CompressionStream__stepPromise and parks its output for the reaction.
 extern "C" void CompressionStreamCoder__transformAsync(void* coder, JSC::JSGlobalObject* global, JSC::EncodedJSValue streamCell, JSC::EncodedJSValue chunk, const uint8_t* input, size_t inputLen, bool finish);
+extern "C" const uint8_t* CompressionStreamCoder__stepOutput(void* coder, size_t* len);
+extern "C" void CompressionStreamCoder__releaseStepOutput(void* coder);
 
 namespace Bun {
 namespace WebStreams {

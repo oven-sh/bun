@@ -6412,7 +6412,11 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
     return high == JSBigInt::ComparisonResult::LessThan || high == JSBigInt::ComparisonResult::Equal;
 }
 
-static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol), bool callGetters, bool withNonEnumerable = false)
+namespace Bun {
+void addEventAttributeNames(JSC::JSGlobalObject*, JSC::JSObject*, JSC::PropertyNameArrayBuilder&);
+}
+
+static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol), bool callGetters, bool withNonEnumerable = false, bool withEventAttributes = false)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     JSC::JSObject* object = value.getObject();
@@ -6422,6 +6426,7 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
+    const bool isEventWithAttributes = withEventAttributes && object->type() == JSC::JSType(JSEventType);
     JSC::PropertyNameArrayBuilder properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     {
 
@@ -6433,6 +6438,12 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
         else
             object->methodTable()->getOwnPropertyNames(object, globalObject, properties, withNonEnumerable ? DontEnumPropertiesMode::Include : DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(scope, );
+        if (isEventWithAttributes) [[unlikely]] {
+            Bun::addEventAttributeNames(globalObject, object, properties);
+            // A trap of a Proxy in the prototype chain can throw. The names behind it are not printed then.
+            if (scope.exception() && !scope.tryClearException())
+                return;
+        }
     }
 
     auto vector = properties.data()->propertyNameVector();
@@ -6466,7 +6477,9 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
                 if (scope.exception()) [[unlikely]] {
                     if (!scope.tryClearException())
                         return;
-                    propertyValue = pureResult();
+                    // getPureResult() is null for a getter that is not cacheable. With --aot that is one that an event inherits.
+                    bool isInheritedByEvent = isEventWithAttributes && slot.slotBase() != object;
+                    propertyValue = isInheritedByEvent && !slot.isCacheableGetter() ? JSValue(slot.getterSetter()) : pureResult();
                 }
             } else {
                 propertyValue = pureResult();
@@ -6495,12 +6508,12 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
     forEachPropertyOrderedImpl(JSValue0, globalObject, arg2, iter, false);
 }
 
-// Returns true if JSC__JSValue__forEachPropertyOrderedWithNonEnumerable is sure to visit the same properties.
-extern "C" bool JSC__JSValue__forEachPropertyOrderedCallingGetters(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+// Returns true if JSC__JSValue__forEachPropertyOrderedWithNonEnumerable is sure to visit the same own properties.
+extern "C" bool JSC__JSValue__forEachPropertyOrderedCallingGetters(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol), bool withEventAttributes)
 {
     JSC::JSObject* object = JSC::JSValue::decode(JSValue0).getObject();
     bool hasOnlyEnumerableValues = object && object->structure()->canPerformFastPropertyEnumeration() && !object->structure()->hasNonEnumerableProperties();
-    forEachPropertyOrderedImpl(JSValue0, globalObject, arg2, iter, true);
+    forEachPropertyOrderedImpl(JSValue0, globalObject, arg2, iter, true, false, withEventAttributes);
     return hasOnlyEnumerableValues;
 }
 

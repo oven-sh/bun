@@ -325,6 +325,10 @@ pub(crate) struct Formatter<'a> {
     same_as_older_bun: bool,
     /// Bytes written so far. Only failure messages track it.
     output_length: Option<&'a core::cell::Cell<usize>>,
+    /// The `target` of the event that a failure message prints. It prints one level deep.
+    dispatcher: JSValue,
+    /// A value at a deeper indent is inside the `dispatcher` and prints as `[Class]`.
+    shallow_below: u32,
     ancestors: ObjectList,
     copied: usize,
     print_basic_prototype: bool,
@@ -359,6 +363,8 @@ impl<'a> Formatter<'a> {
             like_older_bun: None,
             same_as_older_bun: true,
             output_length: None,
+            dispatcher: JSValue::ZERO,
+            shallow_below: u32::MAX,
             ancestors: ObjectList::default(),
             copied: 0,
             print_basic_prototype: false,
@@ -2385,7 +2391,8 @@ impl<'a> Formatter<'a> {
                             .for_each_property_ordered_with_non_enumerable(global, (&raw mut iter).cast::<c_void>(), each)
                             .map(|()| true)
                     } else {
-                        value.for_each_property_ordered_calling_getters(global, (&raw mut iter).cast::<c_void>(), each)
+                        let is_failure_message = iter.formatter.output_length.is_some();
+                        value.for_each_property_ordered_calling_getters(global, (&raw mut iter).cast::<c_void>(), each, is_failure_message)
                     };
 
                     let iter_i = iter.i;
@@ -2544,10 +2551,47 @@ impl<'a> Formatter<'a> {
         value: JSValue,
         global_this: &'a JSGlobalObject,
     ) -> JsResult<()> {
-        // Vitest's `maxOutputLength`. A React fiber or `window` would print hundreds of megabytes.
-        if !result.tag.is_primitive() && self.output_length.is_some_and(|length| length.get() > 1_000_000) {
-            let _ = writer.write_all(if result.tag == Tag::Array { b"[Array]" } else { b"[Object]" });
-            return Ok(());
+        if !result.tag.is_primitive() && let Some(length) = self.output_length {
+            // Vitest's `maxOutputLength`. A React fiber or `window` would print hundreds of megabytes.
+            if length.get() > 1_000_000 {
+                let _ = writer.write_all(if result.tag == Tag::Array { b"[Array]" } else { b"[Object]" });
+                return Ok(());
+            }
+            // Where another value holds the global object, it prints as `console.log` prints it there. It holds `process.env`.
+            if result.cell == JSType::GlobalObject && self.indent > 0 {
+                let global_object = if value.js_type() == JSType::GlobalProxy { value.get_proxy_target() } else { value };
+                if global_object == global_this.to_js_value() {
+                    let _ = writer.write_all(b"[Global Object]");
+                    return Ok(());
+                }
+            }
+            if self.indent > self.shallow_below && !matches!(result.tag, Tag::Function | Tag::Class | Tag::Error) {
+                let name = value.get_class_name(global_this)?;
+                let _ = if name.is_empty() { writer.write_all(b"[Object]") } else { writer.write_fmt(format_args!("[{name}]")) };
+                return Ok(());
+            }
+            // `toEqual` compares the object that dispatched an event, and that object can be large.
+            if value == self.dispatcher {
+                let dispatcher = core::mem::take(&mut self.dispatcher);
+                let outer = core::mem::replace(&mut self.shallow_below, self.indent);
+                let printed = self.format::<W, ENABLE_ANSI_COLORS>(result, writer, value, global_this);
+                self.shallow_below = outer;
+                self.dispatcher = dispatcher;
+                return printed;
+            }
+            // The walk of the Object arm prints what `toEqual` reads of an event.
+            if result.tag == Tag::Event {
+                let dispatcher = match value.get(global_this, "target") {
+                    Ok(target) => target.filter(|target| *target != value).unwrap_or_default(),
+                    Err(JsError::Thrown) if global_this.clear_exception_except_termination() => JSValue::ZERO,
+                    Err(error) => return Err(error),
+                };
+                let outer = core::mem::replace(&mut self.dispatcher, dispatcher);
+                let event = TagResult { tag: Tag::Object, cell: JSType::Event };
+                let printed = self.format::<W, ENABLE_ANSI_COLORS>(event, writer, value, global_this);
+                self.dispatcher = outer;
+                return printed;
+            }
         }
         let mut result = result;
         if result.tag == Tag::JSX

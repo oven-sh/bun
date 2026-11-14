@@ -34,7 +34,7 @@ GlobalRegistrator.register();
 
 ---
 
-For Testing Library, extend Bun's `expect` function with Testing Library's matchers. Optionally, run cleanup after each test to better match the behavior of test runners like Jest.
+For Testing Library, extend Bun's `expect` function with Testing Library's matchers, and run `cleanup` after each test. `@testing-library/react` registers its own cleanup when it is first imported. Without [`--isolate`](/test/parallel#--isolate), only the first test file that imports it gets that cleanup. Tests in later files then see what earlier tests rendered, and can fail with `Found multiple elements`.
 
 ```ts testing-library.ts icon="/icons/typescript.svg"
 import { afterEach, expect } from "bun:test";
@@ -43,7 +43,7 @@ import * as matchers from "@testing-library/jest-dom/matchers";
 
 expect.extend(matchers);
 
-// Optional: cleans up `render` after each test
+// Cleans up `render` after each test, in every test file
 afterEach(() => {
   cleanup();
 });

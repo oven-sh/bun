@@ -1,0 +1,83 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`lengths a length that is not a count 1`] = `
+{
+  "10n": "0, configurable",
+  "Symbol(length)": "0, configurable",
+  "a getter that returns 5": "5, configurable",
+  "deleted": "0, configurable",
+  "deleted, and 9 in the prototype": "9, configurable",
+  "null": "0, configurable",
+  "the string 3": "0, configurable",
+  "the string abc": "0, configurable",
+  "true": "0, configurable",
+  "undefined": "0, configurable",
+}
+`;
+
+exports[`lengths afterwards 1`] = `
+{
+  "an assignment of 11": [
+    false,
+    "3, configurable",
+  ],
+  "delete": "no own length",
+  "delete, then the length": 0,
+  "mockImplementation()": "3, configurable",
+  "mockImplementation() of jest.fn()": "0, configurable",
+  "mockReset()": "3, configurable",
+}
+`;
+
+exports[`lengths jest.fn() 1`] = `
+{
+  "Array": "1, configurable",
+  "Date": "7, configurable",
+  "Error": "1, configurable",
+  "Map": "0, configurable",
+  "Math.max": "2, configurable",
+  "Promise": "1, configurable",
+  "RegExp": "2, configurable",
+  "Symbol": "0, configurable",
+  "Uint8Array": "3, configurable",
+  "a Proxy of Date": "7, configurable",
+  "a Proxy of a function": "3, configurable",
+  "a Proxy whose get trap answers 8": "8, configurable",
+  "a bound Date": "6, configurable",
+  "a bound function": "2, configurable",
+  "a class": "2, configurable",
+  "a class that extends another": "0, configurable",
+  "a function": "3, configurable",
+  "a function of 9 parameters": "9, configurable",
+  "a function with a default": "1, configurable",
+  "a function with a rest": "1, configurable",
+  "a generator function": "4, configurable",
+  "a mock of a function": "3, configurable",
+  "an arrow function": "2, configurable",
+  "an async function": "1, configurable",
+}
+`;
+
+exports[`lengths jest.spyOn() 1`] = `
+{
+  "Date": "0, configurable",
+  "a Proxy of Date": "0, configurable",
+  "a Proxy of a function": "0, configurable",
+  "a function of no parameters": "0, configurable",
+}
+`;
+
+exports[`lengths no function to replace 1`] = `
+{
+  "jest.fn()": "0, configurable",
+  "jest.fn(undefined)": "0, configurable",
+}
+`;
+
+exports[`lengths the reads of the length of a Proxy 1`] = `
+{
+  "a call, mockReset() and a read of the mock's length": 0,
+  "jest.fn()": 1,
+  "jest.spyOn()": 0,
+}
+`;

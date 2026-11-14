@@ -1,0 +1,268 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`lengths > a length that is not a count 1`] = `
+{
+  "-1": "-1, writable, configurable",
+  "1.5": "1.5, writable, configurable",
+  "10n": "10n, writable, configurable",
+  "Infinity": "Infinity, writable, configurable",
+  "NaN": "NaN, writable, configurable",
+  "Symbol(length)": "Symbol(length), writable, configurable",
+  "a getter that returns 5": "5, writable, configurable",
+  "deleted": "0, writable, configurable",
+  "deleted, and 9 in the prototype": "9, writable, configurable",
+  "deleted, and 9 in the prototype, automock": "9, writable, configurable",
+  "null": "0, writable, configurable",
+  "null, of a spy": "0, writable, configurable",
+  "the string 3": "the string 3, writable, configurable",
+  "the string abc": "the string abc, writable, configurable",
+  "the string abc, of a spy": "the string abc, writable, configurable",
+  "the string abc, of an automock": "the string abc, writable, configurable",
+  "true": "true, writable, configurable",
+  "undefined": "0, writable, configurable",
+}
+`;
+
+exports[`lengths > afterwards 1`] = `
+{
+  "an assignment of 11": "11, writable, configurable",
+  "delete": "no own length",
+  "delete, then the length": 0,
+  "mockImplementation()": "3, writable, configurable",
+  "mockImplementation() of vi.fn()": "0, writable, configurable",
+  "mockReset()": "3, writable, configurable",
+  "mockRestore() of a spy": "3, writable, configurable",
+}
+`;
+
+exports[`lengths > no function to replace 1`] = `
+{
+  "vi.fn()": "0, writable, configurable",
+  "vi.fn(undefined)": "0, writable, configurable",
+  "vi.spyOn(get) of a value": "0, writable, configurable",
+  "vi.spyOn(set) of a getter alone": "0, writable, configurable",
+  "vi.spyOn(set) of a value": "0, writable, configurable",
+}
+`;
+
+exports[`lengths > the mocks that an automocked class gives its instances 1`] = `
+{
+  "automock": {
+    "of an instance, with a spy on the prototype": "0, writable, configurable",
+    "of an instance, with vi.fn() on the prototype": "0, writable, configurable",
+    "the method": "4, writable, configurable",
+    "the method of an instance": "0, writable, configurable",
+  },
+  "spy": {
+    "of an instance, with a spy on the prototype": "3, writable, configurable",
+    "of an instance, with vi.fn() on the prototype": "0, writable, configurable",
+    "the method": "4, writable, configurable",
+    "the method of an instance": "4, writable, configurable",
+  },
+}
+`;
+
+exports[`lengths > the reads of the length of a Proxy 1`] = `
+{
+  "a call, mockReset() and a read of the mock's length": 0,
+  "vi.fn()": 1,
+  "vi.spyOn()": 1,
+}
+`;
+
+exports[`lengths > vi.fn() 1`] = `
+{
+  "Array": "1, writable, configurable",
+  "Date": "7, writable, configurable",
+  "Error": "1, writable, configurable",
+  "Map": "0, writable, configurable",
+  "Math.max": "2, writable, configurable",
+  "Promise": "1, writable, configurable",
+  "RegExp": "2, writable, configurable",
+  "Symbol": "0, writable, configurable",
+  "Uint8Array": "3, writable, configurable",
+  "a Proxy of Date": "7, writable, configurable",
+  "a Proxy of a function": "3, writable, configurable",
+  "a Proxy whose get trap answers 8": "8, writable, configurable",
+  "a bound Date": "6, writable, configurable",
+  "a bound function": "2, writable, configurable",
+  "a class": "2, writable, configurable",
+  "a class that extends another": "0, writable, configurable",
+  "a function": "3, writable, configurable",
+  "a function with a default": "1, writable, configurable",
+  "a function with a rest": "1, writable, configurable",
+  "a generator function": "4, writable, configurable",
+  "an arrow function": "2, writable, configurable",
+  "an async function": "1, writable, configurable",
+}
+`;
+
+exports[`lengths > vi.mockObject() 1`] = `
+{
+  "Array": "1, writable, configurable",
+  "Date": "7, writable, configurable",
+  "Error": "1, writable, configurable",
+  "Map": "0, writable, configurable",
+  "Math.max": "2, writable, configurable",
+  "Promise": "1, writable, configurable",
+  "RegExp": "2, writable, configurable",
+  "Symbol": "0, writable, configurable",
+  "Uint8Array": "3, writable, configurable",
+  "a Proxy of Date": "7, writable, configurable",
+  "a Proxy of a function": "3, writable, configurable",
+  "a Proxy whose get trap answers 8": "8, writable, configurable",
+  "a bound Date": "6, writable, configurable",
+  "a bound function": "2, writable, configurable",
+  "a class": "2, writable, configurable",
+  "a class that extends another": "0, writable, configurable",
+  "a function": "3, writable, configurable",
+  "a function with a default": "1, writable, configurable",
+  "a function with a rest": "1, writable, configurable",
+  "a generator function": "4, writable, configurable",
+  "an arrow function": "2, writable, configurable",
+  "an async function": "1, writable, configurable",
+}
+`;
+
+exports[`lengths > vi.mockObject() of the function 1`] = `
+{
+  "Array": "1, writable, configurable",
+  "Date": "7, writable, configurable",
+  "Error": "1, writable, configurable",
+  "Map": "0, writable, configurable",
+  "Math.max": "2, writable, configurable",
+  "Promise": "1, writable, configurable",
+  "RegExp": "2, writable, configurable",
+  "Symbol": "0, writable, configurable",
+  "Uint8Array": "3, writable, configurable",
+  "a Proxy of Date": "7, writable, configurable",
+  "a Proxy of a function": "3, writable, configurable",
+  "a Proxy whose get trap answers 8": "8, writable, configurable",
+  "a bound Date": "6, writable, configurable",
+  "a bound function": "2, writable, configurable",
+  "a class": "2, writable, configurable",
+  "a class that extends another": "0, writable, configurable",
+  "a function": "3, writable, configurable",
+  "a function with a default": "1, writable, configurable",
+  "a function with a rest": "1, writable, configurable",
+  "a generator function": "4, writable, configurable",
+  "an arrow function": "2, writable, configurable",
+  "an async function": "1, writable, configurable",
+}
+`;
+
+exports[`lengths > vi.mockObject() with spy 1`] = `
+{
+  "bound": "2, writable, configurable",
+  "function": "3, writable, configurable",
+  "proxy": "3, writable, configurable",
+}
+`;
+
+exports[`lengths > vi.spyOn() 1`] = `
+{
+  "Array": "1, writable, configurable",
+  "Date": "7, writable, configurable",
+  "Error": "1, writable, configurable",
+  "Map": "0, writable, configurable",
+  "Math.max": "2, writable, configurable",
+  "Promise": "1, writable, configurable",
+  "RegExp": "2, writable, configurable",
+  "Symbol": "0, writable, configurable",
+  "Uint8Array": "3, writable, configurable",
+  "a Proxy of Date": "7, writable, configurable",
+  "a Proxy of a function": "3, writable, configurable",
+  "a Proxy whose get trap answers 8": "8, writable, configurable",
+  "a bound Date": "6, writable, configurable",
+  "a bound function": "2, writable, configurable",
+  "a class": "2, writable, configurable",
+  "a class that extends another": "0, writable, configurable",
+  "a function": "3, writable, configurable",
+  "a function with a default": "1, writable, configurable",
+  "a function with a rest": "1, writable, configurable",
+  "a generator function": "4, writable, configurable",
+  "an arrow function": "2, writable, configurable",
+  "an async function": "1, writable, configurable",
+}
+`;
+
+exports[`lengths > vi.spyOn() of a getter 1`] = `
+{
+  "Array": "1, writable, configurable",
+  "Date": "7, writable, configurable",
+  "Error": "1, writable, configurable",
+  "Map": "0, writable, configurable",
+  "Math.max": "2, writable, configurable",
+  "Promise": "1, writable, configurable",
+  "RegExp": "2, writable, configurable",
+  "Symbol": "0, writable, configurable",
+  "Uint8Array": "3, writable, configurable",
+  "a Proxy of Date": "7, writable, configurable",
+  "a Proxy of a function": "3, writable, configurable",
+  "a Proxy whose get trap answers 8": "8, writable, configurable",
+  "a bound Date": "6, writable, configurable",
+  "a bound function": "2, writable, configurable",
+  "a class": "2, writable, configurable",
+  "a class that extends another": "0, writable, configurable",
+  "a function": "3, writable, configurable",
+  "a function with a default": "1, writable, configurable",
+  "a function with a rest": "1, writable, configurable",
+  "a generator function": "4, writable, configurable",
+  "an arrow function": "2, writable, configurable",
+  "an async function": "1, writable, configurable",
+}
+`;
+
+exports[`lengths > vi.spyOn() of a setter 1`] = `
+{
+  "Array": "1, writable, configurable",
+  "Date": "7, writable, configurable",
+  "Error": "1, writable, configurable",
+  "Map": "0, writable, configurable",
+  "Math.max": "2, writable, configurable",
+  "Promise": "1, writable, configurable",
+  "RegExp": "2, writable, configurable",
+  "Symbol": "0, writable, configurable",
+  "Uint8Array": "3, writable, configurable",
+  "a Proxy of Date": "7, writable, configurable",
+  "a Proxy of a function": "3, writable, configurable",
+  "a Proxy whose get trap answers 8": "8, writable, configurable",
+  "a bound Date": "6, writable, configurable",
+  "a bound function": "2, writable, configurable",
+  "a class": "2, writable, configurable",
+  "a class that extends another": "0, writable, configurable",
+  "a function": "3, writable, configurable",
+  "a function with a default": "1, writable, configurable",
+  "a function with a rest": "1, writable, configurable",
+  "a generator function": "4, writable, configurable",
+  "an arrow function": "2, writable, configurable",
+  "an async function": "1, writable, configurable",
+}
+`;
+
+exports[`lengths > vi.spyOn() of what a getter returns 1`] = `
+{
+  "Array": "1, writable, configurable",
+  "Date": "7, writable, configurable",
+  "Error": "1, writable, configurable",
+  "Map": "0, writable, configurable",
+  "Math.max": "2, writable, configurable",
+  "Promise": "1, writable, configurable",
+  "RegExp": "2, writable, configurable",
+  "Symbol": "0, writable, configurable",
+  "Uint8Array": "3, writable, configurable",
+  "a Proxy of Date": "7, writable, configurable",
+  "a Proxy of a function": "3, writable, configurable",
+  "a Proxy whose get trap answers 8": "8, writable, configurable",
+  "a bound Date": "6, writable, configurable",
+  "a bound function": "2, writable, configurable",
+  "a class": "2, writable, configurable",
+  "a class that extends another": "0, writable, configurable",
+  "a function": "3, writable, configurable",
+  "a function with a default": "1, writable, configurable",
+  "a function with a rest": "1, writable, configurable",
+  "a generator function": "4, writable, configurable",
+  "an arrow function": "2, writable, configurable",
+  "an async function": "1, writable, configurable",
+}
+`;

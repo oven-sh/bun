@@ -23,6 +23,7 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { closeSync, openSync, readFileSync, readSync, statSync, writeFileSync } from "node:fs";
 import { type BinaryExpectations, symbolList, versionScriptGlobals } from "./binary-expectations.ts";
 import { BuildError, assert } from "./error.ts";
@@ -31,6 +32,8 @@ export interface VerifySpec {
   /** Display name (`bun-profile`). */
   name: string;
   exe: string;
+  /** A second build of the same binary in a different artifact directory. */
+  compareWith?: string;
   tools: { nm: string; readobj: string; objdump: string; cxxfilt: string };
   expect: BinaryExpectations;
 }
@@ -74,7 +77,15 @@ function versionLeq(a: string, b: string): boolean {
 }
 
 type CheckName =
-  "exports" | "dynamic libraries" | "imports" | "static initializers" | "symbols" | "hardening" | "debug info" | "size";
+  | "exports"
+  | "dynamic libraries"
+  | "imports"
+  | "static initializers"
+  | "symbols"
+  | "hardening"
+  | "debug info"
+  | "size"
+  | "reproducibility";
 
 /**
  * What a violation of each check means for the shipped binary and what the
@@ -130,6 +141,10 @@ const GUIDANCE: Record<CheckName, string[]> = {
     "The profile binary is what crash reports and profilers are symbolized against; it",
     "must keep its symbol table and (compressed) debug sections. A missing piece usually",
     "means a strip/objcopy step or a -g flag change applied to the wrong artifact.",
+  ],
+  reproducibility: [
+    "Link the shim with /Brepro and /DEBUG:NONE to avoid a path-dependent PDB GUID.",
+    "For a hash mismatch, compare the two PE files for data that depends on the build directory.",
   ],
 };
 
@@ -643,6 +658,26 @@ function verifyPE(spec: VerifySpec): void {
       violations.push(`subsystem version ${ver}, expected ${expect.minOSVersion}`);
     const props = [...chars, `subsystem ${ver}`];
     report("hardening", `${props.length} hardening properties`, violations, props);
+  }
+
+  if (expect.pe?.reproducible) {
+    const text = run(readobj, ["--coff-debug-directory", exe]);
+    const types = blocks(text, "DebugEntry").map(entry => field(entry, "Type")?.split(" ", 1)[0]);
+    const violations: string[] = [];
+    if (!types.includes("Repro")) violations.push("missing Repro debug entry");
+    if (types.includes("CodeView")) violations.push("unexpected CodeView debug entry");
+    report("reproducibility", "reproducible PE metadata", violations);
+  }
+
+  if (spec.compareWith !== undefined) {
+    const digest = (path: string) => createHash("sha256").update(readFileSync(path)).digest("hex");
+    const first = digest(exe);
+    const second = digest(spec.compareWith);
+    report(
+      "reproducibility",
+      "matching shim SHA-256 across build directories",
+      first === second ? [] : [`${exe}: ${first}`, `${spec.compareWith}: ${second}`],
+    );
   }
 }
 

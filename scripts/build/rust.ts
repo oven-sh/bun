@@ -234,6 +234,8 @@ export interface RustBuildInputs {
   rustSources: string[];
   /** Checks of the Windows shim's executable (bun.ts): validations of the edge that links it. Empty off Windows. */
   shimValidations: string[];
+  /** Second shim for the Windows release CI reproducibility check. */
+  shimReproExe: string | undefined;
   /**
    * Fetch stamps for vendored Rust crates the workspace consumes as path dependencies (lol-html, rust-argon2).
    * Inputs of the plan edge — cargo cannot load the workspace before their manifests exist, and a commit bump
@@ -709,6 +711,8 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
  *   - `/Brepro`                 — the link time and the PDB signature in the PE headers come from the contents
  *                                 instead of the clock, so the same inputs give the same bytes, and with them
  *                                 the same bun_install, which embeds this file.
+ *   - `/DEBUG:NONE`             — override rustc's /DEBUG. The CodeView record would embed a PDB GUID that
+ *                                 varies with the build path even with /Brepro.
  *
  * (`-Cforce-unwind-tables=no` would drop `.pdata`, but the `*-windows-msvc` target spec sets
  * `requires_uwtable: true` so rustc rejects it. The section is ~3 KiB; not worth a custom target JSON.)
@@ -741,6 +745,7 @@ function shimCargoInvocation(
     "-Clink-arg=/SUBSYSTEM:CONSOLE",
     "-Clink-arg=/NODEFAULTLIB",
     "-Clink-arg=/Brepro",
+    "-Clink-arg=/DEBUG:NONE",
     "-Clink-arg=kernel32.lib",
     "-Clink-arg=ntdll.lib",
     // Cross-compiling from a unix host: this is the only rustc-driven link of a *target* artifact, and the linker
@@ -838,22 +843,28 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   // (bun_windows_sys, bun_opaque, bun_pod and the shim itself) include nothing generated, so they wait for no codegen.
   const packageInputs: Record<string, string[]> = {};
   if (shim?.plan !== undefined) {
-    const graph = buildRustGraph(shim.plan, shim.dir);
+    const plan = shim.plan;
+    const graph = buildRustGraph(plan, shim.dir);
     assert(
       graph.root.kind === "bin",
       `shim plan root ${graph.root.crateName} is a ${graph.root.kind}, expected the bin`,
     );
     const exe = windowsShimPath(cfg);
-    emitRustUnits(
-      n,
-      { ...context, graph, binDestination: exe },
-      {
-        generatedInputs: () => [],
-        implicitInputs: {},
-        vendorStamps: inputs.vendorStamps,
-        rootValidations: inputs.shimValidations,
-      },
-    );
+    const emitShim = (graph: ReturnType<typeof buildRustGraph>, binDestination: string, rootValidations: string[]) =>
+      emitRustUnits(
+        n,
+        { ...context, graph, binDestination },
+        {
+          generatedInputs: () => [],
+          implicitInputs: {},
+          vendorStamps: inputs.vendorStamps,
+          rootValidations,
+        },
+      );
+    emitShim(graph, exe, inputs.shimValidations);
+    // Keep the plan and flags identical, but compile and link with different artifact paths.
+    if (inputs.shimReproExe !== undefined)
+      emitShim(buildRustGraph(plan, dirname(inputs.shimReproExe)), inputs.shimReproExe, []);
     n.phony("bun-shim", [exe]);
     packageInputs.bun_install = [exe];
   }

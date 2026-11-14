@@ -7,9 +7,6 @@ export default b.module({ rustPath: "crate::node::path" });
 const text = b.string.allowStringObject.local;
 const result = b.string.local;
 
-/** A UNC root that is longer than any path of the system is answered with the error, which is not thrown. */
-const resultOrError = b.any.returning(table.union(table.string, table.instance("Error")).spec);
-
 /** An operand that is refused is described in the message of the error: that reads its constructor.name or prints it the way console.log does. Nothing keeps it. */
 const describedInMessage = (...membersRead: string[]) => [table.printedByFormatter("constructor", ...membersRead)];
 
@@ -72,27 +69,27 @@ const join = () =>
     ...ofOperandsAlone,
   });
 
-const relative = (returns: b.Type) =>
+const relative = () =>
   b.fn({
     name: "relative",
     namedAsBound: true,
     length: 1,
     args: { from: text, to: text },
     validatorExpects: { from: "string", to: "string" },
-    returns,
+    returns: result,
     capability: "heap",
     throws: true,
     ...ofWorkingDirectory,
   });
 
 /** It looks at its arguments from the last to the first that is absolute, and only one it looks at has to be a string. */
-const resolve = (returns: b.Type) =>
+const resolve = () =>
   b.fn({
     name: "resolve",
     namedAsBound: true,
     length: 1,
     args: { paths: b.rest(b.any.stringObjectAsString) },
-    returns,
+    returns: result,
     capability: "heap",
     throws: true,
     uses: { paths: describedInMessage() },
@@ -121,8 +118,8 @@ export const isAbsolutePosix = isAbsolute();
 export const joinPosix = join();
 export const normalizePosix = ofPath("normalize", result);
 export const parsePosix = ofPath("parse", ParsedPath);
-export const relativePosix = relative(result);
-export const resolvePosix = resolve(result);
+export const relativePosix = relative();
+export const resolvePosix = resolve();
 export const toNamespacedPathPosix = b.fn({
   name: "toNamespacedPath",
   namedAsBound: true,
@@ -142,15 +139,15 @@ export const isAbsoluteWin32 = isAbsolute();
 export const joinWin32 = join();
 export const normalizeWin32 = ofPath("normalize", result);
 export const parseWin32 = ofPath("parse", ParsedPath);
-export const relativeWin32 = relative(resultOrError);
-export const resolveWin32 = resolve(resultOrError);
-/** A `String` object counts as a string, and an empty one is answered as it is. What `resolve` answers an error for is answered with that error. */
+export const relativeWin32 = relative();
+export const resolveWin32 = resolve();
+/** A `String` object counts as a string, and an empty one is answered as it is. */
 export const toNamespacedPathWin32 = b.fn({
   name: "toNamespacedPath",
   namedAsBound: true,
   length: 1,
   args: { path: b.any },
-  returns: b.any.returning(table.union(table.string, table.instance("Error"), table.operand("path")).spec),
+  returns: b.any.returning(table.union(table.string, table.operand("path")).spec),
   capability: "js",
   throws: true,
   runsOnlyOperandCode: true,

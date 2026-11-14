@@ -208,6 +208,27 @@ describe("path.resolve", () => {
     assert.ok(result.endsWith(expectedEnding));
   });
 
+  // 32766 and 98301 (on Windows) are the size of the buffer for the working directory, less 2.
+  test.concurrent.each([32765, 32766, 98301, 100000])("a UNC server name of %d characters", async length => {
+    const script = `const { resolve, relative, toNamespacedPath } = require("node:path").win32;
+      const sep = "\\\\";
+      for (const unit of ["a", "\\u4e2d"]) {
+        const root = sep + sep + Buffer.alloc(${length * 2}, unit, "utf16le").toString("utf16le") + sep + "share" + sep;
+        console.log(
+          resolve(root + "a", ".." + sep + "b") === root + "b",
+          relative(root + "a", root + "b") === ".." + sep + "b",
+          toNamespacedPath(root + "a") === sep + sep + "?" + sep + "UNC" + root.slice(1) + "a",
+        );
+      }`;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "true true true\ntrue true true\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test.skipIf(isWindows)("a backslash at the end of the cwd is part of its name", async () => {
     using dir = tempDir("resolve-backslash-cwd", { "e\\/z": "" });
 

@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir, tmpdirSync } from "harness";
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
 // Each case spawns a full `bun test` process; give the concurrent group
@@ -67,6 +67,102 @@ async function runTestChanged(
 function ranFiles(stderr: string, names: string[]): string[] {
   return names.filter(n => stderr.includes(n + ":")).sort();
 }
+
+/** The `--changed:` lines of a run, in the order it printed them. */
+function changedLines(stderr: string): string[] {
+  return stderr.split(/\r?\n/).filter(line => line.startsWith("--changed:"));
+}
+
+/** The result line of each test that ran, without its duration. */
+function testLines(stderr: string): string[] {
+  return stderr
+    .split(/\r?\n/)
+    .filter(line => line.startsWith("(pass) ") || line.startsWith("(fail) "))
+    .map(line => line.replace(/ \[[\d.]+ms\]$/, ""));
+}
+
+/** The first `error:` line of a run. */
+function firstError(stderr: string): string | undefined {
+  return stderr.split(/\r?\n/).find(line => line.startsWith("error: "));
+}
+
+// price.test.js -> price.js -> rates.js. A linked bundle refuses each price.js
+// with the error `build`. The module graph scan links nothing and prints
+// nothing, so it must keep the imports of price.js. `run` is what the run of
+// price.test.js prints after rates.js changes.
+const testFails = { tests: ["(fail) price"], error: "error: expect(received).toBe(expected)" };
+const refusedByBundle = [
+  {
+    title: "a write to an import",
+    build: `Cannot assign to import "rate"`,
+    files: {
+      "rates.js": `export const rate = 1;\n`,
+      "price.js": `import { rate } from "./rates.js";\nexport const price = rate * 2;\nexport function never() {\n  rate = 0;\n}\n`,
+    },
+    edit: `export const rate = 2;\n`,
+    run: testFails,
+  },
+  {
+    title: "a write to a computed property of an import namespace",
+    build: `Cannot assign to property on import "rates"`,
+    files: {
+      "rates.js": `export const rate = 1;\n`,
+      "price.js": `import * as rates from "./rates.js";\nexport const price = rates.rate * 2;\nexport function never(key) {\n  rates[key] = 0;\n}\n`,
+    },
+    edit: `export const rate = 2;\n`,
+    run: testFails,
+  },
+  {
+    title: "a property write through `require()` of react",
+    build: `Cannot assign to import "useLayoutEffect"`,
+    files: {
+      "node_modules/react/package.json": JSON.stringify({ name: "react", version: "1.0.0", main: "index.js" }),
+      "node_modules/react/index.js": `exports.useEffect = function () {};\n`,
+      "rates.js": `exports.rate = 1;\n`,
+      "price.js": `const React = require("react");\nReact.useLayoutEffect = React.useEffect;\nexports.price = require("./rates.js").rate * 2;\n`,
+    },
+    edit: `exports.rate = 2;\n`,
+    run: testFails,
+  },
+  {
+    title: "a parameter named `eval` in a CommonJS file",
+    build: `Declarations with the name "eval" cannot be used with the ESM output format due to strict mode`,
+    files: {
+      "rates.js": `exports.rate = 1;\n`,
+      "price.js": `exports.price = require("./rates.js").rate * 2;\nexports.never = function (eval) {\n  return eval;\n};\n`,
+    },
+    edit: `exports.rate = 2;\n`,
+    run: testFails,
+  },
+  {
+    title: "a write to a const in a file with the `// @bun` pragma",
+    build: `Cannot assign to "limit" because it is a constant`,
+    files: {
+      "rates.js": `export const rate = 1;\n`,
+      "price.js": `// @bun\nimport { rate } from "./rates.js";\nconst limit = 1;\nexport const price = rate * 2;\nexport function never() {\n  limit = 2;\n}\n`,
+    },
+    edit: `export const rate = 2;\n`,
+    run: testFails,
+  },
+  {
+    // The runtime refuses this file too: it reports the write when it loads the file.
+    title: "a write to a const",
+    build: `Cannot assign to "limit" because it is a constant`,
+    files: {
+      "rates.js": `export const rate = 1;\n`,
+      "price.js": `import { rate } from "./rates.js";\nconst limit = 1;\nexport const price = rate * 2;\nexport function never() {\n  limit = 2;\n}\n`,
+    },
+    edit: `export const rate = 2;\n`,
+    run: { tests: [], error: `error: This assignment will throw because "limit" is a constant` },
+  },
+];
+const refusedByBundleTests = {
+  "price.test.js": `import { test, expect } from "bun:test";\nimport { price } from "./price.js";\ntest("price", () => expect(price).toBe(2));\n`,
+  "other.js": `export const other = 9;\n`,
+  "other.test.js": `import { test, expect } from "bun:test";\nimport { other } from "./other.js";\ntest("other", () => expect(other).toBe(9));\n`,
+  "README.md": "hello\n",
+};
+const refusedByBundleNames = ["other.test.js", "price.test.js"];
 
 // The --watch test at the end is the slow one; everything else is independent
 // git repos so run them concurrently.
@@ -372,6 +468,187 @@ describe.concurrent("bun test --changed", () => {
     expect(exitCode).toBe(0);
   });
 
+  describe.each(refusedByBundle)("an edit behind a file with $title", ({ build, files, edit, run }) => {
+    test("selects its test", async () => {
+      using dir = tempDir("test-changed-refused-by-bundle", { ...refusedByBundleTests, ...files });
+      initRepo(String(dir));
+      writeFileSync(join(String(dir), "rates.js"), edit);
+
+      // The scan sets the same target and the same `packages` option.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "./price.js", "--target=bun", "--packages=external"],
+        cwd: String(dir),
+        env: gitEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+      const [, buildStderr, buildExitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ error: firstError(buildStderr), exitCode: buildExitCode }).toEqual({
+        error: `error: ${build}`,
+        exitCode: 1,
+      });
+
+      const { stderr, exitCode } = await runTestChanged(String(dir));
+      expect({
+        lines: changedLines(stderr),
+        ran: ranFiles(stderr, refusedByBundleNames),
+        tests: testLines(stderr),
+        error: firstError(stderr),
+        exitCode,
+      }).toEqual({
+        lines: ["--changed: 1 changed file, running 1/2 test files"],
+        ran: ["price.test.js"],
+        ...run,
+        exitCode: 1,
+      });
+    });
+  });
+
+  // `bun create <component>` reads a module graph too, but it links the bundle,
+  // so it must keep these errors. Only a bundle that does not link skips them.
+  test("bun create still refuses a component that writes to an import", async () => {
+    const files = {
+      "rates.ts": `export const rate = 1;\n`,
+      "App.tsx": `import { rate } from "./rates";\nexport default function App() {\n  return <div>{rate}</div>;\n}\nexport function never() {\n  rate = 0;\n}\n`,
+    };
+    using dir = tempDir("test-changed-create-keeps-errors", files);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "create", "./App.tsx"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ error: firstError(stderr), stdout, files: readdirSync(String(dir)).sort(), exitCode }).toEqual({
+      error: `error: Cannot assign to import "rate"`,
+      stdout: "",
+      files: Object.keys(files).sort(),
+      exitCode: 1,
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/8908: a bundle turns `exports.x =`
+  // into an ES export and then refuses the `return`. The scan does not turn it.
+  test("an edit behind a CommonJS file with a top-level return selects its test", async () => {
+    using dir = tempDir("test-changed-top-level-return", {
+      ...refusedByBundleTests,
+      "rates.js": `exports.rate = 1;\n`,
+      "price.js": `exports.price = require("./rates.js").rate * 2;\nif (process.env.NO_EXTRAS) return;\nexports.extras = true;\n`,
+    });
+    initRepo(String(dir));
+    writeFileSync(join(String(dir), "rates.js"), `exports.rate = 2;\n`);
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect({
+      lines: changedLines(stderr),
+      ran: ranFiles(stderr, refusedByBundleNames),
+      tests: testLines(stderr),
+      error: firstError(stderr),
+      exitCode,
+    }).toEqual({
+      lines: ["--changed: 1 changed file, running 1/2 test files"],
+      ran: ["price.test.js"],
+      ...testFails,
+      exitCode: 1,
+    });
+  });
+
+  describe.each([
+    {
+      title: "a file that nothing imports",
+      edit: { "README.md": "more\n" },
+      lines: ["--changed: 1 changed file, but no test files are affected"],
+      tests: [],
+    },
+    {
+      title: "the import of another test",
+      edit: { "other.js": `export const other = 9; // touched\n` },
+      lines: ["--changed: 1 changed file, running 1/2 test files"],
+      tests: ["(pass) other"],
+    },
+  ])("next to a file that a linked bundle refuses, an edit of $title", ({ edit, lines, tests }) => {
+    test("selects no other test", async () => {
+      using dir = tempDir("test-changed-refused-by-bundle-exact", {
+        ...refusedByBundleTests,
+        ...refusedByBundle[0].files,
+      });
+      initRepo(String(dir));
+      for (const [name, contents] of Object.entries(edit)) writeFileSync(join(String(dir), name), contents);
+
+      const { stderr, exitCode } = await runTestChanged(String(dir));
+      expect({ lines: changedLines(stderr), tests: testLines(stderr), exitCode }).toEqual({
+        lines,
+        tests,
+        exitCode: 0,
+      });
+    });
+  });
+
+  // The runtime refuses this file too, so the scan keeps refusing it.
+  test("an edit behind a file with an export and a top-level return selects nothing", async () => {
+    using dir = tempDir("test-changed-export-and-return", {
+      ...refusedByBundleTests,
+      "rates.js": `export const rate = 1;\n`,
+      "price.js": `import { rate } from "./rates.js";\nexport const price = rate * 2;\nif (price > 100) return;\n`,
+    });
+    initRepo(String(dir));
+    writeFileSync(join(String(dir), "rates.js"), `export const rate = 2;\n`);
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect({ lines: changedLines(stderr), tests: testLines(stderr), exitCode }).toEqual({
+      lines: ["--changed: 1 changed file, but no test files are affected"],
+      tests: [],
+      exitCode: 0,
+    });
+  });
+
+  test("an edit behind a test file that a linked bundle refuses selects it", async () => {
+    using dir = tempDir("test-changed-refused-test-file", {
+      "rates.js": `export const rate = 1;\n`,
+      "price.test.js": `import { test, expect } from "bun:test";\nimport { rate } from "./rates.js";\ntest("rate", () => expect(rate).toBe(1));\nexport function never() {\n  rate = 0;\n}\n`,
+      "other.test.js": `import { test, expect } from "bun:test";\ntest("other", () => expect(1).toBe(1));\n`,
+    });
+    initRepo(String(dir));
+    writeFileSync(join(String(dir), "rates.js"), `export const rate = 2;\n`);
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect({ lines: changedLines(stderr), tests: testLines(stderr), exitCode }).toEqual({
+      lines: ["--changed: 1 changed file, running 1/2 test files"],
+      tests: ["(fail) rate"],
+      exitCode: 1,
+    });
+  });
+
+  // The script of a page is scanned for the browser, so shared.js is in the
+  // module graph two times. Every copy of a changed file starts the walk.
+  describe.each([
+    { title: "a file that a bundle accepts", never: "" },
+    { title: "a file that a linked bundle refuses", never: `export function never() {\n  page = null;\n}\n` },
+  ])("an edit of a file that a test and a page script import, with the page behind $title", ({ never }) => {
+    test("selects the test", async () => {
+      using dir = tempDir("test-changed-page-copy", {
+        "shared.js": `export const rate = 1;\n`,
+        "app.js": `import { rate } from "./shared.js";\ndocument.title = String(rate * 2);\n`,
+        "index.html": `<!doctype html><html><body><script type="module" src="./app.js"></script></body></html>\n`,
+        "server.js": `import page from "./index.html";\nexport { page };\n${never}`,
+        "server.test.js": `import { test, expect } from "bun:test";\nimport { page } from "./server.js";\ntest("server", () => expect(typeof page).toBe("object"));\n`,
+        "shared.test.js": `import { test, expect } from "bun:test";\nimport { rate } from "./shared.js";\ntest("rate", () => expect(rate).toBe(1));\n`,
+      });
+      initRepo(String(dir));
+      writeFileSync(join(String(dir), "shared.js"), `export const rate = 2;\n`);
+
+      const { stderr, exitCode } = await runTestChanged(String(dir));
+      expect({ tests: testLines(stderr), exitCode }).toEqual({
+        tests: expect.arrayContaining(["(fail) rate"]),
+        exitCode: 1,
+      });
+    });
+  });
+
   // https://github.com/oven-sh/bun/issues/29590: a tsconfig `paths` alias
   // like "@/*" must be followed when building the module graph.
   test("tsconfig paths alias is followed when computing the module graph", async () => {
@@ -576,4 +853,47 @@ describe.skipIf(isWindows)("bun test --changed --watch", () => {
     proc.kill();
     reader.releaseLock();
   }, 60_000);
+
+  // The scan lists the files to watch. rates.js is behind a file that a linked
+  // bundle refuses. other.js restarts the run also when rates.js is not watched.
+  test("watches a file behind a file that a linked bundle refuses", async () => {
+    using dir = tempDir("test-changed-watch-refused-by-bundle", {
+      ...refusedByBundleTests,
+      ...refusedByBundle[0].files,
+    });
+    initRepo(String(dir));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--changed", "--watch", "--no-clear-screen"],
+      cwd: String(dir),
+      env: gitEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    const reader = proc.stderr.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+
+    async function waitFor(needle: string, from = 0): Promise<void> {
+      while (!buf.slice(from).includes(needle)) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error(`stream closed before seeing ${JSON.stringify(needle)}\n${buf}`);
+        buf += decoder.decode(value, { stream: true });
+      }
+    }
+
+    await waitFor("no changed files");
+    await waitFor("Ran 0 tests");
+
+    const before = buf.length;
+    writeFileSync(join(String(dir), "rates.js"), refusedByBundle[0].edit);
+    appendFileSync(join(String(dir), "other.js"), "// touched\n");
+    await waitFor("\nRan ", before);
+    expect(ranFiles(buf.slice(before), ["price.test.js"])).toEqual(["price.test.js"]);
+
+    proc.kill();
+    reader.releaseLock();
+  });
 });

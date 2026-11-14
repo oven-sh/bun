@@ -6985,6 +6985,11 @@ pub mod bv2_impl {
                         import_record.source_index = Index::INVALID;
 
                         if let Some(entry) = dev_server.is_file_cached(path.text, bake_graph) {
+                            // Nor a stylesheet imported from JS (by any loader, a plugin's too): its importer
+                            // declares the names it imports, which a CSS module's source gives.
+                            if entry.kind == bake_types::CacheKind::Css && loader != Loader::Html {
+                                break 'brk;
+                            }
                             let rel = bun_paths::resolve_path::relative_platform::<
                                 bun_paths::resolve_path::platform::Loose,
                                 false,

@@ -122,6 +122,16 @@ console.log(JSON.stringify(Bun.$.braces("{" + inner)));`,
     expect(($.braces as any)("", { tokenize: true })).toBeString();
   });
 
+  test.each([
+    // A backslash in front of a character of more than one byte.
+    ["{\\é,\\😂}x", ["éx", "😂x"]],
+    // Text that is longer than the 15 bytes a token stores inline.
+    ["{ééééééééé,a}€", ["ééééééééé€", "a€"]],
+    ["é{a,{😂,€}ü}ß", ["éaß", "é😂üß", "é€üß"]],
+  ])("unicode: %s", (pattern, expected) => {
+    expect($.braces(pattern)).toEqual(expected);
+  });
+
   test("unicode", () => {
     const result = $.braces(`lol {😂,🫵,🤣}`);
     expect(result).toEqual(["lol 😂", "lol 🫵", "lol 🤣"]);
@@ -174,6 +184,42 @@ describe("brace + glob composition", () => {
     expect(words).toContain("x.,foo");
     // ...and does not split into a spurious `]foo` branch.
     expect(words).not.toContain("x.]foo");
+  });
+});
+
+// The shell lexed a word that was not all ASCII with a brace lexer that decoded each code point and wrote it again.
+// A byte that is not UTF-8 has no code point, so other bytes came out: 0xFF as C3 BF, 0xC3 as EF BF BD.
+describe("a brace-expanded word keeps bytes that are not UTF-8", () => {
+  // `echo -e` is a builtin, so the shell makes each byte itself. An expected string has one character for each byte
+  // of stdout, and is what bash 5.2 prints for the same word with `printf` in place of `echo -e`.
+  test.each([
+    ["a byte that UTF-8 never uses", () => $`echo {$(echo -e '\xff'),a}`, "\xff a\n"],
+    ["a lead byte with no continuation byte", () => $`echo {$(echo -e '\xc3'),a}`, "\xc3 a\n"],
+    ["a continuation byte with no lead byte", () => $`echo {$(echo -e '\x80'),a}`, "\x80 a\n"],
+    ["a sequence that stops early", () => $`echo {$(echo -e '\xe2\x82'),a}`, "\xe2\x82 a\n"],
+    ["a surrogate", () => $`echo {$(echo -e '\xed\xa0\x80'),a}`, "\xed\xa0\x80 a\n"],
+    ["bytes outside the group", () => $`echo $(echo -e '\xff'){a,b}$(echo -e '\xc3')`, "\xffa\xc3 \xffb\xc3\n"],
+    ["a nested group", () => $`echo {a,{$(echo -e '\xff'),b}$(echo -e '\xc3')}`, "a \xff\xc3 b\xc3\n"],
+    [
+      "valid and invalid sequences in one variant",
+      () => $`echo {$(echo -e 'a\xff\xc3\xa9\xe2\x82b'),a}`,
+      "a\xff\xc3\xa9\xe2\x82b a\n",
+    ],
+    [
+      "a variant longer than the 15 bytes a token stores inline",
+      () => $`echo {$(echo -e '\xffxxxxxxxxxxxxxxxxxx\xff'),a}`,
+      "\xffxxxxxxxxxxxxxxxxxx\xff a\n",
+    ],
+    ["a variable", () => $`A=$(echo -e '\xff'); echo {$A,b} x$A`, "\xff b x\xff\n"],
+    ["a comma and a brace that are data", () => $`echo {$(echo -e '\xff,\xc3}'),a}`, "\xff,\xc3} a\n"],
+    ["a group with no comma", () => $`echo {$(echo -e '\xff')}`, "{\xff}\n"],
+  ])("%s", async (_, command, expected) => {
+    const { stdout } = await command().quiet();
+    expect(stdout.toString("latin1")).toBe(expected);
+  });
+
+  test("an interpolated comma and brace between non-ASCII characters are data", async () => {
+    expect(await $`echo {${"é,ü}"},${"ß"}}`.text()).toBe("é,ü} ß\n");
   });
 });
 

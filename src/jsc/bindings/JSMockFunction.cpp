@@ -3083,7 +3083,8 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
         if (object == resolved)
             break;
         if (redirects == maxSpyTargetRedirects) {
-            throwTypeError(globalObject, scope, makeString("Cannot spy on the `"_s, propertyKeyForMessage(propertyKey), "` property because it is behind more than "_s, maxSpyTargetRedirects, " node:vm contexts or module mocks. Spy on an object that is closer to the one that holds it"_s));
+            static_assert(maxSpyTargetRedirects == 8, "the message below names the limit");
+            throwTypeError(globalObject, scope, makeString("Cannot spy on the `"_s, propertyKeyForMessage(propertyKey), "` property because it is behind more than 8 node:vm contexts or module mocks. Spy on an object that is closer to the one that holds it"_s));
             return {};
         }
     }

@@ -935,7 +935,6 @@ dependencies = [
  "bun_uws_sys",
  "enumset",
  "libc",
- "scopeguard",
  "strum",
  "thiserror",
 ]

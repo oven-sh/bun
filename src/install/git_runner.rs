@@ -19,8 +19,6 @@ use bun_ptr::{BackRef, JsCell, RefPtr, ThisPtr};
 use bun_spawn::SpawnResultExt as _;
 use bun_spawn::{ProcessHandle, Rusage, SpawnEnv, SpawnOptions, Status};
 use bun_sys::Fd;
-#[cfg(windows)]
-use bun_sys::windows::libuv as uv;
 use bun_threading::thread_pool as ThreadPool;
 
 use crate::cache_publish::StagedEntry;
@@ -1204,21 +1202,10 @@ impl GitSubprocess {
         this.exit_status.set(None);
         this.remaining_fds.set(0);
 
-        // Windows: the `uv::Pipe` allocations are ours until the spawn succeeds.
         let spawn_options = SpawnOptions {
             stdin: bun_spawn::Stdio::Ignore,
-            #[cfg(unix)]
             stdout: bun_spawn::Stdio::Buffer,
-            #[cfg(unix)]
             stderr: bun_spawn::Stdio::Buffer,
-            #[cfg(windows)]
-            stdout: bun_spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                bun_core::ffi::zeroed::<uv::Pipe>(),
-            )) as bun_spawn::windows::UvPipePtr),
-            #[cfg(windows)]
-            stderr: bun_spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                bun_core::ffi::zeroed::<uv::Pipe>(),
-            )) as bun_spawn::windows::UvPipePtr),
             #[cfg(windows)]
             windows: bun_spawn::WindowsOptions {
                 loop_: this.event_loop,
@@ -1230,22 +1217,9 @@ impl GitSubprocess {
             linux_pdeathsig: Some(bun_sys::SignalCode::SIGKILL.0),
             ..Default::default()
         };
-        #[cfg(windows)]
-        let mut spawn_options = spawn_options;
 
         let mut spawned =
-            match bun_spawn::spawn_process_cstr(&spawn_options, &argv, SpawnEnv::Strings(&envp)) {
-                Ok(Ok(spawned)) => spawned,
-                res => {
-                    #[cfg(windows)]
-                    {
-                        spawn_options.stdout.deinit();
-                        spawn_options.stderr.deinit();
-                    }
-                    res??;
-                    unreachable!();
-                }
-            };
+            bun_spawn::spawn_process_cstr(&spawn_options, &argv, SpawnEnv::Strings(&envp))??;
         // `envp` borrows from `git_env`. The exit handler, which may run below, replaces `git_env`
         // after `Step::Config`.
         drop(envp);
@@ -1282,7 +1256,6 @@ impl GitSubprocess {
             (&this.stdout, spawned.stdout.take()),
             (&this.stderr, spawned.stderr.take()),
         ] {
-            // Take sole ownership of each pipe before `spawned` drops.
             let bun_spawn::SpawnedStdio::Buffer(pipe) = pipe else {
                 continue;
             };

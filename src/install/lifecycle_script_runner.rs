@@ -481,9 +481,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 }
 
-#[cfg(windows)]
-use bun_sys::windows::libuv as uv;
-
 pub type OutputReader = BufferedReader;
 
 impl<'a> LifecycleScriptSubprocess<'a> {
@@ -623,18 +620,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             } else if log_level.is_verbose() || foreground {
                 bun_spawn::Stdio::Inherit
             } else {
-                #[cfg(unix)]
-                {
-                    bun_spawn::Stdio::Buffer
-                }
-                #[cfg(not(unix))]
-                {
-                    // `spawn_process_windows` moves it into `spawned.{stdout,stderr}`, its one owner.
-                    bun_spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                        bun_core::ffi::zeroed::<uv::Pipe>(),
-                    ))
-                        as bun_spawn::windows::UvPipePtr)
-                }
+                bun_spawn::Stdio::Buffer
             }
         };
         let spawn_options = SpawnOptions {
@@ -682,20 +668,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             core::ptr::null(),
         ]);
         // SAFETY: both arrays are null-terminated, and their strings NUL-terminated and live.
-        match unsafe { bun_spawn::spawn_process(&spawn_options, argv.as_ptr(), envp.as_ptr()) } {
-            Ok(Ok(spawned)) => Ok(spawned),
-            res => {
-                #[cfg(windows)]
-                {
-                    // On error we still own the `uv::Pipe`s: `WindowsStdio` has no `Drop`.
-                    let mut spawn_options = spawn_options;
-                    spawn_options.stdout.deinit();
-                    spawn_options.stderr.deinit();
-                }
-                res??;
-                unreachable!();
-            }
-        }
+        Ok(unsafe { bun_spawn::spawn_process(&spawn_options, argv.as_ptr(), envp.as_ptr()) }??)
     }
 
     /// Leaves `self` to the process and the readers until [`Self::maybe_finished`].
@@ -748,14 +721,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             }
             #[cfg(windows)]
             {
-                // `spawn_process_windows` has already `heap::take`n the raw pipe
-                // pointers out of `Stdio::Buffer` into `spawned.{stdout,stderr}`
-                // as `WindowsStdioResult::Buffer(Box<uv::Pipe>)`. Take that Box
-                // out *here* (sole owner) and stash it in `source` BEFORE
-                // `start_with_current_pipe` (which reads `source.?.pipe`) and
-                // BEFORE `spawned` drops — otherwise the `Box<uv::Pipe>` is freed
-                // while libuv still has the handle queued (UAF) and the later
-                // `close_impl`→`on_pipe_close`→`heap::take` double-frees.
                 if let bun_spawn::SpawnedStdio::Buffer(pipe) = spawned.stdout.take() {
                     (*this).stdout.set_source(bun_io::Source::Pipe(pipe));
                     (*this).remaining_fds += 1;

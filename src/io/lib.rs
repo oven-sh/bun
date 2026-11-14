@@ -2234,65 +2234,39 @@ pub mod closer {
     // ── Windows ──────────────────────────────────────────────────────────────
 
     #[cfg(windows)]
-    use crate::IntrusiveUvFs as _;
-    #[cfg(windows)]
     use bun_sys::ReturnCodeExt as _;
     #[cfg(windows)]
     use bun_sys::windows::libuv as uv;
-    #[cfg(windows)]
-    use core::ffi::c_void;
 
     #[cfg(windows)]
-    #[repr(C)]
-    pub struct Closer {
-        io_request: uv::fs_t,
-    }
-    #[cfg(windows)]
-    crate::intrusive_uv_fs!(Closer, io_request);
+    pub struct Closer;
 
     #[cfg(windows)]
     impl Closer {
         pub fn close(fd: Fd, loop_: *mut uv::Loop) {
-            let io_request: uv::fs_t = bun_core::ffi::zeroed();
-            let closer = bun_core::heap::into_raw(Box::new(Closer { io_request }));
-            // data is not overridden by libuv when calling uv_fs_close, its ok to set it here
-            // SAFETY: closer is a freshly-boxed valid pointer.
-            unsafe {
-                (*closer).io_request.data = closer.cast::<c_void>();
-                if let Some(err) = uv::uv_fs_close(
-                    loop_,
-                    &mut (*closer).io_request,
-                    fd.uv(),
-                    Some(Self::on_close),
-                )
-                .errno()
-                {
-                    bun_core::debug_warn!("libuv close() failed = {:?}", err);
-                    drop(bun_core::heap::take(closer));
-                }
+            let req = bun_ptr::AliasableBox::from(bun_core::boxed_zeroed::<uv::fs_t>());
+            // SAFETY: `req` stays put until `on_close` takes it.
+            let rc = unsafe { uv::uv_fs_close(loop_, req.as_ptr(), fd.uv(), Some(Self::on_close)) };
+            if let Some(err) = rc.errno() {
+                bun_core::debug_warn!("libuv close() failed = {:?}", err);
+                return;
             }
+            let _ = req.into_raw();
         }
 
         extern "C" fn on_close(req: *mut uv::fs_t) {
-            // SAFETY: req points to Closer.io_request (set in `close` above).
-            let closer: *mut Closer = unsafe { Closer::from_uv_fs(req) };
-            // SAFETY: req.data was set to `closer` in `close`; both valid for the callback.
-            unsafe {
-                debug_assert!(closer == (*req).data.cast::<Closer>());
-                bun_sys::syslog!(
-                    "uv_fs_close({}) = {}",
-                    // SAFETY: `uv_fs_close` populated the `fd` arm of the union.
-                    Fd::from_uv((*req).file_fd()),
-                    (*req).result
-                );
+            // SAFETY: the box `close` gave up.
+            let req = unsafe { bun_core::heap::take(req) };
+            bun_sys::syslog!(
+                "uv_fs_close({}) = {}",
+                // SAFETY: `uv_fs_close` populated the `fd` arm of the union.
+                Fd::from_uv(unsafe { req.file_fd() }),
+                req.result
+            );
 
-                #[cfg(debug_assertions)]
-                if let Some(err) = (*closer).io_request.result.errno() {
-                    bun_core::debug_warn!("libuv close() failed = {:?}", err);
-                }
-
-                (*req).deinit();
-                drop(bun_core::heap::take(closer));
+            #[cfg(debug_assertions)]
+            if let Some(err) = req.result.errno() {
+                bun_core::debug_warn!("libuv close() failed = {:?}", err);
             }
         }
     }

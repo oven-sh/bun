@@ -356,10 +356,7 @@ impl ShellSubprocess {
     /// readers as errored so PipeReader.deinit's done-assert passes, drops the exit handler so
     /// a later onProcessExit doesn't touch the freed Subprocess, then deinits.
     ///
-    /// Windows: PipeReader.deinit asserts the libuv source is closed. Whether the source
-    /// is uv-initialized depends on how far startWithCurrentPipe got, so a blind close or
-    /// destroy is unsafe. Fall back to leaking the Subprocess (pre-existing behavior)
-    /// rather than risk closing an uninitialized handle.
+    /// Windows: leaks the subprocess, because dropping a `PipeReader` asserts that it has closed.
     fn abort_after_failed_start(this: *mut Self) {
         #[cfg(windows)]
         {
@@ -566,42 +563,18 @@ impl ShellSubprocess {
             true
         };
 
-        // Hoist asSpawnOption results so a later one failing doesn't strand an earlier
-        // Windows *uv.Pipe in an unbound temporary inside the struct initializer.
-        // `mut` only for the Windows-only `.deinit()` rollback below.
-        #[cfg_attr(not(windows), allow(unused_mut))]
-        let mut stdin_opt = match spawn_args.stdio[0].as_spawn_option(0) {
-            stdio::ResultT::Result(opt) => opt,
-            stdio::ResultT::Err(e) => {
-                return Err(ShellErr::Custom(Box::<[u8]>::from(e.to_str())));
-            }
-        };
-        #[cfg_attr(not(windows), allow(unused_mut))]
-        let mut stdout_opt = match spawn_args.stdio[1].as_spawn_option(1) {
-            stdio::ResultT::Result(opt) => opt,
-            stdio::ResultT::Err(e) => {
-                #[cfg(windows)]
-                stdin_opt.deinit();
-                return Err(ShellErr::Custom(Box::<[u8]>::from(e.to_str())));
-            }
-        };
-        let stderr_opt = match spawn_args.stdio[2].as_spawn_option(2) {
-            stdio::ResultT::Result(opt) => opt,
-            stdio::ResultT::Err(e) => {
-                #[cfg(windows)]
-                {
-                    stdin_opt.deinit();
-                    stdout_opt.deinit();
-                }
-                return Err(ShellErr::Custom(Box::<[u8]>::from(e.to_str())));
-            }
+        let mut spawn_option = |i: usize| match spawn_args.stdio[i].as_spawn_option(i as i32) {
+            stdio::ResultT::Result(opt) => Ok(opt),
+            stdio::ResultT::Err(e) => Err(ShellErr::Custom(Box::<[u8]>::from(e.to_str()))),
         };
 
-        let mut spawn_options = SpawnOptions {
+        let spawn_options = SpawnOptions {
+            stdin: spawn_option(0)?,
+            stdout: spawn_option(1)?,
+            stderr: spawn_option(2)?,
             cwd: spawn_args.cwd.into(),
-            stdin: stdin_opt,
-            stdout: stdout_opt,
-            stderr: stderr_opt,
+            #[cfg(unix)]
+            no_sigpipe,
             #[cfg(windows)]
             windows: WindowsOptions {
                 hide_window: true,
@@ -610,10 +583,6 @@ impl ShellSubprocess {
             },
             ..Default::default()
         };
-        #[cfg(unix)]
-        {
-            spawn_options.no_sigpipe = no_sigpipe;
-        }
 
         // Backref so PipeReader callbacks can drive `Yield::run` from async I/O
         // completion.
@@ -630,7 +599,7 @@ impl ShellSubprocess {
         crate::node::fs::note_process_start();
         // SAFETY: `spawn_args.argv` / `env_array` are local null-terminated
         // C-string arrays with argv[0] non-null; valid for this call.
-        let spawn_result = match unsafe {
+        let mut spawn_result = match unsafe {
             bun_process::spawn_process(
                 &spawn_options,
                 spawn_args.argv.as_ptr(),
@@ -638,45 +607,14 @@ impl ShellSubprocess {
             )
         } {
             Err(err) => {
-                // WindowsSpawnOptions has no Drop
-                // (its Stdio::Buffer/Ipc carry FFI-owned `*mut uv::Pipe` already
-                // `uv_pipe_init`ed by spawn_process_windows before uv_spawn fails),
-                // so an implicit `drop(spawn_options)` is a no-op and leaks the
-                // pipe handles open in the uv loop. POSIX deinit is a no-op.
-                #[cfg(windows)]
-                {
-                    spawn_options.stdin.deinit();
-                    spawn_options.stdout.deinit();
-                    spawn_options.stderr.deinit();
-                    for extra in spawn_options.extra_fds.iter_mut() {
-                        extra.deinit();
-                    }
-                }
-                drop(spawn_options);
                 let mut msg = Vec::<u8>::new();
                 use std::io::Write;
                 let _ = write!(&mut msg, "Failed to spawn process: {}", err.name());
                 return Err(ShellErr::Custom(msg.into_boxed_slice()));
             }
-            Ok(r) => match r {
-                bun_sys::Result::Err(err) => {
-                    #[cfg(windows)]
-                    {
-                        spawn_options.stdin.deinit();
-                        spawn_options.stdout.deinit();
-                        spawn_options.stderr.deinit();
-                        for extra in spawn_options.extra_fds.iter_mut() {
-                            extra.deinit();
-                        }
-                    }
-                    drop(spawn_options);
-                    return Err(ShellErr::Sys(err.to_shell_system_error()));
-                }
-                bun_sys::Result::Ok(result) => result,
-            },
+            Ok(Err(err)) => return Err(ShellErr::Sys(err.to_shell_system_error())),
+            Ok(Ok(result)) => result,
         };
-
-        let mut spawn_result = spawn_result;
 
         // Note: Stdio impls Drop, so move out via mem::replace instead of clone.
         let stdio0 = core::mem::replace(&mut spawn_args.stdio[0], Stdio::Ignore);
@@ -934,10 +872,7 @@ impl Writable {
             match &mut stdio {
                 Stdio::Pipe | Stdio::ReadableStream(_) => {
                     if let StdioResult::Buffer(buf) = result {
-                        // Ownership of the `Box<uv::Pipe>` transfers into the
-                        // FileSink's writer.
-                        let uv_pipe: *mut _ = bun_core::heap::into_raw(buf);
-                        let pipe = FileSink::create_with_pipe(event_loop, uv_pipe);
+                        let pipe = FileSink::create_with_pipe(event_loop, buf);
                         if let bun_sys::Result::Err(_err) =
                             pipe.writer.with_mut(|w| w.start_with_current_pipe())
                         {
@@ -1657,8 +1592,7 @@ impl PipeReader {
 
         #[cfg(not(windows))]
         let reader = IOReader::init::<PipeReader>();
-        // With `Box<uv::Pipe>` the pipe cannot be aliased, so ownership transfers to
-        // `reader.source`; `start()` goes through `start_with_current_pipe`.
+        // `start()` goes through `start_with_current_pipe`.
         #[cfg(windows)]
         let reader = {
             let mut reader = IOReader::init::<PipeReader>();

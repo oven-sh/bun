@@ -104,13 +104,6 @@ pub use process::{
 };
 #[cfg(windows)]
 pub type SpawnResult = process::WindowsSpawnResult;
-#[cfg(windows)]
-pub mod windows {
-    /// `bun.windows.libuv.Pipe` raw pointer payload of `Stdio::Buffer` /
-    /// `Stdio::Ipc`. Erased so this crate stays libuv-agnostic at the type
-    /// surface; `bun_runtime` casts it back on consumption.
-    pub type UvPipePtr = *mut bun_sys::windows::libuv::Pipe;
-}
 
 /// Blocking (synchronous) spawn helpers.
 pub mod sync {

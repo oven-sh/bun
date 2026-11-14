@@ -83,13 +83,8 @@ impl PipeReader {
         });
         this.reader.maxbuf = limit.map(max_buf::OwnerRef::for_reader);
         #[cfg(windows)]
-        {
-            // On Windows `StdioResult` is the `WindowsStdioResult` enum and the
-            // `.buffer` payload is a heap-allocated `uv::Pipe`. Ownership
-            // transfers to `reader.source`; `stdio_result` is left `Unavailable`.
-            if let StdioResult::Buffer(pipe) = this.stdio_result.take() {
-                this.reader.set_source(bun_io::Source::Pipe(pipe));
-            }
+        if let StdioResult::Buffer(pipe) = this.stdio_result.take() {
+            this.reader.set_source(bun_io::Source::Pipe(pipe));
         }
 
         let raw: *mut PipeReader = bun_core::heap::into_raw(this);

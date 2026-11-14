@@ -97,6 +97,8 @@ pub(crate) struct RuntimeState {
     /// has not been proven safe; keep the prior behavior of leaking any
     /// still-occupied slot while still freeing the pool allocation itself.
     pub(crate) body_value_pool: Box<core::mem::ManuallyDrop<crate::webcore::body::HiveAllocator>>,
+    #[cfg(windows)]
+    pub(crate) path_watchers: core::cell::OnceCell<Box<crate::node::win_watcher::PathWatchers>>,
     /// The resolver's PackageManager wake-handler context (module queue + VM
     /// handle); the resolver holds a raw pointer to it. Freed with the state.
     pub(crate) wake_ctx: Option<Box<bun_jsc::async_module::WakeContext>>,
@@ -199,6 +201,15 @@ pub(crate) fn sql_rare(vm: &VirtualMachine) -> &bun_sql_jsc::jsc::RareData {
     debug_assert!(!state.is_null(), "sql_rare before init_runtime_state");
     // SAFETY: as `timer_all`.
     unsafe { &(*state).sql_rare }
+}
+
+/// [`RuntimeState::path_watchers`] of this thread's VM.
+#[cfg(windows)]
+pub(crate) fn path_watchers() -> &'static crate::node::win_watcher::PathWatchers {
+    let state = runtime_state();
+    debug_assert!(!state.is_null(), "RuntimeState not installed");
+    // SAFETY: as `timer_all`.
+    unsafe { &(*state).path_watchers }.get_or_init(Default::default)
 }
 
 /// [`RuntimeState::lint`] of this thread's VM.
@@ -359,6 +370,8 @@ unsafe fn init_runtime_state(
                 )
             }
         },
+        #[cfg(windows)]
+        path_watchers: Default::default(),
         wake_ctx: None,
         cron_jobs: Vec::new(),
         matcher_pass: Cell::new(ptr::null()),

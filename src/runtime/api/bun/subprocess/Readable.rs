@@ -133,6 +133,10 @@ impl Readable {
                 // Nothing reads it, but closing it would fail the child's writes.
                 #[cfg(unix)]
                 let _ = result.map(bun_sys::File::into_raw);
+                #[cfg(windows)]
+                if let StdioResult::Buffer(pipe) = result {
+                    let _ = pipe.into_raw();
+                }
                 Readable::Ignore
             }
             // Rejected at i < 3 in Stdio::extract(); stdout/stderr never see this.

@@ -1465,7 +1465,6 @@ impl CopyFileWindows {
                     .slice_z(&mut pathbuf)
                     .as_ptr();
                 let event_loop = self.event_loop;
-                self.io_request.deinit();
                 // SAFETY: all-zero is a valid libuv::fs_t
                 self.io_request = bun_core::ffi::zeroed::<libuv::fs_t>();
 
@@ -1583,7 +1582,6 @@ impl CopyFileWindows {
 impl Drop for CopyFileWindows {
     fn drop(&mut self) {
         self.read_write_loop.close();
-        self.io_request.deinit();
     }
 }
 

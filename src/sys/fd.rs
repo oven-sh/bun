@@ -162,9 +162,6 @@ impl FdExt for Fd {
                         let rc = unsafe {
                             uv::uv_fs_close(uv::Loop::get(), &mut req, file_number, None)
                         };
-                        // fs_t has no Drop impl, so cleanup
-                        // must be explicit (uv_fs_req_cleanup).
-                        req.deinit();
                         rc.to_error(sys::Tag::close).map(|e| e.with_fd(self))
                     }
                     DecodeWindows::Windows(handle) => {

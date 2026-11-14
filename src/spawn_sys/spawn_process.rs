@@ -368,14 +368,6 @@ impl Default for PosixSpawnOptions {
     }
 }
 
-impl PosixSpawnOptions {
-    /// No-op.
-    /// Exists for cfg-parity with `WindowsSpawnOptions::deinit`, which closes
-    /// heap-allocated `uv::Pipe` handles on the spawn error path.
-    #[inline]
-    pub fn deinit(&mut self) {}
-}
-
 /// `bun.jsc.Subprocess.StdioKind` — defined here (not in `subprocess`) to keep
 /// the spawn-sys layer leaf. Re-exported up through `bun_spawn::process` →
 /// `bun_runtime::api::{bun_process, JscSubprocess}` → `shell::subproc`.
@@ -420,23 +412,6 @@ pub enum PosixStdio {
     Pipe(Fd),
     // TODO: remove this entry, it doesn't seem to be used
     Dup2(Dup2),
-}
-
-impl PosixStdio {
-    // Constructor helpers — keep parity with `WindowsStdio::buffer(*mut Pipe)`
-    // so `sync::SyncStdio::to_stdio` can spell both platforms uniformly.
-    #[inline]
-    pub fn inherit() -> Self {
-        PosixStdio::Inherit
-    }
-    #[inline]
-    pub fn ignore() -> Self {
-        PosixStdio::Ignore
-    }
-    #[inline]
-    pub fn buffer() -> Self {
-        PosixStdio::Buffer
-    }
 }
 
 #[derive(Default)]

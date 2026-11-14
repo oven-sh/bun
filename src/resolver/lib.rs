@@ -1231,6 +1231,7 @@ pub mod fs {
             #[cfg(windows)]
             {
                 use bun_sys::windows as w;
+                use std::os::windows::io::{AsRawHandle as _, HandleOrInvalid, OwnedHandle};
                 let _ = (existing_fd, store_fd);
                 let file = bun_sys::get_file_attributes(absolute_path_c)
                     .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
@@ -1270,7 +1271,7 @@ pub mod fs {
                 );
                 // SAFETY: `wpath` is NUL-terminated UTF-16; null security/template handles.
                 let handle = unsafe {
-                    w::CreateFileW(
+                    HandleOrInvalid::from_raw_handle(w::CreateFileW(
                         wpath.as_ptr(),
                         0,
                         w::FILE_SHARE_READ | w::FILE_SHARE_WRITE | w::FILE_SHARE_DELETE,
@@ -1281,19 +1282,16 @@ pub mod fs {
                         // follow the full reparse chain to the final target.
                         w::FILE_FLAG_BACKUP_SEMANTICS,
                         core::ptr::null_mut(),
-                    )
+                    ))
                 };
-                if handle == w::INVALID_HANDLE_VALUE {
+                let Ok(owned) = OwnedHandle::try_from(handle) else {
                     if is_dangling_link_error(w::last_system_errno().to_e()) {
                         cache.kind = EntryKind::Dangling;
                     }
                     // anything else keeps the kind from the link's own directory bit
                     return Ok(cache);
-                }
-                scopeguard::defer! {
-                    // SAFETY: `handle` is a valid HANDLE from CreateFileW above.
-                    unsafe { let _ = w::CloseHandle(handle); }
-                }
+                };
+                let handle = owned.as_raw_handle();
 
                 let mut info: w::BY_HANDLE_FILE_INFORMATION = bun_core::ffi::zeroed();
                 // SAFETY: `handle` is valid; `info` is a valid out-param.

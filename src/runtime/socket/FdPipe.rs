@@ -94,7 +94,7 @@ impl FdPipe {
             // Like `uv_pipe_open`: a blocking FIFO could block the reader's `read(2)` for good.
             // Stdio shares its open file description with other processes, and nothing puts the
             // flag back at exit, so it keeps its mode and the reader guards each `read(2)` with a poll.
-            if (status & libc::O_NONBLOCK) == 0 && !fd.is_stdio() {
+            if (status & libc::O_NONBLOCK) == 0 && fd.stdio_tag().is_none() {
                 sys::update_nonblocking(fd, true).map_err(sys::SystemErrno::from)?;
             }
             (status & libc::O_ACCMODE) != libc::O_RDONLY
@@ -144,7 +144,7 @@ impl FdPipe {
                 r.set_parent(this.cast::<core::ffi::c_void>());
                 // `close` closes the descriptor itself, before the socket hears of the close.
                 r.flags.remove(PosixFlags::CLOSE_HANDLE);
-                if !fd.is_stdio() {
+                if fd.stdio_tag().is_none() {
                     r.flags.insert(PosixFlags::NONBLOCKING);
                 }
                 // Armed by `resume_stream`; a registration now would only be undone in `on_open`.

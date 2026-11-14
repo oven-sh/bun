@@ -48,6 +48,10 @@ pub struct EventLoopTimer {
     /// A `setTimeout()` without a delay in `bun test`. Its deadline is 1 ms away, as in Node, so its place among the
     /// timers is Node's. An event loop that would sleep until then runs it at once.
     pub is_due_when_idle: Cell<bool>,
+    /// The drain that was open when this timer was armed, or 0 for none. A drain does not pop a timer that it
+    /// armed itself. Its deadline came from a later clock reading than the one the drain cached, so it waits for
+    /// the next turn of the event loop whatever the two readings say.
+    pub armed_in_drain: Cell<u32>,
 }
 
 // Duck-typed `.heap` field access for `bun_io::heap::Intrusive`. Implemented
@@ -76,6 +80,7 @@ impl EventLoopTimer {
             heap: IntrusiveField::default(),
             in_heap: Cell::new(InHeap::None),
             is_due_when_idle: Cell::new(false),
+            armed_in_drain: Cell::new(0),
         }
     }
 

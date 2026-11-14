@@ -2964,14 +2964,17 @@ describe("Socket fd adoption", () => {
     }
   });
 
-  // shutdown(true) gives up on reads for good, so a shutdown() after it has nothing to wait for.
-  it.skipIf(fifoReadsUnsupported)("Bun.connect({ fd }): shutdown(true) then shutdown() closes the pipe", async () => {
+  // shutdown(true) gives up on reads for good: once both sides are shut, in either order, nothing is left to wait for.
+  it.skipIf(fifoReadsUnsupported).each([
+    ["shutdown(true) then shutdown()", true],
+    ["shutdown() then shutdown(true)", false],
+  ])("Bun.connect({ fd }): %s closes the pipe", async (_, readFirst) => {
     const { rfd, wfd } = openFifo("shutdown-read.fifo");
     try {
       const closed = Promise.withResolvers<void>();
       const socket = await Bun.connect({ fd: rfd, socket: { data() {}, close: () => closed.resolve() } });
-      socket.shutdown(true);
-      socket.shutdown();
+      socket.shutdown(readFirst);
+      socket.shutdown(!readFirst);
       await closed.promise;
       expect(fstatCode(rfd)).toBe("EBADF");
     } finally {

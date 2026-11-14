@@ -402,12 +402,15 @@ impl Transport for FdPipe {
         }
     }
 
-    /// Reads are over for good: no EOF is waited for, so a `shutdown` after this closes the pipe.
+    /// Reads are over for good: no EOF is waited for, so the pipe closes once both sides are shut.
     fn shutdown_read(&self) {
         #[cfg(unix)]
         if self.reader_active() {
             self.paused.set(true);
             self.release_reader();
+            if self.is_shutdown.get() {
+                self.enqueue();
+            }
         }
     }
 

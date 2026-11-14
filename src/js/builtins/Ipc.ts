@@ -77,7 +77,13 @@ export function parseHandle(target: $Bindgen.Subprocess | null, serialized: $Nod
     }
     case "net.Socket": {
       const socket = new net.Socket({ readable: true, writable: true });
-      socket.connect({ fd, fdIsRawSocket: true });
+      try {
+        socket.connect({ fd, fdIsRawSocket: true });
+      } catch (err) {
+        // A descriptor the socket cannot adopt (a pipe's write end): the socket reports it, like a socket whose read failed.
+        require("node:fs").closeSync(fd);
+        socket.destroy(err as Error);
+      }
       emit(target, serialized.msg, socket);
       return;
     }

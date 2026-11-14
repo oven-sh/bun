@@ -542,6 +542,57 @@ process.on('message', (m, socket) => {
     },
   );
 
+  // A pipe's write end cannot be read: the child's socket reports it, and the child goes on.
+  test.concurrent.skipIf(isMacOS)(
+    "a net.Socket over a pipe's write end arrives in the child as a socket that errors",
+    async () => {
+      using dir = tempDir("ipc-handle-fifo-write-end", {
+        "parent.js": `
+const { fork, execFileSync } = require('node:child_process');
+const fs = require('node:fs');
+const net = require('node:net');
+const path = require('node:path').join(__dirname, 'pipe.fifo');
+execFileSync('mkfifo', [path]);
+const rfd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+const wfd = fs.openSync(path, 'w');
+const child = fork('child.js');
+const socket = new net.Socket({ fd: wfd, readable: false, writable: true });
+child.send('socket', socket, err => {
+  if (err) return finish(false, 'send:' + err.message);
+});
+child.on('message', m => finish(m.error === 'ENOTCONN' && m.alive, JSON.stringify(m)));
+
+function finish(ok, detail) {
+  console.log(ok ? 'RESPONSE:' + detail : 'FAILED:' + detail);
+  try { child.kill(); } catch {}
+  process.exit(ok ? 0 : 1);
+}
+`,
+        "child.js": `
+const net = require('node:net');
+process.on('message', (m, socket) => {
+  if (!(socket instanceof net.Socket)) return process.send({ error: 'handle was ' + typeof socket });
+  socket.on('error', e => setImmediate(() => process.send({ error: e.code, syscall: e.syscall, alive: true })));
+});
+`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "parent.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
+        stdout: 'RESPONSE:{"error":"ENOTCONN","syscall":"open","alive":true}',
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
   test.concurrent("dgram.Socket handle arrives as a bound dgram.Socket the child can send/receive on", async () => {
     using dir = tempDir("ipc-handle-dgram", {
       "parent.js": `

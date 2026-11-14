@@ -644,6 +644,13 @@ extern "C" void Bun__didCreateNextTickQueue(JSC::VM* vm)
     vm->setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
 }
 
+// A module that loads before the entry point (a preload) spends the check that the new queue armed.
+void Zig::GlobalObject::armNextTickQueueCheckAfterEntryPoint()
+{
+    newNextTickQueueWaitsForMicrotaskToEnd = true;
+    vm().setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
+}
+
 extern "C" size_t Bun__reported_memory_size;
 
 // executionContextId: -1 for main thread

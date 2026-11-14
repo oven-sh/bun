@@ -328,9 +328,10 @@ fn list_files_below(folder: &[u8]) -> Vec<Vec<u8>> {
 
 /// The paths of the files and the folders in `folder` itself.
 fn list_folder(folder: &[u8]) -> Option<(Vec<Vec<u8>>, Vec<Vec<u8>>)> {
-    let directory = bun_sys::open_dir_for_iteration(bun_sys::Fd::cwd(), folder).ok()?;
-    let _close = scopeguard::guard(directory, bun_sys::FdExt::close);
-    let mut entries = bun_sys::dir_iterator::iterate(directory);
+    let directory = bun_sys::open_dir_for_iteration(bun_sys::Fd::cwd(), folder)
+        .map(bun_sys::File::from_fd)
+        .ok()?;
+    let mut entries = bun_sys::dir_iterator::iterate(directory.fd());
     let (mut files, mut folders) = (Vec::new(), Vec::new());
     while let Some(entry) = entries.next().ok()? {
         let path = [folder, &[bun_paths::SEP], entry.name.slice_u8()].concat();

@@ -93,12 +93,8 @@ impl Editor {
 
     fn by_fallback_path_for_editor(editor: Editor) -> Option<&'static [u8]> {
         for path in bin_path(editor)? {
-            match bun_sys::File::open_at(bun_sys::Fd::cwd(), path, bun_sys::O::RDONLY, 0) {
-                bun_sys::Result::Ok(opened) => {
-                    let _ = opened.close(); // close error is non-actionable
-                    return Some(path.as_bytes());
-                }
-                bun_sys::Result::Err(_) => {}
+            if bun_sys::File::open_at(bun_sys::Fd::cwd(), path, bun_sys::O::RDONLY, 0).is_ok() {
+                return Some(path.as_bytes());
             }
         }
 

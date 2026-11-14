@@ -589,14 +589,14 @@ impl CreateCommand {
                 )?;
 
                 if !create_options.skip_package_json {
-                    let plucker = &archive_context.pluckers[0];
+                    let plucker = &mut archive_context.pluckers[0];
 
-                    if plucker.found && plucker.fd.is_valid() {
+                    if let Some(file) = plucker.file.take() {
                         progress.root.name = b"Updating package.json";
                         progress.refresh();
 
                         package_json_contents = plucker.contents.clone()?;
-                        package_json_file = Some(bun_sys::File::from_fd(plucker.fd));
+                        package_json_file = Some(file);
                     }
                 }
             }

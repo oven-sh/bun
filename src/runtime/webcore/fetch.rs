@@ -1332,13 +1332,7 @@ fn fetch_impl(
                 }
             }
 
-            // The sendfile path above closes `opened_fd` or moves it into `SendFile` (which
-            // owns its lifecycle and breaks out of `'prepare_body`). On this
-            // read-file path we are the sole owner of the fresh fd: `read_file`
-            // is handed it as an `Fd` and never takes ownership. Wrap it in an
-            // RAII guard so any future early return between here and the read
-            // can't leak it.
-            let opened_fd = scopeguard::guard(opened_fd, |fd| fd.close());
+            let opened_file = bun_sys::File::from_fd(opened_fd);
 
             // TODO: make this async + lazy
             let blob_offset = body.blob().offset.get();
@@ -1350,14 +1344,13 @@ fn fetch_impl(
             // `ReadFile` has `Drop`; can't use FRU `..Default::default()`.
             let mut rf_args = node::fs::args::ReadFile::default();
             rf_args.encoding = Encoding::Buffer;
-            rf_args.path = PathOrFileDescriptor::Fd(*opened_fd);
+            rf_args.path = PathOrFileDescriptor::Fd(opened_file.fd());
             rf_args.offset = blob_offset;
             rf_args.max_size = Some(blob_size);
             let res = node_fs.read_file(&rf_args, node::fs::Flavor::Sync);
 
-            // Eagerly close before constructing the (potentially large) JS
-            // result. Dropping the guard runs the close exactly once.
-            drop(opened_fd);
+            // Eagerly close before constructing the (potentially large) JS result.
+            drop(opened_file);
 
             match res {
                 Err(err) => {

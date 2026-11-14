@@ -12,7 +12,7 @@ use bun_jsc::{StringJsc as _, SysErrorJsc};
 use bun_ptr::RefPtr;
 #[cfg(unix)]
 use bun_sys::beneath::{self, Symlinks};
-use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, Mode};
+use bun_sys::{self, Fd, FdDirExt as _, Mode};
 
 /// Compression options for the archive
 #[derive(Clone, Copy, Default)]
@@ -648,7 +648,6 @@ impl ExtractContext {
             &mut (),
             bun_archive::ExtractOptions {
                 depth_to_skip: 0,
-                close_handles: true,
                 log: false,
                 npm: false,
                 skip_symlinks: false,
@@ -1250,12 +1249,13 @@ fn extract_to_disk_filtered(
                     make_path(bun_core::dirname(pathname).ok_or(err)?)?;
                     open()
                 });
-                let Ok(file_fd) = opened else { continue };
+                let Ok(file) = opened.map(bun_sys::File::from_fd) else {
+                    continue;
+                };
 
                 let write_success = size == 0
-                    || bun_archive::read_data_into_fd(&mut reader, file_fd, &mut write_strategy)
+                    || bun_archive::read_data_into_file(&mut reader, file, &mut write_strategy)
                         .is_ok();
-                let _ = file_fd.close();
 
                 if !write_success {
                     // Remove partial file on failure

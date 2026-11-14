@@ -4822,12 +4822,12 @@ pub(crate) fn resolve_embedded_file_to_buf(
 
     // Write to a unique scratch name, then atomically rename it into place.
     let mut scratch_buf = bun_paths::path_buffer_pool::get();
-    let scratch_name = Fs::FileSystem::tmpname(extname, &mut scratch_buf[..], content_hash).ok()?;
+    let scratch_name =
+        &*Fs::FileSystem::tmpname(extname, &mut scratch_buf[..], content_hash).ok()?;
 
     // 0600: the file persists, only the owning euid ever dlopens it, and the
     // embedded bytes may come from a binary that is not world-readable.
     let mut tmpfile = bun_sys::Tmpfile::create_with_mode(tmpdir_fd, scratch_name, 0o600).ok()?;
-    let _close = bun_sys::CloseOnDrop::new(tmpfile.fd);
 
     let write_ok = bun_sys::File::borrow(&tmpfile.fd)
         .write_all(file_contents)

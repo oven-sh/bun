@@ -154,11 +154,8 @@ impl Transport for FdPipe {
             // SAFETY: this pipe's live hive slot, given back here.
             unsafe { (*poll).deinit() };
         }
-        // Other streams share stdin, stdout and stderr, so they stay open.
-        if !self.fd.is_stdio() {
-            // The program may have closed the descriptor itself.
-            let _ = self.fd.close_allowing_bad_file_descriptor(None);
-        }
+        // Leaves stdin, stdout and stderr open. The program may have closed the descriptor itself.
+        let _ = self.fd.close_allowing_bad_file_descriptor(None);
         self.enqueue();
         let handle = SocketTCP::from_transport(&raw const self.handle);
         fold(TCPSocket::on_close(

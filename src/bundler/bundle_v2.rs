@@ -3391,6 +3391,14 @@ pub mod bv2_impl {
             }
         }
 
+        /// The module of a plugin-routed entry point, which an import made first. It can be a barrel
+        /// with re-exports that no import asked for.
+        fn set_existing_entry_point(&mut self, slot: u32, source_index: IndexInt) {
+            self.set_entry_point(slot, bun_ast::Index::init(source_index));
+            barrel_imports::request_every_export(self, source_index);
+            self.schedule_barrel_imports_after_plugin_resolve(source_index);
+        }
+
         /// An onResolve callback named the module of an entry point: `answer` holds its path.
         fn enqueue_answered_entry_point(
             &mut self,
@@ -3405,6 +3413,7 @@ pub mod bv2_impl {
             };
             // A file that a plugin resolved the record to instead keeps its own loader.
             let loader = record.loader.filter(|_| path.text == &*record.specifier);
+            let mut made_by_import = false;
             let source_index = match self.enqueue_entry_item_impl(
                 answer,
                 true,
@@ -3419,7 +3428,10 @@ pub mod bv2_impl {
                 }
                 // An import made the module first. It is an entry point too.
                 Ok(None) => match self.path_to_source_index_map(target).get_path(&path) {
-                    Some(source_index) => source_index,
+                    Some(source_index) => {
+                        made_by_import = true;
+                        source_index
+                    }
                     None => return,
                 },
                 Err(_) => return,
@@ -3430,10 +3442,12 @@ pub mod bv2_impl {
                 .iter()
                 .any(|entry_point| entry_point.get() == source_index)
             {
-                self.set_entry_point(
-                    record.import_record_index,
-                    bun_ast::Index::init(source_index),
-                );
+                let slot = record.import_record_index;
+                if made_by_import {
+                    self.set_existing_entry_point(slot, source_index);
+                } else {
+                    self.set_entry_point(slot, bun_ast::Index::init(source_index));
+                }
             }
             // The name the entry point was asked for by names its output file.
             let _ = self
@@ -5071,7 +5085,7 @@ pub mod bv2_impl {
                                             .iter()
                                             .any(|entry_point| entry_point.get() == index) =>
                                     {
-                                        this.set_entry_point(slot, bun_ast::Index::init(index));
+                                        this.set_existing_entry_point(slot, index);
                                     }
                                     _ => {}
                                 }

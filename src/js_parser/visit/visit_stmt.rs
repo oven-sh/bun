@@ -535,12 +535,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let should_emit_temp_var = p.options.features.react_fast_refresh
                     && match expr.data {
                         js_ast::ExprData::EArrow(_) => true,
-                        js_ast::ExprData::ECall(call) => match call.target.data {
-                            js_ast::ExprData::EIdentifier(id) => {
-                                id.ref_ == p.react_refresh.latest_signature_ref
-                            }
-                            _ => false,
-                        },
+                        js_ast::ExprData::ECall(_) => p.makes_react_component(*expr),
                         _ => false,
                     };
                 if should_emit_temp_var {

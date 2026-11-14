@@ -1493,6 +1493,34 @@ describe("bundler", () => {
       run: { stdout: "12" },
     });
 
+    for (const [value, registers] of [
+      ["memo(() => null)", true],
+      ["React.memo(Plain)", true],
+      ["memo(forwardRef(() => null))", true],
+      ["memo(Other)", true],
+      ["createContext('none')", false],
+      ["Plain", false],
+    ] as const) {
+      itBundled(`jsx/FastRefreshDefaultExportOf ${value}`, {
+        files: {
+          "/index.tsx": /* js */ `
+            import { Other } from "./other";
+            const memo = (f?: any) => ({ memo: f }), forwardRef = memo, createContext = (_: string) => ({});
+            const React = { memo };
+            const Plain = () => null;
+            console.log([Other, memo, forwardRef, createContext, React, Plain].length);
+            export default ${value};
+          `,
+          "/other.ts": `export const Other = 1;`,
+        },
+        backend: "cli",
+        reactFastRefresh: true,
+        onAfterBundle(api) {
+          expect(api.readFile("out.js").includes(`:default");`)).toBe(registers);
+        },
+      });
+    }
+
     // Each component gets its own signature binding, in the scope its `var` is
     // declared in. Two siblings used to share one name under minification.
     itBundled("jsx/FastRefreshSiblingSignaturesAreDistinct", {

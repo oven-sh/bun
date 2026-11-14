@@ -2928,6 +2928,48 @@ describe("bundler", () => {
 
   // An import of another entry point can make the module before the plugins answer for the
   // entry point. The file is still an entry point, with the output that it has without the plugin.
+  // The import asks for one of the two re-exports, and the other one is left out until the entry point is known.
+  for (const answer of ["declines", "answers"]) {
+    test.concurrent(
+      `plugin/barrel entry point that onResolve ${answer} after an import parsed it has every export`,
+      async () => {
+        using dir = tempDir("plugin-late-barrel-entry", {
+          "package.json": JSON.stringify({ name: "x", sideEffects: false }),
+          "cli.ts": `import { a } from "./index"; console.log(a);`,
+          "index.ts": `export { a } from "./a"; export { b } from "./inner"; export * from "./star";`,
+          "inner.ts": `export { b } from "./b"; export { unused } from "./a";`,
+          "a.ts": `export const a = "A"; export const unused = 1;`,
+          "b.ts": `export const b = "B";`,
+          "star.ts": `export { c } from "./c";`,
+          "c.ts": `export const c = "C";`,
+        });
+        const isParsed = Promise.withResolvers<void>();
+        const result = await Bun.build({
+          entrypoints: [join(String(dir), "cli.ts"), join(String(dir), "index.ts")],
+          outdir: join(String(dir), "out"),
+          plugins: [
+            {
+              name: "late",
+              setup(build) {
+                build.onResolve({ filter: /index\.ts$/ }, async args => {
+                  await isParsed.promise;
+                  return answer === "answers" ? { path: args.path } : undefined;
+                });
+                // A module that the barrel imports is asked for after the barrel is parsed.
+                build.onLoad({ filter: /[\\/]a\.ts$/ }, () => {
+                  isParsed.resolve();
+                  return undefined;
+                });
+              },
+            },
+          ],
+        });
+        expect(result.success).toBe(true);
+        expect({ ...(await import(join(String(dir), "out", "index.js"))) }).toEqual({ a: "A", b: "B", c: "C" });
+      },
+    );
+  }
+
   test.concurrent("plugin/entry point that onResolve declines after an import made its module", async () => {
     using dir = tempDir("plugin-entry-after-import", {
       "a.js": `import "./b.js"; console.log("a");`,

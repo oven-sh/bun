@@ -312,6 +312,12 @@ fn un_defer_record(import_records: &mut import_record::List, record_idx: usize) 
     true
 }
 
+/// A module that became an entry point after an import made it: the build's users can read every export.
+pub(crate) fn request_every_export(this: &mut BundleV2, source_index: u32) {
+    let (_, value) = RequestedExports::entry(&mut this.requested_exports, source_index);
+    *value = RequestedExports::All;
+}
+
 /// The record's patched source_index, or (dev server, where indices are left
 /// unset on import records) a path-map lookup.
 #[inline]

@@ -4,7 +4,7 @@ use bun_core::{env_var, fmt as bun_fmt, output};
 use bun_sys::{Fd, File, O};
 use bun_threading::Guarded;
 
-use crate::watcher_impl::{ChangedFilePath, WatchEvent, WatchList};
+use crate::watcher_impl::{WatchEvent, WatchList};
 
 /// Optional trace file for debugging watcher events.
 // Wrapped in `bun_threading::Guarded` (cheap when
@@ -32,11 +32,7 @@ pub(crate) fn init() {
 /// Write trace events to the trace file if enabled.
 /// This is called from the watcher thread, so no locking is needed.
 /// Events are assumed to be already deduped by path.
-pub(crate) fn write_events(
-    watchlist: &WatchList,
-    events: &[WatchEvent],
-    changed_files: &[ChangedFilePath],
-) {
+pub(crate) fn write_events(watchlist: &WatchList, events: &[WatchEvent], changed_files: &[&[u8]]) {
     use crate::watcher_impl::WatchItemColumns;
     let guard = TRACE_FILE.lock();
     let Some(file) = guard.as_ref() else {
@@ -127,20 +123,12 @@ pub(crate) fn write_events(
         }
 
         // Only write "changed" field if there are changed files
-        let mut has_changed = false;
-        for name_opt in names {
-            if name_opt.is_some() {
-                has_changed = true;
-                break;
-            }
-        }
-
-        if has_changed {
+        if !names.is_empty() {
             if writer.write_all(b",\"changed\":[").is_err() {
                 return;
             }
             first = true;
-            for name in names.iter().flatten() {
+            for name in names {
                 if !first {
                     if writer.write_all(b",").is_err() {
                         return;
@@ -150,7 +138,7 @@ pub(crate) fn write_events(
                 if write!(
                     writer,
                     "{}",
-                    bun_fmt::format_json_string_utf8(name.as_bytes(), Default::default())
+                    bun_fmt::format_json_string_utf8(name, Default::default())
                 )
                 .is_err()
                 {

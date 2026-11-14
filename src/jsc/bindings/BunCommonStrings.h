@@ -53,6 +53,7 @@
     macro(httpHEAD, "HEAD") \
     macro(IN4Loopback, "127.0.0.1") \
     macro(IN6Any, "::") \
+    macro(inspectOptionShowHidden, "showHidden") \
     macro(IPv4, "IPv4") \
     macro(IPv6, "IPv6") \
     macro(httpLINK, "LINK") \

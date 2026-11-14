@@ -1496,6 +1496,60 @@ describe("own non-enumerable properties are not printed", () => {
   });
 });
 
+// Every build compares what is printed. An ASAN build also reports a read of a freed property table.
+it("an object changed while its non-enumerable keys are listed prints what it had when the walk began", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const custom = Symbol.for("nodejs.util.inspect.custom");
+      const hide = (o, key, value) => Object.defineProperty(o, key, { value, enumerable: false, configurable: true });
+      // Enough added properties to cross several PropertyTable capacity doublings; each rehash frees the previous index vector.
+      const addMany = o => { for (let i = 0; i < 256; i++) o["n" + i] = i; };
+      // The value of the non-enumerable key "a" changes its parent while the walk is at that key.
+      // Twelve keys that hold objects follow it, every second one non-enumerable: the walk holds more values than its inline buffer takes.
+      function withHook(parent, mutate, behind = 12) {
+        let fired = 0;
+        hide(parent, "a", { [custom]() { if (!fired++) mutate(parent); return "a"; } });
+        for (let i = 0; i < behind; i++) {
+          if (i % 2) hide(parent, "h" + i, [i]);
+          else parent["s" + i] = [i];
+        }
+        return parent;
+      }
+      console.log("%o", withHook({ k: 0 }, addMany));
+      console.dir(withHook({ k: 0 }, p => { for (const key of Object.getOwnPropertyNames(p)) delete p[key]; }), { showHidden: true });
+      console.log("%o", withHook({ k: 0 }, p => {
+        addMany(p);
+        const junk = [];
+        for (let i = 0; i < 200; i++) { const q = {}; for (let j = 0; j < 20; j++) q["q" + j] = j; junk.push(q); }
+        Bun.gc(true);
+      }));
+      // An array lists its keys by their names, not from the table of its structure.
+      console.log("%o", withHook(["k"], addMany, 2));
+      // An object with no own property is walked from the structure of its prototype.
+      console.dir(Object.create(withHook({ k: 0 }, addMany)), { showHidden: true });
+    `,
+    ],
+    env: {
+      ...bunEnv,
+      ...(isWindows ? {} : { Malloc: "1" }),
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":"),
+    },
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  const behindTheHook = Array.from({ length: 12 }, (_, i) => (i % 2 ? `[h${i}]: [ ${i} ]` : `s${i}: [ ${i} ]`));
+  const object = ["{", "  k: 0,", "  [a]: a,", ...behindTheHook.map(key => `  ${key},`), "}"];
+  expect(stdout).toBe(
+    [...object, ...object, ...object, `[ "k", [a]: a, s0: [ 0 ], [h1]: [ 1 ] ]`, ...object, ""].join("\n"),
+  );
+  expect(exitCode).toBe(0);
+});
+
 describe("values of another realm", () => {
   it("the members of its Object.prototype are not printed", () => {
     expect(Bun.inspect(vm.runInNewContext("({ a: 1 })"))).toBe("{\n  a: 1,\n}");

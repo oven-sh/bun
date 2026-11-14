@@ -8,6 +8,7 @@ use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 
 use crate as jsc;
+use crate::js_value::WalkWithHidden;
 use crate::virtual_machine::VirtualMachine;
 use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsResult};
 use bun_collections::HashMap;
@@ -582,6 +583,11 @@ fn message_with_type_and_level_(
                 if colors_prop.is_boolean() {
                     print_options.enable_colors = colors_prop.to_boolean();
                 }
+            }
+            if let Some(show_hidden) =
+                opts.get_common_string(global, crate::CommonString::InspectOptionShowHidden)?
+            {
+                print_options.show_hidden = show_hidden.to_boolean();
             }
         }
     }
@@ -1224,6 +1230,8 @@ pub struct FormatOptions {
     pub single_line: bool,
     pub default_indent: u16,
     pub error_display_level: ErrorDisplayLevel,
+    /// Node's `showHidden`: also list non-enumerable keys, as `[key]`.
+    pub show_hidden: bool,
 }
 
 impl Default for FormatOptions {
@@ -1238,6 +1246,7 @@ impl Default for FormatOptions {
             single_line: false,
             default_indent: 0,
             error_display_level: ErrorDisplayLevel::Full,
+            show_hidden: false,
         }
     }
 }
@@ -1360,6 +1369,9 @@ pub fn format2(
         fmt.indent = u32::from(options.default_indent);
         fmt.can_throw_stack_overflow = true;
         fmt.error_display_level = options.error_display_level;
+        if options.show_hidden {
+            fmt.hidden_keys = HiddenKeys::List;
+        }
         let tag = formatter::Tag::get(vals[0], global)?;
         if fmt.write_indent(writer).is_err() {
             return Ok(());
@@ -1422,6 +1434,12 @@ pub fn format2(
     fmt.indent = u32::from(options.default_indent);
     fmt.can_throw_stack_overflow = true;
     fmt.error_display_level = options.error_display_level;
+    if options.show_hidden {
+        fmt.hidden_keys = HiddenKeys::List;
+    } else if vals[0].is_string_literal() {
+        // Bun also fills the `%` directives of later strings (#4826). Only a `%o` of the first argument lists hidden keys, as in Node.
+        fmt.hidden_keys = HiddenKeys::InPercentO;
+    }
     let mut tag: formatter::TagResult;
 
     if fmt.write_indent(writer).is_err() {
@@ -1445,6 +1463,7 @@ pub fn format2(
             }
 
             fmt.format::<true>(tag, writer, this_value, global)?;
+            fmt.disarm_percent_o();
             if fmt.remaining().is_empty() {
                 break;
             }
@@ -1467,6 +1486,7 @@ pub fn format2(
             }
 
             fmt.format::<false>(tag, writer, this_value, global)?;
+            fmt.disarm_percent_o();
             if fmt.remaining().is_empty() {
                 break;
             }
@@ -1492,6 +1512,7 @@ pub struct CustomFormattedObject {
 // Formatter
 // ───────────────────────────────────────────────────────────────────────────
 
+pub(crate) use formatter::HiddenKeys;
 pub use formatter::{Formatter, Tag, TagOptions, TagPayload, TagResult, visited};
 
 pub mod formatter {
@@ -1619,6 +1640,7 @@ pub mod formatter {
         pub(crate) always_newline_scope: bool,
         pub single_line: bool,
         pub ordered_properties: bool,
+        pub(crate) hidden_keys: HiddenKeys,
         pub(crate) custom_formatted_object: CustomFormattedObject,
         pub(crate) disable_inspect_custom: bool,
         pub(crate) stack_check: StackCheck,
@@ -1632,6 +1654,15 @@ pub mod formatter {
         pub dom_printer:
             Option<fn(&mut Formatter<'_>, &mut dyn bun_io::Write, JSValue) -> JsResult<bool>>,
         pub call_own_getters: bool,
+    }
+
+    /// Node's `showHidden`: whether the non-enumerable keys of objects and arrays are listed, as `[key]`.
+    #[derive(Copy, Clone, Eq, PartialEq)]
+    pub(crate) enum HiddenKeys {
+        Skip,
+        /// `Skip`, but a `%o` of the format string that is being printed lists them for its value.
+        InPercentO,
+        List,
     }
 
     impl<'a> Formatter<'a> {
@@ -1654,6 +1685,7 @@ pub mod formatter {
                 always_newline_scope: false,
                 single_line: false,
                 ordered_properties: false,
+                hidden_keys: HiddenKeys::Skip,
                 custom_formatted_object: CustomFormattedObject::default(),
                 disable_inspect_custom: false,
                 stack_check: StackCheck::init(),
@@ -1692,6 +1724,7 @@ pub mod formatter {
                 always_newline_scope: self.always_newline_scope,
                 single_line: self.single_line,
                 ordered_properties: self.ordered_properties,
+                hidden_keys: self.hidden_keys,
                 custom_formatted_object: self.custom_formatted_object,
                 disable_inspect_custom: self.disable_inspect_custom,
                 stack_check: self.stack_check,
@@ -1718,6 +1751,14 @@ pub mod formatter {
         pub(crate) fn advance_remaining(&mut self) {
             let s = self.remaining_values;
             self.remaining_values = bun_ptr::RawSlice::new(&s.slice()[1..]);
+        }
+
+        /// The first argument is printed. A `%o` of a later string lists no non-enumerable key.
+        #[inline]
+        pub(crate) fn disarm_percent_o(&mut self) {
+            if self.hidden_keys == HiddenKeys::InPercentO {
+                self.hidden_keys = HiddenKeys::Skip;
+            }
         }
     }
 
@@ -2581,12 +2622,18 @@ pub mod formatter {
                             }
 
                             PercentTag::O | PercentTag::UpperO => {
+                                let prev_hidden_keys = self.hidden_keys;
+                                let _hidden_keys =
+                                    defer_restore!(self.hidden_keys, prev_hidden_keys);
                                 if token == PercentTag::O {
+                                    // Node.js applies `showHidden: true`.
+                                    if prev_hidden_keys == HiddenKeys::InPercentO {
+                                        self.hidden_keys = HiddenKeys::List;
+                                    }
                                     // TODO: Node.js applies the following extra formatter options.
                                     //
                                     // this.max_depth = 4;
                                     // this.show_proxy = true;
-                                    // this.show_hidden = true;
                                     //
                                     // Spec defines %o as:
                                     // > An object with optimally useful formatting is an
@@ -2950,6 +2997,16 @@ pub mod formatter {
         }
     }
 
+    /// How `PropertyIteratorCtx::write_property_key` writes a key.
+    #[derive(Copy, Clone, Eq, PartialEq)]
+    #[repr(u8)]
+    enum KeyKind {
+        Enumerable = 0,
+        Symbol = 1,
+        /// A non-enumerable key, which Node prints as `[key]:`. A symbol key has the brackets in every case.
+        Hidden = 2,
+    }
+
     pub(crate) struct PropertyIteratorCtx<'a, 'b, const C: bool> {
         pub(crate) formatter: &'a mut Formatter<'b>,
         pub(crate) writer: &'a mut dyn bun_io::Write,
@@ -3001,12 +3058,26 @@ pub mod formatter {
         fn write_property_key(
             writer: &mut WrappedWriter<'_>,
             key: &EncodedSlice,
-            is_symbol: bool,
+            kind: KeyKind,
             is_private_symbol: bool,
             quote_keys: bool,
             value_is_string_like: bool,
         ) {
-            if !is_symbol {
+            if kind != KeyKind::Symbol {
+                let hidden = kind == KeyKind::Hidden;
+                macro_rules! colon {
+                    ($reset:literal) => {
+                        if hidden {
+                            pfmt!(concat!($reset, "<d>]:<r> "), C)
+                        } else {
+                            pfmt!(concat!($reset, "<d>:<r> "), C)
+                        }
+                    };
+                }
+                if hidden {
+                    writer.add_for_new_line(2);
+                    writer.write_all(pfmt!("<r><d>[", C).as_bytes());
+                }
                 // TODO: make this one pass?
                 if (!key.is_16bit()
                     && (!quote_keys && JSLexer::is_latin1_identifier_u8(key.slice())))
@@ -3018,7 +3089,7 @@ pub mod formatter {
                         concat!("{}", "{}", "{}"),
                         pfmt!("<r>", C),
                         key,
-                        pfmt!("<d>:<r> ", C),
+                        colon!(""),
                     ));
                 } else if key.is_16bit() {
                     let mut utf16_slice = key.utf16_slice();
@@ -3040,7 +3111,7 @@ pub mod formatter {
 
                     writer.write_16_bit(utf16_slice);
 
-                    writer.print(format_args!("{}", pfmt!("\"<r><d>:<r> ", C)));
+                    writer.print(format_args!("{}", colon!("\"<r>")));
                 } else {
                     writer.add_for_new_line(key.len + 2);
 
@@ -3048,7 +3119,7 @@ pub mod formatter {
                         "{}{}{}",
                         pfmt!("<r><green>", C),
                         bun_core::fmt::format_json_string_latin1(key.slice()),
-                        pfmt!("<r><d>:<r> ", C),
+                        colon!("<r>"),
                     ));
                 }
             } else if cfg!(debug_assertions) && is_private_symbol {
@@ -3092,7 +3163,7 @@ pub mod formatter {
             global_this: &JSGlobalObject,
             key: &EncodedSlice,
             value: JSValue,
-            is_symbol: bool,
+            kind: KeyKind,
             is_private_symbol: bool,
         ) -> Option<TagResult> {
             if key.eq_ascii(b"constructor") {
@@ -3152,7 +3223,7 @@ pub mod formatter {
             Self::write_property_key(
                 &mut writer,
                 key,
-                is_symbol,
+                kind,
                 is_private_symbol,
                 quote_keys,
                 tag.cell.is_string_like(),
@@ -3173,13 +3244,47 @@ pub mod formatter {
             is_symbol: bool,
             is_private_symbol: bool,
         ) {
+            let kind = if is_symbol {
+                KeyKind::Symbol
+            } else {
+                KeyKind::Enumerable
+            };
+            Self::for_each_key(global_this, ctx_ptr, key, value, kind, is_private_symbol);
+        }
+
+        /// `for_each` for a non-enumerable property.
+        pub(crate) extern "C" fn for_each_hidden(
+            global_this: &JSGlobalObject,
+            ctx_ptr: *mut c_void,
+            key: &EncodedSlice,
+            value: JSValue,
+            is_symbol: bool,
+            is_private_symbol: bool,
+        ) {
+            let kind = if is_symbol {
+                KeyKind::Symbol
+            } else {
+                KeyKind::Hidden
+            };
+            Self::for_each_key(global_this, ctx_ptr, key, value, kind, is_private_symbol);
+        }
+
+        #[inline(always)]
+        fn for_each_key(
+            global_this: &JSGlobalObject,
+            ctx_ptr: *mut c_void,
+            key: &EncodedSlice,
+            value: JSValue,
+            kind: KeyKind,
+            is_private_symbol: bool,
+        ) {
             // SAFETY: ctx_ptr points to the stack-allocated `Self` passed by the caller via the C forEach callback.
             let Some(ctx) = (unsafe { ctx_ptr.cast::<Self>().as_mut() }) else {
                 return;
             };
 
             let Some(tag) =
-                Self::for_each_prelude(ctx, global_this, key, value, is_symbol, is_private_symbol)
+                Self::for_each_prelude(ctx, global_this, key, value, kind, is_private_symbol)
             else {
                 return;
             };
@@ -4522,11 +4627,21 @@ pub mod formatter {
                         parent: value,
                         i: i as usize,
                     };
-                    value.for_each_property_non_indexed(
-                        global_this,
-                        (&raw mut iter).cast::<c_void>(),
-                        PropertyIteratorCtx::<C>::for_each,
-                    )?;
+                    if iter.formatter.hidden_keys == HiddenKeys::List {
+                        value.for_each_property_with_hidden(
+                            global_this,
+                            (&raw mut iter).cast::<c_void>(),
+                            WalkWithHidden::NonIndexed,
+                            PropertyIteratorCtx::<C>::for_each,
+                            PropertyIteratorCtx::<C>::for_each_hidden,
+                        )?;
+                    } else {
+                        value.for_each_property_non_indexed(
+                            global_this,
+                            (&raw mut iter).cast::<c_void>(),
+                            PropertyIteratorCtx::<C>::for_each,
+                        )?;
+                    }
                     if self.failed {
                         return Ok(());
                     }
@@ -5422,6 +5537,7 @@ pub mod formatter {
             if self.depth > self.max_depth {
                 return self.print_object_depth_exceeded::<C>(writer_, value);
             }
+            let hidden_keys = self.hidden_keys;
             let ordered_properties = self.ordered_properties;
             let call_own_getters = self.call_own_getters;
             let global_this = self.global_this;
@@ -5445,6 +5561,15 @@ pub mod formatter {
                     global_this,
                     (&raw mut iter).cast::<c_void>(),
                     PropertyIteratorCtx::<C>::for_each,
+                )?;
+            } else if hidden_keys == HiddenKeys::List {
+                // No caller asks for hidden keys and for an ordered or getter-calling walk in one print.
+                value.for_each_property_with_hidden(
+                    global_this,
+                    (&raw mut iter).cast::<c_void>(),
+                    WalkWithHidden::Unordered,
+                    PropertyIteratorCtx::<C>::for_each,
+                    PropertyIteratorCtx::<C>::for_each_hidden,
                 )?;
             } else {
                 value.for_each_property(

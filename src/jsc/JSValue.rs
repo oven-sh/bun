@@ -2174,6 +2174,15 @@ pub(crate) type ForEachPropertyCallback = extern "C" fn(
     is_private_symbol: bool,
 );
 
+/// Which walk [`JSValue::for_each_property_with_hidden`] does.
+#[derive(Copy, Clone)]
+pub(crate) enum WalkWithHidden {
+    /// That of [`JSValue::for_each_property`].
+    Unordered,
+    /// That of [`JSValue::for_each_property_non_indexed`].
+    NonIndexed,
+}
+
 /// `JSValue.StringFormatter` — `Display` adapter that
 /// coerces the value via `toBunString` at format time.
 pub struct StringFormatter<'a> {
@@ -2467,6 +2476,53 @@ impl JSValue {
         }
         crate::top_scope!(scope, global);
         JSC__JSValue__forEachPropertyNonIndexed(self, global, ctx, callback);
+        scope.return_if_exception()
+    }
+    /// Also passes each non-enumerable property, to `hidden_callback`, in its place among the others.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn for_each_property_with_hidden(
+        self,
+        global: &JSGlobalObject,
+        ctx: *mut c_void,
+        walk: WalkWithHidden,
+        callback: ForEachPropertyCallback,
+        hidden_callback: ForEachPropertyCallback,
+    ) -> JsResult<()> {
+        unsafe extern "C" {
+            // safe: same contract as `JSC__JSValue__forEachProperty` above.
+            safe fn JSC__JSValue__forEachPropertyWithHidden(
+                this: JSValue,
+                global: &JSGlobalObject,
+                ctx: *mut c_void,
+                callback: ForEachPropertyCallback,
+                hidden_callback: ForEachPropertyCallback,
+            );
+            safe fn JSC__JSValue__forEachPropertyNonIndexedWithHidden(
+                this: JSValue,
+                global: &JSGlobalObject,
+                ctx: *mut c_void,
+                callback: ForEachPropertyCallback,
+                hidden_callback: ForEachPropertyCallback,
+            );
+        }
+        crate::top_scope!(scope, global);
+        match walk {
+            WalkWithHidden::Unordered => JSC__JSValue__forEachPropertyWithHidden(
+                self,
+                global,
+                ctx,
+                callback,
+                hidden_callback,
+            ),
+            WalkWithHidden::NonIndexed => JSC__JSValue__forEachPropertyNonIndexedWithHidden(
+                self,
+                global,
+                ctx,
+                callback,
+                hidden_callback,
+            ),
+        }
         scope.return_if_exception()
     }
     /// `JSValue.forEachPropertyOrdered` — like

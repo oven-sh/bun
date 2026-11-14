@@ -57,8 +57,8 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     MarkedArgumentBuffer arguments;
     arguments.append(jsNumber(depth));
     if (WebCore::isInspectFunctionOfBuffer(functionToCall)) {
-        // Of its operands it reads `showHidden` of the second.
-        arguments.append(constructEmptyObject(globalObject));
+        // Of its operands it reads `showHidden` of the second, which has no prototype: `Object.prototype.showHidden` does not turn it on.
+        arguments.append(constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure()));
     } else {
         JSObject* options = Bun::createInspectOptionsObject(vm, globalObject, max_depth, colors);
         RETURN_IF_EXCEPTION(scope, {});

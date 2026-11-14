@@ -124,7 +124,9 @@ Every local of a compiled function is a new symbol, also one the source
 declared. `Host::new_local` registers it in the body scope of that function
 (`Scope::generated`), and once the body is replaced the parser drops the
 symbols it declared for the old one (all but `arguments` and the own name of a
-function expression). The bundler's renamer then numbers the new symbols like
+function expression). A parameter of the old function can have that own name:
+the parser linked the name to it, and now unlinks it, so that the name is a
+symbol of its own again. The bundler's renamer then numbers the new symbols like
 the locals of any other function. `Host::new_generated` is for a name declared
 at module level, such as an outlined `_temp`.
 

@@ -200,6 +200,10 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
         body.children.clear();
         if let Some(mut args) = body.parent {
             debug_assert!(args.kind == js_ast::scope::Kind::FunctionArgs);
+            // `declare_symbol` linked `name` to a parameter of the same name (`function c({ c })`), which is gone now.
+            let merged = name
+                .filter(|name| self.symbols[name.inner_index() as usize].has_link())
+                .map(|name| (name, js_ast::symbol::follow_symbols(&self.symbols, name)));
             // Still printed: `arguments`, and `name` when a function expression declares it here.
             let mut kept = js_ast::scope::Members::EMPTY;
             for (key, member) in args.members.iter() {
@@ -209,6 +213,16 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
                     // outlive `args`. It is already the key of a member of
                     // `args`, stored under the same contract.
                     unsafe { kept.put(key, *member) };
+                } else if let Some((name, root)) = merged
+                    && js_ast::symbol::follow_symbols(&self.symbols, member.ref_) == root
+                {
+                    let symbol = &self.symbols[name.inner_index() as usize];
+                    debug_assert!(symbol.kind == js_ast::symbol::Kind::HoistedFunction);
+                    debug_assert!(!self.symbols.iter().any(|other| other.link.get() == name));
+                    symbol.link.set(js_ast::Ref::NONE);
+                    let loc = member.loc;
+                    // SAFETY: as above.
+                    unsafe { kept.put(key, js_ast::scope::Member { ref_: name, loc }) };
                 }
             }
             args.members = kept;

@@ -549,12 +549,12 @@ impl ScopeFunctions {
         }
 
         // handle test reporter agent for debugger
-        let vm = global.bun_vm().as_mut();
+        let vm = global.bun_vm();
         let mut test_id_for_debugger: i32 = 0;
-        if let Some(debugger) = (*vm).debugger.as_mut() {
+        if let Some(debugger) = vm.debugger.get() {
             if debugger.test_reporter_agent.is_enabled() {
-                debugger.test_reporter_agent.next_test_id += 1;
-                let id = debugger.test_reporter_agent.next_test_id;
+                debugger.test_reporter_agent.next_test_id.update(|n| n + 1);
+                let id = debugger.test_reporter_agent.next_test_id.get();
                 let name = StringView::from_bytes(description.unwrap_or(b"(unnamed)"));
                 let parent: &DescribeScope = bun_test.collection.active_scope();
                 let parent_id = if parent.base.test_id_for_debugger != 0 {

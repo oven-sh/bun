@@ -4,7 +4,6 @@
 //! from stdin, runs each file under isolation, and streams results to fd 3).
 
 use core::ffi::c_char;
-use core::ptr::NonNull;
 use std::io::Write as _;
 
 use bun_core::{Global, Output};
@@ -59,7 +58,7 @@ pub(crate) fn run_as_coordinator(
     coverage_opts: &mut CodeCoverageOptions,
 ) -> crate::Result<bool> {
     // SAFETY: env loader is initialized before the test runner runs.
-    let env = unsafe { &mut *vm.transpiler.env };
+    let env = unsafe { &mut *vm.transpiler.get().env };
     let n: u32 = u32::try_from(files.len()).unwrap();
     let k: u32 = ctx.test_options.parallel.min(n);
     if k <= 1 {
@@ -680,7 +679,7 @@ struct WorkerLoop<'a> {
 }
 
 impl<'a> WorkerLoop<'a> {
-    fn begin(&mut self, vm: &mut VirtualMachine) {
+    fn begin(&mut self, vm: &VirtualMachine) {
         if !Channel::adopt(&raw mut self.cmds.channel, vm, Fd::from_uv(3)) {
             bun_core::pretty_errorln!("<red>error<r>: test worker failed to adopt IPC fd");
             Global::exit(1);
@@ -696,7 +695,7 @@ impl<'a> WorkerLoop<'a> {
         // so a stray env var can't disable --parallel in a release build.
         if cfg!(any(debug_assertions, bun_asan)) {
             // SAFETY: env loader is initialized before the test runner runs.
-            let env = unsafe { &*vm.transpiler.env };
+            let env = unsafe { &*vm.transpiler.get().env };
             if let Some(mode) = env.get(b"BUN_TEST_WORKER_EXIT_BEFORE_READY") {
                 bun_core::pretty_errorln!(
                     "test worker exiting before ready (BUN_TEST_WORKER_EXIT_BEFORE_READY)"
@@ -756,7 +755,7 @@ impl<'a> WorkerLoop<'a> {
             ) {
                 test_command::handle_top_level_test_error_before_javascript_start(&err);
             }
-            if vm.test_isolation_enabled {
+            if vm.test_isolation_enabled.get() {
                 crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
                 vm.swap_global_for_test_isolation();
                 self.reporter
@@ -891,20 +890,16 @@ fn growth_since(at_start: ResidentAtStart) -> Growth {
 #[optimize(size)]
 pub(crate) fn run_as_worker(
     reporter: &mut CommandLineReporter,
-    vm: &mut VirtualMachine,
+    vm: &VirtualMachine,
     ctx: Command::Context,
 ) -> ! {
-    vm.test_isolation_enabled = ctx.test_options.isolate;
-    vm.test_isolation_state.shares_global = crate::cli::run_compiled::test_files_share_global(ctx);
-    vm.auto_killer.enabled = ctx.test_options.isolate;
+    vm.test_isolation_enabled.set(ctx.test_options.isolate);
+    vm.test_isolation_state
+        .shares_global
+        .set(crate::cli::run_compiled::test_files_share_global(ctx));
+    vm.auto_killer.enabled.set(ctx.test_options.isolate);
 
-    // `vm.arena` is currently a write-only backref: the `MimallocArena.gc()`
-    // reader was dropped from the GC path (see web_worker.rs, which wires its
-    // own arena the same way and notes the dropped read).
-    let mut arena = bun_alloc::MimallocArena::new();
     vm.event_loop().ensure_waker();
-    vm.arena = Some(NonNull::from(&mut arena));
-    // vm.allocator = arena.arena(); — allocator params dropped in Rust
 
     let mut wloop = WorkerLoop {
         reporter,
@@ -920,7 +915,7 @@ pub(crate) fn run_as_worker(
         },
         files_run: 0,
     };
-    vm.run_with_api_lock_mut(|vm| wloop.begin(vm));
+    vm.run_with_api_lock(|| wloop.begin(vm));
     crate::cli::run_compiled::log_account_of_process(format_args!(
         "worker | files {}",
         wloop.files_run
@@ -944,10 +939,14 @@ pub(crate) fn run_as_worker(
     );
     // Mirror TestCommand::exec's exit path so BUN_DESTRUCT_VM_ON_EXIT teardown
     // (lastChanceToFinalize) runs; bypassing it leaks JSC-owned native state.
-    vm.exit_handler.exit_code = 0;
-    vm.exit_handler.skip_exit_listeners = test_command::skip_exit_listeners(wloop.reporter);
-    vm.exit_handler.requested = test_command::exit_is_requested();
-    vm.run_with_api_lock_mut(|vm| {
+    vm.exit_handler.exit_code.set(0);
+    vm.exit_handler
+        .skip_exit_listeners
+        .set(test_command::skip_exit_listeners(wloop.reporter));
+    vm.exit_handler
+        .requested
+        .set(test_command::exit_is_requested());
+    vm.run_with_api_lock(|| {
         vm.on_exit();
         vm.global_exit()
     });
@@ -959,7 +958,7 @@ pub(crate) fn run_as_worker(
 #[optimize(size)]
 fn worker_flush_aggregates(
     reporter: &mut CommandLineReporter,
-    vm: &mut VirtualMachine,
+    vm: &VirtualMachine,
     coverage: &CodeCoverageOptions,
     cmds: &mut WorkerCommands,
 ) {

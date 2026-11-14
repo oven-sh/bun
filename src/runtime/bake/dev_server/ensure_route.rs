@@ -106,11 +106,12 @@ pub(super) fn ensure_route_is_bundled(
                                 let vm = dev.vm();
                                 let has_tailwind = vm
                                     .transpiler
+                                    .get()
                                     .options
                                     .serve_plugins
                                     .iter()
                                     .flatten()
-                                    .chain(vm.bake_config_plugin_names.iter())
+                                    .chain(vm.bake_config_plugin_names.get().iter())
                                     .find(|p| strings::includes(p, b"tailwind"))
                                     .map(|_| Default::default());
                                 dev.has_tailwind_plugin_hack = has_tailwind;

@@ -367,7 +367,7 @@ type DynAlloc = ();
 
 /// Until `DynAlloc` is a real trait object, route
 /// through the global arena; mimalloc handles large allocations via mmap
-/// already. Returns an empty `Vec` with `n` bytes of capacity for the caller to fill and commit.
+/// already. Returns an empty `Vec` with `n` bytes of capacity for the caller to fill.
 #[inline]
 fn alloc_buf(_arena: DynAlloc, n: usize) -> Result<Vec<u8>, AllocError> {
     let mut v: Vec<u8> = Vec::new();
@@ -416,16 +416,12 @@ impl IntermediateOutput {
         count
     }
 
-    /// Copy `content` into `dest`, escaping occurrences of `close_tag` by
-    /// replacing `</` with `<\/`. Returns the number of bytes written.
-    /// Caller must ensure `dest` has room for `content.len + countClosingTags(...)` bytes.
-    fn memcpy_escaping_closing_tags(dest: &mut [u8], content: &[u8], close_tag: &[u8]) -> usize {
+    /// Appends `content` to `dest`, with `</` replaced by `<\/` where it starts `close_tag`.
+    fn append_escaping_closing_tags(dest: &mut Vec<u8>, content: &[u8], close_tag: &[u8]) {
         let tag_suffix = &close_tag[2..];
         let mut remaining = content;
-        let mut dst: usize = 0;
         while let Some(idx) = strings::index_of(remaining, b"</") {
-            dest[dst..][..idx].copy_from_slice(&remaining[..idx]);
-            dst += idx;
+            dest.extend_from_slice(&remaining[..idx]);
             remaining = &remaining[idx + 2..];
 
             if remaining.len() >= tag_suffix.len()
@@ -434,19 +430,12 @@ impl IntermediateOutput {
                     tag_suffix,
                 )
             {
-                dest[dst] = b'<';
-                dest[dst + 1] = b'\\';
-                dest[dst + 2] = b'/';
-                dst += 3;
+                dest.extend_from_slice(b"<\\/");
             } else {
-                dest[dst] = b'<';
-                dest[dst + 1] = b'/';
-                dst += 2;
+                dest.extend_from_slice(b"</");
             }
         }
-        dest[dst..][..remaining.len()].copy_from_slice(remaining);
-        dst += remaining.len();
-        dst
+        dest.extend_from_slice(remaining);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -722,9 +711,6 @@ impl IntermediateOutput {
                 let arena = allocator_to_use.unwrap_or_else(|| Self::allocator_for_size(count));
                 let total_len = count + debug_id_len;
                 let mut total_buf = alloc_buf(*arena, total_len)?;
-                // SAFETY: the loop below only copies bytes into `remain`; only the prefix it wrote is committed.
-                let mut remain: &mut [u8] =
-                    unsafe { &mut bun_core::vec::spare_bytes_mut(&mut total_buf)[..total_len] };
 
                 for piece in pieces.slice() {
                     let data = piece.data();
@@ -736,23 +722,18 @@ impl IntermediateOutput {
                         shift.after.add(data_offset);
                     }
 
-                    if !data.is_empty() {
-                        remain[..data.len()].copy_from_slice(data);
-                    }
-
-                    remain = &mut remain[data.len()..];
+                    total_buf.extend_from_slice(data);
 
                     match piece.query.kind() {
                         QueryKind::ChunkId => {
                             let id = chunks[piece.query.index() as usize].id();
                             let (bytes, len) = (id.bytes(), id.len());
-                            remain[..len].copy_from_slice(&bytes[..len]);
+                            total_buf.extend_from_slice(&bytes[..len]);
                             if ENABLE_SOURCE_MAP_SHIFTS {
                                 shift.before.advance(chunk.unique_key);
                                 shift.after.advance(&bytes[..len]);
                                 shifts.push(shift);
                             }
-                            remain = &mut remain[len..];
                         }
                         QueryKind::Asset
                         | QueryKind::Chunk
@@ -792,15 +773,13 @@ impl IntermediateOutput {
                                     // For chunk content, escape closing tags (</script, </style)
                                     // that would prematurely terminate the inline tag.
                                     if piece.query.kind() == QueryKind::Chunk {
-                                        let written = Self::memcpy_escaping_closing_tags(
-                                            remain,
+                                        Self::append_escaping_closing_tags(
+                                            &mut total_buf,
                                             content,
                                             chunks[index].closing_tag_for_content(),
                                         );
-                                        remain = &mut remain[written..];
                                     } else {
-                                        remain[..content.len()].copy_from_slice(content);
-                                        remain = &mut remain[content.len()..];
+                                        total_buf.extend_from_slice(content);
                                     }
                                     continue;
                                 }
@@ -844,26 +823,23 @@ impl IntermediateOutput {
                                 }
 
                                 QueryKind::HtmlImport => {
-                                    let mut cursor: &mut [u8] = remain;
-                                    let before_len = cursor.len();
+                                    let start = total_buf.len();
                                     HTMLImportManifest::write_escaped_json(
                                         piece.query.index(),
                                         bundle,
                                         linker_graph,
                                         chunks,
-                                        &mut cursor,
+                                        &mut total_buf,
                                     )
                                     .expect("unreachable");
-                                    let written = before_len - cursor.len();
 
                                     if ENABLE_SOURCE_MAP_SHIFTS {
                                         // The placeholder was an HtmlImport unique key, which has
                                         // the same UNIQUE_KEY_LEN as this chunk's own key.
                                         shift.before.advance(chunk.unique_key);
-                                        shift.after.advance(&remain[..written]);
+                                        shift.after.advance(&total_buf[start..]);
                                         shifts.push(shift);
                                     }
-                                    remain = &mut remain[written..];
                                     continue;
                                 }
                                 _ => unreachable!(),
@@ -891,18 +867,14 @@ impl IntermediateOutput {
                             );
 
                             if !cheap_normalizer[0].is_empty() {
-                                remain[..cheap_normalizer[0].len()]
-                                    .copy_from_slice(cheap_normalizer[0]);
-                                remain = &mut remain[cheap_normalizer[0].len()..];
+                                total_buf.extend_from_slice(cheap_normalizer[0]);
                                 if ENABLE_SOURCE_MAP_SHIFTS {
                                     shift.after.advance(cheap_normalizer[0]);
                                 }
                             }
 
                             if !cheap_normalizer[1].is_empty() {
-                                remain[..cheap_normalizer[1].len()]
-                                    .copy_from_slice(cheap_normalizer[1]);
-                                remain = &mut remain[cheap_normalizer[1].len()..];
+                                total_buf.extend_from_slice(cheap_normalizer[1]);
                                 if ENABLE_SOURCE_MAP_SHIFTS {
                                     shift.after.advance(cheap_normalizer[1]);
                                 }
@@ -918,24 +890,15 @@ impl IntermediateOutput {
 
                 if ENABLE_SOURCE_MAP_SHIFTS && FeatureFlags::SOURCE_MAP_DEBUG_ID {
                     // This comment must go before the //# sourceMappingURL comment
-                    let mut cursor: &mut [u8] = remain;
-                    let before_len = cursor.len();
-                    write!(
-                        &mut cursor,
+                    let _ = write!(
+                        &mut total_buf,
                         "\n//# debugId={}\n",
                         source_map::DebugIDFormatter {
                             id: chunk.isolated_hash
                         }
-                    )
-                    .unwrap_or_else(|_| panic!("unexpected NoSpaceLeft error from bufPrint"));
-                    let written = before_len - cursor.len();
-                    remain = &mut remain[written..];
+                    );
                 }
 
-                debug_assert!(remain.is_empty());
-                let written = total_len - remain.len();
-                // SAFETY: `remain` advanced past exactly the `written` bytes the loop initialized.
-                unsafe { bun_core::vec::commit_spare(&mut total_buf, written) };
                 debug_assert!(total_buf.len() == total_len);
 
                 Ok(CodeResult {

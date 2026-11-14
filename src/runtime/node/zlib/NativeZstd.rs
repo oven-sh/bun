@@ -486,15 +486,29 @@ mod _impl {
                 return;
             }
             self.remaining = match self.mode {
-                // SAFETY: state is a valid CCtx; input/output point to caller-kept-alive buffers (set_buffers).
-                NodeMode::ZSTD_COMPRESS => unsafe {
-                    c::ZSTD_compressStream2(
-                        self.state_ptr().cast(),
-                        &raw mut self.output,
-                        &raw mut self.input,
-                        // cast c_int → ZSTD_EndDirective (c_uint)
-                        self.flush as c_uint,
-                    )
+                NodeMode::ZSTD_COMPRESS => loop {
+                    let (in_pos, out_pos) = (self.input.pos, self.output.pos);
+                    // SAFETY: state is a valid CCtx; input/output point to caller-kept-alive buffers (set_buffers).
+                    let ret = unsafe {
+                        c::ZSTD_compressStream2(
+                            self.state_ptr().cast(),
+                            &raw mut self.output,
+                            &raw mut self.input,
+                            // cast c_int → ZSTD_EndDirective (c_uint)
+                            self.flush as c_uint,
+                        )
+                    };
+                    // With workers, ZSTD_e_continue returns after any progress. The JS drivers
+                    // read input left beside free output as the end of the stream, so call
+                    // again until the input is taken or the output is full. Node calls once.
+                    if self.flush as c_uint != c::ZSTD_e_continue
+                        || c::ZSTD_isError(ret) > 0
+                        || self.input.pos == self.input.size
+                        || self.output.pos == self.output.size
+                        || (self.input.pos == in_pos && self.output.pos == out_pos)
+                    {
+                        break ret;
+                    }
                 },
                 NodeMode::ZSTD_DECOMPRESS => {
                     // SAFETY: state is a valid DCtx.

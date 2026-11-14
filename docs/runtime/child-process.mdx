@@ -154,6 +154,16 @@ const proc = Bun.spawn(["bun", "--version"]);
 proc.unref();
 ```
 
+`unref()` also applies to the `stdout` and `stderr` streams that have not been accessed yet. A stream first accessed after `unref()` does not keep the parent alive: a read from it completes only while something else keeps the parent running. A stream accessed before `unref()` is not affected. Access the stream first when a read must keep the parent alive.
+
+```ts index.ts icon="/icons/typescript.svg"
+const proc = Bun.spawn(["bun", "--version"]);
+const stdout = proc.stdout; // accessed before unref()
+proc.unref();
+
+console.log(await stdout.text()); // => "1.3.3\n"
+```
+
 ## Resource usage
 
 After the process exits, `resourceUsage()` reports its resource usage:

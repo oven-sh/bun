@@ -1926,3 +1926,22 @@ devTest("recovers from an unresolved css url() and html script src longer than t
     expect((await dev.fetch("/")).status).toBe(200);
   },
 });
+
+// A hot update bundles only the files that changed, so the script is the first file of that bundle.
+devTest("a page script that starts with a bun hashbang stays a client file", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["/script.js"] }),
+    "script.js": `#!/usr/bin/env bun\nimport { value } from "./dep.js";\nconsole.log(value);\nimport.meta.hot.accept();\n`,
+    "dep.js": `export const value = "one";\n`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("one");
+    await dev.write(
+      "script.js",
+      `#!/usr/bin/env bun\nimport { value } from "./dep.js";\nconsole.log(value + "!");\nimport.meta.hot.accept();\n`,
+      { dedent: false },
+    );
+    await c.expectMessage("one!");
+  },
+});

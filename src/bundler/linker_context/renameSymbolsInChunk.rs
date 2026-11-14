@@ -29,7 +29,7 @@ pub(crate) fn rename_symbols_in_chunk<'a>(
     let files_in_order: &[u32] = &js.files_in_chunk_order;
     let symbols = &c.graph.symbols;
 
-    let ast = c.graph.ast.slice();
+    let ast = &c.graph.ast;
     let all_module_scopes = ast.items_module_scope();
     let all_parts = ast.items_parts();
     let all_wrapper_refs = ast.items_wrapper_ref();

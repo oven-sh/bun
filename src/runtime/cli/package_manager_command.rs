@@ -74,9 +74,8 @@ impl InstalledFilter {
         if package_id >= lockfile.packages.len() {
             return false;
         }
-        let slice = lockfile.packages.slice();
-        let name = slice.items_name()[package_id];
-        let resolution = &slice.items_resolution()[package_id];
+        let name = lockfile.packages.items_name()[package_id];
+        let resolution = &lockfile.packages.items_resolution()[package_id];
         let buf = lockfile.buffers.string_bytes.as_slice();
         // Local sources live outside of node_modules.
         match resolution.tag {

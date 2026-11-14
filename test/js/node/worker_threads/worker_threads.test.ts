@@ -1,3 +1,4 @@
+import { deserialize, serialize } from "bun:jsc";
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
@@ -21,6 +22,7 @@ import wt, {
   threadId,
   Worker,
   workerData,
+  type WorkerOptions,
 } from "worker_threads";
 
 // Worker startup under debug/ASAN is slow enough that several tests here cannot
@@ -1111,6 +1113,330 @@ test("FileHandles nested in Map and Set workerData are transferred", async () =>
   // and Set entries deserialized to the same single instance
   expect(fh.fd).toBe(-1);
   expect(message).toEqual({ sameInstance: true, text: "hello" });
+});
+
+// The serializer itself moves a listed FileHandle. It walks workerData and environmentData as the
+// caller made them, so the handle is found wherever it sits and nothing else is cloned differently.
+describe("a FileHandle in transferList", () => {
+  class Holder {
+    constructor(public fh: unknown) {}
+  }
+  const dataCloneError = expect.objectContaining({ name: "DataCloneError" });
+  const mark = <T extends object>(value: T) => (markAsUncloneable(value), value);
+
+  async function withHandle(run: (fh: fs.promises.FileHandle, dir: string) => Promise<void>) {
+    using dir = tempDir("worker-fh-transfer", { "x.txt": "hello" });
+    const fh = await fs.promises.open(join(String(dir), "x.txt"), "r");
+    try {
+      await run(fh, String(dir));
+    } finally {
+      // -1: the descriptor went to a worker.
+      if (fh.fd !== -1) await fh.close();
+    }
+  }
+
+  async function expectReadable(fh: fs.promises.FileHandle) {
+    const { bytesRead, buffer } = await fh.read(Buffer.alloc(5), 0, 5, 0);
+    expect(buffer.toString("utf8", 0, bytesRead)).toBe("hello");
+  }
+
+  // The constructor must throw. If it starts a worker instead, stop it before the assertion fails.
+  async function expectConstructorToThrow(options: WorkerOptions, error: unknown = dataCloneError) {
+    let worker: Worker | undefined;
+    try {
+      expect(() => {
+        worker = new Worker("", { eval: true, ...options });
+      }).toThrow(error);
+    } finally {
+      await worker?.terminate();
+    }
+  }
+
+  // Whether the descriptor is closed. Its number can be in use again, for another file.
+  function isClosed(fd: number, ino: number) {
+    try {
+      return fs.fstatSync(fd).ino !== ino;
+    } catch (e: any) {
+      return e.code === "EBADF";
+    }
+  }
+
+  // Posts what is at `expr`: the name of its class, and the text of the file read through it.
+  const readThrough = (expr: string) => `
+    const { workerData, getEnvironmentData, parentPort } = require("node:worker_threads");
+    (async () => {
+      const fh = ${expr};
+      const { bytesRead, buffer } = await fh.read(Buffer.alloc(5), 0, 5, 0);
+      await fh.close();
+      parentPort.postMessage({ class: fh.constructor.name, text: buffer.toString("utf8", 0, bytesRead) });
+    })();`;
+
+  test.each([
+    ["a class instance", (fh: unknown) => new Holder(fh)],
+    [
+      "an object with a prototype of its own",
+      (fh: unknown) => Object.create({ inherited: true }, { fh: { value: fh, enumerable: true } }),
+    ],
+    ["a named property of an array", (fh: unknown) => Object.assign([], { fh })],
+  ])("is transferred when %s holds it", async (_, hold) => {
+    await withHandle(async fh => {
+      const worker = new Worker(readThrough("workerData.fh"), {
+        eval: true,
+        workerData: hold(fh),
+        transferList: [fh as any],
+      });
+      const [message] = await once(worker, "message");
+      await worker.terminate();
+      expect(message).toEqual({ class: "FileHandle", text: "hello" });
+      expect(fh.fd).toBe(-1);
+    });
+  });
+
+  test("is transferred when environmentData holds it, and the parent keeps its entry", async () => {
+    await withHandle(async fh => {
+      const entry = { fh };
+      setEnvironmentData("transferred-handle", entry);
+      try {
+        const worker = new Worker(readThrough(`getEnvironmentData("transferred-handle").fh`), {
+          eval: true,
+          transferList: [fh as any],
+        });
+        const [message] = await once(worker, "message");
+        await worker.terminate();
+        expect(message).toEqual({ class: "FileHandle", text: "hello" });
+        expect(getEnvironmentData("transferred-handle")).toBe(entry);
+        expect(entry.fh).toBe(fh);
+        expect(fh.fd).toBe(-1);
+      } finally {
+        setEnvironmentData("transferred-handle", undefined);
+      }
+    });
+  });
+
+  test("is one object in the worker when workerData and environmentData both hold it", async () => {
+    await withHandle(async fh => {
+      const shared = { fh };
+      setEnvironmentData("shared-with-workerData", shared);
+      try {
+        const worker = new Worker(
+          `const { workerData, getEnvironmentData, parentPort } = require("node:worker_threads");
+           const fromEnvironment = getEnvironmentData("shared-with-workerData");
+           const same = { handle: workerData.fh === fromEnvironment.fh, holder: workerData.shared === fromEnvironment };
+           workerData.fh.close().then(() => parentPort.postMessage(same));`,
+          { eval: true, workerData: { fh, shared }, transferList: [fh as any] },
+        );
+        const [message] = await once(worker, "message");
+        await worker.terminate();
+        expect(message).toEqual({ handle: true, holder: true });
+      } finally {
+        setEnvironmentData("shared-with-workerData", undefined);
+      }
+    });
+  });
+
+  test.each([
+    ["a plain object", (fh: unknown) => ({ marked: mark({ secret: 1 }), fh })],
+    ["an object without a prototype", (fh: unknown) => ({ marked: mark({ __proto__: null, secret: 1 }), fh })],
+    ["an object in an array", (fh: unknown) => ({ list: [mark({ secret: 1 })], fh })],
+    ["a class instance", (fh: unknown) => ({ marked: mark(new Holder(1)), fh })],
+    ["workerData itself", (fh: unknown) => mark({ fh })],
+  ])("does not clone %s that is marked uncloneable", async (_, makeWorkerData) => {
+    await withHandle(async fh => {
+      await expectConstructorToThrow({ workerData: makeWorkerData(fh), transferList: [fh as any] });
+      await expectReadable(fh);
+    });
+  });
+
+  // Which containers honour the mark is for the serializer to say. The handle must not change the answer.
+  test.each([
+    ["an array", () => [1]],
+    ["a Map", () => new Map([[1, 2]])],
+    ["a Set", () => new Set([1])],
+  ])("treats %s that is marked uncloneable as it does without the handle", async (_, make) => {
+    async function outcome(options: WorkerOptions) {
+      let worker: Worker | undefined;
+      try {
+        worker = new Worker("", { eval: true, ...options });
+        return "cloned";
+      } catch (e: any) {
+        return e.name;
+      } finally {
+        await worker?.terminate();
+      }
+    }
+    await withHandle(async fh => {
+      const marked = mark(make());
+      const withoutHandle = await outcome({ workerData: { marked } });
+      expect(await outcome({ workerData: { marked, fh }, transferList: [fh as any] })).toBe(withoutHandle);
+    });
+  });
+
+  test.each([
+    ["a Proxy", () => new Proxy({ a: 1 }, {})],
+    [
+      "an arguments object",
+      () =>
+        (function () {
+          return arguments;
+        })(),
+    ],
+  ])("does not clone %s", async (_, make) => {
+    await withHandle(async fh => {
+      await expectConstructorToThrow({ workerData: { value: make(), fh }, transferList: [fh as any] });
+      await expectReadable(fh);
+    });
+  });
+
+  test("leaves every other value of workerData as the serializer clones it", async () => {
+    await withHandle(async fh => {
+      // What the worker once took for a handle: it is data like any other.
+      const lookalike = { __bunNodeWorkerJSTransferable: "internal/fs/promises:FileHandle", data: { fd: -1 } };
+      const worker = new Worker(
+        `const { workerData: { fh, array, date, string, mapLike, lookalike }, parentPort } = require("node:worker_threads");
+         fh.close().then(() =>
+           parentPort.postMessage({
+             named: array.named,
+             date: date instanceof Date,
+             string: string instanceof String,
+             mapLike: Object.keys(mapLike),
+             lookalike,
+           }),
+         );`,
+        {
+          eval: true,
+          workerData: {
+            fh,
+            array: Object.assign([1], { named: "x" }),
+            date: Object.setPrototypeOf(new Date(0), Object.prototype),
+            string: Object.setPrototypeOf(new String("s"), Object.prototype),
+            mapLike: Object.create(Map.prototype),
+            lookalike,
+          },
+          transferList: [fh as any],
+        },
+      );
+      const [message] = await once(worker, "message");
+      await worker.terminate();
+      expect(message).toEqual({ named: "x", date: true, string: true, mapLike: [], lookalike });
+    });
+  });
+
+  test("keeps its descriptor until workerData is cloned", async () => {
+    await withHandle(async fh => {
+      let attachedDuringClone: boolean | undefined;
+      const workerData = {
+        get probe() {
+          attachedDuringClone = fh.fd !== -1;
+          return 0;
+        },
+        fh,
+      };
+      const worker = new Worker(
+        `const { workerData, parentPort } = require("node:worker_threads");
+         workerData.fh.close().then(() => parentPort.postMessage("closed"));`,
+        { eval: true, workerData, transferList: [fh as any] },
+      );
+      const fdAfter = fh.fd;
+      await once(worker, "message");
+      await worker.terminate();
+      expect({ attachedDuringClone, fdAfter }).toEqual({ attachedDuringClone: true, fdAfter: -1 });
+    });
+  });
+
+  test("is transferred when it is marked uncloneable", async () => {
+    await withHandle(async fh => {
+      const worker = new Worker(readThrough("workerData.fh"), {
+        eval: true,
+        workerData: { fh: mark(fh) },
+        transferList: [fh as any],
+      });
+      const [message] = await once(worker, "message");
+      await worker.terminate();
+      expect(message).toEqual({ class: "FileHandle", text: "hello" });
+    });
+  });
+
+  test("is not transferred when it is marked untransferable", async () => {
+    await withHandle(async fh => {
+      markAsUntransferable(fh);
+      await expectConstructorToThrow({ workerData: { fh }, transferList: [fh as any] });
+      await expectReadable(fh);
+    });
+  });
+
+  test("stays attached, as a listed ArrayBuffer does, when workerData cannot be cloned", async () => {
+    await withHandle(async fh => {
+      const buffer = new ArrayBuffer(8);
+      await expectConstructorToThrow({
+        workerData: { fh, buffer, uncloneable() {} },
+        transferList: [fh as any, buffer],
+      });
+      expect(buffer.byteLength).toBe(8);
+      await expectReadable(fh);
+    });
+  });
+
+  test("is handed back when the worker cannot be started", async () => {
+    await withHandle(async fh => {
+      await expectConstructorToThrow(
+        { workerData: { fh }, transferList: [fh as any], execArgv: ["--disallow-code-generation-from-strings"] },
+        expect.objectContaining({ code: "ERR_WORKER_INVALID_EXEC_ARGV" }),
+      );
+      await expectReadable(fh);
+    });
+  });
+
+  test("is closed when the worker ends before it takes workerData", async () => {
+    await withHandle(async (fh, dir) => {
+      const fd = fh.fd;
+      const { ino } = fs.fstatSync(fd);
+      const worker = new Worker(join(dir, "no-such-entry.js"), { workerData: { fh }, transferList: [fh as any] });
+      const errored = new Promise(resolve => worker.once("error", resolve));
+      await new Promise(resolve => worker.once("exit", resolve));
+      await errored;
+      expect({ fd: fh.fd, closed: isClosed(fd, ino) }).toEqual({ fd: -1, closed: true });
+    });
+  });
+
+  test("is not transferable to a Worker of the web API", async () => {
+    await withHandle(async fh => {
+      let worker: globalThis.Worker | undefined;
+      try {
+        expect(() => {
+          worker = new globalThis.Worker(new URL("./worker.js", import.meta.url).href, {
+            data: { fh },
+            transferList: [fh],
+          } as any);
+        }).toThrow(dataCloneError);
+      } finally {
+        worker?.terminate();
+      }
+      await expectReadable(fh);
+    });
+  });
+
+  // A message names a listed handle by a tag and its place in the list. The handles themselves go to the worker beside the bytes.
+  test("is not made from bytes that carry its tag", () => {
+    const bytes = new Uint8Array(serialize(null));
+    const forged = new Uint8Array([...bytes.subarray(0, -1), 249, 0, 0, 0, 0]);
+    expect(() => deserialize(forged)).toThrow("Unable to deserialize data.");
+  });
+});
+
+// Nothing walks workerData in JS when a worker starts, however deep it is.
+test("a deeply nested workerData reaches the worker", async () => {
+  let workerData: { deep?: object } = {};
+  for (let i = 0; i < 20_000; i++) workerData = { deep: workerData };
+  const worker = new Worker(
+    `const { workerData, parentPort } = require("node:worker_threads");
+     let depth = 0;
+     for (let value = workerData; value.deep; value = value.deep) depth++;
+     parentPort.postMessage(depth);`,
+    { eval: true, workerData },
+  );
+  const [depth] = await once(worker, "message");
+  await worker.terminate();
+  expect(depth).toBe(20_000);
 });
 
 test("MessagePort.hasRef() reports actual loop-ref state", () => {

@@ -33,12 +33,16 @@
 #include "Event.h"
 #include "EventNames.h"
 #include "StructuredSerializeOptions.h"
+#include <JavaScriptCore/DeferTermination.h>
+#include <JavaScriptCore/FrameTracers.h>
 #include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/ScriptCallStack.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Scope.h>
 #include "SerializedScriptValue.h"
 #include "ScriptExecutionContext.h"
+#include "TransferredFileHandle.h"
+#include <JavaScriptCore/AOTPropertyWalk.h>
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSModuleLoader.h>
 #include "MessageEvent.h"
@@ -296,6 +300,152 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetEntryEvaluatedHook, (JSC::JSGlobalObject *
     return JSC::JSValue::encode(jsUndefined());
 }
 
+// ---- A FileHandle in the transfer list of a node:worker_threads Worker. node:fs/promises moves its descriptor: transferHooks in fs.promises.ts.
+
+extern "C" void Bun__FileHandle__closeTransferred(int32_t fd);
+
+TransferredFileHandles::~TransferredFileHandles()
+{
+    for (auto& slot : slots) {
+        if (slot.fd != -1)
+            Bun__FileHandle__closeTransferred(slot.fd);
+    }
+}
+
+// The list as `holder` stores it: no getter and no Proxy trap runs. The Structure of a compiled object does not have its properties.
+static JSArray* storedFileHandleTransferHooks(VM& vm, JSObject* holder)
+{
+    PropertyName name = builtinNames(vm).fileHandleTransferPrivateName();
+    JSValue hooks = JSC::AOT::PropertyWalk::isCompiledObject(holder) ? JSC::AOT::PropertyWalk::getDirect(vm, holder, name, nullptr) : holder->getDirect(vm, name);
+    return hooks ? dynamicDowncast<JSArray>(hooks) : nullptr;
+}
+
+JSArray* fileHandleTransferHooks(VM& vm, JSObject& object)
+{
+    if (object.type() != FinalObjectType && !JSC::AOT::PropertyWalk::isCompiledObject(&object))
+        return nullptr;
+    // node:fs/promises keeps the list on FileHandle.prototype.
+    for (JSValue prototype = object.getPrototypeDirect(); prototype.isObject(); prototype = asObject(prototype)->getPrototypeDirect()) {
+        if (auto* hooks = storedFileHandleTransferHooks(vm, asObject(prototype)))
+            return hooks;
+    }
+    return nullptr;
+}
+
+static JSValue callFileHandleTransferHook(JSGlobalObject* globalObject, JSArray* hooks, FileHandleTransferHook hook, const ArgList& arguments)
+{
+    return JSC::call(globalObject, hooks->getIndexQuickly(static_cast<unsigned>(hook)), arguments, "A FileHandle transfer hook is not a function"_s);
+}
+
+static JSValue flagOfTransferredFileHandle(VM& vm, const TransferredFileHandle& fileHandle)
+{
+    return std::visit(WTF::makeVisitor(
+                          [](std::monostate) -> JSValue { return jsUndefined(); },
+                          [](double flag) -> JSValue { return jsNumber(flag); },
+                          // A copy: the string of the slot may be destroyed on another thread.
+                          [&](const String& flag) -> JSValue { return jsString(vm, flag.isolatedCopy()); }),
+        fileHandle.flag);
+}
+
+void reattachFileHandlesAfterTransfer(JSGlobalObject& globalObject, const FileHandleTransferList& fileHandles)
+{
+    VM& vm = JSC::getVM(&globalObject);
+    // The caller may be on its way out with an error. It is thrown again once the handles are as they were.
+    JSC::DeferTerminationForAWhile deferTermination(vm);
+    JSC::SuspendExceptionScope suspendedException(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto& slots = fileHandles.descriptors->slots;
+    for (unsigned i = 0; i < slots.size(); ++i) {
+        auto& slot = slots[i];
+        JSObject* handle = asObject(fileHandles.handles.at(i));
+        JSArray* hooks = slot.fd == -1 ? nullptr : fileHandleTransferHooks(vm, *handle);
+        if (!hooks)
+            continue;
+        MarkedArgumentBuffer arguments;
+        arguments.append(handle);
+        arguments.append(jsNumber(std::exchange(slot.fd, -1)));
+        arguments.append(flagOfTransferredFileHandle(vm, slot));
+        callFileHandleTransferHook(&globalObject, hooks, FileHandleTransferHook::Attach, arguments);
+        if (scope.exception()) [[unlikely]]
+            (void)scope.tryClearException();
+    }
+}
+
+void detachFileHandlesForTransfer(JSGlobalObject& globalObject, const FileHandleTransferList& fileHandles)
+{
+    VM& vm = JSC::getVM(&globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& slots = fileHandles.descriptors->slots;
+    ASSERT(fileHandles.handles.size() == slots.size());
+    bool isDetached = true;
+    for (unsigned i = 0; i < slots.size() && isDetached; ++i) {
+        isDetached = false;
+        JSObject* handle = asObject(fileHandles.handles.at(i));
+        // What the handle inherits from was read before the walk, which runs code of the caller.
+        JSArray* hooks = fileHandleTransferHooks(vm, *handle);
+        if (!hooks)
+            break;
+        MarkedArgumentBuffer arguments;
+        arguments.append(handle);
+        JSValue result = callFileHandleTransferHook(&globalObject, hooks, FileHandleTransferHook::Detach, arguments);
+        if (scope.exception()) [[unlikely]]
+            break;
+        auto* fdAndFlag = dynamicDowncast<JSArray>(result);
+        if (!fdAndFlag)
+            break;
+        auto& slot = slots[i];
+        slot.fd = JSC::toInt32(fdAndFlag->getIndexQuickly(0).asNumber());
+        JSValue flag = fdAndFlag->getIndexQuickly(1);
+        if (flag.isNumber())
+            slot.flag = flag.asNumber();
+        else if (flag.isString()) {
+            String string = asString(flag)->value(&globalObject);
+            if (scope.exception()) [[unlikely]]
+                break;
+            slot.flag = WTF::move(string).isolatedCopy();
+        }
+        isDetached = true;
+    }
+    if (isDetached) [[likely]]
+        return;
+    reattachFileHandlesAfterTransfer(globalObject, fileHandles);
+    if (!scope.exception())
+        WebCore::propagateException(globalObject, scope, Exception { DataCloneError });
+}
+
+// Makes the FileHandle of this thread for each slot that the message holds somewhere. The other slots keep their descriptor, which is closed with them.
+static void receiveTransferredFileHandles(Zig::GlobalObject* globalObject, TransferredFileHandles& transferred, MarkedArgumentBuffer& fileHandles)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSArray* hooks = nullptr;
+    for (auto& slot : transferred.slots) {
+        if (!slot.isReferenced) {
+            fileHandles.appendWithCrashOnOverflow(jsUndefined());
+            continue;
+        }
+        if (!hooks) {
+            JSValue fsPromises = BUN_REQUIRE_INTERNAL_MODULE(globalObject, NodeFSPromises, "native:Cpp:Worker.cpp:createNodeWorkerThreadsBinding");
+            RETURN_IF_EXCEPTION(scope, );
+            hooks = storedFileHandleTransferHooks(vm, asObject(fsPromises));
+            if (!hooks) [[unlikely]] {
+                WebCore::propagateException(*globalObject, scope, Exception { DataCloneError });
+                return;
+            }
+        }
+        int32_t fd = std::exchange(slot.fd, -1);
+        MarkedArgumentBuffer arguments;
+        arguments.append(jsNumber(fd));
+        arguments.append(flagOfTransferredFileHandle(vm, slot));
+        JSValue fileHandle = callFileHandleTransferHook(globalObject, hooks, FileHandleTransferHook::Receive, arguments);
+        if (scope.exception()) [[unlikely]] {
+            slot.fd = fd;
+            return;
+        }
+        fileHandles.appendWithCrashOnOverflow(fileHandle);
+    }
+}
+
 JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -318,7 +468,14 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
         // checked cast so a non-Array deserialize result doesn't trap.
         if (serialized) {
             auto ports = MessagePort::entanglePorts(*globalObject->scriptExecutionContext(), WTF::move(options.dataMessagePorts));
-            JSValue deserialized = serialized->deserialize(*globalObject, globalObject, WTF::move(ports));
+            JSValue deserialized;
+            if (RefPtr transferredFileHandles = WTF::move(options.dataFileHandles)) [[unlikely]] {
+                MarkedArgumentBuffer fileHandles;
+                receiveTransferredFileHandles(globalObject, *transferredFileHandles, fileHandles);
+                RETURN_IF_EXCEPTION(scope, {});
+                deserialized = serialized->deserialize(*globalObject, globalObject, WTF::move(ports), fileHandles);
+            } else
+                deserialized = serialized->deserialize(*globalObject, globalObject, WTF::move(ports));
             RETURN_IF_EXCEPTION(scope, {});
             // Should always be set to an Array of length 2 in the constructor in JSWorker.cpp
             if (auto* pair = dynamicDowncast<JSArray>(deserialized)) {

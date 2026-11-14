@@ -23,9 +23,6 @@ const kCloseResolve = Symbol("kCloseResolve");
 const kCloseReject = Symbol("kCloseReject");
 const kRef = Symbol("kRef");
 const kUnref = Symbol("kUnref");
-const kTransfer = Symbol("kTransfer");
-const kTransferList = Symbol("kTransferList");
-const kDeserialize = Symbol("kDeserialize");
 const kEmptyObject = ObjectFreeze(Object.create(null));
 const kFlag = Symbol("kFlag");
 const kLocked = Symbol("kLocked");
@@ -236,7 +233,6 @@ declare global {
       [kFd]: number;
       [kRef](): void;
       [kUnref](): void;
-      [kDeserialize](data: { fd: number; flag: string | number }): void;
       read<T extends ArrayBufferView>(
         buffer: T,
         offset?: number | FileHandleReadOptions | null,
@@ -283,17 +279,11 @@ const private_symbols: {
   kRef: typeof kRef;
   kUnref: typeof kUnref;
   kFd: typeof kFd;
-  kTransfer: typeof kTransfer;
-  kTransferList: typeof kTransferList;
-  kDeserialize: typeof kDeserialize;
   FileHandle: $Node.FileHandleConstructor;
 } = {
   kRef,
   kUnref,
   kFd,
-  kTransfer,
-  kTransferList,
-  kDeserialize,
   FileHandle: null!,
 };
 
@@ -1578,37 +1568,6 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
       this.emit("close");
     }
 
-    [kTransfer]() {
-      if (this[kClosePromise] || this[kRefs] > 1) {
-        throw new DOMException("Cannot transfer FileHandle while in use", "DataCloneError");
-      }
-
-      const fd = this[kFd];
-      const flag = this[kFlag];
-      this[kFd] = -1;
-      fileHandleRegistry?.unregister(this);
-      return {
-        data: { fd, flag },
-        deserializeInfo: "internal/fs/promises:FileHandle",
-      };
-    }
-
-    [kTransferList]() {
-      return [];
-    }
-
-    [kDeserialize]({ fd, flag }) {
-      this[kFd] = fd;
-      this[kFlag] = flag;
-      if (fd !== -1) {
-        (fileHandleRegistry ??= new FinalizationRegistry(onFileHandleCollected)).register(
-          this,
-          { fd, path: undefined },
-          this,
-        );
-      }
-    }
-
     [kRef]() {
       this[kRefs]++;
     }
@@ -1626,6 +1585,41 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
     }
   }
   private_symbols.FileHandle = FileHandle;
+
+  // Takes the descriptor out of a handle that nothing is using, and answers it with the flag of the handle.
+  function detachForTransfer(handle: FileHandle) {
+    const fd = handle[kFd];
+    if ((fd | 0) !== fd) return undefined;
+    if (handle[kClosePromise] || handle[kRefs] > 1) {
+      throw new DOMException("Cannot transfer FileHandle while in use", "DataCloneError");
+    }
+    handle[kFd] = -1;
+    fileHandleRegistry?.unregister(handle);
+    return [fd, handle[kFlag]];
+  }
+
+  function attachAfterTransfer(handle: FileHandle, fd: number, flag: string | number | undefined) {
+    handle[kFd] = fd;
+    handle[kFlag] = flag;
+    if (fd !== -1) {
+      (fileHandleRegistry ??= new FinalizationRegistry(onFileHandleCollected)).register(
+        handle,
+        { fd, path: undefined },
+        handle,
+      );
+    }
+    return handle;
+  }
+
+  function receiveFromTransfer(fd: number, flag: string | number | undefined) {
+    return attachAfterTransfer(new FileHandle(-1), fd, flag);
+  }
+
+  // For a FileHandle in the transferList of a node:worker_threads Worker. Native code calls them by index: FileHandleTransferHook in SerializedScriptValue.h.
+  const transferHooks = [detachForTransfer, attachAfterTransfer, receiveFromTransfer];
+  $putByIdDirectPrivate(FileHandle.prototype as any, "fileHandleTransfer", transferHooks);
+  $putByIdDirectPrivate(exports as any, "fileHandleTransfer", transferHooks);
+
   const fileHandles = require("internal/fs/file_handles");
   fileHandles.internals = private_symbols;
   fileHandles.whenLoaded?.(private_symbols);

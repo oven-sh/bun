@@ -379,9 +379,13 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
     valueToTransfer->putDirectIndex(globalObject, 1, environmentData ? environmentData : jsUndefined());
     RETURN_IF_EXCEPTION(throwScope, {});
 
+    // A Worker of node:worker_threads moves the FileHandles of its transfer list too. create() puts them here.
+    FileHandleTransferList fileHandles;
     // Reports a DataCloneError through ExceptionOr, but a getter or toJSON that throws during serialization
     // leaves that exception on the VM and returns normally.
-    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*lexicalGlobalObject, valueToTransfer, WTF::move(transferList), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = options.kind == WorkerOptions::Kind::Node
+        ? SerializedScriptValue::create(*lexicalGlobalObject, valueToTransfer, WTF::move(transferList), ports, SerializationContext::WorkerPostMessage, fileHandles)
+        : SerializedScriptValue::create(*lexicalGlobalObject, valueToTransfer, WTF::move(transferList), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
     RETURN_IF_EXCEPTION(throwScope, {});
     if (serialized.hasException()) {
         WebCore::propagateException(*lexicalGlobalObject, throwScope, serialized.releaseException());
@@ -389,11 +393,19 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
     }
     RETURN_IF_EXCEPTION(throwScope, {});
 
+    // The descriptors leave the handles here. They go back if no thread is started that takes them.
+    if (fileHandles.descriptors) [[unlikely]] {
+        detachFileHandlesForTransfer(*lexicalGlobalObject, fileHandles);
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
+
     Vector<TransferredMessagePort> transferredPorts;
 
     if (!ports.isEmpty()) {
         auto disentangleResult = MessagePort::disentanglePorts(WTF::move(ports));
         if (disentangleResult.hasException()) {
+            if (fileHandles.descriptors) [[unlikely]]
+                reattachFileHandlesAfterTransfer(*lexicalGlobalObject, fileHandles);
             WebCore::propagateException(*lexicalGlobalObject, throwScope, disentangleResult.releaseException());
             RELEASE_AND_RETURN(throwScope, {});
         }
@@ -402,8 +414,11 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
 
     options.workerDataAndEnvironmentData = serialized.releaseReturnValue();
     options.dataMessagePorts = WTF::move(transferredPorts);
+    options.dataFileHandles = fileHandles.descriptors;
 
     auto object = Worker::create(*context, WTF::move(scriptUrl), WTF::move(options));
+    if (object.hasException() && fileHandles.descriptors) [[unlikely]]
+        reattachFileHandlesAfterTransfer(*lexicalGlobalObject, fileHandles);
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);

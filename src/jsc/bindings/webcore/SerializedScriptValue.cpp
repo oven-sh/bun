@@ -47,6 +47,7 @@
 #include "JSMessagePort.h"
 #include "OpenSSLUtilities.h"
 #include "ScriptExecutionContext.h"
+#include "TransferredFileHandle.h"
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/BigIntObject.h>
 #include <JavaScriptCore/BooleanObject.h>
@@ -203,6 +204,7 @@ enum SerializationTag {
     Bun__KeyObjectTag = 252,
     Bun__nodenet_BlockList = 251,
     Bun__NodePerformanceHooksHistogramTag = 250,
+    Bun__NodeFSFileHandleTag = 249,
 
     ErrorTag = 255
 };
@@ -765,7 +767,7 @@ public:
         Vector<uint8_t>& out, SerializationContext context, ArrayBufferContentsArray& sharedBuffers,
         Vector<void*>& serializedBlockListRefs,
         Vector<uint64_t>& serializedHistogramIds,
-        SerializationForStorage forStorage, SerializationForCrossProcessTransfer forTransfer)
+        SerializationForStorage forStorage, SerializationForCrossProcessTransfer forTransfer, FileHandleTransferList* fileHandles)
     {
         CloneSerializer serializer(lexicalGlobalObject, messagePorts, arrayBuffers,
 #if ENABLE(WEBASSEMBLY)
@@ -773,6 +775,7 @@ public:
             wasmMemoryHandles,
 #endif
             out, context, sharedBuffers, forStorage, forTransfer);
+        serializer.m_fileHandles = fileHandles;
         auto code = serializer.serialize(value);
         serializedBlockListRefs = WTF::move(serializer.m_serializedBlockListRefs);
         serializedHistogramIds = WTF::move(serializer.m_serializedHistogramIds);
@@ -1108,6 +1111,18 @@ private:
         code = SerializationReturnCode::DataCloneError;
     }
 
+    // Writes the place of a FileHandle in the transfer list, where `object` is one of those. Nothing of the handle is cloned.
+    NEVER_INLINE bool dumpTransferredFileHandle(JSObject* object)
+    {
+        auto listed = m_fileHandles->indexOf.find(object);
+        if (listed == m_fileHandles->indexOf.end())
+            return false;
+        write(Bun__NodeFSFileHandleTag);
+        write(listed->value);
+        m_fileHandles->descriptors->slots[listed->value].isReferenced = true;
+        return true;
+    }
+
     bool dumpIfTerminal(JSValue value, SerializationReturnCode& code)
     {
         if (!value.isCell()) {
@@ -1146,6 +1161,9 @@ private:
                 && !(obj->inherits<JSMessagePort>() && m_transferredMessagePorts.contains(obj))
                 && obj->structure()->hasNonEnumerableProperties()
                 && obj->getDirect(vm, builtinNames(vm).isUncloneablePrivateName())) {
+                // create() put the mark on each FileHandle of the transfer list too, so that one is found here, where nothing else passes. It is moved.
+                if (m_fileHandles && dumpTransferredFileHandle(obj)) [[unlikely]]
+                    return true;
                 code = SerializationReturnCode::DataCloneError;
                 return true;
             }
@@ -2012,6 +2030,7 @@ private:
 #endif
     SerializationForStorage m_forStorage;
     SerializationForCrossProcessTransfer m_forTransfer;
+    FileHandleTransferList* m_fileHandles { nullptr };
 };
 
 extern "C" void WebCore__CloneSerializer__write(CloneSerializer* serializer, const uint8_t* data, uint32_t length)
@@ -2348,7 +2367,7 @@ class CloneDeserializer : public CloneBase {
     WTF_FORBID_HEAP_ALLOCATION;
 
 public:
-    static DeserializationResult deserialize(JSGlobalObject* lexicalGlobalObject, JSGlobalObject* globalObject, const Vector<RefPtr<MessagePort>>& messagePorts,
+    static DeserializationResult deserialize(JSGlobalObject* lexicalGlobalObject, JSGlobalObject* globalObject, const Vector<RefPtr<MessagePort>>& messagePorts, const MarkedArgumentBuffer* fileHandles,
         ArrayBufferContentsArray* arrayBufferContentsArray, const std::span<uint8_t>& buffer, const Vector<String>& blobURLs, const Vector<String> blobFilePaths, ArrayBufferContentsArray* sharedBuffers
 #if ENABLE(WEBASSEMBLY)
         ,
@@ -2364,6 +2383,7 @@ public:
             wasmModules, wasmMemoryHandles
 #endif
         );
+        deserializer.m_fileHandles = fileHandles;
         if (!deserializer.isValid())
             return std::make_pair(JSValue(), SerializationReturnCode::ValidationError);
         return deserializer.deserialize();
@@ -4024,6 +4044,16 @@ private:
         case Bun__NodePerformanceHooksHistogramTag:
             return readHistogram();
 
+        case Bun__NodeFSFileHandleTag: {
+            // The receiving thread made the FileHandle of each referenced slot before it read the message. Bytes alone bring none.
+            uint32_t index;
+            if (!read(index) || !m_fileHandles || index >= m_fileHandles->size() || !m_fileHandles->at(index).isObject()) {
+                fail();
+                return JSValue();
+            }
+            return m_fileHandles->at(index);
+        }
+
         default:
             m_ptr = preTagPtr; // Push the tag back
             return JSValue();
@@ -4054,6 +4084,7 @@ private:
     std::optional<ObjectFinisher> m_objectFinisher { m_globalObject->aotInstance() ? std::make_optional<ObjectFinisher>() : std::nullopt };
 #endif
     const Vector<RefPtr<MessagePort>>& m_messagePorts;
+    const MarkedArgumentBuffer* m_fileHandles { nullptr };
     ArrayBufferContentsArray* m_arrayBufferContents;
     Vector<RefPtr<JSC::ArrayBuffer>> m_arrayBuffers;
     Vector<String> m_blobURLs;
@@ -4629,7 +4660,7 @@ static bool collectCompiledObjectFields(JSGlobalObject& lexicalGlobalObject, JSO
 RefPtr<SerializedScriptValue> SerializedScriptValue::create(JSC::JSGlobalObject& globalObject, JSC::JSValue value, SerializationForStorage forStorage, SerializationErrorMode throwExceptions, SerializationContext serializationContext, SerializationForCrossProcessTransfer forTransfer)
 {
     Vector<RefPtr<MessagePort>> dummyPorts;
-    auto result = create(globalObject, value, {}, dummyPorts, forStorage, throwExceptions, serializationContext, forTransfer);
+    auto result = create(globalObject, value, {}, dummyPorts, forStorage, throwExceptions, serializationContext, forTransfer, nullptr);
     if (result.hasException())
         return nullptr;
     return result.releaseReturnValue();
@@ -4637,10 +4668,15 @@ RefPtr<SerializedScriptValue> SerializedScriptValue::create(JSC::JSGlobalObject&
 
 ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalObject& globalObject, JSValue value, Vector<JSC::Strong<JSC::JSObject>>&& transferList, Vector<RefPtr<MessagePort>>& messagePorts, SerializationForStorage forStorage, SerializationContext serializationContext, SerializationForCrossProcessTransfer forTransfer)
 {
-    return create(globalObject, value, WTF::move(transferList), messagePorts, forStorage, SerializationErrorMode::Throwing, serializationContext, forTransfer);
+    return create(globalObject, value, WTF::move(transferList), messagePorts, forStorage, SerializationErrorMode::Throwing, serializationContext, forTransfer, nullptr);
 }
 
-ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalObject& lexicalGlobalObject, JSValue value, Vector<JSC::Strong<JSC::JSObject>>&& transferList, Vector<RefPtr<MessagePort>>& messagePorts, SerializationForStorage forStorage, SerializationErrorMode throwExceptions, SerializationContext context, SerializationForCrossProcessTransfer forTransfer)
+ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalObject& globalObject, JSValue value, Vector<JSC::Strong<JSC::JSObject>>&& transferList, Vector<RefPtr<MessagePort>>& messagePorts, SerializationContext serializationContext, FileHandleTransferList& fileHandles)
+{
+    return create(globalObject, value, WTF::move(transferList), messagePorts, SerializationForStorage::No, SerializationErrorMode::Throwing, serializationContext, SerializationForCrossProcessTransfer::No, &fileHandles);
+}
+
+ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalObject& lexicalGlobalObject, JSValue value, Vector<JSC::Strong<JSC::JSObject>>&& transferList, Vector<RefPtr<MessagePort>>& messagePorts, SerializationForStorage forStorage, SerializationErrorMode throwExceptions, SerializationContext context, SerializationForCrossProcessTransfer forTransfer, FileHandleTransferList* fileHandles)
 {
     VM& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -4908,6 +4944,8 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
                 return Exception { DataCloneError, "Transfer list contains duplicate ArrayBuffer"_s };
             } else if (JSMessagePort::toWrapped(vm, transferable.get())) {
                 return Exception { DataCloneError, "Transfer list contains duplicate MessagePort"_s };
+            } else if (fileHandles && fileHandleTransferHooks(vm, *transferable.get())) {
+                return Exception { DataCloneError, "Transfer list contains duplicate FileHandle"_s };
             } else {
                 return Exception { DataCloneError, "Duplicate transferable for structured clone"_s };
             }
@@ -4935,9 +4973,19 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
             messagePorts.append(WTF::move(port));
             continue;
         }
+        if (fileHandles && fileHandleTransferHooks(vm, *transferable.get())) {
+            // The walk looks for a listed FileHandle only where it finds this mark: dumpIfTerminal().
+            markAsUncloneable(vm, *transferable.get());
+            fileHandles->indexOf.add(transferable.get(), fileHandles->handles.size());
+            fileHandles->handles.appendWithCrashOnOverflow(transferable.get());
+            continue;
+        }
 
         return Exception { DataCloneError };
     }
+
+    if (fileHandles && !fileHandles->handles.isEmpty()) [[unlikely]]
+        fileHandles->descriptors = TransferredFileHandles::create(fileHandles->handles.size());
 
     Vector<uint8_t> buffer;
 #if ENABLE(WEBASSEMBLY)
@@ -4952,7 +5000,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
         wasmModules,
         wasmMemoryHandles,
 #endif
-        buffer, context, *sharedBuffers, serializedBlockListRefs, serializedHistogramIds, forStorage, forTransfer);
+        buffer, context, *sharedBuffers, serializedBlockListRefs, serializedHistogramIds, forStorage, forTransfer, fileHandles);
 
     auto releaseSerializedRefs = [&] {
         for (auto* ptr : serializedBlockListRefs)
@@ -5073,7 +5121,7 @@ JSC::JSValue SerializedScriptValue::fromArrayBuffer(JSC::JSGlobalObject& domGlob
     auto size = std::min(arrayBuffer->byteLength(), maxByteLength);
     auto span = std::span<uint8_t> { data, size };
 
-    auto result = CloneDeserializer::deserialize(&domGlobal, globalObject, {}, nullptr, span, blobURLs, blobFiles, nullptr
+    auto result = CloneDeserializer::deserialize(&domGlobal, globalObject, {}, nullptr, nullptr, span, blobURLs, blobFiles, nullptr
 #if ENABLE(WEBASSEMBLY)
         ,
         nullptr, nullptr
@@ -5323,7 +5371,7 @@ NEVER_INLINE JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalG
     }
     }
 
-    DeserializationResult result = CloneDeserializer::deserialize(&lexicalGlobalObject, globalObject, messagePorts,
+    DeserializationResult result = CloneDeserializer::deserialize(&lexicalGlobalObject, globalObject, messagePorts, nullptr,
         m_arrayBufferContentsArray.get(), m_data, blobURLs, blobFilePaths, m_sharedBufferContentsArray.get()
 #if ENABLE(WEBASSEMBLY)
                                                                                ,
@@ -5339,6 +5387,26 @@ NEVER_INLINE JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalG
         RETURN_IF_EXCEPTION(scope, {});
     }
 
+    return result.first ? result.first : jsNull();
+}
+
+JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, JSGlobalObject* globalObject, const Vector<RefPtr<MessagePort>>& messagePorts, const MarkedArgumentBuffer& fileHandles)
+{
+    BUN_REMOVABLE_DEFINITION(StructuredClone, static_cast<JSValue (SerializedScriptValue::*)(JSGlobalObject&, JSGlobalObject*, const Vector<RefPtr<MessagePort>>&, const MarkedArgumentBuffer&)>(&SerializedScriptValue::deserialize));
+    VM& vm = lexicalGlobalObject.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // A transfer list that is not empty takes no fast path of create(), so the walk wrote this message.
+    ASSERT(m_fastPath == FastPath::None);
+    DeserializationResult result = CloneDeserializer::deserialize(&lexicalGlobalObject, globalObject, messagePorts, &fileHandles,
+        m_arrayBufferContentsArray.get(), m_data, {}, {}, m_sharedBufferContentsArray.get()
+#if ENABLE(WEBASSEMBLY)
+                                                              ,
+        m_wasmModulesArray.get(), m_wasmMemoryHandlesArray.get()
+#endif
+    );
+    RETURN_IF_EXCEPTION(scope, {});
+    maybeThrowExceptionIfSerializationFailed(lexicalGlobalObject, result.second);
+    RETURN_IF_EXCEPTION(scope, {});
     return result.first ? result.first : jsNull();
 }
 

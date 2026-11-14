@@ -3,6 +3,7 @@
 #include "root.h"
 #include "SerializedScriptValue.h"
 #include "SharedEnvStore.h"
+#include "TransferredFileHandle.h"
 #include "TransferredMessagePort.h"
 #include "MessagePort.h"
 
@@ -33,6 +34,8 @@ struct WorkerOptions {
     RefPtr<SerializedScriptValue> workerDataAndEnvironmentData;
     // Objects transferred for either data or environmentData in the transferList
     Vector<TransferredMessagePort> dataMessagePorts;
+    // The descriptors of the FileHandles in the transferList of a Worker of node:worker_threads. Shared with the constructor, which takes them back if no thread starts.
+    RefPtr<TransferredFileHandles> dataFileHandles;
     Vector<String> preloadModules;
     std::optional<HashMap<String, String>> env;
     Vector<String> argv;

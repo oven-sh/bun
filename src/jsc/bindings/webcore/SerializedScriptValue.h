@@ -42,6 +42,8 @@
 namespace JSC {
 class JSObject;
 class VM;
+template<size_t> class MarkedArgumentBufferWithSize;
+using MarkedArgumentBuffer = MarkedArgumentBufferWithSize<8>;
 #if ENABLE(WEBASSEMBLY)
 namespace Wasm {
 class Module;
@@ -81,6 +83,7 @@ enum class FastPath : uint8_t {
 };
 
 class MessagePort;
+struct FileHandleTransferList;
 enum class SerializationReturnCode;
 
 enum class SerializationErrorMode { NonThrowing,
@@ -112,6 +115,9 @@ public:
 
     WEBCORE_EXPORT static RefPtr<SerializedScriptValue> create(JSC::JSGlobalObject&, JSC::JSValue, SerializationForStorage = SerializationForStorage::No, SerializationErrorMode = SerializationErrorMode::Throwing, SerializationContext = SerializationContext::Default, SerializationForCrossProcessTransfer = SerializationForCrossProcessTransfer::No);
 
+    // For the Worker constructor of node:worker_threads alone: a FileHandle of the transfer list is moved too, and the list given here gets those handles.
+    static ExceptionOr<Ref<SerializedScriptValue>> create(JSC::JSGlobalObject&, JSC::JSValue, Vector<JSC::Strong<JSC::JSObject>>&& transfer, Vector<RefPtr<MessagePort>>&, SerializationContext, FileHandleTransferList&);
+
     static RefPtr<SerializedScriptValue> convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value) { return create(globalObject, value, SerializationForStorage::Yes); }
 
     // Fast path for postMessage with pure strings
@@ -134,6 +140,8 @@ public:
     WEBCORE_EXPORT JSC::JSValue deserialize(JSC::JSGlobalObject&, JSC::JSGlobalObject*, const Vector<RefPtr<MessagePort>>&, SerializationErrorMode = SerializationErrorMode::Throwing, bool* didFail = nullptr);
 
     JSC::JSValue deserialize(JSC::JSGlobalObject&, JSC::JSGlobalObject*, const Vector<RefPtr<MessagePort>>&, const Vector<String>& blobURLs, const Vector<String>& blobFilePaths, SerializationErrorMode = SerializationErrorMode::Throwing, bool* didFail = nullptr);
+    // Of a message that create() made with a FileHandleTransferList: `fileHandles` has what the receiving thread made for each handle of that list, in its order.
+    JSC::JSValue deserialize(JSC::JSGlobalObject&, JSC::JSGlobalObject*, const Vector<RefPtr<MessagePort>>&, const JSC::MarkedArgumentBuffer& fileHandles);
 
     WEBCORE_EXPORT Ref<JSC::ArrayBuffer> toArrayBuffer();
     static JSC::JSValue fromArrayBuffer(JSC::JSGlobalObject&, JSC::JSGlobalObject*, JSC::ArrayBuffer* arrayBuffer, size_t byteOffset = 0, size_t maxByteLength = 0, SerializationErrorMode = SerializationErrorMode::Throwing, bool* didFail = nullptr);
@@ -149,7 +157,7 @@ public:
     WEBCORE_EXPORT ~SerializedScriptValue();
 
 private:
-    static ExceptionOr<Ref<SerializedScriptValue>> create(JSC::JSGlobalObject&, JSC::JSValue, Vector<JSC::Strong<JSC::JSObject>>&& transfer, Vector<RefPtr<MessagePort>>&, SerializationForStorage, SerializationErrorMode, SerializationContext, SerializationForCrossProcessTransfer);
+    static ExceptionOr<Ref<SerializedScriptValue>> create(JSC::JSGlobalObject&, JSC::JSValue, Vector<JSC::Strong<JSC::JSObject>>&& transfer, Vector<RefPtr<MessagePort>>&, SerializationForStorage, SerializationErrorMode, SerializationContext, SerializationForCrossProcessTransfer, FileHandleTransferList*);
     WEBCORE_EXPORT SerializedScriptValue(Vector<unsigned char>&&, std::unique_ptr<ArrayBufferContentsArray>&& = nullptr);
 
     SerializedScriptValue(Vector<unsigned char>&&, std::unique_ptr<ArrayBufferContentsArray>, std::unique_ptr<ArrayBufferContentsArray> sharedBuffers

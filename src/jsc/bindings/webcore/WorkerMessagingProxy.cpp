@@ -609,6 +609,8 @@ void WorkerMessagingProxy::workerGlobalScopeDestroyedInternal(int32_t exitCode, 
         m_pendingTasks.clear();
     }
     rejectAllCrossVMRequests();
+    // What the thread never took is closed here, ahead of 'close': the descriptors of the FileHandles of its transfer list.
+    m_options.dataFileHandles = nullptr;
 
     // Everything the worker posted before it exited is delivered before 'close' (Node: before
     // 'exit'); the thread is gone, so the queue is finite. A bounded drain still queued behind this

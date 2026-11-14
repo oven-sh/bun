@@ -10588,6 +10588,16 @@ pub(crate) unsafe extern "C" fn Bun__mkdirp(
         .is_ok()
 }
 
+/// Closes the descriptor of a `FileHandle` that a transfer list sent to a worker which never took it.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__FileHandle__closeTransferred(fd: i32) {
+    let fd = FD::from_uv(fd);
+    #[cfg(not(windows))]
+    bun_standalone_graph::forget_descriptor(fd);
+    // Whatever else closed the number first has the error. Nothing waits for this one.
+    let _ = fd.close_allowing_standard_io(None);
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // zig_delete_tree — recursive delete-tree. Returns `FileNotFound`
 // instead of ignoring it, which is required to match the behavior of Node.js's

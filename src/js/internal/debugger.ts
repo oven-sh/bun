@@ -3,9 +3,11 @@ type ServerWebSocket<T> = import("bun").ServerWebSocket<T>;
 interface WebSocketHandler<T> {
   idleTimeout: number;
   closeOnBackpressureLimit: boolean;
+  backpressureLimit: number;
   open(ws: ServerWebSocket<T>): void;
   message(ws: ServerWebSocket<T>, message: string | Buffer): void;
   drain(ws: ServerWebSocket<T>): void;
+  pong(ws: ServerWebSocket<T>, data: Buffer): void;
   close(ws: ServerWebSocket<T>): void;
 }
 
@@ -53,14 +55,15 @@ class SocketFramer {
     this.sizeBuffer = Buffer.alloc(4);
   }
 
-  send(socket: FramedSocket, data: string): void {
+  // False when the socket could not take all of it and holds the rest.
+  send(socket: FramedSocket, data: string): boolean {
     if (!!$debug) {
       $debug("local:", data);
     }
 
     socketFramerMessageLengthBuffer.writeUInt32BE(Buffer.byteLength(data), 0);
     socket.$write(socketFramerMessageLengthBuffer);
-    socket.$write(data);
+    return socket.$write(data) === true;
   }
 
   onData(socket: FramedSocket, data: Buffer): void {
@@ -115,13 +118,38 @@ class SocketFramer {
 interface Backend {
   write: (message: string | string[]) => boolean;
   close: () => void;
+  // The transport wrote everything it held: the backend hands over what it kept meanwhile.
+  resume: () => void;
 }
 
-type CreateBackendFn = (
-  executionContextId: number,
-  refEventLoop: boolean,
-  receive: (...messages: string[]) => void,
-) => unknown;
+// Returns the bytes the transport still holds, if any: the backend then keeps what follows until `resume()`.
+type Receive = (...messages: string[]) => number | void;
+// Makes the transport write what it holds and returns the bytes it still holds.
+type UnsentBytes = () => number;
+// Closes a frontend that took nothing while the backend queued its limit for it. The backend disconnects it after the call.
+type Dismiss = (reason: string) => void;
+// A transport gives all three. The in-process `inspector.Session` has no client and gives `receive` only.
+type Transport = [receive: Receive, unsentBytes: UnsentBytes, dismiss: Dismiss];
+type Frontend = Transport | [receive: Receive];
+type CreateBackendFn = (executionContextId: number, refEventLoop: boolean, ...frontend: Frontend) => unknown;
+
+const socketUnsentBytes = $bindgen("socket_body.bind.ts", "getBufferedAmount") as (socket: FramedSocket) => number;
+
+// This transport has no close frame, so a dismissed frontend gets no reason.
+function socketTransport(socket: FramedSocket, framer: SocketFramer): Transport {
+  return [
+    (...messages) => {
+      let sent = true;
+      for (const message of messages) sent = framer.send(socket, message);
+      if (!sent) return socketUnsentBytes(socket);
+    },
+    () => {
+      socket.flush();
+      return socketUnsentBytes(socket);
+    },
+    () => socket.terminate(),
+  ];
+}
 
 // CDP translation is only needed for node:inspector servers, so load it lazily.
 let lazyInspectorCDPAdapter: $BunModules["internal/inspector/cdp"]["InspectorCDPAdapter"] | undefined;
@@ -139,9 +167,10 @@ export default function (
   urlIsServer: boolean,
   isNodeInspector: boolean,
   reportNodeInspectorServerStarted: (url: string, controlCallback?: (message: string) => void, error?: string) => void,
+  resume: () => void,
 ): void {
   if (urlIsServer) {
-    connectToUnixServer(executionContextId, url, createBackend, send, close);
+    connectToUnixServer(executionContextId, url, createBackend, send, close, resume);
     return;
   }
 
@@ -196,7 +225,7 @@ export default function (
           // start a new server on this already-running debugger thread and
           // report its URL back.
           try {
-            debug = new Debugger(executionContextId, parsed.url, createBackend, send, close, true);
+            debug = new Debugger(executionContextId, parsed.url, createBackend, send, close, resume, true);
             reportNodeInspectorServerStarted(debug.url!.href, control, undefined);
           } catch (error) {
             reportNodeInspectorServerStarted("", control, nodeInspectorListenErrorDetail(error));
@@ -232,7 +261,7 @@ export default function (
     };
 
     try {
-      debug = new Debugger(executionContextId, url, createBackend, send, close, true);
+      debug = new Debugger(executionContextId, url, createBackend, send, close, resume, true);
     } catch (error) {
       // Register the control callback even though the server failed to start
       // (e.g. the port is in use), so a later inspector.open() can retry with
@@ -247,7 +276,7 @@ export default function (
 
   let debug: Debugger | undefined;
   try {
-    debug = new Debugger(executionContextId, url, createBackend, send, close);
+    debug = new Debugger(executionContextId, url, createBackend, send, close, resume);
   } catch (error) {
     exit("Failed to start inspector:\n", error);
   }
@@ -313,7 +342,7 @@ function unescapeUnixSocketUrl(href: string) {
 
 class Debugger {
   #url?: URL;
-  #createBackend: (refEventLoop: boolean, receive: (...messages: string[]) => void) => Backend;
+  #createBackend: (refEventLoop: boolean, ...frontend: Frontend) => Backend;
   // node:inspector mode: connections speak the V8 Chrome DevTools Protocol and
   // /json discovery endpoints are served.
   #nodeInspector = false;
@@ -325,17 +354,19 @@ class Debugger {
     createBackend: CreateBackendFn,
     send: (message: string | string[]) => void,
     close: () => void,
+    resume: () => void,
     isNodeInspector: boolean = false,
   ) {
     this.#nodeInspector = isNodeInspector;
-    this.#createBackend = (refEventLoop, receive) => {
-      const backend = createBackend(executionContextId, refEventLoop, receive);
+    this.#createBackend = (refEventLoop, ...frontend) => {
+      const backend = createBackend(executionContextId, refEventLoop, ...frontend);
       return {
         write: (message: string | string[]) => {
           send.$call(backend, message);
           return true;
         },
         close: () => close.$call(backend),
+        resume: () => resume.$call(backend),
       };
     };
 
@@ -385,7 +416,7 @@ class Debugger {
 
   // A backend connection that is not tied to a WebSocket client, used for
   // commands forwarded from the in-process inspector.Session.
-  createSessionBackend(receive: (...messages: string[]) => void): Backend {
+  createSessionBackend(receive: Receive): Backend {
     return this.#createBackend(true, receive);
   }
 
@@ -426,17 +457,10 @@ class Debugger {
         ...networkOptions,
         socket: {
           open: (socket: FramedSocket) => {
-            let framer: SocketFramer;
-            const callback = (...messages: string[]) => {
-              for (const message of messages) {
-                framer.send(socket, message);
-              }
-            };
-
-            framer = new SocketFramer((message: string | string[]) => {
+            const framer = new SocketFramer((message: string | string[]) => {
               backend!.write(message);
             });
-            backend = this.#createBackend(false, callback);
+            backend = this.#createBackend(false, ...socketTransport(socket, framer));
             socket.data = {
               framer,
               backend,
@@ -450,7 +474,7 @@ class Debugger {
             }
             socket.data.framer.onData(socket, bytes);
           },
-          drain: (_socket: FramedSocket) => {},
+          drain: (socket: FramedSocket) => socket.data?.backend.resume(),
           close: (socket: FramedSocket) => {
             const socketData = socket.data;
             if (socketData) {
@@ -475,8 +499,10 @@ class Debugger {
   get #websocket(): WebSocketHandler<Connection> {
     return {
       idleTimeout: 0,
+      // No limit: uWS would drop what the CDP adapter answers on its own behind one large message.
+      backpressureLimit: 0,
       closeOnBackpressureLimit: false,
-      open: ws => this.#open(ws, webSocketWriter(ws)),
+      open: ws => this.#open(ws),
       message: (ws, message) => {
         if (typeof message === "string") {
           this.#message(ws, message);
@@ -485,6 +511,7 @@ class Debugger {
         }
       },
       drain: ws => this.#drain(ws),
+      pong: (ws, data) => this.#pong(ws, data),
       close: ws => this.#close(ws),
     };
   }
@@ -570,11 +597,19 @@ class Debugger {
     }
   }
 
-  #open(connection: ConnectionOwner, writer: Writer): void {
-    const { data } = connection;
-    const { refEventLoop } = data;
-
-    const client = bufferedWriter(writer);
+  #open(ws: ServerWebSocket<Connection>): void {
+    const { data } = ws;
+    const unsentBytes = () => {
+      // Makes uWS write what it holds.
+      ws.cork(noop);
+      return ws.getBufferedAmount();
+    };
+    const dismiss = (reason: string) => {
+      // The frontend answers this ping when it has read everything before it. Then it gets the close frame.
+      data.dismissed = reason;
+      ws.ping(dismissPing);
+      data.dismissTimer = setTimeout(() => ws.terminate(), dismissTimeoutMs);
+    };
 
     if (this.#nodeInspector) {
       // node:inspector clients speak CDP; the adapter sits between the
@@ -583,30 +618,40 @@ class Debugger {
       // alive — Node exits with a debugger attached — so never ref the event
       // loop for these connections (the `true` argument means "do not ref").
       let adapter: InspectorCDPAdapter;
-      const backend = this.#createBackend(true, (...messages: string[]) => {
-        for (const message of messages) {
-          adapter.handleBackendMessage(message);
-        }
-      });
+      const backend = this.#createBackend(
+        true,
+        (...messages: string[]) => {
+          for (const message of messages) {
+            adapter.handleBackendMessage(message);
+          }
+          return ws.getBufferedAmount();
+        },
+        unsentBytes,
+        dismiss,
+      );
       adapter = new (cdpAdapterConstructor())(
         (message: string) => void backend.write(message),
-        (message: string) => void client.write(message),
+        (message: string) => void ws.sendText(message),
       );
 
-      data.client = client;
       data.backend = backend;
       data.adapter = adapter;
       return;
     }
 
-    const backend = this.#createBackend(refEventLoop, (...messages: string[]) => {
-      for (const message of messages) {
-        client.write(message);
-      }
-    });
-
-    data.client = client;
-    data.backend = backend;
+    data.backend = this.#createBackend(
+      data.refEventLoop,
+      (...messages: string[]) => {
+        let sent = 1;
+        for (const message of messages) {
+          sent = ws.sendText(message);
+        }
+        // -1: uWS holds a part of what it was given.
+        if (sent < 0) return ws.getBufferedAmount();
+      },
+      unsentBytes,
+      dismiss,
+    );
   }
 
   #message(connection: ConnectionOwner, message: string): void {
@@ -620,16 +665,19 @@ class Debugger {
     backend?.write(message);
   }
 
-  #drain(connection: ConnectionOwner): void {
-    const { data } = connection;
-    const { client } = data;
-    client?.drain?.();
+  #drain(ws: ServerWebSocket<Connection>): void {
+    if (ws.getBufferedAmount() === 0) ws.data.backend?.resume();
+  }
+
+  #pong(ws: ServerWebSocket<Connection>, payload: Buffer): void {
+    const { dismissed } = ws.data;
+    if (dismissed !== undefined && payload.toString() === dismissPing) ws.close(1013, dismissed);
   }
 
   #close(connection: ConnectionOwner): void {
     const { data } = connection;
-    const { backend } = data;
-    backend?.close();
+    clearTimeout(data.dismissTimer);
+    data.backend?.close();
   }
 
   #error(connection: ConnectionOwner, error: Error): void {
@@ -646,6 +694,7 @@ async function connectToUnixServer(
   createBackend: CreateBackendFn,
   send: (message: string | string[]) => void,
   close: () => void,
+  resume: () => void,
 ) {
   // Windows uses TCP.
   // POSIX uses Unix sockets.
@@ -691,11 +740,7 @@ async function connectToUnixServer(
             backend.write(message);
           });
 
-          const backendRaw = createBackend(executionContextId, true, (...messages: string[]) => {
-            for (const message of messages) {
-              framer.send(socket, message);
-            }
-          });
+          const backendRaw = createBackend(executionContextId, true, ...socketTransport(socket, framer));
 
           const backend: Backend = {
             write: message => {
@@ -703,6 +748,7 @@ async function connectToUnixServer(
               return true;
             },
             close: () => close.$call(backendRaw),
+            resume: () => resume.$call(backendRaw),
           };
 
           socket.data = {
@@ -721,8 +767,7 @@ async function connectToUnixServer(
           socket.data.framer.onData(socket, bytes);
         },
 
-        // Ensure we always drain the socket.
-        drain: (_socket: FramedSocket) => {},
+        drain: (socket: FramedSocket) => socket.data?.backend.resume(),
 
         close: (socket: FramedSocket) => {
           const socketData = socket.data;
@@ -765,44 +810,11 @@ function nodeVersionInfo(): unknown {
   };
 }
 
-function webSocketWriter(ws: ServerWebSocket<unknown>): Writer {
-  return {
-    write: message => !!ws.sendText(message),
-    close: () => ws.close(),
-  };
-}
+const noop = () => {};
 
-function bufferedWriter(writer: Writer): Writer {
-  let draining = false;
-  let pendingMessages: string[] = [];
-
-  return {
-    write: message => {
-      if (draining || !writer.write(message)) {
-        pendingMessages.push(message);
-      }
-      return true;
-    },
-    drain: () => {
-      draining = true;
-      try {
-        for (let i = 0; i < pendingMessages.length; i++) {
-          if (!writer.write(pendingMessages[i])) {
-            pendingMessages = pendingMessages.slice(i);
-            return;
-          }
-        }
-        pendingMessages.length = 0;
-      } finally {
-        draining = false;
-      }
-    },
-    close: () => {
-      writer.close();
-      pendingMessages.length = 0;
-    },
-  };
-}
+// How long a dismissed frontend has to read what was sent to it. A process with nothing else to do stays alive for it.
+const dismissTimeoutMs = 30_000;
+const dismissPing = "bun:dismissed";
 
 const defaultHostname = "localhost";
 const defaultPort = 6499;
@@ -941,14 +953,10 @@ type ConnectionOwner = {
 
 type Connection = {
   refEventLoop: boolean;
-  client?: Writer;
   backend?: Backend;
   // Present for node:inspector connections, which speak the V8 protocol.
   adapter?: InspectorCDPAdapter;
-};
-
-type Writer = {
-  write: (message: string) => boolean;
-  drain?: () => void;
-  close: () => void;
+  // The reason for the close frame, once the backend dismissed this frontend.
+  dismissed?: string;
+  dismissTimer?: ReturnType<typeof setTimeout>;
 };

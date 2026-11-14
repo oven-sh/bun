@@ -2,6 +2,14 @@ import { expectType } from "./utilities";
 
 expectType(Bun.redis.publish("hello", "world")).is<Promise<number>>();
 
+// The constructor takes the URL as a string or as a `URL` object.
+expectType(new Bun.RedisClient("redis://localhost:6379")).is<Bun.RedisClient>();
+expectType(new Bun.RedisClient(new URL("redis://localhost:6379"))).is<Bun.RedisClient>();
+expectType(new Bun.RedisClient(new URL("rediss://localhost:6380/2"), { maxRetries: 5 })).is<Bun.RedisClient>();
+expectType(new Bun.RedisClient(undefined, { autoReconnect: false })).is<Bun.RedisClient>();
+// @ts-expect-error - a number is not a URL
+new Bun.RedisClient(6379);
+
 const copy = await Bun.redis.duplicate();
 expectType(copy.connected).is<boolean>();
 expectType(copy).is<Bun.RedisClient>();

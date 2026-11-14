@@ -7428,6 +7428,47 @@ describe("RedisClient URL parsing", () => {
     }
   });
 
+  test("a client built from a URL object connects as one built from its href", async () => {
+    // The socket plays the server. No argument of these commands holds a line break, so a command is its lines.
+    const replies: Record<string, string> = { HELLO: "%1\r\n$5\r\nproto\r\n:3\r\n", PING: "+PONG\r\n" };
+    const connections: string[][][] = [];
+    using server = Bun.listen<{ text: string; commands: string[][] }>({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.data = { text: "", commands: [] };
+          connections.push(socket.data.commands);
+        },
+        data(socket, chunk) {
+          const state = socket.data;
+          state.text += chunk.toString("latin1");
+          while (true) {
+            const lines = state.text.split("\r\n");
+            const end = 1 + 2 * Number(lines[0].slice(1));
+            if (!lines[0].startsWith("*") || lines.length <= end) return;
+            const command = lines.slice(1, end).filter((_, i) => i % 2 === 1);
+            state.commands.push(command);
+            state.text = lines.slice(end).join("\r\n");
+            socket.write(replies[command[0]] ?? "+OK\r\n");
+          }
+        },
+      },
+    });
+
+    const url = new URL(`redis://user:pass@127.0.0.1:${server.port}/5`);
+    for (const target of [url, url.href]) {
+      const client = new RedisClient(target, { autoReconnect: false });
+      try {
+        expect(await client.ping()).toBe("PONG");
+      } finally {
+        client.close();
+      }
+    }
+    const handshake = [["HELLO", "3", "AUTH", "user", "pass"], ["SELECT", "5"], ["PING"]];
+    expect(connections).toEqual([handshake, handshake]);
+  });
+
   test("unix socket path is not treated as a database number", () => {
     const client = new RedisClient("redis+unix:///tmp/not-a-real-redis.sock");
     try {

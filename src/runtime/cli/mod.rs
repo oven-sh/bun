@@ -647,26 +647,21 @@ pub(crate) mod command {
     // `bun_clap::streaming::WARN_ON_UNRECOGNIZED_FLAG` so node-mode argv parsing
     // stays silent on unknown flags.
     // ──────────────────
+    /// The file name of argv[0] is `name`, ignoring ASCII case and a trailing `.exe` on Windows.
+    fn invoked_as(argv0: &[u8], name: &[u8]) -> bool {
+        let mut file_name = strings::basename(argv0);
+        if cfg!(windows) && strings::ends_with_case_insensitive_ascii(file_name, b".exe") {
+            file_name = &file_name[..file_name.len() - b".exe".len()];
+        }
+        file_name.eq_ignore_ascii_case(name)
+    }
+
     fn is_bun_x(argv0: &[u8]) -> bool {
-        #[cfg(windows)]
-        {
-            return strings::ends_with(argv0, b"bunx.exe") || strings::ends_with(argv0, b"bunx");
-        }
-        #[cfg(not(windows))]
-        {
-            strings::ends_with(argv0, b"bunx")
-        }
+        invoked_as(argv0, b"bunx")
     }
 
     fn is_node(argv0: &[u8]) -> bool {
-        #[cfg(windows)]
-        {
-            return strings::ends_with(argv0, b"node.exe") || strings::ends_with(argv0, b"node");
-        }
-        #[cfg(not(windows))]
-        {
-            strings::ends_with(argv0, b"node")
-        }
+        invoked_as(argv0, b"node")
     }
 
     /// Cheap argv prescan for the dominant `bun <path>` / `bun .` shape.

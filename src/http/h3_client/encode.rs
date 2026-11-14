@@ -207,6 +207,7 @@ pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
     }
     stream.pending_body = remaining;
     if remaining.is_empty() {
+        stream.pending_body = bun_ptr::RawSlice::EMPTY;
         stream.request_body_done = true;
         qs.shutdown();
         client.state.request_stage = HTTPStage::Done;

@@ -619,6 +619,314 @@ describe("fs.watch", () => {
     ]);
   });
 
+  test.skipIf(!isWindows).each([false, true])(
+    "the end of a watched directory is one 'rename', ENOENT and 'close' (recursive: %p)",
+    async recursive => {
+      using dir = tempDir("watch-deleted-directory", { "watched": {} });
+      const watched = path.join(String(dir), "watched");
+      const events: unknown[] = [];
+      const closed = Promise.withResolvers<void>();
+      const watcher = fs.watch(watched, { recursive }, (event, filename) => events.push([event, filename]));
+      watcher.on("error", (error: NodeJS.ErrnoException) => events.push([error.code, error.syscall]));
+      watcher.on("close", () => closed.resolve());
+      try {
+        fs.rmdirSync(watched);
+        await closed.promise;
+        expect(events).toEqual([
+          ["rename", watched],
+          ["ENOENT", "watch"],
+        ]);
+        // The watcher holds on to nothing of the directory.
+        fs.mkdirSync(watched);
+      } finally {
+        watcher.close();
+      }
+    },
+  );
+
+  // https://github.com/oven-sh/bun/issues/47068
+  test.skipIf(!isWindows).each([false, true])(
+    "a watched directory that is removed with its contents can be made and watched again (recursive: %p)",
+    async recursive => {
+      using dir = tempDir("watch-deleted-tree", { "watched": { "inner": { "a.md": "x" } } });
+      const watched = path.join(String(dir), "watched");
+      const events: unknown[][] = [];
+      const closed = Promise.withResolvers<void>();
+      const seenByNewWatch = Promise.withResolvers<[string, string | null]>();
+      let again: FSWatcher | undefined;
+      const watcher = fs.watch(watched, { recursive }, (event, filename) => events.push([event, filename]));
+      watcher.on("error", (error: NodeJS.ErrnoException) => {
+        events.push([error.code, error.syscall]);
+        try {
+          fs.mkdirSync(watched);
+          again = fs.watch(watched, { recursive }, (...event) => seenByNewWatch.resolve(event));
+          again.on("error", seenByNewWatch.reject);
+          fs.writeFileSync(path.join(watched, "created-after.txt"), "");
+        } catch (error) {
+          seenByNewWatch.reject(error);
+        }
+      });
+      watcher.on("close", () => closed.resolve());
+      try {
+        fs.rmSync(watched, { recursive: true, force: true });
+        await closed.promise;
+        // The entries are reported first. The directory itself is reported once, and that ends the watch.
+        expect(events.filter(([, filename]) => filename === watched)).toEqual([["rename", watched]]);
+        expect(events.slice(-2)).toEqual([
+          ["rename", watched],
+          ["ENOENT", "watch"],
+        ]);
+        expect(await seenByNewWatch.promise).toEqual(["rename", "created-after.txt"]);
+      } finally {
+        again?.close();
+        watcher.close();
+      }
+    },
+  );
+
+  const twoWatchers: [string, fs.WatchOptions[]][] = [
+    ["both flat", [{}, {}]],
+    ["a flat and a recursive one", [{}, { recursive: true }]],
+    ["one with names as strings and one as buffers", [{}, { encoding: "buffer" }]],
+  ];
+  test.skipIf(!isWindows).each(twoWatchers)(
+    "two watchers of one directory each get the end of it, %s",
+    async (_, options) => {
+      using dir = tempDir("watch-deleted-twice", { "watched": {} });
+      const watched = path.join(String(dir), "watched");
+      const watches = options.map(option => {
+        const events: unknown[] = [];
+        const closed = Promise.withResolvers<void>();
+        const watcher = fs.watch(watched, option, (event, filename) =>
+          events.push([event, Buffer.isBuffer(filename) ? ["buffer", filename.toString()] : filename]),
+        );
+        watcher.on("error", (error: NodeJS.ErrnoException) => events.push([error.code, error.syscall]));
+        watcher.on("close", () => closed.resolve());
+        return { events, closed: closed.promise, watcher };
+      });
+      try {
+        fs.rmdirSync(watched);
+        await Promise.all(watches.map(watch => watch.closed));
+        expect(watches.map(watch => watch.events)).toEqual(
+          options.map(option => [
+            ["rename", option.encoding === "buffer" ? ["buffer", watched] : watched],
+            ["ENOENT", "watch"],
+          ]),
+        );
+      } finally {
+        for (const { watcher } of watches) watcher.close();
+      }
+    },
+  );
+
+  test.skipIf(!isWindows)("a program with no 'error' listener ends when its watched directory is removed", async () => {
+    using dir = tempDir("watch-deleted-unhandled", { "watched": {} });
+    const watched = path.join(String(dir), "watched");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const fs = require("node:fs");
+        const watched = process.argv[1];
+        fs.watch(watched, (event, filename) => console.log(event, filename === watched));
+        fs.rmdirSync(watched);
+        `,
+        watched,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("rename true\n");
+    expect(stderr).toContain("ENOENT");
+    expect(exitCode).toBe(1);
+  });
+
+  // libuv reports the entries of such a path as "\name", which is no report about the directory itself.
+  test.skipIf(!isWindows).each([false, true])(
+    "a watch path that ends in a separator ends with the directory only (recursive: %p)",
+    async recursive => {
+      using dir = tempDir("watch-trailing-separator", { "watched": {} });
+      const watched = path.join(String(dir), "watched");
+      const renames: string[] = [];
+      const errors: unknown[] = [];
+      const closed = Promise.withResolvers<void>();
+      // Each step runs once the one before it was reported.
+      const steps = [
+        () => fs.writeFileSync(path.join(watched, "second.txt"), "2"),
+        () => fs.unlinkSync(path.join(watched, "first.txt")),
+        () => fs.unlinkSync(path.join(watched, "second.txt")),
+        () => fs.rmdirSync(watched),
+      ];
+      const watcher = fs.watch(watched + path.sep, { recursive }, (event, filename) => {
+        if (event !== "rename") return;
+        renames.push(path.basename(`${filename}`));
+        try {
+          steps[renames.length - 1]?.();
+        } catch (error) {
+          closed.reject(error);
+        }
+      });
+      watcher.on("error", (error: NodeJS.ErrnoException) => errors.push(error.code));
+      watcher.on("close", () => closed.resolve());
+      try {
+        fs.writeFileSync(path.join(watched, "first.txt"), "1");
+        await closed.promise;
+        expect(renames).toEqual(["first.txt", "second.txt", "first.txt", "second.txt", "watched"]);
+        expect(errors).toEqual(["ENOENT"]);
+      } finally {
+        watcher.close();
+      }
+    },
+  );
+
+  // A change of a stream of a file can be reported as "a:stream", which starts like a drive.
+  test.skipIf(!isWindows)("a write to a stream of a file with a one-letter name does not end the watch", async () => {
+    using dir = tempDir("watch-stream", { "a": "" });
+    const names: string[] = [];
+    const errors: unknown[] = [];
+    const done = Promise.withResolvers<void>();
+    const watcher = fs.watch(String(dir), (_, filename) => {
+      names.push(`${filename}`);
+      if (filename === "last.txt") done.resolve();
+    });
+    watcher.on("error", (error: NodeJS.ErrnoException) => {
+      errors.push(error.code);
+      done.resolve();
+    });
+    try {
+      fs.writeFileSync(path.join(String(dir), "a:stream"), "x");
+      expect(fs.readFileSync(path.join(String(dir), "a:stream"), "utf8")).toBe("x");
+      fs.writeFileSync(path.join(String(dir), "last.txt"), "x");
+      await done.promise;
+      expect(errors).toEqual([]);
+      expect(names).toContain("last.txt");
+    } finally {
+      watcher.close();
+    }
+  });
+
+  // https://github.com/oven-sh/bun/issues/47263
+  test.skipIf(!isWindows).each([
+    ["the flat one first", [false, true]],
+    ["the recursive one first", [true, false]],
+  ])("a flat and a recursive watcher of one directory each get their own events, %s", async (_, order) => {
+    using dir = tempDir("watch-flat-and-recursive", { "nested": {} });
+    const watches = order.map(recursive => {
+      const names: string[] = [];
+      const sawLast = Promise.withResolvers<void>();
+      const watcher = fs.watch(String(dir), { recursive }, (_, filename) => {
+        names.push(`${filename}`);
+        if (filename === "last.txt") sawLast.resolve();
+      });
+      watcher.on("error", sawLast.reject);
+      return { recursive, names, sawLast: sawLast.promise, watcher };
+    });
+    try {
+      fs.writeFileSync(path.join(String(dir), "nested", "file.txt"), "x");
+      fs.writeFileSync(path.join(String(dir), "last.txt"), "x");
+      await Promise.all(watches.map(watch => watch.sawLast));
+      expect(watches.map(({ recursive, names }) => [recursive, names.includes("nested\\file.txt")])).toEqual(
+        order.map(recursive => [recursive, recursive]),
+      );
+    } finally {
+      for (const { watcher } of watches) watcher.close();
+    }
+  });
+
+  test.skipIf(!isWindows)("a directory that takes the name of a renamed one gets its own watcher", async () => {
+    using dir = tempDir("watch-renamed", { "a": {} });
+    const [a, b] = ["a", "b"].map(name => path.join(String(dir), name));
+    const watch = (target: string) => {
+      const names = new Set<string>();
+      const sawOne = Promise.withResolvers<void>();
+      const watcher = fs.watch(target, (_, filename) => {
+        names.add(`${filename}`);
+        sawOne.resolve();
+      });
+      watcher.on("error", sawOne.reject);
+      return { names, sawOne: sawOne.promise, watcher };
+    };
+    const watches = [watch(a)];
+    try {
+      fs.renameSync(a, b);
+      fs.mkdirSync(a);
+      watches.push(watch(a));
+      fs.writeFileSync(path.join(b, "in-b.txt"), "");
+      fs.writeFileSync(path.join(a, "in-a.txt"), "");
+      await Promise.all(watches.map(watch => watch.sawOne));
+      // The first one stays with its directory.
+      expect(watches.map(watch => [...watch.names])).toEqual([["in-b.txt"], ["in-a.txt"]]);
+    } finally {
+      for (const { watcher } of watches) watcher.close();
+    }
+  });
+
+  test.skipIf(!isWindows).each(["directory", "file"])(
+    "a %s by the name of a deleted one gets a watcher of its own",
+    async kind => {
+      using dir = tempDir("watch-recreated", {});
+      const directory = path.join(String(dir), "d");
+      const file = path.join(directory, "file");
+      const watched = kind === "file" ? file : directory;
+      const create = () => (fs.mkdirSync(directory), fs.writeFileSync(file, ""));
+      create();
+      const first = fs.watch(watched, () => {});
+      first.on("error", () => {});
+      fs.rmSync(directory, { recursive: true });
+      create();
+      const second = fs.watch(watched);
+      try {
+        const outcome = await new Promise(done => {
+          second.on("error", (error: NodeJS.ErrnoException) => done(error.code));
+          second.on("change", (event, filename) => done(event + " " + filename));
+          fs.writeFileSync(file, "changed");
+        });
+        expect(outcome).toBe("change file");
+      } finally {
+        first.close();
+        second.close();
+      }
+    },
+  );
+
+  // A watched file's directory being removed reaches libuv as a failed
+  // ReadDirectoryChangesW: the watcher gets 'error' and closes. A watch of the
+  // path from inside the 'error' listener is a new one.
+  test.skipIf(!isWindows)("after a watched file's directory is removed, the file can be watched again", async () => {
+    using dir = tempDir("watch-file-parent-removed", { "parent": { "watched.txt": "1" } });
+    const parent = path.join(String(dir), "parent");
+    const target = path.join(parent, "watched.txt");
+    const events: unknown[][] = [];
+    const seenByNewWatch = Promise.withResolvers<[string, string | null]>();
+    let again: FSWatcher | undefined;
+    const watcher = fs.watch(target, (eventType, filename) => events.push([eventType, filename]));
+    watcher.on("error", (err: NodeJS.ErrnoException) => {
+      events.push(["error", err.code]);
+      try {
+        fs.mkdirSync(parent);
+        fs.writeFileSync(target, "2");
+        again = fs.watch(target, (...event) => seenByNewWatch.resolve(event));
+        again.once("error", seenByNewWatch.reject);
+        fs.appendFileSync(target, "3");
+      } catch (err) {
+        seenByNewWatch.reject(err);
+      }
+    });
+    watcher.on("close", () => events.push(["close"]));
+    try {
+      fs.rmSync(parent, { recursive: true });
+      expect(await seenByNewWatch.promise).toEqual(["change", "watched.txt"]);
+      // The file's own removal is reported first; what follows it is fixed.
+      expect(events.slice(-2)).toEqual([["error", "EPERM"], ["close"]]);
+    } finally {
+      again?.close();
+      watcher.close();
+    }
+  });
+
   // Past fs.inotify.max_queued_events the kernel drops events and queues one
   // IN_Q_OVERFLOW; Bun reports it as ('change', null) on every watcher sharing
   // the inotify fd, the same shape node uses for overflow on Windows.

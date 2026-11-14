@@ -585,7 +585,7 @@ impl<'a> Run<'a> {
     ) -> Result<Expr, MacroError> {
         let _ = macro_.vm();
         let vm = VirtualMachine::get();
-        let Some(&macro_callback) = vm.macros.get().get(&id) else {
+        let Some(macro_callback) = vm.macros.get().get(&id).map(jsc::Strong::get) else {
             return Ok(caller);
         };
 

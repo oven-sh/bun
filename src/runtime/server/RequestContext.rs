@@ -2955,7 +2955,6 @@ where
                             ),
                             ..Default::default()
                         };
-                        stream.value.unprotect();
                         let js_err = err.to_error_instance(global_this);
                         this.run_error_handler(js_err);
                         return;

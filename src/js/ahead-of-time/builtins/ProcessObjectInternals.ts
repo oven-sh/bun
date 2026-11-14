@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ProcessObjectInternals.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 34b28730976f3729b1f08385ac19a7f622a31d5c76459e81ae77e00f2e40eba8.
+// Written against that file with the SHA-256 090da988dcfd38c1affb5cbeca7ab507bd086743eb868167cab0d60f2adb9b38.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /*
@@ -159,6 +159,9 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
     source.updateRef(forceUnref ? false : true);
     source?.setFlowing?.(true);
 
+    // Node hands stdin each read in a callback of its own. While this stream holds the reader, no pull reads fd 0
+    // inside the call: a chunk that a pull answers at once is pushed ahead of the nextTicks of the chunk before.
+    source?.setPollOnly?.(true);
     if (needsInternalReadRefresh) {
       needsInternalReadRefresh = false;
       internalRead(stream);
@@ -170,6 +173,8 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
     source?.setFlowing?.(false);
 
     if (reader) {
+      // The next reader of Bun.stdin.stream() is not this stream.
+      source?.setPollOnly?.(false);
       // releaseLock() rejects any in-flight internalRead() with a TypeError; that
       // rejection is handled there by observing that `reader` was cleared here.
       reader.releaseLock();

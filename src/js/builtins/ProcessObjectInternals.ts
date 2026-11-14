@@ -140,6 +140,9 @@ export function getStdinStream(
     source.updateRef(forceUnref ? false : true);
     source?.setFlowing?.(true);
 
+    // Node hands stdin each read in a callback of its own. While this stream holds the reader, no pull reads fd 0
+    // inside the call: a chunk that a pull answers at once is pushed ahead of the nextTicks of the chunk before.
+    source?.setPollOnly?.(true);
     if (needsInternalReadRefresh) {
       needsInternalReadRefresh = false;
       internalRead(stream);
@@ -151,6 +154,8 @@ export function getStdinStream(
     source?.setFlowing?.(false);
 
     if (reader) {
+      // The next reader of Bun.stdin.stream() is not this stream.
+      source?.setPollOnly?.(false);
       // releaseLock() rejects any in-flight internalRead() with a TypeError; that
       // rejection is handled there by observing that `reader` was cleared here.
       reader.releaseLock();

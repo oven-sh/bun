@@ -1568,9 +1568,10 @@ impl Tree {
                         continue 'dep;
                     }
                 } else if pkg_resolutions[pkg_id as usize].tag == crate::resolution::Tag::Folder {
-                    // A peer an ancestor edge already provides dedupes instead of nesting
-                    // a second copy of the folder.
-                    if dependency.behavior.is_peer()
+                    // A peer, or a range bound to a folder of the project, that an ancestor edge
+                    // already provides dedupes instead of nesting a second copy of the folder.
+                    if (dependency.behavior.is_peer()
+                        || dependency.version.tag == crate::dependency::VersionTag::Npm)
                         && let provided @ (HoistDependencyResult::Hoisted
                         | HoistDependencyResult::Served(_)) = hoist(hoist_root_id, &mut *builder)
                     {

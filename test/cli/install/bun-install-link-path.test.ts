@@ -307,7 +307,9 @@ describe.each(["hoisted", "isolated"])("link:<path> (%s)", linker => {
     // The link has no dependencies of its own, and the copy keeps them.
     const lock = await lockText(root);
     expect(lock).toContain(`"dual": ["dual@link:./vendor/dual", {}]`);
-    expect(lock).toContain(`["dual@file:vendor/dual", { "dependencies": { "leaf": "file:../leaf" } }]`);
+    expect(lock).toContain(
+      `["dual@file:vendor/dual", { "version": "1.0.0", "dependencies": { "leaf": "file:../leaf" } }]`,
+    );
     expectLinkTo(join(root, "project", "node_modules", "dual"), join(root, "project", "vendor", "dual"));
     expect(exitCode).toBe(0);
   });

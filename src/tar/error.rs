@@ -58,6 +58,8 @@ pub enum Error {
     Ambiguous,
     #[error("Oversized AppleDouble extension")]
     OversizedMacMetadata,
+    #[error("A directory cannot have contents")]
+    DirectoryWithContents,
     #[error("Input requires too many filters for decoding")]
     TooManyLayers,
     #[error("truncated gzip input")]

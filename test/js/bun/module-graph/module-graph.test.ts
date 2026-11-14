@@ -1212,6 +1212,19 @@ describe("Bun.ModuleGraph — error attribution matrix", () => {
       plain: false,
     });
   });
+  test("a first import() with a query that the URL serializer encodes is main: import.meta.main compares the key as the URL it was made into", async () => {
+    using d = tempDir("module-graph-main-encoded-query", {
+      "m.mjs": `export const main = import.meta.main; export const url = import.meta.url;`,
+    });
+    const file = join(String(d), "m.mjs");
+    const href = Bun.pathToFileURL(file).href;
+    const space = await new ModuleGraphClass().import(file + "?tenant=a b");
+    const accent = await new ModuleGraphClass().import(file + "?name=\u00e9");
+    expect({ space: [space.main, space.url], accent: [accent.main, accent.url] }).toEqual({
+      space: [true, href + "?tenant=a%20b"],
+      accent: [true, href + "?name=%C3%A9"],
+    });
+  });
   test("the first import() is main from the moment it is requested: a second one in the same tick, and evicting main from require.cache, do not change it", async () => {
     using d = tempDir("module-graph-main-first", {
       "a.mjs": `export const main = import.meta.main;`,

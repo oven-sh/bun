@@ -98,18 +98,20 @@ ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, JS
     return ImportMetaObject::createFromSpecifier(globalObject, specifier);
 }
 
-ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier)
+String ImportMetaObject::urlForSpecifier(const String& specifier)
 {
     auto index = specifier.find('?');
-    URL url;
-    if (index != notFound) {
-        StringView view = specifier;
-        url = URL::fileURLWithFileSystemPath(view.substring(0, index));
-        url.setQuery(view.substring(index + 1));
-    } else {
-        url = URL::fileURLWithFileSystemPath(specifier);
-    }
-    return create(globalObject, url.string());
+    if (index == notFound)
+        return URL::fileURLWithFileSystemPath(specifier).string();
+    StringView view = specifier;
+    URL url = URL::fileURLWithFileSystemPath(view.substring(0, index));
+    url.setQuery(view.substring(index + 1));
+    return url.string();
+}
+
+ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier)
+{
+    return create(globalObject, urlForSpecifier(specifier));
 }
 
 extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
@@ -667,17 +669,10 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
         JSValue mainPath = graph->mainPath();
         if (!mainPath.isString())
             return JSValue::encode(jsBoolean(false));
-        // The graph's main is a registry key: the path, and the query if there is one.
-        WTF::URL url(thisObject->url);
+        // The graph's main is a registry key: the path, and the query if there is one. This object was made from that key.
         auto mainKey = asString(mainPath)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-#if OS(WINDOWS)
-        if (Bun::hasCompiledModules()) [[unlikely]] {
-            auto key = makeString(url.fileSystemPath(), url.queryWithLeadingQuestionMark());
-            return JSValue::encode(jsBoolean(url.protocolIsFile() && makeStringByReplacingAll(mainKey.data, '/', '\\') == makeStringByReplacingAll(key, '/', '\\')));
-        }
-#endif
-        return JSValue::encode(jsBoolean(url.protocolIsFile() && mainKey.data == makeString(url.fileSystemPath(), url.queryWithLeadingQuestionMark())));
+        return JSValue::encode(jsBoolean(ImportMetaObject::urlForSpecifier(mainKey.data) == thisObject->url));
     }
 
     // In an executable, `require.main === module` in a CommonJS file reads this property, and the file that a Worker starts with is the main module of its thread.
@@ -688,14 +683,16 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
     JSValue path = thisObject->pathProperty.getInitializedOnMainThread(thisObject);
     bool isMain = JSValue::strictEqual(globalObject, path, bunMain);
     RETURN_IF_EXCEPTION(scope, {});
-    // The name of a text that a Worker starts from is no path. createFromSpecifier() makes a path of it for this object.
-    if (!isMain && Bun::hasCompiledModules() && bunMain.isString()) [[unlikely]] {
+    // `Bun.main` is a module key. This object's url came from its own key, so compare in that form.
+    if (!isMain && bunMain.isString()) {
         auto name = asString(bunMain)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        isMain = URL::fileURLWithFileSystemPath(name.data).string() == thisObject->url;
+        isMain = ImportMetaObject::urlForSpecifier(name.data) == thisObject->url;
         // `Bun.main = require.resolve("./other.cjs")` stores where the file lay when the program was built.
-        if (String known = isMain ? String() : Bun::pathInExecutable(name.data); !known.isNull())
-            isMain = URL::fileURLWithFileSystemPath(known).string() == thisObject->url;
+        if (!isMain && Bun::hasCompiledModules()) [[unlikely]] {
+            if (String known = Bun::pathInExecutable(name.data); !known.isNull())
+                isMain = ImportMetaObject::urlForSpecifier(known) == thisObject->url;
+        }
     }
 
     return JSValue::encode(jsBoolean(isMain));

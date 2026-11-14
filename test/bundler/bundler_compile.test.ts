@@ -1354,6 +1354,45 @@ describe("bundler", () => {
     },
     run: { stdout: new Array(7).fill("true").join("\n") },
   });
+  // The bundler folds a direct `import.meta.main` read in the entry point. Every other read reaches the runtime
+  // getter, which compares the module against `Bun.main`. In the executable on Windows, `Bun.main` is
+  // `B:/~BUN/root/x` and `import.meta.path` is `B:\~BUN\root\x`. https://github.com/oven-sh/bun/issues/48689
+  itBundled("compile/ImportMetaMainRuntimeGetter", {
+    compile: true,
+    backend: "cli",
+    files: {
+      "/entry.ts": /* js */ `
+        const meta = import.meta;
+        const { main } = import.meta;
+        console.log(meta.main, main, import.meta?.main, Reflect.get(import.meta, "main"));
+      `,
+    },
+    run: { stdout: "true true true true" },
+  });
+  // The same mismatch on every platform: the runtime reads a `?` in the key as a query, so `import.meta.path`
+  // ends before it and `Bun.main` keeps it. A `?` is not a valid character of a file name on Windows.
+  test.skipIf(isWindows)("compile/ImportMetaMainRuntimeGetterQuestionMarkName", async () => {
+    using dir = tempDir("compile-import-meta-main-question-mark", {
+      "entry.ts": `const meta = import.meta; console.log(meta.main, meta.path === Bun.main);`,
+    });
+    const outfile = join(String(dir), "my?app");
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", "./entry.ts", "--outfile", outfile],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+    await using proc = Bun.spawn({ cmd: [outfile], env: bunEnv, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("true false\n");
+    expect(exitCode).toBe(0);
+  });
   itBundled("compile/SourceMap", {
     target: "bun",
     compile: true,

@@ -2594,12 +2594,8 @@ pub(crate) struct ThreadSafeFunction {
     // for std.condvar
     pub(crate) lock: Mutex,
 
-    // Note: BackRef — `enqueue_task`/`drain_microtasks` need `&mut
-    // EventLoop`; reborrowed at use sites (single JS thread). `None` once the
-    // owning env is torn down: the loop lives inside a VirtualMachine that a
-    // worker's shutdown frees, while addon threads outlive it.
     /// JS-thread uses; `None` once the env has been torn down.
-    pub(crate) event_loop: Option<bun_ptr::BackRef<EventLoop, bun_ptr::Mut>>,
+    pub(crate) event_loop: Option<bun_ptr::BackRef<EventLoop>>,
     /// How addon threads (`napi_call_threadsafe_function`) schedule a
     /// dispatch on the VM. Weak: addon threads hold this function for as long
     /// as they like (Node: calls after env cleanup get `napi_closing`), so it
@@ -2794,19 +2790,6 @@ impl ThreadSafeFunction {
         self.closing.load(Ordering::SeqCst) != ClosingState::NotClosing as u8
     }
 
-    /// The creating VM's event loop, or `None` once its env has been torn down.
-    ///
-    /// JS-thread only. Its callers (`call`, `maybe_queue_finalizer`) run from
-    /// the loop's own dispatch, so no other `&mut EventLoop` is live. Paths
-    /// reachable from an addon thread must use the shared `&EventLoop` that
-    /// `BackRef` derefs to, never this.
-    #[inline]
-    fn loop_mut(&mut self) -> Option<&mut EventLoop> {
-        let back_ref = self.event_loop.as_mut()?;
-        // SAFETY: BackRef invariant while `Some`; JS thread, outside tick().
-        Some(unsafe { back_ref.get_mut() })
-    }
-
     fn maybe_queue_finalizer(&mut self) {
         let prev = self
             .closing
@@ -2819,7 +2802,7 @@ impl ThreadSafeFunction {
                     self.callback = TsfnCallback::Js(StrongOptional::empty());
                     self.poll_ref.disable();
                     let self_ptr: *mut Self = self;
-                    let Some(loop_) = self.loop_mut() else {
+                    let Some(loop_) = self.event_loop else {
                         // env torn down: `env_teardown` owns the finalize + free.
                         return;
                     };
@@ -2887,7 +2870,7 @@ impl ThreadSafeFunction {
             break 'brk t;
         };
 
-        let called = match self.loop_mut() {
+        let called = match self.event_loop {
             Some(loop_) if !is_first => loop_.drain_microtasks(),
             _ => Ok(()),
         }
@@ -3381,9 +3364,8 @@ extern "C" fn napi_create_threadsafe_function(
     };
 
     let function = ThreadSafeFunction::new(ThreadSafeFunction {
-        // SAFETY: the loop is live now; `NapiEnv::cleanup()` clears this field
-        // (via `env_teardown`) before the VirtualMachine holding it is freed.
-        event_loop: Some(unsafe { bun_ptr::BackRef::from_raw_mut(vm.event_loop()) }),
+        // `env_teardown` clears this before the VirtualMachine holding the loop is freed.
+        event_loop: Some(bun_ptr::BackRef::new(vm.event_loop())),
         handle: vm.handle(),
         loop_kind: vm.current_loop_kind(),
         // SAFETY: env is a live C++-owned napi_env.
@@ -3491,7 +3473,7 @@ extern "C" fn napi_unref_threadsafe_function(
         // SAFETY: `func` was null-checked above; JS thread, shared read.
         let loop_ = unsafe { (*func).event_loop.as_ref() };
         if let (Some(loop_), Some(env)) = (loop_, env_) {
-            debug_assert!(core::ptr::eq(loop_.global.unwrap().as_ptr(), env.to_js()));
+            debug_assert!(core::ptr::eq(loop_.global_ref(), env.to_js()));
         }
     }
     #[cfg(not(debug_assertions))]
@@ -3515,7 +3497,7 @@ extern "C" fn napi_ref_threadsafe_function(
         // SAFETY: `func` was null-checked above; JS thread, shared read.
         let loop_ = unsafe { (*func).event_loop.as_ref() };
         if let (Some(loop_), Some(env)) = (loop_, env_) {
-            debug_assert!(core::ptr::eq(loop_.global.unwrap().as_ptr(), env.to_js()));
+            debug_assert!(core::ptr::eq(loop_.global_ref(), env.to_js()));
         }
     }
     #[cfg(not(debug_assertions))]
@@ -5488,7 +5470,7 @@ impl NapiFinalizerTask {
             );
         } else {
             let this = bun_core::heap::into_raw(self);
-            vm.event_loop_ref().enqueue_task(Task::init(this));
+            vm.event_loop().enqueue_task(Task::init(this));
         }
     }
 

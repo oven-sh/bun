@@ -632,7 +632,7 @@ impl MultiPartUpload {
     pub(crate) fn fail_writer_collected(&self) {
         self.ref_();
         self.vm
-            .event_loop_ref()
+            .event_loop()
             .enqueue_task(bun_event_loop::Task::init(
                 self.root_ptr().cast::<WriterCollected>(),
             ));

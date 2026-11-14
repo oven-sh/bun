@@ -267,12 +267,12 @@ impl RuntimeTranspilerStore {
     /// folded here and the drain goes on; the VM's termination ends it, with
     /// the rest of the batch back on the queue (each still has its own posted
     /// task, or the teardown release, to pick it up).
-    // Note: takes `NonNull` rather than `&mut` for `event_loop`/`vm`
+    // Note: takes `NonNull` rather than `&mut` for `vm`
     // because `&mut self` already aliases `vm.transpiler_store` (this `Self` is
     // a field of `VirtualMachine`). Field-level derefs only.
     pub fn run_from_js_thread(
         &mut self,
-        event_loop: NonNull<EventLoop>,
+        event_loop: &EventLoop,
         global: &JSGlobalObject,
         vm: NonNull<VirtualMachine>,
     ) {
@@ -285,9 +285,7 @@ impl RuntimeTranspilerStore {
         while !job.is_null() {
             if !first {
                 // if there are more, we need to drain the microtasks from the previous run
-                // SAFETY: `event_loop` is the VM's live event-loop self-pointer.
-                let drained =
-                    unsafe { (*event_loop.as_ptr()).drain_microtasks_with_global(global, jsc_vm) };
+                let drained = event_loop.drain_microtasks_with_global(global, jsc_vm);
                 if drained.is_err() {
                     self.requeue(job, &mut iter);
                     return;

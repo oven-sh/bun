@@ -1112,11 +1112,11 @@ impl<'a> Repl<'a> {
             if SIGINT_DURING_WAIT.swap(false, Ordering::AcqRel) {
                 return true;
             }
-            vm.as_mut().event_loop_mut().tick();
+            vm.event_loop().tick();
             if jsc::JSPromise::opaque_mut(promise).status() == PromiseStatus::Pending
                 && !SIGINT_DURING_WAIT.load(Ordering::Acquire)
             {
-                vm.as_mut().event_loop_mut().auto_tick();
+                vm.event_loop().auto_tick();
             }
         }
         false
@@ -1818,9 +1818,7 @@ impl<'a> Repl<'a> {
             // owning JSC VM handle for this thread.
             jsc::JSPromise::opaque_mut(promise).set_handled();
             // Interrupted (SIGINT forbids execution) ⇒ handled just below.
-            let _ = vm
-                .as_mut()
-                .wait_for_promise(jsc::AnyPromise::Normal(promise));
+            let _ = vm.wait_for_promise(jsc::AnyPromise::Normal(promise));
             let jsc_vm_ref = vm.jsc_vm();
             match jsc::JSPromise::opaque_mut(promise).status() {
                 PromiseStatus::Fulfilled => {

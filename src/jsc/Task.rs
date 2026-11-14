@@ -45,7 +45,7 @@ pub fn report_error_or_terminate(global: &JSGlobalObject, proof: JsError) -> Res
     if vm.is_shutting_down() {
         return Ok(());
     }
-    vm.event_loop_mut().maybe_drain_microtasks()
+    vm.event_loop().maybe_drain_microtasks()
 }
 
 // The full ~96-arm `match` (previously in this file) has been hoisted to

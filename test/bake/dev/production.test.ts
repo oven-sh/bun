@@ -41,6 +41,8 @@ describe("production", () => {
     // Check that the error message shows the proper source location
     expect(buildStderr.toString()).toContain("throw new Error");
     expect(buildStderr.toString()).toContain("oh no!");
+    // The frame names the source file from the working directory of the build.
+    expect(buildStderr.toString()).toContain("(pages/index.tsx:2:");
   });
 
   test("import.meta properties are inlined in production build", async () => {

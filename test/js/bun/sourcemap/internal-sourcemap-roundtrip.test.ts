@@ -612,3 +612,93 @@ test.concurrent("sourcemap sources use forward slashes on every platform", async
   const map = await Bun.file(path.join(String(dir), "out", "in.js.map")).json();
   expect(map.sources).toEqual(["../src/dep.js", "../src/nested/in.js"]);
 });
+
+// Bun resolves a `sources` entry from the directory of the file that it runs.
+// For a chunk below the outdir that is the chunk's directory, not the outdir.
+test.concurrent.each(["external", "linked", "inline"])(
+  "stack trace of a chunk below the outdir names the source file (--sourcemap=%s)",
+  async sourcemap => {
+    using dir = tempDir("sourcemap-nested-chunk-stack", {
+      "src/a/deep/entry.ts": `import { thrower } from "./thrower";\nthrower();\n`,
+      "src/a/deep/thrower.ts": `export function thrower(): never {\n  throw new Error("from thrower");\n}\n`,
+      "src/b/entry.ts": `console.log("b");\n`,
+    });
+    async function run(...cmd: string[]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...cmd],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    const build = await run(
+      "build",
+      `--sourcemap=${sourcemap}`,
+      "--target=bun",
+      "--outdir=out",
+      "src/a/deep/entry.ts",
+      "src/b/entry.ts",
+    );
+    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+
+    const { stderr, exitCode } = await run(path.join("out", "a", "deep", "entry.js"));
+    expect(stderr).toContain(`at thrower (${path.join(String(dir), "src", "a", "deep", "thrower.ts")}:2:`);
+    expect(exitCode).toBe(1);
+  },
+);
+
+describe.concurrent("bun build --sourcemap sources", () => {
+  async function build(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", ...args],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // The map is in dist/js/, two directories below the sources.
+  test("are relative to the directory of the map with a directory in --entry-naming", async () => {
+    using dir = tempDir("sourcemap-sources-entry-naming", {
+      "src/index.ts": `import { dep } from "./lib/dep"; console.log(dep);`,
+      "src/lib/dep.ts": `export const dep = 1;`,
+    });
+    const { stderr, exitCode } = await build(
+      String(dir),
+      "./src/index.ts",
+      "--outdir=dist",
+      "--entry-naming=js/[name].[ext]",
+      "--sourcemap=external",
+    );
+    expect(stderr).toBe("");
+    const map = await Bun.file(path.join(String(dir), "dist", "js", "index.js.map")).json();
+    expect(map.sources).toEqual(["../../src/lib/dep.ts", "../../src/index.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // Without an outdir no file carries the map.
+  test("are relative to the working directory on standard output", async () => {
+    using dir = tempDir("sourcemap-sources-stdout", {
+      "src/index.ts": `console.log("stdout");`,
+    });
+    const { stdout, stderr, exitCode } = await build(
+      String(dir),
+      "./src/index.ts",
+      "--entry-naming=js/[name].[ext]",
+      "--sourcemap=inline",
+    );
+    expect(stderr).toBe("");
+    const inlineMap = "//# sourceMappingURL=data:application/json;base64,";
+    expect(stdout).toContain(inlineMap);
+    const map = JSON.parse(atob(stdout.slice(stdout.indexOf(inlineMap) + inlineMap.length).trim()));
+    expect(map.sources).toEqual(["src/index.ts"]);
+    expect(exitCode).toBe(0);
+  });
+});

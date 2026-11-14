@@ -790,15 +790,11 @@ pub(crate) fn post_process_js_chunk(
             chunk.intermediate_output,
             crate::chunk::IntermediateOutput::Pieces(_)
         );
-        // Copy the `ParentRef` out (not `c.resolver()`) so the arg borrows the
-        // local, not `c`, avoiding the split-borrow with
-        // `c.generate_source_map_for_chunk(&mut self, …)`.
-        let resolver = c.resolver.expect("resolver set in load()");
         chunk.output_source_map = c.generate_source_map_for_chunk(
-            chunk.isolated_hash,
-            worker,
+            chunk,
+            chunk_index,
+            &ctx.chunks,
             &compile_results_for_source_map,
-            &resolver.opts.output_dir,
             can_have_shifts,
         )?;
     }

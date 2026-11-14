@@ -1,8 +1,37 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
+import { readdirSync } from "node:fs";
 import { itBundled } from "./expectBundled";
 
 describe.concurrent("bundler", () => {
   for (const backend of ["api", "cli"] as const) {
+    // A server build writes the script of an imported HTML file as a chunk of
+    // its own. An inline map is in that chunk: its `sources` are relative to
+    // the chunk's directory, not to the HTML file's.
+    itBundled(`html-import/${backend}/SourceMapSourcesOfScriptChunk`, {
+      backend: backend,
+      target: "bun",
+      files: {
+        "/server.ts": `import page from "./pages/index.html";\nconsole.log(typeof page);`,
+        "/pages/index.html": `<!doctype html><html><body><script type="module" src="./client/app.ts"></script></body></html>`,
+        "/pages/client/app.ts": `import { h } from "./h";\nconsole.log(h);`,
+        "/pages/client/h.ts": `export const h = "h";`,
+      },
+      entryPoints: ["/server.ts"],
+      outdir: "/out",
+      sourceMap: "inline",
+      chunkNaming: "assets/js/[name]-[hash].[ext]",
+      onAfterBundle(api) {
+        const [script] = readdirSync(api.outdir + "/assets/js");
+        const [, inlineMap] = api
+          .readFile("/out/assets/js/" + script)
+          .split("//# sourceMappingURL=data:application/json;base64,");
+        expect(JSON.parse(atob(inlineMap.trim())).sources).toEqual([
+          "../../../pages/client/h.ts",
+          "../../../pages/client/app.ts",
+        ]);
+      },
+    });
+
     itBundled(`compile/${backend}/HTMLServerBasic`, {
       compile: true,
       backend: backend,

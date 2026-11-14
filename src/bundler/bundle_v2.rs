@@ -7935,7 +7935,6 @@ pub mod bv2_impl {
         Css {
             result: crate::Result<Box<[u8]>>,
             source_index: IndexInt,
-            source_map: Option<bun_sourcemap::Chunk>,
         },
         Html {
             source_index: IndexInt,
@@ -7984,8 +7983,7 @@ pub mod bv2_impl {
                     bun_js_printer::PrintResult::Result(r) => r.source_map.as_ref(),
                     bun_js_printer::PrintResult::Err(_) => None,
                 },
-                CompileResult::Css { source_map, .. } => source_map.as_ref(),
-                CompileResult::Html { .. } => None,
+                CompileResult::Css { .. } | CompileResult::Html { .. } => None,
             }
         }
     }

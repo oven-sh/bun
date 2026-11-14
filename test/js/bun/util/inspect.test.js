@@ -1635,6 +1635,36 @@ it("expect.objectContaining(fn) prints the function when it has no properties to
   );
 });
 
+it("expect.arrayContaining() prints its sample", () => {
+  expect(Bun.inspect(expect.arrayContaining([1, "a"]))).toBe(`ArrayContaining [ 1, "a" ]`);
+  expect(Bun.inspect(expect.arrayContaining([]))).toBe("ArrayContaining []");
+  expect(Bun.inspect(expect.not.arrayContaining([1]))).toBe("ArrayNotContaining [ 1 ]");
+  expect(Bun.inspect(expect.resolvesTo.arrayContaining([1]))).toBe("promise resolved to ArrayContaining [ 1 ]");
+  expect(Bun.inspect(expect.rejectsTo.not.arrayContaining([1]))).toBe("promise rejected to ArrayNotContaining [ 1 ]");
+  expect(Bun.inspect(expect.arrayContaining([1, [2], { a: 3 }]), { compact: true })).toBe(
+    "ArrayContaining [ 1, [ 2 ], { a: 3 } ]",
+  );
+
+  // Matchers in the sample, and the matcher in the sample of another.
+  expect(Bun.inspect({ list: expect.arrayContaining([expect.any(Number), expect.arrayContaining(["a"])]) })).toBe(
+    `{\n  list: ArrayContaining [\n    Any<Number>, ArrayContaining [ "a" ]\n  ],\n}`,
+  );
+  expect(Bun.inspect(expect.objectContaining({ list: expect.arrayContaining([1]) }))).toBe(
+    "ObjectContaining {\n  list: ArrayContaining [ 1 ],\n}",
+  );
+
+  const sample = [1];
+  const inItsOwnSample = expect.arrayContaining(sample);
+  sample.push(inItsOwnSample);
+  expect(Bun.inspect(inItsOwnSample)).toBe("ArrayContaining [ 1, ArrayContaining [Circular] ]");
+
+  // Past the depth limit the sample is cut as an array is. The name stays.
+  expect(Bun.inspect({ a: expect.arrayContaining([1]) }, { depth: 0 })).toBe("{\n  a: ArrayContaining [Array ...],\n}");
+
+  // As for the other matchers, a property of the matcher object is no part of what it asks for.
+  expect(Bun.inspect(Object.assign(expect.arrayContaining([1]), { extra: true }))).toBe("ArrayContaining [ 1 ]");
+});
+
 describe("compact prints one line", () => {
   it("an array of more than 100 items", () => {
     expect(Bun.inspect(Array(150).fill(0), { compact: true })).toBe(

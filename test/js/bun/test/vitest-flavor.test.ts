@@ -919,7 +919,7 @@ describe.concurrent("each and for", () => {
       `[Error: ${digits(60)}]`,
       "Any<Number>",
       `ObjectContaining { z: 1, a: "s" }`,
-      "ExpectArrayContaining {}",
+      `ArrayContaining [ ${numbers(40)} ]`,
       `{ a: "x" }|{ a: "x" }|{"a":"x"}`,
       `[ "y" ]|[ "y" ]|["y"]`,
       "-0|-0|0|0",

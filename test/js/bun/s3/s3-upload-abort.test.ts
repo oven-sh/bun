@@ -239,3 +239,22 @@ test.concurrent("an upload that rejects because the stream is locked doesn't rea
     exited: 0,
   });
 });
+
+// Signing fails inside the write that fills the first part, which also fills the queue.
+test.concurrent("a request that cannot be signed fails the upload of a fetched body", async () => {
+  const body = `
+    const origin = Bun.serve({ port: 0, fetch: () => new Response(new Uint8Array(partSize + 1024 * 1024)) });
+    const { body } = await fetch(origin.url);
+    const tooLong = Buffer.alloc(2048, "k").toString();
+    const result = await client
+      .write(tooLong, new Response(body), { ...opts, queueSize: 1 })
+      .then(() => "resolved", e => "rejected: " + e.code);
+    origin.stop(true);
+    console.log(result);
+  `;
+  expect(await run({ body, waitFor: `true` })).toEqual({
+    stdout: `rejected: ERR_S3_INVALID_PATH\n{"create":0,"part":0,"complete":0,"abort":0,"put":0}\n`,
+    stderr: "",
+    exited: 0,
+  });
+});

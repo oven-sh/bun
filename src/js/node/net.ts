@@ -1704,15 +1704,16 @@ function Socket(options?): void {
   if (stats !== undefined) {
     // isSocket() covers stdio handed to a child as a socketpair, which is how spawn implements pipes on unix.
     const optionsReadable = opts.readable;
-    // Stdio is only ever written through a socket, as node wraps it; an fd above 2 with `readable: true` is adopted for reading below.
+    // Stdio is only ever written through a socket, as node wraps it, and so is every fd on Windows; an fd above 2
+    // with `readable: true` is adopted for reading below.
     if (
       opts.writable === true &&
-      (optionsReadable !== true || fd <= 2) &&
+      (optionsReadable !== true || fd <= 2 || process.platform === "win32") &&
       (stats.isFIFO() || stats.isCharacterDevice() || stats.isSocket())
     ) {
       fdIsWriteOnly = true;
       // No native reads on this path: an unspecified `readable` gets EOF here (`false` already ended it in the Duplex).
-      if (optionsReadable !== false) {
+      if (optionsReadable !== true && optionsReadable !== false) {
         this.push(null);
         this.read(0);
       }

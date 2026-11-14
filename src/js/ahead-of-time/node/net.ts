@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 5e1947dffd91f5c53fee733bade4ddb04fa8651205ac80e937553f25e6bbf376.
+// Written against that file with the SHA-256 4f6b921c7c559ae41c2af9da7f9e216c2c6d53044aa2d8e6762ffdf64d584296.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -2085,15 +2085,16 @@ function Socket(this: $Node.Socket, options?: $Node.SocketOptions): void {
   if (stats !== undefined) {
     // isSocket() covers stdio handed to a child as a socketpair, which is how spawn implements pipes on unix.
     const optionsReadable = opts.readable;
-    // Stdio is only ever written through a socket, as node wraps it; an fd above 2 with `readable: true` is adopted for reading below.
+    // Stdio is only ever written through a socket, as node wraps it, and so is every fd on Windows; an fd above 2
+    // with `readable: true` is adopted for reading below.
     if (
       opts.writable === true &&
-      (optionsReadable !== true || fd! <= 2) &&
+      (optionsReadable !== true || fd! <= 2 || process.platform === "win32") &&
       (stats.isFIFO() || stats.isCharacterDevice() || stats.isSocket())
     ) {
       fdIsWriteOnly = true;
       // No native reads on this path: an unspecified `readable` gets EOF here (`false` already ended it in the Duplex).
-      if (optionsReadable !== false) {
+      if (optionsReadable !== true && optionsReadable !== false) {
         this.push(null);
         this.read(0);
       }

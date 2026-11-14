@@ -2964,6 +2964,21 @@ describe("Socket fd adoption", () => {
     }
   });
 
+  // shutdown(true) gives up on reads for good, so a shutdown() after it has nothing to wait for.
+  it.skipIf(fifoReadsUnsupported)("Bun.connect({ fd }): shutdown(true) then shutdown() closes the pipe", async () => {
+    const { rfd, wfd } = openFifo("shutdown-read.fifo");
+    try {
+      const closed = Promise.withResolvers<void>();
+      const socket = await Bun.connect({ fd: rfd, socket: { data() {}, close: () => closed.resolve() } });
+      socket.shutdown(true);
+      socket.shutdown();
+      await closed.promise;
+      expect(fstatCode(rfd)).toBe("EBADF");
+    } finally {
+      fs.closeSync(wfd);
+    }
+  });
+
   // Bun.connect's allowHalfOpen: true leaves the socket open after the peer's EOF until it is ended.
   it.skipIf(fifoReadsUnsupported)(
     "Bun.connect({ fd, allowHalfOpen: true }) over a FIFO stays open after EOF",
@@ -3180,7 +3195,10 @@ describe("Socket fd adoption", () => {
           const net = require("node:net");
           const socket = new net.Socket({ fd: 1, readable: true, writable: true });
           socket.on("error", err => console.error(err.code));
-          socket.write("ok", () => process.exit(0));
+          socket.on("close", () => console.error("closed"));
+          socket.write("o");
+          // The readable side never ends on its own: the socket stays writable later.
+          setTimeout(() => socket.write("k", () => process.exit(0)), 20);
         `,
       ],
       env: bunEnv,

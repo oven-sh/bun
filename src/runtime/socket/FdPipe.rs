@@ -402,13 +402,12 @@ impl Transport for FdPipe {
         }
     }
 
+    /// Reads are over for good: no EOF is waited for, so a `shutdown` after this closes the pipe.
     fn shutdown_read(&self) {
         #[cfg(unix)]
-        if let Some(reader) = &self.reader
-            && self.reader_active()
-        {
+        if self.reader_active() {
             self.paused.set(true);
-            reader.with_mut(|r| r.pause());
+            self.release_reader();
         }
     }
 

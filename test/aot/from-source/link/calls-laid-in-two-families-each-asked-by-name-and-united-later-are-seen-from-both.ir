@@ -24,7 +24,7 @@
 # -- end of source
 # L0 = First, L1 = Second. Each family is asked by name at a place of its own, each with an object of its own class; one of the first five then hands each family to the other place. The families are united behind both calls: each place must find what is laid on the closures of the other family.
 # RUN(FIELDS): link fields mechanisms=all
-# FIELDS: "count" proven=number|string
-# FIELDS: L1.0 "note" proven=number|string
+# FIELDS: "count" proven=int[0, {{*}}]|string
+# FIELDS: L1.0 "note" proven=int[0, {{*}}]|string
 # RUN(ANSWERS): run-in-shell globalThis.hidden = () => 2;
 # ANSWERS: 10,number;20,number;1,number;2,number;4,number;second,string;first,string;,number;

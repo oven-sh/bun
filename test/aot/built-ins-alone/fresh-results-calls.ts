@@ -65,6 +65,22 @@ const ofServers = (member: string, classes: string, text: string[]) =>
   Object.fromEntries([`%HTTPServer%.prototype.${member} > ${classes}`].map(key => [key, text]));
 
 const stats = (bigint: boolean) => `import { statSync } from "node:fs";\nconst stats = statSync(".", { bigint: ${bigint} });`;
+const callsOfFileSystem: Record<string, string[]> = {
+  statSync: [
+    'import { statSync } from "node:fs";\nstatSync(".")',
+    `${stats(false)}\nstats`,
+    `${stats(true)}\nstats`,
+  ],
+  lstatSync: [
+    'import { lstatSync } from "node:fs";\nlstatSync(".")',
+    'import { lstatSync } from "node:fs";\nlstatSync(".", { bigint: true })',
+  ],
+  readdirSync: [
+    'import { readdirSync } from "node:fs";\nreaddirSync("/")',
+    'import { readdirSync } from "node:fs";\nreaddirSync("/", { withFileTypes: true })',
+  ],
+  readFileSync: ['import { readFileSync } from "node:fs";\nreadFileSync("/etc/hostname")'],
+};
 const observed = [
   "const { promise, resolve } = Promise.withResolvers();",
   "const observer = new PerformanceObserver(list => (observer.disconnect(), resolve(list)));",
@@ -78,11 +94,14 @@ export const calls: Record<string, string[]> = {
   // The rows under the names of the classes are the constructors'. What native code makes is judged under the methods of the binding, as node:fs hands it on.
   "%Stats%": [`${stats(false)}\nnew stats.constructor(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)`],
   "%BigIntStats%": [`${stats(true)}\nnew stats.constructor(1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n, 10n, 11n, 12n, 13n, 14n)`],
-  "%NodeJSFS%.prototype.statSync": [`${stats(false)}\nstats`, `${stats(true)}\nstats`],
-  "%NodeJSFS%.prototype.lstatSync": ['import { lstatSync } from "node:fs";\nlstatSync(".")', 'import { lstatSync } from "node:fs";\nlstatSync(".", { bigint: true })'],
+  // Only the node:fs of a compiled program holds the functions. A function and the method of its name make what they answer in the same code (node_fs.rs).
+  ...Object.fromEntries(
+    Object.entries(callsOfFileSystem).flatMap(([name, texts]) => [
+      [`%NodeJSFS%.prototype.${name}`, texts],
+      [`native:Bindgen:node_fs_binding.bind.ts:${name}`, texts],
+    ]),
+  ),
   "%NodeJSFS%.prototype.fstatSync": ['import { fstatSync } from "node:fs";\nfstatSync(0)'],
-  "%NodeJSFS%.prototype.readdirSync": ['import { readdirSync } from "node:fs";\nreaddirSync("/")', 'import { readdirSync } from "node:fs";\nreaddirSync("/", { withFileTypes: true })'],
-  "%NodeJSFS%.prototype.readFileSync": ['import { readFileSync } from "node:fs";\nreadFileSync("/etc/hostname")'],
   "%NodeJSFS%.prototype.realpathSync": ['import { realpathSync } from "node:fs";\nrealpathSync("/", "buffer")'],
   ...Object.fromEntries(
     ["atime", "birthtime", "ctime", "mtime"].flatMap(name => [
@@ -601,6 +620,8 @@ export const notCalled: Record<string, string> = {
   "%CompilerHelpers%.plainQueryEntries": ofTheCompiler,
   "%CompilerHelpers%.plainQueryKeys": ofTheCompiler,
   "%CompilerHelpers%.plainQueryValues": ofTheCompiler,
+  "%CompilerHelpers%.toSortedByDifference": ofTheCompiler,
+  "%CompilerHelpers%.toSortedByReversedDifference": ofTheCompiler,
   "native:Bindgen:ffi.bind.ts:linkLibrary": ofOneModule("bun:ffi"),
   "native:Bindgen:ffi.bind.ts:openLibrary": ofOneModule("bun:ffi"),
   "native:Bindgen:ffi.bind.ts:printSource": ofOneModule("bun:ffi"),

@@ -1,4 +1,6 @@
 import { test, vi } from "bun:test";
+// Runs the event loop that many times: jobs, unhandled rejections and immediates run each time, and no clock decides.
+const spinEventLoop = async (count = 20) => { while (count-- > 0) await new Promise(done => setImmediate(done)); };
 test("settles", async () => {
   const called = Promise.withResolvers<void>();
   const settles = Promise.withResolvers<{ x: string }>();
@@ -8,6 +10,6 @@ test("settles", async () => {
   vi.doUnmock("./kept");
   console.log("SAID", (await import("./kept")).x, (await importing).x);
   settles.resolve({ x: "late" });
-  await new Promise(resolve => setTimeout(resolve, 5));
+  await spinEventLoop();
   console.log("SAID", (await import("./kept")).x, (await import("./user")).x);
 });

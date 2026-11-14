@@ -1,6 +1,6 @@
 // Three functions ask for overlapping sets of four constructor functions: {Ref, Struct}, {Num, Ref, Struct}, {Atom, Num, Struct}. The sets nest in no one family, and Ref stands in none:
 // what the value is expected to be says which families hold the strangers to Ref.
-// STATISTIC: MissesOfInstanceOfAnsweredByShapesOfKin >= 8
+// STATISTIC: InstanceOfMissesDecidedByHierarchy >= 8
 function Atom(name) { this.name = name; }
 function Num(value) { this.value = value; }
 function Ref(name) { this.name = name; this.to = null; }

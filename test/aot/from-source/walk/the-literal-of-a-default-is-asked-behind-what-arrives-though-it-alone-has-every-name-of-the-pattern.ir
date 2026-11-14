@@ -12,3 +12,8 @@
 # CHECK: GetSlot {{*}} key="width" receivers=[L{{*}}] level=Proven
 # CHECK: ShapeTest {{*}} layouts=[L
 # CHECK: GetSlotOrUndefined {{*}} key="width"
+# In a copy what arrives is asked too, once in front of the loop.
+# RUN(COPY): walk f2 mechanisms=all
+# COPY: frame 1 callee=f1
+# COPY: ShapeTest {{*}} layouts=[L
+# COPY: GetSlot {{*}} key="width" receivers=[L{{*}}] level=Proven

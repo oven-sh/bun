@@ -1,0 +1,24 @@
+# -- source: main.cjs
+# function Counter() { this.up = 0; this.both = 0; this.sum = 0; this.twice = 0; this.mixed = 0; this.last = 0; this.told = 0; this.key = 0; }
+# Counter.prototype = {
+#   step: function () { this.up++; this.both += 1; this.sum = this.sum + this.up; this.twice = this.twice * 2 + 1; this.mixed++; this.told++; return this.up > 9 || this.both > 9 || this.sum > 90 || this.mixed > 9; },
+#   back: function () { if (--this.both > 5) return 0; this.mixed = this.mixed / 2; this.last = this.up; return this.both; },
+#   next: function (list) { return list[this.key++]; },
+# };
+# const c = new Counter();
+# let seen = "";
+# for (let i = 0; i < 4; i++) { c.step(); c.back(); seen += c.next(["a", "b", "c"]); }
+# print(c.up, c.both, c.sum, c.twice, c.mixed, c.last, c.told, seen);
+# -- end of source
+# A field that is only stepped by one is an exact integer and lies in a slot of integers. Sums, products and fractions stay numbers.
+# RUN: link fields mechanisms=all
+# CHECK: field L0.0 "up" proven=int[0, 9007199254740992] writers-known
+# CHECK: field L0.1 "both" proven=int[-9007199254740992, 9007199254740992] writers-known
+# CHECK: field L0.2 "sum" proven=number writers-known
+# CHECK: field L0.3 "twice" proven=number writers-known
+# CHECK: field L0.4 "mixed" proven=number writers-known
+# CHECK: field L0.5 "last" proven=int[0, 9007199254740992] writers-known
+# CHECK: field L0.6 "told" proven=int[0, 9007199254740992] writers-known
+# CHECK: field L0.7 "key" proven=int[0, 9007199254740992] writers-known
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 4 0 10 15 0.9375 4 4 abcundefined

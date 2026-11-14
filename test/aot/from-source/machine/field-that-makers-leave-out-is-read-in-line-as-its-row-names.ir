@@ -25,7 +25,7 @@
 # CHECK-NOT: not named:
 # CHECK: every form is named
 # RUN(ROWS): bytes-by-form mechanisms=all
-# ROWS: GetSlotOrUndefined FieldInExtension Anywhere Open
+# ROWS: GetSlotOrUndefined Always Anywhere Open
 # ROWS: GetSlotOrUndefined FieldLeftOutByMakers Anywhere Open
 # ROWS: GetSlotOrUndefined FieldLeftOutByMakers Loop Open
 # RUN(FILLED): bytes-by-form mechanisms=all

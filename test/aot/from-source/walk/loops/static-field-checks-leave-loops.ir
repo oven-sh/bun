@@ -1,0 +1,15 @@
+# f1 = repeat
+# -- source: main.mjs
+# class T { static t = []; static { for (let i = 0; i < 8; i++) T.t.push(i * i); } static at(i) { return T.t[i & 7]; } }
+# function repeat(turns) { let n = 0; for (let k = 0; k < turns; k++) n += T.at(k); return n; }
+# print(repeat(1000), repeat(0), repeat(3));
+# -- end of source
+# The list is read in front of the loop. The check of its type stood in the loop, in every turn.
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: source=Variable
+# CHECK: = GetArrayElement
+# CHECK: = GetStaticFieldOrAbsent
+# CHECK: CheckProof {{*}}source=Variable
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 17500 0 5

@@ -263,14 +263,7 @@ bun_io::impl_buffered_reader_parent! {
     on_read_chunk   = |this, chunk, state| (&*this).on_read_chunk(chunk, state);
     on_reader_done  = |this| (&*this).on_reader_done();
     on_reader_error = |this, err| (&*this).on_reader_error(err);
-    loop_ = |this| {
-        let ev = (&*this).event_loop.get();
-        // The event loop is a libuv
-        // `uv_loop_t*` on Windows. `.cast()` reconciles the impl-declared
-        // `bun_uws_sys::Loop` nominal with `bun_io::Loop` (= `uv::Loop`).
-        #[cfg(windows)] { ev.uv_loop().cast() }
-        #[cfg(not(windows))] { ev.r#loop() }
-    };
+    loop_ = |this| (&*this).event_loop.get().native_loop();
     event_loop = |this| (&*this).event_loop.get().as_event_loop_ctx();
     // A read delivers to `on_read_chunk` consumers (JS, or a native sink such
     // as HTMLRewriter) that can drop this stream's last GC root and allocate
@@ -363,15 +356,12 @@ impl FileReader {
             }
         }
 
-        // `bun_vm()` returns a raw `*mut VirtualMachine` (never null for a Bun
-        // global); deref to call `event_loop()`.
         {
             let global = self.parent_const().global_this();
             // `bun_vm()` is the live thread-local VM; `event_loop()` is its
             // per-thread `jsc::EventLoop`.
-            self.event_loop.set(EventLoopHandle::init(
-                global.bun_vm().as_mut().event_loop().cast::<()>(),
-            ));
+            self.event_loop
+                .set(EventLoopHandle::init(global.bun_vm().event_loop_ptr()));
         }
 
         if was_lazy {

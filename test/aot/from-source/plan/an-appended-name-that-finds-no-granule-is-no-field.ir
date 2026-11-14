@@ -6,7 +6,7 @@
 # function make(text: string): Wide { return { text }; }
 # function fill(one: Wide) { one.m0 = true; one.m1 = true; one.m2 = true; one.m3 = true; one.m4 = true; one.m5 = true; one.m6 = true; one.m7 = true; one.m8 = true; one.m9 = true; one.m10 = true; one.m11 = true; one.m12 = true; one.m13 = true; one.m14 = true; one.m15 = true; one.m16 = true; one.m17 = true; one.m18 = true; one.m19 = true; one.m20 = true; one.m21 = true; one.m22 = true; one.m23 = true; one.m24 = true; one.m25 = true; one.m26 = true; one.m27 = true; one.m28 = true; one.m29 = true; one.m30 = true; one.m31 = true; one.m32 = true; one.m33 = true; one.m34 = true; one.m35 = true; one.m36 = true; one.m37 = true; one.m38 = true; one.m39 = true; one.m40 = true; one.m41 = true; one.m42 = true; one.m43 = true; one.m44 = true; one.m45 = true; one.m46 = true; one.m47 = true; one.m48 = true; one.m49 = true; one.m50 = true; one.m51 = true; one.m52 = true; one.m53 = true; one.m54 = true; one.m55 = true; one.m56 = true; one.m57 = true; one.m58 = true; one.m59 = true; one.m60 = true; one.m61 = true; one.m62 = true; one.m63 = true; }
 # function lay(one: any, name: string) { one.beside = 1; one[name] = 2; }
-# const bare = make("bare"), full = make("full"); fill(full); lay(full, "other");
+# const bare = make("bare"), full = make("full"); fill(full); lay(full, JSON.parse('"other"'));
 # sink(bare.text, bare.m63, full.text, full.m63, (full as any).beside, (full as any).other);
 # -- end of source
 # f1 = make, f2 = fill, f3 = lay

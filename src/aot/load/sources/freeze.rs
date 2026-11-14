@@ -167,11 +167,18 @@ pub(crate) fn freeze_sources(
 pub(crate) fn check_unique_paths_across_projects(
     projects: PerProject<(&Files<'_>, &Sources)>,
 ) -> Result<(), InternalError> {
-    let [application, runtime] =
-        [projects.application, projects.runtime].map(|(files, sources)| {
-            let compiled_files = files.compiled_files().iter();
-            compiled_files.map(move |&file| (file, sources.module_paths(file)))
-        });
+    let projects = [projects.application, projects.runtime];
+    let [application, runtime] = projects.map(|(files, sources)| {
+        let compiled_files = files.compiled_files().iter();
+        compiled_files.map(move |&file| sources.public_path(file))
+    });
+    if are_all_different(application.chain(runtime)) {
+        return Ok(());
+    }
+    let [application, runtime] = projects.map(|(files, sources)| {
+        let compiled_files = files.compiled_files().iter();
+        compiled_files.map(move |&file| (file, sources.module_paths(file)))
+    });
     check_unique_public_paths(application.chain(runtime))
 }
 

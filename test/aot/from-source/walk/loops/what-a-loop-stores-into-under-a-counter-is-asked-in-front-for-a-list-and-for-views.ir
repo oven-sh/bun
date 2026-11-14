@@ -24,7 +24,7 @@
 # FRACTION-LABEL: code f3:Body
 # FRACTION-NOT: = TypeTest
 # -- source: main.js
-# function lay(make, value) { const into = make(); for (let i = 0; i < 100; i++) into[i] = value; return into; }
+# function lay(make, value) { const into = make(); let sum = 0; for (let i = 0; i < 100; i++) { into[i] = value; sum += i; } return sum ? into : 0; }
 # function seven(make) { const into = make(); for (let i = 0; i < 100; i++) into[i] = 7; return into; }
 # function halve(make, value) { const into = make(); for (let i = 0; i < 100; i++) into[i / 2] = value; return into; }
 # globalThis.kept = [lay, seven, halve];

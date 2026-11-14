@@ -68,8 +68,11 @@ fn parse(
         let mut worker = scopeguard::guard(&mut **worker, |worker| {
             worker.arena = arena_of_bundle;
             set_known_answers(context, worker, None);
+            let inlines_main = context.options().inline_entrypoint_import_meta_main;
+            set_main_inlining(worker, inlines_main);
         });
         set_known_answers(context, &mut worker, known_answers);
+        set_main_inlining(&mut worker, false);
         let mut task = create_task(context, file);
         let mut entry = Entry {
             contents: Contents::SharedBuffer {
@@ -95,6 +98,12 @@ fn set_known_answers(
     transpiler.options.no_macros = context.options().no_macros || known_answers.is_none();
     let macros = transpiler.macro_context.as_mut();
     macros.expect("Worker::create wires it").known_answers = known_answers;
+}
+
+/// A worker may run an entry point too, so the load folds `import.meta.main` there, not the parser.
+fn set_main_inlining(worker: &mut Worker, inlines_main: bool) {
+    let options = &mut worker.transpiler_for_target(TARGET).options;
+    options.inline_entrypoint_import_meta_main = inlines_main;
 }
 
 fn create_task(context: &BuildContext, file: &ComponentFile<'_>) -> ParseTask<'static> {

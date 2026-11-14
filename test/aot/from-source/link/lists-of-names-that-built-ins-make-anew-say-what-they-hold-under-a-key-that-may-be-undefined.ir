@@ -6,7 +6,7 @@
 # CHECK: proven=undefined|string|symbol
 # CHECK: proven=undefined|string
 # CHECK: proven=undefined|string
-# CHECK: proven=undefined|object
+# CHECK: proven=undefined|Array
 # -- source: lists-of-names-that-built-ins-make-anew-say-what-they-hold-under-a-key-that-may-be-undefined.ts
 # const queue: number[] = [0];
 # const keys = Object.keys({ x: 1 }), names = Object.getOwnPropertyNames({ x: 1 }), own = Reflect.ownKeys({ x: 1 }), cut = "a1b".split(/\d/), letters = Object.values("ab"), pairs = Object.entries({ x: 1 });

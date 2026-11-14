@@ -8,6 +8,21 @@ use crate::module_format::{
     EsmSyntax, FormatDecision, ModuleFormat, decide_module_format, file_esm_syntax,
 };
 use crate::session::Arena;
+use bun_core::file_steps::{self, FileStep};
+
+pub(super) fn bind<'s>(
+    hir: &mut File<'s>,
+    options: BindOptions,
+    inputs: &FoldInputs<'s>,
+    atoms: &Interner<'s>,
+    arena: &'s Arena,
+) -> Bound<'s> {
+    debug_assert!(options.runtime.is_some());
+    debug_assert!(!matches!(hir.kind, FileKind::Json | FileKind::Declaration));
+    hir.reset_strict();
+    let _step = file_steps::count(FileStep::Bind);
+    bind_below_defines(hir, options, inputs.names_in_place(), atoms, arena)
+}
 
 pub(super) fn run<'s>(
     hir: &mut File<'s>,
@@ -17,29 +32,31 @@ pub(super) fn run<'s>(
     atoms: &Interner<'s>,
     arena: &'s Arena,
 ) -> (Bound<'s>, FileAnalysis<'s>) {
-    debug_assert!(options.runtime.is_some());
-    debug_assert!(!matches!(hir.kind, FileKind::Json | FileKind::Declaration));
-    hir.reset_strict();
     let names_in_place = inputs.names_in_place();
-    let mut bound = bind_below_defines(hir, options, names_in_place, atoms, arena);
+    let mut bound = bind(hir, options, inputs, atoms, arena);
     if bound.ran_out_of_stack {
         return (bound, FileAnalysis::default());
     }
     let (mut folded, mut scan) = fold_bound_file(hir, &bound, inputs, file, atoms, arena);
     let decision = decide_format(hir, &bound, &folded, &scan);
     let is_module = decision.formats.get(file.declared_module_type) == ModuleFormat::Esm;
+    let has_sloppy_functions = hir.makes_sloppy_functions();
     if is_module && !hir.is_strict_by_syntax {
         hir.set_strict();
-        if bound.runtime.depends_on_sloppy_mode() {
+        if has_sloppy_functions || bound.runtime.depends_on_sloppy_mode() {
             drop(bound);
+            let step = file_steps::count(FileStep::Bind);
             bound = bind_below_defines(hir, options, names_in_place, atoms, arena);
+            drop(step);
             if bound.ran_out_of_stack {
                 return (bound, FileAnalysis::default());
             }
             (folded, scan) = fold_bound_file(hir, &bound, inputs, file, atoms, arena);
         }
     }
-    bound.runtime.set_module_goal(is_module);
+    bound
+        .runtime
+        .set_module_goal(is_module, has_sloppy_functions);
     let analysis = create_analysis(hir, &folded, &scan, &decision, file, arena);
     (bound, analysis)
 }
@@ -55,7 +72,10 @@ pub(super) fn run_again<'s>(
     arena: &'s Arena,
 ) -> Option<AnalyzedAgain<'s>> {
     let folded = match from {
-        AnalyzedAgainFrom::Folding => fold_file(hir, bound, inputs, file, atoms, arena),
+        AnalyzedAgainFrom::Folding => {
+            let _step = file_steps::count(FileStep::Fold);
+            fold_file(hir, bound, inputs, file, atoms, arena)
+        }
         AnalyzedAgainFrom::ImportScan => FoldResult {
             decisions: previous.decisions,
             errors: previous
@@ -128,14 +148,29 @@ fn create_analysis<'s>(
         answers_of_resolvers: scan.answers_of_resolvers,
         names_of_workers: scan.names_of_workers,
         paths_of_changed_files: scan.paths_of_changed_files,
-        paths_of_files_read: scan.paths_of_files_read,
-        files_read_beside_callers: scan.files_read_beside_callers,
-        own_urls_handed: scan.own_urls_handed,
+        module_relative_reads: scan.module_relative_reads,
+        module_relative_patterns: scan.module_relative_patterns,
+        reads_ruled_out: scan.reads_ruled_out,
+        patterns_ruled_out: scan.patterns_ruled_out,
+        caller_relative_reads: scan.caller_relative_reads,
+        unknown_path_reads: scan.unknown_path_reads,
+        path_queries: scan.path_queries,
+        path_listings: scan.path_listings,
+        folders_entered: scan.folders_entered,
+        reads_below_working_folder: scan.reads_below_working_folder,
+        named_paths: scan.named_paths,
+        paths_created: scan.paths_created,
+        web_assembly_names: scan.web_assembly_names,
+        reading_functions: scan.reading_functions,
+        own_folder_arguments: scan.own_folder_arguments,
+        known_load_names: scan.known_load_names,
+        own_url_arguments: scan.own_url_arguments,
         exported_file_changers: scan.exported_file_changers,
-        asked_of_other_files: scan.asked_of_other_files,
-        asked_of_data_files: scan.asked_of_data_files,
-        asked_of_own_exports: scan.asked_of_own_exports,
-        names_out_of_data_files: scan.names_out_of_data_files,
+        other_file_queries: scan.other_file_queries,
+        data_file_queries: scan.data_file_queries,
+        own_path_queries: scan.own_path_queries,
+        own_export_queries: scan.own_export_queries,
+        names_from_data_files: scan.names_from_data_files,
         names_resolved_from_listed_folders: scan.names_resolved_from_listed_folders,
         options_of_resolves_with_unread_folders: scan.options_of_resolves_with_unread_folders,
         keys_stored_in_caches: scan.keys_stored_in_caches,
@@ -168,7 +203,9 @@ fn fold_bound_file<'s>(
     atoms: &Interner<'s>,
     arena: &'s Arena,
 ) -> (FoldResult<'s>, ImportScan<'s>) {
+    let step = file_steps::count(FileStep::Fold);
     let folded = fold_file(hir, bound, inputs, file, atoms, arena);
+    drop(step);
     let scan = scan_folded_file(hir, bound, inputs, file, &folded, atoms, arena);
     (folded, scan)
 }
@@ -191,6 +228,7 @@ fn scan_folded_file<'s>(
         file,
         atoms,
     };
+    let _step = file_steps::count(FileStep::FindImportSites);
     collect_import_sites(&scan_inputs, arena)
 }
 

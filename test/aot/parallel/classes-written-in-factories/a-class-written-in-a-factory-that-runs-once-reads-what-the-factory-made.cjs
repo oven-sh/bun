@@ -1,4 +1,4 @@
-// STATISTIC: CapturesOfClassesStoredForGoodPromoted >= 3
+// STATISTIC: PermanentClassCapturesPromoted >= 3
 (function (root, factory) {
   typeof exports === "object" && typeof module !== "undefined" ? factory(exports) : factory((root.readers = {}));
 })(this, function (exports) {

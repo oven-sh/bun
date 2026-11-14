@@ -2,9 +2,10 @@
 # function outer() { let seen = 0; function turns(step, n) { let sum = 0; for (let i = 0; i < n; i++) { sum += step(i); seen = seen + 1; } return sum; } return turns((i) => i * 2, 3) * 10 + seen; }
 # print(outer());
 # -- end of source
-# The red control of what-a-function-that-calls-its-parameter-writes-in-its-own-text-is-counted-given-its-arguments.ir: the effects of turns() given its arguments are taken to name no write of EnvironmentFields (the lie cuts the narrowest effects that a caller may take):
-# the verifier of the unit stops on the store in the function's own text, though it leaves the text of the closure that was copied in to the caller.
-# OPTIONS: check=Validate testing=RowSaysLess:Summary/f2/EnvironmentFields
+# This is the failing control of what-a-function-that-calls-its-parameter-writes-in-its-own-text-is-counted-given-its-arguments.ir.
+# The effects of turns() given its arguments are assumed to include no write of EnvironmentFields. The injected fault cuts the narrowest effects that a caller may use.
+# The verifier of the compile unit fails on the store in the function's own source, although it leaves the source of the inlined closure to the caller.
+# OPTIONS: check=Validate testing=UnderstateEffects:Summary/f2/EnvironmentFields
 # DIAGNOSTIC: EffectsNotCounted
 # RUN: walk f2 mechanisms=all
 # CHECK-NOT: code f2:Body

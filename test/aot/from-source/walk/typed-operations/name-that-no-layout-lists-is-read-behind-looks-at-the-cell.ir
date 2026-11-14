@@ -12,8 +12,8 @@
 # one byte of the cell: behind the two looks the read is undefined, and where either fails it goes as it is written. The text that is evaluated between the two calls lays the property: the first look fails from then on.
 # RUN: walk f2 mechanisms=all
 # CHECK-LABEL: code f2:Body
+# CHECK: = ShapeTest v0 layouts=[L0] [rejectsMarkedObjects]
 # CHECK: = HasNoExtraProperties
-# CHECK: = HasLayoutPrototype
 # CHECK: = PropGet {{*}}key="aborted"
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 3

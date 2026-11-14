@@ -5,8 +5,11 @@
 # KEPT: = FindKeyInMap
 # KEPT: inlineBuiltin=MapSet
 # KEPT: = GetValueAtPlaceInMap
-# RUN(EVENT): compile PlacesOfKeysThatStandBehindStoresWhereTestsFoundNoKey
-# EVENT: statistic PlacesOfKeysThatStandBehindStoresWhereTestsFoundNoKey 2
+# RUN(EVENT): compile LoopsUnswitched MapEntryIndicesSurvivingInserts
+# Link does not prove that the keys are numbers: the loop has no version for boxed ones.
+# The keys are handed to calls: a third version reads them out of int32 storage, and keeps the place like the two others.
+# EVENT: statistic LoopsUnswitched 1
+# EVENT: statistic MapEntryIndicesSurvivingInserts 3
 # RUN(SAID): run-in-shell mechanisms=all
 # SAID: 1024 8
 # SAID-NEXT: exited with 0

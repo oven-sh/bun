@@ -185,10 +185,16 @@ impl<'h> Resolver<'h> {
         if !path.starts_with(b"/") {
             return DeclaredModuleType::Unknown;
         }
-        match self.module_type_manifest(dirname::<Posix>(path)) {
+        let directory = dirname::<Posix>(path);
+        let by_directory = &self.code_state().package_module_types;
+        if let Some(&known) = by_directory.get_ref(directory) {
+            return known;
+        }
+        let declared = match self.module_type_manifest(directory) {
             Some(manifest) => manifest.module_type,
             None => DeclaredModuleType::Unknown,
-        }
+        };
+        *by_directory.insert_ref(self.keep(directory), declared)
     }
 
     pub(crate) fn module_type_where_imported(&self, path: &[u8]) -> DeclaredModuleType {

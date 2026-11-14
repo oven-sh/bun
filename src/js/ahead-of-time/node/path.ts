@@ -29,9 +29,14 @@ declare global {
       matchesGlob(path: string, pattern: string): boolean;
       sep: "/" | "\\";
       delimiter: ":" | ";";
-      win32: Path;
+      win32: Win32Path;
       posix: Path;
       _makeLong<T>(path: T): T;
+    }
+
+    /** `path.win32`. A property instead of a method gives the object its own Structure, so that the compiler knows the functions of `path.posix`. */
+    interface Win32Path extends Path {
+      _makeLong: <T>(path: T) => T;
     }
   }
 }
@@ -56,7 +61,7 @@ const posix = {
   parse: $bindgen("node_path.bind.ts", "parsePosix"),
   sep: "/",
   delimiter: ":",
-  win32: undefined! as $Node.Path,
+  win32: undefined! as $Node.Win32Path,
   posix: undefined! as $Node.Path,
   _makeLong: toNamespacedPathPosix,
   matchesGlob: undefined! as $Node.Path["matchesGlob"],
@@ -75,11 +80,11 @@ const win32 = {
   parse: $bindgen("node_path.bind.ts", "parseWin32"),
   sep: "\\",
   delimiter: ";",
-  win32: undefined! as $Node.Path,
+  win32: undefined! as $Node.Win32Path,
   posix,
   _makeLong: toNamespacedPathWin32,
   matchesGlob: undefined! as $Node.Path["matchesGlob"],
-} as $Node.Path;
+} as $Node.Win32Path;
 posix.win32 = win32.win32 = win32;
 posix.posix = posix;
 

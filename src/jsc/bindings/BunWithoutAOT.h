@@ -48,6 +48,7 @@ inline void setESModuleMarker(JSCell*, bool) {}
 
 inline void lockBuiltinsWithoutImage() {}
 inline ASCIILiteral rejectedEvaluationMessage() { return ""_s; }
+inline void disallowEvaluation(JSGlobalObject*) {}
 inline void hostDidCreateRealm(JSGlobalObject*) {}
 inline void hostDidCreateStructure(JSGlobalObject*, Structure*) {}
 inline void hostDidCreateConstructor(JSGlobalObject*, JSObject*) {}
@@ -88,6 +89,10 @@ enum class Presence : uint8_t { Present,
 constexpr bool isCompiledObject(const JSCell*) { return false; }
 template<typename Functor> Result forEachOwnProperty(VM&, JSObject*, Filter, const Functor&) { return Result::NeedsGenericPath; }
 template<typename Functor> Result forEachOwnPropertyAsCreated(VM&, JSObject*, const Functor&) { return Result::NeedsGenericPath; }
+enum class IdenticalValues : bool { Skip,
+    Append };
+inline bool structureGuaranteesAbsence(Structure*, UniquedStringImpl*) { return false; }
+inline bool appendDifferingValues(JSObject*, JSObject*, IdenticalValues, MarkedArgumentBuffer&) { return false; }
 inline JSValue getDirect(VM&, const JSObject*, PropertyName, unsigned*) { return {}; }
 inline void materializeLazyProperties(VM&, JSObject*) {}
 inline void prepareHoldersBeforeLookupsUnder(JSGlobalObject*, Symbol*, JSObject*) {}

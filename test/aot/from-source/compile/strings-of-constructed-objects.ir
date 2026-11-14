@@ -1,0 +1,9 @@
+# -- source: main.cjs
+# function Mixer(rate, channels) { this.rate = rate; this.channels = channels | 0; this.initialize(); }
+# Mixer.prototype.initialize = function () { if (this.rate > 0 && this.channels > 0) this.compile(); };
+# Mixer.prototype.compile = function () { var code = "return list[0]"; for (var channel = 1; channel < this.channels; ++channel) code += " + list[" + channel + "]"; this.mix = Function("list", code + ";"); };
+# globalThis.mixers = [new Mixer(+process.argv[2], 2), new Mixer(+process.argv[2], 3)];
+# -- end of source
+# The strings that a method makes out of constants of constructions are compiled: one function for two and one for three channels.
+# RUN: print
+# CHECK: name="anonymous"

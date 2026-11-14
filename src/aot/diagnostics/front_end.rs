@@ -9,9 +9,11 @@ use bun_sema::module_format::CommonJsEvidence;
 use bun_sema::node::NodeData;
 use bun_sema::program::FileId;
 use bun_sema::resolve::CodeFailure;
+use bun_sema_driver::format::plural;
 use bun_sema_driver::host::to_native;
 use bun_sema_driver::{BuildDiagnostic, EntryPointFailure, Incomplete, LoadFailure, log_message};
 
+use super::engine_records::package_name_in;
 use super::sink::{append_location, to_driver_diagnostic, to_log_message};
 use super::{
     Diagnostic, Diagnostics, ProgramView, Severity, Span, SpanLocator, new_driver_diagnostic,
@@ -37,6 +39,26 @@ impl Diagnostics {
             self.add(None, Diagnostic::new(code, None, &[entry_point]));
         }
         self.add_build_diagnostics(Stage::Load, failure.diagnostics);
+    }
+
+    /// One warning for each package. Returns the number of files that have an error.
+    pub(crate) fn add_dependency_type_errors(&mut self, errors: &[BuildDiagnostic]) -> usize {
+        let mut places: Vec<(&[u8], &[u8])> = errors
+            .iter()
+            .map(|reported| {
+                let path = &reported.diagnostic.path[..];
+                (package_name_in(path).unwrap_or(path), path)
+            })
+            .collect();
+        places.sort_unstable();
+        for of_package in places.chunk_by(|left, right| left.0 == right.0) {
+            let count = plural(of_package.len(), b"type error", b"type errors");
+            let arguments = [of_package[0].0, &count[..]];
+            let code = Code::DependencyHasTypeErrors;
+            self.add(None, Diagnostic::new(code, None, &arguments));
+        }
+        places.dedup_by_key(|place| place.1);
+        places.len()
     }
 
     pub(crate) fn add_build_diagnostics(
@@ -353,11 +375,11 @@ fn commonjs_notes(
     notes
 }
 
-fn module_name<'a>(view: ProgramView<'a, '_>, module: ModuleRef) -> &'a [u8] {
+pub(crate) fn module_name<'a>(view: ProgramView<'a, '_>, module: ModuleRef) -> &'a [u8] {
     match module {
         ModuleRef::File(file)
         | ModuleRef::Inner { file, .. }
-        | ModuleRef::Face(file)
+        | ModuleRef::Facade(file)
         | ModuleRef::Check(file) => view.sources.module_paths(file).display_path,
         ModuleRef::Runtime(module) => table::specifier_of(module),
         ModuleRef::External { specifier, .. } => view.files().atoms.bytes(specifier),

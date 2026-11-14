@@ -7,7 +7,7 @@
 # print(count("a1_ b"), countDown("a1_ b", 4), first("a"), first("_"));
 # -- end of source
 # If a callee were judged by the number of its operations, `isWordPart` would be called everywhere: constants and what turns a boolean into a boolean count there: in a copy it is six compares.
-# A callee without loops that calls nobody goes by what a copy pays for: 12 and its operands where the call stands in a loop: in `count`. Outside of loops 3 and its operands: `first` calls it, and so does `countDown`, which calls itself: no loop stands in its text.
+# A callee without loops that calls nobody goes by what a copy pays for: 12 and its operands where the call stands in a loop: in `count`. A function that calls itself is a loop for a callee whose result is a number; this one's is a boolean: `countDown` calls it. Elsewhere 3 and its operands: `first` calls it.
 # RUN: walk f3 mechanisms=all
 # CHECK: frame 1 callee=f1
 # RUN(RECURSION): walk f2 mechanisms=all

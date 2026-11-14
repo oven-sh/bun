@@ -1,4 +1,4 @@
-// STATISTIC: GuessesAtInt32sOfOperatorsOnBitsWhoseFailingSideAsksForNumbers >= 1
+// STATISTIC: Int32SpeculationsWithNumberFallback >= 1
 let asked = 0;
 const hidden = JSON.parse('["7", "7.5", "x", "", " 12 ", "0x10", null, true, false, [], [5.5], {}, 0, 0, 0, 0, 0]');
 hidden[12] = undefined;

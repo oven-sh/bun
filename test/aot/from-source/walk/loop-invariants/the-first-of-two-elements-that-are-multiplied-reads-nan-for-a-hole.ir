@@ -1,3 +1,4 @@
+# LIBRARY: own
 # -- source: the-first-of-two-elements-that-are-multiplied-reads-nan-for-a-hole.ts
 # declare function sink(value: unknown): void;
 # function dot(a: number[], b: number[]): number { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; }

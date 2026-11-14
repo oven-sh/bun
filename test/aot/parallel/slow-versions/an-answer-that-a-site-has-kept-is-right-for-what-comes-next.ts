@@ -1,4 +1,4 @@
-// STATISTIC: ReadsThatAskTheirSiteStraight >= 2
+// STATISTIC: StraightSiteCachedReads >= 2
 type Plot = { breadth: number; depth: number };
 const area = (plot: Plot) => plot.breadth * plot.depth;
 function areasOf(plots: Plot[]): string {

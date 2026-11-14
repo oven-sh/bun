@@ -1,6 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { statSync } from "node:fs";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { sayGoal } from "./harness/goals";
 import { run } from "./harness/run";
@@ -12,16 +11,17 @@ const wire = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
 async function built(entry: string, files: Record<string, string>) {
   using dir = tempDir("doors-and-reach", files);
   const build = await run(
-    [bunExe(), "build", "--compile", "--aot", entry, "--outfile", "program"],
+    [bunExe(), "build", "--compile", "--aot", "--explain=statistics", entry, "--outfile", "program"],
     String(dir),
-    bunEnv,
+    { ...bunEnv, NO_COLOR: "1" },
   );
   expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
   const ran = await run([join(String(dir), "program")], String(dir), wire);
   return {
     stdout: ran.stdout,
     exitCode: ran.exitCode,
-    size: statSync(join(String(dir), isWindows ? "program.exe" : "program")).size,
+    // Not the size of the file: its sections are whole pages, 64 KB each on arm64 under Linux.
+    tableBytes: Number(/^TableBytesEmitted (\d+)$/m.exec(build.stderr)?.[1]),
   };
 }
 
@@ -56,9 +56,9 @@ async function expectNoGrowth(forms: Record<string, string>, atMost: number, goa
   expect({ stdout: plain.stdout, exitCode: plain.exitCode }).toEqual({ stdout: "42\n", exitCode: 0 });
   for (const [name, lib] of Object.entries(forms)) {
     const found = await builtOnceWith(lib);
-    if (goalNotMet) sayGoal(goalNotMet, found.size - plain.size, atMost);
+    if (goalNotMet) sayGoal(goalNotMet, found.tableBytes - plain.tableBytes, atMost);
     // Where it grows, the failure says by how much, and which features stay for it and not for the plain program.
-    const bytes = found.size - plain.size;
+    const bytes = found.tableBytes - plain.tableBytes;
     const staysAnyway = bytes > atMost ? await keptWith(double) : [];
     const stays = bytes > atMost ? (await keptWith(lib)).filter(feature => !staysAnyway.includes(feature)) : [];
     expect({
@@ -90,7 +90,7 @@ test("a door in a function that nothing reaches brings no built-in module along"
 // A goal that is not met yet: beside a load by a name that nobody reads, reached or not, the tables of the executable list every public module of Bun's own that the standard streams load.
 // Once it is met this test fails: put the form back into the list above.
 test.failing(
-  "a load by name in a function that only a function nobody calls calls brings no built-in module along: 80 KB for at most 32 KB",
+  "a load by name in a function that only a function nobody calls calls brings no built-in module along: 46 KB of tables for at most 32 KB",
   () =>
     expectNoGrowth(
       notReachedAndStillDear,
@@ -102,8 +102,9 @@ test.failing(
 // A case that is marked fails for whatever reason. That the program is built and answers is asked here, of the same build.
 test("a load by name in a function that only a function nobody calls calls: the program is built and answers all the same", async () => {
   for (const [name, lib] of Object.entries(notReachedAndStillDear)) {
-    const { stdout, exitCode } = await builtOnceWith(lib);
+    const { stdout, exitCode, tableBytes } = await builtOnceWith(lib);
     expect({ name, stdout, exitCode }).toEqual({ name, stdout: "42\n", exitCode: 0 });
+    expect(tableBytes).toBeGreaterThan(0);
   }
 }, 240_000);
 

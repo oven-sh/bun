@@ -1,4 +1,4 @@
-// STATISTIC: TableMethodsCalledByOneStub >= 7
+// STATISTIC: CollectionMethodsCalledByStub >= 7
 const said: unknown[] = [];
 function look(table: Map<unknown, unknown>, key: unknown): void {
   try { said.push(String(table.get(key))); } catch (e) { said.push((e as Error).constructor.name); }

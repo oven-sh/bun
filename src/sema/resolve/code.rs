@@ -1,5 +1,6 @@
 use super::*;
 use crate::import_sites::ImportSiteKind;
+use crate::module_format::DeclaredModuleType;
 use crate::program::HostModuleId;
 
 mod computed;
@@ -48,6 +49,8 @@ pub enum CodeImportForm {
     ResolveOnly,
     Macro,
     WrittenByHost,
+    /// The program doesn't load the file: a text of it may be the file's name.
+    Guess,
 }
 
 impl CodeImportForm {
@@ -90,6 +93,7 @@ pub struct SiteOfComputedLoad<'a> {
     pub type_attribute: Option<&'a [u8]>,
     pub opens_database: bool,
     pub starts_at_own_folder: bool,
+    pub is_written_in_load: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -191,6 +195,12 @@ pub(super) struct CodeState<'h> {
     options: &'h CodeOptions,
     resolutions: Memo<&'h [u8], CodeResolution<'h>>,
     manifests: Memo<&'h [u8], Option<&'h CodeManifest<'h>>>,
+    /// The nearest manifest at or above a directory that names its package.
+    named_manifests: Memo<&'h [u8], Option<&'h CodeManifest<'h>>>,
+    /// `aot_package_directory` of the files of a directory.
+    aot_package_directories: Memo<&'h [u8], Option<&'h [u8]>>,
+    /// `package_module_type` of the files of a directory.
+    package_module_types: Memo<&'h [u8], DeclaredModuleType>,
     required_files: bun_threading::Guarded<FxHashMap<&'h [u8], &'h [u8]>>,
     files_found_with_side_effects: bun_threading::Guarded<FxHashSet<&'h [u8]>>,
     configs: ConfigCaches<'h>,
@@ -212,6 +222,9 @@ impl<'h> Resolver<'h> {
             options: code,
             resolutions: Memo::new(false),
             manifests: Memo::new(false),
+            named_manifests: Memo::new(false),
+            aot_package_directories: Memo::new(false),
+            package_module_types: Memo::new(false),
             required_files: Default::default(),
             files_found_with_side_effects: Default::default(),
             configs: ConfigCaches::new(false),

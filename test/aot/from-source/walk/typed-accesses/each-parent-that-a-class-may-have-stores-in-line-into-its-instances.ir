@@ -14,7 +14,7 @@
 # RUN(LAYOUTS): print
 # LAYOUTS: layout L2 {{*}}name="Either"{{*}}key=#"#raw"@L0 {{*}}IsInherited] originLayout=L0 originField=1}{{*}}key=#"#only"@L1 {{*}}IsInherited] originLayout=L1 originField=1}{{*}}supertypes=[L0, L1]
 # RUN(LINK): link fields families mechanisms=all
-# LINK: field L2.{{*}} #"#raw"@L0 proven=i32 writers-known
+# LINK: field L2.{{*}} #"#raw"@L0 proven=int[0, 2147483647] writers-known
 # LINK: field L2.{{*}} #"#only"@L1 proven=string writers-known
 # LINK: family F{{*}} [L0, L1, L2, L3]
 # RUN(WALK): walk f1 f3 mechanisms=all

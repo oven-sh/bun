@@ -13,6 +13,7 @@ mod module_records;
 mod module_table;
 mod move_records;
 mod numbering;
+mod parents_by_names;
 mod program_keys;
 mod rings_of_bases;
 mod state;
@@ -336,6 +337,7 @@ pub fn link(input: LinkInput<'_, '_>) -> Result<Linked, Vec<LinkError>> {
                                     modules: &modules,
                                     functions: &functions,
                                     variables: &variables,
+                                    layouts: &layouts,
                                     definitions: &definitions,
                                     numbering: &numbering,
                                     in_parallel,
@@ -400,6 +402,7 @@ pub fn link(input: LinkInput<'_, '_>) -> Result<Linked, Vec<LinkError>> {
     let defined = &mut program_tables.layouts;
     let other_definitions = core::mem::take(&mut program_tables.other_layout_definitions);
     let views = unite_layout_definitions(defined, other_definitions, &mut types, in_parallel);
+    parents_by_names::expect_parents_by_names(defined, &units, &numbering);
     rings_of_bases::cut_rings_of_bases(defined);
     let keys = &numbering.layout_keys;
     fields_of_base_functions::take_fields_of_base_functions(defined, keys, in_parallel);
@@ -447,6 +450,8 @@ pub fn link(input: LinkInput<'_, '_>) -> Result<Linked, Vec<LinkError>> {
         ambiguous_exports: records.ambiguous_exports,
         source_stamps: Vec::new(),
         declared_records: program_tables.declared_records,
+        module_instances: program_tables.module_instances,
+        module_links: program_tables.module_links,
         eval_scopes: program_tables.eval_scopes,
         functions: Vec::new(),
         data: program_tables.data,

@@ -64,7 +64,7 @@ fn test_scope_input<R>(
             modules: inputs.modules,
             builtins: file_inputs.expect("the entry point is lowered").builtins,
             fields_under_signed_members: &[],
-            holds_registry: &|_| false,
+            find_registries: None,
             max_captures: max_captures(),
             names_lie_on_object_prototype: inputs.names_lie_on_object_prototype(),
         })
@@ -101,7 +101,7 @@ pub(in crate::lower) fn with_runtime_dialect_input<R>(
             modules: inputs.modules,
             builtins: &builtins,
             fields_under_signed_members: &[],
-            holds_registry: &|_| false,
+            find_registries: None,
             max_captures: max_captures(),
             names_lie_on_object_prototype: false,
         })

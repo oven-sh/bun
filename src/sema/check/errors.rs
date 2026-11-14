@@ -227,13 +227,13 @@ impl Checker<'_, '_> {
             + self.circular_before_parameter_symbol.len()
     }
 
-    /// Runs every check that queries `file`. Diagnostics it causes in other files, or that other files cause in this
-    /// one, go to the sink.
-    pub fn check_file(&mut self, file: FileId) -> Checked {
-        let _work = current_work::working_on(
-            current_work::Step::Check,
-            self.files().module(file).file_name(),
-        );
+    /// Begins a visit for questions about a file that another task checks.
+    pub fn begin_questions(&mut self, file: FileId) {
+        self.begin_visit(file);
+        self.is_type_checked = true;
+    }
+
+    fn begin_visit(&mut self, file: FileId) {
         if let Some(previous) = self.task.file
             && previous != file
             && self.files().module(previous).is_leaf
@@ -243,8 +243,10 @@ impl Checker<'_, '_> {
         if self.task.file != Some(file) {
             self.flow_memo.let_kept_walks_go();
         }
+        self.recent_symbol_types.begin_visit();
         self.task
             .begin_file(file, !self.files().module(file).is_leaf);
+        self.note_visited_module(file);
         self.provisional.clear();
         self.rejected_expressions.clear();
         self.side_effect_free.get_mut().clear();
@@ -276,10 +278,20 @@ impl Checker<'_, '_> {
         self.release_provisional_shapes();
         self.is_type_checked = false;
         self.reads_types_alone = self.expected == Requested::All && self.files().is_compile_build();
-        let hir = self.hir(file);
-        if hir.ran_out_of_stack {
+        if self.hir(file).ran_out_of_stack {
             self.ran_out_of_stack.set(true);
         }
+    }
+
+    /// Runs every check that queries `file`. Diagnostics it causes in other files, or that other files cause in this
+    /// one, go to the sink.
+    pub fn check_file(&mut self, file: FileId) -> Checked {
+        let _work = current_work::working_on(
+            current_work::Step::Check,
+            self.files().module(file).file_name(),
+        );
+        self.begin_visit(file);
+        let hir = self.hir(file);
         // `GetSyntacticDiagnostics` and `getBindAndCheckDiagnosticsWithChecker` are separate. Only the second depends
         // on whether the file is checked.
         self.report_hir_diagnostics(file, &[DiagnosticKind::Parse, DiagnosticKind::Js]);
@@ -454,13 +466,17 @@ impl Checker<'_, '_> {
         for d in syntactic.iter_mut().chain(&mut declaration) {
             self.resolve_span_end(d);
         }
+        let never_checked = self.never_checked.take();
+        if self.files.brings_declarations() {
+            self.never_checked_in_last_file.clone_from(&never_checked);
+        }
         Checked {
             syntactic,
             semantic: None,
             declaration,
             include: Vec::new(),
             expected_errors: Vec::new(),
-            never_checked: self.never_checked.take(),
+            never_checked,
             unused_private_members: std::mem::take(&mut self.unused_private_members),
             declaration_file: self.declaration_file.take(),
         }
@@ -474,6 +490,10 @@ impl Checker<'_, '_> {
             return Some(d);
         }
         let hir = self.hir(d.file);
+        // What a string holds is the run's. The tree may be gone before the build sorts what it reports.
+        if hir.is_in_known_evaluation(d.start) || hir.is_in_copied_factory(d.start) {
+            return None;
+        }
         let is_unconditional = self.is_unconditional_error(&d);
         // `SkipTypeChecking`
         if hir.check_directive == Some(false) && !is_unconditional {

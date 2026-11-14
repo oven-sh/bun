@@ -65,7 +65,17 @@ impl FileScan<'_, '_> {
 
     pub(super) fn place_units(&mut self) {
         for (unit, position) in take(&mut self.units_placed_by_text) {
-            let around = self.region_outside(position, Some(unit));
+            let function = self.units.units[unit as usize].functions.first();
+            let parent = match function.map(|it| self.bound.fns[it.idx()].owner) {
+                Some(FnOwner::Expr(written)) if self.has_compiled_components => {
+                    self.bound.parent_of_expr(written)
+                }
+                Some(FnOwner::Stmt(declared)) if self.has_compiled_components => {
+                    self.bound.parent_of_stmt(declared)
+                }
+                _ => Parent::None,
+            };
+            let around = self.region_below(parent, position, Some(unit));
             self.units.units[unit as usize].region_around = around;
         }
     }
@@ -100,8 +110,7 @@ impl FileScan<'_, '_> {
     }
 
     fn is_in_variable_alone(&self, symbol: SymbolId) -> bool {
-        self.is_stable(symbol)
-            && self.bound.export_symbol_of_value_symbol_if_exported(symbol) == symbol
+        self.is_stable(symbol) && self.bound.exported_value(symbol) == symbol
     }
 
     fn find_variable_of_class(&self, class: ClassId) -> Option<SymbolId> {
@@ -262,7 +271,7 @@ impl FileScan<'_, '_> {
 
     fn holds_code_of(&self, module: ModuleRef) -> bool {
         match module {
-            ModuleRef::File(file) | ModuleRef::Face(file) | ModuleRef::Inner { file, .. } => {
+            ModuleRef::File(file) | ModuleRef::Facade(file) | ModuleRef::Inner { file, .. } => {
                 file == self.file
             }
             ModuleRef::Check(_) | ModuleRef::Runtime(_) | ModuleRef::External { .. } => false,
@@ -335,7 +344,7 @@ impl FileScan<'_, '_> {
             && let Some(name) = self.bound.private_name_of_reference(access)
             && let Some(unit) = self.find_unit_of_private_name(name)
         {
-            self.add_interest(self.hir[access].pos, Interest::Unit(unit));
+            self.add_interest(access, Interest::Unit(unit));
         }
     }
 }

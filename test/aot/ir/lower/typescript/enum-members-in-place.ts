@@ -1,13 +1,13 @@
 // `bun build` has a value for a member where its visit of the initializer ends in a number or a text, in a function as at the top of a file, and has it in place of a callee too. It compares like with like alone. A constant from outside the function is in place of its name, as under `bun run`.
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="called"
-// CHECK: = NewObject
+// CHECK: = Data data=
 // CHECK-NOT: PropGet
 // CHECK: [[member]] = Integer integer=1 @
 // CHECK-NEXT: = Call [[member]] calleeName="Local.first"
 // CHECK-LABEL: function {{*}}name="inPlace"
 // CHECK-NOT: PropSet
-// CHECK: = NewObject {{*}}fields=[0, 1, 2, 3, 4]
+// CHECK: = Data data=
 // CHECK: [[chosen]] = Integer integer=5 @
 // CHECK-NEXT: [[either]] = Integer integer=2 @
 // CHECK-NEXT: [[asserted]] = Integer integer=11 @

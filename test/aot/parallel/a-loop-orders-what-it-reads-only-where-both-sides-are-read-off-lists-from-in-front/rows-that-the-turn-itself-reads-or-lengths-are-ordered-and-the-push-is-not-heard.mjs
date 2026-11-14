@@ -1,4 +1,4 @@
-// STATISTIC: MethodsOfListsHeardInLoopsAsWritersOfListsMadeHere <= 1
+// STATISTIC: LocalArrayMethodEffectsNarrowed <= 1
 // The twins that do not count as "the loop orders what it reads": what is held against one another is read off rows that the turn itself has read; or it is two lengths; or the ordering stands in an inner loop. (One hearing is the library's own.)
 function walked(rows, a, b) {
   const out = [];

@@ -1,8 +1,8 @@
-# The place of a key in the table of the cells of built-ins is the cell's number: the run time finds it by a search, and compiled code bears the same numbers.
-# THE LIE, testing=TwoCellsOfBuiltinsBearEachOthersNumbers: the first two keys are written in each other's places.
+# The index of a key in the table of built-in cells is the cell's number. The runtime finds it by a search, and compiled code carries the same numbers.
+# Fault injection, testing=SwapBuiltinCellNumbers: the first two keys are swapped.
 # AS-USERS-BUILD: the image asks in every build that the keys ascend strictly.
 # DIAGNOSTIC: ProgramTableCheckFailed
-# RUN: compile mechanisms=all testing=TwoCellsOfBuiltinsBearEachOthersNumbers
+# RUN: compile mechanisms=all testing=SwapBuiltinCellNumbers
 # CHECK: diagnostic ProgramTableCheckFailed
 # CHECK-NEXT: image empty
 # -- source: main.ts

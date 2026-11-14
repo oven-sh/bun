@@ -206,7 +206,7 @@ impl<'v, T, const N: usize, L: std::ops::Deref<Target = [T]>> IntoIterator
 
 /// Inline capacities for the constituents of a union or intersection, the type arguments of a
 /// reference or elements of a tuple, and the declarations of a function value. They're as large as
-/// possible while a `TypeRecord` still occupies one cache line.
+/// possible while a `TypeRecord` still occupies 56 bytes.
 const INLINE_CONSTITUENTS: usize = 7;
 const INLINE_TYPE_ARGUMENTS: usize = 3;
 const INLINE_DECLARATIONS: usize = 2;
@@ -1874,9 +1874,6 @@ impl FirstRequest {
 
 pub struct TypeRecord<'s> {
     created: OwnedTypeKey<'s>,
-    /// `Type.flags`. See `tf`.
-    flags: u32,
-    object_flags: ObjectFlags,
     /// A union or an intersection without type variables whose alias type arguments could contain
     /// some: `type Brand<T> = number & {}`. `instantiateTypeWithAlias` instantiates it, and
     /// `couldContainTypeVariables` is false for it.
@@ -1890,7 +1887,7 @@ pub struct TypeRecord<'s> {
     id: TypeId,
 }
 
-const _: () = assert!(size_of::<TypeRecord<'static>>() <= 64);
+const _: () = assert!(size_of::<TypeRecord<'static>>() <= 56);
 
 enum MapperRecord<'s> {
     Inline(u8, ObjectFlags, [(TypeId, TypeId); 3]),
@@ -2118,13 +2115,19 @@ const IS_PLAIN_OBJECT: u32 = 1 << 30;
 const IS_MAPPED_TYPE: u32 = 1 << 31;
 
 impl TypeRecord<'_> {
-    /// `member_flags_of` must return a constituent's `Summary::member_flags`.
+    /// `object_flags` are those that `Types::new_record` returned with the record. `member_flags_of` must return a
+    /// constituent's `Summary::member_flags`.
     #[inline]
-    fn summary(&self, member_flags_of: impl Fn(TypeId) -> u32) -> TypeSummary {
+    fn summary(
+        &self,
+        object_flags: ObjectFlags,
+        member_flags_of: impl Fn(TypeId) -> u32,
+    ) -> TypeSummary {
+        let flags = Types::flags_of(&self.created);
         TypeSummary {
-            flags: self.flags,
-            object_flags: self.object_flags,
-            class: self.instantiation_class(),
+            flags,
+            object_flags,
+            class: self.instantiation_class(object_flags),
             is_module_object: matches!(
                 self.created.0,
                 TypeData::Anon {
@@ -2142,29 +2145,29 @@ impl TypeRecord<'_> {
                 TypeData::Anon {
                     origin: Origin::Mapped(..),
                     ..
-                } => self.flags | IS_MAPPED_TYPE,
+                } => flags | IS_MAPPED_TYPE,
                 TypeData::Ref { .. }
                 | TypeData::Tuple { .. }
                 | TypeData::Anon { .. }
                 | TypeData::Fns { .. }
                 | TypeData::Synth(_)
-                | TypeData::ReverseMapped { .. } => self.flags | IS_PLAIN_OBJECT,
+                | TypeData::ReverseMapped { .. } => flags | IS_PLAIN_OBJECT,
                 TypeData::StringLit { fresh: true, .. }
                 | TypeData::NumberLit { fresh: true, .. }
                 | TypeData::BigIntLit { fresh: true, .. }
                 | TypeData::BoolLit { fresh: true, .. }
                 | TypeData::EnumLit { fresh: true, .. }
-                | TypeData::Enum { fresh: true, .. } => self.flags | HAS_FRESH_LITERAL,
-                _ => self.flags,
+                | TypeData::Enum { fresh: true, .. } => flags | HAS_FRESH_LITERAL,
+                _ => flags,
             },
         }
     }
 
     #[inline]
-    fn instantiation_class(&self) -> InstantiationClass {
+    fn instantiation_class(&self, object_flags: ObjectFlags) -> InstantiationClass {
         let is_changed =
             ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES | ObjectFlags::HAS_OTHER_INSTANTIATION;
-        if !self.object_flags.intersects(is_changed) && !self.has_type_variables_in_alias_only {
+        if !object_flags.intersects(is_changed) && !self.has_type_variables_in_alias_only {
             return InstantiationClass::Unchanged;
         }
         match self.created.0 {
@@ -2224,8 +2227,6 @@ impl Record for TypeRecord<'_> {
     fn hole() -> Self {
         TypeRecord {
             created: (TypeData::Intrinsic(Intrinsic::Unresolved), None),
-            flags: 0,
-            object_flags: ObjectFlags::empty(),
             has_type_variables_in_alias_only: false,
             is_from_type_node: AtomicBool::new(false),
             constrained_type_variable: AtomicU8::new(0),
@@ -3257,24 +3258,15 @@ impl<'s> TypeStore<'s> {
             return TypeId(id);
         }
         let own = OwnStore::new_in(self.session.arena(), self);
-        let record = Types::new(self, &own).new_record(created, self.types.items.len());
-        let id = TypeId(self.types.add(spread, record));
-        self.summarize_types(self.types.items.len());
-        id
-    }
-
-    /// Adds the summaries of the types with ids below `below`, which are all stored, to `summaries`.
-    /// Runs before the first task, on one thread.
-    fn summarize_types(&self, below: u32) {
-        for id in self.summaries.len()..below {
-            // A record only references records with lower ids.
-            let record = self.types.items.get(id);
-            let summary = record.summary(|member| {
-                debug_assert!(member.0 < id);
-                (self.summaries.get(member.0).member_flags).load(Ordering::Relaxed)
-            });
-            self.summaries.push(Summary::new(summary));
-        }
+        let (record, object_flags) =
+            Types::new(self, &own).new_record(created, self.types.items.len());
+        let summary = record.summary(object_flags, |member| {
+            (self.summaries.get(member.0).member_flags).load(Ordering::Relaxed)
+        });
+        let id = self.types.add(spread, record);
+        let place = self.summaries.push(Summary::new(summary));
+        debug_assert_eq!(place, id, "each constant is summarized as it's published");
+        TypeId(id)
     }
 
     /// After this call, a task with `Sharing::Publishes` publishes each record as it creates it (see `Interned`). Call it
@@ -3343,6 +3335,10 @@ impl<'s> TypeStore<'s> {
                 ids
             }
         }
+    }
+
+    pub fn session(&self) -> &'s Session {
+        self.session
     }
 
     /// Called at the end of a task. Makes the ids it reserved but didn't use available to later
@@ -3624,8 +3620,8 @@ impl<'p, 's> Types<'p, 's> {
     ) -> (TypeRecord<'s>, Destination<'s>) {
         let class = class_of_type(&created.0);
         let home = self.destination_of(Kind::Type, class, &created, is_bound);
-        let record = self.new_record(created, home.id(own_id));
-        let summary = record.summary(|member| self.member_flags_and_more(member));
+        let (record, object_flags) = self.new_record(created, home.id(own_id));
+        let summary = record.summary(object_flags, |member| self.member_flags_and_more(member));
         let is_unresolved_name = matches!(record.created.0, TypeData::UnresolvedName { .. });
         match &home {
             Destination::Own { .. } => {
@@ -3984,7 +3980,7 @@ impl<'p, 's> Types<'p, 's> {
         members.iter().all(has_target_of_first) && members.iter().filter(is_given).count() <= 1
     }
 
-    fn new_record(&self, created: OwnedTypeKey<'s>, id: u32) -> TypeRecord<'s> {
+    fn new_record(&self, created: OwnedTypeKey<'s>, id: u32) -> (TypeRecord<'s>, ObjectFlags) {
         let data = &created.0;
         let may_be_reduced = match data {
             TypeData::Intersection(_) => true,
@@ -4068,9 +4064,7 @@ impl<'p, 's> Types<'p, 's> {
             } else {
                 u8::from(first_request.has(FirstRequest::NO_CONSTRAINED_TYPE_VARIABLE))
             };
-        TypeRecord {
-            flags: Self::flags_of(&created),
-            object_flags: flags,
+        let record = TypeRecord {
             has_type_variables_in_alias_only: has_type_variables_in_alias
                 && is_union_or_intersection
                 && !flags.contains(ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES),
@@ -4079,7 +4073,8 @@ impl<'p, 's> Types<'p, 's> {
             is_without_primitive_union: first_request.has(FirstRequest::WITHOUT_PRIMITIVE_UNION),
             created,
             id: TypeId(id),
-        }
+        };
+        (record, flags)
     }
 
     /// Runs `create` so that a type it creates has `flags` set from the start. `create` must request one type and

@@ -10,7 +10,7 @@
 # -- end of source
 # A test in front of a call through a table of methods.
 # RUN(CODE): bytes f0:Body mechanisms=all
-# CODE: thunks=14
+# CODE: thunks=17
 # CODE: MethodSelector
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: 8 -1 8

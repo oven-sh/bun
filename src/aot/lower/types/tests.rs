@@ -873,6 +873,35 @@ fn inferred_type_of_a_parameter_is_checked_in_a_checked_file_and_expected_in_any
 }
 
 #[test]
+fn parameter_passed_to_babels_loop_helper_is_expected_to_be_a_list() {
+    let source = "function _createForOfIteratorHelperLoose(r, e) {
+  var t = \"undefined\" != typeof Symbol && r[Symbol.iterator] || r[\"@@iterator\"];
+  if (t) return (t = t.call(r)).next.bind(t);
+  if (Array.isArray(r) || \"string\" == typeof r || e) {
+    var o = 0;
+    return function () { return o >= r.length ? { done: !0 } : { done: !1, value: r[o++] }; };
+  }
+  throw new TypeError(\"Invalid attempt\");
+}
+export function probe(fns) {
+  for (var _iterator = _createForOfIteratorHelperLoose(fns), _step; !(_step = _iterator()).done;) {
+    var fn = _step.value;
+    if (fn) fn.call(fns);
+  }
+}
+";
+    let lowered = lower_file("main.js", source, None);
+    let parameter = find_function(&lowered, "probe").parameters[0];
+    let position = expand_position(&lowered.tables, parameter);
+    assert!(position.is_expected, "{position:?}");
+    assert!(
+        !position.ty.primitives.contains(Primitives::NUMBER),
+        "{position:?}"
+    );
+    contents_of(&position.ty, BuiltinClass::Array);
+}
+
+#[test]
 fn declared_head_of_for_of_is_expected_to_hold_the_type_of_its_binding() {
     for declaration in ["const", "let", "var"] {
         let source = format!(
@@ -1035,14 +1064,16 @@ fn receiver_of_method_is_tested_at_entry() {
 }
 
 #[test]
-fn array_literal_holds_the_declared_elements_or_else_anything() {
+fn array_literal_holds_declared_elements_or_inferred_numbers() {
     let numbers = [
         "(a: number) { const v: number[] = [a]; return v; }",
         "() { const v: number[] = []; return v; }",
         "(a: number) { const v: [number, number] = [a, a]; return v; }",
+        "(a: number) { const v = [a]; return v; }",
     ];
     let anything = [
-        "(a: number) { const v = [a]; return v; }",
+        "(a: string) { const v = [a]; return v; }",
+        "(a: number | string) { const v = [a]; return v; }",
         "() { const v = []; v.push(1); return v; }",
         "<T extends unknown[]>(a: number, rest: T) { const v: [number, ...T] = [a, ...rest]; return v; }",
     ];

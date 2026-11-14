@@ -4,11 +4,12 @@
 // By default it also keeps the text of its functions, for toString() and for what an error quotes. That is the text that `bun build --compile`
 // holds, so a name of unreached code may stand there where an executable built without --aot holds it too, and nowhere else.
 import { expect } from "bun:test";
-import { readFileSync, rmSync } from "fs";
+import { rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned } from "./harness/commands";
 import { afterAll } from "./harness/default-timeout";
+import { bytesAndStoredStrings } from "./harness/executable-bytes";
 import { buildFlags, compileCommand } from "./harness/flags";
 import { withoutDebugInformation } from "./harness/without-debug-information";
 // One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
@@ -234,7 +235,7 @@ describe.each(Object.keys(builds) as (keyof typeof builds)[])(
     const folder = String(tempDir("aot-names-of-unreached-code", sources));
     const executable = join(folder, isWindows ? "program.exe" : "program");
     const executableWithoutAot = join(folder, isWindows ? "without-aot.exe" : "without-aot");
-    const keepsTextOfFunctions = build === "by default";
+    const embedsFunctionSource = build === "by default";
     let bytes = Buffer.alloc(0);
     let bytesWithoutAot = Buffer.alloc(0);
     afterAll(() => rmSync(folder, { recursive: true, force: true }));
@@ -249,10 +250,10 @@ describe.each(Object.keys(builds) as (keyof typeof builds)[])(
             bunEnv,
           ),
         );
-        return readFileSync(outfile);
+        return bytesAndStoredStrings(outfile);
       };
       bytes = await buildWith([...compileCommand, ...builds[build]], executable);
-      if (keepsTextOfFunctions) bytesWithoutAot = await buildWith(["build", "--compile"], executableWithoutAot);
+      if (embedsFunctionSource) bytesWithoutAot = await buildWith(["build", "--compile"], executableWithoutAot);
     }, 300_000);
 
     const holds = (held: Buffer, name: string) => held.includes(name, 0, "latin1") || held.includes(name, 0, "utf16le");
@@ -277,7 +278,7 @@ describe.each(Object.keys(builds) as (keyof typeof builds)[])(
         "keptMessageQ82",
       ];
       expect(found(names)).toEqual(names);
-      if (keepsTextOfFunctions) expect(names.filter(name => holds(bytesWithoutAot, name))).toEqual(names);
+      if (embedsFunctionSource) expect(names.filter(name => holds(bytesWithoutAot, name))).toEqual(names);
     });
 
     const foldedByTheParser = ["literalFalse", "defined"];
@@ -424,7 +425,7 @@ describe("compile/aot/names of unreached code, obfuscated", () => {
         bunEnv,
       ),
     );
-    const bytes = readFileSync(executable);
+    const bytes = bytesAndStoredStrings(executable);
     const found = (names: string[]) =>
       names.filter(name => bytes.includes(name, 0, "latin1") || bytes.includes(name, 0, "utf16le"));
     expect(found(namesOfKeptFunctionsAndTypes)).toEqual([]);

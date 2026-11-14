@@ -23,10 +23,25 @@ const commonJsAbove = (floor: string) => ({
   "panel.cjs": commonJs["panel.cjs"],
 });
 const lay = (file: string) => `  vi.doMock("./${file}", () => ({ level: "deep" }));\n`;
-// `bun test` links what a factory loads to the original of the file that it mocks, and takes it out when the factory ends.
-const layBehindLoadOf = (file: string) =>
+// `bun test` links the modules that a factory imports to the original module and evicts them when the factory settles.
+const mockAfterImporting = (file: string) =>
   `  vi.doMock("./floor.mjs", async () => {\n    await import("./${file}");\n    return { level: "deep" };\n  });\n` +
   `  console.log("SAID", "mock", (await import("./floor.mjs")).level);\n`;
+const failAfterImporting = (file: string) =>
+  `  vi.doMock("./floor.mjs", async () => {\n    await import("./${file}");\n    throw new Error("no floor");\n  });\n` +
+  `  console.log("SAID", "mock", await import("./floor.mjs").then(() => "came", error => error.message));\n`;
+// A require() inside a package is given a mocked module of that package itself, so the end of the mock changes nothing above it.
+const requirerIn = (folder: string, name: string) => ({
+  [`${folder}floor.mjs`]: esModules["floor.mjs"],
+  [`${folder}meter.cjs`]: `exports.reading = "read " + require("./floor.mjs").level;\n`,
+  "panel.mjs": `import meter from "${name}meter.cjs";\nexport const show = () => meter.reading;\n`,
+  "b.test.mjs": inTest(
+    `  vi.doMock("${name}floor.mjs", () => ({ level: "deep" }));\n  console.log("SAID", "mock", (await import("${name}floor.mjs")).level);\n` +
+      ask("first", "panel.mjs") +
+      `  vi.doUnmock("${name}floor.mjs");\n` +
+      ask("second", "panel.mjs"),
+  ),
+});
 // The test holds the door, so the second call reaches the panel by the require() in it and by nothing else.
 const door = { "door.cjs": `exports.show = () => require("./panel.cjs").show();\n` };
 const throughDoor = (body: string) => inTest(`  const door = await import("./door.cjs");\n` + body);
@@ -57,7 +72,7 @@ const runs = {
       "b.test.mjs": inTest(lay("floor.mjs") + ask("first", "panel.mjs")),
       "z.test.mjs": inTest(ask("second", "panel.mjs")),
     },
-    named: ["meter.mjs, while z.test.mjs ran", "panel.mjs, while z.test.mjs ran"],
+    named: [],
   },
   "the mock is removed and the same test asks again": {
     files: {
@@ -66,7 +81,7 @@ const runs = {
         lay("floor.mjs") + ask("first", "panel.mjs") + `  vi.doUnmock("./floor.mjs");\n` + ask("second", "panel.mjs"),
       ),
     },
-    named: ["meter.mjs, while b.test.mjs ran", "panel.mjs, while b.test.mjs ran"],
+    named: [],
   },
   "an earlier test file loaded the module and the next one mocks below it": {
     files: {
@@ -74,7 +89,7 @@ const runs = {
       "a.test.mjs": inTest(ask("earlier", "panel.mjs")),
       "b.test.mjs": inTest(lay("floor.mjs") + ask("first", "panel.mjs")),
     },
-    named: ["meter.mjs, while b.test.mjs ran", "panel.mjs, while b.test.mjs ran"],
+    named: [],
   },
   "CommonJS files that require the mocked file": {
     files: {
@@ -82,7 +97,7 @@ const runs = {
       "b.test.mjs": inTest(lay("floor.cjs") + ask("first", "panel.cjs")),
       "z.test.mjs": inTest(ask("second", "panel.cjs")),
     },
-    named: ["meter.cjs, while z.test.mjs ran", "panel.cjs, while z.test.mjs ran"],
+    named: [],
   },
   "an earlier test file loaded CommonJS files and the next one mocks the file that they require": {
     files: {
@@ -90,7 +105,7 @@ const runs = {
       "a.test.mjs": inTest(ask("earlier", "panel.cjs")),
       "b.test.mjs": inTest(lay("floor.cjs") + ask("first", "panel.cjs")),
     },
-    named: ["meter.cjs, while b.test.mjs ran", "panel.cjs, while b.test.mjs ran"],
+    named: [],
   },
   "CommonJS files that require a mocked ES module": {
     files: {
@@ -99,7 +114,7 @@ const runs = {
       "b.test.mjs": inTest(lay("floor.mjs") + ask("first", "panel.cjs")),
       "z.test.mjs": inTest(ask("second", "panel.cjs")),
     },
-    named: ["meter.cjs, while z.test.mjs ran", "panel.cjs, while z.test.mjs ran"],
+    named: [],
   },
   "an earlier test file loaded CommonJS files that require an ES module and the next one mocks it": {
     files: {
@@ -108,7 +123,7 @@ const runs = {
       "a.test.mjs": inTest(ask("earlier", "panel.cjs")),
       "b.test.mjs": inTest(lay("floor.mjs") + ask("first", "panel.cjs")),
     },
-    named: ["meter.cjs, while b.test.mjs ran", "panel.cjs, while b.test.mjs ran"],
+    named: [],
   },
   "CommonJS files that require a mocked data file": {
     files: {
@@ -117,7 +132,35 @@ const runs = {
       "b.test.mjs": inTest(lay("floor.json") + ask("first", "panel.cjs")),
       "z.test.mjs": inTest(ask("second", "panel.cjs")),
     },
-    named: ["meter.cjs, while z.test.mjs ran", "panel.cjs, while z.test.mjs ran"],
+    named: [],
+  },
+  "a preload loaded CommonJS files and a test file mocks the file that they require": {
+    files: {
+      ...commonJs,
+      "bunfig.toml": `[test]\npreload = ["./preload.cjs"]\n`,
+      "preload.cjs": `require("./panel.cjs");\n`,
+      "b.test.mjs": inTest(
+        lay("floor.cjs") +
+          `  console.log("SAID", "mock", (await import("./floor.cjs")).level);\n  vi.doUnmock("./floor.cjs");\n` +
+          ask("second", "panel.cjs") +
+          `  console.log("SAID", "floor", (await import("./floor.cjs")).level);\n`,
+      ),
+    },
+    named: ["floor.cjs, while b.test.mjs ran", "meter.cjs, while b.test.mjs ran"],
+  },
+  "a star hands on a name that a module hands on over a star of a CommonJS file": {
+    files: {
+      "floor.cjs": commonJs["floor.cjs"],
+      "ground.mjs": `export * from "./floor.cjs";\n`,
+      "stairs.mjs": `export { level } from "./ground.mjs";\n`,
+      "house.mjs": `export * from "./stairs.mjs";\n`,
+      "panel.mjs": `import { level } from "./house.mjs";\nexport const show = () => level;\n`,
+      "a.test.mjs": inTest(ask("earlier", "panel.mjs")),
+      "b.test.mjs": inTest(
+        lay("floor.cjs") + ask("first", "panel.mjs") + `  vi.doUnmock("./floor.cjs");\n` + ask("second", "panel.mjs"),
+      ),
+    },
+    named: ["floor.cjs, while b.test.mjs ran"],
   },
   "the mock is removed and the same test asks again by require()": {
     files: {
@@ -125,7 +168,7 @@ const runs = {
       ...door,
       "b.test.mjs": throughDoor(lay("floor.cjs") + call("first") + `  vi.doUnmock("./floor.cjs");\n` + call("second")),
     },
-    named: ["meter.cjs, while b.test.mjs ran", "panel.cjs, while b.test.mjs ran"],
+    named: [],
   },
   "this test file had loaded the files, only the test loads the mock, and it asks again behind its end": {
     files: {
@@ -151,7 +194,7 @@ const runs = {
   },
   "the mock is removed and a require() that was made while the program ran asks again": {
     files: { ...desk, "b.test.mjs": atDesk(layOverLoaded + call("second")) },
-    named: ["gauge.cjs, while b.test.mjs ran"],
+    named: [],
   },
   "the mock is removed and nobody asks again by a require() that was made while the program ran": {
     files: { ...desk, "b.test.mjs": atDesk(layOverLoaded) },
@@ -173,11 +216,11 @@ const runs = {
       ),
     },
     flags: ["--parallel"],
-    named: ["meter.mjs", "panel.mjs"],
+    named: [],
   },
   "a file threw, a mock without a factory is made over it, and import() asks again": {
     files: { ...kiln, "b.test.mjs": inTest(fire("first") + `  vi.doMock("./kiln.mjs");\n` + fire("second")) },
-    named: ["kiln.mjs, while b.test.mjs ran"],
+    named: [],
   },
   "a file threw, a mock without a factory is made over it, and require() asks again": {
     files: {
@@ -186,9 +229,9 @@ const runs = {
         `import { createRequire } from "node:module";\n` +
         inTest(fire("first") + `  vi.doMock("./kiln.mjs");\n` + requireKiln),
     },
-    named: ["kiln.mjs, while b.test.mjs ran"],
+    named: [],
   },
-  "a file threw, a mock is made over it, and importActual() asks for the file": {
+  "a file threw, a mock is made over it, and importActual() evaluates the file again": {
     files: {
       ...kiln,
       "b.test.mjs": inTest(
@@ -197,7 +240,7 @@ const runs = {
           fire("second", `vi.importActual("./kiln.mjs")`),
       ),
     },
-    named: ["kiln.mjs, while b.test.mjs ran"],
+    named: [],
   },
   "a file threw, a factory that takes the original is made over it, and require() asks again": {
     files: {
@@ -225,27 +268,47 @@ const runs = {
     files: { ...kiln, "b.test.mjs": inTest(fire("first") + `  vi.doMock("./kiln.mjs");\n`) },
     named: [],
   },
-  "a factory loads a module above the file that it mocks, and the test asks for that module behind the end of the factory":
-    {
-      files: { ...esModules, "b.test.mjs": inTest(layBehindLoadOf("panel.mjs") + ask("second", "panel.mjs")) },
-      named: ["meter.mjs, while b.test.mjs ran", "panel.mjs, while b.test.mjs ran"],
-    },
-  "a factory loads a module above the file that it mocks, and nobody asks for that module again": {
-    files: { ...esModules, "b.test.mjs": inTest(layBehindLoadOf("panel.mjs")) },
+  "factory's importer is imported again": {
+    files: { ...esModules, "b.test.mjs": inTest(mockAfterImporting("panel.mjs") + ask("second", "panel.mjs")) },
     named: [],
   },
-  "a factory loads a module that no mock lies below, and the test asks for that module again": {
-    files: { ...esModules, "b.test.mjs": inTest(layBehindLoadOf("aside.mjs") + ask("second", "aside.mjs")) },
+  "factory's importer is never reimported": {
+    files: { ...esModules, "b.test.mjs": inTest(mockAfterImporting("panel.mjs")) },
     named: [],
   },
-  "a factory loads a module above the file that it mocks, the modules are reset, and the test asks for that module, which runs again":
-    {
-      files: {
-        ...esModules,
-        "b.test.mjs": inTest(layBehindLoadOf("panel.mjs") + `  vi.resetModules();\n` + ask("second", "panel.mjs")),
-      },
-      named: [],
+  "factory imports an unrelated module": {
+    files: { ...esModules, "b.test.mjs": inTest(mockAfterImporting("aside.mjs") + ask("second", "aside.mjs")) },
+    named: [],
+  },
+  "modules reset before the reimport": {
+    files: {
+      ...esModules,
+      "b.test.mjs": inTest(mockAfterImporting("panel.mjs") + `  vi.resetModules();\n` + ask("second", "panel.mjs")),
     },
+    named: [],
+  },
+  "failed factory's importer is reimported": {
+    files: {
+      ...esModules,
+      "b.test.mjs": inTest(failAfterImporting("panel.mjs") + `  await import("./panel.mjs").catch(() => {});\n`),
+    },
+    named: [],
+  },
+  "failed factory's importer never reimported": {
+    files: { ...esModules, "b.test.mjs": inTest(failAfterImporting("panel.mjs")) },
+    named: [],
+  },
+  "package's own requirer is unaffected": {
+    files: {
+      "node_modules/@made-up/kit/package.json": `{ "name": "@made-up/kit" }`,
+      ...requirerIn("node_modules/@made-up/kit/", "@made-up/kit/"),
+    },
+    named: [],
+  },
+  "project's requirer runs again": {
+    files: requirerIn("", "./"),
+    named: [],
+  },
   "nobody asks again": {
     files: { ...esModules, "b.test.mjs": inTest(lay("floor.mjs") + ask("first", "panel.mjs")) },
     named: [],

@@ -545,6 +545,13 @@ const TYPEOF_REQUIRE: &[DeadCalls] = &[
 ];
 
 const LOADER_VALUES: &[DeadCalls] = &[
+    ("a.cjs", "module.exports ? a() : b();", &["b"], &["a"]),
+    (
+        "a.cjs",
+        "(function (f) { if (typeof module.exports === 'object') { module.exports = a(); } else { b(); } })(function () {});",
+        &["b"],
+        &["a"],
+    ),
     (
         "a.js",
         r#"if (typeof module === "object") a(); else b();"#,
@@ -689,7 +696,18 @@ const UNDECIDED_LOADER_VALUES: &[DeadCalls] = &[
         &[],
         &["a", "b"],
     ),
-    ("a.cjs", "module.exports ? a() : b();", &[], &["a", "b"]),
+    (
+        "a.cjs",
+        "f(); module.exports ? a() : b();",
+        &[],
+        &["a", "b"],
+    ),
+    (
+        "a.cjs",
+        "(function (d = f()) { module.exports ? a() : b(); })();",
+        &[],
+        &["a", "b"],
+    ),
 ];
 
 const STATEMENTS_REMOVED_WITH_LOADER_VALUES: &[DeadCalls] = &[
@@ -1863,6 +1881,28 @@ fn import_meta_main() {
         "import.meta.resolve(name); import.meta[key]; import.meta.env.A = 1; import.meta.main;",
     ] {
         check_import_meta_main(text, Some(true), boolean(true));
+    }
+}
+
+#[test]
+fn only_import_meta_main_needs_main_module() {
+    for (text, asks) in [
+        ("import.meta.main;", true),
+        ("import.meta?.main;", true),
+        ("import.meta[\"main\"];", true),
+        ("import.meta[key];", true),
+        ("const { main } = import.meta;", true),
+        ("read(import.meta);", true),
+        ("object[import.meta];", true),
+        ("import.meta.url + import.meta.dir; import.meta.main;", true),
+        ("import.meta.url + import.meta[\"dir\"];", false),
+        ("var load = import.meta.require; load(name);", false),
+        ("import.meta.resolve(name); import.meta.env.MODE;", false),
+        ("run();", false),
+    ] {
+        analyzed("a.mjs", text, |s| {
+            assert_eq!(s.analysis.asks_for_main_module, asks, "{text}");
+        });
     }
 }
 

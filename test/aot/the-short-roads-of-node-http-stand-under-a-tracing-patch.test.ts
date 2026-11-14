@@ -62,7 +62,7 @@ async function serve(dir: string, entry: string) {
   const { stdout, exitCode } = await run([executable], dir, { ...bunEnv, BUN_JSC_aotCountsPath: path });
   const line = readFileSync(path, "utf8")
     .split("\n")
-    .find(line => line.endsWith("\tcounter:ClassGuardBitsEnded"));
+    .find(line => line.endsWith("\tcounter:ClassGuardBitsInvalidated"));
   return { stdout, exitCode, guardBitsEnded: Number(line?.split("\t")[0] ?? 0) };
 }
 

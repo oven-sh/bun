@@ -1,5 +1,5 @@
 // A value that no turn changes is tested and converted in front of the loop. Where it is not what the source says every turn does what is written: an object is converted anew in each turn, a BigInt and a symbol throw in the first turn and not where there is none.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 class Box { x; constructor(x) { this.x = x; } }
 class Other { y; x; constructor(x) { this.y = 0; this.x = x; } }

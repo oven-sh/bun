@@ -10,19 +10,20 @@
 # Scale.prototype.tick = function weigh(by) { this.total += by + this.step; return this; };
 # const box = {};
 # box['k' + [].length] = [new Meter(1), new Fine(2), new Scale(3), { step: 4, total: 'a', tick: Meter.prototype.tick }];
+# globalThis['box' + [].length] = [box, Meter, Fine, Scale];
 # function turn(at, by) { return box.k0[at].tick(by).total; }
 # print(turn(0, 5), turn(1, 5), turn(2, 5), turn(3, 5));
 # -- end of source
+# RUN(GUARD): walk f5:ParameterGuard mechanisms=all
+# GUARD: = TypeTest v0 testedType=L1|L2
 # RUN: walk f5 mechanisms=all
 # CHECK-LABEL: code f5:Body
-# CHECK: = ShapeTest {{*}}layouts=[L1, L2]
 # CHECK: = GetSlot {{*}}key="total" receivers=[L1, L2]
 # CHECK: = GetSlot {{*}}key="step" receivers=[L1, L2]
 # RUN(STORE): walk f5 mechanisms=all
-# STORE: = PutSlotOrAdd {{*}}key="total" receivers=[L1, L2]
+# STORE: = PutSlot {{*}}key="total" receivers=[L1, L2]
 # RUN(CLASS): walk f6 mechanisms=all
 # CLASS-LABEL: code f6:Body
-# CLASS: = ShapeTest {{*}}layouts=[L0]
 # CLASS: = GetSlot {{*}}key="total" receivers=[L0]
 # CLASS: = PutSlot {{*}}key="total" receivers=[L0]
 # RUN(ANSWERS): run-in-shell

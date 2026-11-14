@@ -1,5 +1,7 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, rss, tempDir } from "harness";
+import { expect } from "bun:test";
+import { bunEnv, bunExe, isASAN, isWindows, rss, tempDir, testThatMeasuresOwnMemory } from "harness";
+
+const test = testThatMeasuresOwnMemory(import.meta.path);
 
 test("native ReadableStream reuses the pull buffer across small reads", async () => {
   // #getInternalBuffer used to rotate to a fresh autoAllocateChunkSize
@@ -92,8 +94,14 @@ test.skipIf(isWindows)("abandoned Bun.file().stream() reader does not leak its f
     for (const fn of Object.values(shapes)) {
       for (let i = 0; i < 30; i++) await fn();
     }
-    for (let r = 0; r < 30; r++) { Bun.gc(true); await new Promise(x => setImmediate(x)); }
-    const fend = fdc();
+    let fend;
+    // A finalizer leaves the close to a pool thread, which a busy machine can hold up.
+    const deadline = performance.now() + 30_000;
+    do {
+      Bun.gc(true);
+      await Bun.sleep(1);
+      fend = fdc();
+    } while (fend >= f0 + 20 && performance.now() < deadline);
     process.stdout.write(JSON.stringify({ f0, fend }));
   `;
   await using proc = Bun.spawn({
@@ -166,8 +174,7 @@ test.skipIf(isWindows)(
     console.log(require("bun:jsc").heapStats());
     console.log("RSS delta", ((after - before) | 0) / 1024 / 1024);
     console.log("RSS total", (after / 1024 / 1024) | 0, "MB");
-    // ASAN's quarantine + shadow memory raise the absolute RSS floor and slow
-    // recycling of freed allocations; widen both bounds under bun-asan.
+    // ASAN's shadow memory raises the absolute RSS floor; widen both bounds under bun-asan.
     expect(after).toBeLessThan((isASAN ? 700 : 250) * 1024 * 1024);
     expect(after).toBeLessThan(before * (isASAN ? 3 : 1.5));
   },

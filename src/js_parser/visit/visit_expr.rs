@@ -801,7 +801,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     fn macro_denied_reason(&self) -> Option<&'static [u8]> {
         let path = &self.source.path;
-        if path.is_node_module() {
+        if path.is_dependency() {
             Some(b"For security reasons, macros cannot be run from node_modules.")
         } else if path.text.starts_with(b"data:") {
             Some(b"Macros cannot be run from a \"data:\" URL module.")

@@ -1,4 +1,4 @@
-// STATISTIC: LoopsThatHoldLoopsWrittenOut >= 1
+// STATISTIC: LoopNestsFullyUnrolled >= 1
 "use strict";
 function collected(rounds) {
     const made = [];

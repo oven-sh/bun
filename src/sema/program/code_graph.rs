@@ -42,6 +42,7 @@ pub enum CodeAnswer<'s> {
     NotFound(CodeFailure),
 }
 
+// A program has one for every import site.
 const _: () = assert!(size_of::<CodeAnswer<'static>>() == 16);
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -229,7 +230,7 @@ impl<'s> Files<'s> {
         }
     }
 
-    pub fn is_es_module_to_imports(&self, file: FileId) -> bool {
+    pub fn is_imported_as_es_module(&self, file: FileId) -> bool {
         self.compiled(file).is_some_and(|compiled| {
             let analysis = &compiled.analysis;
             analysis.module_format == ModuleFormat::CommonJs

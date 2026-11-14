@@ -2,7 +2,7 @@
 # "use strict";
 # function add(a, b) { return (a + b) | 0; }
 # function sub(a, b) { return (a - b) | 0; }
-# const lib = { base: 1 };
+# const lib = (0, { base: 1 });
 # Object.defineProperty(lib, "add", { configurable: true, get: function () { return add; } });
 # function called(t) { let s = 1; for (let i = 0; i < t; i++) s = lib.add(s, i); return s; }
 # print(called(5));

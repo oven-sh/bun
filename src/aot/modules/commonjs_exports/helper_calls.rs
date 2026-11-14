@@ -97,6 +97,17 @@ impl<'a> CallReader<'a, '_> {
             | Helper::ClassPrivateFieldGet
             | Helper::ClassPrivateFieldSet
             | Helper::ClassPrivateFieldIn
+            | Helper::AssertClassBrand
+            | Helper::CheckPrivateRedeclaration
+            | Helper::PrivateElementAdd
+            | Helper::PrivateGetterCall
+            | Helper::PrivateSetterCall
+            | Helper::PrivateAccessCheck
+            | Helper::ClassExtractFieldDescriptor
+            | Helper::ClassApplyDescriptorGet
+            | Helper::ClassApplyDescriptorSet
+            | Helper::PrivateWrapper
+            | Helper::ThrowTypeError
             | Helper::ExportSetter
             | Helper::ReturnValue
             | Helper::CommonJs
@@ -109,11 +120,21 @@ impl<'a> CallReader<'a, '_> {
             | Helper::Typeof
             | Helper::DefineNormalProperty
             | Helper::PublicField
+            | Helper::PossibleConstructorReturn
+            | Helper::AssertThisInitialized
+            | Helper::CallSuper
+            | Helper::ClassCallCheck
+            | Helper::CreateSuper
+            | Helper::GetPrototypeOf
+            | Helper::IsNativeReflectConstruct
+            | Helper::HasOwn
+            | Helper::Assign
             | Helper::CopyProperties
             | Helper::ToCommonJs
             | Helper::ToEsModule
             | Helper::SetModuleDefault
             | Helper::ImportStar
+            | Helper::WildcardCache
             | Helper::ImportDefault => None,
         }
     }
@@ -167,7 +188,8 @@ impl<'a> CallReader<'a, '_> {
     }
 
     fn find_helper(&self, callee: ExprId) -> Option<&'a KnownFunction> {
-        self.helpers.certain_callee(self.files, self.file, callee)
+        let own = self.helpers.certain_callee(self.files, self.file, callee);
+        own.or_else(|| self.wrapped.helper_of_member(self.files, self.file, callee))
     }
 
     fn is_exports_object(&self, expression: ExprId) -> bool {
@@ -235,7 +257,7 @@ impl<'a> CallReader<'a, '_> {
         Some(())
     }
 
-    fn add_getters_of_literal(&mut self, literal: ExprId) -> Option<()> {
+    fn add_getters_of_literal(&mut self, shape: Shape, literal: ExprId) -> Option<()> {
         let hir = self.hir;
         let ExprKind::Object(properties) = hir[hir.skip_type_assertions(literal)].kind else {
             return None;
@@ -243,7 +265,11 @@ impl<'a> CallReader<'a, '_> {
         self.names.reserve(properties.len());
         for id in properties.iter() {
             let property = hir[id];
-            if !matches!(property.kind, PropKind::Init | PropKind::Method) {
+            let is_getter = match shape {
+                Shape::ExportGettersOfLiteral => property.kind == PropKind::Getter,
+                _ => matches!(property.kind, PropKind::Init | PropKind::Method),
+            };
+            if !is_getter {
                 return None;
             }
             let name = self.find_name_of_property(id)?;
@@ -367,7 +393,18 @@ impl<'a> CallReader<'a, '_> {
         if !self.is_exports_object(object) {
             return None;
         }
-        self.add_getters_of_literal(getters)?;
+        let first = self.names.len();
+        self.add_getters_of_literal(shape, getters)?;
+        if shape == Shape::ExportGettersIfMissing {
+            let (before, added) = self.names.split_at(first);
+            let may_exist = |added: &StoredName| {
+                let mut before = before.iter();
+                before.any(|stored| stored.name().is_none() || stored.name() == added.name())
+            };
+            if added.iter().any(may_exist) {
+                return None;
+            }
+        }
         if shape == Shape::ExportMarksModuleAndDefinesGetters {
             *self.marker = Some(true);
         }
@@ -489,7 +526,7 @@ impl<'a> CallReader<'a, '_> {
             return None;
         }
         let copy = hir[self.statement];
-        let mut literals: SmallVec<[(u32, ExprId); 2]> = SmallVec::new();
+        let mut literals: SmallVec<[(u32, Shape, ExprId); 2]> = SmallVec::new();
         for mention in (0..hir.exprs.len() as u32).map(ExprId) {
             if !bound.is_evaluated_ident(mention)
                 || bound.binding(mention) != copied
@@ -510,9 +547,10 @@ impl<'a> CallReader<'a, '_> {
             {
                 return None;
             }
-            match (self.find_helper(callee)?.shape.helper(), &arguments[..]) {
+            let shape = self.find_helper(callee)?.shape;
+            match (shape.helper(), &arguments[..]) {
                 (Helper::Export, &[_, literal]) if hir[user].end <= copy.start => {
-                    literals.push((hir[user].pos, literal));
+                    literals.push((hir[user].pos, shape, literal));
                 }
                 (Helper::ReExport, _) if hir[user].pos >= copy.loc.end => {}
                 _ => return None,
@@ -520,8 +558,8 @@ impl<'a> CallReader<'a, '_> {
         }
         literals.shared_sort_unstable_by_key(|entry| entry.0);
         let first = self.names.len();
-        for &(_, literal) in &literals {
-            self.add_getters_of_literal(literal)?;
+        for &(_, shape, literal) in &literals {
+            self.add_getters_of_literal(shape, literal)?;
         }
         let mut copies = self.names[first..].iter();
         if copies.any(|stored| stored.name() == Some(known::__esModule)) {

@@ -13,6 +13,8 @@ impl NamedValues for NoNamedValues {
     }
 }
 
+/// In a file that is checked as a whole, every result exists before it is read.
+/// directive nothing is checked ahead, and each question walks by itself.
 fn unchecked(text: &str) -> String {
     format!("// @ts-nocheck\n{text}")
 }
@@ -27,6 +29,7 @@ fn ask_for_names(text: &str, far_walk: u32) -> (Vec<String>, usize) {
             checked_elsewhere: &[],
             builtin_types: &BuiltinTypeSymbols::compute(all, &[], Box::new(|| &[])),
             named_values: &NoNamedValues,
+            alias_mentions: None,
             max_inference_nodes: 0,
             limits: Default::default(),
         };
@@ -111,6 +114,7 @@ fn a_walk_that_skips_whole_statements_finds_what_a_walk_through_them_finds() {
         let (through, kept_through) = ask_for_names(&text, u32::MAX);
         let (skipping, kept_skipping) = ask_for_names(&text, 0);
         assert_eq!(skipping, through, "{statement}");
+        // Each has walked by itself: what goes through the loops leaves a type at each of them.
         assert!(
             kept_skipping < kept_through,
             "{statement}: {kept_skipping}, {kept_through}"
@@ -279,6 +283,9 @@ fn types_of_the_last_names(types: &[String], count: usize) -> Vec<&str> {
         .collect()
 }
 
+/// The walk from the outer `finally` block goes through the inner one twice: as it's left in the normal way, and as an
+/// exception leaves it. The second time it ends at what the first time left in `sharedFlows`. The walk from the `catch`
+/// clause only goes through it the second way.
 #[test]
 fn a_walk_that_went_through_a_finally_block_twice_leaves_nothing_for_a_walk_that_goes_through_it_once()
  {
@@ -294,6 +301,7 @@ fn a_walk_that_went_through_a_finally_block_twice_leaves_nothing_for_a_walk_that
     assert_eq!(types_of_the_last_names(&through, 3), expected);
 }
 
+/// The other way round: the walk from the `catch` clause comes first.
 #[test]
 fn a_walk_that_goes_through_a_finally_block_twice_takes_nothing_from_a_walk_that_went_through_it_once()
  {
@@ -455,6 +463,7 @@ fn ask_for_every_expression_from_the_last(text: &str, far_walk: u32) -> Vec<Stri
             checked_elsewhere: &[],
             builtin_types: &BuiltinTypeSymbols::compute(all, &[], Box::new(|| &[])),
             named_values: &NoNamedValues,
+            alias_mentions: None,
             max_inference_nodes: 0,
             limits: Default::default(),
         };
@@ -485,6 +494,9 @@ fn ask_for_every_expression_from_the_last(text: &str, far_walk: u32) -> Vec<Stri
     })
 }
 
+/// To learn whether a call in a comma expression is idle, its callee is checked, by a walk that reaches the same calls again.
+/// What that walk writes into the table of the far skip may not be undone by the walk around it: two entries named each other,
+/// and with 31 lines of filler and the far walk of a build the chase went round for ever.
 #[test]
 fn a_call_beside_a_comma_that_is_asked_about_in_the_middle_of_a_far_skip_leaves_the_table_whole() {
     for filler in [0, 31] {
@@ -500,6 +512,8 @@ fn a_call_beside_a_comma_that_is_asked_about_in_the_middle_of_a_far_skip_leaves_
     }
 }
 
+/// The far skip from the name takes the walk to the head of the loop. Each `continue` is an antecedent of the head inside the
+/// stretch that the skip passed, a few nodes from the head.
 #[test]
 fn many_ways_back_to_the_head_of_a_loop_do_not_double_the_wait_between_far_skips_past_its_type() {
     let mut text = String::from(

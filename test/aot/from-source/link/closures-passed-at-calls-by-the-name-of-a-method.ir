@@ -1,0 +1,13 @@
+# -- source: main.cjs
+# class M { constructor(n) { this.n = n; this.f = function (i) { return this.n * i; }; } each(f) { let s = 0; for (let i = 0; i < this.n; i++) s += f.call(this, i); return s; } }
+# function run(o) { return o.each(o.f) + o.each(function (i) { return i + this.n; }); }
+# globalThis.kept = [new M(4), new M(2)];
+# print(run(globalThis.kept[0]), run(globalThis.kept[1]));
+# -- end of source
+# f3 = each, f4 = run's function, f5 = what M keeps in f. Nothing is known of the receiver: each expects the closures that the program passes to a method of its name.
+# RUN: link functions mechanisms=all
+# CHECK-LABEL: function f3
+# CHECK: parameter 1 expected=f4|f5
+# RUN(ANSWER): run-in-shell
+# ANSWER: 46 7
+# ANSWER-NEXT: exited with 0

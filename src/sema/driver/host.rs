@@ -17,8 +17,8 @@ use bun_sema::hir;
 use bun_sema::json::Json;
 use bun_sema::resolve::{
     CachedConfig, FileStamp, Host, ModuleDetection, ParseOptions, Paths, ScriptKind, ancestors,
-    case_insensitive_hash, inside, is_declaration_file_name, is_same_path, join, root_length,
-    to_file_name_lower_case, to_path, typescript_path,
+    case_insensitive_hash, inside, is_declaration_file_name, is_plainly_normalized, is_same_path,
+    join, root_length, to_file_name_lower_case, to_path, typescript_path,
 };
 use bun_sema::session::{Arena, Session};
 use bun_sema::util::SharedSort;
@@ -64,6 +64,13 @@ fn to_syscall_path(path: &[u8]) -> Option<&[u8]> {
     is_representable.then_some(native)
 }
 
+/// Opening a named pipe waits for a writer, and some devices never end.
+pub fn is_regular_file(path: &[u8]) -> bool {
+    let mut buffer = path_buffer_pool::get();
+    let stat = to_syscall_path(path).and_then(|it| bun_sys::stat(z(it, &mut buffer)).ok());
+    stat.is_some_and(|it| bun_sys::is_regular_file(it.st_mode as bun_sys::Mode))
+}
+
 /// A drive's root is `/C:`. The system treats `C:` as the working directory on that drive, so it needs `/C:/`. The same
 /// goes for every root except `/`.
 fn with_root(path: &[u8]) -> Cow<'_, [u8]> {
@@ -75,7 +82,10 @@ fn with_root(path: &[u8]) -> Cow<'_, [u8]> {
 
 /// Converts a native path to the checker's path format. It must be absolute.
 pub fn from_native(path: &[u8]) -> Vec<u8> {
-    let path = join(b"/", bun_paths::string_paths::without_nt_prefix(path));
+    let path = match !cfg!(windows) && is_plainly_normalized(path) {
+        true => path.to_vec(),
+        false => join(b"/", bun_paths::string_paths::without_nt_prefix(path)),
+    };
     // A POSIX path's root is `/`, even if its first name looks like a drive or a URL. See `root_length`.
     match !cfg!(windows) && root_length(&path) > 1 && !path.starts_with(b"//") {
         true => [b"/\0", &path[..]].concat(),

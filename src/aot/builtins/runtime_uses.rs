@@ -139,6 +139,13 @@ const WRITTEN_IN_PLACE_OF: &[(BuiltinId, &[BuiltinId])] = &[
         BuiltinId::NodeModuleCreateRequire,
         &[BuiltinId::PrivateGlobalsCreateCommonJSModule],
     ),
+    (
+        BuiltinId::StringPrototypeMatchAll,
+        &[
+            BuiltinId::CompilerHelpersWayToStepMatches,
+            BuiltinId::CompilerHelpersStepMatchesInWay,
+        ],
+    ),
 ];
 
 const DECORATOR_HELPERS: &[BuiltinId] = &[
@@ -157,6 +164,7 @@ const DECORATOR_HELPERS: &[BuiltinId] = &[
     BuiltinId::CompilerHelpersDecorateParameter,
     BuiltinId::CompilerHelpersDecorateProperty,
     BuiltinId::CompilerHelpersDefineMetadata,
+    BuiltinId::CompilerHelpersKeepInitializerLists,
     BuiltinId::CompilerHelpersRunInitializers,
     BuiltinId::CompilerHelpersRunValueInitializers,
     BuiltinId::CompilerHelpersSetDecoratorMetadata,
@@ -412,6 +420,7 @@ pub fn is_name_of_language_member_with_code(name: BuiltinName) -> bool {
         for &(name, _) in language_members_with_code() {
             names[name.0 as usize] = true;
         }
+        names[table::entry(BuiltinId::StringPrototypeMatchAll).name.0 as usize] = true;
         names.into_boxed_slice()
     });
     names[name.0 as usize]
@@ -512,6 +521,9 @@ impl Collector {
         if names_of_what_promises_can_do()[name.0 as usize] {
             (self.work_stack).extend_from_slice(holders_that_come_with_first_promise());
         }
+        if name == table::entry(BuiltinId::StringPrototypeMatchAll).name {
+            self.add_what_is_written_in_place_of(BuiltinId::StringPrototypeMatchAll);
+        }
         let members = language_members_with_code();
         let first = members.partition_point(|member| member.0 < name);
         let named = members[first..].iter();
@@ -519,6 +531,17 @@ impl Collector {
             self.add_entry(id);
             for object in objects_of_class_of(id) {
                 self.add_functions(table::entry(object).calls());
+            }
+        }
+    }
+
+    fn add_members_of_namespaces(&mut self) {
+        for &id in language_entries_with_code() {
+            let holder = table::entry(id).holder.map(table::canonical_id);
+            if holder.is_some_and(|holder| {
+                is_of_language(holder) && table::entry(holder).kind == BuiltinKind::Namespace
+            }) {
+                self.add_entry_called_without_other_code(id);
             }
         }
     }
@@ -751,6 +774,7 @@ pub struct Mentions<'a> {
     pub reads_by_unknown_key: bool,
     pub may_call_evaluator: bool,
     pub global_object_may_be_looked_through: bool,
+    pub aliases_global_object: bool,
     pub syntax: SyntaxWithHelpers,
     pub may_hand_values_to_natives: bool,
     pub called: &'a [BuiltinId],
@@ -817,6 +841,7 @@ impl Collector {
             reads_by_unknown_key,
             may_call_evaluator,
             global_object_may_be_looked_through,
+            aliases_global_object,
             syntax,
             may_hand_values_to_natives,
             called,
@@ -832,6 +857,7 @@ impl Collector {
             && !reads_by_unknown_key
             && !may_call_evaluator
             && !global_object_may_be_looked_through
+            && !aliases_global_object
             && !may_hand_values_to_natives;
         if names_nothing {
             return None;
@@ -905,6 +931,9 @@ impl Collector {
             };
         } else if reads_by_unknown_key {
             collector.add_language();
+        }
+        if aliases_global_object {
+            collector.add_members_of_namespaces();
         }
         Some(collector)
     }

@@ -136,12 +136,14 @@ for (const [form, files] of Object.entries(kept)) {
 // A call brings the file into the executable all the same. It runs where the call runs, as in `bun build --compile`, and not where the dropped statement stood.
 const free = `console.log("ID| free runs");\nexport const free = 1;\n`;
 const helper = `import "./free.mjs";\nexport const made = 1;\nconsole.log("ID| helper runs");\n`;
-const brought: Record<string, { files: Record<string, string>; printed: string[] }> = {
+// What an entry point imports runs where the statement stands.
+const brought: Record<string, { files: Record<string, string>; printed: string[]; compiled?: string[] }> = {
   "the entry point imports it and loads it later": {
     files: {
       "main.mjs": `import "./free.mjs";\nconsole.log("ID| main");\nawait import("./free.mjs");\nconsole.log("ID| end");\n`,
     },
     printed: ["main", "free runs", "end"],
+    compiled: ["free runs", "main", "end"],
   },
   "a file of the library imports it, and the entry point loads it later": {
     files: {
@@ -158,13 +160,13 @@ const brought: Record<string, { files: Record<string, string>; printed: string[]
     printed: ["helper runs", "main 1", "end"],
   },
 };
-for (const [form, { files, printed }] of Object.entries(brought)) {
+for (const [form, { files, printed, compiled = printed }] of Object.entries(brought)) {
   const id = add({ "free.mjs": free, ...files });
   test.concurrent(
     `an executable: ${form}`,
     async () => {
       expect(await runExecutable(id, [])).toEqual({ printed, exitCode: 0 });
-      expect(await runExecutable(id, ["--aot"])).toEqual({ printed, exitCode: 0 });
+      expect(await runExecutable(id, ["--aot"])).toEqual({ printed: compiled, exitCode: 0 });
     },
     240_000,
   );

@@ -156,7 +156,7 @@ describe.skipIf(!isLinux && !isMacOS)("a fault at an address inside a removed ra
         said.push(
           `${how}: exit ${exitCode}, signal ${signalCode}, at ${address} of ${hole.size}\n${stderr.slice(0, 1500)}`,
         );
-        const saysRemoved = / removed .* from this executable/.test(stderr);
+        const saysRemoved = / doesn't include .*, but the program needs it/.test(stderr);
         found[how] = { stdout, saysRemoved, exits70: exitCode === 70 };
         if (saysRemoved) {
           // The sentence ends with where removed code was entered, counted from Bun__removableFeatureState.

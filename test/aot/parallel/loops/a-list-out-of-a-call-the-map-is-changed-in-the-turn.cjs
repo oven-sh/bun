@@ -1,4 +1,4 @@
-// STATISTIC: LoopsBuiltTwice >= 0
+// STATISTIC: WalkLoopsVersioned >= 0
 'use strict';
 const q = Number(process.argv[2] ?? 3);
 const m = new Map();

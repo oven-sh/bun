@@ -1,0 +1,16 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function both(): any { return [first, second, first]; }
+# const before = (() => { try { return both(); } catch (error) { return (error as Error).message; } })();
+# const first = { x: JSON.parse("1") };
+# const between = (() => { try { return both(); } catch (error) { return (error as Error).message; } })();
+# const second = { x: JSON.parse("2") };
+# print(before, between, both()[0] === first, both()[1] === second);
+# -- end of source
+# The check of an initialization is a load that faults on an empty pointer. Nobody uses what it loads, so it is the shortest load of the cell's header.
+# REQUIRES: x86_64
+# RUN: bytes f1 mechanisms=all-Inlining
+# CHECK: unit f1:Body
+# CHECK-NEXT: size=30 frame=0@1-27
+# RUN(SHELL): run-in-shell mechanisms=all-Inlining
+# SHELL: Cannot access 'first' before initialization. Cannot access 'second' before initialization. true true

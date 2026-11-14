@@ -1,4 +1,3 @@
-// STATISTIC: LoopsLaidOutThatAreComeBackTo = 1
 const n = Number(process.argv[2] ?? 3);
 const made = [...new TextEncoder().encode(JSON.stringify([{ id: 10, name: 'one "two"', list: [1, 22, 333] }, { id: 11, name: 'three', deep: { a: -4.5, b: 'x' } }, { id: 12, name: 'four', on: true }]))];
 function job(d, turn) {

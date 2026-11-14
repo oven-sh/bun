@@ -7,8 +7,11 @@
 // # STAYS-NOT: filled-under-computed-keys only-null-comes-above
 // # STAYS: layout L1 changes=[LosesProperty, ChangesPrototype] stays-with-compiled-code only-null-comes-above
 // # RUN(WALK): walk f3 mechanisms=all
+// # `scale` is deleted somewhere, `add` nowhere: it is called with no look at its slot.
 // # WALK-NOT: = PropGet
-// # WALK: = GetSlotOrUndefined {{*}}key="add"
+// # WALK-NOT: key="add"
+// # WALK: = CallDirect {{*}} function=f1
+// # WALK: = GetSlotOrUndefined {{*}}key="scale"
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
 // # CHECK: 7 of 7 of 7

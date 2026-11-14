@@ -6113,6 +6113,13 @@ restart:
     if (fast) {
         bool anyHits = false;
         JSC::JSObject* objectToUse = prototypeObject.getObject();
+#if ENABLE(AOT)
+        // The quick walk meets the private fields of an object, and shows none of them.
+        if (vm.hasCompiledCode()) [[unlikely]] {
+            anyHits = JSC::AOT::PropertyWalk::hasOwnPrivateField(globalObject, objectToUse);
+            CLEAR_IF_EXCEPTION(scope);
+        }
+#endif
 
         // The iter callback can run user code (a nested value's inspect.custom, Proxy
         // traps) that adds properties to this object, rehashing the PropertyTable
@@ -6164,6 +6171,10 @@ restart:
 #endif
         {
             structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+#if ENABLE(AOT)
+                if (entry.key()->isSymbol() && vm.hasCompiledCode() && JSC::AOT::PropertyWalk::isRuntimeProperty(vm, entry.key(), objectToUse->getDirect(entry.offset()))) [[unlikely]]
+                    return true;
+#endif
                 collect(entry.key(), entry.attributes(), [&] {
                     return objectToUse->getDirect(entry.offset());
                 });

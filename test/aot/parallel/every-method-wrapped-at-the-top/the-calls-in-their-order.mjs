@@ -46,14 +46,12 @@ function send(agent, path, method, body) {
       const parts = [];
       response.on("data", part => parts.push(part));
       response.on("close", () => {
-        clearTimeout(patience);
         const heads = [];
         for (let at = 0; at < response.rawHeaders.length; at += 2) heads.push(response.rawHeaders[at] + ": " + (response.rawHeaders[at].toLowerCase() === "date" ? "*" : response.rawHeaders[at + 1]));
         resolve(response.statusCode + " " + response.statusMessage + " {" + heads.join("; ") + "} " + JSON.stringify(String(Buffer.concat(parts)).slice(0, 24)));
       });
     });
-    request.on("error", error => { clearTimeout(patience); resolve("failed " + error.code); });
-    const patience = setTimeout(() => { request.destroy(); resolve("no answer"); }, 1000);
+    request.on("error", error => resolve("failed " + error.code));
     request.end(body);
   });
 }

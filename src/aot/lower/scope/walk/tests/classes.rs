@@ -141,6 +141,35 @@ fn field_initializers_belong_to_initializers() {
 }
 
 #[test]
+fn independent_field_values_belong_to_constructor() {
+    let class = |value: &str| {
+        format!(
+            "export class C {{ a; b = {value}; c = () => this.a; \
+                constructor(a) {{ this.a = a; }} }}"
+        )
+    };
+    let expect = |value: &str, is_in_constructor: bool| {
+        let source = class(value);
+        with_walk(&[("main.mjs", &source[..])], |hir, _, walk| {
+            let [_, b, c, _] = members(hir)[..] else {
+                panic!("the class has four members");
+            };
+            let function = match is_in_constructor {
+                true => walked(walk, only_function(hir, FnKind::Constructor)),
+                false => instance_initializer(walk),
+            };
+            assert_eq!(walk.function_of_field, [(b, function), (c, function)]);
+        });
+    };
+    expect("new Map()", true);
+    expect("[globalThis.first]", true);
+    expect("5", true);
+    expect("this.a", false);
+    expect("[this]", false);
+    expect("eval('1')", false);
+}
+
+#[test]
 fn values_of_fields_with_legacy_decorators_belong_to_who_evaluates_them() {
     let source = "declare const d: any; \
         export class C { @d a = 1; @d static b = 2; c = 3; static e = 4; }";

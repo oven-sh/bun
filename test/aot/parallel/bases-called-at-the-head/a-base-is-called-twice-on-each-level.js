@@ -1,6 +1,6 @@
 // Each level calls the one above twice. The build used to read a base once for each way down to it: twice as often with every level.
 // STATISTIC: BodiesReadForBirths <= 100
-// STATISTIC: FieldsListedAtBirthsByConstructors = 0
+// STATISTIC: ConstructorFieldsFoldedIntoAllocations = 0
 function F0() { this.a = 1; }
 function F1() { F0.call(this); F0.call(this); this.f1 = 1; }
 Object.setPrototypeOf(F1.prototype, F0.prototype);

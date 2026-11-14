@@ -1,11 +1,11 @@
-# Behind a computed store nothing is known of the slots of `all`: one guess covers the stores by name that follow, the second store into `f0` and the reads of `f0` and `f1`.
+# Behind a computed store of what may be an object nothing is known of the slots of `all`: one guess covers the stores by name that follow, the second store into `f0` and the reads of `f0` and `f1`.
 # The reads look at no slot: the guess knows that both were stored in front of them.
 # The search for what the guess covers finds two things a store, and past 192 it goes by tables. The ninety-six stores here leave it at 192: the two reads are answered by going through what was found.
 # f1 = fill
 # -- source: main.js
-# function fill(key) {
+# function fill(key, value) {
 #   const all = {};
-#   all[key] = 1;
+#   all[key] = value;
 #   all.f0 = 0;
 #   all.f1 = 1;
 #   all.f2 = 2;
@@ -105,7 +105,7 @@
 #   return all.f0 + all.f1;
 # }
 # globalThis.kept = fill;
-# print(fill("x"));
+# print(fill("x", fill));
 # -- end of source
 # RUN(WALK): walk f1:Body mechanisms=all
 # WALK: = IsNotFrozen

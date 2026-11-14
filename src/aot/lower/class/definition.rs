@@ -176,7 +176,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             static_name,
             is_under_computed_key,
         );
-        let layout = layouts::define_class_layout(self.file, class, Some(constructor));
+        let layout = match self.file.is_class_of_other_part(class) {
+            true => self.file.request_class(class),
+            false => layouts::define_class_layout(self.file, class, Some(constructor)),
+        };
 
         self.set_position(self.file.hir[class].start);
         let closure = self.emit_closure(constructor, None);
@@ -217,6 +220,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             ClassTransform::Standard => {
                 if let Some(initializers) = decoration.class_initializers {
                     self.emit_initializer_run(initializers, value);
+                }
+                if plan.initializer_list_count > 0 {
+                    self.drop_empty_initializer_lists(evaluation.class);
                 }
                 value
             }

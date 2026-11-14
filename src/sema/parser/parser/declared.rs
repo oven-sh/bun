@@ -174,17 +174,19 @@ pub(crate) struct Declared {
     parameters: (Span<TypeParamId>, Span<ParamId>),
 }
 
+#[derive(Copy, Clone)]
+pub(crate) struct DeclaredNames {
+    pub(crate) are_collected: bool,
+    /// `note_odd_exports` will be called.
+    pub(crate) need_table: bool,
+    pub(crate) are_of_javascript: bool,
+}
+
 impl Declared {
-    /// `has_table` is true if `note_odd_exports` will be called.
-    pub(crate) fn begin(
-        &mut self,
-        text_len: usize,
-        is_on: bool,
-        has_table: bool,
-        is_javascript: bool,
-    ) {
-        (self.is_on, self.is_javascript, self.unopened) = (is_on, is_javascript, 0);
-        if !is_on && !has_table {
+    pub(crate) fn begin(&mut self, text_len: usize, names: DeclaredNames) {
+        (self.is_on, self.is_javascript, self.unopened) =
+            (names.are_collected, names.are_of_javascript, 0);
+        if !names.are_collected && !names.need_table {
             return;
         }
         // A file with its own atoms numbers them from 0. Beyond a million names, some share a slot.

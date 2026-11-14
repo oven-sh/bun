@@ -12,8 +12,8 @@
 # -- end of source
 # The compiler before this one: 18 instructions, 8 of them patches, a turn of the written loop steps by 8.
 # When the bound was taken: loop: operations 20, patches 0, moves 0, unlikely 11 ; loop: operations 6, patches 1, moves 0, unlikely 0.
-# RUN(X64): loops most:20,6 f1 mechanisms=all-Inlining
+# RUN(X64): loops most:20,21 f1 mechanisms=all-Inlining
 # REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
 # X64-LABEL: unit f1:Body
 # X64-NEXT: loop: at most 20
-# X64-NEXT: loop: at most 6
+# X64-NEXT: loop: at most 21

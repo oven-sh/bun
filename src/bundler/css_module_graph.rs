@@ -64,24 +64,24 @@ pub fn read(path_text: &[u8], log: &mut Log) -> Option<Vec<u8>> {
     }
 }
 
-struct CssModuleFile {
-    source: Source<'static>,
+struct CssModuleFile<'a> {
+    source: Source<'a>,
     /// `None` when the file's loader is not CSS.
-    sheet: Option<BundlerStyleSheet>,
+    sheet: Option<BundlerStyleSheet<'a>>,
     symbols: Vec<Symbol>,
-    import_records: Vec<ImportRecord<'static>>,
+    import_records: Vec<ImportRecord<'a>>,
 }
 
-impl CssModuleFile {
+impl<'a> CssModuleFile<'a> {
     /// Parses like the bundler, but skips invalid CSS the way a browser does instead of failing the import.
     fn parse(
         host: &mut dyn Host,
-        bump: &'static Arena,
+        bump: &'a Arena,
         source_index: usize,
         path_text: &[u8],
-        contents: Option<&'static [u8]>,
+        contents: Option<&'a [u8]>,
         log: &mut Log,
-    ) -> Result<CssModuleFile, Failure> {
+    ) -> Result<Self, Failure> {
         let top_level_dir = FileSystem::get().top_level_dir();
         let interned = host
             .intern(path_text)
@@ -135,10 +135,10 @@ impl CssModuleFile {
     }
 }
 
-struct CssModuleGraph(Vec<CssModuleFile>);
+struct CssModuleGraph<'a>(Vec<CssModuleFile<'a>>);
 
-impl ComposesGraph for CssModuleGraph {
-    fn stylesheet(&self, source_index: u32) -> Option<&BundlerStyleSheet> {
+impl<'a> ComposesGraph<'a> for CssModuleGraph<'a> {
+    fn stylesheet(&self, source_index: u32) -> Option<&BundlerStyleSheet<'a>> {
         self.0[source_index as usize].sheet.as_ref()
     }
 
@@ -151,13 +151,13 @@ impl ComposesGraph for CssModuleGraph {
     }
 }
 
-impl CssModuleGraph {
+impl<'a> CssModuleGraph<'a> {
     fn load(
         &mut self,
         host: &mut dyn Host,
-        bump: &'static Arena,
+        bump: &'a Arena,
         path_text: &[u8],
-        contents: &'static [u8],
+        contents: &'a [u8],
         log: &mut Log,
     ) -> Result<(), Failure> {
         self.0.push(CssModuleFile::parse(
@@ -267,13 +267,10 @@ pub fn load_exports(
     path_text: &[u8],
     contents: &[u8],
 ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, Failure> {
-    let arena = Arena::new();
-    // SAFETY: only `graph` and `skipped` borrow from `arena`; they're declared after it, so they drop first.
-    let bump: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
+    let bump = &Arena::new();
     let mut graph = CssModuleGraph(Vec::new());
     let mut skipped = Log::init();
 
-    let contents = bump.alloc_slice_copy(contents);
     graph.load(host, bump, path_text, contents, &mut skipped)?;
     let exports = graph.exports(bump, &mut skipped)?;
     for msg in &skipped.msgs {

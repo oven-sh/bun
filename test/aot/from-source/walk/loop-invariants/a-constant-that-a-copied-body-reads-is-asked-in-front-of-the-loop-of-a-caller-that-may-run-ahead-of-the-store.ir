@@ -2,10 +2,10 @@
 # of the store: true where the read stands, and carried by no operand. What stands in front of a loop runs though the loop has no turn. So in front of the typed copy the word is read as it lies and asked; what is
 # empty goes to the closed copy, where the read stands in its turn; the unboxing and the load of the slot stand behind the test. f1 = go.
 # RUN: walk f1 mechanisms=all
-# CHECK: absent|{{*}} = GetModuleVariable {{*}}givesWordAsItLies
+# CHECK: absent|{{*}} = GetModuleVariable {{*}}returnsRawSlot
 # CHECK-NEXT: = TypeTest {{*}}testedType=absent
-# CHECK: = Narrowed
-# CHECK-NEXT: = Unbox
+# CHECK: [[held]]: L0 @JSValue = Narrowed
+# CHECK: = Unbox [[held]]
 # CHECK-NEXT: = GetSlot {{*}}key="width"
 # -- source: a-constant-that-a-copied-body-reads-is-asked-in-front-of-the-loop-of-a-caller-that-may-run-ahead-of-the-store.cjs
 # "use strict";

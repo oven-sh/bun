@@ -1,0 +1,24 @@
+# -- source: main.mjs
+# class Model { constructor(v) { this.v = v; this.n = 0; } }
+# const Events = { on(x) { this.n += x; return this; }, count() { return this.n; } };
+# const Reads = { get(x) { return this.v + x; } };
+# const Writes = { put(x) { this.v = x; return x; } };
+# Object.keys(Events).forEach(name => { Model.prototype[name] = Events[name]; });
+# for (const name of Object.keys(Reads)) Model.prototype[name] = Reads[name];
+# for (const [name, method] of Object.entries(Writes)) Model.prototype[name] = method;
+# function run(turns) { const model = new Model(1); let sum = 0; for (let i = 0; i < turns; i++) { model.on(i); sum += model.count() + model.get(i) + model.put(2); } return sum; }
+# print(run(4), run(0));
+# -- end of source
+# What is stored under a key of the record is what the record holds under it.
+# RUN: link mechanisms=all
+# CHECK: on-prototype L0 "on" function=f
+# RUN(COUNT): link mechanisms=all
+# COUNT: on-prototype L0 "count" function=f
+# RUN(GET): link mechanisms=all
+# GET: on-prototype L0 "get" function=f
+# RUN(PUT): link mechanisms=all
+# PUT: on-prototype L0 "put" function=f
+# RUN(LAYOUT): link mechanisms=all
+# LAYOUT: layout L0 changes=[]
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 31 0

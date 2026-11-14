@@ -1,7 +1,7 @@
 # -- source: main.js
 # "use strict";
 # const held = { row: null };
-# function plain(t) { const a = []; for (let i = 0; i < 40; i++) { a[i] = i * 0.5 + t; a[i] = a[i] + 1.5; } return a; }
+# function plain(t) { const a = [1.5, 2.5]; a.push(3.5); for (let i = 0; i < 40; i++) { a[i] = i * 0.5 + t; a[i] = a[i] + 1.5; } return a; }
 # function storedOver(t) { const a = []; for (let i = 0; i < 40; i++) { a[i] = i * 0.5 + t; if (i === 20) a.length = 10; a[i] = a[i] + 1.5; } return a; }
 # function otherName(t) { const a = []; const b = a; for (let i = 0; i < 40; i++) { a[i] = i * 0.5 + t; if (i === 20) b.length = 2; a[i] = a[i] + 1.5; } return a; }
 # function holder(t) { const a = []; held.row = a; for (let i = 0; i < 40; i++) { a[i] = i * 0.5 + t; if (i === 20) held.row.length = 2; a[i] = a[i] + 1.5; } return a; }

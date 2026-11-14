@@ -1,0 +1,13 @@
+# f1 = ring, f2 = rounds
+# -- source: main.cjs
+# "use strict";
+# function ring(f, b, g) { var h = f[0], k = f[1], l = f[2], n = f[3], d = 0; for (var c = 0; 64 > c; c++) { if (16 > c) d = b[c]; else d = b[c & 15] = (b[c + 1 & 15] >>> 7 ^ b[c + 1 & 15] << 25 ^ b[c + 14 & 15] >>> 10) + b[c & 15] + b[c + 9 & 15] | 0; d = d + n + (h >>> 6 ^ h << 26 ^ h >>> 11) + (h & k ^ l & (h ^ k)) + g[c] | 0; n = l; l = k; k = h; h = d; } return [h, k, l, n]; }
+# function rounds(f, b) { var h = f[0] | 0, k = f[1] | 0, l = f[2] | 0, n = f[3] | 0; for (var c = 0; c < 64; c++) { var d = (h << 5 ^ h >>> 27 ^ k >>> 2 ^ k << 30) + (h & k ^ l & (h ^ k)) + n + b[c] | 0; n = l; l = k; k = h; h = d; } return [h, k, l, n]; }
+# function fill(n) { const a = []; for (let i = 0; i < n; i++) a.push(Math.imul(i + 1, 0x9e3779b9) | 0); return a; }
+# const block = fill(16); block[9] = 1099511627776 + 2147483648;
+# console.log(ring(fill(4), fill(16), fill(64)).join(), ring(fill(4), block, fill(64)).join(), rounds(fill(4), fill(64)).join(), rounds(fill(4), new Int32Array(fill(64))).join());
+# -- end of source
+# Iterations with a constant trip count whose words are others of the next one are unrolled, each stage of the counter by itself: nothing moves the words, and places under a masked counter are constants.
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 1605097547,-1482710,-1811251759,370550804 -1459464194,-2094541039,1861816360,-22162690 -661738917,683312339,442460574,877287285 -661738917,683312339,442460574,877287285
+# RIGHT-NEXT: exited with 0

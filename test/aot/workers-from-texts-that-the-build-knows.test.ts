@@ -212,19 +212,46 @@ describe.concurrent("compile/aot/workers from texts that the build knows", () =>
   );
 
   test(
-    "a file that is named by a path and imports what isn't there stops the build, as it does in an entry point",
+    "a file that is named by a path and imports what isn't there fails where the worker starts, and the build says so",
     () =>
       slot(async () => {
         using dir = tempDir("aot-workers-from-texts", {
-          "main.js": `new Worker(new URL("./imports.js", import.meta.url));`,
+          "main.js": `const worker = new Worker(new URL("./imports.js", import.meta.url));${listen}`,
           "imports.js": `import "./inner.js"; postMessage("imports.js");`,
           "inner.js": `import "./no-such-file.js";`,
         });
-        const compiled = await build(String(dir), "main.js");
-        expect({ stderr: compiled.stderr, exitCode: compiled.exitCode }).toEqual({
-          stderr: expect.stringContaining("error: TS100150"),
-          exitCode: 1,
+        const plain = await spawned([bunExe(), "run", "main.js"], String(dir), bunEnv);
+        expect({ stdout: plain.stdout, exitCode: plain.exitCode }).toEqual({
+          stdout: "error Cannot find module\n",
+          exitCode: 0,
         });
+        const compiled = await build(String(dir), "main.js");
+        built(compiled);
+        expect(compiled.stderr).toContain("warn: TS100150");
+        const ran = await spawned([compiled.executable], String(dir), compiledOnly);
+        expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
+      }),
+    timeout,
+  );
+
+  test(
+    "the same file stops the build where the program imports it too or it is given as an entry point",
+    () =>
+      slot(async () => {
+        const files = {
+          "imports.js": `import "./inner.js"; globalThis.postMessage?.("imports.js");`,
+          "inner.js": `import "./no-such-file.js";`,
+        };
+        const start = `new Worker(new URL("./imports.js", import.meta.url));`;
+        using imported = tempDir("aot-workers-from-texts", { ...files, "main.js": `import "./imports.js"; ${start}` });
+        using given = tempDir("aot-workers-from-texts", { ...files, "main.js": start });
+        const builds = [await build(String(imported), "main.js"), await build(String(given), "main.js", "imports.js")];
+        for (const compiled of builds) {
+          expect({ stderr: compiled.stderr, exitCode: compiled.exitCode }).toEqual({
+            stderr: expect.stringContaining("error: TS100150"),
+            exitCode: 1,
+          });
+        }
       }),
     timeout,
   );

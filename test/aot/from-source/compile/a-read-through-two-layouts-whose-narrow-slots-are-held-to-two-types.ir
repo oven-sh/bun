@@ -4,8 +4,8 @@
 # const enum Flags { None = 0, A = 1, B = 2, C = 4 }
 # class Other { tag: string; constructor(tag: string) { this.tag = tag; } }
 # class Lid { tag: string; constructor(tag: string) { this.tag = tag; } }
-# class Thing { flags: Flags; ready: boolean; name: string; other: Other; more: Flags; last: boolean; constructor(i: number) { this.flags = (i & 7) as Flags; this.ready = (i & 1) === 1; this.name = "n" + i; this.other = new Other("o" + i); this.more = (i & 3) as Flags; this.last = false; } }
-# class Crate { flags: Flags; ready: boolean; name: string; other: Lid; more: Flags; last: boolean; constructor(i: number) { this.flags = (i & 7) as Flags; this.ready = (i & 1) === 1; this.name = "c" + i; this.other = new Lid("l" + i); this.more = (i & 3) as Flags; this.last = true; } }
+# class Thing { flags: Flags; ready: boolean; name: string; other: Other; next: Thing | undefined; more: Flags; last: boolean; constructor(i: number) { this.flags = (i & 7) as Flags; this.ready = (i & 1) === 1; this.name = "n" + i; this.other = new Other("o" + i); this.more = (i & 3) as Flags; this.last = false; } }
+# class Crate { flags: Flags; ready: boolean; name: string; other: Lid; next: Crate | undefined; more: Flags; last: boolean; constructor(i: number) { this.flags = (i & 7) as Flags; this.ready = (i & 1) === 1; this.name = "c" + i; this.other = new Lid("l" + i); this.more = (i & 3) as Flags; this.last = true; } }
 # function otherOf(t: Thing) { return t.other; }
 # function lidOf(t: Crate) { return t.other; }
 # sink(Thing, Crate, Other, Lid, otherOf, lidOf, new Thing(1), new Crate(2));
@@ -14,7 +14,7 @@
 # code f1:Body {
 #   frame 0 callee=f1 callPosition=4294967295 module=m0
 #   b0(v0: anything?ParameterOfEscapedFunction @JSValue) entry=0:
-#     v1: anything?ContentsOfEscapedObject @JSValue = GetSlot v0 key="other" receivers=[L2, L3] level=Expected [holdsDeclaredType] traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v1: anything?ContentsOfEscapedObject @JSValue = GetSlot v0 key="other" receivers=[L2, L3] level=Expected [holdsDeclaredType] traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     Return v1
 # }
 # -- end of code

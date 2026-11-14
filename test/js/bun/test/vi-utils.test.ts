@@ -280,6 +280,38 @@ describe("vi.stubGlobal", () => {
     expect("viUtilsNew" in globalThis).toBe(false);
   });
 
+  // onmessage is a data property to a script, with native code behind it. A stub of it is the handler as long as it is
+  // there, and what unstubAllGlobals() puts back removes it. The run ends either way.
+  test.each([
+    ["and unstubAllGlobals() removes it", "vi.unstubAllGlobals();", ["a stub: 1", "an assignment: 2"]],
+    ["and stays when the file ends with it", "", ["a stub: 1", "an assignment: 2", "an assignment: 3"]],
+  ])("a stub of onmessage is the handler of message events, %s", async (_, after, expected) => {
+    const { stdout, stderr, exitCode } = await run(["test", "./stub.test.ts"], {
+      "stub.test.ts": `
+        import { test, vi } from "bun:test";
+        test("stubs", () => {
+          const seen = [];
+          vi.stubGlobal("onmessage", event => seen.push("a stub: " + event.data));
+          dispatchEvent(new MessageEvent("message", { data: 1 }));
+          onmessage = event => seen.push("an assignment: " + event.data);
+          dispatchEvent(new MessageEvent("message", { data: 2 }));
+          ${after}
+          dispatchEvent(new MessageEvent("message", { data: 3 }));
+          console.log(JSON.stringify(seen));
+        });
+      `,
+    });
+    expect({
+      seen: stdout && JSON.parse(stdout.slice(stdout.indexOf("["))),
+      results: results(stderr),
+      exitCode,
+    }).toEqual({
+      seen: expected,
+      results: ["(pass) stubs"],
+      exitCode: 0,
+    });
+  });
+
   test("the originals survive garbage collection", () => {
     try {
       Object.defineProperty(globalThis, "viUtilsDescriptor", { value: { marker: "original" }, configurable: true });

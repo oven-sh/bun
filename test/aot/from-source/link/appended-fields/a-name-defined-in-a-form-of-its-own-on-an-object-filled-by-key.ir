@@ -6,17 +6,17 @@
 # function filled(names) { const made = {}; for (const name of names) made[name] = 1; return made; }
 # function grown(names) { const made = { first: 1 }; for (const name of names) made[name] = 1; return made; }
 # function listed() { return { only: 1 }; }
-# const maps = [Object.defineProperty(filled(["a"]), "fixed", { value: 1, enumerable: true, writable: false }), Object.defineProperty(grown(["a"]), "fixed", { value: 2, enumerable: false, writable: true })];
+# const maps = [Object.defineProperty(filled(JSON.parse('["a"]')), "fixed", { value: 1, enumerable: true, writable: false }), Object.defineProperty(grown(JSON.parse('["a"]')), "fixed", { value: 2, enumerable: false, writable: true })];
 # const record = Object.defineProperty(listed(), "fixed", { value: 3, enumerable: true, writable: false });
-# grown(["b"]).plain = 4;
-# console.log(String(maps[0].fixed), String(maps[1].fixed), String(record.fixed), Object.keys({ ...filled(["c"]) }).join(), Object.keys({ ...grown(["d"]) }).join());
+# grown(JSON.parse('["b"]')).plain = 4;
+# console.log(String(maps[0].fixed), String(maps[1].fixed), String(record.fixed), Object.keys({ ...filled(JSON.parse('["c"]')) }).join(), Object.keys({ ...grown(JSON.parse('["d"]')) }).join());
 # -- end of source
 # RUN: link fields layouts mechanisms=all
 # CHECK-NOT: field L0.
 # CHECK: field L2.0 "first"
 # CHECK-NEXT: field L2.1 "plain" appended
 # CHECK-NEXT: field L3.0 "only"
-# CHECK-NEXT: field L3.1 "fixed" appended proven=i32 writers-known form=read-only.not-configurable.
+# CHECK-NEXT: field L3.1 "fixed" appended proven=int[0, 2147483647] writers-known form=read-only.not-configurable.
 # CHECK: layout L0 {{*}} filled-under-computed-keys
 # CHECK: layout L2 {{*}} filled-under-computed-keys
 # RUN(PLAN): plan layouts mechanisms=all

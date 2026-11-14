@@ -123,6 +123,26 @@ allows src/aot/lower/function/original_asked_for.rs a word that `bun test` searc
     return name == known::importActual;
 allows src/aot/options.rs option words, which are the build's own
     return key == "threads";
+allows src/aot/lower/commonjs/path_comparisons.rs a member of a path that is a path too
+    matches!(
+        name,
+        b"dirname"
+            | b"join"
+    )
+allows src/aot/lower/call/assignment_to_new_object.rs a callee that is compared with Object.assign
+    ExprKind::Dot { name, .. } => self.file.queries.atom_bytes(name) == b"__assign",
+allows src/aot/compile/bind_stage.rs a path of a WebAssembly file
+    let named = named.filter(|it| files.atoms.bytes(it.1).ends_with(b".wasm"));
+allows src/aot/load/import_functions.rs the callee of a call that makes code from a string
+    match atoms.bytes(callee) {
+        b"Function" => read_function_body(atoms, parameter, body),
+        _ => None,
+    }
+allows src/aot/load/known_evaluations/evaluator.rs a method in the guess at a string that is evaluated
+    match name {
+        b"replace" => self.replace(text, args),
+        _ => Value::Unknown,
+    }
 allows src/aot/load/test_runner_names.rs a name that no program can write
     return name.starts_with(b"%");
 allows src/aot/lower/function/text_read_back.rs a word of a kept text that the compiler reads back to check itself
@@ -212,16 +232,26 @@ allows src/sema/import_sites/changed_files.rs a function of node:fs that reads a
     return matches!(name, b"readFile" | b"readFileSync" | b"createReadStream");
 allows src/sema/import_sites/changed_files.rs a flag of fs.constants that only reads
     return atoms.bytes(constants) == b"constants" && matches!(name, b"O_RDONLY" | b"O_NONBLOCK");
+allows src/sema/import_sites/changed_files.rs a function of node:fs that queries a file
+    return matches!(name, b"existsSync" | b"stat" | b"lstatSync" | b"access");
+allows src/sema/import_sites/changed_files.rs an access mode of fs.constants that only reads
+    return matches!(name, b"F_OK" | b"R_OK");
+allows src/sema/import_sites/changed_files.rs a function of node:fs that lists a folder
+    return matches!(name, b"readdir" | b"readdirSync" | b"opendirSync");
 finds src/sema/import_sites/changed_files.rs matches!
-    return matches!(name, b"existsSync");
+    return matches!(name, b"watchFile");
 allows src/sema/import_sites/call_sites.rs a member of jest, which the record of an import leads to
     if name == known::doMock { return may_be_export_of_test_runner(hir, bound, object, holders); }
 allows src/sema/import_sites/call_sites.rs what Bun's transpiler goes by
     return [known::toMatchInlineSnapshot].contains(&name);
+allows src/sema/import_sites/alternatives/execution.rs the environment of the process
+    matches!(hir.member_key(e), Some((host, MemberKey::Name(known::env))) if is_process(hir, bound, host, &[]))
 allows src/sema/import_sites/call_sites.rs a query behind a specifier
     if strings::contains_char(inputs.atoms.bytes(name), b'?'));
 allows src/sema/import_sites/call_sites.rs a constructor that cannot be followed
     return by_binding.unwrap_or(name == known::Worker);
+allows src/aot/test_runs/files_of_run.rs a name that may be a loader
+    return name == known::require || name == known::createRequire;
 allows src/sema/import_sites/import_uses.rs the identifier eval as it is written
     return matches!(e.kind, ExprKind::Ident(name) if name == known::eval);
 finds src/sema/import_sites/import_uses.rs ==
@@ -247,20 +277,28 @@ allows src/sema/check/aot/prototype_links.rs a call that may hand on a receiver
     return name == known::call || name == known::apply;
 finds src/sema/check/aot/prototype_links.rs ==
     return name == known::eval;
+allows src/aot/builtins/resolve/written_members.rs a member through which a spy shows its receiver
+    return matches!(name, known::contexts | known::instances);
+finds src/aot/builtins/resolve/written_members.rs matches!
+    return matches!(name, known::value | known::resolve);
 allows src/aot/load/hoisted_mocks.rs a member of vi or jest
     return matches!(name, known::mock | known::unmock);
 finds src/aot/load/hoisted_mocks.rs matches!
     return matches!(name, known::require);
 allows src/aot/modules/referents.rs the exports of the module's own parameter
     return key == MemberKey::Name(known::exports) && bound.binding(object) == Binding::CommonJs(CommonJsVariable::Module);
+allows src/aot/modules/wrapped/bootstrap.rs the exports of the record that webpack's runtime makes
+    return name == known::exports && self.names(object, symbol);
+allows src/aot/modules/wrapped/browserify.rs the call of a body in the object of browserify's runtime
+    self.files.atoms.bytes(name) == b"call"
 allows src/aot/lower/module/loads.rs the end of a written path
     let bytes = self.file.queries.atom_bytes(written).to_vec();
     let (of_folder, of_file) = match bytes.ends_with(b"/") {
 allows src/aot/lower/module/loads.rs the scheme of a built-in module
     return alias.node_builtin && !name.starts_with(b"node:");
-allows src/aot/lower/quoted_text.rs an identifier that the build has made
+allows src/aot/lower/quoted_source.rs an identifier that the build has made
     return written_name_of_local(self.file.queries.atom_bytes(name)).starts_with(b"%");
-finds src/aot/lower/quoted_text.rs starts_with
+finds src/aot/lower/quoted_source.rs starts_with
     return self.file.queries.atom_bytes(name).starts_with(b"_");
 allows src/aot/builtins/resolve/mentions.rs the kind of an event that a listener on the global object is added for
     const EVENTS_THAT_NATIVE_CODE_DISPATCHES_ON_GLOBAL_OBJECT: [&[u8]; 3] = [b"error", b"message", b"messageerror"];
@@ -312,6 +350,49 @@ allows src/aot/lower/member.rs a member of a function that plain Bun answers whi
     return name != known::arguments && name != known::caller;
 allows src/sema/import_sites/touched_exports.rs a member that leads from one module to the others
     matches!(member, b"parent" | b"children" | b"require")
+allows src/aot/modules/wrapped/bootstrap.rs what every function has of its own
+    let bytes = self.files.atoms.bytes(name);
+    matches!(
+        bytes,
+        b"name" | b"length" | b"prototype" | b"arguments" | b"caller"
+    )
+finds src/aot/modules/wrapped/bootstrap.rs matches!
+    matches!(self.files.atoms.bytes(name), b"require" | b"cache")
+allows src/aot/load/copied_factories.rs a member that is handed a function
+    matches!(self.atoms.bytes(name), b"every" | b"filter" | b"map")
+allows src/aot/load/objects_created_below.rs a member of the global Object
+    return self.atoms.bytes(name) != b"create" || self.bound.binding(object) != Binding::Free;
+allows src/aot/lower/layouts/object_types.rs a member of a list
+    return self.queries.atom_bytes(name) == b"forEach";
+allows src/sema/check/aot/class_stores.rs a member of a function in hand
+    let Some((object, MemberKey::Name(known::call | known::apply))) = hir.member_key(callee) else {
+allows src/sema/check/aot/constructor_evidence.rs the whole module
+    return name == known::exports || name == known::default;
+allows src/sema/import_sites/changed_files.rs the identifier eval as it is written
+    ExprKind::Ident(name) => name != known::eval,
 allows src/aot/compile/summary.rs the end of a written path
     let path = files.atoms.bytes(path);
     _ if path.ends_with(b"/") => [&own_name[..end], b"/", path, b"noop.js"].concat(),
+allows src/aot/lower/call/class_makers.rs a member of the global Object, which is asked next
+    if self.queries.atom_bytes(name) != b"create" {
+finds src/aot/lower/call/class_makers.rs !=
+    if self.queries.atom_bytes(name) != b"inherits" {
+allows src/aot/lower/call/prototype_makers.rs members that define accessors
+    if name.starts_with(b"__define") {
+allows src/aot/lower/call/written_operands.rs a member of Reflect.construct, which is asked next
+    if name != known::apply
+allows src/aot/lower/statement/loose_loops.rs a member that iteration reads off its iterator
+    if self.is_name_of(obj, iterator) && atoms.bytes(name) == b"return"
+allows src/aot/lower/statement/loose_loops.rs a member of Array, which is asked next
+    && self.queries.files().atoms.bytes(method) == b"isArray"
+allows src/aot/modules/evicted.rs a member of a function in hand
+    && self.files.atoms.bytes(name) == b"call"
+allows src/sema/import_sites/made_requires.rs an export of a module that is asked next
+    && !matches!(key, MemberKey::Name(known::createRequire))
+allows src/aot/known_helpers/private_state.rs a member of what a known helper returns
+    && self.input.files.atoms.bytes(name) == b"_"
+allows src/sema/check/aot/inferred_from_use.rs a guess at what a parameter holds
+    const NAME: &[u8] = b"_createForOfIteratorHelper";
+    name.is_some() && self.atom_bytes(name).starts_with(NAME)
+allows src/sema/check/aot/inferred_from_use.rs a guess at what a parameter holds, by its iterator
+    self.atom_bytes(holder) == b"Symbol" && self.atom_bytes(name) == b"iterator";

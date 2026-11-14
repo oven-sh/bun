@@ -540,6 +540,10 @@ impl Finder<'_, '_> {
         let (hir, bound, decisions) = (self.hir, self.bound, self.decisions);
         for &(expression, decision) in decisions.decided() {
             let is_printed = match hir[expression].kind {
+                ExprKind::Ident(_) if matches!(bound.binding(expression), Binding::Symbol(_)) => {
+                    !matches!(decision, Decision::Constant(_))
+                        || decisions.is_constant_in_bun_run(hir, expression)
+                }
                 ExprKind::Ident(_) | ExprKind::Dot { .. } => true,
                 ExprKind::Call(_) => decisions.is_constant_in_bun_run(hir, expression),
                 _ => false,

@@ -31,6 +31,8 @@ use super::entry_points::is_relative_path;
 use super::scan::{ContentsScan, ScanInput};
 use super::worker_entries::is_url_with_code;
 use crate::builtins::{BuiltinId, KeyOfModuleCache, ResolvedBuiltins, RuntimeModule, table};
+use crate::ir::InParallel;
+use crate::ir::parallel::map_each;
 use crate::load::is_in_node_modules;
 use crate::load::loader_aliases::{
     LoaderAlias, resolve_exported_loader_alias, resolve_loader_alias,
@@ -76,6 +78,7 @@ pub(crate) struct NamedLoads {
     pub unknown_names_at: Vec<u32>,
     pub sought_from_unknown_folders: Vec<(Atom, bool)>,
     pub written_arms_of_unknown_names: Vec<(Atom, bool)>,
+    pub followed_names: Vec<(Atom, bool)>,
     pub guessed_arms: Vec<Atom>,
     pub arms_of_makers_called_first: Vec<Atom>,
     pub files_missing_at_build_at: Vec<u32>,
@@ -225,30 +228,63 @@ fn sort_named_modules(named: &mut Vec<NamedModule>, atoms: &Interner<'_>) {
     named.dedup();
 }
 
-pub(crate) fn find_library_modules_that_unknown_names_may_stand_for(
-    application: &Files<'_>,
-) -> Vec<RuntimeModule> {
-    let mut modules: Vec<RuntimeModule> = Vec::new();
-    let mut written: Vec<RuntimeModule> = Vec::new();
-    let mut loads_by_unknown_name = false;
-    let (mut loads_by_path_alone, mut is_answered_otherwise) = (false, false);
-    for &file in application.compiled_files() {
+#[derive(Default)]
+struct UnknownNames {
+    modules: Vec<RuntimeModule>,
+    written: Vec<RuntimeModule>,
+    loads_by_unknown_name: bool,
+    loads_by_path_alone: bool,
+    is_answered_otherwise: bool,
+}
+
+impl UnknownNames {
+    fn add_file(&mut self, application: &Files<'_>, file: FileId) {
         let source = parsed_source(application, file);
-        loads_by_unknown_name = loads_by_unknown_name
+        self.loads_by_unknown_name = self.loads_by_unknown_name
             || source.is_none_or(|source| {
                 source.contents.names.loads_by_unknown_name
                     || source.builtins.loads_unknown_modules()
             })
             || resolve_loads_through_imported_loaders(application, file);
         let Some(source) = source else {
-            continue;
+            return;
         };
-        loads_by_path_alone |= source.contents.names.loads_by_path_alone;
-        is_answered_otherwise |= answers_for_names_itself(&source.builtins);
-        modules.extend(&source.library_modules_named_in_text_left_to_run_time);
-        modules.extend(&source.contents.names.passed_for_parameters);
-        written.extend(&source.contents.names.written_as_values);
-        written.extend(&source.contents.names.written_as_keys);
+        let names = &source.contents.names;
+        self.loads_by_path_alone |= names.loads_by_path_alone;
+        self.is_answered_otherwise |= answers_for_names_itself(&source.builtins);
+        (self.modules).extend(&source.library_modules_named_in_text_left_to_run_time);
+        self.modules.extend(&names.passed_for_parameters);
+        self.written.extend(&names.written_as_values);
+        self.written.extend(&names.written_as_keys);
+    }
+}
+
+pub(crate) fn find_library_modules_that_unknown_names_may_stand_for(
+    application: &Files<'_>,
+    in_parallel: InParallel<'_>,
+) -> Vec<RuntimeModule> {
+    const FILES_IN_CHUNK: usize = 256;
+    let chunks: Vec<&[FileId]> = application
+        .compiled_files()
+        .chunks(FILES_IN_CHUNK)
+        .collect();
+    let names_of_chunks = map_each(chunks, in_parallel, &|chunk: &[FileId]| {
+        let mut names = UnknownNames::default();
+        for &file in chunk {
+            names.add_file(application, file);
+        }
+        names
+    });
+    let mut modules: Vec<RuntimeModule> = Vec::new();
+    let mut written: Vec<RuntimeModule> = Vec::new();
+    let mut loads_by_unknown_name = false;
+    let (mut loads_by_path_alone, mut is_answered_otherwise) = (false, false);
+    for mut names in names_of_chunks {
+        modules.append(&mut names.modules);
+        written.append(&mut names.written);
+        loads_by_unknown_name |= names.loads_by_unknown_name;
+        loads_by_path_alone |= names.loads_by_path_alone;
+        is_answered_otherwise |= names.is_answered_otherwise;
     }
     if loads_by_unknown_name || (loads_by_path_alone && is_answered_otherwise) {
         modules.append(&mut written);
@@ -1112,10 +1148,13 @@ impl ContentsScan<'_, '_> {
         }
         (names.sought_from_unknown_folders)
             .extend(find_name_sought_from_unknown_folder(request, site));
+        let name = site.specifier_node;
+        let requires = !matches!(site.kind, ImportSiteKind::ImportCall(_));
         if is_known {
+            let known = analysis.known_load_names_at(name);
+            (names.followed_names).extend(known.map(|name| (name, requires)));
             return;
         }
-        let name = site.specifier_node;
         let is_path_alone = find_why_resolver_takes_name_for_path(analysis, atoms, name).is_some();
         names.unknown_names_at.push(index as u32);
         names.loads_by_unknown_name |= may_name_library_module && !is_path_alone;
@@ -1127,9 +1166,12 @@ impl ContentsScan<'_, '_> {
             &self.exported_names,
             &self.written_names,
         ));
-        let requires = !matches!(site.kind, ImportSiteKind::ImportCall(_));
         let arms = find_written_arms(request.hir, request.bound, &analysis.decisions, site);
-        (names.written_arms_of_unknown_names).extend(arms.iter().map(|&arm| (arm, requires)));
+        let known = analysis.known_load_names_at(name);
+        let known = known.filter(|it| !arms.contains(it));
+        (names.followed_names).extend(known.map(|name| (name, requires)));
+        let arms = arms.iter().copied();
+        (names.written_arms_of_unknown_names).extend(arms.map(|arm| (arm, requires)));
     }
 
     fn look_at_texts_passed(&mut self, call: CallId) {
@@ -1332,7 +1374,7 @@ impl ContentsScan<'_, '_> {
         names.loads_by_unknown_name |= builtins.loads_unknown_modules();
         names.loads_by_unknown_path |=
             builtins.hands_on_loader_of_paths() || !names.files_missing_at_build_at.is_empty();
-        for &(name, ..) in request.analysis.names_out_of_data_files {
+        for &(name, ..) in request.analysis.names_from_data_files {
             let module = find_module(input, atoms, name);
             names.written_as_values.extend(module);
         }

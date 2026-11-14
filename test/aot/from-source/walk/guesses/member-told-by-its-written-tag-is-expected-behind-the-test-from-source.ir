@@ -22,7 +22,7 @@
 # function untold(x: N): number {
 #   return x.kind + (x as A).a;
 # }
-# const list: N[] = [{ kind: 1, a: 7 }, { kind: 2, b: 8 }, { kind: 3, a: 5, c: 9 }];
+# const list: N[] = [{ kind: 1, a: JSON.parse("7") }, { kind: 2, b: JSON.parse("8") }, { kind: 3, a: JSON.parse("5"), c: JSON.parse("9") }];
 # let s = 0;
 # for (let i = 0; i < list.length; i++) s += tell(list[i]) + chosen(list[i]) + untold(list[i]);
 # console.log(s);

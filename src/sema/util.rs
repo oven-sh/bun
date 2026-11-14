@@ -4,9 +4,10 @@ pub mod memory;
 
 pub use memory::{AppendVec, LocalVec};
 
+use crate::table::Alloc;
 use bun_collections::index_sort;
 use bun_threading::Guarded;
-use memory::{Fixed, Growing, Newest, Series};
+use memory::{Fixed, FreeWhenUnread, Growing, Newest, Series, free_with_all};
 use smallvec::{SmallVec, smallvec};
 use std::alloc::{Allocator, Global};
 use std::hash::Hasher;
@@ -409,13 +410,19 @@ pub(crate) fn slots_for<P: Placement>(len: usize, old: usize) -> usize {
 pub(crate) struct Slots<P, A: Allocator + Clone, S: Series<AtomicU64, A>> {
     /// Each shard's slot count is a power of two.
     slots: Newest<AtomicU64, A, S>,
+    free_when_unread: FreeWhenUnread<A>,
     placement: PhantomData<P>,
 }
 
 impl<P: Placement, A: Allocator + Clone, S: Series<AtomicU64, A>> Slots<P, A, S> {
     pub(crate) fn new_in(alloc: A) -> Self {
+        Self::freeing_in(alloc, free_with_all)
+    }
+
+    fn freeing_in(alloc: A, free_when_unread: FreeWhenUnread<A>) -> Self {
         Slots {
             slots: Newest::new_in(alloc),
+            free_when_unread,
             placement: PhantomData,
         }
     }
@@ -458,7 +465,8 @@ impl<P: Placement, A: Allocator + Clone, S: Series<AtomicU64, A>> Slots<P, A, S>
     #[cold]
     #[inline(never)]
     fn grow(&self, shard: usize, old: &[AtomicU64], len: usize) -> &[AtomicU64] {
-        (self.slots).replace(shard, slots_for::<P>(len, old.len()), |bigger| {
+        let (len, free) = (slots_for::<P>(len, old.len()), self.free_when_unread);
+        (self.slots).replace_and_free(shard, len, free, |bigger| {
             for packed in old {
                 let packed = packed.load(Ordering::Relaxed);
                 if packed != 0 {
@@ -644,14 +652,16 @@ pub(crate) struct WindowedSlots<A: Allocator + Clone = Global> {
     locks: [Guarded<()>; WINDOW_LOCKS],
 }
 
-impl<A: Allocator + Clone> WindowedSlots<A> {
+impl<A: Alloc> WindowedSlots<A> {
     pub(crate) fn new_in(alloc: A) -> Self {
         WindowedSlots {
-            slot_table: Slots::new_in(alloc),
+            slot_table: Slots::freeing_in(alloc, A::free_when_unread),
             locks: std::array::from_fn(|_| Guarded::new(())),
         }
     }
+}
 
+impl<A: Allocator + Clone> WindowedSlots<A> {
     #[inline]
     pub(crate) fn find(&self, spread: u64, is_match: impl FnMut(u32) -> bool) -> Option<u32> {
         (self.slot_table).find((spread >> 32) as usize, spread, Ordering::Acquire, is_match)
@@ -799,15 +809,17 @@ pub(crate) struct WindowedMap<K, V, A: Allocator + Clone = Global> {
     entries: Box<[AppendVec<(K, V), A>; LISTS], A>,
 }
 
-impl<K: Eq, V, A: Allocator + Clone> WindowedMap<K, V, A> {
+impl<K, V, A: Alloc> WindowedMap<K, V, A> {
     pub(crate) fn new_in(alloc: A) -> Self {
-        let list = |_| AppendVec::new_in(alloc.clone());
+        let entries = std::array::from_fn(|_| AppendVec::new_in(alloc.clone()));
         WindowedMap {
             slot_table: Box::new_in(WindowedSlots::new_in(alloc.clone()), alloc.clone()),
-            entries: Box::new_in(std::array::from_fn(list), alloc.clone()),
+            entries: Box::new_in(entries, alloc),
         }
     }
+}
 
+impl<K: Eq, V, A: Allocator + Clone> WindowedMap<K, V, A> {
     /// Selects the list by the tag, because keys inserted around the same time have the same window.
     #[inline]
     fn list(&self, spread: u64) -> &AppendVec<(K, V), A> {

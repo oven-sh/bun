@@ -18,7 +18,6 @@ async function turn(label) {
       server.listen(0, () => {
         fetch("http://127.0.0.1:" + server.address().port + "/p").then(r => r.text().then(t => { server.close(); resolve(r.status + "," + r.headers.get("x-a") + "," + t); }), e => { server.close(); reject(e); });
       });
-      setTimeout(() => reject(new Error("late")), 8000).unref();
     });
   } catch (e) { answer = e.constructor.name + ":" + e.message.slice(0, 30); }
   said.push(label + ".server=" + answer + "/" + (hits > 0));

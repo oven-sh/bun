@@ -7,6 +7,7 @@
 //
 // A function that is written where it is laid can be seen there. One that comes out of a list, a map or a call, off an instance or out of the library, is a value like any other.
 import { mkdirSync, writeFileSync } from "fs";
+import { printThroughBranch } from "./print-through-branch.ts";
 
 // The parameters and what the function hands back, what lays it, and the deed that has it called. GIVEN is the expression that gives the function. ANY is `: any` in TypeScript and nothing elsewhere.
 const places: [string, string, string, string, string][] = [
@@ -195,7 +196,7 @@ else if (process.argv[2] === "named") {
   for (let at = 0; at < all && laidOut < atMost; at++) {
     const program = write(at);
     if (!pattern.test(program.name)) continue;
-    writeFileSync(`${folder}/${pad(at)}-${program.name}`, program.text);
+    writeFileSync(`${folder}/${pad(at)}-${program.name}`, printThroughBranch(program.text, at, program.name));
     laidOut++;
   }
   console.log(laidOut);
@@ -205,7 +206,7 @@ else if (process.argv[2] === "named") {
   for (let step = 0; step < Math.min(count, all); step++) {
     const at = (from + step * stride) % all;
     const program = write(at);
-    writeFileSync(`${folder}/${pad(at)}-${program.name}`, program.text);
+    writeFileSync(`${folder}/${pad(at)}-${program.name}`, printThroughBranch(program.text, at, program.name));
   }
   console.log(Math.min(count, all));
 }

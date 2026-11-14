@@ -160,6 +160,11 @@ pub trait SourceProvider: Sync {
 
     fn finish_deferred_loads(&self, log: &mut Log) -> Vec<DeferredLoad>;
 
+    /// The loader of a `data:` URL that is written where it is loaded, or `None` if a bundle leaves it to the run time.
+    fn data_url_loader(&self, _url: &[u8]) -> Option<Loader> {
+        None
+    }
+
     fn decode_data_url(&self, _url: &[u8]) -> Option<Vec<u8>> {
         None
     }
@@ -182,19 +187,128 @@ pub trait SourceProvider: Sync {
 
     fn keep_where_text_is_refused(&self, _refused: &RefusedText<'_>) {}
 
+    /// `source_path`: where the file lies on the disk of the build.
     fn keep_bytes_of_data_file(&self, _source_path: &[u8]) {}
 
+    /// A compiled file that `node:fs` finds in the executable. Told only of a program of which `keep_bytes_of_data_file` was told.
     fn keep_path_of_code_that_file_system_sees(&self, _source_path: &[u8]) {}
 
-    fn is_file_that_only_asset_brings(&self, _source_path: &[u8]) -> bool {
+    /// Whether `--asset` puts files into the executable.
+    fn embeds_assets(&self) -> bool {
         false
     }
 
-    fn is_data_file_that_its_folder_may_hide(&self, _source_path: &[u8]) -> bool {
+    /// How many folders above the root directory the highest `--asset` lies. The executable mounts them as it mounts folders with code.
+    fn highest_asset_level(&self) -> usize {
+        0
+    }
+
+    /// Whether `source_path`, which `module_path` reads, is a file that `node:fs` won't find in the executable but `--asset` would embed: no `--asset` names it or a parent folder, and `keep_bytes_of_data_file` was not called for it.
+    fn is_embeddable_only_by_asset(&self, _module_path: &[u8], _source_path: &[u8]) -> bool {
         false
     }
 
-    fn warn_if_file_system_lacks(&self, _source_path: &[u8], _warning: Msg) {}
+    /// Whether an `--asset` names `source_path` or a parent folder.
+    fn is_in_asset(&self, _source_path: &[u8]) -> bool {
+        false
+    }
+
+    /// Whether `module_path` is no file of an installed package, in an executable that its sources needn't lie beside.
+    fn is_own_module_of_project(&self, _module_path: &[u8]) -> bool {
+        false
+    }
+
+    /// Whether `source_path`, which `module_path` names, is a file or a folder of the program that lies on the disk of the build.
+    fn is_on_disk(&self, _module_path: &[u8], _source_path: &[u8]) -> bool {
+        false
+    }
+
+    /// Whether `keep_bytes_of_data_file` was called for `source_path` and `--asset` would embed it where `node:fs` finds it. Whether `node:fs` finds it without `--asset` is known only once the executable's file list is final.
+    fn is_embedding_undecided(&self, _module_path: &[u8], _source_path: &[u8]) -> bool {
+        false
+    }
+
+    /// Whether `--asset` embeds the file or folder `source_path` and that path, as written, climbs two or more folders above the root directory while `module_path` lies at or below it. The folder of such a module is `/$bunfs/root` or lies below it, and that has one folder above it.
+    fn is_asset_unreachable(&self, _module_path: &[u8], _source_path: &[u8]) -> bool {
+        false
+    }
+
+    /// The first link between the innermost `--asset` around `source_path` and that file. The link itself can be an asset: that one is followed.
+    fn find_symlink_in_asset(&self, _source_path: &[u8]) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// Returns true if code that finds `source_path` by a search reads it, as a `package.json`. A question about such a file counts as a read.
+    fn is_searched_for(&self, _source_path: &[u8]) -> bool {
+        false
+    }
+
+    /// Returns true if `embed_file_implicitly()` has embedded `source_path`. A read needs its bytes.
+    fn is_embedded_implicitly(&self, _source_path: &[u8], _is_query: bool) -> bool {
+        false
+    }
+
+    fn list_files_embedded_implicitly(&self) -> Vec<Vec<u8>> {
+        Vec::new()
+    }
+
+    /// Embeds each `package.json` between `module_path` and the root of its package in `node_modules`, and returns those not embedded before.
+    fn embed_package_json_files(&self, _module_path: &[u8]) -> Vec<Vec<u8>> {
+        Vec::new()
+    }
+
+    /// The folder of the installed package that `module_path` is a file of.
+    fn find_package_folder(&self, _module_path: &[u8]) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// Whether a file of an installed package hands `folder` to a search that finds a `package.json` on the disk, and another one or none in the executable.
+    fn search_misses_manifest(&self, _module_path: &[u8], _folder: &[u8]) -> bool {
+        false
+    }
+
+    /// A search that climbs from a module finds the nearest `package.json`, so one that is embedded implicitly needs every nearer one embedded too.
+    /// Embeds those. Where one can't be embedded, the ones above it are no longer embedded. Returns each added path with the one that a search would have found.
+    fn fill_package_json_gaps(&self, _module_paths: &[&[u8]]) -> Vec<(Vec<u8>, Vec<u8>)> {
+        Vec::new()
+    }
+
+    /// The program reads a file whose path isn't known at build time. It may be any that it has found there.
+    fn note_reads_of_unknown_paths(&self) {}
+
+    /// Embeds `source_path`, which `module_path` reads through a path known at build time, and returns true. Only a file inside `node_modules` and the `package.json` nearest above `entry_path` qualify. Everything else of the application needs `--asset`. `is_query`: the call asks about the file and doesn't read its contents. A file that no call reads is embedded without its bytes, unless the program reads a path that isn't known.
+    fn embed_file_implicitly(
+        &self,
+        _entry_path: &[u8],
+        _module_path: &[u8],
+        _source_path: &[u8],
+        _is_query: bool,
+    ) -> bool {
+        false
+    }
+
+    /// The bytes of the file at `source_path`, if it is there and holds WebAssembly.
+    fn read_web_assembly(&self, _source_path: &[u8]) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// Embeds `source_path`, which `module_path` names, if it lies in an installed package and may be read as a file.
+    fn embed_named_file(&self, _module_path: &[u8], _source_path: &[u8]) -> bool {
+        false
+    }
+
+    /// The files in `folder` that `embed_file_implicitly` may embed, because it lies in an installed package. With `reaches_below` those below it too, but none for the folder of a whole package.
+    fn list_files_to_embed(&self, _folder: &[u8], _reaches_below: bool) -> Vec<Vec<u8>> {
+        Vec::new()
+    }
+
+    /// The files in `folder` itself, if no `--asset` names it or a parent folder and one could.
+    fn list_excluded_folder(&self, _folder: &[u8]) -> Option<Vec<Vec<u8>>> {
+        None
+    }
+
+    /// Emits `warning` later if `node:fs` won't find `source_path` in the executable.
+    fn warn_if_not_embedded(&self, _source_path: &[u8], _warning: Msg) {}
 
     fn parse_data<'s>(
         &self,
@@ -225,6 +339,7 @@ pub trait SourceProvider: Sync {
     fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed>;
 }
 
+/// `bun run` makes an empty module of such a text and asks no parser (`Transpiler::parse` in bundler/transpiler.rs).
 pub fn is_short_blank_text(text: &[u8]) -> bool {
     text.len() < 33 && text.iter().all(|byte| matches!(byte, b'\n' | b'\r' | b' '))
 }
@@ -286,7 +401,7 @@ fn parse_without_bundler(
     options.warn_about_unbundled_modules = false;
     options.tree_shaking = true;
     options.is_entry_point = file.is_entry_point;
-    options.import_meta_main_value = Some(file.is_entry_point);
+    options.import_meta_main_value = (!file.is_entry_point).then_some(false);
     options.use_define_for_class_fields = file.settings.use_define_for_class_fields != Some(false);
     options.import_meta_glob = glob_host;
     let has_legacy_decorators =

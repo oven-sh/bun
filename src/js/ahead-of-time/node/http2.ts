@@ -3077,8 +3077,12 @@ class Http2Stream extends (Duplex as $Node.DuplexConstructor) {
       callback();
     }
   }
+}
 
-  [EventEmitter.captureRejectionSymbol](err: Error, event: string | symbol, ...args: unknown[]) {
+// Not a member of the class body: the compiler does not know this name there, and gives up on the fields of every stream.
+const captureRejectionSymbol: typeof EventEmitter.captureRejectionSymbol = EventEmitter.captureRejectionSymbol;
+const rejectionMember = {
+  [captureRejectionSymbol](this: Http2Stream, err: Error, event: string | symbol, ...args: unknown[]) {
     switch (event) {
       case "stream": {
         const stream = args[0] as Http2Stream;
@@ -3088,8 +3092,16 @@ class Http2Stream extends (Duplex as $Node.DuplexConstructor) {
       default:
         this.destroy(err);
     }
-  }
-}
+  },
+};
+$Object.$defineProperty(Http2Stream.prototype, captureRejectionSymbol, {
+  __proto__: null,
+  value: rejectionMember[captureRejectionSymbol],
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
+
 class ClientHttp2Stream extends Http2Stream {
   declare authority: string | undefined;
 }

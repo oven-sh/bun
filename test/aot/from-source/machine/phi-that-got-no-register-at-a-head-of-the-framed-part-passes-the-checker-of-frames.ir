@@ -40,7 +40,8 @@
 # -- end of source
 # f1 = g, f2 = h, f3 = last, f4 = looped, f5 = straight
 # OPTIONS: check=Validate
-# RUN: allocate f5:Body mechanisms=all
+# As built the call that takes the third way is evaluated, and the way is gone.
+# RUN: allocate f5:Body mechanisms=all-Inlining
 # CHECK-LABEL: unit f5:Body
 # CHECK: needsFrameAheadOfFramedPart
 # RUN(LOOPED): allocate f4:Body mechanisms=all

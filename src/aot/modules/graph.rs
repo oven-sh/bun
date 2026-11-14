@@ -12,6 +12,7 @@ use super::compare_code_units;
 use super::deferred_exports::mirrors_an_object;
 use super::failures::{ModuleFailure, ModuleFailureId};
 use super::imports::NamedMember;
+use super::instances::InstanceLayout;
 use super::interop::{Interop, ModuleKind};
 use super::known_members::list_data_linked_by_names_alone;
 use super::order::SiteKey;
@@ -28,7 +29,7 @@ use bun_sema::hir::{ExprId, FnId};
 use bun_sema::import_sites::{ImportSiteKind, JsxImport};
 use bun_sema::program::FileId;
 use bun_sema::resolve::ExternalKind;
-use bun_sema::util::{FxHashSet, SharedSort};
+use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use core::ops::Range;
 use std::sync::OnceLock;
 
@@ -61,8 +62,12 @@ pub struct ModuleGraph {
     pub(super) commonjs_exports: CommonJsExports,
     pub(super) plan: Plan,
     pub(super) member_stores: Vec<OnceLock<MemberStores>>,
+    pub(super) instance_layouts: Vec<OnceLock<InstanceLayout>>,
+    pub(super) reexport_paths: super::reexport_paths::GuardedReexportPaths,
     pub(super) data_linked_by_names_alone: Box<[FileId]>,
     pub(super) forms_require_checks_first: Vec<(FileId, FileId)>,
+    /// The ES modules of the files that are compiled as CommonJS files too.
+    pub(super) module_forms: Box<[FileId]>,
     pub(super) folders_of_databases: Vec<FileId>,
     pub(super) star_names_left_out: StarNamesLeftOut,
     pub(super) names_laid_on_object_prototype: Vec<Box<[u8]>>,
@@ -98,6 +103,7 @@ pub(super) struct FileRow {
     pub namespace_values: Vec<ModuleRef>,
     pub evaluating_sites: Vec<(SiteKey, StoredSite)>,
     pub unread_sites: Vec<(ExprId, bool)>,
+    pub destructured_holders: Vec<(ExprId, (SymbolId, ModuleRef))>,
     pub holders: Vec<Holder>,
     pub holders_by_call: OnceLock<Vec<u32>>,
     pub answer_members: Vec<(ExprId, AnswerMember)>,
@@ -113,6 +119,7 @@ pub(super) struct FileRow {
     pub named_by_stars: Vec<FileId>,
     pub names_from_stars: Vec<Atom>,
     pub names_of_unlisted_stars: Vec<(Atom, FileId)>,
+    pub name_stars: Vec<(Atom, FileId)>,
     pub reaches_mock: bool,
 }
 
@@ -139,7 +146,7 @@ fn is_among(files: &[FileId], module: ModuleRef) -> bool {
     match module {
         ModuleRef::File(file)
         | ModuleRef::Inner { file, .. }
-        | ModuleRef::Face(file)
+        | ModuleRef::Facade(file)
         | ModuleRef::Check(file) => !files.is_empty() && files.binary_search(&file).is_ok(),
         ModuleRef::Runtime(_) | ModuleRef::External { .. } => false,
     }
@@ -180,11 +187,13 @@ impl ModuleGraph {
         match module {
             ModuleRef::File(file) => self.row(file).interop,
             ModuleRef::Inner { .. } => Interop::INNER_MODULE,
-            ModuleRef::Face(file) if self.commonjs_exports.face_captures(file) => Interop {
-                export_rule: self.row(file).interop.export_rule,
-                ..Interop::ES_MODULE
-            },
-            ModuleRef::Face(_) | ModuleRef::Check(_) => Interop::ES_MODULE,
+            ModuleRef::Facade(file) if self.commonjs_exports.has_capturing_facade(file) => {
+                Interop {
+                    export_rule: self.row(file).interop.export_rule,
+                    ..Interop::ES_MODULE
+                }
+            }
+            ModuleRef::Facade(_) | ModuleRef::Check(_) => Interop::ES_MODULE,
             ModuleRef::Runtime(_) => Interop::RUNTIME,
             ModuleRef::External { .. } => {
                 let kind = self.external_kind(module);
@@ -450,53 +459,135 @@ impl ModuleGraph {
         !self.placeholder_files.is_empty() && self.placeholder_files.binary_search(&file).is_ok()
     }
 
-    fn pass_requests_through(&mut self, left_out_files: &[FileId]) {
+    /// For each file that passes its requests on to its importers, the requests that its imports lead to, each once, in the order of a depth-first search.
+    fn find_forwarded_requests(
+        &self,
+        left_out_files: &[FileId],
+    ) -> FxHashMap<FileId, Vec<ModuleRequest>> {
         let is_left_out = |file: FileId| left_out_files.binary_search(&file).is_ok();
-        let mut lists = Vec::with_capacity(self.rows.len() + self.plan.inner_requests.len());
-        let mut seen = FxHashSet::default();
-        let mut pending: Vec<(ModuleRequest, bool)> = Vec::new();
-        let is_import = |request: &&ModuleRequest| request.kind == ModuleRequestKind::Import;
-        let of_files = self.rows.iter().map(|row| &row.requests);
-        for written in of_files.chain(&self.plan.inner_requests) {
-            let mut passed_on = Vec::with_capacity(written.len());
-            seen.clear();
-            pending.extend(written.iter().rev().map(|&request| (request, true)));
-            while let Some((request, is_written_here)) = pending.pop() {
-                let is_same = |earlier: &ModuleRequest| {
-                    earlier.target == request.target && earlier.kind == request.kind
-                };
-                match request.target {
-                    ModuleRef::File(target) | ModuleRef::Inner { file: target, .. }
-                        if is_left_out(target) && request.kind == ModuleRequestKind::Require => {}
-                    ModuleRef::File(target)
-                        if is_left_out(target) && !self.is_placeholder(target) =>
-                    {
-                        if seen.insert(request.target) {
-                            let imports = self.requests(target).iter().filter(is_import).rev();
-                            pending.extend(imports.map(|&request| (request, false)));
-                        }
-                    }
-                    ModuleRef::External { importer, .. } if is_left_out(importer) => {}
-                    _ if seen.is_empty() => passed_on.push(request),
-                    _ if is_written_here => {
-                        match passed_on.iter_mut().find(|earlier| is_same(earlier)) {
-                            Some(earlier) => {
-                                earlier.is_star_export |= request.is_star_export;
-                                earlier.star_place = earlier.star_place.min(request.star_place);
-                                earlier.is_dynamic_star_export |= request.is_dynamic_star_export
+        let files = left_out_files.iter().copied();
+        let has_row = |file: FileId| {
+            self.row_by_file
+                .get(file.idx())
+                .is_some_and(|it| it.is_some())
+        };
+        let files: Vec<FileId> = files
+            .filter(|&file| has_row(file) && !self.is_placeholder(file))
+            .collect();
+        let nodes: FxHashMap<FileId, u32> = files.iter().copied().zip(0..).collect();
+        let node_of = |request: &ModuleRequest| match request.target {
+            ModuleRef::File(target) => nodes.get(&target).copied(),
+            _ => None,
+        };
+        let imports = |file: FileId| {
+            let requests = self.requests(file).iter();
+            requests.filter(|request| request.kind == ModuleRequestKind::Import)
+        };
+        let edges: Vec<Vec<u32>> = files
+            .iter()
+            .map(|&file| {
+                let mut edges: Vec<u32> = imports(file).filter_map(node_of).collect();
+                edges.shared_sort_unstable();
+                edges.dedup();
+                edges
+            })
+            .collect();
+        let (component_of, components) = strongly_connected_components(&edges);
+        let mut passed_on: Vec<Vec<ModuleRequest>> = vec![Vec::new(); files.len()];
+        let mut pending: Vec<&ModuleRequest> = Vec::new();
+        // A component comes after those that it imports, so only a file of the same component has no list yet.
+        for component in &components {
+            for &node in component {
+                let mut found = Vec::new();
+                let (mut met, mut seen) = (FxHashSet::default(), FxHashSet::default());
+                seen.insert(node);
+                pending.extend(imports(files[node]).rev());
+                while let Some(request) = pending.pop() {
+                    match node_of(request) {
+                        Some(next) if component_of[next as usize] == component_of[node] => {
+                            if seen.insert(next as usize) {
+                                pending.extend(imports(files[next as usize]).rev());
                             }
-                            None => passed_on.push(request),
                         }
-                    }
-                    _ => {
-                        if !passed_on.iter().any(is_same) {
-                            passed_on.push(ModuleRequest {
+                        Some(next) => {
+                            let more = passed_on[next as usize].iter();
+                            found.extend(more.filter(|request| met.insert(request.target)));
+                        }
+                        None => match request.target {
+                            ModuleRef::External { importer, .. } if is_left_out(importer) => {}
+                            _ if met.insert(request.target) => found.push(ModuleRequest {
                                 is_star_export: false,
                                 is_dynamic_star_export: false,
                                 star_place: NO_STAR_PLACE,
-                                ..request
-                            });
+                                ..*request
+                            }),
+                            _ => {}
+                        },
+                    }
+                }
+                passed_on[node] = found;
+            }
+        }
+        files.into_iter().zip(passed_on).collect()
+    }
+
+    fn pass_requests_through(&mut self, left_out_files: &[FileId]) {
+        let is_left_out = |file: FileId| left_out_files.binary_search(&file).is_ok();
+        let passed_on_by = self.find_forwarded_requests(left_out_files);
+        let key_of = |request: &ModuleRequest| {
+            let kind = core::mem::discriminant(&request.kind);
+            (request.target, kind)
+        };
+        let mut lists = Vec::with_capacity(self.rows.len() + self.plan.inner_requests.len());
+        let of_files = self.rows.iter().map(|row| &row.requests);
+        for written in of_files.chain(&self.plan.inner_requests) {
+            let mut passed_on: Vec<ModuleRequest> = Vec::with_capacity(written.len());
+            // The places of the requests, kept from the first file on that is left out.
+            let mut places: Option<FxHashMap<_, usize>> = None;
+            for &request in written {
+                match request.target {
+                    ModuleRef::File(target) | ModuleRef::Inner { file: target, .. }
+                        if is_left_out(target) && request.kind == ModuleRequestKind::Require =>
+                    {
+                        continue;
+                    }
+                    ModuleRef::External { importer, .. } if is_left_out(importer) => continue,
+                    _ => {}
+                }
+                let more = match request.target {
+                    ModuleRef::File(target) => passed_on_by.get(&target),
+                    _ => None,
+                };
+                if let Some(more) = more {
+                    let places = places.get_or_insert_with(|| {
+                        let mut places = FxHashMap::default();
+                        for (place, request) in passed_on.iter().enumerate() {
+                            places.entry(key_of(request)).or_insert(place);
                         }
+                        places
+                    });
+                    for &request in more {
+                        places.entry(key_of(&request)).or_insert_with(|| {
+                            passed_on.push(request);
+                            passed_on.len() - 1
+                        });
+                    }
+                    continue;
+                }
+                let Some(places) = &mut places else {
+                    passed_on.push(request);
+                    continue;
+                };
+                match places.get(&key_of(&request)) {
+                    Some(&place) => {
+                        let earlier = &mut passed_on[place];
+                        earlier.is_star_export |= request.is_star_export;
+                        earlier.star_place = earlier.star_place.min(request.star_place);
+                        earlier.is_dynamic_star_export |= request.is_dynamic_star_export;
+                    }
+                    None => {
+                        places.insert(key_of(&request), passed_on.len());
+                        passed_on.push(request);
                     }
                 }
             }
@@ -528,7 +619,7 @@ impl ModuleGraph {
                 retain_used_exports(&mut row.exports, row.file, find_use);
             }
         });
-        self.commonjs_exports.limit_exports_of_faces(find_use);
+        self.commonjs_exports.retain_used_facade_exports(find_use);
     }
 
     pub fn import_bindings(&self, file: FileId) -> &[(SymbolId, ImportBinding)] {
@@ -578,6 +669,14 @@ impl ModuleGraph {
         }
     }
 
+    pub fn takes_export_from_star(&self, file: FileId, name: Atom, atoms: &Interner<'_>) -> bool {
+        let exports = &self.row(file).exports;
+        let name_bytes = atoms.bytes(name);
+        let position = exports
+            .binary_search_by(|export| compare_code_units(atoms.bytes(export.name), name_bytes));
+        position.is_ok_and(|position| exports[position].is_from_star_export)
+    }
+
     pub fn lists_export(&self, module: ModuleRef, name: Atom, atoms: &Interner<'_>) -> bool {
         let ModuleRef::File(file) = module else {
             return false;
@@ -611,6 +710,10 @@ impl ModuleGraph {
 
     pub fn required_names(&self, file: FileId) -> &[RequiredName] {
         &self.row(file).required_names
+    }
+
+    pub fn namespace_values(&self, file: FileId) -> &[ModuleRef] {
+        &self.row(file).namespace_values
     }
 
     pub fn names_searched_behind_stars(&self, file: FileId) -> &[(FileId, Atom)] {
@@ -680,6 +783,10 @@ impl ModuleGraph {
         let start = forms.partition_point(|entry| entry.0 < file);
         let count = forms[start..].partition_point(|entry| entry.0 == file);
         &forms[start..start + count]
+    }
+
+    pub fn is_module_form(&self, file: FileId) -> bool {
+        self.module_forms.binary_search(&file).is_ok()
     }
 
     pub fn is_every_export_asked_for(&self, module: ModuleRef) -> bool {
@@ -845,8 +952,24 @@ impl ModuleGraph {
         debug_assert!(external_kinds.is_sorted_by(|a, b| external_key(a.0) < external_key(b.0)));
         self.mocked_library_modules.sort_unstable();
         self.mocked_library_modules.dedup();
+        self.module_forms = self.list_module_forms();
         self.settle_holders();
         self
+    }
+
+    fn list_module_forms(&self) -> Box<[FileId]> {
+        let is_kind = |file: FileId, kind: ModuleKind| {
+            self.find_row(file)
+                .is_some_and(|row| row.interop.kind == kind)
+        };
+        let forms = self.forms_require_checks_first.iter();
+        let forms = forms.filter(|&&(file, form)| {
+            is_kind(file, ModuleKind::CommonJs) && is_kind(form, ModuleKind::SourceText)
+        });
+        let mut forms: Vec<FileId> = forms.map(|it| it.1).collect();
+        forms.sort_unstable();
+        forms.dedup();
+        forms.into_boxed_slice()
     }
 
     pub fn names_left_to_loader(

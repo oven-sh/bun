@@ -8,12 +8,14 @@
 # function look(weight: number) { const parcel = new Parcel(weight); return parcel.fragile; }
 # const looks = id(look);
 # print(looks(1));
-# (Parcel.prototype as any).fragile = true;
+# id(Parcel.prototype).fragile = true;
 # print(looks(2));
 # -- end of source
 # LIBRARY: own
-# A read of a field that an object just made lacks folds to undefined where nothing stands above under the name, and leaves no operation. What is laid above must be found.
-# The lie, testing=GuardsAndFactsAreTakenToHold: the planner of typed accesses takes every guard of a class for held and every fact of a cell for seen, and the state is not touched. Under testing=CheckProofsAtRunTime (--aot-harden=proof-checks) what the access leans on is asked where nobody has answered it: the process stops by name.
+# A read of a field that a freshly allocated object lacks folds to undefined if the prototype chain has no property of that name, and the fold leaves no operation.
+# A property that the program adds to the prototype chain must be found.
+# Fault injection, testing=AssumeGuardsAndFacts: the planner of typed accesses assumes that every class guard holds and that every cell fact is known. It does not change the walk's state.
+# With testing=CheckProofsAtRunTime (--aot-harden=proof-checks) whatever the access relies on is checked at run time. Here nothing has established it, so the process crashes with a named error.
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: undefined
 # RIGHT-NEXT: true
@@ -22,7 +24,8 @@
 # HARDENED: undefined
 # HARDENED-NEXT: true
 # HARDENED-NEXT: exited with 0
-# RUN(LIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,GuardsAndFactsAreTakenToHold
+# RUN(LIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,AssumeGuardsAndFacts
 # LIE: undefined
-# LIE-NEXT: AOT: f1 at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it. It is: another value or a test that once passed fails. This is a bug in Bun.
+# LIE-NEXT: bun: internal AOT error: redundancy elimination check failed at {{*}} (look)
+# LIE-NEXT: a load or check that the compiler removed as redundant gives a different result here
 # LIE: crashed with

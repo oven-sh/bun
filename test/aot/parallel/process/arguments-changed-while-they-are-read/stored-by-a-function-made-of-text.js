@@ -1,5 +1,4 @@
-// process.argv is overwritten by a function that is made of text at run time.
-// DECLARED: docs/compiler/compatibility.mdx, "Built-in objects are read-only". A written text is unseen code, so the build does not see the store, and the lock on process.argv refuses it. `bun <file>` and `bun build --compile` store.
+// process.argv is overwritten by a function that is made of text, which the build reads: the function is compiled and its store is seen.
 function attempt(read) {
   try {
     return String(read());
@@ -30,7 +29,3 @@ for (let i = 0; i < 6; i++) {
   seen.push([now === String(atStart) ? "as at the start" : now, attempt(first), attempt(third), attempt(() => hasFlag("--added")), typeof process.argv, Array.isArray(process.argv)].join(" "));
 }
 console.log(seen.join("\n"));
-/* Output:
-exit code 1
-TypeError: Cannot assign to process.argv because built-in objects are read-only in a compiled executable, and the build didn't see your code assign to this one. Spell out the object and the name where it does, as in process.argv = value (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
-*/

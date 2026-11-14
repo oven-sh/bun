@@ -1,7 +1,7 @@
 import { test, vi } from "bun:test";
-const later = ms => new Promise(done => setTimeout(done, ms));
+// Runs the event loop that many times: jobs, unhandled rejections and immediates run each time, and no clock decides.
+const spinEventLoop = async (count = 20) => { while (count-- > 0) await new Promise(done => setImmediate(done)); };
 globalThis.log = [];
-const hung = setTimeout(() => { console.log("SAID still waiting"); process.exit(4); }, 3000);
 let open;
 let openSecond;
 globalThis.door = new Promise(done => { open = done; });
@@ -16,20 +16,17 @@ test("what the body stands at", async () => {
   await burning;
   vi.doMock("./kiln.mjs", async () => {
     globalThis.log.push("factory called");
-    await later(50);
+    await spinEventLoop();
     const real = await vi.importActual("./kiln.mjs");
     globalThis.log.push("factory has " + real.glaze);
     return { look: () => "stand-in over " + real.glaze };
   });
   const early = import("./shelf.mjs").then(it => it.read(), error => error.name);
   open();
-  await later(100);
   openSecond();
-  const stands = later(700).then(() => "stands");
-  const original = await Promise.race([first, stands]);
-  const said = globalThis.shelf ? await Promise.race([globalThis.shelf, stands]) : "none";
-  console.log("SAID early", await Promise.race([early, stands]));
+  const original = await first;
+  const said = globalThis.shelf ? await globalThis.shelf : "none";
+  console.log("SAID early", await early);
   console.log("SAID", said, "|", original, "|", globalThis.firings);
   console.log("SAID LOG " + globalThis.log.join(" > "));
-  clearTimeout(hung);
-}, 5000);
+});

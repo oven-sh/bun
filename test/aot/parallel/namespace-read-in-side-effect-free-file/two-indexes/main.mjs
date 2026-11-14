@@ -1,0 +1,1 @@
+import "./part/main.mjs";

@@ -1,10 +1,12 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // CHECK-LABEL: function {{*}}name="nested"
-// CHECK: builtin=CompilerHelpersGetDisposeMethod
-// CHECK-NEXT: = Call {{*}}, -, [[first]]
-// CHECK: builtin=CompilerHelpersGetDisposeMethod
-// CHECK-NEXT: = Call {{*}}, -, [[second]]
+// CHECK: TypeTest [[first]] testedType=undefined|null
+// CHECK: [[readFirst]] = PropGet {{*}} key=@@dispose
+// CHECK-NEXT: TypeTest [[readFirst]] testedType=function
+// CHECK: TypeTest [[second]] testedType=undefined|null
+// CHECK: [[readSecond]] = PropGet {{*}} key=@@dispose
+// CHECK-NEXT: TypeTest [[readSecond]] testedType=function
 // CHECK: integer=1
 // CHECK: Branch {{*}}notTaken [[secondPresent]](| 0)
 // CHECK: [[secondPresent]]([[disposeSecond]]) handler=[[outer]]():

@@ -18,7 +18,7 @@
 # PARTLY-LABEL: code f2:Body
 # PARTLY-NOT: testedType=number #
 # -- source: main.js
-# function fill(make, value) { const into = make(); for (let i = 0; i < 100; i++) into[i] = value; return into; }
+# function fill(make, value) { const into = make(); let sum = 0; for (let i = 0; i < 100; i++) { into[i] = value; sum += i; } return sum ? into : 0; }
 # function mark(make, flag) { const into = make(), value = flag ? 1.5 : undefined; for (let i = 0; i < 100; i++) into[i] = value; return into; }
 # globalThis.kept = [fill, mark];
 # -- end of source

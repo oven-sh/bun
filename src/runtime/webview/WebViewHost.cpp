@@ -366,21 +366,25 @@ void WebViewHost::doNativeClick(float x, float y, uint8_t button, uint8_t modifi
 static constexpr const char* kActionabilityJS = R"js(
 const deadline = performance.now() + timeout;
 let last;
+document.querySelector(sel);
 for (;;) {
+  await new Promise(f => requestAnimationFrame(f));
   const el = document.querySelector(sel);
   if (el) {
     const r = el.getBoundingClientRect();
     const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
     if (r.width > 0 && r.height > 0 && cx >= 0 && cy >= 0 && cx < innerWidth && cy < innerHeight) {
-      if (last && last.l === r.left && last.t === r.top && last.w === r.width && last.h === r.height) {
+      const held = [];
+      for (let e = el; e; e = e.parentElement)
+        for (const a of e.getAnimations()) if (a.pending && a.timeline?.currentTime != null) held.push([a, a.currentTime]);
+      if (last && last.l === r.left && last.t === r.top && last.w === r.width && last.h === r.height && !last.held.some(([a, t]) => a.playState === "running" && a.currentTime === t)) {
         const hit = document.elementFromPoint(cx, cy);
         if (hit === el || el.contains(hit)) return cx + "," + cy;
       }
-      last = { l: r.left, t: r.top, w: r.width, h: r.height };
+      last = { l: r.left, t: r.top, w: r.width, h: r.height, held };
     } else last = undefined;
   } else last = undefined;
   if (performance.now() > deadline) throw "timeout waiting for '" + sel + "' to be actionable";
-  await new Promise(f => requestAnimationFrame(f));
 }
 )js";
 

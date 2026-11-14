@@ -1,4 +1,4 @@
-// STATISTIC: NumbersBesideCountersAskedInFrontOfLoops >= 1
+// STATISTIC: InvariantNumberGuardsHoisted >= 1
 class Box { constructor(public v: number) {} }
 var bound = 0, seen = 0, target = 0;
 const trap: any = {};

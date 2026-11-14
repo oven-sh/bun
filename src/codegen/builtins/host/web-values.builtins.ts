@@ -208,8 +208,13 @@ const assignableURLComponent = {
   },
 } satisfies b.GetterField;
 
+// Its setter throws. Called as a function of its own it would have a frame in the stack of the error.
+const urlHref = {
+  ...assignableURLComponent,
+  setter: { ...assignableURLComponent.setter, implementation: b.generic },
+} satisfies b.GetterField;
+
 const assignableURLComponents = [
-  "href",
   "protocol",
   "username",
   "password",
@@ -231,6 +236,24 @@ const pairCount = {
 } satisfies b.GetterField;
 
 const newTextDecoder = b.instance("TextDecoder").fresh;
+
+const encodedBytes = takingStrings([], ["input"], {
+  returns: b.instance("Uint8Array").exactly.fresh,
+  throws: true,
+  uses: { this: b.inspected },
+});
+
+// Accepts any receiver and arguments, and calls the prototype's function for those it does not handle itself.
+const callFrameEntry = (symbol: string) =>
+  ({
+    symbol,
+    declaration: `JSC_DECLARE_HOST_FUNCTION(${symbol});`,
+    headers: [],
+    parameters: [
+      { value: "Realm", cppType: "JSC::JSGlobalObject*" },
+      { value: "FrameOfValues", cppType: "JSC::CallFrame*" },
+    ],
+  }) satisfies b.DirectEntrySpec;
 
 const decodedText = {
   returns: b.string,
@@ -423,6 +446,7 @@ export default b.declarations(
   b.static("URL.canParse", parsesURL(b.bool, false)),
   b.static("URL.parse", parsesURL(b.union(b.instance("URL"), b.strictNull).fresh, false)),
   membersOf("URL.prototype", {
+    href: urlHref,
     ...eachOf(assignableURLComponents, assignableURLComponent),
     origin: urlComponent,
     // Every read answers the same object, which native code makes at the first one, and a change to it changes the URL.
@@ -486,10 +510,7 @@ export default b.declarations(
     done: b.bool,
   }),
   membersOf("FormData.prototype", {
-    ...pairIteration(
-      "FormDataIterator",
-      forEachPairOf(valueOfForm, [...makesFiles, b.handedOutFrom(filesOfFormsCell)]),
-    ),
+    ...pairIteration("FormDataIterator", forEachPairOf(valueOfForm, [...makesFiles, b.exposedFrom(filesOfFormsCell)])),
     get: takingStrings(["name"], [], { ...formRead, returns: b.union(valueOfForm, b.strictNull) }),
     getAll: takingStrings(["name"], [], {
       ...formRead,
@@ -626,6 +647,7 @@ export default b.declarations(
         args: { input: byteSource.optional, options: b.null.optional },
         capability: "heap",
         uses: { this: changesState, input: readsState },
+        directEntry: callFrameEntry("AOT__TextDecoder__decode"),
       },
       {
         ...decodedText,
@@ -656,11 +678,9 @@ export default b.declarations(
         uses: { this: b.inspected },
         implementation: b.hostCall,
       },
-      encode: takingStrings([], ["input"], {
-        returns: b.instance("Uint8Array").exactly.fresh,
-        throws: true,
-        uses: { this: b.inspected },
-      }),
+      encode: encodedBytes.map((field, index) =>
+        index === 0 ? { ...field, directEntry: callFrameEntry("AOT__TextEncoder__encode") } : field,
+      ),
       // Any view is taken as the destination, and its kind is tested after the source is converted.
       encodeInto: [
         {

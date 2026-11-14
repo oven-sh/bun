@@ -258,25 +258,11 @@ impl<'a> LinkerContext<'a> {
             .get()
     }
 
-    /// Mutable projection of the `r#loop` BACKREF for `AnyEventLoop` dispatch
-    /// (`enqueue_task_concurrent*`, `tick`). Centralises the raw `NonNull`
-    /// deref so the three callers (`BundleV2::any_loop_mut`, `ParseTask` /
-    /// `ServerComponentParseTask` completion) are safe.
-    ///
-    /// `&self` receiver (not `&mut self`): the loop storage is **disjoint**
-    /// from `LinkerContext` (it lives in the `BundleThread` / runtime arena —
-    /// see [`EventLoop`]), and worker-thread completions reach this through a
-    /// `BackRef<BundleV2>` (`&` only).
+    /// The loop that runs this bundle pass. Other threads only post to it.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub(crate) fn any_loop_mut(&self) -> Option<&mut bun_event_loop::AnyEventLoop> {
-        // SAFETY: BACKREF — set once in `BundleV2::init` from a loop that
-        // outlives the bundle pass; the pointee is disjoint from `*self`.
-        // Exclusivity: `Js { owner }.enqueue_task_concurrent` is `&self`
-        // (MPSC), and `Mini.enqueue_task_concurrent_with_extra_ctx` only
-        // pushes to an MPSC queue + writes the caller-owned intrusive task
-        // node, so concurrent worker completions do not alias loop state.
-        self.r#loop.map(|p| unsafe { &mut *p.as_ptr() })
+    pub(crate) fn any_loop(&self) -> Option<&bun_event_loop::AnyEventLoop> {
+        // SAFETY: BACKREF — set once in `BundleV2::init` from a loop that outlives the bundle pass.
+        self.r#loop.map(|p| unsafe { p.as_ref() })
     }
 
     /// Shared-read accessor for the bundler log.
@@ -2734,7 +2720,7 @@ pub(crate) struct TreeShakeCtx<'a, 'r> {
     pub(crate) parts_live: &'r mut [bun_collections::AutoBitSet],
     pub(crate) import_records: &'r [bun_ast::import_record::List<'a>],
     pub(crate) entry_point_kinds: &'r [EntryPoint::Kind],
-    pub(crate) css_reprs: &'r [crate::bundled_ast::CssCol],
+    pub(crate) css_reprs: &'r [crate::bundled_ast::CssCol<'a>],
     pub(crate) worklist: Vec<TreeShakeWork>,
 }
 

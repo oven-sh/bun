@@ -9,16 +9,16 @@ use super::unit::LinkUnit;
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{
     Data, DeclaredRecord, EvalScope, ExpectedResult, Function, Layout, LayoutFlags, LayoutKind,
-    Variable, VariableFlags,
+    ModuleInstance, ModuleLink, Variable, VariableFlags,
 };
 use crate::ir::parallel::{extend_from_lists, map_each};
 use crate::ir::{
     DataId, EvalScopeId, ExpectedResultId, FunctionId, Id, InParallel, LayoutId, ModuleId,
-    StringTable, VariableId, for_each_mut,
+    PackScratch, StringTable, VariableId, for_each_mut,
 };
 use crate::statistics::{Stage, StepClock};
 use bun_sema::atom::{Atom, Interner};
-use bun_sema::util::SharedSort;
+use bun_sema::util::{FxHashSet, SharedSort};
 use core::mem::take;
 use std::sync::{Arc, OnceLock};
 
@@ -31,6 +31,8 @@ pub(super) struct ProgramTables {
     pub data: Vec<Data>,
     pub expected_results: Vec<ExpectedResult>,
     pub declared_records: Vec<DeclaredRecord>,
+    pub module_instances: Vec<ModuleInstance>,
+    pub module_links: Vec<ModuleLink>,
 }
 
 #[derive(Default)]
@@ -44,6 +46,8 @@ struct UnitOutput {
     data: Vec<(DataId, Data)>,
     expected_results: Vec<(ExpectedResultId, ExpectedResult)>,
     declared_records: Vec<DeclaredRecord>,
+    module_instances: Vec<ModuleInstance>,
+    module_links: Vec<ModuleLink>,
 }
 
 fn place_of_export_named(name: &[u8]) -> u32 {
@@ -123,8 +127,9 @@ impl RecordMover<'_> {
     fn move_functions(&self, index: u32, unit: &mut LinkUnit, output: &mut UnitOutput) {
         let local_to_merged = &self.merged_functions[unit.tables as usize];
         let definitions = &mut unit.function_definitions;
+        let mut scratch = PackScratch::default();
         output.functions.reserve(definitions.len());
-        for (merged, site, mut function) in take_definitions(index, definitions, local_to_merged) {
+        for (merged, site, function) in take_definitions(index, definitions, local_to_merged) {
             if self.definitions.functions[merged as usize] != Some(site) {
                 continue;
             }
@@ -134,6 +139,7 @@ impl RecordMover<'_> {
                 id.index() == first.index() + output.functions.len(),
                 "program ids follow the order of the unit"
             );
+            let mut function = function.unpack(&mut scratch);
             let record = Arc::make_mut(&mut function);
             record.function_types = program_ids_above(
                 &self.definitions.function_types,
@@ -150,12 +156,14 @@ impl RecordMover<'_> {
         let map = ids.as_map();
         let local_to_merged = &self.merged_layouts[unit.tables as usize];
         let definitions = &mut unit.layout_definitions;
-        for (merged, site, mut layout) in take_definitions(index, definitions, local_to_merged) {
+        let mut scratch = PackScratch::default();
+        for (merged, site, layout) in take_definitions(index, definitions, local_to_merged) {
             let is_chosen = self.definitions.layouts[merged as usize] == Some(site);
             if !is_chosen && !self.definitions.is_other_definition(merged, site) {
                 continue;
             }
             let id = program_id(&self.numbering.layouts, merged);
+            let mut layout = layout.unpack(&mut scratch);
             forget_module_without_record(&mut layout, &ids.modules);
             if layout.module.is_some() && layout.place.is_none() {
                 layout.place = Some(layout.position);
@@ -219,6 +227,21 @@ impl RecordMover<'_> {
             });
             declared.names.sort_unstable();
             has_every_name
+        });
+        output.module_instances = take(&mut unit.records.module_instances);
+        for instance in &mut output.module_instances {
+            instance.remap_ids(&map);
+        }
+        output.module_links = take(&mut unit.records.module_links);
+        output.module_links.retain_mut(|link| {
+            let is_in_program = [&link.path[..], &[link.target]]
+                .concat()
+                .iter()
+                .all(|module| matches!(map.modules.get(module.index()), Some(Some(_))));
+            if is_in_program {
+                link.remap_ids(&map);
+            }
+            is_in_program
         });
     }
 
@@ -390,6 +413,22 @@ pub(super) fn make_synthetic_export_variables(
     variables.collect()
 }
 
+/// Takes out the links whose path goes on by a link that is not in the program.
+fn retain_links_with_rest(links: &mut Vec<ModuleLink>) {
+    loop {
+        let resolved = links.iter().filter(|it| !it.path.is_empty());
+        let resolved: FxHashSet<_> = resolved.map(|it| (it.module, it.link)).collect();
+        let count = links.len();
+        links.retain(|link| {
+            let last = link.path.last().copied();
+            link.rest.is_none() || last.is_some_and(|last| resolved.contains(&(last, link.rest)))
+        });
+        if links.len() == count {
+            return;
+        }
+    }
+}
+
 pub(super) fn move_records(
     units: &mut [LinkUnit],
     functions: &MergedKeys<'_, ProgramFunctionKey>,
@@ -433,6 +472,8 @@ pub(super) fn move_records(
     let mut data_lists = Vec::with_capacity(tasks.len());
     let mut expected_result_lists = Vec::with_capacity(tasks.len());
     let mut declared_records = Vec::new();
+    let mut module_instances = Vec::new();
+    let mut module_links = Vec::new();
     for (_, unit, output) in tasks {
         assert!(
             output
@@ -454,6 +495,8 @@ pub(super) fn move_records(
         data_lists.push(output.data);
         expected_result_lists.push(output.expected_results);
         declared_records.extend(output.declared_records);
+        module_instances.extend(output.module_instances);
+        module_links.extend(output.module_links);
     }
     assert!(
         function_count == counts.functions,
@@ -501,6 +544,9 @@ pub(super) fn move_records(
             .then_with(|| one.names.cmp(&other.names))
     });
     declared_records.dedup();
+    module_instances.sort_unstable_by_key(|it: &ModuleInstance| it.module);
+    module_links.sort_by_key(|it: &ModuleLink| it.module);
+    retain_links_with_rest(&mut module_links);
     ProgramTables {
         functions: function_lists,
         layouts,
@@ -510,6 +556,8 @@ pub(super) fn move_records(
         data,
         expected_results,
         declared_records,
+        module_instances,
+        module_links,
     }
 }
 

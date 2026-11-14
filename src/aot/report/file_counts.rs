@@ -67,7 +67,8 @@ pub(crate) fn count_files(
         let origin = view.origin(file);
         let statistic = statistic_of(origin, role, view.sources.is_data(file));
         statistics.count(statistic, 1);
-        let text: &[u8] = &files.module(file).hir.text;
+        let hir = &files.module(file).hir;
+        let text: &[u8] = &hir.text[..hir.written_text_end() as usize];
         counted_texts.push((text, 0, sizes_of(statistic, origin)));
     }
     for_each_mut(&mut counted_texts, in_parallel, &|(text, lines, _)| {

@@ -1,3 +1,4 @@
+use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, CodeUnit, InitialState, ScopeId, ScopeKind, SymbolId};
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::hir::{FnKind, IdList, StmtId, StmtKind};
@@ -9,6 +10,7 @@ use super::state::{EnteredScope, EnvironmentPutOff};
 use super::{
     BindingRef, DeadZone, LocalBinding, ScopeSlot, Storage, bindings, dead_zone, environments,
 };
+use crate::ir::generated::GlobalDeclarationStep;
 use crate::ir::{
     BlockId, ClassSlot, LocalVariable, PositionFlags, Type, TypeTable, ValueId, VariableKey,
 };
@@ -165,16 +167,18 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             match placement.storage {
                 Storage::Variable(key) => {
                     let variable = self.file.ensure_variable(key);
-                    let runs_again = self.file.inputs.modules.runs_again(self.file.file);
+                    let may_be_reevaluated =
+                        self.file.inputs.modules.may_be_reevaluated(self.file.file);
                     let is_stored_at_entry = match binding {
                         BindingRef::Symbol(_) => {
-                            runs_again || entry.find_initial(binding).is_some()
+                            may_be_reevaluated || entry.find_initial(binding).is_some()
                         }
                         BindingRef::Slot(..) => true,
                     };
                     let value = match (value, binding) {
                         (None, BindingRef::Symbol(_))
-                            if runs_again && dead_zone::has_dead_zone(self.file, binding) =>
+                            if may_be_reevaluated
+                                && dead_zone::has_dead_zone(self.file, binding) =>
                         {
                             Some(self.get_entry_absent(&mut entry))
                         }
@@ -187,6 +191,27 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                         self.builder.put_module_variable(variable, value);
                     }
                 }
+                Storage::Instance { field } => {
+                    if let Some(value) = value
+                        && maker != MakerOfScope::AheadOfBody
+                    {
+                        let instance = self.get_module_instance();
+                        let layout = environments::instance_layout(self.file);
+                        self.builder
+                            .put_environment_field(instance, layout, field, value);
+                    }
+                }
+                Storage::Field {
+                    scope: holder,
+                    field,
+                } if holder != scope => {
+                    if let Some(value) = value {
+                        let environment = self.get_environment(holder);
+                        let layout = environments::environment_layout(self.file, holder);
+                        self.builder
+                            .put_environment_field(environment, layout, field, value);
+                    }
+                }
                 Storage::Field { .. } | Storage::Local => {}
             }
         }
@@ -196,9 +221,37 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.instantiate_functions_made_by(scope, MakerOfScope::Here);
     }
 
+    /// EvalDeclarationInstantiation, in the order of the engine
+    fn declare_globals_of_script(&mut self, globals: &[(Atom, bool)]) {
+        let steps = [
+            (GlobalDeclarationStep::FindDuplicate, [false, true]),
+            (GlobalDeclarationStep::CheckProperty, [true, false]),
+            (GlobalDeclarationStep::Create, [true, false]),
+        ];
+        for (step, kinds) in steps {
+            for is_function in kinds {
+                let of_kind = globals.iter().filter(|it| it.1 == is_function);
+                for &(name, _) in of_kind {
+                    let key = self.file.atom_key(name);
+                    self.file.fragment.note_write(key);
+                    self.builder.declare_global(key, step, is_function);
+                }
+            }
+        }
+    }
+
     fn instantiate_functions_made_by(&mut self, scope: ScopeId, maker: MakerOfScope) {
+        let globals = self.file.list_globals_of_script(scope);
+        self.declare_globals_of_script(&globals);
         for index in 0..self.file.scopes.hoisted_functions(scope).len() {
             let (symbol, function) = self.file.scopes.hoisted_functions(scope)[index];
+            if !globals.is_empty() {
+                let id = function::declare_source_function(self.file, function, None);
+                let closure = self.emit_closure(id, None);
+                let name = self.file.bound.symbol(symbol).name;
+                self.emit_free_name_set(name, closure);
+                continue;
+            }
             if self.file.scopes.initial_function(symbol).is_some() {
                 continue;
             }
@@ -224,7 +277,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 function,
             };
             let is_left_out = is_local && self.file.inputs.library_functions.is_left_out(written);
-            if (is_name_in_function || is_left_out)
+            if ((is_name_in_function && is_local) || is_left_out)
                 && !bound.is_visible_to_eval(symbol)
                 && self.file.scopes.is_never_named(symbol)
             {
@@ -270,6 +323,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         for &binding in self.file.scopes.stored_in_loop(statement) {
             let local = self.scopes.find_local(binding);
             let local = local.expect("the scope of a local is entered before the loop");
+            modified.push(local.variable);
+        }
+        for whole in self.whole_strings_of(self.file.scopes.stored_in_loop(statement)) {
+            let local = self.scopes.find_local(whole);
+            let local = local.expect("the longer string is declared outside the loop");
             modified.push(local.variable);
         }
         if let StmtKind::For { .. } = self.file.hir[statement].kind {
@@ -342,9 +400,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if !self.file.scopes.has_environment(scope) {
             return None;
         }
-        let key = VariableKey::EnvironmentMadeAhead(self.file.file);
-        let made = self.file.ensure_variable(key);
-        let made = self.builder.get_module_variable(made);
+        let made = match self.file.inputs.modules.instance_layout(self.file.file) {
+            Some(instance_fields) => {
+                let field = instance_fields.field_of_scope();
+                let instance = self.get_module_instance();
+                let layout = environments::instance_layout(self.file);
+                self.builder.get_environment_field(instance, layout, field)
+            }
+            None => {
+                let key = VariableKey::EnvironmentMadeAhead(self.file.file);
+                let made = self.file.ensure_variable(key);
+                self.builder.get_module_variable(made)
+            }
+        };
         let layout = environments::environment_layout(self.file, scope);
         let ty = self.file.fragment.types.intern(Type::environment(layout));
         let variable = self.builder.create_variable(Some(ty));
@@ -358,10 +426,18 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return;
         };
         debug_assert!(self.file.scopes.has_environment(scope));
+        let made = self.builder.read_variable(environment);
+        if let Some(instance_fields) = self.file.inputs.modules.instance_layout(self.file.file) {
+            let field = instance_fields.field_of_scope();
+            let instance = self.get_module_instance();
+            let layout = environments::instance_layout(self.file);
+            self.builder
+                .put_environment_field(instance, layout, field, made);
+            return;
+        }
         let key = VariableKey::EnvironmentMadeAhead(self.file.file);
-        let made = self.file.ensure_variable(key);
-        let environment = self.builder.read_variable(environment);
-        self.builder.put_module_variable(made, environment);
+        let variable = self.file.ensure_variable(key);
+        self.builder.put_module_variable(variable, made);
     }
 
     fn allocate_environment(
@@ -518,6 +594,7 @@ fn emit_entry_value(
             ScopeSlot::NewTarget => lowering.builder.new_target(),
             ScopeSlot::Callee => lowering.builder.callee(),
             ScopeSlot::HomeObject => lowering.find_captured_value(Capture::Value(binding)),
+            ScopeSlot::ModuleInstance => Some(lowering.get_module_instance()),
             ScopeSlot::ArgumentsBinding => {
                 entry.find_initial(BindingRef::Slot(scope, ScopeSlot::Arguments))
             }

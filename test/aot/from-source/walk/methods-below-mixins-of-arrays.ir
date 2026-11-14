@@ -1,0 +1,20 @@
+# -- source: main.cjs
+# function mixin(S) { return class Mixed extends S { total() { var t = 0; for (var i = 0; i < this.rows; i++) t += this.get(i, 1); return t; } }; }
+# class M extends mixin(Array) { constructor(r) { super(r); for (var i = 0; i < r; i++) this[i] = [i, i / 2]; this.rows = r; } get(i, j) { return this[i][j]; } }
+# var m = new M(4);
+# print(m.total());
+# -- end of source
+# The structure of an instance tells a class below a mixin that is evaluated over Array, as it tells a class that extends Array.
+# RUN: walk f3 mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK: = GetArrayElement
+# RUN(METHOD): walk f5 mechanisms=all
+# METHOD-LABEL: code f5:Body
+# METHOD: HasStructureOfClass {{*}}layout=L1
+# METHOD: GetPropertyOfHeir
+# RUN(ANSWER): run-in-shell
+# ANSWER: 3
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: 3
+# CHECKED-NEXT: exited with 0

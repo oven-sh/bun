@@ -1,11 +1,12 @@
-// A frame of a module that is compiled into an executable names its file as `/$bunfs/root/` and the path relative to the folder
-// the build ran in. Lines and columns are the sources'. Whatever reads a frame's file gets that text: Error.stack, call sites,
-// error.sourceURL, console.trace and the uncaught-exception printer. An in-place executable, `bun run --aot` and `bun test --aot`
-// run real files and show their real paths.
+// A frame of a module that is compiled into an executable prints the path of its source relative to the folder the build ran in, as
+// `bun build --compile --sourcemap` does, with `./` in front of a path below that folder. Lines and columns are the sources'. That is
+// what Error.stack, error.sourceURL, a call site as text, console.trace and the uncaught-exception printer show. Packages look files
+// up by what a call site's getFileName() returns, so it stays the module's own path below `/$bunfs/root`. An in-place executable,
+// `bun run --aot` and `bun test --aot` run real files and show their real paths.
 import { expect } from "bun:test";
 import { readFileSync, realpathSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { dirname, join, sep } from "path";
+import { join, sep } from "path";
 import { built, spawned } from "./harness/commands";
 import { describe, test } from "./supported";
 
@@ -15,11 +16,12 @@ const files = {
   }),
   "app/main.ts": `
     import { viaModule } from "./src/module.mjs";
-    import { viaTyped, sites } from "./src/deep/typed";
+    import { viaTyped, sites, siteAsText } from "./src/deep/typed";
     import viaCommonJS from "./src/common.cjs";
     import viaPackage from "frames-of-a-package";
     import { above } from "../above";
     import { EventEmitter } from "node:events";
+    import { getCallSites } from "node:util";
     const top = (stack: string | undefined): string => (stack ?? "").split("\\n")[1].trim();
     function own(): string { return top(new Error().stack); }
     console.log("entry point:", own());
@@ -29,6 +31,8 @@ const files = {
     console.log("package:", top(viaPackage()));
     console.log("above the build's folder:", top(above()));
     console.log("call sites:", JSON.stringify(sites()));
+    console.log("call sites of node:util:", (getCallSites()[0] as any).scriptName);
+    console.log("a call site as text:", siteAsText());
     console.log("sourceURL:", (new Error() as Error & { sourceURL: string }).sourceURL);
     const holder: { stack?: string } = {};
     Error.captureStackTrace(holder);
@@ -54,6 +58,13 @@ const files = {
       Error.prepareStackTrace = previous;
       return found.slice(0, 2).map(site => [site.getFileName(), site.getScriptNameOrSourceURL(), site.getLineNumber(), site.getColumnNumber(), site.getFunctionName()]);
     }
+    export function siteAsText(): string {
+      const previous = Error.prepareStackTrace;
+      Error.prepareStackTrace = (_error, sites) => String(sites[0]);
+      const found = new Error().stack!;
+      Error.prepareStackTrace = previous;
+      return found;
+    }
   `,
   "app/src/common.cjs": `module.exports = function viaCommonJS() { return new Error().stack; };\n`,
   "app/src/common.d.cts": `declare function viaCommonJS(): string;\nexport = viaCommonJS;\n`,
@@ -66,6 +77,17 @@ const files = {
   "app/node_modules/frames-of-a-package/lib/index.js": `module.exports = function viaPackage() { return new Error().stack; };\n`,
   "app/node_modules/frames-of-a-package/lib/index.d.ts": `declare function viaPackage(): string;\nexport = viaPackage;\n`,
   "above.ts": `export function above(): string | undefined { return new Error().stack; }\n`,
+  "beside/empty.txt": "",
+  "app/src/places.ts": `
+    import { viaModule } from "./module.mjs";
+    import viaPackage from "frames-of-a-package";
+    import { above } from "../../above";
+    const file = (stack: string | undefined) => console.log(/(?:\\(|at )([^()]*):\\d+:\\d+\\)?$/.exec(stack!.split("\\n")[1])![1]);
+    file(new Error().stack);
+    file(viaModule());
+    file(viaPackage());
+    file(above());
+  `,
   // What packages do with the file of a frame, each in the form the package has it.
   "app/idioms.ts": `
     import { folderOfCaller, fileOfCaller, firstFileOutside, firstFrameWithASlash } from "reads-frames";
@@ -123,12 +145,24 @@ const root = isWindows ? "B:\\~BUN\\root" : "/$bunfs/root";
 const under = (...parts: string[]) => [root, ...parts].join(sep);
 const pattern = (text: string) => text.replace(/[\\$.]/g, "\\$&");
 
-// What plain Bun prints, with the build's folder replaced by the root of the executable's own files.
-const inExecutable = (text: string, app: string) =>
+// What plain Bun prints, with a real path replaced by what the executable has for it: where code looks the file up the path below
+// the root of its modules, and everywhere else the path from the build's folder.
+const inExecutable = (text: string, app: string, looksUp: RegExp) =>
   text
-    .replaceAll(join(app, "..", "above.ts"), () => [dirname(root), "_.._", "_.._", "above.ts"].join(sep))
-    .replaceAll(app, () => root)
-    .replaceAll(JSON.stringify(app).slice(1, -1), () => JSON.stringify(root).slice(1, -1));
+    .split("\n")
+    .map(line =>
+      looksUp.test(line)
+        ? line
+            .replaceAll(app, () => root)
+            .replaceAll(JSON.stringify(app).slice(1, -1), () => JSON.stringify(root).slice(1, -1))
+        : line
+            .replaceAll(join(app, "..", "above.ts"), "../above.ts")
+            .replace(
+              new RegExp(pattern(app + sep) + "[^:]*", "g"),
+              path => "./" + path.slice(app.length + 1).replaceAll(sep, "/"),
+            ),
+    )
+    .join("\n");
 
 function pathsBelow(executable: Buffer, folder: string) {
   const found: string[] = [];
@@ -138,7 +172,7 @@ function pathsBelow(executable: Buffer, folder: string) {
 }
 
 describe.concurrent("the file of a stack frame", () => {
-  test("in an executable: /$bunfs/root/ and the path from the build's folder", async () => {
+  test("in an executable: the path from the build's folder", async () => {
     using at = project();
     const plain = await spawned([bunExe(), "run", "main.ts"], at.app, bunEnv);
     expect(plain.exitCode).toBe(0);
@@ -147,13 +181,15 @@ describe.concurrent("the file of a stack frame", () => {
     );
     const compiled = await spawned([join(at.app, "../program")], "/", bunEnv);
     expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({
-      stdout: inExecutable(plain.stdout, at.app),
+      stdout: inExecutable(plain.stdout, at.app, /^call sites/),
       exitCode: 0,
     });
-    expect(compiled.stdout).toContain(`typed: at viaTyped (${under("src", "deep", "typed.ts")}:4:`);
-    expect(compiled.stdout).toContain(
-      `package: at viaPackage (${under("node_modules", "frames-of-a-package", "lib", "index.js")}:1:`,
-    );
+    expect(compiled.stdout).toContain("typed: at viaTyped (./src/deep/typed.ts:4:");
+    expect(compiled.stdout).toContain("package: at viaPackage (./node_modules/frames-of-a-package/lib/index.js:1:");
+    expect(compiled.stdout).toContain("above the build's folder: at above (../above.ts:1:");
+    expect(compiled.stdout).toContain("sourceURL: ./main.ts\n");
+    expect(compiled.stdout).toContain(`call sites of node:util: ${under("main.ts")}\n`);
+    expect(compiled.stdout).toContain("a call site as text: siteAsText (./src/deep/typed.ts:");
     // The executable holds no path of the build's folder.
     expect(pathsBelow(readFileSync(join(at.app, isWindows ? "../program.exe" : "../program")), at.app)).toEqual([]);
   }, 120_000);
@@ -167,18 +203,14 @@ describe.concurrent("the file of a stack frame", () => {
     );
     const compiled = await spawned([join(at.app, "../program")], "/", bunEnv);
     expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({
-      stdout: inExecutable(plain.stdout, at.app),
+      stdout: inExecutable(plain.stdout, at.app, /^the (folder|file|first file) /),
       exitCode: 0,
     });
     expect(compiled.stdout.split("\n")).toEqual([
       `the folder a lookup starts from (resolve): ${root}`,
       `the file two frames up (get-caller-file): ${under("idioms.ts")}`,
       `the first file that is not a loader's (caller): ${under("src", "helper.cjs")}`,
-      expect.stringMatching(
-        new RegExp(
-          `^the first frame that is not the package's own build \\(msw\\): ${pattern(under("idioms.ts"))}:\\d+:\\d+$`,
-        ),
-      ),
+      expect.stringMatching(/^the first frame that is not the package's own build \(msw\): \.\/idioms\.ts:\d+:\d+$/),
       "",
     ]);
   }, 120_000);
@@ -189,17 +221,44 @@ describe.concurrent("the file of a stack frame", () => {
       await spawned([bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", "../program"], at.app, bunEnv),
     );
     const traced = await spawned([join(at.app, "../program"), "trace"], "/", bunEnv);
-    expect(traced.stdout).toMatch(new RegExp(`traced\\n\\s+at ${pattern(under("main.ts"))}:\\d+:\\d+`));
+    expect(traced.stdout).toMatch(/traced\n\s+at \.\/main\.ts:\d+:\d+/);
     const thrown = await spawned([join(at.app, "../program"), "throw"], "/", bunEnv);
     expect(thrown.exitCode).toBe(1);
     expect(thrown.stderr).toContain("RangeError: thrown in typed.ts");
-    expect(thrown.stderr).toMatch(new RegExp(`at viaTyped \\(${pattern(under("src", "deep", "typed.ts"))}:3:\\d+\\)`));
-    expect(thrown.stderr).toMatch(new RegExp(`at ${pattern(under("main.ts"))}:\\d+:\\d+`));
+    expect(thrown.stderr).toMatch(/at viaTyped \(\.\/src\/deep\/typed\.ts:3:\d+\)/);
+    expect(thrown.stderr).toMatch(/at \.\/main\.ts:\d+:\d+/);
     // An executable opens no file to show its source, also where its sources lie beside it.
     expect(thrown.stderr).not.toContain("if (throws) throw");
     const besideTheSources = await spawned([join(at.app, "../program"), "throw"], at.app, bunEnv);
     expect(besideTheSources.stderr).toBe(thrown.stderr);
   }, 120_000);
+
+  test.each([
+    ["the folder of the project", ".", "src/places.ts", "places"],
+    ["the folder above the project", "..", "app/src/places.ts", "places"],
+    ["the folder of the entry point", "src", "places.ts", "../places"],
+    ["a folder below the entry point", "src/deep", "../places.ts", "../../places"],
+    ["a folder beside the project", "../beside", "../app/src/places.ts", "places"],
+    ["the folder of the project, with --outfile elsewhere", ".", "src/places.ts", "../beside/places"],
+  ])(
+    "built in %s: the paths that --sourcemap has",
+    async (_, folder, entry, outfile) => {
+      using at = project();
+      const cwd = join(at.app, folder);
+      async function placesOf(suffix: string, ...flags: string[]) {
+        built(
+          await spawned([bunExe(), "build", "--compile", ...flags, entry, "--outfile", outfile + suffix], cwd, bunEnv),
+        );
+        const { stdout, exitCode } = await spawned([join(cwd, outfile + suffix)], "/", bunEnv);
+        expect(exitCode).toBe(0);
+        return stdout.trim().split("\n");
+      }
+      const [ours, withSourceMap] = await Promise.all([placesOf("-aot", "--aot"), placesOf("-map", "--sourcemap")]);
+      expect(withSourceMap).toHaveLength(4);
+      expect(ours).toEqual(withSourceMap.map(path => (path.startsWith("../") ? path : "./" + path)));
+    },
+    120_000,
+  );
 
   test.each([
     [

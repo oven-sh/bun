@@ -1,8 +1,9 @@
 import { mock, test, vi } from "bun:test";
 import { load } from "./helper.cjs";
 let inner;
+const gate = Promise.withResolvers();
 vi.doMock("./kiln.mjs", async () => {
-  await new Promise(done => setTimeout(done, 20));
+  await gate.promise;
   return { heat: "mocked kiln" };
 });
 vi.doMock("./glaze.cjs", () => {
@@ -12,5 +13,6 @@ vi.doMock("./glaze.cjs", () => {
 test("a", async () => {
   const outer = import("./kiln.mjs");
   const glaze = load();
+  gate.resolve();
   console.log(String(glaze.shade ?? glaze.default?.shade), "|", (await inner).heat, "|", (await outer).heat, "|", globalThis.glazes ?? 0, globalThis.kilns ?? 0);
 });

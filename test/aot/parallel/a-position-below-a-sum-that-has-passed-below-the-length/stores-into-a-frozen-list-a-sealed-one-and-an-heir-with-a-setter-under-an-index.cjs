@@ -1,4 +1,4 @@
-// Under: --aot-testing=EmittersAloneTestEveryPosition: the walk and its proofs as users build, every position tested where it is used: a store that is told inside and is not stops by name.
+// Under: --aot-testing=CheckBoundsInEmittersOnly: the walk and its proofs as users build, every position tested where it is used: a store that is told inside and is not stops by name.
 function fill(v) { let said = ""; for (let i = 0; i + 2 < v.length; i += 3) { try { v[i] = i + 10; v[i + 1] = i + 11; v[i + 2] = i + 12; } catch (error) { said += error.constructor.name + ";"; } } return said + JSON.stringify(Array.from(v)); }
 const seen = [];
 class Heir extends Array {}

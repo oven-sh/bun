@@ -217,9 +217,9 @@ function Sign-Artifact {
         throw "Expected directory $extractDir not found after extraction"
     }
 
-    $exes = Get-ChildItem -Path $extractDir -Filter "*.exe"
+    $exes = Get-ChildItem -Path $extractDir -Filter "bun*.exe"
     if ($exes.Count -eq 0) {
-        throw "No .exe files found in $extractDir"
+        throw "No bun*.exe found in $extractDir"
     }
 
     foreach ($exe in $exes) {

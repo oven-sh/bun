@@ -1,6 +1,6 @@
 const { sum, ask } = require("./asks.cjs");
 globalThis.seen = [];
-(0, eval)(`
+const text = `
   const Module = process.getBuiltinModule("node:module");
   const original = Module._resolveFilename;
   const attempt = read => { try { return String(read()); } catch (error) { return "throws " + error.name; } };
@@ -13,7 +13,8 @@ globalThis.seen = [];
       );
     return original.apply(this, arguments);
   };
-`);
+`;
+(0, eval)((process.env.NO_SUCH_VARIABLE ?? "") + text);
 console.log(ask(["node:", "path"].join("")));
 for (const line of seen) console.log(line);
 console.log(sum(1, 2));

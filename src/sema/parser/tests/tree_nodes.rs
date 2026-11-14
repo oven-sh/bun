@@ -754,6 +754,23 @@ fn legacy_octal_forms() {
 }
 
 #[test]
+fn legacy_octal_forms_without_an_extension() {
+    for &text in LEGACY_OCTAL_FORMS {
+        parsed("bin/tool", text, |_, hir| {
+            assert!(!hir.is_js);
+            assert!(hir.diagnostics.is_empty(), "{text}: {:?}", hir.diagnostics);
+            assert_ne!(hir.rare_syntax & rare::LEGACY_OCTAL, 0, "{text}");
+        });
+        parsed("a.ts", text, |_, hir| {
+            assert!(!hir.diagnostics.is_empty(), "{text}");
+        });
+    }
+    parsed("bin/tool", r#"const x: string = "\033[0m";"#, |_, hir| {
+        assert!(hir.diagnostics.is_empty(), "{:?}", hir.diagnostics);
+    });
+}
+
+#[test]
 fn octal_escapes_that_bun_run_reports() {
     let reported = [
         (r#"x = "\4";"#, 2),

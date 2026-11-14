@@ -1,4 +1,4 @@
-// STATISTIC: CopiesWalkedWhereTheirGuardsFail >= 1
+// STATISTIC: CallsInlinedAfterFailedGuards >= 1
 "use strict";
 // Its own instances have the names and are no literal of the file.
 function Plate(from) { this.wide = from.wide; this.tall = from.tall; }

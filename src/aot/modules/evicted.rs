@@ -9,15 +9,17 @@ use super::order::FileText;
 use super::requests::{ScannedSite, Scans};
 use super::spelled_files::{TextThatSpellsFile, list_texts_that_spell_files};
 use super::test_run_evictions::{find_files_that_leave, is_among};
+use super::wrapped::is_closed_bundle;
 use super::{BindInput, ModuleRef};
 use crate::builtins::RuntimeModule;
 use crate::ir::parallel::map_each;
 use crate::load::contents::load_names::find_library_modules_stored_in_cache;
-use crate::load::sources::parsed_source;
+use crate::load::sources::{ParsedSource, parsed_source};
 use crate::load::{EntryPointKind, SourceKind, is_in_node_modules};
 use crate::test_run_report::say_files_that_may_run_again;
-use crate::test_runs::runs_unseen_code;
+use crate::test_runs::{runs_unseen_code, runs_unseen_code_without_require};
 use bun_sema::bind::{Bound, CodeUnit, FnOwner, Parent};
+use bun_sema::components::strongly_connected_components;
 use bun_sema::fold::Decisions;
 use bun_sema::hir::{self, ExprId, ExprKind, FnId, PatId, PatKind, PropKey, StmtId, StmtKind};
 use bun_sema::import_sites::ImportSiteKind;
@@ -125,7 +127,8 @@ pub(super) fn find_files_that_run_again(
         let run_again = files.filter(may_load_again).map(ModuleRef::File).collect();
         return (run_again, None);
     }
-    let loads = collect_loads(input, scans, modules);
+    let closed_bundles = find_closed_bundles(input, modules);
+    let loads = collect_loads(input, scans, modules, &closed_bundles);
     let mut is_found_by_load = vec![false; input.files.modules.len()];
     let written_and_found = input.files.entry_points().iter();
     for &file in written_and_found.skip(input.written_entry_point_count) {
@@ -139,9 +142,10 @@ pub(super) fn find_files_that_run_again(
         if input.sources.kind(file) != SourceKind::Program {
             continue;
         }
-        let lets_loader_out = source.builtins.loads_unknown_modules()
+        let lets_loader_out = (source.builtins.loads_unknown_modules()
             || source.builtins.mentions_evaluator()
-            || runs_unseen_code(source);
+            || runs_unseen_code(source))
+            && !closed_bundles.contains(&file);
         loads_out_of_sight |= lets_loader_out;
         may_ask_for_any_file |=
             lets_loader_out && !is_in_node_modules(input.files.module(file).file_name());
@@ -177,7 +181,15 @@ pub(super) fn find_files_that_run_again(
             started.push(entry_point.file);
         }
     }
-    let settled_times = walk_startup(&loads, &started, &is_commonjs, &mut possible_loads);
+    let (start_times, settled_times) =
+        walk_startup(&loads, &started, &is_commonjs, &mut possible_loads);
+    add_cyclic_import_loads(
+        &loads,
+        &modules.compiled_files,
+        &start_times,
+        &is_commonjs,
+        &mut possible_loads,
+    );
     let may_be_loaded_behind_throw = find_files_that_may_be_loaded_behind_throw(
         &loads,
         &modules.compiled_files,
@@ -249,7 +261,35 @@ impl Loads {
     }
 }
 
-fn collect_loads(input: &BindInput<'_, '_>, scans: &Scans, modules: &ModuleSet) -> Loads {
+fn find_closed_bundles(input: &BindInput<'_, '_>, modules: &ModuleSet) -> Vec<FileId> {
+    let files = modules.compiled_files.iter().copied();
+    let is_closed = |&file: &FileId| {
+        let loads_unseen_files = |source: &ParsedSource| {
+            source.builtins.loads_unknown_modules()
+                && !source.builtins.mentions_evaluator()
+                && !runs_unseen_code_without_require(source)
+        };
+        input.sources.kind(file) == SourceKind::Program
+            && modules.interop(ModuleRef::File(file)).kind == ModuleKind::CommonJs
+            && parsed_source(input.files, file).is_some_and(loads_unseen_files)
+            && is_closed_bundle(
+                input.files,
+                input.known_helpers,
+                &|name| input.every_object_has(name),
+                input.replaced_builtins,
+                file,
+                input.platform,
+            )
+    };
+    files.filter(is_closed).collect()
+}
+
+fn collect_loads(
+    input: &BindInput<'_, '_>,
+    scans: &Scans,
+    modules: &ModuleSet,
+    closed_bundles: &[FileId],
+) -> Loads {
     let files = input.files;
     let mut loads = Loads {
         all: Vec::new(),
@@ -266,7 +306,8 @@ fn collect_loads(input: &BindInput<'_, '_>, scans: &Scans, modules: &ModuleSet) 
         let texts_of_file = &texts_that_spell_files[first_text..];
         let text_count = texts_of_file.partition_point(|text| text.written_in == file);
         let texts_of_file = &texts_of_file[..text_count];
-        if analysis.import_sites.is_empty() && texts_of_file.is_empty() {
+        let is_closed_bundle = closed_bundles.contains(&file);
+        if (analysis.import_sites.is_empty() || is_closed_bundle) && texts_of_file.is_empty() {
             return None;
         }
         let text = BodyText {
@@ -280,7 +321,8 @@ fn collect_loads(input: &BindInput<'_, '_>, scans: &Scans, modules: &ModuleSet) 
         let mut of_file: Vec<Load> = Vec::new();
         let mut calls: Vec<ExprId> = Vec::new();
         let mut first_return = None;
-        for (site, answer) in analysis.import_sites.iter().zip(&scan.sites) {
+        let sites = analysis.import_sites.iter().zip(&scan.sites);
+        for (site, answer) in sites.filter(|_| !is_closed_bundle) {
             if let Some(call) = site.kind.call() {
                 if text.decisions.is_dead_expr(call) {
                     continue;
@@ -337,7 +379,7 @@ fn collect_loads(input: &BindInput<'_, '_>, scans: &Scans, modules: &ModuleSet) 
                 target,
                 timing: match target {
                     Some(target)
-                        if is_linked_with_importer && files.is_es_module_to_imports(target) =>
+                        if is_linked_with_importer && files.is_imported_as_es_module(target) =>
                     {
                         timing.max(LoadTiming::Conditional)
                     }
@@ -684,7 +726,7 @@ fn walk_startup(
     started: &[FileId],
     is_commonjs: &dyn Fn(FileId) -> bool,
     possible_loads: &mut Vec<PossibleLoad>,
-) -> Vec<u32> {
+) -> (Vec<u32>, Vec<u32>) {
     let file_count = loads.by_file.len();
     let mut walk = StartupWalk {
         loads,
@@ -704,7 +746,49 @@ fn walk_startup(
     for &entry_point in started {
         walk.start_entry_point(entry_point);
     }
-    walk.settled_times
+    (walk.start_times, walk.settled_times)
+}
+
+/// An import cycle swallows the error of a CommonJS file that an ES module on the cycle imports. What the file loads may be loaded again after the throw.
+fn add_cyclic_import_loads(
+    loads: &Loads,
+    all_files: &[FileId],
+    start_times: &[u32],
+    is_commonjs: &dyn Fn(FileId) -> bool,
+    possible_loads: &mut Vec<PossibleLoad>,
+) {
+    let mut edges = vec![Vec::new(); loads.by_file.len()];
+    for &file in all_files {
+        let of_file = loads.of(file).iter();
+        let during_load = of_file.filter(|load| load.timing != LoadTiming::Deferred);
+        edges[file.idx()].extend(during_load.filter_map(|load| Some(load.target?.0)));
+    }
+    let component_of = strongly_connected_components(&edges).0;
+    let mut is_added = vec![false; loads.by_file.len()];
+    for &importer in all_files {
+        if is_commonjs(importer) {
+            continue;
+        }
+        let imports = loads.of(importer).iter().take_while(|load| load.is_hoisted);
+        for target in imports.filter_map(|load| load.target) {
+            if !is_commonjs(target)
+                || component_of[target.idx()] != component_of[importer.idx()]
+                || core::mem::replace(&mut is_added[target.idx()], true)
+            {
+                continue;
+            }
+            let earliest_time = match start_times[target.idx()] {
+                NEVER => 0,
+                time => time,
+            };
+            let of_file = loads.of(target).iter();
+            possible_loads.extend(of_file.map(|load| PossibleLoad {
+                earliest_time,
+                target: load.target,
+                may_be_caught: true,
+            }));
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]

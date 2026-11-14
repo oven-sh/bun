@@ -5,8 +5,8 @@
 # function empty() { return {}; }
 # const state = { cache: {} };
 # function remember(key, value) { state.cache[key] = value; }
-# remember("a", 1);
-# console.log(Object.keys(counted(["a", "b"])).join(), Object.keys(named("b")).join(), Object.keys(listed("b")).join(), Object.keys(empty()).join(), Object.keys(state.cache).join());
+# remember(JSON.parse('"a"'), 1);
+# console.log(Object.keys(counted(JSON.parse('["a", "b"]'))).join(), Object.keys(named(JSON.parse('"b"'))).join(), Object.keys(listed(JSON.parse('"b"'))).join(), Object.keys(empty()).join(), Object.keys(state.cache).join());
 # -- end of source
 # A record that lists no name has no slot. As a compiled object it holds extra properties alone, and each new key makes it a structure of its own: a bag of eight fresh keys took 21,030 instructions, and takes 15,285.
 # So the objects of such a layout are ordinary objects where reached code fills one by key: `counts`, and `state.cache`, which lies in a record of data.

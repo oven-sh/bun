@@ -3,7 +3,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-// `bun test` runs a file that laid mocks again for the next test file that imports it. A compiled body runs once, and its calls are made again.
+// `bun test` evaluates a module whose body registered mocks again for the next test file that imports it.
 const testFile = (name: string) => `import { test } from "bun:test";
 const say = (...words) => console.log("SAID", ...words);
 const tell = async (name, deed) => { try { say(name, JSON.stringify(await deed())); } catch (error) { say(name, "threw", String(error && error.message)); } };
@@ -32,26 +32,21 @@ async function linesOf(project: Record<string, string>, ...flags: string[]) {
   return stdout.split("\n").filter(line => line.startsWith("SAID"));
 }
 
-test.failing(
-  "a mock is laid in front of a call whose throw the body does not catch: it prints what bun test prints: a wrong answer today: under `bun test --aot` the second test file reads the file's own word, where `bun test` reads the mock's",
-  async () => {
-    const project = projectOf(`mock.module("./rug.mjs", () => ({ word: "stand-in rug" }));
+test("a mock is registered before a call whose error the body does not catch", async () => {
+  const project = projectOf(`mock.module("./rug.mjs", () => ({ word: "stand-in rug" }));
 mock.module("./lamp.mjs", () => { throw new Error("the factory throws"); });
 mock.module("./desk.mjs", () => ({ word: "stand-in desk" }));
 `);
-    const plain = await linesOf(project);
-    expect(plain.filter(line => line.startsWith("SAID rug"))).toEqual([
-      `SAID rug "stand-in rug"`,
-      `SAID rug "stand-in rug"`,
-    ]);
-    expect(await linesOf(project, "--aot")).toEqual(plain);
-  },
-);
+  const plain = await linesOf(project);
+  expect(plain.filter(line => line.startsWith("SAID rug"))).toEqual([
+    `SAID rug "stand-in rug"`,
+    `SAID rug "stand-in rug"`,
+  ]);
+  expect(await linesOf(project, "--aot")).toEqual(plain);
+});
 
-test.failing(
-  "a factory throws from the second time on, and the body would catch it: it prints what bun test prints: a wrong answer today: under `bun test --aot` the import in the second test file is rejected and the mock behind it is not laid",
-  async () => {
-    const project = projectOf(`try {
+test("a factory throws from the second time on, and the body catches the error", async () => {
+  const project = projectOf(`try {
   mock.module("./lamp.mjs", () => {
     globalThis.asked = (globalThis.asked ?? 0) + 1;
     if (globalThis.asked > 1) throw new Error("the factory throws");
@@ -60,8 +55,7 @@ test.failing(
 } catch (error) {}
 mock.module("./desk.mjs", () => ({ word: "stand-in desk" }));
 `);
-    const plain = await linesOf(project);
-    expect(plain.filter(line => line.startsWith("SAID setup"))).toEqual([`SAID setup "loaded"`, `SAID setup "loaded"`]);
-    expect(await linesOf(project, "--aot")).toEqual(plain);
-  },
-);
+  const plain = await linesOf(project);
+  expect(plain.filter(line => line.startsWith("SAID setup"))).toEqual([`SAID setup "loaded"`, `SAID setup "loaded"`]);
+  expect(await linesOf(project, "--aot")).toEqual(plain);
+});

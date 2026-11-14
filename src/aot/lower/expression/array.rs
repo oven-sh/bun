@@ -116,7 +116,11 @@ pub(super) fn lower_regexp_literal(
         diagnostics.report(Code::InvalidRegExpFlags, span, &[letters]);
         return lowering.builder.undefined();
     };
-    let text = regexp_pattern_as_printed(lowering.file.queries.atom_bytes(pattern));
+    let written = lowering.file.queries.atom_bytes(pattern);
+    let text = match lowering.file.is_in_known_evaluation(literal) {
+        true => Cow::Borrowed(written),
+        false => regexp_pattern_as_printed(written),
+    };
     let creation = classify_regexp_literal(&text, letters);
     if creation == RegExpLiteralCreation::NeverBuilt
         && let Some(message) = describe_regexp_construction_error(&text, letters)

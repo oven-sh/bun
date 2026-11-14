@@ -1,0 +1,18 @@
+# -- source: main.cjs
+# function Reader(n) { this.n = n; }
+# Reader.prototype.read = function () { return limit + name.length + given + this.n; };
+# var limit = 6;
+# var name = "abc";
+# var given = Number(process.argv[2]);
+# sink(new Reader(1).read());
+# function Early() {}
+# Early.prototype.read = function () { return late; };
+# sink(new Early().read());
+# var late = 3;
+# -- end of source
+# A closure that is stored on the prototype of a function is used where the function is. No setter lies above the prototype under such a name.
+# RUN: link
+# CHECK: variable g1 proven=6 writers-known written-at-construction-alone filled
+# CHECK-NEXT: variable g2 proven="abc" writers-known written-at-construction-alone filled
+# CHECK-NEXT: variable g3 proven=number writers-known written-at-construction-alone filled
+# CHECK-NEXT: variable g4 proven=undefined|int[0, 2147483647] writers-known written-at-construction-alone

@@ -31,6 +31,18 @@ const cases: Record<string, string> = {
   await say("import()", async () => (await import("./late.ts")).value);
   writeFileSync(here + "/late.cjs", "exports.value = 'written by the test';\\n");
   await say("require()", () => require("./late.cjs").value);`,
+  "written anew by the default of a parameter": `
+  const save = (text: string, write = writeFileSync) => write(here + "/late.ts", text);
+  save("export const value = 'written by the test';\\n");
+  await say("import()", async () => (await import("./late.ts")).value);
+  function put(write = writeFileSync) { write(here + "/late.cjs", "exports.value = 'written by the test';\\n"); }
+  put(undefined);
+  await say("require()", () => require("./late.cjs").value);`,
+  "written anew by a default where an argument is undefined": `
+  ((write = writeFileSync) => write(here + "/late.ts", "export const value = 'written by the test';\\n"))((globalThis as any).writer);
+  await say("import()", async () => (await import("./late.ts")).value);
+  ((text: string, write = writeFileSync) => write(here + "/late.cjs", text))("exports.value = 'written by the test';\\n", ({} as any).writer);
+  await say("require()", () => require("./late.cjs").value);`,
   "under a name beyond ASCII written anew before its first load": `
   await say("beside", async () => (await import("./beside.ts")).value);
   writeFileSync(here + "/sp\u00e4t/\u665a.ts", "export const value = 'written by the test';\\n");

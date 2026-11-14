@@ -1,5 +1,5 @@
 // `f(...xs)` in a loop where nobody has shown xs to be a list: the ways part on whether it is a list as made. Each kind of source answers as written.
-// STATISTIC: CallsWalkedApartFromSpreadsOfWhatIsNoList >= 3
+// STATISTIC: SpreadCallsSpecializedForArrays >= 3
 function two(a: any, b: any) { return String(a) + "," + String(b); }
 function none() { return "none"; }
 function withDefault(a: any, b: any = "d") { return String(a) + "," + String(b); }

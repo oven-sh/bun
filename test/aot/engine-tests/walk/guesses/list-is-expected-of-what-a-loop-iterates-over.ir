@@ -7,8 +7,8 @@
 # CHECK-LABEL: code f1:Body
 # CHECK: [[iterable]]: {{*}} = ElemGet
 # CHECK: = TypeTest [[iterable]] testedType=Array
-# CHECK: = PropGet {{*}}key=@@iterator
 # CHECK: = IsPristine {{*}}builtinClass=Array
+# CHECK: = PropGet {{*}}key=@@iterator
 # CHECK: = PropGet {{*}}key="next"
 # CHECK: isLoopHead=true
 # CHECK: = GetArrayElement

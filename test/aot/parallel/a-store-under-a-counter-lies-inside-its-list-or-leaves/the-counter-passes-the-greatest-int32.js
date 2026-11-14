@@ -1,4 +1,4 @@
-// STATISTIC: RangeChecksRemoved >= 1
+// STATISTIC: RangeChecksRemoved = 0
 // Under: --aot-harden=proof-checks: the position of every store is held against the length of its list
 'use strict';
 const n = +process.argv[2] || 3; const said = [];

@@ -1,4 +1,4 @@
-// COUNTER: FieldsLeftSlotByRedefinition = 0
+// COUNTER: FieldsEvictedByRedefinition = 0
 "use strict";
 function join(a, b) { return (a + b) | 0; }
 const tools = {};

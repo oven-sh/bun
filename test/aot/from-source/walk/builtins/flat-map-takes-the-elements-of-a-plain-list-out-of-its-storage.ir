@@ -14,6 +14,6 @@
 # RUN(STORE): walk f4 mechanisms=all
 # STORE: = TryPutIndex
 # RUN(TAIL): walk f5 mechanisms=all
-# TAIL-NOT: ContiguousIndex
+# TAIL: = HasContiguousIndex
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 1,2,2,4,3,6 4,8,6,12

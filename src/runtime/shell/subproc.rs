@@ -13,7 +13,7 @@ use crate::shell::{self as sh, Yield};
 use crate::webcore::{self, FileSink};
 use bun_alloc::Arena;
 use bun_collections::VecExt;
-use bun_io::Loop as AsyncLoop;
+use bun_io::LoopRef;
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{BufferedReader, ReadState};
@@ -203,7 +203,7 @@ impl JscSubprocess::static_pipe_writer::StaticPipeWriterProcess for ShellSubproc
 bun_spawn::link_impl_ProcessExit! {
     Shell for ShellSubprocess => |this| {
         // Forwarded raw, not autoref'd: the callee may free `*this`.
-        on_process_exit(_process, status, _rusage) =>
+        on_process_exit(status, _rusage) =>
             ShellSubprocess::on_process_exit(this, &status),
     }
 }
@@ -212,8 +212,8 @@ impl ShellSubprocess {
     /// The shell is single-threaded; `process` is set for the lifetime of
     /// `ShellSubprocess` until `close_process`.
     #[inline]
-    pub(crate) fn proc(&self) -> &mut Process {
-        self.process.as_ref().expect("process closed").process_mut()
+    pub(crate) fn proc(&self) -> &bun_process::ProcessHandle {
+        self.process.as_ref().expect("process closed")
     }
 
     /// The `< ${buffer}` stdin writer closed: release it and let the `Cmd`
@@ -398,9 +398,10 @@ impl ShellSubprocess {
                 }
             }
             // Nothing reports its exit from here on, so nothing would reap it either.
-            let _ = subproc
-                .proc()
-                .kill_and_reap(&mut bun_core::ffi::zeroed::<bun_spawn::Rusage>());
+            let _ = Process::kill_and_reap(
+                subproc.proc().this_ptr(),
+                &mut bun_core::ffi::zeroed::<bun_spawn::Rusage>(),
+            );
             subproc.proc().set_exit_handler_default();
             // Dropping `subproc` runs `ShellSubprocess::drop` → `finalize_sync`.
         }
@@ -640,6 +641,7 @@ impl ShellSubprocess {
 
         let foreground = !interp.in_background(cmd_parent.id);
         let ctrl_c_child = foreground.then(bun_spawn::ctrl_c::Child::enter);
+        crate::node::fs::note_process_start();
         // SAFETY: `spawn_args.argv` / `env_array` are local null-terminated
         // C-string arrays with argv[0] non-null; valid for this call.
         let spawn_result = match unsafe {
@@ -765,12 +767,10 @@ impl ShellSubprocess {
         // below are scoped so no borrow of the Subprocess spans the
         // re-entrant `watch`/`start`/`read_all` calls.
         unsafe {
-            (*subprocess)
-                .proc()
-                .set_exit_handler(bun_spawn::ProcessExit::new(
-                    bun_spawn::ProcessExitKind::Shell,
-                    subprocess,
-                ));
+            Process::set_exit_handler(
+                (*subprocess).proc(),
+                bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::Shell, subprocess),
+            );
         }
         let _ = scopeguard::ScopeGuard::into_inner(stdio_guard);
         if let Some(id) = cmd_parent.interp.context.get() {
@@ -1344,7 +1344,7 @@ impl<'a> SpawnArgs<'a> {
 
             override_env: false,
             env_array: Vec::new(),
-            cwd: event_loop.top_level_dir(),
+            cwd: b"",
             stdio: [Stdio::Ignore, Stdio::Pipe, Stdio::Inherit],
             redirect_stdout: None,
             redirect_stderr: None,
@@ -2032,15 +2032,8 @@ impl PipeReader {
         // Dropping `guard` is the matching `deref()`; may free `this`.
     }
 
-    pub(crate) fn r#loop(&self) -> *mut AsyncLoop {
-        #[cfg(windows)]
-        {
-            self.event_loop.uv_loop()
-        }
-        #[cfg(not(windows))]
-        {
-            self.event_loop.r#loop()
-        }
+    pub(crate) fn r#loop(&self) -> LoopRef {
+        self.event_loop.native_loop()
     }
 
     // Helper accessor used above to paper over Rc<PipeReader> interior mutability.

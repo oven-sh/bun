@@ -1116,13 +1116,6 @@ impl RunTasksCallbacks for InstallWaitCallbacks {
 }
 
 struct RunAndWaitClosure<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool> {
-    // The caller also holds the same
-    // pointer to call `sleepUntil`. Storing `&mut PackageManager` would alias the outer
-    // borrow in `run_and_wait`. Keep a raw pointer; `run_and_wait` derives this pointer
-    // first and then reborrows *through it* for the `sleep_until` receiver, so both the
-    // receiver and the callback's reborrow share the same raw provenance root.
-    // See `run_and_wait` for the remaining `tick`/`event_loop` overlap note.
-    manager: *mut PackageManager,
     err: Option<crate::Error>,
     /// The wait also ends once only the deferred peers are left to resolve. The tarballs that are
     /// still being downloaded then do not hold up the requests that the peers need.
@@ -1132,14 +1125,7 @@ struct RunAndWaitClosure<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool> {
 impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
     RunAndWaitClosure<CHECK_PEERS, ONLY_PRE_PATCH>
 {
-    fn is_done(closure: &mut Self) -> bool {
-        // SAFETY: `closure.manager` is the raw provenance root set in `run_and_wait`.
-        // `sleep_until` is now an associated fn taking `*mut PackageManager` and
-        // `AnyEventLoop::tick_raw` reborrows the event loop only *between* `is_done`
-        // calls, so this `&mut PackageManager` is the unique live borrow for the
-        // duration of the callback (no `&mut event_loop` straddles it). The original
-        // `this: &mut` in `run_and_wait` is dead past the `let mgr = ...` line.
-        let this = unsafe { &mut *closure.manager };
+    fn is_done(closure: &mut Self, this: &mut PackageManager) -> bool {
         loop {
             if CHECK_PEERS {
                 if let Err(err) = this.process_peer_dependency_list() {
@@ -1191,25 +1177,12 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
     }
 
     fn run_and_wait(this: &mut PackageManager, stops_for_peers: bool) -> crate::Result<()> {
-        // Derive the raw pointer first and route *every* manager access through it.
-        // Previously `closure.manager` was taken from `this`, then `this` was reborrowed
-        // into `sleep_until`'s `&mut self` — under Stacked Borrows that reborrow popped
-        // the raw pointer's tag, so the later `&mut *closure.manager` in `is_done` used
-        // an invalidated provenance. Now `mgr` is the root: both the `sleep_until`
-        // receiver and the closure share it, and `this` is never touched again.
-        let mgr: *mut PackageManager = this;
         let mut closure = RunAndWaitClosure::<CHECK_PEERS, ONLY_PRE_PATCH> {
-            manager: mgr,
             err: None,
             stops_for_peers,
         };
 
-        // SAFETY: `mgr` was just derived from the live exclusive `this` borrow above and
-        // is the sole access path for the manager from here on. `sleep_until` takes the
-        // raw pointer directly (no `&mut self` receiver) and `tick_raw` holds no
-        // `&mut event_loop` across `is_done`, so `closure.manager`'s reborrow inside the
-        // callback never invalidates a live tag.
-        unsafe { PackageManager::sleep_until(mgr, &mut closure, Self::is_done) };
+        this.sleep_until(|this| Self::is_done(&mut closure, this));
 
         if let Some(err) = closure.err {
             return Err(err);

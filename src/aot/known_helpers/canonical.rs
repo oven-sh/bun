@@ -26,6 +26,8 @@ pub(super) struct CanonicalInput<'a, 's> {
     pub(super) file: &'a FindInput<'a, 's>,
     pub(super) max_bytes: usize,
     pub(super) is_outer_name: &'a dyn Fn(Atom) -> bool,
+    /// The only functions of interest, in ascending order.
+    pub(super) known: Option<&'a [Box<[u8]>]>,
 }
 
 #[derive(Copy, Clone)]
@@ -107,6 +109,9 @@ struct Writer<'a, 's> {
     found: CanonicalFunction,
     root: FnId,
     is_unsupported: bool,
+    /// Those of `CanonicalInput::known` that begin with the first `compared` bytes.
+    known: Option<&'a [Box<[u8]>]>,
+    compared: usize,
 }
 
 pub(super) fn canonical_function(
@@ -123,6 +128,8 @@ pub(super) fn canonical_function(
         },
         root: function,
         is_unsupported: false,
+        known: input.known,
+        compared: 0,
     };
     writer.function(function);
     (!writer.is_unsupported).then_some(writer.found)
@@ -130,8 +137,25 @@ pub(super) fn canonical_function(
 
 impl Writer<'_, '_> {
     fn is_stopped(&mut self) -> bool {
-        self.is_unsupported |= self.found.bytes.len() > self.input.max_bytes;
+        self.is_unsupported |=
+            self.found.bytes.len() > self.input.max_bytes || !self.may_become_known();
         self.is_unsupported
+    }
+
+    fn may_become_known(&mut self) -> bool {
+        let Some(known) = self.known else {
+            return true;
+        };
+        let written = &self.found.bytes[self.compared..];
+        if written.is_empty() {
+            return !known.is_empty();
+        }
+        let from = self.compared;
+        let start = known.partition_point(|it| &it[from..] < written);
+        let count = known[start..].partition_point(|it| it[from..].starts_with(written));
+        self.known = Some(&known[start..start + count]);
+        self.compared = self.found.bytes.len();
+        count != 0
     }
 
     fn tag(&mut self, tag: Tag) {

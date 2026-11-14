@@ -7,6 +7,7 @@ use bun_paths::resolve_path;
 use bun_sema::util::SharedSort;
 use bun_threading::Guarded;
 
+use super::database_log::read_database_with_log;
 use super::paths::{relative_path, report_long_path};
 use super::plugins::with_separators_of_host;
 use super::services::BuildContext;
@@ -91,6 +92,11 @@ fn create_embedded_file(
     file: &SourceFile<'_>,
     log: &mut Log,
 ) -> Result<(OutputFile, Vec<u8>), Failed> {
+    let with_log = read_database_with_log(file.path, file.contents);
+    let file = &SourceFile {
+        contents: with_log.as_deref().unwrap_or(file.contents),
+        ..*file
+    };
     let content_hash = ContentHasher::run(file.contents);
     let Some(template) = create_embedded_template(context, file, content_hash) else {
         report_long_path(log, "embedded file", file.path);

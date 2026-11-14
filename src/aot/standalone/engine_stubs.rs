@@ -34,7 +34,9 @@ functions_of_no_engine! {
         *const c_void,
         *const c_void,
         unsafe extern "C" fn(*mut c_void, u32) -> usize,
-        unsafe extern "C" fn(*mut c_void, u32, *mut u8)
+        unsafe extern "C" fn(*mut c_void, u32, *mut u8),
+        unsafe extern "C" fn(*mut c_void, u32) -> *const u8,
+        unsafe extern "C" fn(*mut c_void)
     ) -> *mut c_void;
     fn Bun__AOT__resultSection(*const c_void, u32) -> Bytes;
     fn Bun__AOT__freeResult(*mut c_void);
@@ -43,6 +45,7 @@ functions_of_no_engine! {
     fn Bun__AOT__readStoredStrings(
         *const u8,
         usize,
+        u8,
         *mut c_void,
         unsafe extern "C" fn(*mut c_void, *const u8, usize, *const u8, usize)
     ) -> u32;

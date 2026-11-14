@@ -1,0 +1,15 @@
+# f1 = fill, f2 = early
+# -- source: main.ts
+# function fill(n: number): number { let sum = 0; for (let i = 0; i < n; i++) { const k = (i * 5 + 3) & 15; table[k] = (table[k]! + i) & 63; sum += table[k]!; } return sum; }
+# function early(n: number): string { try { return String(fill(n)); } catch (error) { return (error as Error).name; } }
+# const first = early(0), second = early(2);
+# const table: number[] = []; for (let i = 0; i < 16; i++) table.push(i * 3);
+# print(first, second, fill(40), table.join());
+# -- end of source
+# A constant of a module that holds a list is read in front of the loop and asked there for a list; in its dead zone the other copy throws in its turn.
+# RUN: walk f1 mechanisms=all
+# CHECK: = TypeTest {{*}} testedType=absent
+# CHECK: = GetArrayElement {{*}} arrayStorage=Int32 level=Proven [keyIsIntegral, isPresent]
+# CHECK: = PutContiguousIndex
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 0 ReferenceError 1256 34,5,63,57,54,51,23,17,11,7,4,1,35,29,24,21

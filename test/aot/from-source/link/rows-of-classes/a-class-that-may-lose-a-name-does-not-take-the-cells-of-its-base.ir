@@ -1,15 +1,23 @@
 # The cells of the fields that a layout takes whole from its base are copied from the base only where the layout says of itself what its base says.
-# A name is deleted from an object of the class below: there no field is known to be filled, the inherited ones included. In the base they all are.
+# A computed name is deleted from an object of the class below: there no field is known to be filled, the inherited ones included. In the base they all are.
+# Where the deleted name is written, the fields under other names stay filled.
 # -- source: a-name-is-deleted-from-the-class-below-alone.ts
 # class Base { a = 1; b = 2; }
 # class Below extends Base { c?: number = 3; }
 # const base = new Base();
 # const below = new Below();
+# class Beside extends Base { c?: number = 3; }
+# const beside = new Beside();
 # delete below.c;
-# console.log(base.a, base.b, below.a, below.c);
+# delete (beside as any)[JSON.parse('"c"')];
+# console.log(base.a, base.b, below.a, below.c, beside.a, beside.c);
 # -- end of source
 # RUN: link fields mechanisms=all
-# CHECK: field L0.0 "a" proven=i32 writers-known written-at-construction-alone filled
-# CHECK: field L0.1 "b" proven=i32 writers-known written-at-construction-alone filled
-# CHECK: field L1.1 "a" proven=i32 writers-known written-at-construction-alone of-birth
-# CHECK: field L1.2 "b" proven=i32 writers-known written-at-construction-alone of-birth
+# CHECK: field L0.0 "a" {{*}} writers-known filled
+# CHECK: field L0.1 "b" {{*}} writers-known filled
+# CHECK: field L1.0 "c" {{*}} writers-known of-birth
+# CHECK: field L1.1 "a" {{*}} writers-known filled
+# CHECK: field L1.2 "b" {{*}} writers-known filled
+# CHECK: field L2.0 "c" {{*}} writers-known of-birth
+# CHECK: field L2.1 "a" {{*}} writers-known of-birth
+# CHECK: field L2.2 "b" {{*}} writers-known of-birth

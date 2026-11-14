@@ -200,7 +200,7 @@ main();
 folder = sys.argv[1]
 os.makedirs(folder, exist_ok=True)
 for label, text, call in ROWS:
-    counted = "// STATISTIC: ReadsOfElementsKnownToBeThere >= 1\n" if label in FOUND_WITHOUT_A_TEST else ""
+    counted = "// STATISTIC: ElementReadsProvenPresent >= 1\n" if label in FOUND_WITHOUT_A_TEST else ""
     helpers = HELPERS if re.search(r"\b(meddle|make|numbers|values)\b", text + call) else ""
     open(os.path.join(folder, kebab(label) + ".ts"), "w").write(counted + PRELUDE + helpers + "\n" + text + "\n" + MAIN.replace("LABEL", label).replace("CALL", call))
 print(len(ROWS), "programs")

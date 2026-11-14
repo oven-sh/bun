@@ -1,0 +1,23 @@
+# `name` of Arrow has the type never, of which nothing is said, and is stored objects that nobody has seen: they may be the family's. It is held to what the others are held to, and every cell is smaller for it.
+# `value` of Below is stored what may be every primitive too: no row of its place is held to anything.
+# -- source: unseen-objects-keep-fields-of-families.ts
+# declare function sink(...values: unknown[]): void;
+# declare function source(): any;
+# class Mark { tag: string; constructor(tag: string) { this.tag = tag; } }
+# class Call { kind: "call"; name: Mark; constructor(mark: Mark) { this.kind = "call"; this.name = mark; } }
+# class Arrow { kind: "arrow"; name: never; constructor() { this.kind = "arrow"; this.name = undefined as never; } }
+# class Above { value: string; constructor(value: string) { this.value = value; } }
+# class Below extends Above { value: any = source(); }
+# function nameOf(node: Call | Arrow): Mark | undefined { return node.name; }
+# function rename(node: Call | Arrow) { const name = source(); if (typeof name === "object" && name) node.name = name as never; }
+# const call = new Call(new Mark("a")), arrow = new Arrow();
+# rename(call);
+# rename(arrow);
+# sink(nameOf, rename, call, arrow, Call, Arrow, Above, Below);
+# -- end of source
+# RUN: plan layouts mechanisms=all
+# CHECK: "name" OptionalCell32 Inline
+# CHECK: "name" OptionalCell32 Inline
+# RUN(NEVER): plan layouts mechanisms=all
+# NEVER-NOT: "value" {{*}} type=
+

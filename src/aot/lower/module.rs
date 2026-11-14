@@ -1,5 +1,5 @@
 mod body;
-mod faces;
+mod facades;
 mod imports;
 mod left_out;
 mod library;
@@ -19,7 +19,7 @@ use bun_sema::program::{FileId, Files};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::{OnceCell, RefCell};
 
-use super::commonjs::CommonJsState;
+use super::commonjs::{CommonJsState, PathComparison};
 use super::context::{FileInputs, SourceKind};
 use super::data::DataState;
 use super::scope::NamesOfFileForEvals;
@@ -30,7 +30,7 @@ use crate::load::Sources;
 use crate::modules::{ImportBinding, KnownMemberValues};
 
 pub(in crate::lower) use self::body::finish_body;
-pub(crate) use self::loads::lower_import_call;
+pub(crate) use self::loads::{has_settled_type, lower_import_call};
 pub(crate) use self::test_run_ways::{KeptBetweenWays, find_file_that_asks_mock};
 pub use left_out::LeftOutDeclarations;
 pub use library::collect_library_functions;
@@ -41,6 +41,7 @@ pub use throwing::lower_file_that_throws;
 pub(crate) struct ModuleState {
     pub(in crate::lower) data: DataState,
     pub(in crate::lower) commonjs: CommonJsState,
+    pub(in crate::lower) path_comparisons: Vec<PathComparison>,
     pub(in crate::lower) known_member_values: KnownMemberValues,
     pub(in crate::lower) imports_replaceable_variable: OnceCell<bool>,
     pub(in crate::lower) names_of_file_for_evals: Option<NamesOfFileForEvals>,

@@ -129,6 +129,9 @@ fn unite_layouts(
                 None => field.flags = field.flags.without(FieldFlags::IS_REQUIRED),
             }
         }
+        if said.iter().any(|declared| !declared.is_inferred()) {
+            said.retain(|declared| !declared.is_inferred());
+        }
         let Some((&first, rest)) = said.split_first() else {
             continue;
         };
@@ -215,7 +218,7 @@ fn collect_views_of_literals(
             definition
                 .fields
                 .iter()
-                .all(|field| field.declared.is_said())
+                .all(|field| field.declared.is_said() && !field.declared.is_inferred())
         })
         .map(|definition| (list_literals(definition, types), definition))
         .collect();
@@ -330,7 +333,9 @@ pub(super) fn unite_layout_definitions(
             .iter_mut()
             .filter(|layout| layout.kind == LayoutKind::Record);
         for field in records.flat_map(|layout| &mut layout.fields) {
-            if !field.declared.is_said() {
+            let DeclaredType { ty, flags, .. } = field.declared;
+            let is_inferred = flags.contains(PositionFlags::IS_FROM_COMPILER);
+            if !field.declared.is_said() || (is_inferred && ty == TypeTable::ANYTHING) {
                 field.declared = DeclaredType::untyped();
             }
         }
@@ -402,7 +407,9 @@ pub(super) fn add_views_of_literals(layouts: &mut Vec<Layout>, views: Vec<Layout
 mod tests {
     use super::*;
     use crate::ir::{FunctionId, PropertyKeyId, StringId, Type};
-    use crate::link::testing::{forward, reverse, test_class_key, test_object_type_key};
+    use crate::link::testing::{
+        forward, link_sources_without_bun_modules, reverse, test_class_key, test_object_type_key,
+    };
 
     fn field(key: usize, declared: DeclaredType, flags: FieldFlags) -> Field {
         Field {
@@ -754,6 +761,51 @@ mod tests {
         assert_eq!(united.fields[0].declared, string);
         let (united, _) = unite(holder_of(unsaid), vec![holder_of(unsaid)]);
         assert_eq!(united.fields[0].declared, DeclaredType::untyped());
+    }
+
+    #[test]
+    fn inferred_yields_to_written_type() {
+        let inferred = |ty: TypeId| checked(ty).inferred();
+        let (string, number) = (TypeTable::STRING, TypeTable::NUMBER);
+        let written = vec![holder_of(checked(string))];
+        let (united, _) = unite(holder_of(inferred(number)), written);
+        assert_eq!(united.fields[0].declared, checked(string));
+        let unsaid = holder_of(DeclaredType::unsaid());
+        let others = vec![holder_of(inferred(number)), holder_of(inferred(string))];
+        let (united, types) = unite(unsaid.clone(), others);
+        let either = united.fields[0].declared;
+        assert!(either.is_inferred());
+        let union = types.find_union([number, string].into_iter());
+        assert_eq!(union, Some(either.ty));
+        let anything = holder_of(inferred(TypeTable::ANYTHING));
+        let (united, _) = unite(unsaid, vec![anything, holder_of(inferred(number))]);
+        assert_eq!(united.fields[0].declared, DeclaredType::untyped());
+    }
+
+    #[test]
+    fn literal_fields_have_inferred_types() {
+        const SOURCE: &str = r#"
+interface Written { width: number | null }
+export function make(k: number) { return { left: k, open: k > 2, title: "t" + k, run() {} }; }
+export function makeWritten(): Written { return { width: 1 }; }
+export function makeOther(k: number) { return { width: k }; }
+"#;
+        let linked = link_sources_without_bun_modules(&[("main.ts", SOURCE)]);
+        let program = linked.expect("the program links").program;
+        let declared = |name: &str| {
+            let has_name = |key: PropertyKeyId| {
+                let text = program.property_keys.get(key).text;
+                text.is_some_and(|id| program.strings.get(id) == name.as_bytes())
+            };
+            let mut fields = program.layouts.iter().flat_map(|layout| &layout.fields);
+            let field = fields.find(|field| field.key.is_some_and(has_name));
+            field.expect(name).declared
+        };
+        assert_eq!(declared("left"), checked(TypeTable::NUMBER).inferred());
+        assert!(declared("title").is_inferred());
+        assert!(declared("open").is_inferred());
+        assert_eq!(declared("run"), DeclaredType::untyped());
+        assert!(!declared("width").is_inferred());
     }
 
     #[test]

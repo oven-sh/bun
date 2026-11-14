@@ -1,4 +1,4 @@
-// STATISTIC: ElementsOfFreshListsKnownAgain >= 1
+// STATISTIC: FreshArrayElementReadsEliminated >= 1
 "use strict";
 // The second read is answered by the first. The third goes under the same name, whose value has changed.
 const values = JSON.parse('[["a",1],["b",2],["c",3],["d",4]]');

@@ -1,0 +1,5 @@
+// A program that runs for a while: Bun.serve with bodies that are streams.
+const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(req) { const n = +new URL(req.url).pathname.slice(1); let i = 0; return new Response(new ReadableStream({ async pull(c) { if (i === n) return c.close(); await null; c.enqueue(new TextEncoder().encode("line " + i++ + "\n")); } }), { headers: { "content-type": "text/plain" } }); } });
+let total = 0, lines = 0;
+for (let round = 0; round < 60; round++) { const r = await fetch(server.url + String(round)); let rest = ""; const decoder = new TextDecoder(); for await (const chunk of r.body!) { rest += decoder.decode(chunk, { stream: true }); const parts = rest.split("\n"); rest = parts.pop()!; for (const p of parts) { lines++; total += +p.slice(5); } } if (rest) throw new Error("rest " + rest); }
+console.log(lines, total); const upload = await fetch(server.url + "0", { method: "POST", body: new Blob(["x".repeat(1000)]) }); console.log(upload.status, (await upload.text()).length); server.stop(true);

@@ -29,10 +29,17 @@
 # BEHIND: isLoopHead=true
 # BEHIND-NOT: = Put
 # RUN(LENGTH): walk f3 mechanisms=all
-# LENGTH-NOT: = HasArrayStorage
+# the loop is built twice, for what it adds up: the list is asked in the turn, behind the head
+# LENGTH: isLoopHead=true
+# LENGTH: isLoopHead=true
+# LENGTH: = HasArrayStorage
 # LENGTH-NOT: = GetArrayStorage
+# pop() leaves the storage and the kind as they are: both are taken before the loop, and the length is read in the iteration
 # RUN(SHRINKS): walk f4 mechanisms=all
-# SHRINKS-NOT: = GetArrayStorage
+# SHRINKS: = HasArrayStorage {{*}}arrayStorage=Int32 [isWritable]
+# SHRINKS: = GetArrayStorage
+# SHRINKS: isLoopHead=true
+# SHRINKS: = GetArrayLength
 # RUN(KIND): walk f5 mechanisms=all
 # KIND-NOT: = HasArrayStorage
 # KIND-NOT: = GetArrayStorage
@@ -44,7 +51,9 @@
 # OTHER: = HasArrayStorage
 # OTHER: = GetArrayStorage
 # OTHER: isLoopHead=true
-# OTHER-NOT: = Put
+# `other` is asked as well, for doubles: a number stored inside it changes neither its length nor its kind, whether it is `list` or not. Past its end the turn begins again in the other copy.
+# OTHER: = PutDoubleIndex {{*}}isInBounds
+# OTHER-NOT: = PutArrayElement
 # RUN(CALLEE): walk f8 mechanisms=all
 # CALLEE-NOT: = HasArrayStorage
 # CALLEE-NOT: = GetArrayStorage

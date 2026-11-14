@@ -1,0 +1,28 @@
+# -- source: main.ts
+# class Board {
+#   readonly cells: number[] = new Array<number>(128).fill(0);
+#   slides(square: number, steps: readonly number[], piece: number): boolean {
+#     for (const step of steps) {
+#       for (let at = square + step; !(at & 0x88); at += step) {
+#         const found = this.cells[at]!;
+#         if (found === 0) continue;
+#         if (found === piece) return true;
+#         break;
+#       }
+#     }
+#     return false;
+#   }
+# }
+# const diagonals: readonly number[] = [-17, -15, 15, 17];
+# const lines: readonly number[] = [-16, -1, 1, 16];
+# const squares: number[] = JSON.parse("[0,50]");
+# const board = new Board();
+# board.cells[17 * 3] = 5;
+# board.cells[2] = 4;
+# console.log(board.slides(squares[0]!, diagonals, 5), board.slides(squares[0]!, lines, 4), board.slides(squares[1]!, lines, 5), board.slides(squares[1]!, diagonals, 4));
+# -- end of source
+# RUN: compile Int32KeysGuardedInIterations mechanisms=all
+# CHECK: statistic Int32KeysGuardedInIterations 1
+# RUN(SHELL): run-in-shell mechanisms=all
+# SHELL: true true true false
+# SHELL-NEXT: exited with 0

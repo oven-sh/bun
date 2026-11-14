@@ -1614,6 +1614,48 @@ async function installStreamPkg(
   return results;
 }
 
+describe.concurrent("pax size", () => {
+  // The body of `data` is itself an entry, found only if the size is read as 0.
+  const buildTarballWithSize = (size: string) => {
+    const body = Buffer.concat(tarFile("package/index.js", Buffer.from("second")));
+    let record = "";
+    for (let len = 0; record.length !== len || len === 0;) {
+      len = record.length;
+      record = `${len} size=${size}\n`;
+    }
+    const pax = Buffer.from(record);
+    return gzipSync(
+      Buffer.concat([
+        ...tarFile("package/package.json", Buffer.from(JSON.stringify({ name: "stream-pkg", version: "1.0.0" }))),
+        ...tarFile("package/index.js", Buffer.from("first")),
+        tarHeader("PaxHeader", pax.length, "x"),
+        pax,
+        pad512(pax.length),
+        tarHeader("package/data", body.length, "0"),
+        body,
+        Buffer.alloc(1024),
+      ]),
+    );
+  };
+  const extractPaths = ["libdeflate", "zlib", "buffered", "streaming"] as const;
+
+  test.each(extractPaths)("allows leading zeros (%s)", async path => {
+    const [{ error, exitCode, files }] = await installStreamPkg(path, buildTarballWithSize("0001024"), { files: true });
+    expect(error).toBeUndefined();
+    expect(files).toMatchObject({ "index.js": "first" });
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(extractPaths.flatMap(path => ["", "0x1", "+1", "0.5", " 1", "1k"].map(size => [size, path] as const)))(
+    "rejects %j (%s)",
+    async (size, path) => {
+      const [{ error, installed, cached, exitCode }] = await installStreamPkg(path, buildTarballWithSize(size));
+      expect({ error, installed, cached }).toEqual({ error: expect.any(String), installed: false, cached: 0 });
+      expect(exitCode).toBe(1);
+    },
+  );
+});
+
 // -------------------------------------------------------------------
 // A gzip member ends with the CRC32 and the length (ISIZE) of its data.
 // Where no integrity is recorded (a `file:` or URL tarball on its first
@@ -1939,7 +1981,6 @@ describe.concurrent("entries that npm skips or names differently", () => {
       tarball(...pax("linkpath", "日本"), ...entry("package/link", Buffer.alloc(0), type), ...other),
       { "other.js": "second" },
     ]),
-    ["a NUL in the path of a pax header", tarball(...pax("path", `${index}\0.js`), ...other), {}],
     [
       "the name of a sparse file in a pax header",
       tarball(...pax("GNU.sparse.name", index), ...other),
@@ -1988,6 +2029,13 @@ describe.concurrent("entries that npm skips or names differently", () => {
       ]);
     },
   );
+
+  // Versions of npm differ.
+  test.each(paths)("a NUL in the path of a pax header (%s)", async path => {
+    const [result] = await installStreamPkg(path, tarball(...pax("path", `${index}\0.js`), ...other));
+    const error = expect.stringContaining(path === "streaming" ? "Ambiguous tar header" : "Fail extracting tarball");
+    expect(result).toMatchObject({ error, installed: false, cached: 0, exitCode: 1 });
+  });
 
   // Two cases that do not follow npm, which loses files of archives that real tar writers make.
   // Old writers repeat the size of the file in the header of a hard link. npm takes what follows for its body.

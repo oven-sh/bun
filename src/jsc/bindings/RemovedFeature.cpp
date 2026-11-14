@@ -5,6 +5,8 @@
 #include "CodeGenerationFromStrings.h"
 #include <JavaScriptCore/AOTBuiltinTable.h>
 #include <JavaScriptCore/Error.h>
+#include <JavaScriptCore/FunctionPrototype.h>
+#include <JavaScriptCore/InternalFunction.h>
 #include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSNativeStdFunction.h>
@@ -167,13 +169,15 @@ extern "C" [[noreturn]] void Bun__abortForRemovedFeature(uint16_t feature)
     auto text = Bun::textOfRemovableFeature(static_cast<JSC::RemovableFeature>(feature)).span();
     const char* beBun = getenv("BUN_BE_BUN");
     bool actsAsBun = beBun && *beBun;
-    Bun::writeToStandardError(actsAsBun ? "error: BUN_BE_BUN is set, but this executable doesn't include "_span : "error: --trim removed "_span);
+    bool isTrimmed = JSC::Bun__removableFeatureState.isTrimmed;
+    Bun::writeToStandardError(actsAsBun ? "error: BUN_BE_BUN is set, but this executable doesn't include "_span : isTrimmed ? "error: --trim removed "_span
+                                                                                                                            : "error: This executable doesn't include "_span);
     Bun::writeToStandardError(text);
     if (actsAsBun) {
         Bun::writeToStandardError(". Run bun instead.\n"_span);
         _exit(70);
     }
-    Bun::writeToStandardError(" from this executable, but the program needs it."_span);
+    Bun::writeToStandardError(isTrimmed ? " from this executable, but the program needs it."_span : ", but the program needs it."_span);
     if (Bun::isRemovedByRequest(feature)) {
         Bun::writeToStandardError(" It is listed in compile.trim.remove.\n"_span);
         _exit(70);
@@ -283,10 +287,107 @@ extern "C" JSC::EncodedJSValue Bun__createStandInForRemovedBinding(JSC::JSGlobal
     return JSC::JSValue::encode(standIn);
 }
 
+namespace Bun {
+
+static bool throwRemovedSQLError(JSC::JSGlobalObject* globalObject, JSC::JSCell* function)
+{
+    throwFeatureRemovedError(globalObject, WTF::makeString("Bun."_s, uncheckedDowncast<JSC::InternalFunction>(function)->name()), static_cast<uint16_t>(Feature::Sql));
+    return false;
+}
+
+JSC_DEFINE_HOST_FUNCTION(useRemovedSQLFunction, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    throwRemovedSQLError(globalObject, callFrame->jsCallee());
+    return {};
+}
+
+// Bun.sql and Bun.SQL in an executable without the native code that loading bun:sql needs. Reading them works, and using them throws.
+class RemovedSQLFunction final : public JSC::InternalFunction {
+public:
+    using Base = JSC::InternalFunction;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesGetOwnPropertySlot | JSC::OverridesPut | JSC::ProhibitsPropertyCaching;
+
+    static RemovedSQLFunction* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, ASCIILiteral name, unsigned length)
+    {
+        auto* structure = JSC::Structure::create(vm, globalObject, globalObject->functionPrototype(), JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+        auto* function = new (NotNull, JSC::allocateCell<RemovedSQLFunction>(vm)) RemovedSQLFunction(vm, structure);
+        function->finishCreation(vm, length, name);
+        return function;
+    }
+
+    DECLARE_INFO;
+
+    static bool getOwnPropertySlot(JSC::JSObject* object, JSC::JSGlobalObject* globalObject, JSC::PropertyName key, JSC::PropertySlot& slot)
+    {
+        if (Base::getOwnPropertySlot(object, globalObject, key, slot))
+            return true;
+        if (slot.internalMethodType() == JSC::PropertySlot::InternalMethodType::VMInquiry)
+            return false;
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        // These are read off arbitrary functions, so they behave as if absent.
+        auto& names = *vm.propertyNames;
+        bool isCommonProperty = key.isSymbol() ? key != names.asyncDisposeSymbol : key == names.then || key == names.toJSON;
+        if (isCommonProperty)
+            return false;
+        bool isInherited = JSC::asObject(object->getPrototypeDirect())->hasProperty(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (isInherited)
+            return false;
+        RELEASE_AND_RETURN(scope, throwRemovedSQLError(globalObject, object));
+    }
+    static bool put(JSC::JSCell* cell, JSC::JSGlobalObject* globalObject, JSC::PropertyName key, JSC::JSValue value, JSC::PutPropertySlot& slot)
+    {
+        if (slot.thisValue() != JSC::JSValue(cell))
+            return Base::put(cell, globalObject, key, value, slot);
+        return throwRemovedSQLError(globalObject, cell);
+    }
+    static bool putByIndex(JSC::JSCell* cell, JSC::JSGlobalObject* globalObject, unsigned, JSC::JSValue, bool) { return throwRemovedSQLError(globalObject, cell); }
+    static bool deleteProperty(JSC::JSCell* cell, JSC::JSGlobalObject* globalObject, JSC::PropertyName, JSC::DeletePropertySlot&) { return throwRemovedSQLError(globalObject, cell); }
+    static bool deletePropertyByIndex(JSC::JSCell* cell, JSC::JSGlobalObject* globalObject, unsigned) { return throwRemovedSQLError(globalObject, cell); }
+    static bool defineOwnProperty(JSC::JSObject* object, JSC::JSGlobalObject* globalObject, JSC::PropertyName, const JSC::PropertyDescriptor&, bool) { return throwRemovedSQLError(globalObject, object); }
+    static bool setPrototype(JSC::JSObject* object, JSC::JSGlobalObject* globalObject, JSC::JSValue, bool) { return throwRemovedSQLError(globalObject, object); }
+    static bool preventExtensions(JSC::JSObject* object, JSC::JSGlobalObject* globalObject) { return throwRemovedSQLError(globalObject, object); }
+
+private:
+    RemovedSQLFunction(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure, useRemovedSQLFunction, useRemovedSQLFunction)
+    {
+    }
+};
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(RemovedSQLFunction, JSC::InternalFunction);
+
+const JSC::ClassInfo RemovedSQLFunction::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(RemovedSQLFunction) };
+
+JSC_DEFINE_HOST_FUNCTION(removedSQLFunctionOwnKeys, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    throwRemovedSQLError(globalObject, JSC::asObject(callFrame->uncheckedArgument(0)));
+    return {};
+}
+
+bool isRemovedSQLFunction(JSC::JSValue value)
+{
+    auto* proxy = value ? dynamicDowncast<JSC::ProxyObject>(value) : nullptr;
+    return proxy && proxy->target()->inherits<RemovedSQLFunction>();
+}
+
+JSC::JSValue createRemovedSQLFunction(JSC::JSGlobalObject* globalObject, ASCIILiteral name, unsigned length, bool hasPrototype)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto* function = RemovedSQLFunction::create(vm, globalObject, name, length);
+    if (hasPrototype)
+        function->putDirect(vm, vm.propertyNames->prototype, JSC::constructEmptyObject(globalObject), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    // util.inspect() prints the target of a Proxy, so the target lists its keys. Any other code gets them from the Proxy, which throws.
+    auto* handler = JSC::constructEmptyObject(globalObject);
+    handler->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "ownKeys"_s), 1, removedSQLFunctionOwnKeys, JSC::ImplementationVisibility::Private, JSC::NoIntrinsic, 0);
+    return JSC::ProxyObject::create(globalObject, function, handler);
+}
+
+}
 extern "C" JSC::EncodedJSValue Bun__createModuleNotCompiledInError(JSC::JSGlobalObject* globalObject, Bun::ErrorCode code, const BunString* specifier)
 {
     // --trim took out what reads a file, so nothing here can say why the module fails to load. The compiled program then says that it was not found.
-    if (Bun::isAskingWhyFileFailsToLoad())
+    if (Bun::isDiagnosingLoadFailure())
         return {};
     WTF::String name = specifier->toWTFString(BunString::ZeroCopy);
     bool isPath = name.startsWith('/') || (name.length() > 2 && name[1] == ':' && (name[2] == '/' || name[2] == '\\'));

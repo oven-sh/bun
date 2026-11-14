@@ -1,4 +1,4 @@
-// STATISTIC: SumsOfIntegersInTurnsLaidOut >= 1
+// STATISTIC: UnrolledLoopIntegerSums >= 1
 "use strict";
 function sum(l, from) { let s = from; for (let i = 0; i < l.length; i++) s += l[i]; return s; }
 const out = [];

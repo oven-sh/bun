@@ -183,8 +183,9 @@ fn find_without_plugins(
     unsafe extern "C" {
         safe fn Bun__AOT__setPluginsSilent(are_silent: bool);
     }
-    // SAFETY: the VM of this thread is live, and nothing else holds its resolver's options here.
-    let options = unsafe { &mut (*global.bun_vm_ptr()).transpiler.resolver.opts };
+    let transpiler = global.bun_vm().transpiler.as_ptr();
+    // SAFETY: nothing else holds the resolver's options here.
+    let options = unsafe { &mut (*transpiler).resolver.opts };
     let installs = core::mem::replace(
         &mut options.global_cache,
         bun_resolver::GlobalCache::disable,
@@ -199,7 +200,7 @@ fn find_without_plugins(
     );
     Bun__AOT__setPluginsSilent(false);
     // SAFETY: as above.
-    unsafe { (*global.bun_vm_ptr()).transpiler.resolver.opts.global_cache = installs };
+    unsafe { (*transpiler).resolver.opts.global_cache = installs };
     match found {
         Ok(Ok(found)) => Some(found),
         _ => None,
@@ -408,6 +409,16 @@ pub fn did_run_preloads(global: &JSGlobalObject) {
 pub fn is_compiled_module(path: &[u8]) -> bool {
     compiled_program().is_some()
         && Bun__isCompiledProgramFile(&bun_core::StringView::from_bytes(path))
+}
+
+/// Whether `source_url` is a path relative to the build folder, as stack traces of an executable print it.
+/// No such file exists at run time.
+pub fn is_build_relative_path(source_url: &[u8]) -> bool {
+    compiled_program().is_some_and(|program| !program.preserves_source_paths)
+        && !bun_paths::is_absolute(source_url)
+        && ![&b"data:"[..], b"blob:", b"file:"]
+            .iter()
+            .any(|scheme| source_url.starts_with(scheme))
 }
 
 /// On a thread that runs apart from the compiled program: an entry point of that program, of which the graph holds no text.
@@ -1028,8 +1039,18 @@ pub extern "C" fn Bun__AOT__isLoadedSynchronously(
 ) -> bool {
     let vm = global.bun_vm();
     vm.is_test_entry_point(path)
-        || !vm.transpiler_store.enabled
+        || !vm.transpiler_store.enabled.get()
         || crate::node_compile_cache::is_enabled()
+}
+
+/// Called by BunCompiledModules.cpp. Sets `Resolver::resolves_for_code_from_disk` and returns its previous value.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__AOT__setResolvesForCodeFromDisk(
+    global: &JSGlobalObject,
+    value: bool,
+) -> bool {
+    (global.bun_vm().transpiler)
+        .with_mut(|t| core::mem::replace(&mut t.resolver.resolves_for_code_from_disk, value))
 }
 
 /// BunCompiledModules.cpp
@@ -1148,7 +1169,6 @@ fn sentence_of(verdict: ImageVerdict) -> Option<&'static str> {
         ImageVerdict::NotAnImage => "the file is corrupt (bad header)",
         ImageVerdict::Truncated => "the file is truncated. Copy or download it again",
         ImageVerdict::Misaligned => "the code isn't page-aligned. Something modified the executable after it was built",
-        ImageVerdict::AlreadyInUse => "this process has already loaded another compiled program",
         ImageVerdict::LowPagesAccessible => "it needs the lowest pages of the address space to be unmapped, and this system maps them",
         ImageVerdict::NoCode => "it contains no code",
         ImageVerdict::CannotMapCode => "its code could not be mapped as executable memory",

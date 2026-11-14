@@ -8,6 +8,7 @@ import { isASAN } from "harness";
 import {
   appendFileSync,
   cpSync,
+  existsSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -68,7 +69,9 @@ function listRuns(flags: string[], stderr: string, { exitCode, signalCode }: End
   if (cutOffBy) {
     const says = `the ${flags.length ? "compiled" : "plain"} copy ${cutOffBy}: what it ran is no list of runs`;
     appendFileSync(process.env.AOT_CHILDREN_STOPPED!, says + "\n");
-    throw new Error(says + "\n" + stderr.slice(-2000));
+    // What stopped it and the stack stand in front. Behind them a sanitizer prints the memory around the fault.
+    const stop = stderr.search(/ERROR: AddressSanitizer|ASSERTION FAILED|^panic/m);
+    throw new Error(says + "\n" + (stop < 0 ? stderr.slice(-2000) : stderr.slice(stop, stop + 8000)));
   }
   const realms = new Map<string, number>();
   const numberOf = (realm: string) => realms.get(realm) ?? realms.set(realm, realms.size + 1).size;
@@ -91,6 +94,18 @@ function hold(plain: ReturnType<typeof listRuns>, compiled: ReturnType<typeof li
   );
 }
 
+// Plain Bun reads the files of three tests on one thread ("evicting modules stays fast while many loads are pending", "files that mock it between files that don't",
+// "with jest.mock(), the mock reaches modules the preload loaded and mocked"): with threads it completes loads in the order in which the threads finish.
+// In the third one the original of an automock races with the test file. Under --isolate it always comes behind the test file, but not on one thread.
+const filesOfTestsOnOneThread = ["uses39.ts", "5.test.js"];
+const runsOnOneThread = ({ cmd, cwd = process.cwd() }: Options) =>
+  filesOfTestsOnOneThread.some(file => existsSync(join(cwd, file))) ||
+  (!cmd.includes("--isolate") && existsSync(join(cwd, "automock.test.js")));
+function asPlainRuns(options: Options) {
+  if (!runsOnOneThread(options)) return options;
+  return { ...options, env: { ...(options.env ?? process.env), BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1" } };
+}
+
 const madeForTheRun = realpathSync(tmpdir()) + sep;
 const findBun = ({ cmd, cwd }: Options) => {
   // ./run.ts puts words in front of a command.
@@ -108,13 +123,13 @@ Bun.spawn = function (this: unknown, first: string[] | Options, second?: Omit<Op
   appendFileSync(process.env.AOT_CHILDREN_STARTED!, ".");
   // Both copies are made before the child can write into its project.
   const lists = [[], ["--aot"]].map(async flags => {
-    const copy = copyOf(options, bun, flags);
+    const copy = copyOf(flags.length ? options : asPlainRuns(options), bun, flags);
     const child = spawn(copy);
     const [stderr] = await Promise.all([child.stderr.text(), child.exited]);
     rmSync(copy.cwd, { recursive: true, force: true });
     return listRuns(flags, stderr, child);
   });
-  const child = spawn.call(this, first as never, second as never);
+  const child = spawn.call(this, asPlainRuns(options) as never);
   const exited = Promise.all([child.exited, ...lists]).then(([code, plain, compiled]) => (hold(plain, compiled), code));
   return Object.defineProperty(child, "exited", { value: exited });
 } as typeof Bun.spawn;
@@ -125,11 +140,11 @@ Bun.spawnSync = function (this: unknown, first: string[] | Options, second?: Omi
   if (bun < 0) return spawnSync.call(this, first as never, second as never);
   appendFileSync(process.env.AOT_CHILDREN_STARTED!, ".");
   const [plain, compiled] = [[], ["--aot"]].map(flags => {
-    const copy = copyOf(options, bun, flags);
+    const copy = copyOf(flags.length ? options : asPlainRuns(options), bun, flags);
     const ended = spawnSync(copy);
     rmSync(copy.cwd, { recursive: true, force: true });
     return listRuns(flags, ended.stderr.toString(), ended);
   });
   hold(plain, compiled);
-  return spawnSync.call(this, first as never, second as never);
+  return spawnSync.call(this, asPlainRuns(options) as never);
 } as typeof Bun.spawnSync;

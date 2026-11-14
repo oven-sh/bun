@@ -98,6 +98,24 @@ impl<'a> NamesHandedOn<'a> {
         found
     }
 
+    /// The files whose star exports bring names to `file`, by name and then in written order.
+    pub(super) fn name_stars(&self, file: FileId) -> Vec<(Atom, FileId)> {
+        let own_count = self.tables.own_names(file).len();
+        let names = self.tables.names(file).iter().skip(own_count);
+        let from_stars: FxHashSet<Atom> = names.map(|&(name, _)| name).collect();
+        if from_stars.is_empty() {
+            return Vec::new();
+        }
+        let stars = self.tables.files_named_by_stars(file).flat_map(|star| {
+            let names = self.tables.names(star).iter();
+            names.map(move |&(name, _)| (name, star))
+        });
+        let stars = stars.filter(|(name, _)| from_stars.contains(name));
+        let mut stars: Vec<(Atom, FileId)> = stars.collect();
+        stars.shared_sort_by_key(|&(name, _)| name.0);
+        stars
+    }
+
     pub(super) fn names_from_stars(&self, file: FileId, is_compiled: bool) -> Vec<Atom> {
         if self.files_named_by_stars(file, is_compiled).is_empty() {
             return Vec::new();

@@ -7,5 +7,5 @@ function tagOfKept(list) { let got; for (let turn = 0; turn < turns; turn++) got
 function kept(list) { let got; for (let turn = 0; turn < turns; turn++) got = list.map(x => x * 0.5).filter(v => v > 0.6); return got; }
 console.log(say(tagOfMade(source)), say(tagOfKept(source)), say(kept(source)), say(log));
 delete Array.prototype.tag;
-// STATISTIC: NewListsInPlaceOfSpecies >= 1
-// STATISTIC: NumbersStoredByKindOfStorageInCopiedRuns <= 1
+// STATISTIC: ArraySpeciesLookupsElided >= 1
+// STATISTIC: NumberStoresDispatchedByIndexingType <= 4

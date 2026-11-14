@@ -1,4 +1,5 @@
 use bun_ast::import_record::is_test_module;
+use bun_paths::fs::PathName;
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::{Binding, Decl, SymbolId};
 use bun_sema::hir::{
@@ -13,6 +14,14 @@ use bun_sema::util::FxHashMap;
 use crate::builtins::{RuntimeModule, table};
 
 const NAMESPACE_PREFIX: &str = "%import:";
+
+pub(crate) fn is_namespace_of_hoisted_import(name: &[u8]) -> bool {
+    name.starts_with(NAMESPACE_PREFIX.as_bytes())
+}
+
+pub(crate) fn shown_name_of_namespace(name: &[u8]) -> Option<&[u8]> {
+    is_namespace_of_hoisted_import(name).then(|| &name[NAMESPACE_PREFIX.len()..])
+}
 
 fn text_of<'a>(atoms: &'a Interner<'_>, text: Atom) -> &'a [u8] {
     match text.is_none() {
@@ -595,8 +604,15 @@ impl Plan {
         });
         let lowered: Vec<(StmtId, ImportId)> = lowered.collect();
         let locals = lowered.iter().enumerate().map(|(position, it)| {
-            let local = atoms.intern(format!("{NAMESPACE_PREFIX}{position}").as_bytes());
-            (it.1, local)
+            let mut local = NAMESPACE_PREFIX.as_bytes().to_vec();
+            match text_of(atoms, file[it.1].namespace) {
+                b"" => {
+                    let path = PathName::init(text_of(atoms, file[it.1].spec)).fmt_identifier();
+                    local.extend(format!("import_{path}${}", position + 1).into_bytes());
+                }
+                written => local.extend_from_slice(written),
+            }
+            (it.1, atoms.intern(&local))
         });
         let mut locals: Vec<(ImportId, Atom)> = locals.collect();
         locals.sort_unstable_by_key(|it| it.0);

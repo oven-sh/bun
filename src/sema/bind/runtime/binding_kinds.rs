@@ -14,7 +14,7 @@ pub(super) fn record_declared_binding_kinds(hir: &File<'_>, bound: &mut BoundBui
         let symbol = SymbolId(index);
         let kind = declared_binding_kind(hir, bound, symbol);
         record_binding_kind(bound, symbol, kind);
-        let exported = bound.export_symbol_of_value_symbol_if_exported(symbol);
+        let exported = bound.exported_value(symbol);
         if exported != symbol {
             let kind = declared_binding_kind_of(hir, bound, symbol, exported);
             record_binding_kind(bound, exported, kind);
@@ -60,7 +60,11 @@ fn declared_binding_kind_of(
 }
 
 #[inline]
-fn declaration_binding_kind(hir: &File<'_>, bound: &BoundBuilder, decl: Decl) -> BindingKind {
+pub(super) fn declaration_binding_kind(
+    hir: &File<'_>,
+    bound: &BoundBuilder,
+    decl: Decl,
+) -> BindingKind {
     match declaration_kind(hir, bound, decl) {
         DeclarationKind::Var => BindingKind::Var,
         DeclarationKind::Parameter => BindingKind::Parameter,

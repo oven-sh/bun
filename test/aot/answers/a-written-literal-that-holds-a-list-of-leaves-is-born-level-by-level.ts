@@ -10,9 +10,11 @@
 // # LEVELS-LABEL: code f2:Body
 // # LEVELS-COUNT-2: encoding=CopyOnWriteArray
 // # LEVELS-LABEL: code f3:Body
-// # LEVELS-COUNT-4: encoding=CopyOnWriteArray
+// # The program stores elements into v of ofRecords and a of recordRoot: such a list is born with storage of its own.
+// # LEVELS-COUNT-4: encoding=TreeWithOwnStorage
 // # LEVELS-LABEL: code f4:Body
-// # LEVELS-COUNT-6: encoding=CopyOnWriteArray
+// # LEVELS: encoding=TreeWithOwnStorage
+// # LEVELS-COUNT-5: encoding=CopyOnWriteArray
 // # LEVELS-LABEL: code f5:Body
 // # LEVELS-COUNT-6: encoding=CopyOnWriteArray
 // # RUN(NOTREE): walk f1 f2 f3 f4 f5 f9 mechanisms=all

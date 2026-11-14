@@ -75,6 +75,7 @@ pub(in crate::lower) enum Storage {
     Local,
     Field { scope: ScopeId, field: u32 },
     Variable(VariableKey),
+    Instance { field: u32 },
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -193,6 +194,7 @@ pub(crate) struct ScopeAnalysis {
     pub(super) is_made_at_first_read: Vec<bool>,
     pub(super) created_at_each_read: Vec<SymbolId>,
     pub(super) functions_created_before_loops: Vec<(StmtId, SymbolId)>,
+    pub(super) functions_calling_themselves: Vec<FnId>,
     pub(super) names_called: Vec<SymbolId>,
     pub(super) symbol_placements: Vec<Placement>,
     pub(super) slot_placements: Vec<(SlotKey, Placement)>,
@@ -257,6 +259,7 @@ impl ScopeAnalysis {
         self.use_counts.get(symbol.idx()) == Some(&0)
     }
 
+    /// The function that the name is declared as, where its function object is made by whoever reads the name first.
     pub(in crate::lower) fn is_created_at_each_read(&self, symbol: SymbolId) -> bool {
         self.created_at_each_read.binary_search(&symbol).is_ok()
     }
@@ -277,6 +280,12 @@ impl ScopeAnalysis {
         let first = functions.partition_point(|entry| entry.0 < statement);
         let end = functions.partition_point(|entry| entry.0 <= statement);
         &functions[first..end]
+    }
+
+    pub(in crate::lower) fn calls_itself(&self, function: FnId) -> bool {
+        self.functions_calling_themselves
+            .binary_search(&function)
+            .is_ok()
     }
 
     pub(in crate::lower) fn function_called_by_name(&self, call: ExprId) -> Option<FnId> {

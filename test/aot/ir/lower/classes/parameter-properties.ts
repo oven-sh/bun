@@ -1,9 +1,9 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="Base" {{*}}kind=BaseConstructor
+// CHECK-NOT: NewObject
+// CHECK: = Call {{*}}calleeName="initial"
 // CHECK: [[allocated]] = NewObject {{*}}layout=[[layout]] @
 // CHECK-NEXT: [[this]] = Convert [[allocated]] declared={type=[[layout]]}
-// CHECK-NOT: PropDefine
-// CHECK: = Call {{*}}calleeName="initial"
 // CHECK: PropDefine [[this]], {{*}}key="a"
 // CHECK: PropDefine [[this]], {{*}}key="b"
 // CHECK-NOT: key="c"
@@ -11,12 +11,11 @@
 // CHECK-NOT: PropSet
 // CHECK: [[derived]] = SuperConstruct
 // CHECK: [[convertedDerived]] = Convert [[derived]] declared={type=L{{*}}} @
+// CHECK: = IsUnlockedInstance [[convertedDerived]] testedType=L{{*}} @
+// CHECK: PropDefine [[convertedDerived]], {{*}}key="d"
+// CHECK: [[first]] = Undefined
+// CHECK-NEXT: PropDefine [[convertedDerived]], [[first]] key="d"
 // CHECK: PropSet [[convertedDerived]], {{*}}key="d"
-
-// RUN(FIELDS): lower
-// FIELDS-LABEL: function {{*}}kind=Initializer
-// FIELDS: [[first]] = Undefined
-// FIELDS-NEXT: PropDefine [[self]], [[first]] key="d"
 
 declare function initial(): number;
 

@@ -153,9 +153,7 @@ class Executable {
 }
 
 const framesOf = (text: string) =>
-  [...text.matchAll(/^ +at (?:(.*) \()?\/\$bunfs\/root\/(.*?)\)?$/gm)].map(
-    ([, name, place]) => `${name ?? ""} ${place}`,
-  );
+  [...text.matchAll(/^ +at (?:(.*) \()?\.\/(.*?)\)?$/gm)].map(([, name, place]) => `${name ?? ""} ${place}`);
 
 // The planted bytes are x64's, the symbol table is ELF's, and in a Bun built with AddressSanitizer its handler answers, not Bun's.
 describe.skipIf(!isLinux || process.arch !== "x64" || isASAN)("a planted fault", () => {

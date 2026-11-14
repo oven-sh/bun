@@ -1,5 +1,5 @@
 'use strict';
-// STATISTIC: CallsWhoseParametersAreReadOutOfList = 0
+// STATISTIC: SpreadCallsUnpackedToParameters = 0
 function inner(who, count, first, second) { return [typeof who, count, first === undefined ? "none" : first, second === undefined ? "none" : second].join(":"); }
 
 const others = [new Set([1, 2]), "ab", new Map([[1, 2]]).keys(), (function* () { yield "g1"; yield "g2"; })(), new Uint8Array([7, 8])];

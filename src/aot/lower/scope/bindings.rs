@@ -6,7 +6,7 @@ use smallvec::SmallVec;
 use super::lexical_owners::find_container_binding;
 use super::{BindingForm, BindingRef, DeadZone, ScopeSlot, Storage, environments};
 use crate::ir::generated::{ECMAMode, RuntimeErrorKind};
-use crate::ir::{LocalVariable, ValueId};
+use crate::ir::{FunctionKey, LocalVariable, ValueId};
 use crate::lower::captures::Capture;
 use crate::lower::member::PropertyName;
 use crate::lower::{FileLowering, FunctionLowering, convert, function};
@@ -15,12 +15,15 @@ use crate::lower::{FileLowering, FunctionLowering, convert, function};
 enum BindingStore {
     Initialize,
     Assign,
-    Release,
 }
 
 impl FileLowering<'_, '_, '_, '_> {
     pub(super) fn code_unit_slot(&self, unit: CodeUnit, slot: ScopeSlot) -> BindingRef {
         BindingRef::Slot(self.bound.top_scope(self.hir, unit), slot)
+    }
+
+    pub(in crate::lower) fn instance_slot(&self) -> BindingRef {
+        self.code_unit_slot(CodeUnit::File, ScopeSlot::ModuleInstance)
     }
 }
 
@@ -61,7 +64,25 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                         .is_some()
             }
             Some(Storage::Variable(_)) => true,
+            Some(Storage::Instance { .. }) => self.reaches_stored(self.file.instance_slot()),
             Some(Storage::Local) | None => false,
+        }
+    }
+
+    pub(in crate::lower) fn get_module_instance(&mut self) -> ValueId {
+        if let Some(instance) = self.scopes.allocated_instance {
+            return instance;
+        }
+        let slot = self.file.instance_slot();
+        match self.reaches_stored(slot) {
+            true => self.get_stored(slot),
+            false => {
+                debug_assert!(
+                    matches!(self.key, FunctionKey::ModuleBody(_)),
+                    "only the body of a file runs with the current instance"
+                );
+                self.emit_current_instance(self.file.file)
+            }
         }
     }
 
@@ -84,6 +105,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Storage::Variable(key) => {
                 let variable = self.file.ensure_variable(key);
                 self.builder.get_module_variable(variable)
+            }
+            Storage::Instance { field } => {
+                let instance = self.get_module_instance();
+                let layout = environments::instance_layout(self.file);
+                self.builder.get_environment_field(instance, layout, field)
             }
             Storage::Local => {
                 unreachable!("the scope of a local is entered before code that names it")
@@ -129,20 +155,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     pub(super) fn set_stored(&mut self, binding: BindingRef, value: ValueId) {
-        self.set_stored_as(binding, value, BindingStore::Initialize);
-    }
-
-    fn set_stored_as(&mut self, binding: BindingRef, value: ValueId, store: BindingStore) {
         let Some(placement) = self.file.scopes.placement(binding) else {
             return;
         };
         let local = self.scopes.find_local(binding);
         if let Some(local) = local {
-            match (store, &placement.storage) {
-                (BindingStore::Release, Storage::Local) => {
-                    self.builder.write_released_variable(local.variable, value);
-                }
-                (_, Storage::Field { .. }) => {
+            match &placement.storage {
+                Storage::Field { .. } => {
                     self.builder
                         .write_variable_kept_in_field(local.variable, value);
                 }
@@ -159,6 +178,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Storage::Variable(key) => {
                 let variable = self.file.ensure_variable(key);
                 self.builder.put_module_variable(variable, value);
+            }
+            Storage::Instance { field } => {
+                let instance = self.get_module_instance();
+                let layout = environments::instance_layout(self.file);
+                self.builder
+                    .put_environment_field(instance, layout, field, value);
             }
             Storage::Local => debug_assert!(
                 local.is_some(),
@@ -234,6 +259,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.emit_throw_runtime_error(error, Some(name));
     }
 
+    pub(in crate::lower) fn store_parameter(
+        &mut self,
+        parameter: SymbolId,
+        name: Atom,
+        value: ValueId,
+        source: Option<ExprId>,
+    ) {
+        self.store_binding(Binding::Symbol(parameter), name, value, source, false);
+    }
+
     pub(super) fn store_binding(
         &mut self,
         binding: Binding,
@@ -299,16 +334,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return self.emit_binding_error(error, Binding::Symbol(symbol), name);
         }
         let position = self.file.binding_position(symbol);
-        let store = match self.builder.is_undefined_or_null(value) {
-            true => BindingStore::Release,
-            false => BindingStore::Assign,
-        };
         self.describe_int32_flow_into_binding(position, symbol, source);
         let value = convert::convert(self, value, position, source);
         if tests_dead_zone && self.file.scopes.form(symbol) == BindingForm::Stored {
             self.check_before_store(symbol, name);
         }
-        self.write_symbol(symbol, name, value, store, container);
+        self.write_symbol(symbol, name, value, BindingStore::Assign, container);
     }
 
     fn get_symbol(&mut self, symbol: SymbolId, name: Atom) -> ValueId {
@@ -377,10 +408,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         match self.file.scopes.form(symbol) {
             BindingForm::Stored => {
                 let binding = BindingRef::Symbol(symbol);
-                self.set_stored_as(binding, value, store);
+                self.set_stored(binding, value);
                 match store {
                     BindingStore::Initialize => self.scopes.end_dead_zone(binding),
-                    BindingStore::Assign | BindingStore::Release => {}
+                    BindingStore::Assign => {}
                 }
             }
             BindingForm::MappedArgument { unit, index } => {
@@ -398,7 +429,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 BindingStore::Initialize => {
                     debug_assert!(false, "a symbol without a value is never initialized");
                 }
-                BindingStore::Assign | BindingStore::Release => {
+                BindingStore::Assign => {
                     let error = RuntimeErrorKind::UnresolvableReference;
                     self.emit_binding_error(error, Binding::Free, name);
                 }

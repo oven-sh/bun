@@ -5,7 +5,7 @@ use super::answers::{
 use super::class_stores::StoreIndex;
 use super::queries::AliasScan;
 use super::type_identity::TypeIdentity;
-use super::type_shape::{BuiltinShape, PrimitiveKinds, ShapeKind, TypeShape};
+use super::type_shape::{BuiltinShape, FunctionSignatures, PrimitiveKinds, ShapeKind, TypeShape};
 use crate::atom::Atom;
 use crate::check::links::ByType;
 use crate::hir::TypeNodeId;
@@ -17,7 +17,10 @@ use crate::util::FxHashMap;
 #[derive(Default)]
 pub(crate) struct KeptAnswers {
     memo: KeptMemo<'static>,
+    /// Holds what the task in progress has found.
     arena: Option<Box<Arena>>,
+    /// Holds what the rows that earlier tasks carried over have.
+    carried_arena: Option<Box<Arena>>,
     pub(super) of_lowering: Option<Box<dyn core::any::Any + Send>>,
     pub(super) of_lowering_in_last_task: Option<Box<dyn core::any::Any + Send>>,
     pub(super) hand_on_of_lowering: Option<HandOn>,
@@ -30,13 +33,24 @@ pub(super) type HandOn = fn(
 ) -> Option<Box<dyn core::any::Any + Send>>;
 
 pub struct RowsCarriedOver<'a> {
+    /// The rows below it were carried over before, and keep their numbers.
+    carried_before: u32,
+    /// Of each row from there on: one more than its new number, or 0 if it isn't carried over.
     new_rows: &'a [u32],
 }
 
 impl RowsCarriedOver<'_> {
+    /// How many rows were carried over before: the first ones.
+    pub fn count_before(&self) -> usize {
+        self.carried_before as usize
+    }
+
     #[inline]
     pub fn new_row(&self, old_row: u32) -> Option<u32> {
-        self.new_rows.get(old_row as usize)?.checked_sub(1)
+        let Some(added) = old_row.checked_sub(self.carried_before) else {
+            return Some(old_row);
+        };
+        self.new_rows.get(added as usize)?.checked_sub(1)
     }
 }
 
@@ -57,6 +71,7 @@ impl KeptAnswers {
     pub(crate) fn clear(&mut self) {
         self.memo.clear();
         self.arena = None;
+        self.carried_arena = None;
         let state = self.of_lowering.take();
         if let Some(state) = state.or_else(|| self.of_lowering_in_last_task.take()) {
             let hand_on = self.hand_on_of_lowering;
@@ -75,20 +90,20 @@ impl KeptAnswers {
         let Some(state) = self.of_lowering.take() else {
             return;
         };
-        let old_arena = self.arena.take();
-        let mut old = std::mem::take(&mut self.memo);
-        let arena: Box<Arena> = Box::default();
-        let (memo, new_rows) = old.copy_shared_rows(&arena);
-        // SAFETY: `arena` is the only source of its references, and `put_back` lays both down together.
-        let memo = unsafe { memo.outliving_its_borrow() };
+        let arena_of_task = self.arena.take();
+        let mut memo = std::mem::take(&mut self.memo);
+        let carried_arena = self.carried_arena.get_or_insert_default();
+        let carried_before = memo.carried_count as u32;
+        let new_rows = memo.carry_rows_over(carried_arena);
+        // SAFETY: the memo only refers to `carried_arena` now, which is freed behind it.
+        self.memo = unsafe { memo.outliving_its_borrow() };
         let carried = RowsCarriedOver {
+            carried_before,
             new_rows: &new_rows,
         };
         let hand_on = self.hand_on_of_lowering;
         self.of_lowering_in_last_task = hand_on.and_then(|hand_on| hand_on(state, Some(&carried)));
-        drop(old);
-        drop(old_arena);
-        self.put_back(memo, arena);
+        drop(arena_of_task);
     }
 }
 
@@ -99,13 +114,31 @@ fn copy_list<'n, T: Copy>(list: &[T], arena: &'n Arena) -> &'n [T] {
     }
 }
 
+fn copy_object<'n>(object: &ObjectAnswers<'_>, arena: &'n Arena) -> ObjectAnswers<'n> {
+    ObjectAnswers {
+        primitives: object.primitives,
+        builtin_base: (object.builtin_base).map(|base| base.map(|shape| copy_shape(shape, arena))),
+        accepted_builtins: object.accepted_builtins.map(|it| copy_list(it, arena)),
+        accepted_class_constructors: (object.accepted_class_constructors)
+            .map(|it| copy_list(it, arena)),
+        members: object.members.map(|it| copy_list(it, arena)),
+        listed_members: object.listed_members.map(|it| copy_list(it, arena)),
+        index_signatures: object.index_signatures.map(|it| copy_list(it, arena)),
+        first_member_type: object.first_member_type,
+        member_type_count: object.member_type_count,
+    }
+}
+
 fn copy_shape<'n>(shape: TypeShape<'_>, arena: &'n Arena) -> TypeShape<'n> {
     let kind = match shape.kind {
         ShapeKind::TemplateLiteral { texts, types } => ShapeKind::TemplateLiteral {
             texts: copy_list(texts, arena),
             types: copy_list(types, arena),
         },
-        ShapeKind::Function(signatures) => ShapeKind::Function(copy_list(signatures, arena)),
+        ShapeKind::Function(signatures) => ShapeKind::Function(FunctionSignatures {
+            declared: copy_list(signatures.declared, arena),
+            ..signatures
+        }),
         ShapeKind::Tuple {
             elements,
             is_readonly,
@@ -251,8 +284,8 @@ impl<T: Copy + Default> Blocks<T> {
         self.len = len;
     }
 
-    fn replace_rows_with(&mut self, rows: &[T]) {
-        self.truncate(0);
+    fn replace_rows_from(&mut self, first: usize, rows: &[T]) {
+        self.truncate(first);
         for &row in rows {
             self.push(row);
         }
@@ -277,6 +310,23 @@ impl<T> core::ops::IndexMut<usize> for Blocks<T> {
     }
 }
 
+/// Where the task in progress has made room for `object`'s member types, they move to the end of `member_types`, which
+/// follow the first `first` ones.
+fn move_member_types(
+    object: &mut ObjectAnswers<'_>,
+    first: usize,
+    known: &Blocks<Option<(Atom, PositionTypes)>>,
+    member_types: &mut Vec<Option<(Atom, PositionTypes)>>,
+) {
+    let start = object.first_member_type as usize;
+    if object.member_type_count == 0 || start < first {
+        return;
+    }
+    object.first_member_type = (first + member_types.len()) as u32;
+    let kept = start..start + object.member_type_count as usize;
+    member_types.extend(kept.map(|index| known[index]));
+}
+
 impl KeptMemo<'_> {
     pub(super) unsafe fn outliving_its_borrow(self) -> KeptMemo<'static> {
         // SAFETY: that arena is freed behind the memo, and `KeptAnswers::take` hands both out together.
@@ -294,6 +344,7 @@ pub(super) struct TypeAnswers<'c> {
     object: u32,
     ty: TypeId,
     made_in: u32,
+    seen_in: u32,
 }
 
 impl Default for TypeAnswers<'_> {
@@ -307,6 +358,7 @@ impl Default for TypeAnswers<'_> {
             object: 0,
             ty: TypeId::ANY,
             made_in: 0,
+            seen_in: 0,
         }
     }
 }
@@ -328,7 +380,6 @@ pub(super) struct ObjectAnswers<'c> {
 pub(super) struct KeptMemo<'c> {
     rows: ByType,
     types: Blocks<TypeAnswers<'c>>,
-    seen_in: Vec<u32>,
     objects: Blocks<ObjectAnswers<'c>>,
     member_types: Blocks<Option<(Atom, PositionTypes)>>,
     pub(super) signatures: FxHashMap<SigId, SignatureShape<'c>>,
@@ -339,8 +390,19 @@ pub(super) struct KeptMemo<'c> {
     pub(super) alias_scans: FxHashMap<Sym, AliasScan>,
     pub(super) alias_reads: FxHashMap<Sym, bool>,
     pub(super) store_indexes: FxHashMap<FileId, StoreIndex<'c>>,
+    /// Of names that are published: the primitives with a property of that name.
+    pub(super) primitives_with_property: FxHashMap<Atom, PrimitiveKinds>,
+    /// The same of the subtypes of built-ins that the program declares, a bit each, and the list of those.
+    pub(super) subtypes_with_property: (usize, FxHashMap<Atom, u64>),
     visit: u32,
     last_row: Option<(TypeId, TypeRow)>,
+    /// The rows of the three tables that earlier tasks carried over: the first ones.
+    carried_count: usize,
+    carried_object_count: usize,
+    carried_member_type_count: usize,
+    /// Those of them, and of their objects, that the task in progress has written to. A row may be listed twice.
+    changed_rows: Vec<u32>,
+    changed_objects: Vec<u32>,
 }
 
 #[derive(Copy, Clone)]
@@ -361,7 +423,6 @@ impl<'c> KeptMemo<'c> {
         let KeptMemo {
             rows,
             types,
-            seen_in,
             objects,
             member_types,
             signatures,
@@ -372,14 +433,27 @@ impl<'c> KeptMemo<'c> {
             alias_scans,
             alias_reads,
             store_indexes,
+            primitives_with_property,
+            subtypes_with_property,
             visit,
             last_row,
+            carried_count,
+            carried_object_count,
+            carried_member_type_count,
+            changed_rows,
+            changed_objects,
         } = self;
         *visit = 0;
         *last_row = None;
+        (
+            *carried_count,
+            *carried_object_count,
+            *carried_member_type_count,
+        ) = (0, 0, 0);
+        changed_rows.clear();
+        changed_objects.clear();
         rows.clear();
         types.truncate(0);
-        seen_in.clear();
         objects.truncate(0);
         member_types.truncate(0);
         signatures.clear();
@@ -390,6 +464,8 @@ impl<'c> KeptMemo<'c> {
         alias_scans.clear();
         alias_reads.clear();
         store_indexes.clear();
+        primitives_with_property.clear();
+        subtypes_with_property.1.clear();
     }
 
     #[inline]
@@ -410,7 +486,7 @@ impl<'c> KeptMemo<'c> {
         let row = match self.rows.get(ty) {
             0 => self.add_type(ty),
             row => {
-                self.seen_in[row as usize - 1] = self.visit;
+                self.types[row as usize - 1].seen_in = self.visit;
                 TypeRow(row - 1)
             }
         };
@@ -424,97 +500,121 @@ impl<'c> KeptMemo<'c> {
         self.types.push(TypeAnswers {
             ty,
             made_in: self.visit,
+            seen_in: self.visit,
             ..TypeAnswers::default()
         });
-        self.seen_in.push(self.visit);
         let count = self.types.len() as u32;
         self.rows.set(ty, count);
         TypeRow(count - 1)
     }
 
-    fn copy_shared_rows<'n>(&mut self, arena: &'n Arena) -> (KeptMemo<'n>, Vec<u32>)
-    where
-        'c: 'n,
-    {
-        let mut next = KeptMemo {
-            rows: std::mem::take(&mut self.rows),
-            signature_results: std::mem::take(&mut self.signature_results),
-            variables: std::mem::take(&mut self.variables),
-            written_forms: std::mem::take(&mut self.written_forms),
-            alias_scans: std::mem::take(&mut self.alias_scans),
-            alias_reads: std::mem::take(&mut self.alias_reads),
-            visit: self.visit,
-            ..KeptMemo::default()
-        };
-        next.rows.clear();
-        next.signature_results.clear();
-        next.variables.clear();
-        next.written_forms.clear();
-        next.alias_scans.clear();
-        next.alias_reads.clear();
-        let mut types: Blocks<TypeAnswers<'n>> = std::mem::take(&mut self.types);
-        let mut seen_in = std::mem::take(&mut self.seen_in);
-        let (mut object_count, mut member_type_count) = (0, 0);
-        for (row, &last_visit) in seen_in.iter().enumerate() {
-            let answers = &types[row];
-            if last_visit != answers.made_in && answers.object != 0 {
-                let object = &self.objects[answers.object as usize - 1];
-                object_count += 1;
-                member_type_count += object.member_type_count as usize;
-            }
-        }
-        let mut objects: Vec<ObjectAnswers<'n>> = Vec::with_capacity(object_count);
-        let mut member_types = Vec::with_capacity(member_type_count);
-        let mut new_rows = vec![0u32; types.len()];
-        let mut carried_count = 0;
-        for (row, new_row) in new_rows.iter_mut().enumerate() {
-            let answers = types[row];
-            if seen_in[row] == answers.made_in {
-                continue;
-            }
-            let object = match answers.object {
-                0 => 0,
-                object => {
-                    let object = &self.objects[object as usize - 1];
-                    let first = object.first_member_type as usize;
-                    let first_member_type = member_types.len() as u32;
-                    for index in first..first + object.member_type_count as usize {
-                        member_types.push(self.member_types[index]);
-                    }
-                    objects.push(ObjectAnswers {
-                        primitives: object.primitives,
-                        builtin_base: (object.builtin_base)
-                            .map(|base| base.map(|shape| copy_shape(shape, arena))),
-                        accepted_builtins: object.accepted_builtins.map(|it| copy_list(it, arena)),
-                        accepted_class_constructors: (object.accepted_class_constructors)
-                            .map(|it| copy_list(it, arena)),
-                        members: object.members.map(|it| copy_list(it, arena)),
-                        listed_members: object.listed_members.map(|it| copy_list(it, arena)),
-                        index_signatures: object.index_signatures.map(|it| copy_list(it, arena)),
-                        first_member_type,
-                        member_type_count: object.member_type_count,
-                    });
-                    objects.len() as u32
-                }
+    /// Forgets the rows that only the file that made them has asked for, and what isn't in a row. The others go on to the
+    /// next task: those that tasks before have carried over stay where they are, and `arena` already holds what they have,
+    /// except for what this task has written. Returns `RowsCarriedOver::new_rows`.
+    fn carry_rows_over(&mut self, arena: &'c Arena) -> Vec<u32> {
+        self.signatures = FxHashMap::default();
+        self.function_signatures = FxHashMap::default();
+        self.store_indexes = FxHashMap::default();
+        self.signature_results.clear();
+        self.variables.clear();
+        self.written_forms.clear();
+        self.alias_scans.clear();
+        self.alias_reads.clear();
+        self.last_row = None;
+        let (first_object, first_member_type) =
+            (self.carried_object_count, self.carried_member_type_count);
+        let mut objects: Vec<ObjectAnswers<'c>> = Vec::new();
+        let mut member_types: Vec<Option<(Atom, PositionTypes)>> = Vec::new();
+        let mut copy_new_object =
+            |object: &ObjectAnswers<'c>,
+             objects: &mut Vec<ObjectAnswers<'c>>,
+             known: &Blocks<Option<(Atom, PositionTypes)>>| {
+                let mut copy = copy_object(object, arena);
+                move_member_types(&mut copy, first_member_type, known, &mut member_types);
+                objects.push(copy);
+                (first_object + objects.len()) as u32
             };
-            types[carried_count] = TypeAnswers {
+        let mut changed = std::mem::take(&mut self.changed_rows);
+        changed.sort_unstable();
+        changed.dedup();
+        for &row in &changed {
+            let answers = self.types[row as usize];
+            let object = match answers.object as usize {
+                object if object > first_object => {
+                    copy_new_object(&self.objects[object - 1], &mut objects, &self.member_types)
+                }
+                _ => answers.object,
+            };
+            self.types[row as usize] = TypeAnswers {
                 shape: answers.shape.map(|shape| copy_shape(shape, arena)),
                 object,
                 ..answers
             };
-            seen_in[carried_count] = seen_in[row];
+        }
+        changed.clear();
+        self.changed_rows = changed;
+        let mut new_rows = vec![0u32; self.types.len() - self.carried_count];
+        let mut carried_count = self.carried_count;
+        for (added, new_row) in new_rows.iter_mut().enumerate() {
+            let row = self.carried_count + added;
+            let answers = self.types[row];
+            if answers.seen_in == answers.made_in {
+                self.rows.set(answers.ty, 0);
+                continue;
+            }
+            let object = match answers.object as usize {
+                0 => 0,
+                object => {
+                    copy_new_object(&self.objects[object - 1], &mut objects, &self.member_types)
+                }
+            };
+            self.types[carried_count] = TypeAnswers {
+                shape: answers.shape.map(|shape| copy_shape(shape, arena)),
+                object,
+                ..answers
+            };
             carried_count += 1;
             *new_row = carried_count as u32;
-            next.rows.set(answers.ty, *new_row);
+            self.rows.set(answers.ty, *new_row);
         }
-        types.truncate(carried_count);
-        seen_in.truncate(carried_count);
-        (next.types, next.seen_in) = (types, seen_in);
-        next.objects = std::mem::take(&mut self.objects);
-        next.objects.replace_rows_with(&objects);
-        next.member_types = std::mem::take(&mut self.member_types);
-        next.member_types.replace_rows_with(&member_types);
-        (next, new_rows)
+        let mut changed = std::mem::take(&mut self.changed_objects);
+        changed.sort_unstable();
+        changed.dedup();
+        for &row in &changed {
+            let mut copy = copy_object(&self.objects[row as usize], arena);
+            move_member_types(
+                &mut copy,
+                first_member_type,
+                &self.member_types,
+                &mut member_types,
+            );
+            self.objects[row as usize] = copy;
+        }
+        changed.clear();
+        self.changed_objects = changed;
+        self.types.truncate(carried_count);
+        self.objects.replace_rows_from(first_object, &objects);
+        self.member_types
+            .replace_rows_from(first_member_type, &member_types);
+        self.carried_count = carried_count;
+        self.carried_object_count = self.objects.len();
+        self.carried_member_type_count = self.member_types.len();
+        new_rows
+    }
+
+    /// Lists a row that the task is about to write to, if it was carried over.
+    #[inline]
+    fn note_change_of_row(&mut self, row: u32) {
+        if (row as usize) < self.carried_count {
+            self.changed_rows.push(row);
+        }
+    }
+
+    #[inline]
+    fn note_change_of_object(&mut self, row: u32) {
+        if (row as usize) < self.carried_object_count {
+            self.changed_objects.push(row);
+        }
     }
 
     #[inline]
@@ -531,17 +631,34 @@ impl<'c> KeptMemo<'c> {
     fn add_object(&mut self, row: u32) -> ObjectRow {
         self.objects.push(ObjectAnswers::default());
         let count = self.objects.len() as u32;
+        self.note_change_of_row(row);
         self.types[row as usize].object = count;
         ObjectRow(count - 1)
     }
 
+    /// For reading. Takes a mutable borrow for the sake of `Queries::kept_about_type`.
     #[inline]
     pub(super) fn type_at(&mut self, row: TypeRow) -> &mut TypeAnswers<'c> {
         &mut self.types[row.0 as usize]
     }
 
+    /// For writing.
+    #[inline]
+    pub(super) fn type_to_change(&mut self, row: TypeRow) -> &mut TypeAnswers<'c> {
+        self.note_change_of_row(row.0);
+        &mut self.types[row.0 as usize]
+    }
+
+    /// For reading, as `type_at`.
     #[inline]
     pub(super) fn object_at(&mut self, row: ObjectRow) -> &mut ObjectAnswers<'c> {
+        &mut self.objects[row.0 as usize]
+    }
+
+    /// For writing.
+    #[inline]
+    pub(super) fn object_to_change(&mut self, row: ObjectRow) -> &mut ObjectAnswers<'c> {
+        self.note_change_of_object(row.0);
         &mut self.objects[row.0 as usize]
     }
 
@@ -565,6 +682,7 @@ impl<'c> KeptMemo<'c> {
     }
 
     pub(super) fn make_room_for_member_types(&mut self, row: ObjectRow, count: u32) {
+        self.note_change_of_object(row.0);
         let object = &mut self.objects[row.0 as usize];
         object.first_member_type = self.member_types.len() as u32;
         object.member_type_count = count;

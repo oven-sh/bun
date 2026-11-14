@@ -19,4 +19,4 @@
 # CHECK-NEXT: fact {{*}}kind=OperandSummaries
 # The body of the other one may return an object of its own.
 # RUN(OTHER): walk f4 mechanisms=all
-# OTHER: anything{{*}} = Construct
+# OTHER: object{{*}} = Construct

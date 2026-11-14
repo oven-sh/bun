@@ -1,5 +1,5 @@
 // On a letter seldom met the turn calls a function by value that puts another text, then a number, where the text stood.
-// STATISTIC: FieldsOfScopesBehindTheirStoresReadInFrontOfTypedCopies >= 1
+// STATISTIC: CapturedVariableReadsHoisted >= 1
 const said: string[] = [];
 function tell(what: () => unknown) { try { said.push(String(what())); } catch (error: any) { said.push(error.constructor.name + ": " + error.message); } }
 const through = new Function("x", "return x");

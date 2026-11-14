@@ -1,5 +1,5 @@
 // A plain object is laid between the topmost animal's prototype and Object.prototype right behind the class; later IT is laid below Marked's prototype: every animal is Marked from then on.
-// STATISTIC: MissesOfInstanceOfAnsweredByShapesOfKin = 2
+// STATISTIC: InstanceOfMissesDecidedByHierarchy = 2
 class Marked { mark = 1; }
 class Stamped extends Marked {}
 class Animal { n: number; constructor(n: number) { this.n = n; } }

@@ -101,6 +101,15 @@ fn plugin_source_declares_no_module_type() {
     });
 }
 
+fn parse_options_at(
+    context: &CodeLoadContext<'_, '_, '_>,
+    path: &[u8],
+    settings: &TranspileSettings,
+) -> ParseOptions {
+    let is_javascript = is_javascript_file(context.host, path);
+    parse_options_of(context, path, settings, is_javascript)
+}
+
 #[test]
 fn either_decorator_setting_selects_legacy_decorators_in_typescript() {
     let cases = [
@@ -112,9 +121,9 @@ fn either_decorator_setting_selects_legacy_decorators_in_typescript() {
     with_context(&host_of(&[]), |context| {
         for (experimental_decorators, emits_metadata, expected) in cases {
             let settings = settings_with(experimental_decorators, emits_metadata);
-            let typescript = parse_options_of(context, b"/p/a.ts", &settings);
+            let typescript = parse_options_at(context, b"/p/a.ts", &settings);
             assert_eq!(typescript.experimental_decorators, expected, "{settings:?}");
-            let javascript = parse_options_of(context, b"/p/a.js", &settings);
+            let javascript = parse_options_at(context, b"/p/a.js", &settings);
             assert!(!javascript.experimental_decorators, "{settings:?}");
         }
     });
@@ -127,7 +136,7 @@ fn parser_needs_no_module_indicator() {
             context.options.for_parsing().module_detection,
             ModuleDetection::Auto
         );
-        let options = parse_options_of(context, b"/p/a.ts", &settings_with(false, false));
+        let options = parse_options_at(context, b"/p/a.ts", &settings_with(false, false));
         assert_eq!(options.module_detection, ModuleDetection::Force);
     });
 }

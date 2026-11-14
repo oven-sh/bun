@@ -19,7 +19,7 @@
 # Nothing is declared in these files. What is expected of a place is what the text writes into it: of the parameter `table` the record of the literal that the one call written in the function's own file hands over;
 # of the fields `handler` and `bias` the arrow and the number that the literals written in the files in sight of the reader lay there; of the constant `kept` the record that its own file stores into it.
 # All of it is only expected: each is tested. Of `table.handler`, which is the same in every turn, the whole program was seen to lay two arrows, stranger.js's among them: in the typed copy of run()'s loop each has its arm, and there is none as written.
-# Where one of the values written is not told by its own text (`globalThis.seen.length`), nothing is said of the place.
+# A field into which the text writes numbers alone is expected to hold numbers, though another value is not told by its own text (`globalThis.seen.length`).
 # RUN: walk f2 mechanisms=all
 # CHECK: b0(v0: L1?{{*}}
 # CHECK: TypeTest {{*}} testedType=f7
@@ -31,5 +31,7 @@
 # KEPT: TypeTest {{*}} testedType=f6
 # RUN(MIXED): walk f4 mechanisms=all
 # MIXED: b0(v0: L0?{{*}}
-# MIXED-NOT: testedType=i32
-# MIXED: Add {{*}} form=Generic
+# MIXED: GetSlot {{*}}key="mixed"
+# MIXED: TypeTest {{*}} testedType=number
+# MIXED: Add {{*}} form=Integers
+# MIXED: Add {{*}} form=Numbers

@@ -39,6 +39,6 @@
 # CHECK-LABEL: code f2:Body
 # CHECK: = NewArrayLike {{*}} arrayStorage=Int32
 # CHECK-LABEL: code f3:Body
-# CHECK: = NewArrayLike {{*}} arrayStorage=Contiguous
+# CHECK: = NewArrayLike {{*}} arrayStorage=Int32 {{*}}remembersStorageAtSite
 # CHECK-LABEL: code f4:Body
 # CHECK: = NewArrayLike {{*}} arrayStorage=Int32 {{*}}remembersStorageAtSite

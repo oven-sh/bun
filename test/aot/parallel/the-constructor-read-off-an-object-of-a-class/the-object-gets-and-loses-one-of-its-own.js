@@ -1,5 +1,5 @@
 // The object gets a constructor of its own and loses it again.
-// STATISTIC: ConstructorsReadOffObjectsOfClasses >= 1
+// STATISTIC: ConstructorReadsResolvedToClasses >= 1
 class Tree { k = 0; again() { return new this.constructor(); } }
 class Ash extends Tree { k = 1; }
 class Birch extends Tree { k = 20; }

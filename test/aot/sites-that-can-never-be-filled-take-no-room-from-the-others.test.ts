@@ -10,7 +10,8 @@ import { test } from "./supported";
 const sites = 34_000;
 const program = [
   `"use strict";`,
-  `const held = { rows: null }; held[process.argv.length > 99 ? "other" : "rows"] = [new Response(null, { status: 201 })];`,
+  `globalThis[process.argv[1]] = new Response(null, { status: 201 });`,
+  `const held = { rows: [globalThis[process.argv[1]]] };`,
   ...Array.from(
     { length: sites },
     (_, i) => `function f${i}(rows) { let s = 0; for (const r of rows) s += r.status * 2; return s; }`,

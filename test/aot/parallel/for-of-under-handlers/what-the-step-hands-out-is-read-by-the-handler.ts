@@ -1,5 +1,5 @@
 // What the step of a for-of hands out goes into a variable that the catch block reads. The step goes on two ways under that handler, and the handler reads what the last step gave.
-// STATISTIC: StepsOfListsOnWaysApartUnderHandlers >= 5
+// STATISTIC: IteratorStepsThreadedUnderHandlers >= 5
 function risky(v: number, stop: number): number { if (v === stop) throw new Error("stop"); return v; }
 function run(list: number[], stop: number): string {
   let last = -1, s = 0;

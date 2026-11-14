@@ -7,13 +7,7 @@ import { everydayMockCases } from "./everyday-mock-cases";
 import { run } from "./run";
 
 // Where the two runs part today, and what the compiled run says of its second test there. Such a case is run all the same. It fails by any other difference, and once the two runs agree: its line goes out.
-const stillWrong: [cases: RegExp, secondTest: string, what: string][] = [
-  [
-    /^(bare|the-original-in-the-factory|the-original-awaited-in-the-factory)--[a-z-]+--reset-modules--imported-at-run-time--two-tests$/,
-    "2 the load threw EvalError",
-    "a mock that needs the original, imported again behind resetModules()",
-  ],
-];
+const stillWrong: [cases: RegExp, secondTest: string, what: string][] = [];
 
 // AOT_TEST_RUN_WORDS puts every compiled run under its words, as in test-runs-in-folders.ts.
 const wordsOfAll = process.env.AOT_TEST_RUN_WORDS ?? "";
@@ -44,18 +38,7 @@ export function everydayMocks(part: number, parts: number) {
   const stretch = Math.ceil(cases.length / parts);
   for (const { name, files } of cases.slice((part - 1) * stretch, part * stretch)) {
     test(name, async () => {
-      const [plain, again, compiled] = await Promise.all([
-        outcomeOf(files, ""),
-        outcomeOf(files, ""),
-        outcomeOf(files, wordsOfAll, "--aot"),
-      ]);
-      // A case in which `bun test` does not say the same twice specifies nothing.
-      if (!Bun.deepEquals(plain, again)) {
-        console.error(
-          `THE REFERENCE WAVERED: ${name}: plain Bun said ${JSON.stringify(plain)}, then ${JSON.stringify(again)}`,
-        );
-        return;
-      }
+      const [plain, compiled] = await Promise.all([outcomeOf(files, ""), outcomeOf(files, wordsOfAll, "--aot")]);
       expect(plain.printed).toHaveLength(1);
       const secondTest = stillWrong.find(([names]) => names.test(name))?.[1];
       expect(compiled).toEqual(

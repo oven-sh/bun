@@ -4,8 +4,9 @@ use super::test_run_ways::{
 };
 use crate::compile::link_program;
 use crate::compile::testing::{BUNDLED_LIBS, TestProject, default_settings, describe_messages};
+use crate::ir::generated::ModuleExportKind;
 use crate::ir::parallel::run_serially;
-use crate::ir::{Program, print_program};
+use crate::ir::{Id, ModuleId, Program, print_program};
 use crate::load::source_provider::WithoutServices;
 use crate::modules::testing::{bind_whole_program, file_named, symbol_named, with_test_run_graph};
 use crate::modules::{BindInput, ModuleRef};
@@ -18,7 +19,9 @@ const LIB: (&str, &str) = ("lib.js", "export const fn = () => 'real';\n");
 fn write_test_file(mocked: &[&str], rest: &str) -> String {
     let mut text = String::from("import { mock } from 'bun:test';\n");
     for path in mocked {
-        text.push_str(&format!("mock.module('./{path}', () => ({{}}));\n"));
+        text.push_str(&format!(
+            "mock.module('./{path}', () => ({{ ['' + 'one']: 1 }}));\n"
+        ));
     }
     text.push_str(rest);
     text
@@ -38,6 +41,7 @@ fn describe(input: &BindInput<'_, '_>, steps: &[Step]) -> Vec<String> {
             asked_by,
             asked_from,
             behind,
+            ..
         } => {
             let file = name_of(input, file);
             let name = String::from_utf8_lossy(input.files.atoms.bytes(name)).into_owned();
@@ -68,12 +72,17 @@ fn describe(input: &BindInput<'_, '_>, steps: &[Step]) -> Vec<String> {
                 false => format!("{file} may have {name}"),
             }
         }
-        Step::FileItself { file, name } => {
+        Step::FileItself { file, name, .. } => {
             let file = name_of(input, file);
             let name = String::from_utf8_lossy(input.files.atoms.bytes(name)).into_owned();
             format!("{file} itself is asked for {name}")
         }
         Step::Declaration => String::from("declaration"),
+        Step::OtherDeclaration { file, name } => {
+            let file = name_of(input, file);
+            let name = String::from_utf8_lossy(input.files.atoms.bytes(name)).into_owned();
+            format!("{file} may have {name}")
+        }
     };
     steps.iter().map(describe_step).collect()
 }
@@ -349,17 +358,78 @@ fn find_stations(mocked: &[&str], rest: &str, others: &[(&str, &str)]) -> Vec<St
         let name = path.rsplit(|&byte| byte == b'/').next().unwrap_or(path);
         Some(String::from_utf8_lossy(name).into_owned())
     };
-    let mut is_in_test_file = false;
-    let mut stations = Vec::new();
-    for line in print_program(&program).lines() {
-        if line.starts_with("function ") {
-            is_in_test_file = file_of(line, "module=m").as_deref() == Some(TEST_FILE);
+    let name_of = |module: ModuleId| {
+        let path = program.strings.get(program.modules[module.index()].path);
+        let name = path.rsplit(|&byte| byte == b'/').next().unwrap_or(path);
+        String::from_utf8_lossy(name).into_owned()
+    };
+    let number = |line: &str, field: &str| -> Option<usize> {
+        let mut words = line.split_whitespace();
+        words
+            .find_map(|word| word.strip_prefix(field))?
+            .parse()
+            .ok()
+    };
+    let place = |line: &str| {
+        (
+            number(line, "layout=L"),
+            number(line, "field=").unwrap_or(0),
+        )
+    };
+    let values = |line: &str| -> Vec<usize> {
+        let words = line.split([' ', ',']);
+        words
+            .filter_map(|word| word.strip_prefix('v')?.parse().ok())
+            .collect()
+    };
+    let text = print_program(&program);
+    let mut words: Vec<((Option<usize>, usize), String)> = Vec::new();
+    for link in &program.module_links {
+        let mut instances = program.module_instances.iter();
+        let instance = instances.find(|it| it.module == link.module);
+        let layout = instance.map(|it| it.layout.index());
+        if let Some(mock) = link.mock {
+            let holder = link.path.last().copied().unwrap_or(link.module);
+            let station = format!("{} seen by {}", name_of(link.target), name_of(holder));
+            words.push(((layout, mock as usize), station));
         }
-        let asks_for_names = line.contains("thatKeepsNamesOfOriginal");
-        if is_in_test_file && line.contains(" = SeesMockOf ") && !asks_for_names {
-            let mocked = file_of(line, "module=m").expect("the operation names a module");
-            let importer = file_of(line, "referrer=m").expect("the operation names a referrer");
-            stations.push(format!("{mocked} seen by {importer}"));
+    }
+    let functions: Vec<Vec<&str>> = (text.split("\nfunction "))
+        .map(|function| function.lines().collect())
+        .collect();
+    let find_word = |function: &[&str], used: usize| {
+        let mut found: Option<(usize, String)> = None;
+        for line in function
+            .iter()
+            .filter(|it| it.contains(" = GetEnvironmentField "))
+        {
+            let read = values(line)[0];
+            let word = words.iter().find(|it| it.0 == place(line));
+            if let Some((_, station)) = word
+                && read <= used
+                && found.as_ref().is_none_or(|it| it.0 < read)
+            {
+                found = Some((read, station.clone()));
+            }
+        }
+        found.map(|it| it.1)
+    };
+    let mut stations = Vec::new();
+    for function in &functions {
+        if file_of(function[0], "module=m").as_deref() != Some(TEST_FILE) {
+            continue;
+        }
+        for line in function {
+            if line.contains(" = LinkedMock ") {
+                let word = find_word(function, values(line)[1]);
+                stations.push(word.expect("the word is a mock word"));
+            }
+            let asks_for_names = line.contains("keepingOriginalNames");
+            if line.contains(" = SeesMockOf ") && !asks_for_names {
+                let mocked = file_of(line, "module=m").expect("the operation names a module");
+                let importer = file_of(line, "referrer=m").expect("the operation names a referrer");
+                stations.push(format!("{mocked} seen by {importer} by time"));
+            }
         }
     }
     stations
@@ -858,7 +928,7 @@ fn file_that_reads_its_own_name_through_a_barrel_is_no_station_for_itself() {
 }
 
 #[test]
-fn commonjs_file_behind_its_face_is_a_station_with_its_declaration_below_it() {
+fn module_behind_facade_is_station() {
     let rest = "import { flag } from './barrel.js';\nconsole.log(flag);\n";
     let test_file = write_test_file(&["dep.cjs"], rest);
     let files = [
@@ -1015,7 +1085,7 @@ fn program_that_mocks_no_file_has_no_station() {
 }
 
 #[test]
-fn name_read_off_what_require_gives_is_asked_of_the_file_that_is_required() {
+fn require_member_reads_object() {
     let others = [
         ("declares.js", "export const v = 'real';\n"),
         ("mocked.js", "export { v } from './declares.js';\n"),
@@ -1030,7 +1100,7 @@ fn name_read_off_what_require_gives_is_asked_of_the_file_that_is_required() {
         "const { v } = require('./barrel.js');\nconsole.log(v);\n",
         "const { v: inner = 'none' } = require('./barrel.js');\nconsole.log(inner);\n",
     ] {
-        assert_eq!(find(rest), by_import, "{rest}");
+        assert_eq!(find(rest), [""; 0], "{rest}");
     }
 }
 
@@ -1057,13 +1127,9 @@ fn name_of_a_commonjs_file_read_off_a_barrel_is_asked_of_the_barrel() {
         ("mocked.js", "export { v } from './declares.cjs';\n"),
         ("barrel.js", "export { v } from './mocked.js';\n"),
     ];
-    for rest in [
-        "import * as all from './barrel.js';\nconsole.log(all.v);\n",
-        "console.log(require('./barrel.js').v);\n",
-    ] {
-        let stations = find_stations(&["mocked.js"], rest, &others);
-        assert_eq!(stations, ["mocked.js seen by barrel.js"], "{rest}");
-    }
+    let rest = "import * as all from './barrel.js';\nconsole.log(all.v);\n";
+    let stations = find_stations(&["mocked.js"], rest, &others);
+    assert_eq!(stations, ["mocked.js seen by barrel.js"]);
 }
 
 #[test]
@@ -1136,12 +1202,13 @@ fn name_read_off_an_object_that_another_object_shows_is_asked_of_its_module() {
     let find = |rest: &str| find_stations(&["mocked.js"], rest, &others);
     let by_name = find("import { inner } from './barrel.js';\nconsole.log(inner.v);\n");
     assert_eq!(by_name, ["mocked.js seen by barrel.js"]);
+    let by_namespace = "import * as all from './barrel.js';\nconsole.log(all.inner.v);\n";
+    assert_eq!(find(by_namespace), by_name);
     for rest in [
-        "import * as all from './barrel.js';\nconsole.log(all.inner.v);\n",
         "console.log(require('./barrel.js').inner.v);\n",
         "const all = require('./barrel.js');\nconsole.log(all.inner.v);\n",
     ] {
-        assert_eq!(find(rest), by_name, "{rest}");
+        assert_eq!(find(rest), [""; 0], "{rest}");
     }
 }
 
@@ -1284,11 +1351,52 @@ fn object_of_a_module_that_may_be_mocked_is_asked_for_in_the_name_of_its_importe
         ("mocked.js", "export const v = 'real';\n"),
     ];
     let printed = print_program(&link_test_run(&files));
-    let asks: Vec<&str> = (printed.lines())
-        .filter(|line| line.contains(" = NamespaceSeenBy "))
-        .collect();
-    assert_eq!(asks.len(), 1, "{printed}");
-    assert!(asks[0].contains("referrer=m"), "{}", asks[0]);
+    for operation in [" = LinkedMock ", " = InstanceNamespace "] {
+        let found = printed.lines().filter(|line| line.contains(operation));
+        assert_eq!(found.count(), 1, "{operation} in {printed}");
+    }
+}
+
+#[test]
+fn instance_has_its_own_import_meta() {
+    let rest = "import { at } from './mocked.js';\nconsole.log(at());\n";
+    let test_file = write_test_file(&["mocked.js"], rest);
+    let mocked =
+        "export const at = () => import.meta.url;\nexport const first = import.meta.url;\n";
+    let files = [(TEST_FILE, test_file.as_str()), ("mocked.js", mocked)];
+    let printed = print_program(&link_test_run(&files));
+    let found = printed
+        .lines()
+        .filter(|line| line.contains(" = InstanceImportMeta "));
+    assert_eq!(found.count(), 2, "{printed}");
+}
+
+#[test]
+fn mocked_commonjs_file_takes_original_arguments() {
+    let test_file = "import { test, vi } from 'bun:test';\nimport './reader.cjs';\nvi.mock('./mocked.cjs', async original => ({ ...(await original()), v: 2 }));\ntest('t', () => {});\n";
+    let reader = "const mocked = require('./mocked.cjs');\nexports.v = mocked.v;\n";
+    let count = |mocked: &str, operation: &str| {
+        let files = [
+            (TEST_FILE, test_file),
+            ("reader.cjs", reader),
+            ("mocked.cjs", mocked),
+            (
+                "back.cjs",
+                "exports.back = () => require('./mocked.cjs');\n",
+            ),
+        ];
+        let printed = print_program(&link_test_run(&files));
+        let operation = format!(" = {operation} ");
+        printed
+            .lines()
+            .filter(|line| line.contains(&operation))
+            .count()
+    };
+    // The requirer takes none.
+    let alone = "exports.v = 1;\n";
+    assert_eq!(count(alone, "OriginalArgument"), 5);
+    let on_a_cycle = "exports.v = 1;\nexports.back = require('./back.cjs').back;\n";
+    assert_eq!(count(on_a_cycle, "OriginalArgument"), 0);
 }
 
 fn write_chain(count: usize) -> Vec<(String, String)> {
@@ -1386,6 +1494,154 @@ fn what_lies_behind_a_station_that_holds_another_is_written_out_once() {
     );
 }
 
+fn find_path_through_diamonds(levels: usize, is_mocked: impl Fn(&str) -> bool) -> Vec<String> {
+    let mut files = vec![(
+        String::from("leaf.cjs"),
+        String::from("exports[['f', 'n'].join('')] = 1;\n"),
+    )];
+    for level in 0..levels {
+        let is_last = level + 1 == levels;
+        let text = match is_last {
+            true => String::from("export * from './leaf.cjs';\n"),
+            false => format!("export * from './l{level}.js';\nexport * from './r{level}.js';\n"),
+        };
+        files.push((format!("b{level}.js"), text));
+        if !is_last {
+            let text = format!("export {{ fn }} from './b{}.js';\n", level + 1);
+            files.push((format!("l{level}.js"), text.clone()));
+            files.push((format!("r{level}.js"), text));
+        }
+    }
+    let others: Vec<(&str, &str)> = files.iter().map(|it| (&*it.0, &*it.1)).collect();
+    let mocked = others.iter().map(|it| it.0);
+    let mocked: Vec<&str> = mocked.filter(|name| is_mocked(name)).collect();
+    find_way(&mocked, &others, ("b0.js", "fn"))
+}
+
+#[test]
+fn diamond_steps_are_linear() {
+    let are_barrels = |name: &str| name.starts_with('b');
+    let are_left = |name: &str| name.starts_with('l') && name != "leaf.cjs";
+    let are_sides = |name: &str| are_left(name) || name.starts_with('r');
+    let shapes: [&dyn Fn(&str) -> bool; 6] = [
+        &are_barrels,
+        &are_left,
+        &are_sides,
+        &|name| name == "b0.js",
+        &|name| are_barrels(name) || are_left(name),
+        &|name| are_barrels(name) || are_sides(name),
+    ];
+    for (shape, is_mocked) in shapes.into_iter().enumerate() {
+        let steps = |levels: usize| find_path_through_diamonds(levels, is_mocked).len();
+        let (ten, twenty, forty) = (steps(10), steps(20), steps(40));
+        assert_eq!(
+            forty - twenty,
+            2 * (twenty - ten),
+            "{shape}: {ten} {twenty} {forty}"
+        );
+    }
+}
+
+fn find_unmocked_path(factory: &str, module: &str) -> Vec<String> {
+    let test_file = format!(
+        "import {{ jest, mock, vi }} from 'bun:test';\nmock.module('./mocked.js', {factory});\nimport * as all from './barrel.js';\nconsole.log(all);\n"
+    );
+    let files = [
+        (TEST_FILE, test_file.as_str()),
+        (
+            "barrel.js",
+            "export * from './mocked.js';\nexport * from './real.js';\n",
+        ),
+        ("mocked.js", module),
+        ("real.js", "export function fn() {}\n"),
+    ];
+    with_test_run_graph(&files, |graph, input| {
+        let reader = file_named(input, TEST_FILE);
+        let name = input.files.atoms.intern(b"fn");
+        let asked = (file_named(input, "barrel.js"), name);
+        let mut kept = KeptBetweenWays::default();
+        let alone = describe(
+            input,
+            &find_way_to_declaration(graph, None, Some(reader), asked),
+        );
+        let way = find_way_to_declaration(graph, Some(&mut kept), Some(reader), asked);
+        assert_eq!(alone, describe(input, &way));
+        alone
+    })
+}
+
+#[test]
+fn nameless_mocks_are_skipped() {
+    let module = "export const other = 1;\n";
+    for factory in [
+        "() => ({ other: 2 })",
+        "() => { return { other: 2, default: 1 }; }",
+        "async () => ({ other: 2, get more() { return 1; } })",
+        "async original => ({ ...(await original()), other: 2 })",
+        "async original => { const actual = await original(); return { ...actual, other: 2 }; }",
+        "() => ({ ...jest.requireActual('./mocked.js'), other: 2 })",
+        "async () => ({ ...(await vi.importActual('./mocked.js')) })",
+    ] {
+        assert_eq!(
+            find_unmocked_path(factory, module),
+            ["declaration"],
+            "{factory}"
+        );
+    }
+    for factory in [
+        "() => ({ fn: 2 })",
+        "() => ({ other: 2, ['f' + 'n']: 1 })",
+        "() => ({ ...made })",
+        "() => ({ ...jest.requireActual('./real.js') })",
+        "() => made",
+        "made",
+        "() => ({ __proto__: made })",
+        "function* () { return { other: 2 }; }",
+        "() => { if (made) return made; return { other: 2 }; }",
+    ] {
+        let way = find_unmocked_path(factory, module);
+        assert_eq!(
+            way.first().map(|step| &step[..9]),
+            Some("mocked.js"),
+            "{factory}: {way:?}"
+        );
+    }
+    let lists_name = "export const other = 1; export const fn = 1;\n";
+    let way = find_unmocked_path("() => ({ other: 2 })", lists_name);
+    assert_eq!(
+        way.first().map(|step| &step[..9]),
+        Some("mocked.js"),
+        "{way:?}"
+    );
+}
+
+#[test]
+fn unmocked_members_bind() {
+    for (factory, is_bound) in [
+        ("() => ({ other: 2 })", true),
+        ("() => ({ ...jest.requireActual('./mocked.js') })", true),
+        ("() => ({ fn: 2 })", false),
+        ("() => made", false),
+    ] {
+        let test_file = format!(
+            "import {{ jest, mock }} from 'bun:test';\nimport * as all from './barrel.js';\nmock.module('./mocked.js', {factory});\nconsole.log(all.fn);\n"
+        );
+        let program = link_test_run(&[
+            (TEST_FILE, test_file.as_str()),
+            (
+                "barrel.js",
+                "export * from './mocked.js';\nexport * from './real.js';\n",
+            ),
+            ("mocked.js", "export const other = 1;\n"),
+            ("real.js", "export function fn() {}\n"),
+        ]);
+        let printed = print_program(&program);
+        let reads = [" = ModuleNamespace ", " = InstanceNamespace "];
+        let reads_namespace = reads.iter().any(|read| printed.contains(read));
+        assert_eq!(reads_namespace, !is_bound, "{factory}");
+    }
+}
+
 #[test]
 fn stars_that_meet_again_behind_a_fork_are_asked_once() {
     const LEVELS: usize = 40;
@@ -1411,6 +1667,145 @@ fn stars_that_meet_again_behind_a_fork_are_asked_once() {
             String::from("declaration"),
             format!("lib.js fn by a star from l{last}b.js behind 4"),
             String::from("declaration")
+        ]
+    );
+}
+
+#[test]
+fn exported_function_stays_declared() {
+    let rest = "import { twice } from './uses.js';\nconsole.log(twice(2));\n";
+    let test_file = write_test_file(&["mocked.js"], rest);
+    let files = [
+        (TEST_FILE, test_file.as_str()),
+        (
+            "uses.js",
+            "import { v } from './mocked.js';\nexport function twice(n) { return n + v; }\n",
+        ),
+        ("mocked.js", "export const v = 1;\n"),
+    ];
+    let program = link_test_run(&files);
+    let printed = print_program(&program);
+    let uses = program.module_instances.iter().find(|instance| {
+        let path = program.modules[instance.module.index()].path;
+        program.strings.get(path).ends_with(b"/uses.js")
+    });
+    let layout = uses.expect("uses.js has instances").layout.index();
+    let mut lines = printed.lines();
+    let line = lines.find(|line| line.starts_with(&format!("layout L{layout} ")));
+    let line = line.expect("the program prints its layouts");
+    let field = line
+        .split("key=@")
+        .nth(1)
+        .expect("the first field is the function");
+    assert!(field.contains("flags=[IsImmutable]"), "{field}\n{printed}");
+    assert!(!field.contains("absent"), "{field}\n{printed}");
+}
+
+#[test]
+fn module_functions_capture_environments() {
+    let rest = "import { A } from './uses.js';\nconsole.log(A.make().get());\n";
+    let test_file = write_test_file(&["mocked.js"], rest);
+    let uses = "import { v } from './mocked.js';\nconst K = v;\nexport class A {\n  #x = 1;\n  static made = 0;\n  static make() { return new A(); }\n  get() { return this.#x + K + A.made; }\n}\n";
+    let files = [
+        (TEST_FILE, test_file.as_str()),
+        ("uses.js", uses),
+        ("mocked.js", "export const v = 1;\n"),
+    ];
+    let program = link_test_run(&files);
+    let mut modules = program.modules.iter();
+    let place = modules.position(|module| program.strings.get(module.path).ends_with(b"/uses.js"));
+    let module = format!(" module=m{} ", place.expect("the program has the file"));
+    let printed = print_program(&program);
+    let functions = printed.lines().filter(|line| line.starts_with("function "));
+    let functions: Vec<&str> = functions.filter(|line| line.contains(&module)).collect();
+    let captures = functions.iter().filter_map(|line| {
+        let captures = line.split(" captures=[").nth(1)?;
+        captures.split("] thisType=").next()
+    });
+    let captures: Vec<&str> = captures.collect();
+    assert!(!captures.is_empty(), "{functions:?}");
+    for captured in captures.iter().flat_map(|it| it.split("{type=").skip(1)) {
+        assert!(captured.starts_with("env "), "{captured}: {functions:?}");
+    }
+}
+
+#[test]
+fn jsx_reads_captured_instance() {
+    let runtime = "import { word } from './word.js';\nconst make = () => word;\nexport { make as jsx, make as jsxs, make as jsxDEV, make as Fragment };\n";
+    let word = "node_modules/react/word.js";
+    let rest = "import { view } from './view.jsx';\nconsole.log(view());\n";
+    let test_file = write_test_file(&[word], rest);
+    let files = [
+        (TEST_FILE, test_file.as_str()),
+        ("view.jsx", "export const view = () => <a><></></a>;\n"),
+        ("node_modules/react/jsx-runtime.js", runtime),
+        ("node_modules/react/jsx-dev-runtime.js", runtime),
+        (word, "export const word = 1;\n"),
+        (
+            "node_modules/react/package.json",
+            "{\"name\":\"react\",\"type\":\"module\"}",
+        ),
+    ];
+    let printed = print_program(&link_test_run(&files));
+    let mut functions = printed.split("\nfunction ");
+    let view = functions.find(|it| {
+        let header = it.lines().next();
+        header.is_some_and(|header| header.contains(" name=\"view\""))
+    });
+    let view = view.expect("the program has the function");
+    let held = printed
+        .lines()
+        .filter(|line| line.starts_with("variable ") && line.contains("HoldsInstance"));
+    for variable in held.filter_map(|line| line.split_whitespace().nth(1)) {
+        let mut words = view.split(|it: char| !it.is_alphanumeric());
+        assert!(words.all(|word| word != variable), "{variable}:\n{view}");
+    }
+    assert!(view.contains("GetEnvironmentField"), "{view}");
+}
+
+#[test]
+fn reexports_record_first_hop() {
+    let rest = "import * as all from './barrel.js';\nconsole.log(Object.keys(all));\n";
+    let test_file = write_test_file(&["lib.js"], rest);
+    let files = [
+        (TEST_FILE, test_file.as_str()),
+        (
+            "barrel.js",
+            "export { inner as renamed, own, space } from './lib.js';\n",
+        ),
+        (
+            "lib.js",
+            "export { inner } from './leaf.js';\nexport * as space from './leaf.js';\nexport let own = 1;\n",
+        ),
+        ("leaf.js", "export const inner = 1;\n"),
+    ];
+    let program = link_test_run(&files);
+    let text = |id| String::from_utf8_lossy(program.strings.get(id)).into_owned();
+    let path_of = |module: ModuleId| text(program.modules[module.index()].path);
+    let mut modules = program.modules.iter();
+    let barrel = modules.find(|module| text(module.path).ends_with("/barrel.js"));
+    let mut hops = Vec::new();
+    for export in &barrel.expect("the program has the barrel").exports {
+        let requested = match export.kind {
+            ModuleExportKind::Field => export.module,
+            _ => export.requested,
+        };
+        let requested = requested.expect("the export names its first hop");
+        assert!(path_of(requested).ends_with("/lib.js"), "{export:?}");
+        let name = export.import_name.expect("the export has a name there");
+        hops.push(format!(
+            "{} {:?} {}",
+            text(export.name),
+            export.kind,
+            text(name)
+        ));
+    }
+    assert_eq!(
+        hops,
+        [
+            "own Field own",
+            "renamed Variable inner",
+            "space Namespace space"
         ]
     );
 }

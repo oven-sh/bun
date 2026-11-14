@@ -2,8 +2,8 @@ use super::bits::{has_bit, insert_bit};
 use super::queries::find_entry;
 use super::references::ReferencePass;
 use super::{Binding, StoreKind, SymbolStore};
-use crate::atom::known;
-use crate::bind::{BoundBuilder, Parent, SymbolId};
+use crate::atom::{Atom, known};
+use crate::bind::{AssignmentTarget, BoundBuilder, Parent, SymbolId};
 use crate::fold::{DefinePath, DefineRoot};
 use crate::hir::*;
 
@@ -34,14 +34,16 @@ impl ReferencePass<'_, '_> {
                 }
                 ExprKind::ImportMeta => {
                     self.has_import_meta = true;
-                    if bound.parent_of_expr(e) != Parent::None
-                        && may_modify_import_meta(hir, bound, e)
-                    {
-                        self.import_meta_may_be_modified = true;
+                    if bound.parent_of_expr(e) != Parent::None {
+                        self.import_meta_may_be_modified |= may_modify_import_meta(hir, bound, e);
+                        self.writes_import_meta_path |= writes_import_meta_path(hir, bound, e);
                     }
                 }
                 _ => {}
             }
+        }
+        if self.import_meta_may_be_modified && !self.writes_import_meta_path {
+            self.writes_import_meta_path = may_write_path_under_alias(hir, bound);
         }
         for (index, stmt) in hir.stmts.iter().enumerate() {
             let (StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. }) = stmt.kind else {
@@ -247,6 +249,152 @@ pub(super) fn is_object_of_read(hir: &File<'_>, bound: &BoundBuilder, object: Ex
     }
 }
 
+fn is_condition_or_unused(hir: &File<'_>, node: ExprId, statement: StmtId) -> bool {
+    match hir[statement].kind {
+        StmtKind::Expr(_) => true,
+        StmtKind::If { test, .. }
+        | StmtKind::While { test, .. }
+        | StmtKind::DoWhile { test, .. } => node == test,
+        StmtKind::For { test, update, .. } => node == test || node == update,
+        _ => false,
+    }
+}
+
+/// Returns true if the code around `value` tests it and passes it nowhere.
+fn is_only_tested(hir: &File<'_>, bound: &BoundBuilder, value: ExprId) -> bool {
+    let mut node = value;
+    loop {
+        node = find_outermost_cast(hir, bound, node);
+        let parent = match bound.parent_of_expr(node) {
+            Parent::Expr(parent) if parent.is_some() => parent,
+            Parent::Stmt(statement) => return is_condition_or_unused(hir, node, statement),
+            _ => return false,
+        };
+        match hir[parent].kind {
+            ExprKind::Unary {
+                op: UnOp::Not | UnOp::Typeof | UnOp::Void,
+                ..
+            }
+            | ExprKind::Binary {
+                op: BinOp::EqEqEq | BinOp::NotEqEq,
+                ..
+            } => return true,
+            ExprKind::Binary {
+                op: BinOp::EqEq | BinOp::NotEq,
+                left,
+                right,
+            } => {
+                // Beside a string or a number, `==` converts the object.
+                let other = if node == left { right } else { left };
+                return matches!(
+                    hir[hir.skip_type_assertions(other)].kind,
+                    ExprKind::Null | ExprKind::Ident(known::undefined)
+                );
+            }
+            ExprKind::Binary {
+                op: BinOp::In,
+                right,
+                ..
+            } => return node == right,
+            ExprKind::Binary {
+                op: BinOp::And | BinOp::Comma,
+                left,
+                ..
+            } if node == left => return true,
+            ExprKind::Cond { test, .. } if node == test => return true,
+            ExprKind::Binary {
+                op: BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma,
+                ..
+            }
+            | ExprKind::Cond { .. } => node = parent,
+            _ => return false,
+        }
+    }
+}
+
+/// Returns true if the code around `import.meta` writes a member that holds the path of the file.
+fn writes_import_meta_path(hir: &File<'_>, bound: &BoundBuilder, import_meta: ExprId) -> bool {
+    let object = find_outermost_cast(hir, bound, import_meta);
+    let user = match bound.parent_of_expr(object) {
+        Parent::Expr(parent) if parent.is_some() => parent,
+        _ => return false,
+    };
+    if let ExprKind::Call(call) = hir[user].kind {
+        let mut arguments = hir.ids(hir[call].args);
+        let is_target = arguments.next() == Some(object);
+        let name = arguments.next().map(|name| hir[name].kind);
+        let defines = matches!(hir.member_key(hir[call].callee), Some((_, MemberKey::Name(name)))
+            if name == known::defineProperty || name == known::set);
+        return is_target
+            && defines
+            && !matches!(name, Some(ExprKind::String(name)) if !holds_path(name));
+    }
+    let is_path = match hir.member_key(user) {
+        Some((obj, MemberKey::Name(name))) => obj == object && holds_path(name),
+        Some((obj, MemberKey::Computed(_))) => obj == object,
+        _ => false,
+    };
+    let access = find_outermost_cast(hir, bound, user);
+    let is_deleted = matches!(bound.parent_of_expr(access), Parent::Expr(user)
+        if matches!(hir.exprs.get(user.idx()).map(|it| it.kind), Some(ExprKind::Unary { op: UnOp::Delete, .. })));
+    is_path && (is_deleted || stores_path(hir, bound, access))
+}
+
+fn holds_path(name: Atom) -> bool {
+    matches!(
+        name,
+        known::url | known::path | known::meta_dir | known::meta_dirname | known::meta_filename
+    )
+}
+
+fn stores_path(hir: &File<'_>, bound: &BoundBuilder, member: ExprId) -> bool {
+    match bound.get_assignment_target(hir, member) {
+        // Bun fills in every path, so `??=` and `||=` store nothing.
+        Some(AssignmentTarget::Assign(Some(BinOp::Nullish | BinOp::Or))) | None => false,
+        Some(AssignmentTarget::Assign(None)) => !stores_own_value(hir, bound, member),
+        Some(_) => true,
+    }
+}
+
+/// `import.meta.url = import.meta.url`
+fn stores_own_value(hir: &File<'_>, bound: &BoundBuilder, member: ExprId) -> bool {
+    let Parent::Expr(assignment) = bound.parent_of_expr(member) else {
+        return false;
+    };
+    let ExprKind::Assign { target, value, .. } = hir[assignment].kind else {
+        return false;
+    };
+    let key = |member: ExprId| {
+        let (object, key) = hir.member_key(hir.skip_type_assertions(member))?;
+        let object = hir[hir.skip_type_assertions(object)].kind;
+        matches!(object, ExprKind::ImportMeta).then_some(key)
+    };
+    target == member
+        && matches!((key(target), key(value)), (Some(MemberKey::Name(it)), Some(MemberKey::Name(other))) if it == other)
+}
+
+/// Returns true if the file stores to or defines a member that is named as a path of `import.meta`.
+fn may_write_path_under_alias(hir: &File<'_>, bound: &BoundBuilder) -> bool {
+    (0..hir.exprs.len() as u32).map(ExprId).any(|member| {
+        let Some((object, MemberKey::Name(name))) = hir.member_key(member) else {
+            return false;
+        };
+        if (name == known::defineProperty || name == known::set)
+            && let Parent::Expr(call) = bound.parent_of_expr(member)
+            && let ExprKind::Call(call) = hir[call].kind
+        {
+            let mut arguments = hir.ids(hir[call].args);
+            return hir[call].callee == member
+                && matches!(arguments.nth(1).map(|name| hir[name].kind), Some(ExprKind::String(name)) if holds_path(name));
+        }
+        let object = hir[hir.skip_type_assertions(object)].kind;
+        holds_path(name)
+            && !matches!(object, ExprKind::This | ExprKind::ImportMeta)
+            && bound.parent_of_expr(member) != Parent::None
+            && stores_path(hir, bound, find_outermost_cast(hir, bound, member))
+    })
+}
+
 fn may_modify_import_meta(hir: &File<'_>, bound: &BoundBuilder, import_meta: ExprId) -> bool {
     let object = find_outermost_cast(hir, bound, import_meta);
     let access = match bound.parent_of_expr(object) {
@@ -254,12 +402,12 @@ fn may_modify_import_meta(hir: &File<'_>, bound: &BoundBuilder, import_meta: Exp
         Parent::VarInit(declaration) => {
             return !matches!(hir[hir[declaration].pat].kind, PatKind::Object(_));
         }
-        _ => return true,
+        _ => return !is_only_tested(hir, bound, object),
     };
     let name = match hir[access].kind {
         ExprKind::Dot { obj, name, .. } if obj == object => Some(name),
         ExprKind::Index { obj, .. } if obj == object => None,
-        _ => return true,
+        _ => return !is_only_tested(hir, bound, object),
     };
     let access = find_outermost_cast(hir, bound, access);
     if bound.get_assignment_target(hir, access).is_some() {

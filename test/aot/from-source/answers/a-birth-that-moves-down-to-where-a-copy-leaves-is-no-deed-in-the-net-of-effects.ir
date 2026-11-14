@@ -12,13 +12,12 @@
 # each((o) => assigned(new Box(5), o, 3));
 # -- end of source
 # `new Box(5)` is made in front of the copy of assigned(). Only the way on which that copy leaves for the call needs the cell, so the sweep moves the birth and the store that fills it down into that block
-# (`Sweep::moveBirthsToWhereCellsAreNeeded()`): behind the beginning of what may run again. The net of effects takes such a store for no deed: it fills a cell that is born above it in its own block, and it runs once.
+# (`Sweep::moveBirthsToWhereCellsAreNeeded()`): behind the beginning of what may run again. The net of effects takes such a birth for no deed: it runs once.
 # f9 = the last arrow
 # RUN(SHAPE): walk f9 testing=CheckEffectsAtRunTime mechanisms=all
 # SHAPE-LABEL: code f9:Body
-# SHAPE: = BeginsWhatMayRunAgain
-# SHAPE: = NewObject
-# SHAPE-NEXT: PutSlotOrAdd
-# SHAPE-NEXT: CopyLeavesForCall
+# SHAPE: = BeginEffectsCheck
+# SHAPE: = NewObject {{*}}fields=[0]
+# SHAPE-NEXT: CheckInlineeFallback
 # RUN(NET): run-in-shell testing=CheckEffectsAtRunTime mechanisms=all
 # NET: exited with 0

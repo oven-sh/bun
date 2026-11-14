@@ -182,7 +182,7 @@ fn decode_read(operation: ValueView<'_>) -> PropertyRead {
 
 #[track_caller]
 fn decode_store(operation: ValueView<'_>) -> PropertyStore {
-    let (Opcode::PropSet, &[flags, object, key, mode, value]) =
+    let (Opcode::PropSet, &[flags, object, key, mode, value, _called_builtin]) =
         (operation.opcode, operation.fields)
     else {
         panic_at(operation, Opcode::PropSet);

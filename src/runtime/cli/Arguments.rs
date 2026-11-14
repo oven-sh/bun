@@ -718,7 +718,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--aot-huge-heap                  With --aot: remove the 32 GB heap limit per thread. Uses more memory and runs slower"
         ),
         parse_param!(
-            "--no-compile-function-source     With --aot: don't embed function source code. fn.toString() returns [native code], and an eval() or new Function() call the compiler didn't find at build time throws"
+            "--no-compile-function-source     With --aot: don't embed function source code. fn.toString() returns [native code]"
         ),
         parse_param!(
             "--compile-in-place               With --aot: keep modules at their paths on disk and load anything that wasn't compiled from there. The executable only runs on the machine that built it"
@@ -753,6 +753,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!("--aot-refuse-code-from-disk"),
         parse_param!("--aot-out <STR>"),
         parse_param!("--aot-stored-strings <STR>"),
+        parse_param!("--aot-stored-strings-json <STR>"),
         parse_param!("--aot-symbols"),
         parse_param!("--no-builtin-modules"),
         parse_param!("--trim-without <STR>..."),
@@ -2509,6 +2510,16 @@ fn parse_build_command_options(
             .is_some_and(|format| format != b"esm" && format != b"cjs")
         {
             Output::err_generic("--library only supports --format=esm and --format=cjs", ());
+            Global::exit(1);
+        }
+        if args
+            .option(b"--target")
+            .is_some_and(|target| !matches!(target, b"bun" | b"node" | b"browser"))
+        {
+            Output::err_generic(
+                "--library only supports --target=bun, --target=node and --target=browser",
+                (),
+            );
             Global::exit(1);
         }
         ctx.bundler_options.outdir = cli::compile_command::DEFAULT_LIBRARY_OUTDIR.into();

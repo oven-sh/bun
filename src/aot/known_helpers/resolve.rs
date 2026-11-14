@@ -7,7 +7,7 @@ use crate::modules::{
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, BindingInitializer, BindingKind, SymbolId};
 use bun_sema::fold::{Constant, FoldedValue};
-use bun_sema::hir::{BinOp, Chain, ExprId, ExprKind, MemberKey, NodeData};
+use bun_sema::hir::{BinOp, Chain, ExprId, ExprKind, FnId, MemberKey, NodeData};
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::{FileId, Files, Sym};
 use smallvec::SmallVec;
@@ -45,7 +45,9 @@ pub enum PrivateStateKind {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PrivateStateRole {
     Definition,
+    Test,
     HelperArgument,
+    Update,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -59,25 +61,56 @@ pub struct PrivateStateSite {
 pub enum PrivateMemberKind {
     Field,
     Method,
+    Getter,
+    Setter,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PrivateFieldAccess {
     Get,
-    Set { value: usize },
-    GetMethod { member: usize },
+    Set {
+        value: usize,
+    },
+    GetMethod {
+        member: usize,
+    },
+    GetReceiver,
     Has,
+    /// An operator steps what the accessors of the answer read and store.
+    Update,
+    /// The entry is a descriptor, which the function reads or stores through.
+    ApplyDescriptor {
+        function: FnId,
+        value: Option<usize>,
+    },
+    Add {
+        value: Option<usize>,
+        answers_collection: bool,
+    },
+    CallGetter {
+        getter: usize,
+        receiver_is_argument: bool,
+    },
+    CallSetter {
+        setter: usize,
+        value: usize,
+        receiver_is_argument: bool,
+    },
 }
 
 #[derive(Clone, Debug)]
 pub struct PrivateFieldCall {
     pub callee: KnownCallee,
     pub helper: Helper,
+    pub shape: Shape,
+    /// Every function that the helper calls is the published one.
+    pub is_settled: bool,
     pub receiver: usize,
     pub state: usize,
     pub value: Option<usize>,
     pub member_kind: PrivateMemberKind,
     pub member: Option<usize>,
+    pub applies_descriptor: Option<FnId>,
 }
 
 impl KnownCallee {
@@ -121,6 +154,11 @@ impl KnownCallee {
 
 impl PrivateFieldCall {
     pub fn access(&self, kind: PrivateStateKind) -> Option<PrivateFieldAccess> {
+        if let Some(function) = self.applies_descriptor {
+            let value = self.value;
+            return (kind == PrivateStateKind::Field)
+                .then_some(PrivateFieldAccess::ApplyDescriptor { function, value });
+        }
         match (self.helper, kind, self.member_kind, self.member) {
             (
                 Helper::ClassPrivateFieldGet,
@@ -140,9 +178,53 @@ impl PrivateFieldCall {
                 PrivateMemberKind::Method,
                 Some(member),
             ) => Some(PrivateFieldAccess::GetMethod { member }),
+            (
+                Helper::ClassPrivateFieldGet | Helper::PrivateGetterCall,
+                PrivateStateKind::Brand,
+                PrivateMemberKind::Getter,
+                Some(getter),
+            ) => Some(PrivateFieldAccess::CallGetter {
+                getter,
+                receiver_is_argument: self.helper == Helper::PrivateGetterCall,
+            }),
+            (
+                Helper::ClassPrivateFieldSet | Helper::PrivateSetterCall,
+                PrivateStateKind::Brand,
+                PrivateMemberKind::Setter,
+                Some(setter),
+            ) => Some(PrivateFieldAccess::CallSetter {
+                setter,
+                value: self.value?,
+                receiver_is_argument: self.helper == Helper::PrivateSetterCall,
+            }),
             (Helper::ClassPrivateFieldIn, _, _, _) => Some(PrivateFieldAccess::Has),
+            (Helper::PrivateWrapper, PrivateStateKind::Field, PrivateMemberKind::Field, None) => {
+                Some(PrivateFieldAccess::Update)
+            }
+            (Helper::AssertClassBrand, _, _, None) => Some(PrivateFieldAccess::GetReceiver),
+            (Helper::AssertClassBrand, _, _, Some(member)) => {
+                Some(PrivateFieldAccess::GetMethod { member })
+            }
+            (Helper::PrivateElementAdd, _, _, _) => match (self.shape, kind) {
+                (Shape::PrivateFieldAddSetsEntry, PrivateStateKind::Brand)
+                | (Shape::PrivateMethodAddAddsEntry, PrivateStateKind::Field) => None,
+                (shape, _) => Some(PrivateFieldAccess::Add {
+                    value: self.value,
+                    answers_collection: shape == Shape::PrivateElementAddAnswersCollection,
+                }),
+            },
             _ => None,
         }
+    }
+
+    /// The helper compares the state with the receiver where it holds a class.
+    pub fn compares_classes(&self) -> bool {
+        matches!(
+            self.shape,
+            Shape::ClassPrivateFieldGetByKind
+                | Shape::ClassPrivateFieldSetByKind
+                | Shape::ClassPrivateFieldInAsksStateOrComparesConstructor
+        )
     }
 
     pub fn supports_private_state(&self, kind: PrivateStateKind) -> bool {
@@ -151,7 +233,7 @@ impl PrivateFieldCall {
                 Certainty::Always | Certainty::OnceInitialized => true,
                 Certainty::MayHoldOtherValues => false,
             };
-        is_callee_certain && self.access(kind).is_some()
+        is_callee_certain && self.is_settled && self.access(kind).is_some()
     }
 }
 
@@ -250,6 +332,93 @@ pub fn resolve_reference(
     })
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum PublicFieldAnswer {
+    Value,
+    DefinedObjectOrStoredValue,
+    Object,
+}
+
+pub struct PublicFieldCallee {
+    pub file: FileId,
+    pub answer: PublicFieldAnswer,
+    /// The function that stores: whether it is strict decides what a refused store does.
+    pub defines: HeldFunction,
+}
+
+/// `__publicField` where nothing else can be called, neither by the call nor by the helper.
+pub fn resolve_public_field(
+    input: &ResolveInput<'_, '_>,
+    file: FileId,
+    callee: ExprId,
+) -> Option<PublicFieldCallee> {
+    let callee = resolve_callee(input, file, callee)?;
+    let &[held] = &callee.functions[..] else {
+        return None;
+    };
+    let known = input.helpers.function(callee.file, held.definition)?;
+    let is_certain = !callee.needs_guard() && callee.holds_from_the_start;
+    let converts_key = known.shape == Shape::PublicFieldWithConvertedKey;
+    let is_known = match converts_key {
+        true => {
+            known.names_locked_globals
+                && calls_only_published_helpers(input, callee.file, held.definition)
+        }
+        false => known.relies_on_facts,
+    };
+    if !is_certain || !is_known {
+        return None;
+    }
+    let answer = match known.shape {
+        Shape::PublicFieldAnswersValue => PublicFieldAnswer::Value,
+        Shape::PublicFieldAnswersWhatDefiningAnswers => {
+            PublicFieldAnswer::DefinedObjectOrStoredValue
+        }
+        Shape::PublicFieldReturnsObject | Shape::PublicFieldWithConvertedKey => {
+            return Some(PublicFieldCallee {
+                file: callee.file,
+                answer: PublicFieldAnswer::Object,
+                defines: held,
+            });
+        }
+        _ => return None,
+    };
+    let [reference] = known.references[..] else {
+        return None;
+    };
+    let defines = resolve_reference(input, callee.file, reference, &|shape| {
+        shape == Shape::DefineNormalPropertyDefinesWhatIsThereAndStoresWhatIsNot
+    })?;
+    (!defines.needs_guard).then_some(PublicFieldCallee {
+        file: callee.file,
+        answer,
+        defines: defines.function,
+    })
+}
+
+pub fn calls_only_published_helpers(
+    input: &ResolveInput<'_, '_>,
+    home: FileId,
+    function: FnId,
+) -> bool {
+    let Some(known) = input.helpers.function(home, function) else {
+        return false;
+    };
+    let relies_on_facts = !known.shape.replaces_itself()
+        || (known.relies_on_facts && known.is_named_only_to_be_called);
+    relies_on_facts
+        && known.references.iter().all(|&reference| match reference {
+            KnownReference::Loaded { .. } => resolve_loaded_reference(input, home, reference)
+                .is_some_and(|(file, called)| {
+                    calls_only_published_helpers(input, file, called.definition)
+                }),
+            _ => resolve_reference(input, home, reference, &|_| true).is_some_and(|called| {
+                !called.needs_guard
+                    && calls_only_published_helpers(input, home, called.function.definition)
+            }),
+        })
+}
+
 pub fn resolve_loaded_reference(
     input: &ResolveInput<'_, '_>,
     file: FileId,
@@ -274,6 +443,37 @@ pub fn resolve_loaded_reference(
         return None;
     };
     (loaded.helper(input.helpers)? == helper).then_some((loaded.file, held))
+}
+
+/// The function of this file that the helper hands the descriptor to.
+fn find_descriptor_function(
+    input: &ResolveInput<'_, '_>,
+    file: FileId,
+    call: &PrivateFieldCall,
+    helper: Helper,
+) -> Option<FnId> {
+    if call.callee.file != file {
+        return None;
+    }
+    let first = call.callee.functions.first()?.definition;
+    let known = input.helpers.function(file, first)?;
+    known.references.iter().find_map(|&reference| {
+        let called = resolve_reference(input, file, reference, &|shape| shape.helper() == helper)?;
+        (!called.needs_guard).then_some(called.function.definition)
+    })
+}
+
+/// Every helper that the function names holds the published function wherever it runs.
+fn calls_settled_helpers(input: &ResolveInput<'_, '_>, home: FileId, function: FnId) -> bool {
+    let Some(known) = input.helpers.function(home, function) else {
+        return false;
+    };
+    known.references.iter().all(|&reference| {
+        let called = resolve_reference(input, home, reference, &|_| true);
+        called.is_some_and(|called| {
+            !called.needs_guard && calls_settled_helpers(input, home, called.function.definition)
+        })
+    })
 }
 
 pub fn resolve_private_field_call(
@@ -301,17 +501,41 @@ pub fn resolve_private_field_call(
         false => callee,
     };
     let helper = callee.helper(input.helpers)?;
-    let shape = callee.shape_of(input.helpers, *callee.functions.first()?)?;
+    let first = callee.functions.first()?.definition;
+    let known = input.helpers.function(callee.file, first)?;
+    let shape = known.shape;
     let of_field = PrivateFieldCall {
+        is_settled: calls_settled_helpers(input, callee.file, first),
         callee,
         helper,
+        shape,
         receiver: 0,
         state: 1,
         value: None,
         member_kind: PrivateMemberKind::Field,
         member: None,
+        applies_descriptor: None,
     };
     match (shape, arguments.len()) {
+        (Shape::ClassPrivateFieldGetByDescriptor, 2) => Some(PrivateFieldCall {
+            applies_descriptor: Some(find_descriptor_function(
+                input,
+                file,
+                &of_field,
+                Helper::ClassApplyDescriptorGet,
+            )?),
+            ..of_field
+        }),
+        (Shape::ClassPrivateFieldSetByDescriptor, 3) => Some(PrivateFieldCall {
+            value: Some(2),
+            applies_descriptor: Some(find_descriptor_function(
+                input,
+                file,
+                &of_field,
+                Helper::ClassApplyDescriptorSet,
+            )?),
+            ..of_field
+        }),
         (Shape::ClassPrivateFieldGetFromWeakMap, 2) => Some(of_field),
         (Shape::ClassPrivateFieldSetInWeakMap, 3) => Some(PrivateFieldCall {
             value: Some(2),
@@ -328,9 +552,78 @@ pub fn resolve_private_field_call(
             member: (count == 5).then_some(4),
             ..of_field
         }),
-        (Shape::ClassPrivateFieldInAsksStateOrComparesConstructor, 2) => Some(PrivateFieldCall {
+        (
+            Shape::ClassPrivateFieldInAsksStateOrComparesConstructor
+            | Shape::ClassPrivateFieldInAsksState
+            | Shape::ClassPrivateFieldGetOfBrandedReceiver
+            | Shape::AssertClassBrandAnswersReceiverOrMember,
+            2,
+        ) => Some(PrivateFieldCall {
             receiver: 1,
             state: 0,
+            ..of_field
+        }),
+        (Shape::ClassPrivateFieldSetOfBrandedReceiver, 3) => Some(PrivateFieldCall {
+            receiver: 1,
+            state: 0,
+            value: Some(2),
+            ..of_field
+        }),
+        (Shape::AssertClassBrandAnswersReceiverOrMember, 3) => Some(PrivateFieldCall {
+            receiver: 1,
+            state: 0,
+            member_kind: PrivateMemberKind::Method,
+            member: Some(2),
+            ..of_field
+        }),
+        (Shape::PrivateGetterCallOfBrandedReceiver, 3) => Some(PrivateFieldCall {
+            receiver: 1,
+            state: 0,
+            member_kind: PrivateMemberKind::Getter,
+            member: Some(2),
+            ..of_field
+        }),
+        (Shape::PrivateSetterCallOfBrandedReceiver, 4) => Some(PrivateFieldCall {
+            receiver: 2,
+            state: 0,
+            value: Some(3),
+            member_kind: PrivateMemberKind::Setter,
+            member: Some(1),
+            ..of_field
+        }),
+        (Shape::ClassPrivateFieldGetOrGetterCall | Shape::PrivateWrapperOfAccessors, 2) => {
+            Some(of_field)
+        }
+        (Shape::ClassPrivateFieldGetOrGetterCall, 3) => Some(PrivateFieldCall {
+            member_kind: PrivateMemberKind::Getter,
+            member: Some(2),
+            ..of_field
+        }),
+        (Shape::ClassPrivateFieldSetOrSetterCall, 3) => Some(PrivateFieldCall {
+            value: Some(2),
+            ..of_field
+        }),
+        (Shape::ClassPrivateFieldSetOrSetterCall, 4) => Some(PrivateFieldCall {
+            value: Some(2),
+            member_kind: PrivateMemberKind::Setter,
+            member: Some(3),
+            ..of_field
+        }),
+        (Shape::ClassPrivateMethodOfReceiver, 3) => Some(PrivateFieldCall {
+            member_kind: PrivateMemberKind::Method,
+            member: Some(2),
+            ..of_field
+        }),
+        (Shape::PrivateFieldAddSetsEntry, 3) => Some(PrivateFieldCall {
+            value: Some(2),
+            ..of_field
+        }),
+        (Shape::PrivateMethodAddAddsEntry, 2) => Some(of_field),
+        (
+            Shape::PrivateElementAddAnswersCollection | Shape::PrivateElementAddAnswersNothing,
+            count @ (2 | 3),
+        ) => Some(PrivateFieldCall {
+            value: (count == 3).then_some(2),
             ..of_field
         }),
         _ => None,
@@ -492,7 +785,7 @@ fn find_required_file(
         SiteAnswer::Module(ModuleRef::File(required)) => Some(required),
         SiteAnswer::Module(
             ModuleRef::Inner { .. }
-            | ModuleRef::Face(_)
+            | ModuleRef::Facade(_)
             | ModuleRef::Check(_)
             | ModuleRef::Runtime(_)
             | ModuleRef::External { .. },

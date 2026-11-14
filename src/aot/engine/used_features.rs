@@ -1,7 +1,7 @@
 use bun_sema::util::SharedSort;
 use bun_trim::{
     FeatureSet, LocaleTag, UnseenCode, UnseenCodeCause, UsedFeature, UsedFeatures, UsedLocales,
-    WitnessIndex, features_kept_only_when_named,
+    WitnessIndex, features_retained_by_name,
 };
 
 use super::{
@@ -9,6 +9,7 @@ use super::{
     feature_of,
 };
 use crate::builtins::id::{BuiltinId, Feature};
+use crate::builtins::table;
 use crate::ir::generated::{FeatureUseKind, LocaleUseKind, UnseenCodeCause as EngineCause};
 
 pub fn used_features(result: &EngineResult) -> UsedFeatures {
@@ -29,7 +30,7 @@ fn from_records(
     locales: &[LocaleUseRecord],
     text_of: &dyn Fn(TextRange) -> Vec<u8>,
 ) -> UsedFeatures {
-    let only_when_named = features_kept_only_when_named();
+    let only_when_named = features_retained_by_name();
     let mut seen = FeatureSet::EMPTY;
     let mut named = FeatureSet::EMPTY;
     let mut used = Vec::new();
@@ -70,6 +71,7 @@ fn from_records(
         locales: used_locales(locales, text_of),
         starts_workers_from_unseen_code: true,
         names_bun_build: features.iter().any(names_bun_build),
+        can_reach_test_runner: !unseen.is_empty() || features.iter().any(leads_to_test_runner),
     }
 }
 
@@ -84,6 +86,18 @@ fn names_bun_build(record: &FeatureUseRecord) -> bool {
     record.kind == FeatureUseKind::Named
         && builtin_of(record.builtin).is_some()
         && is_entered_by_bun_build(record)
+}
+
+fn leads_to_test_runner(record: &FeatureUseRecord) -> bool {
+    if feature_of(record.feature) != Some(Feature::Test) {
+        return false;
+    }
+    let is_named = matches!(
+        record.kind,
+        FeatureUseKind::Named | FeatureUseKind::FoundByName
+    );
+    let hangs_under_no_name = |builtin| table::text_of(builtin).starts_with('%');
+    is_named || !builtin_of(record.builtin).is_some_and(hangs_under_no_name)
 }
 
 fn cause_of(cause: EngineCause) -> UnseenCodeCause {

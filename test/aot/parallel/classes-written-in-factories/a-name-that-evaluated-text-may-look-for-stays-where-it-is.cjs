@@ -1,4 +1,4 @@
-// STATISTIC: CapturesOfClassesStoredForGoodPromoted = 0
+// STATISTIC: PermanentClassCapturesPromoted = 0
 (function (exports) {
   var kinds = { word: 3, end: 7 };
   var spare = { word: 30, end: 70 };

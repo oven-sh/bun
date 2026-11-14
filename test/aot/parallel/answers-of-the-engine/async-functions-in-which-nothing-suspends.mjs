@@ -1,5 +1,5 @@
 // An async function in which nothing suspends runs to its end at the call and hands back a promise. If the promise were settled at another moment, a throw left the call instead of rejecting, be it the first thing that the body does or on its way out through a finally, a thenable or a promise that is returned were handed on as it is, or the body ran later than the call, these would differ, the order of the notes above all.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 const order = [];
 function note(what) { order[order.length] = what; }

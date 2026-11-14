@@ -9,14 +9,10 @@
 # CHECK: [[test]]: boolean @Boolean = TypeTest v0 testedType=number
 # CHECK-NEXT: Branch [[test]] ->
 # CHECK: [[proven]]: number @JSValue = Narrowed {{*}}, [[test]]
+# CHECK-NEXT: [[raw]]: number @Double = Unbox [[proven]]
 # CHECK: frequency=Rare isLoopHead=true
 # CHECK: = Mul {{*}}form=NumberAndValue
-# CHECK: [[head]]({{*}}isInLoop=true isLoopHead=true
-# CHECK-NOT: Unbox
-# CHECK: ():
-# CHECK-NOT: isInLoop
-# CHECK: [[raw]]: number @Double = Unbox [[proven]]
-# CHECK-NEXT: Jump -> next [[head]](
+# CHECK: ({{*}}isInLoop=true isLoopHead=true
 # CHECK-NOT: Unbox
 # CHECK: = Mul {{*}}, [[raw]] form=Numbers
 

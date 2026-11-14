@@ -1,6 +1,6 @@
 // A helper copied in line tells three classes apart in a loop, and the guards of its questions are asked in front of the typed copy. One element is an instance of the first class by its chain alone, and its getter, once,
 // gives the second class a Symbol.hasInstance of its own in the middle of the loop. The read of that getter leaves the typed copy before it runs, so the rest of the loop asks as it is written and that method answers.
-// STATISTIC: MissesOfInstanceOfThatStayInTheTurn >= 1
+// STATISTIC: InstanceOfMissesWalkedInline >= 1
 "use strict";
 class Circle { constructor(d) { this.r = d.r; } }
 class Rect { constructor(d) { this.w = d.w; this.h = d.h; } }

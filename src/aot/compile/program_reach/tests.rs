@@ -310,6 +310,11 @@ impl Outcome {
                 &expected.reached.naming_ways,
             ),
             (
+                "exposing the global object",
+                &reached.exposing_global_object,
+                &expected.reached.exposing_global_object,
+            ),
+            (
                 "found by name",
                 &reached.found_by_name,
                 &expected.reached.found_by_name,
@@ -366,6 +371,7 @@ fn assert_same_on_any_number_of_threads(
             isolates_code_from_disk: false,
             mocks_any_module: false,
             files_started_by_runner: &[],
+            files_with_kept_imports: &[],
             starts_of_workers: &[],
             beside: bind_input.beside,
         };
@@ -426,6 +432,7 @@ fn ten_thousand_files_are_reached_alike_on_any_number_of_threads() {
         assert!(outcome.export_uses.contains(&ExportUse::None));
         assert!(outcome.export_uses.contains(&ExportUse::Bound));
         assert!(reached.found_by_name.is_empty() && reached.naming_ways.is_empty());
+        assert!(reached.exposing_global_object.is_empty());
     });
 }
 

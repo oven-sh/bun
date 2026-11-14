@@ -63,7 +63,7 @@ impl ExportedBlockBindings {
                 continue;
             }
             for &(_, local) in bound.table(scope.locals) {
-                if bound.export_symbol_of_value_symbol_if_exported(local) != local
+                if bound.exported_value(local) != local
                     && scopes.is_scope_binding(bound, local)
                     && is_block_binding(bound, scope.kind, local)
                 {
@@ -97,7 +97,8 @@ impl ExportedBlockBindings {
             declarations.sort();
         }
         for (local, kind) in self.kinds {
-            declarations.binding_kinds[local.idx()] = kind;
+            let recorded = &mut declarations.binding_kinds[local.idx()];
+            *recorded = (*recorded).max(kind);
         }
     }
 }

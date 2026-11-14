@@ -1,4 +1,5 @@
-await new Promise(done => setTimeout(done, 20));
+globalThis.begin();
+await globalThis.gate;
 export const v = "a1";
 globalThis.jobs = 0;
 const tick = () => {

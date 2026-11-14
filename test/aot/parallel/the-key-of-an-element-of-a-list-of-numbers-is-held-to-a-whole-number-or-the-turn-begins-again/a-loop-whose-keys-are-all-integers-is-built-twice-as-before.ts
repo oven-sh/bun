@@ -1,4 +1,4 @@
-// STATISTIC: LoopsBuiltTwice >= 9
+// STATISTIC: WalkLoopsVersioned >= 9
 const rounds = +process.argv[2]! || 3;
 
 class Table {

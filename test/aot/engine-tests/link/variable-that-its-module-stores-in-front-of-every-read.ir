@@ -10,9 +10,9 @@
 # LIBRARY: own
 # RUN: summary f0
 # CHECK: stores-first g0 at v2, g1 at v9, g2 at v14, g3 at v20, g7 at v37
-# CHECK: uses-first f1 at v4, f2 at v7, f4 at v18, f5 at v32, f6 at v34, f7 at v12
+# CHECK: uses-first f1 at v4, f2 at v7, f4 at v18, f5 at v32, f7 at v12
 # RUN(LINK): link variables mechanisms=all
-# LINK: variable g0 proven=int[0, 2147483647] writers-known written-at-construction-alone filled
+# LINK: variable g0 proven=1 writers-known written-at-construction-alone filled
 # LINK-NEXT: variable g1 proven=undefined|int[0, 2147483647] writers-known written-at-construction-alone
 # LINK-NEXT: variable g2 proven=undefined|int[0, 2147483647] writers-known written-at-construction-alone
 # LINK-NEXT: variable g3 proven=undefined|int[0, 2147483647] writers-known written-at-construction-alone

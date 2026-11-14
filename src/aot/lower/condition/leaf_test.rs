@@ -63,7 +63,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 LeafTest::Truthiness
             }
             OperatorClass::Ordering | OperatorClass::Equality { .. }
-                if main_module_operand(file.hir, file.bound, expression).is_some() =>
+                if main_module_operand(file.hir, file.bound, expression).is_some()
+                    || file.find_path_comparison(expression).is_some() =>
             {
                 LeafTest::Truthiness
             }
@@ -197,13 +198,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return None;
         };
         let symbol = scope::find_tested_local(self, node)?;
-        let has_no_value_before = matches!(
-            bound.binding_kind(symbol),
+        let has_no_value_before = match bound.binding_kind(symbol) {
             BindingKind::Const
-                | BindingKind::Let
-                | BindingKind::Parameter
-                | BindingKind::SimpleCatchParameter
-        );
+            | BindingKind::Let
+            | BindingKind::Parameter
+            | BindingKind::SimpleCatchParameter => true,
+            BindingKind::Var => self.typeof_variables.contains(&symbol),
+            _ => false,
+        };
         (has_no_value_before && bound.is_stable_binding(symbol)).then_some(symbol)
     }
 

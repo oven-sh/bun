@@ -90,6 +90,22 @@ impl DeclaredType {
         }
     }
 
+    /// What the checker infers for a position that nobody has declared.
+    #[inline]
+    pub fn inferred(self) -> DeclaredType {
+        let omitted = self.flags & (PositionFlags::OMITS_NULL | PositionFlags::OMITS_UNDEFINED);
+        DeclaredType {
+            ty: self.ty,
+            site: None,
+            flags: omitted | PositionFlags::IS_FROM_COMPILER | PositionFlags::IS_EXPECTED,
+        }
+    }
+
+    #[inline]
+    pub fn is_inferred(self) -> bool {
+        (self.flags).contains(PositionFlags::IS_FROM_COMPILER | PositionFlags::IS_EXPECTED)
+    }
+
     #[inline]
     pub fn is_said(self) -> bool {
         self.ty != TypeTable::NEVER

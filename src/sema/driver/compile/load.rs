@@ -84,6 +84,8 @@ pub fn load_program<'s>(
     let brings_bun_types =
         is_application && !has_bun_types_installed && take_bun_types_of_host(host, options);
     let has_bun_types = has_bun_types_installed || brings_bun_types;
+    // A folder without a tsconfig.json is read as under the one that `bun init` writes. With the library of the DOM in sight
+    // Bun's declarations leave to it what they declare themselves otherwise, the `text()` of a stream among it.
     let is_read_as_after_bun_init =
         is_application && has_bun_types && project.config_path.is_empty();
     if is_read_as_after_bun_init && !options.specifies_lib {
@@ -252,6 +254,8 @@ pub fn load_program<'s>(
     })
 }
 
+/// Makes the checker's program in a frame of its own. The program is large and is moved into the
+/// arena once, so nothing of it lies on the stack under the rest of `load_program`.
 #[inline(never)]
 fn make_checker<'s>(
     session: &'s Session,
@@ -359,12 +363,26 @@ impl<'a> FileFinder<'a> {
     }
 
     pub fn find_entry_point(&self, specifier: &[u8]) -> Option<Vec<u8>> {
+        self.find_entry_point_as(specifier, CodeImportForm::Static)
+    }
+
+    /// No plugin is asked.
+    pub fn find_entry_point_on_disk(&self, specifier: &[u8]) -> Option<Vec<u8>> {
+        self.find_entry_point_as(specifier, CodeImportForm::Macro)
+    }
+
+    /// A plugin that fails stops no build: the file is left out.
+    pub fn find_guessed_entry_point(&self, specifier: &[u8]) -> Option<Vec<u8>> {
+        self.find_entry_point_as(specifier, CodeImportForm::Guess)
+    }
+
+    fn find_entry_point_as(&self, specifier: &[u8], form: CodeImportForm) -> Option<Vec<u8>> {
         let resolution = self.resolver.resolve_code(&CodeRequest {
             specifier,
             importer: b"",
             directory: &self.code.working_directory,
             kind: CodeImportKind::EntryPoint,
-            form: CodeImportForm::Static,
+            form,
         });
         match resolution {
             CodeResolution::File(file) if file.host_module.is_none() => Some(file.path.to_vec()),
@@ -732,11 +750,20 @@ fn take_bun_types_of_host(host: &dyn CodeHost, options: &mut Options) -> bool {
     let Some(root) = host.type_root_in_place_of_bun_types() else {
         return false;
     };
+    take_bun_types_below(root, &|path| host.is_file(path), options);
+    true
+}
+
+pub(crate) fn take_bun_types_below(
+    root: Vec<u8>,
+    is_file: &dyn Fn(&[u8]) -> bool,
+    options: &mut Options,
+) {
     let roots = options.effective_type_roots();
     let has_bun_types_package = roots.iter().any(|root| {
         let directories = [Some(&root[..]), root.strip_suffix(b"/@types")];
         (directories.into_iter().flatten())
-            .any(|it| host.is_file(&[it, b"/bun-types/package.json"].concat()))
+            .any(|it| is_file(&[it, b"/bun-types/package.json"].concat()))
     });
     options.type_root_of_last_resort = Some(root);
     let (named, other): (&[u8], &[u8]) = match has_bun_types_package {
@@ -748,5 +775,4 @@ fn take_bun_types_of_host(host: &dyn CodeHost, options: &mut Options) -> bool {
     if !types.iter().any(|name| name == named) {
         types.push(named.to_vec());
     }
-    true
 }

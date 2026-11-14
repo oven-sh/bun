@@ -1,4 +1,4 @@
-// STATISTIC: ListsTakenUnderCountersAskedInFrontOfLoops >= 1
+// STATISTIC: ArraysGuardedUnderSpeculatedCounters >= 1
 const rounds = +process.argv[2]! || 3;
 function horner(c: any, x: number, from: any): number { let s = 0, i = from; while (i-- > 0) s = s * x + c[i]; return s; }
 function fill(list: any, from: any, v: number): number { let i = from, n = 0; while (i-- > 0) { list[i] = v + i; n++; } return n; }

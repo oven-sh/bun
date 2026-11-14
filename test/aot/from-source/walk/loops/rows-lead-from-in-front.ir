@@ -1,0 +1,24 @@
+# -- source: rows-lead-from-in-front.js
+# const best = [];
+# for (let i = 0; i < 4; i++)
+#   best.push([0, 0, 0, 0, 0, 0]);
+# function pack(weights) {
+#   for (let i = 1; i < 4; i++)
+#     for (let w = 0; w < 6; w++)
+#       best[i][w] = w < weights[i] ? best[i - 1][w] : Math.max(best[i - 1][w], best[i - 1][w - weights[i]] + i);
+#   return best[3].join();
+# }
+# print(pack([0, 2, 3, 1]));
+# best[2] = [0.5, 1.5, 2.5, 3.5, 4.5, 5.5];
+# print(pack([0, 2, 3, 1]));
+# best[0] = [0.5, , "2", 3, 4, 5];
+# print(pack([0, 2, 3, 1]));
+# -- end of source
+# RUN: walk f1:Body mechanisms=all
+# CHECK: Put{{*}}Index
+# RUN(SHELL): run-in-shell mechanisms=all
+# SHELL: 0,3,3,4,5,5
+# SHELL-NEXT: 0,3,3,4,5,5
+# SHELL-NEXT: 0.5,NaN,NaN,NaN,NaN,NaN
+# SHELL-NEXT: exited with 0
+# SHELL-NEXT: the source prints the same

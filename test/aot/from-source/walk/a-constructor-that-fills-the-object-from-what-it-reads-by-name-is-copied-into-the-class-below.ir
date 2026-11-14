@@ -8,16 +8,14 @@
 # print(run(6));
 # -- end of source
 # f3 = the constructor of Mark, f4 = the constructor of Round
-# The constructor of Mark fills the object from what it reads by name off its parameter. In Round new.target is proven, so the copy makes an object of Round's own layout in line, and all three stores go into a fresh cell of a proven layout.
+# The constructor of Mark fills the object from what it reads by name off its parameter. In Round new.target is proven, so the copy makes an object of Round's own layout in line, with all three fields.
 # RUN(COPY): walk f4 mechanisms=all
 # COPY: frame 1 callee=f3
 # COPY-NOT: GetConstructPrototype
 # COPY-NOT: function=f3
-# COPY: [[made]]: L1 @Cell = NewObject layout=L1
-# COPY: PutSlotOrAdd [[made]], {{*}} key="left" receivers=[L1] level=Proven
-# COPY: PutSlotOrAdd [[made]], {{*}} key="top" receivers=[L1] level=Proven
 # COPY-NOT: PropSet
-# COPY: PutSlotOrAdd [[made]], {{*}} key="reach" receivers=[L1] level=Proven
+# COPY: L1 @Cell = NewObject {{*}}layout=L1 fields=[1, 2, 0]
+# COPY-NOT: PutSlotOrAdd
 # RUN: run-in-shell void 0;
 # CHECK: 6.5:lefttopreach 15.5:lefttopwidth 24.5:lefttopreach 6.5:lefttopreach 15.5:lefttopwidth 24.5:lefttopreach
 # CHECK-NEXT: exited with 0

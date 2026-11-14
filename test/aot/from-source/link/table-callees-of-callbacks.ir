@@ -1,0 +1,20 @@
+# -- source: main.cjs
+# "use strict";
+# function mixin(Base) { return class Mixed extends Base { apply(f) { for (var i = 0; i < this.rows; i++) for (var j = 0; j < this.columns; j++) f.call(this, i, j); return this; } }; }
+# class M extends mixin(Array) { constructor(r, c) { super(r); for (var i = 0; i < r; i++) { this[i] = new Array(c); for (var j = 0; j < c; j++) this[i][j] = i + j / 2; } this.rows = r; this.columns = c; } }
+# const table = { tanh: { act: Math.tanh, der: v => 1 - v * v }, half: { act: v => v / 2, der: Math.cos }, text: { act: v => v + "s", der: () => 1 } };
+# class Layer { constructor(name) { var record = table[name], act = record.act, der = record.der; this.f = function (i, j) { this[i][j] = act(this[i][j]); }; this.d = function (i, j) { this[i][j] = der(this[i][j]); }; } }
+# globalThis.kept = [new M(2, 3), new Layer("tanh"), new Layer("half"), new Layer("text")];
+# function run(m, layer) { m.apply(layer.f); return m.apply(layer.d)[1][2].toFixed(6); }
+# print(run(globalThis.kept[0], globalThis.kept[1]), run(globalThis.kept[0], globalThis.kept[2]), run(globalThis.kept[0], globalThis.kept[3]));
+# -- end of source
+# The callbacks call what records of a table hold under one name. Their loops test for each of these, and look at the receiver before the elements.
+# RUN: link functions mechanisms=all
+# CHECK: table-callee of 0 MathTanh
+# CHECK-NEXT: table-callee of 0 f
+# CHECK-NEXT: table-callee of 0 f
+# CHECK: table-callee of 0 MathCos
+# CHECK-NEXT: table-callee of 0 f
+# RUN(ANSWER): run-in-shell
+# ANSWER: 0.070651 0.999376 1.000000
+# ANSWER-NEXT: exited with 0

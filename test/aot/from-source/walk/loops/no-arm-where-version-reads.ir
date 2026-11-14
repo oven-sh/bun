@@ -1,0 +1,22 @@
+# f1 = total, f2 = kept
+# -- source: main.mjs
+# function total(held, count) { let sum = 0; for (let i = 0; i < count; i++) sum += held.k * 0.5 + held.j; return sum; }
+# function kept(held, count) { for (let i = 0; i < count; i++) held.s = held.k * 0.5 + held.j; return held.s; }
+# print(total(JSON.parse('{"k":3,"j":5}'), 4), kept(JSON.parse('{"k":3,"j":5,"s":0}'), 4));
+# -- end of source
+# A turn that stores nothing by name is begun again where a guess fails, and what stands in front of the loop is read in front of its version: neither takes an arm. A turn that stores one property finds its address in front of its version, too, and stores there.
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = GetValueAtSiteOrAbsent {{*}} key="k"
+# CHECK: = GetValueAtSiteOrAbsent {{*}} key="j"
+# CHECK: = Add {{*}} form=Numbers
+# RUN(KEPT): walk f2:Body mechanisms=all
+# KEPT: = GetValueAtSiteOrAbsent {{*}} key="k"
+# KEPT: isInLoop=true isLoopHead=true:
+# KEPT: = PutKeyedProperty
+# KEPT-NOT: isInLoop=true
+# KEPT: = GetValueAtSiteOrAbsent {{*}} key="j"
+# KEPT: = Add {{*}} form=Numbers
+# KEPT: = GetKeyedPropertyAddress {{*}} key="s"
+# KEPT-NOT: isInLoop=true
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 26 6.5

@@ -5,8 +5,8 @@
 // # f1 = sumUp, f2 = total, f3 = bump, f4 = lay
 // # L1 = rates, L2 = kept and cold (one row of keys), L3 = other
 // # RUN(STAYS): link layouts mechanisms=all
-// # STAYS: layout L1 changes=[GainsProperty, ChangesPrototype] stays-with-compiled-code filled-under-computed-keys
-// # STAYS: layout L2 changes=[IsFrozen, GainsProperty, ChangesPrototype] stays-with-compiled-code filled-under-computed-keys
+// # STAYS: layout L1 changes=[GainsProperty] stays-with-compiled-code filled-under-computed-keys
+// # STAYS: layout L2 changes=[IsFrozen, GainsProperty] stays-with-compiled-code filled-under-computed-keys
 // # STAYS: layout L3 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor] filled-under-computed-keys
 // # RUN(FIELDS): link fields mechanisms=all
 // # FIELDS: field L1.0 "a" proven=number|string|bigint writers-known filled

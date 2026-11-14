@@ -1,8 +1,9 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // CHECK-LABEL: function {{*}}name="pendingAwait"
-// CHECK: builtin=CompilerHelpersGetDisposeMethod
-// CHECK-NEXT: = Call {{*}}, -, [[first]]
+// CHECK: TypeTest [[first]] testedType=undefined|null
+// CHECK: [[read]] = PropGet {{*}} key=@@dispose
+// CHECK-NEXT: TypeTest [[read]] testedType=function
 // CHECK: role=DisposalCleanup subject=[[first]]:
 // CHECK-NEXT: = CatchValue
 // CHECK-NEXT: Branch

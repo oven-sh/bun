@@ -75,12 +75,16 @@ public:
     // When the module is assigned a JSCommonJSModule parent, it is assigned to this field.
     // This is the normal state.
     JSC::Weak<JSCommonJSModule> m_parent {};
+    // The filename of m_parent, whose object nothing may hold, e.g. the one behind the require() that jest.requireActual() calls.
+    JSC::WriteBarrier<JSString> m_parentFilename;
     // `module.parent = 7`: from then on nobody asks the compiled program who required the file first.
     bool m_isParentStored { false };
     // Of the object that createRequire() has made: code of the executable called it. A loader that code from disk makes finds no file of the executable, whatever path it is given.
-    bool isMadeByCodeOfImage { false };
+    bool isCreatedByImageCode { false };
     // What else an ahead-of-time executable keeps of a few of these objects lies in a record beside the cell.
     bool hasRecordBesideCell { false };
+    // For an object that require() created for a compiled file: the parent's `children` already list it.
+    bool isListedAsChild { false };
     // require() makes an object for a file of the executable at every call: the number of the file that was loaded into this one, where a requirer that is no file of the executable asked.
     uint32_t compiledModuleLoadedInto { noCompiledModule };
     // If compile is overridden, it is assigned to this field. The default
@@ -96,9 +100,9 @@ public:
     static constexpr uint32_t noCompiledModule = UINT32_MAX;
     uint32_t compiledModule { noCompiledModule };
     // Of the object behind `import.meta.require` of an ES module of the executable: the number of that module. It is who asks through the object, and the engine lists what it has required.
-    uint32_t compiledModuleThatAsks() const { return hasRecordBesideCell ? compiledModuleThatAsksByRecord() : noCompiledModule; }
-    void setCompiledModuleThatAsks(uint32_t);
-    bool areChildrenListedByEngine() const { return compiledModule != noCompiledModule || compiledModuleThatAsks() != noCompiledModule; }
+    uint32_t requestingCompiledModule() const { return hasRecordBesideCell ? compiledModuleThatAsksByRecord() : noCompiledModule; }
+    void setRequestingCompiledModule(uint32_t);
+    bool areChildrenListedByEngine() const { return compiledModule != noCompiledModule || requestingCompiledModule() != noCompiledModule; }
     // Among the children of a requirer that is no file of the executable the first object of a file stays, and no other is listed.
     bool listsAsChild(JSCommonJSModule* loaded) { return loaded->compiledModuleLoadedInto == noCompiledModule || listsCompiledModuleAsChild(loaded->compiledModuleLoadedInto); }
     void forgetCompiledModulesAmongChildren();
@@ -116,6 +120,10 @@ public:
     ~JSCommonJSModule();
 
     void finishCreation(JSC::VM& vm, const JSC::SourceCode& sourceCode);
+
+    void setParent(JSC::VM&, JSCommonJSModule*);
+    void clearParent();
+    JSValue parentFilename() const;
 
     static JSC::Structure* createStructure(JSC::JSGlobalObject* globalObject);
 

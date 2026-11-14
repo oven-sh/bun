@@ -1,0 +1,17 @@
+# -- source: reads-of-two-classes-outside-loops.ts
+# declare function print(value: unknown): void;
+# abstract class Text { abstract readonly depth: number; abstract at(index: number): number; }
+# class Short extends Text { readonly depth = 0; constructor(readonly code: number) { super(); } at(index: number): number { return this.code + index; } }
+# class Joined extends Text { readonly depth: number; constructor(readonly left: Text, readonly right: Text, readonly size: number) { super(); this.depth = (left.depth > right.depth ? left.depth : right.depth) + 1; } at(index: number): number { return index < this.size ? this.left.at(index) : this.right.at(index - this.size); } }
+# function join(left: Text, right: Text): Text { return left.depth > right.depth ? new Joined(right, left, 1) : new Joined(left, right, 1); }
+# let text: Text = new Short(65);
+# for (let i = 1; i < 9; i++) text = i & 1 ? join(text, new Short(65 + i)) : join(text, text);
+# print(text.at(4) + " " + text.depth);
+# -- end of source
+# A read outside a loop off two classes below one class has two typed arms, not one beside the read as written.
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = ShapeTest v0 layouts=[L1]
+# CHECK: = GetSlot {{*}}key="depth" receivers=[L1] level=Proven
+# CHECK: = ShapeTest {{*}}layouts=[L2]
+# CHECK: = GetSlot {{*}}key="depth" receivers=[L2] level=Proven
+# CHECK-NOT: = PropGet {{*}}key="depth"

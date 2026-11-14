@@ -25,6 +25,9 @@ pub(super) enum MentionUse {
     Exposed,
 }
 
+/// The table knows what stands above every prototype object but one above which native code puts an
+/// object of the program while the program runs. What lies there gets whoever was asked as `this`.
+/// Without a name: a name that no built-in object has.
 pub(super) fn lookup_passes_holder_linked_anew(
     holder: BuiltinId,
     name: Option<BuiltinName>,
@@ -97,11 +100,17 @@ impl Resolver<'_, '_> {
     fn may_have_hook_of_instanceof(&self, right: ExprId) -> bool {
         match self.hooks_of_instanceof_supposed.get() {
             HooksOfInstanceof::OnWhatIsNoBuiltin => {
-                !self.is_resolved(self.input.hir.skip_type_assertions(right))
+                let right = self.input.hir.skip_type_assertions(right);
+                !self.is_resolved(right) || self.is_own_exports(right)
             }
             HooksOfInstanceof::Nowhere => false,
             HooksOfInstanceof::Everywhere => true,
         }
+    }
+
+    fn is_own_exports(&self, e: ExprId) -> bool {
+        let value = self.value_of(e).or_else(|| self.held_value_of(e));
+        value.is_some_and(|value| value.path.id == BuiltinId::ModuleObjectExports)
     }
 
     pub(super) fn classify_use(&self, e: ExprId) -> MentionUse {
@@ -181,6 +190,8 @@ impl Resolver<'_, '_> {
         ControlFlow::Break(mention_use)
     }
 
+    /// `(a = process) === null`, `(a = process) == null`, `a = process;`: the store is the only one to `a`, and nothing but
+    /// `a` has the object from it. Each place that names `a` is a mention of the object by itself.
     fn is_kept_to_be_read_by_name(&self, e: ExprId, target: ExprId, assignment: ExprId) -> bool {
         let (hir, bound) = (self.input.hir, self.input.bound);
         if !self
@@ -327,7 +338,8 @@ impl Resolver<'_, '_> {
                 if is_first
                     && self.input.runs_tests
                     && writes_on_first_operand(builtin)
-                    && !self.is_of_loader(operand) =>
+                    && !self.is_of_loader(operand)
+                    && !self.exposes_first_operand(call, builtin) =>
             {
                 MentionUse::Inspected
             }
@@ -396,6 +408,8 @@ impl Resolver<'_, '_> {
         table::own_member(BuiltinId::ObjectPrototype, name).is_some() && !holds_member_itself
     }
 
+    /// Whether the language looks above `object` here: for a name that neither it nor the built-in
+    /// objects above it have, or for what makes a text, a number or a key of it.
     pub(super) fn is_handed_to_code_laid_above(&self, e: ExprId, object: BuiltinId) -> bool {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let (input, holder) = (self.input, holder_of(object));

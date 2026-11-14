@@ -66,13 +66,14 @@ struct Operation<'a> {
 fn lower_files(files: &[(&str, &str)]) -> LoweredFiles {
     let options = LoweringOptions {
         platform: host_platform(),
-        embeds_function_text: false,
-        reads_function_texts_back: false,
+        embeds_function_source: false,
+        reparses_function_sources: false,
         removable: Default::default(),
         minifies_identifiers: false,
         obfuscates: false,
         counts_executions: false,
         runs_tests: false,
+        divides_small_files: false,
     };
     let files = lower_program(files, options);
     let mut tables: Vec<(Arc<SharedTables>, UnitTables)> = Vec::new();

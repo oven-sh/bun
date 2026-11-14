@@ -1,6 +1,6 @@
 // A row of the host says what the promise that it hands out settles with: `Response.prototype.text` says a string. An `await` of such a promise is typed `anything`;
 // what Link makes of the row goes on to the places that it types: a variable, a field, the parameter of a callback. In front of each stands a test in every build.
-// `--aot-testing=RowSaysLess:Builtin/<row>/ContentsOfResult` lays the row false: what its result holds is taken to be null alone.
+// `--aot-testing=UnderstateEffects:Builtin/<row>/ContentsOfResult` lays the row false: what its result holds is taken to be null alone.
 import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
@@ -9,7 +9,7 @@ import { test } from "./harness/default-timeout";
 import { withoutDebugInformation } from "./harness/without-debug-information";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
-const LIE = "--aot-testing=RowSaysLess:Builtin/Response.prototype.text/ContentsOfResult";
+const LIE = "--aot-testing=UnderstateEffects:Builtin/Response.prototype.text/ContentsOfResult";
 const ways = {
   "a variable": {
     source: `let kept: string | null = null;
@@ -17,7 +17,7 @@ async function fill(r: Response) { kept = await r.text(); }
 function use(): string { return typeof kept; }
 fill(new Response(JSON.parse('"abc"'))).then(() => { console.log(use()); console.log("went on"); });
 `,
-    stops: "what a variable holds is not of the type that the compiler has proven of it. It is: string.",
+    stops: "found string in a local variable",
   },
   "a field": {
     source: `class Holder { text: string | null = null; }
@@ -26,13 +26,13 @@ async function fill(h: Holder, r: Response) { h.text = await r.text(); }
 function use(h: Holder): string { return typeof h.text; }
 fill(holder, new Response(JSON.parse('"abc"'))).then(() => { console.log(use(holder)); console.log("went on"); });
 `,
-    stops: "StoreOfOtherType of an object of layout",
+    stops: "StoreOfOtherType on an instance of class 'Holder'",
   },
   "the parameter of a callback": {
     source: `function use(r: Response): Promise<string> { return r.text().then(text => typeof text); }
 use(new Response(JSON.parse('"abc"'))).then(kind => { console.log(kind); console.log("went on"); });
 `,
-    stops: "an entry parameter is not of the type that the compiler has proven of it. It is: string.",
+    stops: "found string in an argument",
   },
 };
 

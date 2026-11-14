@@ -1,0 +1,31 @@
+# -- source: main.cjs
+# function Shape() { this.radius = 0; }
+# Shape.prototype.copy = function () { return null; };
+# Shape.prototype.set = function (other) { this.radius = other.radius; };
+# function Circle(r) { this.radius = r; this.center = new Point(r); }
+# Circle.prototype = Object.create(Shape.prototype); Circle.prototype.constructor = Circle;
+# Circle.prototype.copy = function () { var made = new Circle(0); made.set(this); return made; };
+# Circle.prototype.set = function (other) { this.radius = other.radius; this.center.setV(other.center); };
+# Circle.prototype.area = function () { return 3.5 * this.radius + this.center.x; };
+# function Point(x) { this.x = x; }
+# Point.prototype.setV = function (other) { this.x = other.x; };
+# function Fixture() { this.shape = null; }
+# Fixture.prototype.create = function (def) { this.shape = def.shape.copy(); };
+# function Def() { this.shape = null; }
+# function run(count) {
+#   var def = new Def(), fixture = new Fixture(), sum = 0;
+#   for (var i = 0; i < count; i++) {
+#     def.shape = new Circle(i);
+#     fixture.create(def);
+#     sum += fixture.shape.area();
+#   }
+#   return sum;
+# }
+# console.log(run(10), run(100), new Shape().copy());
+# -- end of source
+# A call of a few methods that were read off prototypes enters each of them.
+# RUN: link functions
+# CHECK: function f7 callers-known
+# CHECK: function f8 callers-known
+# CHECK: function f9 callers-known
+# CHECK: function f10 callers-known

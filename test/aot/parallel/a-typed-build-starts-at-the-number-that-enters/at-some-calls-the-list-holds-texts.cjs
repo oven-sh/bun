@@ -1,4 +1,4 @@
-// STATISTIC: SumsThatGoRoundAsNumbersInTypedBuildsAlone >= 1
+// STATISTIC: SumsSpecializedAsNumbers >= 1
 "use strict";
 // At one call in three the elements are texts: both sums are texts there.
 const list = JSON.parse('[0.5,1.25,2,3.75]'), texts = JSON.parse('["a","b","c"]');

@@ -539,7 +539,7 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
         Output::err_generic("{}: {}", (BStr::new(&tree.label), message));
         Global::exit(1);
     };
-    let mut reader = bun_archive::open_memory(bytes, tar::Dialect::General)
+    let mut reader = bun_archive::open_memory(bytes, tar::Dialect::Npm)
         .map_err(|err| fail(err, "failed to read tarball"))?;
     while let Some(entry) = reader
         .next_entry()
@@ -551,13 +551,15 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
         let perm = (entry.perm() & 0o777) as bun_sys::Mode;
         let size = usize::try_from(entry.size().max(0)).expect("int cast");
         let path = bun_archive::display_path(entry)?;
-        let path: &[u8] = &path;
-        // npm tarballs root everything under one folder (usually `package/`).
-        let rel = match strings::index_of_char(path, b'/') {
-            Some(i) => &path[i as usize + 1..],
-            None => path,
+        // npm tarballs root everything under one folder (usually `package/`). What is beside it is not installed.
+        let Some((_, rel)) = strings::split_once_char(&path, b'/') else {
+            continue;
         };
-        if rel.is_empty() {
+        let rel = strings::trim_leading_char(rel, b'/');
+        let mut normalized = vec![0; rel.len() + 1];
+        let rel = bun_archive::normalize_npm_entry_path(rel, &mut normalized);
+        bun_paths::resolve_path::platform_to_posix_in_place(rel);
+        if matches!(&*rel, b"" | b".") {
             continue;
         }
         let rel = rel.to_vec();
@@ -594,8 +596,8 @@ fn read_dir_tree(
         modes: BTreeMap::new(),
         registry_entry: None,
     };
-    let root_fd = match bun_sys::open_dir_at(Fd::cwd(), root) {
-        Ok(fd) => fd,
+    let root_dir = match bun_sys::Dir::open(root) {
+        Ok(dir) => dir,
         Err(err) => {
             Status::clear();
             Output::err(err, "failed to open {}", (BStr::new(root),));
@@ -615,7 +617,7 @@ fn read_dir_tree(
     // A package (has a package.json) is read as `bun pm pack` would publish it: `files`, .npmignore/.gitignore,
     // bins — not the whole checkout with its vendor/ and build/.
     'package: {
-        if let Ok(pkg) = bun_sys::File::read_from(root_fd, b"package.json") {
+        if let Ok(pkg) = bun_sys::File::read_from(&root_dir, b"package.json") {
             // This has to come before the parse below, because it parses other package.json files.
             let manifests = as_published_by.and_then(|pm| manifests_for(pm, root, &pkg));
             let bump = Bump::new();
@@ -641,21 +643,19 @@ fn read_dir_tree(
                 }
                 // pack's own error paths crash without unwinding: no status line to print over.
                 Status::clear();
-                let dir = bun_sys::Dir::from_fd(root_fd);
                 let (queue, _bins) = crate::cli::pack_command::published_files(
-                    &dir,
+                    &root_dir,
                     root,
                     &json,
                     &bump,
                     bun_install::package_manager::LogLevel::Silent,
                 )?;
-                let _ = dir.into_raw();
                 for path in queue.into_paths() {
                     let rel = path.as_bytes();
-                    match bun_sys::File::read_from(root_fd, rel) {
+                    match bun_sys::File::read_from(&root_dir, rel) {
                         Ok(bytes) => {
                             #[cfg(not(windows))]
-                            if let Ok(st) = bun_sys::fstatat(root_fd, path.as_zstr()) {
+                            if let Ok(st) = bun_sys::fstatat(&root_dir, path.as_zstr()) {
                                 tree.modes.insert(rel.to_vec(), st.st_mode as u32 & 0o777);
                             }
                             tree.files.insert(rel.to_vec(), bytes);
@@ -668,12 +668,11 @@ fn read_dir_tree(
                     None => pkg,
                 };
                 tree.files.insert(b"package.json".to_vec(), pkg);
-                root_fd.close();
                 return Ok(tree);
             }
         }
     }
-    let mut stack: Vec<(Fd, Vec<u8>)> = vec![(root_fd, Vec::new())];
+    let mut stack: Vec<(Fd, Vec<u8>)> = vec![(root_dir.into_raw(), Vec::new())];
     while let Some((dir, prefix)) = stack.pop() {
         let mut it = DirIterator::iterate(dir);
         loop {

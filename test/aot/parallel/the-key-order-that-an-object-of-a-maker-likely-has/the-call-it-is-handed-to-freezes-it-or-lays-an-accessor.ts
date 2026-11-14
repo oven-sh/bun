@@ -1,5 +1,5 @@
 // Frozen, sealed, with an accessor under the very name, with another prototype.
-// STATISTIC: KeyOrdersAskedInFrontOfStores >= 7
+// STATISTIC: KeyOrderChecksBeforeStores >= 6
 const said: string[] = [];
 function tell(what: () => unknown) { try { said.push(String(what())); } catch (error: any) { said.push(error.constructor.name + ": " + error.message); } }
 const through = new Function("x", "return x");

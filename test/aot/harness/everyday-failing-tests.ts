@@ -4,17 +4,10 @@ import { expect } from "bun:test";
 import { everydayFailingTests } from "./everyday-failing-test-cases";
 import { each } from "./everyday-mocks-of-several-steps";
 
-// These tests wait for timers, so a case is asked up to three times, and fails if it fails each time.
 export function everydayFailingTestsIn(part: number, parts: number) {
-  each(
-    everydayFailingTests(),
-    part,
-    parts,
-    (name, plain, compiled) => {
-      // A pair is a pair: the good one passes and the bad one fails.
-      expect(plain.exitCode === 0).toBe(name.endsWith("--good"));
-      expect({ ...compiled, didNotRunAgain: 0 }).toEqual(plain);
-    },
-    3,
-  );
+  each(everydayFailingTests(), part, parts, (name, plain, compiled) => {
+    // A pair is a pair: the good one passes and the bad one fails.
+    expect(plain.exitCode === 0).toBe(name.endsWith("--good"));
+    expect({ ...compiled, didNotRunAgain: 0 }).toEqual(plain);
+  });
 }

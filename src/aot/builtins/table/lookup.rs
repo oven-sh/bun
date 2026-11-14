@@ -317,6 +317,13 @@ pub fn well_known_symbol(id: BuiltinId) -> Option<WellKnownSymbol> {
     Some(SYMBOL_CONSTANTS[position].2)
 }
 
+pub fn number_constant(id: BuiltinId) -> Option<f64> {
+    let position = NUMBER_CONSTANTS
+        .binary_search_by_key(&id, |&(constant, _)| constant)
+        .ok()?;
+    Some(NUMBER_CONSTANTS[position].1)
+}
+
 pub fn is_callable(id: BuiltinId) -> bool {
     match entry(id).kind {
         BuiltinKind::Constructor | BuiltinKind::Function | BuiltinKind::Method => true,
@@ -388,6 +395,10 @@ pub fn host_reads(context: HostReadContext) -> impl Iterator<Item = &'static Hos
 
 pub fn is_parser(builtin: BuiltinId) -> bool {
     PARSERS.binary_search(&builtin).is_ok()
+}
+
+pub fn is_name_of_parser(name: BuiltinName) -> bool {
+    PARSERS.iter().any(|&parser| entry(parser).name == name)
 }
 
 pub fn answers_query(builtin: BuiltinId) -> bool {

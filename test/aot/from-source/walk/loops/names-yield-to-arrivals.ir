@@ -1,0 +1,15 @@
+# f1 = total
+# -- source: main.mjs
+# const other = { list: 1, grid: [[2]] };
+# const d = JSON.parse('{"grid":[[1,2,3],[4,5,6],[7,8,9]]}'), e = JSON.parse('{"grid":[[1],null]}');
+# function total(d) { let sum = 0; for (let y = 0; y < d.grid.length; y++) for (let x = 0; x < d.grid[y].length; x++) sum += d.grid[y][x]; return sum; }
+# print(other.list, total(d));
+# try { total(e); } catch (error) { print(error instanceof TypeError); }
+# -- end of source
+# No object of the literal comes to total(), so its loops do not ask for the literal's shape.
+# RUN: walk f1:Body mechanisms=all
+# CHECK-NOT: ShapeTest
+# CHECK: = GetValueAtSiteOrAbsent {{*}} key="grid"
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 1 45
+# ANSWERS-NEXT: true

@@ -1,3 +1,4 @@
+# LIBRARY: own
 # `list.forEach(function (x) { .. })` in a method that nobody in sight calls in a loop, `rows.map(x => x + 1)` off a static field, `for (..) xs.forEach(x => { sum += x; })` in the body of a file: a list is expected of the
 # receiver, by the names asked or by an earlier rule, and still the read and the call went by name: outside loops that rule was silent, and a guess at the read of a method has to buy more than the read itself:
 # one operation was enough only for what is declared: a map, a set, a list out of a variable of the file that stays.

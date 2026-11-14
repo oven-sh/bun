@@ -5,9 +5,11 @@ use bun_sema::hir::{
 use bun_sema::program::{CompiledModule, FileId};
 use smallvec::{SmallVec, smallvec};
 
+use super::constructor::find_initial_fields;
 use super::{
-    ClassElement, ClassPlan, ClassTransform, FieldSemantics, FieldValue, InitializerCall,
-    InjectionPoint, KeyThatHoldsDecorators, PrintedForEachObject,
+    ClassElement, ClassPlan, ClassText, ClassTransform, FieldSemantics, FieldValue,
+    FieldsInConstructor, InitializerCall, InjectionPoint, KeyThatHoldsDecorators,
+    PrintedForEachObject,
 };
 use crate::ir::ClassSlot;
 use crate::lower::decorators::{self, InitializerLists};
@@ -421,20 +423,40 @@ fn find_member_slot(
     }
 }
 
-pub(in crate::lower) fn fields_evaluated_in_constructor(
+pub(in crate::lower) fn find_fields_evaluated_in_constructor<'t, 's>(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
     compiled: &CompiledModule<'_>,
     fields_under_signed_members: &[MemberId],
     class: ClassId,
-) -> SmallVec<[MemberId; 4]> {
+    get_text: &dyn Fn() -> ClassText<'t, 's>,
+) -> FieldsInConstructor {
     let plan = plan_class(hir, bound, compiled, fields_under_signed_members, class);
-    let injected = plan.injected_elements.iter();
-    let fields = injected.filter_map(|element| match *element {
+    let assigned = plan.injected_elements.iter();
+    let assigned = assigned.filter_map(|element| match *element {
         ClassElement::AssignedField { member } => Some(member),
         _ => None,
     });
-    fields.collect()
+    let with_value = plan.instance_elements.iter();
+    let with_value = with_value.filter_map(|element| match *element {
+        ClassElement::Field {
+            member,
+            value: FieldValue::Initializer,
+        } => Some(member),
+        _ => None,
+    });
+    let mut defined: SmallVec<[MemberId; 4]> = with_value.collect();
+    let is_at_birth = |constructor| {
+        !is_derived_class(hir, class)
+            && find_initial_fields(get_text(), &plan, constructor).is_some()
+    };
+    if !defined.is_empty() && !plan.constructor.is_some_and(is_at_birth) {
+        defined.clear();
+    }
+    FieldsInConstructor {
+        assigned: assigned.collect(),
+        defined,
+    }
 }
 
 pub(in crate::lower) fn is_printed_as_getter_and_setter(

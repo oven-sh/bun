@@ -206,6 +206,7 @@ fn order_program_layouts(merged: &Merged<'_>, definitions: &Definitions) -> Vec<
         .filter_map(|(layout, site)| Some(((*site)?, layout)));
     let mut defined: Vec<(DefinitionSite, u32)> = defined.collect();
     defined.sort_by_u64(|&(site, layout)| number_of_pair(site.unit, layout));
+    // The numbers of files move with the files that are merely listed. Where they alone tell layouts apart, the order in which the unit defines the layouts decides.
     let key_of = |layout: u32| &merged.layouts.keys[layout as usize].key;
     let tied = defined.chunk_by_mut(|&(site, layout), &(next_site, next)| {
         site.unit == next_site.unit && key_of(layout).differs_in_files_alone(key_of(next))

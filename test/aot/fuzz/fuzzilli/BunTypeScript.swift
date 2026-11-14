@@ -1,4 +1,4 @@
-// Turns the JavaScript that Fuzzilli writes into TypeScript. README.md beside this file describes the settings.
+// Turns the JavaScript that Fuzzilli writes into TypeScript. README.md beside this file says how to turn it on, and `TypeScriptSettings` below has the settings.
 //
 // Fuzzilli's typer knows a type for every variable. A plan is made from it before a program is lifted: which
 // declarations get an annotation and which one, which types are declared, and where a value has to pass through a
@@ -36,6 +36,10 @@ struct TypeScriptSettings {
     var withoutCasts = 25
     /// How often what follows a declaration is a scene of a place that is given what its type doesn't allow.
     var places = 20
+    /// How often what follows a declaration is a scene of objects that share fields with classes.
+    var sharedFields = 0
+    /// How often what follows a declaration is a scene of a list of objects of several classes and a primitive.
+    var mixedLayouts = 0
     /// How often a program is its scenes without a cast and nothing else.
     var scenesAlone = 0
     /// Added to what is computed from a program to seed its choices.
@@ -72,6 +76,8 @@ struct TypeScriptSettings {
             case "tested": settings.tested = value
             case "without-casts": settings.withoutCasts = value
             case "places": settings.places = value
+            case "shared-fields": settings.sharedFields = value
+            case "mixed-layouts": settings.mixedLayouts = value
             case "scenes-alone": settings.scenesAlone = value
             case "seed": settings.seed = UInt64(value)
             default: fatalError("BUN_FUZZILLI_TYPES: unknown setting \(part)")
@@ -3461,6 +3467,8 @@ extension TypeScriptPlan {
         }
         guard choices.percent(settings.tested) else { return [] }
         sitesWithTests += 1
+        if settings.sharedFields > 0, choices.percent(settings.sharedFields) { return sceneOfSharedFields(site: v.number) }
+        if settings.mixedLayouts > 0, choices.percent(settings.mixedLayouts) { return sceneOfMixedLayouts(site: v.number) }
         if choices.percent(settings.places) { return sceneOfATypedPlace(site: v.number) }
         if choices.percent(settings.withoutCasts) { return withTwin(sceneWithoutCasts(of: v, named: name), site: v.number) }
         if choices.percent(30), let lines = disturb(v, named: name) { return lines }
@@ -4445,6 +4453,108 @@ extension TypeScriptPlan {
                     ? "\(call).then(note, () => note(\"rejected\"));" : "try { note(\(call)); } catch (error) { note((error as any)?.name); \(Self.messageToStderr) }")
         }
         helpers.insert("note")
+        return ["{"] + indented(lines) + ["}"]
+    }
+
+    /// Loops read and store number fields of an object while classes with some of the same fields exist beside it, constructed or not, and start them at other kinds of values.
+    fileprivate func sceneOfSharedFields(site n: Int) -> [String] {
+        let names = ["n", "sum", "last"]
+        let numbers = ["0", "0", "1", "7", "0.5", "2.5", "-1"]
+        let values = numbers + ["true", "\"7\"", "null", "-0", "2147483648"]
+        let field = choices.pick(names)
+        let other = choices.pick(names.filter { $0 != field })
+        var lines = [String]()
+        var fieldsOfFirst = [String]()
+        for index in 0..<choices.pick([1, 2, 4, 4, 4, 4]) {
+            let own = names.filter { _ in choices.percent(index == 0 ? 65 : 4) }
+            if index == 0 { fieldsOfFirst = own }
+            let keyword = choices.percent(50) ? "declare " : ""
+            let declared = (["list"] + own).map { "\(keyword)\($0): any; " }.joined()
+            let stores = own.map { " this.\($0) = \(choices.pick(numbers));" }.joined()
+            lines.append("class Shared\(n)_\(index) { \(declared)constructor(list: any) { this.list = list;\(stores) } }")
+        }
+        lines.append("const revive\(n) = (value: any): any => JSON.parse(\"0\", () => value);")
+        // A type with the fields of a class lets an object stand for one of its instances.
+        let parameter = choices.percent(75) ? "{ \((["list"] + fieldsOfFirst).map { "\($0): any; " }.joined())[name: string]: any }" : "any"
+        let step = choices.pick(["+= 0.5", "+= 0.5", "+= 0.5", "/= 2", "+= 1", "+= 2 ** 40", "+= \"x\""])
+        let store = choices.pick(["(o.\(other) + 1) | 0", "i", "i", "o.\(other) + 0.5", "o.\(field)"])
+        let computed = choices.pick(["(o.\(field) * 31 + o.list[i >> 1]) | 0", "(o.\(field) + o.list[i >> 1]) | 0", "(o.\(field) * 31 + i) | 0", "Math.floor(o.\(field) * 31 + o.list[i >> 1])"])
+        var body = ["        o.\(other) = \(store);", "        o.\(field) = \(computed);"]
+        if choices.percent(10) { body.reverse() }
+        lines += ["function tally\(n)(o: \(parameter)): string {", "    for (let j = 0; j < \(choices.pick([1, 3, 3, 3, 4])); j++) o.\(field) \(step);", "    for (let i = 0; i < \(choices.pick([1, 8, 8, 8])); i++) {"] + body
+        lines += ["    }", "    return o.\(field) + \"/\" + o.\(other);", "}"]
+        switch choices.below(4) {
+        case 0, 1: lines += ["const rows\(n): any[] = [];", "for (const row of rows\(n)) printValue(\"made\", typeof new Shared\(n)_0(row));"]
+        case 2: lines.append("printValue(\"made\", typeof new Shared\(n)_0([1]));")
+        default: break
+        }
+        let order = choices.percent(80) ? ["list"] + names : ["sum", "n", "list", "last"]
+        let members = order.map { name -> String in
+            if name == "list" { return "list: [1, 2, 3, 4]" }
+            return "\(name): \(name == other && choices.percent(50) ? choices.pick(["0.5", "2.5", "true"]) : choices.percent(70) ? choices.pick(numbers) : choices.pick(values))"
+        }
+        let object = "{ \(members.joined(separator: ", ")) }"
+        let made = choices.pick(["revive\(n)(\(object))", "revive\(n)(\(object))", "revive\(n)(\(object))", object, "{ ...\(object) }", "JSON.parse(JSON.stringify(\(object)))", "[\(object)][JSON.parse(\"0\")]"])
+        lines.append("try { printValue(\"fields\", tally\(n)(\(made) as any)); } catch (error) { printValue(\"threw\", (error as any)?.name); \(Self.messageToStderr) }")
+        return ["{"] + indented(lines) + ["}"]
+    }
+
+    /// A list holds objects of several classes and a primitive, and one object is changed. Functions read fields of each element more than once and behind tests of what it is.
+    fileprivate func sceneOfMixedLayouts(site n: Int) -> [String] {
+        let (primitive, kind) = choices.pick([("4", "number"), ("4", "number"), ("2.5", "number"), ("\"word\"", "string"), ("true", "boolean"), ("5n", "bigint")])
+        let classCount = choices.pick([2, 3, 3, 3, 4])
+        var lines = [String]()
+        for index in 0..<classCount {
+            let own = index == 0 ? ["size", "lid"] : choices.percent(75) ? ["own\(index)"] : ["own\(index)", choices.pick(["size", "lid"])]
+            let type = choices.pick(["number", "number", "any"])
+            let declared = own.map { "\($0): \(type); " }.joined()
+            let stores = own.map { " this.\($0) = value;" }.joined()
+            lines.append("class Mixed\(n)_\(index) { \(declared)constructor(value: \(type)) {\(stores) } }")
+        }
+        let classes = (0..<classCount).map { "Mixed\(n)_\($0)" }
+        let union = (classes + [kind]).joined(separator: " | ")
+        let parameter = choices.percent(60) ? union : "any"
+        let object = parameter == "any" ? "value" : "(value as Mixed\(n)_0)"
+        let tests = [
+            "typeof value !== \"\(kind)\"", "typeof value !== \"\(kind)\"", "typeof value !== \"\(kind)\"", "typeof value === \"object\"",
+            "value instanceof Mixed\(n)_0", "!(value instanceof Mixed\(n)_1)", "value != null", "typeof value !== \"\(kind)\" && value instanceof Mixed\(n)_0",
+        ]
+        for reader in 0..<choices.pick([1, 2, 3]) {
+            var body = [String]()
+            func use() -> String {
+                let read = "\(object).\(choices.percent(75) ? "size" : "lid")"
+                return choices.pick(["text += \(read);", "text += \"/\" + \(read);", "text += `${\(read)}`;", "total += (\(read) as any) | 0;", "text += String(\(read));", "if ((\(read) as any) === 5) total += 100;"])
+            }
+            body.append(use())
+            for _ in 0..<choices.pick([1, 2, 3]) {
+                let test = choices.pick(tests)
+                switch choices.below(5) {
+                case 0: body += ["if (\(test)) {", "    \(use())", "} else {", "    total += 1000;", "}"]
+                case 1: body += ["if (!(\(test))) return text + total;", use()]
+                case 2: body.append(use())
+                default: body.append("if (\(test)) \(use())")
+                }
+            }
+            if choices.percent(40) { body = ["for (let turn = 0; turn < \(choices.pick([1, 2, 3])); turn++) {"] + indented(body) + ["}"] }
+            lines += ["function describe\(n)_\(reader)(value: \(parameter)): string {", "    let text = \"\";", "    let total = 0;"] + indented(body) + ["    return text + total;", "}"]
+            lines.append("const read\(n)_\(reader) = describe\(n)_\(reader);")
+            if reader == 0 {
+                lines.append("const changed\(n) = new Mixed\(n)_0(5);")
+                lines.append(
+                    choices.pick([
+                        "delete (changed\(n) as any).lid;", "delete (changed\(n) as any).lid;", "delete (changed\(n) as any).lid;", "delete (changed\(n) as any).size;", "(changed\(n) as any).more = 1;", "Object.freeze(changed\(n));",
+                        "Object.defineProperty(changed\(n), \"lid\", { get: () => 8, enumerable: true, configurable: true });", "Object.setPrototypeOf(changed\(n), { own1: 6 });", "(changed\(n) as any).size = \"another\";",
+                    ]))
+                let elements = classes.enumerated().map { "new \($1)(\($0 + 1))" } + ["changed\(n)", primitive]
+                lines.append("const mixed\(n): (\(parameter))[] = [\(elements.joined(separator: ", "))];")
+            }
+            let name = choices.percent(85) ? "describe\(n)_\(reader)" : "read\(n)_\(reader)"
+            switch choices.below(5) {
+            case 0: lines.append("for (const each of mixed\(n)) printValue(\"mixed\", \(name)(each));")
+            case 1: lines += (0..<(classCount + 2)).map { "printValue(\"mixed\", \(name)(mixed\(n)[\($0)]!));" }
+            default: lines.append("for (let i = 0; i < mixed\(n).length; i++) printValue(\"mixed\", \(name)(mixed\(n)[i]!));")
+            }
+        }
         return ["{"] + indented(lines) + ["}"]
     }
 

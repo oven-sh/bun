@@ -1,4 +1,4 @@
-// STATISTIC: ReadsToldApartByShape >= 1
+// STATISTIC: PropertyReadsDispatchedByShape >= 1
 abstract class Disk { abstract get width(): number; }
 class Coin extends Disk { constructor(public radius: number) { super(); } get width(): number { return this.radius * 2; } }
 class Plate extends Disk { constructor(public across: number) { super(); } get width(): number { return this.across; } }

@@ -630,6 +630,15 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
         self.try_specifier(&[text, b".js"].concat())
     }
 
+    fn find_module_of_data_url(&self, url: &[u8]) -> Option<CodeFile<'h>> {
+        let site = self.request.site;
+        if !self.is_whole_alternative || !site.is_written_in_load || site.type_attribute.is_some() {
+            return None;
+        }
+        let path = (self.resolver.code_host()).create_module_from_data_url(url)?;
+        Some(self.resolver.code_file(&path, None))
+    }
+
     fn try_specifier(&mut self, text: &[u8]) -> Result<(), ComputedUnknown> {
         let request = self.request;
         if !matches_pattern(text, request.prefix, request.suffix)
@@ -692,9 +701,12 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
             CodeResolution::File(file) => ComputedCandidate::File(file),
             CodeResolution::HostModule(module) => ComputedCandidate::HostModule(module),
             CodeResolution::External {
+                specifier,
                 kind: ExternalKind::UncompiledCode,
-                ..
-            } => return Err(ComputedUnknown::ExternalCandidate),
+            } => match self.find_module_of_data_url(specifier) {
+                Some(file) => ComputedCandidate::File(file),
+                None => return Err(ComputedUnknown::ExternalCandidate),
+            },
             CodeResolution::External {
                 kind: ExternalKind::HostValue,
                 ..

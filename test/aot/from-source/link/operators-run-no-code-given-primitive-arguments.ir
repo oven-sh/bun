@@ -1,0 +1,19 @@
+# -- source: main.ts
+# declare const process: any;
+# const lists: number[][] = JSON.parse("[[1, 2, 3], [5, 6]]");
+# function inside(code: number): boolean { let low = 0, high = 20; while (low < high) { const middle = (low + high) >> 1; if (middle * 40 < code) low = middle + 1; else high = middle; } return low > 3; }
+# function either(code: number | string): boolean { return (code as number) > 3; }
+# function loose(code: any): boolean { return code > 3; }
+# function count(list: number[]): number { let n = 0; for (let i = 0; i < list.length; i++) { const x = list[i]!; if (x > 200 && inside(x)) n++; n += x; } return n; }
+# const bad: any = { valueOf() { return 7; } };
+# console.log(count(lists[0]!), either(bad), loose(bad), loose({}));
+# -- end of source
+# An operator on a parameter runs the conversions of objects. Given primitives, as the parameter is expected to be, it runs none.
+# RUN: link functions mechanisms=all
+# CHECK-LABEL: function f1
+# CHECK: given-arguments as-expected=[0]
+# CHECK-LABEL: function f2
+# CHECK: given-arguments as-expected=[0]
+# CHECK-LABEL: function f3
+# CHECK-NOT: given-arguments
+# CHECK-LABEL: function f4

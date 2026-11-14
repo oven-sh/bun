@@ -7,12 +7,12 @@
 # 17 for a Uint8ClampedArray; and such a turn was not laid out by eights. A plain sum of 1,000 elements: 11,134 .. 24,128 instructions, plain Bun 4,078 .. 8,070.
 # The kind of a view never changes. The code generator lays turns out in a row once for each kind that the view's type lists, as it does for the two kinds of storage of a list; the kind is asked in front of them;
 # in them the read is the read of one kind. The rest keeps the chain. 4,171 .. 5,189.
-# RUN: compile LoopsLaidOutForEachKindOfView mechanisms=all
-# CHECK: statistic LoopsLaidOutForEachKindOfView 1
+# RUN: compile UnrolledLoopsForTypedArrays mechanisms=all
+# CHECK: statistic UnrolledLoopsForTypedArrays 1
 # Four turns a kind, not the eight of a loop of one kind: eight kinds stand here: a loop told apart weighed 3,573 B and 4.0 M instructions of build more by them; by four 2,083 B and 2.4 M, half an instruction an element dearer,
 # and a view of four to seven elements runs in them.
-# RUN(TURNS): compile TurnsLaidOutForKindsOfViews mechanisms=all
-# TURNS: statistic TurnsLaidOutForKindsOfViews 32
+# RUN(TURNS): compile UnrolledIterationsForTypedArrays mechanisms=all
+# TURNS: statistic UnrolledIterationsForTypedArrays 32
 # RUN(ANSWERS): run-in-shell mechanisms=all
 # ANSWERS: -57 2040 -5100 589815 -1120000 42949672950 5.5 5.75 14 0
 # ANSWERS-NEXT: exited with 0

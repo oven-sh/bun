@@ -4,6 +4,6 @@
 # -- source: main.js
 # const util = require("node:util"); for (const bad of [[() => {}, "m"], [() => {}, "n"]]) { util.deprecate(...bad); print("ok"); }
 # -- end of source
-# RUN(BUILDS): compile CallsWalkedApartFromSpreadsOfWhatIsNoList mechanisms=all
+# RUN(BUILDS): compile SpreadCallsSpecializedForArrays mechanisms=all
 # BUILDS-NOT: a jump hands on what has no type
-# BUILDS: statistic CallsWalkedApartFromSpreadsOfWhatIsNoList {{*}}
+# BUILDS: statistic SpreadCallsSpecializedForArrays {{*}}

@@ -1140,7 +1140,7 @@ const ClassInfo JSMockFunction::s_info = { "Mock"_s, &Base::s_info, nullptr, nul
 
 class SpyWeakHandleOwner final : public JSC::WeakHandleOwner {
 public:
-    void finalize(JSC::Handle<JSC::Unknown>, void* context) final {}
+    FinalizeResult finalize(JSC::Handle<JSC::Unknown>, void* context) final { return FinalizeResult::KeepImpl; }
 };
 
 static SpyWeakHandleOwner& weakValueHandleOwner()
@@ -3060,7 +3060,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     // A module mock's exports are read live from the object its factory returned, so spy on that object.
 #if ENABLE(AOT)
     while (globalObject->aotInstance()) {
-        JSObject* exports = Bun::objectHoldingExportOfCompiledModuleMock(globalObject, object, propertyKey);
+        JSObject* exports = Bun::compiledMockExportHolder(globalObject, object, propertyKey);
         RETURN_IF_EXCEPTION(scope, {});
         if (!exports)
             break;
@@ -3136,7 +3136,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
             bool isReplaced = JSC::AOT::tryReplaceExport(object, propertyKey.impl(), replacement);
             RETURN_IF_EXCEPTION(scope, true);
             if (!isReplaced)
-                throwTypeError(globalObject, scope, JSC::AOT::spyOnExportErrorMessage(object, propertyKey.impl(), Bun::fileOfCallerThatWasNotCompiled(vm, callframe)));
+                throwTypeError(globalObject, scope, JSC::AOT::spyOnExportErrorMessage(object, propertyKey.impl(), Bun::uncompiledCallerFile(vm, callframe)));
             return true;
         }
 #endif

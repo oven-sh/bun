@@ -1,0 +1,19 @@
+# -- source: main.cjs
+# class Base { constructor(n) { this.n = n; } }
+# class Early extends Base { constructor(n, held) { if (held) return held.copy(); super(n); this.first = n; this.second = n * 2; } copy() { return new Early(this.n); } }
+# class Late extends Base { constructor(n, held) { super(n); if (held) return held.copy(); this.third = n; } copy() { return new Late(this.n); } }
+# class Round extends Base { constructor(n, held) { for (var i = 0; i < 2; i++) { if (i) return held; super(n); } this.fourth = n; } }
+# var a = new Early(1), b = new Early(2, a), c = new Late(3), d = new Late(4, c), e = new Round(5, a);
+# print(a.first + a.second + b.first, c.third, d.third, e.n, e.fourth);
+# -- end of source
+# What leaves a derived constructor in front of super() leaves no instance behind.
+# RUN: print
+# CHECK: name="Early" {{*}}key="first" declared={type=anything} flags=[IsRequired]}, {key="second" declared={type=anything} flags=[IsRequired]}
+# CHECK: name="Late" {{*}}key="third" declared={type=anything}}
+# CHECK: name="Round" {{*}}key="fourth" declared={type=anything}}
+# RUN(ANSWER): run-in-shell
+# ANSWER: 4 3 3 1 undefined
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: 4 3 3 1 undefined
+# CHECKED-NEXT: exited with 0

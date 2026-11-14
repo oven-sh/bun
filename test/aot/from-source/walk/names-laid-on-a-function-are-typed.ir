@@ -1,0 +1,12 @@
+# -- source: main.mjs
+# function Vector() {}
+# Vector.limit = 7;
+# Vector.twice = function (x) { return x * 2 + 1; };
+# function use(n) { let t = 0; for (let i = 0; i < n; i++) t = (t + Vector.limit + Vector.twice(i)) | 0; return t; }
+# console.log(use(process.argv.length * 9));
+# -- end of source
+# What is laid on a function in sight under a name is read with its type, as a value and as a callee.
+# RUN(VALUE): walk f2 mechanisms=all
+# VALUE: undefined|int{{*}} PropGet {{*}} key="limit"
+# RUN(CALLEE): walk f2 mechanisms=all
+# CALLEE: undefined|f3 {{*}} PropGet {{*}} key="twice"

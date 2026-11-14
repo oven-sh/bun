@@ -24,15 +24,15 @@
 # RUN(TURNS): emit f2 mechanisms=all
 # TURNS-LABEL: unit f2:Body
 # `i & 7` stands at two places of the text: nine of the one, among them the eight turns laid out, and one of the other. arm64 has one more BitAnd, at the entry, which is none of them.
-# TURNS-COUNT-9: = BitAnd({{*}}origin = 102)
-# TURNS-NOT: = BitAnd({{*}}origin = 102)
+# TURNS-COUNT-9: = BitAnd({{*}}origin = 101)
+# TURNS-NOT: = BitAnd({{*}}origin = 101)
 # RUN(OTHER): emit f2 mechanisms=all
 # OTHER-COUNT-1: = BitAnd({{*}}origin = 70)
 # OTHER-NOT: = BitAnd({{*}}origin = 70)
-# RUN(EVENT): compile LoopsWhoseTurnsAreLaidOut StoresLeftOutOfTurnsLaidOut SumsOfIntegersInTurnsLaidOut mechanisms=all
-# EVENT: statistic LoopsWhoseTurnsAreLaidOut 1
-# EVENT: statistic StoresLeftOutOfTurnsLaidOut 1
-# EVENT: statistic SumsOfIntegersInTurnsLaidOut 1
+# RUN(EVENT): compile UnrolledLoopsEmitted UnrolledLoopStoresSunk UnrolledLoopIntegerSums mechanisms=all
+# EVENT: statistic UnrolledLoopsEmitted 1
+# EVENT: statistic UnrolledLoopStoresSunk 1
+# EVENT: statistic UnrolledLoopIntegerSums 1
 # RUN(RIGHT): run-in-shell globalThis.count = () => 40;
 # RIGHT: 140
 # RIGHT-NEXT: exited with 0

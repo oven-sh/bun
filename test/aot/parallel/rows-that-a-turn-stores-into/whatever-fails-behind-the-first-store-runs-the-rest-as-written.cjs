@@ -1,6 +1,6 @@
 // The rows are made by pushing: a row written as a literal is shared until it is first written, and the arm in kind would not take it.
 // Every test of the typed arm is made to fail, in front of the first store and behind it, on rows of every kind; what was stored stays stored once, and nothing is stored twice.
-// STATISTIC: RowsAskedOnceWhereStretchesStoreIntoThem >= 1
+// STATISTIC: RowStoreRegionsGuarded >= 1
 "use strict";
 function turned(count, grid, sine, cosine, from, to) { let held; for (let i = from - 1; i >= to; i--) { for (let k = 0; k < count; k++) { held = grid[k][i + 1]; grid[k][i + 1] = sine * grid[k][i] + cosine * held; grid[k][i] = cosine * grid[k][i] - sine * held; } } }
 function reached(count, grid, from, to) { for (let i = from - 1; i >= to; i--) { for (let k = 0; k < count; k++) { grid[k][i] = grid[k][i] * 2 + 1; grid[k][i + 3] = grid[k][i] + 0.5; } } }

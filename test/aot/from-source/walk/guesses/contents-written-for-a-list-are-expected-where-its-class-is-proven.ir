@@ -38,6 +38,5 @@
 # RUN(LOOSE): walk f3 mechanisms=all-Inlining
 # LOOSE-LABEL: code f3:Body
 # LOOSE: : anything{{*}} = GetArrayElement
-# LOOSE: = GetSlot {{*}} key="kind" {{*}}level=Expected
 # LOOSE: = ShapeTest {{*}} layouts=[L2]
-# LOOSE: = GetSlot {{*}} key="kind"
+# LOOSE: = GetSlot {{*}} key="kind" {{*}}level=Proven

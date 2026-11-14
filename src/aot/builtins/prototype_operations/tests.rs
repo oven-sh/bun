@@ -45,6 +45,13 @@ fn operands_are_positions_of_arguments() {
         ),
         (BuiltinId::ObjectDefineProperty, define_property),
         (BuiltinId::ReflectDefineProperty, define_property),
+        (
+            BuiltinId::ObjectDefineProperties,
+            PrototypeOperation::DefineProperties {
+                object: 0,
+                descriptors: 1,
+            },
+        ),
         (BuiltinId::FunctionPrototypeCall, call_function),
         (BuiltinId::FunctionPrototypeApply, call_function),
     ];
@@ -59,7 +66,6 @@ fn other_builtins_are_no_operations() {
     let builtins = [
         BuiltinId::Object,
         BuiltinId::ObjectPrototype,
-        BuiltinId::ObjectDefineProperties,
         BuiltinId::ObjectKeys,
         BuiltinId::ReflectGet,
         BuiltinId::FunctionPrototypeToString,

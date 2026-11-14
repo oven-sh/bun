@@ -321,7 +321,7 @@ impl ExtractTarball {
                     }
                     if zlib_pool.list.capacity() > 16 {
                         use bun_libdeflate_sys::libdeflate;
-                        if let Some(mut decompressor) = libdeflate::OwnedDecompressor::new() {
+                        if let Some(decompressor) = libdeflate::OwnedDecompressor::new() {
                             zlib_pool.list.clear();
                             let result = decompressor.decompress_to_vec(
                                 tgz_bytes,
@@ -329,9 +329,10 @@ impl ExtractTarball {
                                 libdeflate::Encoding::Gzip,
                             );
                             // libdeflate only reads the first gzip member, so a tarball with more
-                            // than one member is left to `extract_to_dir`.
+                            // than one member is left to `extract_to_dir`, which also counts the layers.
                             if result.status == libdeflate::Status::Success
                                 && result.read == tgz_bytes.len()
+                                && !bun_archive::tar::gzip::starts_like_header(&zlib_pool.list)
                             {
                                 decompressed_in_memory = true;
                             }

@@ -1,10 +1,11 @@
 // Under --minify-syntax `bun build` leaves out an unused `new Map([..])`, `new Set([..])` and the like. An executable built with --aot leaves out the same.
 import { expect } from "bun:test";
-import { readFileSync, rmSync } from "fs";
+import { rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned } from "./harness/commands";
 import { afterAll } from "./harness/default-timeout";
+import { bytesAndStoredStrings } from "./harness/executable-bytes";
 import { buildFlags, compileCommand } from "./harness/flags";
 import { beforeAll, describe, test } from "./supported";
 
@@ -60,7 +61,7 @@ describe.each([
   beforeAll(async () => {
     const command = [bunExe(), ...compileCommand, buildFlags.withoutFunctionSource, ...flags];
     built(await spawned([...command, "./main.ts", "--outfile", executable], folder, bunEnv));
-    bytes = readFileSync(executable);
+    bytes = bytesAndStoredStrings(executable);
   }, 300_000);
 
   test("the program prints what it prints under plain Bun", async () => {

@@ -3,9 +3,8 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
-import { hasNodeModulesAbove } from "./harness/without-installing-packages";
+import { join } from "node:path";
+import { hasNodeModulesAbove, temporaryFolderThatInstalls } from "./harness/without-installing-packages";
 
 const missing = "a-package-that-no-test-installs";
 const program = `
@@ -80,7 +79,7 @@ describe("plain Bun asks no registry for a package that is not installed", () =>
   });
 
   // Without this the two tests above would pass with a registry that nobody can reach.
-  const outside = basename(tmpdir()) === "aot" ? dirname(tmpdir()) : tmpdir();
+  const outside = temporaryFolderThatInstalls();
   test.skipIf(hasNodeModulesAbove(outside))("and does ask where no folder above holds node_modules", async () => {
     const folder = mkdtempSync(join(outside, "asks-the-registry-"));
     try {

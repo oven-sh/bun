@@ -53,7 +53,7 @@ fn queue_request<'a>(request: &CompileRequest<'a, '_>) -> Request<'a> {
         threads: request.threads.get(),
         libs: request.libs,
         progress: request.progress,
-        order: 1,
+        order: request.order,
         plan_options: PlanOptions {
             after_file_only_for_checked_files: true,
             task_size: TaskSize::ByCostAndThreads,

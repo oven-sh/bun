@@ -1,5 +1,5 @@
 use bun_sema::bind::{FnOwner, FunctionFlags, ScopeId, ScopeKind};
-use bun_sema::hir::{FnId, FnKind};
+use bun_sema::hir::{FnId, FnKind, find_transpiled_mark};
 use bun_sema::module_format::evaluates_own_this;
 
 use crate::ir::generated::{HomeObjectKind, ModuleKind, RuntimeErrorKind};
@@ -77,7 +77,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn lower_this_expression(&mut self) -> ValueId {
         match self.find_lexical_owner() {
             LexicalOwner::File(_)
-                if self.file.compiled.analysis.has_esm_syntax && !self.is_in_value_of_field() =>
+                if self.file.compiled.analysis.has_esm_syntax
+                    && !self.is_in_value_of_field()
+                    && find_transpiled_mark(&self.file.hir.text).is_none() =>
             {
                 self.builder.null()
             }
@@ -132,6 +134,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn get_derived_constructor_this(&mut self, owner: ScopeId) -> ValueId {
         let value = self.get_slot(owner, ScopeSlot::This);
+        if self.scopes.initialized_this.contains(&value) {
+            return value;
+        }
         let split = self.split_on_type(value, TypeTable::ABSENT);
         self.builder.switch_to(split.taken);
         self.emit_throw_runtime_error(RuntimeErrorKind::UninitializedThis, None);
@@ -140,6 +145,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if let Some(local) = self.scopes.find_local(binding) {
             self.builder
                 .write_variable(local.variable, split.not_taken_value);
+            self.scopes.initialized_this.push(split.not_taken_value);
         }
         split.not_taken_value
     }
@@ -155,11 +161,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
         };
         let old = self.get_slot(owner, ScopeSlot::This);
-        let split = self.split_on_type(old, TypeTable::ABSENT);
-        self.builder.switch_to(split.not_taken);
-        self.emit_throw_runtime_error(RuntimeErrorKind::ThisAlreadyBound, None);
-        self.builder.switch_to(split.taken);
+        if !self.builder.is_absent(old) {
+            let split = self.split_on_type(old, TypeTable::ABSENT);
+            self.builder.switch_to(split.not_taken);
+            self.emit_throw_runtime_error(RuntimeErrorKind::ThisAlreadyBound, None);
+            self.builder.switch_to(split.taken);
+        }
         self.set_slot(owner, ScopeSlot::This, value);
+        self.scopes.initialized_this.push(value);
     }
 
     pub(crate) fn get_new_target(&mut self) -> ValueId {

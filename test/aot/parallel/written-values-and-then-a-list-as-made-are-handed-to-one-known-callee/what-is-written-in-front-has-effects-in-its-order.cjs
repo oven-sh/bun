@@ -1,5 +1,5 @@
 'use strict';
-// STATISTIC: CallsWhoseParametersAreReadOutOfList >= 1
+// STATISTIC: SpreadCallsUnpackedToParameters >= 1
 let order = "";
 function note(word) { order += word; return word; }
 function inner(a, b, c, d) { return [a, b, c, d].join(); }

@@ -57,7 +57,7 @@ async function pagesOpenedBy(text: string) {
   return readFileSync(counts, "utf8")
     .split("\n")
     .map(line => line.split("\t"))
-    .filter(([, name]) => name === "counter:MethodTableMadeWritable")
+    .filter(([, name]) => name === "counter:MethodTablePagesMadeWritable")
     .map(([count]) => Number(count));
 }
 

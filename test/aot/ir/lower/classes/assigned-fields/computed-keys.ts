@@ -18,6 +18,7 @@ const first = "first";
 declare function f(): void;
 f();
 let variable = "variable";
+variable += "s";
 
 export class SignedNumber {
   [-1] = 1;

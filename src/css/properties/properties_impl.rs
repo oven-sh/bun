@@ -6,7 +6,7 @@ use css::VendorPrefix;
 use css::css_properties::CustomPropertyName;
 use css::css_properties::{Property, PropertyId, PropertyIdTag};
 
-impl Property {
+impl Property<'_> {
     /// Returns the *raw* enum discriminant of this `Property` as a
     /// [`PropertyIdTag`].
     ///
@@ -68,7 +68,9 @@ pub(super) mod property_id_mixin {
         )
     }
 
-    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<PropertyId> {
+    pub(crate) fn parse<'bump>(
+        input: &mut css::Parser<'_, 'bump>,
+    ) -> css::Result<'bump, PropertyId<'bump>> {
         let name = input.expect_ident()?;
         // `transition-property: unset` is the css-wide keyword, not a property of that name.
         if css::css_values::ident::is_reserved_custom_ident(name) {
@@ -77,7 +79,7 @@ pub(super) mod property_id_mixin {
         Ok(from_string(name))
     }
 
-    pub(crate) fn from_string(name_: &[u8]) -> PropertyId {
+    pub(crate) fn from_string(name_: &[u8]) -> PropertyId<'_> {
         let (prefix, trimmed_name) = VendorPrefix::strip_from(name_);
         PropertyId::from_name_and_prefix(trimmed_name, prefix)
             .unwrap_or_else(|| PropertyId::Custom(CustomPropertyName::from_str(name_)))

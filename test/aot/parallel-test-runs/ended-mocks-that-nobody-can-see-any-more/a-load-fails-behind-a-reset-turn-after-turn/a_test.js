@@ -28,4 +28,4 @@ test('h-fails', async () => {
     vi.doUnmock('./part.mjs');
   }
   await tell('h-fails 50', refs, word);
-});
+}, 60000);

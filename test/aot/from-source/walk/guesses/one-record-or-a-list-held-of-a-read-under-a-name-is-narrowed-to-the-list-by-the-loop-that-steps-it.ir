@@ -11,7 +11,7 @@
 # Under a name lies one record or a list of them, and Link holds both of the read. One question cannot tell the two, and asked for both at once it tells nothing. The loop asks the value for its length and its elements under an index: that use lies within what is held, so it narrows it: the value is asked in front of the turns whether it is a list.
 # f5 = emit
 # RUN(HELD): link held accesses mechanisms=all
-# HELD: read f5 v{{*}} proven=undefined|null|L0|Array
+# HELD: read f5 v{{*}} proven=undefined|L0|Array
 # The turns are built twice behind that one question, typed and as written.
 # RUN(FORM): walk f5 mechanisms=all
 # FORM-LABEL: code f5:Body

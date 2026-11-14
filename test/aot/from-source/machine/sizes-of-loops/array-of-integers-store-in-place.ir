@@ -12,10 +12,9 @@
 # -- end of source
 # The compiler before this one: 10 instructions, 1 of them patches.
 # When the bound was taken: loop: operations 26, patches 2, moves 1, unlikely 0.
-# A store of a number into a list stands in turns laid out in a row: eight turns in 100 for int32s and in 101 for doubles (12.6 a turn against 25); the written loop stands behind them for the rest, as it was.
-# RUN(X64): loops most:100,101,27 f1 mechanisms=all-Inlining
+# A store of a number into a list stands in turns laid out in a row: eight turns in 59 for int32s (7.4 a turn against 25); the written loop stands behind them for the rest.
+# RUN(X64): loops most:68,12 f1 mechanisms=all-Inlining
 # REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
 # X64-LABEL: unit f1:Body
-# X64-NEXT: loop: at most 100
-# X64-NEXT: loop: at most 101
-# X64-NEXT: loop: at most 27
+# X64-NEXT: loop: at most 68
+# X64-NEXT: loop: at most 12

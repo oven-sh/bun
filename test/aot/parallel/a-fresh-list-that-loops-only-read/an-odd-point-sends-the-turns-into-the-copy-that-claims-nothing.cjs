@@ -1,4 +1,4 @@
-// STATISTIC: ListsKeptAtHeadsThoughAnAnswerAboutThemWasForgotten >= 1
+// STATISTIC: RetainedObjectFactLossesIgnored >= 1
 "use strict";
 // Points that are no lists of numbers run the copy that claims nothing; it reads the literal as it was made.
 const spots = JSON.parse('[[0.5,1.5],{"0":2,"1":3},"ab",[3,4],[null,1],[1.5],[],{"0":"7","1":[1]}]');

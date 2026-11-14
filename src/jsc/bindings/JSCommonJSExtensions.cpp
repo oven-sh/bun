@@ -238,7 +238,7 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
     JSC::JSValue specifier = callFrame->argument(1);
     WTF::String specifierWtfString = specifier.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    bool hasGoneOn = goOnWithRequireHandedToLoaderOfProgram(global, mod, specifierWtfString);
+    bool hasGoneOn = resumeDelegatedRequire(global, mod, specifierWtfString);
     RETURN_IF_EXCEPTION(scope, {});
     if (hasGoneOn)
         return JSC::JSValue::encode(jsUndefined());

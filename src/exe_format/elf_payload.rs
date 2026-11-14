@@ -274,8 +274,8 @@ impl<D: core::ops::DerefMut<Target = [u8]>> ElfFile<D> {
         };
         let PayloadPlace {
             replaces_payload,
-            mapping,
-            spare_headers,
+            mut mapping,
+            mut spare_headers,
             tail,
         } = place;
         let header_size = size_of::<u64>() as u64;
@@ -291,6 +291,34 @@ impl<D: core::ops::DerefMut<Target = [u8]>> ElfFile<D> {
             file_offset: ehdr.e_phoff + (index * size_of::<Elf64_Phdr>()) as u64,
             header,
         };
+        // A payload of an earlier build without code ends the linked segment, or is a segment.
+        let mut linked_header = None;
+        if replaces_payload
+            && code_in_section.is_some()
+            && spare_headers.start == mapping.header_index + 1
+        {
+            let linked_size = mapping.address - mapping.header.p_vaddr;
+            if linked_size == 0 {
+                spare_headers.start = mapping.header_index;
+            } else if spare_headers.len() >= PAYLOAD_SEGMENT_COUNT {
+                let linked = Elf64_Phdr {
+                    p_filesz: linked_size,
+                    p_memsz: linked_size,
+                    ..mapping.header
+                };
+                linked_header = Some(header_write(mapping.header_index, linked));
+                mapping.header_index = spare_headers.start;
+                mapping.header = Elf64_Phdr {
+                    p_offset: mapping.file_offset,
+                    p_vaddr: mapping.address,
+                    p_paddr: mapping.address,
+                    p_filesz: aligned_size,
+                    p_memsz: aligned_size,
+                    p_align: page_size,
+                    ..mapping.header
+                };
+            }
+        }
         let has_own_segment = spare_headers.contains(&mapping.header_index);
         let mut header_writes: Vec<ProgramHeaderWrite> = spare_headers
             .clone()
@@ -305,6 +333,7 @@ impl<D: core::ops::DerefMut<Target = [u8]>> ElfFile<D> {
             _ if has_own_segment => header_writes[0].header = mapping.header,
             _ => header_writes.push(header_write(mapping.header_index, mapping.header)),
         }
+        header_writes.extend(linked_header);
 
         let moved_tail_start = mapping
             .file_offset
@@ -1149,6 +1178,37 @@ mod tests {
             assert_both_fail(&longer_span, 100, ElfError::BunSectionAlreadyWritten);
             let moved_span = edited::<Elf64_Phdr>(&first, span_offset, |span| span.p_vaddr += page);
             assert_both_fail(&moved_span, 100, ElfError::BunSectionAlreadyWritten);
+        }
+    }
+
+    #[test]
+    fn payload_with_code_replaces_plain_one() {
+        for architecture in ARCHITECTURES {
+            let mut trimmed = template(architecture);
+            remove_text_pages(&mut trimmed);
+            for linked in [template(architecture), trimmed] {
+                let page = page_size(&linked);
+                let pointer_address = find_section(&linked, b".bun").sh_addr;
+                let mut replaced = write_in_pieces(&linked, &create_payload(3 * page))
+                    .0
+                    .unwrap();
+                let address = find_section(&replaced, b".bun").sh_addr;
+                assert_eq!(reserve_payload_segments(&mut replaced), Ok(true));
+
+                let (payload, code) = (create_payload(4 * page), page - 8..3 * page - 8);
+                let written = write_with_code(&replaced, &payload, code.clone());
+                let expected = [
+                    (PF_R, 0, page),
+                    (PF_R | PF_X, page, 2 * page),
+                    (PF_R, 3 * page, 2 * page),
+                ];
+                assert_eq!(payload_segments(&written), expected);
+                assert_eq!(find_section(&written, b".bun").sh_addr, address);
+                assert!(section_bytes(&written, b".bun")[size_of::<u64>()..] == payload);
+                let (_, linked_segment) = load_segment_at(&written, pointer_address);
+                assert!(linked_segment.p_vaddr + linked_segment.p_memsz <= address);
+                assert!(write_with_code(&written, &payload, code) == written);
+            }
         }
     }
 

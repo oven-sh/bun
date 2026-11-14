@@ -1,4 +1,4 @@
-// STATISTIC: ExactIntegersBehindNumbers >= 8
+// STATISTIC: DoublesRecomputedAsIntegers >= 8
 function h31(xs: number[], from: number): number { let h = from | 0; for (let i = 0; i < xs.length; i++) h = (h * 31 + xs[i]!) | 0; return h; }
 function sq(xs: number[], from: number): number { let s = from | 0; for (let i = 0; i < xs.length; i++) s = (s + xs[i]! * xs[i]!) | 0; return s; }
 function neg(xs: number[]): number { let s = 0; for (let i = 0; i < xs.length; i++) s = (s + xs[i]! * -5) | 0; return 1 / s; }

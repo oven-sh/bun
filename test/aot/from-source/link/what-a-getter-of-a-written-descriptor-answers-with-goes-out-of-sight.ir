@@ -1,6 +1,6 @@
-# The control of the-value-of-a-read-only-descriptor-lies-under-its-name-on-an-object-in-sight.ir: the descriptor lays a getter: what the getter answers with goes out of sight as before. L0 = what it answers with.
+# The descriptor defines a getter: what the getter returns stays in sight, as the value of a read-only descriptor does. L0 = what it returns.
 # RUN: link layouts mechanisms=all
-# CHECK: layout L0 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# CHECK: layout L0 changes=[] stays-with-compiled-code
 # -- source: what-a-getter-of-a-written-descriptor-answers-with-goes-out-of-sight.js
 # function make(kind) {
 #   const made = {}, held = { kind, seen: 0 };

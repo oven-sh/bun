@@ -90,7 +90,16 @@ export default b.declarations(
   extendAll(
     ["NodeFs", "FsStats", "Buffer"],
     "%NodeJSFS%",
-    ...nativeBindings("Bindgen", "node_fs_binding.bind.ts", "binding"),
+    ...nativeBindings(
+      "Bindgen",
+      "node_fs_binding.bind.ts",
+      "binding",
+      "existsSync",
+      "lstatSync",
+      "readFileSync",
+      "readdirSync",
+      "statSync",
+    ),
   ),
   extendAll(["NodeFs", "FsStats"], "%StatWatcher%"),
   extendAll(["NodeFs"], "%FSWatcher%"),

@@ -6,7 +6,7 @@ import { runtimeEnvironment } from "./harness/flags";
 import { run } from "./harness/run";
 import { test } from "./measures";
 
-// Each require() below asks whether ring-a, which has run, still waits for its cycle. A walk through the whole program at each ask shows between the two sizes.
+// Each read of require.cache below asks whether never.ts has run, and with it whether ring-a, which has run, still waits for its cycle. A walk through the whole program at each ask shows between the two sizes.
 const sizes = [250, 1_000];
 
 function project(modules: number) {
@@ -15,9 +15,11 @@ function project(modules: number) {
     "package.json": `{ "type": "module" }`,
     "ring-a.ts": `import { two } from "./ring-b";\nexport const one = 1;\nexport const three = () => one + two();\n`,
     "ring-b.ts": `import { one } from "./ring-a";\nexport const two = () => one + one;\n`,
+    "never.ts": `export const v = 0;\n`,
     "requires.test.ts": `import { test } from "bun:test";
-let sum = 0;
-${numbers.map(index => `sum += require("./m${index}").v;\n`).join("")}test("requires", () => {
+const never = require.resolve("./never");
+let sum = process.argv.length > 99 ? require("./never").v : 0;
+${numbers.map(index => `sum += require("./m${index}").v;\nif (never in require.cache) sum = NaN;\n`).join("")}test("requires", () => {
   console.log("answers", sum);
 });
 `,
@@ -60,7 +62,7 @@ test.concurrent.each(sizes)("%d modules", async modules => {
   const lines = readdirSync(cwd)
     .filter(name => name.startsWith("counts-"))
     .flatMap(name => readFileSync(join(cwd, name), "utf8").split("\n"))
-    .filter(line => line.endsWith("\tsought:ModulesForCyclesThatWait"));
+    .filter(line => line.endsWith("\tsought:ModulesScannedForPendingCycles"));
   expect(lines.length).toBeGreaterThan(0);
   sought.set(
     modules,

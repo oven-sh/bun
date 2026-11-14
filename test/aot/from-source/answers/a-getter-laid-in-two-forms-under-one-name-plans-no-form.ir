@@ -9,9 +9,9 @@
 # -- end of source
 # The other side of a-getter-laid-by-a-written-descriptor-lies-in-a-slot-of-its-form.ir: the name is laid in TWO forms: no form is planned, and two getters are expected of nobody.
 # RUN(FIELD): link fields mechanisms=all
-# FIELD: field L1.0 "size" {{*}}writers-known filled-by-accessors-alone
+# FIELD: field {{*}} "size" {{*}}filled-by-accessors-alone
 # RUN(FORM): link fields mechanisms=all
-# FORM-NOT: field L1.0 "size" {{*}}form=
+# FORM-NOT: "size" {{*}}form=
 # RUN(ANSWER): run-in-shell
 # ANSWER: 15 20
 # ANSWER-NEXT: exited with 0

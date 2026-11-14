@@ -1,5 +1,5 @@
 // Under: --aot-testing=CheckProofsAtRunTime --aot-check=Validate: the form in which a number crosses a call is a matter of the calling convention: the checks read every unit against the plan
-// STATISTIC: MethodCallsThroughTable >= 2
+// STATISTIC: MethodCallsThroughTable = 0
 interface Valve { open(): boolean; flow(load: number): number }
 class Ball implements Valve { constructor(private readonly on: boolean) {} open(): boolean { return this.on; } flow(load: number): number { return load * 0.5; } }
 class Gate implements Valve { constructor(private readonly off: boolean) {} open(): boolean { return !this.off; } flow(load: number): number { return load - 3; } }

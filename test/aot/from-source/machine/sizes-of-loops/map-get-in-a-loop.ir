@@ -12,10 +12,12 @@
 # names.push(String(input));
 # for (let turn = 0; turn < input; turn++) (globalThis as any).answer = total(prices, names);
 # -- end of source
-# The compiler before this one: 21 instructions, 3 of them patches.
-# When the bound was taken: loop: operations 23, patches 3, moves 9, unlikely 1 ; loop: operations 25, patches 3, moves 8, unlikely 1.
-# RUN(X64): loops most:32,33 f1 mechanisms=all-Inlining
-# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
-# X64-LABEL: unit f1:Body
-# X64-NEXT: loop: at most 32
-# X64-NEXT: loop: at most 33
+# The map is searched in line, by the tag of its string keys. What every search asks of the map is read once, before both versions of the loop.
+# RUN: walk f1 mechanisms=all-Inlining
+# CHECK: = CollectionColumns {{*}}keysAreStrings
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: CollectionColumns
+# CHECK: = GetMapValueByStringTag
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: CollectionColumns
+# CHECK: = GetMapValueByStringTag

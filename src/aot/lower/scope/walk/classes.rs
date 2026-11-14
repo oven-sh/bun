@@ -6,7 +6,7 @@ use bun_sema::util::SharedSort;
 use super::walker::{bindings_of, entries_of};
 use super::{Context, Task, WalkedFunctionId, Walker};
 use crate::ir::{ClassSlot, FunctionKey};
-use crate::lower::class;
+use crate::lower::class::{self, ClassText};
 use crate::lower::scope::ScopeSlot;
 
 fn has_slot(sorted_slots: &[ClassSlot], slot: ClassSlot) -> bool {
@@ -17,7 +17,7 @@ fn slot_initialization(scope: ScopeId, slot: ClassSlot) -> Task {
     Task::InitializeSlot(scope, ScopeSlot::Class(slot))
 }
 
-impl Walker<'_, '_> {
+impl<'s> Walker<'_, 's> {
     pub(super) fn visit_class(&mut self, class: ClassId, context: Context) {
         let (hir, bound) = (self.hir, self.bound);
         if hir[class].flags.contains(Flags::AMBIENT) {
@@ -53,13 +53,18 @@ impl Walker<'_, '_> {
             self.note_binding_is_looked_at(binding);
             self.record_binding_use(context, binding, false);
         }
-        let in_constructor =
-            class::fields_evaluated_in_constructor(hir, bound, compiled, signed, class);
+        let get_text = || self.class_text();
+        let in_constructor = class::find_fields_evaluated_in_constructor(
+            hir, bound, compiled, signed, class, &get_text,
+        );
         self.fields_evaluated_in_constructors
-            .extend(in_constructor.iter().copied());
-        let function_of_field = |member: MemberId| match in_constructor.binary_search(&member) {
-            Ok(_) => constructor,
-            Err(_) => instance_initializer,
+            .extend(in_constructor.assigned.iter().copied());
+        let function_of_field = |member: MemberId| {
+            let is_assigned = in_constructor.assigned.binary_search(&member).is_ok();
+            match is_assigned || in_constructor.defined.binary_search(&member).is_ok() {
+                true => constructor,
+                false => instance_initializer,
+            }
         };
         let (of_instances, of_class) = (Some(instance_initializer), Some(static_initializer));
         for &slot in &slots {
@@ -139,6 +144,18 @@ impl Walker<'_, '_> {
         }
         if is_decorated {
             self.push_task(Task::EndDecoratedClass { first_store }, context);
+        }
+    }
+
+    fn class_text(&self) -> ClassText<'_, 's> {
+        let (hir, bound) = (self.hir, self.bound);
+        let places = &self.places_of_this_super_and_return;
+        ClassText {
+            hir,
+            bound,
+            decisions: self.decisions,
+            places_of_this_super_and_return: places
+                .get_or_init(|| class::find_this_super_returns(hir, bound)),
         }
     }
 

@@ -28,7 +28,7 @@ impl Folder<'_, '_> {
         let ExprKind::Ident(name) = hir[callee].kind else {
             return None;
         };
-        if self.bound.binding(callee) != Binding::Free {
+        if self.bound.static_binding(callee) != Some(Binding::Free) {
             return None;
         }
         let arguments = hir.ids(call.args).map(|it| hir.skip_type_assertions(it));

@@ -63,7 +63,7 @@ describe("compile/aot/names-do-not-decide-how-a-function-is-compiled", () => {
 
   async function compiled(file: string, text: string, called: string) {
     const wire = await wireOf({ [file]: text }, file);
-    const statistic = "NumbersBesideCountersAskedInFrontOfLoops";
+    const statistic = "InvariantNumberGuardsHoisted";
     const counted = await printed("compile", wire, `--output=${wire}.image`, statistic);
     return {
       boundsAskedInFront: counted.find(line => line.startsWith(`statistic ${statistic} `))?.split(" ")[2],
@@ -78,7 +78,7 @@ describe("compile/aot/names-do-not-decide-how-a-function-is-compiled", () => {
     async () => {
       const one = await compiled("h-bound.ts", loopWithABoundThatAGetterMoves, "h-bound");
       const other = await compiled("w01-h-bound.ts", loopWithABoundThatAGetterMoves, "w01-h-bound");
-      expect(one.boundsAskedInFront).toBe("1");
+      expect(one.boundsAskedInFront).toBe("2");
       expect(other).toEqual(one);
     },
     timeLimit,
@@ -89,7 +89,7 @@ describe("compile/aot/names-do-not-decide-how-a-function-is-compiled", () => {
     async () => {
       const one = await compiled("a.ts", loopWithABoundThatAGetterMoves, '"seen"');
       const other = await compiled("a.ts", loopWithABoundThatAGetterMoves.replaceAll("seen", "s11"), '"s11"');
-      expect(one.boundsAskedInFront).toBe("1");
+      expect(one.boundsAskedInFront).toBe("2");
       expect(other).toEqual(one);
     },
     timeLimit,

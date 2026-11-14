@@ -1,5 +1,5 @@
 // Behind a join the state has no note of a slot that one path has filled. Which keys an object has, and in which order, goes by its order word, which the paths leave different.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 function show(o) { return Object.keys(o).join("") + ":" + o.a + "," + o.b + "," + o.c + "," + o.d; }
 function make(i) { const p = { a: i }; if (i & 1) p.d = 4; if (i & 2) p.b = 2; if (i & 4) p.c = 3; return p; }

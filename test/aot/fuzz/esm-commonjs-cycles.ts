@@ -171,13 +171,6 @@ function commonJSModule(random: Random, module: Module, modules: Module[]): stri
   return [...lines, ...parts, `say("${name} ends");`, ""].join("\n");
 }
 
-// The next require() of a CommonJS module that threw runs it again under plain Bun, and throws the same error in an
-// executable: docs/compiler/compatibility.mdx, "Loader hooks and the module cache".
-export const runsModuleAgain = (out: string) => {
-  const begun = out.split("\n").filter(line => /^m\d+ begins$/.test(line));
-  return new Set(begun).size < begun.length;
-};
-
 // If an ES module imported the file while it ran, plain Bun runs nothing again: the next request gets that import's
 // namespace object. An executable does the same if nobody received the error. If somebody did, it throws the same
 // error, also for a request for a module that depends on the file. If nobody catches the error, the module that

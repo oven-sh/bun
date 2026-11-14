@@ -1,0 +1,21 @@
+let T = process.argv.length, C = 0; const L = []; function ARGS() { return arguments; }
+const show = v => { try { return Object.is(v, -0) ? "-0" : Array.isArray(v) ? "[" + v.map(show).join() + "]" : typeof v === "object" && v !== null ? "o" : typeof v + ":" + String(v); } catch (e) { return "E"; } };
+const h0 = c => "a" == c;
+const h1 = c => c === " " || c === "\t";
+function h2(c, d) { return c === "a" && d !== " "; }
+function h3(c) { return c + "" === "a"; }
+const h4 = (c, k = 0) => c === "a" || k > 2;
+function f0(t, u, v, o) { let s = 0, w = "", k = 0; const out = [], x = [], m = new Map(); let i = 0; for (const c of t) { if (c === v) s++; s += t.length; i++; if (i > 9) break; } return [show(s), w, k, show(out), show(x), m.size, show(o.n)].join(" "); }
+function f1(t, u, v, o) { let s = 0, w = "", k = 0; const out = [], x = [], m = new Map(); for (let i = 0; i < t.length && i < 9; i++) { x[i] = h1(t[i & 1]); } return [show(s), w, k, show(out), show(x), m.size, show(o.n)].join(" "); }
+function f2(t, u, v, o) { let s = 0, w = "", k = 0; const out = [], x = [], m = new Map(); for (let i = 5; i >= 0; i--) { s += h4(t[i], u[i]) ? 1 : 0; o.n += h3(t[i]) ? 1 : 2; } return [show(s), w, k, show(out), show(x), m.size, show(o.n)].join(" "); }
+function f3(t, u, v, o) { let s = 0, w = "", k = 0; const out = [], x = [], m = new Map(); for (let i = 0; i < t.length && i < 9; i++) { if (h4(t.charAt(i))) break; } return [show(s), w, k, show(out), show(x), m.size, show(o.n)].join(" "); }
+function f4(t, u, v, o) { let s = 0, w = "", k = 0; const out = [], x = [], m = new Map(); let i = 0; for (const c of t) { if (h4(c, u[i])) s += 2; else s--; i++; if (i > 9) break; } return [show(s), w, k, show(out), show(x), m.size, show(o.n)].join(" "); }
+function f5(t, u, v, o) { let s = 0, w = "", k = 0; const out = [], x = [], m = new Map(); for (let i = 0; i < t.length && i < 9; i++) { s += t.length; } return [show(s), w, k, show(out), show(x), m.size, show(o.n)].join(" "); }
+function f6(t, u, v, o) { let s = 0, w = "", k = 0; const out = [], x = [], m = new Map(); for (let i = 0; i < t.length && i < 9; i++) { if (h2(t[i])) w += t[i]; s += t.length; } return [show(s), w, k, show(out), show(x), m.size, show(o.n)].join(" "); }
+function f7(t, u, v, o) { let s = 0, w = "", k = 0; const out = [], x = [], m = new Map(); for (let i = 5; i >= 0; i--) { if (h0(t[i & 1])) s += 3; if (h3(t[i])) s += 2; else s--; } return [show(s), w, k, show(out), show(x), m.size, show(o.n)].join(" "); }
+function f8(t, u, v, o) { let s = 0, w = "", k = 0; const out = [], x = [], m = new Map(); for (let i = 0; i < t.length && i < 9; i++) { s += h1(u[i], t[i + 1]) ? 1 : 0; if (t[i] === v) s++; if (h0(t[t.length - 1 - i])) s++; } return [show(s), w, k, show(out), show(x), m.size, show(o.n)].join(" "); }
+function f9(t, u, v, o) { let s = 0, w = "", k = 0; const out = [], x = [], m = new Map(); for (let i = 5; i >= 0; i--) { if (t[i] === v) s++; if (!h2(t[i], t[i + 1])) continue; if (h4(t[i])) s += 3; } return [show(s), w, k, show(out), show(x), m.size, show(o.n)].join(" "); }
+function f10(t, u, v, o) { let s = 0, w = "", k = 0; const out = [], x = [], m = new Map(); let i = 0; for (const c of t) { s += t.length; if (h1(u[i], i)) s += 3; i++; if (i > 9) break; } return [show(s), w, k, show(out), show(x), m.size, show(o.n)].join(" "); }
+function f11(t, u, v, o) { let s = 0, w = "", k = 0; const out = [], x = [], m = new Map(); try { let i = -1; while (++i < t.length && i < 9) { s += h4(t[i + 1], u[i]) ? 1 : 0; if (h0(t[i + 1], u[i])) s++; const r61224 = h4(t[i & 1], i); s += 1; } } catch (e) { s += 1000; } return [show(s), w, k, show(out), show(x), m.size, show(o.n)].join(" "); }
+const fs = { f0, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11 }, kinds = [() => new String("a1 "), () => ({ length: 2, 0: "a", 1: " " }), () => "x" + T + "9 b", () => new Uint8Array([97, 32, 49]), () => new Set(["a"]), () => JSON.parse('"a1 b"'), () => ({ length: 2 }), () => "ab 1c", () => ["a", " ", "1"]], vs = ["a", 1, " ", undefined, "b"];
+for (const f in fs) for (let a = 0; a < kinds.length; a++) for (let z = 0; z < 3; z++) { let r; L.length = 0; try { r = fs[f](kinds[a](), kinds[(a + z) % kinds.length](), vs[(a + z) % 5], JSON.parse('{"n":1}')); } catch (e) { r = e.name; } console.log(f, a, z, r, T, C, show(L.slice(0, 12))); }

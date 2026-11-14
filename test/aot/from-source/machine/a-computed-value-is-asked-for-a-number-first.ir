@@ -1,0 +1,10 @@
+# -- source: main.cjs
+# function Core(list) { this.list = list; this.go = 1; this.total = 100; }
+# Core.prototype.run = function () { while (this.go) { this.list[0](this); this.count += 1; if (this.count > this.total) this.go = 0; } };
+# const core = new Core([() => {}]); globalThis.core = core; globalThis.start = x => { x.count = 0; }; globalThis.start(core); core.run();
+# -- end of source
+# The sum of a field and one is a number or a string. Usually it is a number, so that is asked first.
+# RUN: emit f2 mechanisms=all
+# CHECK-LABEL: unit f2
+# CHECK: Int64 @{{*}} = BitAnd(@{{*}}, @[[mask]], origin = 
+# CHECK: Int64 @[[mask]] = Const64(-562949953421312)

@@ -12,10 +12,7 @@ use crate::values::position::{
 use crate::{PrintErr, Printer, VendorPrefix};
 use bun_alloc::Arena;
 
-// `'bump` arena threading dropped for now: `BumpVec<'bump,_>` →
-// `Vec<_>` (matches `Parser::parse_comma_separated → Vec<T>`); re-thread once
-// `Parser<'bump,'_>` two-lifetime arity lands and `arena()` returns
-// `&'bump Bump`. The generic `D` bound (`LengthPercentage` / `AnglePercentage`)
+// The generic `D` bound (`LengthPercentage` / `AnglePercentage`)
 // is expressed via the local `GradientPosition` trait below — replaces the
 // gated `crate::generic::{Parse,ToCss,DeepClone}` set so the monomorphized
 // `parse_items<D>` / `serialize_items<D>` / `GradientItem<D>` bodies type-
@@ -26,7 +23,7 @@ use bun_alloc::Arena;
 /// `LengthPercentage` (= `DimensionPercentage<LengthValue>`) and
 /// `AnglePercentage` (= `DimensionPercentage<Angle>`).
 pub trait GradientPosition: Sized + Clone + PartialEq {
-    fn parse(input: &mut Parser) -> Result<Self>;
+    fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> Result<'bump, Self>;
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr>;
 }
 
@@ -37,7 +34,7 @@ macro_rules! impl_gradient_position {
     ($ty:ty) => {
         impl GradientPosition for $ty {
             #[inline]
-            fn parse(input: &mut Parser) -> Result<Self> {
+            fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> Result<'bump, Self> {
                 <$ty>::parse(input)
             }
             #[inline]
@@ -54,13 +51,13 @@ impl_gradient_position!(AnglePercentage);
 /// at `HorizontalPositionKeyword` / `VerticalPositionKeyword`). Replaces the
 /// missing `css::css_values::position::IntoLengthPercentage` shape.
 pub trait GradientSideKeyword: Sized + Clone + PartialEq + Copy {
-    fn parse(input: &mut Parser) -> Result<Self>;
+    fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> Result<'bump, Self>;
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr>;
     fn into_length_percentage(&self) -> LengthPercentage;
 }
 impl GradientSideKeyword for HorizontalPositionKeyword {
     #[inline]
-    fn parse(input: &mut Parser) -> Result<Self> {
+    fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> Result<'bump, Self> {
         HorizontalPositionKeyword::parse(input)
     }
     #[inline]
@@ -74,7 +71,7 @@ impl GradientSideKeyword for HorizontalPositionKeyword {
 }
 impl GradientSideKeyword for VerticalPositionKeyword {
     #[inline]
-    fn parse(input: &mut Parser) -> Result<Self> {
+    fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> Result<'bump, Self> {
         VerticalPositionKeyword::parse(input)
     }
     #[inline]
@@ -107,7 +104,7 @@ pub enum Gradient {
 }
 
 impl Gradient {
-    pub(crate) fn parse(input: &mut css::Parser) -> Result<Gradient> {
+    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> Result<'bump, Gradient> {
         let location = input.current_source_location();
         let func = input.expect_function()?;
         input.parse_nested_block(|input_: &mut css::Parser| -> Result<Gradient> {
@@ -301,7 +298,10 @@ pub struct LinearGradient {
 }
 
 impl LinearGradient {
-    fn parse(input: &mut css::Parser, vendor_prefix: VendorPrefix) -> Result<LinearGradient> {
+    fn parse<'bump>(
+        input: &mut css::Parser<'_, 'bump>,
+        vendor_prefix: VendorPrefix,
+    ) -> Result<'bump, LinearGradient> {
         let direction: LineDirection = if let Ok(dir) =
             input.try_parse(|i| LineDirection::parse(i, vendor_prefix != VendorPrefix::NONE))
         {
@@ -386,7 +386,10 @@ pub struct RadialGradient {
 }
 
 impl RadialGradient {
-    fn parse(input: &mut css::Parser, vendor_prefix: VendorPrefix) -> Result<RadialGradient> {
+    fn parse<'bump>(
+        input: &mut css::Parser<'_, 'bump>,
+        vendor_prefix: VendorPrefix,
+    ) -> Result<'bump, RadialGradient> {
         // todo_stuff.depth
         let shape = input.try_parse(EndingShape::parse).ok();
         let position = input
@@ -480,7 +483,7 @@ pub struct ConicGradient {
 }
 
 impl ConicGradient {
-    fn parse(input: &mut css::Parser) -> Result<ConicGradient> {
+    fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> Result<'bump, ConicGradient> {
         let angle = input.try_parse(|i: &mut css::Parser| -> Result<Angle> {
             i.expect_ident_matching(b"from")?;
             // Spec allows unitless zero angles for gradients.
@@ -628,7 +631,7 @@ pub enum WebKitGradient {
 }
 
 impl WebKitGradient {
-    fn parse(input: &mut css::Parser) -> Result<WebKitGradient> {
+    fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> Result<'bump, WebKitGradient> {
         let location = input.current_source_location();
         let ident = input.expect_ident()?;
         input.expect_comma()?;
@@ -848,7 +851,10 @@ pub enum LineDirection {
 }
 
 impl LineDirection {
-    fn parse(input: &mut css::Parser, is_prefixed: bool) -> Result<LineDirection> {
+    fn parse<'bump>(
+        input: &mut css::Parser<'_, 'bump>,
+        is_prefixed: bool,
+    ) -> Result<'bump, LineDirection> {
         // Spec allows unitless zero angles for gradients.
         // https://w3c.github.io/csswg-drafts/css-images-3/#linear-gradient-syntax
         if let Ok(angle) = input.try_parse(Angle::parse_with_unitless_zero) {
@@ -1044,7 +1050,7 @@ pub struct WebKitGradientPoint {
 }
 
 impl WebKitGradientPoint {
-    fn parse(input: &mut css::Parser) -> Result<WebKitGradientPoint> {
+    fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> Result<'bump, WebKitGradientPoint> {
         let x = WebKitGradientPointComponent::<HorizontalPositionKeyword>::parse(input)?;
         let y = WebKitGradientPointComponent::<VerticalPositionKeyword>::parse(input)?;
         Ok(WebKitGradientPoint { x, y })
@@ -1069,7 +1075,7 @@ pub enum WebKitGradientPointComponent<S> {
 }
 
 impl<S: GradientSideKeyword> WebKitGradientPointComponent<S> {
-    fn parse(input: &mut css::Parser) -> Result<Self> {
+    fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> Result<'bump, Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"center"))
             .is_ok()
@@ -1148,7 +1154,7 @@ pub struct WebKitColorStop {
 }
 
 impl WebKitColorStop {
-    fn parse(input: &mut css::Parser) -> Result<WebKitColorStop> {
+    fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> Result<'bump, WebKitColorStop> {
         let location = input.current_source_location();
         let function = input.expect_function()?;
         input.parse_nested_block(|i: &mut css::Parser| -> Result<WebKitColorStop> {
@@ -1208,7 +1214,7 @@ pub struct ColorStop<D> {
 }
 
 impl<D: GradientPosition> ColorStop<D> {
-    fn parse(input: &mut css::Parser) -> Result<ColorStop<D>> {
+    fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> Result<'bump, ColorStop<D>> {
         let color = CssColor::parse(input)?;
         let position = input.try_parse(D::parse).ok();
         Ok(ColorStop { color, position })
@@ -1245,7 +1251,7 @@ pub enum Ellipse {
 }
 
 impl Ellipse {
-    fn parse(input: &mut css::Parser) -> Result<Ellipse> {
+    fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> Result<'bump, Ellipse> {
         if let Ok(extent) = input.try_parse(ShapeExtent::parse) {
             // The `ellipse` keyword is optional, but only if the `circle` keyword is not present.
             // If it is, then we'll re-parse as a circle.
@@ -1323,7 +1329,7 @@ pub enum Circle {
 }
 
 impl Circle {
-    fn parse(input: &mut css::Parser) -> Result<Circle> {
+    fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> Result<'bump, Circle> {
         if let Ok(extent) = input.try_parse(ShapeExtent::parse) {
             // The `circle` keyword is required. If it's not there, then it's an ellipse.
             input.expect_ident_matching(b"circle")?;
@@ -1390,9 +1396,9 @@ crate::css_eql_partialeq!(
     Circle,
 );
 
-pub(crate) fn parse_items<D: GradientPosition>(
-    input: &mut css::Parser,
-) -> Result<Vec<GradientItem<D>>> {
+pub(crate) fn parse_items<'bump, D: GradientPosition>(
+    input: &mut css::Parser<'_, 'bump>,
+) -> Result<'bump, Vec<GradientItem<D>>> {
     let mut items: Vec<GradientItem<D>> = Vec::new();
     let mut seen_stop = false;
 

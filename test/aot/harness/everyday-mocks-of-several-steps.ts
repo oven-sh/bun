@@ -10,12 +10,12 @@ import { run } from "./run";
 
 const wordsOfAll = process.env.AOT_TEST_RUN_WORDS ?? "";
 
-async function outcomeOf(files: Record<string, string>, words: string, ...flags: string[]) {
+async function outcomeOf(files: Record<string, string>, words: string, oneThread: boolean, ...flags: string[]) {
   using dir = tempDir("aot-everyday-mock", files);
   const env = {
     ...bunEnv,
     NO_COLOR: "1",
-    BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "0",
+    BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: oneThread ? "1" : "0",
     BUN_DEBUG_TEST_AOT_WORDS: words,
   };
   const testFiles = Object.keys(files)
@@ -41,34 +41,18 @@ function each(
   part: number,
   parts: number,
   judge: (name: string, plain: Outcome, compiled: Outcome) => void,
-  tries = 1,
+  plainOnOneThread = false,
 ) {
   const stretch = Math.ceil(cases.length / parts);
   for (const { name, files } of cases.slice((part - 1) * stretch, part * stretch)) {
     test(name, async () => {
-      for (let attempt = 1; ; attempt++) {
-        const [plain, again, compiled] = await Promise.all([
-          outcomeOf(files, ""),
-          outcomeOf(files, ""),
-          outcomeOf(files, wordsOfAll, "--aot"),
-        ]);
-        // A case in which `bun test` does not say the same twice specifies nothing.
-        if (!Bun.deepEquals(plain, again)) {
-          if (attempt < tries) continue;
-          console.error(
-            `THE REFERENCE WAVERED: ${name}: plain Bun said ${JSON.stringify(plain)}, then ${JSON.stringify(again)}`,
-          );
-          return;
-        }
-        // A run that printed nothing would be the same as any other that printed nothing.
-        expect(plain.printed).not.toBeEmpty();
-        try {
-          judge(name, plain, compiled);
-          return;
-        } catch (error) {
-          if (attempt === tries) throw error;
-        }
-      }
+      const [plain, compiled] = await Promise.all([
+        outcomeOf(files, "", plainOnOneThread),
+        outcomeOf(files, wordsOfAll, false, "--aot"),
+      ]);
+      // A run that printed nothing would be the same as any other that printed nothing.
+      expect(plain.printed).not.toBeEmpty();
+      judge(name, plain, compiled);
     });
   }
 }
@@ -80,6 +64,9 @@ export { each };
 export function mocksFromOneTestFileToTheNextIn(part: number, parts: number) {
   each(mocksFromOneTestFileToTheNext(), part, parts, (name, plain, compiled) => {
     expect({ ...compiled, printed: [], didNotRunAgain: 0 }).toEqual({ ...plain, printed: [] });
+    // What a line says may differ then, but not that each test file prints its line, and how it is made.
+    const shapeOf = (line: string) => line.replace(/^(SAID \S+) .* ran \d+$/, "$1 ran");
+    expect(compiled.printed.map(shapeOf)).toEqual(plain.printed.map(shapeOf));
     if (!Bun.deepEquals(compiled.printed, plain.printed)) expect(compiled.didNotRunAgain).toBeGreaterThan(0);
   });
 }
@@ -116,70 +103,22 @@ const partsInAChain: [cases: RegExp, what: string][] = [
   ],
 ];
 
-// These tests wait for loads and for a timer, and on a busy machine a run now and then comes too late for itself. So a case is asked up to three times, and fails if it fails each time.
+// Plain Bun reads the files on one thread: with threads it completes loads in the order in which the threads finish.
 export function mocksInAChainIn(part: number, parts: number) {
-  each(
-    mocksInAChain(),
-    part,
-    parts,
-    (name, plain, compiled) => {
-      if (!partsInAChain.some(([names]) => names.test(name))) {
-        expect({ ...compiled, didNotRunAgain: 0 }).toEqual(plain);
-        return;
-      }
-      // Which load in flight ends first is a matter of time, so that the two runs part is asked of nobody.
-      if (Bun.deepEquals({ ...compiled, didNotRunAgain: 0 }, plain))
-        console.error(`A LISTED PARTING AGREES WITH bun test: ${name}`);
-    },
-    3,
-  );
+  const judge = (name: string, plain: Outcome, compiled: Outcome) => {
+    if (!partsInAChain.some(([names]) => names.test(name))) {
+      expect({ ...compiled, didNotRunAgain: 0 }).toEqual(plain);
+      return;
+    }
+    // Which load in flight ends first is a matter of time, so that the two runs part is asked of nobody.
+    if (Bun.deepEquals({ ...compiled, didNotRunAgain: 0 }, plain))
+      console.error(`A LISTED PARTING AGREES WITH bun test: ${name}`);
+  };
+  each(mocksInAChain(), part, parts, judge, true);
 }
 
-// Where the two runs part today, and all that the compiled run prints there. Such a case fails by any other difference, and once the two runs agree: its line goes out. Where a file does not run again, which a
-// compiled run may do, the run has to say so at its end: `saysSo`.
-const stillWrong: [cases: RegExp, printed: string, what: string, saysSo?: true][] = [
-  [
-    /^[a-z-]+--the-original-in-the-factory--reset-modules--laid-again--imported-at-run-time$/,
-    "laid 1 ; the body of the lamp runs 1 ; 1 mock1 own 1 ; laid 2 ; threw EvalError",
-    "a mock that needs the original, imported again behind resetModules()",
-  ],
-  [
-    /^[a-z-]+--the-original-in-the-factory--reset-modules--left-as-it-is--imported-at-run-time$/,
-    "laid 1 ; the body of the lamp runs 1 ; 1 mock1 own 1 ; threw EvalError",
-    "the same",
-  ],
-  [
-    /^vi-do-mock--a-factory--nothing-between--laid-again--imported-at-run-time$/,
-    "laid 1 ; 1 mock1 mocked 0 ; laid 2 ; 2 mock2 mocked 0 ; held mock2 mocked",
-    "the room does not run again, so what the test held from its first import() follows the second mock",
-    true,
-  ],
-  [
-    /^vi-do-mock--the-original-in-the-factory--nothing-between--laid-again--imported-at-run-time$/,
-    "laid 1 ; the body of the lamp runs 1 ; 1 mock1 own 1 ; laid 2 ; 2 mock2 own 1 ; held mock2 own",
-    "the same",
-    true,
-  ],
-  [
-    /^vi-do-mock--a-factory--nothing-between--laid-again--required$/,
-    "laid 1 ; 1 mock1 mocked 0 ; laid 2 ; 2 mock1 mocked 0 ; held mock1 mocked",
-    "the room does not run again, so the second require() still gets the first mock",
-    true,
-  ],
-  [
-    /^vi-do-mock--the-original-in-the-factory--nothing-between--laid-again--required$/,
-    "laid 1 ; the body of the lamp runs 1 ; 1 mock1 own 1 ; laid 2 ; 2 mock1 own 1 ; held mock1 own",
-    "the same",
-    true,
-  ],
-];
-
 export function mocksLaidTwiceIn(part: number, parts: number) {
-  each(mocksLaidTwice(), part, parts, (name, plain, compiled) => {
-    const [, printed, , saysSo] = stillWrong.find(([names]) => names.test(name)) ?? [];
-    expect({ ...compiled, didNotRunAgain: 0 }).toEqual(
-      printed === undefined ? plain : { ...plain, printed: printed.split(" ; ").map(line => "SAID " + line) },
-    );
-    if (saysSo) expect(compiled.didNotRunAgain).toBeGreaterThan(0);
+  each(mocksLaidTwice(), part, parts, (_, plain, compiled) => {
+    expect({ ...compiled, didNotRunAgain: 0 }).toEqual(plain);
   });
 }

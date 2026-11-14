@@ -10,8 +10,8 @@
 # (globalThis as any).answer = walk(input | 0);
 # -- end of source
 # The compiler before this one: 5 instructions, 0 of them patches ; 6 instructions, 0 of them patches.
-# When the bound was taken: loop: operations 11, patches 2, moves 2, unlikely 0.
-# RUN(X64): loops most:13 f1 mechanisms=all-Inlining
+# The fields come round beside the object, which is never made, so the loop is written out eight times: operations 19, patches 0, moves 10.
+# RUN(X64): loops most:30 f1 mechanisms=all-Inlining
 # REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
 # X64-LABEL: unit f1:Body
-# X64-NEXT: loop: at most 13
+# X64-NEXT: loop: at most 30

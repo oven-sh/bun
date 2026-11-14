@@ -10,6 +10,7 @@ const kState: typeof streamState.kState = streamState.kState;
 const kErroredValue: typeof streamState.kErroredValue = streamState.kErroredValue;
 
 const enum Flag {
+  ErrorEmitted = 1 << 1,
   AutoDestroy = 1 << 2,
   EmitClose = 1 << 3,
   Destroyed = 1 << 4,
@@ -17,6 +18,7 @@ const enum Flag {
   Errored = 1 << 7,
   ReadableEnded = 1 << 9,
   ReadableEndEmitted = 1 << 10,
+  WritableEnding = 1 << 12,
   WritableFinished = 1 << 13,
   HasWritable = 1 << 21,
   Writable = 1 << 22,
@@ -98,8 +100,33 @@ declare global {
   }
 }
 
+const enum Sides {
+  Unknown,
+  Readable,
+  Both,
+}
+
+function plainStreamSides(stream: unknown): number {
+  return streamState.internals.plainStreamSides?.(stream) ?? Sides.Unknown;
+}
+
+function hasReadableSide(stream: $Node.AnyStream, sides: number): boolean {
+  if (sides !== Sides.Both) return true;
+  return (stream._readableState as $Node.ReadableState).readable !== false;
+}
+
+function hasWritableSide(stream: $Node.AnyStream, sides: number): boolean {
+  if (sides !== Sides.Both) return false;
+  const state = stream._writableState as $Node.WritableState;
+  return (state[kState] & (Flag.HasWritable | Flag.Writable)) !== Flag.HasWritable;
+}
+
 function isReadableNodeStream(obj: any, strict?: boolean): obj is $Node.Readable;
 function isReadableNodeStream(obj: $Node.MaybeStream, strict = false): obj is $Node.Readable {
+  if (IS_COMPILED_AHEAD_OF_TIME && !strict) {
+    const sides = plainStreamSides(obj);
+    if (sides !== Sides.Unknown) return hasReadableSide(obj!, sides);
+  }
   return !!(
     obj &&
     typeof obj.pipe === "function" &&
@@ -121,6 +148,10 @@ function writableSideOf(state) {
 
 function isWritableNodeStream(obj: any): obj is $Node.Writable;
 function isWritableNodeStream(obj: $Node.MaybeStream): obj is $Node.Writable {
+  if (IS_COMPILED_AHEAD_OF_TIME) {
+    const sides = plainStreamSides(obj);
+    if (sides !== Sides.Unknown) return hasWritableSide(obj!, sides);
+  }
   return !!(
     obj &&
     typeof obj.write === "function" &&
@@ -177,7 +208,24 @@ function isIterable(obj, isAsync?: boolean) {
   return typeof obj[SymbolAsyncIterator] === "function" || typeof obj[SymbolIterator] === "function";
 }
 
+// For `sides` other than `Unknown`: the `destroyed` accessor, which isDestroyed() reads before kIsDestroyed.
+function isPlainStreamDestroyed(stream: $Node.AnyStream, sides: number): boolean {
+  const isReadableSideDestroyed = ((stream._readableState as $Node.ReadableState)[kState] & Flag.Destroyed) !== 0;
+  if (sides === Sides.Readable || !isReadableSideDestroyed) return isReadableSideDestroyed;
+  return ((stream._writableState as $Node.WritableState)[kState] & Flag.Destroyed) !== 0;
+}
+
 function isDestroyed(stream: $Node.MaybeStream) {
+  if (IS_COMPILED_AHEAD_OF_TIME) {
+    const sides = plainStreamSides(stream);
+    if (sides !== Sides.Unknown) {
+      const state = sides === Sides.Readable ? stream!._readableState : stream!._writableState;
+      if (isPlainStreamDestroyed(stream!, sides) || stream![kIsDestroyed]) return true;
+      return !!(isWritableState(state) || isReadableState(state)
+        ? (state[kState] & Flag.Destroyed) !== 0
+        : state!.destroyed);
+    }
+  }
   if (IS_COMPILED_AHEAD_OF_TIME && $isObject(stream) && !$isProxyObject(stream)) {
     if (
       !stream._readableState &&
@@ -215,6 +263,22 @@ function isWritableEnded(stream: $Node.MaybeStream) {
   if (wState?.errored) return false;
   if (typeof wState?.ended !== "boolean") return null;
   return wState.ended;
+}
+
+function isWritableStateFinished(state: $Node.WritableState, strict): boolean {
+  const flags = state[kState];
+  if ((flags & Flag.WritableFinished) !== 0) return true;
+  if ((flags & Flag.Errored) !== 0) return false;
+  return strict === false && (flags & Flag.WritableEnded) !== 0 && state.length === 0;
+}
+
+function isReadableStateFinished(state: $Node.ReadableState, strict?): boolean {
+  const flags = state[kState];
+  if ((flags & Flag.Errored) !== 0) return false;
+  return (
+    (flags & Flag.ReadableEndEmitted) !== 0 ||
+    (strict === false && (flags & Flag.ReadableEnded) !== 0 && state.length === 0)
+  );
 }
 
 // Have emitted 'finish'.
@@ -262,15 +326,33 @@ function isReadableSideFinished(stream: $Node.AnyStream, strict?) {
 
 function isReadable(stream: $Node.MaybeStream) {
   if (stream && stream[kIsReadable] != null) return stream[kIsReadable];
-  if (typeof stream?.readable !== "boolean") return null;
+  const sides: number = IS_COMPILED_AHEAD_OF_TIME ? plainStreamSides(stream) : Sides.Unknown;
+  const isPlain = sides !== Sides.Unknown;
+  if (!isPlain && typeof stream?.readable !== "boolean") return null;
   if (isDestroyed(stream)) return false;
+  // A program may have an accessor under kIsDestroyed.
+  if (isPlain && plainStreamSides(stream) === sides) {
+    const state = stream!._readableState as $Node.ReadableState;
+    return (
+      state.readable !== false && (state[kState] & (Flag.Destroyed | Flag.ErrorEmitted | Flag.ReadableEndEmitted)) === 0
+    );
+  }
   return isReadableNodeStream(stream) && stream.readable && !isReadableFinished(stream);
 }
 
 function isWritable(stream: $Node.MaybeStream) {
   if (stream && stream[kIsWritable] != null) return stream[kIsWritable];
-  if (typeof stream?.writable !== "boolean") return null;
+  const sides: number = IS_COMPILED_AHEAD_OF_TIME ? plainStreamSides(stream) : Sides.Unknown;
+  const isPlain = sides === Sides.Both;
+  if (!isPlain && typeof stream?.writable !== "boolean") return null;
   if (isDestroyed(stream)) return false;
+  if (isPlain && plainStreamSides(stream) === sides) {
+    const flags = (stream!._writableState as $Node.WritableState)[kState];
+    return (
+      (flags & (Flag.HasWritable | Flag.Writable)) !== Flag.HasWritable &&
+      (flags & (Flag.WritableEnding | Flag.WritableEnded | Flag.Destroyed | Flag.Errored)) === 0
+    );
+  }
   return isWritableNodeStream(stream) && stream.writable && !isWritableEnded(stream);
 }
 
@@ -438,6 +520,11 @@ export default {
   isReadableSideFinished,
   isNodeStreamClosed,
   willNodeStreamEmitClose,
+  plainStreamSides,
+  hasReadableSide,
+  hasWritableSide,
+  isReadableStateFinished,
+  isWritableStateFinished,
   isTransformStream,
   // bitfields
 } as const;

@@ -13,7 +13,8 @@
 #   }
 #   return [d, e].join();
 # }
-# print(k(3, 2));
+# const three = "abc".split(""), two = "ab".split("");
+# print(k(three.length, two.length));
 # -- end of source
 # The sum is the head parameter of a loop in front of the try that was built twice: it stands above the handler and travels as a name, not as an argument of the handler. The purchase of the loop under the try asks in front
 # whether the sum is an int32 and names it otherwise in the typed copy: the edges into the handler bring two names, both as raw numbers. The handler's parameter takes the form that every edge brings; once it was boxed because
@@ -24,7 +25,7 @@
 # CHECK: 0,7
 # CHECK-NEXT: exited with 0
 # CHECK-NEXT: the source prints the same
-# RUN(FAILING): run-in-shell mechanisms=all testing=FailGuesses
+# RUN(FAILING): run-in-shell mechanisms=all testing=FailSpeculations
 # FAILING: 0,7
 # FAILING-NEXT: exited with 0
 # RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime

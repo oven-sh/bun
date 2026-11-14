@@ -1,4 +1,4 @@
-// Under: --aot-testing=EmittersAloneTestEveryPosition: a read outside a view gives nothing, which is lawful: a hold on a wide integer once met the mark of nothing ahead of the question for it and stopped this right program.
+// Under: --aot-testing=CheckBoundsInEmittersOnly: a read outside a view gives nothing, which is lawful: a hold on a wide integer once met the mark of nothing ahead of the question for it and stopped this right program.
 // EVENT: RangeChecksRemoved and AccessesInsideViews, the build in front | 04.29.29; testaot walk: isInsideView | isInBounds
 const ints = (): number[] => JSON.parse("[1,2,3,4,5,6,7,8,9,10,11]");
 const doubles = (): number[] => JSON.parse("[1.5,2.5,3.5,4.5,5.5,6.5,7.5,8.5,9.5,10.5,11.5]");

@@ -6,7 +6,7 @@
 // # RUN(FORM): walk f3 f4 mechanisms=all
 // # FORM-LABEL: code f3:Body
 // # FORM: : number @Double = GetSlot {{*}}key=#"#x"@L0
-// # FORM: : i32 @Int64 = GetSlot {{*}}key=#"#y"@L0
+// # FORM: : int[0, 2147483647] @Int64 = GetSlot {{*}}key=#"#y"@L0
 // # FORM-LABEL: code f4:Body
 // # FORM: : number @Double = GetSlot {{*}}key="x"
 // # At the end the shell runs the same text itself: every answer is the same.

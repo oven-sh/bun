@@ -876,9 +876,8 @@ pub fn lstatat(fd: impl AsFd, path: &ZStr) -> Result<Stat> {
         // `fstat` the handle, then close.
         match openat_windows_a(fd, path.as_bytes(), O::NOFOLLOW, 0) {
             Ok(file) => {
-                let r = fstat(file);
-                let _ = close(file);
-                r
+                let _close = CloseOnDrop::new(file);
+                fstat(file)
             }
             Err(err) => Err(err),
         }
@@ -1221,7 +1220,10 @@ pub mod O {
 // ──────────────────────────────────────────────────────────────────────────
 // `File` / `Dir` — high-level handles. Extracted to file.rs / dir.rs.
 // ──────────────────────────────────────────────────────────────────────────
+#[cfg(unix)]
+pub mod close_on_fork;
 pub mod file;
+pub mod private_copy;
 pub use file::{File, ReadToEndResult};
 pub mod dir;
 pub use dir::*;
@@ -2199,6 +2201,17 @@ mod posix_impl {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub static SUPPORTS_STATX_ON_LINUX: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(true);
+    /// Like `SUPPORTS_STATX_ON_LINUX`, but false once the `fstat()` of some descriptor is overridden.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub static IS_FSTATX_DIRECT: core::sync::atomic::AtomicBool =
+        core::sync::atomic::AtomicBool::new(true);
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn stop_using_statx() {
+        use core::sync::atomic::Ordering;
+        SUPPORTS_STATX_ON_LINUX.store(false, Ordering::Relaxed);
+        IS_FSTATX_DIRECT.store(false, Ordering::Relaxed);
+    }
 
     /// `STATX_*` request mask covering every field `node:fs Stats` consumes
     /// (all field bits OR'd — the only mask callers ever pass).
@@ -2250,7 +2263,6 @@ mod posix_impl {
         mask: u32,
         syscall: Tag,
     ) -> Maybe<PosixStat> {
-        use core::sync::atomic::Ordering;
         let mut buf = core::mem::MaybeUninit::<lx::statx>::uninit();
         let pathname: *const c_char = match path {
             Some(p) => p.as_ptr(),
@@ -2265,7 +2277,7 @@ mod posix_impl {
             // success (0) nor a kernel -errno. Treat as "not implemented".
             // See nodejs/node#27275 and libuv/libuv src/unix/fs.c.
             if rc > 0 {
-                SUPPORTS_STATX_ON_LINUX.store(false, Ordering::Relaxed);
+                stop_using_statx();
                 return statx_fallback(fd, path, flags);
             }
             if rc < 0 {
@@ -2285,7 +2297,7 @@ mod posix_impl {
                     errno,
                     Some(E::ENOSYS | E::EOPNOTSUPP | E::EPERM | E::EINVAL)
                 ) {
-                    SUPPORTS_STATX_ON_LINUX.store(false, Ordering::Relaxed);
+                    stop_using_statx();
                     return statx_fallback(fd, path, flags);
                 }
                 return Err(Error {
@@ -3699,7 +3711,7 @@ mod windows_impl {
         }
         let adjusted_len = buf.len().min(MAX_COUNT) as w::DWORD;
         // Stdin callers route through this function (via
-        // `File::stdin().read_to_end_into` / `output_sink().read`), so the
+        // `File::read_to_end_into` / `output_sink().read`), so the
         // BROKEN_PIPE/HANDLE_EOF → 0 (EOF) mapping and the OPERATION_ABORTED
         // retry live here.
         loop {
@@ -4354,9 +4366,8 @@ mod windows_impl {
         // → FOLLOWS reparse points) then `fstat(file)`. Do NOT use `lstat` here —
         // that's the `lstatat` no-follow variant.
         let file = openat(fd, path, 0, 0)?;
-        let r = fstat(file);
-        let _ = close(file);
-        r
+        let _close = super::CloseOnDrop::new(file);
+        fstat(file)
     }
     pub fn access(path: &ZStr, mode: i32) -> Maybe<()> {
         // GetFileAttributesW, then if
@@ -7595,9 +7606,9 @@ fn linux_kernel_is_freebsd() -> bool {
         let Ok(fd) = open(z, O::RDONLY | O::NOCTTY, 0) else {
             break 'detect 1;
         };
+        let _close = CloseOnDrop::new(fd);
         let mut buf = [0u8; 512];
         let n = read(fd, &mut buf).unwrap_or(0);
-        let _ = close(fd);
         if bun_core::strings::contains_case_insensitive_ascii(&buf[..n], b"freebsd") {
             2
         } else {
@@ -9039,10 +9050,9 @@ pub(crate) fn move_file_z_slow(
         O::RDONLY | O::CLOEXEC,
         if cfg!(windows) { 0 } else { 0o644 },
     )?;
+    let _close = CloseOnDrop::new(in_handle);
     let _ = unlinkat(from_dir, filename);
-    let r = copy_file_z_slow_with_handle(in_handle, to_dir, destination);
-    let _ = close(in_handle);
-    r
+    copy_file_z_slow_with_handle(in_handle, to_dir, destination)
 }
 /// `copyFileZSlowWithHandle` (POSIX read/write fallback arm).
 pub(crate) fn copy_file_z_slow_with_handle(
@@ -9060,6 +9070,7 @@ pub(crate) fn copy_file_z_slow_with_handle(
         O::WRONLY | O::CREAT | O::CLOEXEC | O::TRUNC,
         0o644,
     )?;
+    let _close = CloseOnDrop::new(dst);
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // Preallocation is best-effort.
@@ -9074,7 +9085,6 @@ pub(crate) fn copy_file_z_slow_with_handle(
         let _ = safe_libc::fchmod(dst.native(), st.st_mode);
         let _ = safe_libc::fchown(dst.native(), st.st_uid, st.st_gid);
     }
-    let _ = close(dst);
     r
 }
 /// `renameatZ` alias (bun_install reaches for it as the NUL-terminated form).

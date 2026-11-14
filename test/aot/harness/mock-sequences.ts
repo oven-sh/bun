@@ -14,15 +14,12 @@ const rewrite = !!process.env.BUN_AOT_REWRITE_MOCK_SEQUENCES;
 const known = readFileSync(list, "utf8").split("\n");
 const withoutName = (line: string) => line.replace(/^(\S+) /, "");
 const idOf = (line: string) => withoutName(line).split(" ")[1];
-const isEntry = (line: string) => !!line && !/^[#~]/.test(line);
+const isEntry = (line: string) => !!line && !line.startsWith("#");
 const keyOf = (line: string) => line.split(" | ")[0].replace(/ (loud|SILENT)$/, "");
-const wavers = new Set(known.filter(line => line.startsWith("~ ")).map(line => line.replace(/^~ \S+ /, "")));
-const isSteady = (line: string) => !wavers.has(keyOf(line));
 const seen: string[] = [];
 const asked = new Set<string>();
 
-function judge(way: string, ids: string[], differing: string[]) {
-  const found = differing.filter(isSteady);
+function judge(way: string, ids: string[], found: string[]) {
   seen.push(...found);
   for (const id of ids) asked.add(`${way} ${id}`);
   if (rewrite) return;
@@ -93,6 +90,6 @@ export function mockSequences(...ways: Way[]) {
     const kept = now.filter(line => isEntry(line) && !asked.has(withoutName(line).split(" ", 2).join(" ")));
     const mine = seen.map(line => `${names.get(keyOf(line)) ?? "?"} ${line}`);
     const byKey = (a: string, b: string) => (withoutName(a) < withoutName(b) ? -1 : 1);
-    writeFileSync(list, [...now.filter(line => /^[#~]/.test(line)), ...[...kept, ...mine].sort(byKey), ""].join("\n"));
+    writeFileSync(list, [...now.filter(line => line.startsWith("#")), ...[...kept, ...mine].sort(byKey), ""].join("\n"));
   });
 }

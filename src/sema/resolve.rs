@@ -799,6 +799,8 @@ pub struct Options {
     pub type_root_of_last_resort: Option<Vec<u8>>,
     /// The project has Bun's types installed and its `types` don't name them, so `tsc` doesn't read them. A build does.
     pub names_bun_types_by_itself: bool,
+    /// The file that "aot" names counts only where the package has no TypeScript or declaration file without it.
+    pub takes_aot_sources_last: bool,
     /// The declarations of one symbol in several files are considered in the order in which the directories list the files, whichever file refers to which.
     pub orders_files_as_listed: bool,
     /// `validatedFilesSpecBeforeSubstitution`, each paired with the corresponding entry of
@@ -1512,8 +1514,15 @@ fn parent_directory(mut path: &[u8]) -> &[u8] {
 
 #[inline]
 fn ends_with(path: &[u8], suffix: &[u8]) -> bool {
-    let mut path = path.iter().rev();
-    suffix.iter().rev().all(|byte| path.next() == Some(byte))
+    let Some(start) = path.len().checked_sub(suffix.len()) else {
+        return false;
+    };
+    for at in (0..suffix.len()).rev() {
+        if path[start + at] != suffix[at] {
+            return false;
+        }
+    }
+    true
 }
 
 /// The path of `name` in `dir`: `CombinePaths` for a `name` without a root.
@@ -1601,7 +1610,8 @@ pub fn root_length(path: &[u8]) -> usize {
         [b'/', volume, b':'] | [b'/', volume, b':', b'/', ..] if volume.is_ascii_alphabetic() => 3,
         [b'/', b'^'] | [b'/', b'^', b'/', ..] => 2,
         [b'/', b'/', ..] => unc_root_length(path),
-        [b'/', rest @ ..] if !strings::contains_char(rest, b':') => 1,
+        // Without an early exit the loop is vectorized.
+        [b'/', rest @ ..] if !rest.iter().fold(false, |found, &it| found | (it == b':')) => 1,
         [b'/', rest @ ..] => match get_encoded_root_length(rest) {
             url if url < 0 => 1 + url_root_without_separator(&rest[..!url as usize]).len(),
             _ => 1,
@@ -1656,6 +1666,9 @@ pub(crate) fn get_path_components(path: &[u8]) -> SmallVec<[&[u8]; 8]> {
 /// The path that the file system resolves `path` to. It follows `.`, `..` and empty names, which never appear in a
 /// directory listing. Returns `None` if `path` is already absolute and normalized.
 fn normalized_for_lookup(path: &[u8]) -> Option<Vec<u8>> {
+    if is_plainly_normalized(path) {
+        return None;
+    }
     let names = &path[get_root_length(path)..];
     let mut split = strings::split(names, b"/");
     let is_normalized = path.first() == Some(&b'/')
@@ -1664,6 +1677,20 @@ fn normalized_for_lookup(path: &[u8]) -> Option<Vec<u8>> {
             // In the checker's format a URL's root has a `/` before it.
             || get_encoded_root_length(&path[1..]) < 0);
     (!is_normalized).then(|| join(b"/", path))
+}
+
+/// True for a path whose only root is the `/` that it begins with, if none of its names is empty, begins with a dot or
+/// contains a backslash.
+#[inline]
+pub fn is_plainly_normalized(path: &[u8]) -> bool {
+    let [b'/', names @ ..] = path else {
+        return false;
+    };
+    // Without an early exit the loop is vectorized.
+    let may_be_special = path.iter().zip(names).fold(false, |found, (&byte, &next)| {
+        found | ((byte == b'/') & ((next == b'/') | (next == b'.'))) | (next == b'\\')
+    });
+    !may_be_special && names.last().is_some_and(|&last| last != b'/')
 }
 
 /// `NormalizePath` of an absolute path, which keeps a separator at the end.
@@ -1687,10 +1714,31 @@ fn unc_root_length(path: &[u8]) -> usize {
     }
 }
 
+/// The names of the relative path `rest`, if each of them stays as it's written.
+fn find_plain_names(rest: &[u8]) -> Option<&[u8]> {
+    let names = rest.strip_prefix(b"./").unwrap_or(rest);
+    let (&[first, ..], &[.., last]) = (names, names) else {
+        return None;
+    };
+    // Without an early exit the loop is vectorized.
+    let is_special = |byte: u8| (byte == b'\\') | (byte == b':') | (byte == b'^');
+    let pairs = names.iter().zip(&names[1..]);
+    let has_special = pairs.fold(false, |found, (&byte, &next)| {
+        let is_odd_name = (byte == b'/') & ((next == b'/') | (next == b'.'));
+        found | is_odd_name | is_special(byte)
+    });
+    let is_odd_end = last == b'/' || is_special(last);
+    (!has_special && !is_odd_end && first != b'.' && first != b'/').then_some(names)
+}
+
 /// `GetNormalizedAbsolutePath`. `dir` is already normalized and absolute, so it's copied as is.
 /// That leaves one pass over `rest` and one allocation.
 /// (`bun_paths::join_abs_string_buf` copies the whole path three times before it reaches a `Vec`.)
 pub fn join(dir: &[u8], rest: &[u8]) -> Vec<u8> {
+    if let Some(names) = find_plain_names(rest) {
+        let dir = if dir == b"/" { b"" } else { dir };
+        return [dir, b"/", names].concat();
+    }
     // `GetEncodedRootLength`: `C:\a` and `^/a` are absolute paths too, on every system. They are
     // represented as `/C:/a` and `/^/a` here.
     let has_drive = matches!(rest, [drive, b':'] | [drive, b':', b'/' | b'\\', ..] if drive.is_ascii_alphabetic());
@@ -2015,6 +2063,15 @@ impl Look<'_> {
 }
 
 /// The result of searching one location.
+/// What a walk over the targets of an export does with those below "aot".
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum AotTargets {
+    Included,
+    /// Only they are found, and "types" is skipped.
+    Only,
+    Skipped,
+}
+
 enum Found {
     File(Vec<u8>),
     /// `unresolved()`: explicitly resolved to nothing, which ends the search.
@@ -2440,6 +2497,9 @@ pub fn is_declaration_file_name(path: &[u8]) -> bool {
     let root_is_one_slash = path.first() == Some(&b'/') && !path.get(1).is_some_and(is_separator);
     if !root_is_one_slash || path.last().is_some_and(is_separator) {
         return !get_declaration_file_extension(path).is_empty();
+    }
+    if !ends_with(path, b"ts") {
+        return false;
     }
     // The base name is the end of such a path, from its last separator on.
     let base = || &path[path.iter().rposition(is_separator).map_or(0, |at| at + 1)..];
@@ -4341,7 +4401,7 @@ impl<'h> Resolver<'h> {
         is_imports: IsImports,
         look: Look,
     ) -> Found {
-        let walk = |skips_types: bool| {
+        let walk = |aot_targets: AotTargets| {
             self.walk_export_target(
                 package_dir,
                 module_name,
@@ -4351,21 +4411,29 @@ impl<'h> Resolver<'h> {
                 key,
                 is_imports,
                 look,
-                skips_types,
+                aot_targets,
             )
         };
         let custom_conditions = &self.options.custom_conditions;
-        if custom_conditions.iter().any(|it| it == AOT_CONDITION)
-            && names_condition(target, AOT_CONDITION)
-            && let Found::File(path) = walk(true)
-        {
-            return Found::File(path);
+        let has_aot_target = custom_conditions.iter().any(|it| it == AOT_CONDITION)
+            && names_condition(target, AOT_CONDITION);
+        if !has_aot_target {
+            return walk(AotTargets::Included);
         }
-        walk(false)
+        if self.options.takes_aot_sources_last {
+            return match walk(AotTargets::Skipped) {
+                Found::No => walk(AotTargets::Only),
+                found => found,
+            };
+        }
+        match walk(AotTargets::Only) {
+            Found::File(path) => Found::File(path),
+            Found::Blocked | Found::No => walk(AotTargets::Included),
+        }
     }
 
     /// `loadModuleFromTargetExportOrImport`. `subpath`: the text matched by the `*` of `key` if
-    /// `is_pattern`, or else the text after `key`. With `skips_types` it finds only what stands below "aot".
+    /// `is_pattern`, or else the text after `key`.
     fn walk_export_target<'j>(
         &self,
         package_dir: &[u8],
@@ -4376,7 +4444,7 @@ impl<'h> Resolver<'h> {
         key: &[u8],
         is_imports: IsImports,
         look: Look,
-        skips_types: bool,
+        aot_targets: AotTargets,
     ) -> Found {
         /// An object or an array whose targets are being searched.
         enum Entered<'a> {
@@ -4389,8 +4457,11 @@ impl<'h> Resolver<'h> {
             match entered {
                 Entered::Conditions(condition, rest) => {
                     for (next, target) in rest.by_ref() {
-                        let is_skipped =
-                            skips_types && (next == b"types" || next.starts_with(b"types@"));
+                        let is_skipped = match aot_targets {
+                            AotTargets::Included => false,
+                            AotTargets::Only => next == b"types" || next.starts_with(b"types@"),
+                            AotTargets::Skipped => next == AOT_CONDITION,
+                        };
                         if !is_skipped && self.condition_matches(next, look) {
                             look.trace(6403, &[Arg::Bytes(field), Arg::Bytes(next)]);
                             *condition = next.as_slice();
@@ -4446,7 +4517,8 @@ impl<'h> Resolver<'h> {
                     matches!(it, Entered::Conditions(condition, _) if *condition == AOT_CONDITION)
                 })
             };
-            if skips_types && matches!(found, Found::File(_)) && !is_below_aot() {
+            if aot_targets == AotTargets::Only && matches!(found, Found::File(_)) && !is_below_aot()
+            {
                 return Found::No;
             }
             // Back out to the innermost entry that has another target to try. A result ends the search.

@@ -1,3 +1,4 @@
+# LIBRARY: own
 # -- source: an-element-with-a-user-that-does-more-than-reckon-keeps-its-hole.ts
 # declare function sink(value: unknown): void;
 # function tally(d: number[]): number { let s = 0, holes = 0; for (let i = 0; i < d.length; i++) { const v = d[i]; if (v === undefined) holes++; else s += v * v; } return holes * 1000000 + s; }

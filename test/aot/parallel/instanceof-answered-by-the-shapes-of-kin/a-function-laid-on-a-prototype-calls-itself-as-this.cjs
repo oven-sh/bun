@@ -1,6 +1,6 @@
 // `Machine.prototype.alike = function (a, b) { .. this.alike(..) .. }`: the function calls itself under the name under which the statement lays it: its questions are answered as in a loop.
 // Later the name gets another function, and an object of another kind borrows the first one.
-// STATISTIC: MissesOfInstanceOfAnsweredByShapesOfKin >= 3
+// STATISTIC: InstanceOfMissesDecidedByHierarchy >= 3
 function Atom(name) { this.name = name; }
 function Num(value) { this.value = value; }
 function Struct(name, args) { this.name = name; this.args = args; }

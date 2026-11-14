@@ -3,17 +3,17 @@
 // # right because every sum on the way is an integer below 2^53, which a number holds exactly: the sum that enters is whole and at most 2^52, asked once at the entry, and all turns together add at most 2^52, by the types.
 // # every start is run that fails one of the two: NaN, the infinities, what lies beyond 2^52 on either side, a fraction; and -0, which passes and comes out as 0 either way.
 // # f2 = sumBytes, f3 = sumSigned, f4 = sumFromAnyNumber, f5 = sumWords, f6 = sumReadInTheTurn, f7 = sumMasked, f13 = sumFromHalves
-// # no turn laid out makes a number of its byte: one conversion for floor, one on the way out of the turns laid out, one in the written loop
+// # no turn laid out makes a number of its byte: one conversion for floor, one on the way out of the vectors, one on the way out of the turns laid out, one in the written loop
 // # RUN(SUM): emit f2 mechanisms=all
 // # SUM-LABEL: unit f2:Body
-// # SUM-COUNT-3: = IToD(
+// # SUM-COUNT-4: = IToD(
 // # SUM-NOT: = IToD(
 // # RUN(SMALL): emit f2 mechanisms=all
 // # SMALL: [[size]] = Abs(
 // # SMALL: = LessEqual(@[[size]],
 // # a term that may be negative is extended with its sign
 // # RUN(SIGN): emit f3 mechanisms=all
-// # SIGN-COUNT-8: = SExt32(
+// # SIGN-COUNT-9: = SExt32(
 // # SIGN-NOT: = SExt32(
 // # a sum of whole numbers that comes round has no fraction by its type, so the entry asks for its size alone
 // # RUN(SIZE): emit f7 mechanisms=all
@@ -28,7 +28,7 @@
 // # WHOLE: = Equal(@[[size]], @[[rounded]]
 // # 2^31 a turn over 2^34 turns is more than a number holds exactly: the integer is taken over into the number behind every stretch of 2^20 turns, and there the size of the number is asked again: the entry asks once, the end of a stretch once
 // # RUN(LARGE): emit f5 mechanisms=all
-// # LARGE-COUNT-2: = Abs(
+// # LARGE-COUNT-3: = Abs(
 // # LARGE-NOT: = Abs(
 // # a sum that the turn reads for itself has to be there: it stays a number
 // # RUN(READ): emit f6 mechanisms=all

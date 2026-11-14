@@ -15,9 +15,10 @@ use crate::ir::generated::{
     AmbiguousExport, BuiltinUsedAtStart, Data, DataMember, DataNode, DeclaredRecord, Entry,
     EvalBinding, EvalScope, ExpectedResult, Field, Function, FunctionFlags, FunctionVisibility,
     Header, HostRead, ImportPhase, Layout, LayoutKind, MAGIC, Module, ModuleExport, ModuleFailure,
-    ModuleRequest, ModuleRequestKind, OpenedName, ProgramList, QuotedText, ReplaceableBuiltin,
-    RequiredName, RuntimeFunctionEntry, SCHEMA_HASH, SourcePositions, SourceStamp, StaticField,
-    SyntheticExport, TypeSite, TypeSiteKind, Variable, WebAssemblyModule,
+    ModuleInstance, ModuleLink, ModuleRequest, ModuleRequestKind, OpenedName, ProgramList,
+    QuotedSource, ReplaceableBuiltin, RequiredName, RuntimeFunctionEntry, SCHEMA_HASH,
+    SourcePositions, SourceStamp, StaticField, SyntheticExport, TypeSite, TypeSiteKind, Variable,
+    WebAssemblyModule,
 };
 use crate::ir::testing::{build_function, function_with_parameters};
 use crate::ir::{
@@ -140,18 +141,18 @@ fn create_module(names: &Names) -> Module {
             export_name: Some(names.name),
             specifier: Some(names.text),
             drops_export_if_absent: false,
-            is_asked_for_by_star: false,
+            is_requested_by_star_export: false,
         }],
         positions: SourcePositions {
-            quoted_texts: vec![QuotedText {
+            quoted_sources: vec![QuotedSource {
                 position: 1,
                 start: 0,
                 end: 2,
             }],
-            text_of_quotes: b"ab".to_vec(),
+            quoted_source_text: b"ab".to_vec(),
             ..source_positions(source, vec![0, 2])
         },
-        function_text: source.to_vec(),
+        function_source: source.to_vec(),
         ..Module::default()
     }
 }
@@ -219,7 +220,7 @@ fn create_full_program() -> Program {
         specifier: names.text,
         exporter: Some(MODULE),
         export_specifier: Some(names.text),
-        ends_load_of: None,
+        failed_load_root: None,
     });
     program.ambiguous_exports.push(AmbiguousExport {
         module: MODULE,
@@ -235,6 +236,20 @@ fn create_full_program() -> Program {
         position: 7,
         parameter: 1,
         names: vec![names.key],
+    });
+    program.module_instances.push(ModuleInstance {
+        module: MODULE,
+        layout: LAYOUT,
+        namespace_field: 1,
+        deferred_namespace_field: 2,
+    });
+    program.module_links.push(ModuleLink {
+        module: MODULE,
+        target: MODULE,
+        link: Some(3),
+        mock: None,
+        path: vec![MODULE],
+        rest: None,
     });
     program.eval_scopes.push(EvalScope {
         bindings: vec![EvalBinding {
@@ -647,6 +662,8 @@ fn counts_match_program() {
         ),
         (ProgramList::SourceStamps, program.source_stamps.len()),
         (ProgramList::DeclaredRecords, program.declared_records.len()),
+        (ProgramList::ModuleInstances, program.module_instances.len()),
+        (ProgramList::ModuleLinks, program.module_links.len()),
         (ProgramList::EvalScopes, program.eval_scopes.len()),
         (ProgramList::Functions, program.functions.len()),
         (ProgramList::Data, program.data.len()),
@@ -671,8 +688,8 @@ fn counts_match_program() {
         (
             ProgramList::Bytes,
             program.strings.byte_len()
-                + program.modules[0].function_text.len()
-                + program.modules[0].positions.text_of_quotes.len()
+                + program.modules[0].function_source.len()
+                + program.modules[0].positions.quoted_source_text.len()
                 + program.web_assembly_modules[0].bytes.len(),
         ),
     ];

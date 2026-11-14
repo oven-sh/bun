@@ -1,13 +1,17 @@
-# a turn stores into the field, so each turn reads it
+# Each iteration stores into the field, so no iteration may use a read made before the one ahead of it stored. The value of the slot comes round the loop:
+# the read in the preheader enters the header alone, and what an iteration stores is what the next one uses.
 # class Box { x: number; constructor(x: number) { this.x = x; } }
 # function sum(o: Box, n: number) { let s = 0; for (let i = 0; i < n; i++) { s = (s + o.x) | 0; o.x = s; } return s; }
 # console.log(sum(new Box(2), 5));
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
-# CHECK-NOT: GetSlot
-# CHECK: isLoopHead=true
-# CHECK: = GetSlot {{*}}key="x"
-# CHECK: = PutSlot {{*}}key="x"
+# CHECK: [[entering]]: {{*}} = GetSlot {{*}}key="x"
+# CHECK-NEXT: Jump -> next [[head]]({{*}}, {{*}}, [[entering]])
+# CHECK-NEXT: [[head]]({{*}}, {{*}}, [[held]]: undefined|i32 @OptionalInt64{{*}}isLoopHead=true
+# CHECK: = TypeTest [[held]] testedType=undefined
+# CHECK: [[stored]]: i32 @OptionalInt64 = Box
+# CHECK-NEXT: = PutSlot {{*}}, [[stored]] key="x"
+# CHECK: Jump -> next [[head]]({{*}}, {{*}}, [[stored]])
 
 module m0 path="store-of-the-field-keeps-the-read-in-the-loop.ts" displayPath="store-of-the-field-keeps-the-read-in-the-loop.ts" body=f0 namespaceLayout=L(m0)
 entry module=m0

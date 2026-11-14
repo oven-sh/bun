@@ -62,6 +62,15 @@ describe.concurrent("the enumerable members of host prototypes", () => {
     ["a comparison with null", `console.log(Object.getPrototypeOf(value) == null ? "none" : "one");`],
     ["a test", `if (Object.getPrototypeOf(value)) console.log("one");`],
     ["typeof", `console.log(typeof value.__proto__);`],
+    ["a name read from the prototype of a record", `console.log(typeof Object.getPrototypeOf({ a: 1 }).later);`],
+    [
+      "two steps from what two tests left",
+      `if (typeof value === "object" && value !== null) console.log(String(Object.getPrototypeOf(Object.getPrototypeOf(value)) === null));`,
+    ],
+    [
+      "a name read from the prototype of a text or a record",
+      `console.log(typeof Object.getPrototypeOf(process.argv[3] ? "x" : {}).later);`,
+    ],
     [
       "two steps and a comparison",
       `console.log(String(Object.getPrototypeOf(Object.getPrototypeOf(value)) === null));`,
@@ -111,10 +120,12 @@ describe.concurrent("the enumerable members of host prototypes", () => {
     "Object.create",
     "Object.setPrototypeOf in the constructor of an error",
   ];
+  const assignToWhatWasCopied = ["copies of objects that are no prototypes"];
   const met = unused.filter(([what]) => !countAsUsedToday.includes(what));
   for (const together of [
-    met.filter(([what]) => !handAPrototypeOn.includes(what)),
+    met.filter(([what]) => !handAPrototypeOn.includes(what) && !assignToWhatWasCopied.includes(what)),
     met.filter(([what]) => handAPrototypeOn.includes(what)),
+    met.filter(([what]) => assignToWhatWasCopied.includes(what)),
   ])
     test(`do not count as used with ${together.map(([what]) => what).join(", ")}`, async () => {
       expect(await inOneProgram(together)).toEqual({ ...closed, retainsImage: false });

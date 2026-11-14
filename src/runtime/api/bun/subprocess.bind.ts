@@ -50,9 +50,9 @@ export const Subprocess = b.class({
       throws: true,
       length: 1,
       uses: {
-        message: [...table.handedOver, table.storedIn(table.nativeCell(sentMessagesCell))],
-        handle: [...table.handedOver, table.storedIn(table.nativeCell(sentHandlesCell))],
-        options: [...table.handedOver, table.storedIn(table.nativeCell(sentOptionsCell))],
+        message: [...table.retainedByNativeCode, table.storedIn(table.nativeCell(sentMessagesCell))],
+        handle: [...table.retainedByNativeCode, table.storedIn(table.nativeCell(sentHandlesCell))],
+        options: [...table.retainedByNativeCode, table.storedIn(table.nativeCell(sentOptionsCell))],
       },
     },
     signalCode: { getter: b.any.returning("string", "number", "null"), capability: "js" },

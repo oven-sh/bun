@@ -442,7 +442,7 @@ for (const [name, instance] of Object.entries(instances)) {
         `ShuffleExpectedTypes:${seed}`,
         `ShuffleChoices:${seed}`,
         `ShuffleBlockFrequencies:${seed}`,
-        `FailGuesses:${1 + (seed % 7)}:${seed}`,
+        `FailSpeculations:${1 + (seed % 7)}:${seed}`,
       ])
         under(
           word,

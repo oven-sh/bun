@@ -1,4 +1,11 @@
 // A module with two memories. Only the first can be a fast memory, so every access to the second is tested against its size.
+// STATISTIC: WasmOptimizedCopies = 8
+// STATISTIC: WasmBaselineCopies = 8
+// STATISTIC: WasmOptimizedCheckingCopies = 0
+// STATISTIC: WasmBaselineCheckingCopies = 8
+// COUNTER in every build: WasmInstancesUsingImageCode = 1
+// COUNTER in every build: WasmInstancesInterpreted = 0
+// COUNTER in every build: WasmModulesFoundBeforeParsing = 1
 /// <reference path="../wasm-files.d.ts" />
 // Env of the executable: BUN_JSC_crashIfInterpreterIsUsed=1
 import path from "./module.wasm";

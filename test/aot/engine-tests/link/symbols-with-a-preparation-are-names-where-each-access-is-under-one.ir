@@ -4,7 +4,7 @@
 #   o[kHeaders];  o[kLenient];  o[kOther]
 # LIBRARY: own
 # RUN: link accesses mechanisms=all
-# STATISTIC: SymbolsWithPreparationThatGoByValue = 0
+# STATISTIC: PreparedSymbolsAccessedByValue = 0
 # CHECK: access f2 v2 under symbol("kHeaders")@m1:0
 # CHECK-NEXT: access f3 v2 under symbol("kLenient")@m1:1
 # CHECK: access f5 v2 under symbol("kOther")@m1:2

@@ -41,9 +41,10 @@ impl FileLowering<'_, '_, '_, '_> {
         let callee = self.hir[site].callee;
         self.hir.member_key(callee)?;
         let method = self.find_written_type(callee)?;
-        let ShapeKind::Function(&[signature]) = self.queries.type_shape(method).ok()?.kind else {
+        let ShapeKind::Function(signatures) = self.queries.type_shape(method).ok()?.kind else {
             return None;
         };
+        let signature = self.queries.only_signature(signatures)?;
         let shape = self.queries.signature(signature);
         let declared = self.queries.function_signature(shape.declaration?);
         let written = shape.result.written;
@@ -350,13 +351,14 @@ mod tests {
     fn count_int32_promises_in(files: &[(&str, &str)], function_name: &str) -> usize {
         let options = LoweringOptions {
             platform: host_platform(),
-            embeds_function_text: false,
-            reads_function_texts_back: false,
+            embeds_function_source: false,
+            reparses_function_sources: false,
             removable: Default::default(),
             minifies_identifiers: false,
             obfuscates: false,
             counts_executions: false,
             runs_tests: false,
+            divides_small_files: false,
         };
         let lowered = lower_program(files, options);
         let count = lowered.iter().find_map(|(_, lowered)| {

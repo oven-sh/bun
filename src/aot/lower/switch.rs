@@ -48,11 +48,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) {
         let switched_by_kind = self.find_operand_switched_by_kind(expr, cases);
         let subject = match switched_by_kind {
-            Some(operand) => Subject {
-                value: self.lower_typeof_operand(operand),
-                local: None,
-                field: None,
-            },
+            Some(operand) => {
+                let value = self.lower_typeof_operand(operand);
+                let local = scope::find_tested_local(self, operand);
+                Subject {
+                    value,
+                    local: local.filter(|&local| self.read_local(local) == value),
+                    field: None,
+                }
+            }
             None => Subject {
                 value: self.lower_expression(expr),
                 local: scope::find_tested_local(self, expr),
@@ -98,7 +102,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     _ => None,
                 });
                 let names: Vec<(Atom, BlockId)> = names.collect();
-                self.jump_by_typeof(subject.value, &names, default_target);
+                self.jump_by_typeof(subject.value, subject.local, &names, default_target);
             }
             None => self.emit_dispatch(subject, &tests, default_target),
         }

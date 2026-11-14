@@ -1,12 +1,16 @@
 use core::ptr::NonNull;
 use std::io::Write as _;
 
-use super::entry_points::find_default_entry_point;
+use super::entry_points::{
+    EntryPointError, NamedEntryPoint, find_default_entry_point, find_named_entry_point,
+    find_package_name, is_script_without_extension,
+};
 use super::library::find_default_library_entry_points;
 use super::{BundlerInputs, CompileProduct, CompileRequest, ExecutableSettings, RequestOrigin};
 pub(super) use crate::cli::build_command::compile_outfile;
 use crate::cli::command::Context;
 use crate::cli::run_compiled;
+use bun_aot::report::build_rows::write_note_row;
 use bun_bundler::aot::expand_entry_points;
 use bun_bundler::options;
 use bun_bundler::transpiler::Transpiler;
@@ -63,12 +67,99 @@ pub(super) fn use_default_entry_point(ctx: &mut ContextData) {
                 ctx.bundler_options.outfile = found.executable_name;
             }
         }
-        Err(error) => {
-            let mut message = Vec::new();
-            error.write_message(&mut message);
-            exit_without_entry_point(&message);
-        }
+        Err(error) => exit_with_error(&error),
     }
+}
+
+/// `bun compile rollup` compiles the file that `bun run rollup` runs.
+pub(super) fn use_installed_executable(ctx: &mut ContextData) {
+    if ctx.bundler_options.library {
+        return;
+    }
+    let Some(written) = ctx.args.entry_points.first() else {
+        return;
+    };
+    let working_directory = ctx
+        .args
+        .absolute_working_dir
+        .as_deref()
+        .expect("Arguments::parse sets the working directory");
+    match find_named_entry_point(working_directory, written) {
+        Ok(NamedEntryPoint::AsWritten) => {}
+        Ok(NamedEntryPoint::Library { executable_names }) => {
+            note_library_entry_point(written, &executable_names);
+        }
+        Ok(NamedEntryPoint::SourceFile(path)) => ctx.args.entry_points[0] = path,
+        Ok(NamedEntryPoint::Executable(found)) => {
+            note_installed_executable(working_directory, written, &found.path);
+            ctx.args.entry_points[0] = found.path;
+            if ctx.bundler_options.outfile.is_empty() {
+                ctx.bundler_options.outfile = found.executable_name;
+            }
+        }
+        Err(error) => exit_with_error(&error),
+    }
+}
+
+#[cold]
+pub(super) fn load_script_as_code(ctx: &mut ContextData) {
+    let working_directory = ctx
+        .args
+        .absolute_working_dir
+        .as_deref()
+        .expect("Arguments::parse sets the working directory");
+    let is_script = (ctx.args.entry_points.first())
+        .is_some_and(|written| is_script_without_extension(working_directory, written));
+    if !is_script {
+        return;
+    }
+    // What `--loader=:tsx` does. `bun run` and `--aot` read such an entry point as TSX too.
+    let loaders = ctx.args.loaders.get_or_insert_default();
+    if !loaders.extensions.iter().any(|it| it.is_empty()) {
+        loaders.extensions.push(Box::default());
+        loaders.loaders.push(api::Loader::tsx);
+    }
+}
+
+#[cold]
+fn note_library_entry_point(package_name: &[u8], executable_names: &[Vec<u8>]) {
+    let package_name = bstr::BStr::new(package_name);
+    if executable_names.is_empty() {
+        bun_core::note!(
+            "{} has no \"bin\" in its package.json, so this compiles the library that import \"{}\" loads",
+            package_name,
+            package_name
+        );
+        return;
+    }
+    bun_core::note!(
+        "{} has no \"bin\" of that name in its package.json, so this compiles the library that import \"{}\" loads. Its \"bin\" has: {}",
+        package_name,
+        package_name,
+        bstr::BStr::new(&executable_names.join(&b", "[..]))
+    );
+}
+
+#[cold]
+fn note_installed_executable(working_directory: &[u8], name: &[u8], path: &[u8]) {
+    let shown_path = bun_paths::resolve_path::relative(working_directory, path);
+    let mut line = [name, b" is ", shown_path].concat();
+    if let Some(package_name) = find_package_name(path) {
+        line.extend_from_slice(b", from the package ");
+        line.extend_from_slice(&package_name);
+    }
+    let mut row = Vec::new();
+    let has_colors = Output::enable_ansi_colors_stderr();
+    write_note_row("note", &[line], has_colors, &mut row);
+    let _ = Output::error_writer().write_all(&row);
+    Output::flush();
+}
+
+#[cold]
+fn exit_with_error(error: &EntryPointError) -> ! {
+    let mut message = Vec::new();
+    error.write_message(&mut message);
+    exit_without_entry_point(&message)
 }
 
 #[cold]
@@ -476,7 +567,7 @@ fn finish(
 pub(super) fn request_from_context<'r>(
     ctx: &'r mut ContextData,
     configuration: Configuration,
-    event_loop: &'r mut AnyEventLoop,
+    event_loop: &'r AnyEventLoop,
     product: CompileProduct<'r>,
     root_dir: Fd,
     origin: RequestOrigin,

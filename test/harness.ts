@@ -16,7 +16,7 @@ import os from "node:os";
 import { dirname, isAbsolute, join, sep } from "path";
 import { locksEnvironment } from "./aot/hardened";
 import { ownTemporaryFolder } from "./aot/harness/temporary-folders";
-import "./aot/harness/without-installing-packages";
+import { temporaryFolderThatInstalls } from "./aot/harness/without-installing-packages";
 
 export const BREAKING_CHANGES_BUN_1_2 = false;
 
@@ -738,17 +738,20 @@ export function tempDirWithFiles(
   return base;
 }
 
+// On Windows a process that was just killed can hold the folder for a moment: a child that a job
+// object ends after its parent, for one. The folder is busy then. A program in it that has not quite ended may not be removed.
+const isHeldByEndingProcess = (error: any) => isWindows && (error?.code === "EBUSY" || error?.code === "EPERM");
+
 class DisposableString extends String {
   [Symbol.dispose]() {
-    // On Windows a process that was just killed can hold the folder for a moment: a child that a job
-    // object ends after its parent, for one. `rmSync` does not act on `maxRetries`.
+    // `rmSync` does not act on `maxRetries`.
     const deadline = Date.now() + 5000;
     while (true) {
       try {
         fs.rmSync(this + "", { recursive: true, force: true });
         return;
       } catch (error: any) {
-        if (!isWindows || error?.code !== "EBUSY" || Date.now() > deadline) throw error;
+        if (!isHeldByEndingProcess(error) || Date.now() > deadline) throw error;
         sleepSync(50);
       }
     }
@@ -759,7 +762,7 @@ class DisposableString extends String {
       try {
         return await fs.promises.rm(this + "", { recursive: true, force: true });
       } catch (error: any) {
-        if (!isWindows || error?.code !== "EBUSY" || Date.now() > deadline) throw error;
+        if (!isHeldByEndingProcess(error) || Date.now() > deadline) throw error;
         await Bun.sleep(50);
       }
     }
@@ -772,6 +775,16 @@ export function tempDir(
 ): string & DisposableString & AsyncDisposable {
   const base = tempDirWithFiles(basename, filesOrAbsolutePathToCopyFolderFrom);
 
+  return new DisposableString(base) as string & DisposableString & AsyncDisposable;
+}
+
+/** `tempDir`, but with no node_modules folder above it. Auto-install is off in the other temporary folders. */
+export function autoInstallTempDir(
+  basename: string,
+  filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string,
+): string & DisposableString & AsyncDisposable {
+  const base = ownTemporaryFolder(fs.mkdtempSync(join(temporaryFolderThatInstalls(), basename + "_")));
+  makeTreeSync(base, filesOrAbsolutePathToCopyFolderFrom);
   return new DisposableString(base) as string & DisposableString & AsyncDisposable;
 }
 
@@ -841,7 +854,7 @@ export function unprivilegedSpawnOptions(dir: string): { uid?: number; gid?: num
     for (const entry of fs.readdirSync(dir, { recursive: true, encoding: "utf8" })) {
       fs.lchownSync(join(dir, entry), NOBODY, NOBODY);
     }
-    const tmp = fs.realpathSync(os.tmpdir());
+    const tmp = fs.realpathSync(temporaryFolderThatInstalls());
     for (let parent = dirname(fs.realpathSync(dir)); parent !== dirname(parent); parent = dirname(parent)) {
       const mode = fs.statSync(parent).mode & 0o7777;
       if (mode & 0o001) continue;
@@ -2124,18 +2137,6 @@ export function forceGuardMalloc(env) {
   } else {
     console.warn("Guard malloc is not available on this platform for some reason.");
   }
-}
-
-export function fileDescriptorLeakChecker() {
-  const initial = getMaxFD();
-  return {
-    [Symbol.dispose]() {
-      const current = getMaxFD();
-      if (current > initial) {
-        throw new Error(`File descriptor leak detected: ${current} (current) > ${initial} (initial)`);
-      }
-    },
-  };
 }
 
 /**

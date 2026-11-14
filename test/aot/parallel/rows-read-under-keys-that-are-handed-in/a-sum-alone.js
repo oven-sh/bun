@@ -1,4 +1,4 @@
-// STATISTIC: ListsAskedInTurnsOfTypedCopies >= 1
+// STATISTIC: ArraysGuardedInIterations >= 1
 const D = JSON.parse("[[1.5,2,3],[3,4.5,1],[5,6,0.25],[7,8,9]]");
 function one(d, a) {
   let sum = 0;

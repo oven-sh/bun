@@ -18,8 +18,7 @@
 # CHECK: [[test]]: boolean @Boolean = TypeTest [[add]] testedType=f1
 # CHECK: Branch [[test]]
 # CHECK: isInLoop=true isLoopHead=true:
-# CHECK-NOT: calleeName="N.add"
-# CHECK: Call {{*}}calleeName="N.dot" traits=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory]
+# CHECK-NOT: calleeName="N.
 # RUN(ANSWERS): run-in-shell globalThis.sink = f => { print(f(1)); print(f(2)); };
 # ANSWERS: 837.5
 # ANSWERS-NEXT: 1187.5

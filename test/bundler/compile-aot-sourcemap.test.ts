@@ -1,12 +1,10 @@
 import { spawn } from "bun";
 import { expect, setDefaultTimeout } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { describe, test } from "../aot/supported";
 
 setDefaultTimeout(60_000);
-
-const root = isWindows ? "B:\\~BUN\\root\\" : "/$bunfs/root/";
 
 const files = {
   "app.ts": `
@@ -56,7 +54,7 @@ describe.concurrent("--sourcemap with --aot", () => {
     async flag => {
       const { said, stdout } = await built(["--aot", flag]);
       expect(said).toContain(note);
-      expect(stdout).toBe(`Error: failed\n    at fail (${root}app.ts:3:13)\n    at ${root}app.ts:6:3\n`);
+      expect(stdout).toBe(`Error: failed\n    at fail (./app.ts:3:13)\n    at ./app.ts:6:3\n`);
     },
   );
 
@@ -64,7 +62,7 @@ describe.concurrent("--sourcemap with --aot", () => {
     const { said, stdout } = await built(["--aot", "--sourcemap=external"]);
     expect(said).not.toContain(note);
     expect(stdout.replace(/\d+/g, "N")).toBe(
-      `Error: failed\n    at <anonymous> (${root}compiled.js:N:N)\n    at ${root}compiled.js:N:N\n`,
+      `Error: failed\n    at <anonymous> (./compiled.js:N:N)\n    at ./compiled.js:N:N\n`,
     );
   });
 

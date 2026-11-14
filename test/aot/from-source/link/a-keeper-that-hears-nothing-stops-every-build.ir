@@ -16,7 +16,7 @@
 # -- end of source
 # Nobody declares the name, so every member sleeps; a store by name on one of them wakes them. THE RED CONTROL OF THE NET IN EVERY BUILD: with a keeper that hears nothing on purpose the build stops: once the flow is at rest it asks the nodes themselves, not who was told.
 # DIAGNOSTIC: FlowEndedTooEarly 1
-# RUN: link functions testing=NobodyWakesSleepersOfSharedCalls mechanisms=all
+# RUN: link functions testing=IgnoreDormantMemberUpdates mechanisms=all
 
 module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
 entry module=m0

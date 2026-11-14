@@ -2,7 +2,7 @@ use bun_trim::UnseenCodeCause;
 
 use super::levels::AccessColumn;
 use crate::ir::generated::{
-    AllocationEscapeReason, AllocationHeapCause, CodeForm, IllTypedCause, KnowledgeLevel,
+    AllocationEscapeReason, AllocationHeapCause, CodeForm, KnowledgeLevel, TypeOriginReason,
     TypeTestFailure, UnprovenCause,
 };
 
@@ -13,68 +13,14 @@ pub(super) struct CauseWording {
     pub fix: &'static str,
 }
 
-pub(super) struct GuardWording {
-    pub counted_as: &'static str,
-    pub headline: &'static str,
-    pub fix: &'static str,
-}
-
-pub(super) struct IllTypedWording {
-    pub code: &'static str,
-    pub message: &'static str,
-    pub fix: &'static str,
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub(super) enum GuardClass {
-    OtherType,
-    UnknownObject,
-    UnknownCallee,
-    UnprovenContents,
-    ProofWithheld,
-    ReadBeforeInitialized,
-}
-
-impl GuardClass {
-    pub(super) const COUNT: usize = 6;
-    pub(super) const ALL: [GuardClass; GuardClass::COUNT] = [
-        GuardClass::OtherType,
-        GuardClass::UnknownObject,
-        GuardClass::UnknownCallee,
-        GuardClass::UnprovenContents,
-        GuardClass::ProofWithheld,
-        GuardClass::ReadBeforeInitialized,
-    ];
-}
+pub(super) const GUARD_HEADLINE: &str =
+    "the type of this value isn't proven, so it is checked here";
+pub(super) const GUARD_FIX: &str = "nothing to fix unless it fails in hot code. Then trace the value back from here to where its type is lost";
 
 pub(super) const ESCAPE_REASONS: [(AllocationEscapeReason, &str);
     AllocationEscapeReason::NAMES.len()] = [
     (AllocationEscapeReason::RETURNED, "it is returned"),
     (AllocationEscapeReason::THROWN, "it is thrown"),
-    (
-        AllocationEscapeReason::STORED_IN_UNKNOWN_MEMORY,
-        "it is stored somewhere the compiler can't track",
-    ),
-    (
-        AllocationEscapeReason::PASSED_TO_UNKNOWN_CODE,
-        "it is passed to code the compiler can't see",
-    ),
-    (
-        AllocationEscapeReason::RETAINED_BY_CALLEE,
-        "a callee keeps a reference to it",
-    ),
-    (
-        AllocationEscapeReason::STORED_IN_ESCAPING_OBJECT,
-        "it is stored in an object that escapes",
-    ),
-    (
-        AllocationEscapeReason::LEAKED_BY_CONTAINER,
-        "it is in a collection that escapes",
-    ),
-    (
-        AllocationEscapeReason::LIMIT_REACHED,
-        "escape analysis hit a limit",
-    ),
 ];
 
 pub(super) fn cause_wording(cause: UnprovenCause) -> CauseWording {
@@ -83,262 +29,220 @@ pub(super) fn cause_wording(cause: UnprovenCause) -> CauseWording {
             "The compiler recorded no reason for this slow path.",
             "this is a bug in Bun: please report it.",
         ),
-        UnprovenCause::ResultDisabled => (
-            "The part of the analysis that proves this was left out of the build.",
-            "no build option does that, so this is a bug in Bun: please report it.",
-        ),
         UnprovenCause::UnknownObject => (
-            "An object from untyped code is used as this type here, so it can have any shape.",
-            "build a new object of this type from it where it enters typed code.",
-        ),
-        UnprovenCause::NonLayoutObject => (
-            "An array, a function or a built-in object is used as this type here.",
-            "pass an object literal or a class instance, or declare the parameter with the type that is actually passed.",
-        ),
-        UnprovenCause::BuiltinBase => (
-            "This class extends a built-in class. The built-in constructor allocates the instances, so their fields can't be at fixed offsets.",
-            "fine for an error class. For a class with many instances, hold the built-in object in a field instead of extending it.",
-        ),
-        UnprovenCause::UnknownBase => (
-            "This class extends a class that comes from untyped code.",
-            "extend one of your own classes, or store the other object in a field.",
-        ),
-        UnprovenCause::ClassEvaluatedAgain => (
-            "This class declaration, or one it extends, can be evaluated more than once.",
-            "define the class at the top level of a module, not in a function or a loop.",
-        ),
-        UnprovenCause::ReachesNativeCode => (
-            "An object of this type is passed to a built-in function here that may add, delete or redefine its properties.",
-            "pass only the fields the function needs, or a copy.",
-        ),
-        UnprovenCause::ReachesUnknownJavaScript => (
-            "An object of this type is passed to untyped code here, which may add, delete or redefine its properties.",
-            "pass only the fields the other code needs. Instead of Object.defineProperty, declare the property in the class. Instead of Object.create, use a class and extends.",
-        ),
-        UnprovenCause::UnknownWriter => (
-            "Untyped code can write to a field of this type, so the field may hold any value.",
-            "keep the object out of that code, or pass only the fields it needs.",
+            "The compiler doesn't know the shape of this object, so the access is a lookup or needs a shape check.",
+            "that depends on where the object comes from. See the table at the link below.",
         ),
         UnprovenCause::UnknownCallee => (
-            "The callee isn't known at build time, so the result has no type.",
+            "The compiler can't tell which function this call reaches, so the call is indirect and its result has no type.",
             "call the function directly, or narrow the result.",
         ),
-        UnprovenCause::UnprovenContents => (
-            "The array, Map or Set this value is read from may contain values of other types.",
-            "only add to the collection from typed code, or narrow the element after reading it.",
-        ),
-        UnprovenCause::OtherNewTarget => (
-            "This class is constructed with a different new.target (Reflect.construct, or a subclass from untyped code).",
-            "construct it with new.",
-        ),
-        UnprovenCause::UndescribedNativeResult => (
-            "The value is the result of a built-in function whose result type the compiler doesn't know.",
-            "narrow the result.",
-        ),
-        UnprovenCause::UnseenCode => (
-            "The value comes from code that isn't in the executable.",
-            "keep eval'd code and modules loaded at run time away from this value.",
-        ),
-        UnprovenCause::UncheckedConversionOfUntracked => (
-            "A value that nothing checked against its declared type can reach this access.",
-            "follow the 'why' line of this entry.",
-        ),
-        UnprovenCause::DataFromOutside => (
-            "The value comes from outside the program (JSON.parse, response.json(), a file loaded at run time).",
-            "check its fields, and build a new object of this type from them.",
-        ),
-        UnprovenCause::ThrownByRunTime => (
-            "The value was caught, and anything can be thrown.",
-            "narrow it first, for example with instanceof Error.",
-        ),
-        UnprovenCause::ParameterOfEscapedFunction => (
-            "A function is handed to code the compiler can't see here, which can call it with any arguments.",
-            "call the function from your own code, or hand over a small wrapper that checks its arguments.",
-        ),
-        UnprovenCause::ContentsOfEscapedObject => (
-            "An object is handed to code the compiler can't see here, which can write anything into it.",
-            "hand over a copy, or only the fields that code needs.",
-        ),
-        UnprovenCause::ResultOfUnknownCallee => (
-            "The value is returned by a call whose callee isn't known at build time.",
-            "give the callee a function type.",
-        ),
-        UnprovenCause::ObjectWithoutLayout => (
-            "The object is made by a function that the compiler found no fixed layout for.",
-            "use a class or an object literal.",
-        ),
         UnprovenCause::Untracked => (
-            "The compiler stopped tracking the objects that reach this access.",
-            "give the value a declared type, or split the function.",
-        ),
-        UnprovenCause::LayoutOutsideFamily => (
-            "An object reaches this access with a shape its declared type doesn't include.",
-            "trace the object back from here. An unsound cast hides it from TypeScript.",
+            "An operator runs on a value whose type the compiler doesn't know.",
+            "start with the unknown-object or unknown-callee entry at the same location. If there is none, narrow the value first, for example with typeof.",
         ),
     };
     CauseWording { message, fix }
 }
 
-pub(super) fn guard_class(cause: UnprovenCause) -> GuardClass {
-    match cause {
-        UnprovenCause::Unknown => GuardClass::OtherType,
-        UnprovenCause::ResultDisabled => GuardClass::ProofWithheld,
-        UnprovenCause::UnknownCallee | UnprovenCause::ResultOfUnknownCallee => {
-            GuardClass::UnknownCallee
-        }
-        UnprovenCause::UnprovenContents => GuardClass::UnprovenContents,
-        UnprovenCause::UnknownObject
-        | UnprovenCause::NonLayoutObject
-        | UnprovenCause::BuiltinBase
-        | UnprovenCause::UnknownBase
-        | UnprovenCause::ClassEvaluatedAgain
-        | UnprovenCause::ReachesNativeCode
-        | UnprovenCause::ReachesUnknownJavaScript
-        | UnprovenCause::UnknownWriter
-        | UnprovenCause::OtherNewTarget
-        | UnprovenCause::UndescribedNativeResult
-        | UnprovenCause::UnseenCode
-        | UnprovenCause::UncheckedConversionOfUntracked
-        | UnprovenCause::DataFromOutside
-        | UnprovenCause::ThrownByRunTime
-        | UnprovenCause::ParameterOfEscapedFunction
-        | UnprovenCause::ContentsOfEscapedObject
-        | UnprovenCause::ObjectWithoutLayout
-        | UnprovenCause::Untracked
-        | UnprovenCause::LayoutOutsideFamily => GuardClass::UnknownObject,
+/// The message has a place for a name. Without a wording the cause of the operation says everything that is known.
+pub(super) struct OriginWording {
+    pub before_name: &'static str,
+    pub unnamed: &'static str,
+    pub after_name: &'static str,
+    pub fix: &'static str,
+}
+
+impl OriginWording {
+    pub(super) fn message(&self, name: &[u8]) -> Vec<u8> {
+        let name = match name.is_empty() {
+            true => self.unnamed.as_bytes(),
+            false => name,
+        };
+        [
+            self.before_name.as_bytes(),
+            name,
+            self.after_name.as_bytes(),
+        ]
+        .concat()
     }
 }
 
-pub(super) fn guard_wording(class: GuardClass) -> GuardWording {
-    match class {
-        GuardClass::OtherType => GuardWording {
-            counted_as: "on a value of the wrong type",
-            headline: "a value of the wrong type reaches this guard",
-            fix: "trace the value back from here: an unsound cast ('as', 'any' or '!') hides the mismatch from TypeScript",
-        },
-        GuardClass::UnknownObject => GuardWording {
-            counted_as: "on a value from untyped code",
-            headline: "the value may come from untyped code",
-            fix: "narrow it first: typeof for a primitive. For an object, check its fields and build a new object of the type from them",
-        },
-        GuardClass::UnknownCallee => GuardWording {
-            counted_as: "on the result of an unknown callee",
-            headline: "the value is returned by a call whose callee isn't known at build time",
-            fix: "call the function directly, or narrow the result",
-        },
-        GuardClass::UnprovenContents => GuardWording {
-            counted_as: "on an element of a collection",
-            headline: "the array, Map or Set it's read from may contain values of other types",
-            fix: "only add to the collection from typed code, or narrow the element after reading it",
-        },
-        GuardClass::ProofWithheld => GuardWording {
-            counted_as: "because part of the analysis was left out of the build",
-            headline: "the part of the analysis that proves this was left out of the build",
-            fix: "no build option does that, so this is a bug in Bun: please report it",
-        },
-        GuardClass::ReadBeforeInitialized => GuardWording {
-            counted_as: "on a variable that may be read too early",
-            headline: "the variable may be read before it's initialized",
-            fix: "initialize it before the code that reads it can run",
-        },
-    }
-}
-
-pub(super) fn ill_typed_cause_wording(cause: IllTypedCause) -> Option<IllTypedWording> {
-    let (code, message, fix) = match cause {
-        IllTypedCause::None => return None,
-        IllTypedCause::Unclassified => (
-            "unclassified",
-            "The compiler recorded no reason for this guard.",
-            "this is a bug in Bun: please report it.",
+pub(super) fn origin_wording(reason: TypeOriginReason) -> Option<OriginWording> {
+    let (before_name, unnamed, after_name, fix) = match reason {
+        TypeOriginReason::Unknown | TypeOriginReason::Untracked => return None,
+        TypeOriginReason::BuiltinResult => (
+            "The compiler doesn't know the shape of what ",
+            "this call",
+            " returns.",
+            "check its fields and build a new object from them.",
         ),
-        IllTypedCause::FromLooseType => (
-            "loose-type",
-            "The value comes from 'any', 'unknown', 'object', '{}', 'Function' or a bare type parameter.",
-            "narrow it, or give the source a precise type.",
+        TypeOriginReason::CallResult => (
+            "The compiler doesn't know what ",
+            "this call",
+            " returns, because it can't tell which function is called.",
+            "call the function directly, or narrow the result.",
         ),
-        IllTypedCause::Assertion => (
-            "unsound-cast",
-            "An 'as' cast changes the type here, and nothing checks it.",
-            "remove the cast, or narrow the value first.",
+        TypeOriginReason::PropertyRead => (
+            "The compiler doesn't know the shape of what is read from ",
+            "here",
+            ".",
+            "check its fields and build a new object from them.",
         ),
-        IllTypedCause::SuppressedError => (
-            "suppressed-error",
-            "The type checker doesn't accept this value here.",
-            "fix the type error.",
+        TypeOriginReason::OutsideCaller => (
+            "Code that the compiler can't see can call ",
+            "this function",
+            " with any values.",
+            "check the arguments where the function starts, or call it from compiled code.",
         ),
-        IllTypedCause::DeclarationWithoutBody => (
-            "declaration-only",
-            "The type comes from a 'declare' or a .d.ts file, which the compiler can't check against the code.",
-            "compile the typed source of the package, or narrow the value.",
+        TypeOriginReason::ExposedObject => (
+            "Code that the compiler can't see can store anything in the fields of ",
+            "objects that it gets here",
+            ".",
+            "pass a copy, or only the values that are needed.",
         ),
-        IllTypedCause::OutsideData => (
-            "external-data",
-            "The value comes from outside the program (JSON.parse, response.json(), structuredClone, a message).",
-            "check its fields, and build a new object of this type from them.",
+        TypeOriginReason::ExposedVariable => (
+            "Code that the compiler can't see can assign anything to ",
+            "this variable",
+            ".",
+            "copy it into a constant and use that.",
         ),
-        IllTypedCause::LayoutOutsideFamily => (
-            "unexpected-shape",
-            "An object reaches this point with a shape its declared type doesn't include.",
-            "trace the object back from here: an unsound cast hides it from TypeScript.",
+        TypeOriginReason::CaughtException => (
+            "A caught exception can be anything",
+            "",
+            ".",
+            "narrow it, for example with instanceof.",
         ),
-        IllTypedCause::MemberWithoutSlot => (
-            "not-a-plain-object",
-            "A primitive, function, array, built-in object or proxy is used as this object type.",
-            "pass an object literal or a class instance.",
+        TypeOriginReason::OtherValue => (
+            "A value that isn't an object gets to places that hold objects: ",
+            "this one",
+            ".",
+            "keep it in a variable or a field of its own.",
         ),
-        IllTypedCause::NativeWritesOperand => (
-            "passed-to-builtin",
-            "The object is passed to a built-in function that may write to it.",
-            "pass a copy, or only the fields the function needs.",
+        TypeOriginReason::ArrayArgument => (
+            "new Array() makes its argument an element unless that's a number, and ",
+            "this value",
+            " may not be one yet.",
+            "make it a number before the array is created: declare it with const, above its first use.",
         ),
-        IllTypedCause::UnseenWriter => (
-            "written-by-runtime-code",
-            "Code that isn't in the executable can write to this object.",
-            "keep the object out of eval'd code and modules loaded at run time.",
+        TypeOriginReason::OtherBuiltin => (
+            "A built-in object, such as an array or a map, gets to places that hold other objects: ",
+            "this one",
+            ".",
+            "keep it in a variable or a field of its own.",
         ),
-        IllTypedCause::UnseenCaller => (
-            "called-by-runtime-code",
-            "Code that isn't in the executable can call this function with any arguments.",
-            "keep the function out of eval'd code and modules loaded at run time.",
+        TypeOriginReason::OtherFunction => (
+            "A function gets to places that hold objects: ",
+            "this one",
+            ".",
+            "keep it in a variable or a field of its own.",
         ),
-        IllTypedCause::UnprovenCallee => (
-            "unknown-callee",
-            "The callee isn't known at build time.",
-            "call the function directly.",
+        TypeOriginReason::ManyShapes => (
+            "Objects of too many shapes come together in ",
+            "this access",
+            ".",
+            "keep them apart, or give them one class.",
         ),
-        IllTypedCause::OtherThis => (
-            "other-this",
-            "The method can run with a different 'this' (call, apply, bind, or read off its object and called later).",
-            "call it as a method, or use an arrow function.",
+        TypeOriginReason::ManyFunctions => (
+            "More than one function can be called here, so the call is indirect and its result has no type",
+            "",
+            ".",
+            "call the function directly, or narrow the result.",
         ),
-        IllTypedCause::CalledByEngine => (
-            "called-by-builtin",
-            "A built-in calls this function (a callback, getter, toString or iterator), so its arguments aren't proven.",
-            "nothing to fix if the guard passes: it costs a few instructions.",
+        TypeOriginReason::ChangedShape => (
+            "Objects of ",
+            "this class",
+            " change their shape: a property is added, deleted or redefined.",
+            "declare every property in the class and assign them there.",
         ),
-        IllTypedCause::ContainerWriterUnseen => (
-            "untyped-collection",
-            "Something the compiler can't see may add to this array, Map, Set or Promise.",
-            "only add to the collection from typed code.",
+        TypeOriginReason::MissingField => (
+            "The compiler can't prove that the object has this field already, so each access checks for it",
+            "",
+            ".",
+            "assign the field on every path of the constructor, or in every literal.",
         ),
-        IllTypedCause::ElementMayBeAbsent => (
-            "element-may-be-missing",
-            "The index may be out of bounds, or the array may have holes, so the read can produce undefined.",
-            "check the index, or loop with for...of.",
+        TypeOriginReason::CheckedElement => (
+            "The compiler can't prove that this element exists, so each access checks for it",
+            "",
+            ".",
+            "nothing to fix unless it's in hot code. Then loop from 0 to the length, over an array without holes.",
         ),
-        IllTypedCause::ScopeOpenedByEval => (
-            "direct-eval",
-            "A direct eval() in this scope can reassign the variable.",
-            "use indirect eval, (0, eval)(code), or move the eval out of this scope.",
+        TypeOriginReason::CheckedResult => (
+            "The result of ",
+            "this call",
+            " is checked each time, because it can take a slow path that returns anything.",
+            "nothing to fix unless it's in hot code. Then use a loop or an index instead.",
         ),
-        IllTypedCause::ReadBeforeInitialized => (
-            "read-before-init",
-            "The field or variable can be read before it's initialized.",
-            "initialize it in the declaration or first in the constructor.",
+        TypeOriginReason::CheckedKeys => (
+            "Copying or listing the properties of an object checks that it has no others",
+            "",
+            ".",
+            "nothing to fix unless it's in hot code. Then name the properties one by one.",
+        ),
+        TypeOriginReason::StaticField => (
+            "A static field is added to its class when the class is evaluated",
+            "",
+            ".",
+            "nothing to fix: it runs once.",
+        ),
+        TypeOriginReason::ComputedName => (
+            "The name of this property is only known when the program runs, so it is looked up",
+            "",
+            ".",
+            "use a Map, or an array with numbers as indexes.",
+        ),
+        TypeOriginReason::BuiltinProperty => (
+            "Properties of built-in objects, functions and primitive values are looked up by name",
+            "",
+            ".",
+            "read it outside your loops.",
         ),
     };
-    Some(IllTypedWording { code, message, fix })
+    Some(OriginWording {
+        before_name,
+        unnamed,
+        after_name,
+        fix,
+    })
+}
+
+/// There may be a faster way to write it, but no type or declaration to change.
+pub(super) fn has_fix(reason: TypeOriginReason) -> bool {
+    !matches!(
+        reason,
+        TypeOriginReason::CheckedElement
+            | TypeOriginReason::CheckedKeys
+            | TypeOriginReason::CheckedResult
+            | TypeOriginReason::StaticField
+    )
+}
+
+pub(super) fn origin_code(reason: TypeOriginReason) -> &'static str {
+    match reason {
+        TypeOriginReason::Unknown => "",
+        TypeOriginReason::Untracked => "untracked-value",
+        TypeOriginReason::BuiltinResult => "builtin-result",
+        TypeOriginReason::CallResult => "call-result",
+        TypeOriginReason::PropertyRead => "property-read",
+        TypeOriginReason::OutsideCaller => "outside-caller",
+        TypeOriginReason::ExposedObject => "exposed-object",
+        TypeOriginReason::ExposedVariable => "exposed-variable",
+        TypeOriginReason::CaughtException => "caught-exception",
+        TypeOriginReason::OtherValue => "other-value",
+        TypeOriginReason::ArrayArgument => "array-argument",
+        TypeOriginReason::OtherBuiltin => "other-builtin",
+        TypeOriginReason::OtherFunction => "other-function",
+        TypeOriginReason::ManyShapes => "many-shapes",
+        TypeOriginReason::ManyFunctions => "many-functions",
+        TypeOriginReason::ChangedShape => "changed-shape",
+        TypeOriginReason::MissingField => "missing-field",
+        TypeOriginReason::CheckedElement => "checked-element",
+        TypeOriginReason::CheckedResult => "checked-result",
+        TypeOriginReason::CheckedKeys => "checked-keys",
+        TypeOriginReason::StaticField => "static-field",
+        TypeOriginReason::BuiltinProperty => "builtin-property",
+        TypeOriginReason::ComputedName => "computed-name",
+    }
 }
 
 pub(super) fn failure_sentence(failure: TypeTestFailure) -> &'static str {
@@ -347,7 +251,7 @@ pub(super) fn failure_sentence(failure: TypeTestFailure) -> &'static str {
         TypeTestFailure::Throws => {
             "when it fails, the operation throws, as it does in plain JavaScript"
         }
-        TypeTestFailure::Leaves => {
+        TypeTestFailure::ExitsToSlowVersion => {
             "when it fails, the rest of the call runs in the function's slow version"
         }
     }
@@ -357,40 +261,10 @@ pub(super) fn heap_cause_sentence(cause: AllocationHeapCause) -> Option<&'static
     match cause {
         AllocationHeapCause::None => None,
         AllocationHeapCause::NotTracked => Some("escape analysis doesn't track it"),
-        AllocationHeapCause::HasNoFrameForm => Some("this kind of object is never stack-allocated"),
         AllocationHeapCause::Escapes => Some("it can outlive the call that creates it"),
-        AllocationHeapCause::SeveralLiveInstances => {
-            Some("more than one object created here can be live at the same time")
-        }
-        AllocationHeapCause::HasUntrackedAlias => {
-            Some("it has an alias the compiler doesn't track")
-        }
         AllocationHeapCause::LiveAcrossSuspension => Some("it is live across an await or a yield"),
-        AllocationHeapCause::LiveAtReturnCall => {
-            Some("it is live at a tail call, which replaces the stack frame")
-        }
-        AllocationHeapCause::HeldByHeapCell => Some("a heap object references it"),
-        AllocationHeapCause::HeldAcrossIterations => {
+        AllocationHeapCause::RetainedAcrossIterations => {
             Some("an object that outlives one loop iteration references it")
-        }
-        AllocationHeapCause::ChangedByUse => {
-            Some("an operation may change its shape, its prototype or its storage")
-        }
-        AllocationHeapCause::SeenByNativeCode => {
-            Some("it is passed to a built-in function or looked up by a computed key")
-        }
-        AllocationHeapCause::ClosureIsNotOnlyCalled => {
-            Some("the function is used as a value, not only called")
-        }
-        AllocationHeapCause::LayoutDefersClosures => {
-            Some("one of its methods is created lazily and captures the object")
-        }
-        AllocationHeapCause::FieldsCreatedLater => {
-            Some("some of its fields are added after it is created")
-        }
-        AllocationHeapCause::ExceedsLimit => Some("it has too many fields to stack-allocate"),
-        AllocationHeapCause::MaterializationDoesNotPay => {
-            Some("moving it to the heap later would not be cheaper")
         }
     }
 }
@@ -458,40 +332,9 @@ pub(super) fn form_label(form: CodeForm) -> &'static str {
 pub(super) fn cause_code(cause: UnprovenCause) -> &'static str {
     match cause {
         UnprovenCause::Unknown => "unknown",
-        UnprovenCause::ResultDisabled => "analysis-disabled",
         UnprovenCause::UnknownObject => "unknown-object",
-        UnprovenCause::NonLayoutObject => "not-a-plain-object",
-        UnprovenCause::BuiltinBase => "builtin-base",
-        UnprovenCause::UnknownBase => "untyped-base",
-        UnprovenCause::ClassEvaluatedAgain => "class-not-top-level",
-        UnprovenCause::ReachesNativeCode => "passed-to-builtin",
-        UnprovenCause::ReachesUnknownJavaScript => "passed-to-untyped-code",
-        UnprovenCause::UnknownWriter => "written-by-untyped-code",
         UnprovenCause::UnknownCallee => "unknown-callee",
-        UnprovenCause::UnprovenContents => "untyped-collection",
-        UnprovenCause::OtherNewTarget => "other-new-target",
-        UnprovenCause::UndescribedNativeResult => "builtin-result",
-        UnprovenCause::UnseenCode => "runtime-code",
-        UnprovenCause::UncheckedConversionOfUntracked => "unchecked-value",
-        UnprovenCause::DataFromOutside => "external-data",
-        UnprovenCause::ThrownByRunTime => "caught-value",
-        UnprovenCause::ParameterOfEscapedFunction => "called-by-unknown-code",
-        UnprovenCause::ContentsOfEscapedObject => "read-from-shared-object",
-        UnprovenCause::ResultOfUnknownCallee => "unknown-callee-result",
-        UnprovenCause::ObjectWithoutLayout => "no-fixed-layout",
         UnprovenCause::Untracked => "lost-track",
-        UnprovenCause::LayoutOutsideFamily => "unexpected-shape",
-    }
-}
-
-pub(super) fn guard_cause_code(class: GuardClass) -> &'static str {
-    match class {
-        GuardClass::OtherType => "wrong-type",
-        GuardClass::UnknownObject => "untyped-value",
-        GuardClass::UnknownCallee => "unknown-callee",
-        GuardClass::UnprovenContents => "untyped-collection",
-        GuardClass::ProofWithheld => "analysis-disabled",
-        GuardClass::ReadBeforeInitialized => "read-before-init",
     }
 }
 
@@ -499,7 +342,7 @@ pub(super) fn failure_code(failure: TypeTestFailure) -> &'static str {
     match failure {
         TypeTestFailure::TakesGenericPath => "rejoins",
         TypeTestFailure::Throws => "throws",
-        TypeTestFailure::Leaves => "leaves",
+        TypeTestFailure::ExitsToSlowVersion => "leaves",
     }
 }
 

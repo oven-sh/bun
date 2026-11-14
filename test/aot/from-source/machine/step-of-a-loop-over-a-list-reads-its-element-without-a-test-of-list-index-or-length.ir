@@ -18,5 +18,6 @@
 # ARMS-LABEL: unit f1:Body
 # ARMS-NOT: = Load({{*}}indexedDoubleProperties
 # RUN(LENGTH): emit f1:Body mechanisms=all
-# LENGTH-COUNT-1: Butterfly_publicLength
+# The loop is built for an array and as written: the step of either one reads the length once.
+# LENGTH-COUNT-2: Butterfly_publicLength
 # LENGTH-NOT: Butterfly_publicLength

@@ -47,16 +47,17 @@ export function setState(holder: any, state: number): number {
 }
 ";
 
-fn lowering_options(embeds_function_text: bool) -> LoweringOptions {
+fn lowering_options(embeds_function_source: bool) -> LoweringOptions {
     LoweringOptions {
         platform: host_platform(),
-        embeds_function_text,
-        reads_function_texts_back: embeds_function_text,
+        embeds_function_source,
+        reparses_function_sources: embeds_function_source,
         removable: Default::default(),
         minifies_identifiers: false,
         obfuscates: false,
         counts_executions: false,
         runs_tests: false,
+        divides_small_files: false,
     }
 }
 
@@ -280,7 +281,7 @@ fn find_call_block<'a>(function: &'a Function, call_operands: &[ValueId]) -> Blo
 fn find_store_mode(fragment: &Fragment, function: &Function, property: &str) -> ECMAMode {
     let values = function.body.blocks().flat_map(|block| block.values());
     let modes = values.filter_map(|value| {
-        let (Opcode::PropSet, &[_, _, key, mode, _]) = (value.opcode, value.fields) else {
+        let (Opcode::PropSet, &[_, _, key, mode, _, _]) = (value.opcode, value.fields) else {
             return None;
         };
         let key = PropertyKeyId::from_word(key);
@@ -429,7 +430,11 @@ fn library_module_with_unverified_types_has_expected_parameters_alone() {
     assert!(!function.flags.contains(FunctionFlags::IS_CHECKED));
     let number = Mapped::expected(TypeTable::NUMBER);
     let expected = DeclaredType::new(number, None, PositionFlags::default());
-    assert_eq!(function.parameters, [DeclaredType::untyped(), expected]);
+    let [holder, state] = function.parameters[..] else {
+        panic!("{} parameters", function.parameters.len());
+    };
+    assert!(holder.is_expected());
+    assert_eq!(state, expected);
     assert_eq!(function.results, [DeclaredType::untyped()]);
     assert_eq!(
         find_variable(&fragment, "kState").declared,
@@ -531,17 +536,17 @@ fn nothing_leads_to_entry_block() {
 }
 
 #[test]
-fn text_range_is_cleared_without_function_text() {
+fn omitted_source_clears_ranges() {
     let files = [("main.ts", "export function f() {}\n")];
-    let without_text = take_only_file(lower_program(&files, lowering_options(false))).fragment;
-    assert!(without_text.module.types_in_function_text.is_none());
-    for (id, function) in &without_text.functions {
-        assert_eq!(function.text, SourceRange::default(), "{id}");
+    let without_source = take_only_file(lower_program(&files, lowering_options(false))).fragment;
+    assert!(without_source.module.erased_type_ranges.is_none());
+    for (id, function) in &without_source.functions {
+        assert_eq!(function.source_range, SourceRange::default(), "{id}");
     }
 
-    let with_text = take_only_file(lower_program(&files, lowering_options(true))).fragment;
-    let range = find_function(&with_text, "f").text;
-    let types = with_text.module.types_in_function_text.unwrap();
+    let with_source = take_only_file(lower_program(&files, lowering_options(true))).fragment;
+    let range = find_function(&with_source, "f").source_range;
+    let types = with_source.module.erased_type_ranges.unwrap();
     let source = files[0].1.as_bytes();
     let mut text = vec![0; types.kept_len(source.len())];
     types.remove_from(source, &mut text);

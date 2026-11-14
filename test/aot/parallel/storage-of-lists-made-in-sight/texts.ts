@@ -1,4 +1,4 @@
-// STATISTIC: ReadsOfElementsKnownToBeThere >= 1
+// STATISTIC: ElementReadsProvenPresent >= 1
 const lines: string[] = [];
 
 function text(value: unknown): string {

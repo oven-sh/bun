@@ -15,7 +15,9 @@ use crate::load::test_runner_names::skip_to_written_use;
 use crate::lower::commonjs::BodyForm;
 use crate::lower::expression::is_link_in_brackets;
 use crate::lower::member::{self, KeyConversion, PropertyName};
-use crate::lower::quoted_text::{append_printed_name, append_printed_number, append_printed_text};
+use crate::lower::quoted_source::{
+    append_printed_name, append_printed_number, append_printed_string,
+};
 use crate::lower::{FileLowering, FunctionLowering};
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
@@ -174,6 +176,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let this = self.lower_namespace_receiver(object);
             return Callee::without_key(function, Some(this), name);
         }
+        if let Some((function, this)) = self.lower_member_behind_getters(access) {
+            return Callee::without_key(function, Some(this), name);
+        }
         if let Some(function) = self.lower_export_member(access) {
             let this = self.lower_export_receiver(access);
             return Callee::without_key(function, Some(this), name);
@@ -195,7 +200,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn lower_callee_of_answer(&mut self, access: ExprId, base: Option<ValueId>) -> ValueId {
         let (function, on_answer) = self.lower_member_of_answer_below(access, base);
-        self.callees_read_on_answers.insert(function, on_answer);
+        let (modules, file) = (self.file.inputs.modules, self.file.file);
+        let member = modules.answer_member(file, access);
+        let holder = member.and_then(|member| modules.holder_of_answer(file, member.holder));
+        if !holder.is_some_and(|(_, copy)| copy.wraps_unmarked_answer) {
+            self.callees_read_on_answers.insert(function, on_answer);
+        }
         function
     }
 
@@ -280,6 +290,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if !matches!(hir[inner].kind, ExprKind::Ident(_)) {
             let name = match hir[inner].kind {
                 ExprKind::Await(_) => self.file.find_callee_name(inner),
+                ExprKind::Binary {
+                    op: BinOp::Comma,
+                    right,
+                    ..
+                } => match self.file.written_name_of_hoisted_import(right) {
+                    Some(written) => Some(self.file.intern_bytes(written)),
+                    None => None,
+                },
                 _ => None,
             };
             return Callee::without_key(self.lower_chain_base(callee, exit), None, name);
@@ -288,7 +306,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if let Some(builtin) = find_locked_builtin(self.file, inner) {
             return Callee::without_key(self.emit_locked_builtin(builtin), None, name);
         }
-        self.set_position(hir[inner].pos);
+        // Where the engine parses the string itself, it reports a name that is called behind it.
+        self.set_position(match self.file.is_in_known_evaluation(inner) {
+            true => hir[inner].end,
+            false => hir[inner].pos,
+        });
         let (function, this) = self.lower_identifier_callee(inner);
         Callee::without_key(function, this, name)
     }
@@ -298,6 +320,9 @@ impl FileLowering<'_, '_, '_, '_> {
     pub(super) fn find_callee_name(&mut self, callee: ExprId) -> Option<StringId> {
         let hir = self.hir;
         let inner = self.skip_type_syntax(callee);
+        if let Some(written) = self.written_name_of_hoisted_import(inner) {
+            return Some(self.intern_bytes(written));
+        }
         if let ExprKind::Ident(name) = hir[inner].kind
             && self.queries.atom_bytes(name).is_ascii()
         {
@@ -348,6 +373,10 @@ impl FileLowering<'_, '_, '_, '_> {
         const LONGEST_PATH: usize = 80;
         let hir = self.hir;
         let inner = self.skip_type_syntax(expression);
+        if let Some(written) = self.written_name_of_hoisted_import(inner) {
+            path.extend_from_slice(written);
+            return path.len() <= LONGEST_PATH;
+        }
         let wraps = match hir[inner].kind {
             ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => {
                 is_link_in_brackets(chain, has_parent_outside_chain)
@@ -385,7 +414,7 @@ impl FileLowering<'_, '_, '_, '_> {
                     append_printed_name(written_name(name), path);
                 } else {
                     path.extend_from_slice(if chain == Chain::Start { b"?.[" } else { b"[" });
-                    append_printed_text(name, path);
+                    append_printed_string(name, path);
                     path.push(b']');
                 }
             }
@@ -400,7 +429,7 @@ impl FileLowering<'_, '_, '_, '_> {
                         append_printed_number(hir.numbers[key as usize], path);
                     }
                     (_, MemberKey::Name(key)) => {
-                        append_printed_text(self.queries.atom_bytes(key), path);
+                        append_printed_string(self.queries.atom_bytes(key), path);
                     }
                     _ => return false,
                 }

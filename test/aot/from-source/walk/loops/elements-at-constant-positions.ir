@@ -1,0 +1,23 @@
+# f1 = next, f2 = run, f3 = scale, f4 = draw
+# -- source: main.js
+# const sums = [1, 2, 3, 4];
+# const halves = [0.5, 1.5];
+# const state = [7, 3];
+# function next() { state[0] = (state[0] * 5 + 1) & 1023; return state[0]; }
+# function run(k) { for (let i = 0; i < k; i++) { sums[0] = (sums[0] + i) | 0; sums[1] ^= sums[0]; sums[2] = (sums[2] + sums[1]) | 0; } return sums.join("/"); }
+# function scale(k) { for (let i = 0; i < k; i++) { halves[0] = halves[0] * 0.5 + i; halves[1] -= halves[0]; } return halves.join("/"); }
+# function draw(k) { let s = 0; for (let i = 0; i < k; i++) s = (s + next()) | 0; return s; }
+# print(run(0), run(50), run(1), scale(0), scale(20), draw(0), draw(100));
+# -- end of source
+# One iteration stores the element that the next one reads: a parameter of the header holds it. The loop reads none of the elements and asks for none of them.
+# RUN: walk f2:Body mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: @Int32, v{{*}} @Int32, v{{*}} @Int32, v{{*}} @Int32) isInLoop=true isLoopHead=true
+# RUN(SCALE): walk f3:Body mechanisms=all
+# SCALE-LABEL: code f3:Body
+# SCALE: @Int32, v{{*}} @Double, v{{*}} @Double) isInLoop=true isLoopHead=true
+# RUN(DRAW): walk f4:Body mechanisms=all
+# DRAW-LABEL: code f4:Body
+# DRAW: @Int32, v{{*}} @Int32, v{{*}}) isInLoop=true isLoopHead=true
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 1/2/3/4 1226/2033/20227/4 1226/827/21054/4 0.5/1.5 36.000004291534424/-342.9999957084656 0 51942

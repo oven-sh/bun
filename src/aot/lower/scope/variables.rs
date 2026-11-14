@@ -5,7 +5,7 @@ use bun_sema::program::Sym;
 
 use super::{BindingRef, ScopeSlot, Storage, environments};
 use crate::ir::generated::{Variable, VariableFlags, VariableInitialization};
-use crate::ir::{ClassSlot, DeclaredType, Type, TypeTable, VariableId, VariableKey};
+use crate::ir::{ClassSlot, DeclaredType, FunctionKey, Type, TypeTable, VariableId, VariableKey};
 use crate::lower::{FileLowering, class, function, module};
 use crate::modules::ModuleRef;
 
@@ -30,6 +30,14 @@ impl FileLowering<'_, '_, '_, '_> {
                 self.create_untyped_variable(variable.name())
             }
             VariableKey::PrivateState { part, .. } => self.create_private_state_variable(part),
+            VariableKey::AddedStatic(property) => {
+                let class = self.class_with_added_static(property.id);
+                Variable {
+                    initialization: VariableInitialization::Uninitialized,
+                    owner: Some(self.class_layout(class)),
+                    ..self.create_untyped_variable(self.bound.symbol(property.id).name)
+                }
+            }
             VariableKey::ModuleExports(_) => self.create_untyped_variable(known::exports),
             VariableKey::MockOf(_) => {
                 let mut declared = DeclaredType::untyped();
@@ -48,6 +56,15 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             VariableKey::InstantiationState(_) => Variable {
                 name: None,
+                flags: match self.inputs.modules.has_instances(self.file) {
+                    true => VariableFlags::IS_REPLACEABLE | VariableFlags::GUARDS_INSTANCE,
+                    false => VariableFlags::default(),
+                },
+                ..self.create_untyped_variable(known::default)
+            },
+            VariableKey::EvaluationMark(_) => Variable {
+                name: None,
+                flags: VariableFlags::MARKS_EVALUATION,
                 ..self.create_untyped_variable(known::default)
             },
             VariableKey::EnvironmentMadeAhead(_) => {
@@ -61,6 +78,44 @@ impl FileLowering<'_, '_, '_, '_> {
                     ..self.create_untyped_variable(known::default)
                 }
             }
+            VariableKey::InstanceOf(_) => {
+                let layout = environments::instance_layout(self);
+                let ty = self.fragment.types.intern(Type::environment(layout));
+                Variable {
+                    name: None,
+                    declared: DeclaredType::from_compiler(ty),
+                    initialization: VariableInitialization::Uninitialized,
+                    flags: VariableFlags::HOLDS_INSTANCE,
+                    ..self.create_untyped_variable(known::default)
+                }
+            }
+            VariableKey::InstanceAllocator(file) => {
+                let allocation = self.reference_function(FunctionKey::Instantiation(file));
+                Variable {
+                    name: None,
+                    initialization: VariableInitialization::Function,
+                    function: Some(allocation),
+                    flags: VariableFlags::IS_REPLACEABLE | VariableFlags::ALLOCATES_INSTANCE,
+                    ..self.create_untyped_variable(known::default)
+                }
+            }
+            VariableKey::PrototypeMaker(variable) => {
+                let maker = self.declare_prototype_maker(variable.id);
+                let ty = self.fragment.types.intern(Type::function(maker));
+                Variable {
+                    name: None,
+                    declared: DeclaredType::from_compiler(ty),
+                    initialization: VariableInitialization::Function,
+                    function: Some(maker),
+                    flags: VariableFlags::IS_IMMUTABLE,
+                    ..self.create_untyped_variable(known::default)
+                }
+            }
+            VariableKey::HasSeveralInstances(_) => Variable {
+                name: None,
+                flags: VariableFlags::IS_REPLACEABLE | VariableFlags::HAS_SEVERAL_INSTANCES,
+                ..self.create_untyped_variable(known::default)
+            },
             VariableKey::RequiredAnswer(_)
             | VariableKey::RequiresMadeForOwnFile(_)
             | VariableKey::RequiresMadeForOtherFolders(_)
@@ -108,13 +163,19 @@ impl FileLowering<'_, '_, '_, '_> {
             VariableKey::EnvironmentMadeAhead(_) => one_a_file + 3,
             VariableKey::RequiresMadeForOwnFile(_) => one_a_file + 4,
             VariableKey::RequiresMadeForOtherFolders(_) => one_a_file + 5,
+            VariableKey::InstanceOf(_) => one_a_file + 14,
+            VariableKey::HasSeveralInstances(_) => one_a_file + 13,
+            VariableKey::InstanceAllocator(_) => one_a_file + 15,
             VariableKey::ModulePath { variable, .. } => one_a_file + 6 + variable as u32,
             VariableKey::RequiresMadeForPaths(_) => one_a_file + 12,
+            VariableKey::EvaluationMark(_) => one_a_file + 11,
             VariableKey::Symbol(symbol) => match self.scopes.place_at_module_level(symbol.id) {
                 Some(place) => place,
                 None => by_number(symbol.id.idx(), 0),
             },
             VariableKey::RequiredAnswer(holder) => by_number(holder.id.idx(), 1),
+            VariableKey::PrototypeMaker(variable) => by_number(variable.id.idx(), 2),
+            VariableKey::AddedStatic(property) => by_number(property.id.idx(), 0),
             VariableKey::PrivateState { state, part } => by_number(state.id.idx(), 2 + part as u32),
             VariableKey::ClassSlot { class, slot } => match slot {
                 ClassSlot::ClassObject => by_number(class.class.idx(), 4),
@@ -145,7 +206,13 @@ impl FileLowering<'_, '_, '_, '_> {
     pub(super) fn is_export_that_code_fills(&self, symbol: SymbolId) -> bool {
         let placement = self.scopes.placement(BindingRef::Symbol(symbol));
         let (file, id) = (self.file, symbol);
-        placement.is_some_and(|placement| matches!(placement.storage, Storage::Variable(_)))
+        let is_visible_to_importers = |placement: super::Placement| {
+            matches!(
+                placement.storage,
+                Storage::Variable(_) | Storage::Instance { .. }
+            )
+        };
+        placement.is_some_and(is_visible_to_importers)
             && matches!(self.bound.initial_state(symbol), InitialState::Initialized)
             && self.scopes.initial_function(symbol).is_none()
             && self.is_exported_variable(VariableKey::Symbol(Sym { file, id }))

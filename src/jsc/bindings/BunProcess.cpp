@@ -338,7 +338,7 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
 #undef STRINGIFY_IMPL
 
     // A program that runs in place, as a test does, reads these two as plain Bun does.
-    if (!Bun::compiledModulesRunInPlaceOfFiles())
+    if (!Bun::runsCompiledModules())
         lockFoldedMembers(vm, globalObject, object, "process.versions"_s, { "node"_s, "bun"_s });
     return object;
 }
@@ -354,7 +354,7 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
     putDirectNamed(vm, release, "headersUrl"_s, jsOwnedString(vm, String("https://nodejs.org/download/release/v" REPORTED_NODEJS_VERSION "/node-v" REPORTED_NODEJS_VERSION "-headers.tar.gz"_s)));
 
     RETURN_IF_EXCEPTION(scope, {});
-    if (!Bun::compiledModulesRunInPlaceOfFiles())
+    if (!Bun::runsCompiledModules())
         lockFoldedMembers(vm, globalObject, release, "process.release"_s, { "name"_s });
     return release;
 }
@@ -5961,6 +5961,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCwd, (JSC::JSGlobalObject * globalObjec
 
 #if !OS(WINDOWS)
 extern "C" bool CrashHandler__isCrashSignal(int signalNumber);
+extern "C" void Bun__willSendSignalToSelf(int signalNumber);
 
 // kill(-1) never reaches the caller, not even when the caller's process group is 1, hence pid < -1.
 static bool killReachesThisProcess(int pid, int ownPid)
@@ -6038,6 +6039,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill, (JSC::JSGlobalObject * glob
 
 #if !OS(WINDOWS)
     bypassCrashHandlerForSelfSentSignal(pid, ownPid, signal);
+    if (killReachesThisProcess(pid, ownPid))
+        Bun__willSendSignalToSelf(signal);
     int result = kill(pid, signal);
     if (result < 0)
         result = errno;

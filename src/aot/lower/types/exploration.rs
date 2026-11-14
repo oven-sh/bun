@@ -6,6 +6,13 @@ use super::{Component, ExploredType, TypeEdges};
 use crate::ir::generated::LimitId;
 use crate::lower::{CheckerTypeId, FileLowering};
 
+pub(super) enum Explored {
+    Exhausted,
+    /// The parts of the type are mapped.
+    Alone(ExploredType),
+    Components(SmallVec<[Component; 1]>),
+}
+
 #[derive(Copy, Clone)]
 enum NodeState {
     Open { index: u32 },
@@ -64,21 +71,30 @@ fn leave_type(walk: &mut Walk) {
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    pub(super) fn explore(&mut self, root: CheckerTypeId) -> Option<SmallVec<[Component; 1]>> {
+    pub(super) fn explore(&mut self, root: CheckerTypeId) -> Explored {
         debug_assert!(
             self.find_mapped(root).is_none(),
             "only an unmapped type is explored"
         );
         if self.types.exhausted.contains(&root) {
-            return None;
+            return Explored::Exhausted;
         }
         let edges = collect_edges(self, root);
-        if edges
-            .iter()
-            .all(|edge| self.find_mapped(edge.target).is_some())
-        {
-            return Some(smallvec![smallvec![ExploredType { ty: root, edges }]]);
+        let mut parts = edges.iter();
+        if parts.all(|edge| self.find_mapped(edge.target).is_some()) {
+            return Explored::Alone(ExploredType { ty: root, edges });
         }
+        match self.explore_parts(root, edges) {
+            Some(components) => Explored::Components(components),
+            None => Explored::Exhausted,
+        }
+    }
+
+    fn explore_parts(
+        &mut self,
+        root: CheckerTypeId,
+        edges: TypeEdges,
+    ) -> Option<SmallVec<[Component; 1]>> {
         let mut walk = core::mem::take(&mut self.types.walk);
         enter_type(&mut walk, root, edges);
         let is_complete = self.walk_from_root(&mut walk, root);

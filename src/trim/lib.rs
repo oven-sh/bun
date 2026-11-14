@@ -17,12 +17,12 @@ pub use bun_exe_format::cut_model::{NoCutReason, Uncut, UncutReason};
 pub use bun_removable_features::{
     EnteredFrom, Feature, FeatureSet, Removal, RuntimeRequirement, TrimFeature,
 };
-pub use decide::{decide, features_kept_only_when_named};
+pub use decide::{decide, features_retained_by_name};
 pub use error::{TrimError, TrimInternalError, TrimRequestError, UnsupportedReason};
 pub use model::{
     Decision, EdgeStrength, ExecutableSettings, FeatureEdge, FeatureEdges, LocaleTag,
-    OptionRequirement, RetainReason, Retained, TrimInput, TrimPlan, TrimSummary, UnseenCode,
-    UnseenCodeCause, UsedFeature, UsedFeatures, UsedLocales, WitnessIndex,
+    OptionRequirement, RetainReason, Retained, TrimInput, TrimPlan, TrimSummary, UnrequestedCut,
+    UnseenCode, UnseenCodeCause, UsedFeature, UsedFeatures, UsedLocales, WitnessIndex,
 };
 pub use plan::{can_run_unseen_code, plan, read_feature_edges};
 pub use settings::collect_requirements;

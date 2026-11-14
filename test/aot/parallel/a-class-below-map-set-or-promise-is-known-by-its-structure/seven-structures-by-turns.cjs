@@ -1,5 +1,5 @@
 // More structures by turns than a class has words for.
-// COUNT: counter:StructuresOfHeirsRemembered >= 7
+// COUNT: counter:BuiltinSubclassStructuresAccepted >= 7
 "use strict";
 class H extends Map { constructor() { super(); this.n = 1; } two() { return this.n + 1; } three() { return this.n + 2; } }
 const all = []; for (let k = 0; k < 7; k++) { const h = new H(); for (let j = 0; j < k; j++) h['m' + k + j] = j; h.n = k; all.push(h); } function make(t) { return all[t % 7]; }

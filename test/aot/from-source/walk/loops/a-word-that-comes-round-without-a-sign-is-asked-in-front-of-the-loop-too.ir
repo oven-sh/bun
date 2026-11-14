@@ -11,7 +11,7 @@
 # -- end of source
 # RUN: walk f1 f2 mechanisms=all
 # CHECK-LABEL: code f1:Body
-# CHECK: = TypeTest v0 testedType=int[-2147483648, 4294967295]
+# CHECK: = TypeTest v0 testedType=int[-562949953421312, 562949953421312]
 # CHECK-LABEL: code f2:Body
 # CHECK-NOT: = TypeTest v0 testedType=int[-2147483648, 4294967295]
 # RUN(SHELL): run-in-shell globalThis.say = (x) => print(String(x));

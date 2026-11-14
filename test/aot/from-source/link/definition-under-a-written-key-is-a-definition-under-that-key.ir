@@ -4,8 +4,8 @@
 # CHECK: change {{*}}DefinesByDescriptor {{*}}"shown"
 # CHECK: change {{*}}DefinesByDescriptor {{*}}"shown"
 # RUN(LINK): link fields layouts mechanisms=all
-# LINK: field L0.0 "x" proven=i32 writers-known
-# LINK: field L1.0 "x" proven=i32|string writers-known
+# LINK: field L0.0 "x" proven=int[0, 2147483647] writers-known
+# LINK: field L1.0 "x" proven=int[0, 2147483647]|string writers-known
 # LINK: layout L0 changes=[]
 # LINK: layout L1 changes=[]
 # LINK: layout L2 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]

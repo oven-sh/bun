@@ -5,12 +5,16 @@ mod tests;
 
 use super::ModuleRef;
 use super::bindings::{ExportBinding, ExportLookup, ImportBinding, SiteAnswer};
+use super::commonjs_exports::ForwardedName;
 use super::graph::ModuleGraph;
 use super::interop::{ImportPhase, RequireResult};
 use crate::builtins::table::MemberLookup;
 use crate::builtins::{
     BuiltinId, BuiltinNames, Intrinsic, ModuleExport, Platforms, Resolved, RuntimeModule,
     find_module_export, named_value_of, prototype_operation_of, table,
+};
+use crate::known_helpers::{
+    Helper, KnownHelpers, ResolveInput, resolve_callee, resolve_public_field,
 };
 use crate::load::Sources;
 use crate::load::sources::parsed_source;
@@ -23,9 +27,10 @@ use bun_sema::bind::{
 use bun_sema::check::aot::{
     ClassDeclaration, FunctionRef, NamedValue, NamedValues, PrototypeOperation,
 };
-use bun_sema::hir::{BinOp, ExprId, ExprKind, File, MemberKey, StmtKind};
+use bun_sema::hir::{BinOp, ExprId, ExprKind, File, FnId, MemberKey, StmtKind};
 use bun_sema::import_sites::{ImportSiteKind, is_linked_by_bundler};
 use bun_sema::program::{FileId, Files};
+use smallvec::SmallVec;
 
 #[derive(Copy, Clone)]
 pub struct LinkedProject<'a, 's> {
@@ -34,6 +39,7 @@ pub struct LinkedProject<'a, 's> {
     pub builtin_names: &'a BuiltinNames,
     pub platform: Platforms,
     pub library: Option<&'a Library<'a, 's>>,
+    pub known_helpers: Option<&'a KnownHelpers>,
 }
 
 pub struct Library<'a, 's> {
@@ -130,6 +136,21 @@ impl LinkedProject<'_, '_> {
         }
     }
 
+    fn is_public_field_helper(&self, file: FileId, callee: ExprId, function: FunctionRef) -> bool {
+        let Some(helpers) = self.known_helpers else {
+            return false;
+        };
+        let is_helper = helpers
+            .function(function.file, function.function)
+            .is_some_and(|known| known.shape.helper() == Helper::PublicField);
+        let input = ResolveInput {
+            files: self.files,
+            modules: self.graph,
+            helpers,
+        };
+        is_helper && resolve_public_field(&input, file, callee).is_some()
+    }
+
     fn find_private_global(&self, file: FileId, reference: ExprId) -> Option<BuiltinId> {
         let ExprKind::Ident(spelling) = self.files.hir(file)[reference].kind else {
             return None;
@@ -206,7 +227,19 @@ impl Library<'_, '_> {
 
 impl NamedValues for LinkedProject<'_, '_> {
     fn find_named_value(&self, file: FileId, expression: ExprId) -> Option<NamedValue> {
-        named_value_of(static_referent(self, file, expression).referent).or_else(|| {
+        let referent = static_referent(self, file, expression).referent;
+        if let StaticReferent::Function(function) = referent
+            && self.is_public_field_helper(file, expression, function)
+        {
+            return Some(NamedValue::PrototypeOperation(
+                PrototypeOperation::DefineField {
+                    object: 0,
+                    key: 1,
+                    value: 2,
+                },
+            ));
+        }
+        named_value_of(referent).or_else(|| {
             self.find_function_exported_whole(file, expression)
                 .map(NamedValue::Function)
         })
@@ -311,7 +344,14 @@ impl<'s> ReferentContext<'s> for LinkedProject<'_, 's> {
         }
     }
 
+    fn inner_export(&self, file: FileId, body: FnId, name: Option<Atom>) -> Option<ExprId> {
+        self.graph.wrapped().exported_value(file, body, name)
+    }
+
     fn loaded_value(&self, file: FileId, call: ExprId) -> Option<LoadedValue<ModuleRef>> {
+        if let Some(body) = self.graph.wrapped().body_of_call(self.files, file, call) {
+            return Some(LoadedValue::InnerExports { file, body });
+        }
         let analysis = &self.files.compiled(file)?.analysis;
         let site = analysis.import_sites[analysis.import_site_of_call(call)?].kind;
         match site {
@@ -324,7 +364,7 @@ impl<'s> ReferentContext<'s> for LinkedProject<'_, 's> {
             return None;
         };
         let interop = self.graph.interop(module);
-        if interop.answers_loader_with_namespace
+        if interop.loader_returns_namespace
             && !is_linked_by_bundler(self.files.hir(file), self.files.bound(file), site)
         {
             return None;
@@ -347,19 +387,66 @@ impl<'s> ReferentContext<'s> for LinkedProject<'_, 's> {
             (
                 RequireResult::DefaultExport,
                 ModuleRef::Inner { .. }
-                | ModuleRef::Face(_)
+                | ModuleRef::Facade(_)
                 | ModuleRef::Check(_)
                 | ModuleRef::External { .. },
             )
             | (
                 RequireResult::ModuleExports,
                 ModuleRef::Inner { .. }
-                | ModuleRef::Face(_)
+                | ModuleRef::Facade(_)
                 | ModuleRef::Check(_)
                 | ModuleRef::Runtime(_)
                 | ModuleRef::External { .. },
             ) => None,
         }
+    }
+
+    fn forwarded_export(&self, file: FileId, name: Atom) -> Option<Linked> {
+        match self
+            .graph
+            .commonjs()
+            .find_forwarded_name(ModuleRef::File(file), name)?
+        {
+            ForwardedName::Binding(symbol) => Some(LinkedBinding::Binding(symbol)),
+            ForwardedName::Export(ModuleRef::File(file), name) => {
+                let name = Some(name);
+                Some(LinkedBinding::ExportOfCommonJs { file, name })
+            }
+            ForwardedName::Export(..) => None,
+        }
+    }
+
+    fn star_sources(&self, file: FileId) -> SmallVec<[FileId; 4]> {
+        let sources = self.graph.commonjs().name_sources(ModuleRef::File(file));
+        let files = sources.iter().filter_map(|&source| match source {
+            ModuleRef::File(source) if source != file => Some(source),
+            _ => None,
+        });
+        files.collect()
+    }
+
+    fn interop_argument(&self, file: FileId, call: ExprId) -> Option<ExprId> {
+        let helpers = self.known_helpers?;
+        let hir = self.files.hir(file);
+        let ExprKind::Call(site) = hir[call].kind else {
+            return None;
+        };
+        let module = hir.skip_type_assertions(hir.ids(hir[site].args).next()?);
+        if !matches!(hir[module].kind, ExprKind::Call(_)) {
+            return None;
+        }
+        let input = ResolveInput {
+            files: self.files,
+            modules: self.graph,
+            helpers,
+        };
+        let callee = resolve_callee(&input, file, hir[site].callee)?;
+        let is_interop = matches!(
+            callee.helper(helpers)?,
+            Helper::ImportDefault | Helper::ImportStar | Helper::ToEsModule
+        );
+        is_interop.then_some(module)
     }
 
     fn is_dead_store(&self, file: FileId, target: ExprId) -> bool {

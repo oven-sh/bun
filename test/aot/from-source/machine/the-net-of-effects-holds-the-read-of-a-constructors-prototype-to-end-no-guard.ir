@@ -7,18 +7,22 @@
 # let n = 0;
 # for (let i = 0; i < 40; i++) n += pair(i);
 # print(n);
+# if (n < 0) Crate.prototype = {};
 # -- end of source
-# Where the guards of a constructor function have begun the walk believes that the read of its prototype ends no guard that held, and the net of effects (testing=CheckEffectsAtRunTime) holds the operation to that:
-# to the count of guards ended. The count of guards armed is left open under it, by name: the class may be defined by that very read.
-# Here the first object is born before the statements that set the class up, so the class is first met at that read.
-# Honest, the guards have not begun there, the walk believes nothing of the read, and the net is silent.
-# THE LIE, testing=ReadsOfConstructorsPrototypesAreTakenToEndNoGuard: the guards are taken to have begun. The net rings: so the count of guards ended is still held under this operation.
-# It does not show a guard that held in front of the call and was ended: the run time also counts what it arms and ends within one call. Should an honest program ever ring so, ask that first.
-# NO RUN UNDER THE LIE WITHOUT THE NET IS STORED.
+# The last statement keeps the prototype property from being proven: a proven one is not read at the construction.
+# Once the guards of a constructor function have begun, the walk assumes that the read of its prototype ends no guard that held.
+# The run-time effects check (testing=CheckEffectsAtRunTime) checks the operation against that assumption, by the count of guards that ended.
+# The count of guards that were armed is left unchecked for this operation, by name, because that very read may define the class.
+# Here the first object is allocated before the statements that set up the class, so the class is first encountered at that read.
+# Without the fault, the guards have not begun there, the walk assumes nothing about the read, and the effects check reports nothing.
+# Fault injection, testing=IgnorePrototypeReads: the walk assumes that the guards have begun. The effects check fires, so the count of guards that ended is still checked for this operation.
+# This does not show a guard that held before the call and then ended: the runtime also counts the guards that it arms and ends within one call.
+# If a program ever triggers this report without an injected fault, look into that first.
+# The test stores no run with the fault injected and without the effects check.
 # RUN(HONEST): run-in-shell mechanisms=all testing=CheckEffectsAtRunTime
 # HONEST: undefinedundefined
 # HONEST-NEXT: 1680
 # HONEST-NEXT: exited with 0
-# RUN(RINGS): run-in-shell mechanisms=all testing=ReadsOfConstructorsPrototypesAreTakenToEndNoGuard,CheckEffectsAtRunTime
-# RINGS: the rows of effects of operation:GetConstructPrototype and of what the walk believed of its operands say that the call will not write MemberGuards, and under it guards that held have ended
+# RUN(RINGS): run-in-shell mechanisms=all testing=IgnorePrototypeReads,CheckEffectsAtRunTime
+# RINGS: the declared effects of operation:GetConstructPrototype and of the proven types of its operands say that the call does not write MemberGuards, but guards were invalidated
 # RINGS: crashed with SIGABRT

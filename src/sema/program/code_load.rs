@@ -10,6 +10,7 @@ use crate::resolve::{
     CodeHost, CodeImportKind, CodeOptions, CodeResolution, DeclaredSideEffects, EnclosingPackage,
     HostPayload, JsxSettings, ProjectResolvers, SiteResolution, TranspileSettings,
 };
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub struct CompileInputs<'a, 's> {
     pub entry_points: &'a [Vec<u8>],
@@ -58,6 +59,8 @@ pub(super) struct CodeLoadContext<'a, 's: 'r, 'r> {
     guesses_held_back: Guarded<(Vec<Vec<u8>>, FxHashSet<Vec<u8>>)>,
     are_guesses_out: Guarded<bool>,
     entry_points_that_run_first: FxHashSet<Vec<u8>>,
+    files_with_module_form: Guarded<FxHashSet<Vec<u8>>>,
+    has_module_forms: AtomicBool,
     pub(super) is_case_sensitive: bool,
 }
 
@@ -106,6 +109,8 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             guesses_held_back: Guarded::new((Vec::new(), FxHashSet::default())),
             are_guesses_out: Guarded::new(false),
             entry_points_that_run_first,
+            files_with_module_form: Guarded::new(FxHashSet::default()),
+            has_module_forms: AtomicBool::new(false),
             is_case_sensitive,
         }
     }
@@ -270,6 +275,25 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         loads.iter().copied().collect()
     }
 
+    /// Returns the loader under which an import without a type loads the file, if that is not the loader of require().
+    pub(super) fn loader_of_module_form(&self, path: &[u8]) -> Option<HostLoader> {
+        if !self.has_module_forms.load(Ordering::Relaxed) {
+            return None;
+        }
+        let path = to_path(path, self.is_case_sensitive);
+        let has_form = self.files_with_module_form.lock().contains(&*path);
+        has_form
+            .then(|| self.host.loader_of_module_form(&path))
+            .flatten()
+    }
+
+    /// Returns false if the file has the form already.
+    pub(super) fn add_module_form(&self, path: &[u8]) -> bool {
+        let path = to_path(path, self.is_case_sensitive).into_owned();
+        self.has_module_forms.store(true, Ordering::Relaxed);
+        self.files_with_module_form.lock().insert(path)
+    }
+
     pub(super) fn runs_first(&self, key: LoadKey<'_>) -> bool {
         let path = to_path(key.path, self.is_case_sensitive);
         self.entry_points_that_run_first.contains(&*path)
@@ -292,6 +316,8 @@ pub(super) struct CodeTarget<'r> {
     pub(super) is_loaded_with_importer: bool,
     pub(super) has_shared_type: bool,
     pub(super) has_type_of_shared_kind: bool,
+    /// The load does not spell the name. The build has followed it through values.
+    pub(super) is_name_followed: bool,
 }
 
 impl<'r> CodeTarget<'r> {
@@ -305,6 +331,7 @@ impl<'r> CodeTarget<'r> {
             is_loaded_with_importer: false,
             has_shared_type: false,
             has_type_of_shared_kind: false,
+            is_name_followed: false,
         }
     }
 }

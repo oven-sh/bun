@@ -7,10 +7,10 @@ use crate::ir::{LayoutId, PropertyKeyId, ValueId};
 use crate::lower::member::PropertyName;
 use crate::lower::{FunctionLowering, convert};
 
-const MOST_VALUES_THAT_WAIT_IN_REGISTERS: usize = 8;
+pub(in crate::lower) const MOST_VALUES_THAT_WAIT_IN_REGISTERS: usize = 8;
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    fn costs_no_word_while_it_waits(&self, value: ValueId) -> bool {
+    pub(in crate::lower) fn costs_no_word_while_it_waits(&self, value: ValueId) -> bool {
         self.builder.is_constant(value)
             || matches!(
                 self.builder.function().kind,

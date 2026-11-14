@@ -1,8 +1,11 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // CHECK-LABEL: function {{*}}name="exits"
-// CHECK: [[helper]] = Builtin builtin=CompilerHelpersGetDisposeMethod
-// CHECK-NEXT: [[method]] = Call [[helper]], -, [[resource]]
+// CHECK: TypeTest [[resource]] testedType=undefined|null
+// CHECK: [[read]] = PropGet {{*}} key=@@dispose
+// CHECK-NEXT: TypeTest [[read]] testedType=function
+// CHECK: Jump -> next [[found]]({{*}})
+// CHECK-NEXT: [[found]]([[method]]):
 // CHECK: TypeTest [[method]] testedType=undefined
 // CHECK: = Call [[onReturn]], [[resource]]
 // CHECK: Return [[returned]]
@@ -15,8 +18,8 @@
 // CHECK: Throw
 
 // RUN(COPIES): lower
-// COPIES-COUNT-3: testedType=undefined
-// COPIES-NOT: testedType=undefined
+// COPIES-COUNT-3: testedType=undefined @
+// COPIES-NOT: testedType=undefined @
 
 // RUN(PATHS): lower
 // PATHS-NOT: Switch

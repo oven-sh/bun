@@ -1,4 +1,4 @@
-// STATISTIC: CapturedListsReadInFrontOfLoops >= 1
+// STATISTIC: CapturedArrayReadsHoisted >= 1
 "use strict";
 let table = [1, 2, 3, 4];
 function renew(r) { table = table.map((v) => (v + r) % 9); }

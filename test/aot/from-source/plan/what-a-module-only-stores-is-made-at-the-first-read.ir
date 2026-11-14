@@ -34,9 +34,9 @@
 # CHECK: deferred g13 made-by f0 v15 NewRegExp mark=undefined at-declaration
 # CHECK-NEXT: deferred g14 made-by f0 v17 Data mark=undefined at-declaration
 # CHECK-NEXT: deferred g15 made-by f0 v19 Data mark=undefined at-declaration
-# CHECK-NEXT: deferred g17 made-by f0 v23 NewRegExp mark=undefined at-declaration
-# CHECK-NEXT: deferred g18 made-by f0 v25 NewRegExp mark=null at-declaration
-# CHECK-NEXT: deferred g21 made-by f0 v36 Data mark=undefined at-declaration
+# CHECK-NEXT: deferred g17 made-by f0 v24 NewRegExp mark=undefined at-declaration
+# CHECK-NEXT: deferred g18 made-by f0 v26 NewRegExp mark=null at-declaration
+# CHECK-NEXT: deferred g21 made-by f0 v37 Data mark=undefined at-declaration
 # CHECK-NOT: deferred
 # RUN(WITHHELD): plan deferred mechanisms=-Deferral
 # WITHHELD-NOT: deferred

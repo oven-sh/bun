@@ -111,9 +111,10 @@ describe.skipIf(isWindows).each(kinds)("in %s", kind => {
     expect(readdirSync(join(String(dir), "tmp"))).toEqual([".keep"]);
     // Another run's name is there between two of its system calls.
     let left = namesInSharedMemory().filter(name => !before.has(name));
-    if (left.length) {
-      await Bun.sleep(100);
-      left = namesInSharedMemory().filter(name => left.includes(name));
+    for (const deadline = Date.now() + 5_000; left.length && Date.now() < deadline;) {
+      await Bun.sleep(10);
+      const names = new Set(namesInSharedMemory());
+      left = left.filter(name => names.has(name));
     }
     expect(left).toEqual([]);
   });

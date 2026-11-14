@@ -16,6 +16,6 @@
 # RUN(BOX): link why-gone L0
 # BOX: why-gone L0: it has not gone
 # RUN(FIELDS): link fields mechanisms=all
-# FIELDS: "count" proven=i32 writers-known written-at-construction-alone
+# FIELDS: "count" proven=int[0, 2147483647] writers-known written-at-construction-alone
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 11,12,13,14,15,10,0,number

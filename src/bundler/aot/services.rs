@@ -13,6 +13,7 @@ use bun_ast::{ASTMemoryAllocator, Loader, Log, Msg, SideEffects};
 use bun_core::ZBox;
 use bun_js_parser::{Define, ExpandedImportMetaGlob};
 use bun_paths::resolve_path::posix_to_platform_in_place;
+use bun_paths::string_paths::without_trailing_slash_windows_path;
 use bun_react_compiler::Observer;
 use bun_resolver::compiled_program::{RefusedData, encode_refused_data};
 use bun_resolver::options::{ExternalModules, Packages};
@@ -25,9 +26,11 @@ use bun_sema::atom::Interner;
 use bun_sema::fold::FoldOptions;
 use bun_sema::hir_from_data::DataModule;
 use bun_sema::resolve::{AOT_CONDITION, CodeFailure, CodeImportKind, FileSearch, FoundCode, Host};
-use bun_sema_driver::host::{from_native, to_native};
+use bun_sema::util::FxHashSet;
+use bun_sema_driver::host::{from_native, is_regular_file, to_native};
 use bun_threading::Guarded;
 use core::ptr::NonNull;
+use std::borrow::Cow;
 
 pub(crate) struct BuildContext {
     bundle: NonNull<BundleV2<'static>>,
@@ -190,7 +193,7 @@ pub(crate) fn with_test_context<R>(
     static OUTPUT: std::sync::Once = std::sync::Once::new();
     OUTPUT.call_once(bun_core::output::stdio::init);
     let mut log = Log::init();
-    let mut event_loop = bun_event_loop::AnyEventLoop::default();
+    let event_loop = bun_event_loop::AnyEventLoop::default();
     let arena = Arena::new();
     let transform_options = crate::options::TransformOptions {
         absolute_working_dir: Some(Box::from(&b"/project"[..])),
@@ -206,7 +209,7 @@ pub(crate) fn with_test_context<R>(
         transpiler,
         None,
         &arena,
-        Some(NonNull::from(&mut event_loop)),
+        Some(NonNull::from(&event_loop)),
         false,
         None,
         &arena,
@@ -237,14 +240,202 @@ pub(crate) struct BundlerServices {
     /// What `--asset` names, by absolute paths.
     assets: Box<[Vec<u8>]>,
     /// An asset below this folder is embedded under its path from the root, where the code beside it looks for it. Any other is embedded under its name alone.
-    folder_of_assets_that_keep_paths: Vec<u8>,
+    assets_root: Vec<u8>,
     names_wanted: NamesWanted,
     names_of_packages: Guarded<NamesOfPackages>,
 }
 
-pub(super) fn is_at_or_below(path: &[u8], folder: &[u8]) -> bool {
-    let rest = path.strip_prefix(folder);
+pub(super) fn is_at_or_below(path: &[u8], ancestor: &[u8]) -> bool {
+    let rest = path.strip_prefix(ancestor);
     rest.is_some_and(|rest| rest.first().is_none_or(|&byte| bun_paths::is_sep_any(byte)))
+}
+
+fn is_package_json(path: &[u8]) -> bool {
+    bun_paths::basename(path) == b"package.json"
+}
+
+/// The front end writes `/` on every platform, as in `C:/a`. Paths are compared by their bytes here.
+fn with_platform_separators(path: &[u8]) -> Cow<'_, [u8]> {
+    if bun_paths::SEP == b'/' {
+        return Cow::Borrowed(path);
+    }
+    let mut path = path.to_vec();
+    posix_to_platform_in_place(&mut path);
+    Cow::Owned(path)
+}
+
+fn count_levels_above(root: &[u8], asset: &[u8]) -> usize {
+    let Some(written_folder) = bun_paths::dirname(asset) else {
+        return 0;
+    };
+    let mut buffer = bun_paths::path_buffer_pool::get();
+    let real_folder = bun_sys::realpath(&ZBox::from_bytes(written_folder), &mut buffer).ok();
+    let folders = [real_folder, Some(written_folder)];
+    if folders.iter().flatten().any(|it| is_at_or_below(it, root)) {
+        return 0;
+    }
+    let relative = bun_paths::resolve_path::relative(root, real_folder.unwrap_or(written_folder));
+    let steps = relative.split(|&byte| bun_paths::is_sep_any(byte));
+    steps.take_while(|&step| step == b"..").count()
+}
+
+const LOCK_FILES: [&[u8]; 6] = [
+    b"bun.lock",
+    b"bun.lockb",
+    b"npm-shrinkwrap.json",
+    b"package-lock.json",
+    b"pnpm-lock.yaml",
+    b"yarn.lock",
+];
+
+/// `path` is below a folder that is directly below `node_modules`, or below a scope there, and holds a `package.json`. Hidden files, files in hidden folders and lock files don't count.
+fn is_installed_package_file(path: &[u8]) -> bool {
+    let segments: Vec<&[u8]> = path.split(|&byte| bun_paths::is_sep_any(byte)).collect();
+    let is_store = |&segment: &&[u8]| segment == b"node_modules";
+    let Some(innermost) = segments.iter().rposition(is_store) else {
+        return false;
+    };
+    let below = &segments[innermost + 1..];
+    let is_scoped = below.first().is_some_and(|it| it.first() == Some(&b'@'));
+    let package_depth = if is_scoped { 2 } else { 1 };
+    if below.len() <= package_depth
+        || below.iter().any(|it| it.first() == Some(&b'.'))
+        || below.last().is_some_and(|it| LOCK_FILES.contains(it))
+    {
+        return false;
+    }
+    let package = segments[..=innermost + package_depth].iter();
+    let length: usize = package.map(|it| it.len() + 1).sum();
+    let manifest = ZBox::from_bytes([&path[..length], b"package.json"].concat());
+    let kind = bun_sys::exists_at_type(bun_sys::Fd::cwd(), &manifest);
+    matches!(kind, Ok(bun_sys::ExistsAtType::File))
+}
+
+/// Without the packages below it.
+fn list_files_below(folder: &[u8]) -> Vec<Vec<u8>> {
+    let mut pending = vec![folder.to_vec()];
+    let mut below = Vec::new();
+    while let Some(folder) = pending.pop() {
+        if let Some((files, folders)) = list_folder(&folder) {
+            let is_store = |path: &Vec<u8>| bun_paths::basename(path) == b"node_modules";
+            below.extend(files);
+            pending.extend(folders.into_iter().filter(|it| !is_store(it)));
+        }
+    }
+    below.sort_unstable();
+    below
+}
+
+/// The paths of the files and the folders in `folder` itself.
+fn list_folder(folder: &[u8]) -> Option<(Vec<Vec<u8>>, Vec<Vec<u8>>)> {
+    let directory = bun_sys::open_dir_for_iteration(bun_sys::Fd::cwd(), folder)
+        .map(bun_sys::File::from_fd)
+        .ok()?;
+    let mut entries = bun_sys::dir_iterator::iterate(directory.fd());
+    let (mut files, mut folders) = (Vec::new(), Vec::new());
+    while let Some(entry) = entries.next().ok()? {
+        let path = [folder, &[bun_paths::SEP], entry.name.slice_u8()].concat();
+        match entry.kind {
+            bun_sys::EntryKind::File => files.push(path),
+            bun_sys::EntryKind::Directory => folders.push(path),
+            _ => {}
+        }
+    }
+    Some((files, folders))
+}
+
+/// `path` lies below the folder of `manifest` with no `node_modules` above it. Files in hidden folders need `--asset`, as in a package.
+fn is_application_file_under(manifest: &[u8], path: &[u8]) -> bool {
+    let folder = bun_paths::dirname(manifest).unwrap_or_default();
+    let mut below = path[folder.len()..].split(|&byte| bun_paths::is_sep_any(byte));
+    find_node_modules_parent(path).is_none() && !below.any(|it| it.first() == Some(&b'.'))
+}
+
+/// A program or a library of machine code. A process is started from it, or it is loaded.
+fn is_native_program(path: &[u8]) -> bool {
+    const ELF: &[u8] = b"\x7fELF";
+    const MACH_O: [&[u8]; 5] = [
+        b"\xfe\xed\xfa\xce",
+        b"\xfe\xed\xfa\xcf",
+        b"\xce\xfa\xed\xfe",
+        b"\xcf\xfa\xed\xfe",
+        b"\xca\xfe\xba\xbe",
+    ];
+    if !is_regular_file(path) {
+        return false;
+    }
+    let Ok(file) = bun_sys::File::openat(bun_sys::Fd::cwd(), path, bun_sys::O::RDONLY, 0) else {
+        return false;
+    };
+    let mut start = [0; 4];
+    let read = file.read_all(&mut start).unwrap_or(0);
+    let start = &start[..read];
+    start == ELF || start.starts_with(b"MZ") || MACH_O.contains(&start)
+}
+
+fn is_readable(path: &[u8]) -> bool {
+    bun_sys::File::openat(bun_sys::Fd::cwd(), path, bun_sys::O::RDONLY, 0).is_ok()
+}
+
+/// The folder that holds the outermost `node_modules` of `path`.
+fn find_node_modules_parent(path: &[u8]) -> Option<&[u8]> {
+    let mut start = 0;
+    for segment in path.split(|&byte| bun_paths::is_sep_any(byte)) {
+        if segment == b"node_modules" {
+            return Some(&path[..start.max(1) - 1]);
+        }
+        start += segment.len() + 1;
+    }
+    None
+}
+
+/// The folder of the innermost installed package that `path` lies in.
+fn find_package_root(path: &[u8]) -> Option<&[u8]> {
+    let (mut segments, mut start) = (Vec::new(), 0);
+    for segment in path.split(|&byte| bun_paths::is_sep_any(byte)) {
+        start += segment.len() + 1;
+        segments.push((segment, start - 1));
+    }
+    let store = segments.iter().rposition(|it| it.0 == b"node_modules")?;
+    let is_scoped = segments.get(store + 1)?.0.first() == Some(&b'@');
+    let end = segments.get(store + if is_scoped { 2 } else { 1 })?.1;
+    Some(&path[..end])
+}
+
+/// `path` is an existing file.
+fn is_nearest_package_json(entry_path: &[u8], path: &[u8]) -> bool {
+    let holder = bun_paths::dirname(path).filter(|_| bun_paths::basename(path) == b"package.json");
+    let mut folder = bun_paths::dirname(entry_path);
+    while let (Some(holder), Some(current)) = (holder, folder) {
+        let nearer = ZBox::from_bytes([current, b"/package.json"].concat());
+        if current == holder || bun_sys::exists_at_type(bun_sys::Fd::cwd(), &nearer).is_ok() {
+            return current == holder;
+        }
+        folder = bun_paths::dirname(current).filter(|above| above.len() < current.len());
+    }
+    false
+}
+
+/// Embedding an asset's folder does not follow symlinks below it, so their targets are not embedded. `asset` itself may be a symlink.
+fn is_reached_through_symlink(asset: &[u8], path: &[u8]) -> bool {
+    let (mut first, mut second) = (
+        bun_paths::path_buffer_pool::get(),
+        bun_paths::path_buffer_pool::get(),
+    );
+    let real_asset = bun_sys::realpath(&ZBox::from_bytes(asset), &mut first).ok();
+    let real_path = bun_sys::realpath(&ZBox::from_bytes(path), &mut second).ok();
+    let matches_written_path = |(real_asset, real_path): (&[u8], &[u8])| {
+        real_path.strip_prefix(real_asset) == path.strip_prefix(asset)
+    };
+    !real_asset.zip(real_path).is_some_and(matches_written_path)
+}
+
+/// Purely lexical, because the executable does not follow symlinks.
+fn count_lexical_levels_above(root: &[u8], written: &[u8]) -> usize {
+    let folder = bun_paths::dirname(written).unwrap_or(written);
+    let relative = bun_paths::resolve_path::relative(root, folder);
+    let steps = relative.split(|&byte| bun_paths::is_sep_any(byte));
+    steps.take_while(|&step| step == b"..").count()
 }
 
 pub(crate) struct NamesWanted {
@@ -288,7 +479,7 @@ impl BundlerServices {
             refused_data: Guarded::new(Vec::new()),
             files_for_file_system: Guarded::new(FilesForFileSystem::default()),
             assets: Box::default(),
-            folder_of_assets_that_keep_paths: Vec::new(),
+            assets_root: Vec::new(),
             names_wanted,
             names_of_packages: Guarded::new(NamesOfPackages::default()),
         }
@@ -297,10 +488,10 @@ impl BundlerServices {
     pub(crate) fn with_assets(
         mut self,
         assets: Box<[Vec<u8>]>,
-        folder_of_assets_that_keep_paths: Vec<u8>,
+        assets_root: Vec<u8>,
     ) -> BundlerServices {
         self.assets = assets;
-        self.folder_of_assets_that_keep_paths = folder_of_assets_that_keep_paths;
+        self.assets_root = assets_root;
         self
     }
 
@@ -316,33 +507,169 @@ impl BundlerServices {
         core::mem::take(&mut *self.refused_data.lock())
     }
 
+    /// `SourceProvider::embed_file_implicitly()` for a file of a kind that may be embedded.
+    fn embed_eligible_file(&self, module_path: &[u8], source_path: &[u8], is_query: bool) -> bool {
+        let reads_unknown_paths = self.files_for_file_system.lock().reads_unknown_paths;
+        let written_path = source_path;
+        let module_path = &*with_platform_separators(module_path);
+        let source_path = &*with_platform_separators(source_path);
+        if self.names_wanted.runs_in_place {
+            return false;
+        }
+        let is_around = |asset: &Vec<u8>| is_at_or_below(source_path, asset);
+        if self.assets.iter().any(is_around) || self.is_found_by_pattern(written_path) {
+            return false;
+        }
+        // A file is embedded at its real path, where a read through a symlink does not find it, and a symlink may lead to a file of the application.
+        let unlinked =
+            find_node_modules_parent(source_path).or_else(|| bun_paths::dirname(source_path));
+        if unlinked.is_none_or(|folder| is_reached_through_symlink(folder, source_path)) {
+            return false;
+        }
+        // The levels above the root are already settled. They reach as far up as code does, and one level always exists.
+        let root = without_trailing_slash_windows_path(&self.names_wanted.root_directory);
+        let highest = count_lexical_levels_above(root, module_path).max(1);
+        let is_embedded = count_lexical_levels_above(root, source_path) <= highest
+            && is_regular_file(source_path)
+            && match is_query {
+                // What finds it there may read it. A program of machine code is started, which needs the disk.
+                true if reads_unknown_paths => {
+                    is_readable(source_path) && !is_native_program(source_path)
+                }
+                is_query => is_query || is_readable(source_path),
+            };
+        if is_embedded {
+            let has_no_bytes = is_query && !reads_unknown_paths;
+            (self.files_for_file_system.lock()).embed(source_path, has_no_bytes);
+        }
+        is_embedded
+    }
+
+    /// `SourceProvider::fill_package_json_gaps()` for the modules in `folder`. A folder in `closed` is done, and so are those above it. A `package.json` between compiled code and one that is embedded may be the application's own.
+    fn fill_gaps_above(
+        &self,
+        folder: &[u8],
+        closed: &mut FxHashSet<Vec<u8>>,
+        added: &mut Vec<(Vec<u8>, Vec<u8>)>,
+    ) {
+        let is_above = |path: &[u8]| {
+            let above = bun_paths::dirname(path).filter(|_| is_package_json(path));
+            above.is_some_and(|above| is_at_or_below(folder, above))
+        };
+        let files = self.files_for_file_system.lock();
+        let embedded = files.embedded_manifests.iter().filter(|it| is_above(it));
+        let mut embedded: Vec<Box<[u8]>> = embedded.cloned().collect();
+        drop(files);
+        embedded.sort_unstable_by_key(|it| it.len());
+        let Some(farthest) = embedded.first() else {
+            return;
+        };
+        let mut current = Some(folder);
+        while let Some(here) = current {
+            let path = [here, &[bun_paths::SEP], b"package.json"].concat();
+            if path.len() <= farthest.len() || !closed.insert(here.to_vec()) {
+                return;
+            }
+            current = bun_paths::dirname(here).filter(|above| above.len() < here.len());
+            let is_present = embedded.iter().any(|it| **it == *path)
+                || self.assets.iter().any(|asset| is_at_or_below(&path, asset));
+            let kind = bun_sys::exists_at_type(bun_sys::Fd::cwd(), &ZBox::from_bytes(&path));
+            if is_present || kind.is_err() {
+                continue;
+            }
+            let is_eligible =
+                is_installed_package_file(&path) || is_application_file_under(farthest, &path);
+            if !is_eligible || !self.embed_eligible_file(folder, &path, false) {
+                let mut files = self.files_for_file_system.lock();
+                files.take_out(|it| it.len() < path.len() && embedded.contains(it));
+                return;
+            }
+            let found = embedded.iter().rfind(|it| it.len() < path.len());
+            added.extend(found.map(|found| (path, found.to_vec())));
+        }
+    }
+
+    /// A search may start in any folder of a package, as in `find(path.join(__dirname, "esm"))`. So each `package.json` below one of a package that is embedded is embedded too, whether or not code lies beside it. Another package in a `node_modules` below has its own.
+    fn fill_gaps_in_packages(&self, added: &mut Vec<(Vec<u8>, Vec<u8>)>) {
+        let files = self.files_for_file_system.lock();
+        let of_packages = files
+            .embedded_manifests
+            .iter()
+            .filter(|it| is_installed_package_file(it));
+        let mut embedded: Vec<Box<[u8]>> = of_packages.cloned().collect();
+        drop(files);
+        // The farthest first, so that a folder is listed once.
+        embedded.sort_unstable_by_key(|it| it.len());
+        let mut listed: Vec<&[u8]> = Vec::new();
+        for manifest in &embedded {
+            let Some(folder) = bun_paths::dirname(manifest) else {
+                continue;
+            };
+            // The walk below a folder stops at a `node_modules`, so a package in there is walked for itself.
+            let is_listed = |above: &&[u8]| {
+                find_package_root(above) == find_package_root(folder)
+                    && is_at_or_below(folder, above)
+            };
+            if listed.iter().any(is_listed) {
+                continue;
+            }
+            listed.push(folder);
+            for path in list_files_below(folder) {
+                let is_new = is_package_json(&path) && !embedded.iter().any(|it| **it == *path);
+                if is_new && self.embed_eligible_file(manifest, &path, false) {
+                    added.push((path, manifest.to_vec()));
+                }
+            }
+        }
+    }
+
     fn is_found_by_pattern(&self, source_path: &[u8]) -> bool {
         let files = self.files_for_file_system.lock();
         let mut found = files.data_found_by_patterns.iter();
         found.any(|found| &found[..] == source_path)
     }
 
-    fn is_file_that_asset_would_bring(&self, source_path: &[u8]) -> bool {
+    /// The executable's folders reach as far above the root as code does.
+    fn is_near_code(&self, module_path: &[u8], source_path: &[u8]) -> bool {
+        let root = without_trailing_slash_windows_path(&self.names_wanted.root_directory);
+        let is_beside_code = || {
+            let levels = count_lexical_levels_above(root, source_path);
+            levels > 0 && levels <= count_lexical_levels_above(root, module_path)
+        };
+        is_at_or_below(source_path, &self.assets_root) || is_beside_code()
+    }
+
+    fn is_embeddable_as_asset(&self, module_path: &[u8], source_path: &[u8]) -> bool {
+        let module_path = &*with_platform_separators(module_path);
+        let source_path = &*with_platform_separators(source_path);
         let kind = || bun_sys::exists_at_type(bun_sys::Fd::cwd(), &ZBox::from_bytes(source_path));
-        let mut assets = self.assets.iter();
-        is_at_or_below(source_path, &self.folder_of_assets_that_keep_paths)
-            && !assets.any(|asset| is_at_or_below(source_path, asset))
-            && matches!(kind(), Ok(bun_sys::ExistsAtType::File))
+        let is_around = |asset: &&Vec<u8>| is_at_or_below(source_path, asset);
+        let mut around = self.assets.iter().filter(is_around).peekable();
+        let is_left_out = match around.peek() {
+            None => self.is_near_code(module_path, source_path),
+            Some(_) => around.all(|asset| is_reached_through_symlink(asset, source_path)),
+        };
+        is_left_out && matches!(kind(), Ok(bun_sys::ExistsAtType::File))
     }
 
     pub(crate) fn take_files_for_file_system(&self) -> FilesForFileSystem {
         let mut files = core::mem::take(&mut *self.files_for_file_system.lock());
-        for paths in [&mut files.data_found_by_patterns, &mut files.code_seen] {
+        let (found, seen) = (&mut files.data_found_by_patterns, &mut files.code_seen);
+        let (embedded, asked_about) = (&mut files.implicitly_embedded, &mut files.asked_about);
+        for paths in [found, seen, &mut *embedded, &mut *asked_about] {
             paths.sort_unstable();
             paths.dedup();
         }
+        asked_about.retain(|path| embedded.binary_search(path).is_err());
         let key = |kept: &(Box<[u8]>, Msg)| {
             let place = kept.1.data.location.as_ref();
             let place = place.map(|it| (it.file.clone(), it.line, it.column));
             (place, kept.1.data.text.clone())
         };
-        files.warnings_if_lacking.sort_by_cached_key(key);
-        files.warnings_if_lacking.dedup_by_key(|kept| key(kept));
+        files.warnings_if_not_embedded.sort_by_cached_key(key);
+        files
+            .warnings_if_not_embedded
+            .dedup_by_key(|kept| key(kept));
         files
     }
 
@@ -361,8 +688,43 @@ pub struct FilesForFileSystem {
     pub data_found_by_patterns: Vec<Box<[u8]>>,
     /// The compiled files that `node:fs` finds in the executable. Empty where there is no such data file.
     pub code_seen: Vec<Box<[u8]>>,
-    /// With the path of a data file above: what the build says if `node:fs` won't find it in the executable. Ascending by place and text, each once.
-    pub warnings_if_lacking: Vec<(Box<[u8]>, Msg)>,
+    /// `SourceProvider::embed_file_implicitly`.
+    pub implicitly_embedded: Vec<Box<[u8]>>,
+    /// Those that the program only asks about. None is in `implicitly_embedded`.
+    pub asked_about: Vec<Box<[u8]>>,
+    /// What both lists hold, and each `package.json` of the first.
+    embedded_index: FxHashSet<Box<[u8]>>,
+    asked_about_index: FxHashSet<Box<[u8]>>,
+    embedded_manifests: Vec<Box<[u8]>>,
+    /// `SourceProvider::note_reads_of_unknown_paths`.
+    reads_unknown_paths: bool,
+    /// A data file's path and the warning if `node:fs` can't find it. Sorted, without duplicates.
+    pub warnings_if_not_embedded: Vec<(Box<[u8]>, Msg)>,
+}
+
+impl FilesForFileSystem {
+    fn is_embedded(&self, path: &[u8], is_query: bool) -> bool {
+        self.embedded_index.contains(path) || is_query && self.asked_about_index.contains(path)
+    }
+
+    fn embed(&mut self, path: &[u8], is_query: bool) {
+        let (paths, index) = match is_query {
+            true => (&mut self.asked_about, &mut self.asked_about_index),
+            false => (&mut self.implicitly_embedded, &mut self.embedded_index),
+        };
+        if index.insert(path.into()) {
+            paths.push(path.into());
+            if !is_query && is_package_json(path) {
+                self.embedded_manifests.push(path.into());
+            }
+        }
+    }
+
+    fn take_out(&mut self, is_out: impl Fn(&Box<[u8]>) -> bool) {
+        self.implicitly_embedded.retain(|it| !is_out(it));
+        self.embedded_index.retain(|it| !is_out(it));
+        self.embedded_manifests.retain(|it| !is_out(it));
+    }
 }
 
 impl SourceProvider for BundlerServices {
@@ -505,6 +867,16 @@ impl SourceProvider for BundlerServices {
             .collect()
     }
 
+    fn data_url_loader(&self, url: &[u8]) -> Option<Loader> {
+        use bun_http_types::MimeType::Category;
+        let url = DataURL::parse(url).ok().flatten()?;
+        match url.decode_mime_type().category {
+            Category::Javascript => Some(Loader::Tsx),
+            Category::Json => Some(Loader::Json),
+            _ => None,
+        }
+    }
+
     fn decode_data_url(&self, url: &[u8]) -> Option<Vec<u8>> {
         let url = DataURL::parse(url).ok().flatten()?;
         url.decode_data().ok()
@@ -570,18 +942,230 @@ impl SourceProvider for BundlerServices {
             .push(source_path.into());
     }
 
-    fn is_file_that_only_asset_brings(&self, source_path: &[u8]) -> bool {
-        !self.is_found_by_pattern(source_path) && self.is_file_that_asset_would_bring(source_path)
+    fn embeds_assets(&self) -> bool {
+        !self.assets.is_empty() && !self.names_wanted.runs_in_place
     }
 
-    fn is_data_file_that_its_folder_may_hide(&self, source_path: &[u8]) -> bool {
-        self.is_found_by_pattern(source_path) && self.is_file_that_asset_would_bring(source_path)
+    fn highest_asset_level(&self) -> usize {
+        if self.names_wanted.runs_in_place {
+            return 0;
+        }
+        let root = without_trailing_slash_windows_path(&self.names_wanted.root_directory);
+        let levels = self.assets.iter().map(|it| count_levels_above(root, it));
+        levels.max().unwrap_or(0)
     }
 
-    fn warn_if_file_system_lacks(&self, source_path: &[u8], warning: Msg) {
+    fn is_embeddable_only_by_asset(&self, module_path: &[u8], source_path: &[u8]) -> bool {
+        !self.is_found_by_pattern(source_path)
+            && self.is_embeddable_as_asset(module_path, source_path)
+    }
+
+    fn is_in_asset(&self, source_path: &[u8]) -> bool {
+        let source_path = &*with_platform_separators(source_path);
+        let mut assets = self.assets.iter();
+        assets.any(|asset| is_at_or_below(source_path, asset))
+    }
+
+    fn find_package_folder(&self, module_path: &[u8]) -> Option<Vec<u8>> {
+        find_package_root(&with_platform_separators(module_path)).map(<[u8]>::to_vec)
+    }
+
+    fn search_misses_manifest(&self, module_path: &[u8], folder: &[u8]) -> bool {
+        let module_path = &*with_platform_separators(module_path);
+        let folder = &*with_platform_separators(folder);
+        let kind_of =
+            |path: &[u8]| bun_sys::exists_at_type(bun_sys::Fd::cwd(), &ZBox::from_bytes(path));
+        let is_folder = || matches!(kind_of(folder), Ok(bun_sys::ExistsAtType::Directory));
+        let Some(root) = find_package_root(module_path) else {
+            return false;
+        };
+        if self.names_wanted.runs_in_place || !is_folder() {
+            return false;
+        }
+        let files = self.files_for_file_system.lock();
+        let is_above = |manifest: &[u8]| {
+            bun_paths::dirname(manifest).is_some_and(|above| is_at_or_below(folder, above))
+        };
+        let nearest = (files.embedded_manifests.iter())
+            .filter(|it| is_above(it))
+            .max_by_key(|it| it.len());
+        let nearest = nearest.and_then(|it| bun_paths::dirname(it));
+        if nearest.is_none() && is_at_or_below(folder, root) {
+            return false;
+        }
+        let mut current = Some(folder);
+        while let Some(above) = current {
+            if nearest == Some(above) {
+                return false;
+            }
+            let manifest = [above, &[bun_paths::SEP], b"package.json"].concat();
+            if kind_of(&manifest).is_ok() {
+                return true;
+            }
+            current = bun_paths::dirname(above);
+        }
+        false
+    }
+
+    fn is_own_module_of_project(&self, module_path: &[u8]) -> bool {
+        !self.names_wanted.runs_in_place
+            && find_node_modules_parent(&with_platform_separators(module_path)).is_none()
+    }
+
+    fn is_on_disk(&self, module_path: &[u8], source_path: &[u8]) -> bool {
+        let module_path = &*with_platform_separators(module_path);
+        let source_path = &*with_platform_separators(source_path);
+        let kind = || bun_sys::exists_at_type(bun_sys::Fd::cwd(), &ZBox::from_bytes(source_path));
+        !self.names_wanted.runs_in_place
+            && self.is_near_code(module_path, source_path)
+            && kind().is_ok()
+    }
+
+    fn is_embedding_undecided(&self, module_path: &[u8], source_path: &[u8]) -> bool {
+        self.is_found_by_pattern(source_path)
+            && self.is_embeddable_as_asset(module_path, source_path)
+    }
+
+    fn is_asset_unreachable(&self, module_path: &[u8], source_path: &[u8]) -> bool {
+        let module_path = &*with_platform_separators(module_path);
+        let source_path = &*with_platform_separators(source_path);
+        let root = without_trailing_slash_windows_path(&self.names_wanted.root_directory);
+        // Almost every file is below the root.
+        if self.names_wanted.runs_in_place || is_at_or_below(source_path, root) {
+            return false;
+        }
+        let kind = || bun_sys::exists_at_type(bun_sys::Fd::cwd(), &ZBox::from_bytes(source_path));
+        let mut assets = self.assets.iter();
+        assets.any(|asset| is_at_or_below(source_path, asset))
+            && count_lexical_levels_above(root, source_path) >= 2
+            && count_levels_above(root, module_path) == 0
+            && kind().is_ok()
+    }
+
+    fn is_searched_for(&self, source_path: &[u8]) -> bool {
+        is_package_json(source_path)
+    }
+
+    fn is_embedded_implicitly(&self, source_path: &[u8], is_query: bool) -> bool {
+        let source_path = &*with_platform_separators(source_path);
+        let files = self.files_for_file_system.lock();
+        files.is_embedded(source_path, is_query)
+    }
+
+    fn list_files_embedded_implicitly(&self) -> Vec<Vec<u8>> {
+        let files = self.files_for_file_system.lock();
+        let embedded = files.implicitly_embedded.iter().chain(&files.asked_about);
+        let mut paths: Vec<Vec<u8>> = embedded.map(|it| it.to_vec()).collect();
+        paths.sort_unstable();
+        paths.dedup();
+        paths
+    }
+
+    fn fill_package_json_gaps(&self, module_paths: &[&[u8]]) -> Vec<(Vec<u8>, Vec<u8>)> {
+        let has_any = !(self.files_for_file_system.lock().embedded_manifests).is_empty();
+        let (mut added, mut closed) = (Vec::new(), FxHashSet::default());
+        let mut asked: FxHashSet<Vec<u8>> = FxHashSet::default();
+        for path in module_paths.iter().filter(|_| has_any) {
+            let path = with_platform_separators(path);
+            // Whatever is added has an embedded `package.json` above it, so a folder that had none above it still has none.
+            if let Some(folder) = bun_paths::dirname(&path).filter(|it| !asked.contains(*it)) {
+                asked.insert(folder.to_vec());
+                if !closed.contains(folder) {
+                    self.fill_gaps_above(folder, &mut closed, &mut added);
+                }
+            }
+        }
+        self.fill_gaps_in_packages(&mut added);
+        added
+    }
+
+    fn embed_package_json_files(&self, module_path: &[u8]) -> Vec<Vec<u8>> {
+        let mut added = Vec::new();
+        let mut folder =
+            bun_paths::dirname(module_path).filter(|_| is_installed_package_file(module_path));
+        while let Some(current) = folder.filter(|it| bun_paths::basename(it) != b"node_modules") {
+            let path = [current, &[bun_paths::SEP], b"package.json"].concat();
+            let is_new = !self.is_embedded_implicitly(&path, false);
+            if is_new && self.embed_file_implicitly(b"", module_path, &path, false) {
+                added.push(path);
+            }
+            folder = bun_paths::dirname(current).filter(|above| above.len() < current.len());
+        }
+        added
+    }
+
+    fn note_reads_of_unknown_paths(&self) {
+        self.files_for_file_system.lock().reads_unknown_paths = true;
+    }
+
+    fn embed_file_implicitly(
+        &self,
+        entry_path: &[u8],
+        module_path: &[u8],
+        source_path: &[u8],
+        is_query: bool,
+    ) -> bool {
+        let entry = &*with_platform_separators(entry_path);
+        let source = &*with_platform_separators(source_path);
+        (is_installed_package_file(source) || is_nearest_package_json(entry, source))
+            && self.embed_eligible_file(module_path, source_path, is_query)
+    }
+
+    fn read_web_assembly(&self, source_path: &[u8]) -> Option<Vec<u8>> {
+        let source = &*with_platform_separators(source_path);
+        if !is_regular_file(source) {
+            return None;
+        }
+        let bytes = bun_sys::File::read_from(bun_sys::Fd::cwd(), source).ok()?;
+        bytes.starts_with(b"\0asm\x01\0\0\0").then_some(bytes)
+    }
+
+    fn embed_named_file(&self, module_path: &[u8], source_path: &[u8]) -> bool {
+        let source = &*with_platform_separators(source_path);
+        is_installed_package_file(source)
+            && !is_native_program(source)
+            && self.embed_eligible_file(module_path, source_path, false)
+    }
+
+    fn list_files_to_embed(&self, folder: &[u8], reaches_below: bool) -> Vec<Vec<u8>> {
+        let folder = &*with_platform_separators(folder);
+        let folder = without_trailing_slash_windows_path(folder);
+        match reaches_below {
+            true if is_installed_package_file(folder) => list_files_below(folder),
+            false if find_node_modules_parent(folder).is_some() => {
+                list_folder(folder).map_or_else(Vec::new, |it| it.0)
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    fn list_excluded_folder(&self, folder: &[u8]) -> Option<Vec<Vec<u8>>> {
+        let folder = &*with_platform_separators(folder);
+        let folder = without_trailing_slash_windows_path(folder);
+        let is_around = |asset: &Vec<u8>| is_at_or_below(folder, asset);
+        if self.assets.iter().any(is_around) || !is_at_or_below(folder, &self.assets_root) {
+            return None;
+        }
+        list_folder(folder).map(|(files, _)| files)
+    }
+
+    fn find_symlink_in_asset(&self, source_path: &[u8]) -> Option<Vec<u8>> {
+        let source_path = &*with_platform_separators(source_path);
+        let is_around = |asset: &&Vec<u8>| is_at_or_below(source_path, asset);
+        let around = self.assets.iter().filter(is_around);
+        let asset = around.max_by_key(|it| it.len())?;
+        let is_end = |&at: &usize| bun_paths::is_sep_any(source_path[at]);
+        let ends = (asset.len() + 1..source_path.len()).filter(is_end);
+        let ends = ends.chain([source_path.len()]);
+        let mut names = ends.map(|end| &source_path[..end]);
+        let link = names.find(|name| is_reached_through_symlink(asset, name))?;
+        Some(link.to_vec())
+    }
+
+    fn warn_if_not_embedded(&self, source_path: &[u8], warning: Msg) {
         let mut files = self.files_for_file_system.lock();
         files
-            .warnings_if_lacking
+            .warnings_if_not_embedded
             .push((source_path.into(), warning));
     }
 

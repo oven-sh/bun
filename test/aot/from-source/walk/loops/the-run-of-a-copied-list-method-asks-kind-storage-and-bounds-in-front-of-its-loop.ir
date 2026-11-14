@@ -7,6 +7,7 @@
 # sink(makeRows, countHits);
 # -- end of source
 # RUN: walk f2 mechanisms=all
-# CHECK: = HasArrayStorage {{*}}arrayStorage=Contiguous
-# CHECK: [[storage]]: opaque(ArrayStoragePointer) {{*}}= GetArrayStorage
-# CHECK: = HasContiguousIndex {{*}}storage=[[storage]] [isInBounds]
+# CHECK: isLoopHead=true
+# CHECK: = IsPristine {{*}} builtinClass=Array
+# CHECK: = NewClosure function=f3 storage=Frame
+# CHECK: = Call {{*}}calleeKey="some"

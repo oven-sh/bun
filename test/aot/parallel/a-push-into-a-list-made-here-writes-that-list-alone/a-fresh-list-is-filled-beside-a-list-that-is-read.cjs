@@ -1,4 +1,4 @@
-// STATISTIC: MethodsOfListsHeardInLoopsAsWritersOfListsMadeHere >= 1
+// STATISTIC: LocalArrayMethodEffectsNarrowed >= 1
 "use strict";
 // The everyday form: a loop reads a list from in front and pushes into a list made here. The list read holds doubles, whole numbers, holes, texts; the list filled passes from whole numbers to doubles to values, and grows past its vector many times.
 const said = [];

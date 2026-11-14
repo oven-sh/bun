@@ -1,11 +1,11 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="visit"
-// CHECK: = IteratorOpen {{*}}@[[statement]]
-// CHECK: = IteratorResume {{*}}@[[statement]]
+// CHECK: = IteratorOpen {{*}}@[[variable]]
+// CHECK: = IteratorResume {{*}}@[[variable]]
 
 // RUN(CLOSES): lower
-// CLOSES: = IteratorOpen {{*}}@[[statement]]
-// CLOSES-COUNT-2: IteratorClose {{*}}@[[statement]]
+// CLOSES: = IteratorOpen {{*}}@[[variable]]
+// CLOSES-COUNT-2: IteratorClose {{*}}@[[variable]]
 
 // RUN(SUBJECT): lower
 // SUBJECT: = Call {{*}}@[[call]]

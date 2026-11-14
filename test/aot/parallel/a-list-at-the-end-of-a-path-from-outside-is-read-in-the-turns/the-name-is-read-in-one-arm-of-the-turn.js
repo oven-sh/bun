@@ -1,4 +1,4 @@
-// STATISTIC: ReadsByNameThatAskTheirSitesAlone = 0
+// STATISTIC: SiteCachedReadsEmitted = 2
 var held = JSON.parse('{"inner":{"rate":3}}');
 var memo;
 function f(t) { let s = t & 1; for (let i = 0; i < 100; i++) s = s + ((memo === undefined ? held.inner : memo).rate + (memo === undefined ? held.inner : memo).rate) | 0; return s >>> 0; }

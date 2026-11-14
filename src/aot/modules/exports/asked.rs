@@ -196,6 +196,7 @@ impl AskedNames {
                 .map_or(&[][..], |it| it.implied_answers)
             {
                 if let CodeAnswer::File(target) = *answer
+                    && files.compiled(target).is_some()
                     && let Some(component) = component_of(ModuleRef::File(target))
                 {
                     is_whole[component] = true;

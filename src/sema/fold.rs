@@ -8,6 +8,7 @@ mod folder;
 mod folder_calls;
 mod folder_commonjs;
 mod folder_enums;
+mod folder_fields;
 mod folder_imports;
 mod folder_members;
 mod folder_names;
@@ -33,9 +34,9 @@ pub use known_sets::KnownSets;
 pub(crate) use known_sets::outermost_cast;
 pub use removed_by_bun_run::is_removed_where_never_run;
 pub(crate) use string_affixes::{
-    MembersBehindNames, PathBelowFolder, find_export_of_module, find_export_of_module_with,
-    find_members_below_module, trim_lead_surrogate_at_end, trim_to_last_segment,
-    trim_trail_surrogate_at_start,
+    MembersBehindNames, Passes, PathBelowFolder, PathEnd, find_export_of_module,
+    find_export_of_module_with, find_members_below_module, trim_lead_surrogate_at_end,
+    trim_to_last_segment, trim_trail_surrogate_at_start,
 };
 pub use string_affixes::{ends_in_name_with_extension, find_export_of_path_module};
 
@@ -205,6 +206,8 @@ pub struct Decisions<'s> {
     dead_exprs_under_minify_syntax: NodeBits<'s>,
     dead_stmts_under_minify_syntax: NodeBits<'s>,
     short_circuited_links: NodeBits<'s>,
+    constant_reads: &'s [(ExprId, Constant)],
+    constants_of_lets: &'s [(ExprId, Constant)],
     truthy_without_effects: NodeBits<'s>,
     member_reads: NodeBits<'s>,
     folded_under_minify_syntax: NodeBits<'s>,
@@ -215,6 +218,21 @@ pub struct Decisions<'s> {
 impl<'s> Decisions<'s> {
     pub fn is_constant_under_minify_syntax(&self, hir: &File<'_>, expr: ExprId) -> bool {
         self.is_constant_in_bun_run(hir, expr) || self.folded_under_minify_syntax.has(expr.idx())
+    }
+
+    /// The value of a variable whose only store is its initializer, a constant, where the
+    /// expression reads it after that store.
+    pub fn constant_read(&self, expr: ExprId) -> Option<Constant> {
+        let reads = self.constant_reads;
+        let found = reads.binary_search_by_key(&expr, |read| read.0);
+        found.ok().map(|index| reads[index].1)
+    }
+
+    /// The value of a `let` whose only store is its initializer, a constant: a read finds it or throws in the dead zone.
+    pub fn constant_of_let(&self, expr: ExprId) -> Option<Constant> {
+        let reads = self.constants_of_lets;
+        let found = reads.binary_search_by_key(&expr, |read| read.0);
+        found.ok().map(|index| reads[index].1)
     }
 
     #[inline]
@@ -376,6 +394,7 @@ impl<'s> Decisions<'s> {
         self.decided
     }
 
+    /// The texts that expressions which are no literals fold to.
     pub fn folded_texts(&self) -> impl Iterator<Item = Atom> + use<'s> {
         self.constants
             .iter()
@@ -387,6 +406,20 @@ impl<'s> Decisions<'s> {
 
     pub fn dead_exprs(&self) -> impl Iterator<Item = ExprId> + use<'s> {
         self.dead_exprs.iter().map(|index| ExprId(index as u32))
+    }
+
+    /// In the order of their numbers.
+    pub fn dead_exprs_and_short_circuited_links(&self) -> impl Iterator<Item = ExprId> + use<'s> {
+        let (dead, links) = (self.dead_exprs.0, self.short_circuited_links.0);
+        let word_at = |words: &[u64], index: usize| words.get(index).copied().unwrap_or(0);
+        (0..dead.len().max(links.len())).flat_map(move |index| {
+            let mut rest = word_at(dead, index) | word_at(links, index);
+            std::iter::from_fn(move || {
+                let position = (rest != 0).then(|| index * 64 + rest.trailing_zeros() as usize);
+                rest &= rest.wrapping_sub(1);
+                position.map(|position| ExprId(position as u32))
+            })
+        })
     }
 
     pub fn dead_stmts(&self) -> impl Iterator<Item = StmtId> + use<'s> {

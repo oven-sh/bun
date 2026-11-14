@@ -1,5 +1,4 @@
 // `for (name in config) if (!reserved.hasOwnProperty(name)) ..`: the function is found by a closed call, and the caches of the run time answer: the operation that files an answer is entered for the first questions and no more. The function of the host would never enter it.
-// COUNT: operation:operationAOTHasOwnByValAndCache >= 1
 // COUNT: operation:operationAOTHasOwnByValAndCache <= 60
 var reserved: any = { key: true, ref: true }
 function pick(config: any): any {

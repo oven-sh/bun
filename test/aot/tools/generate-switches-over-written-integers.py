@@ -55,7 +55,7 @@ for name, arms in sets.items():
         typed = 'x: any' if kind in ('any', 'absent') else 'x: number'
         span = every[-1] - every[0] + 1
         places = len({gives for _, gives in arms if gives})
-        count = 'SwitchesAnsweredByByteOfTable' if places == 1 and len(every) >= 4 and 64 < span <= 64 * len(every) else 'SwitchWindowsToldByBits'
+        count = 'SwitchesLoweredToByteTables' if places == 1 and len(every) >= 4 and 64 < span <= 64 * len(every) else 'SwitchBitTestsEmitted'
         lines = [
             '// A switch over written integers, %s, asked of %s: every integer round its cases, the same moved by 2 ** 32, the halves between them, and what is no integer.' % (name.replace('-', ' '), form.replace('-', ' ')),
             '// STATISTIC: %s >= 1' % count,

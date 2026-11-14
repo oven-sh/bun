@@ -15,7 +15,7 @@
 #     v12: 2 @JSValue = Integer integer=2
 #     v14: 3 @Int32 = Integer integer=3
 #   b0(v0: anything?ParameterOfEscapedFunction @JSValue @51, v1: function?ParameterOfEscapedFunction @JSValue @51, v2: anything?ParameterOfEscapedFunction @JSValue @51, v3: anything?ParameterOfEscapedFunction @JSValue @51, v4: Generator @Cell @51) entry=0:
-#     v6: undefined @Void = YieldBySavingFrame v4, v5, v2, v3, v0 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects] @77
+#     v6: undefined @Void = YieldBySavingFrame v4, v5, v2, v3, v0 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects] @77
 #     v7: anything?UndescribedNativeResult @JSValue = ResultAt v6 @77
 #     v8: int[0, 2] @Int32 = ResultAt v6 index=1 @77
 #     v10: int[0, 2] @JSValue = Box v8 @77
@@ -29,7 +29,7 @@
 #   b3() frequency=Rare:
 #     Return v7 @77
 #   b4():
-#     v15: undefined @Void = YieldBySavingFrame v4, v9, v2, v3, v0 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects] @90
+#     v15: undefined @Void = YieldBySavingFrame v4, v9, v2, v3, v0 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects] @90
 #     v16: anything?UndescribedNativeResult @JSValue = ResultAt v15 @90
 #     v17: int[0, 2] @Int32 = ResultAt v15 index=1 @90
 #     Switch v17 cases=[1, 2] -> case b5(), case b6(), otherwise b7() @90
@@ -39,9 +39,9 @@
 #     Return v16 @90
 #   b7():
 #     v18: Array @Cell = NewArrayLike v14, v5 traits=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory] @116
-#     v19: boolean @Boolean = TryFillNewArray v18, v3 traits=[mayWriteWhatIsSeen, mayTouchMemory] @116
+#     v19: boolean @Boolean = TryFillNewArray v18, v3 traits=[mayWriteObservableState, mayTouchMemory] @116
 #     v21: Array @JSValue = Box v18 @116
-#     v22: undefined @Void = YieldBySavingFrame v4, v21, v2, v3, v0 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects] @142
+#     v22: undefined @Void = YieldBySavingFrame v4, v21, v2, v3, v0 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects] @142
 #     v23: anything?UndescribedNativeResult @JSValue = ResultAt v22 @142
 #     v24: int[0, 2] @Int32 = ResultAt v22 index=1 @142
 #     Switch v24 cases=[1, 2] -> case b8(), case b9(), otherwise b10() @142
@@ -58,4 +58,4 @@
 # CHECK: unit f1:CoroutineBody
 # CHECK: = Store(@[[list]], {{*}}InternalFields)
 # CHECK: = Store({{*}}indexedContiguousProperties
-# CHECK: = Load8Z(@[[list]], offset = 7, collectorState
+# CHECK: = Load{{*}}(@[[list]], offset = {{*}}, collectorState

@@ -172,18 +172,19 @@ const withoutCoreDump = (cmd: string[]) =>
         ...cmd,
       ];
 
-// A case that runs into its limit says nothing of the command that it waits for. So the command ends shortly before, and the case fails by what the command has printed.
-const endOfCommands = new AsyncLocalStorage<number>();
+// A test that times out prints nothing about the command it was waiting for. So each command is killed shortly before its test would time out,
+// and the test then fails on what the command printed.
+const commandDeadline = new AsyncLocalStorage<number>();
 
 // No more commands at once than the machine has cores: many fill the address space that they are given.
 async function run(cmd: string[], cwd: string, env: Record<string, string> = {}) {
-  const end = endOfCommands.getStore();
+  const deadline = commandDeadline.getStore();
   const { stdout, stderr, exitCode } = await inTurn(() =>
     runCommand(
       cmd,
       cwd,
       { ...bunEnv, ...(!locksEnvironment && { BUN_CRASH_REPORT_URL: "" }), ...env },
-      end && Math.max(Math.ceil(end - performance.now()), 1),
+      deadline && Math.max(Math.ceil(deadline - performance.now()), 1),
     ),
   );
   // The message of the error goes on with the limit and the option that lifts it. The first test reads all of it; the programs that print a message are compared without.
@@ -282,7 +283,7 @@ export function addressSpaceForObjects(part: number, parts: number) {
   const inPart = (define: typeof test) => (name: string, body: () => Promise<void>, timeout?: number) => {
     if (!isInPart()) return;
     const limit = timeout && isASAN ? timeout * 2 : timeout;
-    define(name, limit ? () => endOfCommands.run(performance.now() + limit * 0.9, body) : body, limit);
+    define(name, limit ? () => commandDeadline.run(performance.now() + limit * 0.9, body) : body, limit);
   };
 
   describe("the address space for objects of a compiled program", () => {
@@ -1002,6 +1003,7 @@ console.log(answer);
       240_000,
     );
 
+    // One object of eight keeps its one field, so no object is made with room for the others.
     inPart(test)(
       "a function that is entered where the range is full gets the RangeError of the range",
       async () => {
@@ -1057,7 +1059,7 @@ function widen(o, i) {
 function fill() {
   for (let i = 0; i < objects.length; i++) {
     try {
-      widen(objects[i], i);
+      if (i % 8) widen(objects[i], i);
       turns += depth(3);
     } catch (error) {
       return "inside " + i + " " + error.name + " " + error.message.slice(0, 30);

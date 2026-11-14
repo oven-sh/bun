@@ -13,7 +13,7 @@
 # In a unit that is walked closed, `met` is read out of its scope as anything, held to its type by a check, and asked whether it is set; what that question hands on goes to note(). The unit leaves the checked type at note(),
 # and the judge of calls finds the check: it follows the question to the read as the walk does.
 # f2 = block
-# OPTIONS: check=Validate testing=WalksUnitsBy:Closed
+# OPTIONS: check=Validate testing=ForceWalkMode:Closed
 # RUN: walk f2 mechanisms=all
 # CHECK: code f2:Body
 # CHECK: [[read]]: {{*}} = GetEnvironmentField

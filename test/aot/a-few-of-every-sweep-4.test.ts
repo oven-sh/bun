@@ -1,3 +1,3 @@
 import { aFewOfEverySweepIn } from "./harness/a-few-of-every-sweep";
 
-aFewOfEverySweepIn(4, 4);
+aFewOfEverySweepIn(4, 8);

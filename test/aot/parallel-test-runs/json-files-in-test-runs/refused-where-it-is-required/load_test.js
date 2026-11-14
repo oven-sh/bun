@@ -79,4 +79,4 @@ test("each file by itself", async () => {
       console.log(name + ": " + error.name + ": " + error.message);
     }
   }
-});
+}, 60_000);

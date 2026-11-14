@@ -21,6 +21,6 @@
 # sink(total);
 # -- end of source
 # RUN: link fields functions mechanisms=all
-# CHECK: field L0.0 "v" proven=i32
+# CHECK: field L0.0 "v" proven=int[0, 2147483647]
 # CHECK: function f5 {{*}}result=undefined|L0
 # CHECK: function f6 {{*}}result=i32

@@ -1,5 +1,5 @@
 'use strict';
-// STATISTIC: CallsWhoseParametersAreReadOutOfList >= 1
+// STATISTIC: SpreadCallsUnpackedToParameters >= 1
 function inner(list, first, second) { list.length = 0; list.push("changed"); return first + ":" + second + ":" + list.join(); }
 function outer(...rest) { return inner(rest, ...rest) + "/" + rest.join(); }
 const byValue = JSON.parse("[0,1]").map(() => outer);

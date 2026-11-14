@@ -1,4 +1,5 @@
 # -- source: main.js
+# // Flags: --open-world
 # const names = ["plum", "pear", "quince", "medlar", "damson", "sloe"];
 # let changing = ["plum", "pear"];
 # const grown = [];

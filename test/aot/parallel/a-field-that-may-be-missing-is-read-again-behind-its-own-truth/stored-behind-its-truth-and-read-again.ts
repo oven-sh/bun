@@ -1,4 +1,5 @@
-// STATISTIC: SlotsShownFilledByTruthOfWhatWasReadOffThem >= 1
+// STATISTIC: SlotsProvenFilledByTruthiness >= 1
+const outside: any = JSON.parse("{}");
 interface Part { id: number }
 class Kind { flags: number; constructor(flags: number) { this.flags = flags; } }
 interface Whole extends Kind { part: Part; label: string }
@@ -8,8 +9,8 @@ const part: Part = { id: 3 };
 const other: Part = { id: 8 };
 function idOf(kind: Kind): number | undefined { const whole = kind as Whole; return whole.part && ((whole.part.id > 5 ? (whole.part = part) : (whole.part = other)), whole.part.id); }
 function both(a: Kind, b: Kind): string { return String(idOf(a)) + " " + String(idOf(b)); }
-(globalThis as any).handed = [both];
-const asked: (a: Kind, b: Kind) => string = (globalThis as any).handed[0];
+outside.handed = [both];
+const asked: (a: Kind, b: Kind) => string = outside.handed[0];
 function ask(a: any, b: any) { try { tell(asked(a, b)); } catch (error) { tell("threw " + (error as Error).name); } }
 const bare = new Kind(4);
 const full = new Kind(4);

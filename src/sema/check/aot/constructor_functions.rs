@@ -66,6 +66,7 @@ impl Checker<'_, '_> {
         })
     }
 
+    /// `getInferredClassType`
     fn compute_instance_type_of_constructor_function(
         &mut self,
         file: FileId,
@@ -80,7 +81,7 @@ impl Checker<'_, '_> {
         let mut given_this: SmallVec<[FnId; 8]> = SmallVec::new();
         given_this.push(function);
         for binding in find_bindings_of_function(hir, bound, function) {
-            if !bound.is_stable_binding(binding) {
+            if !bound.is_stable_beside_evals(binding) {
                 continue;
             }
             for store in stores.binding_stores_of(binding) {
@@ -126,9 +127,18 @@ impl Checker<'_, '_> {
 
     fn instance_type_by_signature(&mut self, site: FileId, signature: SigId) -> Option<TypeId> {
         let (file, function, _) = self.sig_decl(signature)?;
-        if !self.is_out_of_sight_of_checked_files(site)
-            || !self.is_out_of_sight_of_checked_files(file)
-        {
+        if !self.is_out_of_sight_of_checked_files(site) {
+            return None;
+        }
+        self.instance_type_of_function(file, function)
+    }
+
+    pub(in crate::check) fn instance_type_of_function(
+        &mut self,
+        file: FileId,
+        function: FnId,
+    ) -> Option<TypeId> {
+        if !self.is_out_of_sight_of_checked_files(file) {
             return None;
         }
         let declared = self.hir(file)[function];
@@ -203,7 +213,7 @@ impl Checker<'_, '_> {
             return None;
         }
         let binding = bound.declared_symbol(declaration);
-        if !bound.is_stable_binding(binding) {
+        if !bound.is_stable_beside_evals(binding) {
             return None;
         }
         match bound.binding_initializer(hir, binding) {

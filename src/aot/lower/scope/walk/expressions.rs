@@ -1,4 +1,5 @@
 use bun_sema::bind::{Binding, CodeUnit, CommonJsVariable, PrivateMembers, ScopeId, SymbolId};
+use bun_sema::check::aot::find_super_call;
 use bun_sema::fold::{Decision, TreeNode};
 use bun_sema::hir::{
     BinOp, Branches, Call, CallId, ExprId, ExprKind, FnId, JsxId, MemberId, NodeData, PatId,
@@ -17,18 +18,26 @@ use crate::builtins::table::{self, Scope};
 use crate::builtins::{Intrinsic, Mutability, Resolved};
 use crate::ir::ClassSlot;
 use crate::lower::jsx::find_key_argument;
+use crate::lower::module::has_settled_type;
 use crate::lower::scope::lexical_owners::{ScopeObjectSearch, find_binding_looked_for};
+use crate::lower::scope::plan::is_instance_jsx_import;
 use crate::lower::scope::{
     BindingRef, CalledByName, ScopeSlot, find_declaration_called_by_name,
     find_declaration_made_at_first_read,
 };
+use crate::lower::self_tail_calls::function_named_by_call;
 use crate::lower::{class, commonjs, parameters};
 use crate::modules::{Member, ModuleRef, Site, SiteAnswer};
 
-fn has_module_operation(site: &ImportSite, answer: SiteAnswer<'_>, argument_count: usize) -> bool {
+fn has_module_operation(
+    site: &ImportSite,
+    answer: SiteAnswer<'_>,
+    argument_count: usize,
+    is_type_settled: bool,
+) -> bool {
     match site.kind {
         ImportSiteKind::Require(_) | ImportSiteKind::ImportMetaRequire(_) => match answer {
-            SiteAnswer::Computed(_) => argument_count <= 1,
+            SiteAnswer::Computed(_) => argument_count <= 1 || is_type_settled,
             SiteAnswer::Module(_) | SiteAnswer::Failed(_) | SiteAnswer::Erased => true,
         },
         ImportSiteKind::GetBuiltinModule(_) => match answer {
@@ -67,6 +76,9 @@ impl Walker<'_, '_> {
                 return;
             }
             _ => return,
+        }
+        if expression == self.literal_of_bodies {
+            return;
         }
         match self.hir[expression].kind {
             ExprKind::Cond { test: tested, .. }
@@ -126,8 +138,14 @@ impl Walker<'_, '_> {
             | ExprKind::String(_)
             | ExprKind::BigInt(_)
             | ExprKind::Regex { .. }
-            | ExprKind::JsxText(_)
-            | ExprKind::ImportMeta => {}
+            | ExprKind::JsxText(_) => {}
+            ExprKind::ImportMeta => {
+                if self.input.modules.has_instances(self.input.file) {
+                    let file_scope = self.file_scope;
+                    let slot = ScopeSlot::ModuleInstance;
+                    self.record_slot_use(context.function, file_scope, slot);
+                }
+            }
             ExprKind::Binary { left, right, .. } => {
                 self.push_present_expressions([left, right], context);
             }
@@ -289,7 +307,9 @@ impl Walker<'_, '_> {
                     CodeUnit::File | CodeUnit::FieldInitializer(_) => None,
                 };
                 let owner = owner.filter(|it| self.walk.functions[it.index()].creator.is_some());
+                let wrapped = self.input.modules.wrapped();
                 if let Some(owner) = owner
+                    && wrapped.require_function(self.input.file) != Some(symbol)
                     && let Some(function) = find_declaration_made_at_first_read(hir, bound, symbol)
                 {
                     let time = self.tick();
@@ -405,6 +425,9 @@ impl Walker<'_, '_> {
 
     fn visit_call(&mut self, expression: ExprId, call: CallId, context: Context) {
         let call = self.hir[call];
+        if self.requests_inner_module(expression, &call) {
+            return;
+        }
         let mut binds_this_for_what_follows = false;
         if matches!(self.hir[call.callee].kind, ExprKind::Super) {
             let scope = context.lexical_scope;
@@ -429,6 +452,10 @@ impl Walker<'_, '_> {
                 self.visit_direct_eval(expression, eval, context);
             }
             self.record_argument_read(&call, context);
+            if let Some(written) = find_super_call(self.hir, self.bound, expression) {
+                self.use_new_target(context);
+                self.record_symbol_use(context, written.name);
+            }
             let loads_module = self.evaluates_inner_module(expression, &call)
                 || ((self.walk.has_wrapper_parameters || self.walk.has_values_of_each_run)
                     && self.is_bound_module_call(expression, &call));
@@ -444,6 +471,11 @@ impl Walker<'_, '_> {
             {
                 let slot = ScopeSlot::CommonJs(CommonJsVariable::Module);
                 self.record_slot_use(context.function, self.file_scope, slot);
+            }
+            if let Some((function, _)) = function_named_by_call(self.hir, self.bound, &call)
+                && self.walk.function_of_fn[function.idx()] == Some(context.function)
+            {
+                self.walk.functions_calling_themselves.push(function);
             }
             if !loads_module {
                 let called = find_declaration_called_by_name(self.hir, self.bound, expression);
@@ -508,8 +540,19 @@ impl Walker<'_, '_> {
         }
     }
 
+    fn requests_inner_module(&self, expression: ExprId, call: &Call) -> bool {
+        let (modules, file) = (self.input.modules, self.input.file);
+        call.args.len() == 2
+            && !modules.inner_modules(file).is_empty()
+            && modules.requested_module(file, expression).is_some()
+    }
+
     fn evaluates_inner_module(&self, expression: ExprId, call: &Call) -> bool {
-        if !call.args.is_empty() || self.input.modules.inner_modules(self.input.file).is_empty() {
+        if self.input.modules.inner_modules(self.input.file).is_empty() {
+            return false;
+        }
+        let wrapped = self.input.modules.wrapped();
+        if call.args.len() > 1 && !wrapped.is_start_of_bundle(self.input.file, expression) {
             return false;
         }
         match self.input.modules.stored_site(self.input.file, expression) {
@@ -549,7 +592,10 @@ impl Walker<'_, '_> {
         let Some(answer) = modules.find_site_answer(self.input.file, site.kind) else {
             return false;
         };
-        has_module_operation(&site, answer, given.len()) && self.is_bound_module_callee(call.callee)
+        let names = analysis.alternatives_of(&site.specifier);
+        let is_type_settled = has_settled_type(hir, &site, names, given);
+        has_module_operation(&site, answer, given.len(), is_type_settled)
+            && self.is_bound_module_callee(call.callee)
     }
 
     fn is_bound_module_callee(&self, callee: ExprId) -> bool {
@@ -591,11 +637,24 @@ impl Walker<'_, '_> {
         }
     }
 
+    fn use_jsx_import(&mut self, import: JsxImport, context: Context) {
+        if is_instance_jsx_import(self.input, import) {
+            let file_scope = self.bound.top_scope(self.hir, CodeUnit::File);
+            self.record_slot_use(context.function, file_scope, ScopeSlot::ModuleInstance);
+        }
+    }
+
     fn visit_jsx(&mut self, expression: ExprId, jsx: JsxId, context: Context) {
         let hir = self.hir;
         let callee = jsx_callee(hir, self.input.compiled.jsx_mode, jsx);
         if callee == JsxCallee::Import(JsxImport::JsxDev) {
             self.use_this(context);
+        }
+        if let JsxCallee::Import(import) = callee {
+            self.use_jsx_import(import, context);
+        }
+        if hir[jsx].tag.is_none() {
+            self.use_jsx_import(JsxImport::Fragment, context);
         }
         for binding in bindings_of(&self.jsx_uses, expression) {
             self.note_binding_is_looked_at(binding);

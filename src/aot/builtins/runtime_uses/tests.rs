@@ -588,6 +588,17 @@ fn name_finds_no_member_of_a_namespace() {
 }
 
 #[test]
+fn variable_holding_the_global_object_brings_the_members_of_namespaces() {
+    let mentions = Mentions {
+        aliases_global_object: true,
+        ..Mentions::default()
+    };
+    let uses = RuntimeUses::of_mentions(&mentions, LINUX);
+    assert!(holds_code_of(&uses, BuiltinId::ReflectGet));
+    assert!(!holds_code_of(&uses, BuiltinId::ArrayPrototypeMap));
+}
+
+#[test]
 fn key_that_nobody_knows_brings_all_that_the_language_has() {
     let by_key = Mentions {
         reads_by_unknown_key: true,

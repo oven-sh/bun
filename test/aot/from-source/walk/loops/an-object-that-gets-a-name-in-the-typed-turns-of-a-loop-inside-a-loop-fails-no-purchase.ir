@@ -25,9 +25,9 @@
 # -- end of source
 # `mate` is made in front of both loops and is believed, with its shape, where the closed copy of the loop inside begins; the typed turn that hands over to it has given it a name more. It may be fresh still: what
 # arrives is another shape than was believed. The builds of that row are given up as a try is, and every fresh object leaves in front of them; no purchase of the loop around is lost.
-# RUN: compile PurchasesOfLoopsThatFailed LoopsBuiltTwice mechanisms=all
-# CHECK: statistic PurchasesOfLoopsThatFailed 0
-# CHECK: statistic LoopsBuiltTwice 7
+# RUN: compile LoopVersioningAttemptsFailed WalkLoopsVersioned mechanisms=all
+# CHECK: statistic LoopVersioningAttemptsFailed 0
+# CHECK: statistic WalkLoopsVersioned 12
 # RUN(SHELL): run-in-shell mechanisms=all
 # SHELL: number 3 number 6 2 6 {"n":6} {"n":6,"late":2} 3,5,5
 # SHELL-NEXT: exited with 0

@@ -25,8 +25,6 @@ bitflags::bitflags! {
         const ALLOCATIONS = 1 << 5;
         const FORMS = 1 << 6;
         const STATISTICS = 1 << 7;
-        const ONLY_UNKNOWN_CODE = 1 << 8;
-        const ONLY_UNPROVEN_TYPE = 1 << 9;
     }
 }
 
@@ -91,6 +89,10 @@ pub struct AotOptions {
     pub writes_no_executable: bool,
     /// `--aot-testing=DiscardsFirstVisits`: the first visit of every file is thrown away, as one is that ends with an invalid commit, and the file is visited again. The program is the same.
     pub discards_first_visits: bool,
+    /// `--aot-testing=LowersInParts`: a JavaScript file that nobody checks is lowered in parts, however small it is, as a large one always is.
+    pub lowers_small_files_in_parts: bool,
+    /// `--aot-testing=CheckOrder=<odd number>`: the order in which the checker's threads take the files. 1: as always. 4294967295: the last file first. Any other number: a fixed permutation. The program and its type errors are the same.
+    pub check_order: u32,
     /// `--aot-testing=TypeErrorsWarn`: a type error is printed as `bun test --aot` prints it, and the executable is built. What is compiled is the same.
     pub type_errors_warn: bool,
     pub runs_in_place: bool,
@@ -98,6 +100,7 @@ pub struct AotOptions {
     pub checks_only: bool,
     /// `bun check --aot`: the program's own TypeScript is checked file by file, as `bun check` checks it.
     pub looks_for_type_errors: bool,
+    pub dependency_type_errors: DependencyTypeErrors,
     /// `bun test --aot`: `@jest/globals` and `vitest` are `bun:test`, as in `bun test`.
     pub runs_tests: bool,
     /// `bun test --globals=vitest`.
@@ -122,6 +125,9 @@ pub struct AotOptions {
     /// What `--define` or bunfig.toml names, without what the build defines by itself. `bun run` replaces these too.
     pub user_defined_names: Vec<Box<[u8]>>,
     pub option_words: Vec<Box<[u8]>>,
+    pub hardening_names: Vec<Box<[u8]>>,
+    /// Option words that only `hardening_names` ask for.
+    pub hardening_words: Vec<Box<[u8]>>,
 }
 
 /// `bun test --aot`: what the runner tells the build, because no file of the run spells it. The build itself finds what the files replace.
@@ -133,6 +139,17 @@ pub struct ReplacedByTests {
     pub test_files: Vec<Vec<u8>>,
     /// The file of each `--preload`. One that nothing resolves: as it is written.
     pub preloads: Vec<Vec<u8>>,
+}
+
+/// `bun check --aot`: type errors in the TypeScript sources of dependencies.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum DependencyTypeErrors {
+    #[default]
+    NotChecked,
+    /// One warning for each package.
+    Counted,
+    /// `--all`: each is an error, like one in the program's own files.
+    Listed,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -173,11 +190,14 @@ impl Default for AotOptions {
             other_products: Vec::new(),
             writes_no_executable: false,
             discards_first_visits: false,
+            lowers_small_files_in_parts: false,
+            check_order: 1,
             type_errors_warn: false,
             runs_in_place: false,
             missing_tsconfig_override: None,
             checks_only: false,
             looks_for_type_errors: false,
+            dependency_type_errors: DependencyTypeErrors::NotChecked,
             runs_tests: false,
             has_globals_of_vitest: false,
             counts_executions: false,
@@ -191,6 +211,8 @@ impl Default for AotOptions {
             platform: None,
             user_defined_names: Vec::new(),
             option_words: Vec::new(),
+            hardening_names: Vec::new(),
+            hardening_words: Vec::new(),
         }
     }
 }
@@ -199,7 +221,7 @@ impl Default for AotOptions {
 mod tests {
     use super::*;
 
-    const MEMBERS: [ExplainSet; 10] = [
+    const MEMBERS: [ExplainSet; 8] = [
         ExplainSet::TEXT,
         ExplainSet::JSON,
         ExplainSet::CHECKS,
@@ -208,8 +230,6 @@ mod tests {
         ExplainSet::ALLOCATIONS,
         ExplainSet::FORMS,
         ExplainSet::STATISTICS,
-        ExplainSet::ONLY_UNKNOWN_CODE,
-        ExplainSet::ONLY_UNPROVEN_TYPE,
     ];
 
     #[test]
@@ -237,11 +257,14 @@ mod tests {
             other_products,
             writes_no_executable,
             discards_first_visits,
+            lowers_small_files_in_parts,
+            check_order,
             type_errors_warn,
             runs_in_place,
             missing_tsconfig_override,
             checks_only,
             looks_for_type_errors,
+            dependency_type_errors,
             runs_tests,
             has_globals_of_vitest,
             counts_executions,
@@ -255,6 +278,8 @@ mod tests {
             platform,
             user_defined_names,
             option_words,
+            hardening_names,
+            hardening_words,
         } = AotOptions::default();
         let ReplacedByTests {
             builtins,
@@ -290,11 +315,14 @@ mod tests {
         assert!(other_products.is_empty());
         assert!(!writes_no_executable);
         assert!(!discards_first_visits);
+        assert!(!lowers_small_files_in_parts);
+        assert_eq!(check_order, 1);
         assert!(!type_errors_warn);
         assert!(!runs_in_place);
         assert!(missing_tsconfig_override.is_none());
         assert!(!checks_only);
         assert!(!looks_for_type_errors);
+        assert_eq!(dependency_type_errors, DependencyTypeErrors::NotChecked);
         assert!(!runs_tests);
         assert!(!has_globals_of_vitest);
         assert!(!counts_executions);
@@ -309,6 +337,8 @@ mod tests {
         assert!(thread_count.is_none());
         assert!(user_defined_names.is_empty());
         assert!(option_words.is_empty());
+        assert!(hardening_names.is_empty());
+        assert!(hardening_words.is_empty());
     }
 
     #[test]
@@ -320,6 +350,6 @@ mod tests {
             seen.insert(member);
         }
         assert_eq!(seen, ExplainSet::all());
-        assert_eq!(seen.bits(), 0b11_1111_1111);
+        assert_eq!(seen.bits(), 0b1111_1111);
     }
 }

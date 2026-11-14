@@ -25,9 +25,7 @@ const server = http.createServer({ IncomingMessage: Asked }, (req, res) => {
   tell("the response of this request still ends", () => { res.end("ok"); return "finished " + res.finished; });
 });
 server.listen(0, "127.0.0.1", async () => {
-  const timer = setTimeout(() => { console.log("NO ANSWER"); process.exit(0); }, 3000);
   try { const answer = await fetch("http://127.0.0.1:" + server.address().port + "/"); console.log("answered | " + answer.status + " " + (await answer.text())); } catch (error) { console.log("the client | " + error.name); }
-  clearTimeout(timer);
   server.close();
   server.closeAllConnections();
 });

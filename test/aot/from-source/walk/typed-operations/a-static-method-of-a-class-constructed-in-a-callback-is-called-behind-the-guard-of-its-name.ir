@@ -19,6 +19,9 @@
 # CHECK: = Mul {{*}} form=Integers
 # CHECK: frequency=Rare
 # CHECK: = PropGet {{*}} key="twice"
-# A class that is evaluated several times has several class objects: there nothing is expected.
+# A class that is evaluated several times has several class objects: the loop has a version for each.
 # RUN(SEVERAL): walk f3 mechanisms=all
-# SEVERAL-NOT: AreMembersUnchanged
+# SEVERAL: = AreMembersUnchanged conditions=[{layout=L{{*}} side=Static key="twice"}]
+# SEVERAL: = Mul {{*}} form=Integers
+# SEVERAL: = AreMembersUnchanged conditions=[{layout=L{{*}} side=Static key="twice"}]
+# SEVERAL: = Mul {{*}} form=Integers

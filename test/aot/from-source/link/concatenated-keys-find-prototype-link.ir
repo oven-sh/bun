@@ -1,0 +1,12 @@
+# -- source: concatenated-keys-find-prototype-link.js
+# class Store { constructor() { this.__first__ = [1]; } read(name) { return this["__" + name + "__"]; } twice() { return 2; } }
+# const store = new Store();
+# const above = store.read(globalThis.which);
+# above.twice = function () { return 3; };
+# print(store.read("first").length, store.twice(), store.read("none"));
+# -- end of source
+# L0 = Store. __proto__ has the beginning and the end of the key.
+# RUN(STORE): link why-gone L0
+# STORE: why-gone L0: it has gone
+# RUN(ANSWERS): run-in-shell globalThis.which = "proto";
+# ANSWERS: 1 3 undefined

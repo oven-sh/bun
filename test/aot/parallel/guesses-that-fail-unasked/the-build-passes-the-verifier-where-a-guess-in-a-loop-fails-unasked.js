@@ -1,4 +1,4 @@
-// Flags: --aot-testing=FailGuesses --aot-check=Validate
+// Flags: --aot-testing=FailSpeculations --aot-check=Validate
 // The read under a key of the run draws the formatter of the library into the executable; one of its functions tests its own parameter inside a loop. Under the word every guess fails unasked, and
 // the verifier reads every unit: the proof of a guess stands right behind the branch on its test, with the word or without it.
 function countUp() {

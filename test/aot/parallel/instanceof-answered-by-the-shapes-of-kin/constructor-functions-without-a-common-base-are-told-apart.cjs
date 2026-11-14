@@ -1,5 +1,5 @@
 // Four constructor functions whose objects meet in lists; a function that calls itself asks which one made its operand.
-// STATISTIC: MissesOfInstanceOfAnsweredByShapesOfKin >= 2
+// STATISTIC: InstanceOfMissesDecidedByHierarchy >= 2
 function Atom(name) { this.name = name; }
 function Num(value) { this.value = value; }
 function Ref(name) { this.name = name; this.to = null; }

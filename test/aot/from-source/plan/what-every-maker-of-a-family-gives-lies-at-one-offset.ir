@@ -23,12 +23,12 @@
 # sink(top(d) === a, stampOf(a) + stampOf(c), labelOf(b) + labelOf(c), a.tint + d.tint);
 # -- end of source
 # RUN: plan layouts mechanisms=all
-# CHECK: layout L0 CompiledObject size=80
+# CHECK: layout L0 CompiledObject size=64
 # CHECK-NEXT: "kind" {{*}}Inline offset=[[kind]]
 # CHECK-NEXT: "stamp" {{*}}Inline offset=[[stamp]]
 # CHECK-NEXT: "tint" {{*}}Inline offset=[[tint]]
 # CHECK-NEXT: "owner" {{*}}Inline offset=[[owner]]
-# CHECK: layout L1 CompiledObject size=80
+# CHECK: layout L1 CompiledObject size=64
 # CHECK-NEXT: "kind" {{*}}Inline offset=[[kind]]
 # CHECK-NEXT: "tint" {{*}}Inline offset=[[tint]]
 # CHECK-NEXT: "owner" {{*}}Inline offset=[[owner]]

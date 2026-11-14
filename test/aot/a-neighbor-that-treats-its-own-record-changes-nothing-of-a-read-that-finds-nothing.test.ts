@@ -2,6 +2,7 @@
 // A neighbor, which reader.js never names, makes a record of the same names and links it anew, or lays another name, an accessor and a delete on it, in plain sight. A record of the same names is one layout for the whole
 // program, and what code in sight does to such objects used to withhold the form: the reader was built one way alone and another way beside the neighbor.
 // How a function is compiled may not hang on the rest of the program: the looks are tests, and the neighbor's own record fails them where it arrives.
+// The reader is kept, and the neighbor's record is found, under names that only the run knows: the program does not see who calls the reader with what. What spelled names of the global object hold is followed.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
@@ -18,8 +19,9 @@ export function make(i: number): Payload;
 export function read(o: Payload): string;
 `;
 const asks = `import { make, read } from "./reader.js";
-globalThis.kept = [read, make(1)];
-console.log(read(make(JSON.parse("2"))), "|", globalThis.neighbor ? read(globalThis.neighbor) : "alone");
+globalThis[process.argv[9] ?? "kept"] = [read, make(1)];
+const neighbor = globalThis[process.argv[9] ?? "neighbor"];
+console.log(read(make(JSON.parse("2"))), "|", neighbor ? read(neighbor) : "alone");
 `;
 
 async function buildAloneAndBeside(neighbor: string) {
@@ -60,15 +62,18 @@ async function buildAloneAndBeside(neighbor: string) {
   return built;
 }
 
+// An object below another prototype than its layout's bears the mark that the shape test refuses, unless code in sight gives objects of the layout another one: then the prototype is asked too.
 test.skipIf(!!without("testaot"))(
-  "a neighbor that links its own record anew changes nothing of a read that finds nothing",
+  "a neighbor that links its own record anew has the prototype asked beside the shape",
   async () => {
     const built = await buildAloneAndBeside(`const made = { value: 1, issues: [] };
 Object.setPrototypeOf(made, { memo: "above" });
 globalThis.neighbor = made;
 `);
     expect(built.beside.said).toBe("nothing | found above");
-    expect(built.beside.walk).toBe(built.alone.walk);
+    expect(built.alone.walk).not.toContain("= HasLayoutPrototype");
+    expect(built.beside.walk).toContain("= HasNoExtraProperties");
+    expect(built.beside.walk).toContain("= HasLayoutPrototype");
   },
   240_000,
 );

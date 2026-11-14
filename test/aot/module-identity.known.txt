@@ -1,0 +1,220 @@
+# Where a compiled test run differs from `bun test` in the identity of mocked modules. See harness/module-identity.ts.
+held | rerun-each-without-mock barrel-without-body collected cold | silent | late.run2:first | 14
+held | rerun-each-without-mock barrel-without-body collected warm | silent | late.run2:first | 14
+held | rerun-each-without-mock barrel-without-body kept cold | silent | late.run2:first | 14
+held | rerun-each-without-mock barrel-without-body kept warm | silent | late.run2:first | 14
+held | rerun-each-without-mock module collected cold | silent | late.run2:first | 9
+held | rerun-each-without-mock module collected warm | silent | late.run2:first | 9
+held | rerun-each-without-mock module kept cold | silent | late.run2:first | 10
+held | rerun-each-without-mock module kept warm | silent | late.run2:first | 10
+held | rerun-each-without-mock namespace-barrel collected cold | silent | late.run2:first | 14
+held | rerun-each-without-mock namespace-barrel collected warm | silent | late.run2:first | 14
+held | rerun-each-without-mock namespace-barrel kept cold | silent | late.run2:first | 14
+held | rerun-each-without-mock namespace-barrel kept warm | silent | late.run2:first | 14
+looped | default dependency vi.doMock reset named-file-before | reported | main:mocked | 11
+looped | default dependency vi.doMock stop async-factory named-file-before | reported | main:mocked | 8
+looped | default dependency vi.doMock stop named-file-before typescript | reported | main:mocked | 8
+looped | default dependency vi.doMock unmock named-file-before helper | reported | main:mocked | 16
+looped | default dependency vi.doMock unmock named-file-mocks-after | reported | other:mocked | 18
+looped | default dependency vi.mock remock namespace-file-before | reported | main:user | 17
+looped | default itself mock.module unmock async-factory required-again namespace-file-mocks-after spy-on-oldest helper arrows typescript | reported | other:again | 8
+looped | default itself vi.doMock unmock namespace-file-before | reported | main:again | 8
+looped | default itself vi.doMock unmock partial-factory named-file-before | reported | main:mocked | 14
+looped | default named-barrel vi.mock stop namespace-file-before | reported | main:user | 10
+looped | default namespace-barrel jest.doMock remock named-file-before | reported | main:mocked | 14
+looped | default star-barrel vi.doMock unmock named-file-before | reported | main:mocked | 15
+looped | default star-barrel vi.mock unmock named-file-before typescript | reported | main:user | 17
+looped | dynamic dependency vi.doMock stop named-file-before cycle | reported | main:mocked | 8
+looped | dynamic dependency vi.doMock stop named-file-before spy-on-oldest | reported | main:mocked | 10
+looped | dynamic dependency vi.doMock unmock named-file-before arrows | reported | main:mocked | 15
+looped | dynamic dependency vi.doMock unmock namespace-file-mocks-after | reported | other:mocked | 19
+looped | dynamic dependency vi.mock remock namespace-file-before | reported | main:user | 17
+looped | dynamic dependency vi.mock stop named-file-before typescript | reported | main:user | 10
+looped | dynamic itself vi.doMock stop named-file-mocks-after | reported | other:again | 7
+looped | dynamic itself vi.doMock unmock named-file-before spy-on-newest | reported | main:again | 9
+looped | dynamic itself vi.doMock unmock named-file-before typescript | reported | main:again | 8
+looped | dynamic itself vi.doMock unmock named-file-mocks-before | reported | main:again | 8
+looped | dynamic named-barrel vi.mock stop namespace-file-before | reported | main:user | 10
+looped | dynamic namespace-barrel jest.doMock remock namespace-file-before | reported | main:mocked | 14
+looped | dynamic star-barrel vi.doMock unmock namespace-file-before | reported | main:mocked | 15
+looped | named dependency jest.doMock stop named-file-before | reported | main:mocked | 8
+looped | named dependency vi.doMock stop named-file-before helper | reported | main:mocked | 9
+looped | named dependency vi.doMock stop named-file-mocks-after | reported | other:mocked | 16
+looped | named dependency vi.doMock unmock named-file-before spy-on-newest | reported | main:mocked | 17
+looped | named dependency vi.doMock unmock named-file-mocks-before | reported | main:mocked | 17
+looped | named dependency vi.mock unmock named-file-before cycle | reported | main:user | 17
+looped | named itself vi.doMock stop partial-factory named-file-before | reported | main:mocked | 7
+looped | named itself vi.doMock unmock async-factory named-file-before | reported | main:again | 8
+looped | named namespace-barrel vi.doMock stop namespace-file-before | reported | main:mocked | 8
+looped | named namespace-barrel vi.mock remock namespace-file-before | reported | main:user | 17
+looped | named star-barrel vi.mock unmock namespace-file-before | reported | main:user | 17
+looped | namespace dependency jest.doMock stop named-file-before | reported | main:mocked | 8
+looped | namespace dependency vi.doMock stop named-file-before arrows | reported | main:mocked | 8
+looped | namespace dependency vi.doMock stop namespace-file-mocks-after | reported | other:mocked | 16
+looped | namespace dependency vi.doMock unmock namespace-file-before | reported | main:mocked | 15
+looped | namespace dependency vi.doMock unmock namespace-file-mocks-before | reported | main:mocked | 17
+looped | namespace dependency vi.doMock unmock required-again named-file-before | reported | main:mocked | 15
+looped | namespace dependency vi.mock remock namespace-file-before | reported | main:user | 17
+looped | namespace itself vi.doMock unmock named-file-before spy-on-oldest | reported | main:again | 9
+looped | namespace named-barrel vi.mock stop namespace-file-before | reported | main:user | 10
+looped | namespace namespace-barrel jest.doMock remock namespace-file-before | reported | main:mocked | 14
+looped | namespace star-barrel vi.doMock unmock named-file-before typescript | reported | main:mocked | 15
+looped | namespace star-barrel vi.doMock unmock named-file-before | reported | main:mocked | 15
+looped | require dependency mock.module restore partial-factory required-again named-file-mocks-after arrows typescript | reported | other:user | 24
+looped | require dependency vi.doMock stop partial-factory named-file-before | reported | main:mocked | 8
+looped | require dependency vi.doMock unmock async-factory named-file-before | reported | main:mocked | 15
+looped | require dependency vi.mock remock namespace-file-before | reported | main:user | 17
+looped | require dependency vi.mock stop named-file-before cycle | reported | main:user | 10
+looped | require itself vi.doMock stop namespace-file-mocks-after | reported | other:again | 7
+looped | require itself vi.doMock unmock namespace-file-before | reported | main:again | 8
+looped | require itself vi.doMock unmock namespace-file-mocks-before | reported | main:again | 8
+looped | require itself vi.doMock unmock required-again named-file-before | reported | main:again | 8
+looped | require named-barrel vi.mock stop named-file-before | reported | main:user | 10
+looped | require namespace-barrel jest.doMock remock named-file-before | reported | main:mocked | 14
+looped | require star-barrel jest.doMock unmock named-file-before | reported | main:mocked | 15
+looped | unloaded dependency vi.doMock stop named-file-before spy-on-newest | reported | main:mocked | 5
+looped | unloaded dependency vi.doMock stop named-file-mocks-before | reported | main:mocked | 6
+looped | unloaded dependency vi.doMock unmock named-file-after | reported | main:again | 17
+looped | unloaded dependency vi.doMock unmock named-file-before spy-on-oldest | reported | main:mocked | 13
+looped | unloaded dependency vi.doMock unmock named-file-before typescript | reported | main:mocked | 11
+looped | unloaded dependency vi.mock remock namespace-file-before | reported | main:mocked | 11
+looped | unloaded itself vi.doMock unmock named-file-before helper | reported | main:again | 6
+looped | unloaded itself vi.doMock unmock named-file-mocks-after | reported | other:again | 7
+looped | unloaded itself vi.doMock unmock namespace-file-before | reported | main:again | 6
+looped | unloaded itself vi.mock unmock named-preload | reported | main:again.setup | 4
+looped | unloaded named-barrel vi.mock stop named-file-before | reported | main:mocked | 5
+looped | unloaded namespace-barrel mock.module remock namespace-file-before | reported | main:mocked | 10
+looped | unloaded star-barrel vi.doMock stop named-file-before typescript | reported | main:mocked | 5
+looped | unloaded star-barrel vi.doMock unmock named-file-before | reported | main:mocked | 11
+shared | default dependency vi.doMock reset named-file-before | reported | main:default | 20
+shared | default dependency vi.doMock stop async-factory named-file-before | reported | main:default | 12
+shared | default dependency vi.doMock stop named-file-before typescript | reported | main:default | 12
+shared | default dependency vi.doMock unmock named-file-before helper | reported | main:default | 31
+shared | default dependency vi.doMock unmock named-file-mocks-after | reported | other:mocked | 18
+shared | default dependency vi.mock remock namespace-file-before | reported | main:default | 46
+shared | default itself mock.module unmock async-factory required-again namespace-file-mocks-after spy-on-oldest helper arrows typescript | reported | other:again | 8
+shared | default itself vi.doMock unmock namespace-file-before | reported | main:default | 18
+shared | default itself vi.doMock unmock partial-factory named-file-before | reported | main:default | 29
+shared | default named-barrel vi.mock stop namespace-file-before | reported | main:default | 22
+shared | default namespace-barrel jest.doMock remock named-file-before | reported | main:default | 26
+shared | default star-barrel vi.doMock unmock named-file-before | reported | main:default | 29
+shared | default star-barrel vi.mock unmock named-file-before typescript | reported | main:default | 26
+shared | dynamic dependency vi.doMock stop named-file-before cycle | reported | main:user | 12
+shared | dynamic dependency vi.doMock stop named-file-before spy-on-oldest | reported | main:user | 20
+shared | dynamic dependency vi.doMock unmock named-file-before arrows | reported | main:user | 29
+shared | dynamic dependency vi.doMock unmock namespace-file-mocks-after | reported | other:mocked | 19
+shared | dynamic dependency vi.mock remock namespace-file-before | reported | main:kept.other | 46
+shared | dynamic dependency vi.mock stop named-file-before typescript | reported | main:user | 11
+shared | dynamic itself vi.doMock stop named-file-mocks-after | reported | other:again | 7
+shared | dynamic itself vi.doMock unmock named-file-before spy-on-newest | reported | main:user | 20
+shared | dynamic itself vi.doMock unmock named-file-before typescript | reported | main:user | 12
+shared | dynamic itself vi.doMock unmock named-file-mocks-before | reported | main:user | 12
+shared | dynamic named-barrel vi.mock stop namespace-file-before | reported | main:kept.other | 22
+shared | dynamic namespace-barrel jest.doMock remock namespace-file-before | reported | main:kept.other | 39
+shared | dynamic star-barrel vi.doMock unmock namespace-file-before | reported | main:kept.other | 42
+shared | named dependency jest.doMock stop named-file-before | reported | main:imports | 12
+shared | named dependency vi.doMock stop named-file-before helper | reported | main:imports | 15
+shared | named dependency vi.doMock stop named-file-mocks-after | reported | other:mocked | 16
+shared | named dependency vi.doMock unmock named-file-before spy-on-newest | reported | main:imports | 43
+shared | named dependency vi.doMock unmock named-file-mocks-before | reported | main:imports | 42
+shared | named dependency vi.mock unmock named-file-before cycle | reported | main:imports | 26
+shared | named itself vi.doMock stop partial-factory named-file-before | reported | main:imports | 12
+shared | named itself vi.doMock unmock async-factory named-file-before | reported | main:imports | 12
+shared | named namespace-barrel vi.doMock stop namespace-file-before | reported | main:imports | 18
+shared | named namespace-barrel vi.mock remock namespace-file-before | reported | main:imports | 54
+shared | named star-barrel vi.mock unmock namespace-file-before | reported | main:imports | 46
+shared | namespace dependency jest.doMock stop named-file-before | reported | main:direct | 15
+shared | namespace dependency vi.doMock stop named-file-before arrows | reported | main:direct | 15
+shared | namespace dependency vi.doMock stop namespace-file-mocks-after | reported | other:mocked | 16
+shared | namespace dependency vi.doMock unmock namespace-file-before | reported | main:direct | 47
+shared | namespace dependency vi.doMock unmock namespace-file-mocks-before | reported | main:direct | 60
+shared | namespace dependency vi.doMock unmock required-again named-file-before | reported | main:direct | 34
+shared | namespace dependency vi.mock remock namespace-file-before | reported | main:direct | 52
+shared | namespace itself vi.doMock unmock named-file-before spy-on-oldest | reported | main:direct | 25
+shared | namespace named-barrel vi.mock stop namespace-file-before | reported | main:direct | 26
+shared | namespace namespace-barrel jest.doMock remock namespace-file-before | reported | main:direct | 44
+shared | namespace star-barrel vi.doMock unmock named-file-before typescript | reported | main:direct | 34
+shared | namespace star-barrel vi.doMock unmock named-file-before | reported | main:direct | 34
+shared | require dependency mock.module restore partial-factory required-again named-file-mocks-after arrows typescript | reported | other:user | 24
+shared | require dependency vi.doMock stop partial-factory named-file-before | reported | main:user | 12
+shared | require dependency vi.doMock unmock async-factory named-file-before | reported | main:user | 29
+shared | require dependency vi.mock remock namespace-file-before | reported | main:kept.other | 46
+shared | require dependency vi.mock stop named-file-before cycle | reported | main:user | 11
+shared | require itself vi.doMock stop namespace-file-mocks-after | reported | other:again | 7
+shared | require itself vi.doMock unmock namespace-file-before | reported | main:kept.other | 18
+shared | require itself vi.doMock unmock namespace-file-mocks-before | reported | main:kept.other | 18
+shared | require itself vi.doMock unmock required-again named-file-before | reported | main:user | 12
+shared | require named-barrel vi.mock stop named-file-before | reported | main:user | 11
+shared | require namespace-barrel jest.doMock remock named-file-before | reported | main:user | 26
+shared | require star-barrel jest.doMock unmock named-file-before | reported | main:user | 29
+shared | unloaded dependency vi.doMock stop named-file-before spy-on-newest | reported | main:mocked | 10
+shared | unloaded dependency vi.doMock stop named-file-mocks-before | reported | main:kept.otherMocked | 12
+shared | unloaded dependency vi.doMock unmock named-file-after | reported | main:mocked | 22
+shared | unloaded dependency vi.doMock unmock named-file-before spy-on-oldest | reported | main:mocked | 24
+shared | unloaded dependency vi.doMock unmock named-file-before typescript | reported | main:mocked | 16
+shared | unloaded dependency vi.mock remock namespace-file-before | reported | main:kept.other | 29
+shared | unloaded itself vi.doMock unmock named-file-before helper | reported | main:again | 6
+shared | unloaded itself vi.doMock unmock named-file-mocks-after | reported | other:again | 7
+shared | unloaded itself vi.doMock unmock namespace-file-before | reported | main:kept.other | 12
+shared | unloaded itself vi.mock unmock named-preload | reported | main:@12 | 3
+shared | unloaded named-barrel vi.mock stop named-file-before | reported | main:mocked | 6
+shared | unloaded namespace-barrel mock.module remock namespace-file-before | reported | main:kept.other | 26
+shared | unloaded star-barrel vi.doMock stop named-file-before typescript | reported | main:mocked | 6
+shared | unloaded star-barrel vi.doMock unmock named-file-before | reported | main:mocked | 16
+straight | default dependency mock.module reset | needless notice
+straight | default dependency vi.doMock reset named-file-before | reported | main:mocked | 11
+straight | default dependency vi.doMock reset | needless notice
+straight | default dependency vi.mock unmock async-factory required-again named-file-mocks-before | reported | main:user | 20
+straight | default itself mock.module reset partial-factory namespace-file-after named-preload spy-on-oldest | needless notice
+straight | default itself mock.module reset | needless notice
+straight | default itself vi.doMock reset named-file-before | needless notice
+straight | default itself vi.doMock reset | needless notice
+straight | default star-barrel vi.doMock reset required-again named-file-mocks-after spy-on-oldest | reported | other:@4 | 11
+straight | dynamic dependency jest.doMock reset namespace-file-mocks-before named-preload | needless notice
+straight | dynamic dependency mock.module reset | needless notice
+straight | dynamic dependency vi.doMock reset named-file-before | reported | main:mocked | 11
+straight | dynamic dependency vi.doMock reset | needless notice
+straight | dynamic itself mock.module reset | needless notice
+straight | dynamic itself vi.doMock reset named-file-before | needless notice
+straight | dynamic itself vi.doMock reset | needless notice
+straight | dynamic star-barrel vi.mock remock partial-factory required-again namespace-file-mocks-after spy-on-oldest | reported | other:user | 7
+straight | named dependency mock.module reset named-file-mocks-after named-preload helper | needless notice
+straight | named dependency mock.module reset | needless notice
+straight | named dependency vi.doMock reset async-factory namespace-file-mocks-after named-preload helper typescript | needless notice
+straight | named dependency vi.doMock reset named-file-before | reported | main:mocked | 11
+straight | named dependency vi.doMock reset | needless notice
+straight | named dependency vi.doMock stop partial-factory required-again named-file-before spy-on-newest helper arrows | needless notice
+straight | named itself mock.module reset | needless notice
+straight | named itself vi.doMock reset named-file-before | needless notice
+straight | named itself vi.doMock reset | needless notice
+straight | named namespace-barrel mock.module reset async-factory namespace-file-after spy-on-oldest | needless notice
+straight | named namespace-barrel mock.module reset partial-factory required-again named-file-mocks-before named-preload arrows | needless notice
+straight | named namespace-barrel vi.mock reset async-factory named-file-before arrows | reported | main:user | 13
+straight | namespace dependency mock.module reset | needless notice
+straight | namespace dependency vi.doMock reset named-file-before | reported | main:mocked | 11
+straight | namespace dependency vi.doMock reset | needless notice
+straight | namespace itself mock.module reset | needless notice
+straight | namespace itself vi.doMock reset named-file-before | needless notice
+straight | namespace itself vi.doMock reset | needless notice
+straight | namespace named-barrel vi.mock reset async-factory required-again named-file-after namespace-preload arrows typescript | needless notice
+straight | namespace namespace-barrel vi.doMock reset required-again namespace-file-after named-preload spy-on-newest typescript | needless notice
+straight | require dependency jest.doMock reset async-factory named-file-after spy-on-newest arrows typescript | needless notice
+straight | require dependency mock.module reset | needless notice
+straight | require dependency mock.module restore async-factory named-file-after spy-on-oldest typescript | reported | other:user | 15
+straight | require dependency mock.module restore partial-factory required-again named-file-mocks-after arrows typescript | reported | other:user | 24
+straight | require dependency vi.doMock reset named-file-before | reported | main:mocked | 11
+straight | require dependency vi.doMock reset | needless notice
+straight | require dependency vi.doMock stop async-factory named-file-before | reported | main:mocked | 8
+straight | require dependency vi.doMock stop partial-factory named-file-before | reported | main:mocked | 8
+straight | require dependency vi.doMock unmock async-factory named-file-before | reported | main:mocked | 15
+straight | require dependency vi.doMock unmock partial-factory named-file-before | reported | main:mocked | 15
+straight | require itself mock.module reset | needless notice
+straight | require itself vi.doMock reset named-file-before | needless notice
+straight | require itself vi.doMock reset | needless notice
+straight | unloaded dependency mock.module reset | needless notice
+straight | unloaded dependency vi.doMock reset named-file-before | reported | main:mocked | 8
+straight | unloaded dependency vi.doMock reset | needless notice
+straight | unloaded itself mock.module reset async-factory namespace-file-mocks-before spy-on-oldest typescript | needless notice
+straight | unloaded itself mock.module reset | needless notice
+straight | unloaded itself vi.doMock reset named-file-before | needless notice
+straight | unloaded itself vi.doMock reset | needless notice

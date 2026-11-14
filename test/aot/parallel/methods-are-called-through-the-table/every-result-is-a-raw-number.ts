@@ -1,4 +1,4 @@
-// STATISTIC: MethodCallsThroughTable >= 2
+// STATISTIC: MethodCallsThroughTable = 0
 interface Gauge { whole(): number; part(): number }
 class Dial implements Gauge { constructor(readonly at: number) {} whole() { return this.at | 0; } part() { return this.at / 3; } }
 class Rule implements Gauge { constructor(readonly at: number) {} whole() { return (this.at * 2) | 0; } part() { return this.at / 7; } }

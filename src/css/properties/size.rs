@@ -28,7 +28,9 @@ pub enum BoxSizing {
 // Hand-written (only two variants) so the inherent `parse`/`to_css` participate in
 // `impl_parse_tocss_via_inherent!` without a derive-coherence clash.
 impl BoxSizing {
-    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<BoxSizing> {
+    pub(crate) fn parse<'bump>(
+        input: &mut css::Parser<'_, 'bump>,
+    ) -> css::Result<'bump, BoxSizing> {
         let location = input.current_source_location();
         let ident = input.expect_ident()?;
         if bun_core::eql_case_insensitive_ascii(ident, b"content-box", true) {
@@ -81,7 +83,7 @@ macro_rules! size_ident_match {
 }
 
 impl Size {
-    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<Size> {
+    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, Size> {
         let res = input.try_parse(|i: &mut css::Parser| -> css::Result<Size> {
             let ident = i.expect_ident()?;
             size_ident_match!(ident, {
@@ -215,7 +217,7 @@ pub enum MaxSize {
 }
 
 impl MaxSize {
-    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<MaxSize> {
+    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, MaxSize> {
         let res = input.try_parse(|i: &mut css::Parser| -> css::Result<MaxSize> {
             let ident = i.expect_ident()?;
             size_ident_match!(ident, {
@@ -337,7 +339,9 @@ pub struct AspectRatio {
 }
 
 impl AspectRatio {
-    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<AspectRatio> {
+    pub(crate) fn parse<'bump>(
+        input: &mut css::Parser<'_, 'bump>,
+    ) -> css::Result<'bump, AspectRatio> {
         let location = input.current_source_location();
         let mut auto = input.try_parse(|i| i.expect_ident_matching(b"auto"));
 
@@ -379,7 +383,9 @@ impl AspectRatio {
     }
 }
 
-fn parse_fit_content(input: &mut css::Parser) -> css::Result<LengthPercentage> {
+fn parse_fit_content<'bump>(
+    input: &mut css::Parser<'_, 'bump>,
+) -> css::Result<'bump, LengthPercentage> {
     input.expect_function_matching(b"fit-content")?;
     input.parse_nested_block(LengthPercentage::parse)
 }
@@ -537,12 +543,12 @@ impl_prefixed_keyword!(Size);
 impl_prefixed_keyword!(MaxSize);
 
 #[inline(never)]
-fn flush_size_property<T: PrefixedKeyword>(
+fn flush_size_property<'bump, T: PrefixedKeyword>(
     flushed_properties: &mut SizeProperty,
     val: Option<T>,
     flag: SizeProperty,
-    property: fn(T) -> Property,
-    dest: &mut DeclarationList,
+    property: fn(T) -> Property<'bump>,
+    dest: &mut DeclarationList<'bump>,
     context: &PropertyHandlerContext,
 ) {
     let Some(val) = val else {
@@ -564,10 +570,10 @@ fn flush_size_property<T: PrefixedKeyword>(
 }
 
 impl SizeHandler {
-    pub(crate) fn handle_property(
+    pub(crate) fn handle_property<'bump>(
         &mut self,
-        property: &Property,
-        dest: &mut DeclarationList,
+        property: &Property<'bump>,
+        dest: &mut DeclarationList<'bump>,
         context: &mut PropertyHandlerContext,
     ) -> bool {
         let logical_supported = !context.should_compile_logical(Feature::LogicalSize);

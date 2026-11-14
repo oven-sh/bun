@@ -19,14 +19,14 @@ mod summarize;
 mod token;
 
 pub use names::FileAtoms;
-pub use parser::keyword_suggestion;
+pub use parser::{AppendedExpression, AppendedExpressionFilter, keyword_suggestion};
 
 use bun_sema::atom::Intern;
 use bun_sema::hir::FileBuilder;
 pub use summarize::{
     COUNTS, CompileParseOptions, Counts, PartError, Parts, Summary, ThreadCaches,
-    parse_for_compile, parse_for_compile_in, summarize, summarize_as, summarize_in,
-    summarize_top_level, with_summary, with_summary_in_place,
+    parse_appended_expressions, parse_for_compile, parse_for_compile_in, summarize, summarize_as,
+    summarize_in, summarize_top_level, with_summary, with_summary_in_place,
 };
 
 /// Why the parser rejected a text.
@@ -154,6 +154,8 @@ pub struct Options {
     pub compiles: bool,
     /// The lexer reads text as `bun run` does. `compiles` implies it.
     pub reads_as_bun_run: bool,
+    /// With `compiles`, in a file whose name names no language, such as a script without an extension: it is read as TypeScript, and `bun run` accepts the octal forms of JavaScript in it.
+    pub accepts_legacy_octal: bool,
     /// With `compiles`: the engine gets the text as it is written, so a comment says of no call that it is pure.
     pub ignores_pure_comments: bool,
     /// Functions have empty bodies wherever `parser/skipped_blocks.rs` can step over their blocks.

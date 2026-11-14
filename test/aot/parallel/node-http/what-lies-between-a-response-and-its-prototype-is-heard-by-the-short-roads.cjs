@@ -3,6 +3,8 @@
 // A row a name, a deed and a moment; a connection of its own with two requests. Printed: whether what was laid was touched, what came over the wire, what was thrown. No counts.
 const http = require("node:http");
 const net = require("node:net");
+// Runs the event loop that many times: jobs, errors that nobody handles and what has arrived run each time, and no clock decides.
+const spinEventLoop = async (count = 20) => { while (count-- > 0) await new Promise(done => setImmediate(done)); };
 const names = { response: "_callPendingCallbacks detachSocket getHeader socket" };
 const deeds = ["a getter", "a setter", "not writable", "a function"];
 const define = (object, name, value) => Object.defineProperty(object, name, { value, writable: true, enumerable: true, configurable: true });
@@ -66,16 +68,14 @@ function run(row, done) {
   }
   let isFinished = false;
   let client;
-  const timer = setTimeout(() => (said.push("no end"), finish()), 900);
   function finish() {
     if (isFinished) return;
     isFinished = true;
-    clearTimeout(timer);
     client?.destroy();
     http.Server.prototype.close.call(server);
     http.Server.prototype.closeAllConnections.call(server);
     console.log([row.object, row.name, row.deed, row.moment].join(" . ") + ": touched " + touched + " | " + said.join(" | "));
-    setTimeout(done, 2);
+    spinEventLoop().then(done);
   }
   function ask() {
     const port = http.Server.prototype.address.call(server).port;
@@ -88,10 +88,10 @@ function run(row, done) {
       if (!got.endsWith(endsAtOnce ? "\r\n\r\nx" : "0\r\n\r\n")) return;
       said.push(got.split("\r\n")[0].slice(9) + " " + JSON.stringify(got.split("\r\n\r\n").slice(1).join("")));
       got = "";
-      ++answers < 2 ? setTimeout(() => client.write(text), 4) : setTimeout(finish, 12);
+      ++answers < 2 ? spinEventLoop().then(() => client.write(text)) : spinEventLoop().then(finish);
     });
     client.on("error", () => {});
-    client.on("close", () => (said.push("closed"), setTimeout(finish, 12)));
+    client.on("close", () => (said.push("closed"), spinEventLoop().then(finish)));
     client.write(text);
   }
 }

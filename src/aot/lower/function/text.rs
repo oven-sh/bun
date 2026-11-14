@@ -5,9 +5,10 @@ use bun_sema::check::spans::skip_trivia_back;
 use bun_sema::erasure::{
     PackedTypeRanges, ReplacedText, TypeRanges, find_type_ranges_beside_what_is_laid,
 };
-use bun_sema::fold::Constant;
+use bun_sema::fold::{Constant, Decision};
 use bun_sema::hir::{
-    ExprId, ExprKind, FnId, PropKind, StmtId, StmtKind, end_of_expr, find_transpiled_mark, start_of,
+    BinOp, ExprId, ExprKind, FnId, PropKind, StmtId, StmtKind, end_of_expr, find_transpiled_mark,
+    start_of,
 };
 use bun_sema::module_format::list_this_of_file;
 use rustc_hash::FxHashMap;
@@ -24,7 +25,41 @@ use crate::load::SourceKind;
 use crate::lower::FileLowering;
 
 impl FileLowering<'_, '_, '_, '_> {
-    pub(in crate::lower) fn finish_function_texts(&mut self) -> PackedTypeRanges {
+    fn is_left_out_of_text(&self, expression: ExprId) -> bool {
+        let may_be_left_out = !matches!(
+            self.hir[expression].kind,
+            ExprKind::Call(_) | ExprKind::Assign { .. } | ExprKind::Await(_) | ExprKind::New(_)
+        );
+        may_be_left_out && self.reads_only_what_bun_run_leaves_out(expression, true)
+    }
+
+    fn find_operands_left_out(&self, list: ExprId) -> Vec<(u32, u32)> {
+        let hir = self.hir;
+        let decisions = self.decisions();
+        let mut found = Vec::new();
+        let mut waiting = vec![list];
+        while let Some(operand) = waiting.pop() {
+            if let ExprKind::Binary {
+                op: BinOp::Comma,
+                left,
+                right,
+            } = hir[operand].kind
+            {
+                waiting.extend([left, right]);
+                continue;
+            }
+            let is_written_in_place = matches!(
+                decisions.decision(operand),
+                Decision::Constant(_) | Decision::Data(_)
+            );
+            if !is_written_in_place && self.is_left_out_of_text(operand) {
+                found.push((hir[operand].pos, hir[operand].end));
+            }
+        }
+        found
+    }
+
+    pub(in crate::lower) fn finish_function_sources(&mut self) -> PackedTypeRanges {
         let hir = self.hir;
         let atoms = &self.queries.files().atoms;
         let is_of_program = self.inputs.sources.kind(self.file) == SourceKind::Program;
@@ -77,6 +112,7 @@ impl FileLowering<'_, '_, '_, '_> {
             (sign, end_of_expr(hir, decorator))
         });
         let mut not_evaluated: Vec<(u32, u32)> = decorators.collect();
+        let mut left_out: Vec<(u32, u32)> = Vec::new();
         replaced.extend(not_evaluated.iter().map(|&(start, end)| ReplacedText {
             start,
             end,
@@ -87,11 +123,15 @@ impl FileLowering<'_, '_, '_, '_> {
             let StmtKind::Expr(expression) = statement.kind else {
                 continue;
             };
-            let may_be_left_out = !matches!(
+            let is_left_out = self.is_left_out_of_text(expression);
+            let is_list = matches!(
                 hir[expression].kind,
-                ExprKind::Call(_) | ExprKind::Assign { .. } | ExprKind::Await(_) | ExprKind::New(_)
+                ExprKind::Binary {
+                    op: BinOp::Comma,
+                    ..
+                }
             );
-            if !may_be_left_out || !self.reads_only_what_bun_run_leaves_out(expression, true) {
+            if !is_left_out && !is_list {
                 continue;
             }
             let id = StmtId(index as u32);
@@ -108,6 +148,18 @@ impl FileLowering<'_, '_, '_, '_> {
             if is_head_of_loop {
                 continue;
             }
+            if !is_left_out {
+                let operands = self.find_operands_left_out(expression);
+                replaced.extend(operands.iter().map(|&(start, end)| ReplacedText {
+                    start,
+                    end,
+                    text: Box::new(*b"0"),
+                }));
+                left_out.extend(&operands);
+                not_evaluated.extend(operands);
+                continue;
+            }
+            left_out.push((statement.start, statement.loc.end));
             not_evaluated.push((statement.start, statement.loc.end));
             replaced.push(ReplacedText {
                 start: statement.start,
@@ -140,10 +192,13 @@ impl FileLowering<'_, '_, '_, '_> {
                 self.counts_executions(),
             ));
         }
-        let reads_back = self.inputs.options.reads_function_texts_back;
+        remove_parts_inside(&mut replaced, left_out);
+        let written_end = hir.written_text_end();
+        replaced.retain(|it| it.start <= written_end);
+        let reparses = self.inputs.options.reparses_function_sources;
         let folded = decisions.as_folded_by_bun_run();
         let is_printed_by_bun = is_of_program && !stands_as_written;
-        let lays_heads = self.inputs.options.embeds_function_text && is_printed_by_bun;
+        let lays_heads = self.inputs.options.embeds_function_source && is_printed_by_bun;
         let mut changes = None;
         let ranges = find_type_ranges_beside_what_is_laid(hir, replaced, |types, replaced| {
             if lays_heads {
@@ -153,18 +208,19 @@ impl FileLowering<'_, '_, '_, '_> {
                 }
                 let mut heads = find_text_of_heads(hir, types, replaced);
                 replaced.append(&mut heads);
+                replaced.retain(|it| it.start <= written_end);
             }
-            changes = reads_back
+            changes = reparses
                 .then(|| ChangesOfText::new(hir, &folded, replaced))
                 .map(|changes| changes.written_anew_at(stretches_of_jsx))
                 .map(|changes| changes.not_evaluated_by_text_at(not_evaluated));
         });
-        if !ranges.is_empty() || reads_back {
+        if !ranges.is_empty() || reparses {
             let mut texts = Vec::new();
-            let embeds_texts = self.inputs.options.embeds_function_text;
+            let embeds_sources = self.inputs.options.embeds_function_source;
             let written_by_loader = hir.functions_written_by_loader.iter();
             let written_by_loader: FxHashMap<FnId, SourceRange> = written_by_loader
-                .filter(|_| embeds_texts)
+                .filter(|_| embeds_sources)
                 .map(|written| {
                     let text = hir.texts_written_by_loader[written.text as usize];
                     let start = match text.start < text.end {
@@ -178,7 +234,7 @@ impl FileLowering<'_, '_, '_, '_> {
                     (written.function, range)
                 })
                 .collect();
-            self.fragment.map_function_texts(|key, text| {
+            self.fragment.map_function_source_ranges(|key, text| {
                 if let FunctionKey::Source(source) = key
                     && let Some(&written) = written_by_loader.get(&source.function)
                 {
@@ -191,13 +247,13 @@ impl FileLowering<'_, '_, '_, '_> {
                 }
             });
             if let Some(changes) = changes {
-                self.read_function_texts_back(&ranges, texts, changes);
+                self.reparse_function_sources(&ranges, texts, changes);
             }
         }
         ranges.pack()
     }
 
-    fn read_function_texts_back(
+    fn reparse_function_sources(
         &mut self,
         ranges: &TypeRanges,
         texts: Vec<(u32, u32)>,
@@ -205,7 +261,7 @@ impl FileLowering<'_, '_, '_, '_> {
     ) {
         let atoms = &self.queries.files().atoms;
         let path = self.inputs.sources.diagnostic_path(self.file);
-        let count = &mut self.texts_read_back;
+        let count = &mut self.function_sources_reparsed;
         let difference =
             find_difference_in_kept_texts(self.hir, atoms, ranges, texts, changes, path, count);
         if let Some(difference) = difference {
@@ -214,7 +270,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 start: difference.start,
                 end: difference.end,
             };
-            let code = Code::TextOfFunctionIsNotItsTree;
+            let code = Code::FunctionSourceReparseMismatch;
             self.diagnostics.report(code, span, &[&difference.message]);
         }
     }
@@ -246,6 +302,25 @@ impl FileLowering<'_, '_, '_, '_> {
             });
         }
     }
+}
+
+fn remove_parts_inside(replaced: &mut Vec<ReplacedText>, mut left_out: Vec<(u32, u32)>) {
+    left_out.sort_unstable_by_key(|&(start, end)| (start, u32::MAX - end));
+    let mut outermost: Vec<(u32, u32)> = Vec::with_capacity(left_out.len());
+    for range in left_out {
+        if outermost.last().is_none_or(|last| last.1 < range.1) {
+            outermost.push(range);
+        }
+    }
+    replaced.retain(|part| {
+        let next = outermost.partition_point(|range| range.0 <= part.start);
+        let Some(&(start, end)) = next.checked_sub(1).and_then(|at| outermost.get(at)) else {
+            return true;
+        };
+        let is_written_for_stretch = (part.start, part.end) == (start, end);
+        let stands_behind = part.start >= end && *part.text != *b")";
+        is_written_for_stretch || stands_behind || part.end > end
+    });
 }
 
 pub(in crate::lower) fn print_number(number: f64, is_followed_by_dot: bool) -> Vec<u8> {

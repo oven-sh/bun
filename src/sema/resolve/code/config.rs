@@ -287,9 +287,21 @@ impl<'h> Resolver<'h> {
     }
 
     pub fn transpile_settings(&self, path: &[u8]) -> &'h TranspileSettings {
-        if self.is_aot_source_of_dependency(path) {
-            return self.aot_package_settings(dirname::<Posix>(path));
+        self.transpile_settings_as(path, || is_javascript_file(self.host, path))
+    }
+
+    pub fn transpile_settings_as(
+        &self,
+        path: &[u8],
+        is_javascript: impl FnOnce() -> bool,
+    ) -> &'h TranspileSettings {
+        match self.is_aot_source_of_dependency(path, is_javascript) {
+            true => self.aot_package_settings(dirname::<Posix>(path)),
+            false => self.configured_transpile_settings(path),
         }
+    }
+
+    fn configured_transpile_settings(&self, path: &[u8]) -> &'h TranspileSettings {
         let config = match self.transpiles_by_working_directory() {
             true => self.code_config_in_working_directory(),
             false if self.code_host().is_given_in_memory(path) => None,
@@ -313,9 +325,13 @@ impl<'h> Resolver<'h> {
         *self.config_caches().in_working_directory.get_or_init(find)
     }
 
-    fn is_aot_source_of_dependency(&self, path: &[u8]) -> bool {
+    fn is_aot_source_of_dependency(
+        &self,
+        path: &[u8],
+        is_javascript: impl FnOnce() -> bool,
+    ) -> bool {
         let working_directory = &self.code_options().working_directory;
-        !is_javascript_file(self.host, path)
+        !is_javascript()
             && (self.aot_package_directory(path)).is_some_and(|package| {
                 !contains_path(package, working_directory, self.host.is_case_sensitive())
             })

@@ -15,11 +15,11 @@ use super::ArrayList;
 /// A property within an `@font-face` rule.
 ///
 /// See [FontFaceRule](FontFaceRule).
-pub enum FontFaceProperty {
+pub enum FontFaceProperty<'bump> {
     /// The `src` property.
-    Source(ArrayList<Source>),
+    Source(ArrayList<Source<'bump>>),
     /// The `font-family` property.
-    FontFamily(crate::css_properties::font::FontFamily),
+    FontFamily(crate::css_properties::font::FontFamily<'bump>),
     /// The `font-style` property.
     FontStyle(FontStyle),
     /// The `font-weight` property.
@@ -29,10 +29,10 @@ pub enum FontFaceProperty {
     /// The `unicode-range` property.
     UnicodeRange(ArrayList<UnicodeRange>),
     /// An unknown or unsupported property.
-    Custom(crate::css_properties::custom::CustomProperty),
+    Custom(crate::css_properties::custom::CustomProperty<'bump>),
 }
 
-impl FontFaceProperty {
+impl<'bump> FontFaceProperty<'bump> {
     fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         macro_rules! write_property_single {
             ($d:expr, $prop:expr, $value:expr) => {{
@@ -76,12 +76,12 @@ impl FontFaceProperty {
             FontFaceProperty::Custom(custom) => {
                 custom.name.to_css(dest)?;
                 dest.delim(b':', false)?;
-                custom.value.to_css(dest, true)
+                custom.value.to_css(dest)
             }
         }
     }
 
-    fn deep_clone(&self, arena: &bun_alloc::Arena) -> Self {
+    fn deep_clone(&self, arena: &'bump bun_alloc::Arena) -> Self {
         match self {
             FontFaceProperty::Source(v) => {
                 FontFaceProperty::Source(v.iter().map(|s| s.deep_clone(arena)).collect())
@@ -178,7 +178,7 @@ impl UnicodeRange {
     }
 
     /// https://drafts.csswg.org/css-syntax/#urange-syntax
-    fn parse(input: &mut css::Parser) -> css::Result<UnicodeRange> {
+    fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, UnicodeRange> {
         // <urange> =
         //   u '+' <ident-token> '?'* |
         //   u <dimension-token> '?'* |
@@ -199,21 +199,17 @@ impl UnicodeRange {
         let range = if let Some(range) = Self::parse_concatenated(concatenated_tokens) {
             range
         } else {
-            return Err(
-                input.new_basic_unexpected_token_error(css::Token::Ident(concatenated_tokens))
-            );
+            return Err(input.new_unexpected_token_error(css::Token::Ident(concatenated_tokens)));
         };
 
         if range.end > 0x10FFFF || range.start > range.end {
-            return Err(
-                input.new_basic_unexpected_token_error(css::Token::Ident(concatenated_tokens))
-            );
+            return Err(input.new_unexpected_token_error(css::Token::Ident(concatenated_tokens)));
         }
 
         Ok(range)
     }
 
-    fn parse_tokens(input: &mut css::Parser) -> css::Result<()> {
+    fn parse_tokens<'bump>(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, ()> {
         let tok = *input.next_including_whitespace()?;
         // Tag-only matches on `Dimension`/`Number` — payloads are never inspected.
         match tok {
@@ -235,18 +231,18 @@ impl UnicodeRange {
                     if !(matches!(next, css::Token::Ident(_))
                         || matches!(next, css::Token::Delim(d) if d == '?' as u32))
                     {
-                        return Err(input.new_basic_unexpected_token_error(next));
+                        return Err(input.new_unexpected_token_error(next));
                     }
                     return Self::parse_question_marks(input);
                 }
             }
             _ => {}
         }
-        Err(input.new_basic_unexpected_token_error(tok))
+        Err(input.new_unexpected_token_error(tok))
     }
 
     /// Consume as many '?' as possible
-    fn parse_question_marks(input: &mut css::Parser) -> css::Result<()> {
+    fn parse_question_marks<'bump>(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, ()> {
         loop {
             let start = input.state();
             if let Ok(tok) = input.next_including_whitespace() {
@@ -335,7 +331,7 @@ pub enum FontStyle {
 }
 
 impl FontStyle {
-    fn parse(input: &mut css::Parser) -> css::Result<FontStyle> {
+    fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, FontStyle> {
         use crate::css_properties::font::FontStyle as FontStyleProperty;
         let property = FontStyleProperty::parse(input)?;
         Ok(match property {
@@ -386,7 +382,7 @@ impl FontStyle {
 /// A font format keyword in the `format()` function of the
 /// [src](https://drafts.csswg.org/css-fonts/#src-desc)
 /// property of an `@font-face` rule.
-pub enum FontFormat {
+pub enum FontFormat<'bump> {
     /// A WOFF 1.0 font.
     Woff,
     /// A WOFF 2.0 font.
@@ -402,12 +398,11 @@ pub enum FontFormat {
     /// An SVG font.
     Svg,
     /// An unknown format.
-    // Arena-owned slice from parser input; TODO(refactor): thread `'i`.
-    String(&'static [u8]),
+    String(&'bump [u8]),
 }
 
-impl FontFormat {
-    fn parse(input: &mut css::Parser) -> css::Result<FontFormat> {
+impl<'bump> FontFormat<'bump> {
+    fn parse(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, FontFormat<'bump>> {
         let s = input.expect_ident_or_string()?;
         Ok(crate::match_ignore_ascii_case! { s, {
             b"woff" => FontFormat::Woff,
@@ -459,15 +454,15 @@ impl FontFormat {
 
 /// A value for the [src](https://drafts.csswg.org/css-fonts/#src-desc)
 /// property in an `@font-face` rule.
-pub enum Source {
+pub enum Source<'bump> {
     /// A `url()` with optional format metadata.
-    Url(UrlSource),
+    Url(UrlSource<'bump>),
     /// The `local()` function.
-    Local(crate::css_properties::font::FontFamily),
+    Local(crate::css_properties::font::FontFamily<'bump>),
 }
 
-impl Source {
-    pub fn parse(input: &mut css::Parser) -> css::Result<Source> {
+impl<'bump> Source<'bump> {
+    pub fn parse(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, Source<'bump>> {
         use crate::css_properties::font as fontprops;
         match input.try_parse(UrlSource::parse) {
             Ok(url) => return Ok(Source::Url(url)),
@@ -498,7 +493,7 @@ impl Source {
         }
     }
 
-    pub(crate) fn deep_clone(&self, arena: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, arena: &'bump bun_alloc::Arena) -> Self {
         // `css.implementDeepClone` variant-walk, hand-expanded.
         match self {
             Source::Url(u) => Source::Url(u.deep_clone(arena)),
@@ -550,17 +545,17 @@ pub enum FontTechnology {
 
 /// A `url()` value for the [src](https://drafts.csswg.org/css-fonts/#src-desc)
 /// property in an `@font-face` rule.
-pub struct UrlSource {
+pub struct UrlSource<'bump> {
     /// The URL.
-    pub(crate) url: Url,
+    pub(crate) url: Url<'bump>,
     /// Optional `format()` function.
-    pub(crate) format: Option<FontFormat>,
+    pub(crate) format: Option<FontFormat<'bump>>,
     /// Optional `tech()` function.
     pub(crate) tech: ArrayList<FontTechnology>,
 }
 
-impl UrlSource {
-    fn parse(input: &mut css::Parser) -> css::Result<UrlSource> {
+impl<'bump> UrlSource<'bump> {
+    fn parse(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, UrlSource<'bump>> {
         let url = Url::parse(input)?;
 
         let format = if input
@@ -617,14 +612,14 @@ impl UrlSource {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// A [@font-face](https://drafts.csswg.org/css-fonts/#font-face-rule) rule.
-pub struct FontFaceRule {
+pub struct FontFaceRule<'bump> {
     /// Declarations in the `@font-face` rule.
-    pub(crate) properties: ArrayList<FontFaceProperty>,
+    pub(crate) properties: ArrayList<FontFaceProperty<'bump>>,
     /// The location of the rule in the source file.
     pub(crate) loc: Location,
 }
 
-impl FontFaceRule {
+impl FontFaceRule<'_> {
     pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
@@ -647,8 +642,8 @@ impl FontFaceRule {
     }
 }
 
-impl FontFaceRule {
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+impl<'bump> FontFaceRule<'bump> {
+    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
         Self {
             properties: self.properties.iter().map(|p| p.deep_clone(bump)).collect(),
             loc: self.loc,
@@ -670,24 +665,24 @@ const _: () = {
     };
     use css::{Parser, ParserOptions, Result};
 
-    impl AtRuleParser for FontFaceDeclarationParser {
+    impl<'bump> AtRuleParser<'bump> for FontFaceDeclarationParser {
         type Prelude = ();
-        type AtRule = FontFaceProperty;
+        type AtRule = FontFaceProperty<'bump>;
     }
 
-    impl QualifiedRuleParser for FontFaceDeclarationParser {
+    impl<'bump> QualifiedRuleParser<'bump> for FontFaceDeclarationParser {
         type Prelude = ();
-        type QualifiedRule = FontFaceProperty;
+        type QualifiedRule = FontFaceProperty<'bump>;
     }
 
-    impl DeclarationParser for FontFaceDeclarationParser {
-        type Declaration = FontFaceProperty;
+    impl<'bump> DeclarationParser<'bump> for FontFaceDeclarationParser {
+        type Declaration = FontFaceProperty<'bump>;
 
         fn parse_value(
             _this: &mut Self,
-            name: &'static [u8],
-            input: &mut Parser,
-        ) -> Result<Self::Declaration> {
+            name: &'bump [u8],
+            input: &mut Parser<'_, 'bump>,
+        ) -> Result<'bump, Self::Declaration> {
             let state = input.state();
             crate::match_ignore_ascii_case! { name, {
                 b"src" => if let Ok(sources) = input.parse_comma_separated(Source::parse) {
@@ -731,7 +726,7 @@ const _: () = {
         }
     }
 
-    impl RuleBodyItemParser for FontFaceDeclarationParser {
+    impl RuleBodyItemParser<'_> for FontFaceDeclarationParser {
         fn parse_qualified(_this: &Self) -> bool {
             false
         }

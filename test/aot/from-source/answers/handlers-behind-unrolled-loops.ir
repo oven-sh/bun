@@ -1,0 +1,38 @@
+# -- source: handlers-behind-unrolled-loops.ts
+# declare function print(...values: any[]): void;
+# const hide: any = [(value: any) => value][Number(JSON.parse("0"))];
+# function fail(v: number) { if (v & 1) throw v; return v; }
+# function literal(n: number) {
+#   let text = "";
+#   for (let i = 0; i < n; i++) {
+#     let o: any = { b: "t", c: i & 1 };
+#     try {
+#       for (let j = 0; j < n; j++) { hide(o); o = o; }
+#       o = { a: -0, b: [i, 2] };
+#     } catch {}
+#     text += String(o.c ?? "none");
+#   }
+#   return text;
+# }
+# function thrown(n: number, m: number) {
+#   let text = "";
+#   for (let i = 0; i < n; i++) {
+#     let o: any = { b: "t", c: i };
+#     try {
+#       for (let j = 0; j < m; j++) { hide(o); o = o; }
+#       fail(i);
+#       o = { a: -0, b: [i, 2] };
+#     } catch {}
+#     text += String(o.c ?? "none") + " ";
+#   }
+#   return text;
+# }
+# print(literal(7));
+# print(thrown(7, 0));
+# print(thrown(7, 40));
+# -- end of source
+# A throw in an unrolled loop and a throw behind it go to one handler with the same value. Behind the exit of the loop the value is another phi: the two have a landing pad each. They shared one, and a loop of no iterations left its phi unset (MalformedMachineProcedure).
+# RUN(ANSWER): run-in-shell mechanisms=all
+# ANSWER: nonenonenonenonenonenonenone
+# ANSWER-NEXT: none 1 none 3 none 5 none
+# ANSWER-NEXT: none 1 none 3 none 5 none

@@ -212,7 +212,7 @@ fn unsupported_values_report_argument() {
         (|o| o.server_components = true, "--server-components"),
         (
             |o| o.allow_unresolved = AllowUnresolved::None,
-            "--allow-unresolved",
+            "--reject-unresolved",
         ),
         (
             |o| o.macro_remap.put(b"a", Default::default()).expect("oom"),

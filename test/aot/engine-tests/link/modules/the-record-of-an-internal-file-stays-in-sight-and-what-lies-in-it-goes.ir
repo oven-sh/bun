@@ -8,8 +8,8 @@
 # CHECK: field L0.0 {{*}}proven={{*}}f2 writers-known
 layout L0 module=m1 fields=[{key="grow" declared={type=anything} flags=[IsRequired]}, {key="size" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
 module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m2 kind=Require completes=true}]
-module m1 path="internal:net/isIP" displayPath="internal:net/isIP" kind=RuntimeSource flags=[IsLoadedByImportOnly, IsHeldUnderNameWithoutPrefix] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalNetIsIP body=f1
-module m2 path="node:net" displayPath="node:net" kind=RuntimeSource flags=[IsHeldUnderNameWithoutPrefix] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeNet body=f3
+module m1 path="internal:net/isIP" displayPath="internal:net/isIP" kind=RuntimeSource flags=[IsLoadedByImportOnly, RejectsRequireCacheOverride] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalNetIsIP body=f1
+module m2 path="node:net" displayPath="node:net" kind=RuntimeSource flags=[RejectsRequireCacheOverride] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeNet body=f3
 entry module=m0
 
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {

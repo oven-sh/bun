@@ -1,14 +1,14 @@
-# THE LIE, testing=EqualIntegersAreTakenToBeLess: the code generator answers `<` of two integers as `<=`: -1 passes `-1 < at`, behind which the walk tells that `at` is no less than nought.
-# Two integers that are both told to be no less than nought are compared without a sign: -1 is then the greatest of all, and the relation answered the other way, in silence.
-# Under CheckProofsAtRunTime (which --aot-harden=proof-checks stands for) the relation asks that neither is negative where it stands, and the process stops by name.
+# Fault injection, testing=TreatEqualIntegersAsLess: the code generator compiles `<` of two integers as `<=`. So -1 passes `-1 < at`, after which the walk has proven that `at` is at least zero.
+# Two integers that are both proven to be at least zero are compared as unsigned integers. As an unsigned integer, -1 is the greatest of all, so the comparison silently gave the opposite result.
+# With CheckProofsAtRunTime (which --aot-harden=proof-checks enables), the comparison itself checks that neither operand is negative, and the process crashes with a named error.
 # RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
 # RIGHT: none inside
 # RIGHT-NEXT: exited with 0
-# RUN(STOPPED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,EqualIntegersAreTakenToBeLess
-# STOPPED: AOT: f1 at {{*}}is not of the type that the compiler has proven of it
+# RUN(STOPPED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,TreatEqualIntegersAsLess
+# STOPPED: bun: internal AOT error: type check failed at {{*}} (placed)
 # STOPPED: crashed with SIGABRT
-# RUN(ALONE): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition,EqualIntegersAreTakenToBeLess
-# ALONE: AOT: f1 at {{*}}is not of the type that the compiler has proven of it
+# RUN(ALONE): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly,TreatEqualIntegersAsLess
+# ALONE: bun: internal AOT error: type check failed at {{*}} (placed)
 # ALONE: crashed with SIGABRT
 # -- source: main.ts
 # declare function print(...values: unknown[]): void;

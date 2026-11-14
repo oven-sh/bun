@@ -6,9 +6,6 @@ use crate::css_values::ident::{DashedIdent, Ident};
 use crate::{Parser, PrintErr, Printer, Result};
 use bun_alloc::ArenaPtr;
 
-// Strings here borrow parser input/arena memory but the structs carry no lifetime
-// params (crate-wide `&'static`/raw-slice placeholder convention); see lib.rs.
-
 // ───────────────────────── value-type imports ─────────────────────────
 use crate::css_values::length::Length;
 use crate::css_values::number::{CSSIntegerFns, CSSNumberFns};
@@ -25,21 +22,21 @@ type CSSInteger = i32;
 // only because of derive blockers — fix the derive, not the trait.
 
 /// Any type that can appear as a node in a query-condition tree.
-pub trait QueryCondition: Sized + ToCss {
+pub trait QueryCondition<'bump>: Sized + ToCss {
     /// Leaf payload: `QueryFeature<_>` for media/container, `Property` for
     /// `StyleQuery`.
     type Feature;
 
-    fn parse_feature(input: &mut Parser) -> Result<Self>;
+    fn parse_feature(input: &mut Parser<'_, 'bump>) -> Result<'bump, Self>;
     /// `parse_feature` with `ParserOptions` threaded — needed for the
     /// `env()` arm of `MediaFeatureValue::parse_unknown`. Default impl
     /// drops `options` so out-of-tree implementors (e.g.
     /// `rules::container::{ContainerCondition,StyleQuery}`) keep compiling
     /// until they opt in.
     fn parse_feature_with_options(
-        input: &mut Parser,
+        input: &mut Parser<'_, 'bump>,
         _options: &css::ParserOptions,
-    ) -> Result<Self> {
+    ) -> Result<'bump, Self> {
         Self::parse_feature(input)
     }
     // Mutually-defaulting pairs: override exactly one of each.
@@ -49,7 +46,7 @@ pub trait QueryCondition: Sized + ToCss {
     fn create_negation(condition: Box<Self>) -> Self {
         Self::create_negation_in(*condition, ArenaPtr::global())
     }
-    fn create_negation_in(condition: Self, _alloc: ArenaPtr) -> Self {
+    fn create_negation_in(condition: Self, _alloc: ArenaPtr<'bump>) -> Self {
         Self::create_negation(Box::new(condition))
     }
     fn create_operation(operator: Operator, conditions: Vec<Self>) -> Self {
@@ -57,17 +54,17 @@ pub trait QueryCondition: Sized + ToCss {
         v.extend(conditions);
         Self::create_operation_in(operator, v)
     }
-    fn create_operation_in(operator: Operator, conditions: Vec<Self, ArenaPtr>) -> Self {
+    fn create_operation_in(operator: Operator, conditions: Vec<Self, ArenaPtr<'bump>>) -> Self {
         let mut v = Vec::with_capacity(conditions.len());
         v.extend(conditions);
         Self::create_operation(operator, v)
     }
-    fn parse_style_query(input: &mut Parser) -> Result<Self>;
+    fn parse_style_query(input: &mut Parser<'_, 'bump>) -> Result<'bump, Self>;
     /// See `parse_feature_with_options` — same default-forward rationale.
     fn parse_style_query_with_options(
-        input: &mut Parser,
+        input: &mut Parser<'_, 'bump>,
         _options: &css::ParserOptions,
-    ) -> Result<Self> {
+    ) -> Result<'bump, Self> {
         Self::parse_style_query(input)
     }
     fn needs_parens(
@@ -77,7 +74,7 @@ pub trait QueryCondition: Sized + ToCss {
     ) -> bool;
 
     /// Makes a `<general-enclosed>` condition from its source text. `None`: no such variant.
-    const GENERAL_ENCLOSED: Option<fn(&'static [u8]) -> Self> = None;
+    const GENERAL_ENCLOSED: Option<fn(&'bump [u8]) -> Self> = None;
 
     // ─── variant-walk accessors (drive `condition_to_css`) ───
     fn as_feature(&self) -> Option<&Self::Feature>;
@@ -85,7 +82,7 @@ pub trait QueryCondition: Sized + ToCss {
     fn as_operation(&self) -> Option<(Operator, &[Self])>;
 
     /// Serialize the leaf feature. Not defaulted: `Property::to_css` takes an
-    /// extra `is_custom_property` flag, and `QueryFeature::to_css` is inherent
+    /// extra `important` flag, and `QueryFeature::to_css` is inherent
     /// (not the `ToCss` trait), so callers must spell the dispatch.
     fn feature_to_css(f: &Self::Feature, dest: &mut Printer) -> core::result::Result<(), PrintErr>;
 
@@ -123,12 +120,12 @@ pub use crate::generics::ToCss;
 
 /// A [media query list](https://drafts.csswg.org/mediaqueries/#mq-list).
 #[derive(Debug, Clone, PartialEq)]
-pub struct MediaList {
+pub struct MediaList<'bump> {
     /// The list of media queries.
-    pub media_queries: Vec<MediaQuery, ArenaPtr>,
+    pub media_queries: Vec<MediaQuery<'bump>, ArenaPtr<'bump>>,
 }
 
-impl Default for MediaList {
+impl Default for MediaList<'_> {
     fn default() -> Self {
         Self {
             media_queries: Vec::new_in(ArenaPtr::global()),
@@ -138,13 +135,13 @@ impl Default for MediaList {
 
 /// A [media query](https://drafts.csswg.org/mediaqueries/#media).
 #[derive(Debug, Clone, PartialEq)]
-pub struct MediaQuery {
+pub struct MediaQuery<'bump> {
     /// The qualifier (`not` / `only`).
     pub(crate) qualifier: Option<Qualifier>,
     /// The media type (`screen`, `print`, `all`, ...).
-    pub(crate) media_type: MediaType,
+    pub(crate) media_type: MediaType<'bump>,
     /// The media condition.
-    pub(crate) condition: Option<MediaCondition>,
+    pub(crate) condition: Option<MediaCondition<'bump>>,
 }
 
 /// `not` / `and` / `or` boolean combiner.
@@ -162,9 +159,8 @@ pub enum Qualifier {
 }
 
 /// A [media type](https://drafts.csswg.org/mediaqueries/#media-types).
-// Copy: bitwise OK — `Custom` borrows arena-owned parser input (non-owning).
-#[derive(Debug, Copy, Clone)]
-pub enum MediaType {
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum MediaType<'bump> {
     /// `all` (default).
     All,
     /// `print`.
@@ -172,24 +168,7 @@ pub enum MediaType {
     /// `screen`.
     Screen,
     /// An unknown / deprecated / custom media type.
-    // Lifetime: arena-borrowed parser input; valid until the arena is reset.
-    Custom(*const [u8]),
-}
-
-// Hand-rolled — derived PartialEq on `*const [u8]` compares
-// address+len, not byte content. Adjacent-@media merging depends on
-// content equality across distinct arena offsets.
-impl PartialEq for MediaType {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::All, Self::All) => true,
-            (Self::Print, Self::Print) => true,
-            (Self::Screen, Self::Screen) => true,
-            // SAFETY: arena-owned slices valid for the MediaList lifetime.
-            (Self::Custom(a), Self::Custom(b)) => unsafe { **a == **b },
-            _ => false,
-        }
-    }
+    Custom(&'bump [u8]),
 }
 
 // Flags for `parse_query_condition`.
@@ -220,69 +199,58 @@ impl QueryConditionFlags {
 
 /// Represents a media condition. Implements `QueryCondition`.
 #[derive(Debug, Clone, PartialEq)]
-pub enum MediaCondition {
-    Feature(Box<MediaFeature, ArenaPtr>),
-    Not(Box<MediaCondition, ArenaPtr>),
+pub enum MediaCondition<'bump> {
+    Feature(Box<MediaFeature<'bump>, ArenaPtr<'bump>>),
+    Not(Box<MediaCondition<'bump>, ArenaPtr<'bump>>),
     Operation {
         operator: Operator,
-        conditions: Vec<MediaCondition, ArenaPtr>,
+        conditions: Vec<MediaCondition<'bump>, ArenaPtr<'bump>>,
     },
     /// `<general-enclosed>`, as its source text.
-    Unknown(&'static [u8]),
+    Unknown(&'bump [u8]),
 }
 
 // ───────────────────────── QueryFeature / MediaFeature ─────────────────────────
 
 /// `MediaFeature` is the media-query specialization of the generic
 /// `QueryFeature` (also used by `@container`).
-pub(crate) type MediaFeature = QueryFeature<MediaFeatureId>;
+pub(crate) type MediaFeature<'bump> = QueryFeature<'bump, MediaFeatureId>;
 
 /// A media feature name (either a known `MediaFeatureId` or a custom/unknown ident).
-#[derive(Debug, Clone)]
-pub enum MediaFeatureName<FeatureId: FeatureIdTrait> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MediaFeatureName<'bump, FeatureId: FeatureIdTrait> {
     /// A standard known feature.
     Standard(FeatureId),
     /// A `--custom` feature (custom-media).
-    Custom(DashedIdent),
+    Custom(DashedIdent<'bump>),
     /// An unrecognized feature name.
-    Unknown(Ident),
-}
-
-// Data-only PartialEq, derived once `Ident`/`DashedIdent` gained `PartialEq`.
-impl<FeatureId: FeatureIdTrait> PartialEq for MediaFeatureName<FeatureId> {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Standard(a), Self::Standard(b)) => a == b,
-            (Self::Custom(a), Self::Custom(b)) => a.v() == b.v(),
-            // SAFETY: arena-owned slices valid for the MediaList lifetime.
-            (Self::Unknown(a), Self::Unknown(b)) => unsafe { *a.v == *b.v },
-            _ => false,
-        }
-    }
+    Unknown(Ident<'bump>),
 }
 
 /// A `(name: value)` / `(name)` / `(name > value)` / `(a < name < b)` query feature.
 #[derive(Debug, Clone, PartialEq)]
-pub enum QueryFeature<FeatureId: FeatureIdTrait> {
+pub enum QueryFeature<'bump, FeatureId: FeatureIdTrait> {
     /// A plain media feature, e.g. `(min-width: 240px)`.
     Plain {
-        name: MediaFeatureName<FeatureId>,
-        value: MediaFeatureValue,
+        name: MediaFeatureName<'bump, FeatureId>,
+        value: MediaFeatureValue<'bump>,
     },
     /// A boolean feature, e.g. `(hover)`.
-    Boolean { name: MediaFeatureName<FeatureId> },
+    Boolean {
+        name: MediaFeatureName<'bump, FeatureId>,
+    },
     /// A range, e.g. `(width > 240px)`.
     Range {
-        name: MediaFeatureName<FeatureId>,
+        name: MediaFeatureName<'bump, FeatureId>,
         operator: MediaFeatureComparison,
-        value: MediaFeatureValue,
+        value: MediaFeatureValue<'bump>,
     },
     /// An interval, e.g. `(120px < width < 240px)`.
     Interval {
-        name: MediaFeatureName<FeatureId>,
-        start: MediaFeatureValue,
+        name: MediaFeatureName<'bump, FeatureId>,
+        start: MediaFeatureValue<'bump>,
         start_operator: MediaFeatureComparison,
-        end: MediaFeatureValue,
+        end: MediaFeatureValue<'bump>,
         end_operator: MediaFeatureComparison,
     },
 }
@@ -311,7 +279,7 @@ pub enum MediaFeatureComparison {
 // `Debug`, but the `MediaCondition`/`QueryFeature` chain wants it for
 // diagnostics.
 #[derive(Clone)]
-pub enum MediaFeatureValue {
+pub enum MediaFeatureValue<'bump> {
     /// A length value.
     Length(Length),
     /// A number value.
@@ -325,12 +293,12 @@ pub enum MediaFeatureValue {
     /// A ratio.
     Ratio(Ratio),
     /// An identifier.
-    Ident(Ident),
+    Ident(Ident<'bump>),
     /// An environment variable reference.
-    Env(EnvironmentVariable),
+    Env(EnvironmentVariable<'bump>),
 }
 
-impl core::fmt::Debug for MediaFeatureValue {
+impl core::fmt::Debug for MediaFeatureValue<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // Minimal — `Length` lacks `Debug`; emit the variant tag only.
         use MediaFeatureValue as V;
@@ -347,9 +315,9 @@ impl core::fmt::Debug for MediaFeatureValue {
     }
 }
 
-// derive(PartialEq) blocked on `Ident`/`EnvironmentVariable` lacking
+// derive(PartialEq) blocked on `EnvironmentVariable` lacking
 // std `PartialEq`; hand-roll all arms.
-impl PartialEq for MediaFeatureValue {
+impl PartialEq for MediaFeatureValue<'_> {
     fn eq(&self, other: &Self) -> bool {
         use MediaFeatureValue as V;
         match (self, other) {
@@ -359,7 +327,7 @@ impl PartialEq for MediaFeatureValue {
             (V::Boolean(a), V::Boolean(b)) => a == b,
             (V::Resolution(a), V::Resolution(b)) => a == b,
             (V::Ratio(a), V::Ratio(b)) => a == b,
-            (V::Ident(a), V::Ident(b)) => a.v() == b.v(),
+            (V::Ident(a), V::Ident(b)) => a == b,
             // `CssEql` derive on `EnvironmentVariable`
             // (name + indices + fallback structural equality).
             (V::Env(a), V::Env(b)) => {
@@ -664,7 +632,7 @@ impl FeatureIdTrait for MediaFeatureId {
 
 // ───────────────────────── to_css / matching ─────────────────────────
 
-impl MediaList {
+impl MediaList<'_> {
     /// Returns whether the media query list always matches.
     pub(crate) fn always_matches(&self) -> bool {
         // If the media list is empty, it always matches.
@@ -684,7 +652,7 @@ impl MediaList {
     }
 }
 
-impl MediaQuery {
+impl MediaQuery<'_> {
     /// Returns whether the media query is guaranteed to always match.
     pub(crate) fn always_matches(&self) -> bool {
         self.qualifier.is_none()
@@ -719,8 +687,7 @@ impl MediaQuery {
             MediaType::Print => dest.write_str("print")?,
             MediaType::Screen => dest.write_str("screen")?,
             MediaType::Custom(desc) => {
-                // SAFETY: arena-owned slice valid for the MediaList lifetime.
-                dest.serialize_identifier(unsafe { crate::arena_str(*desc) })?;
+                dest.serialize_identifier(desc)?;
             }
         }
 
@@ -761,7 +728,7 @@ fn to_css_with_parens_if_needed<T: ToCss + ?Sized>(
 }
 
 /// Serialize `a OP b OP c ...` with per-child parens.
-fn operation_to_css<C: QueryCondition>(
+fn operation_to_css<'bump, C: QueryCondition<'bump>>(
     operator: Operator,
     conditions: &[C],
     dest: &mut Printer,
@@ -784,16 +751,16 @@ fn operation_to_css<C: QueryCondition>(
     Ok(())
 }
 
-impl ToCss for MediaCondition {
+impl ToCss for MediaCondition<'_> {
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         self.condition_to_css(dest)
     }
 }
 
-impl QueryCondition for MediaCondition {
-    type Feature = MediaFeature;
+impl<'bump> QueryCondition<'bump> for MediaCondition<'bump> {
+    type Feature = MediaFeature<'bump>;
 
-    fn as_feature(&self) -> Option<&MediaFeature> {
+    fn as_feature(&self) -> Option<&MediaFeature<'bump>> {
         if let Self::Feature(f) = self {
             Some(&**f)
         } else {
@@ -821,7 +788,7 @@ impl QueryCondition for MediaCondition {
     fn feature_to_css(f: &MediaFeature, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         f.to_css(dest)
     }
-    const GENERAL_ENCLOSED: Option<fn(&'static [u8]) -> Self> = Some(MediaCondition::Unknown);
+    const GENERAL_ENCLOSED: Option<fn(&'bump [u8]) -> Self> = Some(MediaCondition::Unknown);
     fn extra_to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         let Self::Unknown(raw) = self else {
             unreachable!()
@@ -829,7 +796,7 @@ impl QueryCondition for MediaCondition {
         dest.write_bytes(raw)
     }
 
-    fn parse_feature(input: &mut Parser) -> Result<Self> {
+    fn parse_feature(input: &mut Parser<'_, 'bump>) -> Result<'bump, Self> {
         let feature = MediaFeature::parse(input)?;
         Ok(MediaCondition::Feature(Box::new_in(
             feature,
@@ -837,25 +804,25 @@ impl QueryCondition for MediaCondition {
         )))
     }
     fn parse_feature_with_options(
-        input: &mut Parser,
+        input: &mut Parser<'_, 'bump>,
         options: &css::ParserOptions,
-    ) -> Result<Self> {
+    ) -> Result<'bump, Self> {
         let feature = MediaFeature::parse_with_options(input, options)?;
         Ok(MediaCondition::Feature(Box::new_in(
             feature,
             ArenaPtr::new(input.arena()),
         )))
     }
-    fn create_negation_in(condition: Self, alloc: ArenaPtr) -> Self {
+    fn create_negation_in(condition: Self, alloc: ArenaPtr<'bump>) -> Self {
         MediaCondition::Not(Box::new_in(condition, alloc))
     }
-    fn create_operation_in(operator: Operator, conditions: Vec<Self, ArenaPtr>) -> Self {
+    fn create_operation_in(operator: Operator, conditions: Vec<Self, ArenaPtr<'bump>>) -> Self {
         MediaCondition::Operation {
             operator,
             conditions,
         }
     }
-    fn parse_style_query(input: &mut Parser) -> Result<Self> {
+    fn parse_style_query(input: &mut Parser<'_, 'bump>) -> Result<'bump, Self> {
         Err(input.new_error_for_next_token())
     }
     fn needs_parens(
@@ -872,7 +839,7 @@ impl QueryCondition for MediaCondition {
     }
 }
 
-impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
+impl<FeatureId: FeatureIdTrait> QueryFeature<'_, FeatureId> {
     pub(crate) fn needs_parens(
         &self,
         parent_operator: Option<Operator>,
@@ -947,7 +914,7 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
     }
 }
 
-impl<FeatureId: FeatureIdTrait> MediaFeatureName<FeatureId> {
+impl<'bump, FeatureId: FeatureIdTrait> MediaFeatureName<'bump, FeatureId> {
     fn value_type(&self) -> MediaFeatureType {
         match self {
             MediaFeatureName::Standard(standard) => standard.value_type(),
@@ -984,12 +951,14 @@ impl<FeatureId: FeatureIdTrait> MediaFeatureName<FeatureId> {
     /// Parses a media feature name. Returns `(name, legacy_comparator)` —
     /// `legacy_comparator` is `Some` when the ident carried a `min-`/`max-`
     /// prefix (lowered to `>=`/`<=`).
-    fn parse(input: &mut Parser) -> Result<(Self, Option<MediaFeatureComparison>)> {
+    fn parse(
+        input: &mut Parser<'_, 'bump>,
+    ) -> Result<'bump, (Self, Option<MediaFeatureComparison>)> {
         use bun_core::strings;
         let ident = input.expect_ident()?;
 
-        if strings::starts_with(ident, b"--") {
-            return Ok((MediaFeatureName::Custom(DashedIdent { v: ident }), None));
+        if let Some(custom) = DashedIdent::new(ident) {
+            return Ok((MediaFeatureName::Custom(custom), None));
         }
 
         let mut name: &[u8] = ident;
@@ -1071,7 +1040,7 @@ impl MediaFeatureComparison {
     }
 }
 
-impl MediaFeatureValue {
+impl<'bump> MediaFeatureValue<'bump> {
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             MediaFeatureValue::Length(len) => len.to_css(dest),
@@ -1087,13 +1056,13 @@ impl MediaFeatureValue {
             MediaFeatureValue::Resolution(res) => res.to_css(dest),
             MediaFeatureValue::Ratio(ratio) => ratio.to_css(dest),
             MediaFeatureValue::Ident(id) => id.to_css(dest),
-            MediaFeatureValue::Env(env) => env.to_css(dest, false),
+            MediaFeatureValue::Env(env) => env.to_css(dest),
         }
     }
 
     /// Adjust by `other` for strict-inequality → min/max
     /// boundary lowering. Consumes `self`.
-    fn add_f32(self, other: f32) -> MediaFeatureValue {
+    fn add_f32(self, other: f32) -> MediaFeatureValue<'bump> {
         match self {
             // Blink gives a `min-`/`max-` length 1/64px of slack, so a smaller step does nothing.
             MediaFeatureValue::Length(len) => {
@@ -1140,10 +1109,10 @@ impl MediaFeatureValue {
     /// Parses a single media query feature value, with an expected type.
     /// If the type is unknown, pass `MediaFeatureType::Unknown` instead.
     fn parse(
-        input: &mut Parser,
+        input: &mut Parser<'_, 'bump>,
         expected_type: MediaFeatureType,
         options: &css::ParserOptions,
-    ) -> Result<MediaFeatureValue> {
+    ) -> Result<'bump, MediaFeatureValue<'bump>> {
         if let Ok(value) = input.try_parse(|i| MediaFeatureValue::parse_known(i, expected_type)) {
             return Ok(value);
         }
@@ -1151,9 +1120,9 @@ impl MediaFeatureValue {
     }
 
     fn parse_known(
-        input: &mut Parser,
+        input: &mut Parser<'_, 'bump>,
         expected_type: MediaFeatureType,
-    ) -> Result<MediaFeatureValue> {
+    ) -> Result<'bump, MediaFeatureValue<'bump>> {
         Ok(match expected_type {
             MediaFeatureType::Boolean => {
                 let value = CSSIntegerFns::parse(input)?;
@@ -1177,9 +1146,9 @@ impl MediaFeatureValue {
     }
 
     fn parse_unknown(
-        input: &mut Parser,
+        input: &mut Parser<'_, 'bump>,
         options: &css::ParserOptions,
-    ) -> Result<MediaFeatureValue> {
+    ) -> Result<'bump, MediaFeatureValue<'bump>> {
         // Ratios are ambiguous with numbers because the second param is optional (e.g. 2/1 == 2).
         // We require the / delimiter when parsing ratios so that 2/1 ends up as a ratio and 2 is
         // parsed as a number.
@@ -1264,9 +1233,9 @@ fn write_min_max<FeatureId: FeatureIdTrait>(
 // (`Vec`, `Box`, `MediaFeatureValue`) are recursed into. The derive would
 // instead add a spurious `FeatureId: DeepClone<'bump>` where-bound.
 
-impl MediaList {
+impl<'bump> MediaList<'bump> {
     /// Element-wise clone of `media_queries`.
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
         let mut media_queries =
             Vec::with_capacity_in(self.media_queries.len(), ArenaPtr::new(bump));
         media_queries.extend(self.media_queries.iter().map(|q| q.deep_clone(bump)));
@@ -1280,9 +1249,9 @@ impl MediaList {
     }
 }
 
-impl MediaQuery {
+impl<'bump> MediaQuery<'bump> {
     /// Field-wise.
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
         Self {
             qualifier: self.qualifier,
             media_type: self.media_type.deep_clone(bump),
@@ -1291,7 +1260,7 @@ impl MediaQuery {
     }
 }
 
-impl MediaType {
+impl MediaType<'_> {
     /// `Custom` is an arena-owned slice (identity copy).
     #[inline]
     fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
@@ -1299,9 +1268,9 @@ impl MediaType {
     }
 }
 
-impl MediaCondition {
+impl<'bump> MediaCondition<'bump> {
     /// Variant-wise recursion.
-    fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
         let alloc = ArenaPtr::new(bump);
         match self {
             MediaCondition::Feature(f) => {
@@ -1324,7 +1293,7 @@ impl MediaCondition {
     }
 }
 
-impl<FeatureId: FeatureIdTrait> MediaFeatureName<FeatureId> {
+impl<FeatureId: FeatureIdTrait> MediaFeatureName<'_, FeatureId> {
     /// All payloads are `Copy` /
     /// arena-slice idents; `derive(Clone)` is the faithful deep clone.
     #[inline]
@@ -1333,10 +1302,10 @@ impl<FeatureId: FeatureIdTrait> MediaFeatureName<FeatureId> {
     }
 }
 
-impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
+impl<'bump, FeatureId: FeatureIdTrait> QueryFeature<'bump, FeatureId> {
     /// Variant-wise; `name`/`operator` are
     /// value-copied, `MediaFeatureValue` recurses.
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
         match self {
             QueryFeature::Plain { name, value } => QueryFeature::Plain {
                 name: name.deep_clone(bump),
@@ -1371,9 +1340,9 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
     }
 }
 
-impl MediaFeatureValue {
+impl<'bump> MediaFeatureValue<'bump> {
     /// Variant-wise.
-    fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
         use MediaFeatureValue as V;
         match self {
             V::Length(l) => V::Length(l.clone()),
@@ -1396,13 +1365,13 @@ impl MediaFeatureValue {
 
 // ───────────────────────── parse impl bodies ─────────────────────────
 
-impl MediaType {
-    fn parse(input: &mut Parser) -> Result<MediaType> {
+impl<'bump> MediaType<'bump> {
+    fn parse(input: &mut Parser<'_, 'bump>) -> Result<'bump, MediaType<'bump>> {
         let name = input.expect_ident()?;
         Ok(MediaType::from_str(name))
     }
 
-    fn from_str(name: &[u8]) -> MediaType {
+    fn from_str(name: &'bump [u8]) -> MediaType<'bump> {
         use bun_core::eql_case_insensitive_ascii_check_length as eq;
         if eq(name, b"all") {
             return MediaType::All;
@@ -1413,13 +1382,16 @@ impl MediaType {
         if eq(name, b"screen") {
             return MediaType::Screen;
         }
-        MediaType::Custom(std::ptr::from_ref::<[u8]>(name))
+        MediaType::Custom(name)
     }
 }
 
-impl MediaList {
+impl<'bump> MediaList<'bump> {
     /// Parse a media query list from CSS.
-    pub fn parse(input: &mut Parser, options: &css::ParserOptions) -> Result<MediaList> {
+    pub fn parse(
+        input: &mut Parser<'_, 'bump>,
+        options: &css::ParserOptions,
+    ) -> Result<'bump, MediaList<'bump>> {
         let mut media_queries: Vec<MediaQuery, ArenaPtr> =
             Vec::new_in(ArenaPtr::new(input.arena()));
         loop {
@@ -1451,8 +1423,11 @@ impl MediaList {
     }
 }
 
-impl MediaQuery {
-    pub fn parse(input: &mut Parser, options: &css::ParserOptions) -> Result<MediaQuery> {
+impl<'bump> MediaQuery<'bump> {
+    pub fn parse(
+        input: &mut Parser<'_, 'bump>,
+        options: &css::ParserOptions,
+    ) -> Result<'bump, MediaQuery<'bump>> {
         let (qualifier, explicit_media_type) = input
             .try_parse(|i| -> Result<(Option<Qualifier>, Option<MediaType>)> {
                 let qualifier = i.try_parse(Qualifier::parse).ok();
@@ -1487,13 +1462,13 @@ impl MediaQuery {
     }
 }
 
-impl MediaCondition {
+impl<'bump> MediaCondition<'bump> {
     #[inline]
     fn parse_with_flags(
-        input: &mut Parser,
+        input: &mut Parser<'_, 'bump>,
         flags: QueryConditionFlags,
         options: &css::ParserOptions,
-    ) -> Result<Self> {
+    ) -> Result<'bump, Self> {
         parse_query_condition_with_options::<MediaCondition>(input, flags, options)
     }
 }
@@ -1503,20 +1478,20 @@ impl MediaCondition {
 /// Forwarder kept for callers that don't yet thread `ParserOptions`
 /// (e.g. `rules::container`); routes through `ParserOptions::default(None)`.
 #[inline]
-pub(crate) fn parse_query_condition<C: QueryCondition>(
-    input: &mut Parser,
+pub(crate) fn parse_query_condition<'bump, C: QueryCondition<'bump>>(
+    input: &mut Parser<'_, 'bump>,
     flags: QueryConditionFlags,
-) -> Result<C> {
+) -> Result<'bump, C> {
     parse_query_condition_with_options::<C>(input, flags, &css::ParserOptions::default(None))
 }
 
 /// Parse a single query condition with `ParserOptions` threaded so the
 /// `env()` arm of `MediaFeatureValue::parse_unknown` is reachable.
-pub(crate) fn parse_query_condition_with_options<C: QueryCondition>(
-    input: &mut Parser,
+pub(crate) fn parse_query_condition_with_options<'bump, C: QueryCondition<'bump>>(
+    input: &mut Parser<'_, 'bump>,
     flags: QueryConditionFlags,
     options: &css::ParserOptions,
-) -> Result<C> {
+) -> Result<'bump, C> {
     let location = input.current_source_location();
     let alloc = ArenaPtr::new(input.arena());
 
@@ -1555,11 +1530,11 @@ pub(crate) fn parse_query_condition_with_options<C: QueryCondition>(
 
 /// Parse a media condition in parentheses, or a function. A block that is neither a known
 /// condition nor a known function is `<general-enclosed>` and is kept as written.
-fn parse_parens_or_function<C: QueryCondition>(
-    input: &mut Parser,
+fn parse_parens_or_function<'bump, C: QueryCondition<'bump>>(
+    input: &mut Parser<'_, 'bump>,
     flags: QueryConditionFlags,
     options: &css::ParserOptions,
-) -> Result<C> {
+) -> Result<'bump, C> {
     use bun_core::strings;
     let location = input.current_source_location();
     input.skip_whitespace();
@@ -1600,11 +1575,11 @@ fn is_general_enclosed(input: &mut Parser) -> bool {
         .is_ok()
 }
 
-fn parse_paren_block<C: QueryCondition>(
-    input: &mut Parser,
+fn parse_paren_block<'bump, C: QueryCondition<'bump>>(
+    input: &mut Parser<'_, 'bump>,
     flags: QueryConditionFlags,
     options: &css::ParserOptions,
-) -> Result<C> {
+) -> Result<'bump, C> {
     input.parse_nested_block(|i| {
         // `( <media-condition> )` allows `or` even after a media type: `screen and ((a) or (b))`.
         // `(calc(1px) < width)` is a range, and `(layer(x))` without its parentheses is an
@@ -1619,19 +1594,22 @@ fn parse_paren_block<C: QueryCondition>(
     })
 }
 
-impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
+impl<'bump, FeatureId: FeatureIdTrait> QueryFeature<'bump, FeatureId> {
     /// Parse a media/container feature inside `(` `)`.
     ///
     /// Forwarder kept for callers that don't yet thread `ParserOptions`
     /// (e.g. `rules::container::ContainerCondition::parse_feature`).
     #[inline]
-    pub(crate) fn parse(input: &mut Parser) -> Result<Self> {
+    pub(crate) fn parse(input: &mut Parser<'_, 'bump>) -> Result<'bump, Self> {
         Self::parse_with_options(input, &css::ParserOptions::default(None))
     }
 
     /// `QueryFeature.parse` with `ParserOptions` threaded so the `env()`
     /// arm of `MediaFeatureValue::parse_unknown` is reachable.
-    fn parse_with_options(input: &mut Parser, options: &css::ParserOptions) -> Result<Self> {
+    fn parse_with_options(
+        input: &mut Parser<'_, 'bump>,
+        options: &css::ParserOptions,
+    ) -> Result<'bump, Self> {
         match input.try_parse(|i| Self::parse_name_first(i, options)) {
             Ok(res) => Ok(res),
             Err(e) => {
@@ -1646,7 +1624,10 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
         }
     }
 
-    fn parse_name_first(input: &mut Parser, options: &css::ParserOptions) -> Result<Self> {
+    fn parse_name_first(
+        input: &mut Parser<'_, 'bump>,
+        options: &css::ParserOptions,
+    ) -> Result<'bump, Self> {
         let (name, legacy_op) = MediaFeatureName::<FeatureId>::parse(input)?;
 
         let operator = match input.try_parse(|i| consume_operation_or_colon(i, true)) {
@@ -1678,7 +1659,10 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
         }
     }
 
-    fn parse_value_first(input: &mut Parser, options: &css::ParserOptions) -> Result<Self> {
+    fn parse_value_first(
+        input: &mut Parser<'_, 'bump>,
+        options: &css::ParserOptions,
+    ) -> Result<'bump, Self> {
         // We need to find the feature name first so we know the type.
         let start = input.state();
         // Skip tokens (matching lightningcss) until the name is found;
@@ -1763,10 +1747,10 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
 ///
 /// Returns `Ok(None)`
 /// when a colon was consumed (and `allow_colon`); `Ok(Some(op))` for `<`/`>`/`=`.
-fn consume_operation_or_colon(
-    input: &mut Parser,
+fn consume_operation_or_colon<'bump>(
+    input: &mut Parser<'_, 'bump>,
     allow_colon: bool,
-) -> Result<Option<MediaFeatureComparison>> {
+) -> Result<'bump, Option<MediaFeatureComparison>> {
     let location = input.current_source_location();
     let first_delim: u32 = {
         let loc = input.current_source_location();

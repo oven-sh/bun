@@ -16,7 +16,8 @@
 # -- end of source
 # `route` calls itself, so it tests the stack; `small` and `other` leave that test to their callers. The two calls in tail position must therefore follow a test. They need nothing else of a frame: ahead of the framed part they compare the stack pointer with the bound themselves, and only the third way sets the frame up.
 # REQUIRES: x86_64 unsanitized-code
-# RUN: frame f4:Body mechanisms=all
+# Calls that stand once are copied, so nothing is copied here.
+# RUN: frame f4:Body mechanisms=all-Inlining
 # CHECK-LABEL: unit f4:Body
 # CHECK: coverage = FramedPart
 # RUN(ANSWERS): run-in-shell

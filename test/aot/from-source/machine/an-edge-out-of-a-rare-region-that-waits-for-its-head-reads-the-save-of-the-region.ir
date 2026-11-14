@@ -23,9 +23,14 @@
 # CHECK: s0: {{*}} isSaveInRareRegion
 # CHECK-NOT: s1:
 # CHECK-NOT: needsFrameOutsideRareRegions
+# REQUIRES(FRAME): x86_64 unsanitized-code
 # RUN(FRAME): frame f1:Body mechanisms=all
 # FRAME-LABEL: unit f1:Body
 # FRAME: coverage = RareRegions
+# REQUIRES(PART): arm64 unsanitized-code
+# RUN(PART): frame f1:Body mechanisms=all
+# PART-LABEL: unit f1:Body
+# PART: coverage = FramedPart
 # RUN(RUNS): run-in-shell mechanisms=all globalThis.id = value => value; globalThis.report = value => print(String(value));
 # RUNS: 45150
 # RUNS: exited with 0

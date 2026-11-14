@@ -33,6 +33,8 @@ pub(super) struct Table {
     pub(super) entries: FxHashMap<Box<[u8]>, TableEntry>,
     pub(super) signatures: FxHashSet<Signature>,
     pub(super) max_bytes: usize,
+    /// The keys of `entries`, in ascending order.
+    pub(super) functions: Vec<Box<[u8]>>,
 }
 
 impl Table {
@@ -67,6 +69,7 @@ impl Table {
                     file,
                     max_bytes: MAX_PUBLISHED_BYTES,
                     is_outer_name: &|name| names.contains(&name),
+                    known: None,
                 };
                 let root = find_published_function(hir, statement);
                 let canonical =
@@ -110,6 +113,8 @@ impl Table {
                     .entries
                     .insert(canonical.bytes.into_boxed_slice(), entry);
             }
+            table.functions = table.entries.keys().cloned().collect();
+            table.functions.sort_unstable();
             (table, rejected)
         })
     }

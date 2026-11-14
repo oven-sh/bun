@@ -6,6 +6,7 @@
 # function fill(key) {
 #   const all = {};
 #   all[key] = 1;
+#   publish(all);
 #   all.f0 = 0;
 #   all.f1 = 1;
 #   all.f2 = 2;
@@ -117,5 +118,5 @@
 # WALK: = PutSlotOrAdd {{*}}key="f95"
 # WALK: = PutSlot {{*}}key="f0"
 # WALK-NOT: = IsSlotFilled
-# RUN(ANSWERS): run-in-shell
+# RUN(ANSWERS): run-in-shell globalThis.publish = () => { };
 # ANSWERS: 97

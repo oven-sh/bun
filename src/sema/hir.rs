@@ -8,7 +8,7 @@ use crate::atom::Atom;
 pub use crate::node::{Kind, Node, NodeBases, NodeData, Part, RangeSet, ToNode};
 use crate::session::{Arena, ArenaBox, ArenaHashMap, ArenaVec, Session};
 use crate::util::{FxHashMap, FxHashSet, SharedSort};
-use bun_alloc::ChunkOfBlocks;
+use bun_alloc::BlockChunk;
 use std::borrow::Cow;
 use std::hint::cold_path;
 use std::marker::PhantomData;
@@ -600,8 +600,8 @@ pub struct ListBlock<'s> {
     /// In bytes.
     size: usize,
     used: usize,
-    /// `Arena::lay`. Null: the block lies by itself.
-    chunk: *mut ChunkOfBlocks,
+    /// The chunk of `Arena::alloc_block`. Null: the block has an allocation of its own.
+    chunk: *mut BlockChunk,
     arena: PhantomData<&'s Arena>,
 }
 
@@ -635,7 +635,7 @@ impl<'s> ListBlock<'s> {
         if size == 0 {
             return ListBlock::default();
         }
-        if let Some((first, chunk)) = arena.lay(size) {
+        if let Some((first, chunk)) = arena.alloc_block(size) {
             return ListBlock {
                 first: first.as_ptr().cast(),
                 size,
@@ -730,9 +730,9 @@ impl Drop for ListBlock<'_> {
         if self.first.is_null() {
             return;
         }
-        if let Some(chunk) = NonNull::new(self.chunk) {
+        if let (Some(chunk), Some(first)) = (NonNull::new(self.chunk), NonNull::new(self.first)) {
             // SAFETY: `new_in` has laid the block in it, and the arena outlives `'s`.
-            return unsafe { ChunkOfBlocks::stop_using(chunk) };
+            return unsafe { BlockChunk::free_block(chunk, first.cast(), self.size) };
         }
         let words = self.size / ListBlock::ALIGNMENT;
         // SAFETY: it is the block of `new_in`.
@@ -907,6 +907,8 @@ pub struct Lazy<'s> {
 pub struct LazyCells {
     /// `node.Parent`, by `Node`: `File::parent`.
     pub(crate) parents: LazyCell<crate::node::Parents>,
+    /// `File::nearest_holder`
+    pub(crate) nearest_holders: LazyCell<Box<[crate::node::Node]>>,
     /// `File::kind`
     pub(crate) kinds: LazyCell<Box<[AtomicU16]>>,
     /// `FnId::to_node`, `ClassId::to_node`
@@ -925,6 +927,8 @@ pub struct LazyCells {
     pub(crate) names_used_otherwise_than_called:
         LazyCell<Box<[(crate::bind::SymbolId, crate::import_sites::OtherUse)]>>,
     pub(crate) identifiers_by_name: LazyCell<Box<[(Atom, ExprId)]>>,
+    /// `File::is_valid_evaluation`
+    pub(crate) early_errors_in_evaluations: LazyCell<Box<[u32]>>,
 }
 
 /// A `OnceLock` that can be emptied while nothing reads the file.
@@ -969,6 +973,7 @@ impl<T> LazyCell<T> {
 /// The cells of every file without nodes. What's computed from such a file is the same for all of them.
 static EMPTY_FILE_CELLS: LazyCells = LazyCells {
     parents: LazyCell::new(),
+    nearest_holders: LazyCell::new(),
     kinds: LazyCell::new(),
     owners: LazyCell::new(),
     ambient_or_type_ranges: LazyCell::new(),
@@ -980,6 +985,7 @@ static EMPTY_FILE_CELLS: LazyCells = LazyCells {
     names_that_hold_own_requires: LazyCell::new(),
     names_used_otherwise_than_called: LazyCell::new(),
     identifiers_by_name: LazyCell::new(),
+    early_errors_in_evaluations: LazyCell::new(),
 };
 
 /// Copies `list` to a block of exactly its size in `arena` and clears it. `list` keeps its capacity.
@@ -2778,6 +2784,10 @@ pub struct JsDocHost {
     pub first_satisfies_tag: u32,
 }
 
+/// `// bun-ignore TS100064` silences warnings of `bun compile` on one line.
+/// Not `@bun-ignore`: a first line that begins with `// @bun` says that Bun has transpiled the file already.
+pub const IGNORE_COMMENT_MARKER: &[u8] = b"bun-ignore";
+
 /// `ast.CommentDirective`
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct CommentDirective {
@@ -2921,6 +2931,67 @@ pub struct FunctionWrittenByLoader {
     pub end_in_text: u32,
 }
 
+/// `call` evaluates `arguments`, as far as the build can tell, which gives `function`. The functions of a call follow its
+/// written arguments. Their texts follow the written text of the file. Set by the loader.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct KnownEvaluation {
+    pub call: CallId,
+    pub function: ExprId,
+    /// The expressions from this one to `function` are in the text.
+    pub first_expression: ExprId,
+    /// The text of an eval. The parameters and the body that `Function` takes.
+    pub arguments: IdList<Atom>,
+    /// Where the text of the function is in the text of the file.
+    pub start: u32,
+    pub end: u32,
+    /// Where the evaluated text begins. The loader writes an arrow function around a direct eval's call.
+    pub text_start: u32,
+    /// `Function` and an indirect eval see the global scope alone.
+    pub is_in_global_scope: bool,
+    /// An indirect eval. The text is the body of the function, and what the function returns is what the eval returns.
+    pub is_script: bool,
+}
+
+impl KnownEvaluation {
+    /// The evaluation gives what the function returns.
+    pub fn is_called(&self) -> bool {
+        self.text_start != self.start
+    }
+}
+
+/// How the code of a function sees names that it doesn't declare.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum GlobalCode {
+    /// They are in the global scope.
+    Function,
+    /// So are the variables and the functions that it declares.
+    Script,
+    /// Its variables and functions are its own.
+    StrictScript,
+}
+
+impl GlobalCode {
+    /// Names `arguments` as it names any other global.
+    pub fn is_script(self) -> bool {
+        self != GlobalCode::Function
+    }
+}
+
+/// `call` enters `function`, a copy of `factory` with all that is in it, where its callee is a closure of `factory`. `sequence`
+/// is the copy and then the call. The text of the copy follows the text of the file. Set by the loader.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct CopiedFactory {
+    pub sequence: ExprId,
+    pub call: CallId,
+    pub function: ExprId,
+    pub factory: FnId,
+    /// Where the copy is in the text of the file.
+    pub start: u32,
+    pub end: u32,
+    /// Where `factory` is.
+    pub written_start: u32,
+}
+
 /// The parser's output for one source file.
 #[derive(Default)]
 pub struct FileIn<S: Storage> {
@@ -2954,11 +3025,16 @@ pub struct FileIn<S: Storage> {
     pub texts_of_data_files: S::Few<TextOfDataFile>,
     /// Set by the loader.
     pub imported_file_changers: S::Few<ImportedFileChanger>,
-    /// Among those that `FileAnalysis::asked_of_other_files` names. Set by the loader.
+    /// Among those that `FileAnalysis::other_file_queries` names. Set by the loader.
     pub texts_of_other_files: S::Few<TextOfOtherFile>,
     pub exports_that_others_touch: S::Few<Atom>,
     pub texts_written_by_loader: S::Few<TextWrittenByLoader>,
     pub functions_written_by_loader: S::Few<FunctionWrittenByLoader>,
+    /// Sorted by call and by start.
+    pub known_evaluations: S::Few<KnownEvaluation>,
+    pub settled_evals: S::Few<CallId>,
+    /// Sorted by sequence and by start.
+    pub copied_factories: S::Few<CopiedFactory>,
     /// Has a top-level `import` or `export`.
     pub has_module_syntax: bool,
     /// The parser rejected the file, so the HIR is partial or empty. Only parse errors are reported for it.
@@ -2996,6 +3072,9 @@ pub struct FileIn<S: Storage> {
     pub references: S::Few<(ReferenceKind, Atom, u32, ResolutionMode)>,
     /// `CommentDirectives`, in order.
     pub comment_directives: S::Few<CommentDirective>,
+    /// Each comment that begins with [`IGNORE_COMMENT_MARKER`], in order: where the marker starts and where the comment
+    /// ends. They are kept where `comments` is dropped. The type checker doesn't read them.
+    pub ignore_comments: S::Few<(u32, u32)>,
     /// Every `//` and `/* */` comment, in order. Not a `#!` line. The HTML-like comments of a script (`<!--`, `-->`)
     /// are only included if the parser was asked to attach comments.
     pub comments: S::Nodes<Comment>,
@@ -3380,6 +3459,141 @@ impl<S: Storage> FileIn<S> {
             .any(|&(start, end)| (start..end).contains(&pos))
     }
 
+    /// Where the text that was read ends. The texts of `known_evaluations` and of `copied_factories` follow it.
+    pub fn written_text_end(&self) -> u32 {
+        match self.known_evaluations.is_empty() && self.copied_factories.is_empty() {
+            true => self.text.len() as u32,
+            false => self.source_len,
+        }
+    }
+
+    /// The build replaces no names there: the program evaluates the text as it is.
+    #[inline]
+    pub fn is_in_known_evaluation(&self, pos: u32) -> bool {
+        !self.known_evaluations.is_empty()
+            && pos > self.source_len
+            && !self.is_in_copied_factory(pos)
+    }
+
+    #[inline]
+    pub fn is_in_copied_factory(&self, pos: u32) -> bool {
+        (self.copied_factories.first()).is_some_and(|first| pos >= first.start)
+    }
+
+    /// The program enters copies of the factory that is written there.
+    pub fn is_in_factory_with_copies(&self, pos: u32) -> bool {
+        (self.copied_factories.iter())
+            .any(|it| (it.written_start..it.written_start + (it.end - it.start)).contains(&pos))
+    }
+
+    fn copied_factory_at(&self, pos: u32) -> Option<&CopiedFactory> {
+        let all = &self.copied_factories[..];
+        all[..all.partition_point(|it| it.start <= pos)].last()
+    }
+
+    /// Where the file has what is at `pos`, if that is in a copy.
+    #[inline]
+    pub fn written_position(&self, pos: u32) -> u32 {
+        match self.copied_factories.is_empty() {
+            true => pos,
+            false => self.find_written_position(pos),
+        }
+    }
+
+    fn find_written_position(&self, pos: u32) -> u32 {
+        let copied = self.copied_factory_at(pos);
+        copied.map_or(pos, |it| pos - it.start + it.written_start)
+    }
+
+    #[inline]
+    pub fn copied_factory_of(&self, sequence: ExprId) -> Option<&CopiedFactory> {
+        let all = &self.copied_factories[..];
+        match all.is_empty() {
+            true => None,
+            false => {
+                let found = all.binary_search_by_key(&sequence, |it| it.sequence);
+                found.ok().map(|index| &all[index])
+            }
+        }
+    }
+
+    /// Whether the loader wrote the import() or the function at `pos` in place of a call that evaluates a string.
+    pub fn replaces_evaluation(&self, pos: u32) -> bool {
+        !self.texts_written_by_loader.is_empty()
+            && !self
+                .text
+                .get(pos as usize..)
+                .is_some_and(|text| text.starts_with(b"import"))
+    }
+
+    /// Where `eval` or `Function` is written in the call that the loader replaced at `pos`.
+    pub fn replaced_callee_position(&self, pos: u32) -> u32 {
+        let text = self.text.get(pos as usize..).unwrap_or_default();
+        let text = &text[..text.len().min(64)];
+        let is_callee =
+            |at: &usize| text[*at..].starts_with(b"eval") || text[*at..].starts_with(b"Function");
+        pos + (0..text.len()).find(is_callee).unwrap_or(0) as u32
+    }
+
+    /// Whether the loader wrote `function` in place of a call of `Function`.
+    pub fn is_evaluated_function(&self, function: FnId) -> bool {
+        let mut written = self.functions_written_by_loader.iter();
+        written.any(|it| it.function == function) && self.replaces_evaluation(self[function].start)
+    }
+
+    /// Where the call is that evaluates what is at `pos`, or enters the copy there. `pos` itself in the text that was read.
+    pub fn position_of_evaluation(&self, pos: u32) -> u32 {
+        if let Some(copied) = self.copied_factory_at(pos) {
+            return self[self[copied.call].callee].pos;
+        }
+        let all = &self.known_evaluations[..];
+        match all.partition_point(|it| it.start <= pos) {
+            0 => pos,
+            count => self[self[all[count - 1].call].callee].pos,
+        }
+    }
+
+    /// The functions of `known_evaluations` that see the global scope alone, sorted.
+    pub fn global_code(&self) -> Vec<(FnId, GlobalCode)> {
+        let evaluations = self.known_evaluations.iter();
+        let mut found: Vec<(FnId, GlobalCode)> = evaluations
+            .filter(|it| it.is_in_global_scope)
+            .filter_map(|it| {
+                let root = self.skip_type_assertions(it.function);
+                let ExprKind::Fn(function) = self[root].kind else {
+                    return None;
+                };
+                let code = match (it.is_script, self[function].is_strict) {
+                    (false, _) => GlobalCode::Function,
+                    (true, false) => GlobalCode::Script,
+                    (true, true) => GlobalCode::StrictScript,
+                };
+                Some((function, code))
+            })
+            .collect();
+        found.sort_unstable_by_key(|it| it.0.0);
+        found
+    }
+
+    pub fn known_evaluations_of(&self, call: CallId) -> &[KnownEvaluation] {
+        let all = &self.known_evaluations[..];
+        let first = all.partition_point(|it| it.call < call);
+        let count = all[first..].partition_point(|it| it.call == call);
+        &all[first..first + count]
+    }
+
+    #[inline]
+    pub fn is_settled_eval(&self, call: CallId) -> bool {
+        !self.settled_evals.is_empty() && self.settled_evals.binary_search(&call).is_ok()
+    }
+
+    /// The arguments of `call` that the program writes.
+    pub fn written_args(&self, call: CallId) -> IdList<ExprId> {
+        let args = self[call].args;
+        let known = self.known_evaluations_of(call).len() as u32;
+        IdList::new(args.start, args.len - known)
+    }
+
     /// `NodeFlagsJSDoc`, `NodeFlagsReparsed` for the node at `pos`: true if it's in a JSDoc comment of a JavaScript
     /// file.
     #[inline]
@@ -3684,6 +3898,9 @@ macro_rules! file_in_storage {
             exports_that_others_touch: $few!($this.exports_that_others_touch),
             texts_written_by_loader: $few!($this.texts_written_by_loader),
             functions_written_by_loader: $few!($this.functions_written_by_loader),
+            known_evaluations: $few!($this.known_evaluations),
+            settled_evals: $few!($this.settled_evals),
+            copied_factories: $few!($this.copied_factories),
             has_module_syntax: $this.has_module_syntax,
             has_errors: $this.has_errors,
             ran_out_of_stack: $this.ran_out_of_stack,
@@ -3700,6 +3917,7 @@ macro_rules! file_in_storage {
             body: $this.body,
             references: $few!($this.references),
             comment_directives: $few!($this.comment_directives),
+            ignore_comments: $few!($this.ignore_comments),
             comments: $long!($this.comments),
             mentioned: $long!($this.mentioned),
             with_bodies: $few!($this.with_bodies),
@@ -3837,6 +4055,9 @@ impl FileBuilder {
             exports_that_others_touch,
             texts_written_by_loader,
             functions_written_by_loader,
+            known_evaluations,
+            settled_evals,
+            copied_factories,
             has_module_syntax,
             has_errors,
             ran_out_of_stack,
@@ -3853,6 +4074,7 @@ impl FileBuilder {
             body,
             references,
             comment_directives,
+            ignore_comments,
             comments,
             mentioned,
             with_bodies,
@@ -3946,6 +4168,9 @@ impl FileBuilder {
         exports_that_others_touch.clear();
         texts_written_by_loader.clear();
         functions_written_by_loader.clear();
+        known_evaluations.clear();
+        settled_evals.clear();
+        copied_factories.clear();
         *has_module_syntax = Default::default();
         *has_errors = Default::default();
         *ran_out_of_stack = Default::default();
@@ -3962,6 +4187,7 @@ impl FileBuilder {
         *body = Default::default();
         references.clear();
         comment_directives.clear();
+        ignore_comments.clear();
         comments.clear();
         mentioned.clear();
         with_bodies.clear();
@@ -4134,6 +4360,22 @@ impl FileBuilder {
 }
 
 impl File<'_> {
+    /// Takes the positions of the early errors in the texts of `known_evaluations`.
+    pub fn set_early_errors_in_evaluations(&self, positions: Box<[u32]>) {
+        let cell = &self.lazy.cells.early_errors_in_evaluations;
+        cell.get_or_init(|| positions);
+    }
+
+    /// The text is JavaScript. False before the early errors of the file are known.
+    pub fn is_valid_evaluation(&self, evaluation: &KnownEvaluation) -> bool {
+        let Some(errors) = self.lazy.cells.early_errors_in_evaluations.get() else {
+            return false;
+        };
+        errors
+            .iter()
+            .all(|at| !(evaluation.start..=evaluation.end).contains(at))
+    }
+
     /// Returns the same file for a program that shares it with others. The lists of nodes stay where they are, and
     /// on-demand data is computed once for all programs. Everything else in the `File` is in `arena`, which belongs to
     /// `session`.
@@ -4207,6 +4449,7 @@ impl<'s> File<'s> {
         // SAFETY: caller contract.
         unsafe {
             cells.parents.clear();
+            cells.nearest_holders.clear();
             cells.kinds.clear();
             cells.owners.clear();
             cells.ambient_or_type_ranges.clear();
@@ -4218,6 +4461,7 @@ impl<'s> File<'s> {
             cells.names_that_hold_own_requires.clear();
             cells.names_used_otherwise_than_called.clear();
             cells.identifiers_by_name.clear();
+            cells.early_errors_in_evaluations.clear();
         }
     }
 }

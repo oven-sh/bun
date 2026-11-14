@@ -12,7 +12,9 @@
 # -- end of source
 # The compiler before this one: 23 instructions, 16 of them patches, a turn of the written loop steps by 4.
 # When the bound was taken: loop: operations 17, patches 1, moves 1, unlikely 0.
-# RUN(X64): loops most:18 f1 mechanisms=all-Inlining
+# All three neighbors lie inside behind `k < signal.length - 1`: eight turns laid out in 93 (11.6 a turn), and the loop as written behind them.
+# RUN(X64): loops most:93,89 f1 mechanisms=all-Inlining
 # REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
 # X64-LABEL: unit f1:Body
-# X64-NEXT: loop: at most 18
+# X64-NEXT: loop: at most 93
+# X64-NEXT: loop: at most 89

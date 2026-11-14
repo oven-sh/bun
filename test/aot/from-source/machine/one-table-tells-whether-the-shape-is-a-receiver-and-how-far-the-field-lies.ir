@@ -1,8 +1,9 @@
 # `holder.it.v`: `it` is declared of an interface that 18 classes meet, and what a field of an object that has left holds is proven of nothing. `v` lies behind one, two or three inherited fields: the read looks up how
 # far it lies by the shape. The flat table of distances holds a byte for "no member", so it also tells whether the shape is a receiver at all: no second table of bits is asked and the shape word is loaded once.
 # Three interfaces, each met by two of three groups of classes: however the shapes are numbered, one of the three tables has the third group in its middle: objects of every group go to every reader.
-# The count is of the whole build: three in this program, the others in the library that rides along: a closure whose capture is written as a family, and the streams, which ask a state that is not as it was born by name.
 # f1 = readV
+# f2 = readW
+# f3 = readX
 # -- source: main.ts
 # declare function print(...values: unknown[]): void;
 # interface HasV { v: number } interface HasW { w: number } interface HasX { x: number }
@@ -32,8 +33,24 @@
 # for (const thing of things) sum += Number(outside[0](new HolderOfV(thing)) ?? 3) + Number(outside[1](new HolderOfW(thing)) ?? 5) + Number(outside[2](new HolderOfX(thing)) ?? 7);
 # print(sum);
 # -- end of source
-# RUN(COUNT): compile ReceiversToldByTablesOfOffsets mechanisms=all
-# COUNT: statistic ReceiversToldByTablesOfOffsets 62
+# RUN(V): emit f1:Body mechanisms=all
+# V: AOTObject_shapeNumber
+# V-NOT: AOTObject_shapeNumber
+# V: = Load8Z({{*}}AOTImage_tables
+# V-NOT: AOTImage_tables
+# V-NOT: AOTObject_shapeNumber
+# RUN(W): emit f2:Body mechanisms=all
+# W: AOTObject_shapeNumber
+# W-NOT: AOTObject_shapeNumber
+# W: = Load8Z({{*}}AOTImage_tables
+# W-NOT: AOTImage_tables
+# W-NOT: AOTObject_shapeNumber
+# RUN(X): emit f3:Body mechanisms=all
+# X: AOTObject_shapeNumber
+# X-NOT: AOTObject_shapeNumber
+# X: = Load8Z({{*}}AOTImage_tables
+# X-NOT: AOTImage_tables
+# X-NOT: AOTObject_shapeNumber
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: 316512
 # RIGHT-NEXT: exited with 0

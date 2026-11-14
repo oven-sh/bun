@@ -1,5 +1,4 @@
 // The constructor lays `works` by a data descriptor, read-only and not configurable. A definition under a key that nobody knows stands in the program, so the slot is held to nothing. It gets the object first and lays a text with the same attributes. The constructor's own definition is then refused, and the constructor goes on.
-// STATISTIC: FieldsHeldToWhatIsSeen <= 1
 // Under: --aot-testing=CheckProofsAtRunTime: what is proven is asked again at run time
 class Works { constructor(teeth) { this.teeth = teeth; this.turns = 1; } }
 let refusals = 0;

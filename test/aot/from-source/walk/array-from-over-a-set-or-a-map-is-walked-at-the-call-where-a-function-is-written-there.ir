@@ -6,6 +6,7 @@
 # copied: no function is handed over: native code copies a Set at once whichever function is entered, so nothing is asked.
 # byAnyFunction: nobody knows the mapper: a copy would have nothing to put into its loop: nothing is asked.
 # -- source: from.ts
+# // Flags: --open-world
 # declare function sink(...values: unknown[]): void;
 # function doubled(items: Set<number>) { return Array.from(items, value => value * 2); }
 # function joined(items: Map<string, number>) { return Array.from(items, ([key, value]) => key + value); }

@@ -259,7 +259,6 @@ impl ShellTouchTask {
     /// fall back to `open(O_CREAT|O_WRONLY, 0o664)`.
     pub(crate) fn run_from_thread_pool(this: &mut ShellTouchTask) {
         use bun_paths::resolve_path::{self, Platform, platform};
-        use bun_sys::FdExt as _;
         // We have to give an absolute path. An operand that does not fit the
         // path buffer is still passed on whole, so the OS reports ENAMETOOLONG
         // for it like for any other operand.
@@ -285,13 +284,17 @@ impl ShellTouchTask {
         let mtime = atime;
         if let Err(err) = bun_sys::utimens(filepath, atime, mtime) {
             'out: {
+                // The executable holds it: it is there.
+                if err.get_errno() == bun_sys::E::ENOENT
+                    && crate::node::fs::is_embedded_source_file(filepath.as_bytes())
+                {
+                    break 'out;
+                }
                 if err.get_errno() == bun_sys::E::ENOENT {
                     const PERM: bun_sys::Mode = 0o664;
-                    match bun_sys::open(filepath, bun_sys::O::CREAT | bun_sys::O::WRONLY, PERM) {
-                        Ok(fd) => {
-                            fd.close();
-                            break 'out;
-                        }
+                    let flags = bun_sys::O::CREAT | bun_sys::O::WRONLY;
+                    match bun_sys::File::open(filepath, flags, PERM) {
+                        Ok(_) => break 'out,
                         Err(e) => {
                             this.err = Some(e.with_path(filepath.as_bytes()));
                             break 'out;

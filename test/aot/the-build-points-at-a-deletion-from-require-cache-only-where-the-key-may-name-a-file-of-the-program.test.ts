@@ -17,6 +17,84 @@ const cases: Record<string, Case> = {
   "a text that is no whole path": { key: () => `"part.cjs"`, warns: false },
 };
 
+const made = `const { createRequire } = require("node:module");\n`;
+const waysToTheTable: Record<string, { text: string; warning: "TS100091" | "TS100093" }> = {
+  "destructured": { text: `const { cache } = createRequire(__filename);\ndelete cache[part];`, warning: "TS100091" },
+  "destructured under another name": {
+    text: `const { cache: table } = createRequire(__filename);\ndelete table[part];`,
+    warning: "TS100091",
+  },
+  "destructured off a variable": {
+    text: `const made = createRequire(__filename);\nconst { cache } = made;\nReflect.deleteProperty(cache, part);`,
+    warning: "TS100091",
+  },
+  "given to Reflect.deleteProperty": { text: `Reflect.deleteProperty(require.cache, part);`, warning: "TS100091" },
+  "held in a variable": {
+    text: `const made = createRequire(__filename);\nconst table = made.cache;\ndelete table[part];`,
+    warning: "TS100091",
+  },
+  "of a require that a function makes": {
+    text: `const made = (() => createRequire(__filename))();\ndelete made.cache[part];`,
+    warning: "TS100091",
+  },
+  "of a require that a function answers with": {
+    text: `function getRequire() {\n  return require;\n}\ndelete getRequire().cache[part];`,
+    warning: "TS100091",
+  },
+  "destructured off what a function makes": {
+    text: `function make() {\n  return createRequire(__filename);\n}\nconst { cache } = make();\ndelete cache[part];`,
+    warning: "TS100091",
+  },
+  "that a function answers with": {
+    text: `const table = (() => createRequire(__filename).cache)();\ndelete table[part];`,
+    warning: "TS100093",
+  },
+  "in an object": {
+    text: `const holder = { table: createRequire(__filename).cache };\ndelete holder.table[part];`,
+    warning: "TS100093",
+  },
+  "assigned by a pattern": { text: `let cache;\n({ cache } = require);\ndelete cache[part];`, warning: "TS100093" },
+};
+
+test.concurrent.each(Object.keys(waysToTheTable))("the table %s", async name => {
+  const { text, warning } = waysToTheTable[name];
+  using sources = tempDir("aot-a-way-to-the-table", {
+    "part.cjs": "exports.a = 1;\n",
+    "main.cjs": `${made}const part = require.resolve("./part.cjs");\nrequire(part);\n${text}\nconsole.log(typeof require(part));\n`,
+  });
+  using outside = tempDir("aot-a-way-to-the-table-outside", {});
+  const executable = join(String(outside), isWindows ? "program.exe" : "program");
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", executable],
+    String(sources),
+  );
+  expect(built.exitCode).toBe(0);
+  const warnings = (built.stdout + built.stderr).match(/TS10009[13]/g);
+  expect(warnings).toEqual([warning]);
+});
+
+const quietTexts: Record<string, string> = {
+  "another member destructured": `const { resolve } = createRequire(__filename);\nconsole.log(typeof resolve);`,
+  "another member assigned by a pattern": `let resolve;\n({ resolve } = require);\nconsole.log(typeof resolve);`,
+  "a path outside given to Reflect.deleteProperty": `Reflect.deleteProperty(require.cache, "/outside/config.json");`,
+  "a member of that name of something else": `const make = () => ({ cache: {} });\nconst { cache } = make();\ndelete cache[part];`,
+};
+
+test.concurrent.each(Object.keys(quietTexts))("no warning for %s", async name => {
+  using sources = tempDir("aot-no-way-to-the-table", {
+    "part.cjs": "exports.a = 1;\n",
+    "main.cjs": `${made}const part = require.resolve("./part.cjs");\nrequire(part);\n${quietTexts[name]}\n`,
+  });
+  using outside = tempDir("aot-no-way-to-the-table-outside", {});
+  const executable = join(String(outside), isWindows ? "program.exe" : "program");
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", executable],
+    String(sources),
+  );
+  expect(built.exitCode).toBe(0);
+  expect(built.stdout + built.stderr).not.toMatch(/TS10009[13]/);
+});
+
 test.concurrent.each(Object.keys(cases))("%s", async name => {
   const { key, warns } = cases[name];
   using sources = tempDir("aot-a-deletion-from-require-cache", { "part.cjs": "exports.a = 1;\n" });

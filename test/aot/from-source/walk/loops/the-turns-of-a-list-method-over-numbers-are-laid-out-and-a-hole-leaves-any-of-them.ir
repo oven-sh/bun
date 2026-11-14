@@ -21,6 +21,6 @@
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 0,0;1,2;4,6;9,12;16,20;25,30;36,42;49,56;64,72;81,90;100,110;
 # ANSWERS-NEXT: exited with 0
-# RUN(HARDENED): run-in-shell testing=CheckProofsAtRunTime,TestsEveryPosition
+# RUN(HARDENED): run-in-shell testing=CheckProofsAtRunTime,CheckBoundsAtRunTime
 # HARDENED: 0,0;1,2;4,6;9,12;16,20;25,30;36,42;49,56;64,72;81,90;100,110;
 # HARDENED-NEXT: exited with 0

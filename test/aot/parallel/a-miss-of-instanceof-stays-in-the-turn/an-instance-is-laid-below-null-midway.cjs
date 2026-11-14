@@ -1,5 +1,5 @@
 // A helper copied in line tells three classes apart in a loop. Midway one instance is laid below null: it keeps its shape and is an instance no more.
-// STATISTIC: MissesOfInstanceOfThatStayInTheTurn >= 1
+// STATISTIC: InstanceOfMissesWalkedInline >= 1
 "use strict";
 class Circle { constructor(d) { this.r = d.r; } }
 class Rect { constructor(d) { this.w = d.w; this.h = d.h; } }

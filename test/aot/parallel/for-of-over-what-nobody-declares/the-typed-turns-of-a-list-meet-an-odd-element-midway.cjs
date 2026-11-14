@@ -1,5 +1,5 @@
 "use strict";
-// STATISTIC: IterationsOverListsThatStepTextsBeside >= 1
+// STATISTIC: ArrayIterationsWithStringFallback >= 1
 const log = [];
 const outside = JSON.parse('[[{"weight": 1}, ",", {"weight": 2}, {"other": 1, "weight": 3}, ",", {"weight": 4}], [",", ",", {"weight": 0.5}, {"weight": "x"}, {"weight": 7}], ["a", ",", "b"], "a,b", [1, 2, ",", 3.5, null], [{"weight": 1}, {"weight": 2}, {"weight": 3}, {"weight": {"valueOf": 1}}, {"weight": 5}]]');
 const weigh = input => { let sum = 0; for (const it of input) { if (it === ",") sum += 1; else sum += it.weight; } return sum; };

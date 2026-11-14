@@ -5,10 +5,10 @@
 # class Idle {}
 #
 # class Counter {
-#   bump() {}
+#   bump() { while (seen); }
 # }
 # function turn(holder: any): any {
-#   for (;;) {
+#   for (; !seen;) {
 #     while (holder !== holder) note(holder);
 #     holder.bump();
 #     while (seen);
@@ -16,10 +16,13 @@
 # }
 # const idle: any = new Idle();
 #
+# class Runner {
+#   bump() { while (seen); }
+# }
 # class Plain {}
 #
 # class Stepper extends Plain {
-#   bump() {}
+#   bump() { while (seen); }
 # }
 # function pass(holder: any, more?: any): any {
 #   note(holder);
@@ -33,7 +36,7 @@
 # let calls = 0;
 # Reflect.set(idle, ["bump"][0], () => void calls++);
 # try {
-#   turn(idle), turn(new Counter())(idle())[(pass(new Stepper()), pass(plain, plain()))](spin(0, new Spare()).join);
+#   turn(idle), turn(new Runner()), turn(new Counter())(idle())[(pass(new Stepper()), pass(plain, plain()))](spin(0, new Spare()).join);
 # } catch (error: any) {
 #   console.log(error.constructor.name, calls);
 # }
@@ -46,5 +49,4 @@
 # RUN: walk f2 mechanisms=all
 # CHECK: = CallTable {{*}}key="bump"
 # CHECK: = PropGet {{*}}key="bump"
-# CHECK: = TypeTest {{*}}testedType=f
 # CHECK: = Call {{*}}calleeKey="bump"

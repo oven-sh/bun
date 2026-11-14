@@ -11,15 +11,15 @@
 # In the copy new.target is the class below: the object is made as a Noted, below the prototype of Noted, and nobody has to ask what the call has given.
 # RUN(COPY): walk f4 mechanisms=all
 # COPY-NOT: function=f3
-# COPY: = NewObject layout=
+# COPY: = NewObject {{*}}layout=
 # COPY-NOT: function=f3
 # COPY: Return
 # RUN(TYPED): walk f4 mechanisms=all
-# TYPED: = NewObject layout=
+# TYPED: = NewObject {{*}}layout=
 # TYPED-NOT: ShapeTest
 # TYPED: Return
 # RUN(STORES): walk f4 mechanisms=all
-# STORES: = NewObject layout=
+# STORES: = NewObject {{*}}layout=
 # STORES-NOT: PropSet
 # STORES: Return
 # RUN: run-in-shell void 0;

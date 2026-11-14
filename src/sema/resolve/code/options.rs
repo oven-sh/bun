@@ -29,6 +29,8 @@ pub struct CodeOptions {
     pub entry_points_that_run_first: Vec<Vec<u8>>,
     pub ignores_declared_side_effects: bool,
     pub looks_for_type_errors: bool,
+    /// `bun check --aot`: also reports type errors in the TypeScript sources of dependencies.
+    pub checks_dependency_sources: bool,
 }
 
 pub const AOT_CONDITION: &[u8] = b"aot";
@@ -72,6 +74,7 @@ impl CodeOptions {
             entry_points_that_run_first: Vec::new(),
             ignores_declared_side_effects: false,
             looks_for_type_errors: false,
+            checks_dependency_sources: false,
         };
         options.add_custom_condition(AOT_CONDITION);
         options

@@ -14,7 +14,7 @@ const note = (name, call) => call.then(() => settled.push(name + "+"), () => set
 note("pages", import("./${first}"));
 await null; await null; await null;
 note("menu", import("./menu.mjs"));
-await new Promise(done => setTimeout(done, 30));
+for (let turn = 0; turn < 20; turn++) await new Promise(done => setImmediate(done));
 console.log(ran.join(" ") + " | " + settled.join(" "));
 `;
 const ring = {
@@ -36,8 +36,8 @@ test.concurrent.each(cases)("the earlier graph %s", async (_, pages, printed) =>
   const compiled = await run([join(cwd, "compiled.exe")], cwd, countingIn(cwd));
   expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: printed + "\n", exitCode: 0 });
   expect({
-    held: counted(cwd, "GraphsHeldBehindEarlierCalls"),
-    letGo: counted(cwd, "GraphsLetGoBehindEarlierCalls"),
+    held: counted(cwd, "GraphsDeferredForImports"),
+    letGo: counted(cwd, "DeferredGraphsResumed"),
   }).toEqual({
     held: 1,
     letGo: 1,

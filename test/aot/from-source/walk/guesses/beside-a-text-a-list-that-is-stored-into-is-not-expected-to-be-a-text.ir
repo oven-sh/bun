@@ -7,7 +7,7 @@
 # In front of the loop the first holder is told apart; in its copy for a text the other holder whose elements are held against its own is expected to be a text too. In the copy for a class of views every other holder walked in step
 # is expected to be of that class, one that is stored into as well. Beside a text that was asked too: a copy stood in front that expected the list that is stored into to be a text: no right program passes that front.
 # RUN(WALK): walk f1 mechanisms=all
-# WALK-COUNT-4: isLoopHead=true
+# WALK-COUNT-5: isLoopHead=true
 # WALK-NOT: isLoopHead=true
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: 9,1,1,0,1 9,1,0 9,1,0

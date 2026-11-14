@@ -1,5 +1,5 @@
-// STATISTIC: ReadsThatAskTheirSitesBuiltInFrontOfLoops = 0
-// STATISTIC: ReadsByNameThatAskTheirSitesAlone >= 1
+// STATISTIC: SiteCachedReadsHoisted = 1
+// STATISTIC: SiteCachedReadsEmitted >= 1
 "use strict";
 const holders = JSON.parse('[{"port":5},null]'), flags = JSON.parse("[true,false]");
 function part(holder, reads) { if (reads) return holder.port * 2; return 1; }

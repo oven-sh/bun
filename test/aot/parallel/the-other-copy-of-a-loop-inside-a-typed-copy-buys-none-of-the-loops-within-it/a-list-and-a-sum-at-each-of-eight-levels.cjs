@@ -1,5 +1,5 @@
-// STATISTIC: LoopsBuiltTwice <= 120
-// STATISTIC: WalksOfLoops <= 9000
+// STATISTIC: WalkLoopsVersioned <= 120
+// STATISTIC: LoopVisits <= 9000
 // Both copies of a loop built twice held the loops within built twice again: 1,409 loops built twice and 29,884 walks at eight levels, 2.4 MB of code.
 "use strict";
 const given = JSON.parse("[1,2,3]");

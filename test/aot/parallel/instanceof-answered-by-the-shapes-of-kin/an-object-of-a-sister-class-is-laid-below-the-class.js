@@ -1,5 +1,5 @@
 // Object.setPrototypeOf on ONE object of a sister class, in the middle of the turns: that object alone says yes from then on, and no again when it goes back.
-// STATISTIC: MissesOfInstanceOfAnsweredByShapesOfKin >= 1
+// STATISTIC: InstanceOfMissesDecidedByHierarchy >= 1
 const sizes = JSON.parse("[1,2,3,4,5,6]");
 class Animal { constructor(n) { this.n = n; } }
 class Cat extends Animal {}

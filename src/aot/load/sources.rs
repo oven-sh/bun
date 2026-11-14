@@ -2,11 +2,13 @@ mod freeze;
 #[cfg(test)]
 mod tests;
 
+use std::borrow::Cow;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use bun_ast::{Loader, Location};
 use bun_builtin_sources::{Manifest, VIRTUAL_ROOT};
+use bun_paths::is_absolute;
 use bun_sema::program::{CodeView, FileId, Files};
 use bun_sema::resolve::HostPayload;
 
@@ -233,6 +235,23 @@ impl Sources {
 
     pub fn public_path(&self, file: FileId) -> &[u8] {
         &self.entries[file.idx()].public_path
+    }
+
+    /// In an executable this is relative to the folder of the build and never an absolute path of the build machine.
+    pub fn path_in_stack_traces(&self, file: FileId) -> Cow<'_, [u8]> {
+        let ModulePaths {
+            public_path,
+            display_path,
+        } = self.module_paths(file);
+        let path_on_disk = self.diagnostic_path(file);
+        match self.root_of_executable() {
+            None if is_absolute(path_on_disk) => {
+                with_separators_of_host(path_on_disk, cfg!(windows)).into()
+            }
+            // Windows: on another drive.
+            Some(_) if is_absolute(display_path) => public_path.into(),
+            None | Some(_) => display_path.into(),
+        }
     }
 
     pub fn root_of_executable(&self) -> Option<&[u8]> {

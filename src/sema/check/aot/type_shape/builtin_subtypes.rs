@@ -1,4 +1,5 @@
 use super::{BuiltinShape, ShapeKind, TypeShape};
+use crate::atom::Atom;
 use crate::check::aot::answers::{ClassRef, GaveUp, MemberName};
 use crate::check::aot::builtin_types::{BuiltinClassIndex, Denotation};
 use crate::check::aot::queries::Queries;
@@ -83,7 +84,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         &mut self,
         ty: TypeId,
     ) -> Result<&'c [BuiltinShape], GaveUp> {
-        let ty = self.declared_type_of_this(ty);
+        let ty = self.resolve_object_type(ty);
         if !matches!(self.type_shape(ty)?.kind, ShapeKind::Object) {
             return Ok(&[]);
         }
@@ -94,10 +95,24 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let Some(members) = self.c.members(ty).filter(|_| !subtypes.is_empty()) else {
             return Ok(self.list(&accepted));
         };
+        let has_bits = subtypes.len() <= u64::BITS as usize;
+        let mut possible = u64::MAX;
+        for prop in &members.shape().props {
+            if !has_bits || prop.flags.contains(PropFlags::OPTIONAL) {
+                continue;
+            }
+            possible &= self.subtypes_with_property(subtypes, prop.name);
+            if possible == 0 {
+                return Ok(self.list(&accepted));
+            }
+        }
         let target = self.c.permissive_instantiation(ty);
-        for &subtype in subtypes {
+        for (index, &subtype) in subtypes.iter().enumerate() {
+            if has_bits && possible >> index & 1 == 0 {
+                continue;
+            }
             let declared = self.c.declared_type(subtype);
-            if !self.has_required_properties(declared, members.shape()) {
+            if !has_bits && !self.has_required_properties(declared, members.shape()) {
                 continue;
             }
             let base = self.builtin_type_or_base(declared)?;
@@ -113,6 +128,30 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             }
         }
         Ok(self.list(&accepted))
+    }
+
+    /// A bit for each of `subtypes`.
+    fn subtypes_with_property(&mut self, subtypes: &[Sym], name: Atom) -> u64 {
+        let list = subtypes.as_ptr() as usize;
+        let (known_list, known) = &mut self.kept.subtypes_with_property;
+        if *known_list != list {
+            *known_list = list;
+            known.clear();
+        }
+        if let Some(&known) = known.get(&name) {
+            return known;
+        }
+        let mut found = 0;
+        for (index, &subtype) in subtypes.iter().enumerate() {
+            let declared = self.c.declared_type(subtype);
+            if self.c.get_property_of_type(declared, name).is_some() {
+                found |= 1 << index;
+            }
+        }
+        if !name.is_own() {
+            self.kept.subtypes_with_property.1.insert(name, found);
+        }
+        found
     }
 
     pub fn is_type_of_builtin(
@@ -208,7 +247,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         &mut self,
         ty: TypeId,
     ) -> Result<&'c [ClassRef], GaveUp> {
-        let ty = self.declared_type_of_this(ty);
+        let ty = self.resolve_object_type(ty);
         if !matches!(self.type_shape(ty)?.kind, ShapeKind::Object) {
             return Ok(&[]);
         }

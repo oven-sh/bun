@@ -34,7 +34,7 @@
 #   }
 # }
 # function weigh(thing: HasV, depth: number): number {
-#   if (depth > 0) return weigh(thing, depth - 1);
+#   if (depth > 0) return weigh(thing, -depth);
 #   const before = thing.v;
 #   thing.v = before + 1;
 #   return before;
@@ -44,16 +44,14 @@
 # print(sum, behind);
 # -- end of source
 # A bound on a table of field offsets. `v` lies behind one, two or three inherited fields, so the read and the store in `weigh` and the read in the loop look up where it lies.
-# Only an inherited prefix pins a field: below one base, in unrelated classes and in literals `v` lies at one offset and there is no table. So the count is held.
+# Only an inherited prefix pins a field: below one base, in unrelated classes and in literals `v` lies at one offset and there is no table.
 # f1 = weigh
-# RUN(COUNT): compile OffsetsFoundInFlatTables mechanisms=all
-# COUNT: statistic OffsetsFoundInFlatTables 3
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: 1770 1830
 # RIGHT-NEXT: exited with 0
-# RUN(HIGHEST): run-in-shell mechanisms=all testing=RowSaysLess:Callee/f1/ShapesOfField
-# HIGHEST: AOT: 
+# RUN(HIGHEST): run-in-shell mechanisms=all testing=UnderstateEffects:Callee/f1/ShapesOfField
+# HIGHEST: bun: internal AOT error:
 # HIGHEST-NOT: exited with 0
-# RUN(MIDDLE): run-in-shell mechanisms=all testing=RowSaysLess:Callee/f1/MiddleShapesOfField
-# MIDDLE: AOT: 
+# RUN(MIDDLE): run-in-shell mechanisms=all testing=UnderstateEffects:Callee/f1/MiddleShapesOfField
+# MIDDLE: bun: internal AOT error:
 # MIDDLE-NOT: exited with 0

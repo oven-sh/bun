@@ -1,12 +1,13 @@
 use super::support::{
-    BringsBunTypes, BuildSummary, DEPENDENCY_MANIFEST, FAILING_DEPENDENCY, IMPORTS_DEPENDENCY,
-    LacksBunTypes, PROJECT, TYPE_ERROR, check, check_only, codes, project_disk, with_defines,
-    with_host, with_look_for_type_errors, with_program, with_runtime_project,
+    BringsBunTypes, BuildSummary, CheckedBuild, DEPENDENCY_MANIFEST, FAILING_DEPENDENCY,
+    IMPORTS_DEPENDENCY, LacksBunTypes, PROJECT, TYPE_ERROR, TestProgram, check, check_only, codes,
+    project_disk, with_defines, with_host, with_look_for_type_errors, with_program,
+    with_runtime_project,
 };
 use crate::compile::BunTypes;
 use crate::{
-    BuildDiagnostic, CompileRequest, Locator, Progress, check_and_lower, decide_roles,
-    equal_diagnostics, global, log_message,
+    BuildDiagnostic, CompileRequest, Locator, PassCount, Passes, Progress, check_and_lower,
+    check_and_lower_noting_commits, decide_roles, equal_diagnostics, global, log_message,
 };
 use bun_sema::check::aot::{
     BuiltinTypeSymbols, DiagnosticClass, Effect, NamedValue, NamedValues, QueryInputs,
@@ -104,6 +105,8 @@ fn members_are_held_against_an_index_signature_in_the_file_where_they_stand() {
     }
 }
 
+/// `first.ts` and so many more files that several share a task, each with a declaration in `declare global`. Returns how
+/// often `code` is reported in `first.ts`, and the least and the most often in one of the others.
 fn reported_in_many_files(
     first: &str,
     declared: &dyn Fn(usize) -> String,
@@ -647,7 +650,7 @@ fn generated_text(index: usize) -> String {
     import + &rest
 }
 
-fn check_generated_program(threads: usize) -> BuildSummary<usize> {
+fn check_generated_program(threads: usize, passes: usize) -> BuildSummary<usize> {
     let generated: Vec<(String, String)> = (0..GENERATED_FILE_COUNT)
         .map(|index| (generated_name(index), generated_text(index)))
         .collect();
@@ -655,7 +658,30 @@ fn check_generated_program(threads: usize) -> BuildSummary<usize> {
     let files: Vec<(&str, &str)> = files.collect();
     let entry_point = format!("./{}", generated_name(GENERATED_FILE_COUNT - 1));
     with_program(&files, &[&entry_point[..]], threads, |program| {
-        let build = check(program, &|_, file| file.idx());
+        let files_to_lower = program.files().compiled_files();
+        let (loaded, host, request) = (program.loaded, program.host, program.request);
+        let roles = decide_roles(loaded, host, request, files_to_lower);
+        let renewals = AtomicUsize::new(0);
+        let checked = check_and_lower_noting_commits(
+            loaded,
+            host,
+            request,
+            &roles,
+            files_to_lower,
+            &|_, file, _| Some(file.idx()),
+            &|_, _| {},
+            &Passes {
+                count: PassCount::Exactly(passes),
+                before_next: &|| {
+                    renewals.fetch_add(1, Ordering::Relaxed);
+                },
+            },
+        );
+        assert_eq!(renewals.into_inner() + 1, passes);
+        let build = CheckedBuild {
+            roles,
+            program: checked,
+        };
         assert_eq!(build.program.lowered.len(), GENERATED_FILE_COUNT);
         let second = program.file(&generated_name(2));
         assert_eq!(build.reported(second, 2322), [STOPS_BUILD]);
@@ -670,13 +696,187 @@ fn check_generated_program(threads: usize) -> BuildSummary<usize> {
 
 #[test]
 fn diagnostics_do_not_depend_on_threads() {
-    let on_one_thread = check_generated_program(1);
+    let on_one_thread = check_generated_program(1, 1);
     for threads in [2, 8] {
         assert_eq!(
-            check_generated_program(threads),
+            check_generated_program(threads, 1),
             on_one_thread,
             "{threads} threads"
         );
+    }
+}
+
+#[test]
+fn first_pass_takes_large_scripts() {
+    let values = |count: usize| "a, ".repeat(count);
+    let text = |rest: &str, count: usize| {
+        format!(
+            "{rest}export const all = (a: number) => [{}];\n",
+            values(count)
+        )
+    };
+    let mut generated: Vec<(String, String)> = (0..GENERATED_FILE_COUNT)
+        .map(|index| match index.checked_sub(1) {
+            None => ("f0.ts".to_owned(), text("", 100)),
+            Some(before) => {
+                let import = format!("import \"./f{before}.ts\";\n");
+                (format!("f{index}.ts"), text(&import, 100))
+            }
+        })
+        .collect();
+    let script =
+        |count: usize| format!("export function all(a) {{ return [{}]; }}\n", values(count));
+    generated.push(("large.js".to_owned(), script(1000)));
+    generated.push(("small.js".to_owned(), script(2)));
+    let last = GENERATED_FILE_COUNT - 1;
+    generated.push((
+        "main.ts".to_owned(),
+        format!("import \"./f{last}.ts\";\nimport \"./large.js\";\nimport \"./small.js\";\n"),
+    ));
+    let files = generated.iter().map(|(path, text)| (&path[..], &text[..]));
+    let files: Vec<(&str, &str)> = files.collect();
+    with_program(&files, &["./main.ts"], 1, |program| {
+        let files_to_lower = program.files().compiled_files();
+        let (loaded, host, request) = (program.loaded, program.host, program.request);
+        let roles = decide_roles(loaded, host, request, files_to_lower);
+        let renewals = AtomicUsize::new(0);
+        let checked = check_and_lower_noting_commits(
+            loaded,
+            host,
+            request,
+            &roles,
+            files_to_lower,
+            &|_, _, _| Some(renewals.load(Ordering::Relaxed)),
+            &|_, _| {},
+            &Passes {
+                count: PassCount::Exactly(2),
+                before_next: &|| {
+                    renewals.fetch_add(1, Ordering::Relaxed);
+                },
+            },
+        );
+        let pass_of = |path: &str| {
+            let file = program.file(path);
+            let found = checked.lowered.iter().find(|entry| entry.0 == file);
+            found.expect("it is lowered").1
+        };
+        assert_eq!(pass_of("f0.ts"), 0);
+        assert_eq!(pass_of("large.js"), 0);
+        assert_eq!(pass_of("small.js"), 1);
+        assert_eq!(pass_of("main.ts"), 1);
+    });
+}
+
+#[test]
+fn diagnostics_do_not_depend_on_passes() {
+    let in_one_pass = check_generated_program(1, 1);
+    for (threads, passes) in [(1, 2), (1, 3), (8, 2)] {
+        assert_eq!(
+            check_generated_program(threads, passes),
+            in_one_pass,
+            "{threads} threads, {passes} passes"
+        );
+    }
+}
+
+fn check_and_request_types(program: &TestProgram<'_, '_>, order: u32) -> CheckedBuild<()> {
+    let all = program.files();
+    let roles: Vec<FileRole> = (0..all.modules.len() as u32)
+        .map(|file| all.role(FileId(file)))
+        .collect();
+    let inputs = QueryInputs {
+        roles: &roles,
+        checked_elsewhere: &[],
+        builtin_types: &BuiltinTypeSymbols::compute(all, &[], Box::new(|| &[])),
+        named_values: &NoNamedValues,
+        alias_mentions: None,
+        max_inference_nodes: 0,
+        limits: Default::default(),
+    };
+    let request = CompileRequest {
+        order,
+        ..*program.request
+    };
+    let program = TestProgram {
+        request: &request,
+        ..*program
+    };
+    check(&program, &|checker, file| {
+        checker.with_queries(file, &inputs, |queries| {
+            for index in 0..queries.hir().exprs.len() {
+                let _ = queries.expression_type(ExprId(index as u32));
+            }
+        })
+    })
+}
+
+/// `node_modules/dep/index.ts` is lowered and not checked, so its lowering may be the first to resolve the call in
+/// `measure.ts`.
+#[test]
+fn argument_errors_do_not_depend_on_lowering() {
+    let calls = [
+        ("take({ read: () => 1 })", 2322),
+        ("take({ read: () => \"\" }, 1)", 2554),
+    ];
+    for (call, code) in calls {
+        let measure = format!(
+            "import {{ take, within }} from \"./take\";\n\
+             export function measure() {{ return within(() => {call}); }}\n"
+        );
+        let files = [
+            ("main.ts", "import \"dep\";\n"),
+            ("node_modules/dep/package.json", DEPENDENCY_MANIFEST),
+            (
+                "node_modules/dep/index.ts",
+                "import { measure } from \"../../measure\";\nexport const value = measure();\n",
+            ),
+            ("measure.ts", &measure[..]),
+            (
+                "take.ts",
+                "export function take(options: { read: () => string }): number { return 1; }\n\
+                 export function within<T>(run: () => T): T { return run(); }\n",
+            ),
+        ];
+        for order in [1, u32::MAX] {
+            with_program(&files, &["./main.ts"], 1, |program| {
+                let build = check_and_request_types(program, order);
+                let reported = build.reported(program.file("measure.ts"), code);
+                assert_eq!(reported, [STOPS_BUILD], "{call}, order {order}");
+            });
+        }
+    }
+}
+
+/// The package is lowered and not checked. Both files import each other, so in program order it's lowered before `pick.ts` is checked.
+#[test]
+fn constraints_do_not_depend_on_lowering() {
+    let files = [
+        (
+            "main.ts",
+            "import { used } from \"./pick\";\nexport const sum = used() + 1;\n",
+        ),
+        (
+            "pick.ts",
+            "import { use } from \"dep\";
+type Last<T extends unknown[]> =
+    T extends [unknown, ...infer R] ? (R extends [] ? T[0] : Last<R>) : T[number];
+export function pick<T extends { size: number }[]>(last: Last<T>) { return last.size; }
+export const used = () => use();
+",
+        ),
+        ("node_modules/dep/package.json", DEPENDENCY_MANIFEST),
+        (
+            "node_modules/dep/index.ts",
+            "import { pick } from \"../../pick\";
+export function use() { return pick<{ size: number }[]>({ size: 1 }); }
+",
+        ),
+    ];
+    for order in [1, u32::MAX] {
+        with_program(&files, &["./main.ts"], 1, |program| {
+            let build = check_and_request_types(program, order);
+            assert_eq!(build.codes(), [0; 0], "order {order}");
+        });
     }
 }
 
@@ -691,6 +891,7 @@ fn ask_for_member_accesses(files: &[(&str, &str)], threads: usize) -> Vec<Option
             checked_elsewhere: &[],
             builtin_types: &BuiltinTypeSymbols::compute(all, &[], Box::new(|| &[])),
             named_values: &NoNamedValues,
+            alias_mentions: None,
             max_inference_nodes: 0,
             limits: Default::default(),
         };
@@ -778,6 +979,7 @@ fn parameters_without_types_in_a_list_of_functions_close_no_cycle() {
             checked_elsewhere: &[],
             builtin_types: &BuiltinTypeSymbols::compute(all, &[], Box::new(|| &[])),
             named_values: &NoNamedValues,
+            alias_mentions: None,
             max_inference_nodes: 0,
             limits: Default::default(),
         };
@@ -841,6 +1043,7 @@ fn untyped_package_stops_only_a_project_with_bun_types_installed() {
     }
 }
 
+/// `bun check` decides which of these stop a build, which reports them.
 #[test]
 fn the_check_finds_the_same_under_brought_declarations_as_under_installed_ones() {
     for is_installed in [false, true] {
@@ -883,6 +1086,7 @@ fn the_check_finds_the_same_under_brought_declarations_as_under_installed_ones()
     }
 }
 
+/// That the first is no mistake of the program is found where the build reports it: `bun check` does not say it.
 #[test]
 fn a_script_of_the_program_that_takes_a_name_of_the_brought_declarations_is_reported() {
     let folder = format!("{}/bun", BringsBunTypes::TYPE_ROOT);

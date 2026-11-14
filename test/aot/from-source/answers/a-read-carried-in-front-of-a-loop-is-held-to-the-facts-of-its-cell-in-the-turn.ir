@@ -11,7 +11,7 @@
 # "f1 at 3:199: what memory holds where the compiler remembers another value ..". In front of a loop the check is not built (as its three neighbours in checkProofsOfWhatIsStoredBy() are not): in the turn the read is read again
 # where it stands, with the check in front of it.
 # That alone would have taken a net away: a compiler that forgot to branch on the copy's two tests answered NaN, and of four programs two were stopped by nothing but the check that stood early. So the copy's word about the cell
-# is checked where it is given, behind its own tests (goOnWhereObjectHasOwnKeys()).
+# is checked where it is given, behind its own tests (continueIfOwnKeys()).
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: 240
 # RIGHT-NEXT: exited with 0
@@ -22,4 +22,4 @@
 # WALK: [[nothing]]: boolean @Boolean = HasNoExtraProperties {{*}}[hasNoFieldOutsideSlot]
 # WALK: Branch [[nothing]] ->
 # WALK: [[again]]: boolean @Boolean = HasNoFieldOutsideSlot
-# WALK-NEXT: CheckProof [[again]] checkedType=true {{*}}source=WhatIsRemembered
+# WALK-NEXT: CheckProof [[again]] checkedType=true {{*}}source=RememberedFact

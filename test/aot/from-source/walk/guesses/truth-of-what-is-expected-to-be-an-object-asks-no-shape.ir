@@ -1,5 +1,5 @@
 # `parent ? 1 : 2`, of what is written `Node | undefined`: nobody reads what a test of the shape would prove: the question itself says that an object or nothing is expected, and the code asks for undefined and for an object in front of the closed operation
-# `if (parent) return parent.kind`: the read leans on the proof: the test of the shape stays, and its failing side asks for undefined and null in front of the closed operation
+# `if (parent) return parent.kind`: the truth narrows the parameter, and the read tests the shape itself
 # f1 = truth, f2 = kindOf
 # -- source: truth-of-what-is-expected-to-be-an-object-asks-no-shape.ts
 # declare function sink(...values: unknown[]): void;
@@ -17,7 +17,7 @@
 # NOSHAPE-NOT: = ShapeTest
 # RUN(PROOF): walk f2 mechanisms=all-ParameterGuards
 # PROOF-LABEL: code f2:Body
-# PROOF: = ShapeTest v0
-# PROOF: testedType=undefined|null
+# PROOF: = Narrowed v0
+# PROOF: = GetSlot {{*}}key="kind" receivers=[L0] level=Expected
 # RUN(WITHHELD): walk f1 f2 mechanisms=all-ParameterGuards-Guesses
 # WITHHELD-NOT: testedType=undefined|null

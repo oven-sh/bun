@@ -29,7 +29,7 @@ const callOwnFunctionsWithoutParameters = $newCppFunction(
   3,
 );
 
-const defineOwnPropertiesLeftOut = $newCppFunction("BunCompiledModules.cpp", "jsFunctionDefineOwnPropertiesLeftOut", 3);
+const defineOwnPropertiesLeftOut = $newCppFunction("BunCompiledModules.cpp", "jsFunctionDefineMissingProperties", 3);
 
 const sealClass = constructor => {
   const prototype = constructor.prototype;

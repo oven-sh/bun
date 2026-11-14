@@ -1,4 +1,4 @@
-use bun_sema::bind::{Binding, CodeUnit, Decl, FnOwner};
+use bun_sema::bind::{Binding, Bound, CodeUnit, Decl, FnOwner};
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::file_analysis::has_live_await;
 use bun_sema::hir::{self, ExprKind, Flags, FnBody, FnId, FnKind, StmtKind};
@@ -34,6 +34,15 @@ impl FileLowering<'_, '_, '_, '_> {
     fn find_enclosing_key(&self, key: FunctionKey) -> Option<FunctionKey> {
         let bound = self.bound;
         let mut scope = match key {
+            FunctionKey::Source(source)
+                if self
+                    .inputs
+                    .modules
+                    .inner_module(self.file, source.function)
+                    .is_some() =>
+            {
+                return None;
+            }
             FunctionKey::Source(source) => {
                 let top = bound.fns[source.function.idx()].scope;
                 bound.scopes[top.idx()].parent
@@ -58,7 +67,7 @@ impl FileLowering<'_, '_, '_, '_> {
                     FunctionKey::StaticInitializer(class) => class.class,
                     enclosing @ (FunctionKey::ModuleBody(_)
                     | FunctionKey::WrappedModuleBody(_)
-                    | FunctionKey::FaceBody(_)
+                    | FunctionKey::FacadeBody(_)
                     | FunctionKey::CheckBody(_)
                     | FunctionKey::Instantiation(_)
                     | FunctionKey::Source(_)
@@ -68,7 +77,10 @@ impl FileLowering<'_, '_, '_, '_> {
                     | FunctionKey::InstanceInitializer(_)
                     | FunctionKey::AccessorGetter { .. }
                     | FunctionKey::AccessorSetter { .. }
-                    | FunctionKey::PrivateNameTest { .. }) => return Some(enclosing),
+                    | FunctionKey::PrivateNameTest { .. }
+                    | FunctionKey::ModuleRequest { .. }
+                    | FunctionKey::CopiedGetter { .. }
+                    | FunctionKey::PrototypeMaker(_)) => return Some(enclosing),
                 },
                 CodeUnit::FieldInitializer(member) => bound.member_class(member)?,
             };
@@ -110,12 +122,14 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     pub(in crate::lower) fn find_end_of_function(&self, function: FnId) -> Option<u32> {
-        let hir = self.hir;
-        match self.bound.fns[function.idx()].owner {
-            FnOwner::Expr(expression) => Some(hir[expression].end),
-            FnOwner::Stmt(statement) => Some(hir[statement].loc.end),
-            FnOwner::Member(member) => Some(hir[member].loc.end),
-            FnOwner::Type(_) | FnOwner::None => None,
+        end_of_function(self.hir, self.bound, function)
+    }
+
+    /// Where the file has the text of a function or of a class that may be in a copy.
+    pub(in crate::lower) fn written_range(&self, start: u32, end: u32) -> SourceRange {
+        SourceRange {
+            start: self.hir.written_position(start),
+            end: self.hir.written_position(end),
         }
     }
 
@@ -123,10 +137,20 @@ impl FileLowering<'_, '_, '_, '_> {
         let Some(end) = self.find_end_of_function(function) else {
             return SourceRange::default();
         };
-        SourceRange {
-            start: self.hir[function].text_start,
-            end,
-        }
+        self.written_range(self.hir[function].text_start, end)
+    }
+}
+
+pub(in crate::lower) fn end_of_function(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    function: FnId,
+) -> Option<u32> {
+    match bound.fns[function.idx()].owner {
+        FnOwner::Expr(expression) => Some(hir[expression].end),
+        FnOwner::Stmt(statement) => Some(hir[statement].loc.end),
+        FnOwner::Member(member) => Some(hir[member].loc.end),
+        FnOwner::Type(_) | FnOwner::None => None,
     }
 }
 
@@ -137,7 +161,10 @@ pub(crate) fn create_header(
     position: u32,
 ) -> Function {
     let mut syntax = FunctionSyntax::default();
-    let (enclosing_runtime_function, inherited_flags) = match file.find_enclosing_key(key) {
+    // A wrapper that another part lowers hands nothing down.
+    let enclosing = file.find_enclosing_key(key);
+    let enclosing = enclosing.filter(|&enclosing| !file.is_key_of_other_part(enclosing));
+    let (enclosing_runtime_function, inherited_flags) = match enclosing {
         Some(enclosing) => {
             let enclosing = file.reference_function(enclosing);
             let header = file.function_header(enclosing);
@@ -157,8 +184,8 @@ pub(crate) fn create_header(
     Function {
         name: None,
         module: file.module_id(),
-        position,
-        text: SourceRange::default(),
+        position: file.hir.written_position(position),
+        source_range: SourceRange::default(),
         kind,
         role: file.source.function_role(),
         flags,
@@ -172,7 +199,7 @@ pub(crate) fn create_header(
         body: Body::default(),
         function_types: Vec::new(),
         builtin_members: Vec::new(),
-        originals_asked_for: Vec::new(),
+        requested_originals: Vec::new(),
     }
 }
 
@@ -184,6 +211,40 @@ pub(crate) fn declare_source_function(
     declare(file, function, |file| {
         create_source_header(file, function, name)
     })
+}
+
+/// A function that shows itself as `function` and captures nothing.
+pub(in crate::lower) fn create_header_of_copy(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    key: FunctionKey,
+    function: FnId,
+    name: StringId,
+) -> Function {
+    let mut header = create_source_header(file, function, Some(name));
+    header.captures = file.capture_positions(key);
+    header
+}
+
+pub(in crate::lower) fn create_header_of_missing_function(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    function: FnId,
+    name: Option<StringId>,
+) -> Function {
+    let flags = match file.is_checked() {
+        true => FunctionFlags::IS_CHECKED,
+        false => FunctionFlags::default(),
+    };
+    Function {
+        name,
+        module: file.module_id(),
+        position: file.hir.written_position(file.hir[function].start),
+        kind: FunctionKind::Plain,
+        role: file.source.function_role(),
+        flags,
+        this_type: DeclaredType::untyped(),
+        results: vec![DeclaredType::untyped()],
+        ..Function::default()
+    }
 }
 
 pub(crate) fn declare_source_function_with(
@@ -208,7 +269,7 @@ fn declare(
         function,
     };
     let id = file.declare_function(FunctionKey::Source(source), create);
-    if !file.inputs.library_functions.is_left_out(source) {
+    if !file.inputs.library_functions.is_left_out(source) && !file.is_of_other_part(function) {
         file.constructor_function_layout(source);
     }
     id
@@ -226,7 +287,7 @@ fn create_source_header(
         function,
     };
     let key = FunctionKey::Source(source);
-    let declared = file.function_positions(function);
+    let is_of_other_part = file.is_of_other_part(function);
     let kind = file.compute_function_kind(function);
     let position = match kind {
         FunctionKind::BaseConstructor | FunctionKind::DerivedConstructor => {
@@ -265,14 +326,18 @@ fn create_source_header(
     if header.flags.contains(FunctionFlags::IS_ASYNC)
         && has_live_await(hir, &file.decisions().as_folded_by_bun_run(), function)
     {
-        header.syntax |= FunctionSyntax::HAS_WRITTEN_AWAIT;
+        header.syntax |= FunctionSyntax::HAS_LIVE_AWAIT;
     }
-    header.text = file.compute_text_range(function);
-    let asked = file.find_originals_asked_for(function, header.text);
+    let wrapped = file.inputs.modules.wrapped();
+    if wrapped.runs_once_per_closure(source.file, function) {
+        header.syntax |= FunctionSyntax::RUNS_ONCE_PER_CLOSURE;
+    }
+    header.source_range = file.compute_text_range(function);
+    let asked = file.find_originals_asked_for(function, header.source_range);
     if asked.may_be_own {
-        header.syntax |= FunctionSyntax::MAY_ASK_FOR_OWN_ORIGINAL;
+        header.syntax |= FunctionSyntax::MAY_IMPORT_OWN_ORIGINAL;
     }
-    header.originals_asked_for = asked.names;
+    header.requested_originals = asked.names;
     header.length = func
         .params
         .iter()
@@ -280,6 +345,19 @@ fn create_source_header(
             hir[parameter].default.is_none() && !hir[parameter].flags.contains(Flags::REST)
         })
         .count() as u32;
+    if !is_of_other_part {
+        add_positions(file, function, &mut header);
+    }
+    if hir.runtime_function_kind(function) == FnKind::Constructor {
+        let class = file.bound.function_class(function);
+        let class = class.expect("a constructor has a class");
+        file.finish_constructor_header(class, name, &mut header);
+    }
+    header
+}
+
+fn add_positions(file: &mut FileLowering<'_, '_, '_, '_>, function: FnId, header: &mut Function) {
+    let declared = file.function_positions(function);
     let has_strict_this = header.flags.contains(FunctionFlags::HAS_THIS)
         && !header.flags.contains(FunctionFlags::IS_SLOPPY);
     if has_strict_this {
@@ -291,18 +369,29 @@ fn create_source_header(
     {
         *rest = file.compute_rest_position(*rest);
     }
+    let key = FunctionKey::Source(FunctionRef {
+        file: file.file,
+        function,
+    });
     let undeclared = file.scopes.undeclared_parameters(key) as usize;
     header
         .parameters
         .extend(std::iter::repeat_n(DeclaredType::untyped(), undeclared));
     header.results.clear();
     header.results.push(declared.result);
-    if hir.runtime_function_kind(function) == FnKind::Constructor {
-        let class = file.bound.function_class(function);
-        let class = class.expect("a constructor has a class");
-        file.finish_constructor_header(class, name, &mut header);
+}
+
+/// The header of a function that another part lowers has no positions until a call asks for them.
+pub(crate) fn complete_header(file: &mut FileLowering<'_, '_, '_, '_>, id: FunctionId) {
+    let FunctionKey::Source(source) = file.function_key(id) else {
+        return;
+    };
+    let function = source.function;
+    if file.is_of_other_part(function) && file.needs_positions_of_other_part(function) {
+        let mut header = file.function_header(id).clone();
+        add_positions(file, function, &mut header);
+        *file.function_header_mut(id) = header;
     }
-    header
 }
 
 fn find_frames_mark(file: &FileLowering<'_, '_, '_, '_>, function: FnId) -> Option<FramesMark> {

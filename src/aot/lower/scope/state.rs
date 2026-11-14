@@ -111,6 +111,9 @@ pub(crate) struct ScopeState {
     pub(super) environments_put_off: Vec<EnvironmentPutOff>,
     pub(in crate::lower) locals: Locals,
     pub(in crate::lower) entry_this: Option<ValueId>,
+    /// Values of `this` that hold an object: a parent constructor returned them, or they were checked.
+    pub(in crate::lower) initialized_this: SmallVec<[ValueId; 4]>,
+    pub(in crate::lower) allocated_instance: Option<ValueId>,
     pub(in crate::lower) unpacked_captures: Vec<ValueId>,
     pub(super) created_functions: FxHashMap<SymbolId, ValueId>,
 }

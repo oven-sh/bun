@@ -1,0 +1,82 @@
+# f1 = Reader, f2 = byteAt
+# -- source: typed-array-comes-beside-record.js
+# function Reader(buffer) { this.buffer = buffer; }
+# function byteAt(row, at) { return row[at] + row[at + 1]; }
+# const reader = new Reader(new Uint8Array([1, 2, 3]));
+# reader[0] = 5; reader[1] = 6;
+# print(byteAt(new Uint8Array([1, 2, 3]), 1), byteAt(reader, 0));
+# -- end of source
+# The front end writes a list for `row`. Bytes and a record come, no list: the bytes are expected.
+# RUN: walk f2 mechanisms=all
+# CHECK: = ElemGet {{*}} expectedElements=Uint8Array
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 5 11
+
+module m0 path="typed-array-comes-beside-record.js" displayPath="typed-array-comes-beside-record.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+layout L0 kind=Instance name="Reader" module=m0 constructor=f1 fields=[{key="buffer" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] place=0 ownFieldCount=1
+data d0 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
+data d1 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = Builtin builtin=Uint8Array @139
+    v5 = Data data=d0 @150
+    v6 = Construct v4, -, v5 calleeName="Uint8Array" @139 @135
+    v7 = Construct v1, -, v6 calleeName="Reader" @128 @124
+    v8 = Integer @163
+    v9 = Integer integer=5 @175
+    ElemSet v7, v8, v9 @163
+    v11 = Integer integer=1 @178
+    v12 = Integer integer=6 @190
+    ElemSet v7, v11, v12 @178
+    v14 = Builtin builtin=GlobalThis @193
+    v15 = PropGet v14 key="print" [isFreeName] @193
+    v16 = Builtin builtin=Uint8Array @210
+    v17 = Data data=d1 @221
+    v18 = Construct v16, -, v17 calleeName="Uint8Array" @210 @206
+    v19 = Integer integer=1 @233
+    v20 = Call v3, -, v18, v19 calleeName="byteAt" @199
+    v21 = Integer @252
+    v22 = Call v3, -, v7, v21 calleeName="byteAt" @237
+    v23 = Call v15, -, v20, v22 calleeName="print" @193
+    v24 = Undefined @193
+    Return v24 @193
+}
+function f1 name="Reader" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="buffer" @26
+    v3 = Undefined @26
+    Return v3 @26
+}
+function f2 name="byteAt" module=m0 position=50 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array, v1: i32):
+    v2 = ElemGet v0, v1 @84
+    v3 = Integer integer=1 @103
+    v4 = Add v1, v3 @98
+    v5 = ElemGet v0, v4 @94
+    v6 = Add v2, v5 @84
+    Return v6 @84
+}
+function f3 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private

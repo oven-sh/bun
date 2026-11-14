@@ -1,5 +1,5 @@
 // A helper copied in line tells three classes apart in a loop. Numbers, a text, null, undefined, a symbol, a big integer and a boolean stand among the instances: none of them is an instance of anything.
-// STATISTIC: MissesOfInstanceOfThatStayInTheTurn >= 1
+// STATISTIC: InstanceOfMissesWalkedInline >= 1
 "use strict";
 class Circle { constructor(d) { this.r = d.r; } }
 class Rect { constructor(d) { this.w = d.w; this.h = d.h; } }

@@ -1,5 +1,5 @@
 // Constructor functions of the library are constructed by value 900 times: the run time makes `this`, and goes its slow road only while it learns a layout and where the allocator wants a new block
-// COUNT: counter:ThisMadeBySlowOperation <= 200
+// COUNT: counter:CreateThisSlowPaths <= 200
 import { EventEmitter } from "node:events";
 import { Readable, Writable } from "node:stream";
 const table: Record<string, any> = {};

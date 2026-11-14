@@ -1,4 +1,4 @@
-// STATISTIC: MethodCallsThroughTable >= 1
+// STATISTIC: MethodCallsThroughTable = 0
 declare const seen: any;
 function note(value: any) {}
 

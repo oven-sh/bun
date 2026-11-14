@@ -1,0 +1,16 @@
+# f1 = sum
+# -- source: main.ts
+# function sum(list: number[], start: number, size: number, turns: number): number { let total = 0; for (let k = 0; k < turns; k++) { total += list[(start + k * 0.5) % size] ?? 100; total += list[(start - k) % size] ?? 1000; } return total; }
+# const numbers = JSON.parse("[3,2.5,0,-1,9007199254740994]") as number[];
+# const list = JSON.parse("[1,2,4]") as number[];
+# print(sum(list, 0.5, numbers[0]!, 4), sum(list, 5, numbers[1]!, 4), sum(list, 5, numbers[2]!, 4), sum(list, 5, numbers[3]!, 4), sum(list, 2, numbers[4]!, 4));
+# -- end of source
+# Whether the divisor is a whole number from 1 up is found once, in front of the loop.
+# RUN: walk f1 mechanisms=all
+# CHECK: = WholeDivisor
+# CHECK-NOT: = WholeDivisor
+# CHECK: isLoopHead=true
+# CHECK-NOT: = WholeDivisor
+# CHECK-COUNT-2: = RemainderByWholeDivisor
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 4206 2208 4400 206 1311

@@ -287,8 +287,20 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let (taken, not_taken) = (self.create_block(), self.create_block());
         self.builder
             .branch(is_pristine, Edge::to(taken), Edge::to(not_taken));
-        self.builder.seal(taken);
         self.builder.seal(not_taken);
+        let mut otherwise = not_taken;
+        if self
+            .file
+            .is_fixed_method(BuiltinId::StringPrototypeSymbolIterator)
+        {
+            self.builder.switch_to(not_taken);
+            let is_text = self.builder.type_test(written[0], TypeTable::STRING);
+            otherwise = self.create_block();
+            self.builder
+                .branch(is_text, Edge::to(taken), Edge::to(otherwise));
+            self.builder.seal(otherwise);
+        }
+        self.builder.seal(taken);
         let result = self.builder.create_variable(None);
         let join = self.create_block();
         self.builder.switch_to(taken);
@@ -296,7 +308,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let made = self.emit_maker_at(call, maker, None, &written, tail);
         self.builder.write_variable(result, made);
         self.jump(join);
-        self.builder.switch_to(not_taken);
+        self.builder.switch_to(otherwise);
         let this = self.emit_builtin_itself(BuiltinId::Array);
         let made = self.emit_maker_at(call, BuiltinId::ArrayFrom, Some(this), &written, tail);
         self.builder.write_variable(result, made);

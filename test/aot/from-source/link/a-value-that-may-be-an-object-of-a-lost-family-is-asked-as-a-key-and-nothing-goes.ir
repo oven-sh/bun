@@ -17,6 +17,6 @@
 # RUN(MARK): link why-gone L0
 # MARK: why-gone L0: it has not gone
 # RUN(FIELDS): link fields mechanisms=all
-# FIELDS: "start" proven=number writers-known written-at-construction-alone
+# FIELDS: "start" proven=int[0, {{*}}] writers-known written-at-construction-alone
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: false,number;true,number;true,number;false,number;false,number;false,number;

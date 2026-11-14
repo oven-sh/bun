@@ -5,22 +5,24 @@
 # var filled = T[key](halves(16, 0.5), halves(16, globalThis.fails ? 0.5 : 0.25));
 # print(5 in filled, Object.keys(filled).length, filled.join());
 # -- end of source
-# In a list of doubles a NaN is the mark of a hole, so a number goes in raw only behind `x === x`; who fails begins the turn again. The emitter holds each raw store to that, but it asked the word
-# testing=CheckProofsAtRunTime itself, under which no turn is laid out: inside turns laid out the check was text that never ran. It answers to testing=EmittersAloneTestEveryPosition too.
-# The lie, testing=NumbersStoredIntoListsOfDoublesAreTakenToBeNoNaN, leaves the test out: as built the sixth element, nothing by nothing, would be gone in silence: fifteen keys, and nothing between two commas.
+# In an array of doubles a NaN marks a hole, so a number is stored raw only after it has passed `x === x`. A number that fails the test restarts the iteration.
+# The emitter checks each raw store for that, but it tested for the switch testing=CheckProofsAtRunTime itself, with which no loop is unrolled.
+# So inside unrolled loops the check was code that never ran. The check responds to testing=CheckBoundsInEmittersOnly too.
+# Fault injection, testing=AssumeNoNaNStores: the test is omitted. In a default build the sixth element, which is 0 / 0, would silently disappear: fifteen keys, and nothing between two commas.
 # RUN(RIGHT): run-in-shell mechanisms=all globalThis.fails = true;
 # RIGHT: true 16 1,1,1,1,1,NaN,1,1,1,1,1,1,1,1,1,1
 # RIGHT-NEXT: exited with 0
-# RUN(HELD): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition globalThis.fails = true;
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly globalThis.fails = true;
 # HELD: true 16 1,1,1,1,1,NaN,1,1,1,1,1,1,1,1,1,1
 # HELD-NEXT: exited with 0
-# RUN(PASSES): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition,NumbersStoredIntoListsOfDoublesAreTakenToBeNoNaN
+# RUN(PASSES): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly,AssumeNoNaNStores
 # PASSES: true 16 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
 # PASSES-NEXT: exited with 0
-# RUN(SILENT): run-in-shell mechanisms=all testing=NumbersStoredIntoListsOfDoublesAreTakenToBeNoNaN globalThis.fails = true;
+# RUN(SILENT): run-in-shell mechanisms=all testing=AssumeNoNaNStores globalThis.fails = true;
 # SILENT: 15 1,1,1,1,1,,1,1
-# RUN(LIE): run-in-shell mechanisms=all testing=EmittersAloneTestEveryPosition,NumbersStoredIntoListsOfDoublesAreTakenToBeNoNaN globalThis.fails = true;
-# LIE: AOT: f{{*}} at {{*}}: what an operation gives is not of the type that the compiler has proven of it. It is: nothing.
+# RUN(LIE): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly,AssumeNoNaNStores globalThis.fails = true;
+# LIE: bun: internal AOT error: type check failed
+# LIE-NEXT: found an unexpected value in the result of an operation
 # LIE: crashed with
-# RUN(COUNT): compile LoopsWhoseTurnsAreLaidOut mechanisms=all testing=EmittersAloneTestEveryPosition,NumbersStoredIntoListsOfDoublesAreTakenToBeNoNaN
-# COUNT: statistic LoopsWhoseTurnsAreLaidOut 27
+# RUN(COUNT): compile UnrolledLoopsEmitted mechanisms=all testing=CheckBoundsInEmittersOnly,AssumeNoNaNStores
+# COUNT: statistic UnrolledLoopsEmitted 28

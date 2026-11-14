@@ -4,12 +4,14 @@ mod tests;
 use core::cmp::Reverse;
 
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Binding, Bound, CodeUnit, CommonJsVariable, Decl, Parent, SymbolId};
+use bun_sema::bind::{
+    Binding, BindingInitializer, Bound, CodeUnit, CommonJsVariable, Decl, Parent, SymbolId,
+};
 use bun_sema::check::aot::ObjectOrigin;
 use bun_sema::fold::{Constant, Decisions, FoldedValue};
 use bun_sema::hir::{
-    self, BinOp, Call, ExprId, ExprKind, Flags, FnId, FnKind, MemberKey, PatKind, StmtId, StmtKind,
-    TextRange, is_moved_to_file_start,
+    self, BinOp, Call, ClassId, ExprId, ExprKind, Flags, FnId, FnKind, MemberKey, MemberKind,
+    PatKind, PropKey, PropKind, StmtId, StmtKind, TextRange, VarKind, is_moved_to_file_start,
 };
 use bun_sema::import_sites::JsxImport;
 use bun_sema::program::{FileId, Files, Sym};
@@ -166,20 +168,21 @@ impl FileLowering<'_, '_, '_, '_> {
     pub(in crate::lower) fn begins_with_exports_object(&self) -> bool {
         let own_module = ModuleRef::File(self.file);
         let modules = self.inputs.modules;
-        if modules.half(own_module)
-            || modules.keeps_module_object(own_module)
+        if modules.keeps_module_object(own_module)
             || self.reads_this_of_body()
             || self.names_exports_without_expression()
         {
             return true;
         }
-        !replaces_exports_first(&ModuleText {
+        let text = ModuleText {
             hir: self.hir,
             bound: self.bound,
             decisions: self.decisions(),
             builtins: self.builtins,
             is_this_exports: !self.compiled.analysis.has_esm_syntax,
-        })
+        };
+        !replaces_exports_first(&text)
+            || (modules.half(own_module) && !replaces_exports_at_once(&text))
     }
 
     fn compute_exports_fields(&mut self, module: FileId) -> OwnFields {
@@ -194,9 +197,10 @@ impl FileLowering<'_, '_, '_, '_> {
             if fields.as_slice().len() as u64 >= limit {
                 break;
             }
+            let class = self.expect_class_exported_as(module, name);
             fields.add(Field {
                 key: Some(key),
-                declared: DeclaredType::untyped(),
+                declared: class.unwrap_or_else(DeclaredType::untyped),
                 form,
                 ..Field::default()
             });
@@ -214,7 +218,15 @@ impl FileLowering<'_, '_, '_, '_> {
         let bound = self.bound;
         let limit = self.inputs.limits.get(LimitId::FieldsInKeyOrder);
         let mut fields = OwnFields::default();
-        for &(name, export) in bound.table(bound.symbol(symbol.id).exports) {
+        let names = bound.table(bound.symbol(symbol.id).exports).to_vec();
+        let names =
+            bound.move_inner_assignments_first(self.hir, names, |&(_, export)| {
+                match bound.symbol(export).decls.iter().next() {
+                    Some(&Decl::Expando(assignment)) => Some(assignment),
+                    _ => None,
+                }
+            });
+        for (name, export) in names {
             let is_private_static = bound.symbol(export).decls.iter().any(|decl| {
                 matches!(decl, Decl::Member(member) if bound.private_name_of_member(*member).is_some())
             });
@@ -438,7 +450,7 @@ fn find_constant_name(text: &ModuleText<'_, '_>, key: ExprId) -> Option<Atom> {
 fn find_defined_form(text: &ModuleText<'_, '_>, descriptor: ExprId) -> Option<FieldForm> {
     let written = WrittenDescriptor::read(text.hir, text.decisions, descriptor)?;
     let mut form = match written.part {
-        DescribedPart::Accessor { .. } => FieldForm::IS_ACCESSOR,
+        DescribedPart::Accessor { .. } => return Some(FieldForm::default()),
         DescribedPart::Data {
             is_writable: Some(true),
             ..
@@ -678,6 +690,94 @@ fn is_evaluated_behind(
     }
     let value = hir.skip_type_assertions(replacement.value);
     position >= replacement.start && matches!(hir[value].kind, ExprKind::Fn(_))
+}
+
+/// Whether no other code runs and nothing can throw until `module.exports` holds its last value.
+fn replaces_exports_at_once(text: &ModuleText<'_, '_>) -> bool {
+    let hir = text.hir;
+    for statement in hir.ids(hir.body) {
+        if let Some(replacement) = find_replacement(text, statement) {
+            return is_inert_value(text, replacement.value, replacement.start);
+        }
+        if !is_inert_statement(text, statement) {
+            return false;
+        }
+    }
+    false
+}
+
+fn is_inert_statement(text: &ModuleText<'_, '_>, statement: StmtId) -> bool {
+    let hir = text.hir;
+    if text.decisions.is_dead_stmt(statement) {
+        return true;
+    }
+    match hir[statement].kind {
+        StmtKind::Empty | StmtKind::Directive { .. } | StmtKind::Fn(_) => true,
+        StmtKind::Class(class) => is_inert_class(hir, class),
+        StmtKind::Var(declarations) => declarations.iter().all(|declaration| {
+            let declaration = &hir[declaration];
+            matches!(
+                declaration.kind,
+                VarKind::Var | VarKind::Let | VarKind::Const
+            ) && matches!(hir[declaration.pat].kind, PatKind::Ident(_))
+                && (declaration.init.is_none()
+                    || is_inert_value(text, declaration.init, hir[declaration.init].pos))
+        }),
+        _ => false,
+    }
+}
+
+fn is_inert_class(hir: &hir::File<'_>, class: ClassId) -> bool {
+    let class = &hir[class];
+    let mut members = class.members.iter().map(|member| &hir[member]);
+    class.extends.is_none()
+        && hir.decorators.is_empty()
+        && members.all(|member| {
+            let is_named = matches!(member.key, PropKey::Name(_));
+            let is_static = member.flags.contains(Flags::STATIC);
+            match member.kind {
+                MemberKind::Method | MemberKind::Getter | MemberKind::Setter => is_named,
+                MemberKind::Constructor => true,
+                MemberKind::Property => is_named && !is_static,
+                _ => false,
+            }
+        })
+}
+
+/// A value whose evaluation at a place of the file's own straight line runs nothing and cannot fail.
+fn is_inert_value(text: &ModuleText<'_, '_>, value: ExprId, place: u32) -> bool {
+    let (hir, bound) = (text.hir, text.bound);
+    let value = hir.skip_type_assertions(value);
+    match hir[value].kind {
+        ExprKind::Fn(_)
+        | ExprKind::Null
+        | ExprKind::True
+        | ExprKind::False
+        | ExprKind::Number(_)
+        | ExprKind::String(_) => true,
+        ExprKind::Class(class) => is_inert_class(hir, class),
+        ExprKind::Ident(_) => match bound.binding(value) {
+            Binding::Symbol(symbol) => match bound.binding_initializer(hir, symbol) {
+                BindingInitializer::Function(_) => true,
+                BindingInitializer::Class(class) => hir[class].start < place,
+                BindingInitializer::Expression(initializer) => hir[initializer].end <= place,
+                _ => false,
+            },
+            Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => false,
+        },
+        ExprKind::Object(properties) => properties.iter().all(|property| {
+            let property = &hir[property];
+            let is_named = matches!(property.key, PropKey::Name(_));
+            match property.kind {
+                PropKind::Init | PropKind::Shorthand => {
+                    is_named && is_inert_value(text, property.value, place)
+                }
+                PropKind::Method | PropKind::Getter | PropKind::Setter => is_named,
+                PropKind::Spread => false,
+            }
+        }),
+        _ => false,
+    }
 }
 
 fn replaces_exports_first(text: &ModuleText<'_, '_>) -> bool {

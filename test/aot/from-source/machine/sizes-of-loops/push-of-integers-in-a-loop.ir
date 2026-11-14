@@ -9,8 +9,13 @@
 # (globalThis as any).answer = count(input | 0);
 # -- end of source
 # The compiler before this one: 5 instructions, 0 of them patches ; 35 instructions, 0 of them patches ; 12 instructions, 1 of them patches.
-# When the bound was taken: loop: operations 23, patches 1, moves 0, unlikely 0.
-# RUN(X64): loops most:23 f1 mechanisms=all-Inlining
+# Eight turns stand in each of the first two loops: 45 operations. The storage, the length and the kind of the list come round in registers in the last: its turns load none of them. Each arm steps the length itself.
+# RUN(X64): loops most:43,9,44,9,14,22 f1 mechanisms=all-Inlining
 # REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
 # X64-LABEL: unit f1:Body
-# X64-NEXT: loop: at most 23
+# X64-NEXT: loop: at most 43
+# X64-NEXT: loop: at most 9
+# X64-NEXT: loop: at most 44
+# X64-NEXT: loop: at most 9
+# X64-NEXT: loop: at most 14
+# X64-NEXT: loop: at most 22

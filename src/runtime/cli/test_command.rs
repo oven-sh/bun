@@ -396,7 +396,7 @@ fn add_files_behind_pattern(
 
 // `roots` and all that they reach, packages too, `roots` first: the paths, what each imports, and its bytes of source.
 fn find_all_that_is_reached_from(
-    vm: &mut VirtualMachine,
+    vm: &VirtualMachine,
     roots: Vec<Box<[u8]>>,
 ) -> (Vec<Box<[u8]>>, Vec<Vec<u32>>, Vec<u64>) {
     const EXTENSIONS: [&[u8]; 8] = [
@@ -406,7 +406,7 @@ fn find_all_that_is_reached_from(
     // SAFETY: the resolver and `unread_log` outlive the guard.
     let _log_scope = unsafe {
         bun_resolver::Resolver::scoped_log(
-            &raw mut vm.transpiler.resolver,
+            &raw mut (*vm.transpiler.as_ptr()).resolver,
             core::ptr::NonNull::from(&mut unread_log),
         )
     };
@@ -459,7 +459,10 @@ fn find_all_that_is_reached_from(
                     continue;
                 }
                 let kind = bun_ast::ImportKind::Stmt;
-                let result = vm.transpiler.resolver.resolve(&folder, name, kind).ok();
+                let result = vm
+                    .transpiler
+                    .with_mut(|t| t.resolver.resolve(&folder, name, kind))
+                    .ok();
                 let path = result.as_ref().map(|it| it.path_pair.primary.text());
                 let is_code = |path: &&[u8]| {
                     bun_path::is_absolute(path)
@@ -489,7 +492,7 @@ const MICROSECONDS_OF_TEST_FILES_FOR_THOUSAND_BYTES_TO_BUILD: u64 = 8300;
 
 // `bun test --aot --shard`. Keeps the files of the shard, compacted to the front of `test_files`, and returns how many they are.
 fn select_shard_by_reach(
-    vm: &mut VirtualMachine,
+    vm: &VirtualMachine,
     ctx: &crate::cli::command::ContextData,
     test_files: &mut [Interned],
     shard: bun_options_types::context::Shard,
@@ -589,19 +592,22 @@ fn select_shard_by_reach(
 }
 
 // A preload is named as it was written: "./test/preload.ts", "dotenv/config". Whoever looks for what it imports needs its file.
-fn find_files_of_preloads(vm: &mut VirtualMachine, preloads: &[Box<[u8]>]) -> Vec<Box<[u8]>> {
+fn find_files_of_preloads(vm: &VirtualMachine, preloads: &[Box<[u8]>]) -> Vec<Box<[u8]>> {
     let mut unread_log = bun_ast::Log::init();
     // SAFETY: the resolver and `unread_log` outlive the guard.
     let _log_scope = unsafe {
         bun_resolver::Resolver::scoped_log(
-            &raw mut vm.transpiler.resolver,
+            &raw mut (*vm.transpiler.as_ptr()).resolver,
             core::ptr::NonNull::from(&mut unread_log),
         )
     };
     let top = FileSystem::get().top_level_dir();
-    let mut file_of = |name: &[u8]| -> Box<[u8]> {
+    let file_of = |name: &[u8]| -> Box<[u8]> {
         let kind = bun_ast::ImportKind::Stmt;
-        match vm.transpiler.resolver.resolve(top, name, kind) {
+        match vm
+            .transpiler
+            .with_mut(|t| t.resolver.resolve(top, name, kind))
+        {
             Ok(found) if bun_path::is_absolute(found.path_pair.primary.text()) => {
                 Box::from(found.path_pair.primary.text())
             }
@@ -2273,7 +2279,7 @@ impl CommandLineReporter {
                 this.summary().fail += 1;
 
                 if this.summary().fail == this.jest.bail {
-                    this.bail_out(VirtualMachine::get().as_mut());
+                    this.bail_out(VirtualMachine::get());
                 }
             }
         }
@@ -2301,7 +2307,7 @@ impl CommandLineReporter {
 
     /// Prints that `--bail` hit its failure count, then exits with code 1. Tears down the VM the same way `exec` does.
     /// A `--parallel` worker never gets here: its `jest.bail` is 0, and the coordinator counts the failures.
-    pub(crate) fn bail_out(&mut self, vm: &mut VirtualMachine) -> ! {
+    pub(crate) fn bail_out(&mut self, vm: &VirtualMachine) -> ! {
         self.print_summary();
         pretty_error!(
             "\nBailed out after {} failure{}<r>\n",
@@ -2312,10 +2318,12 @@ impl CommandLineReporter {
         self.write_junit_report_if_needed();
         self.write_timings_if_needed();
 
-        vm.exit_handler.exit_code = 1;
-        vm.exit_handler.skip_exit_listeners = skip_exit_listeners(self);
-        vm.exit_handler.requested = true;
-        vm.run_with_api_lock_mut(VirtualMachine::on_exit);
+        vm.exit_handler.exit_code.set(1);
+        vm.exit_handler
+            .skip_exit_listeners
+            .set(skip_exit_listeners(self));
+        vm.exit_handler.requested.set(true);
+        vm.run_with_api_lock(|| vm.on_exit());
         // Exit listeners need the runner, so release the `bun:test` GC roots and clear `RUNNER`
         // after they run. Finalizers in the teardown GC must not see a half-torn-down `TestRunner`.
         self.jest.bun_test_root.deinit_for_exit();
@@ -2324,7 +2332,7 @@ impl CommandLineReporter {
         unsafe {
             jest::Jest::RUNNER.write(None);
         }
-        vm.run_with_api_lock_mut(|vm| vm.global_exit())
+        vm.run_with_api_lock(|| vm.global_exit())
     }
 
     /// Like the JUnit report, called before every exit path (including bail) so measured durations aren't lost.
@@ -2351,7 +2359,7 @@ impl CommandLineReporter {
     }
 
     /// `bun test --aot --coverage`: the files that ran as compiled code join those that JSC has counted.
-    pub(crate) fn add_compiled_files_to_coverage(vm: &mut VirtualMachine) {
+    pub(crate) fn add_compiled_files_to_coverage(vm: &VirtualMachine) {
         let mut files: Vec<(Vec<u8>, Vec<u64>)> = Vec::new();
         bun_jsc::compiled_program::for_each_counted_file(
             vm.global(),
@@ -2388,7 +2396,7 @@ impl CommandLineReporter {
     /// This process's coverage, one `Report` per instrumented file, sorted by
     /// path, with `coveragePathIgnorePatterns` applied.
     pub(crate) fn for_each_coverage_report(
-        vm: &mut VirtualMachine,
+        vm: &VirtualMachine,
         opts: &CodeCoverageOptions,
         mut each: impl FnMut(CodeCoverageReport<'_>),
     ) {
@@ -2424,7 +2432,7 @@ impl CommandLineReporter {
     /// Returns false if `lcov.info` could not be written.
     pub(crate) fn generate_code_coverage(
         &mut self,
-        vm: &mut VirtualMachine,
+        vm: &VirtualMachine,
         opts: &mut CodeCoverageOptions,
     ) -> bool {
         let _trace = bun::perf::trace("TestCommand.printCodeCoverage");
@@ -2643,9 +2651,7 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Stri
         return false;
     }
 
-    // SAFETY: `VirtualMachine::get()` returns the process-lifetime VM pointer; only
-    // called from the JS thread once a VM exists.
-    let options = &VirtualMachine::get().as_mut().transpiler.options;
+    let options = &VirtualMachine::get().transpiler.get().options;
 
     // Skip the wrapper modules Bun generates for these suffixes. Other queries (a plugin's `./a.vue?x`) are user code.
     if let Some(query) = strings::index_of_char_usize(slice, b'?') {
@@ -2760,6 +2766,10 @@ impl TestCommand {
         };
 
         jsc::virtual_machine::isBunTest.store(true, core::sync::atomic::Ordering::Relaxed);
+        run_compiled::TEST_FILES_RUN_AGAIN.store(
+            ctx.test_options.repeat_count > 1,
+            core::sync::atomic::Ordering::Relaxed,
+        );
 
         // Keep an owned `Box` local — `exec()` never returns before process
         // exit, so the heap allocation outlives all raw-pointer observers
@@ -2847,37 +2857,32 @@ impl TestCommand {
         }
 
         bun_ast::initialize_store();
-        // SAFETY: `init` returns the heap-allocated process-lifetime VM; deref once.
-        let vm: &mut VirtualMachine = unsafe {
-            &mut *VirtualMachine::init(jsc::virtual_machine::InitOptions {
-                // Clone (not take): ParallelRunner::run_as_coordinator → build_worker_argv
-                // reads ctx.args.{conditions,define,loaders,tsconfig_override,drop,
-                // main_fields,extension_order,feature_flags,preserve_symlinks,
-                // allow_addons,allow_ffi_cc,jsx} after this point to forward them
-                // to workers.
-                transform_options: ctx.args.clone(),
-                debugger: core::mem::take(&mut ctx.runtime_options.debugger),
-                log: core::ptr::NonNull::new(ctx.log),
-                env_loader: core::ptr::NonNull::new(&raw mut *env_loader),
-                smol: ctx.runtime_options.smol,
-                is_main_thread: true,
-                graph: run_compiled::graph(),
-                ..Default::default()
-            })?
-        };
-        vm.argv = core::mem::take(&mut ctx.passthrough);
+        let vm = VirtualMachine::init(jsc::virtual_machine::InitOptions {
+            // Clone (not take): build_worker_argv reads ctx.args to forward them to workers.
+            transform_options: ctx.args.clone(),
+            argv: core::mem::take(&mut ctx.passthrough).leak(),
+            debugger: core::mem::take(&mut ctx.runtime_options.debugger),
+            log: core::ptr::NonNull::new(ctx.log),
+            env_loader: core::ptr::NonNull::new(&raw mut *env_loader),
+            smol: ctx.runtime_options.smol,
+            is_main_thread: true,
+            graph: run_compiled::graph(),
+            ..Default::default()
+        })?;
         // Clone (not take): build_worker_argv reads ctx.preloads to forward --preload.
-        vm.preload.clone_from(&ctx.preloads);
-        vm.transpiler.options.rewrite_jest_for_tests = true;
-        vm.transpiler.options.vitest_globals =
-            ctx.test_options.globals == Some(TestGlobals::Vitest);
-        if let Some(scope) = &ctx.test_options.react_compiler {
-            vm.transpiler.options.react_compiler = bun_ast::runtime::ReactCompilerMode::Client;
-            vm.transpiler.options.react_compiler_filter = Some(react_compiler_filter(
-                scope,
-                FileSystem::instance().top_level_dir(),
-            ));
-        }
+        vm.preload.set(ctx.preloads.clone());
+        vm.transpiler.with_mut(|t| {
+            t.options.rewrite_jest_for_tests = true;
+            t.options.vitest_globals = ctx.test_options.globals == Some(TestGlobals::Vitest);
+            if let Some(scope) = &ctx.test_options.react_compiler {
+                t.options.react_compiler = bun_ast::runtime::ReactCompilerMode::Client;
+                t.options.react_compiler_filter = Some(react_compiler_filter(
+                    scope,
+                    FileSystem::instance().top_level_dir(),
+                ));
+            }
+            t.options.env.behavior = bun_bundler::options::EnvBehavior::LoadAllWithoutInlining;
+        });
         bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
             ctx.runtime_options.experimental_http2_fetch,
             core::sync::atomic::Ordering::Relaxed,
@@ -2886,8 +2891,6 @@ impl TestCommand {
             ctx.runtime_options.experimental_http3_fetch,
             core::sync::atomic::Ordering::Relaxed,
         );
-        vm.transpiler.options.env.behavior =
-            bun_bundler::options::EnvBehavior::LoadAllWithoutInlining;
 
         let node_env_entry = env_loader.map.get_or_put_without_value(b"NODE_ENV")?;
         if !node_env_entry.found_existing {
@@ -2897,28 +2900,33 @@ impl TestCommand {
             };
         }
 
-        vm.transpiler.configure_defines()?;
+        vm.transpiler.with_mut(|t| t.configure_defines())?;
         if run_compiled::is_requested(ctx) {
             run_compiled::hand_on_environment(&env_loader.map);
         }
 
         vm.load_extra_env_and_source_code_printer();
-        vm.is_main_thread = true;
         VirtualMachine::set_is_main_thread_vm(true);
 
         if ctx.test_options.isolate {
-            vm.test_isolation_enabled = true;
-            vm.auto_killer.enabled = true;
+            vm.test_isolation_enabled.set(true);
+            vm.auto_killer.enabled.set(true);
         }
-        vm.test_isolation_state.shares_global = run_compiled::test_files_share_global(ctx);
-        crate::jsc_hooks::timer_all_mut().zero_delay_is_due_when_idle = true;
+        vm.test_isolation_state
+            .shares_global
+            .set(run_compiled::test_files_share_global(ctx));
+        crate::jsc_hooks::timer_all()
+            .zero_delay_is_due_when_idle
+            .set(true);
 
         if ctx.test_options.coverage.enabled {
-            vm.transpiler.options.code_coverage = true;
-            vm.transpiler.options.minify_syntax = false;
-            vm.transpiler.options.minify_identifiers = false;
-            vm.transpiler.options.minify_whitespace = false;
-            vm.transpiler.options.dead_code_elimination = false;
+            vm.transpiler.with_mut(|t| {
+                t.options.code_coverage = true;
+                t.options.minify_syntax = false;
+                t.options.minify_identifiers = false;
+                t.options.minify_whitespace = false;
+                t.options.dead_code_elimination = false;
+            });
             vm.global().vm().enable_control_flow_profiler();
         }
 
@@ -2929,7 +2937,7 @@ impl TestCommand {
             b"Etc/UTC";
 
         // SAFETY: `vm.transpiler.env` is the process-lifetime DotEnv loader pointer.
-        if let Some(tz) = unsafe { (*vm.transpiler.env).get(b"TZ") } {
+        if let Some(tz) = unsafe { (*vm.transpiler.get().env).get(b"TZ") } {
             tz_name = tz;
         }
 
@@ -2938,13 +2946,14 @@ impl TestCommand {
                 .global()
                 .set_time_zone(&EncodedSlice::from_bytes(tz_name));
         }
-        vm.test_isolation_state.time_zone = Some(Box::from(tz_name));
-        if vm.test_isolation_enabled {
-            vm.test_isolation_state.proxy_env = Some(
+        let _ = vm.test_isolation_state.time_zone.set(Box::from(tz_name));
+        if vm.test_isolation_enabled.get() {
+            let _ = vm.test_isolation_state.proxy_env.set(
                 bun_jsc::rare_data::ProxyEnvSnapshot::capture(&vm.env_loader().map),
             );
-            vm.test_isolation_state.synthetic_allocation_limit =
-                Some(bun_jsc::virtual_machine::synthetic_allocation_limit());
+            vm.test_isolation_state
+                .synthetic_allocation_limit
+                .set(Some(bun_jsc::virtual_machine::synthetic_allocation_limit()));
         }
 
         if ctx.test_options.test_worker {
@@ -2968,7 +2977,7 @@ impl TestCommand {
         #[cfg(windows)]
         let filter_names_normalized: Vec<Box<[u8]>>;
 
-        let mut scanner = Scanner::init(&vm.transpiler, ctx.positionals.len()).expect("oom");
+        let mut scanner = Scanner::init(vm.transpiler.get(), ctx.positionals.len()).expect("oom");
         scanner.path_ignore_patterns = &path_ignore_patterns;
         let has_relative_path = 'hr: {
             for arg in &ctx.positionals {
@@ -3008,9 +3017,9 @@ impl TestCommand {
                                     bun_fmt::quote(arg)
                                 );
                             }
-                            vm.exit_handler.exit_code = 1;
-                            vm.is_shutting_down = true;
-                            vm.run_with_api_lock_mut(|vm| vm.global_exit());
+                            vm.exit_handler.exit_code.set(1);
+                            vm.is_shutting_down.set(true);
+                            vm.run_with_api_lock(|| vm.global_exit());
                         }
                     }
                 }
@@ -3075,9 +3084,9 @@ impl TestCommand {
                             bun_fmt::quote(dir_to_scan)
                         );
                     }
-                    vm.exit_handler.exit_code = 1;
-                    vm.is_shutting_down = true;
-                    vm.run_with_api_lock_mut(|vm| vm.global_exit());
+                    vm.exit_handler.exit_code.set(1);
+                    vm.is_shutting_down.set(true);
+                    vm.run_with_api_lock(|| vm.global_exit());
                 }
             }
         }
@@ -3212,7 +3221,7 @@ impl TestCommand {
         if !test_files.is_empty()
             || (ctx.test_options.changed.is_some() && all_test_files_count != 0)
         {
-            vm.hot_reload = ctx.debug.hot_reload;
+            vm.hot_reload.set(ctx.debug.hot_reload);
 
             // Install the --changed trigger collector BEFORE the watcher
             // thread starts so a file edit during runAllTests is still
@@ -3220,18 +3229,18 @@ impl TestCommand {
             // runAllTests (separate concern; see O_EVTONLY comment
             // below).
             if ctx.test_options.changed.is_some()
-                && vm.hot_reload == jsc::virtual_machine::HotReload::Watch
+                && vm.hot_reload.get() == jsc::virtual_machine::HotReload::Watch
             {
                 ChangedFilesFilter::init_watch_trigger();
             }
 
-            match vm.hot_reload {
+            match vm.hot_reload.get() {
                 jsc::virtual_machine::HotReload::Hot => {
                     // SAFETY: `vm` is the process-lifetime main-thread VM; it
                     // outlives the leaked reloader.
                     unsafe {
                         jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
-                            std::ptr::from_mut::<VirtualMachine>(vm),
+                            std::ptr::from_ref(vm).cast_mut(),
                             None,
                         );
                     }
@@ -3241,7 +3250,7 @@ impl TestCommand {
                     // outlives the leaked reloader.
                     unsafe {
                         jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
-                            std::ptr::from_mut::<VirtualMachine>(vm),
+                            std::ptr::from_ref(vm).cast_mut(),
                             None,
                         );
                     }
@@ -3283,7 +3292,7 @@ impl TestCommand {
             if !vm.is_watcher_enabled() {
                 Global::exit(1);
             }
-            vm.run_with_api_lock_mut(Self::run_event_loop_for_watch);
+            vm.run_with_api_lock(|| Self::run_event_loop_for_watch(vm));
         }
 
         let mut coverage_options: CodeCoverageOptions = ctx.test_options.coverage.clone();
@@ -3319,7 +3328,7 @@ impl TestCommand {
                 )?;
             } else {
                 // SAFETY: `vm.transpiler.env` is the process-lifetime DotEnv loader pointer.
-                ParallelRunner::set_ids_without_workers(unsafe { &mut *vm.transpiler.env });
+                ParallelRunner::set_ids_without_workers(unsafe { &mut *vm.transpiler.get().env });
             }
             if !ran_parallel {
                 crate::run_command::start_profilers(vm, ctx);
@@ -3347,8 +3356,12 @@ impl TestCommand {
             // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set by
             // `enable_hot_module_reloading`; non-null because
             // `is_watcher_enabled()` checked it.
-            let watcher =
-                unsafe { &mut *vm.bun_watcher.cast::<jsc::hot_reloader::ImportWatcher>() };
+            let watcher = unsafe {
+                &mut *vm
+                    .bun_watcher
+                    .get()
+                    .cast::<jsc::hot_reloader::ImportWatcher>()
+            };
             for path in &changed_module_graph_files {
                 let _ = watcher.add_file_by_path_slow(path);
             }
@@ -3678,6 +3691,21 @@ impl TestCommand {
                 );
             }
         }
+        let (more_often, refused): (Vec<Vec<u8>>, Vec<Vec<u8>>) =
+            (refused.into_iter()).partition(|line| line.starts_with(run_compiled::RAN_MORE_OFTEN));
+        if !more_often.is_empty() {
+            pretty_error!(
+                "<yellow>{} mocked file{} may have run more often, or shown other values,<r> during this run than under `bun test`:\n",
+                more_often.len(),
+                if more_often.len() == 1 { "" } else { "s" }
+            );
+            for line in &more_often {
+                pretty_error!(
+                    "  {}\n",
+                    bstr::BStr::new(&line[run_compiled::RAN_MORE_OFTEN.len()..])
+                );
+            }
+        }
         let (addons, refused): (Vec<Vec<u8>>, Vec<Vec<u8>>) =
             (refused.into_iter()).partition(|line| line.starts_with(run_compiled::LOADED_ADDON));
         if !addons.is_empty() {
@@ -3725,8 +3753,8 @@ impl TestCommand {
             reporter.write_timings_if_needed();
         }
 
-        if vm.hot_reload == jsc::virtual_machine::HotReload::Watch {
-            vm.run_with_api_lock_mut(Self::run_event_loop_for_watch);
+        if vm.hot_reload.get() == jsc::virtual_machine::HotReload::Watch {
+            vm.run_with_api_lock(|| Self::run_event_loop_for_watch(vm));
         }
         let summary = reporter.summary();
 
@@ -3741,12 +3769,14 @@ impl TestCommand {
             || !write_coverage_success
             || reporter.jest.unhandled_errors_between_tests > 0
         {
-            vm.exit_handler.exit_code = 1;
+            vm.exit_handler.exit_code.set(1);
         }
-        vm.exit_handler.skip_exit_listeners = skip_exit_listeners(&reporter);
-        vm.exit_handler.requested = exit_is_requested();
+        vm.exit_handler
+            .skip_exit_listeners
+            .set(skip_exit_listeners(&reporter));
+        vm.exit_handler.requested.set(exit_is_requested());
         // Must precede the GC-root release below: exit listeners are user JS and may touch still-live state.
-        vm.run_with_api_lock_mut(VirtualMachine::on_exit);
+        vm.run_with_api_lock(|| vm.on_exit());
         // on_exit() already set is_shutting_down; global_exit() asserts it.
         // Release `bun:test` GC roots before `global_exit()` so
         // `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reach the closures they pin
@@ -3762,41 +3792,41 @@ impl TestCommand {
         drop(reporter);
         // `global_exit()` does not return, so nothing is dropped after it.
         drop(all_test_files);
-        vm.run_with_api_lock_mut(|vm| vm.global_exit());
+        vm.run_with_api_lock(|| vm.global_exit());
         Ok(())
     }
 
-    fn run_event_loop_for_watch(vm: &mut VirtualMachine) {
-        vm.event_loop_ref().tick_possibly_forever();
+    fn run_event_loop_for_watch(vm: &VirtualMachine) {
+        vm.event_loop().tick_possibly_forever();
 
         loop {
             while vm.is_event_loop_alive() {
                 vm.tick();
-                vm.event_loop_ref().auto_tick_active();
+                vm.event_loop().auto_tick_active();
             }
 
-            vm.event_loop_ref().tick_possibly_forever();
+            vm.event_loop().tick_possibly_forever();
         }
     }
 
     pub(crate) fn run_all_tests(
         reporter_: &mut CommandLineReporter,
-        vm_: &mut VirtualMachine,
+        vm_: &VirtualMachine,
         files_: &[Interned],
     ) {
         struct Context<'a> {
             reporter: &'a mut CommandLineReporter,
-            vm: &'a mut VirtualMachine,
+            vm: &'a VirtualMachine,
             files: &'a [Interned],
         }
         impl<'a> Context<'a> {
             fn begin(&mut self) {
                 let reporter = &mut *self.reporter;
-                let vm = &mut *self.vm;
+                let vm = self.vm;
                 let files = self.files;
                 debug_assert!(!files.is_empty());
 
-                let isolate = vm.test_isolation_enabled;
+                let isolate = vm.test_isolation_enabled.get();
 
                 if files.len() > 1 {
                     for (i, file_name) in files[0..files.len() - 1].iter().enumerate() {
@@ -3848,14 +3878,11 @@ impl TestCommand {
             }
         }
 
-        // No MimallocArena is wired through `vm.arena` on this serial run
-        // path; the parallel worker path in runner.rs does wire one.
-        // Reintroduce here if it shows up in profiles.
-        vm_.event_loop_ref().ensure_waker();
-        vm_.run_with_api_lock_mut(|vm| {
+        vm_.event_loop().ensure_waker();
+        vm_.run_with_api_lock(|| {
             Context {
                 reporter: reporter_,
-                vm,
+                vm: vm_,
                 files: files_,
             }
             .begin()
@@ -3864,12 +3891,11 @@ impl TestCommand {
 
     // Not inlined: the bytes of the resolver's result that nothing wrote are old stack, and the GC scans `run`'s frame while the file runs.
     #[inline(never)]
-    fn resolve_test_file(
-        vm: &mut VirtualMachine,
-        file_name: &[u8],
-    ) -> crate::Result<&'static [u8]> {
+    fn resolve_test_file(vm: &VirtualMachine, file_name: &[u8]) -> crate::Result<&'static [u8]> {
         let dot_slash = core::cell::OnceCell::new();
-        let resolution = vm.transpiler.resolve_entry_point(file_name, &dot_slash)?;
+        let resolution = vm
+            .transpiler
+            .with_mut(|t| t.resolve_entry_point(file_name, &dot_slash))?;
         // `append_slice` interns into the process-static `FilenameStore` and
         // returns `&'static [u8]`.
         Ok(FileSystem::get()
@@ -3900,17 +3926,22 @@ impl TestCommand {
         global: &jsc::JSGlobalObject,
         file_path: &[u8],
         next_load_shares_global: bool,
+        runs_again: bool,
     ) {
         unsafe extern "C" {
             safe fn JSMock__replaceModuleOfTestFile(
                 global: &jsc::JSGlobalObject,
                 path: &bun::String,
             );
+            safe fn JSMock__willRunTestFileAgain(global: &jsc::JSGlobalObject, path: &bun::String);
         }
         bun_jsc::cpp::JSMock__forgetPendingModulePatches(global);
         bun_jsc::cpp::JSMock__undoModuleMocksOfTestFile(global, next_load_shares_global);
         if !next_load_shares_global {
             return;
+        }
+        if runs_again {
+            JSMock__willRunTestFileAgain(global, &bun::StringView::from_bytes(file_path));
         }
         // Wait for in-flight modules to load and be evicted, or the next file would get them with this file's mocks.
         // Uses the hook timeout. A leaked timer or server keeps the loop alive, so a load that never settles would
@@ -3918,7 +3949,7 @@ impl TestCommand {
         let timeout = jest::Jest::runner().map_or(0, |runner| runner.default_timeout_ms);
         let real_time = bun::TimespecMockMode::ForceRealTime;
         let deadline = bun::Timespec::ms_from_now(real_time, timeout.into());
-        let waited = vm.event_loop_ref().wait_at_top_level(|| {
+        let waited = vm.event_loop().wait_at_top_level(|| {
             !bun_jsc::cpp::JSMock__hasModulesToEvict(global)
                 || (timeout != 0 && bun::Timespec::now(real_time).greater(&deadline))
         });
@@ -3956,11 +3987,11 @@ impl TestCommand {
     #[optimize(size)]
     pub(crate) fn run(
         reporter: &mut CommandLineReporter,
-        vm: &mut VirtualMachine,
+        vm: &VirtualMachine,
         file_name: &[u8],
         first_last: bun_test::FirstLast,
     ) -> crate::Result<()> {
-        let _print_log = PrintLogAfterFile(vm.log);
+        let _print_log = PrintLogAfterFile(vm.log.get());
         let restore_only = RestoreOnlyAfterFile {
             only: reporter.jest.only,
             reporter,
@@ -3991,9 +4022,10 @@ impl TestCommand {
 
         let repeat_count = reporter.repeat_count;
         let mut repeat_index: u32 = 0;
-        vm.on_unhandled_rejection_ctx = None;
-        vm.on_unhandled_rejection = jest::on_unhandled_rejection::on_unhandled_rejection;
-        vm.is_running_vitest_entry = false;
+        vm.on_unhandled_rejection_ctx.set(None);
+        vm.on_unhandled_rejection
+            .set(jest::on_unhandled_rejection::on_unhandled_rejection);
+        vm.is_running_vitest_entry.set(false);
         let mut environment =
             Environment::of_file(file_path, reporter.jest.test_options.environment);
 
@@ -4019,8 +4051,8 @@ impl TestCommand {
             let bun_test_root_ptr: *mut bun_test::BunTestRoot = bun_test_root;
             let global = vm.global();
             // `--isolate` swaps the global after the last repeat.
-            let next_load_shares_global = !vm.test_isolation_enabled
-                || vm.test_isolation_state.shares_global
+            let next_load_shares_global = !vm.test_isolation_enabled.get()
+                || vm.test_isolation_state.shares_global.get()
                 || repeat_index + 1 < repeat_count;
             let _entered_file = EnteredFile {
                 bun_test_root: bun_test_root_ptr,
@@ -4061,15 +4093,15 @@ impl TestCommand {
             if jsc::JSInternalPromise::opaque_mut(promise).status()
                 != jsc::js_promise::Status::Rejected
             {
-                vm.event_loop_ref().tick();
+                vm.event_loop().tick();
 
                 // Tests start after top-level mock.module() calls with a pending factory have patched their module.
                 let patched = vm
-                    .event_loop_ref()
+                    .event_loop()
                     .wait_at_top_level(|| !bun_jsc::cpp::JSMock__hasPendingModulePatches(global));
                 if patched == Err(TopLevelWaitError::NothingLeft) {
                     // As in Vitest, a vi.mock() or vi.doMock() factory may wait for something a test does.
-                    bun_jsc::cpp::JSMock__forgetPendingModulePatchesOfVitest(global);
+                    bun_jsc::cpp::JSMock__clearPendingVitestPatches(global);
                     if bun_jsc::cpp::JSMock__hasPendingModulePatches(global) {
                         promise = Self::never_settled(global, "A mock.module() factory", file_path);
                     }
@@ -4109,9 +4141,9 @@ impl TestCommand {
                 bun_test::BunTest::run(&buntest_strong, vm.global())?;
 
                 // Process event loop while bun_test tests are running
-                vm.event_loop_ref().tick();
+                vm.event_loop().tick();
 
-                let mut prev_unhandled_count = vm.unhandled_error_counter;
+                let mut prev_unhandled_count = vm.unhandled_error_counter.get();
                 while buntest.phase != bun_test::Phase::Done {
                     // `RunTestsTask` leaves results queued when it fires in an event loop nested under JS.
                     if buntest.result_queue.readable_length() > 0 {
@@ -4125,7 +4157,7 @@ impl TestCommand {
                         buntest.wants_wakeup = false;
                         vm.wakeup();
                     }
-                    if buntest.timer.state != crate::timer::EventLoopTimerState::ACTIVE
+                    if buntest.timer.state.get() != crate::timer::EventLoopTimerState::ACTIVE
                         && !vm.has_work_left()
                     {
                         let (what, waits_for) = Self::what_runner_waits_for(buntest);
@@ -4133,7 +4165,7 @@ impl TestCommand {
                             global, what, file_path,
                         ));
                         vm.unhandled_rejection(global, p.result(global.vm()), p.to_js());
-                        vm.event_loop_ref().tick();
+                        vm.event_loop().tick();
                         // The error ends a describe() or a test. Anything else stays stuck, so abandon the file.
                         if waits_for.is_none()
                             || waits_for == Self::what_runner_waits_for(buntest).1
@@ -4142,34 +4174,32 @@ impl TestCommand {
                         }
                         continue;
                     }
-                    vm.event_loop_ref().auto_tick_asleep();
+                    vm.event_loop().auto_tick_asleep();
                     if buntest.phase == bun_test::Phase::Done {
                         break;
                     }
-                    vm.event_loop_ref().tick();
+                    vm.event_loop().tick();
 
-                    while prev_unhandled_count < vm.unhandled_error_counter {
+                    while prev_unhandled_count < vm.unhandled_error_counter.get() {
                         let _ = vm.global().handle_rejected_promises();
-                        prev_unhandled_count = vm.unhandled_error_counter;
+                        prev_unhandled_count = vm.unhandled_error_counter.get();
                     }
                 }
 
                 // Under --aot a call of import() that asks for a mocked file waits in the run time for its text, by a task that would be lost here.
                 // `bun test` has a read under way in its place. A plain run holds no such call, so it does nothing here.
-                if bun_jsc::cpp::JSMock__hasImportsHeldForMockedFiles(global) {
-                    bun_jsc::cpp::JSMock__letImportsHeldGetFilesThemselves(global);
-                    let _ = vm.event_loop_ref().wait_at_top_level(|| {
-                        !bun_jsc::cpp::JSMock__hasImportsHeldForMockedFiles(global)
-                    });
-                    while prev_unhandled_count < vm.unhandled_error_counter {
+                if bun_jsc::cpp::JSMock__hasHeldImports(global) {
+                    bun_jsc::cpp::JSMock__releaseHeldImports(global);
+                    let _ = vm
+                        .event_loop()
+                        .wait_at_top_level(|| !bun_jsc::cpp::JSMock__hasHeldImports(global));
+                    while prev_unhandled_count < vm.unhandled_error_counter.get() {
                         let _ = vm.global().handle_rejected_promises();
-                        prev_unhandled_count = vm.unhandled_error_counter;
+                        prev_unhandled_count = vm.unhandled_error_counter.get();
                     }
                 }
 
-                let el = vm.event_loop();
-                // SAFETY: el is the VM-owned event loop; vm is passed back as *mut.
-                unsafe { (*el).tick_immediate_tasks(vm) };
+                vm.event_loop().tick_immediate_tasks();
 
                 // Node parity: a node test file exits only when its loop drains.
                 // on_before_exit() drains and dispatches 'beforeExit' like `bun run`;
@@ -4206,7 +4236,13 @@ impl TestCommand {
             if next_load_shares_global {
                 crate::test_runner::timers::fake_timers::on_test_file_end(vm.global());
             }
-            Self::undo_module_mocks(vm, global, file_path, next_load_shares_global);
+            Self::undo_module_mocks(
+                vm,
+                global,
+                file_path,
+                next_load_shares_global,
+                !failed_to_load && repeat_index + 1 < repeat_count,
+            );
             // Must run after the cleanup above, so rejections from JS it runs are reported in this file.
             let _ = vm.global().handle_rejected_promises();
 
@@ -4215,7 +4251,7 @@ impl TestCommand {
                 Output::flush();
             }
 
-            if !vm.test_isolation_enabled {
+            if !vm.test_isolation_enabled.get() {
                 // Ensure these never linger across files. Under --isolate this
                 // is done by swapGlobalForTestIsolation() (kill+clear) and we
                 // need tracking to remain enabled and populated until then.

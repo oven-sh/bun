@@ -1,4 +1,4 @@
-// STATISTIC: ListsKeptAtHeadsThoughAnAnswerAboutThemWasForgotten >= 1
+// STATISTIC: RetainedObjectFactLossesIgnored >= 1
 "use strict";
 // What the literals are born with differs; each is read by the kind it was born with, in the typed copies and in the one that claims nothing.
 const rows = JSON.parse('[[1,2,3],[4.5,5,6],[7,8,9.25],"xyz",[10,11,12]]');

@@ -15,8 +15,8 @@
 # -- end of source
 # RUN(ANSWERS): run-in-shell mechanisms=all
 # ANSWERS: 136048
-# RUN(COUNT): compile LoopsBuiltForClosuresReadOutOfSlots mechanisms=all
-# COUNT: statistic LoopsBuiltForClosuresReadOutOfSlots 0
+# RUN(COUNT): compile SlotClosureLoopsVersioned mechanisms=all
+# COUNT: statistic SlotClosureLoopsVersioned 0
 # RUN(FORM): walk f3 mechanisms=all
 # FORM-LABEL: code f3:Body
 # FORM-NOT: testedType=f5

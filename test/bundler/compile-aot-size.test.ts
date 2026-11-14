@@ -83,11 +83,20 @@ const countMappedBytes = (file: Buffer) => getMappedSegments(file).reduce((sum, 
 // Restated once with oven-sh/bun#47605, to 68,980,000 and 26,400,000, and back where they stood before it: an executable no longer keeps the run-time operations that its image
 // does not list, and measures 67,894,605 and 25,427,277.
 // Restated once with oven-sh/bun#48120: the second measured 25,880,776.
-const mostMappedBytes: Record<string, number> = { "": 68_440_000, "--trim": 25_960_000 };
+// And once with oven-sh/bun#48436: it measured 25,966,728. A trimmed executable still keeps 307 KB for mocks, to be removed next.
+// Both restated with oven-sh/bun#48478: they measured 68,536,578 and 26,028,290.
+// A second exception: the engine of WebKit 8156ba68efab has 417,496 bytes more that an executable keeps, 376,536 of them in a trimmed one, and both bounds
+// went up by that. Before oven-sh/bun#48478 they measured 68,847,648 and 26,351,648 with it, against 68,430,152 and 25,975,112 with the engine before it.
+// Both restated with oven-sh/WebKit#1036: they measured 69,803,456 and 27,164,096.
+const mostMappedBytes: Record<string, number> = { "": 70_150_000, "--trim": 27_340_000 };
 // The bytes of the feature ImageCompiler in the trim table: about 22.50 MB when this was set, with about the 250 KB of room it had before.
 // Restated once, where the compiler was merged: it measured 23,647,988.
 // And once with oven-sh/bun#47605, from what CI measured there and 1%: 23,755,040.
-const mostBytesOfCompiler = 23_990_000;
+// And with oven-sh/bun#48478, from 24,324,717 and 1%.
+// And with oven-sh/WebKit#1036, from 26,919,547 and 1%.
+// And with oven-sh/WebKit#1040, from 29,515,694, with the room it had.
+// And behind oven-sh/bun#48714, from 30,813,843.
+const mostBytesOfCompiler = 30_900_000;
 
 const importsItsArguments = `
   import { join } from "node:path";
@@ -136,7 +145,7 @@ describe.skipIf(!canTrim)("bun build --compile --aot", () => {
     expect(sharedBytes).toBeLessThan(16_384);
   });
 
-  // `--aot` keeps `bun:test`. One call from there into a reader of the compiler's tables keeps the tables in every executable.
+  // A program that names `bun:test` keeps it. One call from there into a reader of the compiler's tables keeps the tables in its executable.
   test("the test runner keeps nothing of the compiler", () => {
     const compiler = model.features.find(each => each.name === featureNamed("ImageCompiler"))!.index;
     const runner = model.features.find(each => each.name === featureNamed("Test"))!.index;
@@ -189,7 +198,7 @@ describe.skipIf(!canTrim)("bun build --compile --aot", () => {
       600_000,
     );
 
-    test.skipIf(!isGlibc || process.arch !== "x64" || flags.length === 0)(
+    test.skipIf(!isGlibc || process.arch !== "x64")(
       "hello world contains no strings from the mocks",
       async () => {
         using dir = tempDirForAotBuilds("compile-aot-size", { "hello.ts": `console.log("hello world");` });

@@ -85,6 +85,7 @@ pub(super) fn build_analysis(context: &Context<'_, '_>, parts: Parts) -> ScopeAn
         forms: parts.forms,
         use_counts: walk.use_counts.clone(),
         calls_by_name: walk.calls_by_name.clone(),
+        functions_calling_themselves: walk.functions_calling_themselves.clone(),
         made_at_first_read: walk.made_at_first_read.clone(),
         is_made_at_first_read,
         created_at_each_read: walk.created_at_each_read.clone(),
@@ -322,7 +323,7 @@ fn compute_entry_flags(
             flags
         }
         FunctionKey::WrappedModuleBody(_)
-        | FunctionKey::FaceBody(_)
+        | FunctionKey::FacadeBody(_)
         | FunctionKey::CheckBody(_)
         | FunctionKey::Instantiation(_) => {
             unreachable!("the walk meets no function of this kind")

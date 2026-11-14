@@ -1,4 +1,12 @@
 // A memory that cannot be a fast memory is bounds-checked. A module has code for either kind of memory, so both instances run compiled code.
+// STATISTIC: WasmOptimizedCopies = 4
+// STATISTIC: WasmBaselineCopies = 4
+// STATISTIC: WasmOptimizedCheckingCopies = 0
+// STATISTIC: WasmBaselineCheckingCopies = 4
+// COUNTER in every build: WasmInstancesUsingImageCode = 2
+// COUNTER in every build: WasmInstancesUsingCheckingCode >= 1
+// COUNTER in every build: WasmInstancesInterpreted = 0
+// COUNTER in every build: WasmModulesFoundBeforeParsing = 1
 /// <reference path="../wasm-files.d.ts" />
 // Env of the executable: BUN_JSC_crashIfInterpreterIsUsed=1
 import path from "../many-memories/module.wasm";

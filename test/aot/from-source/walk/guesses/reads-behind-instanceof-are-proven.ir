@@ -1,0 +1,18 @@
+# -- source: reads-behind-instanceof-are-proven.cjs
+# function Pair(car, cdr) { this.car = car; this.cdr = cdr; }
+# var isSame = function (one, other) {
+#   if (!(one instanceof Pair)) return one === other;
+#   if (!(other instanceof Pair)) return false;
+#   return isSame(one.car, other.car) && isSame(one.cdr, other.cdr);
+# };
+# function read(text) { var list = null; for (var word of text.split(" ")) list = new Pair(word, list); return list; }
+# var texts = ["a b c", "a b", "a b c"], count = 0;
+# for (var one of texts) for (var other of texts) if (isSame(read(one), read(other))) count++;
+# globalThis.handed = [Pair, isSame, read("a b")];
+# console.log(count);
+# -- end of source
+# In a function that calls itself a marked object fails the test of instanceof and goes the long way, so a read behind the test takes the slot for filled.
+# RUN: walk f3:Body mechanisms=all
+# CHECK: = ShapeTest v0 layouts=[L0] [rejectsMarkedObjects]
+# CHECK: = GetSlot {{*}}key="car" receivers=[L0] level=Proven
+# CHECK: = GetSlot {{*}}key="car" receivers=[L0] level=Proven

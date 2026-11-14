@@ -1,7 +1,7 @@
 # -- source: under-the-word-a-value-that-lies-as-a-narrow-reference-is-asked-as-it-lies.ts
 # declare function print(...values: unknown[]): void;
 # class Badge { text: string; constructor(text: string) { this.text = text; } }
-# class Member { rank: number; active: boolean; name: string; badge: Badge; friend: Member | undefined; score: number; done: boolean; constructor(i: number) { this.rank = i & 7; this.active = (i & 1) === 1; this.name = "m" + i; this.badge = new Badge("b" + i); this.friend = undefined; this.score = i & 3; this.done = false; } }
+# class Member { rank: number; active: boolean; name: string; badge: Badge; friend: Member | undefined; next: Member | undefined; last: string; score: number; done: boolean; constructor(i: number) { this.rank = i & 7; this.active = (i & 1) === 1; this.name = "m" + i; this.badge = new Badge("b" + i); this.friend = undefined; this.next = undefined; this.last = "l" + i; this.score = i & 3; this.done = false; } }
 # function textOf(member: Member): string { return member.badge.text; }
 # const shelf: any[] = [textOf, (i: number) => new Member(i)];
 # const at: number[] = JSON.parse("[0, 1]");

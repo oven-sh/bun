@@ -2,7 +2,7 @@
 // The library asks whether globalThis.AbortController, abort(), the getter of signal and the getter of aborted are as built. The program writes each of them at its end, so each is asked
 // by its byte while the program runs, and under the word that checks the walk every yes is held to the object: the member of globalThis to the global object itself, the two getters, which
 // no cell names, to what the host has laid.
-// COUNTER: AnswersAskedAgain >= 4
+// COUNTER: FastPathResultsVerified >= 4
 import "node:http";
 import { pipeline, Readable, Writable } from "node:stream";
 const run = () =>

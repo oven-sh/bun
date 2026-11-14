@@ -13,8 +13,8 @@
 # NET-NEXT: number6.57.5
 # NET-NEXT: le39
 # NET-NEXT: went on
-# RUN(LIE): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:Operation/CopyDataProperties/Elements mechanisms=all
-# LIE: the rows of effects of operation:CopyDataProperties and of runtime:operationAOTCopyDataProperties say that the call will not write Elements, and those words of operand 0 are others behind it. This is a bug in Bun.
+# RUN(LIE): run-in-shell testing=CheckEffectsAtRunTime,UnderstateEffects:Operation/CopyDataProperties/Elements mechanisms=all
+# LIE: the declared effects of operation:CopyDataProperties and of stub:CopyAllDataProperties say that the call does not write Elements, but operand 0 changed there
 # LIE-NOT: went on
 # LIE: crashed
 # LIE: with

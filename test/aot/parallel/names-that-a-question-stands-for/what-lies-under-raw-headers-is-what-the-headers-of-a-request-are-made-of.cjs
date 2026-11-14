@@ -60,14 +60,12 @@ function run(Class, holder, kind, when, between) {
       let asked = 0;
       const ask = () => (asked++, client.write("GET / HTTP/1.1\r\nHost: a\r\n\r\n"));
       const finish = tail => {
-        clearTimeout(guard);
         client.destroy();
         server.close();
         server.closeAllConnections();
         undo();
         resolve(said.join(" | ") + tail);
       };
-      const guard = setTimeout(() => finish(` . no answer to request ${asked}`), 5000);
       client.on("error", () => {});
       client.on("data", chunk => {
         got += chunk;

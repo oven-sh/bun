@@ -30,13 +30,14 @@
 # -- end of source
 # The list under the key is named in front of both loops. The look at the inner loop passed it over: it takes a list for read by index only where the key is an integer in the look, and there the key,
 # read off a list of keys, is a whole number or undefined. The element of a list that is found with storage of int32s is an int32 or a hole in the typed copy: it counts as an int32 in the look,
-# be it read by index or handed out by the step of a for-of: the list under it is tested in front, and the access asks the key for a number.
+# be it read by index or handed out by the step of a for-of: the list under it is tested in front, and the element that is a key is asked for its presence.
 # RUN(STEPPED): walk f2 mechanisms=all
 # STEPPED-COUNT-2: = HasArrayStorage {{*}}arrayStorage=Int32
-# STEPPED: = TypeTest {{*}}testedType=number
-# STEPPED: = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral]
+# STEPPED: = IsElementPresent {{*}}arrayStorage=Int32
+# STEPPED: i32 @Int32 = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds, isPresent
+# STEPPED: = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral
 # RUN(COUNTED): walk f3 mechanisms=all
 # COUNTED-COUNT-2: = HasArrayStorage {{*}}arrayStorage=Int32
 # COUNTED: = IsElementPresent {{*}}arrayStorage=Int32
-# COUNTED: i32 @Int32 = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds, isPresent]
-# COUNTED: = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral]
+# COUNTED: i32 @Int32 = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds, isPresent
+# COUNTED: = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral

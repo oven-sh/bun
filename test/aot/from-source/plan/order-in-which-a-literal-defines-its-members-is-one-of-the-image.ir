@@ -4,7 +4,7 @@
 # -- source: order-in-which-a-literal-defines-its-members-is-one-of-the-image.ts
 # declare function sink(...values: unknown[]): void;
 # type Options = { width?: number; height?: number; style?: { bold?: boolean; color?: string } };
-# function inTurn(w: number, s: { bold?: boolean }) { const o: Options = { style: s, width: w }; return o; }
+# function inTurn(w: number, s: { bold?: boolean }) { const o: Options = { style: s, width: w }; sink(o); }
 # sink(inTurn);
 # -- end of source
 # RUN(SUMMARY): summary f1

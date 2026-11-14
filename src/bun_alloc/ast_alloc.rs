@@ -159,6 +159,11 @@ impl AstAllocState {
 #[thread_local]
 static AST_ALLOC: Cell<Option<Box<AstAllocState>>> = Cell::new(None);
 
+/// Unique among running threads.
+pub(crate) fn thread_key() -> usize {
+    core::ptr::from_ref(&AST_ALLOC).addr()
+}
+
 // One-slot recycler so a per-job `acquire_state`/`release_state` pair doesn't
 // pay a 16 KB malloc each time. Uses `thread_local!` (unlike `AST_ALLOC`) so
 // the destructor frees a parked box at thread exit; only touched on scope

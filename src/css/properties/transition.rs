@@ -21,9 +21,9 @@ use crate::prefixes::Feature;
 
 /// A value for the [transition](https://www.w3.org/TR/2018/WD-css-transitions-1-20181011/#transition-shorthand-property) property.
 #[derive(Clone, PartialEq)]
-pub struct Transition {
+pub struct Transition<'bump> {
     /// The property to transition.
-    pub(crate) property: PropertyId,
+    pub(crate) property: PropertyId<'bump>,
     /// The duration of the transition.
     pub(crate) duration: Time,
     /// The delay before the transition starts.
@@ -32,7 +32,7 @@ pub struct Transition {
     pub(crate) timing_function: EasingFunction,
 }
 
-impl Transition {
+impl<'bump> Transition<'bump> {
     pub(crate) fn eql(&self, rhs: &Self) -> bool {
         self == rhs
     }
@@ -44,7 +44,7 @@ impl Transition {
         self.clone()
     }
 
-    pub(crate) fn parse(parser: &mut Parser) -> CssResult<Self> {
+    pub(crate) fn parse(parser: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         let mut property: Option<PropertyId> = None;
         let mut duration: Option<Time> = None;
         let mut delay: Option<Time> = None;
@@ -116,7 +116,7 @@ impl Transition {
 /// `::view-transition-*(<name>)` pseudo-element selectors, so the two keep
 /// matching after renaming.
 #[derive(Clone, Copy, crate::Parse, crate::ToCss, crate::CssEql, crate::DeepClone)]
-pub enum ViewTransitionName {
+pub enum ViewTransitionName<'bump> {
     /// The `none` keyword.
     None,
     /// The `auto` keyword.
@@ -124,12 +124,12 @@ pub enum ViewTransitionName {
     /// The `match-element` keyword.
     MatchElement,
     /// A custom name.
-    Custom(CustomIdent),
+    Custom(CustomIdent<'bump>),
 }
 
 /// A value for the [view-transition-group](https://drafts.csswg.org/css-view-transitions-2/#view-transition-group-prop) property.
 #[derive(Clone, Copy, crate::Parse, crate::ToCss, crate::CssEql, crate::DeepClone)]
-pub enum ViewTransitionGroup {
+pub enum ViewTransitionGroup<'bump> {
     /// The `normal` keyword.
     Normal,
     /// The `contain` keyword.
@@ -137,12 +137,12 @@ pub enum ViewTransitionGroup {
     /// The `nearest` keyword.
     Nearest,
     /// A custom group, the `view-transition-name` of an ancestor.
-    Custom(CustomIdent),
+    Custom(CustomIdent<'bump>),
 }
 
 #[derive(Default)]
-pub struct TransitionHandler {
-    pub(crate) properties: Option<(SmallList<PropertyId, 1>, VendorPrefix)>,
+pub struct TransitionHandler<'bump> {
+    pub(crate) properties: Option<(SmallList<PropertyId<'bump>, 1>, VendorPrefix)>,
     pub(crate) durations: Option<(SmallList<Time, 1>, VendorPrefix)>,
     pub(crate) delays: Option<(SmallList<Time, 1>, VendorPrefix)>,
     pub(crate) timing_functions: Option<(SmallList<EasingFunction, 1>, VendorPrefix)>,
@@ -189,12 +189,12 @@ mod transition_handler_body {
     use super::*;
     use crate::generics::CssEql as _;
     use crate::generics::DeepClone;
-    impl TransitionHandler {
+    impl<'bump> TransitionHandler<'bump> {
         pub(crate) fn handle_property(
             &mut self,
-            prop: &Property,
-            dest: &mut DeclarationList,
-            context: &mut PropertyHandlerContext,
+            prop: &Property<'bump>,
+            dest: &mut DeclarationList<'bump>,
+            context: &mut PropertyHandlerContext<'_, 'bump>,
         ) -> bool {
             // PropertyHandlerContext carries no arena; it is recovered via
             // `dest.bump()` (DeclarationList = bumpalo::Vec).
@@ -357,13 +357,17 @@ mod transition_handler_body {
 
         pub(crate) fn finalize(
             &mut self,
-            dest: &mut DeclarationList,
-            context: &mut PropertyHandlerContext,
+            dest: &mut DeclarationList<'bump>,
+            context: &mut PropertyHandlerContext<'_, 'bump>,
         ) {
             self.flush(dest, context);
         }
 
-        fn flush(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
+        fn flush(
+            &mut self,
+            dest: &mut DeclarationList<'bump>,
+            context: &mut PropertyHandlerContext<'_, 'bump>,
+        ) {
             if !self.has_any {
                 return;
             }
@@ -484,13 +488,13 @@ mod transition_handler_body {
     }
 
     #[inline]
-    fn get_transitions(
+    fn get_transitions<'bump>(
         arena: &bun_alloc::Arena,
-        properties: &mut SmallList<PropertyId, 1>,
+        properties: &mut SmallList<PropertyId<'bump>, 1>,
         durations: &mut SmallList<Time, 1>,
         delays: &mut SmallList<Time, 1>,
         timing_functions: &mut SmallList<EasingFunction, 1>,
-    ) -> SmallList<Transition, 1> {
+    ) -> SmallList<Transition<'bump>, 1> {
         #[inline]
         fn cycle_bump(idx: &mut u32, len: u32) {
             *idx = (*idx + 1) % len;
@@ -542,16 +546,16 @@ mod transition_handler_body {
         transitions
     }
 
-    fn expand_properties(
-        properties: &mut SmallList<PropertyId, 1>,
-        arena: &bun_alloc::Arena,
-        context: &mut PropertyHandlerContext,
-    ) -> Option<SmallList<PropertyId, 1>> {
+    fn expand_properties<'bump>(
+        properties: &mut SmallList<PropertyId<'bump>, 1>,
+        arena: &'bump bun_alloc::Arena,
+        context: &mut PropertyHandlerContext<'_, 'bump>,
+    ) -> Option<SmallList<PropertyId<'bump>, 1>> {
         #[inline]
-        fn replace(
+        fn replace<'bump>(
             arena: &bun_alloc::Arena,
-            propertiez: &mut SmallList<PropertyId, 1>,
-            props: &[PropertyId],
+            propertiez: &mut SmallList<PropertyId<'bump>, 1>,
+            props: &[PropertyId<'bump>],
             i: u32,
         ) {
             propertiez.slice_mut()[i as usize] = props[0].deep_clone(arena);
@@ -637,11 +641,11 @@ mod transition_handler_body {
 
     enum LogicalPropertyId {
         None,
-        Block(compat::Feature, &'static [PropertyId]),
+        Block(compat::Feature, &'static [PropertyId<'static>]),
         Inline(
             compat::Feature,
-            &'static [PropertyId],
-            &'static [PropertyId],
+            &'static [PropertyId<'static>],
+            &'static [PropertyId<'static>],
         ),
     }
 

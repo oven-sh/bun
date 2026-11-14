@@ -1,6 +1,6 @@
 // checks.js of a package reads `parcel.faults` off a parameter; its own declaration file says that a Parcel comes. What may be expected at a function are the records written in its own file and in the files that it imports
 // or requires: those it brings into the program itself. No other file has a say: beside each neighbor that the package never names, every unit of checks.js is walked and must read as it reads alone, with functions,
-// files and layouts named by where they are written.
+// files and layouts named by where they are written. The functions are kept under a name that only the run knows: the program does not see who calls them.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
@@ -29,7 +29,7 @@ export declare function weigh(parcel: Parcel): number;
   "alone.ts": `import { isClean, weigh } from "parcels/checks.js";
 import { open, spoil } from "parcels/shapes.js";
 const parcels = [open(JSON.parse("1")), spoil(open("two"), "wet")];
-(globalThis as any).kept = [isClean, weigh, parcels];
+(globalThis as any)[process.argv[9] ?? "kept"] = [isClean, weigh, parcels];
 console.log(parcels.map(one => isClean(one)).join(), parcels.map(one => weigh(one)).join());
 `,
 };

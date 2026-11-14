@@ -84,6 +84,7 @@ pub struct UsedFeatures {
     pub starts_workers_from_unseen_code: bool,
     /// The program's code names `Bun.build` and may ask it for more than a bundle: by `check`, `dts`, `compile`, `plugins` or a `target` that starts with "bun-". `Bun.serve` brings the bundler too, for its `app`, and only bundles with it.
     pub names_bun_build: bool,
+    pub can_reach_test_runner: bool,
 }
 
 impl UsedFeatures {
@@ -97,6 +98,7 @@ impl UsedFeatures {
             locales: UsedLocales::Unknown(None),
             starts_workers_from_unseen_code: true,
             names_bun_build: false,
+            can_reach_test_runner: true,
         }
     }
 
@@ -113,6 +115,7 @@ impl UsedFeatures {
             locales: UsedLocales::Unknown(None),
             starts_workers_from_unseen_code: true,
             names_bun_build: features.contains(&Feature::Bundler),
+            can_reach_test_runner: features.contains(&Feature::Test),
         }
     }
 
@@ -320,6 +323,16 @@ pub struct TrimPlan {
     pub(crate) refused_entry_points: Vec<RefusedEntryPoint>,
     pub(crate) icu_packages: Vec<PlannedIcuPackage>,
     pub(crate) keeps_table: bool,
+    pub(crate) unrequested: UnrequestedCut,
+}
+
+/// What the same executable loses if nobody asks to trim it. `apply` only counts its bytes.
+#[derive(Clone, Debug)]
+pub enum UnrequestedCut {
+    Nothing,
+    Planned(Box<TrimPlan>),
+    /// Without the request this executable can't be built, so there is nothing to compare with.
+    Unknown,
 }
 
 impl TrimPlan {
@@ -330,7 +343,12 @@ impl TrimPlan {
             refused_entry_points: Vec::new(),
             icu_packages: Vec::new(),
             keeps_table: false,
+            unrequested: UnrequestedCut::Nothing,
         }
+    }
+
+    pub fn set_unrequested_cut(&mut self, unrequested: UnrequestedCut) {
+        self.unrequested = unrequested;
     }
 
     pub fn decision(&self) -> &Decision {
@@ -356,6 +374,8 @@ pub struct TrimSummary {
     pub cut_bytes: u64,
     pub filled_bytes: u64,
     pub file_bytes_saved: u64,
+    /// How much smaller the request to trim made the file. `None` if its size without the request is unknown.
+    pub requested_cut_bytes: Option<u64>,
     pub uncut: Option<Uncut>,
     pub format: Option<ExecutableFormat>,
 }

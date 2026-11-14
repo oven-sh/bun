@@ -46,6 +46,12 @@ pub(super) struct NamesLookedUp {
     with_shared_types_since: Vec<u32>,
     readers: Vec<(u32, u32)>,
     reader_count_without_repeats: usize,
+    /// By importing file: for each of its imported names, the file that holds the variable, or `NO_HOLDER`.
+    holders: FxHashMap<u32, Vec<u32>>,
+    /// By file. They depend only on the statements of the files, so folding a file again does not change them.
+    stars: Vec<OnceLock<Arc<Stars>>>,
+    ever_parsed: FxHashSet<u32>,
+    has_new_files: bool,
     replacements: FxHashMap<u32, u32>,
     file_count_of_replacements: usize,
     mocked: FxHashSet<u32>,
@@ -62,6 +68,7 @@ impl NamesLookedUp {
 
     pub(super) fn note_parsed_file(&mut self, file: u32, parsed: &ParsedCodeFile<'_, '_>) {
         self.parsed_since.push(file);
+        self.has_new_files |= self.ever_parsed.insert(file);
         let mut sites = parsed.code.analyzed.analysis.import_sites.iter();
         if sites.any(|site| matches!(site.kind, ImportSiteKind::MockModule(_))) {
             self.mocking_since.push(file);
@@ -653,6 +660,8 @@ const MOST_FOLDINGS_OF_ONE_FILE: u32 = 64;
 
 const FILES_OF_ONE_SHARE: usize = 128;
 
+const NO_HOLDER: u32 = u32::MAX;
+
 pub(super) fn fold_files_that_import_constants_again<'s, 'r>(
     context: &CodeLoadContext<'_, 's, 'r>,
     state: &mut WalkState<'s, 'r>,
@@ -672,7 +681,11 @@ pub(super) fn fold_files_that_import_constants_again<'s, 'r>(
         looked_up.replacements = replacements;
         looked_up.file_count_of_replacements = state.files.len();
     }
-    let stars: Vec<OnceLock<Arc<Stars>>> = state.files.iter().map(|_| OnceLock::new()).collect();
+    let mut stars = std::mem::take(&mut looked_up.stars);
+    let has_new_files = std::mem::take(&mut looked_up.has_new_files);
+    if has_new_files || asks_every_file || stars.len() != state.files.len() {
+        stars = state.files.iter().map(|_| OnceLock::new()).collect();
+    }
     let may_mock: Vec<u32> = (mocking.iter().chain(&parsed[parsed_count..]))
         .copied()
         .collect();
@@ -712,13 +725,13 @@ pub(super) fn fold_files_that_import_constants_again<'s, 'r>(
         &newly_mocked,
         newly_mocked_variables,
     );
+    let mut is_parsed = vec![asks_every_file; state.files.len()];
+    for &file in &parsed {
+        is_parsed[file as usize] = true;
+    }
     let mut asked: Vec<u32> = match asks_every_file {
         true => (0..state.files.len() as u32).collect(),
         false => {
-            let mut is_parsed = vec![false; state.files.len()];
-            for &file in &parsed {
-                is_parsed[file as usize] = true;
-            }
             let readers = looked_up.readers.iter();
             let readers = readers.filter(|pair| is_parsed[pair.0 as usize]);
             let readers = readers.map(|pair| pair.1);
@@ -733,22 +746,49 @@ pub(super) fn fold_files_that_import_constants_again<'s, 'r>(
         let mut exports = Exports::new(&state.files, &looked_up, &stars).reusing(spare);
         let mut importers: Vec<(u32, Vec<ImportedConstant>)> = Vec::new();
         let mut reads: Vec<(u32, u32)> = Vec::new();
+        let mut holders: Vec<(u32, Vec<u32>)> = Vec::new();
         for &index in share {
             let file = &state.files[index as usize];
-            let names = imported_names(file).iter();
-            let names = names.filter(|_| file.foldings_with_constants < MOST_FOLDINGS_OF_ONE_FILE);
-            let found: Vec<ImportedConstant> = names
-                .filter_map(|&name| exports.find_constant(index, name))
-                .collect();
+            let names = match file.foldings_with_constants < MOST_FOLDINGS_OF_ONE_FILE {
+                true => imported_names(file),
+                false => &[],
+            };
+            // A name whose holder was not parsed again has the constant that it had, if the importing file was not parsed again either.
+            let known = match is_parsed[index as usize] {
+                true => None,
+                false => looked_up.holders.get(&index),
+            };
+            let mut constants_before = file.imported_constants.iter().peekable();
+            let mut found: Vec<ImportedConstant> = Vec::new();
+            let mut holders_of_names: Vec<u32> = Vec::with_capacity(names.len());
+            for (place, &name) in names.iter().enumerate() {
+                let constant_before = constants_before.next_if(|it| it.name == name);
+                let holder = known.and_then(|known| known.get(place));
+                if let Some(&holder) = holder
+                    && holder != NO_HOLDER
+                    && !is_parsed[holder as usize]
+                {
+                    holders_of_names.push(holder);
+                    found.extend(constant_before.copied());
+                    continue;
+                }
+                let read_before = exports.files_read.len();
+                found.extend(exports.find_constant(index, name));
+                let read = exports.files_read.get(read_before);
+                holders_of_names.push(read.copied().unwrap_or(NO_HOLDER));
+            }
             exports.files_read.sort_by_u32(|&file| file);
             exports.files_read.dedup();
             reads.extend(exports.files_read.drain(..).map(|read| (read, index)));
+            if known != Some(&holders_of_names) {
+                holders.push((index, holders_of_names));
+            }
             if !are_same(&found, &file.imported_constants) {
                 importers.push((index, found));
             }
         }
         spare_tables.lock().push(exports.into_spare_tables());
-        (importers, reads)
+        (importers, reads, holders)
     };
     let shares: Vec<&[u32]> = asked.chunks(FILES_OF_ONE_SHARE).collect();
     let answers: Vec<Guarded<_>> = shares.iter().map(|_| Guarded::new(None)).collect();
@@ -759,11 +799,14 @@ pub(super) fn fold_files_that_import_constants_again<'s, 'r>(
     let mut importers: Vec<(u32, Vec<ImportedConstant>)> = Vec::new();
     for mut answer in answers {
         let answer = answer.get_mut().take();
-        let (importers_of_share, reads_of_share) = answer.expect("every share was looked up");
+        let (importers_of_share, reads_of_share, holders_of_share) =
+            answer.expect("every share was looked up");
         importers.extend(importers_of_share);
         looked_up.readers.extend(reads_of_share);
+        looked_up.holders.extend(holders_of_share);
     }
     looked_up.drop_repeated_readers();
+    looked_up.stars = stars;
     state.names_looked_up = looked_up;
     let mut folded_again: Vec<u32> = Vec::new();
     for (index, found) in importers {

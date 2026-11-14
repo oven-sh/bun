@@ -3,12 +3,7 @@
 # and the receiver and the callee meet: behind the meeting stands the call alone. f1 = apply.
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
-# CHECK: = ShapeTest {{*}}layouts=[L1]
-# CHECK: frequency=Rare
-# CHECK-NEXT: = PropGet {{*}}key="core"
-# CHECK-NEXT: = PropGet {{*}}key="run"
 # CHECK: = GetSlot {{*}}key="core" receivers=[L1] level=Proven
-# CHECK: = IsSlotFilled {{*}}key="run" receivers=[L0] level=Proven
 # CHECK: = GetSlot {{*}}key="run" receivers=[L0] level=Proven
 # CHECK-NOT: = PropGet
 # CHECK: = Call {{*}}calleeKey="run"

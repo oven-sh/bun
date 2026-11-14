@@ -67,7 +67,7 @@ impl<'a> StagedEntry<'a> {
                 // Emptied through its own handle. `rmdir` only removes an empty folder.
                 Ok(incomplete) => {
                     emptying_err = incomplete.delete_children().err();
-                    incomplete.close();
+                    drop(incomplete);
                     let _ = sys::rmdirat(cache_dir, to);
                 }
                 // It isn't a folder, or it's gone by now. `unlink` never removes a folder.

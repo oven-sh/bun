@@ -949,8 +949,16 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn is_empty_object_type(&mut self, ty: TypeId) -> bool {
         match self.data(ty) {
             TypeData::Union(parts) => {
-                !self.has_only_unrelated_classes(ty)
-                    && parts.iter().any(|&p| self.is_empty_object_type(p))
+                let is_large = parts.len() >= unions::MANY_MEMBERS;
+                if is_large && let Some(&is_empty) = self.unions_with_empty_member.get(&ty) {
+                    return is_empty;
+                }
+                let is_empty = !self.has_only_unrelated_classes(ty)
+                    && parts.iter().any(|&p| self.is_empty_object_type(p));
+                if is_large && self.unresolved_members.is_empty() {
+                    self.unions_with_empty_member.insert(ty, is_empty);
+                }
+                is_empty
             }
             TypeData::Intersection(parts) => parts.iter().all(|&p| self.is_empty_object_type(p)),
             _ if ty == TypeId::OBJECT => true,
@@ -3778,10 +3786,17 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `isTypeSubsetOf(globalObjectType, target)`
-    pub(super) fn contains_global_object_type(&self, target: TypeId) -> bool {
-        self.parts(target)
-            .iter()
-            .any(|&p| self.is_reference_to_global(p, known::Object, 0))
+    pub(super) fn contains_global_object_type(&mut self, target: TypeId) -> bool {
+        let is_large = self.has_many_members(target);
+        if is_large && let Some(&has_object) = self.unions_with_global_object.get(&target) {
+            return has_object;
+        }
+        let mut parts = self.parts(target).iter();
+        let has_object = parts.any(|&p| self.is_reference_to_global(p, known::Object, 0));
+        if is_large {
+            self.unions_with_global_object.insert(target, has_object);
+        }
+        has_object
     }
 
     /// `getTypeOfPropertyInType`

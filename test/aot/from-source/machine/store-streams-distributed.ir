@@ -1,0 +1,16 @@
+# -- source: main.cjs
+# "use strict";
+# function streams(view) { let value = 1; for (let i = 0; i < 4096; i++) { view[i] = value; view[4096 | i] = value + 1; view[8192 | i] = value + 2; view[i + 12288] = value + 3; view[i + 16384] = value + 4; view[i + 20480] = value + 5; view[i + 24576] = value + 6; view[i + 28672] = value + 7; value = value * 5 + 3 & 255; } return value; }
+# function meeting(view) { let value = 1; for (let i = 0; i < 4097; i++) { view[i] = value; view[i + 4096] = value + 1; view[i + 8192] = value + 2; view[i + 12288] = value + 3; view[i + 16384] = value + 4; view[i + 20480] = value + 5; view[i + 24576] = value + 6; view[i + 28672] = value + 7; value = value * 5 + 3 & 255; } return value; }
+# function reading(view) { let value = 1; for (let i = 0; i < 4096; i++) { view[i] = value; view[4096 | i] = value + 1; view[8192 | i] = value + 2; view[i + 12288] = value + 3; view[i + 16384] = value + 4; view[i + 20480] = value + 5; view[i + 24576] = value + 6; view[i + 28672] = value + 7; value = view[i * 7 & 32767] + 3 & 255; } return value; }
+# function seven(view) { let value = 1; for (let i = 0; i < 4096; i++) { view[i] = value; view[4096 | i] = value + 1; view[8192 | i] = value + 2; view[i + 12288] = value + 3; view[i + 16384] = value + 4; view[i + 20480] = value + 5; view[i + 24576] = value + 6; value = value * 5 + 3 & 255; } return value; }
+# function sum(view) { let s = 0; for (let i = 0; i < view.length; i++) s = Math.imul(s, 31) + view[i] | 0; return s; }
+# const view = new Uint8Array(32800);
+# console.log(streams(view), sum(view), meeting(view), sum(view), reading(view), sum(view), seven(view), sum(view));
+# -- end of source
+# A loop that stores eight and more streams into one view, all of them a multiple of 4,096 bytes apart, is laid out once for each group of at most six. Streams that meet (`meeting`), a turn that reads (`reading`) and seven streams stay one loop. `streams` has two versions, with and without bounds checks.
+# RUN: compile LoopsDistributed mechanisms=all
+# CHECK: statistic LoopsDistributed 2
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 1 -1191444480 8 645152735 198 -1723172656 1 518638131
+# RIGHT-NEXT: exited with 0

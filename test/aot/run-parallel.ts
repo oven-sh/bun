@@ -26,15 +26,12 @@
 // on both sides, frames or no frames, so a wrong line would pass.
 // The line of a program that passes so says `framesDiffer: true`, and the last line of the run says how many did, and how many are skipped by a `// Todo: only frames (..): <why this driver cannot tell>`.
 //
-// THE REFERENCE IS ASKED AGAIN WHERE THE TWO PART. `bun <file>` itself answers otherwise once in some hundred runs of some programs.
-// It is run again, twice at most, and the program passes if one of those runs ends and prints as the executable did.
-// The executable is not run again: what it printed stands, so an executable that answers now one way, now the other, fails as ever. Not under a mark: that stands for a difference.
-// The line of a program that passes so says `referenceWavered: true`, stderr names it at once, and the last lines of the run name them all.
+// NEITHER RUN IS MADE AGAIN WHERE THE TWO PART. A program of which plain Bun has more than one answer fails, and what it races for is fixed in the program.
 //
 // Every program is built in each way of harness/ways.ts: as written, and with its types erased.
 // Each executable is held to the same run of plain Bun. Only the first build is asked what the program says that a build counts or prints.
 // A program that says `// Under: <flags>: <why>` is built once more with those flags: it is the witness of a fault that showed only there.
-// And every program is built once more with --aot-testing=FailGuesses:<n>: one guess in n fails on purpose though its value would have passed. So each program with a loop or a guess walks the ways
+// And every program is built once more with --aot-testing=FailSpeculations:<n>: one guess in n fails on purpose though its value would have passed. So each program with a loop or a guess walks the ways
 // from its typed copies into the closed ones, which its own values seldom or never take, and must still print what plain Bun prints. n is 3, 2 and 7 in turns, by the number of CI's build, and 3
 // anywhere else; the way in the line of a program names it. With 1 no typed copy is entered at all, and nothing is seen.
 // And once more with --aot-harden=proof-checks: what the compiler has proven is asked again at run time, and a proof that does not hold stops the program by name. A stored program is right, so a stop
@@ -80,10 +77,13 @@
 //                                      Every other build is made and run: `ways` says "built and run, not compared" of it, not "pass"
 //   // Prints what goes by the copy that runs: <what>   the same, for what the language leaves open and a typed copy of its code answers otherwise than the closed one: the bytes of a NaN
 //   // STATISTIC: <name> (= | >= | <=) <n>   what the build must have counted
+//   // STATISTIC on x64: <name> (= | >= | <=) <n>   the same where process.arch is that word, and nothing anywhere else. The word is x64 or arm64
 //   // COUNT: <name> (= | >= | <=) <n>       what the executable of the first build must have counted when it ends: no clock, and the same on every machine.
-//                                      A name as BUN_JSC_aotCountsPath writes it (operation:operationAOTGetById, counter:CompiledStructuresMade), or
+//                                      A name as BUN_JSC_aotCountsPath writes it (operation:operationAOTGetById, counter:CompiledStructuresCreated), or
 //                                      `operations`: all calls into the run time. The run has no collection. What the program starts counts too
-//   // COUNTER: <name> (= | >= | <=) <n>     the same, with the name without its kind (CompiledStructuresMade, operationAOTGetById)
+//   // COUNTER: <name> (= | >= | <=) <n>     the same, with the name without its kind (CompiledStructuresCreated, operationAOTGetById)
+//   // COUNTER in every build: <name> (= | >= | <=) <n>   the same, for a count that depends neither on the build's flags nor on collections (WasmInstancesInterpreted):
+//                                      it is asked of every build's executable, and the run is the ordinary one, with collections
 //                                      Each of the three may end with ` Todo: <why>`: it is not met today. It is asked all the same, and fails once it is met: the words go out.
 //                                      ` Todo on win32: <why>`: the same where process.platform is that, and the bound is held as ever anywhere else.
 //                                      ` Todo on linux x64: <why>`: where process.arch is the second word too: how often the allocator asks for room hangs on it.
@@ -168,6 +168,7 @@ type Program = {
   under: string[][];
   statistics: Bound[];
   counts: Bound[];
+  countsInEveryBuild: Bound[];
   boundsNotRead: string[];
   /** What `// Sizes:` and `// Passes:` say. */
   growth?: { sizes: number[]; passes: number; of: "the run" | "the build"; power: number; roomOfPeakMB?: number };
@@ -267,7 +268,7 @@ const askedOfAll = option("under")?.split(/\s+/).filter(Boolean);
 const isCheck = (flag: string) => flag.startsWith("--aot-check=");
 const oneGuessIn = option("one-guess-in") ?? String([3, 2, 7][Number(process.env.BUILDKITE_BUILD_NUMBER ?? 0) % 3]);
 if (!/^(?:[2-9]|[1-9]\d+)(?::\d+)?$/.test(oneGuessIn)) throw new Error(`--one-guess-in=${oneGuessIn}: <n> or <n>:<seed>, and n over 1`);
-const whereGuessesFail = [`--aot-testing=FailGuesses:${oneGuessIn}`];
+const whereGuessesFail = [`--aot-testing=FailSpeculations:${oneGuessIn}`];
 const whereProofsAreChecked = ["--aot-harden=proof-checks"];
 const waysBehindTheFirst = ways.map(({ flags }) => flags).filter(flags => flags.length > 0);
 const isOneOfTheWays = (flags: readonly string[]) => waysBehindTheFirst.some(way => way.join(" ") === flags.join(" "));
@@ -683,7 +684,6 @@ function differOnlyInLinesWithFrames(one: string, other: string, oneAgain: strin
   return lines.every((line, at) => line === others[at] || (line !== again[at] && others[at] !== othersAgain[at]));
 }
 let programsWhoseFramesDiffer = 0;
-const programsWhoseReferenceWavered = new Set<string>();
 let programsMarkedForFramesAlone = 0;
 /** The lines of `text` that are not the same in `other`, each with the line before and the line after it. */
 function differingLines(text: string, other: string) {
@@ -791,7 +791,6 @@ function settle(program: Program, verdict: Record<string, unknown>) {
     ways: Object.fromEntries(
       all.map(({ way, state, isCompared }) => [way, isCompared === false ? "built and run, not compared" : state]),
     ),
-    ...(all.some(({ referenceWavered }) => referenceWavered) && { referenceWavered: true }),
     ...(statisticsKept.has(program.file) && { statistics: statisticsKept.get(program.file) }),
     ...goalsNotMetOf(program.file),
   });
@@ -823,12 +822,14 @@ function fail(
 
 /** Only a COUNT names what is counted with its kind in front. */
 function readBound(line: string): (Bound & { kind: string }) | undefined {
-  const [, kind, name, relation, bound, platform, arch, todo] =
-    /^\/\/ (STATISTIC|COUNT|COUNTER): ([\w:]+) (=|>=|<=) (\d+)(?: Todo(?: on (\w+)(?: (\w+))?)?: (.+))?$/.exec(line) ?? [];
+  const [, kind, processor = process.arch, name, relation, bound, platform, arch, todo] =
+    /^\/\/ (STATISTIC(?: on (x64|arm64))?|COUNT|COUNTER|COUNTER in every build): ([\w:]+) (=|>=|<=) (\d+)(?: Todo(?: on (\w+)(?: (\w+))?)?: (.+))?$/.exec(
+      line,
+    ) ?? [];
   if (kind === undefined || (kind !== "COUNT" && name.includes(":"))) return undefined;
   const isTodoHere =
     (platform === undefined || platform === process.platform) && (arch === undefined || arch === process.arch);
-  return { kind, name, relation, bound: Number(bound), todo: isTodoHere ? todo : undefined };
+  return { kind: processor === process.arch ? kind.replace(/ on .*/, "") : kind, name, relation, bound: Number(bound), todo: isTodoHere ? todo : undefined };
 }
 
 function read(file: string): Program {
@@ -854,7 +855,7 @@ function read(file: string): Program {
     : [];
   const texts = [text, ...others.map(other => readFileSync(other, "utf8"))];
   const boundLines = texts.flatMap(text =>
-    Array.from(text.matchAll(/^\/\/ (?:STATISTIC|COUNT|COUNTER):.*$/gm), ([line]) => line),
+    Array.from(text.matchAll(/^\/\/ (?:STATISTIC(?: on \w+)?|COUNT|COUNTER|COUNTER in every build):.*$/gm), ([line]) => line),
   );
   const bounds = boundLines.map(readBound).filter(bound => bound !== undefined);
   const namesModules = someFileOf(path, text => namesMuchOfTheLibrary.test(text));
@@ -922,7 +923,8 @@ function read(file: string): Program {
     isNotBuiltWith: flags => lines(`No build under ${flags.join(" ")}`).length > 0,
     under: lines("Under").map(line => line.split(": ", 1)[0].split(/\s+/).filter(Boolean)),
     statistics: bounds.filter(({ kind }) => kind === "STATISTIC"),
-    counts: bounds.filter(({ kind }) => kind !== "STATISTIC"),
+    counts: bounds.filter(({ kind }) => kind === "COUNT" || kind === "COUNTER"),
+    countsInEveryBuild: bounds.filter(({ kind }) => kind === "COUNTER in every build"),
     boundsNotRead: boundLines.filter(line => !readBound(line)),
     growth: growthIsRead
       ? {
@@ -1188,6 +1190,24 @@ async function measureGrowthOfBuild(
   };
 }
 
+/**
+ * A run below a process that holds little and prints how the run ended and what it held at most. Linux counts for a child what the process that
+ * starts it holds, until the child runs its program: a driver that held 334 MB was told so of /bin/true.
+ */
+const startBelowSmallProcess: typeof start = (cmd, cwd, env) => {
+  const script = `const child = Bun.spawn({ cmd: ${JSON.stringify(cmd)}, stdio: ["ignore", "ignore", "ignore"] });
+    await child.exited;
+    console.log(child.exitCode + " " + child.resourceUsage().maxRSS);`;
+  return start([process.execPath, "-e", script], cwd, env);
+};
+
+/** What the small process told, where it ended by itself and its run ended as `run` did. */
+function mostResidentTold(told: Output, run: Output) {
+  const [, exitCode, bytes] = /^(\d+) (\d+)\n$/.exec(told.stdout) ?? [];
+  const isTold = told.exitCode === 0 && !told.overLimit && exitCode === `${run.exitCode}`;
+  return isTold ? Math.round(Number(bytes) / 2 ** 20) : undefined;
+}
+
 /** Every way to build a file is held to one run of the reference. */
 const references = new Map<string, ReturnType<typeof start>>();
 
@@ -1196,7 +1216,7 @@ async function run(program: Program): Promise<void> {
     return fail(
       program,
       "read",
-      `not of the form \`// STATISTIC | COUNT | COUNTER: <name> (= | >= | <=) <n>\`: ${program.boundsNotRead.join("; ")}`,
+      `not of the form \`// STATISTIC | STATISTIC on x64 | COUNT | COUNTER | COUNTER in every build: <name> (= | >= | <=) <n>\`: ${program.boundsNotRead.join("; ")}`,
     );
   if (program.growthNotRead) return fail(program, "read", program.growthNotRead);
   if (program.marksNotRead.length)
@@ -1223,7 +1243,7 @@ async function run(program: Program): Promise<void> {
     "--aot",
     `--aot-threads=${threads}`,
     ...program.flags,
-    ...(program.flags.includes(whereProofsAreChecked[0]) ? ["--aot-testing=ReadsByKeyOffFilledRecordsAreListed"] : []),
+    ...(program.flags.includes(whereProofsAreChecked[0]) ? ["--aot-testing=CheckDictionaryReadProofs"] : []),
     ...(program.statistics.length || (keepsStatistics && program.way === "compiled") ? ["--explain=statistics"] : []),
     entry,
     ...program.entryPoints,
@@ -1286,8 +1306,8 @@ async function run(program: Program): Promise<void> {
     const { BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: _, ...envOfRuns } = env;
     const stored = program.output;
     const withSlotOfRun = program.runsByItself ? withEverySlot : withSlot;
-    const runReference = async (entry = program.path) => {
-      if (!program.comparesWithCompiled) return withSlotOfRun(() => start([process.execPath, entry], cwd, envOfRuns));
+    const runReference = async (entry = program.path, run = start) => {
+      if (!program.comparesWithCompiled) return withSlotOfRun(() => run([process.execPath, entry], cwd, envOfRuns));
       const other = nextExecutable("reference");
       let remove = () => {};
       try {
@@ -1310,7 +1330,7 @@ async function run(program: Program): Promise<void> {
         );
         remove = noteExecutable(other);
         if (built.output.exitCode !== 0) return built;
-        return await withSlotOfRun(() => start([other], cwd, envOfRuns));
+        return await withSlotOfRun(() => run([other], cwd, envOfRuns));
       } finally {
         remove();
       }
@@ -1325,14 +1345,14 @@ async function run(program: Program): Promise<void> {
     };
     // One behind the other: what holds much in one holds much in the other.
     // A file for each process: the program may start itself again.
-    const counts =
-      program.way === "compiled" && program.counts.length && !moreFlags.length && runsAreAsUsersRunThem
-        ? `${basename(executable)}.counts-`
-        : undefined;
+    const asksFirstBuild =
+      program.way === "compiled" && program.counts.length > 0 && !moreFlags.length && runsAreAsUsersRunThem;
+    const counts = asksFirstBuild || program.countsInEveryBuild.length ? `${basename(executable)}.counts-` : undefined;
     const compiled = await withSlotOfRun(() =>
       start([executable], cwd, {
         ...envOfRuns,
-        ...(counts && { ...withoutCollections, [runtimeEnvironment.countsPath]: join(folder, `${counts}%p`) }),
+        ...(asksFirstBuild && withoutCollections),
+        ...(counts && { [runtimeEnvironment.countsPath]: join(folder, `${counts}%p`) }),
         ...program.envOfExecutable,
       }),
     );
@@ -1350,24 +1370,35 @@ async function run(program: Program): Promise<void> {
     compiled.output.stderr = withoutLinesOfImage(compiled.output.stderr);
     // What compiled code lays in store ahead of a deed shows in nothing that a program prints. Of 8,046 programs the worst held 1.48 times what plain Bun held.
     // Not where a program grows its data on purpose, where collections are off for a count, or under a sanitizer.
-    const [mostOfCompiled, mostOfPlain] = [compiled.mostResidentMB, plain?.mostResidentMB ?? 0];
+    // Both sides are told with the driver's memory in them, and the watcher may look at neither at its most: what looks too much is run again.
+    // Then the largest process of each side is compared. What all processes of a run hold together is known by the watcher's looks alone.
+    const isTooMuch = (most: number, mostOfPlain: number) => most > 2 * mostOfPlain + 64;
     if (
       !isASAN &&
       !moreFlags.length &&
       runsAreAsUsersRunThem &&
       !program.growth &&
-      !counts &&
-      mostOfPlain &&
-      mostOfCompiled > 2 * mostOfPlain + 64
-    )
-      return fail(
-        program,
-        "memory",
-        `it held ${mostOfCompiled} MB at most, and plain Bun ${mostOfPlain} MB`,
-        compiled.output,
-        plain?.output,
+      !asksFirstBuild &&
+      plain &&
+      (isTooMuch(compiled.mostResidentMB, plain.mostResidentMB) || isTooMuch(compiled.peakMB, plain.peakMB))
+    ) {
+      const again = await withSlotOfRun(() =>
+        startBelowSmallProcess([executable], cwd, { ...envOfRuns, ...program.envOfExecutable }),
       );
-    const unmetByRun = counts ? unmetBounds(program.file, counted, program.counts, "executable") : [];
+      const plainAgain = await runReference(program.path, startBelowSmallProcess);
+      const most = mostResidentTold(again.output, compiled.output);
+      const mostOfPlain = mostResidentTold(plainAgain.output, plain.output);
+      if (most === undefined || mostOfPlain === undefined || isTooMuch(most, mostOfPlain))
+        return fail(
+          program,
+          "memory",
+          `it held ${most ?? "untold"} MB at most, and plain Bun ${mostOfPlain ?? "untold"} MB`,
+          again.output,
+          plainAgain.output,
+        );
+    }
+    const askedOfRun = [...(asksFirstBuild ? program.counts : []), ...program.countsInEveryBuild];
+    const unmetByRun = unmetBounds(program.file, counted, askedOfRun, "executable");
     if (unmetByRun.length) return fail(program, "count", unmetByRun.join("; "), compiled.output, plain?.output);
     const grown =
       program.way === "compiled" && program.growth && !moreFlags.length && runsAreAsUsersRunThem && !isASAN
@@ -1416,18 +1447,6 @@ async function run(program: Program): Promise<void> {
     if (Bun.deepEquals(comparedWithPlain(compiled.output), comparedWithPlain(plain!.output)))
       return settle(program, { ...passes, plainMs: plain!.ms });
     if (agreeButForFrames(comparedWithPlain(compiled.output), comparedWithPlain(plain!.output))) return passesButForFrames();
-    if (program.todo === undefined && program.todoOfWay === undefined)
-      for (let asked = 0; asked < 2; asked++) {
-        const again = await runReference();
-        if (!Bun.deepEquals(comparedWithPlain(compiled.output), comparedWithPlain(again.output))) continue;
-        references.set(program.path, Promise.resolve(again));
-        programsWhoseReferenceWavered.add(program.file);
-        console.error(
-          `THE REFERENCE WAVERED: ${program.file}: plain Bun printed ${JSON.stringify(differingLines(plain!.output.stdout, again.output.stdout))} at first, ` +
-            `and asked again what the executable printed: ${JSON.stringify(differingLines(again.output.stdout, plain!.output.stdout))}`,
-        );
-        return settle(program, { ...passes, plainMs: plain!.ms + again.ms, referenceWavered: true });
-      }
     const differs = () =>
       fail(
         program,
@@ -1554,10 +1573,5 @@ if (programsWhoseFramesDiffer || programsMarkedForFramesAlone)
   console.error(
     `${programsWhoseFramesDiffer} builds differ from their reference in the frames of stack traces alone, and pass | ` +
       `${programsMarkedForFramesAlone} programs are skipped because a \`// Todo: only frames\` says that of them where this driver cannot tell`,
-  );
-if (programsWhoseReferenceWavered.size)
-  console.error(
-    `${programsWhoseReferenceWavered.size} programs pass though plain Bun printed otherwise at first: asked again it printed what the executable had printed: ` +
-      [...programsWhoseReferenceWavered].join(" "),
   );
 process.exit(hasFailed ? 1 : 0);

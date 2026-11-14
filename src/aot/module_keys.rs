@@ -39,6 +39,7 @@ pub fn loader_by_name(path: &[u8]) -> Loader {
     loader_by_path_or(DEFAULT_LOADERS, path, Loader::File)
 }
 
+/// Each ending that `table` reads with another loader than `DEFAULT_LOADERS` do, a zero byte, the type attribute of that loader, a zero byte.
 pub fn encode_loaders_given_to_build<E: AsRef<[u8]>>(table: &[(E, Loader)]) -> Vec<u8> {
     let mut encoded = Vec::new();
     for (ending, loader) in table {
@@ -92,9 +93,10 @@ fn extension_of(path: &[u8]) -> &[u8] {
 
 #[inline]
 fn compare_bytes(first: &[u8], second: &[u8]) -> Ordering {
-    for (a, b) in first.iter().zip(second) {
-        if a != b {
-            return a.cmp(b);
+    let shared = first.len().min(second.len());
+    for at in 0..shared {
+        if first[at] != second[at] {
+            return first[at].cmp(&second[at]);
         }
     }
     first.len().cmp(&second.len())

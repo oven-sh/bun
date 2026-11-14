@@ -1,6 +1,7 @@
-// STATISTIC: GuessesAtLengthsThatTakeInstancesBelow = 5
+// STATISTIC: TypedArrayLengthSpeculationsAllowingSubclasses >= 4
 // Under: --aot-testing=CheckProofsAtRunTime --aot-check=Validate: where the length is believed by the note the weaker test is asked again
 // The index steps by what was read, or the bytes lie in a field that is read in the turn: no front leads such a loop, and each read of the length has a guess of its own. It takes a Buffer where Uint8Array is
+// In sum() and swapped() the position comes round the loop as an int32: their iterations are a version that asks the view for its storage each time it reads the field, and its length is guessed there as well.
 // written, for the length alone. What has a length, a name or a prototype of its own, an heir, another view, a list and a text go the other way.
 function scan(bytes: Uint8Array): number { let n = 0, i = 0; while (i < bytes.length) { const c = bytes[i++]!; if (c >= 0xc2 && i < bytes.length) { n += bytes[i++]! & 0x3f; continue; } n += c; } return n; }
 class Reader {

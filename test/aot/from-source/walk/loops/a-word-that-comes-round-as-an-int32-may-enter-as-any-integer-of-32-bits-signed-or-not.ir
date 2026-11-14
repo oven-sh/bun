@@ -12,10 +12,10 @@
 # -- end of source
 # RUN: walk f1 f2 mechanisms=all
 # CHECK-LABEL: code f1:Body
-# CHECK-COUNT-2: = TypeTest {{*}}testedType=int[-2147483648, 4294967295]
-# CHECK: : int[-2147483648, 4294967295] @Int64, {{*}}: int[-2147483648, 4294967295] @Int64, {{*}}isInLoop=true isLoopHead=true
+# CHECK-COUNT-2: = TypeTest {{*}}testedType=int[-562949953421312, 562949953421312]
+# CHECK: : int[-562949953421312, 562949953421312] @Int64, {{*}}: int[-562949953421312, 562949953421312] @Int64, {{*}}isInLoop=true isLoopHead=true
 # CHECK-LABEL: code f2:Body
-# CHECK-NOT: testedType=int[-2147483648, 4294967295]
+# CHECK-NOT: testedType=int[-562949953421312, 562949953421312]
 # CHECK: = TypeTest {{*}}testedType=i32
 # RUN(SHELL): run-in-shell const all = [4294967295, 1, 0, 4294967295, 1, 1, 4294967295, 1, 2, 0.5, 0.5, 1, 4294967296, 1, 1, 9007199254740992, 1, 1, -2147483649, -1, 1, NaN, 1, 1, 2147483648, 2147483648, 3, -0, 5, 0, 90, 4294967295, -4294967295.5]; let at = 0; globalThis.hidden = () => all[at++]; globalThis.say = (x) => print(String(x));
 # SHELL: 4294967295,1

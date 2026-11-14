@@ -1,6 +1,6 @@
 // Four functions, each of which spreads a source of its own that may be undefined and calls the next: the ways part once. A function that is copied into a way parts no ways again: they doubled at each level (48 at four levels).
-// STATISTIC: CopiesWalkedApartFromSourcesWithoutProperties >= 1
-// STATISTIC: CopiesWalkedApartFromSourcesWithoutProperties <= 2
+// STATISTIC: ObjectSpreadsSplitOnEmptiness >= 1
+// STATISTIC: ObjectSpreadsSplitOnEmptiness <= 2
 type More = { p: number } | undefined;
 function f0(a: number, m0: More, m1: More, m2: More, m3: More, m4: More) { const o: any = { a, ...m0 }; return o.a; }
 function f1(a: number, m0: More, m1: More, m2: More, m3: More, m4: More) { const o: any = { a, ...m1 }; return f0(o.a + 1, m0, m1, m2, m3, m4); }

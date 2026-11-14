@@ -105,7 +105,7 @@ impl Tree {
         }
         (deps.get(self.dependency_id as usize)).is_some_and(|dep| {
             dep.behavior.is_workspace()
-                && dep.version.tag == crate::dependency::VersionTag::Workspace
+                && dep.version.tag() == crate::dependency::VersionTag::Workspace
         }) && !(trees[self.parent as usize].dependencies)
             .get(hoisted_dependencies)
             .contains(&self.dependency_id)
@@ -380,9 +380,10 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
                     path_written = 2;
                 } else {
                     let member = &dependencies[trees[id as usize].dependency_id as usize];
-                    name = bun_core::strings::without_trailing_slash(
-                        member.version.workspace().slice(buf),
-                    );
+                    let crate::dependency::Value::Workspace(path) = &member.version.value else {
+                        unreachable!("checked by `is_unlinked_member`");
+                    };
+                    name = bun_core::strings::without_trailing_slash(path.slice(buf));
                     path_written = 0;
                     // A workspace can be outside the project, e.g. `../shared`.
                     is_workspace_path = true;
@@ -596,7 +597,7 @@ impl PeerProbes {
         }
 
         let is_probed = |peer: &Dependency| {
-            peer.behavior.is_peer() && peer.version.tag == crate::dependency::VersionTag::Npm
+            peer.behavior.is_peer() && peer.version.tag() == crate::dependency::VersionTag::Npm
         };
         let with_peers = self.1.get_or_insert_with(|| {
             let lists = lockfile.packages.items_resolutions();
@@ -1861,13 +1862,14 @@ impl Tree {
                 let range = (builder.lockfile().catalogs).resolve_range(builder.buf(), dependency);
                 let resolution: &Resolution =
                     &builder.lockfile().packages.items_resolution()[res_id as usize];
-                range.tag == crate::dependency::VersionTag::Npm
-                    && resolution.tag == crate::resolution::Tag::Npm
-                    && (range.npm().version).satisfies(
-                        resolution.npm().version,
-                        builder.buf(),
-                        builder.buf(),
-                    )
+                range.try_npm().is_some_and(|range| {
+                    resolution.tag == crate::resolution::Tag::Npm
+                        && (range.version).satisfies(
+                            resolution.npm().version,
+                            builder.buf(),
+                            builder.buf(),
+                        )
+                })
             };
             // Every platform installs such a dependency, unless an option like `--omit` skips it.
             let is_always_linked =
@@ -1878,12 +1880,8 @@ impl Tree {
                 // registry version. Their hoisted linker linked the workspace.
                 if METHOD == BuilderMethod::Filter
                     && dep.behavior.is_workspace()
-                    && dependency.version.tag == crate::dependency::VersionTag::DistTag
-                    && (dependency.version.dist_tag().name).eql(
-                        dependency.name,
-                        builder.buf(),
-                        builder.buf(),
-                    )
+                    && let crate::dependency::Value::DistTag(dist_tag) = &dependency.version.value
+                    && (dist_tag.name).eql(dependency.name, builder.buf(), builder.buf())
                 {
                     return HoistDependencyResult::Hoisted; // 1
                 }

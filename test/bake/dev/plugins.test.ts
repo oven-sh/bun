@@ -406,6 +406,64 @@ devTest("virtual module shared by two importers is not re-sent when one importer
     await expectOnlyFooInHotUpdate(dev, "virtual:__foo__");
   },
 });
+// The module and what it imports have the same output, but the page never loaded them.
+devTest("virtual module that a page imports for the first time is in the hot update", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      export default {
+        name: "virtual",
+        setup(build) {
+          build.onResolve({ filter: /^virtual:/ }, args => {
+            return { path: args.path.slice("virtual:".length), namespace: "virtual" };
+          });
+          build.onLoad({ filter: /.*/, namespace: "virtual" }, args => {
+            return {
+              contents:
+                args.path === "one"
+                  ? 'import { two } from "virtual:two"; export const one = "one " + two;'
+                  : 'export const two = "two";',
+              loader: "js",
+            };
+          });
+        },
+      };
+    `,
+    "a.html": emptyHtmlFile({ scripts: ["a.ts"] }),
+    "a.ts": `
+      console.log("a");
+      import.meta.hot.accept();
+    `,
+    "b.html": emptyHtmlFile({ scripts: ["b.ts"] }),
+    "b.ts": `
+      import { one } from "virtual:one";
+      console.log("b " + one);
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/a").expect.toInclude("script");
+    {
+      await using b = await dev.client("/b");
+      await b.expectMessage("b one two");
+    }
+    await using a = await dev.client("/a");
+    await a.expectMessage("a");
+    // dev.write() throws when the page reloads.
+    await dev.write(
+      "a.ts",
+      `
+        import { one } from "virtual:one";
+        console.log("a " + one);
+        import.meta.hot.accept();
+      `,
+    );
+    await a.expectMessage("a one two");
+  },
+});
 devTest("virtual json module shared by two importers is not re-sent when one importer changes", {
   files: {
     "bunfig.toml": `

@@ -307,7 +307,10 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     /// Server side: unused (server stores code slices in `current_chunk_code`).
     pub(crate) current_chunk_parts: Vec<FileIndex<SIDE>>,
     /// Client side: the files of the chunk that were bundled again with the same output, in the chunk's order.
+    /// After `settle_unchanged_files`, only those that left the chunk.
     pub(crate) unchanged_files: Vec<FileIndex<SIDE>>,
+    /// Client side: what a file of the bundle imports now and did not before. Empty if no file left the chunk.
+    pub(crate) newly_imported_files: Vec<FileIndex<SIDE>>,
     /// Server side: owned code slices contributing to the current chunk.
     /// Client side: unused.
     pub(crate) current_chunk_code: Vec<Box<[u8]>>,
@@ -481,6 +484,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
         self.current_chunk_parts.clear();
         self.unchanged_files.clear();
+        self.newly_imported_files.clear();
     }
 
     /// Once every chunk is in, an unchanged module that imports no changed module of the chunk, at any depth, leaves it.
@@ -515,6 +519,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         let files = self.bundled_files.values();
         let mut unchanged = self.unchanged_files.iter().peekable();
         let mut removed_len = 0;
+        let mut left_out: Vec<FileIndex<SIDE>> = Vec::new();
         self.current_chunk_parts.retain(|part| {
             let i = part.get() as usize;
             if unchanged.next_if(|file| file.get() == part.get()).is_none() || reached.is_set(i) {
@@ -524,10 +529,43 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             if i < ctx.client_files_updated.bit_length() {
                 ctx.client_files_updated.unset(i);
             }
+            left_out.push(*part);
             false
         });
         self.current_chunk_len -= removed_len;
-        self.unchanged_files.clear();
+        self.unchanged_files = left_out;
+        Ok(())
+    }
+
+    /// Once the edges are up to date. A page whose file has a new import may never have loaded that module,
+    /// nor what the module imports, so they go back into the chunk.
+    pub(crate) fn restore_newly_imported_files(
+        &mut self,
+        ctx: &mut HotUpdateContext<'_>,
+    ) -> Result<(), bun_alloc::AllocError> {
+        debug_assert!(matches!(SIDE, Side::Client));
+        if self.newly_imported_files.is_empty() {
+            return Ok(());
+        }
+        let mut reached = DynamicBitSetUnmanaged::init_empty(self.bundled_files.count())?;
+        let mut queue = core::mem::take(&mut self.newly_imported_files);
+        while let Some(file) = queue.pop() {
+            if reached.is_set(file.get() as usize) {
+                continue;
+            }
+            reached.set(file.get() as usize);
+            let mut it = self.edge_lists[file.get() as usize].first_import;
+            while let Some(edge_index) = it {
+                let edge = self.edges[edge_index.get() as usize];
+                it = edge.next_import;
+                queue.push(edge.imported);
+            }
+        }
+        for file in core::mem::take(&mut self.unchanged_files) {
+            if reached.is_set(file.get() as usize) {
+                self.push_chunk_part(ctx, file);
+            }
+        }
         Ok(())
     }
 
@@ -1194,6 +1232,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             }
             *new_imports = Some(edge);
             self.edge_lists[imported_file_index.get() as usize].first_dep = Some(edge);
+            if !self.unchanged_files.is_empty() {
+                self.newly_imported_files.push(imported_file_index);
+            }
 
             self.dev_incremental_result().had_adjusted_edges = true;
 

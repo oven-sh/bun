@@ -621,6 +621,7 @@ fn finalize_bundle_inner(
             entry_index,
         )?;
     }
+    dev.client_graph.restore_newly_imported_files(&mut ctx)?;
 
     // Index all failed files now that the incremental graph has been updated.
     if !dev.incremental_result.failures_removed.is_empty()

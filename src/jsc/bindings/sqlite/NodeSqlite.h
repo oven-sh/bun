@@ -37,6 +37,8 @@ struct sqlite3_session;
 
 namespace Bun {
 
+JSC_DECLARE_HOST_FUNCTION(jsSetSqliteQueryPublisher);
+
 class JSDatabaseSync;
 class JSStatementSync;
 class JSNodeSqliteSession;
@@ -176,8 +178,14 @@ public:
     // wrapper object for the same reason).
     JSC::WriteBarrier<JSC::JSObject> m_authorizer;
     JSC::WriteBarrier<JSNodeSqliteLimits> m_limits;
+    unsigned m_authorizerCallbackDepth { 0 };
 
     SqliteCallbackRoots m_callbacks;
+
+    void setQueryPublisher(JSC::JSObject*);
+    bool isInQueryCallback() const { return m_queryCallbackDepth > 0; }
+    static int queryTraceCallback(unsigned, void*, void*, void*);
+    bool m_suppressQueryEvents { false };
 
     // Incremented for the duration of any native call that may re-enter JS.
     // close()/deserialize()/process-exit consult it. Node permits re-entrant
@@ -229,6 +237,8 @@ private:
     // The handle between closeInternal() and finishDeferredClose().
     sqlite3* m_deferredClose = nullptr;
     unsigned m_busyDepth = 0;
+    unsigned m_queryCallbackDepth = 0;
+    JSC::WriteBarrier<JSC::JSObject> m_queryPublisher;
     // Not roots. A cell on the list has not run its destructor: a statement's
     // unlinks it, and the database's unlinks whatever is left.
     WTF::SentinelLinkedList<JSStatementSync, WTF::BasicRawSentinelNode<JSStatementSync>> m_statements;

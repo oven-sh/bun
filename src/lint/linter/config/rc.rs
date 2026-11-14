@@ -438,7 +438,7 @@ const PRINTED_SETTINGS: &[u8] = br#"{
   "jest": { "version": null }
 }"#;
 
-/// `"deny"`, or `["deny", [..]]`.
+/// `"deny"`, or `["deny", ..]` with the options: what the loader reads, unlike oxlint 1.92 (oxc-project/oxc#28972).
 fn printed_setting(severity: Severity, options: &[Json]) -> Json {
     let severity: &[u8] = match severity {
         Severity::Off => b"allow",
@@ -448,13 +448,18 @@ fn printed_setting(severity: Severity, options: &[Json]) -> Json {
     let severity = Json::String(severity.to_vec());
     match options {
         [] => severity,
-        options => Json::Array(vec![severity, Json::Array(options.to_vec())]),
+        options => Json::Array(
+            std::iter::once(severity)
+                .chain(options.iter().cloned())
+                .collect(),
+        ),
     }
 }
 
 /// The `rules` of `json` as oxlint prints them in an override, which is as written.
 fn printed_rules(json: &Json) -> Json {
-    let rules = json.get(b"rules").and_then(Json::as_object);
+    let rules = json.get(b"rules").map(with_eslint_severities);
+    let rules = rules.as_ref().and_then(Json::as_object);
     let printed = rules.unwrap_or_default().iter().filter_map(|(id, value)| {
         let setting = RuleSetting::new(id, value)?;
         Some((

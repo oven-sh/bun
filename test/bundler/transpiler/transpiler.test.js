@@ -6466,6 +6466,59 @@ describe("parse error flood", () => {
   }, 90_000);
 });
 
+describe("a log of more than 256 messages", () => {
+  const transpiler = new Bun.Transpiler({ loader: "js" });
+  const warning = 'Treating "-->" as the start of a legacy HTML single-line comment';
+
+  // What each API throws for `code`: every entry of `errors` as "level line: message".
+  const thrownByEveryApi = async code => {
+    const actual = {};
+    for (const api of ["scan", "scanImports", "transformSync", "transform"]) {
+      try {
+        await transpiler[api](code);
+        actual[api] = "did not throw";
+      } catch (e) {
+        actual[api] = {
+          name: e.name,
+          entries: e.errors?.map(entry => `${entry.level} ${entry.position.line}: ${entry.message}`),
+        };
+      }
+    }
+    return actual;
+  };
+
+  // Each `-->` line logs one warning. `let = ;` logs the only error.
+  it.each([255, 256, 300])("%d warnings before the error: every API throws each message", async warnings => {
+    const thrown = {
+      name: "AggregateError",
+      entries: [
+        ...Array.from({ length: warnings }, (_, i) => `warn ${i + 1}: ${warning}`),
+        `error ${warnings + 1}: Unexpected ;`,
+      ],
+    };
+    const code = Buffer.alloc(warnings * 4, "-->\n").toString() + "let = ;\n";
+    expect(await thrownByEveryApi(code)).toEqual({
+      scan: thrown,
+      scanImports: thrown,
+      transformSync: thrown,
+      transform: thrown,
+    });
+  });
+
+  it("300 errors: every API throws each message", async () => {
+    const thrown = {
+      name: "AggregateError",
+      entries: Array.from({ length: 300 }, (_, i) => `error ${i + 1}: Expected ";" but found "b"`),
+    };
+    expect(await thrownByEveryApi(Buffer.alloc(300 * 4, "a b\n").toString())).toEqual({
+      scan: thrown,
+      scanImports: thrown,
+      transformSync: thrown,
+      transform: thrown,
+    });
+  });
+});
+
 describe("multi-line comment scanning", () => {
   // The lexer's block-comment scanner switches to a SIMD skip
   // (bun_highway::index_of_interesting_character_in_multiline_comment) when at

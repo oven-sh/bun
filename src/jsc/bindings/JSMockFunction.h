@@ -1,6 +1,7 @@
 #pragma once
 
 #include "root.h"
+#include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/Strong.h>
 
@@ -24,6 +25,17 @@ JSC::JSValue mockObject(Zig::GlobalObject*, JSC::JSValue exports, bool spy, bool
 // For `vi.dynamicImportSettled()`. `import` is the module loader's own promise for an `import()`, not the one script gets.
 // `key` is null unless there are module mocks.
 void didStartDynamicImport(Zig::GlobalObject*, JSC::JSPromise* import, const String& key);
+
+// A spy that spyOn() laid in place of a value, until its restore.
+struct InstalledSpy {
+    JSC::JSObject* spy;
+    // The object that holds the spy: for a spy on an export, the module namespace object. Null once that object is collected, and then the restore writes nothing.
+    JSC::JSObject* target;
+    JSC::Identifier key;
+    // What its restore writes back.
+    JSC::JSValue replaced;
+};
+std::optional<InstalledSpy> installedSpy(JSC::JSValue);
 
 // Wrapper to scope a bunch of GlobalObject properties related to mocks
 class JSMockModule final {

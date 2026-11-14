@@ -7586,7 +7586,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot extend table 'b' with a dotted key");
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot extend table 'c' with a dotted key");
   });
 
   test("invalid/table/append-with-dotted-keys-02", () => {
@@ -7599,7 +7599,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot extend table 'b' with a dotted key");
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot extend table 'd' with a dotted key");
   });
 
   test("invalid/table/append-with-dotted-keys-03", () => {
@@ -7673,7 +7673,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot extend table 'b' with a dotted key");
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot extend table 'c' with a dotted key");
   });
 
   test("invalid/table/array-empty", () => {

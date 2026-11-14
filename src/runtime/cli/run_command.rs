@@ -3645,9 +3645,7 @@ impl RunCommand {
                         let mut has_copied = false;
                         let mut dir_slice_len: usize = 0;
                         while let Some(entry) = iter.next() {
-                            // SAFETY: `EntryMap` stores non-null `*mut Entry` values owned by
-                            // the resolver dir-cache for the process lifetime.
-                            let value = unsafe { &**entry.1 };
+                            let value = *entry.1;
                             if value.kind(&bun_resolver::fs::FileSystem::get().fs, true)
                                 == bun_resolver::fs::EntryKind::File
                             {
@@ -3701,9 +3699,7 @@ impl RunCommand {
                     let mut iter = entries.data.iter();
 
                     while let Some(entry) = iter.next() {
-                        // SAFETY: `EntryMap` stores non-null `*mut Entry` values owned by the
-                        // resolver dir-cache for the process lifetime.
-                        let value = unsafe { &**entry.1 };
+                        let value = *entry.1;
                         let name = value.base();
                         if name[0] != b'.'
                             && this_transpiler

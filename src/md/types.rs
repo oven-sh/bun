@@ -84,6 +84,10 @@ pub trait RendererImpl {
     fn leave_span(&mut self, span_type: SpanType) -> JsResult<()>;
     fn text(&mut self, text_type: TextType, content: &[u8]) -> JsResult<()>;
 
+    /// Whether the indentation of a line of code or HTML comes as one `text` of one space for each of its columns.
+    fn wants_indentation_as_spaces(&self) -> bool {
+        false
+    }
     /// Whether this consumer wants to know where things are written in the
     /// document. Asked once, before parsing. None of the methods below is
     /// called, and nothing is recorded for them, unless it does. It is then
@@ -267,6 +271,8 @@ pub struct VerbatimLine {
     pub indent: u32,
 }
 bun_core::impl_no_uninit!(VerbatimLine);
+
+const _: () = assert!(size_of::<VerbatimLine>() == 12);
 
 /// Container types: blockquote or list item.
 #[derive(Copy, Clone, Default)]

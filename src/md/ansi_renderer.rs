@@ -2829,6 +2829,10 @@ impl RendererImpl for AnsiRenderer<'_> {
         AnsiRenderer::text(self, text_type, content);
         Ok(())
     }
+    // A terminal has its own tab stops, and `write_wrapped` makes one space of a run of spaces in one text.
+    fn wants_indentation_as_spaces(&self) -> bool {
+        true
+    }
 }
 
 /// Render markdown text to ANSI. Caller owns the returned bytes.

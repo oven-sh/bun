@@ -1,6 +1,6 @@
 use super::helpers;
 use super::parser::{Error as ParserError, Parser};
-use super::types::{self, BlockType, JsResult, TextType, VerbatimLine};
+use super::types::{self, BlockType, JsResult, OFF, TextType, VerbatimLine};
 
 impl Parser<'_> {
     pub(crate) fn enter_block(
@@ -39,33 +39,59 @@ impl Parser<'_> {
             }
         }
 
-        for vline in &block_lines[0..count] {
-            // Output indented content
-            for _ in 0..vline.indent {
-                self.emit_text(TextType::Normal, b" ")?;
-            }
-            let content = &self.text[vline.beg as usize..vline.end as usize];
-            self.emit_text(TextType::Normal, content)?;
-            self.emit_text(TextType::Normal, b"\n")?;
+        self.emit_verbatim_lines(TextType::Normal, &block_lines[0..count])
+    }
+
+    pub(crate) fn process_html_block(&mut self, block_lines: &[VerbatimLine]) -> JsResult<()> {
+        self.emit_verbatim_lines(TextType::Html, block_lines)
+    }
+
+    #[inline(always)]
+    fn emit_verbatim_lines(&mut self, text_type: TextType, lines: &[VerbatimLine]) -> JsResult<()> {
+        if self.indentation_as_spaces {
+            return self.emit_verbatim_lines_in_columns(text_type, lines);
+        }
+        for vline in lines {
+            let start = match vline.indent {
+                0 => vline.beg,
+                _ => self.emit_rest_of_tab(text_type, vline)?,
+            };
+            self.emit_text(text_type, &self.text[start as usize..vline.end as usize])?;
+            self.emit_text(text_type, b"\n")?;
         }
         Ok(())
     }
 
-    pub(crate) fn process_html_block(&mut self, block_lines: &[VerbatimLine]) -> JsResult<()> {
-        for (i, vline) in block_lines.iter().enumerate() {
-            if i > 0 {
-                self.emit_text(TextType::Html, b"\n")?;
-            }
+    /// For `RendererImpl::wants_indentation_as_spaces`.
+    #[inline(never)]
+    fn emit_verbatim_lines_in_columns(
+        &mut self,
+        text_type: TextType,
+        lines: &[VerbatimLine],
+    ) -> JsResult<()> {
+        for vline in lines {
             for _ in 0..vline.indent {
-                self.emit_text(TextType::Html, b" ")?;
+                self.emit_text(text_type, b" ")?;
             }
             self.emit_text(
-                TextType::Html,
+                text_type,
                 &self.text[vline.beg as usize..vline.end as usize],
             )?;
+            self.emit_text(text_type, b"\n")?;
         }
-        self.emit_text(TextType::Html, b"\n")?;
         Ok(())
+    }
+
+    /// CommonMark 2.2: only what is left of a tab that the indentation of the block splits is made of spaces.
+    #[inline(never)]
+    fn emit_rest_of_tab(&mut self, text_type: TextType, vline: &VerbatimLine) -> JsResult<OFF> {
+        const SPACES: &[u8] = b"   ";
+        let floor = core::mem::replace(&mut self.verbatim_floor, vline.end);
+        let (start, spaces) = helpers::indentation_start(self.text, vline.beg, vline.indent, floor);
+        if spaces > 0 {
+            self.emit_text(text_type, &SPACES[..(spaces as usize).min(SPACES.len())])?;
+        }
+        Ok(start)
     }
 
     pub(crate) fn process_table_block(

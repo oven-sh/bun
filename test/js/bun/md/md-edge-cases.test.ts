@@ -1825,6 +1825,27 @@ describe.concurrent("importing .md modules", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("code and HTML keep the tabs that their lines start with, imported and bundled", async () => {
+    using dir = tempDir("md-import-tabs", {
+      "doc.md": "~~~make\nbuild:\n\tcc -o app main.c\n~~~\n\n<pre>\n\tfoo\n</pre>\n",
+      "entry.ts": `
+        import html from "./doc.md";
+        console.log(JSON.stringify(html));
+      `,
+    });
+    const run = async (...cmd: string[]) => {
+      await using proc = Bun.spawn({ cmd: [bunExe(), ...cmd], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+    const rendered =
+      '<pre><code class="language-make">build:\n\tcc -o app main.c\n</code></pre>\n<pre>\n\tfoo\n</pre>\n';
+    const printed = { stdout: JSON.stringify(rendered) + "\n", stderr: "", exitCode: 0 };
+    expect(await run("entry.ts")).toEqual(printed);
+    expect(await run("build", "entry.ts", "--outdir", "out")).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(await run("out/entry.js")).toEqual(printed);
+  });
+
   test("empty .md file produces a module with no default export", async () => {
     using dir = tempDir("md-import-empty", {
       "empty.md": "",
@@ -1900,6 +1921,345 @@ describe("white space behind the marker of a block quote", () => {
       "<blockquote>\n<pre><code>a\n</code></pre>\n</blockquote>\n",
     );
     expect(Markdown.html(">   <div>\n")).toBe("<blockquote>\n  <div>\n</blockquote>\n");
+  });
+});
+
+// CommonMark 2.2: "Tabs in lines are not expanded to spaces." What a line of code or of an HTML block starts with is
+// written as it is. Only what is left of a tab that the indentation of its block ends in is made of spaces.
+describe("white space at the start of a line of code or HTML", () => {
+  // `html` is what commonmark.js 0.31.2 prints. `text` is all text of the document in its order. The rows have the
+  // forms of md4c's tests for this (mity/md4c@2671f259).
+  const cases: [name: string, markdown: string, html: string, text: string][] = [
+    [
+      "fenced code",
+      "~~~make\nbuild:\n\tcc -o app main.c\n\t\techo two\nx:\ty\n    four blanks\n~~~\n",
+      '<pre><code class="language-make">build:\n\tcc -o app main.c\n\t\techo two\nx:\ty\n    four blanks\n</code></pre>\n',
+      "build:\n\tcc -o app main.c\n\t\techo two\nx:\ty\n    four blanks\n",
+    ],
+    [
+      "spaces before a tab in fenced code",
+      "```\n \tone\n  \t\ttwo\n```\n",
+      "<pre><code> \tone\n  \t\ttwo\n</code></pre>\n",
+      " \tone\n  \t\ttwo\n",
+    ],
+    [
+      "lines of only white space in fenced code",
+      "```\n\t\n \t \n```\n",
+      "<pre><code>\t\n \t \n</code></pre>\n",
+      "\t\n \t \n",
+    ],
+    [
+      "a fence that is indented by one column",
+      " ```\n\tone\n \ttwo\n ```\n",
+      "<pre><code>   one\n\ttwo\n</code></pre>\n",
+      "   one\n\ttwo\n",
+    ],
+    [
+      "a fence that is indented by two columns",
+      "  ```\n\tone\n   \ttwo\n  ```\n",
+      "<pre><code>  one\n \ttwo\n</code></pre>\n",
+      "  one\n \ttwo\n",
+    ],
+    [
+      "a fence that is indented by three columns",
+      "   ```\n \t one\n    \ttwo\n   ```\n",
+      "<pre><code>  one\n \ttwo\n</code></pre>\n",
+      "  one\n \ttwo\n",
+    ],
+    [
+      "a tab behind a tab that the indentation of a fence splits",
+      "  ```\n\t\tx\n  \ty\n```\n",
+      "<pre><code>  \tx\n\ty\n</code></pre>\n",
+      "  \tx\n\ty\n",
+    ],
+    ["indented code", "\t\tfoo\n", "<pre><code>\tfoo\n</code></pre>\n", "\tfoo\n"],
+    ["a second line of indented code", "\tfoo\n\t\tbar\n", "<pre><code>foo\n\tbar\n</code></pre>\n", "foo\n\tbar\n"],
+    ["indented code behind four spaces", "    \tfoo\n", "<pre><code>\tfoo\n</code></pre>\n", "\tfoo\n"],
+    ["indented code behind five spaces", "     \tfoo\n", "<pre><code> \tfoo\n</code></pre>\n", " \tfoo\n"],
+    ["indented code behind a tab and a space", "\t \tfoo\n", "<pre><code> \tfoo\n</code></pre>\n", " \tfoo\n"],
+    ["indented code behind a space and two tabs", " \t\tx\n", "<pre><code>\tx\n</code></pre>\n", "\tx\n"],
+    [
+      "a line of only white space in indented code",
+      "\tfoo\n\t\t\n\tbar\n",
+      "<pre><code>foo\n\t\nbar\n</code></pre>\n",
+      "foo\n\t\nbar\n",
+    ],
+    [
+      "fenced code in a block quote",
+      "> ```\n> \tone\n> ```\n",
+      "<blockquote>\n<pre><code>\tone\n</code></pre>\n</blockquote>\n",
+      "\tone\n",
+    ],
+    [
+      "a tab behind the marker of a block quote",
+      "> ```\n>\tone\n> ```\n",
+      "<blockquote>\n<pre><code>  one\n</code></pre>\n</blockquote>\n",
+      "  one\n",
+    ],
+    [
+      "two tabs behind the marker of a block quote",
+      "> ```\n>\t\tx\n> ```\n",
+      "<blockquote>\n<pre><code>  \tx\n</code></pre>\n</blockquote>\n",
+      "  \tx\n",
+    ],
+    [
+      "indented code in a block quote",
+      ">\t\tfoo\n",
+      "<blockquote>\n<pre><code>  foo\n</code></pre>\n</blockquote>\n",
+      "  foo\n",
+    ],
+    [
+      "indented code behind three tabs in a block quote",
+      ">\t\t\tfoo\n",
+      "<blockquote>\n<pre><code>  \tfoo\n</code></pre>\n</blockquote>\n",
+      "  \tfoo\n",
+    ],
+    [
+      "fenced code in two block quotes",
+      "> > ```\n> > \tone\n>> \ttwo\n>>\tthree\n",
+      "<blockquote>\n<blockquote>\n<pre><code>\tone\n\ttwo\n three\n</code></pre>\n</blockquote>\n</blockquote>\n",
+      "\tone\n\ttwo\n three\n",
+    ],
+    [
+      "fenced code in a list item",
+      "- ```\n  \tone\n  ```\n",
+      "<ul>\n<li>\n<pre><code>\tone\n</code></pre>\n</li>\n</ul>\n",
+      "\tone\n",
+    ],
+    [
+      "a tab as the indentation of a list item",
+      "- ```\n\tone\n  ```\n",
+      "<ul>\n<li>\n<pre><code>  one\n</code></pre>\n</li>\n</ul>\n",
+      "  one\n",
+    ],
+    [
+      "two tabs as the indentation of a list item",
+      "- ```\n\t\tx\n  ```\n",
+      "<ul>\n<li>\n<pre><code>  \tx\n</code></pre>\n</li>\n</ul>\n",
+      "  \tx\n",
+    ],
+    [
+      "fenced code in an ordered list item",
+      "1. ```\n   \tone\n\t\ttwo\n   ```\n",
+      "<ol>\n<li>\n<pre><code>\tone\n \ttwo\n</code></pre>\n</li>\n</ol>\n",
+      "\tone\n \ttwo\n",
+    ],
+    [
+      "indented code in a list item",
+      "- foo\n\n\t\tbar\n",
+      "<ul>\n<li>\n<p>foo</p>\n<pre><code>  bar\n</code></pre>\n</li>\n</ul>\n",
+      "foo  bar\n",
+    ],
+    [
+      "indented code behind three tabs in a list item",
+      "- foo\n\n\t\t\tbar\n",
+      "<ul>\n<li>\n<p>foo</p>\n<pre><code>  \tbar\n</code></pre>\n</li>\n</ul>\n",
+      "foo  \tbar\n",
+    ],
+    [
+      "indented code behind the marker of a list item",
+      "-\t\tfoo\n",
+      "<ul>\n<li>\n<pre><code>  foo\n</code></pre>\n</li>\n</ul>\n",
+      "  foo\n",
+    ],
+    [
+      "indented code behind the marker of a list item and three tabs",
+      "-\t\t\tfoo\n",
+      "<ul>\n<li>\n<pre><code>  \tfoo\n</code></pre>\n</li>\n</ul>\n",
+      "  \tfoo\n",
+    ],
+    [
+      "fenced code in a list item in a block quote",
+      "> - ```\n>   \tone\n> \t\ttwo\n>   ```\n",
+      "<blockquote>\n<ul>\n<li>\n<pre><code>\tone\n\ttwo\n</code></pre>\n</li>\n</ul>\n</blockquote>\n",
+      "\tone\n\ttwo\n",
+    ],
+    [
+      "an HTML block",
+      "<div>\n\tfoo\n\t\tbar\n</div>\n",
+      "<div>\n\tfoo\n\t\tbar\n</div>\n",
+      "<div>\n\tfoo\n\t\tbar\n</div>\n",
+    ],
+    [
+      "spaces before a tab in an HTML block",
+      "<div>\n  \tfoo\n</div>\n",
+      "<div>\n  \tfoo\n</div>\n",
+      "<div>\n  \tfoo\n</div>\n",
+    ],
+    ["an HTML block that is indented", "  <div>\n\tx\n", "  <div>\n\tx\n", "  <div>\n\tx\n"],
+    [
+      "an HTML block in a block quote",
+      "> <div>\n> \tfoo\n>\tbar\n",
+      "<blockquote>\n<div>\n\tfoo\n  bar\n</blockquote>\n",
+      "<div>\n\tfoo\n  bar\n",
+    ],
+    [
+      "an HTML block in a list item",
+      "- <div>\n  \tfoo\n\tbar\n",
+      "<ul>\n<li>\n<div>\n\tfoo\n  bar\n</li>\n</ul>\n",
+      "<div>\n\tfoo\n  bar\n",
+    ],
+    [
+      "an HTML block in a list item in a block quote",
+      "> - <pre>\n>   \tx\n>   </pre>\n",
+      "<blockquote>\n<ul>\n<li>\n<pre>\n\tx\n</pre>\n</li>\n</ul>\n</blockquote>\n",
+      "<pre>\n\tx\n</pre>\n",
+    ],
+    [
+      "HTML behind a tab behind the marker of a block quote",
+      ">\t<div>\n",
+      "<blockquote>\n  <div>\n</blockquote>\n",
+      "  <div>\n",
+    ],
+    ["<pre>", "<pre>\n\tfoo\n</pre>\n", "<pre>\n\tfoo\n</pre>\n", "<pre>\n\tfoo\n</pre>\n"],
+    ["a comment", "<!--\n\tfoo\n-->\n", "<!--\n\tfoo\n-->\n", "<!--\n\tfoo\n-->\n"],
+    [
+      "a script",
+      "<script>\nconst s = `\n\ttab`;\n</script>\n",
+      "<script>\nconst s = `\n\ttab`;\n</script>\n",
+      "<script>\nconst s = `\n\ttab`;\n</script>\n",
+    ],
+    [
+      "fenced code behind an empty list item that a blank line ends",
+      "> -\n>\n>   ~~~\n>   \tx\n",
+      "<blockquote>\n<ul>\n<li></li>\n</ul>\n<pre><code>\tx\n</code></pre>\n</blockquote>\n",
+      "\tx\n",
+    ],
+    [
+      "lines that end in CRLF",
+      "```\r\n\tone\r\n```\r\n\r\n<div>\r\n\ttwo\r\n",
+      "<pre><code>\tone\n</code></pre>\n<div>\n\ttwo\n",
+      "\tone\n<div>\n\ttwo\n",
+    ],
+    [
+      "lines that end in CR",
+      "```\r\tone\r```\r\r<div>\r\ttwo\r",
+      "<pre><code>\tone\n</code></pre>\n<div>\n\ttwo\n",
+      "\tone\n<div>\n\ttwo\n",
+    ],
+  ];
+
+  // The strings of a react() tree in their order.
+  const strings = (node: any): string[] =>
+    typeof node === "string"
+      ? [node]
+      : Array.isArray(node)
+        ? node.flatMap(strings)
+        : node?.props
+          ? strings(node.props.children)
+          : [];
+
+  // The strings that the `text` callback of render() is called with.
+  function textEvents(markdown: string): string[] {
+    const events: string[] = [];
+    Markdown.render(markdown, { text: (text: string) => (events.push(text), text) });
+    return events;
+  }
+
+  test.each(cases)("%s", (_, markdown, html, text) => {
+    expect({
+      html: Markdown.html(markdown),
+      render: Markdown.render(markdown, {}),
+      react: strings(Markdown.react(markdown, undefined, { reactVersion: 18 })).join(""),
+    }).toEqual({ html, render: text, react: text });
+  });
+
+  test("a line of only white space in a list item keeps what is beyond the indentation of the item", () => {
+    // As in micromark and markdown-it. commonmark.js writes nothing on such a line, not even spaces.
+    expect(Markdown.html("- ```\n  \ta\n  \t\n    \n  ```\n")).toBe(
+      "<ul>\n<li>\n<pre><code>\ta\n\t\n  \n</code></pre>\n</li>\n</ul>\n",
+    );
+    expect(Markdown.html("- <pre>\n  \ta\n  \t\n    b\n")).toBe("<ul>\n<li>\n<pre>\n\ta\n\t\n  b\n</li>\n</ul>\n");
+  });
+
+  test("lines of only white space at the end of indented code are not part of it", () => {
+    expect(Markdown.html("\tfoo\n\t\t\n\t \t\n")).toBe("<pre><code>foo\n</code></pre>\n");
+  });
+
+  test("without indented code, a line can start with four columns or more", () => {
+    const options = { noIndentedCodeBlocks: true };
+    expect(Markdown.html("\t<div>\n\t\tfoo\n     bar\n", options)).toBe("\t<div>\n\t\tfoo\n     bar\n");
+    expect(Markdown.html("\t```\n\t\tone\n      two\n\t```\n", options)).toBe(
+      "<pre><code>\tone\n  two\n</code></pre>\n",
+    );
+  });
+
+  test("a line is one text, behind the spaces that are left of a tab", () => {
+    expect({
+      spaces: textEvents("```\n        a\n```\n"),
+      tabs: textEvents("```\n\t\ta\n```\n"),
+      splitTab: textEvents("  ```\n\t a\n  ```\n"),
+      html: strings(Markdown.react("<div>\n    a\n\tb\n", undefined, { reactVersion: 18 })),
+      pre: strings(Markdown.react("    a\n\t\tb\n", undefined, { reactVersion: 18 })),
+    }).toEqual({
+      spaces: ["        a", "\n"],
+      tabs: ["\t\ta", "\n"],
+      splitTab: ["  ", " a", "\n"],
+      html: ["<div>", "\n", "    a", "\n", "\tb", "\n"],
+      pre: ["a", "\n", "\tb", "\n"],
+    });
+  });
+
+  test.each(["  ", " a", "\n"])("a text callback that throws at %j ends the parse", at => {
+    const seen: string[] = [];
+    const text = (text: string) => {
+      seen.push(text);
+      if (text === at) throw new Error("stop");
+      return text;
+    };
+    expect(() => Markdown.render("  ```\n\t a\n\t b\n  ```\n", { text })).toThrow("stop");
+    expect(seen).toEqual(["  ", " a", "\n"].slice(0, ["  ", " a", "\n"].indexOf(at) + 1));
+  });
+
+  // The white space that was counted is gone then. What is written starts with white space or with the text of the line.
+  test.each([
+    ["x", ["\tone", "xxx", "xxxxx", "xxxxx", "xxxx", "xxxxxx"]],
+    [" ", ["\tone", "       ", "       ", "     ", "        ", "      "]],
+  ])("a text callback that fills the document with %j gets nothing else from before a line", (fill, lines) => {
+    const document = Buffer.from("```\n\tone\n\ttwo\n  three\n```\n\n<div>\n\tfour\n</div>\n");
+    const seen: string[] = [];
+    const text = (text: string) => {
+      if (seen.push(text) === 1) document.fill(fill);
+      return text;
+    };
+    expect(Markdown.render(document, { text })).toBe(lines.map(line => `${line}\n`).join(""));
+    expect(seen).toEqual(lines.flatMap(line => [line, "\n"]));
+  });
+
+  test("the columns of a line are counted from the end of the line before it, also when its line break is gone", () => {
+    const document = Buffer.from("~~~\n a\n \tb\n~~~\n");
+    const seen: string[] = [];
+    const text = (text: string) => {
+      if (seen.push(text) === 1) document[document.indexOf("\n \t")] = "x".charCodeAt(0);
+      return text;
+    };
+    Markdown.render(document, { text });
+    expect(seen).toEqual([" a", "\n", " \tb", "\n"]);
+  });
+
+  // A terminal puts a tab at the next multiple of 8 columns from its left edge, wherever the line is drawn. The ANSI
+  // renderer gets the white space in columns, as the source has it with tab stops of 4.
+  test.each([0, 80])("ansi() shows the white space that a line starts with in columns, at a width of %d", columns => {
+    const plain = (markdown: string) => Markdown.ansi(markdown, { colors: false, columns });
+    expect(plain(cases[0][1])).toBe(
+      "+- make\n| build:\n|     cc -o app main.c\n|         echo two\n| x:\ty\n|     four blanks\n+-\n",
+    );
+    expect(plain("  ```js\n\tone\n   \t two\n  ```\n")).toBe("+- js\n|   one\n|    two\n+-\n");
+    expect(plain(">\t\t\tfoo\n")).toBe("| +-\n| |       foo\n| +-\n");
+    expect(plain("<div>\n\tfoo\n  \tbar\n      baz\n</div>\n")).toBe("<div>\n    foo\n    bar\n      baz\n</div>\n");
+    expect(plain("> <div>\n> \tfoo\n>\t\tbar\n>\t  baz\n").split("\n").slice(1, 4)).toEqual([
+      "|   foo",
+      "|       bar",
+      "|     baz",
+    ]);
+  });
+
+  // It wraps a run of spaces in one text into one space, so each column is a text of its own.
+  test("ansi() gets each column of that white space as one text", () => {
+    const dim = (text: string) => `\x1b[2m${text}\x1b[22m`;
+    expect(Markdown.ansi("<div>\n\tfoo\n", { colors: true, columns: 80 })).toBe(
+      ["<div>", "\n", " ", " ", " ", " ", "foo", "\n"].map(dim).join(""),
+    );
   });
 });
 

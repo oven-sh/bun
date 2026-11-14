@@ -203,6 +203,31 @@ describe.concurrent("bun compile --library", () => {
     });
   });
 
+  test("9 entry points in one folder are named from that folder", async () => {
+    const more = Array.from({ length: 8 }, (_, i) => `more${i}`);
+    using dir = tempDir("library-nine-entry-points", {
+      "tsconfig.json": tsconfig,
+      "package.json": JSON.stringify({ name: "shapes", version: "1.0.0" }),
+      "src/index.ts": `export const index: string = "index";\n`,
+      ...Object.fromEntries(more.map(name => [`src/${name}.ts`, `export const ${name}: string = "${name}";\n`])),
+    });
+    const entryPoints = ["src/index.ts", ...more.map(name => `src/${name}.ts`)];
+    const built = await bun(String(dir), "compile", "--library", ...entryPoints);
+    expect(built.stderr).toBe("");
+    expect(built.exitCode).toBe(0);
+    const written = json(join(String(dir), "dist/package.json"));
+    expect(written.exports).toEqual({
+      ".": conditions("index"),
+      ...Object.fromEntries(more.map(name => [`./${name}`, conditions(name)])),
+      "./package.json": "./package.json",
+    });
+    expect({ main: written.main, module: written.module, types: written.types }).toEqual({
+      main: "./index.js",
+      module: "./index.js",
+      types: "./index.d.ts",
+    });
+  });
+
   const where = {
     "src/where/browser.ts": `export const where: string = "browser";\n`,
     "src/where/server.ts": `export const where: string = "server";\n`,

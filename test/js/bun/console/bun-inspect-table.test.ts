@@ -116,3 +116,44 @@ describe("inspect.table (with colors in 2nd position)", () => {
     });
   });
 });
+
+describe("inspect.table (options after an undefined or null properties argument)", () => {
+  // The declared types have no `null` for the properties, and only `colors` in the options.
+  const table = inspect.table as (...args: unknown[]) => string;
+  const rows = [{ a: { z: 1, y: { x: 1 } }, b: "s" }];
+
+  describe.each([{ colors: true }, { depth: 0 }, { sorted: true }, { compact: false }])("%j", options => {
+    test("changes the table", () => {
+      expect(table(rows, options)).not.toBe(table(rows));
+    });
+
+    test.each([undefined, null])("is read after %p", properties => {
+      expect(table(rows, properties, options)).toBe(table(rows, options));
+    });
+  });
+
+  test("a bad depth throws after undefined", () => {
+    expect(() => table(rows, undefined, { depth: -1 })).toThrow(
+      "expected depth to be greater than or equal to 0, got -1",
+    );
+  });
+
+  test("an options object in the second position is the options, and a third argument is ignored", () => {
+    expect(table(rows, { colors: true }, { sorted: true })).toBe(table(rows, { colors: true }));
+  });
+
+  test("the members of the third argument are read only when it is the options", () => {
+    const membersRead = (second: unknown) => {
+      const read: PropertyKey[] = [];
+      table(rows, second, new Proxy({}, { get: (target, key) => void read.push(key) }));
+      return read;
+    };
+    const all = ["depth", "colors", "sorted", "compact"];
+    expect({
+      afterUndefined: membersRead(undefined),
+      afterNull: membersRead(null),
+      afterArray: membersRead(["a"]),
+      afterOptions: membersRead({ colors: true }),
+    }).toEqual({ afterUndefined: all, afterNull: all, afterArray: all, afterOptions: [] });
+  });
+});

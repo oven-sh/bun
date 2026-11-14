@@ -38,7 +38,7 @@ impl Rule for NoUnresolved {
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
-        let Some(resolvers) = Resolvers::of(file.settings()) else {
+        let Some(resolvers) = Resolvers::of(file) else {
             return;
         };
         for visited in self.visitor.visit(file) {

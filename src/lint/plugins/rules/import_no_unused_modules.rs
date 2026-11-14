@@ -60,6 +60,8 @@ struct Context {
     jsx: bool,
     experimental_decorators: bool,
     is_eslint_8: bool,
+    /// Decides the defaults of `settings`.
+    is_oxlint: bool,
 }
 
 /// The state upstream keeps across files. Upstream updates it with every file it lints, for editors. This doesn't.
@@ -94,6 +96,7 @@ impl Context {
             jsx: language.jsx,
             experimental_decorators: language.experimental_decorators,
             is_eslint_8: language.eslint_8.is_some(),
+            is_oxlint: language.is_oxlint,
         }
     }
 
@@ -104,6 +107,7 @@ impl Context {
             && self.jsx == language.jsx
             && self.experimental_decorators == language.experimental_decorators
             && self.is_eslint_8 == language.eslint_8.is_some()
+            && self.is_oxlint == language.is_oxlint
             && self.settings == language.settings
             && self.parser_options == language.parser_options
     }
@@ -203,7 +207,7 @@ fn exports_something(stmt: Stmt) -> bool {
 /// True if `updateImportUsage` would add an export to the file's own list, which happens when the file imports
 /// something from itself that it didn't import when `doPreparation` read it.
 fn imports_from_itself<'a>(file: &'a File<'a>, path: &[u8], is_prepared: bool) -> bool {
-    let (Some(resolvers), Some(maps)) = (Resolvers::of(file.settings()), ExportMaps::of(file)) else { return false };
+    let (Some(resolvers), Some(maps)) = (Resolvers::of(file), ExportMaps::of(file)) else { return false };
     let (mut has_default, mut new_imports) = (false, FxHashMap::<&'a [u8], bool>::default());
     for stmt in file.body() {
         let StmtKind::Import(import) = stmt.kind() else { continue };
@@ -256,7 +260,7 @@ impl NoUnusedModules {
             next: OnceLock::new(),
         };
         let (Some(modules), Some(maps)) = (file.modules(), ExportMaps::of(file)) else { return prepared };
-        let extensions = Settings::new(file.settings()).file_extensions();
+        let extensions = Settings::of(file).file_extensions();
         let list_files_to_process = |src: &[Box<[u8]>]| {
             let src: Vec<&[u8]> = src.iter().map(|it| &**it).collect();
             if src.is_empty() { Ok(Vec::new()) } else { modules.list_files(&src, &extensions) }

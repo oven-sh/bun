@@ -35,6 +35,7 @@ use bun_lint::linter::{
     oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key, oxlint_written_name,
     parse_rule_id,
 };
+use bun_lint::modules::import_defaults;
 use bun_lint::options::Json;
 use bun_lint::rule::{Frameworks, Plugin, minor_of};
 use bun_sema::util::{FxHashMap, FxHashSet};
@@ -172,9 +173,9 @@ const BUILT_IN: &[u8] = br#"[
             "parserOptions": { "ecmaFeatures": { "jsx": true } }
         },
         "settings": {
-            "import/core-modules": ["bun", "bun:ffi", "bun:jsc", "bun:sqlite", "bun:test"],
-            "import/extensions": [".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx"],
-            "import/external-module-folders": ["node_modules", "node_modules/@types"],
+            "import/core-modules": IMPORT_CORE_MODULES,
+            "import/extensions": IMPORT_EXTENSIONS,
+            "import/external-module-folders": IMPORT_EXTERNAL_MODULE_FOLDERS,
             "import/parsers": { "@typescript-eslint/parser": [".ts", ".mts", ".cts", ".tsx"] },
             "import/resolver": { "typescript": true }
         },
@@ -258,6 +259,20 @@ fn built_in_json(with_types: bool, project: &[u8]) -> Json {
     let text = strings::replace_owned(BUILT_IN, b"TYPESCRIPT", preset);
     let text = strings::replace_owned(&text, b"UNUSED_ON_PURPOSE", UNUSED_ON_PURPOSE);
     let text = strings::replace_owned(&text, b"TEST_GLOBALS", TEST_GLOBALS);
+    let lists = [
+        (
+            &b"IMPORT_CORE_MODULES"[..],
+            &import_defaults::CORE_MODULES[..],
+        ),
+        (b"IMPORT_EXTENSIONS", &import_defaults::EXTENSIONS),
+        (
+            b"IMPORT_EXTERNAL_MODULE_FOLDERS",
+            &import_defaults::EXTERNAL_MODULE_FOLDERS,
+        ),
+    ];
+    let text = lists.iter().fold(text, |text, (name, items)| {
+        strings::replace_owned(&text, name, &import_defaults::json(items))
+    });
     let mut json = bun_lint::json::parse(&text).unwrap_or(Json::Null);
     // Set here and not in the text, because a path can contain any character.
     if let Json::Array(objects) = &mut json {

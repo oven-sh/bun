@@ -127,14 +127,14 @@ impl Rule for NoUselessPathSegments {
         if sources.is_empty() {
             return;
         }
-        let (Some(resolvers), Some(modules)) = (Resolvers::of(file.settings()), file.modules()) else {
+        let (Some(resolvers), Some(modules)) = (Resolvers::of(file), file.modules()) else {
             return;
         };
         let context = Context {
             file,
             cwd: modules.cwd(),
             resolvers,
-            settings: Settings::new(file.settings()),
+            settings: Settings::of(file),
             no_useless_index: self.no_useless_index,
             regex_unnecessary_index: OnceCell::new(),
         };

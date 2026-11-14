@@ -34,6 +34,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/RegExpObject.h>
 #include <JavaScriptCore/SourceOrigin.h>
+#include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/Structure.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/SymbolTableInlines.h>
@@ -4301,6 +4302,49 @@ static String callerPath(JSC::VM& vm, JSC::CallFrame* callframe)
     return !sourceOrigin.isNull() && url.isValid() && url.protocolIsFile() ? url.fileSystemPath() : String("."_s);
 }
 
+// A module whose body is on the stack makes the call again when it runs again. One that only has a function there passed the call on, and stays loaded.
+__attribute__((minsize)) static void addModulesWhoseBodyRuns(Zig::GlobalObject* globalObject, JSC::CallFrame* callframe, WTF::UncheckedKeyHashSet<String>& modules)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::StackVisitor::visit(callframe, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
+        JSC::CodeBlock* codeBlock = visitor->codeBlock();
+        if (!codeBlock || codeBlock->codeType() != JSC::ModuleCode)
+            return WTF::IterationStatus::Continue;
+        const JSC::SourceOrigin& sourceOrigin = codeBlock->ownerExecutable()->sourceOrigin();
+        const URL& url = sourceOrigin.url();
+        if (sourceOrigin.isNull() || !url.isValid() || !url.protocolIsFile())
+            return WTF::IterationStatus::Continue;
+        // The key that the loader has the module under can end in a query, which the path of its file leaves out.
+        auto* callee = visitor->callee().isCell() ? dynamicDowncast<JSC::JSCallee>(visitor->callee().asCell()) : nullptr;
+        auto* environment = callee ? dynamicDowncast<JSC::JSModuleEnvironment>(callee->scope()) : nullptr;
+        modules.add(environment ? environment->moduleRecord()->moduleKey().string() : url.fileSystemPath());
+        return WTF::IterationStatus::Continue;
+    });
+    // The frame of a CommonJS body is a function's like any other, so evaluateCommonJSModuleOnce() notes the modules whose body it calls.
+    auto& bodies = globalObject->onLoadPlugins.runningCommonJSBodies;
+    if (bodies.isEmpty())
+        return;
+    JSC::JSMap* requireMap = Bun::testFileRequireMap(globalObject);
+    for (JSC::JSCell* body : bodies) {
+        // The require map has a module under its filename, unless a program has renamed or moved it.
+        JSValue key = uncheckedDowncast<Bun::JSCommonJSModule>(body)->filename();
+        JSValue value = key && key.isString() ? requireMap->get(globalObject, key) : JSValue();
+        RETURN_IF_EXCEPTION(scope, );
+        if (value != body) {
+            auto* entries = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), requireMap, JSC::IterationKind::Entries);
+            RETURN_IF_EXCEPTION(scope, );
+            while (entries->nextKeyValue(globalObject, key, value)) {
+                if (value == body)
+                    break;
+            }
+            RETURN_IF_EXCEPTION(scope, );
+        }
+        if (value == body && key.isString())
+            modules.add(asString(key)->tryGetValue().data);
+    }
+}
+
 #if ENABLE(AOT)
 static StringView withoutFileExtension(StringView path)
 {
@@ -5934,8 +5978,15 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     JSModuleMock* mock = JSModuleMock::create(vm, globalObject->mockModule.mockModuleStructure.getInitializedOnMainThread(globalObject), factory, specifierString, writtenString, function);
     mock->spy = spy;
     mock->isFromPreload = JSMock__isInPreload(globalObject);
-    if (!mock->isFromPreload)
-        globalObject->onLoadPlugins.mockingModules.add(callerPath(vm, callframe));
+    if (!mock->isFromPreload) {
+        auto& mockingModules = globalObject->onLoadPlugins.mockingModules;
+        mockingModules.add(callerPath(vm, callframe));
+        // Only the test runner reads the set, on the main thread. `bun test --aot` makes the calls of a compiled body again instead: recordBodyMock().
+        if (Bun::isBunTest && !vm.hasCompiledCode() && globalObject->scriptExecutionContext()->isMainThread()) {
+            addModulesWhoseBodyRuns(globalObject, callframe, mockingModules);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
 #if ENABLE(AOT)
     std::optional<size_t> remembered;
     if (vm.hasCompiledCode() && !mock->isFromPreload)

@@ -977,7 +977,7 @@ impl Value {
                 // with the right MIME type. The off-thread path is still
                 // available via `await image.blob()`.
                 let (encoded, mime) = image.encode_for_body(global_this, value)?;
-                // Blob.Store frees via an Allocator, so dupe out of the
+                // Blob.Store owns a `Vec`, so dupe out of the
                 // codec's allocator here. The hot path (`.bytes()`) hands the
                 // codec buffer to JS without this copy.
                 // SAFETY: `encoded.bytes` is the codec-owned slice; copy then drop frees it.

@@ -58,12 +58,10 @@
   "src/jsc/webcore_types.rs": {
     "unsafe impl Send": [
       "Blob",
-      "Bytes",
       "Store"
     ],
     "unsafe impl Sync": [
       "Blob",
-      "Bytes",
       "Store"
     ]
   },

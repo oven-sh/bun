@@ -2,8 +2,9 @@
 // The build knows both, so it knows the name, and the file is in the executable.
 // ./addons-named-by-the-platform/addon.c is built with the system's C compiler against the headers in src/runtime/napi, without node-gyp, and laid under the names that this machine asks for.
 // Each program is built, its sources and the addon are deleted, and the executable runs in another folder: it prints what plain Bun printed while they were there.
-// A program that imports a built-in module pays for the library, so those are the modules of one executable, each in a folder of its own with its own copies of the addon: no program
-// finds a file that the build took in for another.
+// A build costs, and on some machines so does the first start of a new executable. So most programs are the modules of an executable that they share, each in a folder of its own with
+// its own copies of the addon: no program finds a file that the build took in for another. Those that import a built-in module pay for the library, and the others share an executable
+// that is built without it. One program for each kind of entry point is built alone.
 import { describe, expect } from "bun:test";
 import { copyFileSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
@@ -376,17 +377,26 @@ describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named
     return { plain, compiled, warnedOf: places.map(place => relative(root, place)) };
   }
 
+  const flagsOf = (built: Program[]) => (built.some(usesABuiltInModule) ? [] : ["--no-builtin-modules"]);
+  // Each is the entry point of an executable of its own: a CommonJS file, an ES module and a TypeScript file.
+  const builtAlone = ["a template", "import.meta.require", "in TypeScript"];
+
   const together = [
     ...Object.entries(programs).map(([title, program]) => ({ title, program, passesAddons: false })),
     ...Object.entries(oneOfFew).map(([title, program]) => ({ title, program, passesAddons: true })),
     ...Object.entries(oneOfFew).map(([title, program]) => ({ title, program, passesAddons: false })),
   ]
-    .filter(({ program }) => usesABuiltInModule(program))
+    .filter(({ title }) => !builtAlone.includes(title))
     .map(each => ({
       ...each,
       at: nameOf(each.title, each.passesAddons),
-      // A build that takes in the file that is no program fails, so a program beside such a file shares its executable with nobody else.
-      executable: "no-program.js" in each.program.files ? nameOf(each.title, false) + "-both" : "programs",
+      executable:
+        // A build that takes in the file that is no program fails, so a program beside such a file shares its executable with nobody else.
+        "no-program.js" in each.program.files
+          ? nameOf(each.title, false) + "-both"
+          : usesABuiltInModule(each.program)
+            ? "programs"
+            : "programs-without-modules",
     }));
   const executables = new Map<string, ReturnType<typeof bothWays>>();
   const builtTogether = (name: string) =>
@@ -402,17 +412,18 @@ describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named
       const passed = held.flatMap(({ at, program, passesAddons }) =>
         passesAddons ? program.addons.map(path => join(sources, at, path)) : [],
       );
-      return slot(() => bothWays(name, sources, "main.cjs", [], passed));
+      const flags = flagsOf(held.map(each => each.program));
+      return slot(() => bothWays(name, sources, "main.cjs", flags, passed));
     });
 
   async function run(title: string, program: Program, { passesAddons = false } = {}) {
     const file = nameOf(title, passesAddons);
-    if (!usesABuiltInModule(program)) {
+    if (builtAlone.includes(title)) {
       const sources = join(folder, file);
       lay(sources, program);
       const addons = passesAddons ? program.addons.map(path => join(sources, path)) : [];
       const { plain, compiled, warnedOf } = await slot(() =>
-        bothWays(file, sources, program.entry, ["--no-builtin-modules"], addons),
+        bothWays(file, sources, program.entry, flagsOf([program]), addons),
       );
       return { plain, compiled, isWarnedOf: warnedOf.length > 0 };
     }
@@ -429,6 +440,18 @@ describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named
       isWarnedOf: all.warnedOf.some(place => place.split(sep)[0] === file),
     };
   }
+
+  // Only a few cases are under way at a time. Each shared executable has a case of its own ahead of the cases that read it: else it waits for the cases of another.
+  test.concurrent.each([...new Set(together.map(each => each.executable))])(
+    "each warning of %s lies in the folder of one of its programs",
+    async name => {
+      const { warnedOf } = await builtTogether(name);
+      const folders = together.filter(each => each.executable === name).map(each => each.at);
+      // Elsewhere it would count for none of them.
+      expect(warnedOf.filter(place => !folders.includes(place.split(sep)[0]))).toEqual([]);
+    },
+    600_000,
+  );
 
   test.concurrent.each(Object.keys(programs))(
     "%s",

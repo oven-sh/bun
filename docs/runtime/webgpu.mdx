@@ -186,7 +186,7 @@ device.addEventListener("uncapturederror", event => {
 
 A pending `mapAsync()`, `onSubmittedWorkDone()` or other promise of WebGPU keeps the process alive. An idle device does not, and neither does `device.lost`.
 
-The garbage collector frees buffers, textures and devices that nothing refers to. Call `destroy()` to free one sooner. A device keeps the memory of small buffers and textures for its next ones.
+The garbage collector frees buffers, textures and devices that nothing refers to. Call `destroy()` to free one sooner. With Vulkan and Direct3D 12, a device keeps the memory of buffers and textures of up to 4 MB for its next ones.
 
 ## Differences from browsers
 

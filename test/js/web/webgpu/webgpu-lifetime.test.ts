@@ -475,6 +475,12 @@ describe.skipIf(!hasAdapter).concurrent("the process", () => {
     },
   );
 
+  const returnsFreedMemory = {
+    ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
+    // Or glibc raises it, and keeps what is below.
+    MALLOC_MMAP_THRESHOLD_: "1048576",
+  };
+
   test.each([
     ["buffers that it destroys", "buffer", "for (const it of all) it.destroy()"],
     ["textures that it destroys", "texture", "for (const it of all) it.destroy()"],
@@ -489,7 +495,6 @@ describe.skipIf(!hasAdapter).concurrent("the process", () => {
       "buffer",
       "await collectAfter(buffer => encode(buffer).finish(), all => device.queue.submit((globalThis.submitted = [...all])))",
     ],
-    ["uploads", "upload", ""],
   ])("gets back the memory of %s, though it submits nothing more", async (_, kind, release) => {
     const script = `
       const device = await requestDevice();
@@ -505,11 +510,6 @@ describe.skipIf(!hasAdapter).concurrent("the process", () => {
         const view = device.createTexture({ size: [2048, 1024], format: "rgba8unorm", usage: GPUTextureUsage.RENDER_ATTACHMENT });
         encoder.beginRenderPass({ colorAttachments: [{ view, loadOp: "clear", storeOp: "store" }] }).end();
         return view;
-      };
-      const target = { texture: device.createTexture({ size: [1024, 1024], format: "rgba8unorm", usage: GPUTextureUsage.COPY_DST }) };
-      const pixels = new Uint8Array(4 << 20);
-      const upload = () => {
-        for (let i = 0; i < 2; i++) device.queue.writeTexture(target, pixels, { bytesPerRow: 4096 }, [1024, 1024]);
       };
 
       const layout = device.createBindGroupLayout({
@@ -555,13 +555,58 @@ describe.skipIf(!hasAdapter).concurrent("the process", () => {
       do await Bun.sleep(1);
       while (inUse - rss() < expected && performance.now() < end);
       console.log(inUse - rss() < expected ? inUse - rss() + " MB" : "freed");`;
-    const env = {
-      ...bunEnv,
-      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
-      // Or glibc raises it, and keeps what is below.
-      MALLOC_MMAP_THRESHOLD_: "1048576",
-    };
+    const env = { ...bunEnv, ...returnsFreedMemory };
     expect(await run({ "index.js": script }, undefined, env)).toEqual(printed("freed"));
+  });
+
+  // Each upload fills a staging buffer. Dawn submits after four, and takes back those that the GPU is done with.
+  const uploads = `
+    const rss = () => process.memoryUsage.rss() >> 20;
+    const pixels = new Uint8Array(4 << 20);
+    function prepareUploads(device) {
+      const texture = device.createTexture({ size: [1024, 1024], format: "rgba8unorm", usage: GPUTextureUsage.COPY_DST });
+      return count => {
+        while (count--) device.queue.writeTexture({ texture }, pixels, { bytesPerRow: 4096 }, [1024, 1024]);
+      };
+    }`;
+
+  test("gets back the memory of uploads, though it submits nothing more", async () => {
+    const script = `
+      ${uploads}
+      const devices = await Promise.all(Array.from({ length: 4 }, requestDevice));
+      const uploaders = devices.map(prepareUploads);
+      async function finish() {
+        for (let i = 0; i < 3; i++) {
+          for (const { queue } of devices) await queue.onSubmittedWorkDone();
+          for (let i = 0; i < 2; i++) await new Promise(setImmediate);
+        }
+      }
+      for (const upload of uploaders) upload(1);
+      for (const { queue } of devices) queue.submit([]);
+      await finish();
+      for (const upload of uploaders) upload(4);
+      const inUse = rss();
+      await finish();
+      // With Direct3D 12 it goes back to a pool of the device, which only the next uploads show.
+      for (const upload of uploaders) upload(4);
+      console.log(rss() - inUse);`;
+    const { stdout, exitCode } = await run({ "index.js": script }, undefined, { ...withoutGC, ...returnsFreedMemory });
+    // 48 if nothing comes back.
+    expect(parseInt(stdout)).toBeLessThan(24);
+    expect(exitCode).toBe(0);
+  });
+
+  test("gets back the memory of uploads before the event loop turns", async () => {
+    const script = `
+      ${uploads}
+      const upload = prepareUploads(await requestDevice());
+      const before = rss();
+      let rounds = 0;
+      do upload(4), Bun.sleepSync(++rounds);
+      while (rounds * 16 - (rss() - before) < 64 && rounds < 24);
+      console.log(rounds < 24);`;
+    const env = { ...bunEnv, ...returnsFreedMemory };
+    expect(await run({ "index.js": script }, undefined, env)).toEqual(printed("true"));
   });
 });
 

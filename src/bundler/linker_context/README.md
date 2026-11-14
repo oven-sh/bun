@@ -44,7 +44,8 @@ The LinkerContext operates in several main phases:
 4. **Phase 2**: `treeShakingAndCodeSplitting()` - Eliminates dead code and determines chunk boundaries
 5. **Phase 3**: `computeChunks()` - Creates the final chunk structure
 6. **Phase 4**: `computeCrossChunkDependencies()` - Resolves dependencies between chunks
-7. Follows symbol references to ensure consistency
+7. `scopeTopLevelUsing()` - Keeps the binding of a top-level `using` readable outside the scope that the declaration prints in
+8. Follows symbol references to ensure consistency
 
 **Key responsibilities**:
 
@@ -755,6 +756,17 @@ The renamed symbols are then used during final code generation to produce output
 - Sets up cross-chunk binding code
 - Handles dynamic imports across chunks
 - Manages chunk metadata for dependency resolution
+
+#### `scopeTopLevelUsing.rs`
+
+**Purpose**: Handles a top-level `using` that the parser did not lower (the target runs it natively). The binding of such a declaration exists only in the scope that the linker prints the declaration in.
+
+**Key functions**:
+
+- Runs only when a reachable file has the `HAS_TOP_LEVEL_USING` flag of the parser, after the part ranges of every chunk are final and before the renamers
+- A file with an `__esm` wrapper keeps its `using` inside the closure. The hoist loop of `generateCodeForFileInChunkJS.rs` prints function declarations, classes and values that run no code outside the closure, and the namespace object is outside too. A binding that one of those reads gets a second symbol, and its declaration prints as `using inner = binding = value` with `var binding` outside (`bind_using_inside_scope`)
+- The reader is found per part (`leaves_esm_closure` and `Part::symbol_uses`). A direct `eval` or a part of the React Compiler binds every `using` of the file that way, because the part of an outlined function does not record what it reads
+- The new symbols are in no part. A chunk that prints their file names them (`JavaScriptChunk::scoped_using_symbols`)
 
 #### `findAllImportedPartsInJSOrder.rs`
 

@@ -699,7 +699,11 @@ pub fn generate_code_for_file_in_chunk_js(
                                 // they must stay inside the closure rather than being
                                 // hoisted to `var` + assignment.
                                 if local.kind.is_using() {
-                                    break 'stmt stmt;
+                                    break 'stmt c.bind_using_inside_scope(
+                                        stmt,
+                                        temp_arena,
+                                        &mut |ref_, loc| hoist.wrap_identifier(loc, ref_),
+                                    );
                                 }
 
                                 // Convert the declarations to assignments
@@ -707,9 +711,7 @@ pub fn generate_code_for_file_in_chunk_js(
                                 for decl in local.decls.slice() {
                                     if let Some(initializer) = decl.value {
                                         // Keep in sync with `needs_wrapper_ref` in the parser.
-                                        if initializer.can_be_moved()
-                                            && matches!(decl.binding.data, B::B::BIdentifier(_))
-                                        {
+                                        if local.value_can_leave_esm_wrapper(decl) {
                                             // ie `const main = class { static main() {} }` => `var main = class { static main() {} }`
                                             hoist.decls.push(G::Decl {
                                                 binding: decl.binding,

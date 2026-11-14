@@ -117,6 +117,11 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
     } else {
         &[]
     };
+    // No part declares the symbols that `scope_top_level_using` made.
+    let scoped_using_symbols: &[Ref] = match &chunk.content {
+        Content::Javascript(js) => &js.scoped_using_symbols,
+        _ => &[],
+    };
 
     // `symbol::Map` is not `Clone`/`Copy`. Build a non-owning shallow view via
     // `from_borrowed_slice_dangerous` so the renamer's `Map` does not free graph storage on
@@ -278,10 +283,13 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
                 stable_source_indices,
             )?;
         }
-        for &copy in entry_point_cjs_export_copies {
+        for &generated in entry_point_cjs_export_copies
+            .iter()
+            .chain(scoped_using_symbols)
+        {
             minify_renamer.accumulate_symbol_use_count(
                 &mut top_level_symbols,
-                copy,
+                generated,
                 1,
                 stable_source_indices,
             )?;
@@ -454,9 +462,12 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
     }
 
     // After the files, so a user binding with the same name keeps it and the
-    // copy takes the numbered one.
-    for &copy in entry_point_cjs_export_copies {
-        r.add_top_level_symbol(copy);
+    // generated symbol takes the numbered one.
+    for &generated in entry_point_cjs_export_copies
+        .iter()
+        .chain(scoped_using_symbols)
+    {
+        r.add_top_level_symbol(generated);
     }
 
     chunk.nested_scopes_to_rename = nested_scopes;

@@ -73,7 +73,7 @@ impl Tree {
 }
 
 // max number of node_modules folders
-pub(crate) const MAX_DEPTH: usize = (MAX_PATH_BYTES / b"node_modules".len()) + 1;
+const MAX_DEPTH: usize = MAX_PATH_BYTES / b"node_modules".len();
 
 /// Parent-id stack for [`relative_path_and_depth`] (32 KB on Windows, so not zeroed).
 pub(crate) type DepthBuf = [MaybeUninit<Id>; MAX_DEPTH];
@@ -341,24 +341,21 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
 
     if tree.id > 0 {
         let buf = string_buf;
-        let mut depth_buf_len: usize = 1;
+        let mut ids = bun_core::vec::BorrowedBuf::from(&mut depth_buf[..]);
 
         while parent_id > 0 && (parent_id as usize) < trees.len() {
-            if depth_buf_len == MAX_DEPTH {
+            if ids.len() == ids.capacity() {
                 path_buf[path_written] = 0;
                 return (ZStr::from_buf(path_buf, path_written), 0);
             }
-            depth_buf[depth_buf_len].write(parent_id);
+            ids.unfilled().append(&[parent_id]);
             parent_id = trees[parent_id as usize].parent;
-            depth_buf_len += 1;
         }
 
-        depth_buf_len -= 1;
-
-        depth = depth_buf_len;
-        while depth_buf_len > 0 {
+        depth = ids.len();
+        for (i, &id) in ids.filled().iter().rev().enumerate() {
             if PATH_STYLE == IteratorPathStyle::PkgPath {
-                if depth_buf_len != depth {
+                if i != 0 {
                     if path_written + 1 >= MAX_PATH_BYTES {
                         path_too_long();
                     }
@@ -373,9 +370,6 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
                 path_written += 1;
             }
 
-            // SAFETY: the parent walk above wrote `depth_buf[1..=depth]` and
-            // `1 <= depth_buf_len <= depth`.
-            let id = unsafe { depth_buf[depth_buf_len].assume_init() };
             let mut name = trees[id as usize].folder_name(dependencies, buf);
             let mut is_workspace_path = false;
             // The tree of an unlinked workspace package is a child of the root tree, so this is the
@@ -417,8 +411,6 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
                     .copy_from_slice(b"node_modules");
                 path_written += b"/node_modules".len();
             }
-
-            depth_buf_len -= 1;
         }
     }
     path_buf[path_written] = 0;

@@ -33,6 +33,8 @@ type Case = {
   unfixed?: true;
   /** True if another rule of the plugin has a fix that breaks the file for a reason that this file isn't about. */
   alone?: true;
+  /** True if the new text doesn't parse, so that `bun lint` writes it with no flag. */
+  refused?: true;
 };
 
 /** A test that prints `value`. */
@@ -150,6 +152,16 @@ const importing = (source: string, mock: string): Record<string, Case> => ({
       `const spy = ${mock}.fn(() => (join("a", "b") === "a" + sep + "b" ? path.basename(first) : ""));\n` +
       logs("spy()"),
   },
+  // A call of another module with literals runs no code of this file.
+  "the line below calls of other modules": {
+    files: { "setup.js": 'module.exports = { load: () => "real", names: ["real"] };\n' },
+    text:
+      'require("./setup.js").load();\nconst first = require("./setup.js").names.at(0);\n' +
+      'require("./setup.js").load("a", 1, true, null);\n' +
+      line(source) +
+      `const spy = ${mock}.fn(() => first);\n` +
+      logs("spy()"),
+  },
   "function and class declarations below the line": {
     text:
       line(source) +
@@ -230,13 +242,19 @@ const consistentTestIt = (source: string): Record<string, Case> => ({
   },
 });
 
-/** Two packages that the Vitest rules take for Vitest, and `bun test` doesn't. The second one is a module. */
+/** A package that the Vitest rules take for Vitest, and `bun test` doesn't. */
 const packages: Files = {
   "node_modules/vite-plus/package.json": '{ "name": "vite-plus", "exports": { "./test": "./test.js" } }',
   "node_modules/vite-plus/test.js": 'module.exports = require("bun:test");\n',
+};
+/**
+ * Another such package, which is a module. A case that imports it has a copy of its own: `bun test` loads a module
+ * once for all the files of a run, and some of these cases are about a module that hasn't run yet.
+ */
+const standIn: Files = {
   "node_modules/@effect/vitest/package.json": '{ "name": "@effect/vitest", "type": "module", "exports": "./index.js" }',
   "node_modules/@effect/vitest/index.js":
-    'import * as runner from "bun:test";\nexport const { it, test, vi } = runner;\n',
+    'import * as runner from "bun:test";\nexport const { it, test, vi, xit } = runner;\nexport default runner;\n',
 };
 /** A file that imports `it` under another name, so that a fix which writes `expect` writes a new name. */
 const checked = (source: string, names: string, code: string) =>
@@ -296,6 +314,37 @@ const groups: Record<string, Record<string, Case>> = {
         'test("logs", () => {\n  expect(1).toBe(1);\n  console.log(TAG, fn(() => "real")());\n});\n',
       held: true,
       breaks: true,
+    },
+    // The type is all that the new text drops.
+    "a line with a type": {
+      file: "greet.test.ts",
+      text: 'const { test }: { test: any } = require("@jest/globals");\n' + spy("jest") + logs("spy()"),
+      held: true,
+    },
+    // The new text would have `not-a-name: other`.
+    "a line with a key that is no name": {
+      text: 'const { "not-a-name": other, test } = require("@jest/globals");\n' + spy("jest") + logs("spy()"),
+      held: true,
+      refused: true,
+    },
+    // Types and casts run no code.
+    "the line below types and a cast": {
+      file: "greet.test.cts",
+      text:
+        "type Name = string;\ninterface Greeter {}\ndeclare const shape: Greeter;\n;\n" +
+        'const path = require("node:path") as typeof import("node:path");\n' +
+        jestLine +
+        'const spy = jest.fn(() => path.basename("real"));\n' +
+        logs("spy()"),
+    },
+    // A `require` of the file's own is no matter for an `import`.
+    "an import in a module that declares require": {
+      file: "greet.test.mjs",
+      text:
+        'import { createRequire } from "node:module";\nimport { test } from "@jest/globals";\n' +
+        "const require = createRequire(import.meta.url);\n" +
+        'const spy = jest.fn(() => require("node:path").basename("real"));\n' +
+        logs("spy()"),
     },
     // The comment is all that the new text drops.
     "a line with a comment in it": {
@@ -433,13 +482,26 @@ const groups: Record<string, Record<string, Case>> = {
     // `early.mjs` calls the function before the `import` below it has its module.
     "a function that the file exports, and an import that gets the names": {
       file: "greet.test.mjs",
-      files: { "early.mjs": early("greet.test.mjs") },
+      files: { ...standIn, "early.mjs": early("greet.test.mjs") },
       text:
         'import "./early.mjs";\nimport { test } from "@effect/vitest";\nexport ' +
         makeSpy("vi") +
         logs("globalThis[TAG]()"),
       held: true,
       breaks: true,
+    },
+    // The comment is all that the new text drops.
+    "a line with a comment in it": {
+      text: 'const { test /* the runner\'s */ } = require("vitest");\n' + spy("vi") + logs("spy()"),
+      held: true,
+    },
+    // The new text would be `import runner, { vi }, { test }`.
+    "an import with a default and names": {
+      file: "greet.test.mjs",
+      files: standIn,
+      text: 'import runner, { test } from "@effect/vitest";\n' + spy("vi") + logs("runner.vi ? spy() : 0"),
+      held: true,
+      refused: true,
     },
     // Bun evaluates this `export default` before the first statement, and `run.cjs` calls it from the first line.
     "an arrow function that the file exports by default": {
@@ -580,6 +642,15 @@ const groups: Record<string, Record<string, Case>> = {
         'import type jest = require("@jest/globals");\n' +
         logs("typed()"),
     },
+    // A `declare` gives no value: `jest` is the runner's object.
+    "a cast in a file that declares jest for its types": {
+      file: "greet.test.ts",
+      text:
+        "declare const jest: { mocked<T>(value: T): T };\n" +
+        greet +
+        "const typed = greet as jest.Mock;\n" +
+        logs("typed()"),
+    },
     // An import of a type declares nothing that runs.
     "a cast in a file that exports a value and imports jest as a type": {
       file: "greet.test.ts",
@@ -622,6 +693,20 @@ const groups: Record<string, Record<string, Case>> = {
         jasmine +
         "const matcher = jasmine.any(Number);\n" +
         logs('matcher ? "real" : String(expect.any())'),
+      held: true,
+      breaks: true,
+    },
+    "jasmine.any() above a let that declares expect without a value": {
+      text: jasmine + "const matcher = jasmine.any(Number);\nlet expect;\n" + logs('matcher ? "real" : String(expect)'),
+      held: true,
+      breaks: true,
+    },
+    // The default runs before the parameter after it has its value.
+    "jasmine.any() in a default above a parameter named expect": {
+      text:
+        jasmine +
+        "function matcher(value = jasmine.any(Number), expect = { any: () => 1 }) {\n  return value && expect;\n}\n" +
+        logs('matcher() ? "real" : ""'),
       held: true,
       breaks: true,
     },
@@ -725,10 +810,20 @@ const groups: Record<string, Record<string, Case>> = {
       ...noTestPrefixes("vite-plus/test")["xit() in a function named require"],
       alone: true,
     },
+    // A `require` of the file's own is no matter for an `import`.
+    "xit() in a module that declares require and imports it": {
+      file: "greet.test.mjs",
+      files: standIn,
+      text:
+        'import { createRequire } from "node:module";\nimport { it } from "@effect/vitest";\n' +
+        "const require = createRequire(import.meta.url);\n" +
+        skipped +
+        logs('require("node:path").basename("real")', "it"),
+    },
     // `early.mjs` calls the function before the `import` below it has its module.
     "xit() in a function that the file exports, and an import that declares it": {
       file: "greet.test.mjs",
-      files: { "early.mjs": 'import { suite } from "./greet.test.mjs";\nsuite();\n' },
+      files: { ...standIn, "early.mjs": 'import { suite } from "./greet.test.mjs";\nsuite();\n' },
       text:
         'import "./early.mjs";\nimport { it } from "@effect/vitest";\n' +
         `export function suite() {\n  ${skipped}}\n` +
@@ -948,7 +1043,7 @@ for (const rules of Object.keys(groups)) {
         expect(written.offers).toBe(it.unfixed ? "no fix" : it.held ? "a fix for --fix-dangerously" : "a fix");
         expect(fixed).toEqual({ prints: written.prints, isFixed: !it.held && !it.unfixed });
         if (!it.alone) expect(others["--fix together"].prints).toEqual(written.prints);
-        expect(all.isFixed).toBe(!it.unfixed);
+        expect(all.isFixed).toBe(!it.unfixed && !it.refused);
         if (it.breaks) expect(all.prints).not.toEqual(written.prints);
         else expect(all.prints).toEqual(written.prints);
       });
@@ -1046,12 +1141,14 @@ describe("the cases of oxlint's tests, with a require() line of the runner below
       };
       expect(written.length).toBeGreaterThan(500);
       // Both runs fixed files, so the lists below are about files that have their fixes.
-      expect({ fix: fix.exitCode, fixDangerously: fixDangerously.exitCode }).toEqual({ fix: 0, fixDangerously: 0 });
+      for (const { stdout, stderr, exitCode } of [fix, fixDangerously]) {
+        if (exitCode !== 0) throw new Error(`bun lint exited with ${exitCode}: ${stdout.slice(-2000)}\n${stderr}`);
+      }
       const [safe, all] = [read("fix"), read("fix-dangerously")];
       expect(safe.changed).toBeGreaterThan(written.length / 2);
       expect(all.changed).toBeGreaterThan(safe.changed);
-      // This one has its own change: https://github.com/oven-sh/bun/pull/48674. That change empties the list.
-      expect(safe.early).toEqual(["vitest/consistent-vitest-vi"]);
+      // `vitest/consistent-vitest-vi` has its own change: https://github.com/oven-sh/bun/pull/48674.
+      expect(safe.early.filter(it => it !== "vitest/consistent-vitest-vi")).toEqual([]);
       // The fixes that `--fix` holds back are the ones that do it.
       expect(all.early).toEqual(
         expect.arrayContaining([

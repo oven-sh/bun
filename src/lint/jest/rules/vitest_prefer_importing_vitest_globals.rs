@@ -3,7 +3,7 @@ use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint_oxlint::hash_order::HashOrder;
-use bun_lint_oxlint::import::{ImportEntry, ImportImportName, import_entries};
+use bun_lint_oxlint::import::{ImportEntry, ImportImportName, import_entries, import_entries_of};
 use rustc_hash::FxBuildHasher;
 use smallvec::SmallVec;
 use std::cell::OnceCell;
@@ -189,16 +189,23 @@ impl<'a> Target<'a> {
     }
 }
 
-/// False if the fix can change what the file does: the file assigns to one of the names, or code of the file can run before the names have their values.
+/// False if the fix can change what the file does: the file assigns to one of the names, code of the file can run before the names have their values, or the new text drops a comment or doesn't parse.
 #[cold]
 fn is_safe<'a>(file: &'a File<'a>, missing_globals: &[&str], target: Target<'a>) -> bool {
     if jest::assigns_to_global(file, missing_globals.iter().map(|it| it.as_bytes())) {
         return false;
     }
     match target {
-        // An `import` below another one has its names once its module has run.
-        Target::Import(_) => !jest::opens_early(file),
-        Target::Require(declarator, _) => jest::takes_names(file, declarator),
+        // An `import` below another one has its names once its module has run. `import a, { b }` gets a second `{ }`.
+        Target::Import(entry) => {
+            let is_default = matches!(entry.import_name, ImportImportName::Default(_));
+            let is_alone = import_entries_of(entry.declaration).count() == 1;
+            !jest::exports_value(file) && (!is_default || is_alone)
+        }
+        Target::Require(declarator, _) => {
+            let has_comment = file.comments_in(declarator.pat().span()).next().is_some();
+            jest::takes_names(file, declarator) && !has_comment
+        }
         // A new first `import` has its names before all other code of the file.
         Target::Insert => true,
     }

@@ -4,6 +4,7 @@ use crate::jest::{
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::utils::oxlint::source_type;
+use bun_lint::utils::text::is_identifier_name;
 use bun_lint_oxlint::import::{
     ImportEntry, ImportImportName, import_entries, import_entries_of, is_require_call,
 };
@@ -195,7 +196,7 @@ impl<'a> Target<'a> {
         }
     }
 
-    /// True if the new text has all that the statement has: an `import` of named values only, or a top-level `const` of only `{ key, key: name }` from the `require()` call itself. No attributes, no comment.
+    /// True if the new text has all that the statement has: an `import` of named values only, or a top-level `const` of only `{ key, key: name }` from the `require()` call itself. No attributes, no type, no comment.
     fn keeps_statement(self, file: &'a File<'a>) -> bool {
         let statement = match self {
             Target::Import(first) => {
@@ -221,9 +222,11 @@ impl<'a> Target<'a> {
                     && matches!(statement.parent(), Node::File(_));
                 let is_module_itself = (declarator.init().and_then(Expr::as_call))
                     .is_some_and(|it| is_require_call(it) && !it.callee().is_parenthesized());
+                let kept = kept_properties(declarator).filter(|it| is_identifier_name(it.0.bytes()));
                 if !is_only_const
                     || !is_module_itself
-                    || kept_properties(declarator).count() != properties.len()
+                    || declarator.ty().is_some()
+                    || kept.count() != properties.len()
                 {
                     return false;
                 }
@@ -245,10 +248,12 @@ fn is_safe<'a>(file: &'a File<'a>, functions_to_import: &Names, target: Target<'
     match target {
         // A `require()` line of a script gets the names when it runs.
         Target::Require(declarator) if !is_module(file) => jest::takes_names(file, declarator),
-        // A new first statement has its names before all other code of the file.
+        // A new first `import` has its names before all other code of the file.
         Target::Insert if is_module(file) => true,
-        // An `import` below another one has its names once its module has run, and so has a new first `require()` line.
-        Target::Import(_) | Target::Require(_) | Target::Insert => !jest::opens_early(file),
+        // A new first `require()` line has them when it has run.
+        Target::Insert => !jest::opens_early(file),
+        // An `import` below another one has its names once its module has run.
+        Target::Import(_) | Target::Require(_) => !jest::exports_value(file),
     }
 }
 

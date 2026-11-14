@@ -322,8 +322,8 @@ struct PerFile {
     named_like_jest: OnceCell<Vec<u32>>,
     /// [`top_end`]
     top_end: OnceCell<u32>,
-    /// [`opens_early`]
-    opens_early: OnceCell<bool>,
+    /// [`exports_value`]
+    exports_value: OnceCell<bool>,
     /// [`assigns_to_global`]: true if the file assigns to any name that it doesn't declare.
     writes_globals: OnceCell<bool>,
     /// One for the `jest` and `vitest` rules, and one for the `bun:test` rules.
@@ -424,7 +424,7 @@ fn per_file<'a>(file: &'a File<'a>) -> Option<&'a PerFile> {
             is_bun: file.mentions_bit(const { mention_bit(BUN_TEST) }) && imports_bun_test(file),
             named_like_jest: OnceCell::new(),
             top_end: OnceCell::new(),
-            opens_early: OnceCell::new(),
+            exports_value: OnceCell::new(),
             writes_globals: OnceCell::new(),
             per_runner: Default::default(),
         }
@@ -446,22 +446,49 @@ fn require_binding(declarator: VarDecl<'_>) -> Option<(Pat<'_>, Name<'_>)> {
     Some((declarator.pat(), static_string(source?)?))
 }
 
-/// True for `require("a")`, for `await import("a")` and for a member of one of them: `require("a").b`.
-fn is_plain_require(mut value: Expr<'_>) -> bool {
-    while let ExprKind::Dot { obj, .. } = value.kind() {
-        value = obj;
-    }
+/// The `require("a")` or `await import("a")` under the casts of `value`.
+fn module_of(mut value: Expr<'_>) -> Option<Expr<'_>> {
     let is_text = |it: Expr<'_>| match it.kind() {
         ExprKind::String(_) => true,
         ExprKind::Template(template) => template.exprs().is_empty(),
         _ => false,
     };
-    match value.kind() {
-        ExprKind::Call(call) => is_require_call(call) && call.args().iter().all(is_text),
-        ExprKind::Await(import) => {
-            matches!(import.kind(), ExprKind::ImportCall { args } if args.iter().all(is_text))
-        }
+    loop {
+        value = match value.kind() {
+            ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } => expr,
+            ExprKind::NonNull(expr) => expr,
+            ExprKind::Call(call) => {
+                let is_module = is_require_call(call) && call.args().iter().all(is_text);
+                return is_module.then_some(value);
+            }
+            ExprKind::Await(import) => {
+                let is_module = matches!(import.kind(), ExprKind::ImportCall { args } if args.iter().all(is_text));
+                return is_module.then_some(value);
+            }
+            _ => return None,
+        };
+    }
+}
+
+/// True if `value` loads a module and runs no code of the file: a [module](module_of), a member of one, or a call of one with only literals: `require("a").b("c")`.
+fn is_plain_require(mut value: Expr<'_>) -> bool {
+    let is_literal = |it: Expr<'_>| match it.kind() {
+        ExprKind::Template(template) => template.exprs().is_empty(),
+        ExprKind::String(_) | ExprKind::Number(_) | ExprKind::BigInt(_) => true,
+        ExprKind::True | ExprKind::False | ExprKind::Null => true,
         _ => false,
+    };
+    loop {
+        if module_of(value).is_some() {
+            return true;
+        }
+        value = match value.kind() {
+            ExprKind::Dot { obj, .. } => obj,
+            ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } => expr,
+            ExprKind::NonNull(expr) => expr,
+            ExprKind::Call(call) if call.args().iter().all(is_literal) => call.callee(),
+            _ => return false,
+        };
     }
 }
 
@@ -479,38 +506,42 @@ fn binds_only(pattern: Pat<'_>) -> bool {
     }
 }
 
-/// True if `file` has an `export` of a value.
-fn exports_value<'a>(file: &'a File<'a>) -> bool {
-    file.body().iter().any(|it| match it.tag() {
-        StmtTag::ExportNamed => it.as_export_named().is_some_and(|it| {
-            !it.has_from() && !it.is_type_only() && it.items().iter().any(|it| !it.is_type_only())
-        }),
-        StmtTag::ExportDefault => true,
-        _ => it.is_exported() && !is_type_export_declaration(it),
-    })
-}
-
-/// True if code of `file` can run before the lines at its top have run: the file exports a value, which a file that it imports can call, or it declares the `require` that those lines call.
-pub(crate) fn opens_early<'a>(file: &'a File<'a>) -> bool {
+/// True if `file` has an `export` of a value. A file that it imports can then call into it before its first statement has run.
+pub(crate) fn exports_value<'a>(file: &'a File<'a>) -> bool {
     let find = || {
-        let scope = file.body().first().map(|it| Node::Stmt(it).scope());
-        scope.is_some_and(|it| it.resolve("require").is_some()) || exports_value(file)
+        file.body().iter().any(|it| match it.tag() {
+            StmtTag::ExportNamed => it.as_export_named().is_some_and(|it| {
+                let has_value = || it.items().iter().any(|it| !it.is_type_only());
+                !it.has_from() && !it.is_type_only() && has_value()
+            }),
+            StmtTag::ExportDefault => true,
+            _ => it.is_exported() && !is_type_export_declaration(it),
+        })
     };
     match per_file(file) {
-        Some(it) => *it.opens_early.get_or_init(find),
+        Some(it) => *it.exports_value.get_or_init(find),
         None => find(),
     }
 }
 
-/// Where the top of `file` ends: its directives, its imports and its plain `require()` lines, up to the first other code. No code of the file runs before these lines have run. 0 if the file [opens early](opens_early).
+/// True if code of `file` can run before the `require()` lines at its top have run: the file [exports a value](exports_value), or it declares the `require` that those lines call.
+pub(crate) fn opens_early<'a>(file: &'a File<'a>) -> bool {
+    let scope = file.body().first().map(|it| Node::Stmt(it).scope());
+    scope.is_some_and(|it| it.resolve("require").is_some()) || exports_value(file)
+}
+
+/// Where the top of `file` ends: its directives, its imports, its types and its plain `require()` lines, up to the first other code. No code of the file runs before these lines have run. 0 if the file [opens early](opens_early).
 fn top_end<'a>(file: &'a File<'a>) -> u32 {
     if opens_early(file) {
         return 0;
     }
     let mut end = 0;
     for statement in file.body() {
+        let is_type = matches!(statement.tag(), StmtTag::TypeAlias | StmtTag::Interface)
+            || statement.flags().contains(Flags::AMBIENT);
         match statement.kind() {
-            StmtKind::Import(_) => {}
+            _ if is_type => {}
+            StmtKind::Import(_) | StmtKind::Empty => {}
             StmtKind::ImportEquals(it) if matches!(it.target(), ImportEqualsTarget::Require(_)) => {
             }
             StmtKind::Expr(value) if statement.directive().is_some() || is_plain_require(value) => {
@@ -540,14 +571,14 @@ fn is_at_top<'a>(file: &'a File<'a>, line: Span) -> bool {
     line.end <= end
 }
 
-/// True if a fix can add the names of more exports to `declarator`, a `const { .. } = require("a")`, and every read gets its value: the line is at the [top](top_end) of `file`, it isn't `.. = require("a").b`, and no `...rest` loses the names.
+/// True if a fix can add the names of more exports to `declarator`, a `const { .. } = require("a")`, and every read gets its value: the line is at the [top](top_end) of `file`, it takes its names from the [module](module_of) itself, and no `...rest` loses the names.
 pub(crate) fn takes_names<'a>(file: &'a File<'a>, declarator: VarDecl<'a>) -> bool {
     let has_rest = match declarator.pat().kind() {
         PatKind::Object(properties) => properties.iter().any(|it| it.is_rest()),
         _ => false,
     };
-    let is_member = declarator.init().is_some_and(|it| it.tag() == ExprTag::Dot);
-    is_at_top(file, declarator.span()) && !is_member && !has_rest
+    let is_module = declarator.init().and_then(module_of).is_some();
+    is_at_top(file, declarator.span()) && is_module && !has_rest
 }
 
 /// True if `name` has its value wherever the code at `at` runs, so a fix can write it there. `at` is the expression that the fix replaces: the name that its chain starts with is read there already.
@@ -568,7 +599,7 @@ pub(crate) fn has_value<'a>(name: &[u8], at: Expr<'a>) -> bool {
     let is_ambient = |it: Stmt<'a>| it.flags().contains(Flags::AMBIENT);
     // A file that this one imports can call an export of this one before a later `import` has its module. `bun:test` is there from the start.
     let has_module =
-        |it: Import<'a>| it.is_type_only() || it.spec().bytes() == BUN_TEST || !opens_early(file);
+        |it: Import<'a>| it.is_type_only() || it.spec().bytes() == BUN_TEST || !exports_value(file);
     symbol.declarations().all(|it| match it {
         Declaration::Var(_) => match it.node() {
             Some(Node::VarDecl(declarator)) if declarator.init().is_some() => {
@@ -576,6 +607,12 @@ pub(crate) fn has_value<'a>(name: &[u8], at: Expr<'a>) -> bool {
                     && declarator.var_kind() != VarKind::Var
                     && binds_only(declarator.pat());
                 is_at_top(file, declarator.span()) || is_line_of_read
+            }
+            // A `declare`, or a `var it;` beside the declaration that gives `it` its value.
+            Some(Node::VarDecl(declarator)) => {
+                let is_again =
+                    declarator.var_kind() == VarKind::Var && symbol.declaration_count() > 1;
+                declarator.flags().contains(Flags::AMBIENT) || is_again
             }
             _ => true,
         },
@@ -591,8 +628,15 @@ pub(crate) fn has_value<'a>(name: &[u8], at: Expr<'a>) -> bool {
         },
         Declaration::Enum(it) => is_ambient(it.stmt()),
         Declaration::Module(it) => is_ambient(it.stmt()),
-        Declaration::Param(_)
-        | Declaration::Fn(_)
+        // A default in the parameter list can run before a later parameter has its value.
+        Declaration::Param(_) => {
+            let list = match it.node() {
+                Some(Node::Func(function)) => function.params_span(),
+                _ => None,
+            };
+            !list.is_some_and(|it| it.start <= at.span().start && at.span().end <= it.end)
+        }
+        Declaration::Fn(_)
         | Declaration::Interface(_)
         | Declaration::TypeAlias(_)
         | Declaration::EnumMember(_)

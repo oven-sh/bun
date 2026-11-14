@@ -55,7 +55,7 @@ Macros are import statements annotated with either:
 
 You must explicitly import a macro with `{ type: "macro" }` for it to run at bundle-time. These imports have no effect unless you call them, unlike regular JavaScript imports which may have side effects.
 
-You can disable macros entirely with the `--no-macros` flag. It produces a build error like this:
+You can disable macros entirely with the `--no-macros` flag. To disable them for one build or one transpiler, pass `macros: false` to `Bun.build()` or `macro: false` to `new Bun.Transpiler()`. A call of a macro then fails with an error like this:
 
 ```
 error: Macros are disabled

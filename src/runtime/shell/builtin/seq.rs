@@ -218,7 +218,66 @@ impl Seq {
     }
 }
 
-#[inline]
+/// A decimal number, or a C99 hex float (`0x1.8p1`).
 fn parse_f32(bytes: &[u8]) -> Option<f32> {
-    bun_core::fmt::parse_f32(bytes)
+    let (negative, unsigned) = match bytes {
+        [b'-', unsigned @ ..] => (true, unsigned),
+        [b'+', unsigned @ ..] => (false, unsigned),
+        _ => (false, bytes),
+    };
+    let number = match unsigned {
+        [b'0', b'x' | b'X', hex @ ..] => {
+            let magnitude = parse_hex_float(hex)?;
+            if negative { -magnitude } else { magnitude }
+        }
+        _ => bun_core::fmt::parse_f64(bytes)?,
+    };
+    Some(number as f32)
+}
+
+/// The part of a C99 hex float after `0x`: hex digits with at most one `.`, then an optional `p` exponent.
+fn parse_hex_float(hex: &[u8]) -> Option<f64> {
+    let mut mantissa = bun_core::fmt::RadixInteger::default();
+    let mut fraction_bits: i64 = 0;
+    let mut seen_dot = false;
+    let mut seen_digit = false;
+    let mut rest = hex;
+    while let [c, tail @ ..] = rest {
+        match *c {
+            b'.' if !seen_dot => seen_dot = true,
+            b'p' | b'P' => break,
+            c => {
+                mantissa.push_digit(4, char::from(c).to_digit(16)?);
+                seen_digit = true;
+                fraction_bits += 4 * i64::from(seen_dot);
+            }
+        }
+        rest = tail;
+    }
+    if !seen_digit {
+        return None;
+    }
+    let mut exponent: i64 = 0;
+    if let [_, signed @ ..] = rest {
+        let (negative, digits) = match signed {
+            [b'-', digits @ ..] => (true, digits),
+            [b'+', digits @ ..] => (false, digits),
+            digits => (false, digits),
+        };
+        if digits.is_empty() {
+            return None;
+        }
+        for &digit in digits {
+            if !digit.is_ascii_digit() {
+                return None;
+            }
+            exponent = exponent
+                .saturating_mul(10)
+                .saturating_add(i64::from(digit - b'0'));
+        }
+        if negative {
+            exponent = -exponent;
+        }
+    }
+    Some(mantissa.to_f64_scaled(exponent.saturating_sub(fraction_bits)))
 }

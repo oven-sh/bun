@@ -607,6 +607,7 @@ declare global {
         host: string | undefined,
         socketPath: string | undefined,
         reusePort: boolean,
+        serverNameHost: string | undefined,
       ): void;
     }
 

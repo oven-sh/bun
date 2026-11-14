@@ -451,6 +451,7 @@ const NEVER_RUN_BRANCHES: &[&str] = &[
     "{ declare var v: number; }", "{ declare global {} }", "{ var [] = []; let v = 1; }", "{ function f() {} (() => eval(\"\")); }", "{ { function f() {} } eval(\"\"); }",
     "{ switch (0) { case 0: function f() {} } }", "{ try { unknown(); } finally { function* f() {} } }", "{ async function f(): Promise<void>; async function f() {} }",
     "for (var i;;) {}", "{ for (var i, j;;) {} }", "for (var i, j = 0;;) {}", "label: for (var i;;) { let v = 1; }",
+    "enum E { A }", "while (unknown) enum E { A }", "label: enum E { A }",
 ];
 
 /// Each cell holds one `if` that is no part of a branch that never runs: at the level of the file, or in a function.

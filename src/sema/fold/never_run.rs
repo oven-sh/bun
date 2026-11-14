@@ -39,18 +39,16 @@ impl<'a, 's> NeverRun<'a, 's> {
     /// Where the filter of the parser stops in a statement behind a jump: at the first one that stays, a `var` with its names alone.
     pub fn find_first_that_stays(&self, statement: StmtId) -> Option<StmtId> {
         let mut first = None;
-        self.left_noting(statement, &mut |stays| {
-            first.get_or_insert(stays);
-        });
+        self.left_noting(statement, &mut first);
         first
     }
 
     #[inline]
     fn left(&self, statement: StmtId) -> Left {
-        self.left_noting(statement, &mut |_| {})
+        self.left_noting(statement, &mut None)
     }
 
-    fn left_noting(&self, statement: StmtId, note: &mut impl FnMut(StmtId)) -> Left {
+    fn left_noting(&self, statement: StmtId, first_that_stays: &mut Option<StmtId>) -> Left {
         let hir = self.hir;
         let Some(node) = hir.stmts.get(statement.idx()) else {
             return Left::Nothing;
@@ -66,7 +64,6 @@ impl<'a, 's> NeverRun<'a, 's> {
             | StmtKind::Class(_)
             | StmtKind::Interface(_)
             | StmtKind::TypeAlias(_)
-            | StmtKind::Enum(_)
             | StmtKind::Return(_)
             | StmtKind::Throw(_)
             | StmtKind::Break(_)
@@ -87,15 +84,20 @@ impl<'a, 's> NeverRun<'a, 's> {
                     true => Left::VarsAtEndOfFile,
                 }
             }
+            // `s_enum` declares the enum with `var` in the scope of the file, and with `let` in every other one.
+            StmtKind::Enum(_) => match self.is_in_scope_of_file(statement) {
+                true => Left::InPlace,
+                false => Left::Nothing,
+            },
             StmtKind::Fn(_) => match self.becomes_let(statement) {
                 true => Left::Nothing,
                 false => Left::InPlace,
             },
-            StmtKind::Block(list) => self.most_left(hir.ids(list), note),
-            StmtKind::If { yes, no, .. } => self.most_left([yes, no].into_iter(), note),
+            StmtKind::Block(list) => self.most_left(hir.ids(list), first_that_stays),
+            StmtKind::If { yes, no, .. } => self.most_left([yes, no].into_iter(), first_that_stays),
             StmtKind::While { body, .. }
             | StmtKind::DoWhile { body, .. }
-            | StmtKind::Labeled { body, .. } => self.left_noting(body, note),
+            | StmtKind::Labeled { body, .. } => self.left_noting(body, first_that_stays),
             StmtKind::For {
                 init: head, body, ..
             }
@@ -104,13 +106,13 @@ impl<'a, 's> NeverRun<'a, 's> {
             }
             | StmtKind::ForOf {
                 left: head, body, ..
-            } => self.most_left([head, body].into_iter(), note),
+            } => self.most_left([head, body].into_iter(), first_that_stays),
             StmtKind::Try {
                 block,
                 handler,
                 finalizer,
                 ..
-            } => self.most_left([block, handler, finalizer].into_iter(), note),
+            } => self.most_left([block, handler, finalizer].into_iter(), first_that_stays),
             StmtKind::Switch { .. } | StmtKind::With { .. } => Left::InPlace,
             // No file that `bun run` loads holds one of these below an `if`.
             StmtKind::Module(_)
@@ -123,7 +125,7 @@ impl<'a, 's> NeverRun<'a, 's> {
             | StmtKind::ExportAsNamespace(_) => Left::InPlace,
         };
         if left == Left::InPlace {
-            note(statement);
+            first_that_stays.get_or_insert(statement);
         }
         left
     }
@@ -131,16 +133,32 @@ impl<'a, 's> NeverRun<'a, 's> {
     fn most_left(
         &self,
         statements: impl Iterator<Item = StmtId>,
-        note: &mut impl FnMut(StmtId),
+        first_that_stays: &mut Option<StmtId>,
     ) -> Left {
         let mut most = Left::Nothing;
         for statement in statements {
-            most = most.max(self.left_noting(statement, note));
+            most = most.max(self.left_noting(statement, first_that_stays));
             if most == Left::InPlace {
                 break;
             }
         }
         most
+    }
+
+    /// Whether only statements that open no scope stand between this one and the file.
+    fn is_in_scope_of_file(&self, mut statement: StmtId) -> bool {
+        loop {
+            match self.bound.parent_of_stmt(statement) {
+                Parent::File => return true,
+                Parent::Stmt(above) => match self.hir[above].kind {
+                    StmtKind::If { .. } | StmtKind::While { .. } | StmtKind::DoWhile { .. } => {
+                        statement = above;
+                    }
+                    _ => return false,
+                },
+                _ => return false,
+            }
+        }
     }
 
     /// `maybe_relocate_vars_to_top_level`: a `var` of the file below a scope is declared at the end of the file.

@@ -518,8 +518,14 @@ impl FileLowering<'_, '_, '_, '_> {
             && let StmtKind::Block(list) = hir[above].kind
             && is_var(first)
         {
+            let is_printed = |statement: &StmtId| {
+                !matches!(
+                    hir[*statement].kind,
+                    StmtKind::Empty | StmtKind::Interface(_) | StmtKind::TypeAlias(_)
+                ) && !hir.is_erased_statement(*statement)
+            };
             let behind = hir.ids(list).skip_while(|&it| it != first).skip(1);
-            names_alone.extend(behind.take_while(|&it| is_var(it)));
+            names_alone.extend(behind.filter(is_printed).take_while(|&it| is_var(it)));
         }
     }
 

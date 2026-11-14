@@ -28,6 +28,8 @@ loads	cjs	if (/a**/) {} else { for (var i = 0; i < 1; i++) {} }
 refused	cjs	if (/a**/) {} else { for (var i;;) {} }
 refused	cjs	if (/a**/) {} else for (var i, j;;) {}
 loads	cjs	if (/a**/) {} else for (var i, j = 0;;) {}
+refused	ts	if (/a**/) {} else enum E { A }
+loads	ts	if (/a**/) {} else { enum E { A } }
 loads	cjs	if (/a**/) {} else { try {} catch { var v; } }
 loads	mjs	if (/a**/) {} else { var v = 1; }
 loads	cjs	var x = function () {}; if (/a**/) { x(); } else { var v = 1; }

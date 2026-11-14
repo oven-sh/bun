@@ -137,3 +137,11 @@ missed	cjs	(function () { if (typeof late) {} else { v(/*! mark */ 1); } let lat
 # nor this: a class with a decorator or an `accessor` field leaves a `var` of its own, which stays
 missed	cjs	(function () { function dec() {} if (typeof late) {} else { @dec class K {} } let late = 1; })();
 missed	cjs	(function () { if (typeof late) {} else { class K { accessor a = 1; } } let late = 1; })();
+# an enum is a var to `bun run` where only an `if`, a `while` or a `do` without braces stands between it and the file
+kept	ts	if (typeof late) {} else enum E { A } let late = 1;
+kept	ts	if (typeof late) {} else while (late) enum E { A } let late = 1;
+kept	mts	export {}; if (typeof late) {} else enum E { A } let late = 1;
+dropped	ts	if (typeof late) {} else { enum E { A } } let late = 1;
+dropped	ts	if (typeof late) {} else l: enum E { A } let late = 1;
+dropped	ts	if (typeof late) {} else declare enum E { A } let late = 1;
+dropped	ts	(function () { if (typeof late) {} else enum E { A } let late = 1; })();

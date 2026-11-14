@@ -284,11 +284,9 @@ impl Expansion {
         }
         let brace_str = &escaped[..];
         let mut lexer_output = if bun_core::is_all_ascii(brace_str) {
-            bun_core::handle_oom(braces::Lexer::tokenize(brace_str))
+            braces::Lexer::tokenize(brace_str)
         } else {
-            bun_core::handle_oom(
-                braces::NewLexer::<{ braces::StringEncoding::Wtf8 }>::tokenize(brace_str),
-            )
+            braces::NewLexer::<{ braces::StringEncoding::Wtf8 }>::tokenize(brace_str)
         };
         let count = braces::calculate_expanded_amount(&lexer_output.tokens[..]);
         // Hard cap before preallocation: `calculate_expanded_amount` saturates

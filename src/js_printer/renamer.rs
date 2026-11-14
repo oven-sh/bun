@@ -650,7 +650,7 @@ trait NameScopes {
         let id = self.id_of(name);
         let use_ = self.find(id);
         if let NameUse::Unused = use_ {
-            let unchanged = !normalized || strings::eql_long(name, input_name.slice(), true);
+            let unchanged = !normalized || strings::eql_long(name, input_name.slice());
             let name = if unchanged {
                 input_name
             } else {

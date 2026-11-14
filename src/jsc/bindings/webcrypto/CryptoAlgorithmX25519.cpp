@@ -69,6 +69,16 @@ std::optional<Vector<uint8_t>> CryptoAlgorithmX25519::platformDeriveBits(const C
 }
 #endif
 
+ExceptionOr<void> CryptoAlgorithmX25519::validateDeriveBits(const CryptoAlgorithmX25519Params& parameters)
+{
+    ASSERT(parameters.publicKey);
+    if (parameters.publicKey->type() != CryptoKey::Type::Public)
+        return Exception { ExceptionCode::InvalidAccessError };
+    if (parameters.publicKey->algorithmIdentifier() != s_identifier)
+        return Exception { ExceptionCode::InvalidAccessError, "key algorithm mismatch"_s };
+    return {};
+}
+
 void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& parameters, Ref<CryptoKey>&& baseKey, std::optional<size_t> length, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)
 {
     if (baseKey->type() != CryptoKey::Type::Private) {
@@ -76,13 +86,8 @@ void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& paramete
         return;
     }
     auto& ecParameters = downcast<CryptoAlgorithmX25519Params>(parameters);
-    ASSERT(ecParameters.publicKey);
-    if (ecParameters.publicKey->type() != CryptoKey::Type::Public) {
-        exceptionCallback(ExceptionCode::InvalidAccessError, ""_s);
-        return;
-    }
-    if (baseKey->algorithmIdentifier() != ecParameters.publicKey->algorithmIdentifier()) {
-        exceptionCallback(ExceptionCode::InvalidAccessError, "key algorithm mismatch"_s);
+    if (auto result = validateDeriveBits(ecParameters); result.hasException()) {
+        exceptionCallback(result.exception().code(), result.exception().message());
         return;
     }
     auto& ecBaseKey = downcast<CryptoKeyOKP>(baseKey.get());

@@ -4815,6 +4815,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // TODO:
     pub(crate) fn check_for_non_bmp_code_point(&mut self, _: bun_ast::Loc, _: &[u8]) {}
 
+    /// A bundle keeps the "use strict" of the code, and one such error would make the whole bundle unparsable.
+    pub(crate) fn mark_feature_under_kept_directive(
+        &mut self,
+        feature: StrictModeFeature,
+        r: bun_ast::Range,
+        detail: &[u8],
+    ) -> Result<(), crate::Error> {
+        if self.options.bundle
+            && self.current_scope().strict_mode == js_ast::StrictModeKind::ExplicitStrictMode
+        {
+            self.mark_strict_mode_feature(feature, r, detail)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn mark_strict_mode_feature(
         &mut self,
         feature: StrictModeFeature,
@@ -4822,6 +4837,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         detail: &[u8],
     ) -> Result<(), crate::Error> {
         let text: &'a [u8] = match feature {
+            StrictModeFeature::DeleteBareName => b"Delete of a bare identifier",
+            StrictModeFeature::WithStatement => b"With statements",
             StrictModeFeature::EvalOrArguments => bun_alloc::arena_format!(
                 in self.arena,
                 "Declarations with the name \"{}\"",
@@ -4855,6 +4872,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 js_ast::StrictModeKind::ImplicitStrictModeClass => {
                     why = b"All code inside a class is implicitly in strict mode";
                     where_ = self.enclosing_class_keyword;
+                }
+                js_ast::StrictModeKind::ExplicitStrictMode => {
+                    why = b"Strict mode is triggered by a \"use strict\" directive";
                 }
                 _ => {}
             }

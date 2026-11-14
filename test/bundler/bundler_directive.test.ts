@@ -604,4 +604,32 @@ describe("bundler", () => {
     },
     run: { stdout: "dec=outer" },
   });
+
+  // A bundle keeps the directive of a wrapped file, so each of these would make the whole bundle unparsable.
+  for (const [name, code, error] of [
+    ["With", `with (o) { x; }`, `With statements cannot be used in strict mode`],
+    ["DeleteName", `delete o;`, `Delete of a bare identifier cannot be used in strict mode`],
+    ["DeleteNameInParens", `delete (o);`, `Delete of a bare identifier cannot be used in strict mode`],
+    ["LabelLet", `let: for (;;) break let;`, `"let" is a reserved word and cannot be used in strict mode`],
+    ["LabelStatic", `static: o;`, `"static" is a reserved word and cannot be used in strict mode`],
+  ]) {
+    for (const [where, file] of [
+      ["File", `"use strict"; exports.f = function (o) { ${code} };`],
+      ["Function", `exports.f = function (o) { "use strict"; ${code} };`],
+    ]) {
+      itBundled(`directive/StrictEarlyError${name}${where}`, {
+        files: { "/entry.js": `import "./bad.cjs"; console.log("works");`, "/bad.cjs": file },
+        bundleErrors: { "/bad.cjs": [error] },
+      });
+    }
+    itBundled(`directive/SloppyAllows${name}`, {
+      files: {
+        "/entry.js": `import "./sloppy.cjs"; console.log("works");`,
+        "/sloppy.cjs": `exports.f = function (o) { ${code} };`,
+      },
+      format: "cjs",
+      outfile: "/out.cjs",
+      run: { stdout: "works" },
+    });
+  }
 });

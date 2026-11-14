@@ -5,7 +5,7 @@ use crate::p::{P, ReactRefreshExportKind};
 use crate::parser::Runtime::ReplaceableExport;
 use crate::parser::{
     PrependTempRefsOpts, ReactRefresh, Ref, RelocateVarsMode, SideEffects, StmtsKind,
-    statement_cares_about_scope,
+    StrictModeFeature, statement_cares_about_scope,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast::ast_result::CommonJSExportValue;
@@ -1409,6 +1409,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Label, stmt.loc)
             .expect("unreachable");
         let name = p.load_name_from_ref(data.name.ref_);
+        if js_lexer::is_strict_mode_reserved_word(name) {
+            p.mark_feature_under_kept_directive(
+                StrictModeFeature::ReservedWord,
+                js_lexer::range_of_identifier(p.source, data.name.loc),
+                name,
+            )?;
+        }
         let ref_ = p.new_symbol(js_ast::symbol::Kind::Label, name);
         data.name.ref_ = ref_;
         p.cur_scope().label_ref = ref_;
@@ -1739,6 +1746,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmt: &mut Stmt,
         data: &mut S::With,
     ) -> Result<(), Error> {
+        p.mark_feature_under_kept_directive(
+            StrictModeFeature::WithStatement,
+            bun_ast::Range {
+                loc: stmt.loc,
+                len: 4,
+            },
+            b"",
+        )?;
         p.visit_expr(&mut data.value);
 
         p.push_scope_for_visit_pass(js_ast::scope::Kind::With, data.body_loc)

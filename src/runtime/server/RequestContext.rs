@@ -1294,6 +1294,14 @@ where
         // The normal end path detaches `self.resp` and releases the base ref. uWS
         // markDone() clears onAborted, so no abort would ever do either.
         self.end_without_body(!MUX);
+        self.unpipe();
+    }
+
+    /// For a natively piped body that has nobody left to take it.
+    fn unpipe(&self) {
+        if let Some(stream) = self.byte_stream.take() {
+            shim::byte_stream_unpipe(stream);
+        }
     }
 
     pub(crate) fn force_close(&self) {
@@ -1483,13 +1491,7 @@ where
             return;
         }
 
-        // A natively piped body has nobody left to take it. The deref balances the ref
-        // `do_render_with_body` took for the pipe: `end_chunk`, which releases it otherwise,
-        // cannot run once the response is gone.
-        if let Some(stream) = this.byte_stream.take() {
-            shim::byte_stream_unpipe(stream);
-            this.deref();
-        }
+        this.unpipe();
 
         // if we can, free the request now.
         if this.is_dead_request() {
@@ -1520,6 +1522,8 @@ where
     // so it's important that we can safely do that
     pub(crate) fn finalize_without_deinit(&self) {
         ctx_log!("finalizeWithoutDeinit<d> ({:p})<r>", self);
+        // First: the stream holds no ref, so nothing below may reach `end_chunk` through it.
+        self.unpipe();
         self.blob.with_mut(|b| b.detach());
         debug_assert!(self.server.get().is_some());
         let global_this = self.server().global_this();
@@ -1571,11 +1575,6 @@ where
         // Case 3:
         // Stream was not consumed and the connection was aborted or ended
         let _ = self.end_request_streaming(); // TODO: properly propagate exception upwards
-
-        if let Some(stream) = self.byte_stream.take() {
-            ctx_log!("finalizeWithoutDeinit: stream != null");
-            shim::byte_stream_unpipe(stream);
-        }
 
         self.response_body_readable_stream_ref
             .with_mut(|s| s.deinit());
@@ -3036,7 +3035,6 @@ where
                                 this.do_render_blob();
                                 return;
                             }
-                            this.ref_();
                             // Same as do_render_stream's Pending branch: the
                             // body is in flight, so `handle_reject` must not
                             // fall through to render_missing() and end it.
@@ -3082,7 +3080,7 @@ where
                                 // if we only have metadata to send, send it now
                                 resp.run_corked_with_type(Self::render_metadata, this);
                             }
-                            // Runs `end_chunk`, which adopts the ref taken above and may free `this`.
+                            // Runs `end_chunk`, which may free `this`.
                             if byte_stream.end_sink_with_pending_error() {
                                 return;
                             }
@@ -3168,9 +3166,9 @@ where
     }
 
     pub(crate) fn end_chunk(this: *mut Self, err: Option<&WebCore::streams::StreamError>) {
-        // SAFETY: the sink ctx, with the ref taken when it was attached to the stream.
-        let pipe_ref = unsafe { RefPtr::from_raw(this) };
-        let this: &Self = &pipe_ref;
+        // SAFETY: the sink ctx, which `unpipe` detaches before the context is released.
+        let guard = unsafe { RefPtr::init_ref(this) };
+        let this: &Self = &guard;
         // The stream has already dropped this sink.
         this.byte_stream.set(None);
 

@@ -127,8 +127,7 @@ macro_rules! dispatch {
         }
     }};
     // Raw-pointer variant: hands the typed `*mut T` to `$body`. For `end_chunk`,
-    // which adopts the pipe's ref through that pointer and may release the
-    // context in its own frame.
+    // which may release the context in its own frame.
     ($self:expr, $default:expr, ptr |$T:ident, $ptr:ident| $body:expr) => {{
         let this = $self;
         macro_rules! arm {

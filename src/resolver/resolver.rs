@@ -3363,7 +3363,7 @@ impl<'a> Resolver<'a> {
 
                     let resolution: Resolution = 'brk: {
                         if resolved_package_id == Install::INVALID_PACKAGE_ID {
-                            if dependency_version.tag == Dependency::version::Tag::Uninitialized {
+                            if dependency_version.tag() == Dependency::version::Tag::Uninitialized {
                                 let sliced_string =
                                     Semver::SlicedString::init(esm.version, esm.version);
                                 string_buf = esm.version;

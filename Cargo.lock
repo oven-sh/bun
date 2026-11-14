@@ -1799,7 +1799,6 @@ dependencies = [
  "bun_sema",
  "bun_sema_baselines",
  "bun_sema_driver",
- "bun_sema_parser",
  "bun_sys",
  "bun_threading",
  "bun_zstd",
@@ -2127,7 +2126,6 @@ dependencies = [
  "bun_sema_standalone",
  "bun_trim",
  "strum",
- "thiserror",
 ]
 
 [[package]]

@@ -49,6 +49,39 @@ fn without_asterisks(value: &[u8]) -> Cow<'_, [u8]> {
     }
 }
 
+/// oxlint's `normalize_comment_text`: the text its `ignorePattern` is tested against. ESLint's is `without_asterisks`.
+fn oxlint_normalized(value: &[u8]) -> Cow<'_, [u8]> {
+    fn normalize_line(line: &[u8]) -> &[u8] {
+        let line = strings::trim_unicode_whitespace_start(line);
+        match line.strip_prefix(b"*") {
+            Some(rest) => rest.strip_prefix(b" ").unwrap_or(rest),
+            None => line,
+        }
+    }
+    if !strings::contains_char(value, b'\n') {
+        return Cow::Borrowed(normalize_line(value));
+    }
+    // The lines of Rust's `str::lines`: `\r` goes with the `\n` after it, and a final `\n` starts no line.
+    let (value, ends_with_line_break) = match value.strip_suffix(b"\n") {
+        Some(value) => (value, true),
+        None => (value, false),
+    };
+    let mut normalized = Vec::with_capacity(value.len());
+    let mut lines = strings::split(value, b"\n").peekable();
+    while let Some(line) = lines.next() {
+        let is_last = lines.peek().is_none();
+        let line = match !is_last || ends_with_line_break {
+            true => line.strip_suffix(b"\r").unwrap_or(line),
+            false => line,
+        };
+        normalized.extend_from_slice(normalize_line(line));
+        if !is_last {
+            normalized.push(b'\n');
+        }
+    }
+    Cow::Owned(normalized)
+}
+
 /// `/^\s*[^:/?#\s]+:\/\/[^?#]/u`, for the value of a comment without its asterisks.
 fn is_maybe_url(value: &[u8]) -> bool {
     let mut rest = strings::wtf8_codepoints(value)
@@ -174,8 +207,12 @@ impl CapitalizedComments {
             false if cx.language().has_no_foreign_config && oxlint_is_directive(comment, value) => true,
             false => ast_utils::matches_comments_ignore_pattern(value) || is_maybe_url(value),
         };
+        let is_ignored = |pattern: &Regex| match cx.language().is_oxlint {
+            true => pattern.test(&oxlint_normalized(value)),
+            false => pattern.test(&without_asterisks(value)),
+        };
         if is_directive
-            || (options.ignore_pattern.as_ref()).is_some_and(|it| it.test(&without_asterisks(value)))
+            || options.ignore_pattern.as_ref().is_some_and(is_ignored)
             || options.ignore_inline_comments && is_inline_comment(cx.file(), comment)
             || options.ignore_consecutive_comments && is_consecutive_comment(cx.file(), comment)
         {

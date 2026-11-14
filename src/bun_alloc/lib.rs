@@ -22,71 +22,6 @@ use std::collections::HashMap;
 pub use bun_mimalloc_sys::mimalloc;
 pub mod c_thunks;
 
-// ── Allocator vtable ───────────────────────────────────────────────────────
-#[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct Alignment(pub u8); // log2 of byte alignment
-impl Alignment {
-    #[inline]
-    pub(crate) const fn from_byte_units(b: usize) -> Self {
-        Self(b.trailing_zeros() as u8)
-    }
-}
-
-pub struct AllocatorVTable {
-    pub free: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize),
-}
-impl AllocatorVTable {
-    /// Each call site keeps its own `static`: the vtable address is the `is_instance` tag.
-    pub const fn free_only(
-        free: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize),
-    ) -> Self {
-        Self { free }
-    }
-}
-
-/// Fat allocator handle (ptr + vtable). Distinct from the `Allocator` trait below.
-#[derive(Clone, Copy)]
-pub struct StdAllocator {
-    pub ptr: *mut core::ffi::c_void,
-    pub vtable: &'static AllocatorVTable,
-}
-
-// SAFETY: `ptr` is an opaque tag/context handle; the vtable is `&'static`.
-// Thread-safety of dispatch is the implementor's concern (mimalloc is
-// thread-safe).
-unsafe impl Send for StdAllocator {}
-// SAFETY: see the `Send` impl directly above.
-unsafe impl Sync for StdAllocator {}
-
-impl Default for StdAllocator {
-    /// The mimalloc-backed `c_allocator`.
-    #[inline]
-    fn default() -> Self {
-        basic::C_ALLOCATOR
-    }
-}
-
-impl StdAllocator {
-    #[inline]
-    pub(crate) fn raw_free(&self, buf: &mut [u8], alignment: Alignment, ra: usize) {
-        // SAFETY: vtable invariant — `free` callee respects the (ptr, buf, alignment, ra) contract.
-        unsafe { (self.vtable.free)(self.ptr, buf, alignment, ra) }
-    }
-    /// `raw_free` with `ret_addr = 0`, byte-aligned.
-    #[inline]
-    pub fn free(&self, bytes: &[u8]) {
-        if bytes.is_empty() {
-            return;
-        }
-        // SAFETY: `bytes` is reborrowed mutably only for the vtable signature; the
-        // callee treats it as opaque.
-        let buf =
-            unsafe { core::slice::from_raw_parts_mut(bytes.as_ptr().cast_mut(), bytes.len()) };
-        self.raw_free(buf, Alignment::from_byte_units(1), 0);
-    }
-}
-
 // PORTING.md §Allocators: AST crates thread an `Arena`; non-AST use Vec/Box
 // (global mimalloc). `Arena` is the real per-heap `MimallocArena` — unlike
 // `bumpalo::Bump`, it supports per-allocation free + realloc, so `ArenaVec`
@@ -150,17 +85,11 @@ macro_rules! arena_format {
 /// `bun.use_mimalloc` — false under ASAN, where the global allocator is `std::alloc::System`.
 pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
 
-// ── Allocator-vtable modules: per-module disposition (PORTING.md §Allocators) ──
+// ── Allocator modules: per-module disposition (PORTING.md §Allocators) ──
 //
 //   MimallocArena            → prefer `bun_alloc::Arena` (= bumpalo::Bump)
 //   heap_breakdown           → macOS malloc_zone_* per-tag heaps (debug builds)
 //   basic                    → `impl GlobalAlloc for Mimalloc` above is the canonical impl
-//
-//   LinuxMemFdAllocator, MimallocArena (the vtable impl)
-//   import bun_core/sys/runtime/collections and so live in
-//   `bun_runtime::allocators`; callers import from
-//   there directly.
-//
 pub mod stack_fallback;
 
 /// Raw alloc/free matching the `#[global_allocator]` (`mi_*` normally, libc under ASAN).
@@ -571,7 +500,6 @@ pub fn out_of_memory() -> ! {
 }
 
 // ── page_size ─────────────────────────────────────────────────────────────
-// Used by LinuxMemFdAllocator / standalone_graph.
 // Cached via OnceLock per PORTING.md §Concurrency (was lazy-init in std).
 
 static PAGE_SIZE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();

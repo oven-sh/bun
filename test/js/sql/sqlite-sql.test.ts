@@ -85,9 +85,17 @@ describe("Connection & Initialization", () => {
     expect(oncloseArg instanceof Error).toBe(true);
   });
 
-  test("what onconnect and onclose throw is reported, as on the other adapters", async () => {
+  test.each([
+    ["is reported, as on the other adapters", ""],
+    [
+      // Like every builtin module, the adapter never calls that global.
+      "does not go to a reportError that the program has put on globalThis",
+      `globalThis.reportError = error => void reported.push("reportError of the program: " + error.message);`,
+    ],
+  ])("what onconnect and onclose throw %s", async (_, setUp) => {
     const script = `
       const reported = [];
+      ${setUp}
       process.on("uncaughtException", error => void reported.push(error.message));
       const sql = new Bun.SQL({
         adapter: "sqlite",

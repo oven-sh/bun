@@ -14,7 +14,7 @@ const {
 const { SQLDialect, SQLResultArray, isUnsafeTransactionStart } =
   require("internal/sql/shared") as typeof import("./shared").default;
 const AsyncContextFrame = require("internal/async_context_frame");
-const { isStoppedModuleGraphRunning } = require("internal/shared");
+const { isStoppedModuleGraphRunning, reportUncaughtException } = require("internal/shared");
 const monotonicNowMs: () => number = $bindgen("Timer.bind.ts", "monotonicNowMs");
 /// how many times `bun --hot` has reloaded the program, -1 without --hot
 const hotReloadGeneration: () => number = $bindgen("jsc_hooks.bind.ts", "hotReloadGeneration");
@@ -544,7 +544,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       try {
         AsyncContextFrame.run(this.callbackAsyncContext, callback, this.connectionInfo, err);
       } catch (thrown) {
-        reportError(thrown);
+        reportUncaughtException(thrown);
       }
     }
   }

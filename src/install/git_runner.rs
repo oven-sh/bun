@@ -8,7 +8,7 @@ use std::ffi::CString;
 
 use bstr::BStr;
 use bun_core::fmt::for_terminal;
-use bun_core::{Output, strings};
+use bun_core::{CStrList, Output, strings};
 use bun_event_loop::EventLoopHandle;
 use bun_io::BufferedReader;
 #[cfg(unix)]
@@ -17,7 +17,7 @@ use bun_paths as Path;
 use bun_ptr::{BackRef, JsCell, RefPtr, ThisPtr};
 #[cfg(unix)]
 use bun_spawn::SpawnResultExt as _;
-use bun_spawn::{ProcessHandle, Rusage, SpawnEnv, SpawnOptions, Status};
+use bun_spawn::{ProcessHandle, Rusage, SpawnOptions, Status};
 use bun_sys::Fd;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
@@ -1176,8 +1176,10 @@ impl GitSubprocess {
         {
             argv.push(CString::new(*arg).map_err(|_| Error::InvalidCharacter)?);
         }
-        let argv: Vec<&CStr> = argv.iter().map(CString::as_c_str).collect();
-        let envp: Vec<&CStr> = env.envp.iter().chain(variable).collect();
+        let argv = argv.iter().map(|arg| Some(arg.as_c_str().into()));
+        let argv: Vec<_> = argv.chain([None]).collect();
+        // Without `variable`, the list ends one place earlier.
+        let envp = [env.envp.entries(), &[variable.map(Into::into), None]].concat();
 
         let this_ptr: *mut c_void = this.as_ptr().cast();
         this.read_error.set(None);
@@ -1213,19 +1215,19 @@ impl GitSubprocess {
         #[cfg(windows)]
         let mut spawn_options = spawn_options;
 
-        let spawned =
-            match bun_spawn::spawn_process_cstr(&spawn_options, &argv, SpawnEnv::Strings(&envp)) {
-                Ok(Ok(spawned)) => spawned,
-                res => {
-                    #[cfg(windows)]
-                    {
-                        spawn_options.stdout.deinit();
-                        spawn_options.stderr.deinit();
-                    }
-                    res??;
-                    unreachable!();
+        let (argv, env) = (CStrList::new(&argv), Some(CStrList::new(&envp)));
+        let spawned = match bun_spawn::spawn_process(&spawn_options, argv, env) {
+            Ok(Ok(spawned)) => spawned,
+            res => {
+                #[cfg(windows)]
+                {
+                    spawn_options.stdout.deinit();
+                    spawn_options.stderr.deinit();
                 }
-            };
+                res??;
+                unreachable!();
+            }
+        };
         // `envp` borrows from `git_env`. The exit handler, which may run below, replaces `git_env`
         // after `Step::Config`.
         drop(envp);

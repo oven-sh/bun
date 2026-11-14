@@ -112,13 +112,12 @@ ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* glo
     return create(globalObject, url.string());
 }
 
-extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+// `import.meta.resolveSync(moduleName, parent, isESM)` of the module at `modulePath`.
+static JSC::EncodedJSValue importMetaResolveSync(Zig::GlobalObject* globalObject, JSC::JSString* modulePath, JSC::CallFrame* callFrame)
 {
-    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
-    JSValue thisValue = callFrame->thisValue();
     JSC::JSValue moduleName = callFrame->argument(0);
     JSC::JSValue fromValue = callFrame->argument(1);
 
@@ -128,7 +127,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
         return {};
     }
 
-    JSC::EncodedJSValue from = JSC::JSValue::encode(JSC::jsUndefined());
+    JSC::EncodedJSValue from = JSC::JSValue::encode(modulePath);
     bool isESM = true;
 
     if (callFrame->argumentCount() > 1) {
@@ -161,25 +160,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
 
         if (fromValue.isString()) {
             from = JSC::JSValue::encode(fromValue);
-        } else if (thisValue.isString()) {
-            from = JSC::JSValue::encode(thisValue);
         }
-
-    } else if (thisValue.isString()) {
-        from = JSC::JSValue::encode(thisValue);
-    } else {
-        JSC::JSObject* thisObject = dynamicDowncast<JSC::JSObject>(thisValue);
-        if (!thisObject) [[unlikely]] {
-            JSC::throwTypeError(globalObject, scope, "import.meta.resolveSync must be bound to an import.meta object"_s);
-            return {};
-        }
-
-        auto clientData = WebCore::clientData(vm);
-        JSValue pathProperty = thisObject->getIfPropertyExists(globalObject, clientData->builtinNames().pathPublicName());
-        RETURN_IF_EXCEPTION(scope, {});
-
-        if (pathProperty && pathProperty.isString())
-            from = JSC::JSValue::encode(pathProperty);
     }
 
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
@@ -453,65 +434,35 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
 extern "C" bool Bun__resolveWithOnResolve(ErrorableString* result, JSC::JSGlobalObject* global, const BunString* specifier, const BunString* from, BunString* query);
 extern "C" void Bun__importMetaResolve(ErrorableString* result, JSC::JSGlobalObject* global, const BunString* specifier, const BunString* from, BunString* query);
 
-JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
-    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+JSC::EncodedJSValue ImportMetaObject::resolve(Zig::GlobalObject* globalObject, JSC::JSString* modulePath, JSC::JSValue specifierValue, JSC::JSValue fromValue)
 {
-    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
-    auto thisValue = callFrame->thisValue();
-    auto specifierValue = callFrame->argument(0);
     // 1. Set specifier to ? ToString(specifier).
     auto specifier = specifierValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
     // Node.js allows a second argument for parent
-    JSValue from = {};
+    JSValue from = modulePath;
 
-    if (callFrame->argumentCount() >= 2) {
-        JSValue fromValue = callFrame->uncheckedArgument(1);
-
-        if (!fromValue.isUndefinedOrNull() && fromValue.isObject()) {
-            auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName());
-            RETURN_IF_EXCEPTION(scope, {});
-            if (pathsObject) {
-                if (pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
-                    auto* pathsArray = uncheckedDowncast<JSC::JSArray>(pathsObject);
-                    if (pathsArray->length() > 0) {
-                        fromValue = pathsArray->getIndex(globalObject, 0);
-                        RETURN_IF_EXCEPTION(scope, {});
-                    }
+    if (!fromValue.isUndefinedOrNull() && fromValue.isObject()) {
+        auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName());
+        RETURN_IF_EXCEPTION(scope, {});
+        if (pathsObject) {
+            if (pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
+                auto* pathsArray = uncheckedDowncast<JSC::JSArray>(pathsObject);
+                if (pathsArray->length() > 0) {
+                    fromValue = pathsArray->getIndex(globalObject, 0);
+                    RETURN_IF_EXCEPTION(scope, {});
                 }
             }
         }
-
-        if (fromValue.isString()) {
-            from = fromValue;
-        }
     }
 
-    if (!from) {
-        auto* thisObject = dynamicDowncast<JSC::JSObject>(thisValue);
-        if (!thisObject) [[unlikely]] {
-            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-            JSC::throwTypeError(globalObject, scope, "import.meta.resolve must be bound to an import.meta object"_s);
-            RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSValue {}));
-        }
-
-        auto clientData = WebCore::clientData(vm);
-        JSValue pathProperty = thisObject->getIfPropertyExists(globalObject, clientData->builtinNames().pathPublicName());
-        RETURN_IF_EXCEPTION(scope, {});
-
-        if (pathProperty && pathProperty.isString()) [[likely]] {
-            from = pathProperty;
-        } else {
-            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-            JSC::throwTypeError(globalObject, scope, "import.meta.resolve must be bound to an import.meta object"_s);
-            RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSValue {}));
-        }
+    if (fromValue.isString()) {
+        from = fromValue;
     }
-    ASSERT(from);
 
     // from.toWTFString() *should* always be the fast case, since above we check that it's a string.
     auto fromWTFString = from.toWTFString(globalObject);
@@ -701,6 +652,25 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
     return JSValue::encode(jsBoolean(isMain));
 }
 
+// Each import.meta makes its own `resolve` and `resolveSync` over the path of its module. Neither reads `this`.
+JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_resolve, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
+{
+    ImportMetaObject* thisObject = dynamicDowncast<ImportMetaObject>(JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+
+    return JSValue::encode(thisObject->resolveProperty.getInitializedOnMainThread(thisObject));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_resolveSync, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
+{
+    ImportMetaObject* thisObject = dynamicDowncast<ImportMetaObject>(JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+
+    return JSValue::encode(thisObject->resolveSyncProperty.getInitializedOnMainThread(thisObject));
+}
+
 static const HashTableValue ImportMetaObjectPrototypeValues[] = {
     { "dir"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_dir, 0 } },
     { "dirname"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_dir, 0 } },
@@ -710,8 +680,8 @@ static const HashTableValue ImportMetaObjectPrototypeValues[] = {
     { "main"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_main, 0 } },
     { "path"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_path, 0 } },
     { "require"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_require, jsImportMetaObjectSetter_require } },
-    { "resolve"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, functionImportMeta__resolve, 0 } },
-    { "resolveSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, functionImportMeta__resolveSync, 0 } },
+    { "resolve"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_resolve, 0 } },
+    { "resolveSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_resolveSync, 0 } },
     { "url"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_url, 0 } },
 };
 
@@ -725,8 +695,8 @@ static const HashTableValue ImportMetaObjectBakePrototypeValues[] = {
     { "main"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_main, 0 } },
     { "path"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_path, 0 } },
     { "require"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_require, jsImportMetaObjectSetter_require } },
-    { "resolve"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, functionImportMeta__resolve, 0 } },
-    { "resolveSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, functionImportMeta__resolveSync, 0 } },
+    { "resolve"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_resolve, 0 } },
+    { "resolveSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_resolveSync, 0 } },
     { "url"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_url, 0 } },
 };
 
@@ -788,34 +758,47 @@ JSC::Structure* ImportMetaObject::createStructure(JSC::VM& vm, JSC::JSGlobalObje
     return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), ImportMetaObject::info());
 }
 
+template<bool isOfCompiledModule>
+static void initializeImportMetaRequire(const JSC::LazyProperty<JSC::JSObject, JSC::JSCell>::Initializer& init)
+{
+    auto scope = DECLARE_THROW_SCOPE(init.vm);
+    ImportMetaObject* meta = uncheckedDowncast<ImportMetaObject>(init.owner);
+
+    WTF::URL url = isAbsolutePath(meta->url) ? WTF::URL::fileURLWithFileSystemPath(meta->url) : WTF::URL(meta->url);
+    WTF::String path;
+
+    if (url.isValid()) {
+        if (url.protocolIsFile()) {
+            path = url.fileSystemPath();
+        } else {
+            path = url.path().toString();
+        }
+    } else {
+        path = meta->url;
+    }
+
+    auto* object = Bun::JSCommonJSModule::createBoundRequireFunction(init.vm, meta->globalObject(), path, meta->moduleGraph());
+    RETURN_IF_EXCEPTION(scope, );
+    ASSERT(object);
+    if (isOfCompiledModule)
+        Bun::didCreateRequireOfCompiledModule(object);
+    init.set(uncheckedDowncast<JSFunction>(object));
+}
+
+void ImportMetaObject::setIsOfCompiledModule()
+{
+    requireProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSCell>::Initializer& init) {
+        initializeImportMetaRequire<true>(init);
+    });
+}
+
 void ImportMetaObject::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
     this->requireProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSCell>::Initializer& init) {
-        auto scope = DECLARE_THROW_SCOPE(init.vm);
-        ImportMetaObject* meta = uncheckedDowncast<ImportMetaObject>(init.owner);
-
-        WTF::URL url = isAbsolutePath(meta->url) ? WTF::URL::fileURLWithFileSystemPath(meta->url) : WTF::URL(meta->url);
-        WTF::String path;
-
-        if (url.isValid()) {
-            if (url.protocolIsFile()) {
-                path = url.fileSystemPath();
-            } else {
-                path = url.path().toString();
-            }
-        } else {
-            path = meta->url;
-        }
-
-        auto* object = Bun::JSCommonJSModule::createBoundRequireFunction(init.vm, meta->globalObject(), path, meta->moduleGraph());
-        RETURN_IF_EXCEPTION(scope, );
-        ASSERT(object);
-        if (meta->isOfCompiledModule)
-            Bun::didCreateRequireOfCompiledModule(object);
-        init.set(uncheckedDowncast<JSFunction>(object));
+        initializeImportMetaRequire<false>(init);
     });
     this->urlProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSString>::Initializer& init) {
         ImportMetaObject* meta = uncheckedDowncast<ImportMetaObject>(init.owner);
@@ -872,6 +855,26 @@ void ImportMetaObject::finishCreation(VM& vm)
             init.set(jsString(init.vm, url.path()));
         }
     });
+    this->resolveProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSFunction>::Initializer& init) {
+        ImportMetaObject* meta = uncheckedDowncast<ImportMetaObject>(init.owner);
+        JSString* modulePath = meta->pathProperty.getInitializedOnMainThread(meta);
+        init.set(JSNativeStdFunction::create(
+            init.vm, meta->globalObject(), 1, "resolve"_s,
+            [modulePath](JSGlobalObject* global, CallFrame* callFrame) -> EncodedJSValue {
+                return ImportMetaObject::resolve(uncheckedDowncast<Zig::GlobalObject>(global), modulePath, callFrame->argument(0), callFrame->argument(1));
+            },
+            modulePath));
+    });
+    this->resolveSyncProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSFunction>::Initializer& init) {
+        ImportMetaObject* meta = uncheckedDowncast<ImportMetaObject>(init.owner);
+        JSString* modulePath = meta->pathProperty.getInitializedOnMainThread(meta);
+        init.set(JSNativeStdFunction::create(
+            init.vm, meta->globalObject(), 1, "resolveSync"_s,
+            [modulePath](JSGlobalObject* global, CallFrame* callFrame) -> EncodedJSValue {
+                return importMetaResolveSync(uncheckedDowncast<Zig::GlobalObject>(global), modulePath, callFrame);
+            },
+            modulePath));
+    });
 }
 
 void ImportMetaObject::setModuleGraph(JSC::VM& vm, Bun::JSModuleGraph* graph)
@@ -892,6 +895,8 @@ void ImportMetaObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     fn->dirProperty.visit(visitor);
     fn->fileProperty.visit(visitor);
     fn->pathProperty.visit(visitor);
+    fn->resolveProperty.visit(visitor);
+    fn->resolveSyncProperty.visit(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(ImportMetaObject);
@@ -909,4 +914,7 @@ JSValue ImportMetaObject::getPrototype(JSObject* object, JSC::JSGlobalObject* gl
 
 const JSC::ClassInfo ImportMetaObject::s_info = { "ImportMeta"_s, &Base::s_info, nullptr, nullptr,
     CREATE_METHOD_TABLE(ImportMetaObject) };
+
+// One more field takes every import.meta from a cell of 96 bytes to one of 112.
+static_assert(sizeof(ImportMetaObject) <= 96);
 }

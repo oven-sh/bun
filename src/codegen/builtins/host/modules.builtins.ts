@@ -46,12 +46,11 @@ const resolvesFromReceiver = {
 
 const resolvesFromImportMeta = (specifier: b.TableType) =>
   ({
-    this: b.any,
     args: { specifier, parent: b.any.optional, isESM: b.any.optional },
     returns: b.string,
     capability: "js",
     throws: true,
-    uses: { this: [b.runs(b.named("path"))], parent: [pathListRead], isESM: b.inspected },
+    uses: { parent: [pathListRead], isESM: b.inspected },
     implementation: b.generic,
   }) satisfies b.FunctionField;
 

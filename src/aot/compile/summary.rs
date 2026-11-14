@@ -189,12 +189,26 @@ pub(super) fn collect_names_followed(
                 }
                 _ => continue,
             };
-            if !names_parent
-                && let ImportSpecifier::Constant(written) = site.specifier
-                && let Some(SiteAnswer::Module(ModuleRef::File(target))) =
-                    graph.find_site_answer(file, site.kind)
-            {
-                write_down(site.kind, files.atoms.bytes(written), target);
+            if names_parent {
+                continue;
+            }
+            match graph.find_site_answer(file, site.kind) {
+                Some(SiteAnswer::Module(ModuleRef::File(target))) => {
+                    if let ImportSpecifier::Constant(written) = site.specifier {
+                        write_down(site.kind, files.atoms.bytes(written), target);
+                    }
+                }
+                // A program that has import.meta in its hands calls the function of the host, which knows these names alone.
+                Some(SiteAnswer::Computed(candidates))
+                    if matches!(site.kind, ImportSiteKind::ImportMetaResolve(_)) =>
+                {
+                    for spelled in candidates.spelled_modules() {
+                        if let ModuleRef::File(target) = spelled.module {
+                            write_down(site.kind, files.atoms.bytes(spelled.spelling), target);
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     };

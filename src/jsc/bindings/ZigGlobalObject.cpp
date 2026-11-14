@@ -5013,7 +5013,8 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     auto* importMeta = Zig::ImportMetaObject::create(globalObject, key);
     importMeta->setModuleGraph(globalObject->vm(), Bun::moduleGraphOfLoader(globalObject, loader));
     // A module that the loader holds has a record. Only the engine asks without one, for a module of the executable.
-    importMeta->isOfCompiledModule = !record && Bun::hasCompiledModules();
+    if (!record && Bun::hasCompiledModules())
+        importMeta->setIsOfCompiledModule();
     return importMeta;
 }
 

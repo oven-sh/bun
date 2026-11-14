@@ -422,6 +422,15 @@ import.meta.glob("./pages/*.tsx"); // => { "./pages/home.tsx": () => import("./p
 | `import.meta.resolve`  | Resolve a module specifier (e.g. `"zod"` or `"./file.tsx"`) to a url. Equivalent to [`import.meta.resolve` in browsers](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/import.meta#resolve). Example: `import.meta.resolve("zod")` returns `"file:///path/to/project/node_modules/zod/index.js"` |
 | `import.meta.url`      | A `string` url to the current file, e.g. `file:///path/to/project/index.ts`. Equivalent to [`import.meta.url` in browsers](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/import.meta#url)                                                                                                       |
 
+`import.meta.resolve` resolves from the module whose `import.meta` you read it from. You can destructure it, or pass it to another function.
+
+```ts /path/to/project/file.ts
+const { resolve } = import.meta;
+
+resolve("./logo.png"); // => "file:///path/to/project/logo.png"
+["./logo.png", "./style.css"].map(name => resolve(name));
+```
+
 ### `import.meta.glob`
 
 `import.meta.glob()` imports every module that matches a glob pattern. It's compatible with [Vite's `import.meta.glob`](https://vite.dev/guide/features#glob-import) and works in `bun run`, `bun test` and `bun build`.

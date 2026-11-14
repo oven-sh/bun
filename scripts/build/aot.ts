@@ -1,6 +1,6 @@
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
-import { crateOf, debugFlag, shJoin, typesOnlyFlag, type Ctx } from "./codegen.ts";
+import { debugFlag, shJoin, typesOnlyFlag, type Ctx } from "./codegen.ts";
 import type { CodegenFields } from "./config.ts";
 import { assert } from "./error.ts";
 
@@ -170,7 +170,7 @@ export function emitAotSchema({ n, cfg, o, dirStamp, engine }: Ctx): void {
   o.cppHeaders.push(header);
 }
 
-export function emitBuiltinsTable({ n, cfg, sources, o, dirStamp, engine }: Ctx): void {
+export function emitBuiltinsTable({ n, cfg, sources, o, dirStamp, bindgenSources, engine }: Ctx): void {
   assert(engine !== undefined, "emitBuiltinsTable needs an engine");
   const script = resolve(cfg.cwd, "src", "codegen", "builtins", "index.ts");
   const bindings = resolve(cfg.cwd, "src", "jsc", "bindings");
@@ -220,7 +220,7 @@ export function emitBuiltinsTable({ n, cfg, sources, o, dirStamp, engine }: Ctx)
       ...engine.schemaInputs,
       ...engine.builtinTableInputs,
     ],
-    implicitInputs: [o.rootInstall],
+    implicitInputs: [o.rootInstall, bindgenSources.path],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
@@ -230,7 +230,7 @@ export function emitBuiltinsTable({ n, cfg, sources, o, dirStamp, engine }: Ctx)
         script,
         `--codegen-path=${cfg.codegenDir}`,
         `--target=${builtinTableTarget(cfg)}`,
-        `--sources=${sources.bindgen.map(src => `${crateOf(src)}=${src}`).join(",")}`,
+        `--sources=@${bindgenSources.path}`,
         `--engine-directory=${engine.directory}`,
         ...(engine.javaScriptCore === undefined
           ? [`--prebuilt-generated=${engine.builtinsGeneratedDirectory}`]

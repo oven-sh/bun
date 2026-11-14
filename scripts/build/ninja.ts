@@ -126,7 +126,22 @@ export interface Rule {
   rspfile?: string;
   /** Content written to rspfile (usually $in or $in_newline). */
   rspfile_content?: string;
+  /**
+   * The command needs a shell (`cd`, `&&`, `>`), so on a Windows host its text is `cmd /c "..."` (ninja runs a command
+   * through `/bin/sh -c` on posix and through CreateProcess on Windows). `build()` holds each edge of the rule to
+   * HOST_SHELL_COMMAND_BUDGET, on every host.
+   */
+  hostShell?: boolean;
 }
+
+/**
+ * cmd.exe caps a command line at 8191 characters (#48301: the list of every `.bind.ts` on one command was over 12000).
+ * Half, because configure mostly runs where the text is not cmd.exe's: CI cross-compiles the Windows binaries from
+ * Linux, and a developer's Windows checkout path can be up to MAX_PATH longer than this host's, for each of the few
+ * places a command names one. A list of source files goes in a file the command names (writeBindgenSources in
+ * codegen.ts).
+ */
+export const HOST_SHELL_COMMAND_BUDGET = 4096;
 
 /**
  * A ninja `build` statement — the only primitive of the build graph.
@@ -233,7 +248,7 @@ export class Ninja {
   private readonly ninjaVersion: string;
 
   private readonly lines: string[] = [];
-  private readonly ruleNames = new Set<RuleName>();
+  private readonly rules = new Map<RuleName, Rule>();
   private readonly generatorRules = new Set<RuleName>();
   private readonly outputSet = new Set<string>();
   private readonly pools = new Map<string, number>();
@@ -286,8 +301,8 @@ export class Ninja {
 
   /** Define a ninja rule. */
   rule(name: RuleName, spec: Rule): void {
-    assert(!this.ruleNames.has(name), `Duplicate rule: ${name}`);
-    this.ruleNames.add(name);
+    assert(!this.rules.has(name), `Duplicate rule: ${name}`);
+    this.rules.set(name, spec);
 
     const declared: readonly string[] = ruleVars[name];
     const used = variablesIn(spec.command, spec.description, spec.depfile, spec.rspfile, spec.rspfile_content);
@@ -304,6 +319,13 @@ export class Ninja {
         hint: `Remove it from ruleVars.${name}. If another configuration's text uses it, that text is another rule.`,
       });
     }
+    assert(
+      !spec.command.startsWith("cmd /c ") || spec.hostShell === true,
+      `Rule ${name} runs through cmd /c without hostShell`,
+      {
+        hint: "Set hostShell: true on the rule, so build() holds its edges to HOST_SHELL_COMMAND_BUDGET.",
+      },
+    );
 
     this.lines.push(`rule ${name}`);
     this.lines.push(`  command = ${spec.command}`);
@@ -343,7 +365,7 @@ export class Ninja {
    */
   build<R extends RuleName | "phony">(node: { rule: R } & BuildNode<R>): void {
     assert(node.outputs.length > 0, `Build node must have at least one output (rule: ${node.rule})`);
-    assert(node.rule === "phony" || this.ruleNames.has(node.rule), `Unknown rule: ${node.rule}`, {
+    assert(node.rule === "phony" || this.rules.has(node.rule), `Unknown rule: ${node.rule}`, {
       hint: `Define the rule with ninja.rule("${node.rule}", {...}) first`,
     });
     const vars: Record<string, string> = node.vars ?? {};
@@ -356,6 +378,29 @@ export class Ninja {
         assert(
           declared.includes(v),
           `A ${node.rule} edge (${node.outputs[0]}) binds ${v}, which ruleVars does not list for that rule`,
+        );
+      }
+      const spec = this.rules.get(rule)!;
+      if (spec.hostShell === true) {
+        const command = expand(spec.command, name =>
+          name === "in"
+            ? node.inputs.map(p => this.rel(p)).join(" ")
+            : name === "in_newline"
+              ? node.inputs.map(p => this.rel(p)).join("\n")
+              : name === "out"
+                ? node.outputs.map(p => this.rel(p)).join(" ")
+                : (vars[name] ?? ""),
+        );
+        const longest = Object.entries(vars).sort(([, a], [, b]) => b.length - a.length)[0];
+        assert(
+          command.length <= HOST_SHELL_COMMAND_BUDGET,
+          `The command of a ${rule} edge (${node.outputs[0]}) is ${command.length} characters, over the budget of ${HOST_SHELL_COMMAND_BUDGET}: on a Windows host the rule runs through cmd.exe, which takes at most 8191.`,
+          {
+            hint:
+              longest === undefined
+                ? "Shorten the rule's text."
+                : `$${longest[0]} is ${longest[1].length} characters. A list goes in a file written at configure time, whose path the command names (emitCppBind, writeBindgenSources in codegen.ts).`,
+          },
         );
       }
     }
@@ -532,6 +577,8 @@ export class Ninja {
 
 export interface ManifestRule {
   /** Unexpanded: `$out`, `$in` and the edge's variables are still references. */
+  command: string;
+  /** Unexpanded, as `command`. */
   description: string | undefined;
   restat: boolean;
   generator: boolean;
@@ -577,6 +624,7 @@ export function readManifest(text: string): Manifest {
     const [keyword, rest = ""] = splitOnce(line, " ");
     if (keyword === "rule") {
       const rule: ManifestRule = {
+        command: "",
         description: undefined,
         restat: false,
         generator: false,
@@ -584,7 +632,8 @@ export function readManifest(text: string): Manifest {
       };
       manifest.rules.set(rest, rule);
       bind = (name, value) => {
-        if (name === "description") rule.description = value;
+        if (name === "command") rule.command = value;
+        else if (name === "description") rule.description = value;
         else if (name === "restat") rule.restat = true;
         else if (name === "generator") rule.generator = true;
         else if (name === "pool") rule.pool = value;

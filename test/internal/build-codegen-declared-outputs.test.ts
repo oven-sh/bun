@@ -19,7 +19,13 @@ import { bunExe, bunRun, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 
-import { emitBindgen, registerCodegenRules, type CodegenOutputs } from "../../scripts/build/codegen.ts";
+import {
+  emitBindgen,
+  registerCodegenRules,
+  writeBindgenSources,
+  type BindgenSources,
+  type CodegenOutputs,
+} from "../../scripts/build/codegen.ts";
 import { registerDirStamps } from "../../scripts/build/compile.ts";
 import { resolveConfig, type Config, type Toolchain } from "../../scripts/build/config.ts";
 import { Ninja } from "../../scripts/build/ninja.ts";
@@ -74,7 +80,9 @@ interface Configured {
  * A linux-x64 debug target in `buildDir` (resolves on every host once told where
  * its sysroot is; the path is only recorded), with the rules the codegen
  * emitters reference registered and the empty output groups emitCodegen hands
- * them. Nothing is written to `buildDir`.
+ * them. Nothing is written to `buildDir`: the tests write the list of `.bind.ts`
+ * files themselves (`bindgenSources`), outside the codegen dir, which they
+ * expect to hold only what the generator writes.
  */
 function configure(buildDir: string): Configured {
   const cfg = resolveConfig(
@@ -98,6 +106,11 @@ function configure(buildDir: string): Configured {
     rootInstall: resolve(buildDir, "stamps", "install.stamp"),
   };
   return { cfg, n, o, dirStamp: resolve(cfg.codegenDir, ".dir") };
+}
+
+/** The `<crate>=<path>` list of `bindgen`, in `buildDir` (a build keeps it in the codegen dir, see `configure`). */
+function bindgenSources({ n }: Configured, bindgen: readonly string[]): BindgenSources {
+  return writeBindgenSources(resolve(n.buildDir, "bindgen-sources.txt"), bindgen);
 }
 
 /** Just the lists the emitter under test reads; it never looks at the rest of `Sources`. */
@@ -166,7 +179,14 @@ describe("emitBindgen", () => {
       resolve(cfg.cwd, "src", "jsc", "fmt_jsc.bind.ts"),
     ];
 
-    emitBindgen({ n, cfg, sources: sourceLists({ bindgen, bindgenCodegen: [] }), o, dirStamp });
+    emitBindgen({
+      n,
+      cfg,
+      sources: sourceLists({ bindgen, bindgenCodegen: [] }),
+      o,
+      dirStamp,
+      bindgenSources: bindgenSources(c, bindgen),
+    });
 
     const inDir = (name: string) => resolve(cfg.codegenDir, name);
     const cpp = ["GeneratedFmtJsc.cpp", "GeneratedNodeOs.cpp"].map(inDir);
@@ -196,7 +216,14 @@ describe("emitBindgen", () => {
       const bindgen = repoBindFiles(cfg);
       expect(bindgen).not.toBeEmpty();
 
-      emitBindgen({ n, cfg, sources: sourceLists({ bindgen, bindgenCodegen: [] }), o, dirStamp });
+      emitBindgen({
+        n,
+        cfg,
+        sources: sourceLists({ bindgen, bindgenCodegen: [] }),
+        o,
+        dirStamp,
+        bindgenSources: bindgenSources(c, bindgen),
+      });
 
       const script = resolve(cfg.cwd, "src", "codegen", "bindgen.ts");
       const typesDir = resolve(String(dir), "types");

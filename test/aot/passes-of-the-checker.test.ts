@@ -87,4 +87,18 @@ describe.skipIf(!!unsupported)("--aot-testing=Passes=2", () => {
       const ran = await spawned([two.executable], folder, env);
       expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
     }));
+
+  for (const count of ["", "0", "two"]) {
+    test(`Passes=${count} is refused`, () =>
+      slot(async () => {
+        using dir = tempDir("aot-passes", { "foo.js": foo, "other.ts": other, "main.ts": main });
+        const { stderr, exitCode } = await spawned(
+          [bunExe(), "build", "--compile", "--aot", `--aot-testing=Passes=${count}`, "--outfile", "program", "main.ts"],
+          String(dir),
+          env,
+        );
+        expect(stderr).toContain(`Passes=${count}: takes a number above zero`);
+        expect(exitCode).toBe(1);
+      }));
+  }
 });

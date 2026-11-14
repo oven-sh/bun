@@ -755,6 +755,37 @@ static JSC::InternalFieldTuple* moduleMockWith(Zig::GlobalObject* globalObject, 
     return JSC::InternalFieldTuple::create(globalObject->vm(), globalObject->internalFieldTupleStructure(), mock, cell);
 }
 
+// For AbstractModuleRecord::importPromiseGatesAsyncDependency(): a reaction with (mock, promise) as its context settles that promise, and one with a pending virtual module its fetch.
+bool promisesSettledByHostReaction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue context, Vector<JSC::JSPromise*, 2>& settled)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    if (globalObject->onLoadPlugins.runningModuleMocks.isEmpty()) [[likely]]
+        return false;
+    if (!context)
+        return true;
+    auto settledBy = [&](JSValue value) {
+        JSC::JSCell* cell = value && value.isCell() ? value.asCell() : nullptr;
+        if (auto* pendingModule = cell ? dynamicDowncast<Bun::PendingVirtualModuleResult>(cell) : nullptr) {
+            settled.append(pendingModule->internalPromise());
+            return true;
+        }
+        auto* tuple = cell ? dynamicDowncast<JSC::InternalFieldTuple>(cell) : nullptr;
+        JSValue mock = tuple ? tuple->getInternalField(0) : JSValue();
+        if (!mock || !mock.isCell() || !dynamicDowncast<JSModuleMock>(mock.asCell()))
+            return false;
+        JSValue promise = tuple->getInternalField(1);
+        if (auto* pending = promise && promise.isCell() ? dynamicDowncast<JSC::JSPromise>(promise.asCell()) : nullptr)
+            settled.append(pending);
+        return true;
+    };
+    // JSPromise::performPromiseThenWithContext() pairs a context with the async context.
+    if (!settledBy(context)) {
+        if (auto* pair = context.isCell() ? dynamicDowncast<JSC::InternalFieldTuple>(context.asCell()) : nullptr)
+            settledBy(pair->getInternalField(0));
+    }
+    return !settled.isEmpty();
+}
+
 template<typename T>
 static std::pair<JSModuleMock*, T*> toModuleMockWith(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSValue context)
 {

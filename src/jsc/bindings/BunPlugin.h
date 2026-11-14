@@ -332,6 +332,9 @@ public:
 
 class GlobalObject;
 
+// GlobalObjectMethodTable::promisesSettledByHostReaction: what a pending module mock factory settles.
+bool promisesSettledByHostReaction(JSC::JSGlobalObject*, JSC::JSValue context, WTF::Vector<JSC::JSPromise*, 2>&);
+
 } // namespace Zig
 
 namespace JSC {

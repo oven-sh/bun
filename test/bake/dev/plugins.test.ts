@@ -1,5 +1,5 @@
 // Plugin tests concern plugins in development mode.
-import { devTest, minimalFramework } from "../bake-harness";
+import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 // Note: more in depth testing of plugins is done in test/bundler/bundler_plugin.test.ts
 devTest("onResolve", {
@@ -108,6 +108,38 @@ devTest("onResolve + onLoad virtual file", {
       },
       "file-on-disk",
     ]);
+  },
+});
+devTest("onResolve declines an import that the browser target disables", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      export default {
+        name: "declines",
+        setup(build) {
+          // No result: the import goes back to the resolver, which disables "fs" for the browser.
+          build.onResolve({ filter: /^fs$/ }, args => {
+            console.log("declined: " + args.path);
+          });
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import fs from "fs";
+      import * as star from "fs";
+      console.log("fs: " + typeof fs + " " + typeof star);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("fs: undefined function");
+    await dev.output.waitForLine(/declined: fs/);
   },
 });
 // devTest("onLoad with watchFile", {

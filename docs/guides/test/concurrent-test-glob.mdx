@@ -62,7 +62,7 @@ Tests in files matching the glob pattern automatically run concurrently:
 import { test, expect } from "bun:test";
 
 // These tests automatically run concurrently due to filename matching the glob pattern.
-// Using test() is equivalent to test.concurrent() when the file matches concurrentTestGlob.
+// In a file that matches concurrentTestGlob, test() runs concurrently, unless it is inside describe.serial().
 // Each test is independent and can run in parallel.
 
 test("fetch user data", async () => {

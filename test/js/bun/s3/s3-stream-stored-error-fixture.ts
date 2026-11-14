@@ -79,6 +79,19 @@ async function stored() {
     Bun.write(client.file("copy"), new Response(failed())),
     bytes => `resolved ${bytes} bytes`,
   );
+  // The same stream written twice. The first write used to take the failure out of the stream,
+  // which then read as complete and empty: the second write stored an empty object.
+  const writes: Record<string, (stream: Body) => Promise<number>> = {
+    "client.write(key, new Response(stream))": stream => client.write("copy", new Response(stream)),
+    "client.file(key).write(new Response(stream))": stream => client.file("copy").write(new Response(stream)),
+    "Bun.write(s3file, new Response(stream))": stream => Bun.write(client.file("copy"), new Response(stream)),
+  };
+  for (const [name, write] of Object.entries(writes)) {
+    const stream = failed();
+    // `new Response()` throws for a stream that is spent.
+    const attempt = () => outcome((async () => write(stream))(), bytes => `resolved ${bytes} bytes`);
+    results[`${name}, twice`] = [await attempt(), await attempt()];
+  }
   // Waits for requests in flight, so a PUT that went out is counted.
   await bucket.stop();
   results["requests the bucket got"] = puts;

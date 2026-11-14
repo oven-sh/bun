@@ -833,12 +833,7 @@ fn to_parser_module_type(
 fn init_file_system(top_level_dir: Option<&'static [u8]>) -> crate::Result<*mut Fs::FileSystem> {
     // `FileSystem` initialization calls `adjustUlimit()`
     // to raise RLIMIT_NOFILE and stores the returned limit in
-    // `file_limit`/`file_quota`, and touches the `DirEntry.EntryStore`
-    // singleton. The previous hand-built `Implementation { file_limit: 0, .. }`
-    // skipped both, so `RealFS::need_to_close_files` (resolver/lib.rs:1594)
-    // evaluated `!(0 > 254 && ..)` → always `true`, defeating directory-fd
-    // caching, and the process never had its fd ulimit raised — large module
-    // graphs could hit EMFILE where the spec build does not.
+    // `file_limit`, which `RealFS::need_to_close_files` reads.
     Fs::FileSystem::init(top_level_dir).map_err(Into::into)
 }
 

@@ -591,6 +591,21 @@ describe("the error for a connection URL that cannot be parsed", () => {
   });
 });
 
+// `new URL()` gives a URL with a query or a fragment and no path the pathname "". With credentials it gave "/".
+// Neither names a database.
+describe.each(["postgres", "mysql", "mariadb"] as const)("a %s:// URL with no path", adapter => {
+  test.each(["uu:up@uh:1", "uu@uh", "uh:1", "uh"])(
+    "%s: the options are those of the same URL with the path /",
+    authority => {
+      for (const tail of ["?max=3", "#f", "?max=3#f"]) {
+        const options = optionsOf(`${adapter}://${authority}${tail}`);
+        expect(options).toEqual(optionsOf(`${adapter}://${authority}/${tail}`));
+        expect(options.database).toBe(adapter === "postgres" ? options.username : adapter === "mysql" ? "mysql" : "");
+      }
+    },
+  );
+});
+
 test("options.connection also gives what it inherits", () => {
   expect(optionsOf("postgres://db.example/app", { connection: Object.create({ search_path: "s" }) }).query).toBe(
     "search_path\0s\0",

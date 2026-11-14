@@ -696,8 +696,8 @@ describe("the look for a server in the default export of the entry point", () =>
     });
   });
 
-  describe("another module with the key bun:main is not the entry point", () => {
-    test.concurrent("a module of node:vm", async () => {
+  describe("a module that is not the bun:main of the program gets no look", () => {
+    test.concurrent("a module of node:vm with the identifier bun:main", async () => {
       const source = `
         import vm from "node:vm";
         const module = new vm.SourceTextModule('export default ${server("node:vm")};', { identifier: "bun:main" });
@@ -708,6 +708,24 @@ describe("the look for a server in the default export of the entry point", () =>
       `;
       expect(await run({ "entry.mjs": stub + source }, ["entry.mjs"])).toEqual({
         stdout: "evaluated\n" + servedBy("the entry point"),
+        stderr: [],
+        exitCode: 0,
+      });
+    });
+
+    // The text is what ServerEntryPoint::generate() writes for the first load of the thread.
+    test.concurrent("a module of a plugin with the text of bun:main and another key", async () => {
+      const preload = `
+        import { plugin } from "bun";
+        import { join } from "node:path";
+        const text = "// @bun\\nimport * as start from " + JSON.stringify(join(import.meta.dir, "entry.mjs")) + ";\\n// load 1\\n";
+        plugin({ name: "copy of bun:main", setup(build) { build.module("wrapper!", () => ({ contents: text, loader: "js" })); } });
+        await import("wrapper!");
+        console.log("preloaded");
+      `;
+      const files = { "entry.mjs": stub + `export default ${server("the entry point")};`, "preload.mjs": preload };
+      expect(await run(files, ["--preload", "./preload.mjs", "entry.mjs"])).toEqual({
+        stdout: "preloaded\n" + servedBy("the entry point"),
         stderr: [],
         exitCode: 0,
       });

@@ -152,16 +152,18 @@ static void lookForServer(Zig::GlobalObject* globalObject, JSValue entryNamespac
         addNoteOfLook(globalObject, exception, "looked for a server in"_s);
 }
 
-// The text of `bun:main` names the entry point and the load that it is for. A module of node:vm with the identifier `bun:main` has
-// another text, and so has the `bun:main` that a `--hot` reload replaced. A ShadowRealm and a Bun.ModuleGraph load the same text with
-// a loader of their own.
+// `bun:main` is known by its key and by its text. The text names the entry point and the load that it is for: a module of node:vm
+// with the identifier `bun:main` has another text, and so has the `bun:main` that a `--hot` reload replaced. A ShadowRealm and a
+// Bun.ModuleGraph load the same text with a loader of their own.
 bool isEntryPointWrapperOfThisLoad(Zig::GlobalObject* globalObject, JSModuleLoader* moduleLoader, JSValue moduleRecordValue)
 {
     auto& vm = JSC::getVM(globalObject);
     if (globalObject != defaultGlobalObject(vm) || moduleLoader != globalObject->moduleLoader())
         return false;
     auto* record = dynamicDowncast<JSModuleRecord>(moduleRecordValue);
-    return record && record->sourceCode().view() == StringView(Bun__entryPointWrapperSource(globalObject->bunVM()).toWTFString(BunString::ZeroCopy));
+    if (!record || record->moduleKey().string() != "bun:main"_s)
+        return false;
+    return record->sourceCode().view() == StringView(Bun__entryPointWrapperSource(globalObject->bunVM()).toWTFString(BunString::ZeroCopy));
 }
 
 JSValue evaluateEntryPointWrapper(Zig::GlobalObject* globalObject, JSModuleLoader* moduleLoader, JSValue key, JSValue moduleRecordValue, RefPtr<ScriptFetcher>&& scriptFetcher, JSValue sentValue, JSValue resumeMode)
@@ -177,6 +179,7 @@ JSValue evaluateEntryPointWrapper(Zig::GlobalObject* globalObject, JSModuleLoade
     auto* wrapper = uncheckedDowncast<AbstractModuleRecord>(moduleRecordValue);
     const auto& imports = wrapper->requestedModules();
     auto* entryPoint = imports.size() == 1 ? wrapper->hostResolveImportedModule(globalObject, imports.first().m_specifier, imports.first().type()) : nullptr;
+    RETURN_IF_EXCEPTION(scope, {});
     if (!entryPoint)
         return result;
     JSValue entryNamespace = entryPoint->moduleNamespaceObject(globalObject);

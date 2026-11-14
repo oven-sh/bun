@@ -315,7 +315,7 @@ impl Route {
         this: PendingBuild,
         plugins: Option<NonNull<JSBundler::Plugin>>,
     ) -> Result<(), crate::Error> {
-        let global = this.bundle.global.get();
+        let global = this.bundle.global;
         let server = this.server.get().expect("server set");
         let development = server.config().development;
         let vm = global.bun_vm();
@@ -425,7 +425,7 @@ impl Route {
             route: this,
             started_at_ns: bun_core::util::Timespec::now_allow_mocked_time().ns(),
         };
-        JSBundleCompletionTask::schedule(config, global, server.context_id(), receiver);
+        JSBundleCompletionTask::schedule(config, &global, server.context_id(), receiver);
         Ok(())
     }
 

@@ -1531,10 +1531,7 @@ impl GitSubprocess {
                     *sha = found;
                     task.status = Task::Status::Success;
                 }
-                Err(err) => {
-                    task.status = Task::Status::Fail;
-                    task.err = Some(err);
-                }
+                Err(_) => task.status = Task::Status::Fail,
             }
         }
         Self::release(this);

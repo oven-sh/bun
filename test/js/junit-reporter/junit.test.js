@@ -768,6 +768,56 @@ describe("junit reporter", () => {
     expect(exitCode).toBe(1);
   });
 
+  it("keeps a matcher's error once in <failure> when the test awaits the matcher after it failed", async () => {
+    await using tmpDir = tempDir("junit-matcher-awaited-later", {
+      "package.json": "{}",
+      "later.test.js": `
+        import { test, expect } from "bun:test";
+        test("t", async () => {
+          const { promise, resolve } = Promise.withResolvers();
+          const matcher = expect(promise).resolves.toBe(2);
+          resolve(1);
+          // The matcher has failed, and the runner has reported that, before this timer fires.
+          await new Promise(resolve => setTimeout(resolve, 1));
+          await matcher;
+        });
+        test("leaves a promise that then() made", async () => {
+          const { promise, resolve } = Promise.withResolvers();
+          const matcher = expect(promise).resolves.toBe(3);
+          resolve(1);
+          await new Promise(resolve => setTimeout(resolve, 1));
+          // The rejection of this promise is unhandled. Its report is left out, and the attribute for it is not.
+          matcher.then(() => {});
+          await new Promise(resolve => setTimeout(resolve, 1));
+        });
+      `,
+    });
+
+    const junitPath = join(tmpDir, "junit.xml");
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: tmpDir,
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const xmlContent = await file(junitPath).text();
+    const result = await new Promise((resolve, reject) => {
+      xml2js.parseString(xmlContent, { strict: true }, (err, r) => (err ? reject(err) : resolve(r)));
+    });
+    expect(result.testsuites.$).toMatchObject({ tests: "2", failures: "2" });
+    const testcases = result.testsuites.testsuite[0].testcase;
+    expect(testcases).toHaveLength(2);
+    expect(testcases[0].failure).toHaveLength(1);
+    expect(testcases[0].failure[0]._.match(/Expected: 2/g)).toEqual(["Expected: 2"]);
+    expect(testcases[0].failure[0].$.uncaught).toBeUndefined();
+    expect(testcases[1].failure).toHaveLength(1);
+    expect(testcases[1].failure[0]._.match(/Expected: 3/g)).toEqual(["Expected: 3"]);
+    expect(testcases[1].failure[0].$.uncaught).toBe("true");
+    expect(exitCode).toBe(1);
+  });
+
   it("includes the error type, message and stack in <failure>", async () => {
     await using tmpDir = tempDir("junit-failure", {
       "package.json": "{}",

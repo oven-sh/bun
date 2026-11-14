@@ -18,8 +18,15 @@ using namespace WebCore;
 
 class JSMockFunction;
 
+// How long an automock stands. That of a preload stays for every test file.
+// Any other ends with the test file that runs, and what it stored in place is taken out then.
+enum class AutomockLifetime : uint8_t {
+    TestFile,
+    EveryTestFile,
+};
+
 // Automocks a module's exports. With `spy` the mocks call through, and nested objects are mutated in place unless `leaveOriginalAlone`.
-JSC::JSValue mockObject(Zig::GlobalObject*, JSC::JSValue exports, bool spy, bool leaveOriginalAlone = false);
+JSC::JSValue mockObject(Zig::GlobalObject*, JSC::JSValue exports, bool spy, bool leaveOriginalAlone, AutomockLifetime);
 
 // For `vi.dynamicImportSettled()`. `import` is the module loader's own promise for an `import()`, not the one script gets.
 // `key` is null unless there are module mocks.
@@ -68,8 +75,15 @@ public:
     // A JSMap from the promises given to didStartDynamicImport() to their keys. Settled ones get swept.
     JSC::WriteBarrier<JSC::Unknown> dynamicImports;
 
+    // What the `{ spy: true }` automocks with AutomockLifetime::TestFile stored in place, for the end of the file: see didStoreInPlace(). Created on first use.
+    JSC::WriteBarrier<JSC::Unknown> automockWrites;
+
     // True until the first test starts. A preload, or a beforeAll() of one, can only run before that.
     bool preloadMayBeRunning { true };
+    // Whether the next test file gets this global object. If not, the automocks record nothing for the end of the file. The test runner sets it for each file.
+    bool nextTestFileSharesGlobal { false };
+    // How many objects the automocks have stored in for the first time. Gives each its place in the order of the undo.
+    uint32_t automockStores { 0 };
 
     // Called by GlobalObject::visitChildren
     template<typename Visitor>

@@ -623,6 +623,13 @@ pub(crate) fn convert_stmts_for_chunk(
                                 }
                             }
                             bun_ast::StmtOrExpr::Expr(e) => {
+                                // Fast Refresh already hoisted "export default function A" into
+                                // "const A = ...", so "var A = A" would redeclare it.
+                                if let bun_ast::ExprData::EIdentifier(id) = e.data {
+                                    if id.ref_ == s.default_name.ref_ {
+                                        continue 'stmt_loop;
+                                    }
+                                }
                                 stmt = Stmt::alloc(
                                     S::Local {
                                         decls: G::DeclList::from_slice(&[G::Decl {

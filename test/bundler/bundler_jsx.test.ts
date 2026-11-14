@@ -1479,5 +1479,27 @@ describe("bundler", () => {
       },
       run: { stdout: "1" },
     });
+
+    itBundled("jsx/FastRefreshDefaultFunctionWithHookDeclaresNameOnce", {
+      files: {
+        "/index.tsx": /* js */ `
+          ${prelude}
+          export default function A() {
+            return useThing();
+          }
+          console.log(A());
+        `,
+        "/node_modules/react-refresh/runtime.js": /* js */ `
+          export const createSignatureFunctionForTransform = () => fn => fn;
+          export const register = () => {};
+        `,
+      },
+      backend: "api",
+      reactFastRefresh: true,
+      onAfterBundle(api) {
+        expect(api.readFile("out.js").match(/\b(var|const) A\b/g)).toHaveLength(1);
+      },
+      run: { stdout: "1" },
+    });
   });
 });

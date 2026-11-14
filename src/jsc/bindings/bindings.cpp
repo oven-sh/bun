@@ -4011,6 +4011,7 @@ extern "C" JSC::JSPromise* JSModuleLoader__import(JSC::JSGlobalObject* globalObj
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    defaultGlobalObject(globalObject)->resetAsyncContextAtEventLoop(vm);
     auto* graph = Bun::testFileModuleGraph(defaultGlobalObject(globalObject));
     auto* promise = graph ? graph->import(defaultGlobalObject(globalObject), jsString(vm, moduleNameStr->toWTFString()), false) : JSC::importModule(globalObject, JSC::Identifier::fromString(vm, moduleNameStr->toWTFString()), JSC::Identifier(), nullptr, nullptr);
 
@@ -4429,6 +4430,7 @@ JSC__JSModuleLoader__loadAndEvaluateModule(JSC::JSGlobalObject* globalObject,
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto name = makeAtomString(arg1->toWTFString());
 
+    defaultGlobalObject(globalObject)->resetAsyncContextAtEventLoop(vm);
     auto* promise = JSC::loadAndEvaluateModule(globalObject, name, nullptr, nullptr);
     EXCEPTION_ASSERT(!!promise == !scope.exception());
     return promise;

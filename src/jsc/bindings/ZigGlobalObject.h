@@ -321,6 +321,8 @@ public:
     JSC::JSObject* bunObject() const { return m_bunObject.getInitializedOnMainThread(this); }
 
     uint8_t drainMicrotasks();
+    // With no script on the stack, makes the event loop's async context current: at a checkpoint, and where the host begins a load.
+    void resetAsyncContextAtEventLoop(JSC::VM&);
 
     void handleRejectedPromises();
     size_t holdRejectedPromises() { return m_aboutToBeNotifiedRejectedPromises.hold(this); }

@@ -861,6 +861,7 @@ extern "C" JSC::EncodedJSValue NodeModuleModule__callOverriddenRunMain(Zig::Glob
     }
     MarkedArgumentBuffer args;
     args.append(argv1);
+    global->resetAsyncContextAtEventLoop(vm);
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::profiledCall(global, JSC::ProfilingReason::API, overrideHandler, callData, global, args)));
 }
 

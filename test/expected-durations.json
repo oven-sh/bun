@@ -172,6 +172,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/an-import-call-in-a-compiled-test-run-reads-its-store.test.ts": {
+    "default": 8000,
+    "asan": 32000
+  },
   "aot/a-birth-that-a-door-interrupts-is-finished-where-the-literal-ends.test.ts": {
     "default": 60000,
     "asan": 240000

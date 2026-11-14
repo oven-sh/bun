@@ -610,6 +610,12 @@ void JSModuleGraph::destroy(JSCell* cell)
     graph->JSModuleGraph::~JSModuleGraph();
 }
 
+// VM::asyncContextOfLoadFilter: a load that begins in a graph's context keeps no async context.
+static JSValue asyncContextOfLoadOutsideModuleGraphs(JSGlobalObject* globalObject, JSValue asyncContext)
+{
+    return moduleGraphOfFrame(defaultGlobalObject(globalObject), asyncContext) ? jsUndefined() : asyncContext;
+}
+
 void JSModuleGraph::finishCreation(VM& vm, JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
@@ -622,6 +628,7 @@ void JSModuleGraph::finishCreation(VM& vm, JSGlobalObject* globalObject)
     auto* zigGlobal = defaultGlobalObject(globalObject);
     zigGlobal->setAsyncContextTrackingEnabled(true);
     m_loader->setAsyncContext(vm, createModuleGraphFrame(zigGlobal, this, jsUndefined()));
+    vm.asyncContextOfLoadFilter = asyncContextOfLoadOutsideModuleGraphs;
 }
 
 JSLexicalEnvironment* JSModuleGraph::overlay() const

@@ -14,7 +14,6 @@
 //! resolve thread pool without ever parking a worker on a condvar, and
 //! without holding the full compressed or decompressed tarball in memory.
 
-use core::mem::ManuallyDrop;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_archive::tar::{self, Event};
@@ -34,11 +33,6 @@ use crate::bun_fs::FileSystem;
 use crate::cache_publish::StagedEntry;
 use crate::integrity::{self, Integrity};
 use crate::package_manager_real::PackageManager;
-
-// `crate::Task` is a `()` stub; the real Task lives in `package_manager_task`.
-// `'static` is sound here because we only ever hold raw `*mut Task` and never
-// materialise a `&'static` borrow of the inner `Request` lifetime.
-type Task = crate::package_manager_task::Task<'static>;
 
 type OSPathZ<'a> = &'a OSPathSliceZ;
 
@@ -142,7 +136,7 @@ struct Extraction {
     /// Completion task that carries the final result back to the main
     /// thread. Populated by `finish()` and pushed onto `resolve_tasks` there.
     /// BACKREF — `*mut Task` constructed via `ParentRef::from_raw_mut` so the
-    /// read-only `request_extract()` accessor in `open_destination` goes
+    /// read-only `tarball()` accessor in `open_destination` goes
     /// through safe `Deref`; `finish()` recovers the raw via `as_mut_ptr()`.
     extract_task: bun_ptr::ParentRef<Task, bun_ptr::Mut>,
 }
@@ -178,18 +172,13 @@ impl TarballStream {
     ) -> Box<TarballStream> {
         // Caller guarantees `extract_task` is live for the lifetime of this
         // stream (it is published back to the main thread only in `finish()`).
-        // Wrapped once as `ParentRef` so
-        // the union read goes through the centralised tag-checked
-        // `request_extract()` accessor; `extract` is the active `Request`
-        // variant for streaming tarballs (set by `create_extract_task_for_streaming`,
-        // `tag == Tag::Extract`).
         let extract_task =
             core::ptr::NonNull::new(extract_task).expect("extract_task non-null (Zig *Task)");
         // SAFETY: `extract_task` is the caller's live task pointer.
         let extract_task = unsafe {
             bun_ptr::ParentRef::<Task, bun_ptr::Mut>::from_raw_mut(extract_task.as_ptr())
         };
-        let tarball = &extract_task.request_extract().tarball;
+        let tarball = extract_task.tarball();
 
         // For GitHub/URL/local tarballs we need a SHA-512 to record in the
         // lockfile even when there is no expected value to verify against,
@@ -571,9 +560,7 @@ impl Extraction {
 
     fn open_destination(&mut self) -> crate::Result<()> {
         // BACKREF: `extract_task` is live until `finish()` publishes it.
-        // `request_extract()` is the tag-checked union accessor (`tag ==
-        // Tag::Extract` for streaming tarballs).
-        let tarball = &self.extract_task.request_extract().tarball;
+        let tarball = self.extract_task.tarball();
         let (_, basename) = tarball.name_and_basename();
         let truncated_basename = &basename[0..basename.len().min(32)];
         let tmpname_suffix: &[u8] =
@@ -743,10 +730,6 @@ impl TarballStream {
     /// — caller must not touch it after return. Takes a raw pointer (not
     /// `&mut self`) so no Rust reference dangles across the drop of the
     /// `Box` in `network_task.tarball_stream`.
-    // The `&(&(*task).request.extract)` wrappers below are deliberate — they
-    // sidestep `dangerous_implicit_autorefs` by making the ref explicit before
-    // the union deref. `needless_borrow` flags them as redundant but they are not.
-    #[allow(clippy::needless_borrow)]
     unsafe fn finish(this: *mut Self) {
         // SAFETY: see fn-level # Safety — `this`/`task`/`network`/`manager`
         // are live raw pointers; this fn is the sole owner. After
@@ -775,27 +758,20 @@ impl TarballStream {
             // set, so `http_err` is stable without the lock.
             let http_err = (*this).http_err;
 
-            // SAFETY: `task` is live until pushed onto `resolve_tasks` below, and `extract` is
-            // its active `request` variant (set by `create_extract_task_for_streaming`).
+            // SAFETY: `task` is live until pushed onto `resolve_tasks` below.
             // `(*this).extraction.extract_task` is a raw `*mut Task` (not `&mut`), so this
             // is the only writer — no aliasing with a stored reference.
             // `populate_result` does not touch `(*this).extraction.extract_task`.
-            match (*this).populate_result(
-                &(&(*task).request.extract).tarball,
-                &mut (*task).log,
-                http_err,
-            ) {
-                Ok(data) => {
-                    (*task).data = TaskData {
-                        extract: ManuallyDrop::new(data),
-                    };
+            let Job::Extract { tarball, data, .. } = &mut (*task).job else {
+                unreachable!("`create_extract_task_for_streaming` built it");
+            };
+            match (*this).populate_result(tarball, &mut (*task).log, http_err) {
+                Ok(extracted) => {
+                    *data = Some(extracted);
                     (*task).err = None;
                     (*task).status = TaskStatus::Success;
                 }
                 Err(err) => {
-                    (*task).data = TaskData {
-                        extract: ManuallyDrop::new(Default::default()),
-                    };
                     (*task).err = Some(err);
                     (*task).status = TaskStatus::Fail;
                 }
@@ -803,7 +779,7 @@ impl TarballStream {
 
             // Temp-dir cleanup must happen before we release the stream or
             // publish the task: both `(*this).extraction.tmpname` and
-            // `task.request.extract.tarball.temp_dir` become invalid once
+            // `tarball.temp_dir` become invalid once
             // the stream drops / the main thread recycles the Task.
             // SAFETY: task is live (see above).
             if (*task).status != TaskStatus::Success && !(*this).extraction.tmpname.is_empty() {
@@ -811,11 +787,7 @@ impl TarballStream {
                 // rename; the early-return failure paths leave it open, so close
                 // it here first — Windows can't remove an open directory.
                 (*this).extraction.dest = None;
-                // SAFETY: task is live (see above). `request` is an untagged
-                // union; `extract` is the active variant. Explicit `&` (no
-                // implicit autoref through the raw-ptr deref) for the
-                // `ManuallyDrop` → `ExtractRequest` deref.
-                let _ = Dir::borrow(&(&(*task).request.extract).tarball.temp_dir)
+                let _ = Dir::borrow(&tarball.temp_dir)
                     .delete_tree((*this).extraction.tmpname.as_bytes());
             }
 
@@ -851,11 +823,6 @@ impl TarballStream {
             );
             drop((*network).tarball_stream.take());
 
-            // `task.apply_patch_task` is intentionally not touched: the
-            // buffered `.extract` path (`enqueue_extract_npm_package` →
-            // `Task.callback`) never populates it for npm tarballs either —
-            // patching is handled later by the install phase.
-            //
             // Publish last: once the task is on `resolve_tasks` the main
             // thread may immediately recycle it *and* the NetworkTask it
             // references, so nothing below this line may touch either.
@@ -1124,6 +1091,6 @@ fn tokenize_rest_after_first(s: &[OSPathChar], npm: bool) -> &[OSPathChar] {
 }
 
 // Resolved Phase-B paths: Resolution::Tag is the real npm/git/tarball
-// discriminant; Data/Status live on PackageManagerTask.
-use crate::package_manager_task::{Data as TaskData, Status as TaskStatus};
+// discriminant; Job/Status live on PackageManagerTask.
+use crate::package_manager_task::{Job, Status as TaskStatus, Task};
 use crate::resolution::Tag as ResolutionTag;

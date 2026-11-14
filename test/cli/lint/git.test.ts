@@ -73,6 +73,11 @@ const write = (root: string, name: string, text: string) => {
   writeFileSync(join(root, name), text);
 };
 const read = (root: string, name: string) => readFileSync(join(root, name), "utf8");
+/** Returns the places that a `-f unix` report of a run in `cwd` names, with paths relative to `root`. */
+const reported = (root: string, cwd: string, report: string) => {
+  const places = [...report.matchAll(/^(.+):(\d+:\d+): /gm)];
+  return places.map(it => `${relative(root, resolve(cwd, it[1])).replaceAll("\\", "/")}:${it[2]}`).sort();
+};
 
 /** Returns the files a run would process, as paths relative to `root`. */
 async function selected(root: string, cwd: string, args: string[], more?: Env) {
@@ -90,6 +95,11 @@ const done = { lint: "fixed", fmt: "formatted" };
 const verb = { lint: "lint", fmt: "format" };
 const writing = { lint: ["lint", "--fix", "--rule", "prefer-const: error"], fmt: ["fmt"] };
 const tidy = "export const a = 1;\n";
+// The config file of the other tool, with the rule that `writing.lint` turns on.
+const otherConfig = {
+  lint: [".oxlintrc.json", '{ "rules": { "prefer-const": "error" } }\n'],
+  fmt: [".oxfmtrc.json", "{}\n"],
+};
 
 describe.concurrent.each(commands)("bun %s", command => {
   test("--staged selects the files whose staged version differs from HEAD", async () => {
@@ -340,6 +350,92 @@ describe.concurrent.each(commands)("bun %s", command => {
       expect(await git(root, "diff", "--name-only")).toBe("b.js\nsrc/partly.js\n");
     },
   );
+
+  // A package that shares a directory of the repository through a link. Git names a file by its real path.
+  test("files that are reached through a link to a directory in the repository are selected, written and staged", async () => {
+    using repo = await repository({
+      "shared-tests/a.js": tidy,
+      "shared-tests/partly.js": tidy,
+      "shared-tests/same.js": tidy,
+      "shared-tests/sub/b.js": tidy,
+      // Not changed, and named like a file that is.
+      "packages/a/tests/a.js": tidy,
+    });
+    const { root } = repo;
+    const pkg = join(root, "packages/a");
+    symlinkSync("../../../shared-tests", join(pkg, "tests/shared"));
+    // A link to a file still doesn't count as that file.
+    symlinkSync("shared/partly.js", join(pkg, "tests/partly.js"));
+    await commit(root);
+    for (const name of ["shared-tests/a.js", "shared-tests/partly.js", "shared-tests/sub/b.js"]) {
+      write(root, name, before);
+    }
+    await git(root, "add", "-A");
+    write(root, "shared-tests/partly.js", before + "\n");
+
+    const through = (...names: string[]) => names.map(it => `packages/a/tests/shared/${it}`);
+    const all = through("a.js", "partly.js", "sub/b.js");
+    for (const flag of ["--staged", "--changed"]) {
+      const named = ["tests/shared/a.js", "tests/shared/same.js", "tests/a.js"];
+      expect(await selected(root, pkg, [command, flag, ...named])).toEqual(through("a.js"));
+      // Only `bun lint` follows a link to a directory in a search.
+      if (command === "lint") expect(await selected(root, pkg, [command, flag])).toEqual(all);
+    }
+    // A directory below the link, and a pattern that starts in the linked directory.
+    const below = ["tests/shared/sub", "tests/shared/*.js"];
+    expect(await selected(root, pkg, [command, "--staged", ...below])).toEqual(all);
+    // Git lists a file it doesn't track only for `--changed`.
+    write(root, "shared-tests/sub/untracked.js", before);
+    const inSub = [command, "--changed", "tests/shared/sub"];
+    expect(await selected(root, pkg, inSub)).toEqual(through("sub/b.js", "sub/untracked.js"));
+    rmSync(join(root, "shared-tests/sub/untracked.js"));
+    // From the root, `bun lint` finds each file by two paths, as it does without the flag.
+    const real = ["shared-tests/a.js", "shared-tests/partly.js", "shared-tests/sub/b.js"];
+    const twice = command === "lint" ? [...all, ...real] : real;
+    expect(await selected(root, root, [command, "--staged"])).toEqual(twice);
+
+    const { stderr, exitCode } = await bun(pkg, [
+      ...writing[command],
+      "--staged",
+      "tests/shared/a.js",
+      "tests/shared/partly.js",
+    ]);
+    expect(stderr).toContain("tests/shared/partly.js has both staged and unstaged changes");
+    expect(exitCode).toBe(2);
+    expect(read(root, "shared-tests/a.js")).toBe(after[command]);
+    expect(read(root, "shared-tests/partly.js")).toBe(before + "\n");
+    // a.js was staged again, so only what was unstaged before still is.
+    expect(await git(root, "diff", "--name-only")).toBe("shared-tests/partly.js\n");
+  });
+
+  // oxlint and oxfmt take a link as an argument.
+  test(`with ${otherConfig[command][0]}, files are selected, written and staged through a link that is an argument`, async () => {
+    const [name, text] = otherConfig[command];
+    using repo = await repository({ [name]: text, "shared/a.js": tidy, "shared/same.js": tidy });
+    const { root } = repo;
+    symlinkSync("shared", join(root, "linked"));
+    await commit(root);
+    write(root, "shared/a.js", before);
+    // Git lists this link because it is new. It points to a listed file, and still doesn't count as that file.
+    symlinkSync("a.js", join(root, "shared/alias.js"));
+    await git(root, "add", "-A");
+
+    const named = ["linked/alias.js", "linked/a.js"];
+    expect(await selected(root, root, [command, ...named])).toEqual(["linked/a.js", "linked/alias.js"]);
+    for (const flag of ["--staged", "--changed"]) {
+      expect(await selected(root, root, [command, flag, "linked"])).toEqual(["linked/a.js"]);
+    }
+    // Like "$PWD/a.js" in a shell that got into the directory through the link.
+    const absolute = named.map(it => join(root, it));
+    expect(await selected(root, join(root, "shared"), [command, "--staged", ...absolute])).toEqual(["linked/a.js"]);
+
+    // Both paths of a.js in one run.
+    const both = [command, ...(command === "lint" ? ["--fix"] : []), "--staged", "shared/a.js", "linked/a.js"];
+    const { stderr, exitCode } = await bun(root, both);
+    expect({ exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({ exitCode: 0, stderr: "" });
+    expect(read(root, "shared/a.js")).toBe(after[command]);
+    expect(await git(root, "status", "--porcelain")).toBe("M  shared/a.js\nA  shared/alias.js\n");
+  });
 
   test("a fully staged file is staged again after it's rewritten", async () => {
     using repo = await repository({ "a.js": tidy, "sub/b.js": tidy, "c.js": tidy });
@@ -630,6 +726,113 @@ describe.concurrent("bun lint --staged reads the staged version of a partly stag
       expect(exitCode).toBe(1);
     });
 
+    const promised = "export function f(): Promise<number> {\n  return Promise.resolve(1);\n}\n";
+    const unpromised = "export function f(): number {\n  return 1;\n}\n";
+
+    test("for a file reached through a link to a directory in the repository", async () => {
+      using repo = await repository({ "tsconfig.json": tsconfig, "shared/f.ts": tidy, "packages/a/index.ts": tidy });
+      const { root } = repo;
+      const pkg = join(root, "packages/a");
+      symlinkSync("../../shared", join(pkg, "shared"));
+      await commit(root);
+      write(root, "shared/f.ts", takesNumber);
+      await git(root, "add", "-A");
+      write(root, "shared/f.ts", takesString);
+      const { stdout, exitCode } = await bun(pkg, ["lint", "--staged", ...flags]);
+      expect(reported(root, pkg, stdout)).toEqual(["packages/a/shared/f.ts:2:3"]);
+      expect(stdout).toContain("await-thenable");
+      expect(exitCode).toBe(1);
+    });
+
+    // In the index, whole.ts and up.ts await promises and broken.ts doesn't. On disk it's the other way around.
+    test("for the files that a file behind a link to a directory imports", async () => {
+      using repo = await repository({
+        "tsconfig.json": tsconfig,
+        "shared/f.ts": promised,
+        "shared/sub/g.ts": promised,
+        "other/y.ts": promised,
+        "shared/n.ts": unpromised,
+        "shared/whole.ts": tidy,
+        "shared/sub/up.ts": tidy,
+        "shared/broken.ts": tidy,
+        "packages/a/a.ts": tidy,
+      });
+      const { root } = repo;
+      const pkg = join(root, "packages/a");
+      symlinkSync("../../shared", join(pkg, "shared"));
+      symlinkSync("../../other", join(pkg, "other"));
+      await commit(root);
+      // From its own directory, from a directory below, and through the other link.
+      const imports = [
+        'import { f } from "./f";',
+        'import { f as g } from "./sub/g";',
+        'import { f as y } from "../other/y";',
+      ];
+      const sum = "export const h = async () => (await f()) + (await g()) + (await y());\n";
+      write(root, "shared/whole.ts", imports.join("\n") + "\n" + sum);
+      write(root, "shared/sub/up.ts", 'import { f } from "../f";\nexport const u = async () => (await f()) + 1;\n');
+      write(root, "shared/broken.ts", 'import { f as n } from "./n";\nexport const b = async () => await n();\n');
+      await git(root, "add", "-A");
+      for (const name of ["shared/f.ts", "shared/sub/g.ts", "other/y.ts"]) write(root, name, unpromised);
+      write(root, "shared/n.ts", promised);
+
+      const lint = async (cwd: string, ...named: string[]) => {
+        const { stdout, exitCode } = await bun(cwd, ["lint", "--staged", ...flags, ...named]);
+        return { reported: reported(root, cwd, stdout), exitCode };
+      };
+      const behind = "packages/a/shared/broken.ts:2:30";
+      expect(await lint(root)).toEqual({ reported: [behind, "shared/broken.ts:2:30"], exitCode: 1 });
+      expect(await lint(pkg)).toEqual({ reported: [behind], exitCode: 1 });
+      // An argument names the file, and it imports from above its directory.
+      expect(await lint(pkg, "shared/sub/up.ts")).toEqual({ reported: [], exitCode: 0 });
+    });
+
+    test("for the file that a file passed through a symlinked path imports", async () => {
+      using repo = await repository({ "tsconfig.json": tsconfig, "src/f.ts": promised, "src/whole.ts": tidy });
+      const { root } = repo;
+      write(root, "src/whole.ts", 'import { f } from "./f";\nexport const g = async () => (await f()) + 1;\n');
+      await git(root, "add", "-A");
+      write(root, "src/f.ts", unpromised);
+      using links = tempDir("bun-lint-git-link", {});
+      symlinkSync(root, join(String(links), "link"));
+      const whole = join(String(links), "link", "src/whole.ts");
+      const { stdout, exitCode } = await bun(root, ["lint", "--staged", ...flags, whole]);
+      expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
+    });
+
+    // Git still has l/f.ts, with an older text. The link at l leads to d/f.ts.
+    test("for a file behind a link that replaced its directory, --fix writes the text on disk", async () => {
+      using repo = await repository({ "tsconfig.json": tsconfig, "l/f.ts": tidy });
+      const { root } = repo;
+      write(root, "l/f.ts", before);
+      await git(root, "add", "-A");
+      renameSync(join(root, "l"), join(root, "d"));
+      symlinkSync("d", join(root, "l"));
+      const newer = "export const newer = 2;\n";
+      write(root, "d/f.ts", before + newer);
+      await git(root, "add", "d");
+      using links = tempDir("bun-lint-git-link", {});
+      symlinkSync(root, join(String(links), "link"));
+      const fix = ["--type-aware", "--fix", "--rule", "prefer-const: error", join(String(links), "link", "l/f.ts")];
+      const { exitCode } = await bun(root, ["lint", "--staged", ...fix]);
+      expect(read(root, "d/f.ts")).toBe(after.lint + newer);
+      expect(exitCode).toBe(0);
+    });
+
+    // Git still has l/f.ts, which returns a promise. The link at l now leads to d/f.ts, which is staged and doesn't.
+    test("for an imported file that git still has where a link to a directory is now", async () => {
+      using repo = await repository({ "tsconfig.json": tsconfig, "l/f.ts": promised, "src/use.ts": tidy });
+      const { root } = repo;
+      renameSync(join(root, "l"), join(root, "d"));
+      symlinkSync("d", join(root, "l"));
+      write(root, "d/f.ts", unpromised + "\n");
+      write(root, "src/use.ts", 'import { f } from "../l/f";\nexport const g = async () => (await f()) + 1;\n');
+      await git(root, "add", "d", "src");
+      write(root, "d/f.ts", unpromised);
+      const { stdout, exitCode } = await bun(root, ["lint", "--staged", ...flags]);
+      expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
+    });
+
     test("for a new file that was deleted after it was staged", async () => {
       using repo = await repository({ "tsconfig.json": tsconfig, "src/whole.ts": tidy });
       write(repo.root, "lib/f.ts", takesNumber);
@@ -693,6 +896,58 @@ describe.concurrent("bun lint --staged reads the staged version of a partly stag
     const { stdout, exitCode } = await bun(repo.root, ["lint", "--staged", "--rule", "import/named: error", ...unix]);
     expect(stdout).toContain("whole.js:1:10: b not found in './partly.js'");
     expect(exitCode).toBe(1);
+  });
+
+  // In the index, the imported files export `foo`. On disk they export `nope`, and gone.js is deleted.
+  const importRules = { "import/named": "error", "import/no-unresolved": "error" };
+  const eslintrc = { root: true, parserOptions: { ecmaVersion: 2022, sourceType: "module" }, plugins: ["import"] };
+  test.each([
+    [".eslintrc.json", JSON.stringify({ ...eslintrc, rules: importRules })],
+    [".oxlintrc.json", JSON.stringify({ plugins: ["import"], rules: importRules })],
+    ["no config file", ""],
+  ])("with %s, for the files that a file behind a link to a directory imports", async (name, config) => {
+    const exported = "export const foo = 1;\n";
+    using repo = await repository({
+      ...(config ? { [name]: config } : {}),
+      "shared/f.js": exported,
+      "shared/sub/g.js": exported,
+      "shared/gone.js": exported,
+      "other/y.js": exported,
+      "shared/whole.js": tidy,
+      "shared/sub/up.js": tidy,
+      "shared/broken.js": tidy,
+      "packages/a/index.js": tidy,
+    });
+    const { root } = repo;
+    const pkg = join(root, "packages/a");
+    symlinkSync("../../shared", join(pkg, "shared"));
+    symlinkSync("../../other", join(pkg, "other"));
+    await commit(root);
+    // From its own directory, from a directory below, and through the other link.
+    const from = ["./f.js", "./sub/g.js", "../other/y.js", "./gone.js"];
+    const imports = from.map((it, index) => `import { foo as f${index} } from "${it}";\n`).join("");
+    write(root, "shared/whole.js", imports + "export const h = f0 + f1 + f2 + f3;\n");
+    write(root, "shared/sub/up.js", 'import { foo } from "../f.js";\nexport const u = foo;\n');
+    write(root, "shared/broken.js", 'import { nope } from "./f.js";\nexport const b = nope;\n');
+    await git(root, "add", "-A");
+    for (const it of ["shared/f.js", "shared/sub/g.js", "other/y.js"]) write(root, it, exported.replace("foo", "nope"));
+    rmSync(join(root, "shared/gone.js"));
+
+    const rules = config
+      ? []
+      : Object.entries(importRules).flatMap(([rule, severity]) => ["--rule", `${rule}: ${severity}`]);
+    const lint = async (cwd: string, ...named: string[]) => {
+      const { stdout, exitCode } = await bun(cwd, ["lint", "--staged", ...unix, ...rules, ...named]);
+      return { reported: reported(root, cwd, stdout), exitCode };
+    };
+    const behind = "packages/a/shared/broken.js:1:10";
+    expect(await lint(root)).toEqual({ reported: [behind, "shared/broken.js:1:10"], exitCode: 1 });
+    expect(await lint(pkg)).toEqual({ reported: [behind], exitCode: 1 });
+    // An argument names the file, or a directory below the link. The file imports from above its directory.
+    expect(await lint(pkg, "shared/sub/up.js")).toEqual({ reported: [], exitCode: 0 });
+    const sub = "packages/a/shared/sub";
+    expect(await selected(root, root, ["lint", "--staged", ...rules, sub])).toEqual([`${sub}/up.js`]);
+    expect(await lint(root, sub)).toEqual({ reported: [], exitCode: 0 });
   });
 
   test("--fix-dry-run fixes it because it doesn't write files", async () => {
@@ -806,6 +1061,87 @@ describe.concurrent("bun lint --staged lints what will be committed", () => {
     const { stdout, exitCode } = await lint(repo.root);
     expect(stdout).toContain("f.js:1:1: Unexpected 'debugger' statement.");
     expect(exitCode).toBe(1);
+  });
+
+  test("a staged `debugger` is reported in a file reached through a link to a directory", async () => {
+    using repo = await repository({ "shared-tests/limits.js": clean, "packages/a/tests/a.js": clean });
+    const { root } = repo;
+    const pkg = join(root, "packages/a");
+    symlinkSync("../../../shared-tests", join(pkg, "tests/shared"));
+    await commit(root);
+    write(root, "shared-tests/limits.js", broken);
+    await git(root, "add", "-A");
+    write(root, "shared-tests/limits.js", clean);
+    const { stdout, exitCode } = await lint(pkg);
+    expect(reported(root, pkg, stdout)).toEqual(["packages/a/tests/shared/limits.js:1:1"]);
+    expect(stdout).toContain("Unexpected 'debugger' statement.");
+    expect(exitCode).toBe(1);
+  });
+
+  // Git still has the file under the old name of its directory, and doesn't follow the link to the new one.
+  test("a staged file whose directory was then replaced by a link is linted as staged, once", async () => {
+    using repo = await repository({ "l/f.js": clean });
+    const { root } = repo;
+    write(root, "l/f.js", broken);
+    await git(root, "add", "-A");
+    renameSync(join(root, "l"), join(root, "d"));
+    symlinkSync("d", join(root, "l"));
+    write(root, "d/f.js", clean);
+    for (const named of [[], ["l"], ["l/f.js"]]) {
+      const { stdout, exitCode } = await lint(root, ...named);
+      expect({ reported: reported(root, root, stdout), exitCode }).toEqual({ reported: ["l/f.js:1:1"], exitCode: 1 });
+    }
+  });
+
+  // Git still has l/g.js, which it sees as deleted. On disk that path is now d/g.js, which is staged.
+  test("a path that git still has is not taken for the staged file that a new link leads to", async () => {
+    using repo = await repository({ "l/g.js": clean });
+    const { root } = repo;
+    renameSync(join(root, "l"), join(root, "d"));
+    symlinkSync("d", join(root, "l"));
+    write(root, "d/g.js", broken);
+    await git(root, "add", "d");
+    expect(await selected(root, root, ["lint", "--staged", "l/g.js"])).toEqual([]);
+    expect(await selected(root, root, ["lint", "--staged"])).toEqual(["d/g.js"]);
+    // `bun fmt` reads no index entry that isn't staged, so it takes the path for the file on disk.
+    expect(await selected(root, root, ["fmt", "--staged", "l/g.js"])).toEqual(["l/g.js"]);
+  });
+
+  // The path below the link has the package's config. The real path has none, so `console.log` is allowed there.
+  test("a file reached through a link to a directory is linted with the config of that path", async () => {
+    using repo = await repository({
+      "packages/a/.oxlintrc.json": '{ "rules": { "no-console": "error" } }\n',
+      "packages/a/index.js": tidy,
+      "shared/log.js": tidy,
+    });
+    const { root } = repo;
+    symlinkSync("../../shared", join(root, "packages/a/shared"));
+    await commit(root);
+    write(root, "shared/log.js", clean);
+    await git(root, "add", "-A");
+    const plain = await bun(root, ["lint", "-f", "unix"]);
+    const staged = await lint(root);
+    expect(reported(root, root, staged.stdout)).toEqual(["packages/a/shared/log.js:1:1"]);
+    expect({ stdout: staged.stdout, exitCode: staged.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 1 });
+  });
+
+  // The two paths of a.js have different rules with a fix. The path that git has for it is shared/a.js.
+  test("--fix writes a file that two paths lead to with the fixes for the path that git has", async () => {
+    using repo = await repository({
+      ".oxlintrc.json": '{ "rules": { "prefer-const": "error" } }\n',
+      "packages/a/.oxlintrc.json": '{ "rules": { "no-var": "error", "prefer-const": "off" } }\n',
+      "packages/a/index.js": tidy,
+      "shared/a.js": tidy,
+    });
+    const { root } = repo;
+    symlinkSync("../../shared", join(root, "packages/a/shared"));
+    await commit(root);
+    write(root, "shared/a.js", "let a = 1;\nvar b = 2;\nexport { a, b };\n");
+    await git(root, "add", "-A");
+    const { exitCode } = await bun(root, ["lint", "--staged", "--fix"]);
+    expect(read(root, "shared/a.js")).toBe("const a = 1;\nvar b = 2;\nexport { a, b };\n");
+    expect(await git(root, "status", "--porcelain")).toBe("M  shared/a.js\n");
+    expect(exitCode).toBe(0);
   });
 });
 

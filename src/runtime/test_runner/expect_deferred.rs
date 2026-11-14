@@ -5,19 +5,20 @@ use core::cell::Cell;
 use core::ffi::c_uint;
 use core::ptr::NonNull;
 
+use bun_collections::HashMap;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::call_frame::CallerSrcLoc;
 use bun_jsc::js_promise::{Status, UnwrapMode, Unwrapped};
 use bun_jsc::{
     AnyPromise, JSFunction, JSGlobalObject, JSHostFn, JSPromise, JSValue, JsCell,
-    JsClass as _, JsError, JsResult, Strong,
+    JsClass as _, JsError, JsResult, Strong, Weak,
 };
 
 use super::{Expect, Flags, Promise};
 use crate::generated_bindgen::expect_deferred as generated;
 use crate::test_runner::bun_test::{
-    BunTest, BunTestPtr, BunTestPtrWeak, Phase, RefDataValue, StepResult,
+    BunTest, BunTestPtr, BunTestPtrWeak, Phase, RefDataValue, Report, StepResult,
 };
 use crate::test_runner::execution::ExecutionSequence;
 use crate::test_runner::expect::js as expect_js;
@@ -82,12 +83,104 @@ pub(crate) struct Unclaimed {
     of_file: u32,
     /// When the file stops waiting after its tests have run. `EPOCH` means never.
     deadline: Option<Timespec>,
+    /// The matchers that failed in a test or hook, by the address of their error object and by attempt. The runner shows one report for each.
+    failures: HashMap<(usize, Attempt), Failed>,
+}
+
+/// One attempt of a sequence: a test with its hooks.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+struct Attempt {
+    group_index: usize,
+    sequence_index: usize,
+    attempt: u32,
+}
+
+impl Attempt {
+    fn of(entry: &RefDataValue) -> Option<Attempt> {
+        match *entry {
+            RefDataValue::Execution {
+                group_index,
+                entry_data: Some(entry),
+            } => Some(Attempt {
+                group_index,
+                sequence_index: entry.sequence_index,
+                attempt: entry.attempt,
+            }),
+            _ => None,
+        }
+    }
+}
+
+/// The matchers of one attempt that failed with one error object, which their promises reject with.
+#[derive(Default)]
+struct Failed {
+    /// Weak, because only its identity is read. It is empty once the error is collected: another object can have its address then.
+    error: Weak<()>,
+    matchers: u32,
+    /// For how many of them the runner has shown a report.
+    shown: u32,
 }
 
 impl Unclaimed {
     fn add(&mut self, global: &JSGlobalObject, deferred: JSValue) -> usize {
         self.calls.push(Some(Strong::create(deferred, global)));
         self.calls.len() - 1
+    }
+
+    fn add_failure(&mut self, global: &JSGlobalObject, entry: &RefDataValue, error: JSValue) {
+        let Some(of) = Attempt::of(entry) else {
+            return;
+        };
+        // Two failures with equal primitives are two failures, and an engine can keep two equal strings in one cell.
+        if !error.is_object() {
+            return;
+        }
+        let failed = self.failures.entry((error.encoded(), of)).or_default();
+        // The object that had this address before can be collected, and its matchers go then.
+        if failed.error.get().is_none() {
+            *failed = Failed {
+                error: Weak::create_passive(error, global),
+                matchers: 0,
+                shown: 0,
+            };
+        }
+        failed.matchers += 1;
+    }
+
+    /// The error object that `value` reports, and what its matchers in the attempt that `entry` is or was part of are kept under.
+    fn failure_key(
+        &self,
+        entry: &RefDataValue,
+        value: JSValue,
+    ) -> Option<(JSValue, (usize, Attempt))> {
+        // No matcher failed in most files. Then nothing asks what `value` is.
+        if self.failures.is_empty() {
+            return None;
+        }
+        let error = value.to_error().unwrap_or(value);
+        Some((error, (error.encoded(), Attempt::of(entry)?)))
+    }
+
+    /// `value` is the error of a matcher that failed in the attempt that `entry` is or was part of, and each such matcher has its report.
+    pub(crate) fn was_reported(&self, entry: &RefDataValue, value: JSValue) -> bool {
+        self.failure_key(entry, value)
+            .and_then(|(error, key)| Some((error, self.failures.get(&key)?)))
+            .is_some_and(|(error, failed)| {
+                failed.error.get() == Some(error) && failed.shown == failed.matchers
+            })
+    }
+
+    /// The runner shows `value` now. If a matcher failed with it, this is the one report of that matcher.
+    pub(crate) fn mark_reported(&mut self, entry: &RefDataValue, value: JSValue) {
+        let Some((error, key)) = self.failure_key(entry, value) else {
+            return;
+        };
+        if let Some(failed) = self.failures.get_mut(&key)
+            && failed.error.get() == Some(error)
+            && failed.shown < failed.matchers
+        {
+            failed.shown += 1;
+        }
     }
 
     fn ended_error(&mut self, global: &JSGlobalObject) -> JSValue {
@@ -233,7 +326,7 @@ impl RunningEntry {
         if let Some(failure) = failure {
             buntest
                 .get()
-                .on_uncaught_exception(global, Some(failure), true, &self.entry);
+                .on_uncaught_exception(global, Some(failure), Report::Once, &self.entry);
         }
         let Some(pending_matchers) = self.pending_matchers(&buntest) else {
             return;
@@ -713,6 +806,11 @@ impl ExpectDeferred {
         if let Some(call_site) = js::call_site_get_cached(deferred) {
             ExpectDeferred__continueStackAt(global, error, call_site);
         }
+        if let Some(held) = &held
+            && let Some(buntest) = held.buntest.upgrade()
+        {
+            buntest.get().unclaimed.add_failure(global, &held.entry, error);
+        }
         match held {
             Some(held) if !ExpectDeferred__isHandled(promise) => {
                 held.release(global, Some(error));
@@ -774,7 +872,7 @@ impl ExpectDeferred {
             }
             buntest
                 .get()
-                .on_uncaught_exception(global, Some(error), false, &RefDataValue::Start);
+                .on_uncaught_exception(global, Some(error), Report::Always, &RefDataValue::Start);
         }
     }
 
@@ -1029,7 +1127,7 @@ impl Expect {
         let maybe_skip = unsafe { sequence.as_ref() }.maybe_skip;
         buntest
             .get()
-            .on_uncaught_exception(global, Some(error), false, &test.entry);
+            .on_uncaught_exception(global, Some(error), Report::Always, &test.entry);
         // SAFETY: as above.
         unsafe { (*sequence.as_ptr()).maybe_skip = maybe_skip };
         Ok(match self.flags.get().promise() {

@@ -421,6 +421,38 @@ test("a Response or Blob returned from a macro is classified by its MIME essence
   expect(exitCode).toBe(0);
 });
 
+// A body over a stream of a file has no bytes in memory until the stream is read. The macro reads
+// the stream: the Blob of its bytes has no type, so they are inlined as a data URL.
+test("a macro that returns a Response over a Bun.file() stream is inlined with the bytes of the file", async () => {
+  using dir = tempDir("macro-response-file-stream", {
+    "data.txt": "hello macro",
+    "m.ts": [
+      `export function fileStream() {`,
+      `  return new Response(Bun.file(import.meta.dir + "/data.txt").stream());`,
+      `}`,
+    ].join("\n"),
+    "index.ts": [
+      `import { fileStream } from "./m.ts" with { type: "macro" };`,
+      `console.log(JSON.stringify(fileStream()));`,
+      ``,
+    ].join("\n"),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Debug builds print "[macro] call <name>" to stdout before the script's own output.
+  expect({ lastLine: stdout.trim().split("\n").pop(), stderr }).toEqual({
+    lastLine: JSON.stringify(`data:;base64,${Buffer.from("hello macro").toString("base64")}`),
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 // A macro's `await` is serviced by the VM's macro event loop, so completions have to be routed by which
 // loop was current when their work started: what the macro started goes to the macro loop (or the wait
 // hangs), what the program started stays on the regular loop (or program callbacks run mid-transpile),

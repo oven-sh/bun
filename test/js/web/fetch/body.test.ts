@@ -1,7 +1,8 @@
 import { file, spawn, version, type Socket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, exampleSite, tempDir } from "harness";
+import { bunEnv, bunExe, exampleSite, isMacOS, isWindows, tempDir } from "harness";
 import net from "net";
+import { closeSync, openSync, readSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 // @ts-expect-error missing in @types/node
 import { isDisturbed, isErrored, isReadable, Readable } from "node:stream";
@@ -2035,5 +2036,288 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
     });
     release();
     expect(await text).toBe("payload");
+  });
+});
+
+// A Blob over a file holds no bytes: each read of it reads the file again. So a
+// consumer that does more with the Blob than read it once takes the file in place
+// of the unread stream only when a second read gives the same bytes.
+describe("a body over an unread stream of a file", () => {
+  // blob() gives the Blob to the program. A file descriptor, a FIFO or a socket
+  // gives its bytes once, so the Blob holds what the stream read.
+  describe.concurrent("blob() holds the bytes of a file that can be read only once", () => {
+    const held = {
+      size: 5,
+      type: "",
+      text: ["abcde", "abcde"],
+      arrayBuffer: [5, 5],
+      slice: ["bc", "abcde"],
+      rewrapped: ["abcde", "abcde"],
+      joined: [10, "abcdeabcde"],
+      written: [5, "abcde"],
+    };
+
+    // `body` is source text for the child. Its arguments are `args`, then the file for Bun.write().
+    // Bun.spawn's "pipe" is a socket pair on POSIX. "shell pipe" gives the child a kernel pipe.
+    async function usesOfBlobInChild(
+      body: string,
+      {
+        owner = "Response",
+        stdin = "ignore",
+        args = [],
+      }: { owner?: string; stdin?: "ignore" | "pipe" | "shell pipe" | Blob; args?: string[] } = {},
+    ) {
+      using dir = tempDir("body-blob-reads-once", {});
+      const cmd = [
+        bunExe(),
+        "-e",
+        `const body = ${body};
+         const owner = ${owner === "Request" ? `new Request("http://a/", { method: "POST", body })` : `new Response(body)`};
+         const blob = await owner.blob();
+         const out = process.argv.at(-1);
+         console.log(JSON.stringify({
+           size: blob.size,
+           type: blob.type,
+           text: [await blob.text(), await blob.text()],
+           arrayBuffer: [(await blob.arrayBuffer()).byteLength, (await blob.arrayBuffer()).byteLength],
+           slice: [await blob.slice(1, 3).text(), await blob.text()],
+           rewrapped: [await new Response(blob).text(), await new Response(blob).text()],
+           joined: [new Blob([blob, blob]).size, await new Blob([blob, blob]).text()],
+           written: [await Bun.write(out, blob), await Bun.file(out).text()],
+         }));`,
+        ...args,
+        join(String(dir), "out.bin"),
+      ];
+      await using proc = Bun.spawn({
+        cmd: stdin === "shell pipe" ? ["sh", "-c", `printf abcde | "$0" "$@"`, ...cmd] : cmd,
+        env: bunEnv,
+        stdin: stdin === "shell pipe" ? "ignore" : stdin,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      if (stdin === "pipe") {
+        proc.stdin!.write("abcde");
+        await proc.stdin!.end();
+      }
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { uses: stdout && JSON.parse(stdout), stderr, exitCode };
+    }
+    const bytesAreHeld = { uses: held, stderr: "", exitCode: 0 };
+
+    for (const owner of ["Response", "Request"]) {
+      test(`${owner} over Bun.stdin.stream(), stdin is the "pipe" of Bun.spawn`, async () => {
+        expect(await usesOfBlobInChild("Bun.stdin.stream()", { owner, stdin: "pipe" })).toEqual(bytesAreHeld);
+      });
+
+      // Reads of one descriptor share its offset.
+      test(`${owner} over Bun.stdin.stream(), stdin is a regular file`, async () => {
+        using dir = tempDir("body-blob-stdin-file", { "in.bin": "abcde" });
+        expect(
+          await usesOfBlobInChild("Bun.stdin.stream()", { owner, stdin: file(join(String(dir), "in.bin")) }),
+        ).toEqual(bytesAreHeld);
+      });
+    }
+
+    test.skipIf(isWindows)("Response over Bun.stdin.stream(), stdin is a pipe of the shell", async () => {
+      expect(await usesOfBlobInChild("Bun.stdin.stream()", { stdin: "shell pipe" })).toEqual(bytesAreHeld);
+    });
+
+    test("the stream of another body over Bun.stdin.stream()", async () => {
+      expect(await usesOfBlobInChild("new Response(Bun.stdin.stream()).body", { stdin: "pipe" })).toEqual(bytesAreHeld);
+    });
+
+    test("Bun.file(fd).stream() of a regular file", async () => {
+      using dir = tempDir("body-blob-fd", { "in.bin": "abcde" });
+      expect(
+        await usesOfBlobInChild(`Bun.file(require("node:fs").openSync(process.argv.at(-2), "r")).stream()`, {
+          args: [join(String(dir), "in.bin")],
+        }),
+      ).toEqual(bytesAreHeld);
+    });
+
+    // The same kind of file reached by path: stat says that it is a FIFO.
+    test.skipIf(isWindows)("Bun.file(path).stream() of a FIFO", async () => {
+      using dir = tempDir("body-blob-fifo", {});
+      const fifo = join(String(dir), "body.fifo");
+      expect(Bun.spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
+      await using writer = Bun.spawn({
+        cmd: ["sh", "-c", `printf abcde > "$1"`, "sh", fifo],
+        stdout: "ignore",
+        stderr: "inherit",
+      });
+      expect(await usesOfBlobInChild("Bun.file(process.argv.at(-2)).stream()", { args: [fifo] })).toEqual(bytesAreHeld);
+      expect(await writer.exited).toBe(0);
+    });
+
+    // On macOS an open of /dev/stdin is a dup of fd 0, and stat says what fd 0 is: here, a socket.
+    test.skipIf(!isMacOS)(`Bun.file("/dev/stdin").stream(), stdin is the "pipe" of Bun.spawn`, async () => {
+      expect(await usesOfBlobInChild(`Bun.file("/dev/stdin").stream()`, { stdin: "pipe" })).toEqual(bytesAreHeld);
+    });
+  });
+
+  // The Blob holds what the stream over the descriptor reads, wherever the descriptor is.
+  test("blob() over Bun.file(fd).stream() holds what the stream reads after the program read from the descriptor", async () => {
+    using dir = tempDir("body-blob-fd-position", { "data.txt": "0123456789abcdef" });
+    const openAndReadSome = () => {
+      const fd = openSync(join(String(dir), "data.txt"), "r");
+      expect(readSync(fd, Buffer.alloc(8))).toBe(8);
+      return fd;
+    };
+    const fds = [openAndReadSome(), openAndReadSome()];
+    try {
+      const fromStream = await Bun.readableStreamToText(file(fds[0]).stream());
+      const blob = await new Response(file(fds[1]).stream()).blob();
+      expect([await blob.text(), await blob.text()]).toEqual([fromStream, fromStream]);
+    } finally {
+      fds.forEach(fd => closeSync(fd));
+    }
+  });
+
+  // Reading .body makes a Bun.file(fd) body a stream over the descriptor.
+  test("blob() of a Bun.file(fd) body holds the bytes after .body was read", async () => {
+    using dir = tempDir("body-blob-fd-body", { "data.txt": "abcde" });
+    const fd = openSync(join(String(dir), "data.txt"), "r");
+    try {
+      const response = new Response(file(fd));
+      expect(response.body).toBeInstanceOf(ReadableStream);
+      const blob = await response.blob();
+      expect([blob.size, await blob.text(), await blob.text()]).toEqual([5, "abcde", "abcde"]);
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  // Each read of a regular file by path opens the file again. blob() gives the Blob
+  // of that file, with its type, as clone() keeps it.
+  test("blob() over Bun.file(path).stream() of a regular file is the Blob of that file", async () => {
+    using dir = tempDir("body-path-stream-blob", { "page.html": "<p>hi</p>" });
+    const blob = await new Response(file(join(String(dir), "page.html")).stream()).blob();
+    expect([blob.type, await blob.text(), await blob.text()]).toEqual([
+      "text/html;charset=utf-8",
+      "<p>hi</p>",
+      "<p>hi</p>",
+    ]);
+  });
+
+  // The stat that tells a regular file from a FIFO is not the one that the Bun.file() answers from.
+  test("blob() over Bun.file(path).stream() does not fix the size that the Bun.file() reports", async () => {
+    using dir = tempDir("body-path-stream-blob-size", { "log.txt": "12345" });
+    const path = join(String(dir), "log.txt");
+    const log = file(path);
+    await new Response(log.stream()).blob();
+    writeFileSync(path, "123456789");
+    expect(log.size).toBe(9);
+  });
+
+  // blob() does not read a character device by path as a stream: on Linux that stream cannot be polled.
+  test.skipIf(isWindows)(`blob() over Bun.file("/dev/null").stream() resolves`, async () => {
+    const blob = await new Response(file("/dev/null").stream()).blob();
+    expect(await blob.text()).toBe("");
+  });
+
+  // fetch() sends the bytes that the body has in memory with a Content-Length. A file stays a stream.
+  test("fetch() uploads a body over Bun.file(path).stream() as a stream", async () => {
+    using dir = tempDir("body-path-stream-upload", { "up.txt": "abcde" });
+    await using server = Bun.serve({
+      port: 0,
+      fetch: async req =>
+        Response.json([req.headers.get("content-length"), req.headers.get("transfer-encoding"), await req.text()]),
+    });
+    const response = await fetch(server.url, { method: "POST", body: file(join(String(dir), "up.txt")).stream() });
+    expect(await response.json()).toEqual([null, "chunked", "abcde"]);
+  });
+
+  // formData() parses the bytes that the body has in memory. A Blob over a file has none.
+  describe("formData() reads the stream", () => {
+    const multipart = [
+      `--b`,
+      `Content-Disposition: form-data; name="a"`,
+      ``,
+      `1`,
+      `--b`,
+      `Content-Disposition: form-data; name="upload"; filename="hello.txt"`,
+      ``,
+      `hello`,
+      `--b--`,
+      ``,
+    ].join("\r\n");
+    const fields = async (form: FormData) =>
+      Promise.all(
+        [...form].map(async ([name, value]) => [name, typeof value === "string" ? value : await value.text()]),
+      );
+
+    for (const { body: owner, fn } of bodyTypes) {
+      test(`${owner.name}: urlencoded fields over Bun.file(path).stream()`, async () => {
+        using dir = tempDir("body-path-stream-form", { "form.txt": "a=1&b=2" });
+        const body = file(join(String(dir), "form.txt")).stream();
+        const form = await fn(body, { "content-type": "application/x-www-form-urlencoded" }).formData();
+        expect(await fields(form)).toEqual([
+          ["a", "1"],
+          ["b", "2"],
+        ]);
+      });
+
+      test(`${owner.name}: multipart fields over Bun.file(path).stream()`, async () => {
+        using dir = tempDir("body-path-stream-multipart", { "form.bin": multipart });
+        const body = file(join(String(dir), "form.bin")).stream();
+        const form = await fn(body, { "content-type": "multipart/form-data; boundary=b" }).formData();
+        expect(await fields(form)).toEqual([
+          ["a", "1"],
+          ["upload", "hello"],
+        ]);
+      });
+    }
+
+    test("urlencoded fields over Bun.file(fd).stream()", async () => {
+      using dir = tempDir("body-fd-stream-form", { "form.txt": "a=1&b=2" });
+      const fd = openSync(join(String(dir), "form.txt"), "r");
+      try {
+        const form = await new Response(file(fd).stream(), {
+          headers: { "content-type": "application/x-www-form-urlencoded" },
+        }).formData();
+        expect(await fields(form)).toEqual([
+          ["a", "1"],
+          ["b", "2"],
+        ]);
+      } finally {
+        closeSync(fd);
+      }
+    });
+  });
+
+  // A reader returns a promise. When the stream cannot start, that promise rejects.
+  async function codeOfRejection(
+    body: ReadableStream,
+    method: "text" | "bytes" | "arrayBuffer" | "json" | "blob" | "formData",
+  ) {
+    const response = new Response(body, { headers: { "content-type": "application/x-www-form-urlencoded" } });
+    let promise: Promise<unknown> | undefined;
+    expect(() => {
+      promise = response[method]();
+    }).not.toThrow();
+    return promise!.then(
+      () => "resolved",
+      error => error.code,
+    );
+  }
+
+  describe.skipIf(isWindows)("over a stream of the descriptor of a directory", () => {
+    test.each(["text", "bytes", "arrayBuffer", "json", "blob", "formData"] as const)("%s() rejects", async method => {
+      using dir = tempDir("body-directory-fd-stream", {});
+      const fd = openSync(String(dir), "r");
+      try {
+        expect(await codeOfRejection(file(fd).stream(), method)).toBe("EISDIR");
+      } finally {
+        closeSync(fd);
+      }
+    });
+  });
+
+  // blob() is not in this list. It gives the Blob of the path, and each read of that Blob rejects.
+  describe("over a stream of a path that does not exist", () => {
+    test.each(["text", "bytes", "arrayBuffer", "json", "formData"] as const)("%s() rejects", async method => {
+      using dir = tempDir("body-missing-path-stream", {});
+      expect(await codeOfRejection(file(join(String(dir), "none.txt")).stream(), method)).toBe("ENOENT");
+    });
   });
 });

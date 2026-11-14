@@ -444,6 +444,32 @@ fn node_env_decides_jsx_development() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn node_env_left_to_the_runtime_turns_jsx_development_off_unless_asked() {
+    let cases = [
+        (ForceNodeEnv::Unspecified, true, false, false),
+        (ForceNodeEnv::Unspecified, true, true, true),
+        (ForceNodeEnv::Unspecified, false, false, false),
+        (ForceNodeEnv::Development, true, false, false),
+        (ForceNodeEnv::Development, true, true, true),
+        (ForceNodeEnv::Production, true, true, false),
+    ];
+    for (node_env, is_pragma_development, is_asked, expected) in cases {
+        let code = convert_code(|options| {
+            options.force_node_env = node_env;
+            options.jsx.development = is_pragma_development;
+            options.jsx_development_asked = is_asked;
+            options.node_env_at_runtime = true;
+        });
+        assert_eq!(
+            code.forced_jsx_development,
+            Some(expected),
+            "{node_env:?} {is_pragma_development} {is_asked}"
+        );
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn react_compiler_follows_option() {
     let load = convert_load(|options| options.react_compiler = ReactCompilerMode::Ssr);
     assert_eq!(load.react_compiler, ReactCompilerMode::Ssr);

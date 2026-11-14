@@ -74,7 +74,7 @@ for (let backend of ["api", "cli"] as const) {
       },
     });
 
-    // Disable mode also leaves the mode of the build out of the bundle: the bundle reads NODE_ENV when it runs.
+    // Disable mode also leaves the mode of the build out of a bundle for bun or node: it reads NODE_ENV when it runs.
     itBundled("env/disable-node-env", {
       backend: backend,
       dotenv: "disable",
@@ -92,6 +92,22 @@ for (let backend of ["api", "cli"] as const) {
         stdout: JSON.stringify({ dot: "production", bracket: "production" }) + "\n",
       },
     });
+
+    if (backend === "api")
+      itBundled("env/disable-node-env-compile", {
+        backend: backend,
+        dotenv: "disable",
+        compile: true,
+        files: {
+          "/a.js": `
+        console.log(JSON.stringify({ dot: process.env.NODE_ENV, bracket: process.env["NODE_ENV"] }));
+      `,
+        },
+        run: {
+          env: { NODE_ENV: "production" },
+          stdout: JSON.stringify({ dot: "production", bracket: "production" }) + "\n",
+        },
+      });
 
     // TODO: make this work as expected with process.env isntead of relying on the initial env vars.
     // Test pattern matching - only vars with prefix are inlined
@@ -218,21 +234,25 @@ const buildEachVariant = /* ts */ `
 
 describe("Bun.build env", () => {
   const source = `console.log(process.env.NODE_ENV, process.env.BUN_ENV, process.browser, process.env.PUBLIC_FOO, process.env.PRIVATE_BAR);`;
+  // What "disable" makes of `source` in a bundle for bun or node: the process that runs it has NODE_ENV and BUN_ENV.
+  const leftToTheRun = `console.log(process.env.NODE_ENV, process.env.BUN_ENV, false, process.env.PUBLIC_FOO, process.env.PRIVATE_BAR);`;
 
-  for (const [nodeEnv, mode] of [
-    [undefined, "development"],
-    ["production", "production"],
+  for (const [name, env, mode] of [
+    ["NODE_ENV unset", {}, "development"],
+    ["NODE_ENV=development", { NODE_ENV: "development" }, "development"],
+    ["NODE_ENV=production", { NODE_ENV: "production" }, "production"],
+    ["BUN_ENV=staging", { BUN_ENV: "staging" }, "staging"],
   ] as const) {
-    // The bundler replaces NODE_ENV, BUN_ENV and process.browser on its own unless `env` says "disable". No `env`
-    // at all is not "disable": a build that does not pass the option still gets the three.
-    test.concurrent(`each value of the option, built with NODE_ENV ${nodeEnv ?? "unset"}`, async () => {
+    // A browser has no `process`, so a bundle for it keeps the mode of the build, as does every build that does not
+    // pass the option: no `env` at all is not "disable".
+    test.concurrent(`each value of the option, built with ${name}`, async () => {
       using dir = tempDir("bun-build-env-values", {
         "a.js": source,
         "build-fixture.ts": /* ts */ `
           ${buildEachVariant}
           const out = {};
-          for (const target of ["browser", "bun", "node"]) {
-            out[target] = await buildEach({ entrypoints: ["./a.js"], target }, {
+          for (const target of [undefined, "browser", "bun", "node"]) {
+            out[target ?? "no target"] = await buildEach({ entrypoints: ["./a.js"], target }, {
               "absent": {},
               "undefined": { env: undefined },
               '"disable"': { env: "disable" },
@@ -253,13 +273,14 @@ describe("Bun.build env", () => {
         const own = `${JSON.stringify(mode)}, ${JSON.stringify(mode)}, ${target === "browser"}`;
         const ownOnly = `console.log(${own}, process.env.PUBLIC_FOO, process.env.PRIVATE_BAR);`;
         const everything = `console.log(${own}, "public_value", "private_value");`;
+        const disabled = target === "browser" ? ownOnly : leftToTheRun;
         return {
           "absent": ownOnly,
           "undefined": ownOnly,
-          '"disable"': source,
-          "false": source,
-          "null": source,
-          "0": source,
+          '"disable"': disabled,
+          "false": disabled,
+          "null": disabled,
+          "0": disabled,
           '"inline"': everything,
           "true": everything,
           "1": everything,
@@ -267,13 +288,14 @@ describe("Bun.build env", () => {
         };
       };
       expect(
-        await runBuildScript(String(dir), {
-          NODE_ENV: nodeEnv,
-          PUBLIC_FOO: "public_value",
-          PRIVATE_BAR: "private_value",
-        }),
+        await runBuildScript(String(dir), { ...env, PUBLIC_FOO: "public_value", PRIVATE_BAR: "private_value" }),
       ).toEqual({
-        printed: { browser: outputs("browser"), bun: outputs("bun"), node: outputs("node") },
+        printed: {
+          "no target": outputs("browser"),
+          browser: outputs("browser"),
+          bun: outputs("bun"),
+          node: outputs("node"),
+        },
         stderr: "",
         exitCode: 0,
       });
@@ -293,11 +315,14 @@ describe("Bun.build env", () => {
           'an async plugin assigns "disable"': { plugins: [edit(async config => { await Bun.file("a.js").exists(); config.env = "disable"; })] },
           '"disable", then a plugin assigns "inline"': { env: "disable", plugins: [edit(config => { config.env = "inline"; })] },
           '"disable", then a plugin deletes env': { env: "disable", plugins: [edit(config => { delete config.env; })] },
-          // A define still replaces what it names.
+          // A define still replaces what it names, and only that.
           '"disable" and a define of process.env.NODE_ENV': { env: "disable", define: { "process.env.NODE_ENV": '"from_define"' } },
+          '"disable" and a define of process.env.BUN_ENV': { env: "disable", define: { "process.env.BUN_ENV": '"from_define"' } },
           '"disable" and a define of process.browser': { env: "disable", define: { "process.browser": "true" } },
           // Minifying turns the bracket forms into the dotted ones that a define would match.
           '"disable" and minify.syntax': { env: "disable", minify: { syntax: true }, entrypoints: ["./brackets.js"] },
+          // For a browser, a define of the key to itself is the way to keep the read as written.
+          'no env, for a browser, NODE_ENV defined as itself': { target: "browser", define: { "process.env.NODE_ENV": "process.env.NODE_ENV" } },
         });
         console.log(JSON.stringify(out));
       `,
@@ -305,21 +330,23 @@ describe("Bun.build env", () => {
 
     expect(await runBuildScript(String(dir), { PUBLIC_FOO: "public_value", PRIVATE_BAR: "private_value" })).toEqual({
       printed: {
-        'a plugin assigns "disable"': source,
-        'an async plugin assigns "disable"': source,
+        'a plugin assigns "disable"': leftToTheRun,
+        'an async plugin assigns "disable"': leftToTheRun,
         '"disable", then a plugin assigns "inline"': `console.log("development", "development", false, "public_value", "private_value");`,
         '"disable", then a plugin deletes env': `console.log("development", "development", false, process.env.PUBLIC_FOO, process.env.PRIVATE_BAR);`,
-        '"disable" and a define of process.env.NODE_ENV': `console.log("from_define", process.env.BUN_ENV, process.browser, process.env.PUBLIC_FOO, process.env.PRIVATE_BAR);`,
+        '"disable" and a define of process.env.NODE_ENV': `console.log("from_define", process.env.BUN_ENV, false, process.env.PUBLIC_FOO, process.env.PRIVATE_BAR);`,
+        '"disable" and a define of process.env.BUN_ENV': `console.log(process.env.NODE_ENV, "from_define", false, process.env.PUBLIC_FOO, process.env.PRIVATE_BAR);`,
         '"disable" and a define of process.browser': `console.log(process.env.NODE_ENV, process.env.BUN_ENV, true, process.env.PUBLIC_FOO, process.env.PRIVATE_BAR);`,
-        '"disable" and minify.syntax': `console.log(process.env.NODE_ENV, process.env.BUN_ENV, process.browser);`,
+        '"disable" and minify.syntax': `console.log(process.env.NODE_ENV, process.env.BUN_ENV, !1);`,
+        "no env, for a browser, NODE_ENV defined as itself": `console.log(process.env.NODE_ENV, "development", true, process.env.PUBLIC_FOO, process.env.PRIVATE_BAR);`,
       },
       stderr: "",
       exitCode: 0,
     });
   });
 
-  // A bundle that reads NODE_ENV when it runs lets React pick its development or production build then, and only
-  // the development build has jsxDEV. So a build that does not give NODE_ENV a value emits `jsx`, which both have.
+  // React picks its development or production build when the bundle runs, and only the development build has
+  // jsxDEV. This stand-in does the same.
   const react = {
     "app.jsx": `const element = <div />;\nconsole.log(element.via, element.mode);`,
     "node_modules/react/package.json": JSON.stringify({ name: "react", version: "0.0.0" }),
@@ -332,10 +359,12 @@ describe("Bun.build env", () => {
   };
   const jsxBuildScript = /* ts */ `
     import { readFileSync } from "node:fs";
+    import { join } from "node:path";
+    import { runInNewContext } from "node:vm";
     ${buildEachVariant}
     const calls = text => (text.includes("jsxDEV(") ? "jsxDEV" : text.includes("jsx(") ? "jsx" : "neither");
-    const build = variants =>
-      buildEach({ entrypoints: ["./app.jsx"], target: "bun" }, variants, async result => calls(await result.outputs[0].text()));
+    const build = (variants, base = {}) =>
+      buildEach({ entrypoints: ["./app.jsx"], target: "bun", ...base }, variants, async result => calls(await result.outputs[0].text()));
     // \`bun build\`, which is a different front end of the same bundler.
     const cli = (outdir, ...flags) => {
       const { stderr, exitCode } = Bun.spawnSync({ cmd: [process.execPath, "build", ...flags, "--target=bun", "./app.jsx", "--outdir=" + outdir], env: process.env });
@@ -348,55 +377,146 @@ describe("Bun.build env", () => {
       if (exitCode === 0 && stderr.length === 0) return stdout.toString().trim();
       return { stdout: stdout.toString(), stderr: stderr.toString(), exitCode };
     };
+    // What the bundle prints where there is no \`process\`, as in a browser.
+    const runWithoutProcess = file => {
+      const printed = [];
+      runInNewContext(readFileSync(file, "utf8"), { console: { log: (...args) => printed.push(args.join(" ")) } });
+      return printed.join("\\n");
+    };
   `;
 
-  test.concurrent(
-    "a build that leaves NODE_ENV to the run of the bundle emits JSX that runs in either mode",
-    async () => {
-      using dir = tempDir("bun-build-env-disable-jsx", {
-        ...react,
-        "build-fixture.ts": /* ts */ `
+  // A bundle for bun or node that reads NODE_ENV when it runs emits `jsx`, which both builds of React have.
+  test.concurrent('"disable" for bun emits JSX that runs in either mode', async () => {
+    const files = {
+      ...react,
+      "component.jsx": `export const element = <div />;`,
+      "via-plugin.js": `import { element } from "alias:component.jsx";\nconsole.log(element.via, element.mode);`,
+      "via-import.js": `import { element } from "./component.jsx";\nconsole.log(element.via, element.mode);`,
+      "build-fixture.ts": /* ts */ `
         ${jsxBuildScript}
+        const alias = { name: "alias", setup(build) { build.onResolve({ filter: /^alias:/ }, args => ({ path: join(import.meta.dir, args.path.slice("alias:".length)) })); } };
+        const passThrough = { name: "pass-through", setup(build) { build.onResolve({ filter: /.*/ }, () => undefined); } };
         const out = await build({
           "absent": {},
-          '"disable"': { env: "disable", outdir: "./api-out" },
-          // Asking for the development transform is still honored.
+          '"disable"': { env: "disable", outdir: "./out" },
+          // Files that reach the bundle through a plugin follow the same rule.
+          '"disable", a file that a plugin resolves': { env: "disable", entrypoints: ["./via-plugin.js"], plugins: [alias], outdir: "./out-alias" },
+          '"disable", a file that a plugin passes on': { env: "disable", entrypoints: ["./via-import.js"], plugins: [passThrough] },
+          // The jsx option still decides when it asks for the development transform.
           '"disable", jsx.development: true': { env: "disable", jsx: { development: true } },
           '"disable", jsx.runtime: "react-jsxdev"': { env: "disable", jsx: { runtime: "react-jsxdev" } },
-          // A define that gives NODE_ENV a value states the mode.
+          '"disable", jsx.development: false': { env: "disable", jsx: { development: false } },
+          // A define that gives NODE_ENV a string is the mode of the build again.
           '"disable", NODE_ENV defined as "development"': { env: "disable", define: { "process.env.NODE_ENV": '"development"' } },
           '"disable", NODE_ENV defined as "staging"': { env: "disable", define: { "process.env.NODE_ENV": '"staging"' } },
-          // One that only moves the read does not, and neither does one for another NODE_ENV.
-          "absent, NODE_ENV defined as an expression": { define: { "process.env.NODE_ENV": "globalThis.process.env.NODE_ENV" } },
+          // A define that only moves the read is not, and neither is a define of some other NODE_ENV.
+          '"disable", NODE_ENV defined as itself': { env: "disable", define: { "process.env.NODE_ENV": "process.env.NODE_ENV" } },
+          '"disable", NODE_ENV defined as a read of globalThis': { env: "disable", define: { "process.env.NODE_ENV": "globalThis.process.env.NODE_ENV" } },
           '"disable", import.meta.env.NODE_ENV defined': { env: "disable", define: { "import.meta.env.NODE_ENV": '"development"' } },
         });
-        out["bun build"] = cli("./cli-default-out");
-        out["bun build --env=disable"] = cli("./cli-out", "--env=disable");
         for (const NODE_ENV of ["production", "development"]) {
-          out['the "disable" bundle run with NODE_ENV=' + NODE_ENV] = run("./api-out/app.js", NODE_ENV);
-          out["the --env=disable bundle run with NODE_ENV=" + NODE_ENV] = run("./cli-out/app.js", NODE_ENV);
+          out['the "disable" bundle run with NODE_ENV=' + NODE_ENV] = run("./out/app.js", NODE_ENV);
+          out["the bundle with a file from a plugin run with NODE_ENV=" + NODE_ENV] = run("./out-alias/via-plugin.js", NODE_ENV);
+        }
+        // A bundle for a browser keeps the mode of the build and its transform, and runs where there is no \`process\`.
+        Object.assign(out, await build({ '"disable" for a browser': { env: "disable", outdir: "./out-browser" } }, { target: "browser" }));
+        out['the "disable" bundle for a browser run without process'] = runWithoutProcess("./out-browser/app.js");
+        console.log(JSON.stringify(out));
+      `,
+    };
+    // One copy of the files for each mode of the build: every run writes its bundles beside them.
+    const modes = { "unset": {}, "development": { NODE_ENV: "development" }, "production": { NODE_ENV: "production" } };
+    using dir = tempDir(
+      "bun-build-env-disable-jsx",
+      Object.fromEntries(
+        Object.keys(modes).flatMap(mode => Object.entries(files).map(([name, text]) => [`${mode}/${name}`, text])),
+      ),
+    );
+
+    // `whenNotProduction` is what a build gives when its mode does not turn the development transform off.
+    const printed = (mode: keyof typeof modes) => {
+      const whenNotProduction = mode === "production" ? "jsx" : "jsxDEV";
+      return {
+        "absent": whenNotProduction,
+        '"disable"': "jsx",
+        '"disable", a file that a plugin resolves': "jsx",
+        '"disable", a file that a plugin passes on': "jsx",
+        '"disable", jsx.development: true': whenNotProduction,
+        '"disable", jsx.runtime: "react-jsxdev"': whenNotProduction,
+        '"disable", jsx.development: false': "jsx",
+        '"disable", NODE_ENV defined as "development"': "jsxDEV",
+        '"disable", NODE_ENV defined as "staging"': whenNotProduction,
+        '"disable", NODE_ENV defined as itself': "jsx",
+        '"disable", NODE_ENV defined as a read of globalThis': "jsx",
+        '"disable", import.meta.env.NODE_ENV defined': "jsx",
+        'the "disable" bundle run with NODE_ENV=production': "jsx production",
+        "the bundle with a file from a plugin run with NODE_ENV=production": "jsx production",
+        'the "disable" bundle run with NODE_ENV=development': "jsx development",
+        "the bundle with a file from a plugin run with NODE_ENV=development": "jsx development",
+        '"disable" for a browser': whenNotProduction,
+        'the "disable" bundle for a browser run without process':
+          mode === "production" ? "jsx production" : "jsxDEV development",
+      };
+    };
+    expect(
+      await Promise.all(Object.entries(modes).map(([mode, env]) => runBuildScript(path.join(String(dir), mode), env))),
+    ).toEqual([
+      { printed: printed("unset"), stderr: "", exitCode: 0 },
+      { printed: printed("development"), stderr: "", exitCode: 0 },
+      { printed: printed("production"), stderr: "", exitCode: 0 },
+    ]);
+  });
+
+  // The bundle reads NODE_ENV when it runs, so Bun keeps both branches of a test on it and resolves their imports.
+  test.concurrent('"disable" for bun keeps a branch that the mode of the build would remove', async () => {
+    using dir = tempDir("bun-build-env-disable-branch", {
+      "a.js": `if (process.env.NODE_ENV !== "production") require("./dev-only.js");\nconsole.log("built");`,
+      "build-fixture.ts": /* ts */ `
+        const out = {};
+        for (const [name, options] of Object.entries({ "absent": {}, '"disable"': { env: "disable" } })) {
+          out[name] = await Bun.build({ entrypoints: ["./a.js"], target: "bun", ...options }).then(
+            result => "builds, " + (result.outputs[0].size > 0),
+            error => String(error.errors?.[0]?.message ?? error.message),
+          );
         }
         console.log(JSON.stringify(out));
       `,
+    });
+
+    expect(await runBuildScript(String(dir), { NODE_ENV: "production" })).toEqual({
+      printed: { "absent": "builds, true", '"disable"': `Could not resolve: "./dev-only.js"` },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // With NODE_ENV left to the run, another define that ends in ".NODE_ENV" does not state the mode of the build.
+  test.concurrent(
+    '"disable" with NODE_ENV=development and a define of another NODE_ENV is not a production build',
+    async () => {
+      using dir = tempDir("bun-build-env-disable-other-node-env", {
+        "a.js": `import mode from "conditional";\nconsole.log(mode, import.meta.env.NODE_ENV);`,
+        "node_modules/conditional/package.json": JSON.stringify({
+          name: "conditional",
+          exports: { development: "./development.js", default: "./default.js" },
+        }),
+        "node_modules/conditional/development.js": `export default "development file";`,
+        "node_modules/conditional/default.js": `export default "default file";`,
+        "build-fixture.ts": /* ts */ `
+        const result = await Bun.build({
+          entrypoints: ["./a.js"],
+          target: "bun",
+          env: "disable",
+          define: { "import.meta.env.NODE_ENV": '"production"' },
+          outdir: "./out",
+        });
+        const { stdout } = Bun.spawnSync({ cmd: [process.execPath, "./out/a.js"], env: process.env });
+        console.log(JSON.stringify(stdout.toString().trim()));
+      `,
       });
 
-      expect(await runBuildScript(String(dir))).toEqual({
-        printed: {
-          "absent": "jsxDEV",
-          '"disable"': "jsx",
-          '"disable", jsx.development: true': "jsxDEV",
-          '"disable", jsx.runtime: "react-jsxdev"': "jsxDEV",
-          '"disable", NODE_ENV defined as "development"': "jsxDEV",
-          '"disable", NODE_ENV defined as "staging"': "jsxDEV",
-          "absent, NODE_ENV defined as an expression": "jsx",
-          '"disable", import.meta.env.NODE_ENV defined': "jsx",
-          "bun build": "jsxDEV",
-          "bun build --env=disable": "jsx",
-          'the "disable" bundle run with NODE_ENV=production': "jsx production",
-          "the --env=disable bundle run with NODE_ENV=production": "jsx production",
-          'the "disable" bundle run with NODE_ENV=development': "jsx development",
-          "the --env=disable bundle run with NODE_ENV=development": "jsx development",
-        },
+      expect(await runBuildScript(String(dir), { NODE_ENV: "development" })).toEqual({
+        printed: "development file production",
         stderr: "",
         exitCode: 0,
       });
@@ -404,7 +524,7 @@ describe("Bun.build env", () => {
   );
 
   // The jsx option of the build decides over the tsconfig.json of the working directory, in both directions. The
-  // tsconfig.json alone does not bring jsxDEV back: it cannot know the mode the bundle will run in.
+  // tsconfig.json alone does not bring jsxDEV back: Bun.build does not take the transform of a file from it.
   test.concurrent('"disable" beside a tsconfig.json that names a JSX transform', async () => {
     const tsconfig = (jsx: string) => ({ "tsconfig.json": JSON.stringify({ compilerOptions: { jsx } }) });
     using dir = tempDir("bun-build-env-disable-jsx-tsconfig", {
@@ -413,6 +533,9 @@ describe("Bun.build env", () => {
       ),
       ...Object.fromEntries(
         Object.entries({ ...react, ...tsconfig("react-jsxdev") }).map(([k, v]) => ["react-jsxdev/" + k, v]),
+      ),
+      ...Object.fromEntries(
+        Object.entries({ ...react, "bunfig.toml": `jsx = "react-jsxDEV"` }).map(([k, v]) => ["bunfig/" + k, v]),
       ),
       "react-jsx/build-fixture.ts": /* ts */ `
         ${jsxBuildScript}
@@ -427,8 +550,13 @@ describe("Bun.build env", () => {
           '"disable"': { env: "disable" },
           '"disable", jsx.development: false': { env: "disable", jsx: { development: false } },
         });
+        // \`bun build\` does take it from there, and this change leaves that alone.
         out["bun build --env=disable"] = cli("./cli-out", "--env=disable");
         console.log(JSON.stringify(out));
+      `,
+      "bunfig/build-fixture.ts": /* ts */ `
+        ${jsxBuildScript}
+        console.log(JSON.stringify({ "bun build --env=disable": cli("./cli-out", "--env=disable") }));
       `,
     });
 
@@ -436,55 +564,147 @@ describe("Bun.build env", () => {
       await Promise.all([
         runBuildScript(path.join(String(dir), "react-jsx")),
         runBuildScript(path.join(String(dir), "react-jsxdev")),
+        runBuildScript(path.join(String(dir), "bunfig")),
       ]),
     ).toEqual([
       { printed: { '"disable"': "jsx", '"disable", jsx.development: true': "jsxDEV" }, stderr: "", exitCode: 0 },
       {
-        printed: { '"disable"': "jsx", '"disable", jsx.development: false': "jsx", "bun build --env=disable": "jsx" },
+        printed: {
+          '"disable"': "jsx",
+          '"disable", jsx.development: false': "jsx",
+          "bun build --env=disable": "jsxDEV",
+        },
         stderr: "",
         exitCode: 0,
       },
+      { printed: { "bun build --env=disable": "jsxDEV" }, stderr: "", exitCode: 0 },
     ]);
   });
 
-  // The scripts of an imported .html file are built with the defines of the server build that imports it, so they
-  // keep the reads too. A browser has no `process`: such a build states the mode with `define`.
-  test.concurrent('"disable" in a server build also applies to the scripts of an HTML import', async () => {
+  // The scripts of an imported .html file run in a browser, which has no `process`. They keep the mode of the build:
+  // the page is the same, byte for byte, as in a build without `env`.
+  test.concurrent('"disable" in a server build does not change the page of an HTML import', async () => {
     using dir = tempDir("bun-build-env-disable-html", {
-      "server.ts": `import index from "./index.html";\nexport default index;`,
-      "index.html": `<!DOCTYPE html><html><body><script type="module" src="./client.ts"></script></body></html>`,
-      "client.ts": `console.log(process.env.NODE_ENV, process.env.BUN_ENV);`,
+      ...react,
+      "server.ts": `import index from "./index.html";\nconsole.log("server:", process.env.NODE_ENV, process.env.BUN_ENV, process.browser);\nexport default index;`,
+      "index.html": `<!DOCTYPE html><html><body><script type="module" src="./page.jsx"></script></body></html>`,
+      "page.jsx": `console.log("page:", process.env.NODE_ENV, process.env.BUN_ENV, process.browser);\nglobalThis.element = <div />;`,
       "build-fixture.ts": /* ts */ `
         ${buildEachVariant}
-        const clientLog = async result => {
+        const calls = text => (text.includes("jsxDEV(") ? "jsxDEV" : text.includes("jsx(") ? "jsx" : "neither");
+        // The chunk with the log of server.ts is the server's. Every other output belongs to the page.
+        const parts = async result => {
+          const built = { server: undefined, page: undefined, pageJsx: undefined, pageFiles: {} };
+          for (const output of result.outputs) {
+            const text = await output.text();
+            if (text.includes('"server:"')) built.server = firstLog(text);
+            else {
+              built.pageFiles[output.path] = text;
+              if (text.includes('"page:"')) Object.assign(built, { page: firstLog(text), pageJsx: calls(text) });
+            }
+          }
+          return built;
+        };
+        const out = {};
+        for (const [name, options] of Object.entries({
+          "jsx not given": {},
+          "jsx.development: false": { jsx: { development: false } },
+          "jsx.development: true": { jsx: { development: true } },
+          // The page then has the NODE_ENV of the define and the BUN_ENV of the build.
+          "a define of NODE_ENV": { define: { "process.env.NODE_ENV": '"production"' } },
+          // A define of some other NODE_ENV changes neither the server nor the page.
+          'import.meta.env.NODE_ENV defined as "development"': { define: { "import.meta.env.NODE_ENV": '"development"' } },
+          'import.meta.env.NODE_ENV defined as "production"': { define: { "import.meta.env.NODE_ENV": '"production"' } },
+        })) {
+          const base = { entrypoints: ["./server.ts"], target: "bun", ...options };
+          const without = await parts(await Bun.build(base));
+          const { pageFiles, ...disabled } = await parts(await Bun.build({ ...base, env: "disable" }));
+          const pageIsAsWithoutEnv = Object.keys(pageFiles).length > 1 && Bun.deepEquals(pageFiles, without.pageFiles);
+          out[name] = name.startsWith("import.meta") ? { server: disabled.server, pageIsAsWithoutEnv } : { ...disabled, pageIsAsWithoutEnv };
+        }
+        console.log(JSON.stringify(out));
+      `,
+    });
+
+    const server = `console.log("server:", process.env.NODE_ENV, process.env.BUN_ENV, false);`;
+    const built = (mode: string, jsx: [string, string, string]) => ({
+      printed: {
+        ...Object.fromEntries(
+          ["jsx not given", "jsx.development: false", "jsx.development: true"].map((name, i) => [
+            name,
+            {
+              server,
+              page: `console.log("page:", ${JSON.stringify(mode)}, ${JSON.stringify(mode)}, false);`,
+              pageJsx: jsx[i],
+              pageIsAsWithoutEnv: true,
+            },
+          ]),
+        ),
+        "a define of NODE_ENV": {
+          server: `console.log("server:", "production", process.env.BUN_ENV, false);`,
+          page: `console.log("page:", "production", ${JSON.stringify(mode)}, false);`,
+          pageJsx: "jsx",
+          pageIsAsWithoutEnv: true,
+        },
+        'import.meta.env.NODE_ENV defined as "development"': { server, pageIsAsWithoutEnv: true },
+        'import.meta.env.NODE_ENV defined as "production"': { server, pageIsAsWithoutEnv: true },
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(
+      await Promise.all([
+        runBuildScript(String(dir)),
+        runBuildScript(String(dir), { NODE_ENV: "development" }),
+        runBuildScript(String(dir), { NODE_ENV: "production" }),
+        runBuildScript(String(dir), { BUN_ENV: "staging" }),
+      ]),
+    ).toEqual([
+      built("development", ["jsxDEV", "jsx", "jsxDEV"]),
+      built("development", ["jsxDEV", "jsxDEV", "jsxDEV"]),
+      built("production", ["jsx", "jsx", "jsx"]),
+      built("staging", ["jsxDEV", "jsx", "jsxDEV"]),
+    ]);
+  });
+
+  // An HTML entry point of a build for bun is a page too. When a plugin's onResolve sees that entry point, Bun builds
+  // the page with the options of the server, with or without `env`. Such a page follows the server.
+  test.concurrent('"disable" for bun and an HTML entry point that a plugin sees', async () => {
+    using dir = tempDir("bun-build-env-disable-html-entry", {
+      "index.html": `<!DOCTYPE html><html><body><script type="module" src="./page.js"></script></body></html>`,
+      "page.js": `console.log("page:", process.env.NODE_ENV);`,
+      "build-fixture.ts": /* ts */ `
+        ${buildEachVariant}
+        const passThrough = { name: "pass-through", setup(build) { build.onResolve({ filter: /.*/ }, () => undefined); } };
+        const pageLog = async result => {
           for (const output of result.outputs) {
             const line = firstLog(await output.text());
             if (line) return line;
           }
         };
-        const out = await buildEach({ entrypoints: ["./server.ts"], target: "bun" }, {
+        const out = await buildEach({ entrypoints: ["./index.html"], target: "bun" }, {
           "absent": {},
           '"disable"': { env: "disable" },
-          '"disable" and a define': { env: "disable", define: { "process.env.NODE_ENV": '"production"' } },
-        }, clientLog);
+          "absent, a plugin sees the entry point": { plugins: [passThrough] },
+          '"disable", a plugin sees the entry point': { env: "disable", plugins: [passThrough] },
+        }, pageLog);
         console.log(JSON.stringify(out));
       `,
     });
 
     expect(await runBuildScript(String(dir))).toEqual({
       printed: {
-        "absent": `console.log("development", "development");`,
-        '"disable"': `console.log(process.env.NODE_ENV, process.env.BUN_ENV);`,
-        '"disable" and a define': `console.log("production", process.env.BUN_ENV);`,
+        "absent": `console.log("page:", "development");`,
+        '"disable"': `console.log("page:", "development");`,
+        "absent, a plugin sees the entry point": `console.log("page:", "development");`,
+        '"disable", a plugin sees the entry point': `console.log("page:", process.env.NODE_ENV);`,
       },
       stderr: "",
       exitCode: 0,
     });
   });
 
-  // The entry points below have no explicit "disable" of their own, so they keep the three. A transpiler has no
-  // env option. For the HTML routes of Bun.serve "disable" is the default of bunfig.toml, and the code runs in a
-  // browser, which has no `process` to read NODE_ENV from.
+  // A transpiler has no env option, so it has no explicit "disable": it still replaces the three.
   test.concurrent("new Bun.Transpiler() still replaces NODE_ENV, BUN_ENV and process.browser", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -507,43 +727,5 @@ describe("Bun.build env", () => {
       stderr: "",
       exitCode: 0,
     });
-  });
-
-  test.concurrent('bunfig [serve.static] env = "disable" still replaces NODE_ENV in an HTML route', async () => {
-    const served = async (bunfig: string) => {
-      using dir = tempDir("bun-serve-static-env", {
-        "index.html": `<!DOCTYPE html><html><body><script type="module" src="./app.ts"></script></body></html>`,
-        "app.ts": `console.log("mode:", process.env.NODE_ENV, "public:", process.env.PUBLIC_FOO);`,
-        "bunfig.toml": bunfig,
-        "serve-fixture.ts": /* ts */ `
-          import index from "./index.html";
-          const server = Bun.serve({ port: 0, development: false, routes: { "/": index } });
-          const html = await (await fetch(server.url)).text();
-          const script = await (await fetch(new URL(html.match(/src="([^"]+\\.js)"/)[1], server.url))).text();
-          console.log(script.match(/console\\.log\\([^)]*\\)/)[0]);
-          await server.stop(true);
-        `,
-      });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "serve-fixture.ts"],
-        cwd: String(dir),
-        env: { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined, PUBLIC_FOO: "public_value" },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { stdout: stdout.trim(), stderr, exitCode };
-    };
-
-    const script = (stdout: string) => ({ stdout, stderr: "", exitCode: 0 });
-    const replaced = script(`console.log("mode:","production","public:",process.env.PUBLIC_FOO)`);
-    expect(
-      await Promise.all([
-        served(`[serve.static]`),
-        served(`[serve.static]\nenv = "disable"`),
-        served(`[serve.static]\nenv = false`),
-        served(`[serve.static]\nenv = "inline"`),
-      ]),
-    ).toEqual([replaced, replaced, replaced, script(`console.log("mode:","production","public:","public_value")`)]);
   });
 });

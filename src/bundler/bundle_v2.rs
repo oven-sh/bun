@@ -1982,6 +1982,7 @@ pub mod bv2_impl {
                 unsafe { Transpiler::for_worker(this_transpiler, arena, this_transpiler.log) };
 
             ct.options.target = Target::Browser;
+            ct.options.take_back_defines_left_to_runtime();
             // Don't inherit SSR mode from the server target: the SSR pass
             // drops hook setter bindings, which is invalid for browser code.
             if ct.options.react_compiler.is_ssr() {
@@ -4006,7 +4007,10 @@ pub mod bv2_impl {
             );
             let task: &mut ParseTask = self.arena().alloc(task_val);
             task.loader = Some(loader);
-            task.jsx = self.transpiler_for_target(known_target).options.jsx.clone();
+            task.jsx = self
+                .transpiler_for_target(known_target)
+                .options
+                .jsx_as_set();
             task.task.node.next = core::ptr::null_mut();
             task.io_task.node.next = core::ptr::null_mut();
             task.known_target = known_target;
@@ -5247,8 +5251,7 @@ pub mod bv2_impl {
                                 jsx: this
                                     .transpiler_for_target(resolve.import_record.original_target)
                                     .options
-                                    .jsx
-                                    .clone(),
+                                    .jsx_as_set(),
                                 source_index: bun_ast::Index::init(source_index.get()),
                                 module_type: options::ModuleType::Unknown,
                                 loader: Some(loader),

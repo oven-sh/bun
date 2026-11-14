@@ -520,15 +520,14 @@ impl<'a> Transpiler<'a> {
             self.options.set_production(true);
             self.resolver.opts.set_production(true);
         }
-        Ok(())
-    }
-
-    /// For a build, after `configure_defines()` and `configure_linker()`. React's production build has no `jsxDEV`.
-    pub fn disable_jsx_development_unless_node_env_is_defined(&mut self) {
-        if !self.options.defines_node_env() {
-            self.options.jsx.development = false;
-            self.resolver.opts.jsx.development = false;
+        if self
+            .options
+            .env
+            .leaves_node_env_to_runtime(self.options.target)
+        {
+            self.options.leave_node_env_to_runtime();
         }
+        Ok(())
     }
 
     /// The resolver

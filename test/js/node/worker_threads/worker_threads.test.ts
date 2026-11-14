@@ -1,5 +1,5 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir, tls, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -22,6 +22,7 @@ import wt, {
   Worker,
   workerData,
 } from "worker_threads";
+import { unsupported as aotUnsupported } from "../../../aot/supported";
 
 // Worker startup under debug/ASAN is slow enough that several tests here cannot
 // finish inside the 5s default.
@@ -3356,4 +3357,105 @@ test("a ShadowRealm in a worker can import node:worker_threads", async () => {
 
   expect(stdout).toBe("true\n");
   expect(exitCode).toBe(0);
+});
+
+describe("Worker exit listener cleanup", () => {
+  test.concurrent.each(["normal", "terminate", "error"])("releases listeners after %s", async mode => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--expose-gc", join(import.meta.dir, "worker-exit-cleanup-fixture.mjs"), mode],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
+      stdout: {
+        before: { message: 0, messageerrors: 0, messageerror: 1, error: 2, online: 1, custom: 1 },
+        after: { message: 0, messageerrors: 0, messageerror: 0, error: 0, online: 0, custom: 0, exit: 0 },
+        eventNames: ["newListener", "removeListener"],
+        internalCounts: { newListener: 1, removeListener: 1 },
+        symbolCount: 0,
+        removalNotifications: [true, true, true],
+        collected: [true, true, true, true],
+        controlCollected: true,
+        code: mode === "normal" ? 0 : 1,
+        errorMessage: mode === "error" ? "expected worker failure" : null,
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+test("Worker exit listener cleanup settles termination when removeListener throws", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const assert = require("node:assert/strict");
+        const { Worker } = require("node:worker_threads");
+        let caught = false;
+        let exited = false;
+        process.on("uncaughtException", error => {
+          assert.equal(error.message, "expected removeListener failure");
+          caught = true;
+        });
+        const worker = new Worker("setInterval(() => {}, 1000)", { eval: true });
+        await new Promise(resolve => worker.once("online", resolve));
+        worker.on("message", () => {});
+        worker.on("removeListener", name => {
+          if (name === "message") throw new Error("expected removeListener failure");
+        });
+        worker.on("exit", () => { exited = true; });
+        const code = await worker.terminate();
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(caught, true);
+        assert.equal(exited, true);
+        assert.equal(code, 1);
+        console.log("settled");
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "settled\n", stderr: "", exitCode: 0 });
+});
+
+describe.skipIf(!!aotUnsupported)("compiled Worker exit listener cleanup", () => {
+  test.concurrent.each(["normal", "terminate", "error"])("releases listeners after %s", async mode => {
+    using dir = tempDir("compiled-worker-exit-" + mode, {});
+    const executable = join(String(dir), isWindows ? "app.exe" : "app");
+    await using build = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--aot",
+        "--compile-exec-argv=--expose-gc",
+        join(import.meta.dir, "worker-exit-cleanup-fixture.mjs"),
+        "--outfile",
+        executable,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [buildOut, buildError, buildExit] = await Promise.all([
+      build.stdout.text(),
+      build.stderr.text(),
+      build.exited,
+    ]);
+    expect({ buildOut: buildExit ? buildOut : "", buildError: buildExit ? buildError : "", buildExit }).toEqual({
+      buildOut: "",
+      buildError: "",
+      buildExit: 0,
+    });
+    await using proc = Bun.spawn({ cmd: [executable, mode], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode, signalCode: proc.signalCode }).toEqual({ stderr: "", exitCode: 0, signalCode: null });
+    expect(JSON.parse(stdout).collected).toEqual([true, true, true, true]);
+  });
 });

@@ -709,17 +709,31 @@ unsafe fn deinit_runtime_state(vm: *mut VirtualMachine, state: OpaqueRuntimeStat
     bun_ast::stmt::data::Store::deinit();
 }
 
-/// `ServerEntryPoint.generate(watch, entry_path)` — produces the synthetic
+/// `ServerEntryPoint.generate(entry_path)` — produces the synthetic
 /// `bun:main` wrapper. Returns `false` on error (the error is already logged
 /// into `vm.log` by `generate`).
-fn generate_entry_point(_vm: &VirtualMachine, watch: bool, entry_path: &[u8]) -> bool {
+fn generate_entry_point(_vm: &VirtualMachine, entry_path: &[u8]) -> bool {
     let state = runtime_state();
     if state.is_null() {
         return false;
     }
     // SAFETY: `state` is the live per-thread `RuntimeState` (boxed in
     // `init_runtime_state`); no other `&mut` to `entry_point` is held here.
-    ServerEntryPoint::generate(unsafe { &mut (*state).entry_point }, watch, entry_path).is_ok()
+    ServerEntryPoint::generate(unsafe { &mut (*state).entry_point }, entry_path).is_ok()
+}
+
+/// BunCompiledEntryPoint.cpp. The text of the `bun:main` that this thread generated last. Borrowed until the next one.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__entryPointWrapperSource(
+    _vm: &VirtualMachine,
+) -> bun_core::StringView<'_> {
+    let state = runtime_state();
+    if state.is_null() {
+        return bun_core::StringView::static_(b"");
+    }
+    // SAFETY: `state` is the live per-thread `RuntimeState`; `generate_entry_point` is the only
+    // writer of `entry_point` and is not running.
+    bun_core::StringView::borrow_utf8(unsafe { &(*state).entry_point.contents })
 }
 
 /// `loadPreloads()` — runs `--preload` scripts. Returns the first rejected

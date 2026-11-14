@@ -4,6 +4,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { realpathSync } from "node:fs";
+import { join } from "node:path";
 import { endChildren, spawn } from "../children";
 import expected from "./oracle/react-compiler/expected.json";
 import {
@@ -250,6 +251,61 @@ describe.concurrent(`bun lint: the React Compiler rules match oxlint ${expected.
     expect(exit).toBe(1);
   });
 
+  // A store to `w` after scopes that merge keeps `w` an output of the merged block, as a read of `w` does. The scopes
+  // after it then merge as they do with the read, so the two files get the same memo blocks and the same finding.
+  // Before, store.jsx had a finding in `MemoAfterTheMergedBlock` (12:39) and none in `LoopTestStoreInAMemoCallback`.
+  // oxlint reports this location for both files.
+  test("a store after scopes that merge is checked like a read after them", async () => {
+    const components = (read: string) => `import { useMemo } from "react";
+const count = x => x.length;
+const next = i => (i < 3 ? [i] : null);
+
+export function MemoAfterTheMergedBlock({ c }) {
+  let w = [c];
+  const v = w.length;
+  count(w);
+  const pair = [];
+  pair.push(c);
+  const x = {};
+  const memo = useMemo(() => [pair], [pair]);
+  x.memo = memo;
+  x.v = v;
+  const n = count((w = pair));
+  return <div>{v}{n}{x.memo.length}${read}</div>;
+}
+export function LoopTestStoreInAMemoCallback({ c }) {
+  return useMemo(() => {
+    let w = [c];
+    const v = w.length;
+    count(w);
+    const pair = [];
+    let m;
+    let k = 0;
+    while ((m = next(k)) && k < c) {
+      pair.push(m);
+      k++;
+    }
+    const u = [pair, m, v];
+    let u2;
+    const n = (u2 = w = pair).length;
+    return <div>{v}{n}{u.length}${read}</div>;
+  }, [c]);
+}
+`;
+    const { diagnostics, exit } = await report({
+      ".oxlintrc.json": rc(),
+      "store.jsx": components(""),
+      "read.jsx": components("{w.length}"),
+    });
+    // The dependency list of the second component: `m`, which the loop test assigns, counts as a dependency.
+    const found = [["react(preserve-manual-memoization)", 34, 6]];
+    expect({ store: locationsOf(diagnostics["store.jsx"]), read: locationsOf(diagnostics["read.jsx"]) }).toEqual({
+      store: found,
+      read: found,
+    });
+    expect(exit).toBe(1);
+  });
+
   test(
     "a long component is compiled",
     async () => {
@@ -400,6 +456,91 @@ ${chain}
     });
     expect(files).toBe(1);
     expect([0, 1]).toContain(exit);
+  });
+
+  // A memo block would have to declare `g` for the read that nothing uses, so a build leaves `Plain` as written. The
+  // ref stops a build of `WithRef` before that. Lint keeps upstream's result, which is the finding for the ref.
+  test("a read that nothing uses doesn't hide another finding", async () => {
+    const files = {
+      ".oxlintrc.json": rc(),
+      "hoisted.jsx": `import { useRef } from "react";
+const count = list => list.length;
+export function WithRef({ c }) {
+  const ref = useRef(null);
+  const bad = ref.current;
+  const x = g();
+  function g() {
+    return [c];
+  }
+  const info = { first: x[0] };
+  count(x);
+  const state = (g, c ? "a" : "b", "read");
+  return <div state={state} info={info} bad={bad} />;
+}
+export function Plain({ c }) {
+  const x = g();
+  function g() {
+    return [c];
+  }
+  const info = { first: x[0] };
+  count(x);
+  const state = (g, c ? "a" : "b", "read");
+  return <div state={state} info={info} />;
+}
+`,
+    };
+    const { diagnostics, exit } = await report(files);
+    expect(locationsOf(diagnostics["hoisted.jsx"])).toEqual([["react(refs)", 5, 15]]);
+    expect(exit).toBe(1);
+
+    using dir = tempDir("bun-lint-react-compiler", files);
+    const build = async (reactCompiler: boolean) => {
+      const entrypoints = [join(String(dir), "hoisted.jsx")];
+      const { outputs } = await Bun.build({ entrypoints, external: ["*"], reactCompiler });
+      return outputs[0].text();
+    };
+    expect(await build(true)).toBe(await build(false));
+  });
+
+  test("in a function, a read that nothing reads is no dependency for the rules", async () => {
+    // The compiled output makes such a function depend on `el` (react-compiler/FunctionThatKeepsAnUnreadRead). The
+    // rules are upstream's: `el` in a list is unnecessary, `[]` misses nothing, and `d && el?.x` reads a path.
+    const { diagnostics, exit } = await report({
+      ".oxlintrc.json": rc(),
+      "unread.jsx": `import { useCallback, useEffect } from "react";
+export function useListed(el) {
+  useEffect(() => {
+    el?.offsetHeight;
+  }, [el]);
+  return useCallback(() => {
+    el?.offsetHeight;
+  }, [el]);
+}
+export function useNotListed(el, d) {
+  useEffect(() => {
+    for (let i = 0; i < 1; el.offsetHeight) i++;
+  }, []);
+  return useCallback(() => {
+    d && el?.offsetHeight;
+  }, [d]);
+}
+`,
+    });
+    type Labeled = { code: string; labels: { label: string; span: { line: number; column: number } }[] };
+    const found = (diagnostics["unread.jsx"] as Labeled[]).map(it => [
+      it.code,
+      ...it.labels.map(({ label, span }) => `${span.line}:${span.column} ${label}`),
+    ]);
+    expect(found.sort()).toEqual([
+      ["react(exhaustive-effect-dependencies)", "5:7 Unnecessary dependency `el`"],
+      ["react(memo-dependencies)", "8:7 Unnecessary dependency `el`"],
+      [
+        "react(preserve-manual-memoization)",
+        "16:6 This dependency list does not match the dependencies inferred from the callback",
+        "15:14 This dependency is inferred here",
+      ],
+    ]);
+    expect(exit).toBe(1);
   });
 
   test("reports nothing for a path that contains node_modules", async () => {

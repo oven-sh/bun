@@ -2312,42 +2312,19 @@ describe.concurrent("a module behind an async onLoad() runs once for a factory a
     );
   });
 
-  test("a factory of a preload, called once the callback was asked", async () => {
-    await expectFixturesToPass(
-      {
-        ...files,
-        "preload.js": `${files["preload.js"]}
-          import { mock } from "bun:test";
-          globalThis.asked = Promise.withResolvers();
-          Bun.plugin({
-            name: "tells",
-            setup(build) {
-              build.onLoad({ filter: /mid\\.js$/ }, () => void globalThis.asked.resolve());
-            },
-          });
-          mock.module("./k.js", async () => ({ x: (await import("./mid.js")).mid }));
-        `,
-        "once.test.js": `${imports}
-          test("the factory gets the module of the other load", async () => {
-            const first = import("./uses-mid.js");
-            await globalThis.asked.promise;
-            const b = await import("./user.js"), a = await first;
-            ${expectOne}
-          });
-        `,
-      },
-      1,
-      ["--preload", "./preload.js", "./once.test.js"],
-    );
-  });
-
   // The callback answers once the factory has asked for the module. The two loads share no module.
   test.each([
     ["import() of that module", `(await asks(import("./data.js"))).id`],
     ["import() of a module that imports it", `(await asks(import("./mid.js"))).mid.id`],
     ["vi.importActual()", `(await asks(vi.importActual("./mid.js"))).mid.id`],
     ["vi.importMock()", `(await asks(vi.importMock("./mid.js"))).mid.id`],
-  ])("the factory's %s waits for the fetch of the other load", async (_, id) => {
+  ])("the factory's %s waits for the fetch of the other load", (_, id) => expectFactoryToWait(id));
+
+  test.each(isolationFlags)("it waits whatever isolates the test files %j", args =>
+    expectFactoryToWait(`(await asks(import("./mid.js"))).mid.id`, args),
+  );
+
+  async function expectFactoryToWait(id: string, args: string[] = []) {
     await expectFixturesToPass(
       {
         ...files,
@@ -2379,32 +2356,40 @@ describe.concurrent("a module behind an async onLoad() runs once for a factory a
             const b = await import("./user.js"), a = await first;
             expect([a.seen.id, b.seen, globalThis.calls, globalThis.evaluations]).toEqual([1, 1, 1, 1]);
           });
-          test("also after Bun.plugin.clearAll()", async () => {
-            globalThis.gate = Promise.withResolvers();
-            const waits = Promise.withResolvers();
-            mock.module("./k2.js", async () => (waits.resolve(), { x: (await import("./mid2.js")).mid.id }));
+        `,
+      },
+      1,
+      [...args, "--preload", "./preload.js", "./held.test.js"],
+    );
+  }
+
+  test("an import() that waits goes on after Bun.plugin.clearAll()", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "other.js": `import { mid } from "./mid.js"; export const seen = mid;`,
+        "user.js": `import { x } from "./k.js"; export const seen = x;`,
+        "cleared.test.js": `
+          import { expect, mock, test } from "bun:test";
+          test("the callback of the removed plugin answers", async () => {
+            const gate = Promise.withResolvers(), waits = Promise.withResolvers();
+            mock.module("./k.js", async () => (waits.resolve(), { x: (await import("./mid.js")).mid.id }));
             Bun.plugin({
               name: "answers when the gate is open",
               setup(build) {
-                build.onLoad({ filter: /data2\\.js$/ }, async () => (await globalThis.gate.promise, { contents: "export const id = 2;", loader: "js" }));
+                build.onLoad({ filter: /data\\.js$/ }, async () => (await gate.promise, { contents: "export const id = 2;", loader: "js" }));
               },
             });
-            const first = import("./other2.js");
-            const second = import("./user2.js");
+            const first = import("./other.js");
+            const second = import("./user.js");
             await waits.promise;
             Bun.plugin.clearAll();
-            globalThis.gate.resolve();
+            gate.resolve();
             expect([(await first).seen.id, (await second).seen]).toEqual([2, 2]);
           });
         `,
-        "data2.js": ``,
-        "mid2.js": `import { id } from "./data2.js"; export const mid = { id };`,
-        "other2.js": `import { mid } from "./mid2.js"; export const seen = mid;`,
-        "k2.js": `export const x = "real";`,
-        "user2.js": `import { x } from "./k2.js"; export const seen = x;`,
       },
-      2,
-      ["--preload", "./preload.js", "./held.test.js"],
+      1,
     );
   });
 

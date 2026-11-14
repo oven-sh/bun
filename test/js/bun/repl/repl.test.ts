@@ -787,6 +787,89 @@ describe.concurrent("Bun REPL", () => {
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
+
+    // A sloppy input runs as a script: a function is the variable of its name, and a
+    // direct eval declares in the session.
+    test("a function declaration replaces the one that earlier functions call", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "function rate() { return 3 }; function price(n) { return n * rate() }",
+        "price(10)",
+        "function rate() { return 5 }",
+        "price(10)",
+        "rate = () => 7",
+        "price(10)",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(["undefined", "30", "undefined", "50", "[Function: rate]", "70"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("declarations of a direct eval persist across evaluations", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        'eval("var fromEval = 1")',
+        "fromEval",
+        'eval("function evalFn() { return 2 }")',
+        "evalFn()",
+        "var stale = 1",
+        'eval("var stale = 2")',
+        "stale",
+        // With the `;` this is a block for the transform. Without it the input runs as written.
+        '{ eval("var inBlock = 3") };',
+        "inBlock",
+        '{ eval("var asWritten = 4") }',
+        "asWritten",
+        '"use strict"; eval("var inStrict = 1")',
+        "typeof inStrict",
+        ".exit",
+      ]);
+      expect(outputs).toEqual([
+        "undefined",
+        "1",
+        "undefined",
+        "2",
+        "1",
+        "undefined",
+        "2",
+        "undefined",
+        "3",
+        "undefined",
+        "4",
+        "undefined",
+        '"undefined"',
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test(".load and .copy run sloppy code as a script", async () => {
+      using dir = tempDir("repl-load-sloppy", {
+        "lib.js": [
+          "function rate() { return 3 }",
+          "function price(n) { return n * rate() }",
+          'eval("var fromEval = 2");',
+          "",
+        ].join("\n"),
+      });
+      const filePath = path.join(String(dir), "lib.js");
+      const { outputs, stderr, exitCode } = await runRepl([
+        `.load ${filePath}`,
+        "function rate() { return 5 }",
+        "[price(10), fromEval].join()",
+        '.copy eval("var copied = 4; copied + 3")',
+        "copied",
+        ".exit",
+      ]);
+      expect(outputs).toEqual([
+        `Loading ${filePath}...\nundefined`,
+        "undefined",
+        '"50,2"',
+        "Copied 1 characters to clipboard",
+        "4",
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("multiline input", () => {
@@ -875,6 +958,13 @@ describe.concurrent("Bun REPL", () => {
 
     test("-p prints the result and exits", async () => {
       const { stdout, stderr, exitCode } = await runReplWith(["-p", "1 + 1"]);
+      expect(stdout).toBe("2\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("-p runs a sloppy script as a script: a direct eval declares a global", async () => {
+      const { stdout, stderr, exitCode } = await runReplWith(["-p", 'eval("var fromEval = 2"); globalThis.fromEval']);
       expect(stdout).toBe("2\n");
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
@@ -1010,8 +1100,8 @@ describe.concurrent("Bun REPL", () => {
     // https://github.com/oven-sh/bun/issues/31225
     test("bare top-level `this` does not throw (issue #31225)", async () => {
       // Before the fix this threw `ReferenceError: exports is not defined`
-      // because the parser rewrote top-level `this` to `exports`, and the REPL
-      // IIFE has no `exports` binding.
+      // because the parser rewrote top-level `this` to `exports`, and REPL
+      // input has no `exports` binding.
       const { stdout, stderr, exitCode } = await runReplWith(["-e", "this"]);
       expect(stderr).toBe("");
       expect(stdout).toBe("");
@@ -1702,6 +1792,22 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       send("__editorResult + 23\n");
       send("\x04"); // Ctrl+D to finish editor mode
       await waitFor("123");
+    });
+  });
+
+  test(".editor runs sloppy code as a script", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      send(".editor\n");
+      await waitFor(/editor mode/i);
+      send("function __rate() { return 400 }\n");
+      send("function __price() { return __rate() + 56 }\n");
+      send('eval("var __fromEval = 1")\n');
+      send("\x04"); // Ctrl+D to finish editor mode
+      await waitFor("undefined");
+      send("function __rate() { return 700 }\n");
+      await waitFor("undefined");
+      send("__price() + __fromEval\n");
+      await waitFor("757");
     });
   });
 

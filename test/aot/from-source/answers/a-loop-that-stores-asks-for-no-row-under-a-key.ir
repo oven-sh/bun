@@ -1,0 +1,13 @@
+# -- source: main.cjs
+# const zero = JSON.parse("0"), held = JSON.parse('{"rows":[1,2,3,4,5,6,7]}');
+# function row(data, w, extra) { let s = 0; for (let i = 0; i < data[w].length; i++) { s = s + data[w][i]; data[w][i] = data[w][i] + extra; } return s; }
+# print(row([held][zero], ["rows"][zero], [2][zero]), row([held][zero], ["rows"][zero], [2][zero]), held.rows.join());
+# -- end of source
+# A row found under a key in front of a loop is remembered under the heaps that the read reads, and a typed store into a list or a field ends what is remembered: the holder may be what is stored into, for all the walk
+# knows. In a loop that stores, every copy by member then read generically, failed the guess at a list of lists and ran the closed copy: the front and the copies for nothing: 58,890 > 66,305 instructions at three
+# hundred turns, 1,462 > 1,845 at seven. Such a loop asks for no row.
+# RUN(EVENT): compile KeyedRowLookupsHoisted mechanisms=all
+# EVENT: statistic KeyedRowLookupsHoisted 0
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 28 42 5,6,7,8,9,10,11
+# RIGHT-NEXT: exited with 0

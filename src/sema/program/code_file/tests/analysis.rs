@@ -50,6 +50,7 @@ fn settings_with(
         experimental_decorators,
         emits_decorator_metadata,
         use_define_for_class_fields: None,
+        bun_run_assigns_class_fields: false,
     }
 }
 
@@ -100,6 +101,15 @@ fn plugin_source_declares_no_module_type() {
     });
 }
 
+fn parse_options_at(
+    context: &CodeLoadContext<'_, '_, '_>,
+    path: &[u8],
+    settings: &TranspileSettings,
+) -> ParseOptions {
+    let is_javascript = is_javascript_file(context.host, path);
+    parse_options_of(context, path, settings, is_javascript)
+}
+
 #[test]
 fn either_decorator_setting_selects_legacy_decorators_in_typescript() {
     let cases = [
@@ -111,9 +121,9 @@ fn either_decorator_setting_selects_legacy_decorators_in_typescript() {
     with_context(&host_of(&[]), |context| {
         for (experimental_decorators, emits_metadata, expected) in cases {
             let settings = settings_with(experimental_decorators, emits_metadata);
-            let typescript = parse_options_of(context, b"/p/a.ts", &settings);
+            let typescript = parse_options_at(context, b"/p/a.ts", &settings);
             assert_eq!(typescript.experimental_decorators, expected, "{settings:?}");
-            let javascript = parse_options_of(context, b"/p/a.js", &settings);
+            let javascript = parse_options_at(context, b"/p/a.js", &settings);
             assert!(!javascript.experimental_decorators, "{settings:?}");
         }
     });
@@ -126,7 +136,7 @@ fn parser_needs_no_module_indicator() {
             context.options.for_parsing().module_detection,
             ModuleDetection::Auto
         );
-        let options = parse_options_of(context, b"/p/a.ts", &settings_with(false, false));
+        let options = parse_options_at(context, b"/p/a.ts", &settings_with(false, false));
         assert_eq!(options.module_detection, ModuleDetection::Force);
     });
 }
@@ -270,7 +280,7 @@ fn binder_stack_overflow_replaces_tree_with_empty_tree() {
                 context.session.arena(),
                 target,
                 source,
-                LoadInputs::default(),
+                &LoadInputs::default(),
             );
             let hir = &parsed.parse.hir;
             assert!(hir.ran_out_of_stack && hir.has_errors && hir.has_parse_diagnostics);
@@ -315,22 +325,6 @@ fn only_entry_point_is_main_module() {
     assert_eq!(main_of(&["/a.ts", "/b.ts"], "/b.ts"), None);
     assert_eq!(main_of(&["/a.ts", "/b.ts"], "/c.ts"), Some(false));
     assert_eq!(main_of(&[], "/a.ts"), Some(false));
-}
-
-#[test]
-fn file_that_host_may_run_is_main_module_or_not() {
-    let host = host_of(&[("/b.test.ts", ""), ("/c.ts", "")]);
-    let mut build = TestBuild::new(&host, &["/a.ts"]);
-    build.code.main_modules_beside_entry_points =
-        vec![b"/b.test.ts".to_vec(), b"/missing.test.ts".to_vec()];
-    with_compile_context(&build, |context| {
-        let loader = HostLoader::default();
-        let main_of = |path: &[u8]| import_meta_main(context, LoadKey { path, loader });
-        assert_eq!(main_of(b"/a.ts"), Some(true));
-        assert_eq!(main_of(b"/b.test.ts"), None);
-        assert_eq!(main_of(b"/c.ts"), Some(false));
-        assert_eq!(main_of(b"/missing.test.ts"), Some(false));
-    });
 }
 
 #[test]

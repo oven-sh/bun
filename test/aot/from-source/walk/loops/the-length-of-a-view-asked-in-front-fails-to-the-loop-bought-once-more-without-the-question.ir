@@ -1,0 +1,23 @@
+# -- source: main.cjs
+# 'use strict';
+# const a = new Float64Array(JSON.parse('[1.5,2.5,3.5]')), short = new Float64Array(JSON.parse('[4,5]')), long = new Float64Array(JSON.parse('[4,5,6]')), o = new Float64Array(3);
+# function add(o, a, b) { for (let i = 0; i < 20; i++) { o[0] = a[0] + b[0]; o[1] = a[1] + b[1]; o[2] = a[2] + b[2]; } return o[0] + o[1]; }
+# let said = 0;
+# for (let t = 0; t < 4; t++) said = said * 3 + add(o, a, t & 1 ? short : long);
+# print(said);
+# -- end of source
+# The loop is built twice for the lengths that its turns ask of the views at written places: one test a view in front, and the turns read without tests. A view that is too short failed the test at
+# every call, and all twenty turns ran in the closed copy, which is dearer than the one loop that stood before the purchase. The failing way now leads to the loop bought once more without the
+# question: it buys nothing there and is the plain walk, whose reads test their places one by one.
+# f1 = add
+# RUN(COUNT): compile LoopsReversionedWithoutHoistedGuards mechanisms=all
+# COUNT-NOT: statistic LoopsReversionedWithoutHoistedGuards 0
+# RUN(FORM): walk f1 mechanisms=all
+# FORM-LABEL: code f1:Body
+# FORM: isInLoop=true isLoopHead=true
+# FORM: isInLoop=true isLoopHead=true
+# FORM-NOT: @OptionalDouble = GetTypedArrayElement
+# FORM: isInLoop=true isLoopHead=true
+# FORM: @OptionalDouble = GetTypedArrayElement
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 520

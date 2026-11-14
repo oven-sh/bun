@@ -1,0 +1,12 @@
+# A class object is made with a name and a length of its own, and nothing is proven of what they hold: a descriptor that lays a value under one of them changes nothing that anybody leans on. L0 = Base, L1 = the class that is named anew.
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 {{*}}changes=[] stays-with-compiled-code
+# CHECK: layout L1 {{*}}changes=[] stays-with-compiled-code
+# -- source: the-name-of-a-class-object-is-defined-and-the-class-stays-in-sight.js
+# class Base { constructor() { this.n = 1; } get() { return this.n; } }
+# const Named = class Inner extends Base { constructor() { super(); this.m = 2; } };
+# Object.defineProperty(Named, "name", { value: "Outer" });
+# Object.defineProperty(Named, "length", { value: 3 });
+# const made = new Named();
+# console.log(Named.name, Named.length, made.get(), made.m);
+# -- end of source

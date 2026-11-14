@@ -245,7 +245,7 @@ fn vm_console(global: &JSGlobalObject) -> *mut ConsoleObject {
     // before that. Returned as a raw pointer (not `&'static mut`) so callers
     // dereference at each use site without holding overlapping `&mut`
     // references.
-    global.bun_vm().as_mut().console.cast::<ConsoleObject>()
+    global.bun_vm().console.cast::<ConsoleObject>()
 }
 
 /// `&mut ConsoleObject` accessor for the set-once `VirtualMachine.console`
@@ -368,6 +368,52 @@ pub fn message_with_type_and_level(
         }
         debug_assert!(global.has_exception());
     }
+}
+
+/// `console.log(text)` in AOT-compiled code: one string and nothing else. Nothing is formatted,
+/// so no `Formatter` is made and no option is looked up: what `format2` writes for a lone
+/// string is the indent of the open groups, its characters and a line break.
+fn print_one_text(level: MessageLevel, global: &JSGlobalObject, text: JSValue) -> JsResult<()> {
+    let use_stderr = matches!(level, MessageLevel::Warning | MessageLevel::Error);
+    let _stream_lock = ConsoleStreamLock::acquire(use_stderr);
+    let is_red = level == MessageLevel::Error && Output::enable_ansi_colors_stderr();
+    let console: *mut ConsoleObject = vm_console(global);
+    // SAFETY: see [`vm_console`] — the live boxed `ConsoleObject` of this VM; JS-thread-only, and
+    // nothing below re-enters JavaScript while `writer` is borrowed.
+    let (default_indent, writer): (u16, &mut dyn bun_io::Write) = unsafe {
+        (
+            (*console).default_indent,
+            if use_stderr {
+                (*console).error_writer()
+            } else {
+                (*console).writer()
+            },
+        )
+    };
+    if let Some(hooks) = crate::virtual_machine::runtime_hooks() {
+        (hooks.console_on_before_print)();
+    }
+    if formatter::write_indent_n(u32::from(default_indent), writer).is_err() {
+        return Ok(());
+    }
+    if is_red {
+        let _ = writer.write_all(pfmt!("<r><red>", true).as_bytes());
+    }
+    let characters = text.to_js_string_view(global)?;
+    if characters.is_utf16() {
+        let _ = writer.write_fmt(format_args!("{characters}"));
+    } else if let Some(slice) = characters.as_utf8() {
+        let _ = writer.write_all(slice);
+    } else if !characters.is_empty() {
+        let buf = strings::allocate_latin1_into_utf8(characters.latin1()).unwrap_or_default();
+        let _ = writer.write_all(&buf);
+    }
+    if is_red {
+        let _ = writer.write_all(pfmt!("<r>", true).as_bytes());
+    }
+    let _ = writer.write_all(b"\n");
+    let _ = writer.flush();
+    Ok(())
 }
 
 fn message_with_type_and_level_(
@@ -1135,8 +1181,7 @@ impl<'a> DynWriteAdapter<'a> {
 pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
     let mut source_code = bun_core::Utf8Bytes::EMPTY;
     let mut holder = crate::zig_exception::Holder::init();
-    // SAFETY: per-thread VM; `console.trace()` only runs on the JS thread.
-    let vm = VirtualMachine::get().as_mut();
+    let vm = VirtualMachine::get();
 
     let err = global.create_error_instance(format_args!("trace output"));
     // `remap_zig_exception` populates `holder.zig_exception()` from `err`.
@@ -2101,6 +2146,15 @@ pub mod formatter {
                 });
             }
 
+            if js_type == jsc::JSType::InternalFunction
+                && value.is_placeholder_for_omitted_builtin()
+            {
+                return Ok(TagResult {
+                    tag: TagPayload::Function,
+                    cell: js_type,
+                });
+            }
+
             if js_type.can_get()
                 && js_type != jsc::JSType::ProxyObject
                 && !opts.contains(TagOptions::DISABLE_INSPECT_CUSTOM)
@@ -2705,7 +2759,10 @@ pub mod formatter {
     /// conflict with the `&self` borrow `Formatter::write_indent` takes.
     /// `self.indent` is a disjoint field read, so passing it by value here
     /// keeps the borrow checker happy.
-    fn write_indent_n(indent: u32, writer: &mut dyn bun_io::Write) -> bun_io::Result<()> {
+    pub(crate) fn write_indent_n(
+        indent: u32,
+        writer: &mut dyn bun_io::Write,
+    ) -> bun_io::Result<()> {
         let mut total_remain: u32 = indent;
         while total_remain > 0 {
             let written: u8 = total_remain.min(32) as u8;
@@ -3865,8 +3922,7 @@ pub mod formatter {
             }
 
             let mut adapter = DynWriteAdapter::new(&mut *writer_);
-            // SAFETY: per-thread VM.
-            let vm = VirtualMachine::get().as_mut();
+            let vm = VirtualMachine::get();
             vm.print_errorlike_object(value, None, None, self, adapter.interface(), C, false);
             Ok(())
         }
@@ -5964,6 +6020,21 @@ console_noop_hooks!(
     Bun__ConsoleObject__recordEnd,
     Bun__ConsoleObject__screenshot,
 );
+
+#[unsafe(no_mangle)]
+#[crate::host_call]
+pub(crate) extern "C" fn Bun__ConsoleObject__printOneText(
+    level: u32,
+    global: &JSGlobalObject,
+    text: JSValue,
+) {
+    if let Err(err) = print_one_text(MessageLevel::from_raw(level), global, text) {
+        if matches!(err, jsc::JsError::OutOfMemory) {
+            global.throw_out_of_memory_value();
+        }
+        debug_assert!(global.has_exception());
+    }
+}
 
 #[unsafe(no_mangle)]
 #[crate::host_call]

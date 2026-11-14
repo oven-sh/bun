@@ -12,6 +12,8 @@ import { compareBytes } from "./paths.ts";
 import { errorKinds, type IntrinsicPosition } from "./vocabulary.ts";
 
 const intrinsicDefinePrefix = "__intrinsic__";
+// The private names of src/aot/prelude. Plain Bun never runs that code, so src/js/builtins/BunBuiltinNames.h does not list them. The prelude alone reads and writes them, never native code.
+const preludePrivateNames = ["nextPosition", "steppedText"];
 
 function hostSourceFiles(bunRoot: string): string[] {
   const prelude = path.join(bunRoot, "src/aot/prelude");
@@ -42,13 +44,20 @@ export function collectSyntaxUses(bunRoot: string, engineFiles: readonly ModelEn
   return {
     names,
     prefixedGlobals: [...globalsToPrefix, ...errorKinds],
-    privateNames: [...jscNames.private, ...Array.from(bunNames.matchAll(/^\s*macro\((\w+)\)/gm), match => match[1])],
-    modulePrivateNames: Array.from(
-      bunNames
-        .slice(bunNames.indexOf("#define BUN_MODULE_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME"))
-        .matchAll(/^\s*macro\((\w+)\)/gm),
-      match => match[1],
-    ),
+    privateNames: [
+      ...jscNames.private,
+      ...Array.from(bunNames.matchAll(/^\s*macro\((\w+)\)/gm), match => match[1]),
+      ...preludePrivateNames,
+    ],
+    modulePrivateNames: [
+      ...Array.from(
+        bunNames
+          .slice(bunNames.indexOf("#define BUN_MODULE_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME"))
+          .matchAll(/^\s*macro\((\w+)\)/gm),
+        match => match[1],
+      ),
+      ...preludePrivateNames,
+    ],
     errorCodes: numberedErrorCodes,
     inheritableClasses: numberedClasses,
   };

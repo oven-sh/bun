@@ -340,7 +340,7 @@ struct WalkedDir(Dir, usize);
 impl Drop for WalkedDir {
     fn drop(&mut self) {
         if self.1 == 1 {
-            self.0.fd = Fd::INVALID;
+            self.0.fd = Fd::cwd();
         }
     }
 }
@@ -1239,8 +1239,14 @@ pub(crate) fn bin_subpath<'a>(
     (!is_package_root_or_outside(subpath) && !never_packed()).then_some(subpath)
 }
 
+/// A NUL ends the path that the OS gets, so a path that has one counts as outside.
 pub(crate) fn is_package_root_or_outside(p: &[u8]) -> bool {
-    p.is_empty() || p == b"." || path::is_absolute_loose(p) || p == b".." || p.starts_with(b"../")
+    p.is_empty()
+        || p == b"."
+        || path::is_absolute_loose(p)
+        || p == b".."
+        || p.starts_with(b"../")
+        || strings::contains_char(p, 0)
 }
 
 /// `Unknown` if `bin_path` is missing or a parent component is not a real directory.
@@ -1904,11 +1910,11 @@ pub(crate) fn pack(
         packed_size += bytes.len();
         sha1.update(bytes);
         sha512.update(bytes);
-        let Some((file, dest)) = &tarball_file else {
+        let Some((fd, dest)) = &tarball_file else {
             tarball_bytes.extend_from_slice(bytes);
             return;
         };
-        if let Err(err) = file.write_all(bytes) {
+        if let Err(err) = File::borrow(fd).write_all(bytes) {
             fail_write_tarball(err, dest);
         }
     };
@@ -2025,7 +2031,7 @@ pub(crate) fn pack(
     ctx.stats.packed_size = packed_size;
 
     match (tarball_file, abs_tarball_dest) {
-        (Some((file, dest)), _) => finish_tarball(file, dest, is_typed_filename),
+        (Some((_, dest)), _) => finish_tarball(dest, is_typed_filename),
         (None, Some(dest)) => write_tarball_in_place(dest, &tarball_bytes, is_typed_filename),
         (None, None) => {}
     }
@@ -2237,19 +2243,19 @@ impl<'a> fmt::Display for TarballNameFormatter<'a> {
 
 /// The temporary file that `open_tarball` created. A failed pack can exit from many places, so an
 /// exit callback removes the file.
-static UNFINISHED_TARBALL: bun_core::Mutex<Option<(Fd, ZBox)>> = bun_core::Mutex::new(None);
+static UNFINISHED_TARBALL: bun_core::Mutex<Option<(File, ZBox)>> = bun_core::Mutex::new(None);
 
 extern "C" fn remove_unfinished_tarball() {
-    if let Some((fd, path)) = UNFINISHED_TARBALL.lock().take() {
+    if let Some((file, path)) = UNFINISHED_TARBALL.lock().take() {
         // Windows cannot delete the file while it is open.
-        fd.close();
+        drop(file);
         let _ = bun_sys::unlink(&path);
     }
 }
 
 /// Creates a temporary file next to the destination, which `finish_tarball` renames over it. If
 /// this returns `None`, the tarball stays in memory until `write_tarball_in_place` writes it.
-fn open_tarball(abs_tarball_dest: &ZStr, is_typed_filename: bool) -> Option<File> {
+fn open_tarball(abs_tarball_dest: &ZStr, is_typed_filename: bool) -> Option<Fd> {
     let mode: bun_sys::Mode = match bun_sys::lstat(abs_tarball_dest) {
         Err(_) => 0o666,
         Ok(stat) => match bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode) {
@@ -2284,16 +2290,18 @@ fn open_tarball(abs_tarball_dest: &ZStr, is_typed_filename: bool) -> Option<File
         mode,
     )
     .ok()?;
-    *UNFINISHED_TARBALL.lock() = Some((file.handle(), tmp));
+    let fd = file.fd();
+    *UNFINISHED_TARBALL.lock() = Some((file, tmp));
     Global::add_exit_callback(remove_unfinished_tarball);
-    Some(file)
+    Some(fd)
 }
 
-fn finish_tarball(file: File, abs_tarball_dest: &ZStr, is_typed_filename: bool) {
-    let unfinished = UNFINISHED_TARBALL.lock().take();
+fn finish_tarball(abs_tarball_dest: &ZStr, is_typed_filename: bool) {
+    let Some((file, tmp)) = UNFINISHED_TARBALL.lock().take() else {
+        return;
+    };
     // Windows cannot rename the file while it is open.
     drop(file);
-    let Some((_, tmp)) = unfinished else { return };
     if bun_sys::rename(&tmp, abs_tarball_dest).is_ok() {
         return;
     }
@@ -2900,7 +2908,6 @@ impl IgnorePatterns {
         let contents = ignore_file
             .read_to_end()
             .unwrap_or_else(|err| Self::ignore_file_fail(dir, ignore_kind, "read", err));
-        let _ = ignore_file.close();
 
         let mut patterns: Vec<Pattern> = Vec::new();
         let mut has_rel_path = false;
@@ -3058,7 +3065,6 @@ pub(crate) mod bindings {
         let tarball = match tarball_file.read_to_end() {
             Ok(b) => b,
             Err(err) => {
-                let _ = tarball_file.close();
                 return Err(heap.error(format_args!(
                     "failed to read tarball contents \"{}\": {}",
                     bstr::BStr::new(tarball_path),
@@ -3066,7 +3072,7 @@ pub(crate) mod bindings {
                 )));
             }
         };
-        let _ = tarball_file.close();
+        drop(tarball_file);
 
         let mut sha1_digest: [u8; sha::SHA1::DIGEST] = [0; sha::SHA1::DIGEST];
         let mut sha1 = sha::SHA1::init();

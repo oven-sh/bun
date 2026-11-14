@@ -1,0 +1,12 @@
+# -- source: an-iteration-that-cannot-be-undone-and-restarts-stops-the-build.cjs
+# "use strict";
+# const rows = [[0.5, 2, 1], [1.5, 4, 3], Object.assign([2.5, 6, 1], { *[Symbol.iterator]() { yield 10; yield 20; yield 3; } }), [3.5, 8, 3]];
+# let count = 0;
+# function total(list, t) { let s = t & 1; for (let i = 0; i < list.length; i++) { count = count + 1; const [x, y, z] = list[i]; s += x * 2 + y - z; } return s; }
+# print(total(rows, 3), count);
+# -- end of source
+# An iteration of a specialized version restarts in the generic version only while all that it has done is undone.
+# The walk asks that wherever it builds a restart, in every build, and a no stops the build.
+# Fault injection, testing=AssumeIterationsRestartable: an iteration guard is built behind a store that is not undone.
+# RUN: compile mechanisms=all testing=AssumeIterationsRestartable
+# DIAGNOSTIC: IterationCannotBeUndone

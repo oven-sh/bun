@@ -194,8 +194,8 @@ impl PostgresSQLConnection {
     }
 
     #[inline]
-    fn event_loop(&self) -> &'static mut crate::jsc::EventLoop {
-        VirtualMachine::get().event_loop_mut()
+    fn event_loop(&self) -> &'static crate::jsc::EventLoop {
+        VirtualMachine::get().event_loop()
     }
 
     #[inline]
@@ -864,13 +864,12 @@ pub(crate) fn create_connection<'a>(
     scram_password: &[u8],
 ) -> JsResult<JSValue> {
     let global_object = cx.global();
-    let vm = global_object.bun_vm().as_mut();
+    let vm = global_object.bun_vm();
     let port = port as i32;
     // The connection is the calling script's.
     let context = global_object.bun_vm().context_of_caller();
     let Some(args) = ConnectionCtorArgs::parse(
         global_object,
-        &mut *vm,
         hostname,
         ssl_mode,
         tls.to_js(),
@@ -1040,7 +1039,7 @@ impl CancelTarget {
 
 fn open(
     global_object: &JSGlobalObject,
-    group: &mut uws::SocketGroup,
+    group: &uws::SocketGroup,
     params: ConnectParams<'_>,
 ) -> Result<JSValue, uws::ConnectError> {
     let ConnectionStrings {
@@ -1071,9 +1070,7 @@ fn open(
             advancing: Cell::new(false),
             poll_ref: JsCell::new(KeepAlive::default()),
             global_object: BackRef::new(global_object),
-            vm: BackRef::from(
-                core::ptr::NonNull::new(VirtualMachine::get_mut_ptr()).expect("vm singleton"),
-            ),
+            vm: BackRef::new(VirtualMachine::get()),
             statements: JsCell::new(StatementCache::default()),
             prepared_statement_id: Cell::new(0),
             transaction_status: Cell::new(b'I'),
@@ -2011,35 +2008,6 @@ impl PostgresSQLConnection {
                 // keeps the statement alive.
                 let mut cached_structure: Option<ParentRef<PostgresCachedStructure>> = None;
                 let request_flags = request.flags.get();
-                let row_type = request.row_type.get();
-                if row_type != 0
-                    && request_flags.formats == ResultFormats::Decodable
-                    && !request_flags.bigint
-                    && request_flags.result_mode == SQLQueryResultMode::Objects
-                {
-                    if !statement.row_decoder.is_for(row_type) {
-                        statement.create_row_decoder(self.global(), row_type);
-                    }
-                    if let Some(this_value) = request.this_value.get().try_get() {
-                        let rows = postgres_sql_query::js::pending_value_get_cached(this_value)
-                            .unwrap_or_default();
-                        let (_, length) = reader.peek_length()?;
-                        let appended_to = statement
-                            .row_decoder
-                            .append_row(self.global(), &reader.peek()[4..length], rows)
-                            .map_err(crate::jsc::js_error_to_postgres)?;
-                        if let Some(appended_to) = appended_to {
-                            if rows.is_empty() {
-                                postgres_sql_query::js::pending_value_set_cached(
-                                    this_value,
-                                    self.global(),
-                                    appended_to,
-                                );
-                            }
-                            return reader.skip_message();
-                        }
-                    }
-                }
                 // explicit use switch without else so if new modes are added, we don't forget to check for duplicate fields
                 match request_flags.result_mode {
                     SQLQueryResultMode::Objects => {
@@ -2281,7 +2249,6 @@ impl PostgresSQLConnection {
                 statement.cached_structure = Default::default();
                 statement.needs_duplicate_check = true;
                 statement.fields_flags = Default::default();
-                statement.row_decoder = Default::default();
             }
             MessageType::Authentication => {
                 let auth = protocol::Authentication::decode_internal(&mut reader)?;

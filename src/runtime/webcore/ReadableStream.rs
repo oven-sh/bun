@@ -555,7 +555,7 @@ impl ReadableStream {
                     global_this: Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
                     context: FileReader {
                         event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
-                            cx.vm().as_mut().event_loop().cast(),
+                            cx.vm().event_loop_ptr(),
                         )),
                         start_offset: Some(blob.offset.get() as usize),
                         max_size: if blob.size.get() != webcore::blob::MAX_SIZE {
@@ -598,7 +598,7 @@ impl ReadableStream {
             global_this: Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
             context: FileReader {
                 event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
-                    cx.vm().as_mut().event_loop().cast(),
+                    cx.vm().event_loop_ptr(),
                 )),
                 ..Default::default()
             },
@@ -633,7 +633,7 @@ impl ReadableStream {
             global_this: Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
             context: FileReader {
                 event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
-                    cx.vm().as_mut().event_loop().cast(),
+                    cx.vm().event_loop_ptr(),
                 )),
                 buffered: bun_jsc::JsCell::new(bytes),
                 read_error: bun_jsc::JsCell::new(Some(err)),
@@ -1328,7 +1328,7 @@ impl<C: SourceContext> NewSource<C> {
         Ok(JSValue::UNDEFINED)
     }
 
-    // text/arrayBuffer/blob/bytes/json/jsonSource all share the same body modulo
+    // text/arrayBuffer/blob/bytes/json all share the same body modulo
     // `BufferActionTag`. Collapsed into one helper to avoid 5× drift.
     fn to_buffered_value_from_js(
         &self,
@@ -1356,9 +1356,5 @@ impl<C: SourceContext> NewSource<C> {
 
     pub fn json(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         self.to_buffered_value_from_js(cx, streams::BufferActionTag::Json)
-    }
-
-    pub fn json_source(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        self.to_buffered_value_from_js(cx, streams::BufferActionTag::JsonSource)
     }
 }

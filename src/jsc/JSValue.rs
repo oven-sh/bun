@@ -1662,7 +1662,7 @@ impl JSValue {
     fn has_nobody_to_call(self, global: &JSGlobalObject) -> bool {
         let vm = global.bun_vm();
         vm.calls_nobody()
-            || (vm.test_isolation_enabled && self.is_from_retired_test_isolation_realm())
+            || (vm.test_isolation_enabled.get() && self.is_from_retired_test_isolation_realm())
     }
 
     /// Whether the `undefined` that [`call`](Self::call) just returned may be its silent no-op, for a caller that reads it as consent.
@@ -2355,6 +2355,13 @@ impl JSValue {
             safe fn JSC__JSValue__isCompiledGenerator(this: JSValue) -> bool;
         }
         JSC__JSValue__isCompiledGenerator(self)
+    }
+    /// True for the placeholder that an executable compiled ahead of time hands out for a built-in whose code the build omitted. It has the built-in's name and length; reading any other property throws.
+    pub fn is_placeholder_for_omitted_builtin(self) -> bool {
+        unsafe extern "C" {
+            safe fn JSC__JSValue__isPlaceholderForOmittedBuiltin(this: JSValue) -> bool;
+        }
+        JSC__JSValue__isPlaceholderForOmittedBuiltin(self)
     }
     /// `JSValue.isClass` — true if the callable is a class constructor.
     pub fn is_class(self, global: &JSGlobalObject) -> bool {

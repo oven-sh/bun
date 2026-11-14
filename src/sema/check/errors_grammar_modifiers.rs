@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::bind::{Decl, MemberOwner, Parent};
+use crate::node::kind_of_member;
 use smallvec::SmallVec;
 
 /// The arguments of `grammarErrorOnNode`: the node's span, the message code, and the message arguments, where `""`
@@ -74,6 +75,10 @@ fn can_have_illegal_decorators(kind: Kind) -> bool {
 /// Whether `bun run` stops at the modifier or decorator of `location` that TypeScript reports `code` for.
 fn is_syntax_error_in_bun_run(hir: &File<'_>, location: Node, code: u32) -> bool {
     let is_decorator_error = matches!(code, 1206 | 1433 | 8038);
+    // `verbatimModuleSyntax` refuses the `export`. `bun run` takes the file for an ES module by that word.
+    if code == 1287 {
+        return false;
+    }
     match hir.data(location) {
         NodeData::Stmt(_) => !hir.is_ambient(location) || is_decorator_error || code == 1044,
         NodeData::Param(_) if is_decorator_error => {
@@ -360,7 +365,13 @@ impl Checker<'_, '_> {
         if modifiers.is_empty() {
             return None;
         }
-        let kind = hir.kind(location);
+        let kind = match node {
+            NodeData::Member(m) => match bound.member_owner[m.idx()] {
+                MemberOwner::None => hir.kind(location),
+                owner => kind_of_member(hir[m].kind, || matches!(owner, MemberOwner::Class(_))),
+            },
+            _ => hir.kind(location),
+        };
         // The binder reports the modifiers of `export as namespace N`. `parseTypeMember` doesn't parse any before a
         // signature without a name.
         if matches!(
@@ -461,7 +472,7 @@ impl Checker<'_, '_> {
             return error_on_first_token(1433);
         }
         // `node.Parent.Flags&NodeFlagsAmbient`
-        let is_parent_ambient = || hir.is_ambient(hir.parent(location));
+        let is_parent_ambient = || hir.is_parent_ambient(location);
         // `blockScopeKind`: the code for a modifier that a `using` or an `await using` declaration can't have.
         let on_using = match node {
             NodeData::Stmt(s) => match hir[s].kind {

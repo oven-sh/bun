@@ -593,10 +593,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let this = unsafe { bun_ptr::ThisPtr::new(self.as_ctx_ptr()) };
         let _guard = RefPtr::from_this(this);
 
-        // `VirtualMachine::get()` yields the canonical `*mut` (write
-        // provenance) — never derive `&mut` from the `&'static` borrow stored
-        // on Handlers (that's `invalid_reference_casting`).
-        let vm = VirtualMachine::get().as_mut();
+        let vm = VirtualMachine::get();
         let loop_ = vm.uws_loop();
         let group = vm
             .client_socket_groups_in(context)
@@ -2168,9 +2165,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // recurse, and `onClose` derefs the +1 we took at creation.
         let _pair_scope = this.twin.with_mut(|t| t.take()).map(|raw| {
             // No tick checkpoint between the twin's close handler and this socket's own.
-            // SAFETY: the VM owns its event loop for the life of the process.
-            let scope =
-                unsafe { jsc::event_loop::EventLoop::enter_scope(handlers.vm.event_loop()) };
+            let scope = handlers.vm.enter_event_loop_scope();
             // `on_close` consumes the twin's +1 via its `CloseTeardown`, so
             // hand over the raw pointer rather than letting `RefPtr::drop`
             // release it a second time. This frame is the twin's trampoline for
@@ -3387,24 +3382,12 @@ impl<const SSL: bool> NewSocket<SSL> {
             // servername / ALPN still come from the surrounding tls config.
             if let Some(t) = opts.get_truthy(global, "tls")? {
                 if !t.is_boolean() {
-                    ssl_opts = SSLConfig::from_js(
-                        // SAFETY: per-thread VM singleton.
-                        VirtualMachine::get().as_mut(),
-                        global,
-                        t,
-                        is_server,
-                    )?;
+                    ssl_opts = SSLConfig::from_js(handlers.vm, global, t, is_server)?;
                 }
             }
         } else if let Some(tls_js) = opts.get_truthy(global, "tls")? {
             if !tls_js.is_boolean() {
-                ssl_opts = SSLConfig::from_js(
-                    // SAFETY: per-thread VM singleton.
-                    VirtualMachine::get().as_mut(),
-                    global,
-                    tls_js,
-                    is_server,
-                )?;
+                ssl_opts = SSLConfig::from_js(handlers.vm, global, tls_js, is_server)?;
             } else if tls_js.to_boolean() {
                 ssl_opts = Some(crate::socket::tls_true_defaults(handlers.vm, is_server));
             }
@@ -3415,17 +3398,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // Per-VM weak cache: `tls:true` and `{servername}`-only hit
             // the same CTX as `Bun.connect`; an inline CA dedupes across
             // every upgradeTLS that names it.
-            // `bun_jsc::rare_data::RareData::ssl_ctx_cache()` returns
-            // the high-tier opaque ZST stub (cycle-break); the concrete
-            // `SSLContextCache` lives on this thread's `RuntimeState`.
-            let cache = {
-                let state = crate::jsc_hooks::runtime_state();
-                debug_assert!(!state.is_null(), "RuntimeState not installed");
-                // SAFETY: per-thread `RuntimeState` boxed by `init_runtime_state`;
-                // stable address for the VM's lifetime, JS-thread-only access.
-                unsafe { &mut (*state).ssl_ctx_cache }
-            };
-            owned_ctx = cache.get_or_create(cfg, &mut create_err);
+            owned_ctx = crate::jsc_hooks::ssl_ctx_cache().get_or_create(cfg, &mut create_err);
             if owned_ctx.is_none() {
                 // us_ssl_ctx_from_options only sets *err for the CA/cipher
                 // cases; bad cert/key/DH return NULL with err==.none and the
@@ -3512,10 +3485,9 @@ impl<const SSL: bool> NewSocket<SSL> {
                 .get()
                 .as_ref()
                 .and_then(|handlers| handlers.listener().map(|listener| listener.context));
-            let vm = VirtualMachine::get();
             let context =
                 listener_context.map_or_else(|| vm.root_context(), |id| vm.context_of(id));
-            vm.as_mut().client_socket_groups_in(context)
+            vm.client_socket_groups_in(context)
         } else {
             // SAFETY: `raw_socket` is live (below) and client sockets only join a `SocketGroups` group.
             unsafe { bun_jsc::rare_data::SocketGroups::of((*raw_socket).group()) }
@@ -3973,9 +3945,7 @@ pub(crate) struct DuplexUpgradeContext {
     pub upgrade: UpgradedDuplex,
     // We only us a tls and not a raw socket when upgrading a Duplex, Duplex dont support socketpairs
     pub tls: JsCell<Option<RefPtr<TLSSocket>>>,
-    /// JSC_BORROW: process-lifetime per-thread VM (immortal). Stored as
-    /// `&'static` so [`enqueue_self_task`](Self::enqueue_self_task) routes
-    /// through the safe `event_loop_mut()` accessor instead of a raw deref.
+    /// JSC_BORROW: process-lifetime per-thread VM (immortal).
     pub vm: &'static VirtualMachine,
     pub(in crate::socket) task_event: Cell<EventState>,
     /// A `task_event` hop is in the VM's queue. The context is enqueued by
@@ -4200,9 +4170,7 @@ impl DuplexUpgradeContext {
         }
         // The socket has closed: uncaught, like what a transport method throws in node.
         let vm = this.vm;
-        let _ = vm
-            .as_mut()
-            .uncaught_exception(vm.global(), err_value, false);
+        let _ = vm.uncaught_exception(vm.global(), err_value, false);
     }
 
     fn on_timeout(this: bun_ptr::ThisPtr<Self>) {
@@ -4322,8 +4290,6 @@ impl DuplexUpgradeContext {
         }
     }
 
-    /// process-lifetime per-thread singleton stored at construction
-    /// (`upgrade_duplex_to_tls`); `event_loop_mut()` is the safe accessor.
     /// Takes `ThisPtr<Self>` so the queued task carries the allocation's root
     /// pointer (the task's `run_event` may free it).
     #[inline]
@@ -4333,7 +4299,7 @@ impl DuplexUpgradeContext {
             return;
         }
         this.vm
-            .event_loop_mut()
+            .event_loop()
             .enqueue_task(jsc::Task::init(this.as_ptr()));
     }
 

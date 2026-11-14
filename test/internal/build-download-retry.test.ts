@@ -13,13 +13,22 @@
  * in milliseconds; the schedule's real timing is asserted separately.
  */
 import { expect, spyOn, test } from "bun:test";
-import { tempDir } from "harness";
-import { existsSync, readFileSync } from "node:fs";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
-import { downloadRetry, downloadWithRetry, type RetryPolicy } from "../../scripts/build/download.ts";
+import { pins } from "../../scripts/build/ci-images/spec.ts";
+import type { Config } from "../../scripts/build/config.ts";
+import {
+  checkSha256,
+  downloadRetry,
+  downloadWithRetry,
+  prefetchPathForUrl,
+  type RetryPolicy,
+} from "../../scripts/build/download.ts";
 import { BuildError, describeError } from "../../scripts/build/error.ts";
+import { ensureWindowsSysroot, XWIN_VERSION } from "../../scripts/build/winsysroot.ts";
 
 const BODY = "tarball bytes";
 
@@ -191,4 +200,67 @@ test("describeError() flattens cause chains, AggregateErrors, and non-Error caus
   const loop = new Error("loops");
   loop.cause = loop;
   expect(describeError(loop)).toBe("loops");
+});
+
+test("checkSha256() accepts the file's own sha256 and throws on any other", () => {
+  using dir = tempDir("build-check-sha256", { "dep.tar.gz": BODY });
+  const file = join(String(dir), "dep.tar.gz");
+  const actual = new Bun.CryptoHasher("sha256").update(BODY).digest("hex");
+  const other = new Bun.CryptoHasher("sha256").update("other bytes").digest("hex");
+
+  expect(() => checkSha256(file, actual)).not.toThrow();
+  expect(() => checkSha256(file, other)).toThrow(new BuildError(`dep.tar.gz: sha256 is ${actual}, expected ${other}`));
+});
+
+/** What ensureWindowsSysroot() reads of a CI build for Windows on `host`, with no sysroot on the machine. */
+function windowsCrossConfig(root: string, host: Pick<Config["host"], "os" | "arch">) {
+  return {
+    windows: true,
+    arch: "x64",
+    ci: true,
+    host: { ...host, exeSuffix: "" },
+    cacheDir: join(root, "cache"),
+    winsysroot: join(root, "sysroot"),
+  };
+}
+
+test("an xwin archive whose sha256 is not the pinned one is not unpacked", async () => {
+  using dir = tempDir("build-xwin-sha256", {});
+  const root = String(dir);
+  const cfg = windowsCrossConfig(root, { os: "linux", arch: "x64" });
+
+  // The download is served from the prefetch directory: an archive with the release's layout and other bytes.
+  const release = `xwin-${XWIN_VERSION}-x86_64-unknown-linux-musl`;
+  const url = `https://github.com/Jake-Shadle/xwin/releases/download/${XWIN_VERSION}/${release}.tar.gz`;
+  const prefetch = join(root, "prefetch");
+  const prefetched = prefetchPathForUrl(url, prefetch)!;
+  mkdirSync(dirname(prefetched), { recursive: true });
+  writeFileSync(prefetched, await new Bun.Archive({ [`${release}/xwin`]: "" }, { compress: "gzip" }).bytes());
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `import { ensureWindowsSysroot } from ${JSON.stringify(join(import.meta.dir, "../../scripts/build/winsysroot.ts"))};
+       await ensureWindowsSysroot(${JSON.stringify(cfg)});`,
+    ],
+    env: { ...bunEnv, BUN_BUILD_PREFETCH_DIR: prefetch },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain(`expected ${pins.windowsSysroot.xwinSha256.x64}`);
+  expect(readdirSync(cfg.cacheDir)).toEqual([]);
+  expect(exitCode).not.toBe(0);
+});
+
+test("a host xwin has no release for is told so", async () => {
+  using dir = tempDir("build-xwin-host", {});
+  const cfg = windowsCrossConfig(String(dir), { os: "darwin", arch: "aarch64" });
+
+  const err = await rejection(ensureWindowsSysroot(cfg as Config));
+
+  expect(err).toBeInstanceOf(BuildError);
+  expect((err as BuildError).message).toBe("No xwin release for host darwin-aarch64");
 });

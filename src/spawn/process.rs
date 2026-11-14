@@ -511,11 +511,10 @@ impl Process {
             // Borrow scoped to the call.
             unsafe { (*poll).enable_keeping_process_alive(ctx) };
 
-            // SAFETY: poll is live and `platform_event_loop` returns the live
-            // uws loop; both borrows are scoped to the `register` call.
+            // SAFETY: poll is live; borrow scoped to the call.
             match unsafe {
                 (*poll).register(
-                    &*self.event_loop.platform_event_loop(),
+                    self.event_loop.platform_event_loop(),
                     bun_io::PollKind::Process,
                     PROCESS_POLL_ONE_SHOT,
                 )
@@ -555,10 +554,8 @@ impl Process {
         }
 
         if let Some(fd) = self.poller.fd_poll_mut() {
-            // SAFETY: `platform_event_loop` returns the live uws loop; borrow
-            // scoped to the `register` call.
             let maybe = fd.register(
-                unsafe { &*self.event_loop.platform_event_loop() },
+                self.event_loop.platform_event_loop(),
                 bun_io::PollKind::Process,
                 PROCESS_POLL_ONE_SHOT,
             );
@@ -1822,40 +1819,13 @@ pub type SpawnProcessResult = WindowsSpawnResult;
 
 mod spawn_process_body {
     use super::*;
+    #[cfg(windows)]
     use bun_sys::FdExt as _;
+    #[cfg(unix)]
+    use bun_sys::File;
 
     #[cfg(unix)]
     pub use bun_spawn_sys::spawn_process_posix;
-
-    /// RAII fd owner — closes the wrapped [`Fd`] on drop iff it is valid.
-    /// Used by `sync::spawn_posix` (no-orphans kqueue, ppid pidfd).
-    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
-    struct AutoCloseFd(Fd);
-
-    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
-    impl AutoCloseFd {
-        #[inline]
-        const fn new(fd: Fd) -> Self {
-            Self(fd)
-        }
-        #[inline]
-        const fn invalid() -> Self {
-            Self(Fd::INVALID)
-        }
-        #[inline]
-        fn fd(&self) -> Fd {
-            self.0
-        }
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
-    impl Drop for AutoCloseFd {
-        fn drop(&mut self) {
-            if self.0 != Fd::INVALID {
-                self.0.close();
-            }
-        }
-    }
 
     /// # Safety
     /// `argv` must point to a null-terminated array of NUL-terminated C
@@ -1940,15 +1910,9 @@ mod spawn_process_body {
         // SAFETY: argv is null-terminated, argv[0] is non-null
         uv_process_options.file = options.argv0.unwrap_or_else(|| unsafe { *argv });
         uv_process_options.exit_cb = Some(Process::on_exit_uv);
-        // `WindowsOptions::default()` leaves `loop_` zeroed (every
-        // `bun.spawnSync` call site sets it explicitly). A zeroed
-        // `EventLoopHandle` is discriminant 0 (`Js`) with a null inner pointer,
-        // so `platform_event_loop()` returns null and the deref below segfaults
-        // at the `.uv_loop` field offset. Catch that with a clear panic instead
-        // of an opaque exit-code-3. Release-build assert: this is the contract
-        // boundary, not a debug aid.
+        // `WindowsOptions::default()` leaves a null handle, which `uv_loop()` would dereference.
         assert!(
-            !options.windows.loop_.platform_event_loop().is_null(),
+            !matches!(options.windows.loop_, EventLoopHandle::Js { owner } if owner.owner.is_null()),
             "spawn_process_windows: WindowsSpawnOptions.windows.loop_ was not set. \
          WindowsOptions::default() leaves it zeroed (Zig spec: `= undefined`); \
          every caller must populate it — see src/CLAUDE.md §Spawning Subprocesses \
@@ -2786,7 +2750,6 @@ mod spawn_process_body {
             argv: *const *const c_char,
             envp: *const *const c_char,
         ) -> core::result::Result<Maybe<Result>, crate::Error> {
-            let loop_ = options.windows.loop_.platform_event_loop();
             // All stdio inherited: the child is the foreground program on our console.
             let _child = crate::ctrl_c::Child::enter();
             let mut spawned =
@@ -2795,6 +2758,7 @@ mod spawn_process_body {
                     Ok(proces) => proces,
                 };
 
+            let loop_ = options.windows.loop_.platform_event_loop();
             // Sole owner during sync spawn; detached and released on return,
             // by which time the loop has drained and no uv callback holds a
             // competing `&mut Process`.
@@ -2808,9 +2772,7 @@ mod spawn_process_body {
             // SAFETY: read-only field access between uv ticks; the uv exit
             // callback's `&mut Process` does not overlap this `&Process`.
             while !unsafe { (*process).has_exited() } {
-                // SAFETY: `loop_` is the live `uws::WindowsLoop*` from
-                // `EventLoopHandle::platform_event_loop`.
-                unsafe { (*loop_).run() };
+                loop_.run();
             }
 
             Ok(Ok(Result {
@@ -2905,8 +2867,7 @@ mod spawn_process_body {
             // SAFETY: read-only field access between uv ticks; callbacks fired
             // inside `tick()` write through the same `this_ptr` root.
             while unsafe { (*this_ptr).waiting_count } > 0 {
-                // SAFETY: `loop_` wraps a live `uws::WindowsLoop*`.
-                unsafe { (*loop_.platform_event_loop()).tick() };
+                loop_.platform_event_loop().tick();
             }
 
             // SAFETY: loop drained (waiting_count == 0); no further uv callback
@@ -3215,19 +3176,19 @@ mod spawn_process_body {
             // LIFO: `no_orphans_kq` drops (closes) LAST — after killSyncScriptTree()
             // (which scans via m_kq) and the releaseKq() defer below.
             #[cfg(target_os = "macos")]
-            let mut no_orphans_kq = AutoCloseFd::invalid();
+            let mut no_orphans_kq: Option<File> = None;
             #[cfg(target_os = "macos")]
             if no_orphans {
                 let kq = kqueue();
                 if kq >= 0 {
-                    no_orphans_kq = AutoCloseFd::new(Fd::from_native(kq));
+                    no_orphans_kq = Some(File::from_fd(Fd::from_native(kq)));
                 }
             }
             // LIFO: runs after killSyncScriptTree() (which needs m_kq live for
             // its NOTE_FORK-drain rescan), before `no_orphans_kq` drops/closes.
             #[cfg(target_os = "macos")]
             scopeguard::defer! {
-                if no_orphans_kq.fd() != Fd::INVALID {
+                if no_orphans_kq.is_some() {
                     Bun__noOrphans_releaseKq();
                 }
             }
@@ -3272,8 +3233,8 @@ mod spawn_process_body {
                 // each discovered descendant. waitMacKqueue registers the
                 // script's own knote.
                 #[cfg(target_os = "macos")]
-                if no_orphans_kq.fd() != Fd::INVALID {
-                    Bun__noOrphans_begin(no_orphans_kq.fd().native(), process.pid);
+                if let Some(kq) = &no_orphans_kq {
+                    Bun__noOrphans_begin(kq.fd().native(), process.pid);
                 }
             }
             // Move `jc` into the guard so the defer closure owns it (avoids holding
@@ -3313,11 +3274,13 @@ mod spawn_process_body {
             Bun__sendPendingSignalIfNecessary();
 
             let mut out: [Vec<u8>; 2] = [Vec::new(), Vec::new()];
-            let mut out_fds: [Fd; 2] = [
-                process.stdout.unwrap_or(Fd::INVALID),
-                process.stderr.unwrap_or(Fd::INVALID),
-            ];
-            let mut success = false;
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            let _pidfd = process.pidfd.map(|fd| File::from_fd(Fd::from_native(fd)));
+            let mut out_files = [process.stdout, process.stderr].map(|fd| fd.map(File::from_fd));
+            let kill_and_fail = |err| {
+                let _ = kill(process.pid, 1);
+                Ok(Err(err))
+            };
 
             let mut out_fds_to_wait_for: [Fd; 2] = [
                 process.stdout.unwrap_or(Fd::INVALID),
@@ -3352,10 +3315,10 @@ mod spawn_process_body {
                         process.pid,
                         ppid,
                         &*_jc,
-                        no_orphans_kq.fd(),
+                        no_orphans_kq.as_ref(),
                         &mut out,
                         &mut out_fds_to_wait_for,
-                        &mut out_fds,
+                        &mut out_files,
                     );
                     #[cfg(any(target_os = "linux", target_os = "android"))]
                     let r: Option<Maybe<Status>> = wait_linux_signalfd(
@@ -3365,7 +3328,7 @@ mod spawn_process_body {
                         &*_jc,
                         &mut out,
                         &mut out_fds_to_wait_for,
-                        &mut out_fds,
+                        &mut out_files,
                     );
                     #[cfg(not(any(
                         target_os = "linux",
@@ -3378,10 +3341,7 @@ mod spawn_process_body {
                     };
                     if let Some(maybe) = r {
                         match maybe {
-                            Err(err) => {
-                                cleanup_spawn_posix(&mut out, out_fds, &process, success);
-                                return Ok(Err(err));
-                            }
+                            Err(err) => return kill_and_fail(err),
                             Ok(st) => break 'blk st,
                         }
                     }
@@ -3393,10 +3353,9 @@ mod spawn_process_body {
                 {
                     for i in 0..2 {
                         if let Some(err) =
-                            drain_fd(&mut out_fds_to_wait_for[i], &mut out_fds[i], &mut out[i])
+                            drain_fd(&mut out_fds_to_wait_for[i], &mut out_files[i], &mut out[i])
                         {
-                            cleanup_spawn_posix(&mut out, out_fds, &process, success);
-                            return Ok(Err(err));
+                            return kill_and_fail(err);
                         }
                     }
 
@@ -3423,8 +3382,10 @@ mod spawn_process_body {
                         bun_sys::E::SUCCESS => {}
                         bun_sys::E::EAGAIN | bun_sys::E::EINTR => continue,
                         err => {
-                            cleanup_spawn_posix(&mut out, out_fds, &process, success);
-                            return Ok(Err(bun_sys::Error::from_code(err, bun_sys::Tag::poll)));
+                            return kill_and_fail(bun_sys::Error::from_code(
+                                err,
+                                bun_sys::Tag::poll,
+                            ));
                         }
                     }
                 }
@@ -3434,56 +3395,18 @@ mod spawn_process_body {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 for (idx, &memfd) in process.memfds[1..].iter().enumerate() {
-                    if memfd {
-                        // `out_fds[idx]` is closed by `cleanup_spawn_posix` below;
-                        // borrow a non-owning `File` view so the temporary doesn't
-                        // close it on drop (which would double-close).
-                        out[idx] = bun_sys::File::borrow(&out_fds[idx])
-                            .read_to_end()
-                            .unwrap_or_default();
+                    if memfd && let Some(file) = &out_files[idx] {
+                        out[idx] = file.read_to_end().unwrap_or_default();
                     }
                 }
             }
 
-            success = true;
-            let stdout = core::mem::take(&mut out[0]);
-            let stderr = core::mem::take(&mut out[1]);
-            cleanup_spawn_posix(&mut out, out_fds, &process, success);
+            let [stdout, stderr] = out;
             Ok(Ok(Result {
                 status,
                 stdout,
                 stderr,
             }))
-        }
-
-        #[cfg(unix)]
-        fn cleanup_spawn_posix(
-            out: &mut [Vec<u8>; 2],
-            out_fds: [Fd; 2],
-            process: &PosixSpawnResult,
-            success: bool,
-        ) {
-            // If we're going to return an error,
-            // let's make sure to clean up the output buffers
-            // and kill the process
-            if !success {
-                for array_list in out.iter_mut() {
-                    array_list.clear();
-                    array_list.shrink_to_fit();
-                }
-                let _ = kill(process.pid, 1);
-            }
-
-            for fd in out_fds {
-                if fd != Fd::INVALID {
-                    fd.close();
-                }
-            }
-
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            if let Some(pidfd) = process.pidfd {
-                Fd::from_native(pidfd).close();
-            }
         }
 
         /// no-orphans wait loop for `spawnSync`. Replaces the blind `poll()` +
@@ -3512,17 +3435,15 @@ mod spawn_process_body {
             child: libc::pid_t,
             ppid: libc::pid_t,
             jc: &JobControl,
-            kq_fd: Fd,
+            kq: Option<&File>,
             out: &mut [Vec<u8>; 2],
             out_fds_to_wait_for: &mut [Fd; 2],
-            out_fds: &mut [Fd; 2],
+            out_files: &mut [Option<File>; 2],
         ) -> Option<Maybe<Status>> {
             // kqueue() failed in spawnPosix (EMFILE/ENOMEM): let the caller's
             // plain `poll()` loop drain `.buffer` stdio and reap. The spawnPosix
             // defers (pgroup-kill, killTracked() — empty set) still run.
-            if kq_fd == Fd::INVALID {
-                return None;
-            }
+            let kq_fd = kq?.fd();
 
             // udata tag for the ppid PROC filter. Descendant PROC knotes
             // (`child` here, plus any `scan()` adds) use udata=0; EVFILT_READ
@@ -3717,7 +3638,7 @@ mod spawn_process_body {
                     } else if ev.filter == libc::EVFILT_READ {
                         let i: usize = ev.udata as usize;
                         if let Some(err) =
-                            drain_fd(&mut out_fds_to_wait_for[i], &mut out_fds[i], &mut out[i])
+                            drain_fd(&mut out_fds_to_wait_for[i], &mut out_files[i], &mut out[i])
                         {
                             return Some(Err(err));
                         }
@@ -3743,7 +3664,8 @@ mod spawn_process_body {
                     // defers can't run until we return. drainFd() loops to EAGAIN,
                     // so everything the script itself wrote is captured.
                     for i in 0..2 {
-                        let _ = drain_fd(&mut out_fds_to_wait_for[i], &mut out_fds[i], &mut out[i]);
+                        let _ =
+                            drain_fd(&mut out_fds_to_wait_for[i], &mut out_files[i], &mut out[i]);
                     }
                     return Some(Ok(child_status.unwrap_or_else(|| reap_child(child))));
                 }
@@ -3758,7 +3680,7 @@ mod spawn_process_body {
             jc: &JobControl,
             out: &mut [Vec<u8>; 2],
             out_fds_to_wait_for: &mut [Fd; 2],
-            out_fds: &mut [Fd; 2],
+            out_files: &mut [Option<File>; 2],
         ) -> Option<Maybe<Status>> {
             // Child-exit: signalfd(SIGCHLD). Works everywhere pidfd doesn't
             // (gVisor, ancient kernels). Subreaper means orphaned grandchildren
@@ -3768,7 +3690,7 @@ mod spawn_process_body {
             // one (16 words) — block via libc, build a separate kernel mask for
             // signalfd.
             // SAFETY: signal mask manipulation
-            let (chld_fd, _restore_mask): (Fd, scopeguard::ScopeGuard<libc::sigset_t, _>) = unsafe {
+            let (_restore_mask, chld_fd) = unsafe {
                 let mut libc_mask: libc::sigset_t = bun_core::ffi::zeroed();
                 let mut old_mask: libc::sigset_t = bun_core::ffi::zeroed();
                 libc::sigemptyset(&raw mut libc_mask);
@@ -3787,17 +3709,11 @@ mod spawn_process_body {
                         &raw const kmask,
                         libc::SFD_CLOEXEC | libc::SFD_NONBLOCK,
                     );
-                    if rc >= 0 {
-                        Fd::from_native(rc)
-                    } else {
-                        Fd::INVALID
-                    }
+                    (rc >= 0).then(|| File::from_fd(Fd::from_native(rc)))
                 };
-                (fd, restore)
+                // Bound in this order: the signalfd closes, then the signal mask is restored.
+                (restore, fd)
             };
-            // Shadow as RAII owner *after* `_restore_mask` so LIFO drop order is
-            // preserved (close signalfd, then restore the signal mask).
-            let chld_fd = AutoCloseFd::new(chld_fd);
 
             // Child-exit, take 2: pidfd. signalfd only fires if SIGCHLD stays
             // pending — i.e. is blocked on *every* thread. PackageManager / HTTP
@@ -3807,18 +3723,15 @@ mod spawn_process_body {
             // masking, so poll it too. Keep the signalfd for the subreaper-adopted
             // orphans (whose pidfds we don't have) and as the gVisor / pre-5.3
             // fallback when pidfd_open is unavailable.
-            let child_pidfd = match bun_sys::pidfd_open(child, 0) {
-                Ok(fd) => AutoCloseFd::new(fd),
-                Err(_) => AutoCloseFd::invalid(),
-            };
+            let child_pidfd = bun_sys::pidfd_open(child, 0).ok().map(File::from_fd);
 
             // Parent-death: pidfd when available (instant wake). When not
             // (gVisor, sandboxes, pre-5.3): bound the poll at 100ms and recheck
             // `getppid()`.
-            let mut ppid_fd = AutoCloseFd::invalid();
+            let mut ppid_fd: Option<File> = None;
             if ppid > 1 {
                 match bun_sys::pidfd_open(ppid, 0) {
-                    Ok(fd) => ppid_fd = AutoCloseFd::new(fd),
+                    Ok(fd) => ppid_fd = Some(File::from_fd(fd)),
                     Err(e) => {
                         if e.get_errno() == bun_sys::E::ESRCH {
                             Global::exit(ParentDeathWatchdog::EXIT_CODE as u32);
@@ -3848,11 +3761,11 @@ mod spawn_process_body {
                 Global::exit(ParentDeathWatchdog::EXIT_CODE as u32);
             }
 
-            let need_ppid_fallback = ppid > 1 && ppid_fd.fd() == Fd::INVALID;
+            let need_ppid_fallback = ppid > 1 && ppid_fd.is_none();
             // Only block forever when we have a wake source for *both* events we
             // care about. signalfd alone is not a reliable child-exit wake (see
             // the `child_pidfd` comment above), so require the pidfd for `-1`.
-            let timeout_ms: i32 = if need_ppid_fallback || child_pidfd.fd() == Fd::INVALID {
+            let timeout_ms: i32 = if need_ppid_fallback || child_pidfd.is_none() {
                 100
             } else {
                 -1
@@ -3905,7 +3818,7 @@ mod spawn_process_body {
 
                 for i in 0..2 {
                     if let Some(err) =
-                        drain_fd(&mut out_fds_to_wait_for[i], &mut out_fds[i], &mut out[i])
+                        drain_fd(&mut out_fds_to_wait_for[i], &mut out_files[i], &mut out[i])
                     {
                         return Some(Err(err));
                     }
@@ -3927,15 +3840,15 @@ mod spawn_process_body {
                     }
                 }
                 let ppid_idx = pfds_len;
-                if ppid_fd.fd() != Fd::INVALID {
-                    push(&mut buf, &mut pfds_len, ppid_fd.fd());
+                if let Some(file) = &ppid_fd {
+                    push(&mut buf, &mut pfds_len, file.fd());
                 }
                 let chld_idx = pfds_len;
-                if chld_fd.fd() != Fd::INVALID {
-                    push(&mut buf, &mut pfds_len, chld_fd.fd());
+                if let Some(file) = &chld_fd {
+                    push(&mut buf, &mut pfds_len, file.fd());
                 }
-                if child_pidfd.fd() != Fd::INVALID {
-                    push(&mut buf, &mut pfds_len, child_pidfd.fd());
+                if let Some(file) = &child_pidfd {
+                    push(&mut buf, &mut pfds_len, file.fd());
                 }
 
                 // SAFETY: valid pollfd array
@@ -3946,7 +3859,7 @@ mod spawn_process_body {
                     err => return Some(Err(bun_sys::Error::from_code(err, bun_sys::Tag::poll))),
                 }
 
-                if (ppid_fd.fd() != Fd::INVALID && buf[ppid_idx].revents != 0)
+                if (ppid_fd.is_some() && buf[ppid_idx].revents != 0)
                     || (need_ppid_fallback && getppid() != ppid)
                 {
                     Global::exit(ParentDeathWatchdog::EXIT_CODE as u32);
@@ -3954,28 +3867,32 @@ mod spawn_process_body {
 
                 // Drain the signalfd so the next poll blocks; the actual reap
                 // happens at the top of the next iteration.
-                if chld_fd.fd() != Fd::INVALID && buf[chld_idx].revents != 0 {
+                if let Some(chld_fd) = &chld_fd
+                    && buf[chld_idx].revents != 0
+                {
                     // The siginfo payload is discarded — we only need a buffer of
                     // the right size to drain the fd, so a plain byte array avoids
                     // the unsafe struct-as-bytes reinterpret entirely.
                     let mut si_bytes = [0u8; core::mem::size_of::<libc::signalfd_siginfo>()];
-                    while bun_sys::read(chld_fd.fd(), &mut si_bytes).unwrap_or(0) == si_bytes.len()
-                    {
-                    }
+                    while chld_fd.read(&mut si_bytes).unwrap_or(0) == si_bytes.len() {}
                 }
             }
             for i in 0..2 {
-                let _ = drain_fd(&mut out_fds_to_wait_for[i], &mut out_fds[i], &mut out[i]);
+                let _ = drain_fd(&mut out_fds_to_wait_for[i], &mut out_files[i], &mut out[i]);
             }
             Some(Ok(child_status.unwrap()))
         }
 
         /// Non-blocking drain of `fd` into `bytes`. Closes and invalidates both
-        /// slots on EOF so the caller's deferred cleanup skips them; returns null
+        /// slots on EOF, which takes `fd` out of the next poll; returns null
         /// on EOF/retry/EPIPE (caller keeps polling) or the recv/OOM error
         /// otherwise. Shared by the `poll()` path and the no-orphans wait loops.
         #[cfg(unix)]
-        fn drain_fd(fd: &mut Fd, out_fd: &mut Fd, bytes: &mut Vec<u8>) -> Option<bun_sys::Error> {
+        fn drain_fd(
+            fd: &mut Fd,
+            file: &mut Option<File>,
+            bytes: &mut Vec<u8>,
+        ) -> Option<bun_sys::Error> {
             if *fd == Fd::INVALID {
                 return None;
             }
@@ -4000,9 +3917,8 @@ mod spawn_process_body {
                         // SAFETY: recv wrote `bytes_read` bytes into spare capacity
                         unsafe { bun_core::vec::commit_spare(bytes, bytes_read) };
                         if bytes_read == 0 {
-                            fd.close();
                             *fd = Fd::INVALID;
-                            *out_fd = Fd::INVALID;
+                            *file = None;
                             return None;
                         }
                     }

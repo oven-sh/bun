@@ -1,0 +1,20 @@
+# The setter lies on the prototype object of the heir, and the store stands in the parent's body. On an object of the heir that store runs the setter. The field of the heir's objects is neither filled nor of the birth, wherever its row lists it.
+# -- source: main.js
+# function User(name) { this.id = 7; this.name = name; }
+# function Sub(name) { User.call(this, name); this.extra = 1; }
+# Object.setPrototypeOf(Sub.prototype, User.prototype);
+# Object.defineProperty(Sub.prototype, "name", { get() { return this._name; }, set(v) { this._name = v.trim(); }, configurable: true });
+# const x = new Sub(" a "), y = new User(" b ");
+# print([x.name, Object.keys(x), y.name, Object.keys(y)].join("|"));
+# -- end of source
+# RUN: link fields mechanisms=all
+# CHECK: field L1.{{*}}"name"
+# CHECK-NOT: filled
+# CHECK-NOT: of-birth
+# CHECK: field L
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: a|id,_name,extra| b |id,name
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: a|id,_name,extra| b |id,name
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime
+# CHECKED: a|id,_name,extra| b |id,name

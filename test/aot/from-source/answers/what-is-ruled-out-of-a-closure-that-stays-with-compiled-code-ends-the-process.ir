@@ -1,0 +1,46 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function poke(...values: unknown[]): void;
+# class Keeper {
+#     run: (first: number) => string;
+#     constructor(run: (first: number) => string) { this.run = run; }
+# }
+# function make() { return function target(first: number) { return "base " + first; }; }
+# const kept = new Keeper(make());
+# const tell = () => kept.run(1) + " " + kept.run.call(null, 2) + " " + kept.run.apply(null, [3]);
+# print(tell());
+# poke();
+# print(tell());
+# -- end of source
+# The program hands the closure of `target` to nobody and lays nothing on it, so linked() takes its closures to stay as they are made, and compiled code takes `call` and `apply` off Function.prototype without a look.
+# `poke` is a free name that each run defines, and it is handed nothing. It takes the keeper out of the heap (aotFindObjectOfLayout()), a road that no program has, and reads the closure off it: each run does one deed that is ruled out, and the run time ends the process at the deed.
+# The run time looks at the closure behind the deed. What leaves every lookup as it was goes through: the names are listed, `name` is defined again, `call` is laid with the very function that stands above, the object above is set to what it is, and a store that lays nothing.
+# The same deeds where the program hands the closure over stop nothing: deeds-on-a-closure-that-unseen-code-was-handed-go-through.ir.
+# OPTIONS: mechanisms=all
+# RUN: run-in-shell globalThis.poke = () => { const run = aotFindObjectOfLayout(0).run; print(run.name, run.length, Object.keys(run).length); Object.defineProperty(run, "name", { value: "other" }); print(run.name); run.call = Function.prototype.call; Object.setPrototypeOf(run, Function.prototype); Object.preventExtensions(run); run.late = 1; print(run.late); };
+# CHECK: base 1 base 2 base 3
+# CHECK-NEXT: target 1 0
+# CHECK-NEXT: other
+# CHECK-NEXT: undefined
+# CHECK-NEXT: base 1 base 2 base 3
+# CHECK-NEXT: exited with 0
+# RUN(STORES): run-in-shell globalThis.poke = () => { aotFindObjectOfLayout(0).run.call = function () { return "own call"; }; print("went on"); };
+# STORES: bun: internal AOT error: object mutation check failed
+# STORES-NEXT: AddProperty on a closure of 'target', but the compiler proved that this never happens
+# STORES-NOT: went on
+# STORES: crashed with
+# RUN(DEFINES): run-in-shell globalThis.poke = () => { Object.defineProperty(aotFindObjectOfLayout(0).run, "apply", { value() { return "own apply"; } }); print("went on"); };
+# DEFINES: bun: internal AOT error: object mutation check failed
+# DEFINES-NEXT: AddProperty on a closure of 'target'
+# DEFINES-NOT: went on
+# DEFINES: crashed with
+# RUN(LISTED): run-in-shell globalThis.poke = () => { const run = aotFindObjectOfLayout(0).run; Object.keys(run); run.call = function () { return "own call"; }; print("went on"); };
+# LISTED: bun: internal AOT error: object mutation check failed
+# LISTED-NEXT: AddProperty on a closure of 'target'
+# LISTED-NOT: went on
+# LISTED: crashed with
+# RUN(RELINKS): run-in-shell globalThis.poke = () => { Object.setPrototypeOf(aotFindObjectOfLayout(0).run, { call() { return "other call"; } }); print("went on"); };
+# RELINKS: bun: internal AOT error: object mutation check failed
+# RELINKS-NEXT: ChangePrototype on a closure of 'target'
+# RELINKS-NOT: went on
+# RELINKS: crashed with

@@ -1,57 +1,120 @@
 use smallvec::SmallVec;
 
-use super::{Component, EdgeKind, MappedType, TypeEdge};
+use super::exploration::Explored;
+use super::{Component, EdgeKind, ExploredType, MappedType, TypeEdge};
+use crate::ir::Mapped;
 use crate::ir::generated::LimitId;
-use crate::ir::{Id, Mapped, TypeTable};
 use crate::lower::{CheckerTypeId, FileLowering};
 
 type OpenTypes = SmallVec<[CheckerTypeId; 4]>;
 
 impl FileLowering<'_, '_, '_, '_> {
-    pub(crate) fn map_type_at(&mut self, ty: CheckerTypeId, position: u32) -> Mapped {
-        self.ensure_mapped(ty, position, &mut OpenTypes::new())
+    pub(crate) fn map_type_at(&mut self, ty: CheckerTypeId) -> Mapped {
+        let row = self.queries.row_of_type(ty) as usize;
+        match self.find_mapped_in_row(row) {
+            Some(entry) => entry.mapped,
+            None => self.map_type_anew(ty, row, &mut OpenTypes::new()),
+        }
     }
 
-    fn ensure_mapped(&mut self, ty: CheckerTypeId, position: u32, open: &mut OpenTypes) -> Mapped {
-        if let Some(entry) = self.types.mapped.get(&ty) {
-            return entry.mapped;
+    fn ensure_mapped(&mut self, ty: CheckerTypeId, open: &mut OpenTypes) -> Mapped {
+        let row = self.queries.row_of_type(ty) as usize;
+        match self.find_mapped_in_row(row) {
+            Some(entry) => entry.mapped,
+            None => self.map_type_anew(ty, row, open),
         }
+    }
+
+    fn map_type_anew(&mut self, ty: CheckerTypeId, row: usize, open: &mut OpenTypes) -> Mapped {
+        let unstable_answers_before = self.queries.count_unstable_answers();
         match self.explore(ty) {
-            Some(components) => {
-                for component in &components {
-                    self.map_component(component, position, open);
+            Explored::Alone(alone) => self.map_alone(&alone, row, unstable_answers_before, open),
+            Explored::Components(components) => {
+                for component in components.iter() {
+                    self.map_component(component, unstable_answers_before, open);
                 }
             }
-            None => self.map_exhausted_type(ty, position, open),
+            Explored::Exhausted => self.map_exhausted_type(ty, row, unstable_answers_before, open),
         }
-        self.types.mapped[&ty].mapped
+        let entry = self.find_mapped_in_row(row);
+        debug_assert!(entry.is_some(), "the last component holds the type");
+        entry.map_or(Mapped::UNKNOWN, |entry| entry.mapped)
     }
 
-    fn map_component(&mut self, component: &Component, position: u32, open: &mut OpenTypes) {
-        if self.types.mapped.contains_key(&component[0].ty) {
+    fn map_alone(
+        &mut self,
+        alone: &ExploredType,
+        row: usize,
+        unstable_answers_before: u64,
+        open: &mut OpenTypes,
+    ) {
+        if self.meet_again(alone, row) {
             return;
         }
+        let component = core::slice::from_ref(alone);
         let weight = self.weigh_component(component);
-        if weight.is_none() {
-            self.gave_up(LimitId::MaxTypeNodes, position);
+        self.map_member(
+            component,
+            weight,
+            unstable_answers_before,
+            open,
+            alone.ty,
+            row,
+        );
+    }
+
+    fn map_component(
+        &mut self,
+        component: &Component,
+        unstable_answers_before: u64,
+        open: &mut OpenTypes,
+    ) {
+        let component: &[ExploredType] = component;
+        let first_row = self.queries.row_of_type(component[0].ty) as usize;
+        if self.find_mapped_in_row(first_row).is_some() {
+            return;
         }
-        for member in component {
-            self.map_member(component, weight, open, member.ty);
+        if let [alone] = component {
+            return self.map_alone(alone, first_row, unstable_answers_before, open);
+        }
+        let weight = self.weigh_component(component);
+        for (index, member) in component.iter().enumerate() {
+            let row = match index {
+                0 => first_row,
+                _ => self.queries.row_of_type(member.ty) as usize,
+            };
+            self.map_member(
+                component,
+                weight,
+                unstable_answers_before,
+                open,
+                member.ty,
+                row,
+            );
         }
     }
 
-    fn weigh_component(&mut self, component: &Component) -> Option<u32> {
-        let mut targets: SmallVec<[CheckerTypeId; 8]> = component
-            .iter()
-            .flat_map(|member| &member.edges)
-            .map(|edge| edge.target)
-            .filter(|&target| !is_member(component, target))
-            .collect();
-        targets.sort_unstable_by_key(|target| target.0);
-        targets.dedup();
+    fn weigh_component(&mut self, component: &[ExploredType]) -> Option<u32> {
+        if let [alone] = component
+            && alone.edges.is_empty()
+        {
+            return Some(1);
+        }
+        let mut targets: SmallVec<[CheckerTypeId; 8]> = SmallVec::new();
+        for member in component {
+            for edge in member.edges.iter() {
+                if !is_member(component, edge.target) {
+                    targets.push(edge.target);
+                }
+            }
+        }
+        if targets.len() > 1 {
+            targets.sort_unstable_by_key(|target| target.0);
+            targets.dedup();
+        }
         let mut weight = Some(u32::try_from(component.len()).unwrap_or(u32::MAX));
-        for target in targets {
-            let Some(entry) = self.types.mapped.get(&target) else {
+        for &target in targets.iter() {
+            let Some(entry) = self.find_mapped(target) else {
                 debug_assert!(false, "components arrive after what they reach");
                 continue;
             };
@@ -68,42 +131,57 @@ impl FileLowering<'_, '_, '_, '_> {
 
     fn map_member(
         &mut self,
-        component: &Component,
+        component: &[ExploredType],
         weight: Option<u32>,
+        unstable_answers_before: u64,
         open: &mut OpenTypes,
         ty: CheckerTypeId,
+        row: usize,
     ) -> Mapped {
-        if let Some(entry) = self.types.mapped.get(&ty) {
+        if let Some(entry) = self.find_mapped_in_row(row) {
             return entry.mapped;
         }
-        if open.contains(&ty) {
+        if !open.is_empty() && open.contains(&ty) {
             return Mapped::UNKNOWN;
         }
         open.push(ty);
+        if component.len() == 1 {
+            self.begin_list_of_function_types();
+        }
         let mapped = self.map_shape(ty, &mut |file, edge| {
             if !is_member(component, edge.target) {
                 return file.map_mapped_child(edge);
             }
             match edge.kind {
-                EdgeKind::Transparent => file.map_member(component, weight, open, edge.target),
+                EdgeKind::Transparent => {
+                    let row = file.queries.row_of_type(edge.target) as usize;
+                    file.map_member(
+                        component,
+                        weight,
+                        unstable_answers_before,
+                        open,
+                        edge.target,
+                        row,
+                    )
+                }
                 EdgeKind::Contents => file.map_shallow(edge.target, &mut OpenTypes::new()),
             }
         });
         open.pop();
-        self.finish_type(ty, mapped, weight);
+        let function_types = self.take_list_of_function_types();
+        let entry = MappedType { mapped, weight };
+        self.keep_mapped(
+            ty,
+            row,
+            entry,
+            unstable_answers_before,
+            function_types.as_deref(),
+        );
         mapped
     }
 
-    fn finish_type(&mut self, ty: CheckerTypeId, mapped: Mapped, weight: Option<u32>) {
-        self.types.mapped.insert(ty, MappedType { mapped, weight });
-        if mapped.ty.index() >= TypeTable::WELL_KNOWN_COUNT {
-            self.types.sources.entry(mapped.ty).or_insert(ty);
-        }
-    }
-
     fn map_mapped_child(&mut self, edge: TypeEdge) -> Mapped {
-        // The checker does not memoize a shape it cut short on a low stack, so the table can see an edge that the exploration did not.
-        let Some(&entry) = self.types.mapped.get(&edge.target) else {
+        let Some(entry) = self.find_mapped(edge.target) else {
             return Mapped::UNKNOWN;
         };
         match edge.kind {
@@ -114,32 +192,50 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn map_exhausted_type(&mut self, ty: CheckerTypeId, position: u32, open: &mut OpenTypes) {
-        self.gave_up(LimitId::MaxTypeNodes, position);
+    fn map_exhausted_type(
+        &mut self,
+        ty: CheckerTypeId,
+        row: usize,
+        unstable_answers_before: u64,
+        open: &mut OpenTypes,
+    ) {
         open.push(ty);
         let mapped = self.map_shape(ty, &mut |file, edge| match edge.kind {
             EdgeKind::Transparent if open.contains(&edge.target) => Mapped::UNKNOWN,
-            EdgeKind::Transparent => file.ensure_mapped(edge.target, position, open),
-            EdgeKind::Contents => file.map_exhausted_contents(edge, position),
+            EdgeKind::Transparent => file.ensure_mapped(edge.target, open),
+            EdgeKind::Contents => file.map_exhausted_contents(edge),
         });
         open.pop();
-        self.finish_type(ty, mapped, None);
+        let entry = MappedType {
+            mapped,
+            weight: None,
+        };
+        self.keep_mapped(ty, row, entry, unstable_answers_before, None);
     }
 
-    fn map_exhausted_contents(&mut self, edge: TypeEdge, position: u32) -> Mapped {
-        if !self.types.mapped.contains_key(&edge.target) {
-            let Some(components) = self.explore(edge.target) else {
-                return self.map_shallow(edge.target, &mut OpenTypes::new());
-            };
-            for component in &components {
-                self.map_component(component, position, &mut OpenTypes::new());
+    fn map_exhausted_contents(&mut self, edge: TypeEdge) -> Mapped {
+        if self.find_mapped(edge.target).is_none() {
+            let unstable_answers_before = self.queries.count_unstable_answers();
+            let open = &mut OpenTypes::new();
+            match self.explore(edge.target) {
+                Explored::Alone(alone) => {
+                    let row = self.queries.row_of_type(edge.target) as usize;
+                    self.map_alone(&alone, row, unstable_answers_before, open);
+                }
+                Explored::Components(components) => {
+                    for component in components.iter() {
+                        self.map_component(component, unstable_answers_before, open);
+                        open.clear();
+                    }
+                }
+                Explored::Exhausted => return self.map_shallow(edge.target, open),
             }
         }
         self.map_mapped_child(edge)
     }
 
     fn map_shallow(&mut self, ty: CheckerTypeId, open: &mut OpenTypes) -> Mapped {
-        if let Some(&mapped) = self.types.shallow.get(&ty) {
+        if let Some(mapped) = self.find_shallow(ty) {
             return mapped;
         }
         if open.contains(&ty) {
@@ -151,11 +247,11 @@ impl FileLowering<'_, '_, '_, '_> {
             EdgeKind::Contents => Mapped::UNKNOWN,
         });
         open.pop();
-        self.types.shallow.insert(ty, mapped);
+        self.keep_shallow(ty, mapped);
         mapped
     }
 }
 
-fn is_member(component: &Component, ty: CheckerTypeId) -> bool {
+fn is_member(component: &[ExploredType], ty: CheckerTypeId) -> bool {
     component.iter().any(|member| member.ty == ty)
 }

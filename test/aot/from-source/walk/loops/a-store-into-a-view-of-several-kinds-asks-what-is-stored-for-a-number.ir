@@ -1,0 +1,24 @@
+# A view of several kinds, whose kind the store reads off the cell, took a typed store only of what is proven to be a number. Of what `from[i]` gives nothing is known:
+# it is asked for a number, and the store is the proven one; what is none goes the generic way.
+# So in front of a loop that stores what nobody knows, the views that are neither bytes nor doubles nor floats have a copy together.
+# RUN(TURNS): walk f2 mechanisms=all
+# TURNS-LABEL: code f2:Body
+# TURNS: = TypeTest {{*}} testedType=Float32Array #
+# TURNS: = TypeTest {{*}} testedType=Int16Array|Int32Array|Int8Array|Uint16Array|Uint32Array|Uint8ClampedArray #
+# TURNS: = PutTypedArrayElement {{*}} typedArrayType=9 level=Proven
+# TURNS: = PutTypedArrayElement {{*}} level=Proven
+# TURNS: = ElemSet
+# What every turn stores unchanged is asked once in front of that copy, and the store by the kind of the cell is the proven one.
+# RUN(UNCHANGED): walk f1 mechanisms=all
+# UNCHANGED-LABEL: code f1:Body
+# UNCHANGED: = TypeTest {{*}} testedType=Int16Array|Int32Array|Int8Array|Uint16Array|Uint32Array|Uint8ClampedArray #
+# UNCHANGED: = PutTypedArrayElement {{*}} typedArrayType=9 level=Proven
+# UNCHANGED: = TypeTest {{*}} testedType=number #
+# UNCHANGED: = PutTypedArrayElement {{*}} level=Proven
+# UNCHANGED: = ElemSet
+# -- source: main.js
+# function fill(make, value) { const into = make(); let sum = 0; for (let i = 0; i < 100; i++) { into[i] = value; sum += i; } return sum ? into : 0; }
+# const unknown = [globalThis.first, globalThis.second];
+# function copy(make) { const into = make(); let sum = 0; for (let i = 0; i < 100; i++) { into[i] = unknown[i & 1]; sum += i; } return sum ? into : 0; }
+# globalThis.kept = [fill, copy];
+# -- end of source

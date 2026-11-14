@@ -8,7 +8,8 @@ import {
   isDebug,
   isLinux,
   isWindows,
-  tempDir,
+  runCommandMaxRSS,
+  autoInstallTempDir as tempDir,
   tls,
   unprivilegedSpawnOptions,
 } from "harness";
@@ -584,16 +585,12 @@ describe.concurrent("auto-install reads every dependency group of the project's 
       ),
     });
     const peak = async (...flags: string[]) => {
-      await using proc = Bun.spawn({
+      const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
         cmd: [bunExe(), ...flags, "index.js"],
         cwd: String(dir),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
-      return proc.resourceUsage()!.maxRSS;
+      return maxRSS;
     };
 
     const without = await peak("--no-install");

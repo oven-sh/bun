@@ -1,5 +1,3 @@
-//! Stand-ins for native code the compiler's front end calls on every build, for binaries that link none of Bun's C++: BoringSSL's SHA-256 and library initializers, the abort handler for removed features, the crash handler's queries about compiled code, the two WTF string functions that `bun_sys::Error`'s `Display` links and never calls, ICU's collator, which only the React Compiler calls, and what `bun_core::output::stdio::init` calls at start.
-
 use bun_alloc::WTFStringImplStruct;
 use bun_boringssl_sys::{ENGINE, EVP_MD, EVP_MD_CTX, SHA256_CTX, env_md_ctx_md_data};
 use bun_core::ffi::zeroed;
@@ -382,9 +380,6 @@ extern "C" fn Bun__collateUTF16(
     panic!("this program has no ICU")
 }
 
-// What Bun's transpiler asks of the rest of Bun. The compiler's front end runs it on the files that it lowers.
-
-/// `operationMathPow`
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
 extern "C" fn Bun__JSC__operationMathPow(base: f64, exponent: f64) -> f64 {

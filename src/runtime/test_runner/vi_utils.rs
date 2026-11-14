@@ -63,7 +63,7 @@ pub(crate) fn before_each_attempt(global: &JSGlobalObject, is_vitest: bool) {
 /// False inside a hook that a preload registered, because that hook runs on behalf of a test file.
 #[unsafe(no_mangle)]
 extern "C" fn ViUtils__isLoadingPreload(global: &JSGlobalObject) -> bool {
-    global.bun_vm().is_in_preload
+    global.bun_vm().is_in_preload.get()
 }
 
 /// If `next_load_shares_global` is false, `global` is thrown away and the preloads run again, so there's nothing to undo.
@@ -112,7 +112,7 @@ fn number_option(
 fn commit(global: &JSGlobalObject, config: Config) {
     if let Some(runner) = Jest::runner() {
         runner.vi_config = config;
-        if global.bun_vm().is_in_preload {
+        if global.bun_vm().is_in_preload.get() {
             runner.vi_config_of_preload = config;
         }
     }

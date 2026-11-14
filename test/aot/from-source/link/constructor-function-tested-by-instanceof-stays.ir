@@ -1,0 +1,13 @@
+# -- source: constructor-function-tested-by-instanceof-stays.js
+# function Ok(v) { this.v = v; }
+# function Err(e) { this.e = e; }
+# function unwrap(r) { if (r instanceof Ok) return r.v; if (r instanceof Err) return -r.e; return 0; }
+# sink(unwrap(new Ok(1)) + unwrap(new Err(2)));
+# -- end of source
+# If the row of Function.prototype[Symbol.hasInstance], which reads `prototype` off its receiver, took a constructor function for something that may answer that read with code, `r instanceof Ok` would hand Ok to unseen code, and its layout with it.
+# The property of a function can be written. It cannot become an accessor.
+# RUN: link functions layouts mechanisms=all
+# CHECK: function f1 callers-known
+# CHECK: function f2 callers-known
+# CHECK: layout L0 {{*}}changes=[]
+# CHECK: layout L1 {{*}}changes=[]

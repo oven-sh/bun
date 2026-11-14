@@ -1,0 +1,15 @@
+# -- source: main.js
+# function make(count) { return { count: count, label: "a" }; }
+# function wrap(box) { return { inner: box }; }
+# function peek(holder) { return holder.inner.hurry; }
+# function sweep(holder, turns) { var seen = 0; for (var i = 0; i < turns; i++) { if (holder.inner.hurry) seen++; } return seen; }
+# var kept = wrap(make(1));
+# publish(kept);
+# print(peek(kept), sweep(kept, 3));
+# -- end of source
+# `kept` is in the hands of code that nobody has seen, so what lies in `inner` is anything, and the record of `make` is what is expected there. `hurry` is no field of that record and nothing above it has the name.
+# In `sweep` the read stands in a loop: the looks at the cell pay, and behind them the read finds nothing. In `peek` it stands outside of loops in a function that is not checked, and nobody has written what `inner` holds: the form is withheld by its pay.
+# `why-closed` says so. It used to say why no METHOD stands above ("no field, and the layout is of no class"), which hid the cause.
+# RUN(WHY): why-closed mechanisms=all
+# WHY: the read finds nothing, and the looks at the cell that would show it do not pay outside of loops where nobody has written what the receiver is
+# WHY-NOT: the layout is of no class

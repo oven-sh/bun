@@ -1,0 +1,14 @@
+# -- source: main.js
+# class Meter { k = 2; read(x) { return x + this.k; } }
+# class Scale extends Meter { read(x) { return super.read(x) + 1; } }
+# Meter.prototype.read = function (x) { return x * 2 + this.k; };
+# function run(n) { const scale = new Scale(); let s = 0; for (let i = 0; i < n; i++) s = (s + scale.read(i & 3)) | 0; return s; }
+# print(run(100));
+# -- end of source
+# LIBRARY: own
+# super.read() enters the function that the statement has put on the parent's prototype, behind its guard.
+# RUN: walk f1 mechanisms=all
+# CHECK: AreMembersUnchanged conditions=[{kind=MemberAssigned layout=L0 key="read"}]
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 600
+# ANSWERS-NEXT: exited with 0

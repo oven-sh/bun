@@ -1,0 +1,15 @@
+# -- source: main.cjs
+# "use strict";
+# const M = new Map([["a", JSON.parse("[1, 5, 3]")], ["b", new Uint8Array(3)], ["c", "xxx"]]);
+# const l = M.get("a");
+# function f() { let m = -1; for (let i = 0; i < l.length; i++) if (l[i] > m) m = l[i]; return m; }
+# globalThis.keep = f;
+# print(f());
+# -- end of source
+# What the map gives lies in a constant of the file. The held reading spells a value that nobody knows as every kind of primitive; the bytes beside them are what happened to be in sight.
+# Tested for bytes, the list failed and the loop ran closed. Such a word says nothing where built-in objects or functions alone stand beside the primitives: the loop tells its list apart itself. f1 = f
+# RUN(WALK): walk f1 mechanisms=all
+# WALK-NOT: = TypeTest {{*}}testedType=Uint8Array @
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 5
+# ANSWERS-NEXT: exited with 0

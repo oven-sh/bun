@@ -321,7 +321,7 @@ impl ExtractTarball {
                     }
                     if zlib_pool.list.capacity() > 16 {
                         use bun_libdeflate_sys::libdeflate;
-                        if let Some(mut decompressor) = libdeflate::OwnedDecompressor::new() {
+                        if let Some(decompressor) = libdeflate::OwnedDecompressor::new() {
                             zlib_pool.list.clear();
                             let result = decompressor.decompress_to_vec(
                                 tgz_bytes,

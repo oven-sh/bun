@@ -1,0 +1,19 @@
+# -- source: main.cjs
+# function rows(a, b) {
+#   let prev = [];
+#   for (let j = 0; j <= b.length; j++) prev[j] = j;
+#   for (let i = 0; i < a.length; i++) { const cur = [i + 1]; for (let j = 0; j < b.length; j++) cur.push(prev[j] + 1); prev = cur; }
+#   return prev.join();
+# }
+# globalThis.kept = [rows];
+# print(rows("abc", "xyz")); print(rows("", "xy")); print(rows([1, 2], { length: "3" }));
+# -- end of source
+# The literal begins with what is calculated from a counter. It has storage for int32s, so a loop that pushes numbers onto it is versioned.
+# f1 = rows
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: Array @Cell = NewArray {{*}}literalStorage=ByElements
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 3,3,3,3
+# ANSWERS-NEXT: 0,1,2
+# ANSWERS-NEXT: 2,2,2,3

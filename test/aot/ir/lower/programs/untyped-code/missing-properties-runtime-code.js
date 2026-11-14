@@ -142,37 +142,31 @@ console.log(lines.join("\n"));
 
 // GENERATED: Base reader make Derived has
 // CHECK-LABEL: function {{*}}name="Base"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_1]]] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_1]]] {
 // CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_2]]
 // CHECK-NEXT: v2 = NewObject v1 layout=[[L_2]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_2]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_2]]}
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="reader"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_3]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_4]]
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: undefined|null|string):
+// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_3]]
 // CHECK-NEXT: v2 = CheckInitialized v1 name="readers"
-// CHECK-NEXT: v3 = TypeTest v0 testedType=object
-// CHECK-NEXT: Branch v3 -> taken b2(| 0), notTaken b3(| 0)
-// CHECK-NEXT: b2(v4):
-// CHECK-NEXT: v5 = RequireObjectCoercible v2 nullishAccess=Update
-// CHECK-NEXT: v6 = ToPropertyKey v4
-// CHECK-NEXT: Jump -> next b4(v6)
-// CHECK-NEXT: b3(v7):
-// CHECK-NEXT: Jump -> next b4(v7)
-// CHECK-NEXT: b4(v8):
-// CHECK-NEXT: v9 = ElemGet v2, v8{{*}} callers
+// CHECK-NEXT: v3 = RequireObjectCoercible v2 nullishAccess=Update
+// CHECK-NEXT: v4 = TypeTest v0 testedType=object
+// CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b2(| 0)
+// CHECK-NEXT: b1(v5):
+// CHECK-NEXT: v6 = ToPropertyKey v5
+// CHECK-NEXT: Jump -> next b3(v6)
+// CHECK-NEXT: b2(v7):
+// CHECK-NEXT: Jump -> next b3(v7)
+// CHECK-NEXT: b3(v8):
+// CHECK-NEXT: v9 = ElemGet v2, v8
 // CHECK-NEXT: v10 = TypeTest v9 testedType=undefined|null
-// CHECK-NEXT: Branch v10 -> taken b5(| 0), notTaken b7(| 0)
-// CHECK-NEXT: b5(v11):
-// CHECK-NEXT: Jump -> next b6()
-// CHECK-NEXT: b6():
+// CHECK-NEXT: Branch v10 -> taken b4(| 0), notTaken b36(| 0)
+// CHECK-NEXT: b4(v11):
 // CHECK-NEXT: v12 = Builtin builtin=GlobalThis
 // CHECK-NEXT: v13 = PropGet v12 key="Function" [isFreeName]
 // CHECK-NEXT: v14 = Convert v13 declared={type=builtin(Function) flags=[IsExpected]}
@@ -181,43 +175,155 @@ console.log(lines.join("\n"));
 // CHECK-NEXT: v17 = Add v16, v0
 // CHECK-NEXT: v18 = String string=";"
 // CHECK-NEXT: v19 = Add v17, v18
-// CHECK-NEXT: v20 = Construct v14, -, v15, v19 calleeName="Function"
-// CHECK-NEXT: v21 = Convert v20 declared={type=undefined|null|function flags=[IsExpected]}
-// CHECK-NEXT: ElemSet v2, v8, v21
-// CHECK-NEXT: Jump -> next b8(v21)
-// CHECK-NEXT: b7(v23):
-// CHECK-NEXT: Jump -> next b8(v23)
-// CHECK-NEXT: b8(v24):
-// CHECK-NEXT: Return v24
+// CHECK-NEXT: v20 = Builtin builtin=Function [isNotReadFromHolder]
+// CHECK-NEXT: v21 = StrictEq v14, v20
+// CHECK-NEXT: Branch v21 -> taken b5(), notTaken b34()
+// CHECK-NEXT: b5():
+// CHECK-NEXT: SwitchString v19 strings=["return value.absent;", "return value.later;", "return value.onTheRoot;", "return value.method;", "return value.toString;", "return value.anything;", "return value.counted;", "return value.named;", "return value.absentFromTheGlobalObject;", "return value.key2;", "return value.key3;", "return value.inParent;", "return value.wanted;", "return value.seldom;"] -> case b6(), case b8(), case b10(), case b12(), case b14(), case b16(), case b18(), case b20(), case b22(), case b24(), case b26(), case b28(), case b30(), case b32(), otherwise b34()
+// CHECK-NEXT: b6():
+// CHECK-NEXT: v22 = String string="value"
+// CHECK-NEXT: v23 = StrictEq v15, v22
+// CHECK-NEXT: Branch v23 -> taken b7(), notTaken b34()
+// CHECK-NEXT: b7():
+// CHECK-NEXT: CheckEvaluation [ofFunction]
+// CHECK-NEXT: v25 = NewClosure function=[[f_4]]
+// CHECK-NEXT: Jump -> next b35(v25)
+// CHECK-NEXT: b8():
+// CHECK-NEXT: v26 = String string="value"
+// CHECK-NEXT: v27 = StrictEq v15, v26
+// CHECK-NEXT: Branch v27 -> taken b9(), notTaken b34()
+// CHECK-NEXT: b9():
+// CHECK-NEXT: CheckEvaluation [ofFunction]
+// CHECK-NEXT: v29 = NewClosure function=[[f_5]]
+// CHECK-NEXT: Jump -> next b35(v29)
+// CHECK-NEXT: b10():
+// CHECK-NEXT: v30 = String string="value"
+// CHECK-NEXT: v31 = StrictEq v15, v30
+// CHECK-NEXT: Branch v31 -> taken b11(), notTaken b34()
+// CHECK-NEXT: b11():
+// CHECK-NEXT: CheckEvaluation [ofFunction]
+// CHECK-NEXT: v33 = NewClosure function=[[f_6]]
+// CHECK-NEXT: Jump -> next b35(v33)
+// CHECK-NEXT: b12():
+// CHECK-NEXT: v34 = String string="value"
+// CHECK-NEXT: v35 = StrictEq v15, v34
+// CHECK-NEXT: Branch v35 -> taken b13(), notTaken b34()
+// CHECK-NEXT: b13():
+// CHECK-NEXT: CheckEvaluation [ofFunction]
+// CHECK-NEXT: v37 = NewClosure function=[[f_7]]
+// CHECK-NEXT: Jump -> next b35(v37)
+// CHECK-NEXT: b14():
+// CHECK-NEXT: v38 = String string="value"
+// CHECK-NEXT: v39 = StrictEq v15, v38
+// CHECK-NEXT: Branch v39 -> taken b15(), notTaken b34()
+// CHECK-NEXT: b15():
+// CHECK-NEXT: CheckEvaluation [ofFunction]
+// CHECK-NEXT: v41 = NewClosure function=[[f_8]]
+// CHECK-NEXT: Jump -> next b35(v41)
+// CHECK-NEXT: b16():
+// CHECK-NEXT: v42 = String string="value"
+// CHECK-NEXT: v43 = StrictEq v15, v42
+// CHECK-NEXT: Branch v43 -> taken b17(), notTaken b34()
+// CHECK-NEXT: b17():
+// CHECK-NEXT: CheckEvaluation [ofFunction]
+// CHECK-NEXT: v45 = NewClosure function=[[f_9]]
+// CHECK-NEXT: Jump -> next b35(v45)
+// CHECK-NEXT: b18():
+// CHECK-NEXT: v46 = String string="value"
+// CHECK-NEXT: v47 = StrictEq v15, v46
+// CHECK-NEXT: Branch v47 -> taken b19(), notTaken b34()
+// CHECK-NEXT: b19():
+// CHECK-NEXT: CheckEvaluation [ofFunction]
+// CHECK-NEXT: v49 = NewClosure function=[[f_10]]
+// CHECK-NEXT: Jump -> next b35(v49)
+// CHECK-NEXT: b20():
+// CHECK-NEXT: v50 = String string="value"
+// CHECK-NEXT: v51 = StrictEq v15, v50
+// CHECK-NEXT: Branch v51 -> taken b21(), notTaken b34()
+// CHECK-NEXT: b21():
+// CHECK-NEXT: CheckEvaluation [ofFunction]
+// CHECK-NEXT: v53 = NewClosure function=[[f_11]]
+// CHECK-NEXT: Jump -> next b35(v53)
+// CHECK-NEXT: b22():
+// CHECK-NEXT: v54 = String string="value"
+// CHECK-NEXT: v55 = StrictEq v15, v54
+// CHECK-NEXT: Branch v55 -> taken b23(), notTaken b34()
+// CHECK-NEXT: b23():
+// CHECK-NEXT: CheckEvaluation [ofFunction]
+// CHECK-NEXT: v57 = NewClosure function=[[f_12]]
+// CHECK-NEXT: Jump -> next b35(v57)
+// CHECK-NEXT: b24():
+// CHECK-NEXT: v58 = String string="value"
+// CHECK-NEXT: v59 = StrictEq v15, v58
+// CHECK-NEXT: Branch v59 -> taken b25(), notTaken b34()
+// CHECK-NEXT: b25():
+// CHECK-NEXT: CheckEvaluation [ofFunction]
+// CHECK-NEXT: v61 = NewClosure function=[[f_13]]
+// CHECK-NEXT: Jump -> next b35(v61)
+// CHECK-NEXT: b26():
+// CHECK-NEXT: v62 = String string="value"
+// CHECK-NEXT: v63 = StrictEq v15, v62
+// CHECK-NEXT: Branch v63 -> taken b27(), notTaken b34()
+// CHECK-NEXT: b27():
+// CHECK-NEXT: CheckEvaluation [ofFunction]
+// CHECK-NEXT: v65 = NewClosure function=[[f_14]]
+// CHECK-NEXT: Jump -> next b35(v65)
+// CHECK-NEXT: b28():
+// CHECK-NEXT: v66 = String string="value"
+// CHECK-NEXT: v67 = StrictEq v15, v66
+// CHECK-NEXT: Branch v67 -> taken b29(), notTaken b34()
+// CHECK-NEXT: b29():
+// CHECK-NEXT: CheckEvaluation [ofFunction]
+// CHECK-NEXT: v69 = NewClosure function=[[f_15]]
+// CHECK-NEXT: Jump -> next b35(v69)
+// CHECK-NEXT: b30():
+// CHECK-NEXT: v70 = String string="value"
+// CHECK-NEXT: v71 = StrictEq v15, v70
+// CHECK-NEXT: Branch v71 -> taken b31(), notTaken b34()
+// CHECK-NEXT: b31():
+// CHECK-NEXT: CheckEvaluation [ofFunction]
+// CHECK-NEXT: v73 = NewClosure function=[[f_16]]
+// CHECK-NEXT: Jump -> next b35(v73)
+// CHECK-NEXT: b32():
+// CHECK-NEXT: v74 = String string="value"
+// CHECK-NEXT: v75 = StrictEq v15, v74
+// CHECK-NEXT: Branch v75 -> taken b33(), notTaken b34()
+// CHECK-NEXT: b33():
+// CHECK-NEXT: CheckEvaluation [ofFunction]
+// CHECK-NEXT: v77 = NewClosure function=[[f_17]]
+// CHECK-NEXT: Jump -> next b35(v77)
+// CHECK-NEXT: b34():
+// CHECK-NEXT: v78 = Construct v14, -, v15, v19 calleeName="Function"
+// CHECK-NEXT: Jump -> next b35(v78)
+// CHECK-NEXT: b35(v79):
+// CHECK-NEXT: ElemSet v2, v8, v79
+// CHECK-NEXT: Jump -> next b37(v79)
+// CHECK-NEXT: b36(v81):
+// CHECK-NEXT: Jump -> next b37(v81)
+// CHECK-NEXT: b37(v82):
+// CHECK-NEXT: Return v82
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="make"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_5]]] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v0 = Builtin builtin=Object
 // CHECK-NEXT: v1 = Builtin builtin=ObjectCreate
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_6]]
+// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_18]]
 // CHECK-NEXT: v3 = CheckInitialized v2 name="root"
 // CHECK-NEXT: v4 = Call v1, v0, v3 calleeName="Object.create"
 // CHECK-NEXT: ReturnCall v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Derived"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_7]]] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_19]]] {
 // CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_8]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_8]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_20]]
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_20]]}
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="has"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=true flags=[IsExpected]}] functionTypes={{*}}[[f_9]]] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v0 = Boolean boolean=true
-// CHECK-NEXT: v1 = Convert v0 declared={type=true flags=[IsExpected]}
-// CHECK-NEXT: Return v1
+// CHECK-NEXT: Return v0
 // CHECK-NEXT: }

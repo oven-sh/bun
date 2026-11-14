@@ -3,15 +3,11 @@
 // CHECK: [[test]] = TypeTest [[x]] testedType=undefined|null @
 // CHECK-NEXT: Branch [[test]] -> taken [[taken]](| 0), notTaken [[notTaken]](| 0)
 // CHECK: [[notTaken]]({{*}}):
-// CHECK-NEXT: Jump -> next [[afterNotTaken]]()
-// CHECK: [[afterNotTaken]]():
 // CHECK-NEXT: = Integer integer=1 @
 // CHECK-LABEL: function {{*}}name="looseNull"
 // CHECK: [[test]] = TypeTest [[x]] testedType=undefined|null @
 // CHECK-NEXT: Branch [[test]] -> taken [[taken]](| 0), notTaken [[notTaken]](| 0)
 // CHECK: [[taken]]({{*}}):
-// CHECK-NEXT: Jump -> next [[afterTaken]]()
-// CHECK: [[afterTaken]]():
 // CHECK-NEXT: = Integer integer=1 @
 // CHECK-LABEL: function {{*}}name="strictNull"
 // CHECK: [[test]] = TypeTest [[x]] testedType=null @
@@ -26,8 +22,6 @@
 // CHECK: [[test]] = TypeTest [[x]] testedType=string @
 // CHECK-NEXT: Branch [[test]] -> taken [[taken]](| 0), notTaken [[notTaken]](| 0)
 // CHECK: [[notTaken]]({{*}}):
-// CHECK-NEXT: Jump -> next [[afterNotTaken]]()
-// CHECK: [[afterNotTaken]]():
 // CHECK-NEXT: = Integer integer=1 @
 // CHECK-LABEL: function {{*}}name="typeofReversed"
 // CHECK: [[test]] = TypeTest [[x]] testedType=number @
@@ -36,15 +30,11 @@
 // CHECK: [[test]] = TypeTest [[x]] testedType=string @
 // CHECK-NEXT: Branch [[test]] -> taken [[taken]](| 0), notTaken [[notTaken]](| 0)
 // CHECK: [[taken]]({{*}}):
-// CHECK-NEXT: Jump -> next [[afterTaken]]()
-// CHECK: [[afterTaken]]():
 // CHECK-NEXT: = Integer integer=1 @
 // CHECK-LABEL: function {{*}}name="undefinedReversed"
 // CHECK: [[test]] = TypeTest [[x]] testedType=undefined @
 // CHECK-NEXT: Branch [[test]] -> taken [[taken]](| 0), notTaken [[notTaken]](| 0)
 // CHECK: [[notTaken]]({{*}}):
-// CHECK-NEXT: Jump -> next [[afterNotTaken]]()
-// CHECK: [[afterNotTaken]]():
 // CHECK-NEXT: = Integer integer=1 @
 // CHECK-LABEL: function {{*}}name="voidZero"
 // CHECK: [[test]] = TypeTest [[x]] testedType=undefined @

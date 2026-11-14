@@ -20,6 +20,9 @@ type PendingNodes = SmallVec<[TypeNodeId; 8]>;
 #[derive(Default)]
 struct NamedTypes {
     symbols: SmallVec<[Sym; 8]>,
+    /// Those of the values whose types are named: `typeof value`.
+    annotations: SmallVec<[(FileId, TypeNodeId); 2]>,
+    collected_annotations: usize,
     has_untrusted_part: bool,
     reads_declarations: bool,
 }
@@ -85,8 +88,28 @@ struct StripWalk {
     finished: FxHashMap<TypeId, TypeId>,
 }
 
+#[inline]
 fn push_nodes(pending: &mut PendingNodes, nodes: impl IntoIterator<Item = TypeNodeId>) {
-    pending.extend(nodes.into_iter().filter(|node| node.is_some()));
+    for node in nodes {
+        if node.is_some() {
+            pending.push(node);
+        }
+    }
+}
+
+#[inline]
+fn has_declared_parts(data: &TypeData) -> bool {
+    matches!(
+        data,
+        TypeData::Union(_)
+            | TypeData::Intersection(_)
+            | TypeData::Ref { .. }
+            | TypeData::Tuple { .. }
+            | TypeData::Anon { .. }
+            | TypeData::Fns { .. }
+            | TypeData::Synth(_)
+            | TypeData::ReverseMapped { .. }
+    )
 }
 
 fn tuple_element_type_node(hir: &hir::File<'_>, element: &TupleElem) -> TypeNodeId {
@@ -195,12 +218,43 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     pub(super) fn mentions_untrusted_alias(&mut self, file: FileId, node: TypeNodeId) -> bool {
+        let known = self.inputs.alias_mentions;
+        if let Some(mentions) = known.and_then(|known| known.get(file, node)) {
+            return mentions;
+        }
         let mut named = NamedTypes::default();
         self.collect_named_types(file, [node], &mut named);
-        self.has_untrusted_mention(&named)
+        let mentions = self.has_untrusted_mention(&named);
+        if let Some(known) = known
+            && !self.is_cut_short()
+            && !self.c.is_stack_low()
+        {
+            let node_count = self.c.hir(file).types.len();
+            known.note(file, node, node_count, mentions);
+        }
+        mentions
     }
 
     fn collect_named_types(
+        &mut self,
+        file: FileId,
+        nodes: impl IntoIterator<Item = TypeNodeId>,
+        named: &mut NamedTypes,
+    ) {
+        self.collect_types_named_in(file, nodes, named);
+        self.collect_types_of_annotations(named);
+    }
+
+    fn collect_types_of_annotations(&mut self, named: &mut NamedTypes) {
+        let reads_declarations = named.reads_declarations;
+        while let Some(&(file, annotation)) = named.annotations.get(named.collected_annotations) {
+            named.collected_annotations += 1;
+            self.collect_types_named_in(file, [annotation], named);
+        }
+        named.reads_declarations = reads_declarations;
+    }
+
+    fn collect_types_named_in(
         &mut self,
         file: FileId,
         nodes: impl IntoIterator<Item = TypeNodeId>,
@@ -234,12 +288,12 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 } => {
                     push_nodes(&mut pending, hir.ids(args));
                     let value = self.find_imported_symbol(file, node);
-                    named.has_untrusted_part |= !self.is_trusted_value(value);
+                    self.add_annotations_of_value(value, named);
                 }
                 TypeNodeKind::Typeof { expr, args, .. } => {
                     push_nodes(&mut pending, hir.ids(args));
                     let value = self.find_first_identifier_symbol(file, expr);
-                    named.has_untrusted_part |= !self.is_trusted_value(value);
+                    self.add_annotations_of_value(value, named);
                 }
                 TypeNodeKind::Array(operand)
                 | TypeNodeKind::Readonly(operand)
@@ -297,8 +351,16 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             named.symbols.push(symbol);
         } else if flags.contains(SymFlags::TYPE_ALIAS) || !flags.intersects(SymFlags::TYPE) {
             named.has_untrusted_part = true;
-        } else if written_count < self.c.files().type_argument_arity(symbol).1 {
+        } else if self.takes_more_type_arguments(symbol, written_count) {
             named.symbols.push(symbol);
+        }
+    }
+
+    fn takes_more_type_arguments(&self, symbol: Sym, written_count: usize) -> bool {
+        let files = self.c.files();
+        match files.only_type_param_list(symbol) {
+            Some((_, parameters)) if parameters.len() <= written_count => false,
+            _ => written_count < files.type_argument_arity(symbol).1,
         }
     }
 
@@ -324,6 +386,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let Some(symbol) = symbol else {
             return;
         };
+        if arguments.is_empty() {
+            return;
+        }
         let symbol = self.c.files().canonical(symbol);
         if self.reads_declarations_of_arguments(symbol, arguments.len()) {
             let hir = self.c.hir(file);
@@ -371,33 +436,24 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let answer = self.has_untrusted_declaration(ty, &mut FxHashSet::default());
         if !self.is_cut_short() {
             let row = self.kept.type_row(ty);
-            self.kept.type_at(row).reads_untrusted_declaration = Some(answer);
+            self.kept.type_to_change(row).reads_untrusted_declaration = Some(answer);
         }
         answer
     }
 
     fn has_untrusted_declaration(&mut self, ty: TypeId, visited: &mut FxHashSet<TypeId>) -> bool {
-        let has_parts = matches!(
-            self.c.data(ty),
-            TypeData::Union(_)
-                | TypeData::Intersection(_)
-                | TypeData::Ref { .. }
-                | TypeData::Tuple { .. }
-                | TypeData::Anon { .. }
-                | TypeData::Fns { .. }
-                | TypeData::Synth(_)
-                | TypeData::ReverseMapped { .. }
-        );
-        if !has_parts || !visited.insert(ty) {
+        let data = self.c.data(ty);
+        if !has_declared_parts(data) || !visited.insert(ty) {
             return false;
         }
         if self.c.is_stack_low() {
             return true;
         }
-        match self.c.data(ty) {
-            TypeData::Union(parts) | TypeData::Intersection(parts) => parts
-                .iter()
-                .any(|&part| self.has_untrusted_declaration(part, visited)),
+        match data {
+            TypeData::Union(parts) | TypeData::Intersection(parts) => parts.iter().any(|&part| {
+                has_declared_parts(self.c.data(part))
+                    && self.has_untrusted_declaration(part, visited)
+            }),
             TypeData::Ref { target, .. } => {
                 !self.is_declared_in_type_function_files(*target)
                     || (self.c.type_arguments(ty).iter())
@@ -413,34 +469,41 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    fn is_trusted_value(&mut self, value: Option<Sym>) -> bool {
-        let Some(value) = value else {
-            return false;
+    /// A value is trusted as the types are that its annotations name. They are part of the scan that names the value: an alias
+    /// may be named by the annotation of a value whose type it names.
+    fn add_annotations_of_value(&mut self, value: Option<Sym>, named: &mut NamedTypes) {
+        let value = value.map(|value| self.c.files().canonical(value));
+        let Some(value) = value.filter(|&value| self.symbol_trust(value).is_trusted()) else {
+            named.has_untrusted_part = true;
+            return;
         };
-        let value = self.c.files().canonical(value);
-        if !self.symbol_trust(value).is_trusted() || self.c.is_stack_low() {
-            return false;
-        }
         let declarations = self.c.files().decls_of(value);
-        declarations
-            .iter()
-            .all(|&(file, declaration)| match declaration {
-                Decl::Var(pattern) | Decl::Param(pattern) => {
-                    let annotation = self.c.type_annotation_of_pat(file, pattern);
-                    annotation.is_some() && !self.mentions_untrusted_alias(file, annotation)
-                }
-                _ => true,
-            })
+        for &(file, declaration) in declarations.iter() {
+            let (Decl::Var(pattern) | Decl::Param(pattern)) = declaration else {
+                continue;
+            };
+            let annotation = self.c.type_annotation_of_pat(file, pattern);
+            named.has_untrusted_part |= !annotation.is_some();
+            if annotation.is_some() && !named.annotations.contains(&(file, annotation)) {
+                named.annotations.push((file, annotation));
+            }
+        }
     }
 
     fn has_untrusted_mention(&mut self, named: &NamedTypes) -> bool {
         if named.has_untrusted_part {
             return true;
         }
+        if named.symbols.is_empty() {
+            return false;
+        }
         let mut graph = AliasScanGraph::default();
         let mut mentions = false;
-        for &symbol in &named.symbols {
+        for &symbol in named.symbols.iter() {
             mentions |= self.scan_alias(symbol, &mut graph) == AliasScan::MentionsUntrustedAlias;
+        }
+        if graph.nodes.is_empty() {
+            return mentions;
         }
         self.scan_alias_declarations(&mut graph);
         let mut symbols = named.symbols.iter();
@@ -758,14 +821,14 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return SmallVec::new();
         };
         let mut named = NamedTypes::default();
-        self.collect_named_types(alias_file, [declaration.ty], &mut named);
+        self.collect_types_named_in(alias_file, [declaration.ty], &mut named);
+        let mut aliases = named.symbols.clone();
+        self.collect_types_of_annotations(&mut named);
         if !self.has_untrusted_mention(&named) {
             return SmallVec::new();
         }
-        named
-            .symbols
-            .retain(|symbol| self.find_type_alias(*symbol).is_some());
-        named.symbols
+        aliases.retain(|symbol| self.find_type_alias(*symbol).is_some());
+        aliases
     }
 
     fn compute_alias_form(&mut self, alias: Sym) -> Result<TypeId, GaveUp> {

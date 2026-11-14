@@ -2443,7 +2443,11 @@ export class EnumerationType extends NamedType {
     return ["string"];
   }
   get parameterType(): ParameterType {
-    return strictType({ type: "StringLiterals", values: this.spellings.flat() });
+    return strictType(unionType({ type: "StringLiterals", values: this.spellings.flat() }, instanceType("String")));
+  }
+  /** A String object whose characters are none of the values. */
+  get canRefuse(): boolean {
+    return true;
   }
   get resultType(): TypeSpec {
     return { type: "StringLiterals", values: this.spellings.map(([canonical]) => canonical) };
@@ -2612,10 +2616,10 @@ export class DictionaryType extends NamedType {
     );
     return { ...convertingType(accepted, "Dictionary", unionType(accepted, { type: "Object" })), members: this.names };
   }
-  /** With no JS value in it, it is new objects, new arrays and primitives. Plain data inherits from Object.prototype and Array.prototype. */
+  /** With no JS value in it, it is new objects, new arrays and primitives. Plain data inherits from Object.prototype and Array.prototype. Otherwise it is still a new ordinary object: `to_js::object`, `to_js::null_prototype_object`. */
   get resultType(): TypeSpec {
     return this.holdsJSValue || this.makesObjectWithoutPrototype
-      ? { type: "Object", freshness: "Yes" }
+      ? { type: "Instance", class: "Object", freshness: "Unaliased" }
       : { type: "PlainData" };
   }
   get dependencies(): readonly Type[] {
@@ -2919,6 +2923,7 @@ export class Signature {
       "namedAsBound",
       "mutates",
       "passThis",
+      "answersThis",
       "invalidThis",
       "privateSymbol",
       "rustName",
@@ -3180,6 +3185,8 @@ export interface FunctionField extends Omit<SignatureOptions, "rustPath" | "cppS
   mutates?: boolean;
   /** Also pass the wrapper, `this_value: JsWrapper<'a, Self>`. */
   passThis?: boolean;
+  /** It returns its receiver: every arm of the Rust function hands back the wrapper that `passThis` passes. The thunk hands that on and holds it to nothing. */
+  answersThis?: boolean;
   /** When `this` is not an instance: `"throw"` (the default) throws `ERR_INVALID_THIS`, `"undefined"` returns `undefined`. */
   invalidThis?: "throw" | "undefined";
   /** Key the function by this private builtin name (`$name` in src/js) instead of a string. */
@@ -3274,7 +3281,10 @@ export interface ConstantField {
 export type Field =
   FunctionField | readonly FunctionField[] | GetterField | InternalFieldField | BuiltinField | ConstantField;
 export type StaticField =
-  | Omit<FunctionField, "mutates" | "passThis" | "invalidThis" | "privateSymbol" | "name" | "calledFromCpp">
+  | Omit<
+      FunctionField,
+      "mutates" | "passThis" | "answersThis" | "invalidThis" | "privateSymbol" | "name" | "calledFromCpp"
+    >
   | Omit<GetterField, "cache" | "writable" | "passThis">;
 
 export interface ConstructOptions extends Omit<SignatureOptions, "rustPath" | "returns"> {
@@ -3282,7 +3292,7 @@ export interface ConstructOptions extends Omit<SignatureOptions, "rustPath" | "r
   passStructure?: boolean;
 }
 
-type ClassTableColumns = Pick<ClassColumns, "slots" | "stateHeap" | "types" | "lockedObjects"> & EntryColumns;
+type ClassTableColumns = Pick<ClassColumns, "slots" | "stateHeap" | "types" | "lockedMembers"> & EntryColumns;
 
 export interface ClassOptions extends ClassTableColumns {
   /** Path of the Rust struct. The members are its own methods. A class with `extends` has its base's. */
@@ -3376,6 +3386,7 @@ export class Method extends Signature {
   readonly hasDefaultRustName: boolean;
   readonly receiver: Receiver;
   readonly passThis: boolean;
+  readonly answersThis: boolean;
   readonly invalidThis: "throw" | "undefined";
   readonly privateSymbol: string | undefined;
   readonly functionName: string | undefined;
@@ -3415,6 +3426,11 @@ export class Method extends Signature {
     refuseReentrancy(name, isStatic, sharedThis, this.capability);
     this.receiver = memberReceiver(isStatic, sharedThis, !!options.mutates);
     this.passThis = !isStatic && !!options.passThis;
+    this.answersThis = !!options.answersThis;
+    assert(
+      !this.answersThis || (this.passThis && this.returns instanceof ClassType),
+      `${name}: answersThis takes passThis and returns: b.self`,
+    );
     this.invalidThis = options.invalidThis ?? "throw";
     this.privateSymbol = options.privateSymbol;
     assert(!(this.privateSymbol && wellKnownSymbol(name)), `${name}: an @@ key has no privateSymbol`);

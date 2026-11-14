@@ -1,6 +1,6 @@
 // Alone: which file is the main module goes by the entry points of the executable
 // `main` is an everyday name: the field of a package.json. A store under it counts as a store into Bun.main only where Bun is seen to arrive.
-// STATISTIC: EngineRuns = 1
+// An earlier compiler ran the engine again where a first run showed that the load had missed or taken too much, and counted the runs: EngineRuns = 1. A build runs the engine once now.
 const other = require("./other.cjs");
 const manifest = JSON.parse(process.env.MANIFEST || "{}");
 manifest.main = "index.js";

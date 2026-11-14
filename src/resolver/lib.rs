@@ -1114,14 +1114,8 @@ pub mod fs {
                 },
             };
 
-            // Close the handle on every exit path. Use
-            // scopeguard so close happens even if `readdir`/`put` early-return with `?`.
             let should_close_handle = !had_handle && (!store_fd || self.need_to_close_files());
-            let _close_guard = scopeguard::guard(handle, move |h| {
-                if should_close_handle {
-                    let _ = bun_sys::close(h);
-                }
-            });
+            let _close = should_close_handle.then(|| bun_sys::CloseOnDrop::new(handle));
 
             // if we get this far, it's a real directory, so we can just store the dir name.
             // An in-place refresh always keeps the slot's existing interned name: callers
@@ -1595,7 +1589,7 @@ pub mod fs {
     /// `bun_bundler::cache`) routes through ONE body instead of inlining a
     /// subset of `readFileWithHandleAndAllocator`.
     pub use super::fs_full::{
-        BOM, PathContentsPair, read_file_contents, read_file_contents_in_arena,
+        BOM, ByteOrderMark, PathContentsPair, read_file_contents, read_file_contents_in_arena,
         read_file_with_handle_impl,
     };
 
@@ -2178,17 +2172,48 @@ pub mod cache {
             path: &[u8],
             dirname_fd: Fd,
             use_shared_buffer: bool,
+            file_handle: Option<Fd>,
+            arena: Option<&bun_alloc::Arena>,
+        ) -> crate::CrateResult<Entry> {
+            let mark = fs_mod::ByteOrderMark::Converted;
+            self.read_file(
+                path,
+                dirname_fd,
+                use_shared_buffer,
+                file_handle,
+                arena,
+                mark,
+            )
+        }
+
+        /// The bytes as they are on disk: a byte order mark stays, and UTF-16 is not turned into UTF-8.
+        pub fn read_bytes_into_arena(
+            &mut self,
+            path: &[u8],
+            dirname_fd: Fd,
+            file_handle: Option<Fd>,
+            arena: &bun_alloc::Arena,
+        ) -> crate::CrateResult<Entry> {
+            let mark = fs_mod::ByteOrderMark::Kept;
+            self.read_file(path, dirname_fd, false, file_handle, Some(arena), mark)
+        }
+
+        fn read_file(
+            &mut self,
+            path: &[u8],
+            dirname_fd: Fd,
+            use_shared_buffer: bool,
             _file_handle: Option<Fd>,
             arena: Option<&bun_alloc::Arena>,
+            byte_order_mark: fs_mod::ByteOrderMark,
         ) -> crate::CrateResult<Entry> {
             let will_close =
                 fs_mod::FileSystem::get().fs.need_to_close_files() && _file_handle.is_none();
 
-            // A single let-expression avoids `mem::zeroed()` on a
-            // type that may have niche (NonZero) fields.
-            let file_handle: bun_sys::File = if let Some(f) = _file_handle {
+            let mut owned: Option<bun_sys::File> = None;
+            let fd: Fd = if let Some(f) = _file_handle {
                 bun_sys::lseek(f, 0, libc::SEEK_SET).map_err(crate::Error::from)?;
-                bun_sys::File::from_fd(f)
+                f
             } else if feature_flags::STORE_FILE_DESCRIPTORS && dirname_fd.is_valid() {
                 match bun_sys::openat_a(
                     dirname_fd,
@@ -2196,7 +2221,7 @@ pub mod cache {
                     bun_sys::O::RDONLY,
                     0,
                 ) {
-                    Ok(fd) => bun_sys::File::from_fd(fd),
+                    Ok(fd) => owned.insert(bun_sys::File::from_fd(fd)).fd(),
                     Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
                         let handle = bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)
                             .map_err(crate::Error::from)?;
@@ -2205,22 +2230,14 @@ pub mod cache {
                             bstr::BStr::new(path),
                             dirname_fd,
                         );
-                        handle
+                        owned.insert(handle).fd()
                     }
                     Err(err) => return Err(err.into()),
                 }
             } else {
-                bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)
-                    .map_err(crate::Error::from)?
-            };
-
-            let mut owned: Option<bun_sys::File> = None;
-            let fd: Fd = if _file_handle.is_some() {
-                file_handle.into_raw()
-            } else {
-                let raw = file_handle.handle();
-                owned = Some(file_handle);
-                raw
+                let handle = bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)
+                    .map_err(crate::Error::from)?;
+                owned.insert(handle).fd()
             };
             let file_handle = bun_sys::File::borrow(&fd);
 
@@ -2242,7 +2259,8 @@ pub mod cache {
                 // are reclaimed by `mi_heap_destroy` instead of pinning a
                 // segment in the worker thread's default heap.
                 (false, Some(arena)) => {
-                    match fs_mod::read_file_contents_in_arena(file_handle, path, arena) {
+                    let read = fs_mod::read_file_contents_in_arena;
+                    match read(file_handle, path, arena, byte_order_mark) {
                         Ok((_, 0)) => Contents::Empty,
                         Ok((ptr, len)) => Contents::Arena { ptr, len },
                         Err(err) => {

@@ -3,6 +3,7 @@ mod cleanup;
 mod tests;
 
 use bun_sema::hir::{ExprId, StmtId, StmtKind};
+use bun_sema::import_sites::ends_in_call_that_reads_frame_of_caller;
 use smallvec::SmallVec;
 
 use super::{FunctionLowering, convert};
@@ -113,14 +114,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let returned = self.returned;
         let value = match get_return_rule(self.builder.function().kind) {
             ReturnRule::DeclaredResult => {
-                self.describe_int32_flow(returned, convert::Int32Subject::Result, source);
-                let function = self.builder.function();
-                let source = match function.flags.contains(FunctionFlags::IS_ASYNC) {
-                    true => {
-                        source.and_then(|source| self.file.find_awaited_source(source, returned))
-                    }
-                    false => source,
-                };
+                self.describe_int32_result(returned, source);
                 convert::convert(self, value, returned, source)
             }
             ReturnRule::ConstructorResult => value,
@@ -128,7 +122,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.emit_exit(Exit::Return, Some(value));
     }
 
-    // For a value that no expression of the program returns. Nothing proves that it is an `int32`.
     fn convert_to_result(&mut self, value: ValueId) -> ValueId {
         match get_return_rule(self.builder.function().kind) {
             ReturnRule::DeclaredResult => {
@@ -140,7 +133,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // The checker lets a function whose result has no `undefined` end only where it finds the end unreachable.
     pub(crate) fn emit_empty_return(&mut self) {
         let undefined = self.builder.undefined();
         let value = self.convert_to_result(undefined);
@@ -170,7 +162,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // JSC makes no tail call from the body of a for-in statement.
     fn is_in_for_in_body(&self) -> bool {
         let hir = self.file.hir;
         self.control.entries.iter().any(|entry| match entry {
@@ -181,7 +172,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         })
     }
 
-    pub(crate) fn emit_return_call(&mut self, call: ValueId, casts: &[DeclaredType]) {
+    pub(crate) fn emit_return_call(
+        &mut self,
+        call: ValueId,
+        casts: &[DeclaredType],
+        owes_no_proof: bool,
+    ) {
         debug_assert!(
             allows_tail_call(self),
             "the caller checks allows_tail_call first"
@@ -190,6 +186,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let positions = casts.iter().copied().chain([self.returned]);
         let casts: SmallVec<[TailCast; 2]> = positions
             .filter(|&declared| declared != untyped)
+            .map(|declared| match owes_no_proof {
+                true => {
+                    let flags = declared.flags.without(PositionFlags::IS_INT32_PROMISE);
+                    DeclaredType { flags, ..declared }
+                }
+                false => declared,
+            })
             .map(|declared| TailCast { declared })
             .collect();
         self.builder.return_call(call, &casts);
@@ -241,6 +244,40 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.control.entries.push(entry);
     }
 
+    /// Returns the block that was the target.
+    pub(in crate::lower) fn set_continue_target(
+        &mut self,
+        of: StmtId,
+        target: BlockId,
+    ) -> Option<BlockId> {
+        for entry in self.control.entries.iter_mut().rev() {
+            if let ControlEntry::ContinueTarget { statement, block } = entry
+                && *statement == of
+            {
+                return Some(std::mem::replace(block, target));
+            }
+        }
+        None
+    }
+
+    /// Whether something is cleaned up on the way from here to the next iteration.
+    pub(in crate::lower) fn cleans_up_before_next_iteration(&self, of: StmtId) -> bool {
+        let is_target = |entry: &ControlEntry| matches!(entry, ControlEntry::ContinueTarget { statement, .. } if *statement == of);
+        let entries = self.control.entries.iter().rev();
+        let mut inside = entries.take_while(|entry| !is_target(entry));
+        inside.any(|entry| matches!(entry, ControlEntry::Cleanup(_)))
+    }
+
+    pub(in crate::lower) fn emit_continue(&mut self, of: StmtId) {
+        self.emit_exit(Exit::Continue(of), None);
+    }
+
+    pub(crate) fn stands_in_loop(&self) -> bool {
+        let is_of_loop =
+            |entry: &ControlEntry| matches!(entry, ControlEntry::ContinueTarget { .. });
+        self.control.entries.iter().any(is_of_loop)
+    }
+
     pub(crate) fn pop_jump_target(&mut self) {
         let entry = self.control.entries.pop();
         debug_assert!(matches!(
@@ -251,6 +288,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     pub(crate) fn begin_handler(&mut self, role: BlockRole, subject: Option<ValueId>) -> Handler {
         let handler = self.create_handler(role, subject);
+        self.begin_handler_made(handler)
+    }
+
+    pub(crate) fn begin_handler_that_reads_fields(&mut self, role: BlockRole) -> Handler {
+        let handler = self.create_handler(role, None).reading_fields();
+        self.begin_handler_made(handler)
+    }
+
+    fn begin_handler_made(&mut self, handler: Handler) -> Handler {
         let outer = self.enter_handler(handler);
         let entry = ControlEntry::Handler { handler, outer };
         self.control.entries.push(entry);
@@ -271,6 +317,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     pub(crate) fn begin_cleanup(&mut self, role: BlockRole, subject: Option<ValueId>) {
         let handler = self.create_handler(role, subject);
+        self.begin_cleanup_made(handler);
+    }
+
+    pub(crate) fn begin_cleanup_that_reads_fields(&mut self, role: BlockRole) {
+        let handler = self.create_handler(role, None).reading_fields();
+        self.begin_cleanup_made(handler);
+    }
+
+    fn begin_cleanup_made(&mut self, handler: Handler) {
         let outer = self.enter_handler(handler);
         self.control.entries.push(ControlEntry::Cleanup(Cleanup {
             handler,
@@ -330,7 +385,17 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 }
 
-pub(crate) fn allows_tail_call(lowering: &FunctionLowering<'_, '_, '_, '_, '_>) -> bool {
+pub(crate) fn allows_tail_call_of(
+    lowering: &FunctionLowering<'_, '_, '_, '_, '_>,
+    value: ExprId,
+) -> bool {
+    let file = &lowering.file;
+    let keeps_frame = file.inputs.options.runs_tests
+        && ends_in_call_that_reads_frame_of_caller(file.hir, file.bound, value);
+    !keeps_frame && allows_tail_call(lowering)
+}
+
+fn allows_tail_call(lowering: &FunctionLowering<'_, '_, '_, '_, '_>) -> bool {
     let function = lowering.builder.function();
     let has_ordinary_return = matches!(
         function.kind,

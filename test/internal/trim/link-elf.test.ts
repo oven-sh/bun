@@ -127,22 +127,27 @@ const addedSectionName = new RegExp(`^${unnamedSectionPrefix}\\d+_\\d+$`);
 describeLink("a trimmable link", () => {
   const objectsWithBoth = ["feature_code", "both", "entry", "table", "embedder", "main"];
 
-  test("removes what only the entry point reaches, code and constants, and nothing retained", async () => {
-    using dir = tempDir("trim-elf", cuttableSources);
-    const folder = String(dir);
-    const result = await linked(folder, { compilesFeatureCode: true });
-    const { featuresOf, summary } = result;
-    const removable = ["feature_code", "feature_code_0", "feature_code_1499", "feature_numbers"];
-    expect(removable.map(featuresOf)).toEqual(removable.map(() => [Extra]));
-    expectRetained(result, ["main", "retained", "Bun__abortForRemovedFeature"]);
-    expectCleanRuns(result);
-    expect(summary.removedBytes).toBeGreaterThan(100_000);
-    expect(summary.fileBytesSaved).toBeGreaterThanOrEqual(128 * 1024);
-    const sizeOf = (name: string) => statSync(join(folder, name)).size;
-    expect(sizeOf("program") - sizeOf("trimmed")).toBe(summary.fileBytesSaved);
-    expect(await exitCodeOf(folder, "trimmed", guardedArguments)).toBe(70);
-    expect(await exitCodeOf(folder, "program", guardedArguments)).toBeLessThan(64);
-  });
+  // A compile of thousands of functions. Beside twenty others on a machine with few processors it gets a twentieth of them, and a minute is not enough.
+  test.serial(
+    "removes what only the entry point reaches, code and constants, and nothing retained",
+    async () => {
+      using dir = tempDir("trim-elf", cuttableSources);
+      const folder = String(dir);
+      const result = await linked(folder, { compilesFeatureCode: true });
+      const { featuresOf, summary } = result;
+      const removable = ["feature_code", "feature_code_0", "feature_code_1499", "feature_numbers"];
+      expect(removable.map(featuresOf)).toEqual(removable.map(() => [Extra]));
+      expectRetained(result, ["main", "retained", "Bun__abortForRemovedFeature"]);
+      expectCleanRuns(result);
+      expect(summary.removedBytes).toBeGreaterThan(100_000);
+      expect(summary.fileBytesSaved).toBeGreaterThanOrEqual(128 * 1024);
+      const sizeOf = (name: string) => statSync(join(folder, name)).size;
+      expect(sizeOf("program") - sizeOf("trimmed")).toBe(summary.fileBytesSaved);
+      expect(await exitCodeOf(folder, "trimmed", guardedArguments)).toBe(70);
+      expect(await exitCodeOf(folder, "program", guardedArguments)).toBeLessThan(64);
+    },
+    240_000,
+  );
 
   test("retains a constant folded into an equal one of the feature", async () => {
     using dir = tempDir("trim-elf", sources);
@@ -318,6 +323,52 @@ describeLink("a trimmable link", () => {
     expect(trimmedResult).toEqual(cleanExit);
   });
 
+  test.skipIf(archiver === null)(
+    "writes nothing beside a library of bitcode outside the folder of the build",
+    async () => {
+      using elsewhere = tempDir("trim-elf-library", {
+        "member.c": `
+        static int calls;
+        __attribute__((noinline)) static int counted(int x) { return x + ++calls; }
+        int archive_member(int x) { return counted(x) + counted(x + 1); }
+      `,
+      });
+      using dir = tempDir("trim-elf", {
+        ...sources,
+        "main.c": `
+        ${start}
+        extern const char retained_table[62];
+        int archive_member(int);
+        ${mainReturning("archive_member(argc) == 6 && retained_table[1] == '1' ? 0 : 1")}
+      `,
+      });
+      const [library, folder] = [String(elsewhere), String(dir)];
+      const compile = [
+        tools.clang!,
+        ...thinLtoFlags,
+        "-ffunction-sections",
+        "-fno-pic",
+        "-c",
+        "member.c",
+        "-o",
+        "member.o",
+      ];
+      expect(await run(compile, library)).toEqual(cleanExit);
+      expect(await run([archiver!, "rcs", "libmember.a", "member.o"], library)).toEqual(cleanExit);
+      const { featuresOf, trimmedResult } = await linked(folder, {
+        compileFlags: { main: thinLtoFlags },
+        inputs: [join(library, "libmember.a")],
+      });
+      expect(featuresOf("feature_code")).toEqual([Extra]);
+      expect(trimmedResult).toEqual(cleanExit);
+      // The map says where the object lay that the second link took.
+      const compiled = readFileSync(join(folder, "program.map"), "latin1").split("\n").filter(line => line.includes(".lto.libmember.a(")); // prettier-ignore
+      expect(compiled.length).toBeGreaterThan(0);
+      expect(compiled.filter(line => line.includes(library))).toEqual([]);
+      expect(readdirSync(library).sort()).toEqual(["libmember.a", "member.c", "member.o"]);
+    },
+  );
+
   test.skipIf(!isX64)("orders a section without a symbol with its feature", async () => {
     using dir = tempDir("trim-elf", {
       ...sources,
@@ -457,7 +508,8 @@ const rustFiles = (toy: string) => ({
   "main.c": rustMain,
 });
 
-const endedByTrap = 128 + constants.signals.SIGTRAP;
+// What fills a removed range of code: `hlt` on x86-64, which only the kernel may run, and `udf #0` on arm64.
+const endedByTrap = 128 + (process.arch === "x64" ? constants.signals.SIGSEGV : constants.signals.SIGILL);
 
 async function wrappedRust(folder: string, isBitcode: boolean) {
   const crate = await findGuardCrate();

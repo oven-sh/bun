@@ -170,8 +170,8 @@ fn construct_s3_file_internal_store(
     let existing_credentials = crate::webcore::fetch::s3_credentials_from_env(
         global
             .bun_vm()
-            .as_mut()
             .transpiler
+            .get()
             .env_mut()
             .get_s3_credentials(),
     );
@@ -253,7 +253,7 @@ fn finish_s3_blob(
                     if blob::is_valid_blob_type(slice) {
                         blob.content_type_was_set.set(true);
                         blob.content_type
-                            .set(match global.bun_vm().as_mut().mime_type(slice) {
+                            .set(match global.bun_vm().mime_type(slice) {
                                 Some(mime) => blob::BlobContentType::from(mime),
                                 None => blob::BlobContentType::from_lowercased(slice),
                             });
@@ -409,15 +409,21 @@ impl S3BlobStatTask {
         Ok(promise)
     }
 
+    #[inline(never)]
     pub(crate) fn exists(cx: &bun_jsc::JsThread<'_>, blob: &Blob) -> JsResult<JSValue> {
+        bun_removable_features::removable_definition!(S3Client, Self::exists);
         Self::start(cx, blob, "exists", S3BlobStatTask::on_s3_exists_resolved)
     }
 
+    #[inline(never)]
     pub(crate) fn stat(cx: &bun_jsc::JsThread<'_>, blob: &Blob) -> JsResult<JSValue> {
+        bun_removable_features::removable_definition!(S3Client, Self::stat);
         Self::start(cx, blob, "stat", S3BlobStatTask::on_s3_stat_resolved)
     }
 
+    #[inline(never)]
     pub(crate) fn size(cx: &bun_jsc::JsThread<'_>, blob: &mut Blob) -> JsResult<JSValue> {
+        bun_removable_features::removable_definition!(S3Client, Self::size);
         Self::start(cx, blob, "size", S3BlobStatTask::on_s3_size_resolved)
     }
 

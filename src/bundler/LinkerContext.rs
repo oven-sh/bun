@@ -258,25 +258,11 @@ impl<'a> LinkerContext<'a> {
             .get()
     }
 
-    /// Mutable projection of the `r#loop` BACKREF for `AnyEventLoop` dispatch
-    /// (`enqueue_task_concurrent*`, `tick`). Centralises the raw `NonNull`
-    /// deref so the three callers (`BundleV2::any_loop_mut`, `ParseTask` /
-    /// `ServerComponentParseTask` completion) are safe.
-    ///
-    /// `&self` receiver (not `&mut self`): the loop storage is **disjoint**
-    /// from `LinkerContext` (it lives in the `BundleThread` / runtime arena —
-    /// see [`EventLoop`]), and worker-thread completions reach this through a
-    /// `BackRef<BundleV2>` (`&` only).
+    /// The loop that runs this bundle pass. Other threads only post to it.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub(crate) fn any_loop_mut(&self) -> Option<&mut bun_event_loop::AnyEventLoop> {
-        // SAFETY: BACKREF — set once in `BundleV2::init` from a loop that
-        // outlives the bundle pass; the pointee is disjoint from `*self`.
-        // Exclusivity: `Js { owner }.enqueue_task_concurrent` is `&self`
-        // (MPSC), and `Mini.enqueue_task_concurrent_with_extra_ctx` only
-        // pushes to an MPSC queue + writes the caller-owned intrusive task
-        // node, so concurrent worker completions do not alias loop state.
-        self.r#loop.map(|p| unsafe { &mut *p.as_ptr() })
+    pub(crate) fn any_loop(&self) -> Option<&bun_event_loop::AnyEventLoop> {
+        // SAFETY: BACKREF — set once in `BundleV2::init` from a loop that outlives the bundle pass.
+        self.r#loop.map(|p| unsafe { p.as_ref() })
     }
 
     /// Shared-read accessor for the bundler log.
@@ -2562,9 +2548,30 @@ impl<'a> LinkerContext<'a> {
             bits.set(i);
             reach.push(bits);
         }
+        // Visit imports before their importers, so that without cycles the first round already reaches the fixpoint.
+        let mut order: Vec<usize> = Vec::with_capacity(n);
+        let mut seen = vec![false; n];
+        let mut stack: Vec<(usize, usize)> = Vec::new();
+        for root in 0..n {
+            if core::mem::replace(&mut seen[root], true) {
+                continue;
+            }
+            stack.push((root, 0));
+            while let Some((node, next)) = stack.last_mut() {
+                let Some(&import) = edges[*node].get(*next) else {
+                    order.push(*node);
+                    stack.pop();
+                    continue;
+                };
+                *next += 1;
+                if !core::mem::replace(&mut seen[import as usize], true) {
+                    stack.push((import as usize, 0));
+                }
+            }
+        }
         loop {
             let mut changed = false;
-            for i in 0..n {
+            for &i in &order {
                 for &j in &edges[i] {
                     let j = j as usize;
                     if j == i || reach[j].subset_of(&reach[i]) {
@@ -2713,7 +2720,7 @@ pub(crate) struct TreeShakeCtx<'a, 'r> {
     pub(crate) parts_live: &'r mut [bun_collections::AutoBitSet],
     pub(crate) import_records: &'r [bun_ast::import_record::List<'a>],
     pub(crate) entry_point_kinds: &'r [EntryPoint::Kind],
-    pub(crate) css_reprs: &'r [crate::bundled_ast::CssCol],
+    pub(crate) css_reprs: &'r [crate::bundled_ast::CssCol<'a>],
     pub(crate) worklist: Vec<TreeShakeWork>,
 }
 

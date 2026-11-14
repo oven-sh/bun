@@ -1,0 +1,16 @@
+# -- source: main.cjs
+# function Point(x) { this.x = x; }
+# Point.prototype.read = function () { return this.x; };
+# var slice = Function.prototype.call.bind(Array.prototype.slice);
+# function run(count) {
+#   var list = new Array(1, true), sum = 0;
+#   list[0] = new Point(0.5);
+#   if (run instanceof Function && typeof eval === "function") list[1] = new Point(2);
+#   for (var i = 0; i < count; i++) sum += list[i & 1].x;
+#   return sum + slice([1, 2]).length;
+# }
+# console.log(run(10), run(1000));
+# -- end of source
+# Nobody evaluates a text, so nobody reads the exports of the file, and a name that is read off a number finds nothing.
+# RUN: link layouts
+# CHECK: layout L0 changes=[] stays-with-compiled-code

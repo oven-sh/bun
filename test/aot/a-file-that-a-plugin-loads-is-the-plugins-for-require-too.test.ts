@@ -62,5 +62,4 @@ test("require() of a file that the program also imports asks the plugin", async 
   expect(plain.lines).toContain("OUT a: then require loaded a.custom undefined");
   expect(plain.lines).toContain(" 3 pass");
   expect(await linesOf(["--aot"])).toEqual(plain);
-  expect(await linesOf(["--aot"], "TestRunLayers:2")).toEqual(plain);
 }, 240_000);

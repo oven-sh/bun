@@ -1,0 +1,24 @@
+// Tables that loops look bits up in under keys that come out of other tables: rows of int32s, of doubles, of both, with holes, rows that change, and an array that the loop fills beside them.
+function substituted(g, f, d, n) { const e = []; for (let b = 0; n; b++, n--) { const c = d[b & 3 ? n : n - 4]; e[b] = 4 >= n || 4 > b ? c : g[0][f[c >>> 24]] ^ g[1][f[c >> 16 & 255]] ^ g[2][f[c >> 8 & 255]] ^ g[3][f[c & 255]]; } return e; }
+function folded(g, f, x, n) { let z = 0; for (let i = 0; i < n; i++) { x = Math.imul(x, 0x9e3779b9) + i | 0; z = z ^ g[1][f[x >>> 28]] ^ g[0][f[x & 15]] << 1 ^ g[2][f[f[x >> 4 & 15] & 15]] ^ f[x >> 8 & 15]; } return z; }
+function single(t, f, x, n) { let z = 1; for (let i = 0; i < n; i++) { z = z >>> 1 ^ t[f[(z ^ x) & 255]] ^ t[f[z >>> 24]]; x = x * 3 + i | 0; } return z; }
+function kept(g, f, o, n) { const e = []; o.made = e; const t = o.rows[0], u = o.rows[1]; for (let i = 0; i < n; i++) { const c = g[0][i & 7] | 0; e[i] = t[f[c & 255]] ^ u[f[c >>> 24]] ^ i; } return e; }
+function show(x) { if (!Array.isArray(x)) return String(x); let s = ""; for (let i = 0; i < x.length; i++) s += i in x ? (Object.is(x[i], -0) ? "-0" : String(x[i])) + " " : "- "; return s + x.length; }
+const base = (k, n = 256) => Array.from({ length: n }, (_, i) => Math.imul(i * 5 + k, 0x85ebca6b) ^ k);
+const tables = {
+  ints: k => base(k), uints: k => base(k).map(v => v >>> 0), doubles: k => base(k).map(v => v + .5), mixed: k => base(k).map((v, i) => i & 1 ? v : v >>> 0), small: k => base(k).map(v => v & 15), smallDoubles: k => base(k).map(v => (v & 15) + .25), short: k => base(k, 40), none: () => [],
+  holes: k => { const x = base(k); delete x[7]; delete x[200]; return x; }, holesOfDoubles: k => { const x = base(k).map(v => v + .5); delete x[3]; return x; }, nan: k => { const x = base(k).map(v => v + .5); x[9] = NaN; return x; }, big: k => base(k).map(v => v * 2 ** 20), boxed: k => { const x = base(k); x[4] = "q"; x[4] = 4; return x; }, texts: k => { const x = base(k); x[3] = "7"; return x; }, undef: k => { const x = base(k); x[0] = undefined; return x; }, bigints: k => base(k).map(v => BigInt(v)),
+  frozen: k => Object.freeze(base(k)), getter: k => Object.defineProperty(base(k), 3, { get() { return 6; } }), heir: k => (class extends Array { }).from(base(k)), inherits: k => { const x = base(k); delete x[2]; return Object.setPrototypeOf(x, { __proto__: Array.prototype, 2: 40 }); }, later: k => { const x = base(k); x[5] = .5; x[5] = 5; return x; },
+  words: k => Int32Array.from(base(k)), unsigned: k => Uint32Array.from(base(k)), floats: k => Float64Array.from(base(k)), bytes: k => Uint8Array.from(base(k)), text: () => "0123456789", object: () => ({ 0: 3, 1: 1, length: 4 }), nothing: () => undefined,
+};
+let all = 0; const note = (n, s) => { for (let i = 0; i < s.length; i++) all = Math.imul(all, 31) + s.charCodeAt(i) | 0; console.log(n, s.length > 120 ? s.slice(0, 80) + s.slice(-40) : s); };
+const run = (n, f) => { let r; try { r = show(f()); } catch (e) { r = e.name; } note(n, r); };
+const names = Object.keys(tables);
+for (const turn of [1, 2, 3]) for (const name of names) {
+  const t = tables[name], o = tables[names[(names.indexOf(name) + turn * 5) % names.length]], f = base(7).map(v => v & 255), f4 = base(3, 16).map(v => v & 15);
+  run("substituted " + name, () => substituted([t(1), t(2), t(3), t(4)], f, base(5, 60), 44)); run("substituted one " + name, () => substituted([tables.ints(1), tables.ints(2), t(3), o(4)], f, base(turn, 60).map(v => v >>> 0), 50)); run("substituted under " + name, () => substituted([tables.ints(1), tables.ints(2), tables.ints(3), tables.ints(4)], t(turn), base(5, 60), 44)); run("substituted of " + name, () => substituted([tables.ints(1), tables.ints(2), tables.ints(3), tables.ints(4)], f, t(1), 44));
+  run("folded " + name, () => folded([t(1), tables.ints(2), o(3)], f4, turn, 60)); run("folded under " + name, () => folded([tables.ints(1), tables.ints(2), tables.ints(3)], t(turn), 9, 60)); run("single " + name, () => single(t(turn), f, 5, 60)); run("single under " + name, () => single(tables.ints(1), t(2), 5, 60));
+  run("kept " + name, () => kept([base(3, 8)], f, { rows: [t(1), t(2)] }, 40)); run("kept itself " + name, () => { const x = { get rows() { return [x.made, t(2)]; } }; return kept([base(3, 8)], f, x, 40); }); run("kept below " + name, () => { const x = { get rows() { return [t(1), x.made]; } }; return kept([base(4, 8)], f4.concat(f), x, 300); });
+  const rows = [t(1), tables.ints(2), tables.ints(3), tables.ints(4)]; run("rows before " + name, () => substituted(rows, f, base(5, 60), 44)); run("rows change " + name, () => { rows[turn][f[9]] = turn === 1 ? .5 : turn === 2 ? "x" : 2 ** 40; return 1; }); run("rows behind " + name, () => substituted(rows, f, base(5, 60), 44));
+}
+console.log(all);

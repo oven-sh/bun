@@ -1,0 +1,21 @@
+# f1 = Meter
+# f2 = load
+# f3 = run
+# -- source: main.mjs
+# function Meter() { this.count = 0; this.mask = 0; this.half = 0; this.product = 0; this.level = 0; }
+# Meter.prototype.load = function (values) { this.count = values[0]; this.mask = values[1]; this.half = values[2]; this.product = values[3]; this.level = values[4]; };
+# Meter.prototype.run = function (turns) { for (let turn = 0; turn < turns; turn++) { this.count++; this.mask = (this.mask << 1) ^ turn; this.half = this.half / 2; this.product = this.product * turn; this.level = 0.5; this.level++; } };
+# const meter = new Meter(); globalThis.unseen = meter; meter.load((0, eval)(String(Math.random()))); meter.run(3);
+# print(meter.count, meter.mask, meter.half, meter.product, meter.level);
+# -- end of source
+# Operators on integers fill count and mask. Into half the program stores a quotient, into level a fraction; of a product nothing is said but that it is a number.
+# RUN: link held fields
+# CHECK: "count" proven=i32
+# CHECK: "mask" proven=i32
+# CHECK: "half" proven=number
+# CHECK: "product" proven=number
+# CHECK: "level" proven=number
+# The one test of the slot hands the integer on: the sum takes no second one.
+# RUN(WALK): walk f3 mechanisms=all
+# WALK: GetSlot {{*}}key="count"
+# WALK: TypeTest {{*}} testedType=i32

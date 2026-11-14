@@ -4,16 +4,16 @@ use crate::values::string::{CssString, CssStringFns};
 use crate::{PrintErr, Printer};
 
 /// A [@namespace](https://drafts.csswg.org/css-namespaces/#declaration) rule.
-pub struct NamespaceRule {
+pub struct NamespaceRule<'bump> {
     /// An optional namespace prefix to declare, or `None` to declare the default namespace.
-    pub(crate) prefix: Option<Ident>,
+    pub(crate) prefix: Option<Ident<'bump>>,
     /// The url of the namespace.
-    pub(crate) url: CssString,
+    pub(crate) url: CssString<'bump>,
     /// The location of the rule in the source file.
     pub(crate) loc: Location,
 }
 
-impl NamespaceRule {
+impl NamespaceRule<'_> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
@@ -29,8 +29,6 @@ impl NamespaceRule {
     }
 
     pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // `CssString` is `*const [u8]` (arena-owned slice → identity copy);
-        // `Ident::deep_clone` is the same identity copy.
         Self {
             prefix: self.prefix.as_ref().map(|p| p.deep_clone(bump)),
             url: self.url,

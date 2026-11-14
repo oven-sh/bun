@@ -12,7 +12,7 @@ use bun_js_parser::parser::Runtime;
 use bun_options_types::context::MacroOptions;
 use bun_options_types::schema::api;
 use bun_paths::resolve_path;
-use bun_sys::{self, Fd, FdExt as _};
+use bun_sys::{self, Fd};
 
 extern crate bun_standalone_graph as bun_standalone_module_graph;
 
@@ -39,6 +39,10 @@ fn splat_byte_all(
         remaining -= n;
     }
     Ok(())
+}
+
+pub(crate) fn has_only_html_entry_points(entry_points: &[Box<[u8]>]) -> bool {
+    !entry_points.is_empty() && entry_points.iter().all(|path| path.ends_with(b".html"))
 }
 
 pub(crate) struct BuildCommand;
@@ -87,7 +91,9 @@ impl BuildCommand {
         }
 
         if ctx.bundler_options.compile && ctx.bundler_options.aot.is_some() {
-            if !user_requested_browser_target {
+            if !(user_requested_browser_target
+                && has_only_html_entry_points(&ctx.args.entry_points))
+            {
                 return super::compile_command::CompileCommand::exec(ctx);
             }
             ctx.bundler_options.aot = None;
@@ -685,12 +691,12 @@ impl BuildCommand {
             // Stack-owned Mini event loop so its tasks/concurrent_tasks queues
             // drop at scope exit; the arena bulk-free skips Drop. Outlives the
             // BACKREF passed to `generate_from_cli`.
-            let mut event_loop = bun_event_loop::AnyEventLoop::init();
+            let event_loop = bun_event_loop::AnyEventLoop::init();
 
             let build_result = match BundleV2::generate_from_cli(
                 this_transpiler,
                 arena,
-                Some(core::ptr::NonNull::from(&mut event_loop)),
+                Some(core::ptr::NonNull::from(&event_loop)),
                 ctx.debug.hot_reload == HotReload::Watch,
                 &mut reachable_file_count,
                 &mut minify_duration,
@@ -966,6 +972,25 @@ impl BuildCommand {
                     }
                 }
 
+                if ctx.bundler_options.keeps_entry_points {
+                    let is_entry_point = |file: &&options::OutputFile| {
+                        file.output_kind == options::OutputKind::EntryPoint
+                    };
+                    let entry_points = output_files.iter().filter(is_entry_point);
+                    let sources = entry_points.map(|file| file.src_path.text);
+                    let written = ctx.args.entry_points.iter().map(|path| &path[..]);
+                    let checked = super::compile_command::check_entry_points_are_kept(
+                        outfile, written, sources,
+                    );
+                    if let Err(failure) = checked {
+                        super::compile_command::exit_with_failure(
+                            log_ref,
+                            super::compile_command::RequestOrigin::CompileCommand,
+                            compile_target,
+                            &failure,
+                        );
+                    }
+                }
                 let flags = {
                     use bun_standalone_module_graph::StandaloneModuleGraph::Flags;
                     let mut flags = Flags::default();
@@ -1492,11 +1517,10 @@ pub(crate) fn collect_compile_assets(
         };
         if bun_core::S::ISDIR(st.st_mode as _) {
             let dir = match bun_sys::open_dir_for_iteration(cwd, asset_trimmed) {
-                Ok(d) => d,
+                Ok(d) => bun_sys::File::from_fd(d),
                 Err(e) => return fail(e.with_path(asset)),
             };
-            let _close = scopeguard::guard(dir, |fd| fd.close());
-            let mut walker = match bun_sys::walker_skippable::walk(dir, &[], &[]) {
+            let mut walker = match bun_sys::walker_skippable::walk(dir.fd(), &[], &[]) {
                 Ok(w) => w,
                 Err(_) => bun_core::out_of_memory(),
             };

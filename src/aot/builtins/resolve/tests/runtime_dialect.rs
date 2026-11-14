@@ -118,7 +118,6 @@ fn prefixed_global() {
     });
 }
 
-// The callee, the file and the symbol that name it.
 fn find_native_binding(id: BuiltinId) -> Option<(BuiltinName, &'static [u8], &'static [u8])> {
     let entry = table::entry(id);
     if entry.holder.is_some() {

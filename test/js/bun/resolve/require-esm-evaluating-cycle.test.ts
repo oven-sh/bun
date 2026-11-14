@@ -1,7 +1,7 @@
 // require(esm) of a module that is still evaluating — the require() sits
 // inside that module's own evaluation (a.mjs → require(b.mjs) → b imports
 // a.mjs). The namespace is live: hoisted functions and already-initialized
-// bindings are visible, later `const`s are in TDZ. Code-split bundler
+// bindings are visible, later `const`s and classes are in TDZ. Code-split bundler
 // output (target bun) relies on this for require() cycles across chunks.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
@@ -41,6 +41,29 @@ test("require(esm) inside a require cycle returns the live namespace, not an emp
     selfBefore: "before",
     selfLaterTdz: "ReferenceError",
   });
+  expect(exitCode).toBe(0);
+});
+
+test("require(esm) inside a require cycle leaves a later class and default export in TDZ", async () => {
+  using dir = tempDir("require-esm-evaluating-cycle-class", {
+    "a.mjs": `
+      const self = require("./a.mjs")
+      const read = name => { try { return typeof self[name] } catch (e) { return e.constructor.name } }
+      console.log(JSON.stringify({ Later: read("Later"), default: read("default") }))
+      export class Later {}
+      export default class {}
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "a.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({ Later: "ReferenceError", default: "ReferenceError" });
   expect(exitCode).toBe(0);
 });
 

@@ -24,6 +24,12 @@ const differs = {
   "an error of the build has its number in front": [
     "errors > an import statement in a CommonJS file is still rejected",
   ],
+  "a compiled file runs a class in front of the other statements of its file": ["jest", "vi"].flatMap(api =>
+    ["class Fake", "export class Fake", "export default class Fake"].map(
+      declaration =>
+        `a top-level variable in a factory of ${api}.mock > stays in its place: ${declaration} { static value = "fake"; }`,
+    ),
+  ),
 };
 
 // How many cases of each section of the specification pass.
@@ -67,6 +73,6 @@ test.each(Object.entries(sections))(
     expect(named("fail")).toEqual(differing.sort());
     expect(named("pass")).toHaveLength(passing);
     // A section that is not listed here would run in no case.
-    expect(Number(/^ *(\d+) filtered out$/m.exec(stderr)?.[1])).toBe(122 + 12 - passing - differing.length);
+    expect(Number(/^ *(\d+) filtered out$/m.exec(stderr)?.[1])).toBe(122 + 12 + 6 - passing - differing.length);
   },
 );

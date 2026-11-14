@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { promises as fs } from "fs";
-import { tempDir } from "harness";
+import { isWindows, tempDir } from "harness";
 import * as path from "path";
 
 // These tests verify that the resolver properly invalidates cache across multiple
@@ -391,5 +391,48 @@ describe("resolver cache invalidation", () => {
     expect(result3.success).toBe(true);
     const text3 = await result3.outputs[0].text();
     expect(text3).toContain("recreated");
+  });
+
+  // A second build reads each directory again and keeps what it knows about
+  // every name that is still listed. It finds a name by its lowercased form.
+  test("file renamed to another case", async () => {
+    using dir = tempDir("cache-test-case-rename", {
+      "entry.js": `export { value } from "./Loaded.js";`,
+      "Loaded.js": `export const value = "loaded";`,
+    });
+    const root = String(dir);
+
+    const result1 = await Bun.build({ entrypoints: [path.join(root, "entry.js")], outdir: path.join(root, "out1") });
+    expect(result1.success).toBe(true);
+    expect(await result1.outputs[0].text()).toContain("loaded");
+
+    await fs.rename(path.join(root, "Loaded.js"), path.join(root, "loaded.js"));
+    await fs.writeFile(path.join(root, "entry.js"), `export { value } from "./loaded.js";`);
+
+    const result2 = await Bun.build({ entrypoints: [path.join(root, "entry.js")], outdir: path.join(root, "out2") });
+    expect(result2.logs.map(String)).toEqual([]);
+    expect(result2.success).toBe(true);
+    expect(await result2.outputs[0].text()).toContain("loaded");
+  });
+
+  test.skipIf(isWindows)("symlink replaced by a file", async () => {
+    using dir = tempDir("cache-test-symlink-to-file", {
+      "entry.js": `export { value } from "./config.js";`,
+      "target.js": `export const value = "target";`,
+    });
+    const root = String(dir);
+    await fs.symlink("target.js", path.join(root, "config.js"));
+
+    const result1 = await Bun.build({ entrypoints: [path.join(root, "entry.js")], outdir: path.join(root, "out1") });
+    expect(result1.success).toBe(true);
+    expect(await result1.outputs[0].text()).toContain("target");
+
+    await fs.rm(path.join(root, "config.js"));
+    await fs.writeFile(path.join(root, "config.js"), `export const value = "file";`);
+
+    const result2 = await Bun.build({ entrypoints: [path.join(root, "entry.js")], outdir: path.join(root, "out2") });
+    expect(result2.logs.map(String)).toEqual([]);
+    expect(result2.success).toBe(true);
+    expect(await result2.outputs[0].text()).toContain('"file"');
   });
 });

@@ -90,11 +90,12 @@ impl strings::Appender for FilenameStoreAppender {
 /// to `RealFS::kind`.
 pub trait EntryKindResolver {
     /// Runs with the entry's `mutex` held, so it must not ask for that entry's kind or symlink.
+    /// `previous` is the entry's cache: its descriptor and an unchanged symlink target are reused.
     fn resolve_kind(
         &self,
         dir: &[u8],
         base: &[u8],
-        existing_fd: Fd,
+        previous: EntryCache,
         store_fd: bool,
     ) -> crate::CrateResult<EntryCache>;
 }
@@ -116,6 +117,16 @@ pub struct EntryCache {
     /// don't make it bun.invalid_fd
     pub fd: Fd,
     pub(crate) kind: EntryKind,
+    /// `symlink` is not the target of a symlink: `Entry::set_derived_symlink` stored it.
+    pub(crate) symlink_is_derived: bool,
+}
+
+impl EntryCache {
+    /// The real path of the target, when the entry was a symlink at the last stat.
+    #[inline]
+    pub fn symlink_target(&self) -> Option<Interned> {
+        (!self.symlink.is_empty() && !self.symlink_is_derived).then_some(self.symlink)
+    }
 }
 
 // `cache` / `need_stat` are lazily populated by `Entry::kind` /
@@ -160,11 +171,21 @@ impl Entry {
         self.cache.set(c);
     }
 
-    #[inline(always)]
-    pub(crate) fn set_cache_symlink(&self, symlink: Interned) {
-        let mut c = self.cache.get();
-        c.symlink = symlink;
-        self.cache.set(c);
+    /// Keeps `path`, joined from the real path of the directory and this name, for `symlink`.
+    pub(crate) fn set_derived_symlink(
+        &self,
+        path: &[u8],
+        intern: impl FnOnce(&[u8]) -> crate::CrateResult<&'static [u8]>,
+    ) -> crate::CrateResult<&'static [u8]> {
+        // Every cached-`Entry` rewrite takes the per-entry mutex.
+        let _guard = self.mutex.lock_guard();
+        let mut cache = self.cache.get();
+        if !cache.symlink_is_derived || cache.symlink.as_bytes() != path {
+            cache.symlink = Interned::from_static(intern(path)?);
+            cache.symlink_is_derived = true;
+            self.cache.set(cache);
+        }
+        Ok(cache.symlink.as_bytes())
     }
 
     #[inline]
@@ -211,6 +232,23 @@ impl Entry {
         p
     }
 
+    /// Whether this entry, and the path memoized for it, spell `name` as listed in `dir`.
+    fn is_named(&self, dir: &[u8], name: &[u8]) -> bool {
+        let memo = self.abs_path().as_bytes();
+        self.base() == name
+            && (memo.is_empty() || (memo.ends_with(name) && is_in_dir(memo, dir, name.len())))
+    }
+
+    /// A stat that failed leaves the target unknown. Caller holds `mutex`.
+    fn forget_symlink(&self) {
+        let mut c = self.cache.get();
+        if !c.symlink.is_empty() {
+            c.symlink = Interned::EMPTY;
+            c.symlink_is_derived = false;
+            self.cache.set(c);
+        }
+    }
+
     /// Stat-on-first-use.
     // `Entry` lives in the EntryStore BSSMap singleton. The lazy-stat rewrite
     // of `need_stat` / `cache` is serialized on the per-entry `mutex` here
@@ -223,9 +261,10 @@ impl Entry {
             // Relaxed: every write happens under `mutex`, which we hold.
             if self.need_stat.load(Ordering::Relaxed) {
                 // This is technically incorrect, but we are choosing not to handle errors here
-                match fs.resolve_kind(self.dir, self.base(), self.cache().fd, store_fd) {
+                match fs.resolve_kind(self.dir, self.base(), self.cache(), store_fd) {
                     Ok(c) => self.cache.set(c),
                     Err(_) => {
+                        self.forget_symlink();
                         self.need_stat.store(false, Ordering::Release);
                         return self.cache().kind;
                     }
@@ -239,17 +278,24 @@ impl Entry {
         self.cache().kind
     }
 
+    /// A path kept by `set_derived_symlink` reads as empty unless it is in `dir_real_path`.
     /// See [`Entry::kind`].
-    pub(crate) fn symlink<R: EntryKindResolver>(&self, fs: &R, store_fd: bool) -> &'static [u8] {
+    pub(crate) fn symlink<R: EntryKindResolver>(
+        &self,
+        fs: &R,
+        store_fd: bool,
+        dir_real_path: &[u8],
+    ) -> &'static [u8] {
         if self.need_stat.load(Ordering::Acquire) {
             let _guard = self.mutex.lock_guard();
             // Relaxed: every write happens under `mutex`, which we hold.
             if self.need_stat.load(Ordering::Relaxed) {
                 // This error can happen if the file was deleted between the time the directory
                 // was scanned and the time it was read
-                match fs.resolve_kind(self.dir, self.base(), self.cache().fd, store_fd) {
+                match fs.resolve_kind(self.dir, self.base(), self.cache(), store_fd) {
                     Ok(c) => self.cache.set(c),
                     Err(_) => {
+                        self.forget_symlink();
                         self.need_stat.store(false, Ordering::Release);
                         return b"";
                     }
@@ -258,8 +304,35 @@ impl Entry {
                 self.need_stat.store(false, Ordering::Release);
             }
         }
-        self.cache().symlink.as_bytes()
+        let cache = self.cache();
+        let symlink = cache.symlink.as_bytes();
+        // The kept path can spell the name in the case of an import.
+        if cache.symlink_is_derived
+            && (dir_real_path.is_empty() || !is_in_dir(symlink, dir_real_path, self.base().len()))
+        {
+            return b"";
+        }
+        symlink
     }
+}
+
+/// Whether `path` is `dir`, one separator, and a name of `name_len` bytes.
+fn is_in_dir(path: &[u8], mut dir: &[u8], name_len: usize) -> bool {
+    while let [parent @ .., last] = dir
+        && bun_paths::is_sep_native(*last)
+    {
+        dir = parent;
+    }
+    path.len() == dir.len() + 1 + name_len
+        && bun_paths::is_sep_native(path[dir.len()])
+        && if cfg!(windows) {
+            // A joined path has `\` where `dir` can have `/`.
+            path.iter().zip(dir).all(|(a, b)| {
+                a == b || (bun_paths::is_sep_native(*a) && bun_paths::is_sep_native(*b))
+            })
+        } else {
+            path.starts_with(dir)
+        }
 }
 
 // `entry` is a RAW `*mut Entry`. A safe
@@ -427,10 +500,13 @@ impl DirEntry {
                 // `data` keys are the lowercased basenames, so an exact match on
                 // `name_lc` is the case-insensitive match — and reuses
                 // `name_hash` instead of re-hashing.
-                if let Some(&existing_ptr) = map.get_hashed(name_hash, name_lc) {
+                if let Some(&existing_ptr) = map.get_hashed(name_hash, name_lc)
                     // SAFETY: EntryStore-owned pointer, valid for lifetime of store
-                    let existing = unsafe { &*existing_ptr };
-                    let _guard = existing.mutex.lock_guard();
+                    && let existing = unsafe { &*existing_ptr }
+                    && let _guard = existing.mutex.lock_guard()
+                    // The match ignores case: an entry for another spelling is replaced below.
+                    && existing.is_named(self.dir, name_slice)
+                {
                     // `dir` stays: `self` has the `dir` of the `DirEntry` that owns `map`.
 
                     // No cache rewrite here, even when the kind changed: a
@@ -444,10 +520,13 @@ impl DirEntry {
                     // cache, stale but untorn.
                     // Relaxed load: writes are serialized on the per-entry
                     // mutex held above.
+                    let cache = existing.cache();
                     existing.need_stat.store(
                         existing.need_stat.load(Ordering::Relaxed)
                             || found_kind.is_none()
-                            || Some(existing.cache().kind) != found_kind,
+                            // `cache` is for the target of a symlink that this name was.
+                            || (!cache.symlink.is_empty() && !cache.symlink_is_derived)
+                            || Some(cache.kind) != found_kind,
                         Ordering::Release,
                     );
                     break 'brk existing_ptr;
@@ -502,6 +581,7 @@ impl DirEntry {
                     // store an arbitrary kind
                     kind: found_kind.unwrap_or(EntryKind::File),
                     fd: Fd::INVALID,
+                    symlink_is_derived: false,
                 }));
                 addr_of_mut!((*p).abs_path).write(OnceLock::new());
                 p

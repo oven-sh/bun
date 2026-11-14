@@ -2015,7 +2015,10 @@ impl<'a> Resolver<'a> {
             // map in place under that lock. The entry pointer stays valid after
             // unlock (EntryStore-owned).
             if let Some(query) = dir.get_entry(self.generation, name.filename) {
-                let symlink_path = query.entry().symlink(self.rfs_ref(), self.store_fd);
+                let symlink_path =
+                    query
+                        .entry()
+                        .symlink(self.rfs_ref(), self.store_fd, dir.abs_real_path);
                 if !symlink_path.is_empty() {
                     path.set_realpath(symlink_path);
                     if !result.file_fd.is_valid() {
@@ -2083,20 +2086,17 @@ impl<'a> Resolver<'a> {
                         }
                     }
 
-                    let symlink = Fs::FilenameStore::instance().append_slice(&buf[..out_len])?;
+                    let symlink = query
+                        .entry()
+                        .set_derived_symlink(&buf[..out_len], |joined| {
+                            Fs::FilenameStore::instance().append_slice(joined)
+                        })?;
                     if let Some(debug) = self.debug_logs.as_mut() {
                         debug.add_note_fmt(format_args!(
                             "Resolved symlink \"{}\" to \"{}\"",
                             bstr::BStr::new(symlink),
                             bstr::BStr::new(path.text())
                         ));
-                    }
-                    {
-                        // Every cached-`Entry` rewrite takes the per-entry mutex.
-                        let _entry_guard = query.entry().mutex.lock_guard();
-                        query
-                            .entry()
-                            .set_cache_symlink(Interned::from_static(symlink));
                     }
                     if !result.file_fd.is_valid() && store_fd {
                         result.file_fd = query.entry().cache().fd;
@@ -3845,15 +3845,18 @@ impl<'a> Resolver<'a> {
             }
         };
 
-        if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
-            if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
-                if entries.generation >= self.generation {
-                    dir_entries_option = cached_entry;
-                    needs_iter = false;
-                } else {
-                    in_place = Some(std::ptr::from_mut(*entries));
-                }
+        if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index)
+            && let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry
+        {
+            if entries.generation >= self.generation {
+                dir_entries_option = cached_entry;
+                needs_iter = false;
+            } else {
+                in_place = Some(std::ptr::from_mut(*entries));
             }
+        } else {
+            // No slot, or a slot that only holds an error: the listing from before it is parked.
+            in_place = rfs!().adopt_parked_listing(&mut cached_dir_entry_result);
         }
 
         if needs_iter {
@@ -5027,15 +5030,18 @@ impl<'a> Resolver<'a> {
             let mut needs_iter = true;
             let mut in_place: Option<*mut Fs::file_system::DirEntry> = None;
 
-            if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
-                if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
-                    if entries.generation >= self.generation {
-                        dir_entries_option = cached_entry;
-                        needs_iter = false;
-                    } else {
-                        in_place = Some(std::ptr::from_mut(*entries));
-                    }
+            if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index)
+                && let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry
+            {
+                if entries.generation >= self.generation {
+                    dir_entries_option = cached_entry;
+                    needs_iter = false;
+                } else {
+                    in_place = Some(std::ptr::from_mut(*entries));
                 }
+            } else {
+                // No slot, or a slot that only holds an error: the listing from before it is parked.
+                in_place = rfs!().adopt_parked_listing(&mut cached_dir_entry_result);
             }
 
             if needs_iter {
@@ -6631,7 +6637,11 @@ impl<'a> Resolver<'a> {
                             lookup.entry().set_cache_fd(entries_fd);
                         }
 
-                        let mut symlink = lookup.entry().symlink(self.rfs_ref(), self.store_fd);
+                        let mut symlink = lookup.entry().symlink(
+                            self.rfs_ref(),
+                            self.store_fd,
+                            parent_.abs_real_path,
+                        );
                         if !symlink.is_empty() {
                             if let Some(logs) = self.debug_logs.as_mut() {
                                 let mut buf = Vec::new();
@@ -6651,11 +6661,9 @@ impl<'a> Resolver<'a> {
                             )
                         {
                             // this might leak a little i'm not sure
-                            symlink = self
-                                .fs_ref()
-                                .dirname_store
-                                .append_slice(joined)
-                                .expect("unreachable");
+                            symlink = lookup.entry().set_derived_symlink(joined, |joined| {
+                                self.fs_ref().dirname_store.append_slice(joined)
+                            })?;
 
                             if let Some(logs) = self.debug_logs.as_mut() {
                                 let mut buf = Vec::new();
@@ -6666,13 +6674,6 @@ impl<'a> Resolver<'a> {
                                     bstr::BStr::new(symlink)
                                 );
                                 logs.add_note(buf);
-                            }
-                            {
-                                // Every cached-`Entry` rewrite takes the per-entry mutex.
-                                let _entry_guard = lookup.entry().mutex.lock_guard();
-                                lookup
-                                    .entry()
-                                    .set_cache_symlink(Interned::from_static(symlink));
                             }
                             info.abs_real_path = symlink;
                         }

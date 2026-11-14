@@ -1861,7 +1861,8 @@ interface BuildConfig {
    * JSX configuration object for controlling JSX transform behavior
    */
   jsx?: {
-    runtime?: "automatic" | "classic";
+    // "react", "react-jsx" and "react-jsxdev" are the names that "jsx" has in tsconfig.json
+    runtime?: "automatic" | "classic" | "react" | "react-jsx" | "react-jsxdev";
     importSource?: string;
     factory?: string;
     fragment?: string;

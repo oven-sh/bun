@@ -434,14 +434,13 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     /// Vectored raw write: one writev on real sockets; sequential raw writes on
     /// transports without an fd (duplex/pipe). Plain-TCP callers only — raw
     /// writes bypass TLS framing.
-    pub fn raw_writev(&self, iov: &[crate::UsIoVec]) -> i32 {
+    pub fn raw_writev(&self, iov: &[crate::UsIoVec<'_>]) -> i32 {
         on_socket!(self.socket;
             connected s => s.raw_writev(iov),
             duplex d => {
                 let mut total: i32 = 0;
                 for v in iov {
-                    // SAFETY: UsIoVec contract — base/len reference caller-owned memory
-                    let slice = unsafe { core::slice::from_raw_parts(v.base.cast::<u8>(), v.len) };
+                    let slice = v.as_slice();
                     let w = d.raw_write(slice);
                     if w > 0 { total += w; }
                     if w < slice.len() as i32 { break; }
@@ -451,8 +450,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             pipe p => {
                 let mut total: i32 = 0;
                 for v in iov {
-                    // SAFETY: UsIoVec contract — base/len reference caller-owned memory
-                    let slice = unsafe { core::slice::from_raw_parts(v.base.cast::<u8>(), v.len) };
+                    let slice = v.as_slice();
                     let w = p.raw_write(slice);
                     if w > 0 { total += w; }
                     if w < slice.len() as i32 { break; }

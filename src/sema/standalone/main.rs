@@ -23,8 +23,11 @@ fn run(args: &[String]) {
     match args.first().map(String::as_str) {
         Some("cli") => {
             // cli [paths..] [@<response file>] [-b] [-p <project>] [--<compiler option> [value]]
-            // [--threads=n] [--plain] [--no-color] [--github] [--timing]: behaves like `bun check`.
-            use bun_sema_driver::format::{Layout, Style, write_diagnostics, write_summary};
+            // [--threads=n] [--plain] [--no-color] [--github] [--timing]
+            // [--no-follow-imports]: behaves like `bun check`.
+            use bun_sema_driver::format::{
+                Layout, Style, write_diagnostics, write_slowest_files, write_summary,
+            };
             let has = |flag: &str| args.iter().any(|a| a == flag);
             let cwd = std::env::current_dir()
                 .unwrap()
@@ -48,6 +51,8 @@ fn run(args: &[String]) {
                     Some(other) => panic!("--task-size={other}"),
                 },
                 discards_first_visits: has("--discard-first-visits"),
+                reports_only_requested_paths: has("--no-follow-imports"),
+                times_files: has("--timing"),
                 ..Default::default()
             };
             let request = bun_sema_driver::Request {
@@ -128,6 +133,9 @@ fn run(args: &[String]) {
                         report.check_time.as_secs_f64(),
                         bun_sema_standalone::peak_memory() as f64 / (1u64 << 30) as f64
                     );
+                    let mut slowest = Vec::new();
+                    write_slowest_files(&mut slowest, &report, &style);
+                    let _ = std::io::stderr().write_all(&slowest);
                 }
                 report
             });

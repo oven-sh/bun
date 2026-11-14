@@ -2914,7 +2914,9 @@ void GlobalObject::finishCreation(VM& vm)
              BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_moduleNamespaceObjectStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
-             JSObject* moduleNamespacePrototype = JSC::constructEmptyObject(init.vm, init.owner->nullPrototypeObjectStructure());
+             // ProhibitsPropertyCaching: namespace objects share a Structure that does not list their exports, so a cache of a lookup that reaches this prototype would also answer for a namespace object that exports the name.
+             Structure* moduleNamespacePrototypeStructure = Structure::create(init.vm, init.owner, jsNull(), TypeInfo(FinalObjectType, JSFinalObject::StructureFlags | ProhibitsPropertyCaching), JSFinalObject::info(), JSFinalObject::defaultIndexingType, JSFinalObject::defaultInlineCapacity);
+             JSObject* moduleNamespacePrototype = JSC::constructEmptyObject(init.vm, moduleNamespacePrototypeStructure);
              moduleNamespacePrototype->putDirectCustomAccessor(init.vm, init.vm.propertyNames->__esModule, CustomGetterSetter::create(init.vm, moduleNamespacePrototypeGetESModuleMarker, moduleNamespacePrototypeSetESModuleMarker), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::CustomAccessor | 0);
              init.set(JSModuleNamespaceObject::createStructure(init.vm, init.owner, moduleNamespacePrototype));
          } },

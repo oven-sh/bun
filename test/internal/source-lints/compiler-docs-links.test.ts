@@ -4,7 +4,7 @@ import { expect, test } from "bun:test";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 
-const docs = join(import.meta.dir, "..", "..", "docs");
+const docs = join(import.meta.dir, "..", "..", "..", "docs");
 const site = JSON.parse(readFileSync(join(docs, "docs.json"), "utf8"));
 const readWithoutCode = (file: string) => readFileSync(file, "utf8").replace(/^([ \t]*)```.*?^\1```/gms, "");
 const isFile = (file: string) => /\.\w+$/.test(file) && existsSync(file);

@@ -29,6 +29,7 @@ import {
   getReleaseVersion,
   getSecret,
   isBuildkite,
+  isDocsOnlyChange,
   isFork,
   isMainBranch,
   isMergeQueue,
@@ -1934,7 +1935,7 @@ async function main() {
     } catch (e) {
       console.error(e);
     }
-    if (allFiles.length > 0 && allFiles.every(filename => filename.startsWith("docs/"))) {
+    if (isDocsOnlyChange(allFiles)) {
       console.log(`- PR is only docs, skipping tests!`);
       return;
     }

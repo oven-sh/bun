@@ -649,7 +649,7 @@ pub fn get_loader_and_virtual_source<'a>(
 
     let is_main = jsc_vm
         .main()
-        .is_some_and(|main| strings::eql_long(specifier, main, true));
+        .is_some_and(|main| strings::eql_long(specifier, main));
 
     let dir = path.name().dir;
     // NOTE: we cannot trust `path.isFile()` since it's not always correct

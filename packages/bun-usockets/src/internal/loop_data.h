@@ -56,6 +56,8 @@ struct us_internal_loop_data_t {
     uint32_t sweep_tick;
     /* us_internal_coarse_ms() at the last sweep, or at the first socket if there was none since. */
     uint64_t sweep_time_ms;
+    /* The time that all listeners have spent in their accept loops. */
+    uint64_t accept_batches_ns;
     struct us_internal_async *wakeup_async;
     struct us_socket_group_t *head;
     /* QUIC engines on this loop. us_quic_loop_process walks the list from

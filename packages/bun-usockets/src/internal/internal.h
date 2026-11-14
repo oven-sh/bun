@@ -617,6 +617,8 @@ struct us_listen_socket_t {
   /* SNI tree + dynamic resolver, shared with every SSL this listener accepted
    * (crypto/openssl.c). NULL until the first name, resolver or TLS accept. */
   struct us_server_names_t *server_names;
+  /* On a clock that stands still during accept batches: us_internal_monotonic_ns() less loop->data.accept_batches_ns. */
+  uint64_t last_batch_ns;
   unsigned int socket_ext_size;
   /* kind to stamp on accepted sockets. */
   unsigned char accept_kind;

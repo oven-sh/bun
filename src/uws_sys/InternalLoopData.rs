@@ -35,6 +35,7 @@ pub struct InternalLoopData {
     sweep_timer_count: Cell<i32>,
     sweep_tick: Cell<u32>,
     sweep_time_ms: Cell<u64>,
+    accept_batches_ns: Cell<u64>,
     wakeup_async: Cell<*mut us_internal_async>,
     head: Cell<*mut SocketGroup>,
     quic_head: Cell<*mut c_void>,

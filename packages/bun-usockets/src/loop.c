@@ -77,6 +77,10 @@ void us_internal_disable_sweep_timer(struct us_loop_t *loop) {
     }
 }
 
+static uint64_t us_internal_monotonic_ns(void) {
+    return uv_hrtime();
+}
+
 #else
 
 #define LIBUS_TIMEOUT_GRANULARITY_NS ((long long) LIBUS_TIMEOUT_GRANULARITY * 1000000000LL)
@@ -352,8 +356,11 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
  * (us_internal_timer_sweep). */
 static const int MAX_LOW_PRIO_SOCKETS_PER_LOOP_ITERATION = 5;
 
-/* An accepted socket's handlers run inside the accept loop. The bound lets timers and other sockets run between batches. The listener's poll is level-triggered and reports the rest on the next tick. */
-static const int MAX_ACCEPTS_PER_READINESS_EVENT = 32;
+/* An accepted socket's handlers run inside the accept loop, so a batch ends for timers and other sockets to run. The listener's poll is
+ * level-triggered and reports the rest on the next tick. Past the minimum a batch gets the time that the loop spent on anything but
+ * batches since the listener's last one: a fixed count is a fixed rate on a busy loop, and the accept queue overflows. */
+static const int MIN_ACCEPTS_PER_BATCH = 32;
+static const uint64_t MAX_ACCEPT_BATCH_NS = 50 * 1000 * 1000;
 
 void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
     struct us_internal_loop_data_t *loop_data = &loop->data;
@@ -592,6 +599,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     /* Todo: stop timer if any */
 
                     int accepted = 0;
+                    const uint64_t start = us_internal_monotonic_ns();
+                    const uint64_t budget = start - loop->data.accept_batches_ns - listen_socket->last_batch_ns;
+                    const uint64_t deadline = start + (budget < MAX_ACCEPT_BATCH_NS ? budget : MAX_ACCEPT_BATCH_NS);
+                    listen_socket->last_batch_ns += budget;
                     do {
                         struct us_poll_t *accepted_p = us_create_poll(loop, 0, sizeof(struct us_socket_t) - sizeof(struct us_poll_t) + listen_socket->socket_ext_size);
                         us_poll_init(accepted_p, client_fd, POLL_TYPE_SOCKET);
@@ -642,7 +653,9 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                             break;
                         }
 
-                    } while (++accepted < MAX_ACCEPTS_PER_READINESS_EVENT && (client_fd = bsd_accept_socket(us_poll_fd(p), &addr, listen_socket->shared)) != LIBUS_SOCKET_ERROR);
+                    } while ((++accepted < MIN_ACCEPTS_PER_BATCH || us_internal_monotonic_ns() < deadline) &&
+                             (client_fd = bsd_accept_socket(us_poll_fd(p), &addr, listen_socket->shared)) != LIBUS_SOCKET_ERROR);
+                    loop->data.accept_batches_ns += us_internal_monotonic_ns() - start;
                 }
             }
         break;

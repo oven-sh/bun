@@ -2052,7 +2052,7 @@ pub mod bv2_impl {
         pub(crate) all_targets: &'a [Target],
         /// Files which are Server Component Boundaries
         pub(crate) scb_bitset: Option<DynamicBitSetUnmanaged>,
-        pub(crate) scb_list: server_component_boundary::Slice<'a>,
+        pub(crate) scb_list: &'a server_component_boundary::List,
 
         /// Files inlined in CSS whose output path a JS or HTML importer or their own entry point chunk prints
         pub(crate) additional_files_needed_outside_css: &'a mut DynamicBitSetUnmanaged,
@@ -2285,7 +2285,6 @@ pub mod bv2_impl {
                 Some(
                     self.graph
                         .server_component_boundaries
-                        .slice()
                         .bit_set(self.graph.input_files.len())?,
                 )
             } else {
@@ -2302,39 +2301,22 @@ pub mod bv2_impl {
 
             self.dynamic_import_entry_points = ArrayHashMap::new();
 
-            // reshaped for borrowck — hoist the values that would
-            // otherwise re-borrow `self`/`self.graph` while the visitor holds
-            // disjoint column refs.
-            // Always materialize a valid slice; when the boundary list is empty
-            // this is a cheap `{ list: empty, map: &map }`. Avoids constructing a
-            // null `&Map` via `mem::zeroed()` (UB even though it was never read
-            // when `scb_bitset` is `None`).
-            let scb_list = self.graph.server_component_boundaries.slice();
-
-            // reshaped for borrowck — `Slice<T>` is a value-type
-            // snapshot of column pointers (does not borrow `self.graph.ast`), so
-            // `split_mut()` on the local can coexist with the shared borrows
-            // below. The slab does not resize for the duration of this function.
-            let mut ast_slice = self.graph.ast.slice();
-            let all_import_records: &mut [import_record::List<'_>] =
-                ast_slice.split_mut().import_records;
-            let all_urls_for_css = self.graph.ast.items_url_for_css();
-            let all_exports_kinds = self.graph.ast.items_exports_kind();
-            let all_targets = self.graph.ast.items_target();
+            let ast = self.graph.ast.split_mut();
+            let all_urls_for_css = &*ast.url_for_css;
 
             let mut visitor = ReachableFileVisitor {
                 reachable: Vec::with_capacity(self.graph.entry_points.len() + 1),
                 visited: DynamicBitSet::init_empty(self.graph.input_files.len())?,
-                redirects: self.graph.ast.items_redirect_import_record_index(),
-                all_import_records,
+                redirects: ast.redirect_import_record_index,
+                all_import_records: ast.import_records,
                 all_loaders: self.graph.input_files.items_loader(),
                 all_urls_for_css,
                 dynamic_import_entry_points: &mut self.dynamic_import_entry_points,
                 split_require: self.transpiler.options.split_require,
-                all_exports_kinds,
-                all_targets,
+                all_exports_kinds: ast.exports_kind,
+                all_targets: ast.target,
                 scb_bitset,
-                scb_list,
+                scb_list: &self.graph.server_component_boundaries,
                 additional_files_needed_outside_css: &mut additional_files_needed_outside_css,
                 additional_files_imported_by_css_and_inlined:
                     &mut additional_files_imported_by_css_and_inlined,
@@ -2363,7 +2345,7 @@ pub mod bv2_impl {
                     self.graph.input_files.len()
                 );
                 let sources = self.graph.input_files.items_source();
-                let targets = self.graph.ast.items_target();
+                let targets = visitor.all_targets;
                 for idx in visitor.reachable.iter() {
                     let source = &sources[idx.get() as usize];
                     bun_core::scoped_log!(
@@ -2382,10 +2364,7 @@ pub mod bv2_impl {
             // cleanup loop reads them.
             let ReachableFileVisitor { reachable, .. } = visitor;
 
-            // reshaped for borrowck — three disjoint mutable SoA
-            // columns via `split_mut()` on a value-type `Slice` snapshot.
-            let mut input_files_slice = self.graph.input_files.slice();
-            let input_files_cols = input_files_slice.split_mut();
+            let input_files_cols = self.graph.input_files.split_mut();
             let additional_files: &mut [bun_alloc::AstVec<crate::AdditionalFile>] =
                 input_files_cols.additional_files;
             let unique_keys: &mut [Box<[u8], bun_alloc::AstAlloc>] =
@@ -2560,16 +2539,8 @@ pub mod bv2_impl {
             // version and exports a non-object in CommonJS (often a function). If we
             // pick the "module" field and the package is imported with "require" then
             // code expecting a function will crash.
-            //
-            // reshaped for borrowck — the mutable `import_records` column is
-            // needed alongside shared columns. `split_mut()` on a
-            // value-type `Slice` snapshot yields the one mutable column without
-            // borrowing `self.graph.ast`; read the per-target map through the
-            // disjoint `build_graphs` field instead of the `&mut self` accessor.
-            let mut ast_slice = self.graph.ast.slice();
-            let ast_import_records: &mut [import_record::List<'_>] =
-                ast_slice.split_mut().import_records;
-            let targets = self.graph.ast.items_target();
+            let ast = self.graph.ast.split_mut();
+            let (ast_import_records, targets) = (ast.import_records, ast.target);
             let max_valid_source_index = Index::init(self.graph.input_files.len());
             let secondary_paths = self.graph.input_files.items_secondary_path();
             let sources = self.graph.input_files.items_source();
@@ -3637,7 +3608,7 @@ pub mod bv2_impl {
             let mut server_manifest_props: Vec<G::Property> = Vec::new();
             let mut client_manifest_props: Vec<G::Property> = Vec::new();
 
-            let scbs = self.graph.server_component_boundaries.list.slice();
+            let scbs = &self.graph.server_component_boundaries.list;
             let named_exports_array = self.graph.ast.items_named_exports();
 
             let id_string = server.new_expr(E::EString {
@@ -4344,7 +4315,7 @@ pub mod bv2_impl {
             // entry points. This way, using two component files in a route does not
             // create two separate chunks. (note: bake passes each route as an entrypoint)
             {
-                let scbs = self.graph.server_component_boundaries.slice();
+                let scbs = &self.graph.server_component_boundaries;
                 self.graph.entry_points.reserve(scbs.list.len() * 2);
                 debug_assert_eq!(
                     scbs.list.items_source_index().len(),

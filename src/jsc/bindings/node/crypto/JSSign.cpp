@@ -334,12 +334,6 @@ JSUint8Array* signWithKey(JSC::JSGlobalObject* lexicalGlobalObject, JSSign* this
         return nullptr;
     }
 
-    // Set signature MD from the digest context first
-    if (!pkctx.setSignatureMd(mdCtx)) {
-        throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Failed to set signature message digest"_s);
-        return nullptr;
-    }
-
     // Set RSA padding mode and salt length if applicable
     if (pkey.isRsaVariant()) {
         std::optional<int> effective_salt_len = salt_len;
@@ -355,6 +349,12 @@ JSUint8Array* signWithKey(JSC::JSGlobalObject* lexicalGlobalObject, JSSign* this
             throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Failed to set RSA padding"_s);
             return nullptr;
         }
+    }
+
+    // After the RSA options, as in Node: a padding that is not known is reported before a digest that the key does not take.
+    if (!pkctx.setSignatureMd(mdCtx)) {
+        throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Failed to set signature message digest"_s);
+        return nullptr;
     }
 
     // Create buffer for signature
@@ -440,10 +440,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
         return Bun::ERR::CRYPTO_SIGN_KEY_REQUIRED(scope, lexicalGlobalObject);
     }
 
-    if (!options.isCell()) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key"_s, "ArrayBuffer, Buffer, TypedArray, DataView, string, KeyObject, or CryptoKey"_s, options);
-    }
-
     // Get RSA padding mode and salt length if applicable
     int32_t padding = getPadding(lexicalGlobalObject, scope, options, {});
     RETURN_IF_EXCEPTION(scope, {});
@@ -455,7 +451,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
     DSASigEnc dsaSigEnc = getDSASigEnc(lexicalGlobalObject, scope, options);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto prepareResult = KeyObject::preparePrivateKey(lexicalGlobalObject, scope, options);
+    auto prepareResult = KeyObject::preparePrivateKey(lexicalGlobalObject, scope, options, "privateKey"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
     KeyObject keyObject;

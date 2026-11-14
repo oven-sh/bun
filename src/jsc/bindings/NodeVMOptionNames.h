@@ -8,6 +8,8 @@ namespace Bun {
 #define BUN_NODE_VM_OPTION_NAMES_EACH(macro) \
     macro(breakOnSigint) \
     macro(cachedData) \
+    macro(cachedDataProduced) \
+    macro(cachedDataRejected) \
     macro(codeGeneration) \
     macro(columnOffset) \
     macro(contextCodeGeneration) \
@@ -20,12 +22,13 @@ namespace Bun {
     macro(microtaskMode) \
     macro(parsingContext) \
     macro(produceCachedData) \
+    macro(sourceMapURL) \
     macro(strings) \
     macro(timeout) \
     macro(wasm)
 // clang-format on
 
-// node:vm option names, atomized on first use and kept per VM, so a lookup does not add and remove an atom.
+// node:vm option names and the names of a Script's results, atomized on first use and kept per VM, so a lookup does not add and remove an atom.
 class NodeVMOptionNames {
 public:
 #define BUN_NODE_VM_OPTION_NAME_ACCESSOR(name)                      \

@@ -39,6 +39,7 @@ class JSNextTickQueue;
 class Process;
 class SecureContextCache;
 class GCProfilerObserver;
+class RunnerLoadFetcher;
 
 struct ModuleGraphState;
 } // namespace Bun
@@ -350,6 +351,8 @@ public:
 
     double INSPECT_MAX_BYTES = 50;
     bool isInsideErrorPrepareStackTraceCallback = false;
+    // Set while a CommonJS import of a test file or preload runs right before the graph is linked (JSCommonJSModule.cpp).
+    bool isRunningDeferredCommonJSModule = false;
 
     template<typename T>
     using LazyPropertyOfGlobalObject = LazyProperty<JSGlobalObject, T>;
@@ -698,6 +701,9 @@ public:
     std::unique_ptr<Bun::SecureContextCache> m_secureContextCache;
 
     std::unique_ptr<Bun::ModuleGraphState> m_moduleGraphs;
+
+    // `bun test`: the load of a test file or preload that is in flight, until its promise settles (RunnerLoadFetcher.h).
+    RefPtr<Bun::RunnerLoadFetcher> m_runnerLoad;
 
     // Backs node:v8's GCProfiler. Lazily created on first start(); its
     // destructor detaches from the heap so a worker that exits mid-profile

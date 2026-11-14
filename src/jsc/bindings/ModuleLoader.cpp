@@ -1091,6 +1091,36 @@ JSValue fetchCommonJSModuleNonBuiltin(
     RELEASE_AND_RETURN(scope, jsNumber(-1));
 }
 
+static void endRunnerLoad(Zig::GlobalObject* globalObject)
+{
+    if (auto mark = std::exchange(globalObject->m_runnerLoad, nullptr))
+        mark->clear();
+}
+
+RefPtr<RunnerLoadFetcher> beginRunnerLoad(Zig::GlobalObject* globalObject, JSModuleGraph* graph, const WTF::String& rootKey)
+{
+    if (globalObject->vm().hasCompiledCode())
+        return nullptr;
+    endRunnerLoad(globalObject);
+    globalObject->m_runnerLoad = RunnerLoadFetcher::create(graph ? graph->loader() : globalObject->moduleLoader(), rootKey);
+    return globalObject->m_runnerLoad;
+}
+
+void endRunnerLoadWhenSettled(Zig::GlobalObject* globalObject, RunnerLoadFetcher& mark, JSC::JSPromise* promise)
+{
+    if (globalObject->m_runnerLoad.get() != &mark)
+        return;
+    if (!promise || promise->status() != JSC::JSPromise::Status::Pending) {
+        endRunnerLoad(globalObject);
+        return;
+    }
+    // A reaction marks a pending promise as handled, which must be no news to the rejection tracker.
+    ASSERT(promise->isHandled());
+    mark.setPromise(promise);
+    JSC::JSFunction* didSettle = globalObject->thenable(jsFunctionRunnerLoadSettled);
+    promise->performPromiseThenWithContext(globalObject->vm(), globalObject, didSettle, didSettle, JSC::jsUndefined(), promise);
+}
+
 extern "C" JSC::JSPromise* JSC__JSModuleLoader__resolveAndLoadAndEvaluateModule(JSC::JSGlobalObject* globalObject, const BunString* specifier, bool marksLoad)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1582,6 +1612,16 @@ static JSValue didFulfillPendingVirtualModule(Zig::GlobalObject* globalObject, P
 }
 
 using namespace Bun;
+
+BUN_DEFINE_HOST_FUNCTION(jsFunctionRunnerLoadSettled, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    // A later load may have taken the slot while this one was pending.
+    auto* live = globalObject->m_runnerLoad.get();
+    if (live && JSC::JSValue(live->promise()) == callFrame->argument(1))
+        endRunnerLoad(globalObject);
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
 
 BUN_DEFINE_HOST_FUNCTION(jsFunctionEvictIsolationSourceProviderCache, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {

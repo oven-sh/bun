@@ -2620,4 +2620,23 @@ describe("bundler", () => {
       stdout: "var\nmain",
     },
   });
+
+  // `await` is an ordinary name in a sloppy CommonJS file. All of an ES module
+  // is module code, where no binding can have that name.
+  itBundled("cjs2esm/SloppyDependencyDeclaresAwait", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from './lib.cjs';
+        console.log(lib.f(1), lib.g(2));
+      `,
+      "/lib.cjs": /* js */ `
+        function f(await) { return await + 1; }
+        var g = function (x) { var await = x * 2; return await; };
+        module.exports = { f, g };
+      `,
+    },
+    run: {
+      stdout: "2 4",
+    },
+  });
 });

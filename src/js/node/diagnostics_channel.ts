@@ -3,8 +3,12 @@
 
 const { validateFunction } = require("internal/validators");
 
-const SafeMap = Map;
+const SafeMap = $Map;
 const SafeFinalizationRegistry = FinalizationRegistry;
+// Called with $call: `this.$get(key)` is a lookup by name in an executable of `bun build --compile --aot`.
+const MapPrototypeGet = SafeMap.prototype.$get;
+const MapPrototypeSet = SafeMap.prototype.$set;
+const MapPrototypeDelete = SafeMap.prototype.$delete;
 
 const ArrayPrototypeAt = Array.prototype.at;
 const ArrayPrototypeIndexOf = Array.prototype.indexOf;
@@ -51,24 +55,25 @@ class WeakReference<T extends WeakKey> extends WeakRef<T> {
 // Only GC can be used as a valid time to clean up the channels map.
 class WeakRefMap extends SafeMap {
   #finalizers = new SafeFinalizationRegistry(key => {
-    this.delete(key);
+    MapPrototypeDelete.$call(this, key);
   });
 
   set(key: ChannelName, value: AnyChannel) {
     this.#finalizers.register(value, key);
-    return super.set(key, new WeakReference(value));
+    MapPrototypeSet.$call(this, key, new WeakReference(value));
+    return this;
   }
 
   get(key: ChannelName) {
-    return (super.get(key) as WeakReference<AnyChannel> | undefined)?.get();
+    return (MapPrototypeGet.$call(this, key) as WeakReference<AnyChannel> | undefined)?.get();
   }
 
   incRef(key: ChannelName) {
-    return (super.get(key) as WeakReference<AnyChannel> | undefined)?.incRef();
+    return (MapPrototypeGet.$call(this, key) as WeakReference<AnyChannel> | undefined)?.incRef();
   }
 
   decRef(key: ChannelName) {
-    return (super.get(key) as WeakReference<AnyChannel> | undefined)?.decRef();
+    return (MapPrototypeGet.$call(this, key) as WeakReference<AnyChannel> | undefined)?.decRef();
   }
 }
 
@@ -307,7 +312,8 @@ class TracingChannel {
   }
 
   subscribe(handlers: TraceHandlers) {
-    for (const name of traceEvents) {
+    for (let i = 0; i < traceEvents.length; ++i) {
+      const name = traceEvents[i];
       if (!handlers[name]) continue;
 
       this[name]?.subscribe(handlers[name]);
@@ -317,7 +323,8 @@ class TracingChannel {
   unsubscribe(handlers: TraceHandlers) {
     let done = true;
 
-    for (const name of traceEvents) {
+    for (let i = 0; i < traceEvents.length; ++i) {
+      const name = traceEvents[i];
       if (!handlers[name]) continue;
 
       if (!this[name]?.unsubscribe(handlers[name])) {

@@ -33,9 +33,9 @@ pub(crate) struct Coordinator<'a> {
     pub(crate) cwd: &'a [u8],
     // [:null]?[*:0]const u8 — null-sentinel-terminated slice of C strings;
     // backing storage has a null at [len] for execve-style consumers.
-    pub(crate) argv: Box<[bun_spawn::CStrPtr]>,
+    pub(crate) argv: Box<[Option<bun_core::CStrRef<'static>>]>,
     /// One envp per worker slot — same base, with that slot's `WORKER_ID_VARIABLES`.
-    pub(crate) envps: Vec<bun_dotenv::NullDelimitedEnvMap>,
+    pub(crate) envps: Vec<bun_core::CStringList>,
 
     pub(crate) workers: &'a mut [Worker],
     /// Per file index, when a structured reporter (JUnit) is configured: the
@@ -353,7 +353,7 @@ impl<'a> Coordinator<'a> {
         match w.start(&SpawnContext {
             vm: self.vm,
             cwd: self.cwd,
-            argv: &self.argv,
+            argv: bun_core::CStrList::new(&self.argv),
             envps: &self.envps,
             compiled_program: crate::cli::run_compiled::graph_descriptor(),
             #[cfg(windows)]
@@ -945,7 +945,7 @@ impl<'a> Coordinator<'a> {
             match w.start(&SpawnContext {
                 vm: self.vm,
                 cwd: self.cwd,
-                argv: &self.argv,
+                argv: bun_core::CStrList::new(&self.argv),
                 envps: &self.envps,
                 compiled_program: crate::cli::run_compiled::graph_descriptor(),
                 #[cfg(windows)]

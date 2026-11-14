@@ -2,7 +2,7 @@ use super::arrow_function_expression::{FormatMaybeCachedFunctionBody, FunctionCa
 use super::block_statement::is_empty_block;
 use super::parameters::FormatFormalParameters;
 use super::program::FormatStatements;
-use super::semicolon::OptionalSemicolon;
+use super::semicolon::{BodilessDeclarationSemicolon, OptionalSemicolon};
 use super::type_parameters::type_parameters;
 use crate::js::format::{
     ExprOptions, FormatTypeAnnotation, format_node, identifier, write_expression,
@@ -106,7 +106,10 @@ pub(crate) fn write_function<'a>(
             ]
         );
     } else {
-        write!(f, OptionalSemicolon);
+        match func.owner().as_stmt() {
+            Some(statement) => write!(f, BodilessDeclarationSemicolon(statement)),
+            None => write!(f, OptionalSemicolon),
+        }
     }
 }
 

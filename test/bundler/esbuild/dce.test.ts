@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test";
+import { isWindows } from "harness";
 import { dedent, itBundled } from "../expectBundled";
 
 // Tests ported from:
@@ -799,6 +800,463 @@ describe("bundler", () => {
     dce: true,
     run: {
       stdout: "main effect - should be preserved\ndone",
+    },
+  });
+  // An entry without "/" lists a file in every directory of the package, as in webpack and esbuild.
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`dce/PackageJsonSideEffectsNoSlashAnyDirectory-${backend}`, {
+      backend,
+      files: {
+        "/Users/user/project/src/entry.js": /* js */ `
+          import "demo-pkg/root.side.js";
+          import "demo-pkg/deep/nested.side.js";
+          import "demo-pkg/.hidden/x.side.js";
+          import "demo-pkg/deep/.dot.side.js";
+          import "demo-pkg/polyfill.js";
+          import "demo-pkg/comp/polyfill.js";
+          import "demo-pkg/deep/unlisted.js";
+          console.log("done");
+        `,
+        "/Users/user/project/node_modules/demo-pkg/root.side.js": `console.log("root glob")`,
+        "/Users/user/project/node_modules/demo-pkg/deep/nested.side.js": `console.log("nested glob")`,
+        "/Users/user/project/node_modules/demo-pkg/.hidden/x.side.js": `console.log("dot directory")`,
+        "/Users/user/project/node_modules/demo-pkg/deep/.dot.side.js": `console.log("dotfile")`,
+        "/Users/user/project/node_modules/demo-pkg/polyfill.js": `console.log("root name")`,
+        "/Users/user/project/node_modules/demo-pkg/comp/polyfill.js": `console.log("nested name")`,
+        "/Users/user/project/node_modules/demo-pkg/deep/unlisted.js": `console.log("TEST FAILED")`,
+        "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+          {
+            "sideEffects": ["*.side.js", "polyfill.js"]
+          }
+        `,
+      },
+      dce: true,
+      run: {
+        stdout: "root glob\nnested glob\ndot directory\ndotfile\nroot name\nnested name\ndone",
+      },
+    });
+  }
+  itBundled("dce/PackageJsonSideEffectsGlobNoSlashMatchesNested", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "demo-pkg/root.side.js";
+        import "demo-pkg/deep/nested.side.js";
+        import "demo-pkg/deep/also/here.side.js";
+        import "demo-pkg/deep/unrelated.js";
+        console.log("done");
+      `,
+      "/Users/user/project/node_modules/demo-pkg/root.side.js": `console.log("root kept")`,
+      "/Users/user/project/node_modules/demo-pkg/deep/nested.side.js": `console.log("nested kept")`,
+      "/Users/user/project/node_modules/demo-pkg/deep/also/here.side.js": `console.log("deeper kept")`,
+      "/Users/user/project/node_modules/demo-pkg/deep/unrelated.js": `console.log("TEST FAILED")`,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "sideEffects": ["*.side.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "root kept\nnested kept\ndeeper kept\ndone",
+    },
+  });
+  itBundled("dce/PackageJsonSideEffectsBareNameMatchesNested", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "demo-pkg/polyfill.js";
+        import "demo-pkg/comp/polyfill.js";
+        import "demo-pkg/comp/other.js";
+        console.log("done");
+      `,
+      "/Users/user/project/node_modules/demo-pkg/polyfill.js": `console.log("root poly kept")`,
+      "/Users/user/project/node_modules/demo-pkg/comp/polyfill.js": `console.log("nested poly kept")`,
+      "/Users/user/project/node_modules/demo-pkg/comp/other.js": `console.log("TEST FAILED")`,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "sideEffects": ["polyfill.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "root poly kept\nnested poly kept\ndone",
+    },
+  });
+  itBundled("dce/PackageJsonSideEffectsMixedNoSlashAndPath", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "demo-pkg/lib/effect.side.js";
+        import "demo-pkg/lib/specific.js";
+        import "demo-pkg/comp/polyfill.js";
+        import "demo-pkg/lib/drop.js";
+        console.log("done");
+      `,
+      "/Users/user/project/node_modules/demo-pkg/lib/effect.side.js": `console.log("glob kept")`,
+      "/Users/user/project/node_modules/demo-pkg/lib/specific.js": `console.log("exact kept")`,
+      "/Users/user/project/node_modules/demo-pkg/comp/polyfill.js": `console.log("bare kept")`,
+      "/Users/user/project/node_modules/demo-pkg/lib/drop.js": `console.log("TEST FAILED")`,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "sideEffects": ["*.side.js", "./lib/specific.js", "polyfill.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "glob kept\nexact kept\nbare kept\ndone",
+    },
+  });
+  itBundled("dce/PackageJsonSideEffectsStarListsEveryFile", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "demo-pkg/a.js";
+        import "demo-pkg/deep/b.js";
+        import "demo-pkg/deep/.hidden/c.js";
+        console.log("done");
+      `,
+      "/Users/user/project/node_modules/demo-pkg/a.js": `console.log("a")`,
+      "/Users/user/project/node_modules/demo-pkg/deep/b.js": `console.log("b")`,
+      "/Users/user/project/node_modules/demo-pkg/deep/.hidden/c.js": `console.log("c")`,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "sideEffects": ["*"]
+        }
+      `,
+    },
+    run: {
+      stdout: "a\nb\nc\ndone",
+    },
+  });
+  itBundled("dce/PackageJsonSideEffectsBareCSSAndJS", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "demo-pkg/style.css";
+        import "demo-pkg/setup.js";
+        import "demo-pkg/lib/setup.js";
+        import "demo-pkg/lib/other.js";
+        console.log("done");
+      `,
+      "/Users/user/project/node_modules/demo-pkg/style.css": `body { color: red; }`,
+      "/Users/user/project/node_modules/demo-pkg/setup.js": `console.log("root setup kept")`,
+      "/Users/user/project/node_modules/demo-pkg/lib/setup.js": `console.log("nested setup kept")`,
+      "/Users/user/project/node_modules/demo-pkg/lib/other.js": `console.log("TEST FAILED")`,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "sideEffects": ["style.css", "setup.js"]
+        }
+      `,
+    },
+    outdir: "/out",
+    dce: true,
+    dceKeepMarkerCount: false,
+    run: {
+      stdout: "root setup kept\nnested setup kept\ndone",
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toContain("color: red");
+    },
+  });
+  // The list of a package that has a name, reached through the index of the package.
+  itBundled("dce/PackageJsonSideEffectsNoSlashInNamedPackage", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import { v } from "@scope/ui";
+        console.log(v);
+      `,
+      "/Users/user/project/node_modules/@scope/ui/index.js": /* js */ `
+        import "./root.side.js";
+        import "./sub/deep.side.js";
+        import "./comp/polyfill.js";
+        import "./sub/unlisted.js";
+        export const v = "done";
+      `,
+      "/Users/user/project/node_modules/@scope/ui/root.side.js": `console.log("root glob")`,
+      "/Users/user/project/node_modules/@scope/ui/sub/deep.side.js": `console.log("nested glob")`,
+      "/Users/user/project/node_modules/@scope/ui/comp/polyfill.js": `console.log("nested name")`,
+      "/Users/user/project/node_modules/@scope/ui/sub/unlisted.js": `console.log("TEST FAILED")`,
+      "/Users/user/project/node_modules/@scope/ui/package.json": /* json */ `
+        {
+          "name": "@scope/ui",
+          "version": "1.0.0",
+          "main": "index.js",
+          "sideEffects": ["*.side.js", "polyfill.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "root glob\nnested glob\nnested name\ndone",
+    },
+  });
+  // The list of the project itself, for files that the project imports by relative path.
+  itBundled("dce/PackageJsonSideEffectsNoSlashInProjectPackage", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "./deep/nested.side.js";
+        import "./deep/polyfill.js";
+        import "./deep/unlisted.js";
+        console.log("done");
+      `,
+      "/Users/user/project/src/deep/nested.side.js": `console.log("nested glob")`,
+      "/Users/user/project/src/deep/polyfill.js": `console.log("nested name")`,
+      "/Users/user/project/src/deep/unlisted.js": `console.log("TEST FAILED")`,
+      "/Users/user/project/package.json": /* json */ `
+        {
+          "name": "app",
+          "sideEffects": ["*.side.js", "polyfill.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "nested glob\nnested name\ndone",
+    },
+  });
+  // An entry without "/" has no directory, so it also lists a file that "main" reaches outside the package.
+  itBundled("dce/PackageJsonSideEffectsNoSlashOutsidePackage", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "by-name";
+        import "by-glob";
+        console.log("done");
+      `,
+      "/Users/user/project/node_modules/shared/x.js": `console.log("name outside")`,
+      "/Users/user/project/node_modules/shared/y.js": `console.log("glob outside")`,
+      "/Users/user/project/node_modules/by-name/package.json": /* json */ `
+        {
+          "name": "by-name",
+          "main": "../shared/x.js",
+          "sideEffects": ["x.js"]
+        }
+      `,
+      "/Users/user/project/node_modules/by-glob/package.json": /* json */ `
+        {
+          "name": "by-glob",
+          "main": "../shared/y.js",
+          "sideEffects": ["y.*"]
+        }
+      `,
+    },
+    run: {
+      stdout: "name outside\nglob outside\ndone",
+    },
+  });
+  // A file that the list names keeps its side effects when an onLoad plugin turns it into JavaScript.
+  itBundled("dce/PackageJsonSideEffectsListedFileLoadedByPlugin", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "demo-pkg/root.scss";
+        import "demo-pkg/scss/theme.scss";
+        import "demo-pkg/scss/unlisted.less";
+        console.log("done");
+      `,
+      "/Users/user/project/node_modules/demo-pkg/root.scss": `.root { color: red }`,
+      "/Users/user/project/node_modules/demo-pkg/scss/theme.scss": `.theme { color: blue }`,
+      "/Users/user/project/node_modules/demo-pkg/scss/unlisted.less": `TEST FAILED`,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "sideEffects": ["./lib/common.js", "*.css", "*.scss"]
+        }
+      `,
+    },
+    plugins(builder) {
+      builder.onLoad({ filter: /\.(scss|less)$/ }, async args => ({
+        contents: `console.log(${JSON.stringify((await Bun.file(args.path).text()).trim())})`,
+        loader: "js",
+      }));
+    },
+    run: {
+      stdout: ".root { color: red }\n.theme { color: blue }\ndone",
+    },
+  });
+  // Today a list with a glob is asked a second time through the nearest package.json that has a name, and that
+  // answer wins. A list of file names has no glob, so its own answer stands. This fails if a file name is a glob.
+  itBundled("dce/PackageJsonSideEffectsFileNameInPackageWithoutName", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "no-name/polyfill.js";
+        import "no-name/sub/polyfill.js";
+        import "no-name/sub/unlisted.js";
+        console.log("done");
+      `,
+      "/Users/user/project/package.json": /* json */ `
+        {
+          "name": "app",
+          "sideEffects": false
+        }
+      `,
+      "/Users/user/project/node_modules/no-name/polyfill.js": `console.log("root name")`,
+      "/Users/user/project/node_modules/no-name/sub/polyfill.js": `console.log("nested name")`,
+      "/Users/user/project/node_modules/no-name/sub/unlisted.js": `console.log("TEST FAILED")`,
+      "/Users/user/project/node_modules/no-name/package.json": /* json */ `
+        {
+          "sideEffects": ["polyfill.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "root name\nnested name\ndone",
+    },
+  });
+  // "[slug]" in the path of the package is not a character class for an entry without "/".
+  itBundled("dce/PackageJsonSideEffectsNoSlashUnderBracketDirectory", {
+    files: {
+      "/Users/user/project/[slug]/src/entry.js": /* js */ `
+        import "demo-pkg/root.side.js";
+        import "demo-pkg/deep/nested.side.js";
+        import "demo-pkg/polyfill.js";
+        import "demo-pkg/deep/polyfill.js";
+        import "demo-pkg/deep/unlisted.js";
+        console.log("done");
+      `,
+      "/Users/user/project/[slug]/node_modules/demo-pkg/root.side.js": `console.log("root glob")`,
+      "/Users/user/project/[slug]/node_modules/demo-pkg/deep/nested.side.js": `console.log("nested glob")`,
+      "/Users/user/project/[slug]/node_modules/demo-pkg/polyfill.js": `console.log("root name")`,
+      "/Users/user/project/[slug]/node_modules/demo-pkg/deep/polyfill.js": `console.log("nested name")`,
+      "/Users/user/project/[slug]/node_modules/demo-pkg/deep/unlisted.js": `console.log("TEST FAILED")`,
+      "/Users/user/project/[slug]/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "sideEffects": ["*.side.js", "polyfill.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "root glob\nnested glob\nroot name\nnested name\ndone",
+    },
+  });
+  // An entry with "/" is a path from the directory of the package.json.
+  itBundled("dce/PackageJsonSideEffectsEntryWithSlashIsAPath", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "demo-pkg/polyfill.js";
+        import "demo-pkg/lib/polyfill.js";
+        import "demo-pkg/root.side.js";
+        import "demo-pkg/lib/nested.side.js";
+        import "demo-pkg/comp/setup.js";
+        import "demo-pkg/lib/comp/setup.js";
+        console.log("done");
+      `,
+      "/Users/user/project/node_modules/demo-pkg/polyfill.js": `console.log("root name")`,
+      "/Users/user/project/node_modules/demo-pkg/lib/polyfill.js": `console.log("TEST FAILED")`,
+      "/Users/user/project/node_modules/demo-pkg/root.side.js": `console.log("root glob")`,
+      "/Users/user/project/node_modules/demo-pkg/lib/nested.side.js": `console.log("TEST FAILED")`,
+      "/Users/user/project/node_modules/demo-pkg/comp/setup.js": `console.log("comp path")`,
+      "/Users/user/project/node_modules/demo-pkg/lib/comp/setup.js": `console.log("TEST FAILED")`,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "sideEffects": ["./polyfill.js", "./*.side.js", "comp/setup.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "root name\nroot glob\ncomp path\ndone",
+    },
+  });
+  // An entry with "\\" is a path, as one with "/" is. With glob syntax its "\\" becomes "/" on every platform.
+  // Without glob syntax it is joined as written: a directory separator on Windows, a part of the name elsewhere.
+  itBundled("dce/PackageJsonSideEffectsEntryWithBackslashIsAPath", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "demo-pkg/sub/effect.js";
+        import "demo-pkg/globbed/x.js";
+        import "demo-pkg/deep/globbed/x.js";
+        console.log("done");
+      `,
+      "/Users/user/project/node_modules/demo-pkg/sub/effect.js": `console.log("sub effect")`,
+      "/Users/user/project/node_modules/demo-pkg/globbed/x.js": `console.log("globbed x")`,
+      "/Users/user/project/node_modules/demo-pkg/deep/globbed/x.js": `console.log("TEST FAILED")`,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "sideEffects": ["sub\\\\effect.js", "globbed\\\\*.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: isWindows ? "sub effect\nglobbed x\ndone" : "globbed x\ndone",
+    },
+  });
+  itBundled("dce/PackageJsonSideEffectsExactListInPackageWithoutName", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "no-name/listed.js";
+        import "no-name/unlisted.js";
+        console.log("done");
+      `,
+      "/Users/user/project/package.json": /* json */ `
+        {
+          "name": "app",
+          "sideEffects": false
+        }
+      `,
+      "/Users/user/project/node_modules/no-name/listed.js": `console.log("listed")`,
+      "/Users/user/project/node_modules/no-name/unlisted.js": `console.log("TEST FAILED")`,
+      "/Users/user/project/node_modules/no-name/package.json": /* json */ `
+        {
+          "sideEffects": ["./listed.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "listed\ndone",
+    },
+  });
+  // A list that has a glob does not store its ".css" entries, and a list without a glob stores them. This pins
+  // that difference as it is. The CSS is in the bundle either way. A lazily loaded importer keeps an empty
+  // initializer for a CSS file with side effects.
+  itBundled("dce/PackageJsonSideEffectsCSSEntries", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        console.log(require("with-glob").name, require("with-both").name, require("with-path").name);
+      `,
+      "/Users/user/project/node_modules/with-glob/index.js": /* js */ `
+        import "./sub/globbed.css";
+        export const name = "glob";
+      `,
+      "/Users/user/project/node_modules/with-glob/sub/globbed.css": `.globbed { color: red; }`,
+      "/Users/user/project/node_modules/with-glob/package.json": /* json */ `
+        {
+          "sideEffects": ["*.css"]
+        }
+      `,
+      "/Users/user/project/node_modules/with-both/index.js": /* js */ `
+        import "./sub/mixed.css";
+        export const name = "both";
+      `,
+      "/Users/user/project/node_modules/with-both/sub/mixed.css": `.mixed { color: green; }`,
+      "/Users/user/project/node_modules/with-both/package.json": /* json */ `
+        {
+          "sideEffects": ["./sub/mixed.css", "./*.side.js"]
+        }
+      `,
+      "/Users/user/project/node_modules/with-path/index.js": /* js */ `
+        import "./sub/exact.css";
+        export const name = "path";
+      `,
+      "/Users/user/project/node_modules/with-path/sub/exact.css": `.exact { color: blue; }`,
+      "/Users/user/project/node_modules/with-path/package.json": /* json */ `
+        {
+          "sideEffects": ["./sub/exact.css"]
+        }
+      `,
+    },
+    outdir: "/out",
+    run: {
+      stdout: "glob both path",
+    },
+    onAfterBundle(api) {
+      const js = api.readFile("/out/entry.js");
+      expect(js).not.toContain("init_globbed");
+      expect(js).not.toContain("init_mixed");
+      expect(js).toContain("init_exact");
+      const css = api.readFile("/out/entry.css");
+      expect(css).toContain(".globbed");
+      expect(css).toContain(".mixed");
+      expect(css).toContain(".exact");
     },
   });
   itBundled("dce/PackageJsonSideEffectsGlobInvalidPattern", {

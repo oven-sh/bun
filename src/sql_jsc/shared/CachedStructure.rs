@@ -1,13 +1,12 @@
 use core::ffi::{CStr, c_char};
 
 use crate::jsc::{
-    ExternColumnIdentifier, JSGlobalObject, JSObject, JSValue, JsError, JsResult,
-    MarkedArgumentBuffer, StrongOptional, bun_string_jsc,
+    ExternColumnIdentifier, JSGlobalObject, JSObject, JSValue, JsResult, MarkedArgumentBuffer,
+    StrongOptional, bun_string_jsc,
 };
 use bun_collections::BoundedArray;
 use bun_jsc::Weak;
-use bun_ptr::RawSlice;
-use bun_sql::shared::{ColumnIdentifier, Data};
+use bun_sql::shared::ColumnIdentifier;
 
 #[derive(Default)]
 pub struct CachedStructure {
@@ -79,7 +78,7 @@ impl CachedStructure {
 
         let ids = columns.filter_map(|column| match column {
             ColumnIdentifier::Name(name) => Some(ExternColumnIdentifier::Name(
-                bun_core::String::create_atom_if_possible(name.slice()),
+                bun_core::String::create_atom_if_possible(name),
             )),
             ColumnIdentifier::Index(index) => Some(ExternColumnIdentifier::Index(*index)),
             ColumnIdentifier::Duplicate(_) => None,
@@ -170,7 +169,7 @@ pub(crate) fn column_name_to_js(
 ) -> JsResult<JSValue> {
     match column {
         ColumnIdentifier::Name(name) | ColumnIdentifier::Duplicate(name) => {
-            bun_string_jsc::create_utf8_for_js(global_object, name.slice())
+            bun_string_jsc::create_utf8_for_js(global_object, name)
         }
         ColumnIdentifier::Index(index) => {
             let mut digits = bun_core::fmt::ItoaBuf::new();
@@ -192,6 +191,5 @@ pub(crate) fn transform_name(
         .call(global_object, JSValue::UNDEFINED, &[name])?
         .to_bun_string(global_object)?;
     let renamed = renamed.to_utf8();
-    ColumnIdentifier::init(Data::Temporary(RawSlice::new(renamed.slice())))
-        .map_err(|_| JsError::OutOfMemory)
+    Ok(ColumnIdentifier::init(renamed.slice().into()))
 }

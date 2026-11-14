@@ -9,7 +9,7 @@ Bun relies on pre-existing configuration files like `package.json` and `tsconfig
 
 ## Global vs. local
 
-Put `bunfig.toml` in your project root, alongside your `package.json`.
+Put `bunfig.toml` in your project root, alongside your `package.json`. Bun reads `bunfig.toml` from the current working directory, so run commands from your project root. `bun test` also accepts `--config=<path>`; see [Test configuration](/test/configuration).
 
 To configure Bun's package manager globally, you can also create a `.bunfig.toml` file at one of the following paths:
 

@@ -1,11 +1,11 @@
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::{
-    is_intersection_type, is_literal_type, is_object_flag_set, is_object_type, is_type_flag_set,
+    is_intersection_type, is_object_flag_set, is_object_type, is_type_flag_set, union_constituents,
 };
-use bun_lint::types::utils::type_is_or_has_base_type;
-use bun_lint::types::{IdMap, IdSet, NameOf, ObjectFlags, Type, TypeFlags};
-use bun_lint::utils::eslint_utils::find_variable;
-use bun_lint::utils::ts_scope::is_type_definition;
+use bun_lint::types::utils::{get_type_flags, type_is_or_has_base_type};
+use bun_lint::types::{
+    IdMap, IdSet, ObjectFlags, SymbolFlags, SyntaxKind, TsNode, Type, TypeFlags,
+};
 use bun_lint::utils::ts_utils::{
     MemberAccessValue, get_member_head_loc, get_parameter_property_head_loc,
     get_static_member_access_value,
@@ -13,6 +13,7 @@ use bun_lint::utils::ts_utils::{
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use std::borrow::Cow;
+use std::cell::OnceCell;
 
 /// Require private members to be marked as `readonly` if they're never modified outside of the constructor.
 pub struct PreferReadonly {
@@ -381,6 +382,35 @@ fn is_modified_property_access(node: Expr<'_>) -> bool {
     is_destructuring_assignment(node)
 }
 
+/// Whether the `Dot` or the `Index` is written to.
+fn is_modification(node: Expr<'_>) -> bool {
+    match node.kind() {
+        ExprKind::Dot { .. } => is_modified_property_access(node),
+        // tsgolint ignores writes through brackets.
+        ExprKind::Index { .. } => {
+            !node.file().language().is_oxlint
+                && !node.is_parenthesized()
+                && matches!(
+                    node.parent(),
+                    Node::Expr(parent) if matches!(parent.kind(), ExprKind::Assign { target, .. } if target == node)
+                )
+        }
+        _ => false,
+    }
+}
+
+/// The object of the `Dot` or the `Index`, and the name of the member that it accesses.
+fn accessed_member<'a>(node: Expr<'a>) -> Option<(Expr<'a>, Cow<'a, [u8]>)> {
+    match node.kind() {
+        ExprKind::Dot { obj, name, .. } => Some((obj, Cow::Borrowed(name.bytes()))),
+        ExprKind::Index { obj, .. } => match get_static_member_access_value(node) {
+            Some(MemberAccessValue::String(member_name)) => Some((obj, member_name)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// tsgolint uses the TypeScript parser's idea of a constructor: `static constructor() {}` is one,
 /// `"constructor"<T>() {}` and `*"constructor"() {}` are methods.
 fn is_constructor(member: Member<'_>) -> bool {
@@ -409,38 +439,132 @@ fn enclosing_class(node: Expr<'_>) -> Option<(Class<'_>, bool)> {
     None
 }
 
-/// Returns the type to annotate the `PropertyDefinition` with. Once the property is `readonly`, its literal
-/// initializer's type is no longer widened.
-fn get_type_annotation<'a>(member: Member<'a>, key: Key<'a>) -> Option<Vec<u8>> {
-    // typescript-eslint and tsgolint don't annotate `#a = 0`, so the constructor can't assign other numbers anymore.
-    if member.ty().is_some() || !matches!(key.kind(), KeyKind::Ident(_) | KeyKind::Private(_)) {
-        return None;
+/// What the fix does about the type of a member, which `readonly` would narrow to the type of its initializer.
+enum Annotation<'a> {
+    /// `readonly` leaves the type of the member as it is.
+    NotNeeded,
+    /// The type that the member has now, to write.
+    Write(Vec<u8>),
+    /// Nothing is written, and `readonly` narrows the member to this, the type of its initializer.
+    Narrows(Type<'a>),
+}
+
+/// Whether `name`, written as a type where the member is, is `ty`.
+fn names<'a>(member: Member<'a>, name: &[u8], ty: Type<'a>) -> bool {
+    let types = member.file().type_checker();
+    let Some(named) = types.resolve_name(member, name, SymbolFlags::TYPE, false) else {
+        return false;
+    };
+    let named = named.skip_alias();
+    // `type Color<T> = Enum` is the enum as well, and no type without an argument.
+    let takes_arguments = |declaration: TsNode<'a>| {
+        let mut children = declaration.children();
+        children.any(|it| it.kind() == SyntaxKind::TypeParameter && it.default_type().is_none())
+    };
+    named.get_declared_type() == ty && !named.declarations().any(takes_arguments)
+}
+
+fn get_type_annotation<'a>(member: Member<'a>, key: Key<'a>) -> Annotation<'a> {
+    let (None, Some(initializer)) = (member.ty(), member.init()) else {
+        return Annotation::NotNeeded;
+    };
+    let (violating_type, initializer_type) = (member.type_at_location(), initializer.ty());
+    // Both tools leave out an enum member whose value isn't known, like the `E.A` of `declare enum E { A, B }`.
+    let widened = TypeFlags::LITERAL | TypeFlags::ENUM_LIKE;
+    if initializer_type == violating_type || !get_type_flags(initializer_type).intersects(widened) {
+        return Annotation::NotNeeded;
     }
-    let violating_type = member.type_at_location();
-    let initializer_type = member.init()?.ty();
-    if initializer_type == violating_type || !is_literal_type(initializer_type) {
-        return None;
+    // typescript-eslint and tsgolint don't annotate `#a = 0`, so the constructor can't assign other numbers anymore.
+    let is_named = matches!(key.kind(), KeyKind::Ident(_) | KeyKind::Private(_));
+    if !is_named || initializer_type.is_union() {
+        return Annotation::Narrows(initializer_type);
     }
     let annotation = violating_type.to_text();
     // The enum's name has to resolve to the enum here.
-    if is_type_flag_set(initializer_type, TypeFlags::ENUM_LITERAL) {
-        let variable = find_variable(Node::Member(member).scope(), &annotation)?;
-        let definition = variable.declarations().find(|it| is_type_definition(*it))?;
-        let definition_type = match definition {
-            // tsgolint resolves the name through the import to the enum.
-            Declaration::ImportSpec(specifier) if member.file().language().is_oxlint => {
-                NameOf(specifier).ts_symbol()?.skip_alias().get_declared_type()
-            }
-            _ => definition.node()?.ty(),
-        };
-        if definition_type != violating_type {
-            return None;
-        }
+    let is_enum = is_type_flag_set(initializer_type, TypeFlags::ENUM_LIKE);
+    match is_enum && !names(member, &annotation, violating_type) {
+        true => Annotation::Narrows(initializer_type),
+        false => Annotation::Write(annotation),
     }
-    Some(annotation)
 }
 
-fn report<'a>(cx: &Cx<'a, PreferReadonly>, violating: &PrivateModifiable<'a>) {
+/// Whether the `Assign` can be the default of a pattern, as in `[this.a = 1] = b`, which writes another value.
+fn may_be_default_in_pattern(assign: Expr<'_>) -> bool {
+    match assign.parent() {
+        Node::Prop(_) => true,
+        Node::Expr(parent) => matches!(parent.kind(), ExprKind::Array(_)),
+        _ => false,
+    }
+}
+
+/// Whether all that the constructor writes to `member` still type checks once `readonly` narrows it to `narrowed`.
+fn constructor_writes_fit<'a>(
+    class_scope: &ClassScope<'a>,
+    member: Member<'a>,
+    name: &[u8],
+    narrowed: Type<'a>,
+) -> bool {
+    // What the constructor writes through an instance isn't the static member of that name.
+    if member.is_static() {
+        return true;
+    }
+    let (class, Some(class_type)) = (class_scope.class, class_scope.class_type) else {
+        return false;
+    };
+    let is_of_instance = |object: Expr<'a>| {
+        let object_type = object.ty();
+        !object_type.is_unresolved()
+            && get_type_to_class_relation(object_type, class_type) == TypeToClassRelation::Instance
+    };
+    let is_write = |node: &Expr<'a>| {
+        is_modification(*node)
+            && accessed_member(*node).is_some_and(|(object, member_name)| {
+                *member_name == *name
+                    && enclosing_class(*node) == Some((class, true))
+                    && is_of_instance(object)
+            })
+    };
+    // What is read from the member, as in `this.a = other.a`, is narrowed with it.
+    let is_same_member = |value: Expr<'a>| {
+        accessed_member(value)
+            .is_some_and(|(object, member_name)| *member_name == *name && is_of_instance(object))
+    };
+    // An optional member still takes `undefined`.
+    let is_optional = member.flags().contains(Flags::OPTIONAL);
+    let takes = |ty: Type<'a>| {
+        ty.is_assignable_to(narrowed) || (is_optional && is_type_flag_set(ty, TypeFlags::UNDEFINED))
+    };
+    let has_value_that_fits = |assign: Expr<'a>, node: Expr<'a>| match assign.kind() {
+        ExprKind::Assign {
+            op: None,
+            target,
+            value,
+        } => {
+            target == node
+                && (is_same_member(value) || union_constituents(value.ty()).iter().all(&takes))
+        }
+        _ => false,
+    };
+    let fits = |node: Expr<'a>| {
+        !node.is_parenthesized()
+            && matches!(
+                node.parent(),
+                Node::Expr(assign) if !may_be_default_in_pattern(assign) && has_value_that_fits(assign, node)
+            )
+    };
+    let file = class.file();
+    let mut writes = [ExprTag::Dot, ExprTag::Index]
+        .into_iter()
+        .flat_map(|tag| file.exprs_of_kind(tag))
+        .filter(is_write);
+    writes.all(fits)
+}
+
+fn report<'a>(
+    cx: &Cx<'a, PreferReadonly>,
+    class_scope: &ClassScope<'a>,
+    violating: &PrivateModifiable<'a>,
+) {
     let file = cx.file();
     let member = match violating.node {
         ParameterOrPropertyDeclaration::Parameter(param) => {
@@ -475,33 +599,47 @@ fn report<'a>(cx: &Cx<'a, PreferReadonly>, violating: &PrivateModifiable<'a>) {
         (false, false) => member.span(),
     };
     let has_constructor_modifications = violating.has_constructor_modifications;
+    // Both closures ask, and only when the fix is read.
+    let annotation = OnceCell::new();
+    let annotation = || {
+        annotation.get_or_init(|| {
+            // tsgolint also annotates an abstract property.
+            match (is_property_definition || is_oxlint) && has_constructor_modifications {
+                true => get_type_annotation(member, key),
+                false => Annotation::NotNeeded,
+            }
+        })
+    };
     cx.report(loc, PREFER_READONLY)
         .data("name", file.slice(name_node))
-        .fix(|fixer| {
-            let readonly_insertion_target = match is_property_definition && key.is_computed() {
-                true => key.span(file),
-                false => name_node,
-            };
-            let mut fixes = vec![fixer.insert_before(readonly_insertion_target, "readonly ")];
-            // tsgolint also annotates an abstract property.
-            if (is_property_definition || is_oxlint)
-                && has_constructor_modifications
-                && let Some(type_annotation) = get_type_annotation(member, key)
-            {
-                // tsgolint writes the type before the `?` of `x? = 1`, which doesn't parse.
-                let question_or_exclamation = is_oxlint
-                    .then(|| skip_trivia(file.text(), name_node.end))
-                    .filter(|&at| matches!(file.text().get(at as usize), Some(b'?' | b'!')));
-                let annotated = match question_or_exclamation {
-                    Some(at) => Span::new(at, at + 1),
-                    None => name_node,
+        .fix_where_safe(
+            || match annotation() {
+                Annotation::Narrows(narrowed) => {
+                    constructor_writes_fit(class_scope, member, violating.name, *narrowed)
+                }
+                Annotation::NotNeeded | Annotation::Write(_) => true,
+            },
+            |fixer| {
+                let readonly_insertion_target = match is_property_definition && key.is_computed() {
+                    true => key.span(file),
+                    false => name_node,
                 };
-                fixes.push(
-                    fixer.insert_after(annotated, [&b": "[..], &type_annotation[..]].concat()),
-                );
-            }
-            fixes
-        });
+                let mut fixes = vec![fixer.insert_before(readonly_insertion_target, "readonly ")];
+                if let Annotation::Write(type_annotation) = annotation() {
+                    // Both tools write the type before the `?` of `x? = 1`, which doesn't parse.
+                    let question_or_exclamation = Some(skip_trivia(file.text(), name_node.end))
+                        .filter(|&at| matches!(file.text().get(at as usize), Some(b'?' | b'!')));
+                    let annotated = match question_or_exclamation {
+                        Some(at) => Span::new(at, at + 1),
+                        None => name_node,
+                    };
+                    fixes.push(
+                        fixer.insert_after(annotated, [&b": "[..], &type_annotation[..]].concat()),
+                    );
+                }
+                fixes
+            },
+        );
 }
 
 impl PreferReadonly {
@@ -567,20 +705,7 @@ impl Rule for PreferReadonly {
     }
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let is_modified = match node.kind() {
-            ExprKind::Dot { .. } => is_modified_property_access(node),
-            // tsgolint ignores writes through brackets.
-            ExprKind::Index { .. } => {
-                !cx.language().is_oxlint
-                    && !node.is_parenthesized()
-                    && matches!(
-                        node.parent(),
-                        Node::Expr(parent) if matches!(parent.kind(), ExprKind::Assign { target, .. } if target == node)
-                    )
-            }
-            _ => false,
-        };
-        if !is_modified {
+        if !is_modification(node) {
             return;
         }
         let Some((class, is_directly_inside_constructor)) = enclosing_class(node) else {
@@ -592,13 +717,8 @@ impl Rule for PreferReadonly {
         let Some(class_scope) = cx.state.scopes.get_mut(position) else {
             return;
         };
-        let (expression, member_name) = match node.kind() {
-            ExprKind::Dot { obj, name, .. } => (obj, Cow::Borrowed(name.bytes())),
-            ExprKind::Index { obj, .. } => match get_static_member_access_value(node) {
-                Some(MemberAccessValue::String(member_name)) => (obj, member_name),
-                _ => return,
-            },
-            _ => return,
+        let Some((expression, member_name)) = accessed_member(node) else {
+            return;
         };
         class_scope.add_variable_modification_by_name(
             expression,
@@ -618,7 +738,7 @@ impl Rule for PreferReadonly {
                 for violating in class_scope.private_modifiables.iter().filter(|it| {
                     !it.is_modified && statics.is_none_or(|statics| it.is_static == statics)
                 }) {
-                    report(cx, violating);
+                    report(cx, class_scope, violating);
                 }
             }
         }

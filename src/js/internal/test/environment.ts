@@ -15,6 +15,8 @@ const lastingCopyOfThisModule: () => typeof setup = $newCppFunction(
 const { captureStackTrace } = Error;
 const { isExtensible } = Object;
 const ordinaryHasInstance = Function.prototype[Symbol.hasInstance];
+const weakSetAdd = WeakSet.prototype.add;
+const weakSetHas = WeakSet.prototype.has;
 const NativeBlob = Blob;
 const NativeFormData = FormData;
 const NativeRequest = Request;
@@ -120,6 +122,7 @@ function windowProperties(win: any, additionalKeys: string[]): Pick<Environment,
   }
   for (let i = 0; i < SELF_KEYS.length; i++) properties.$set(SELF_KEYS[i], dataProperty(globalThis, true));
   const { document } = win;
+  if ($isObject(document)) weakSetAdd.$call(documentsOfWindows, document);
   if (document?.defaultView) {
     $Object.$defineProperty(document, "defaultView", {
       __proto__: null,
@@ -381,39 +384,33 @@ function createHappyDOM(_: NodeJS.Require, exports: any, options: any): Environm
 const kept = new $Map<string, Environment>();
 // require() of a module with top-level await throws only the first time, so rethrow that error for every file.
 const failedToLoad = new $Map<string, unknown>();
+// The documents of the windows that Bun opened.
+const documentsOfWindows = new WeakSet();
 
 function isClosed(window: Environment["window"]) {
   return window.closed || !window.document;
 }
 
-// A hook can put the document of a kept window back on globalThis while that window's names are off it.
-function isDocumentOfKeptWindow(document: unknown) {
-  let isOfKeptWindow = false;
-  kept.$forEach(environment => {
-    if (environment.window.document === document) isOfKeptWindow = true;
-  });
-  return isOfKeptWindow;
-}
-
 const NODE_CLASSES = ["Node", "Element", "HTMLElement", "Document"];
 
-// A DOM that was registered by hand is still there when only its `document` was reset.
+// A DOM that was registered by hand is still there when only its `document` was replaced.
 function isNodeClassLeft() {
   for (let i = 0; i < NODE_CLASSES.length; i++) {
     const Class = ownProperty(NODE_CLASSES[i])?.value;
     try {
-      if (typeof Class === "function" && "nodeType" in Class.prototype) return true;
+      if (typeof Class === "function" && "appendChild" in Class.prototype) return true;
     } catch {}
   }
   return false;
 }
 
-// Whether the `document` key on globalThis stands for a DOM that Bun did not open. No getter of a test file runs.
+// Whether the `document` key on globalThis stands for a DOM that Bun did not open. No getter of globalThis runs.
 function isDocumentOfAnotherDOM() {
   const descriptor = ownProperty("document");
   if (!descriptor || !("value" in descriptor) || descriptor.configurable === false) return true;
   const document = descriptor.value;
-  if (document != null) return !isDocumentOfKeptWindow(document);
+  // A hook can put the document of one of Bun's windows back while that window's names are off globalThis.
+  if (document != null && !weakSetHas.$call(documentsOfWindows, document)) return true;
   return isNodeClassLeft();
 }
 
@@ -649,7 +646,7 @@ function setupSharedGlobal(
   };
 }
 
-// Returns a teardown function, or undefined if a preload already set up a DOM.
+// Returns a teardown function, or undefined for "node" and when a DOM that is not Bun's is already on globalThis.
 // On failure it throws, or returns a warning string if `isFromComment`.
 function setup(
   name: "node" | "jsdom" | "happy-dom",

@@ -696,6 +696,193 @@ describe("the look for a server in the default export of the entry point", () =>
     });
   });
 
+  // Refuses every name that its target does not have, as the Proxy that cleanEnv() of envalid returns does, and says which it refused.
+  const strictProxy = (target: string) =>
+    `new Proxy(${target}, { get(target, name, receiver) { if (name in target) return Reflect.get(target, name, receiver); console.log("refused", String(name)); throw new Error("read of " + String(name)); } })`;
+  const ran = `console.log("ran");\n`;
+  const wentOn = (refused: string) => ({ stdout: `ran\nrefused ${refused}\ntick\n`, stderr: [], exitCode: 0 });
+
+  describe("an export that throws when it is asked for a name that it does not have is no server", () => {
+    describe.each([
+      ["an ES module that exports a strict Proxy", "entry.mjs", `export default ${strictProxy("{ a: 1 }")};`, "fetch"],
+      [
+        "a CommonJS module that exports a strict Proxy",
+        "entry.cjs",
+        `module.exports = ${strictProxy("{ a: 1 }")};`,
+        "fetch",
+      ],
+      [
+        "a strict Proxy with a fetch that is no function",
+        "entry.mjs",
+        `export default ${strictProxy("{ fetch: 1 }")};`,
+        "app",
+      ],
+      ["a strict Proxy with a fetch function", "entry.mjs", `export default ${strictProxy("{ fetch() {} }")};`, "stop"],
+      ["a strict Proxy with an app", "entry.cjs", `module.exports = ${strictProxy("{ fetch: 1, app: {} }")};`, "stop"],
+    ])("%s", (_, file, source, refused) => {
+      test.concurrent("as the entry point", async () => {
+        expect(await run({ [file]: source + goesOn + ran }, [file])).toEqual(wentOn(refused));
+      });
+
+      test.concurrent.each(Object.keys(workers) as (keyof typeof workers)[])(
+        "as the entry point of a %s Worker",
+        async kind => {
+          const main = workers[kind].replaceAll("./entry.mjs", "./" + file);
+          expect(await run({ [file]: source + goesOn + ran, "main.mjs": main }, ["main.mjs"])).toEqual({
+            stdout: wentOn(refused).stdout + "ended: 0\n",
+            stderr: [],
+            exitCode: 0,
+          });
+        },
+      );
+    });
+
+    const entry = { "entry.mjs": `export default ${strictProxy("{ a: 1 }")};` + goesOn + ran };
+
+    test.concurrent("-e", async () => {
+      expect(await run({}, ["-e", entry["entry.mjs"]])).toEqual(wentOn("fetch"));
+    });
+
+    test.concurrent("stdin", async () => {
+      expect(await run({}, ["-"], { stdin: entry["entry.mjs"] })).toEqual(wentOn("fetch"));
+    });
+
+    test.concurrent("-p", async () => {
+      const printed = await run({}, ["-p", `module.exports = ${strictProxy("{ a: 1 }")}; console.log("ran"); 42`]);
+      expect(printed).toEqual({ stdout: "ran\nrefused fetch\n42\n", stderr: [], exitCode: 0 });
+    });
+
+    test.concurrent.each(["--hot", "--watch"])("%s", async flag => {
+      const isDone = (stdout: string, stderr: string) => stdout.includes("tick\n") || stderr.includes("error:");
+      expect(await runUntil(entry, [flag, "entry.mjs"], isDone)).toEqual({
+        stdout: wentOn("fetch").stdout,
+        stderr: [],
+      });
+    });
+
+    test.concurrent("a preload that imports bun:main", async () => {
+      const files = { ...entry, "preload.mjs": `await import("bun:main");\nconsole.log("preloaded");\n` };
+      expect(await run(files, ["--preload", "./preload.mjs", "entry.mjs"])).toEqual({
+        stdout: "ran\nrefused fetch\npreloaded\ntick\n",
+        stderr: [],
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("an entry point that awaits", async () => {
+      const source = `await new Promise(setImmediate);\n` + entry["entry.mjs"];
+      expect(await run({ "entry.mjs": source }, ["entry.mjs"])).toEqual(wentOn("fetch"));
+    });
+
+    test.concurrent("what an exported then hands over", async () => {
+      const source = `export function then(resolve) { resolve(${strictProxy("{ a: 1 }")}); console.log("then returned"); }`;
+      expect(await run({ "entry.mjs": source }, ["entry.mjs"])).toEqual({
+        stdout: "refused default\nthen returned\n",
+        stderr: [],
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("what an exported then hands over, when it refuses default after it answered once", async () => {
+      const source = `
+        export function then(resolve) {
+          let asked = 0;
+          resolve(new Proxy({}, { get(target, name) { if (asked++ === 0) return ${server("then")}; throw new Error("read of " + String(name)); } }));
+          console.log("then returned, asked", asked);
+        }
+      `;
+      expect(await run({ "entry.mjs": stub + source }, ["entry.mjs"])).toEqual({
+        stdout: "then returned, asked 2\n",
+        stderr: [],
+        exitCode: 0,
+      });
+    });
+
+    // The target has the name. The Proxy is asked with `in`, after the read, and its answer counts.
+    test.concurrent("a Proxy that says with its has trap that it does not have the name", async () => {
+      const source = `export default new Proxy({ fetch() {} }, { get(target, name) { console.log("get", String(name)); throw new Error("read of " + String(name)); }, has(target, name) { console.log("has", String(name)); return false; } });`;
+      expect(await run({ "entry.mjs": source + goesOn + ran }, ["entry.mjs"])).toEqual({
+        stdout: "ran\nget fetch\nhas fetch\ntick\n",
+        stderr: [],
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent.each([
+      ["bun build --compile", []],
+      ["bun build --compile --bytecode", ["--bytecode"]],
+    ])("%s", async (_, flags) => {
+      expect(await runCompiled(`module.exports = ${strictProxy("{ a: 1 }")};` + goesOn + ran, flags)).toEqual(
+        wentOn("fetch"),
+      );
+    });
+  });
+
+  describe("a throw of what the export has is an error of the program", () => {
+    test.concurrent.each([
+      ["a getter of fetch", `export default { get fetch() { throw new Error("read of fetch"); } };`, "fetch"],
+      ["a getter of app", `export default { get app() { throw new Error("read of app"); } };`, "app"],
+      ["a getter of stop", `export default { fetch() {}, get stop() { throw new Error("read of stop"); } };`, "stop"],
+      [
+        "a getter of fetch behind a Proxy",
+        `export default new Proxy({ get fetch() { throw new Error("read of fetch"); } }, {});`,
+        "fetch",
+      ],
+      [
+        "a getter of fetch of the class of the export",
+        `class Config { get fetch() { throw new Error("read of fetch"); } }\nexport default new Config();`,
+        "fetch",
+      ],
+      [
+        "a getter of fetch of a string",
+        `Object.defineProperty(String.prototype, "fetch", { get() { throw new Error("read of fetch"); } });\nexport default "text";`,
+        "fetch",
+      ],
+      // The target does not have the name. The Proxy says that it has.
+      [
+        "a Proxy that says with its has trap that it has the name",
+        `export default new Proxy({}, { get(target, name) { throw new Error("read of " + String(name)); }, has() { return true; } });`,
+        "fetch",
+      ],
+      // Its first throw stays, not the one of the has trap.
+      [
+        "a Proxy that also refuses to say which names it has",
+        `export default new Proxy({}, { get(target, name) { throw new Error("read of " + String(name)); }, has() { throw new Error("has"); } });`,
+        "fetch",
+      ],
+    ])("%s", async (_, source, name) => {
+      const { stdout, stderr, exitCode } = await run({ "entry.mjs": stub + source + goesOn + ran }, ["entry.mjs"]);
+      expect({ stdout, errors: stderr.filter(line => line.startsWith("error:")), exitCode }).toEqual({
+        stdout: "ran\n",
+        errors: [`error: read of ${name}`],
+        exitCode: 1,
+      });
+    });
+
+    test.concurrent("a getter of default in what an exported then hands over", async () => {
+      const source = `
+        export function then(resolve) {
+          try {
+            resolve({ get default() { throw new Error("read of default"); } });
+          } catch (error) {
+            console.log("caught", error.message.split("\\n")[0]);
+          }
+        }
+      `;
+      expect(await run({ "entry.mjs": source }, ["entry.mjs"])).toEqual({
+        stdout: "caught read of default\n",
+        stderr: [],
+        exitCode: 0,
+      });
+    });
+  });
+
+  // A Proxy that answers a read is not asked with `in`.
+  test.concurrent("a Proxy around a server is not asked which names it has", async () => {
+    const source = `export default new Proxy(${server("a Proxy")}, { has(target, name) { console.log("has", String(name)); return name in target; } });`;
+    expect(await run({ "entry.mjs": stub + source }, ["entry.mjs"])).toEqual(serves("a Proxy"));
+  });
+
   describe("a module that is not the bun:main of the program gets no look", () => {
     test.concurrent("a module of node:vm with the identifier bun:main", async () => {
       const source = `

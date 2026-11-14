@@ -3059,9 +3059,9 @@ describe("bundler", () => {
         ],
       });
       // The import is of the page or of the script, whichever the build met first. The script has no default export.
-      for (const log of result.logs) {
-        expect(String(log)).toContain("No matching export in");
-      }
+      const logs = result.logs.map(log => String(log).replace(/ in ".*/, ""));
+      expect([[], ["BuildMessage: No matching export"]]).toContainEqual(logs);
+      expect(result.success).toBe(logs.length === 0);
     },
   );
 

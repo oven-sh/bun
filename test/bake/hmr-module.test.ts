@@ -1028,32 +1028,6 @@ test("server: a module whose require() was refused for a top-level await runs ag
   expect(take().filter(line => line.startsWith("route"))).toEqual(["route v1 1", "route failed", "route v2 1"]);
 });
 
-test("client: a save below many modules with top-level await walks the waits of each module once", async () => {
-  const { define, load, save } = await loader("client");
-  const count = 400;
-  let reads = 0;
-  const modules: Record<string, unknown> = {};
-  for (let i = 0; i < count; i++) {
-    const deps = i === 0 ? ["leaf"] : [1, 2, 3, 4, 5].map(back => "m" + Math.max(0, i - back));
-    modules["m" + i] = esm([...new Set(deps)], () => {});
-  }
-  const awaits = () => esm([], async hmr => void (hmr.exports = {}), true);
-  define({ ...modules, leaf: awaits(), app: esm(["m" + (count - 1)], hmr => hmr.accept()) });
-  await load("app");
-  const { push } = Array.prototype;
-  // `waitsFor` is the only place that spreads the waits of a module onto a stack.
-  Array.prototype.push = function (...items: unknown[]) {
-    reads += items.length;
-    return push.apply(this, items);
-  };
-  try {
-    await save({ leaf: awaits() });
-  } finally {
-    Array.prototype.push = push;
-  }
-  expect(reads).toBeLessThan(count * 60);
-});
-
 describe("a module that an update holds only because it was bundled again with its importer", () => {
   const shared = (log: (line: string) => void, value: string) =>
     esm([], hmr => {

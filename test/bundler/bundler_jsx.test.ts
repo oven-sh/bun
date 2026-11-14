@@ -1460,11 +1460,11 @@ describe("bundler", () => {
     // Like react-refresh's Babel plugin, so that a component keeps its state when its module runs again.
     itBundled("jsx/FastRefreshRegistersWrappedComponents", {
       files: {
-        "/index.jsx": /* js */ `
+        "/index.tsx": /* js */ `
           const registered = [];
           globalThis.$RefreshSig$ = () => t => t;
           globalThis.$RefreshReg$ = (type, id) => registered.push(id.split(":").pop());
-          const memo = f => ({ memo: f }), forwardRef = memo, createContext = () => ({});
+          const memo = (f?: any) => ({ memo: f }), forwardRef = memo, createContext = (_: string) => ({});
           const React = { memo };
           const useThing = () => 1;
           const Memo = memo(function Memo() { return useThing(); });
@@ -1481,6 +1481,7 @@ describe("bundler", () => {
           if ([Memo, Fwd, Both, Dotted, Plain, Wrapped, Theme, Total, Nothing, lower].length < 10) throw 0;
         `,
       },
+      backend: "cli",
       reactFastRefresh: true,
       run: { stdout: "Memo,Fwd,Both,Dotted,Plain,Wrapped" },
     });

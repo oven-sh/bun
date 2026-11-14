@@ -8,10 +8,10 @@ use bun_semver::String as SemverString;
 #[cfg(not(windows))]
 use bun_sys::OpenDirOptions;
 use bun_sys::{self as sys, Dir, EntryKind, Fd, walker_skippable};
-use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode};
-use bun_threading::work_pool::Task as WorkPoolTask;
 #[cfg(windows)]
-use bun_threading::{IntrusiveWorkTask, WaitGroup};
+use bun_threading::WaitGroup;
+use bun_threading::thread_pool::Batch;
+use bun_threading::work_pool::{OwnedTask, Task as WorkPoolTask};
 
 use crate::package_installer::NodeModulesFolder;
 use crate::{
@@ -801,18 +801,14 @@ impl<TaskType> NewTaskQueue<TaskType> {
         self.wait_group.finish();
     }
 
-    /// Hands `task` to the thread pool; the worker reclaims the `Box` in its callback.
     pub(crate) fn push(&self, task: Box<TaskType>)
     where
-        TaskType: IntrusiveWorkTask + Send + 'static,
+        TaskType: OwnedTask,
     {
         self.wait_group.add_one();
-        // SAFETY: `into_raw` yields a live allocation, and projecting through it keeps its provenance.
         PackageManager::get()
             .thread_pool
-            .schedule(Batch::from(unsafe {
-                TaskType::field_of(bun_core::heap::into_raw(task))
-            }));
+            .schedule(Batch::from_owned(task));
     }
 
     pub(crate) fn wait(&self) {
@@ -837,6 +833,22 @@ struct HardLinkWindowsInstallTask {
 
 #[cfg(windows)]
 bun_threading::intrusive_work_task!(HardLinkWindowsInstallTask, task);
+
+#[cfg(windows)]
+impl OwnedTask for HardLinkWindowsInstallTask {
+    fn run(self: Box<Self>) {
+        let queue = &HARDLINK_QUEUE;
+        scopeguard::defer! { queue.complete_one(); }
+
+        // A local, to be dropped before the guard above.
+        let mut this = self;
+        if let Some(err) = this.link() {
+            this.err = Some(err);
+            // Only the first error is kept.
+            queue.errored_task.lock().get_or_insert(this);
+        }
+    }
+}
 
 #[cfg(windows)]
 type HardLinkQueue = NewTaskQueue<HardLinkWindowsInstallTask>;
@@ -868,34 +880,12 @@ impl HardLinkWindowsInstallTask {
             bytes: combined,
             src_len: src.len(),
             basename: basename.len() as u16, // @truncate
-            task: WorkPoolTask {
-                callback: Self::run_from_thread_pool,
-                node: ThreadPoolNode::default(),
-            },
+            task: WorkPoolTask::default(),
             err: None,
         })
     }
 
-    fn run_from_thread_pool(task: *mut WorkPoolTask) {
-        let queue = &HARDLINK_QUEUE;
-        scopeguard::defer! { queue.complete_one(); }
-
-        // SAFETY: `task` is the `task` field of the `Box` that `NewTaskQueue::push` handed over,
-        // and the pool runs each scheduled task once.
-        let mut this = unsafe { bun_core::heap::take(Self::from_task_ptr(task)) };
-        if let Some(err) = this.run() {
-            this.err = Some(err);
-            // First-write-wins: keep only the first error. Any later failing task
-            // simply drops its Box (leaking it would also leak the inner
-            // `Box<[u16]>` per failed file).
-            let mut slot = queue.errored_task.lock();
-            if slot.is_none() {
-                *slot = Some(this);
-            }
-        }
-    }
-
-    fn run(&mut self) -> Option<crate::Error> {
+    fn link(&mut self) -> Option<crate::Error> {
         use bun_sys::windows;
         // Read scalar fields before borrowing `bytes` so no `&mut self` reborrow
         // overlaps the slice borrows below.
@@ -988,18 +978,13 @@ struct UninstallTask {
     task: WorkPoolTask,
 }
 
-impl UninstallTask {
-    fn run(task: *mut WorkPoolTask) {
-        // SAFETY: task points to the `task` field of an UninstallTask.
-        let uninstall_task: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, task) };
+bun_threading::intrusive_work_task!(UninstallTask, task);
 
-        // declared *before* the Box is reclaimed so it drops *after* the
-        // Box — Rust drops locals in reverse declaration order. The task must be freed
-        // before the main thread can observe pending_tasks==0.
+impl OwnedTask for UninstallTask {
+    fn run(self: Box<Self>) {
         let _done = PendingTaskDone;
-
-        // SAFETY: heap-allocated in uninstall_before_install; reclaim ownership here.
-        let uninstall_task = unsafe { bun_core::heap::take(uninstall_task) };
+        // A local, to be freed before the main thread can see that no task is pending.
+        let uninstall_task = self;
 
         let dirname =
             path::resolve_path::dirname::<path::platform::Auto>(&uninstall_task.absolute_path);
@@ -2113,13 +2098,10 @@ impl<'a> PackageInstall<'a> {
             bun_fs::FileSystem::get().top_level_dir(),
             &[&self.node_modules.path, temp_path.as_bytes()],
         );
-        let task = bun_core::heap::into_raw(Box::new(UninstallTask {
+        let task = Box::new(UninstallTask {
             absolute_path: absolute_path.to_vec().into_boxed_slice(),
-            task: WorkPoolTask {
-                callback: UninstallTask::run,
-                node: ThreadPoolNode::default(),
-            },
-        }));
+            task: WorkPoolTask::default(),
+        });
         let pm = crate::package_manager::get();
         // SAFETY: `uninstall_before_install` runs on the install main thread.
         // Raw-pointer field projection avoids forming `&mut PackageManager`
@@ -2130,10 +2112,7 @@ impl<'a> PackageInstall<'a> {
             *core::ptr::addr_of_mut!((*pm).total_tasks) += 1;
             (*pm).pending_tasks.fetch_add(1, Ordering::Relaxed);
         }
-        // SAFETY: task is a valid heap allocation; .task is the intrusive node.
-        pool.schedule(Batch::from(unsafe {
-            core::ptr::addr_of_mut!((*task).task)
-        }));
+        pool.schedule(Batch::from_owned(task));
     }
 
     fn is_dangling_symlink(path: &ZStr) -> bool {

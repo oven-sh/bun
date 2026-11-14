@@ -94,6 +94,45 @@ for (let specifier of specifiers) {
   });
 }
 
+// hideFromStack() in src/js/internal/shared.ts hides a throw helper from printed errors by renaming it.
+// A function that a program can reach keeps its own name.
+test("no public export of the modules above has the name that hides a stack frame", () => {
+  const seen = new Set();
+  const renamed = [];
+  const walk = (value, path, depth, isModule) => {
+    if ((typeof value !== "object" && typeof value !== "function") || value === null || seen.has(value)) return;
+    // node:module holds the modules that the test run loaded. They are not builtin.
+    if (value === require.cache) return;
+    seen.add(value);
+    if (typeof value === "function" && Object.getOwnPropertyDescriptor(value, "name")?.value === "::bunternal::") {
+      renamed.push(path);
+    }
+    if (depth === 0) return;
+    for (const key of Reflect.ownKeys(value)) {
+      const { value: held, get, set } = Object.getOwnPropertyDescriptor(value, key);
+      const name = `${path}.${String(key)}`;
+      // A module loads some of its exports when a program first reads them.
+      if (isModule && get) walk(get.call(value), name, depth - 1, false);
+      for (const next of [held, get, set]) walk(next, name, depth - 1, false);
+    }
+  };
+  for (const specifier of specifiers) {
+    const module = require(specifier);
+    // The getters of process are not read: some of them open a stream.
+    walk(module, specifier, 6, module !== process);
+  }
+
+  expect(seen.has(require("node:v8").startupSnapshot.addSerializeCallback)).toBe(true);
+  expect(seen.has(require("node:inspector").Session.prototype.post)).toBe(true);
+  expect(seen.has(require("node:util").inspect)).toBe(true);
+  // The throw helpers that node:http2 hands to the tests of Node.js.
+  expect(renamed).toEqual([
+    "node:http2.Symbol(::bunhttp2internals::).util.assertIsObject",
+    "node:http2.Symbol(::bunhttp2internals::).util.assertIsArray",
+    "node:http2.Symbol(::bunhttp2internals::).util.assertValidPseudoHeader",
+  ]);
+});
+
 test("you can import bun:test", async () => {
   const bunTest1 = await import("bun:test" + String(""));
   const bunTest2 = require("bun:test" + String(""));

@@ -119,8 +119,7 @@ impl<'a> Writable<'a> {
     ) -> JsResult<JSValue> {
         FileSink::assign_to_stream(pipe, stream, global).inspect_err(|_| {
             subprocess.weak_file_sink_stdin_ptr.set(None);
-            subprocess.update_flags(|f| f.set(Flags::DEREF_ON_STDIN_DESTROYED, false));
-            subprocess.deref();
+            subprocess.stdin_sink_ref.set(None);
         })
     }
 
@@ -172,11 +171,8 @@ impl<'a> Writable<'a> {
                         subprocess
                             .weak_file_sink_stdin_ptr
                             .set(Some(pipe_ref.as_non_null()));
-                        subprocess.ref_();
-                        subprocess.update_flags(|f| {
-                            f.set(Flags::DEREF_ON_STDIN_DESTROYED, true);
-                            f.set(Flags::HAS_STDIN_DESTRUCTOR_CALLED, false);
-                        });
+                        subprocess.hold_for_stdin_sink();
+                        subprocess.update_flags(|f| f.remove(Flags::HAS_STDIN_DESTRUCTOR_CALLED));
 
                         if let Stdio::ReadableStream(rs) = stdio {
                             *promise_for_stream =
@@ -262,11 +258,8 @@ impl<'a> Writable<'a> {
                 subprocess
                     .weak_file_sink_stdin_ptr
                     .set(Some(pipe_ref.as_non_null()));
-                subprocess.ref_();
-                subprocess.update_flags(|f| {
-                    f.set(Flags::HAS_STDIN_DESTRUCTOR_CALLED, false);
-                    f.set(Flags::DEREF_ON_STDIN_DESTROYED, true);
-                });
+                subprocess.hold_for_stdin_sink();
+                subprocess.update_flags(|f| f.remove(Flags::HAS_STDIN_DESTRUCTOR_CALLED));
 
                 if let Stdio::ReadableStream(rs) = stdio {
                     *promise_for_stream = Self::attach_stream(&pipe_ref, rs, subprocess, global)?;
@@ -344,8 +337,7 @@ impl<'a> Writable<'a> {
                         .get()
                         .contains(Flags::HAS_STDIN_DESTRUCTOR_CALLED)
                 {
-                    // `Writable::init()` already called `subprocess.ref()` and
-                    // set `DEREF_ON_STDIN_DESTROYED`. `on_attached_process_exit()`
+                    // `Writable::init()` set `stdin_sink_ref`. `on_attached_process_exit()`
                     // → `writer.close()` → `pipe.source` → `Writable::on_close`
                     // → `on_stdin_destroyed()` balances that ref, so a ref-count
                     // drop across this call is expected (previously these
@@ -364,16 +356,11 @@ impl<'a> Writable<'a> {
                     subprocess
                         .weak_file_sink_stdin_ptr
                         .set(Some(pipe_ref.as_non_null()));
-                    if !subprocess
-                        .flags
-                        .get()
-                        .contains(Flags::DEREF_ON_STDIN_DESTROYED)
-                    {
+                    if subprocess.stdin_sink_ref.get().is_none() {
                         // `Writable::init()` already did this for fresh pipes;
                         // only take a new ref if `on_stdin_destroyed()` has since
                         // consumed it.
-                        subprocess.ref_();
-                        subprocess.update_flags(|f| f.set(Flags::DEREF_ON_STDIN_DESTROYED, true));
+                        subprocess.hold_for_stdin_sink();
                     }
                     let parent_ptr = subprocess.as_ctx_ptr().cast::<Subprocess<'static>>();
                     if matches!(*pipe_ref.source.get(), SourceHandle::Subprocess(p) if p.as_const_ptr() == parent_ptr.cast_const())

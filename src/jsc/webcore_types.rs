@@ -30,6 +30,7 @@ pub type SizeType = u64;
 /// Maximum blob size (52 bits).
 pub const MAX_SIZE: SizeType = (1u64 << 52) - 1;
 
+#[cfg(not(windows))]
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum ClosingState {
@@ -251,8 +252,7 @@ const _: () = {
 };
 
 impl Blob {
-    /// Heap-promote and mark as
-    /// heap-allocated so `deinit` knows to free the heap box.
+    /// Heap-promote, with the one ref that the caller owns.
     #[inline]
     pub fn new(mut blob: Blob) -> *mut Blob {
         blob.ref_count = bun_ptr::RawRefCount::init(1);
@@ -470,21 +470,6 @@ impl Blob {
             store::Data::S3(s3) => Some(s3.path()),
         }
     }
-
-    /// Tear down owned resources; if
-    /// heap-allocated, also frees the heap box.
-    pub fn deinit(&mut self) {
-        self.detach();
-        self.name.set(bun_core::String::DEAD);
-
-        self.content_type.set(BlobContentType::default());
-
-        if self.is_heap_allocated() {
-            // SAFETY: `self` is the `*mut Blob` originally produced by
-            // `Blob::new` (`heap::alloc`).
-            unsafe { drop(bun_core::heap::take(std::ptr::from_mut::<Blob>(self))) };
-        }
-    }
 }
 
 // SAFETY: `Blob__ref`/`Blob__deref` operate on the intrusive `ref_count` and
@@ -525,9 +510,7 @@ impl bun_ptr::AnyRefCounted for Blob {
 ///
 /// # Safety
 /// `this` must point to a live `Blob` produced by [`Blob::new`], and the call
-/// must happen on the thread that owns it (the count is not atomic). A
-/// by-value `Blob` has a count of zero; bumping it would make a later
-/// [`Blob::deinit`] free an address that was never heap-allocated.
+/// must happen on the thread that owns it (the count is not atomic).
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Blob__ref(this: *mut Blob) {
     // SAFETY: caller contract above.
@@ -551,18 +534,14 @@ unsafe extern "C" fn Blob__ref(this: *mut Blob) {
 /// last count frees the `Blob`, so `this` is dangling once this returns.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Blob__deref(this: *mut Blob) {
-    // SAFETY: caller contract above. `deinit` frees the allocation, so `this`
-    // is not touched after it.
+    // SAFETY: caller contract above.
     unsafe {
         debug_assert!(
             (*this).is_heap_allocated(),
             "cannot deref: this Blob is not heap-allocated"
         );
         if (*this).ref_count.decrement() == bun_ptr::raw_ref_count::DecrementResult::ShouldDestroy {
-            // `deinit` has its own `is_heap_allocated()` guard around the
-            // `drop(heap::take)`, so re-arm so it returns true.
-            (*this).ref_count.increment();
-            (*this).deinit();
+            drop(bun_core::heap::take(this));
         }
     }
 }
@@ -674,18 +653,6 @@ pub mod store {
     // interior mutability, so sharing references across threads is sound.
     unsafe impl Sync for Bytes {}
 
-    impl Default for Bytes {
-        fn default() -> Self {
-            Self {
-                ptr: None,
-                len: 0,
-                cap: 0,
-                allocator: bun_alloc::basic::C_ALLOCATOR,
-                stored_name: Box::default(),
-            }
-        }
-    }
-
     impl Bytes {
         /// Takes ownership of `bytes` (allocated by the global mimalloc allocator).
         pub fn init(bytes: Vec<u8>) -> Bytes {
@@ -702,45 +669,6 @@ pub mod store {
                 allocator: bun_alloc::basic::C_ALLOCATOR,
                 stored_name: Box::default(),
             }
-        }
-
-        /// Takes ownership of a `Box<[u8]>` (global allocator, `cap == len`).
-        /// Paired with [`Bytes::into_boxed_slice`] for round-tripping the
-        /// `is_temporary` handoff in `read_file`.
-        pub fn init_owned(bytes: Box<[u8]>) -> Bytes {
-            let len = bytes.len();
-            let ptr = bun_core::heap::into_raw(bytes).cast::<u8>();
-            Bytes {
-                ptr: NonNull::new(ptr),
-                len: len as SizeType,
-                cap: len as SizeType,
-                allocator: bun_alloc::basic::C_ALLOCATOR,
-                stored_name: Box::default(),
-            }
-        }
-
-        /// Reclaim the buffer as a `Box<[u8]>`, shrinking if `cap > len`.
-        ///
-        /// Only valid for global-allocator-backed storage (the `init`/
-        /// `init_owned` paths) — asserts on a custom allocator (mmap/memfd).
-        pub fn into_boxed_slice(self) -> Box<[u8]> {
-            let mut this = core::mem::ManuallyDrop::new(self);
-            // `ManuallyDrop` suppresses the `Drop` impl, so free `stored_name`
-            // here explicitly (the buffer itself is reclaimed below).
-            drop(core::mem::take(&mut this.stored_name));
-            let Some(ptr) = this.ptr else {
-                return Box::new([]);
-            };
-            debug_assert!(
-                core::ptr::eq(this.allocator.vtable, bun_alloc::basic::C_ALLOCATOR.vtable),
-                "Bytes::into_boxed_slice on non-global allocator",
-            );
-            // SAFETY: `ptr[..cap]` is the live global-allocator allocation
-            // recorded by `init`/`init_owned`; `len <= cap`. `Vec::from_raw_parts`
-            // reconstitutes ownership, `into_boxed_slice` reallocates iff
-            // `cap > len` so the result has the canonical `Box<[u8]>` layout.
-            unsafe { Vec::from_raw_parts(ptr.as_ptr(), this.len as usize, this.cap as usize) }
-                .into_boxed_slice()
         }
 
         /// Construct from a raw `(ptr, len, cap)` triple owned by `allocator`.

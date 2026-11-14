@@ -255,7 +255,7 @@ fn specifier_from(from: &[u8], to: &[u8]) -> Option<Vec<u8>> {
         let mut buffers = vec![0u8; 3 * len];
         let (buf, rest) = buffers.split_at_mut(len);
         let (from_buf, tmp_buf) = rest.split_at_mut(len);
-        let below = bun_node_path::relative_posix_t(from, to, buf, from_buf, tmp_buf).ok()?;
+        let below = bun_node_path::relative_posix_t(from, to, buf, from_buf, tmp_buf);
         if !below.starts_with(b"../") {
             path.extend_from_slice(b"./");
         }

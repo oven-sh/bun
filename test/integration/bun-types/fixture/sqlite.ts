@@ -109,3 +109,11 @@ db.onUpdate = null;
 db.onDelete = undefined;
 // @ts-expect-error - a function, null or undefined
 db.onDelete = "cats";
+
+expectType(db.progressHandler(() => performance.now() > 0)).is<void>();
+db.progressHandler(() => {}, 10_000);
+db.progressHandler(null);
+db.progressHandler(undefined);
+db.progressHandler();
+// @ts-expect-error - a function or null
+db.progressHandler("cats");

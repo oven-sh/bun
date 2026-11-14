@@ -96,10 +96,11 @@ enum WellKnown {
     Underscore,
     MemoCacheSentinel,
     EarlyReturnSentinel,
+    Function,
 }
 
 impl WellKnown {
-    const COUNT: usize = 6;
+    const COUNT: usize = 7;
 }
 
 /// Host-side state shared across nested function-expression codegen so the
@@ -228,6 +229,19 @@ pub(crate) fn codegen_function(
     context: &mut ProgramContext,
     unique_identifiers: HashSet<String>,
 ) -> Result<CodegenFunction, CompilerError> {
+    // Not in upstream: asked first, so that a function that stays as written has no use of `Function` on record.
+    if !env.explicit_receiver_calls.is_empty() {
+        let binds_function = env.identifiers.iter().any(|identifier| {
+            (identifier.name.as_ref()).is_some_and(|name| name.value() == b"Function")
+        });
+        if binds_function || !cg.host.is_unbound_global(b"Function") {
+            return Err(crate::diagnostics::cold_todo(
+                "A method call that reads its method ahead of its arguments needs the global `Function`",
+                None,
+            ));
+        }
+    }
+
     let mut cx = Context::new(env, cg, unique_identifiers);
 
     // Fast Refresh: Bun handles HMR via its own React Refresh transform; the
@@ -1940,14 +1954,19 @@ fn codegen_base_instruction_value(
             Ok(maybe_wrap_hook_call(cx, call_expr, callee.identifier))
         }
         InstructionValue::MethodCall {
-            receiver: _,
+            receiver,
             property,
             args,
             ..
         } => {
             let member_expr = codegen_place_to_expression(cx, property)?;
             if !matches!(member_expr.data, ExprData::EDot(_) | ExprData::EIndex(_)) {
-                return Err(method_call_property_err(property.loc, member_expr));
+                if !cx.env.explicit_receiver_calls.contains(property.identifier) {
+                    return Err(method_call_property_err(property.loc, member_expr));
+                }
+                let call_expr =
+                    codegen_explicit_receiver_call(cx, member_expr, receiver, args, loc)?;
+                return Ok(maybe_wrap_hook_call(cx, call_expr, property.identifier));
             }
             let arguments = codegen_arguments(cx, args)?;
             let call_expr = Expr::init(
@@ -2317,6 +2336,51 @@ fn codegen_base_instruction_value(
 // =============================================================================
 // Function expression codegen
 // =============================================================================
+
+/// Not in upstream: `Function.prototype.call.call(method, receiver, ...args)`, which reads nothing of the method.
+fn codegen_explicit_receiver_call(
+    cx: &mut Context,
+    method: Expr,
+    receiver: &Place,
+    args: &[PlaceOrSpread],
+    loc: Loc,
+) -> Result<Expr, CompilerError> {
+    // The load of the method printed the receiver once, so only a name can print it again.
+    if cx.env.identifiers[receiver.identifier.0 as usize]
+        .name
+        .is_none()
+    {
+        return Err(method_call_property_err(receiver.loc, method));
+    }
+    // `codegen_function` checked that the name is the global.
+    let function = cx.cg.well_known_global(WellKnown::Function, b"Function");
+    let mut call_args: ExprNodeList = AstAlloc::vec_with_capacity(args.len() + 2);
+    call_args.push(method);
+    call_args.push(codegen_place_to_expression(cx, receiver)?);
+    for arg in args {
+        call_args.push(codegen_argument(cx, arg)?);
+    }
+    let mut target = Expr::init_identifier(function, loc);
+    for name in [b"prototype".as_slice(), b"call", b"call"] {
+        target = Expr::init(
+            E::Dot {
+                target,
+                name: StoreStr::new(name),
+                name_loc: loc,
+                ..Default::default()
+            },
+            loc,
+        );
+    }
+    Ok(Expr::init(
+        E::Call {
+            target,
+            args: call_args,
+            ..Default::default()
+        },
+        loc,
+    ))
+}
 
 fn codegen_function_expression(
     cx: &mut Context,

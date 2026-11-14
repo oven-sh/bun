@@ -12,8 +12,10 @@ use crate::collections::FxHashSet as HashSet;
 
 use crate::collections::IdBitSet;
 use crate::collections::IdMap;
+use crate::hir::AliasingEffect;
 use crate::hir::ArrayElement;
 use crate::hir::DeclarationId;
+use crate::hir::EvaluationOrder;
 use crate::hir::FunctionId;
 use crate::hir::IdentifierId;
 use crate::hir::IdentifierName;
@@ -21,6 +23,7 @@ use crate::hir::InstructionKind;
 use crate::hir::InstructionValue;
 use crate::hir::JsxAttribute;
 use crate::hir::JsxTag;
+use crate::hir::MutableRangeId;
 use crate::hir::ObjectPropertyOrSpread;
 use crate::hir::ParamPattern;
 use crate::hir::Place;
@@ -35,6 +38,7 @@ use crate::hir::ScopeId;
 use crate::hir::environment::Environment;
 use crate::hir::is_primitive_type;
 use crate::hir::visitors::Places;
+use crate::reactive_scopes::visitors::ReactiveFunctionVisitor;
 
 // =============================================================================
 // State
@@ -103,6 +107,7 @@ pub(crate) fn promote_used_temporaries(
     let mut inter_state = InterState::new(inline_macro_operands);
     promote_interposed_block(
         &func.body,
+        None,
         &mut state,
         &mut inter_state,
         &mut consts,
@@ -586,6 +591,8 @@ fn visit_hir_function_for_promotion(func_id: FunctionId, state: &mut State, env:
 enum Effect {
     None,
     Read,
+    /// A read that runs an iterator. Only `promote_late_method` tells it from `Read`.
+    Iterate,
     Write,
 }
 
@@ -595,10 +602,11 @@ struct Temporary {
     effect: Effect,
 }
 
-/// Positions of the last statement that reads and of the last statement that writes.
+/// Positions of the last statement that reads, that runs an iterator, and that writes.
 #[derive(Clone, Copy, Default)]
 struct Statements {
     read: u32,
+    iterate: u32,
     write: u32,
 }
 
@@ -647,6 +655,10 @@ impl<'a> InterState<'a> {
         match effect {
             Effect::None => {}
             Effect::Read => statements.read = self.position,
+            Effect::Iterate => {
+                statements.read = self.position;
+                statements.iterate = self.position;
+            }
             Effect::Write => statements.write = self.position,
         }
     }
@@ -656,6 +668,10 @@ impl<'a> InterState<'a> {
         match temporary.effect {
             Effect::None => {}
             Effect::Read => statements.read = statements.read.max(temporary.position),
+            Effect::Iterate => {
+                statements.read = statements.read.max(temporary.position);
+                statements.iterate = statements.iterate.max(temporary.position);
+            }
             Effect::Write => statements.write = statements.write.max(temporary.position),
         }
     }
@@ -666,9 +682,14 @@ impl<'a> InterState<'a> {
         let write = self.statements.write.max(in_value_block.write);
         match temporary.effect {
             Effect::None => false,
-            Effect::Read => write > temporary.position,
+            Effect::Read | Effect::Iterate => write > temporary.position,
             Effect::Write => read.max(write) > temporary.position,
         }
+    }
+
+    /// A statement of the block behind the temporary runs an iterator. `promote_late_method` is for a block only.
+    fn iterates_behind(&self, temporary: Temporary) -> bool {
+        temporary.effect != Effect::None && self.statements.iterate > temporary.position
     }
 
     fn enter_value_block(&mut self) -> Option<Statements> {
@@ -682,8 +703,18 @@ impl<'a> InterState<'a> {
     }
 }
 
+/// What prints in front of an instruction: the statements of its block, then in `outer` those around that block.
+#[derive(Clone, Copy)]
+struct Before<'a> {
+    /// The terminal behind `statements` that holds the inner block, unless it is a label. All of it counts, the call too.
+    terminal: Option<&'a ReactiveTerminalStatement>,
+    statements: &'a [ReactiveStatement],
+    outer: Option<&'a Before<'a>>,
+}
+
 fn promote_interposed_block(
     block: &ReactiveBlock,
+    outer: Option<&Before<'_>>,
     state: &mut State,
     inter_state: &mut InterState<'_>,
     consts: &mut IdBitSet<IdentifierId>,
@@ -694,16 +725,30 @@ fn promote_interposed_block(
         return;
     }
 
-    for stmt in block {
+    for (index, stmt) in block.iter().enumerate() {
+        let before = Before {
+            terminal: None,
+            statements: &block[..index],
+            outer,
+        };
         match stmt {
             ReactiveStatement::Instruction(instr) => {
-                promote_interposed_instruction(instr, state, inter_state, consts, globals, env);
+                promote_interposed_instruction(
+                    instr,
+                    &before,
+                    state,
+                    inter_state,
+                    consts,
+                    globals,
+                    env,
+                );
             }
             ReactiveStatement::Scope(scope) => {
                 // The memo block compares its dependencies first, and what writes must not print in it: it may not run.
                 inter_state.statement(Effect::Read);
                 promote_interposed_block(
                     &scope.instructions,
+                    Some(&before),
                     state,
                     inter_state,
                     consts,
@@ -714,6 +759,7 @@ fn promote_interposed_block(
             ReactiveStatement::PrunedScope(scope) => {
                 promote_interposed_block(
                     &scope.instructions,
+                    Some(&before),
                     state,
                     inter_state,
                     consts,
@@ -722,7 +768,15 @@ fn promote_interposed_block(
                 );
             }
             ReactiveStatement::Terminal(terminal) => {
-                promote_interposed_terminal(terminal, state, inter_state, consts, globals, env);
+                promote_interposed_terminal(
+                    terminal,
+                    &before,
+                    state,
+                    inter_state,
+                    consts,
+                    globals,
+                    env,
+                );
             }
         }
     }
@@ -882,7 +936,7 @@ fn instruction_effect(
                 .iter()
                 .any(|element| matches!(element, ArrayElement::Spread(_))) =>
         {
-            Effect::Read
+            Effect::Iterate
         }
         InstructionValue::ObjectExpression { properties, .. }
             if properties
@@ -903,8 +957,10 @@ fn instruction_effect(
 }
 
 /// Returns the effect of the expression that the instruction prints as.
+/// `before` holds the statements in front of the instruction. A value block has none.
 fn promote_interposed_instruction(
     instr: &ReactiveInstruction,
+    before: &Before<'_>,
     state: &mut State,
     inter_state: &mut InterState<'_>,
     consts: &mut IdBitSet<IdentifierId>,
@@ -956,7 +1012,25 @@ fn promote_interposed_instruction(
                 }
                 _ => {}
             }
-            promote_interposed_value(&instr.value, state, inter_state, consts, globals, env)
+            let effect =
+                promote_interposed_value(&instr.value, state, inter_state, consts, globals, env);
+            // The operands are decided: an argument that got a name is a statement behind the method now.
+            if let InstructionValue::MethodCall { property, .. } = iv
+                && let Some(temporary) = inline_temporary(property, state, inter_state, env)
+                && (inter_state.conflicts(temporary) || inter_state.iterates_behind(temporary))
+            {
+                promote_late_method(
+                    iv,
+                    before,
+                    temporary,
+                    state,
+                    inter_state,
+                    consts,
+                    globals,
+                    env,
+                );
+            }
+            effect
         }
         _ => {
             let outer = inter_state.enter_value_block();
@@ -1020,6 +1094,11 @@ fn promote_interposed_value(
             for instr in instructions {
                 effect = effect.max(promote_interposed_instruction(
                     instr,
+                    &Before {
+                        terminal: None,
+                        statements: &[],
+                        outer: None,
+                    },
                     state,
                     inter_state,
                     consts,
@@ -1060,6 +1139,245 @@ fn promote_interposed_value(
     }
 }
 
+/// Not in upstream: names a method that a statement behind its load can change, or else the key of a computed one.
+#[cold]
+#[allow(clippy::too_many_arguments)]
+fn promote_late_method(
+    call: &InstructionValue,
+    before: &Before<'_>,
+    temporary: Temporary,
+    state: &mut State,
+    inter_state: &mut InterState<'_>,
+    consts: &IdBitSet<IdentifierId>,
+    globals: &IdBitSet<IdentifierId>,
+    env: &mut Environment,
+) {
+    let InstructionValue::MethodCall {
+        receiver, property, ..
+    } = call
+    else {
+        return;
+    };
+    let declaration_of =
+        |place: &Place| env.identifiers[place.identifier.0 as usize].declaration_id;
+    let mut behind = Behind {
+        property: declaration_of(property),
+        state,
+        inter_state,
+        mutations: Mutations {
+            env,
+            consts,
+            globals,
+            receiver: env.enable_memoization().then(|| {
+                env.identifiers[receiver.identifier.0 as usize]
+                    .mutable_range
+                    .id
+            }),
+        },
+        in_call: crate::hir::visitors::operands(call, &env.functions)
+            .map(declaration_of)
+            .collect(),
+        is_mutated: false,
+        load: None,
+    };
+    let mut before = Some(before);
+    while let Some(&Before {
+        terminal,
+        statements,
+        outer,
+    }) = before
+    {
+        if let Some(terminal) = terminal {
+            behind
+                .mutations
+                .visit_terminal(terminal, &mut behind.is_mutated);
+        }
+        if behind.walk(statements) {
+            break;
+        }
+        before = outer;
+    }
+    let Behind {
+        is_mutated, load, ..
+    } = behind;
+    let Some(load) = load else {
+        // A call in a value block prints in place, and the load of its method with it.
+        debug_assert!(inter_state.value_block_statements.is_some() || !env.has_stack());
+        return;
+    };
+    if is_mutated && can_method_change(receiver, property, env) {
+        promote_identifier(property.identifier, state, env);
+        inter_state.promoted(temporary);
+        env.explicit_receiver_calls.insert(property.identifier);
+        // The call prints the receiver again, so the receiver needs a name too.
+        if let Some(temporary) = inline_temporary(receiver, state, inter_state, env) {
+            promote_identifier(receiver.identifier, state, env);
+            inter_state.promoted(temporary);
+        }
+    } else if let ReactiveValue::Instruction(load @ InstructionValue::ComputedLoad { .. }) =
+        &load.value
+    {
+        // The method stays in the call, and the key with it. The key is an operand like any other.
+        let operands = crate::hir::visitors::each_instruction_value_operand(load, env);
+        promote_interposed_operands(operands, state, inter_state, consts, env);
+    }
+}
+
+/// False for a receiver that nothing mutates once it is made, and for a property that has the signature of a method.
+fn can_method_change(receiver: &Place, property: &Place, env: &Environment) -> bool {
+    let range = &env.identifiers[receiver.identifier.0 as usize].mutable_range;
+    let type_ = &env.types[env.identifiers[property.identifier.0 as usize].type_.0 as usize];
+    range.end.0 > range.start.0 + 1
+        && !(env.get_function_signature(type_).ok().flatten())
+            // A hook has its signature from its name alone.
+            .is_some_and(|signature| signature.hook_kind.is_none())
+}
+
+/// What prints between the load of a method and its call, read from the call back to the load.
+struct Behind<'a, 'b> {
+    property: DeclarationId,
+    state: &'b State,
+    inter_state: &'b InterState<'b>,
+    mutations: Mutations<'b>,
+    /// The temporaries that print inside the call. They run behind the read of the method in the source too.
+    in_call: HashSet<DeclarationId>,
+    is_mutated: bool,
+    load: Option<&'a ReactiveInstruction>,
+}
+
+impl<'a> Behind<'a, '_> {
+    /// Returns true at the load of the method.
+    fn walk(&mut self, statements: &'a [ReactiveStatement]) -> bool {
+        let env = self.mutations.env;
+        if !env.has_stack() {
+            return true;
+        }
+        for statement in statements.iter().rev() {
+            match statement {
+                ReactiveStatement::Instruction(instruction) => {
+                    let lvalue = instruction.lvalue.as_ref();
+                    let declaration_id = lvalue
+                        .map(|lvalue| env.identifiers[lvalue.identifier.0 as usize].declaration_id);
+                    if declaration_id == Some(self.property) {
+                        self.load = Some(instruction);
+                        return true;
+                    }
+                    if let Some(lvalue) = lvalue
+                        && declaration_id.is_some_and(|id| self.in_call.contains(&id))
+                        && inline_temporary(lvalue, self.state, self.inter_state, env).is_some()
+                    {
+                        Operands(env).visit_value(
+                            instruction.id,
+                            &instruction.value,
+                            &mut self.in_call,
+                        );
+                    } else {
+                        self.mutations
+                            .visit_instruction(instruction, &mut self.is_mutated);
+                    }
+                }
+                // A pruned scope prints its statements in the block around it.
+                ReactiveStatement::PrunedScope(scope) => {
+                    if self.walk(&scope.instructions) {
+                        return true;
+                    }
+                }
+                ReactiveStatement::Scope(scope) => {
+                    self.mutations.visit_scope(scope, &mut self.is_mutated);
+                }
+                ReactiveStatement::Terminal(terminal) => {
+                    self.mutations
+                        .visit_terminal(terminal, &mut self.is_mutated);
+                }
+            }
+        }
+        false
+    }
+}
+
+/// The operands of a value, by declaration.
+struct Operands<'a>(&'a Environment);
+
+impl ReactiveFunctionVisitor for Operands<'_> {
+    type State = HashSet<DeclarationId>;
+
+    fn env(&self) -> &Environment {
+        self.0
+    }
+
+    fn visit_place(&self, _id: EvaluationOrder, place: &Place, operands: &mut Self::State) {
+        operands.insert(self.0.identifiers[place.identifier.0 as usize].declaration_id);
+    }
+}
+
+/// Sets its state when a statement can mutate the receiver of a method call.
+struct Mutations<'a> {
+    env: &'a Environment,
+    consts: &'a IdBitSet<IdentifierId>,
+    globals: &'a IdBitSet<IdentifierId>,
+    /// The mutable range that the receiver shares. `None` without memoization, where every mutation counts.
+    receiver: Option<MutableRangeId>,
+}
+
+impl Mutations<'_> {
+    fn reaches(&self, place: &Place) -> bool {
+        self.receiver.is_none_or(|receiver| {
+            self.env.identifiers[place.identifier.0 as usize]
+                .mutable_range
+                .id
+                == receiver
+        })
+    }
+}
+
+impl ReactiveFunctionVisitor for Mutations<'_> {
+    type State = bool;
+
+    fn env(&self) -> &Environment {
+        self.env
+    }
+
+    fn visit_instruction(&self, instruction: &ReactiveInstruction, is_mutated: &mut bool) {
+        if let Some(effects) = &instruction.effects {
+            *is_mutated |= effects.iter().any(|effect| match effect {
+                AliasingEffect::Mutate { value, .. }
+                | AliasingEffect::MutateConditionally { value }
+                | AliasingEffect::MutateTransitive { value }
+                | AliasingEffect::MutateTransitiveConditionally { value } => self.reaches(value),
+                // No wildcard: a kind of effect that a sync adds has to be put on one side here.
+                AliasingEffect::Freeze { .. }
+                | AliasingEffect::Capture { .. }
+                | AliasingEffect::Alias { .. }
+                | AliasingEffect::MaybeAlias { .. }
+                | AliasingEffect::Assign { .. }
+                | AliasingEffect::Create { .. }
+                | AliasingEffect::CreateFrom { .. }
+                | AliasingEffect::ImmutableCapture { .. }
+                | AliasingEffect::Apply(_)
+                | AliasingEffect::CreateFunction { .. }
+                | AliasingEffect::MutateFrozen { .. }
+                | AliasingEffect::MutateGlobal { .. }
+                | AliasingEffect::Impure { .. }
+                | AliasingEffect::Render { .. } => false,
+            });
+        }
+        if !matches!(instruction.value, ReactiveValue::Instruction(_)) {
+            self.traverse_value(instruction.id, &instruction.value, is_mutated);
+        }
+    }
+
+    /// The last instruction of a value block has no record of its effects. It can mutate what it uses.
+    fn visit_value(&self, id: EvaluationOrder, value: &ReactiveValue, is_mutated: &mut bool) {
+        let ReactiveValue::Instruction(iv) = value else {
+            return self.traverse_value(id, value, is_mutated);
+        };
+        let operands = crate::hir::visitors::each_instruction_value_operand(iv, self.env);
+        *is_mutated |= instruction_effect(iv, &operands, self.consts, self.globals, self.env)
+            >= Effect::Iterate
+            && operands.iter().any(|operand| self.reaches(operand));
+    }
+}
+
 /// The value of a terminal prints as part of the statement of that terminal.
 fn promote_interposed_terminal_value(
     value: &ReactiveValue,
@@ -1088,12 +1406,20 @@ fn promote_interposed_terminal_place(
 
 fn promote_interposed_terminal(
     stmt: &ReactiveTerminalStatement,
+    before: &Before<'_>,
     state: &mut State,
     inter_state: &mut InterState<'_>,
     consts: &mut IdBitSet<IdentifierId>,
     globals: &mut IdBitSet<IdentifierId>,
     env: &mut Environment,
 ) {
+    // A labeled block runs once, in sequence. An early return puts the statements of a memo block in one.
+    let is_sequence = matches!(stmt.terminal, ReactiveTerminal::Label { .. });
+    let around = Before {
+        terminal: (!is_sequence).then_some(stmt),
+        ..*before
+    };
+    let around = Some(&around);
     match &stmt.terminal {
         ReactiveTerminal::Break { .. } | ReactiveTerminal::Continue { .. } => {}
         ReactiveTerminal::Return { value, .. } | ReactiveTerminal::Throw { value, .. } => {
@@ -1108,7 +1434,7 @@ fn promote_interposed_terminal(
         } => {
             promote_interposed_terminal_value(init, state, inter_state, consts, globals, env);
             promote_interposed_terminal_value(test, state, inter_state, consts, globals, env);
-            promote_interposed_block(loop_block, state, inter_state, consts, globals, env);
+            promote_interposed_block(loop_block, around, state, inter_state, consts, globals, env);
             if let Some(update) = update {
                 promote_interposed_terminal_value(update, state, inter_state, consts, globals, env);
             }
@@ -1125,25 +1451,25 @@ fn promote_interposed_terminal(
             let test = promote_interposed_value(test, state, inter_state, consts, globals, env);
             inter_state.exit_value_block(outer);
             inter_state.statement(init.max(test));
-            promote_interposed_block(loop_block, state, inter_state, consts, globals, env);
+            promote_interposed_block(loop_block, around, state, inter_state, consts, globals, env);
         }
         ReactiveTerminal::ForIn {
             init, loop_block, ..
         } => {
             promote_interposed_terminal_value(init, state, inter_state, consts, globals, env);
-            promote_interposed_block(loop_block, state, inter_state, consts, globals, env);
+            promote_interposed_block(loop_block, around, state, inter_state, consts, globals, env);
         }
         ReactiveTerminal::DoWhile {
             loop_block, test, ..
         } => {
-            promote_interposed_block(loop_block, state, inter_state, consts, globals, env);
+            promote_interposed_block(loop_block, around, state, inter_state, consts, globals, env);
             promote_interposed_terminal_value(test, state, inter_state, consts, globals, env);
         }
         ReactiveTerminal::While {
             test, loop_block, ..
         } => {
             promote_interposed_terminal_value(test, state, inter_state, consts, globals, env);
-            promote_interposed_block(loop_block, state, inter_state, consts, globals, env);
+            promote_interposed_block(loop_block, around, state, inter_state, consts, globals, env);
         }
         ReactiveTerminal::If {
             test,
@@ -1152,9 +1478,9 @@ fn promote_interposed_terminal(
             ..
         } => {
             promote_interposed_terminal_place(test, state, inter_state, consts, env);
-            promote_interposed_block(consequent, state, inter_state, consts, globals, env);
+            promote_interposed_block(consequent, around, state, inter_state, consts, globals, env);
             if let Some(alt) = alternate {
-                promote_interposed_block(alt, state, inter_state, consts, globals, env);
+                promote_interposed_block(alt, around, state, inter_state, consts, globals, env);
             }
         }
         ReactiveTerminal::Switch { test, cases, .. } => {
@@ -1169,12 +1495,20 @@ fn promote_interposed_terminal(
             inter_state.statement(effect);
             for case in cases {
                 if let Some(block) = &case.block {
-                    promote_interposed_block(block, state, inter_state, consts, globals, env);
+                    promote_interposed_block(
+                        block,
+                        around,
+                        state,
+                        inter_state,
+                        consts,
+                        globals,
+                        env,
+                    );
                 }
             }
         }
         ReactiveTerminal::Label { block, .. } => {
-            promote_interposed_block(block, state, inter_state, consts, globals, env);
+            promote_interposed_block(block, around, state, inter_state, consts, globals, env);
         }
         ReactiveTerminal::Try {
             block,
@@ -1182,11 +1516,11 @@ fn promote_interposed_terminal(
             handler,
             ..
         } => {
-            promote_interposed_block(block, state, inter_state, consts, globals, env);
+            promote_interposed_block(block, around, state, inter_state, consts, globals, env);
             if let Some(binding) = handler_binding {
                 promote_interposed_place(binding, state, inter_state, consts, env);
             }
-            promote_interposed_block(handler, state, inter_state, consts, globals, env);
+            promote_interposed_block(handler, around, state, inter_state, consts, globals, env);
         }
     }
 }

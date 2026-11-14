@@ -2107,7 +2107,7 @@ describe.concurrent("--react-compiler", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { compiled: stdout.match(/compiled: (.*)/)?.[1] ?? stderr, stderr, exitCode };
+    return { compiled: stdout.match(/compiled: (.*)/)?.[1] ?? stderr, stdout, stderr, exitCode };
   }
 
   const everything = "List useTotal Story Other";
@@ -2242,6 +2242,48 @@ describe.concurrent("--react-compiler", () => {
       ["--react-compiler"],
     );
     expect(result.compiled).toBe("List actual");
+    expect(result.exitCode).toBe(0);
+  });
+
+  // The compiler calls a method that it read ahead of a statement as `Function.prototype.call.call(method, receiver)`.
+  // `bun test` prints the names of a file as they are written, so a function that binds `Function` stays as it is.
+  test("a function that binds Function keeps a method call that a statement of an argument could change", async () => {
+    const result = await compiled(
+      {
+        "src/Shadows.jsx": `
+          function who() {
+            return this.name + ":old";
+          }
+          function other() {
+            return this.name + ":new";
+          }
+          const shadow = { prototype: { call: { call: () => "shadowed" } } };
+          export function InALoop(p) {
+            const o = { name: p.name, who };
+            let out = "";
+            for (const Function of [shadow]) {
+              out = o.who((() => { o.who = other; return ""; })()) + " " + typeof Function;
+            }
+            return <div>{out}</div>;
+          }
+          export function TheGlobal(p) {
+            const o = { name: p.name, who };
+            return <div>{o.who((() => { o.who = other; return ""; })()) + " " + typeof Function}</div>;
+          }
+        `,
+        "compiled.test.tsx": `
+          import { test } from "bun:test";
+          import * as all from "./src/Shadows";
+          test("which are compiled", () => {
+            ${printCompiled}
+            console.log("rendered: " + Object.values(all).map(Form => Form({ name: "A" }).props.children).join(", "));
+          });
+        `,
+      },
+      ["--react-compiler"],
+    );
+    expect(result.stdout).toContain("rendered: A:old object, A:old function");
+    expect(result.compiled).toBe("TheGlobal");
     expect(result.exitCode).toBe(0);
   });
 

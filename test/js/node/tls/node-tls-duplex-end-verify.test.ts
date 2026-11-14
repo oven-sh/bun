@@ -2,6 +2,7 @@
 // Runs under node:test, so the same file runs on node (`node --test`) and on bun (`bun test`).
 import assert from "node:assert";
 import fs from "node:fs";
+import https from "node:https";
 import net from "node:net";
 import { Duplex, duplexPair } from "node:stream";
 import { test } from "node:test";
@@ -1439,6 +1440,74 @@ for (const rejectUnauthorized of [true, false]) {
     }
   });
 }
+
+// A write that waits for the handshake changes nothing of that: it is cancelled behind the error of the socket.
+async function failsWithItsWaitingWrite(client: tls.TLSSocket) {
+  const events: string[] = [];
+  client.write("early", err => events.push(`write ${(err as NodeJS.ErrnoException | null | undefined)?.code}`));
+  client.on("end", () => events.push("end"));
+  client.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}: ${err.message}`));
+  await new Promise<void>(closed =>
+    client.on("close", hadError => {
+      events.push(`close ${hadError}`);
+      closed();
+    }),
+  );
+  const [end, error, close] = DISCONNECTED_IN_HANDSHAKE;
+  assert.deepStrictEqual(events, [end, error, "write ECANCELED", close]);
+}
+
+test("over a Duplex: a close_notify in answer to the ClientHello is the error of a socket with a write that waits for the handshake", async () => {
+  const transport = transportWithPeer(answerFirstFlight(transport => transport.push(CLOSE_NOTIFY)));
+  await failsWithItsWaitingWrite(tls.connect({ socket: transport, servername: "agent1", rejectUnauthorized: false }));
+});
+
+test("on a TCP socket: a FIN in answer to the ClientHello is the error of a socket with a write that waits for the handshake", async () => {
+  const peer = net.createServer(socket => {
+    socket.on("error", () => {});
+    socket.once("data", () => socket.end());
+  }) as Listening<net.Server>;
+  await new Promise<void>(listening => peer.listen(0, "127.0.0.1", listening));
+  try {
+    const address = { port: peer.address().port, host: "127.0.0.1", rejectUnauthorized: false };
+    await failsWithItsWaitingWrite(tls.connect(address));
+
+    // The request of node:https is such a write.
+    const request = https.request(address);
+    const failed = new Promise<NodeJS.ErrnoException>(resolve => request.once("error", resolve));
+    request.end();
+    const err = await failed;
+    assert.strictEqual(`error ${err.code}: ${err.message}`, DISCONNECTED_IN_HANDSHAKE[1]);
+  } finally {
+    peer.close();
+  }
+});
+
+// That error is the one of tls.connect(): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1811
+test(
+  "on a TCP socket: a FIN in answer to the ClientHello of `new tls.TLSSocket(socket)` is not the error of tls.connect()",
+  { skip: !isBun && "Node ends this socket and leaves it open" },
+  async () => {
+    const peer = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.once("data", () => socket.end());
+    }) as Listening<net.Server>;
+    await new Promise<void>(listening => peer.listen(0, "127.0.0.1", listening));
+    try {
+      const raw = net.connect(peer.address().port, "127.0.0.1");
+      await new Promise<void>(connected => raw.once("connect", connected));
+      const client = new tls.TLSSocket(raw, { rejectUnauthorized: false });
+      const written = new Promise<NodeJS.ErrnoException | null | undefined>(resolve => client.write("early", resolve));
+      assert.deepStrictEqual(await eventsUntilClose(client), [
+        "error ERR_SOCKET_CLOSED: Socket is closed",
+        "close true",
+      ]);
+      assert.strictEqual((await written)?.code, "ERR_SOCKET_CLOSED");
+    } finally {
+      peer.close();
+    }
+  },
+);
 
 test("on a TCP socket: a close_notify in place of the client's last TLS 1.2 flight is a 'tlsClientError'", async () => {
   const server = tls.createServer({ key, cert, maxVersion: "TLSv1.2" });

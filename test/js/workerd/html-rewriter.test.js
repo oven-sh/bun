@@ -3540,3 +3540,121 @@ describe("GC pressure mid-rewrite", () => {
     });
   });
 });
+
+// lol-html parses a chunk where it lies and goes back to it once a handler returns: for the rest of
+// the start tag, for the text, for whatever follows. A stream only lends its chunk to the rewrite.
+describe("a handler that changes the chunk it is called for", () => {
+  const sources = {
+    "a direct ReadableStream": view => new ReadableStream({ type: "direct", pull: c => (c.write(view), c.close()) }),
+    "a ReadableStream": view => new ReadableStream({ pull: c => (c.enqueue(view), c.close()) }),
+  };
+
+  it.each(Object.keys(sources))("rewrites what %s wrote, not what the handler overwrote it with", async source => {
+    const html = "<p class=first>one</p><p class=second>two</p><!--three--><b>four</b>";
+    const view = new TextEncoder().encode(html);
+    const seen = [];
+    const overwrite = () => void view.fill(0x21);
+    const output = await new HTMLRewriter()
+      .on("p", {
+        element(element) {
+          overwrite();
+          seen.push(element.getAttribute("class"));
+        },
+        text(text) {
+          overwrite();
+          if (text.text) seen.push(text.text);
+        },
+      })
+      .transform(new Response(sources[source](view)))
+      .text();
+    expect({ output, seen }).toEqual({ output: html, seen: ["first", "one", "second", "two"] });
+    expect(view).toEqual(new Uint8Array(html.length).fill(0x21));
+  });
+
+  it.concurrent.each(Object.keys(sources))("reads no freed memory when it takes the bytes of %s away", async source => {
+    const fixture = /* js */ `
+      const html = "<p class=first>one</p>" + Buffer.alloc(65536, " ").toString() + "<p class=second>two</p><b>three</b>";
+      const bytes = new TextEncoder().encode(html);
+      const source = ${sources[source]};
+      const keep = [];
+      const inputs = {
+        "nothing"() {
+          return [new Uint8Array(bytes.length), () => {}];
+        },
+        "resize(0)"() {
+          const buffer = new ArrayBuffer(bytes.length, { maxByteLength: bytes.length });
+          return [new Uint8Array(buffer), () => buffer.resize(0)];
+        },
+        "transfer(0)"() {
+          const buffer = new ArrayBuffer(bytes.length);
+          return [new Uint8Array(buffer), () => buffer.transfer(0)];
+        },
+        "transfer(1) of a view's own buffer"() {
+          const view = new Uint8Array(bytes.length);
+          return [view, () => view.buffer.transfer(1)];
+        },
+        "WebAssembly.Memory grow(1)"() {
+          const memory = new WebAssembly.Memory({ initial: 2, maximum: 16 });
+          return [new Uint8Array(memory.buffer, 0, bytes.length), () => memory.grow(1)];
+        },
+      };
+      const handlers = {
+        element: take => ({ element(element) { take(); element.setAttribute("seen", element.getAttribute("class")); } }),
+        text: take => ({ text(text) { take(); if (text.text) text.after("!"); } }),
+        "async element": take => ({ async element(element) { await 1; take(); element.setAttribute("seen", element.getAttribute("class")); } }),
+      };
+      const results = {};
+      for (const [handler, handle] of Object.entries(handlers)) {
+        let expected;
+        for (const [name, input] of Object.entries(inputs)) {
+          const [view, take] = input();
+          view.set(bytes);
+          let taken = 0;
+          const once = () => {
+            if (taken++) return;
+            take();
+            Bun.gc(true);
+            for (let i = 0; i < 8; i++) keep.push(new Uint8Array(bytes.length).fill(0x21));
+          };
+          const output = await new HTMLRewriter().on("p", handle(once)).transform(new Response(source(view))).text();
+          expected ??= output;
+          results[handler + ", " + name] = taken > 0 && output === expected && output.endsWith("<b>three</b>");
+        }
+      }
+      console.log(JSON.stringify(results));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      // Without fast memory, `grow()` moves the block on every platform. Malloc=1 routes JSC's buffer allocations
+      // through the system allocator so ASan builds see the free (bmalloc's SystemHeap is unavailable on Windows).
+      // Symbolizing a report outlasts the test's timeout.
+      env: {
+        ...bunEnv,
+        BUN_JSC_useWasmFastMemory: "0",
+        ...(isWindows ? {} : { Malloc: "1" }),
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const expected = {};
+    for (const handler of ["element", "text", "async element"]) {
+      for (const taken of [
+        "nothing",
+        "resize(0)",
+        "transfer(0)",
+        "transfer(1) of a view's own buffer",
+        "WebAssembly.Memory grow(1)",
+      ]) {
+        expected[`${handler}, ${taken}`] = true;
+      }
+    }
+    expect({ results: stdout && JSON.parse(stdout), stderr, signalCode: proc.signalCode }).toEqual({
+      results: expected,
+      stderr: "",
+      signalCode: null,
+    });
+    expect(exitCode).toBe(0);
+  });
+});

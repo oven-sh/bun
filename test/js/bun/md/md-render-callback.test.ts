@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows } from "harness";
 
 const Markdown = Bun.markdown;
 
@@ -492,5 +493,91 @@ describe("Bun.markdown buffer input", () => {
       );
       expect(buffer.byteLength).toBe(0);
     });
+  });
+
+  // Nor does a pin prevent `grow()`, which frees the block of a memory that moves. And a large typed array has
+  // no ArrayBuffer to pin until `.buffer` is read.
+  test.concurrent.each([
+    [
+      "a WebAssembly.Memory input that grows",
+      `
+        const memory = new WebAssembly.Memory({ initial: 2, maximum: 16 });
+        const view = new Uint8Array(memory.buffer, 0, bytes.length);
+        const take = () => memory.grow(1);
+      `,
+    ],
+    [
+      "a large input whose own buffer is transferred",
+      `
+        const view = new Uint8Array(bytes.length);
+        const take = () => view.buffer.transfer(1);
+      `,
+    ],
+  ])("survives %s during the call", async (_, input) => {
+    const fixture = /* js */ `
+      const source = "# Hello\\n\\n" + Buffer.alloc(100_000, "word ").toString() + "\\n\\n# Bye\\n";
+      const bytes = new TextEncoder().encode(source);
+      const keep = [];
+      function input() {
+        ${input}
+        view.set(bytes);
+        let taken = 0;
+        const once = () => {
+          if (taken++) return;
+          take();
+          Bun.gc(true);
+          for (let i = 0; i < 16; i++) keep.push(new Uint8Array(2 * 65536).fill(0x21));
+        };
+        return { view, take: once, taken: () => taken > 0 && view.byteLength === 0 };
+      }
+      const callbacks = take => ({
+        heading: children => (take(), "<h1>" + children + "</h1>"),
+        paragraph: children => "<p>" + children + "</p>",
+      });
+
+      const render = input();
+      const rendered = Bun.markdown.render(render.view, callbacks(render.take));
+
+      // react() calls nothing of the caller's, but it fills arrays.
+      const expected = JSON.stringify(Bun.markdown.react(source));
+      const react = input();
+      Object.defineProperty(Array.prototype, 0, {
+        configurable: true,
+        set(value) {
+          react.take();
+          Object.defineProperty(this, 0, { value, writable: true, enumerable: true, configurable: true });
+        },
+      });
+      const element = Bun.markdown.react(react.view);
+      delete Array.prototype[0];
+
+      console.log(
+        JSON.stringify({
+          render: render.taken() && rendered === Bun.markdown.render(source, callbacks(() => {})),
+          react: react.taken() && JSON.stringify(element) === expected,
+        }),
+      );
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      // Without fast memory, `grow()` moves the block on every platform. Malloc=1 routes JSC's buffer allocations
+      // through the system allocator so ASan builds see the free (bmalloc's SystemHeap is unavailable on Windows).
+      // Symbolizing a report outlasts the test's timeout.
+      env: {
+        ...bunEnv,
+        BUN_JSC_useWasmFastMemory: "0",
+        ...(isWindows ? {} : { Malloc: "1" }),
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, signalCode: proc.signalCode }).toEqual({
+      stdout: JSON.stringify({ render: true, react: true }),
+      stderr: "",
+      signalCode: null,
+    });
+    expect(exitCode).toBe(0);
   });
 });

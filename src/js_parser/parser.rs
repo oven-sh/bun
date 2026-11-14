@@ -1399,15 +1399,9 @@ impl<'a> ScanPassResult<'a> {
     /// Empties it, keeping capacity. Being empty it borrows nothing, so any lifetime fits.
     pub fn recycle<'b>(mut self) -> ScanPassResult<'b> {
         self.named_imports.clear_retaining_capacity();
-        self.import_records.clear();
         self.used_symbols.clear_retaining_capacity();
         ScanPassResult {
-            // std collects this in place. Were it to stop, only the capacity would be lost.
-            import_records: self
-                .import_records
-                .into_iter()
-                .map(|_| unreachable!())
-                .collect(),
+            import_records: bun_collections::recycle(self.import_records),
             named_imports: self.named_imports,
             used_symbols: self.used_symbols,
         }

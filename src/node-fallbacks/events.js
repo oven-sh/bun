@@ -539,6 +539,7 @@ export {
   getMaxListeners,
   EventEmitter as init,
   listenerCount,
+  EventEmitter as "module.exports",
   once,
   setMaxListeners,
 };

@@ -53,8 +53,10 @@ export function isIP(s) {
   return 0;
 }
 
-export default {
+const net = {
   isIPv4,
   isIPv6,
   isIP,
 };
+export default net;
+export { net as "module.exports" };

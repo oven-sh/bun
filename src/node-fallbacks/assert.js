@@ -1,4 +1,4 @@
-import * as assert from "./node_modules/assert";
+import assert from "./node_modules/assert";
 
 export const {
   AssertionError,
@@ -23,3 +23,4 @@ export const {
   throws,
 } = assert;
 export default assert;
+export { assert as "module.exports" };

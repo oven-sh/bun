@@ -2,8 +2,6 @@ use core::cell::Cell;
 use core::ffi::{c_uint, c_void};
 use core::ptr::NonNull;
 
-use bun_sys::FdExt as _;
-
 use bun_core::String as BunString;
 use bun_http_types::Method::Method;
 use bun_jsc::JsCell;
@@ -1726,34 +1724,30 @@ where
             unreachable!("do_sendfile called with non-file blob");
         };
         let mut file_buf = bun_paths::path_buffer_pool::get();
-        let auto_close = !matches!(
-            file.pathlike,
-            crate::webcore::node_types::PathOrFileDescriptor::Fd(_)
-        );
-        let fd: bun_sys::Fd = if !auto_close {
-            file.pathlike.fd()
-        } else {
-            match bun_sys::open(
-                file.pathlike.path().slice_z(&mut file_buf),
-                bun_sys::O::RDONLY | bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC,
-                0,
-            ) {
-                bun_sys::Result::Ok(fd_) => fd_,
-                bun_sys::Result::Err(err) => {
-                    let js_err = err
-                        .with_path(file.pathlike.path().slice())
-                        .to_js(global_this);
-                    return self.run_error_handler(js_err);
+        let opened = match &file.pathlike {
+            crate::webcore::node_types::PathOrFileDescriptor::Fd(_) => None,
+            crate::webcore::node_types::PathOrFileDescriptor::Path(path) => {
+                match bun_sys::File::open(
+                    path.slice_z(&mut file_buf),
+                    bun_sys::O::RDONLY | bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC,
+                    0,
+                ) {
+                    bun_sys::Result::Ok(opened) => Some(opened),
+                    bun_sys::Result::Err(err) => {
+                        let js_err = err.with_path(path.slice()).to_js(global_this);
+                        return self.run_error_handler(js_err);
+                    }
                 }
             }
         };
+        let fd = opened
+            .as_ref()
+            .map_or_else(|| file.pathlike.fd(), bun_sys::File::fd);
 
         let stat: bun_sys::Stat = match bun_sys::fstat(fd) {
             bun_sys::Result::Ok(s) => s,
             bun_sys::Result::Err(err) => {
-                if auto_close {
-                    fd.close();
-                }
+                drop(opened);
                 // Attach the path for the Path arm and the fd for the Fd arm.
                 let js_err = match &file.pathlike {
                     crate::webcore::node_types::PathOrFileDescriptor::Path(p) => {
@@ -1777,9 +1771,7 @@ where
                 break 'brk (bun_io::FileType::Socket, true);
             }
             if bun_sys::S::ISDIR(mode) {
-                if auto_close {
-                    fd.close();
-                }
+                drop(opened);
                 // Attach the path for the Path arm and the fd for the Fd arm.
                 let base_err = bun_sys::Error {
                     errno: bun_sys::E::EISDIR as _,
@@ -1820,7 +1812,7 @@ where
             offset: blob_offset,
             total: 0,
         };
-        if is_regular && auto_close {
+        if is_regular && opened.is_some() {
             self.flags.set_needs_content_range(
                 sendfile.remain.saturating_sub(sendfile.offset) != stat_size,
             );
@@ -1875,9 +1867,7 @@ where
                     self.flags.set_needs_content_range(true);
                 }
                 RangeRequest::Result::Unsatisfiable => {
-                    if auto_close {
-                        fd.close();
-                    }
+                    drop(opened);
                     let mut crbuf = [0u8; RangeRequest::CONTENT_RANGE_BUF];
                     self.do_write_status(416);
                     if let Some(response) = self.response_mut() {
@@ -1908,9 +1898,7 @@ where
 
         let sendfile = self.sendfile.get();
         if (is_regular && sendfile.remain == 0) || !self.method.has_body() {
-            if auto_close {
-                fd.close();
-            }
+            drop(opened);
             // SAFETY: FFI handle
             let close = resp.should_close_connection();
             let _base_ref = self.detach_response();
@@ -1935,8 +1923,7 @@ where
 
         let server = self.server();
         FileResponseStream::start(file_response_stream::StartOptions {
-            fd,
-            auto_close,
+            fd: opened.map_or(file_response_stream::StreamFd::Borrowed(fd), Into::into),
             resp,
             vm: bun_ptr::BackRef::new(server.vm()),
             file_type,

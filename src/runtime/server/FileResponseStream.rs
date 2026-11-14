@@ -19,7 +19,7 @@ use bun_io::{BufferedReader, FileType, ReadState};
 use bun_io::{FilePollFlag, PosixFlags as ReaderFlags};
 use bun_jsc::JsCell;
 use bun_ptr::RefPtr;
-use bun_sys::{self as sys, Fd};
+use bun_sys::{self as sys, Fd, File};
 use bun_uws::{AnyResponse, WriteResult};
 
 use crate::server::jsc::{EventLoopHandle, VirtualMachine};
@@ -37,8 +37,7 @@ pub(crate) struct FileResponseStream {
     /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     event_loop_handle: Cell<EventLoopHandle>,
-    fd: Cell<Fd>,
-    auto_close: Cell<bool>,
+    fd: StreamFd,
     idle_timeout: Cell<u8>,
 
     /// Taken by whichever of complete / abort / error fires first.
@@ -100,9 +99,39 @@ bitflags::bitflags! {
     }
 }
 
+/// The descriptor that a response is read from.
+pub(crate) enum StreamFd {
+    /// Closed off this thread.
+    Owned(Fd),
+    Borrowed(Fd),
+}
+
+impl StreamFd {
+    pub(crate) fn get(&self) -> Fd {
+        let (Self::Owned(fd) | Self::Borrowed(fd)) = *self;
+        fd
+    }
+}
+
+impl From<File> for StreamFd {
+    fn from(file: File) -> Self {
+        Self::Owned(file.into_raw())
+    }
+}
+
+impl Drop for StreamFd {
+    fn drop(&mut self) {
+        if let Self::Owned(fd) = *self {
+            #[cfg(windows)]
+            Closer::close(fd, bun_sys::windows::libuv::Loop::get());
+            #[cfg(not(windows))]
+            Closer::close(fd, ());
+        }
+    }
+}
+
 pub(crate) struct StartOptions {
-    pub fd: Fd,
-    pub auto_close: bool,
+    pub fd: StreamFd,
     pub resp: AnyResponse,
     pub vm: bun_ptr::BackRef<VirtualMachine>,
     pub file_type: FileType,
@@ -167,8 +196,7 @@ impl FileResponseStream {
             resp: Cell::new(opts.resp),
             vm: Cell::new(opts.vm),
             event_loop_handle: Cell::new(EventLoopHandle::init(opts.vm.event_loop_ptr())),
-            fd: Cell::new(opts.fd),
-            auto_close: Cell::new(opts.auto_close),
+            fd: opts.fd,
             idle_timeout: Cell::new(opts.idle_timeout),
             owner: Cell::new(Some(opts.owner)),
             mode: Cell::new(if use_sendfile {
@@ -224,7 +252,7 @@ impl FileResponseStream {
 
         // BufferedReader path
         this_ref.reader.with_mut(|reader| {
-            reader.flags.remove(ReaderFlags::CLOSE_HANDLE); // we own fd via auto_close
+            reader.flags.remove(ReaderFlags::CLOSE_HANDLE); // `self.fd` closes it
             reader.flags.set(ReaderFlags::POLLABLE, opts.pollable);
             reader
                 .flags
@@ -241,10 +269,11 @@ impl FileResponseStream {
         // SAFETY: `start()`/`start_file_offset()` re-enter this object through
         // the parent pointer (`loop_`/`event_loop`), so no cell borrow spans them.
         let reader = this_ref.reader_mut();
+        let fd = this_ref.fd.get();
         let start_result = if opts.offset > 0 {
-            reader.start_file_offset(opts.fd, opts.pollable, opts.offset as usize)
+            reader.start_file_offset(fd, opts.pollable, opts.offset as usize)
         } else {
-            reader.start(opts.fd, opts.pollable)
+            reader.start(fd, opts.pollable)
         };
         if let Err(err) = start_result {
             this_ref.fail_with(err);
@@ -278,9 +307,22 @@ impl FileResponseStream {
         unsafe { BufferedReader::read(this_ref.reader.as_ptr()) };
     }
 
-    #[inline]
-    fn as_ptr(&self) -> *mut Self {
-        std::ptr::from_ref(self).cast_mut()
+    fn arm_on_writable(&self) {
+        // Not a pointer made from `self`: the callback's guard may free through it.
+        let Some(this) = self.self_ref.get() else {
+            return;
+        };
+        self.resp.get().on_writable(
+            |p: *mut FileResponseStream, off, r| {
+                // SAFETY: uWS hands back the userdata pointer set below; the
+                // guard keeps `*p` alive across the handler.
+                unsafe {
+                    let _guard = RefPtr::init_ref(p);
+                    (*p).on_writable(off, r)
+                }
+            },
+            this.as_ptr(),
+        );
     }
 
     #[inline]
@@ -327,17 +369,7 @@ impl FileResponseStream {
                 // `on_writable` takes it again.
                 #[cfg(windows)]
                 let _read_ref = self.read_ref.take();
-                resp.on_writable(
-                    |p: *mut FileResponseStream, off, r| {
-                        // SAFETY: uWS hands back the userdata pointer set below;
-                        // the guard keeps `*p` alive across the handler.
-                        unsafe {
-                            let _guard = RefPtr::init_ref(p);
-                            (*p).on_writable(off, r)
-                        }
-                    },
-                    self.as_ptr(),
-                );
+                self.arm_on_writable();
                 // SAFETY: reader entry point; `pause()` does not call back into
                 // this object.
                 self.reader_mut().pause();
@@ -468,17 +500,7 @@ impl FileResponseStream {
         bun_output::scoped_log!(FileResponseStream, "armSendfileWritable");
         if !self.sendfile.get().has_set_on_writable {
             self.sendfile.with_mut(|sf| sf.has_set_on_writable = true);
-            self.resp.get().on_writable(
-                |p: *mut FileResponseStream, off, r| {
-                    // SAFETY: uWS hands back the userdata pointer set below; the
-                    // guard keeps `*p` alive across the handler.
-                    unsafe {
-                        let _guard = RefPtr::init_ref(p);
-                        (*p).on_writable(off, r)
-                    }
-                },
-                self.as_ptr(),
-            );
+            self.arm_on_writable();
         }
         self.resp.get().mark_needs_more();
         true
@@ -615,12 +637,6 @@ impl Drop for FileResponseStream {
         // `start()` cleared CLOSE_HANDLE, so the reader's `Drop` doesn't unregister the poll.
         #[cfg(unix)]
         self.reader_mut().handle.close_without_closing_fd();
-        if self.auto_close.get() {
-            #[cfg(windows)]
-            Closer::close(self.fd.get(), bun_sys::windows::libuv::Loop::get());
-            #[cfg(not(windows))]
-            Closer::close(self.fd.get(), ());
-        }
     }
 }
 

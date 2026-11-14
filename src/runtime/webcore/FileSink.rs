@@ -8,7 +8,7 @@ use bun_io::{self, WriteResult, WriteStatus};
 use bun_jsc::JsCell;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_ptr::RefPtr;
-use bun_sys::{self as sys, Fd, FdExt as _};
+use bun_sys::{self as sys, Fd};
 
 use crate::api::bun::process::Status as SpawnStatus;
 use crate::api::bun_subprocess::Subprocess;
@@ -780,12 +780,7 @@ impl FileSink {
         self.is_socket.set(is_socket_out);
         self.nonblocking.set(nonblocking_out);
 
-        let fd = match result {
-            sys::Result::Err(err) => {
-                return sys::Result::Err(err);
-            }
-            sys::Result::Ok(fd) => fd,
-        };
+        let file = result?;
 
         if let PathOrFileDescriptor::Path(path) = &options.input_path {
             let is_whole = options.flags() & sys::O::TRUNC != 0;
@@ -803,33 +798,26 @@ impl FileSink {
         {
             if self.force_sync.get() {
                 // SAFETY(JsCell): `start_sync` is pure I/O setup; no JS.
-                match self
-                    .writer
-                    .with_mut(|w| w.start_sync(fd, self.pollable.get()))
-                {
-                    sys::Result::Err(err) => {
-                        fd.close();
-                        return sys::Result::Err(err);
-                    }
-                    sys::Result::Ok(()) => {
-                        self.writer.with_mut(|w| {
-                            w.owns_fd = true;
-                            w.update_ref(self.io_evtloop(), false);
-                        });
-                    }
-                }
+                self.writer
+                    .with_mut(|w| w.start_sync(file.fd(), self.pollable.get()))?;
+                file.into_raw();
+                self.writer.with_mut(|w| {
+                    w.owns_fd = true;
+                    w.update_ref(self.io_evtloop(), false);
+                });
                 return sys::Result::Ok(());
             }
         }
 
         // SAFETY(JsCell): `start` is pure I/O setup; no JS.
-        match self.writer.with_mut(|w| w.start(fd, self.pollable.get())) {
-            sys::Result::Err(err) => {
-                fd.close();
-                return sys::Result::Err(err);
-            }
+        match self
+            .writer
+            .with_mut(|w| w.start(file.fd(), self.pollable.get()))
+        {
+            sys::Result::Err(err) => return sys::Result::Err(err),
             sys::Result::Ok(()) => {
-                // `open_for_writing` opened or dup'd `fd` for this sink, so `end()` must close it.
+                // The writer closes it from now on.
+                file.into_raw();
                 #[cfg(windows)]
                 self.writer.with_mut(|w| w.owns_fd = true);
                 // Only keep the event loop ref'd while there's a pending write in progress.

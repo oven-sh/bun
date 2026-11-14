@@ -938,6 +938,7 @@ it.each([
     stdout: ["first load", "collected", "third load", ""],
     stderr: [],
   });
+  expect(await runner.exited).toBe(0);
 });
 
 /** Returns a function that resolves to `true` once the stream's text includes `wanted`, or to the full text at EOF. */

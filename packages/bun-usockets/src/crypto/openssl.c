@@ -524,6 +524,47 @@ void us_internal_ssl_loop_state_restore(void **saved) {
   d->ssl_write_batching = (int)(uintptr_t)saved[5];
 }
 
+/* us_socket_pump (loop.c) dispatches one socket from wherever its caller is,
+ * which can be the middle of another socket's read (stacksjs/bun). That read's
+ * state is the loop's: where its ciphertext is, whose it is, and the buffer
+ * its plaintext is in, which its caller is still consuming. All of it is set
+ * aside for the dispatch, which gets a plaintext buffer of its own, and put
+ * back after it. `saved` has US_PUMP_SSL_STATE_SLOTS slots (loop.c). */
+void us_internal_ssl_pump_enter(struct us_loop_t *loop, void **saved);
+void us_internal_ssl_pump_leave(struct us_loop_t *loop, void **saved);
+static char *ssl_alloc_read_output(void);
+
+void us_internal_ssl_pump_enter(struct us_loop_t *loop, void **saved) {
+  struct loop_ssl_data *d = (struct loop_ssl_data *)loop->data.ssl_data;
+  saved[0] = d;
+  /* No TLS socket has been on this loop: there is no read to protect. */
+  if (!d) return;
+  saved[1] = (void *)d->ssl_socket;
+  saved[2] = (void *)d->ssl_read_input;
+  saved[3] = (void *)(uintptr_t)d->ssl_read_input_length;
+  saved[4] = (void *)(uintptr_t)d->ssl_read_input_offset;
+  saved[5] = (void *)(uintptr_t)d->ssl_write_batching;
+  saved[6] = (void *)d->ssl_read_output;
+  /* As us_internal_ssl_loop_state_save: a write for another socket goes to
+   * that socket, and not onto the interrupted one's batch. */
+  d->ssl_write_batching = 0;
+  d->ssl_read_output = ssl_alloc_read_output();
+  if (!d->ssl_read_output) Bun__outOfMemory();
+}
+
+void us_internal_ssl_pump_leave(struct us_loop_t *loop, void **saved) {
+  struct loop_ssl_data *d = (struct loop_ssl_data *)saved[0];
+  /* The loop's TLS state was made inside the dispatch, or there is none. */
+  if (!d || d != (struct loop_ssl_data *)loop->data.ssl_data) return;
+  us_free(d->ssl_read_output);
+  d->ssl_socket = (struct us_socket_t *)saved[1];
+  d->ssl_read_input = (char *)saved[2];
+  d->ssl_read_input_length = (unsigned int)(uintptr_t)saved[3];
+  d->ssl_read_input_offset = (unsigned int)(uintptr_t)saved[4];
+  d->ssl_write_batching = (int)(uintptr_t)saved[5];
+  d->ssl_read_output = (char *)saved[6];
+}
+
 /* A send() that no retry can save loses sealed records: nothing may follow them, but what the peer sent is still read. */
 static int ssl_raw_write(struct loop_ssl_data *loop_ssl_data, struct us_socket_t *s, const char *data, int length) {
   int send_error = 0;

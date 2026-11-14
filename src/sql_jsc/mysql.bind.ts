@@ -50,6 +50,8 @@ export const binding = b.namespace({
       foundRows: b.bool.loose,
       channelBinding: b.any,
       columnTransform: b.callable.optional,
+      scramPassword: b.any,
+      resolveOnWorkPool: b.bool.loose,
     },
     returns: MySQLConnection,
     length: 2,

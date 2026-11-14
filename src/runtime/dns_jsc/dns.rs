@@ -2782,6 +2782,22 @@ pub(crate) mod internal {
                         bstr::BStr::new(host.unwrap_or(b""))
                     );
                     DNS_CACHE_HITS_INFLIGHT.fetch_add(1, Ordering::Relaxed);
+                    #[cfg(target_os = "macos")]
+                    {
+                        unsafe extern "C" {
+                            fn us_internal_dns_prefers_work_pool() -> core::ffi::c_int;
+                            fn us_internal_dns_note_inflight_join();
+                        }
+                        // The caller asked for an answer it can see without the event loop
+                        // (`pump()` of a SQL connection), and shares a lookup that may be the
+                        // system resolver's. It is told, and does not wait for it.
+                        // SAFETY: reads and writes thread-locals.
+                        unsafe {
+                            if us_internal_dns_prefers_work_pool() != 0 {
+                                us_internal_dns_note_inflight_join();
+                            }
+                        }
+                    }
                 }
 
                 drop(guard);
@@ -2835,9 +2851,16 @@ pub(crate) mod internal {
         #[cfg(target_os = "macos")]
         {
             use bun_uws::InternalLoopDataExt as _;
-            if !env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO
-                .get()
-                .unwrap_or(false)
+            unsafe extern "C" {
+                fn us_internal_dns_prefers_work_pool() -> core::ffi::c_int;
+            }
+            // A caller that blocks on its socket (`pump()` of a SQL connection) cannot see an
+            // answer that only a tick of the event loop reads.
+            // SAFETY: reads a thread-local.
+            if unsafe { us_internal_dns_prefers_work_pool() } == 0
+                && !env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO
+                    .get()
+                    .unwrap_or(false)
             {
                 // SAFETY: `loop_` is the live uSockets loop; its parent tag/ptr
                 // was set by `EventLoopHandle::set_as_parent_of` at startup.

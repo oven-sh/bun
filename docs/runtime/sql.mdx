@@ -716,6 +716,59 @@ What `cancel()` does depends on how far the query got:
 - An `ERR_POSTGRES_QUERY_CANCELLED` error without a `hint` means that the query never reached the server, so it is safe to run again.
 - SQLite runs a query inside the call that starts it. `cancel()` only stops a query that has not started, with `ERR_SQLITE_QUERY_CANCELLED`.
 
+### Running a query without `await`
+
+`query.executeSync()` runs a PostgreSQL or MySQL query and returns its result where it is called, the way `bun:sqlite` does. It returns what `await query` would give, and throws what the query would reject with.
+
+```ts
+const [user] = sql`SELECT * FROM users WHERE id = ${id}`.executeSync();
+const orders = sql`SELECT * FROM orders WHERE user_id = ${id}`.executeSync(5000); // wait at most 5 seconds
+```
+
+The thread blocks on the socket of the connection that has the query, and Bun handles what arrives on it. The event loop does not turn in the meantime: no timer fires, no other request is served and no microtask runs until the call returns. Use it where there is nothing else for the program to do, such as a script, a CLI, a migration or code that cannot be `async`. In a server it holds up every other request for as long as the query takes.
+
+`query.wait(ms)` is the same wait without the result. It starts the query and returns:
+
+| Value   | Meaning                                                                                                                                                              |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `true`  | The query has settled. `executeSync()` returns its result or throws its error                                                                                        |
+| `false` | `ms` milliseconds passed. The query is still running                                                                                                                 |
+| `null`  | This thread has nothing to wait on, so only the event loop can settle the query. For example, every connection of the pool is reserved by code that awaits. Await it |
+
+```ts
+const query = sql`SELECT pg_sleep(10)`;
+if (query.wait(1000) !== true) {
+  query.cancelSync();
+}
+```
+
+- Without `ms`, both calls wait until the query settles.
+- When `wait(ms)` would not return `true`, `executeSync(ms)` throws `ERR_POSTGRES_SYNC_TIMEOUT` or `ERR_MYSQL_SYNC_TIMEOUT`. The query was not cancelled: you can wait for it again, await it or cancel it.
+- A query that failed has settled, so `wait()` returns `true` and does not throw.
+- `query.cancelSync(ms)` is `cancel()` followed by a wait until the request to stop the query has reached the server, for at most `ms` milliseconds. Code that does not yield needs it on PostgreSQL: the request goes out on a second connection, which would otherwise only be written to when the event loop turns, after whatever the code does next.
+- `sql.reserveSync(ms)` is [`sql.reserve()`](#reserved-connections) without `await`. It returns `undefined` when no connection can be had without the event loop turning.
+- `connectionTimeout` and `idleTimeout` apply while a call blocks, as they do to a query that you await.
+- A `COPY` query that you read with `readable()` or feed with `writable()` cannot be waited for this way, because the code that reads or writes the stream is the code that would block. `wait()` returns `null` for it.
+- You can mix the two styles on one pool. A query that you await behaves as before, and so does a connection that it opens.
+- SQLite already runs a query inside the call that starts it, so `wait()` returns `true` and `executeSync()` returns the result. `reserveSync()` throws, as `reserve()` rejects.
+- On Windows, `wait()` returns `null` for PostgreSQL and MySQL, so `executeSync()` throws: use `await` there.
+
+A transaction that does not yield runs on a reserved connection:
+
+```ts
+const connection = sql.reserveSync() ?? (await sql.reserve());
+try {
+  connection.unsafe("BEGIN").executeSync();
+  connection`UPDATE accounts SET balance = balance - ${10} WHERE id = ${1}`.executeSync();
+  connection.unsafe("COMMIT").executeSync();
+} catch (error) {
+  connection.unsafe("ROLLBACK").executeSync();
+  throw error;
+} finally {
+  connection.release();
+}
+```
+
 ### Unhandled rejections
 
 `.then()` and `.catch()` return a promise like any other. When it rejects and nothing handles the rejection, Bun reports an unhandled rejection, which ends the process unless you listen for [`unhandledRejection`](https://nodejs.org/api/process.html#event-unhandledrejection). So does an error that your `.finally()` callback throws.

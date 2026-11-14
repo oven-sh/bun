@@ -255,6 +255,42 @@ describe("jest-extended", () => {
         expect(make).toThrow("Expected a function");
       }
     });
+
+    test("expect.toSatisfy() throws if its predicate returns a promise or another thenable", () => {
+      const refused = returned =>
+        `The predicate of expect.toSatisfy() returned ${returned}. It has to return its answer synchronously`;
+      // The matcher leaves a promise to its owner, so this test handles the rejection.
+      const rejected = Promise.reject(new Error("rejected before it was returned"));
+      rejected.catch(() => {});
+      for (const [predicate, returned] of [
+        [async () => true, "a promise"],
+        [async () => false, "a promise"],
+        [() => rejected, "a promise"],
+        [() => new Promise(() => {}), "a promise"],
+        [() => ({ then() {} }), "a thenable"],
+      ]) {
+        for (const assertion of [
+          () => expect(7).toEqual(expect.toSatisfy(predicate)),
+          () => expect(7).not.toEqual(expect.toSatisfy(predicate)),
+          () => expect({ a: 7 }).toEqual({ a: expect.not.toSatisfy(predicate) }),
+          () => expect([7]).toContainEqual(expect.toSatisfy(predicate)),
+          () => expect.toSatisfy(predicate).asymmetricMatch(7),
+        ]) {
+          expect(assertion).toThrow(TypeError);
+          expect(assertion).toThrow(new TypeError(refused(returned)));
+        }
+      }
+      expect(7).toEqual(expect.toSatisfy(() => ({ then: true })));
+
+      async function isOdd(n) {
+        return n % 2 === 1;
+      }
+      expect(() => expect(7).toEqual(expect.toSatisfy(isOdd))).toThrow(
+        new TypeError(
+          "The predicate of expect.toSatisfy(), `isOdd`, returned a promise. It has to return its answer synchronously",
+        ),
+      );
+    });
   }
 
   // Array

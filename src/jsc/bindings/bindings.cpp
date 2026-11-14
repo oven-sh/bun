@@ -6024,8 +6024,33 @@ static bool endsPrototypeWalk(JSC::JSGlobalObject* globalObject, JSC::JSObject* 
         || (prototype->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(prototype)->target() != globalObject);
 }
 
+// This enum must match PropertyOrder in src/jsc/JSValue.rs
+enum class PropertyOrder : uint8_t {
+    Insertion = 0,
+    Sorted = 1,
+};
+
+// The order of keys that compare equal. Only a symbol can compare equal to another key.
+enum class EqualKeys : bool {
+    // Whatever std::sort gives. Stored bun:test snapshots hold it.
+    Unordered,
+    AsListed,
+};
+
+// By UTF-16 code unit, a symbol by its description.
+static NEVER_INLINE void sortPropertyNames(JSC::PropertyNameArray::PropertyNameVector& names, EqualKeys equalKeys)
+{
+    auto byKey = [](const Identifier& a, const Identifier& b) -> bool {
+        return codePointCompare(a.impl(), b.impl()) < 0;
+    };
+    if (equalKeys == EqualKeys::AsListed && names.containsIf([](const Identifier& name) { return name.isSymbol(); })) [[unlikely]]
+        std::stable_sort(names.begin(), names.end(), byKey);
+    else
+        std::sort(names.begin(), names.end(), byKey);
+}
+
 template<bool nonIndexedOnly>
-static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol), bool callOwnGetters)
+static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, PropertyOrder order, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol), bool callOwnGetters)
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
@@ -6256,6 +6281,10 @@ restart:
             }
 
             RETURN_IF_EXCEPTION(scope, void());
+            if constexpr (nonIndexedOnly) {
+                if (order == PropertyOrder::Sorted) [[unlikely]]
+                    sortPropertyNames(properties.data()->propertyNameVector(), EqualKeys::AsListed);
+            }
             for (auto& property : properties) {
                 if (property.isNull()) [[unlikely]]
                     continue;
@@ -6371,17 +6400,17 @@ restart:
 
 [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__forEachProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)([[ZIG_NONNULL]] JSC::JSGlobalObject* arg0, void* ctx, [[ZIG_NONNULL]] EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
-    JSC__JSValue__forEachPropertyImpl<false>(JSValue0, globalObject, arg2, iter, false);
+    JSC__JSValue__forEachPropertyImpl<false>(JSValue0, globalObject, PropertyOrder::Insertion, arg2, iter, false);
 }
 
-extern "C" void JSC__JSValue__forEachPropertyNonIndexed(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+extern "C" void JSC__JSValue__forEachPropertyNonIndexed(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, PropertyOrder order, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
-    JSC__JSValue__forEachPropertyImpl<true>(JSValue0, globalObject, arg2, iter, false);
+    JSC__JSValue__forEachPropertyImpl<true>(JSValue0, globalObject, order, arg2, iter, false);
 }
 
 extern "C" void JSC__JSValue__forEachPropertyCallingOwnGetters(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
-    JSC__JSValue__forEachPropertyImpl<false>(JSValue0, globalObject, arg2, iter, true);
+    JSC__JSValue__forEachPropertyImpl<false>(JSValue0, globalObject, PropertyOrder::Insertion, arg2, iter, true);
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInUInt64Range(JSC::EncodedJSValue value, uint64_t max, uint64_t min)
@@ -6412,7 +6441,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
     return high == JSBigInt::ComparisonResult::LessThan || high == JSBigInt::ComparisonResult::Equal;
 }
 
-static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol), bool callGetters, bool withNonEnumerable = false)
+static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol), EqualKeys equalKeys, bool callGetters, bool withNonEnumerable = false)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     JSC::JSObject* object = value.getObject();
@@ -6436,7 +6465,7 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
     }
 
     auto vector = properties.data()->propertyNameVector();
-    std::sort(vector.begin(), vector.end(), [](const Identifier& a, const Identifier& b) { return codePointCompare(a.impl(), b.impl()) < 0; });
+    sortPropertyNames(vector, equalKeys);
     auto clientData = WebCore::clientData(vm);
 
     for (auto property : vector) {
@@ -6492,7 +6521,7 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
 
 [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__forEachPropertyOrdered(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)([[ZIG_NONNULL]] JSC::JSGlobalObject* arg0, void* ctx, [[ZIG_NONNULL]] EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
-    forEachPropertyOrderedImpl(JSValue0, globalObject, arg2, iter, false);
+    forEachPropertyOrderedImpl(JSValue0, globalObject, arg2, iter, EqualKeys::AsListed, false);
 }
 
 // Returns true if JSC__JSValue__forEachPropertyOrderedWithNonEnumerable is sure to visit the same properties.
@@ -6500,13 +6529,13 @@ extern "C" bool JSC__JSValue__forEachPropertyOrderedCallingGetters(JSC::EncodedJ
 {
     JSC::JSObject* object = JSC::JSValue::decode(JSValue0).getObject();
     bool hasOnlyEnumerableValues = object && object->structure()->canPerformFastPropertyEnumeration() && !object->structure()->hasNonEnumerableProperties();
-    forEachPropertyOrderedImpl(JSValue0, globalObject, arg2, iter, true);
+    forEachPropertyOrderedImpl(JSValue0, globalObject, arg2, iter, EqualKeys::Unordered, true);
     return hasOnlyEnumerableValues;
 }
 
 extern "C" void JSC__JSValue__forEachPropertyOrderedWithNonEnumerable(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
-    forEachPropertyOrderedImpl(JSValue0, globalObject, arg2, iter, false, true);
+    forEachPropertyOrderedImpl(JSValue0, globalObject, arg2, iter, EqualKeys::Unordered, false, true);
 }
 
 [[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isConstructor(JSC::EncodedJSValue JSValue0)

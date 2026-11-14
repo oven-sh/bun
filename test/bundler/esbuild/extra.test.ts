@@ -1245,6 +1245,37 @@ describe("bundler", () => {
     },
     run: true,
   });
+  // The same for a "var" in an "if", "else", "while" or "do" body without braces:
+  // https://github.com/evanw/esbuild/issues/4348
+  for (const minify of [false, true]) {
+    itBundled(`extra/NestedVarHoistingESBuildIssue4348${minify ? "Minify" : ""}`, {
+      files: {
+        "in.js": `
+          var foo = Object.entries({ ...require('./foo') }).join('|')
+          if (foo !== 'a,a|b,b|c,c|d,d|e,e|f,f|g,g|h,h|i,i|j,j') throw 'fail: ' + foo
+        `,
+        "foo.js": `
+          var a = 'a'
+          for (var b = 'b'; 0; ) ;
+          if (true) { var c = 'c' }
+          if (true) var d = 'd'
+          if (false) {} else var e = 'e'
+          var x = 1
+          while (x--) var f = 'f'
+          do var g = 'g'; while (0);
+          for (; x++; ) var h = 'h'
+          for (var y in 'y') var i = 'i'
+          for (var y of 'y') var j = 'j'
+          export { a, b, c, d, e, f, g, h, i, j }
+        `,
+      },
+      format: "cjs",
+      minifySyntax: minify,
+      minifyIdentifiers: minify,
+      minifyWhitespace: minify,
+      run: true,
+    });
+  }
 
   // Test tree shaking
   itBundled(`extra/TreeShaking1`, {

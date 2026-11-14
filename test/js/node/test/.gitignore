@@ -9,6 +9,12 @@ fixtures/v8-coverage
 fixtures/test-runner/*
 !fixtures/test-runner/index.js
 !fixtures/test-runner/tagged.js
+!fixtures/test-runner/output/
+fixtures/test-runner/output/*
+!fixtures/test-runner/output/only_tests.js
+!fixtures/test-runner/output/name_pattern_with_only.js
+!fixtures/test-runner/output/filtered-suite-order.mjs
+!fixtures/test-runner/output/filtered-suite-order.snapshot
 fixtures/source-map
 fixtures/snapshot/*
 !fixtures/snapshot/typescript.js

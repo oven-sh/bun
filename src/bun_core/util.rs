@@ -2715,27 +2715,23 @@ pub fn get_thread_count() -> u16 {
     })
 }
 
-pub unsafe fn copy_in_parallel(to: *mut u8, from: *const u8, len: usize) {
+pub fn append_in_parallel(mut to: crate::vec::BorrowedCursor<'_, u8>, from: &[u8]) {
     const MIN_BYTES_PER_THREAD: usize = 16 << 20;
     let threads = usize::from(get_thread_count())
-        .min(len / MIN_BYTES_PER_THREAD)
+        .min(from.len() / MIN_BYTES_PER_THREAD)
         .min(16);
     if threads < 2 {
-        // SAFETY: the caller's contract is that of `copy_nonoverlapping`.
-        return unsafe { core::ptr::copy_nonoverlapping(from, to, len) };
+        return to.append(from);
     }
-    let share = len.div_ceil(threads).next_multiple_of(1 << 16);
-    let (to, from) = (to as usize, from as usize);
-    for_each_in_parallel((0..len).step_by(share), |start| {
-        // SAFETY: a part of what the caller's contract covers, and no two calls get the same part.
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                (from + start) as *const u8,
-                (to + start) as *mut u8,
-                share.min(len - start),
-            )
-        }
-    });
+    let share = from.len().div_ceil(threads).next_multiple_of(1 << 16);
+    // SAFETY: each of the first `from.len()` bytes is in one part, and each part is written.
+    unsafe {
+        let parts = to.as_mut()[..from.len()].chunks_mut(share);
+        for_each_in_parallel(parts.zip(from.chunks(share)), |(to, from)| {
+            to.write_copy_of_slice(from);
+        });
+        to.advance(from.len());
+    }
 }
 
 /// Calls `work` once with each of `items`, on this thread and on one more for each item after the first.

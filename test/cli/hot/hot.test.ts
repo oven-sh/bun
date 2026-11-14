@@ -909,6 +909,7 @@ it.each([
   };
   await line("first load");
   // What is left on the stack can keep it alive, and differs with where a collection starts from.
+  // One save can load this text twice: writeFileSync() writes and then resizes, which is two watcher events.
   const second = `
       globalThis.kept = [];
       require("fs").readFile(__filename, () => {
@@ -922,7 +923,8 @@ it.each([
               promise.catch(() => {});
               kept.push(promise);
             }
-            console.log("collected");
+            if (!globalThis.collected) console.log("collected");
+            globalThis.collected = true;
           });
         });
       });
@@ -937,6 +939,7 @@ it.each([
     stdout: ["first load", "collected", "third load", ""],
     stderr: [],
   });
+  expect(await runner.exited).toBe(0);
 });
 
 /** Returns a function that resolves to `true` once the stream's text includes `wanted`, or to the full text at EOF. */

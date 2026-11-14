@@ -44,7 +44,7 @@ pub(crate) fn skips_link_to_pruned_workspace(
     if pruned.is_empty() || !bun_lock::may_stay_unresolved(dep) {
         return false;
     }
-    let pkgs = lockfile.packages.slice();
+    let pkgs = &lockfile.packages;
     let resolutions = pkgs.items_resolution();
     // A registry package can share the name of a pruned workspace.
     resolutions[target as usize].tag == ResolutionTag::Workspace
@@ -78,7 +78,7 @@ pub(crate) fn exit_if_survivor_depends_on_missing(
     keeps_missing_workspaces: bool,
     silent: bool,
 ) {
-    let pkgs = from_lockfile.packages.slice();
+    let pkgs = &from_lockfile.packages;
     let names = pkgs.items_name();
     let name_hashes = pkgs.items_name_hash();
     let pkg_res = pkgs.items_resolution();
@@ -241,7 +241,7 @@ fn catalog_entry_is_referenced(
         return true;
     }
 
-    let pkgs = lockfile.packages.slice();
+    let pkgs = &lockfile.packages;
     let name_hashes = pkgs.items_name_hash();
     let pkg_res = pkgs.items_resolution();
     let dep_slices = pkgs.items_dependencies();

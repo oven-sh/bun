@@ -4,7 +4,6 @@
 #include "helpers.h"
 #include "StringSizeLimit.h"
 #include <JavaScriptCore/ObjectConstructor.h>
-#include <wtf/WallTime.h>
 #include <wtf/text/StringToIntegerConversion.h>
 #include <JavaScriptCore/DateConversion.h>
 #include <JavaScriptCore/DateInstance.h>
@@ -152,7 +151,7 @@ ExceptionOr<Ref<Cookie>> Cookie::parse(StringView cookieString)
     return Cookie::create(name, value, domain, path, expires, secure, sameSite, httpOnly, maxAge, partitioned);
 }
 
-bool Cookie::isExpired() const
+bool Cookie::isExpired(JSC::JSGlobalObject* globalObject) const
 {
     // RFC 6265 5.3: Max-Age takes precedence over Expires when both are present. A
     // non-positive Max-Age expires the cookie immediately; a positive one is measured
@@ -163,8 +162,8 @@ bool Cookie::isExpired() const
     if (m_expires == Cookie::emptyExpiresAtValue)
         return false; // Session cookie
 
-    auto currentTime = WTF::WallTime::now().secondsSinceEpoch().seconds() * 1000.0;
-    return currentTime > m_expires;
+    // The real clock behind jsDateNow() is floored to whole ms, so `>` would report the cookie as live for up to 1ms after it expired.
+    return globalObject->jsDateNow() >= m_expires;
 }
 
 ExceptionOr<String> Cookie::toString(JSC::VM& vm) const

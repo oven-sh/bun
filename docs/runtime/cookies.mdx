@@ -280,6 +280,8 @@ cookie.httpOnly; // boolean - Accessible only via HTTP (not JavaScript)
 
 Checks if the cookie has expired. When both `maxAge` and `expires` are set, `maxAge` takes precedence, as required by [RFC 6265](https://datatracker.ietf.org/doc/html/rfc6265#section-5.3).
 
+`isExpired()` compares `expires` with the clock that `Date.now()` reads. The cookie is expired as soon as that clock reaches `expires`. In `bun:test`, [`setSystemTime()` and fake timers](/test/dates-times) move that clock.
+
 ```ts title="is-expired.ts" icon="/icons/typescript.svg"
 // Expired cookie (Date in the past)
 const expiredCookie = new Bun.Cookie("name", "value", {

@@ -4482,6 +4482,9 @@ impl<'p, 's> Checker<'p, 's> {
                     return TypeId::OBJECT;
                 }
             }
+            if !loose && let Some(regular) = self.regular_uniform_union_member(ty, value_ty) {
+                return regular;
+            }
             // `isCoercibleUnderDoubleEquals`
             let coerces = loose
                 && (matches!(value_ty, TypeId::NUMBER | TypeId::STRING)
@@ -4496,6 +4499,12 @@ impl<'p, 's> Checker<'p, 's> {
             return self.replace_primitives_with_literals(filtered, operand_type);
         }
         if self.is_unit(value_ty) {
+            if self.is_uniform_union(ty) {
+                let filtered = self.remove_type(ty, value_ty);
+                if filtered != ty {
+                    return filtered;
+                }
+            }
             let is_plain = Self::is_literal_outside_enum(self.flags(value_ty));
             // FOR SPEED: a union of such literals alone, none of them fresh, holds the value itself or nothing that is equal to it. The type of `x.kind`
             // behind n tests of it no longer holds what they compared it with, and every reference passes all of them.
@@ -4516,6 +4525,16 @@ impl<'p, 's> Checker<'p, 's> {
             });
         }
         ty
+    }
+
+    fn regular_uniform_union_member(&mut self, ty: TypeId, value: TypeId) -> Option<TypeId> {
+        if self.has_primitive_flag(value) && self.is_uniform_union(ty) {
+            let regular = self.regular(value);
+            if self.union_contains_type(ty, regular, false) {
+                return Some(regular);
+            }
+        }
+        None
     }
 
     /// FOR SPEED: true for a string, number or bigint literal type that isn't an enum member. No
@@ -5672,6 +5691,8 @@ impl<'p, 's> Checker<'p, 's> {
         let discriminant = self.union(clause_types);
         let case_type = if discriminant.is_never() {
             TypeId::NEVER
+        } else if let Some(regular) = self.regular_uniform_union_member(ty, discriminant) {
+            regular
         } else {
             let filtered = self.filter(ty, |c, m| c.are_comparable(discriminant, m));
             self.replace_primitives_with_literals(filtered, discriminant)

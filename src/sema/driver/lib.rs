@@ -1281,7 +1281,7 @@ fn major_of_typescript_at(host: &dyn Host, package: &[u8]) -> Option<(Vec<u8>, J
     Some((name, Json::Number(f64::from(major))))
 }
 
-/// The TypeScript version that the type checker is a port of.
+/// The TypeScript baseline for declaration libraries and type-driven package resolution.
 pub use bun_sema::resolve::VERSION_C as TYPESCRIPT_VERSION;
 
 /// The location of TypeScript's `lib.*.d.ts` files.

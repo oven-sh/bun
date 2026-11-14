@@ -5,8 +5,6 @@
 //! For in-depth details on the fields, most of these are documented
 //! inside of `js_parser`
 
-use core::mem::MaybeUninit;
-
 use bun_alloc::Arena as Bump;
 
 use bun_alloc::AllocError as OOM;
@@ -133,7 +131,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         path: &'static [u8],
         identifiers_to_import: [&'static [u8]; N],
     ) -> Result<[Expr; N], OOM> {
-        let mut out: [MaybeUninit<Expr>; N] = [const { MaybeUninit::uninit() }; N];
+        let mut out = [Expr::EMPTY; N];
 
         let record = self.add_import_record(path, ImportKind::Stmt)?;
 
@@ -164,10 +162,10 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                         ..Default::default()
                     }));
             }
-            out_ref.write(self.new_expr(E::ImportIdentifier {
+            *out_ref = self.new_expr(E::ImportIdentifier {
                 ref_,
                 ..Default::default()
-            }));
+            });
             *clause = ClauseItem {
                 name: LocRef {
                     loc: Loc::EMPTY,
@@ -187,10 +185,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             ..Default::default()
         })?;
 
-        // SAFETY: every element of `out` was written in the loop above (loop
-        // runs exactly N times). `Expr` is `Copy`, so by-value `assume_init`
-        // per element is equivalent to `MaybeUninit::array_assume_init`.
-        Ok(out.map(|e| unsafe { e.assume_init() }))
+        Ok(out)
     }
 
     pub(crate) fn append_stmt<T: StatementData>(&mut self, data: T) -> Result<(), OOM> {

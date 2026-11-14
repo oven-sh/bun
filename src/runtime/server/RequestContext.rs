@@ -18,28 +18,6 @@ use crate::webcore::{
     blob::SizeType as BlobSizeType, body, readable_stream, request, response,
 };
 
-/// Q: Why is this needed?
-/// A: The dev server needs to attach its own callback when the request is
-///    aborted.
-///
-/// Q: Why can't the dev server just call `.setAbortHandler(...)` then?
-/// A: It can't, because that is *already* called by the RequestContext, setting
-///    the callback and the user data context pointer.
-///
-///    If it did, it would *overwrite* the user data context pointer (this
-///    is what it did before), causing segfaults.
-pub(crate) struct AdditionalOnAbortCallback {
-    pub cb: fn(*mut c_void),
-    pub(crate) data: NonNull<c_void>,
-    pub(crate) deref_fn: fn(*mut c_void),
-}
-
-impl AdditionalOnAbortCallback {
-    pub(crate) fn deref(&self) {
-        (self.deref_fn)(self.data.as_ptr());
-    }
-}
-
 // NOTE (transport selection): the response/request handle types vary with
 // `(ssl_enabled, http3)`. Stable Rust cannot drive an associated type from a
 // const-generic `bool` without specialization, and an early `Transport`
@@ -191,7 +169,8 @@ pub(crate) struct RequestContext<
     /// `Cell::get`/`set` instead of raw `*mut bool` deref.
     pub(crate) defer_deinit_until_callback_completes: Cell<Option<DeferDeinitFlag>>,
 
-    pub(crate) additional_on_abort: JsCell<Option<AdditionalOnAbortCallback>>,
+    /// The dev server's record of this request. The response has room for one abort handler only.
+    pub(crate) deferred_request: Cell<Option<crate::bake::dev_server::deferred_request::Handle>>,
 
     /// The `NativePromiseContext` cell whose claim (one ref on this context)
     /// is still outstanding, or `ZERO`. Not visited by GC: the promise
@@ -909,10 +888,6 @@ where
             sink.source.detach(&sink.global_this);
         }
 
-        if let Some(cb) = self.additional_on_abort.replace(None) {
-            cb.deref();
-        }
-
         if let Some(server) = self.server.take() {
             server.release_request_context(self.as_ctx_ptr().cast::<c_void>(), MUX);
             server.on_request_complete();
@@ -1324,9 +1299,8 @@ where
     fn end_with_payload_too_large(&self) {
         let Some(resp) = self.resp.get() else { return };
         // A dev server bundle that this request waits for must not answer it later.
-        if let Some(abort) = self.additional_on_abort.replace(None) {
-            (abort.cb)(abort.data.as_ptr());
-            abort.deref();
+        if let Some(deferred) = self.deferred_request.take() {
+            deferred.on_abort();
         }
         // Failing the body runs JS, which can answer with a file. The file stream
         // owns the response from then on, and it hears the close as an abort.
@@ -1453,7 +1427,7 @@ where
                 response_body_readable_stream_ref: JsCell::new(readable_stream::Strong::default()),
                 pathname: JsCell::new(BunString::EMPTY),
                 response_buf_owned: JsCell::new(Vec::new()),
-                additional_on_abort: JsCell::new(None),
+                deferred_request: Cell::new(None),
                 promise_cell: Cell::new(JSValue::ZERO),
             });
         }
@@ -1491,10 +1465,8 @@ where
         debug_assert!(!this.flags.aborted());
         // mark request as aborted
         this.flags.set_aborted(true);
-        let abort = this.additional_on_abort.replace(None);
-        if let Some(abort) = abort {
-            (abort.cb)(abort.data.as_ptr());
-            abort.deref();
+        if let Some(deferred) = this.deferred_request.take() {
+            deferred.on_abort();
         }
 
         this.detach_response();
@@ -1644,8 +1616,6 @@ where
     }
 
     fn on_file_stream_abort(ctx: *mut c_void, resp: uws::AnyResponse) {
-        // Route through the real onAbort so flags.aborted, request.signal,
-        // and additional_on_abort fire exactly as they did pre-consolidation.
         Self::on_abort(ctx.cast::<Self>(), resp);
     }
 
@@ -2529,7 +2499,7 @@ where
         let body_value = response.get_body_value();
         match body_value {
             Body::Value::InternalBlob(_) | Body::Value::WTFStringImpl(_) => {
-                let mut blob = body_value.use_as_any_blob_allow_non_utf8_string();
+                let blob = body_value.use_as_any_blob_allow_non_utf8_string();
                 let size = blob.size();
                 this.render_metadata();
 
@@ -2539,7 +2509,6 @@ where
                     resp.write_header_int(b"content-length", size as u64);
                 }
                 this.end_without_body(this.should_close_connection());
-                blob.detach();
             }
 
             Body::Value::Blob(blob) => {
@@ -3303,7 +3272,7 @@ where
         let crate::webcore::blob::store::Data::Bytes(bytes) = &store.data else {
             return true;
         };
-        let total = bytes.len as BlobSizeType;
+        let total = bytes.len();
         if !bun_standalone_graph::Graph::get_ref().is_some_and(|graph| {
             graph.compiled_program.is_some() && graph.contains_file(&bytes.stored_name)
         }) || blob.offset.get() != 0

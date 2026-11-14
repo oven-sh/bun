@@ -3,7 +3,7 @@
 use crate::node::fs::stat_embedded_shell_operand;
 use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, log};
+use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv};
 use crate::shell::io::IO;
 use crate::shell::states::base::Base;
 use crate::shell::states::expansion::Expansion;
@@ -327,12 +327,6 @@ impl CondExpr {
         }
         let parent = interp.as_condexpr(this).base.parent;
         interp.child_done(parent, this, 1)
-    }
-
-    pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
-        log!("CondExpr {} deinit", this);
-        let me = interp.as_condexpr_mut(this);
-        me.args.clear();
     }
 }
 

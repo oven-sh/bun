@@ -77,12 +77,9 @@ type Sockaddr = netc::sockaddr;
 /// `noalias` hazard when c-ares callbacks re-enter on the same global resolver.
 #[inline]
 fn global_resolver(global_this: &JSGlobalObject) -> &'static Resolver {
-    let gd = crate::jsc_hooks::global_dns_data().get_or_init(|| {
-        let gd = GlobalData::init(global_this.bun_vm());
-        gd.resolver.ref_(); // pin for the VM's lifetime
-        gd
-    });
-    &gd.resolver
+    &crate::jsc_hooks::global_dns_data()
+        .get_or_init(|| GlobalData::init(global_this.bun_vm()))
+        .resolver
 }
 
 /// Send-wrapper for raw pointers handed to the threaded work pool. The DNS
@@ -1753,6 +1750,7 @@ impl Drop for DNSLookup {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) struct GlobalData {
+    /// Its first ref is never released, so it drops with this struct.
     pub(crate) resolver: Resolver,
 }
 
@@ -3378,6 +3376,8 @@ pub(crate) struct Resolver {
     pub(crate) options: Cell<c_ares::ChannelOptions>,
 
     pub(crate) event_loop_timer: EventLoopTimer,
+    /// Held while the timer is armed.
+    timer_ref: JsCell<Option<RefPtr<Resolver>>>,
 
     pub(crate) pending_host_cache_cares: JsCell<PendingCache>,
     pub(crate) pending_host_cache_native: JsCell<PendingCache>,
@@ -3418,8 +3418,7 @@ impl Drop for Resolver {
 
 #[cfg(windows)]
 pub(crate) struct UvDnsPoll {
-    // BACKREF — stored mut because the poll callback hands it to
-    // `Resolver::deref`, which may write/free `*this`.
+    // BACKREF — stored mut because the poll callback's guard may free `*this`.
     pub parent: *mut Resolver,
     pub socket: c_ares::ares_socket_t,
     /// Number of `on_dns_poll_uv` calls for this handle on the stack. libuv
@@ -3668,27 +3667,6 @@ impl Resolver {
         self.vm.get()
     }
 
-    // Intrusive refcount forwarders (RefCount.ref / RefCount.deref).
-    pub(crate) fn ref_(&self) {
-        // SAFETY: `self` is live; ref_count uses interior mutability.
-        unsafe { bun_ptr::RefCount::<Self>::ref_(std::ptr::from_ref::<Self>(self).cast_mut()) };
-    }
-    /// Decrement the intrusive refcount; the last ref drops the Box.
-    ///
-    /// Takes a raw `*mut Self` (not `&self`) because the final deref must write
-    /// through / deallocate `*this`; deriving a `*mut` from a `&self` borrow
-    /// and writing through it is UB under Stacked/Tree Borrows. Matches the
-    /// codebase pattern in `bun_ptr::RefCount::deref(self_: *mut T)`.
-    ///
-    /// # Safety
-    /// `this` must point to a live heap-allocated `Resolver` originating from
-    /// `heap::alloc` (see `init`). If this call may drop the last reference,
-    /// the caller must not hold any live `&`/`&mut` borrow of `*this`.
-    pub(crate) unsafe fn deref(this: *mut Self) {
-        // SAFETY: caller contract — `this` is live; the 1→0 transition drops the Box.
-        unsafe { bun_ptr::RefCount::<Self>::deref(this) };
-    }
-
     pub(crate) fn setup(vm: &VirtualMachine, made_in: Option<bun_jsc::ContextId>) -> Self {
         Self {
             ref_count: bun_ptr::RefCount::init(),
@@ -3698,6 +3676,7 @@ impl Resolver {
             polls: JsCell::new(PollsMap::new()),
             options: Cell::new(c_ares::ChannelOptions::default()),
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::DNSResolver),
+            timer_ref: JsCell::new(None),
             pending_host_cache_cares: JsCell::new(PendingCache::init()),
             pending_host_cache_native: JsCell::new(PendingCache::init()),
             pending_srv_cache_cares: JsCell::new(HiveArray::init()),
@@ -3726,7 +3705,7 @@ impl Resolver {
     // ─── R-2 interior-mutability helpers ────────────────────────────────────
 
     /// `self`'s address as `*mut Self` for c-ares / `FilePoll` / `RefPtr`
-    /// ctx slots and `Self::deref`. Callbacks deref it as `&*const` (shared) —
+    /// ctx slots. Callbacks deref it as `&*const` (shared) —
     /// see `on_dns_poll`, `on_cares_complete` — so no write provenance is
     /// required; the `*mut` spelling is purely to match the C signature. All
     /// mutation routes through `Cell` / `JsCell` (UnsafeCell-backed).
@@ -3743,14 +3722,7 @@ impl Resolver {
         // UnsafeCell-backed, so the re-entrant `ares_process_fd` callbacks
         // (`request_completed`, `drain_pending_*`) may freely re-derive
         // `&Resolver` from their stored ctx without aliasing UB.
-        let deref_this = self.as_ctx_ptr();
-        scopeguard::defer! {
-            crate::jsc_hooks::timer_all().increment_timer_ref(-1, uws_loop);
-            // SAFETY: `deref_this` is the heap allocation from `init`; releases
-            // `add_timer`'s ref. May be the final release; nothing touches
-            // `*self` after this point.
-            unsafe { Self::deref(deref_this) };
-        }
+        let _timer_ref = self.timer_ref.take();
 
         self.event_loop_timer
             .state
@@ -3767,6 +3739,7 @@ impl Resolver {
                 }
             }
         }
+        crate::jsc_hooks::timer_all().increment_timer_ref(-1, uws_loop);
     }
 
     fn any_requests_pending(&self) -> bool {
@@ -3820,7 +3793,7 @@ impl Resolver {
             return false;
         }
 
-        self.ref_();
+        self.timer_ref.set(Some(self.ref_guard()));
         let now_ts = now
             .copied()
             .unwrap_or_else(|| bun::timespec::now(bun::TimespecMockMode::ForceRealTime));
@@ -3838,19 +3811,11 @@ impl Resolver {
             return;
         }
 
+        let timers = crate::jsc_hooks::timer_all();
+        timers.remove(&self.event_loop_timer);
         // Normally checkTimeouts does this, so we have to be sure to do it ourself if we cancel the timer
-        let this = self.as_ctx_ptr();
-        scopeguard::defer! {
-            crate::jsc_hooks::timer_all().increment_timer_ref(-1, self.vm().uws_loop());
-            // SAFETY: `this` is the heap allocation from `init`. This releases
-            // the ref taken by `add_timer`. Every caller holds at least one
-            // other ref for the duration of this call (a `RefPtr` or the
-            // global-resolver permanent pin), so this
-            // `deref` cannot reach 0 while `&self` is live.
-            unsafe { Self::deref(this) };
-        }
-
-        crate::jsc_hooks::timer_all().remove(&self.event_loop_timer);
+        timers.increment_timer_ref(-1, self.vm().uws_loop());
+        self.timer_ref.set(None);
     }
 
     // ───────────── pending-cache helpers ─────────────
@@ -4399,7 +4364,7 @@ impl Resolver {
     /// R-2: `&self` (no `noalias`). `Channel::process` (== `ares_process_fd`)
     /// synchronously fires c-ares completion callbacks which re-enter this
     /// Resolver via a fresh `&Resolver` (e.g. `request_completed`,
-    /// `drain_pending_*`, `ref_`/`deref`). With every mutable field
+    /// `drain_pending_*`, `ref_guard`). With every mutable field
     /// UnsafeCell-backed, LLVM cannot cache `ref_count` across the FFI call —
     /// the structural fix for the previously ASM-verified PROVEN_CACHED
     /// miscompile that needed `black_box` laundering under `&mut self`.

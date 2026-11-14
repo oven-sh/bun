@@ -311,7 +311,7 @@ impl JSMySQLConnection {
             }
         }
 
-        let ptr: *mut JSMySQLConnection = bun_core::heap::into_raw(Box::new(JSMySQLConnection {
+        let this = RefPtr::new(JSMySQLConnection {
             ref_count: Cell::new(1),
             js_value: JsCell::new(JsRef::empty()),
             global_object: GlobalRef::from(global_object),
@@ -336,8 +336,8 @@ impl JSMySQLConnection {
                 EventLoopTimerTag::MySQLConnectionTimeout,
                 EventLoopTimerTag::MySQLConnectionMaxLifetime,
             ),
-        }));
-        let this = ParentRef::from(core::ptr::NonNull::new(ptr).expect("heap::into_raw non-null"));
+        });
+        let ptr = this.as_ptr();
 
         {
             // MySQL always opens plain TCP first; STARTTLS adopts into the TLS
@@ -366,10 +366,6 @@ impl JSMySQLConnection {
             let socket = match result {
                 Ok(s) => s,
                 Err(_) => {
-                    // SAFETY: `ptr` is the freshly-boxed allocation; sole owner.
-                    // `this` (a `ParentRef`) is not used past this point, so no
-                    // borrow outlives the `heap::take` inside `deinit`.
-                    unsafe { Self::deref(ptr) };
                     let mut message = b"Failed to connect".to_vec();
                     if !path.is_empty() {
                         message.extend_from_slice(b" to ");
@@ -387,6 +383,8 @@ impl JSMySQLConnection {
         }
         this.reset_connection_timeout();
         this.poll_ref.r#ref(vm.vm_ctx());
+        // The wrapper takes the ref.
+        let this = this.into_this_ptr();
         let js_value = js::to_js(ptr, global_object);
         js_value.ensure_still_alive();
         this.js_value

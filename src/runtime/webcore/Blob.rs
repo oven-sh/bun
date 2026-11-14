@@ -33,13 +33,16 @@ bun_core::define_scoped_log!(debug, Blob, visible);
 pub(crate) mod store;
 use crate::node::types::{PathLikeExt as _, PathOrFdExt as _};
 pub(crate) use store::Store;
-use store::{BytesExt as _, FileExt as _, S3Ext as _, StoreExt as _};
+use store::{FileExt as _, S3Ext as _, StoreExt as _};
 
 #[path = "blob/copy_file.rs"]
 pub(crate) mod copy_file;
 #[cfg(not(windows))]
 #[path = "blob/io_parking.rs"]
 pub(crate) mod io_parking;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[path = "blob/memfd.rs"]
+mod memfd;
 #[path = "blob/read_file.rs"]
 pub(crate) mod read_file;
 #[path = "blob/write_file.rs"]
@@ -2100,10 +2103,8 @@ impl BlobExt for Blob {
     ) -> Result<Blob, bun_alloc::AllocError> {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            if crate::allocators::linux_mem_fd_allocator::LinuxMemFdAllocator::should_use(bytes_) {
-                if let Ok(result) =
-                    crate::allocators::linux_mem_fd_allocator::LinuxMemFdAllocator::create(bytes_)
-                {
+            if memfd::should_use(bytes_) {
+                if let Ok(result) = memfd::create(bytes_) {
                     let store = RefPtr::new(Store {
                         data: store::Data::Bytes(result),
                         mime_type: bun_http_types::MimeType::NONE,
@@ -2142,9 +2143,10 @@ impl BlobExt for Blob {
     /// read-only provenance and make the downstream `&mut *buf` retag UB).
     ///
     /// Returns a dangling-empty slice when there is no byte store.
+    /// The bytes of an embedded file are read-only. Its store never has one reference only.
     ///
     /// # Aliasing
-    /// The returned pointer aliases the Store's `Vec<u8>` payload. Callers must
+    /// The returned pointer aliases the Store's payload. Callers must
     /// not hold a live `&`/`&mut` into the same Store across uses of this
     /// pointer, and must keep a `RefPtr<Store>` alive for the pointer's lifetime.
     fn shared_view_raw(&self) -> *mut [u8] {
@@ -2165,7 +2167,7 @@ impl BlobExt for Blob {
         // single-threaded).
         match Store::data_mut(store_ref) {
             store::Data::Bytes(bytes) => {
-                let v: &mut [u8] = bytes.as_array_list_leak();
+                let v = bytes.as_mut_ptr();
                 let len = v.len();
                 if len == 0 {
                     return empty();
@@ -2173,10 +2175,7 @@ impl BlobExt for Blob {
                 // Defensive: `offset` may originate from untrusted structured-clone data.
                 let off = (self.offset.get() as usize).min(len);
                 let clamped = (len - off).min(self.size.get() as usize);
-                // `v` already carries mutable provenance (derived through
-                // `Store::data_mut`); safe sub-slicing then raw-ptr coercion
-                // preserves it without `from_raw_parts_mut`/`ptr::add`.
-                core::ptr::from_mut::<[u8]>(&mut v[off..off + clamped])
+                core::ptr::slice_from_raw_parts_mut(v.cast::<u8>().wrapping_add(off), clamped)
             }
             _ => empty(),
         }
@@ -2544,25 +2543,18 @@ impl BlobExt for Blob {
 
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 {
-                    use crate::allocators::linux_mem_fd_allocator::LinuxMemFdAllocator;
                     // If we can use a copy-on-write clone of the buffer, do so.
                     if let Some(store) = self.store.get() {
                         if let store::Data::Bytes(bytes) = &store.data {
-                            let allocated = bytes.allocated_slice();
+                            let allocated = bytes.slice();
                             // SAFETY: `Clone` arm reads only; `buf` is store-backed.
                             if bun::is_slice_in_buffer(unsafe { &*buf }, allocated) {
-                                if let Some(memfd) = LinuxMemFdAllocator::from(bytes.allocator()) {
-                                    // A ref across the FFI call so a concurrent
-                                    // store-deref cannot close the fd mid-mmap.
-                                    // SAFETY: `memfd` is the live Box-allocated ptr
-                                    // smuggled through `StdAllocator.ptr` by
-                                    // `LinuxMemFdAllocator::allocator`.
-                                    let memfd = unsafe { bun_ptr::RefPtr::init_ref(memfd) };
+                                if let Some(memfd) = bytes.memfd() {
                                     let byte_offset = (buf.cast::<u8>() as usize)
                                         .saturating_sub(allocated.as_ptr() as usize);
                                     let result =
                                         jsc::ArrayBuffer::to_array_buffer_from_shared_memfd(
-                                            memfd.fd.native() as i64,
+                                            memfd.native() as i64,
                                             global,
                                             byte_offset,
                                             buf_len,
@@ -3554,8 +3546,6 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
 
                 if let Some(store) = blob.store() {
                     if let store::Data::Bytes(bytes_store) = &mut Store::data_mut(store) {
-                        // Transfer ownership of the local `name: Vec<u8>` into
-                        // `stored_name` (a `Box<[u8]>`); freed by `Bytes::Drop`.
                         bytes_store.stored_name = name.into_boxed_slice();
                     }
                 }
@@ -3848,12 +3838,7 @@ fn write_file_with_empty_source_to_destination(
     destination_blob: &Blob,
     options: &WriteFileOptions,
 ) -> JsResult<JSValue> {
-    // SAFETY: null-checked by caller
-    let destination_store = destination_blob
-        .store()
-        .expect("infallible: store present")
-        .clone();
-    let _detach = scopeguard::guard(destination_blob, |blob| blob.detach());
+    let destination_store = destination_blob.store().expect("infallible: store present");
 
     match &destination_store.data {
         store::Data::File(file) => {
@@ -4339,14 +4324,6 @@ pub(crate) fn write_file_internal(
         }
     }
 
-    let input_store: Option<RefPtr<Store>> = if let PathOrBlob::Blob(ref b) = *path_or_blob {
-        b.store.get().clone()
-    } else {
-        None
-    };
-    // RefPtr<Store> clone+drop keeps the store alive for the duration of this call.
-    let _input_store_hold = input_store;
-
     let destination: Option<&PathOrFileDescriptor> = match &*path_or_blob {
         PathOrBlob::Path(path) => Some(path),
         PathOrBlob::Blob(blob) => match blob.store.get().as_ref().map(|store| &store.data) {
@@ -4509,7 +4486,6 @@ pub(crate) fn write_file_internal(
             });
             if let Some(readable) = existing {
                 if readable.is_locked(cx.global()) || readable.is_disturbed(cx.global()) {
-                    destination_blob.detach();
                     return Ok(ControlFlow::Break(body_used_rejection(cx.global())));
                 }
             }
@@ -4521,7 +4497,6 @@ pub(crate) fn write_file_internal(
                 BodyValue::Error(_) => BodyTag::Error,
                 BodyValue::Locked(locked) if !locked.has_consumer() => BodyTag::Locked,
                 BodyValue::Locked(_) | BodyValue::Used => {
-                    destination_blob.detach();
                     return Ok(ControlFlow::Break(body_used_rejection(cx.global())));
                 }
                 _ => BodyTag::Use,
@@ -4539,7 +4514,6 @@ pub(crate) fn write_file_internal(
                         };
                         err_ref.to_js(cx.global())
                     };
-                    destination_blob.detach();
                     // SAFETY: exclusive borrow scoped to the call; no other
                     // borrow of the body value is live.
                     let _ = unsafe { (*body_value).use_() };
@@ -4567,7 +4541,6 @@ pub(crate) fn write_file_internal(
                         });
                         if let Some(readable) = readable_opt {
                             if readable.is_disturbed(cx.global()) {
-                                destination_blob.detach();
                                 return Err(cx.global().throw_invalid_arguments(format_args!(
                                     "ReadableStream has already been used"
                                 )));
@@ -4593,7 +4566,6 @@ pub(crate) fn write_file_internal(
                                 core::ptr::null_mut(),
                             )?));
                         }
-                        destination_blob.detach();
                         return Err(cx.global().throw_invalid_arguments(format_args!(
                             "ReadableStream has already been used"
                         )));
@@ -4640,7 +4612,6 @@ pub(crate) fn write_file_internal(
                             BodyValue::Locked(_) => {}
                             BodyValue::Error(err) => {
                                 let err_js = err.to_js(cx.global());
-                                destination_blob.detach();
                                 // SAFETY: `err` is not used after `to_js`, so this is the only
                                 // live borrow of the value.
                                 let _ = unsafe { (*body_value).use_() };
@@ -4707,7 +4678,6 @@ pub(crate) fn write_file_internal(
 
         if let Some(readable) = ReadableStream::from_js_direct(data) {
             if readable.is_locked(cx.global()) || readable.is_disturbed(cx.global()) {
-                destination_blob.detach();
                 return Ok(body_used_rejection(cx.global()));
             }
             return destination_blob.pipe_readable_stream_to_blob(cx, readable, &options);
@@ -4717,10 +4687,6 @@ pub(crate) fn write_file_internal(
     };
     // Detach the source blob on scope exit.
     let mut source_blob = scopeguard::guard(source_blob, |b| b.detach());
-
-    let destination_store = destination_blob.store.get().clone();
-    // RefPtr<Store> clone+drop keeps the destination store alive across the call.
-    let _dest_hold = destination_store;
 
     write_file_with_source_destination(cx, &mut *source_blob, &mut destination_blob, &options)
 }
@@ -5260,7 +5226,7 @@ impl S3BlobDownloadTask {
                 // tied to the Blob/JS view and freed via the store's finalizer.
                 let store = Store::init(response.body.list);
                 let bytes: *mut [u8] = match Store::data_mut(&store) {
-                    store::Data::Bytes(b) => std::ptr::from_mut(b.as_array_list()),
+                    store::Data::Bytes(b) => b.as_mut_ptr(),
                     _ => unreachable!(),
                 };
                 this.blob.store.set(Some(store));
@@ -5459,9 +5425,7 @@ pub(crate) unsafe extern "C" fn Blob__fromBytesWithType(
     blob
 }
 
-/// Adopts an mmap'd region — no copy. The Blob's store holds the mapping;
-/// when the store's refcount drops to zero, deinit calls allocator.free
-/// which munmap's.
+/// Adopts an mmap'd region — no copy. The Blob's store unmaps it when dropped.
 ///
 /// # Safety
 /// `[ptr, ptr+len)` must be a valid page-aligned mmap'd region whose ownership
@@ -5484,7 +5448,14 @@ pub(crate) unsafe extern "C" fn Blob__fromMmapWithType(
     {
         // SAFETY: caller (C++ WebKit screenshot path) guarantees `[ptr, ptr+len)`
         // is a valid page-aligned mmap'd region we now own.
-        let store = Store::init_mmap(unsafe { core::slice::from_raw_parts_mut(ptr, len) });
+        let bytes =
+            unsafe { store::Bytes::from_mapping(core::ptr::slice_from_raw_parts_mut(ptr, len)) };
+        let store = RefPtr::new(Store {
+            data: store::Data::Bytes(bytes),
+            mime_type: bun_http_types::MimeType::NONE,
+            ref_count: bun_ptr::ThreadSafeRefCount::init(),
+            is_all_ascii: store::IsAllAscii::default(),
+        });
         let blob = Blob::init_with_store(store, global_this);
         // SAFETY: caller (C++) passes a valid NUL-terminated C string.
         let mime_slice = unsafe { bun_core::ffi::cstr(mime) }.to_bytes();
@@ -5828,8 +5799,7 @@ impl Any {
         if !s.has_one_ref() || !views_whole_store {
             return;
         }
-        let internal = Store::data_mut(s).as_bytes_mut().to_internal_blob();
-        *self = Any::InternalBlob(internal);
+        *self = Any::from_owned_slice(Store::data_mut(s).as_bytes_mut().take_vec());
     }
 
     pub(crate) fn to_action_value(
@@ -6100,20 +6070,7 @@ impl Any {
     }
 
     pub(crate) fn detach(&mut self) {
-        match self {
-            Any::Blob(b) => {
-                b.detach();
-                *self = Any::Blob(Blob::default());
-            }
-            Any::InternalBlob(ib) => {
-                ib.bytes.clear();
-                ib.bytes.shrink_to_fit();
-                *self = Any::Blob(Blob::default());
-            }
-            Any::WTFStringImpl(_) => {
-                *self = Any::Blob(Blob::default());
-            }
-        }
+        *self = Any::Blob(Blob::default());
     }
 }
 

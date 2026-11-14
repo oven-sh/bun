@@ -14,7 +14,6 @@ use std::borrow::Cow;
 use crate::api::socket::{TCPSocket, TLSSocket};
 use crate::node::{Encoding, StringOrBuffer};
 use crate::socket::NativeCallbacks;
-use crate::webcore::AutoFlusher;
 use bstr::BStr;
 use bun_collections::{ByteVecExt, HashMap as BunHashMap, HiveArrayFallback, VecExt};
 use bun_core::strings;
@@ -1136,7 +1135,8 @@ pub(crate) struct H2FrameParser {
     /// Read only by `release_refs_stranded_by_exit()`.
     native_keepalives: Cell<u32>,
 
-    auto_flusher: JsCell<AutoFlusher>,
+    /// Held while the deferred flush is registered.
+    auto_flush_ref: JsCell<Option<RefPtr<Self>>>,
     padding_strategy: Cell<PaddingStrategy>,
 
     // ---- from-scratch rewrite engine (src/runtime/api/bun/h2) ----
@@ -2936,14 +2936,10 @@ impl H2FrameParser {
     }
 
     fn register_auto_flush(&self) {
-        if self.auto_flusher.get().registered.get() {
+        if self.auto_flush_ref.get().is_some() {
             return;
         }
-        self.ref_();
-        // R-2: inlined so the path is `&self` + extra `self.ref_()` (matches
-        // NodeHTTPResponse f1e506c8). `HasAutoFlusher` is now `&self` too.
-        debug_assert!(!self.auto_flusher.get().registered.get());
-        self.auto_flusher.get().registered.set(true);
+        self.auto_flush_ref.set(Some(self.ref_guard()));
         let ctx = NonNull::new(self.as_ctx_ptr().cast::<c_void>());
         let found_existing = self
             .global_this
@@ -2955,7 +2951,7 @@ impl H2FrameParser {
     }
 
     fn unregister_auto_flush(&self) {
-        if !self.auto_flusher.get().registered.get() {
+        if self.auto_flush_ref.get().is_none() {
             return;
         }
         // A write that drains the buffer must not cancel the deferred tick that a pending session
@@ -2964,7 +2960,6 @@ impl H2FrameParser {
         if self.pending_header_compression_error.get() || self.transport_write_fatal.get() {
             return;
         }
-        debug_assert!(self.auto_flusher.get().registered.get());
         let ctx = NonNull::new(self.as_ctx_ptr().cast::<c_void>());
         let removed = self
             .global_this
@@ -2973,8 +2968,7 @@ impl H2FrameParser {
             .deferred_tasks
             .unregister_task(ctx);
         debug_assert!(removed);
-        self.auto_flusher.get().registered.set(false);
-        self.deref();
+        self.auto_flush_ref.set(None);
     }
 
     /// A `write_maybe_corked` in `generic_write`/`generic_flush` returned a fatal
@@ -3060,13 +3054,11 @@ impl H2FrameParser {
         }
         if self.transport_write_fatal.get() {
             // Returning `false` makes DeferredTaskQueue::run remove the entry
-            // itself, so only the registration's flag and ref are released here
-            // - never a re-entrant map mutation from inside run(). The flag is
+            // itself, so only the registration's ref is released here. It is
             // cleared before the close so the teardown paths the close re-enters
             // (detach -> unregister_auto_flush) see an unregistered flusher and
             // early-return instead of removing a map entry run() still owns.
-            self.auto_flusher.get().registered.set(false);
-            self.deref();
+            self.auto_flush_ref.set(None);
             self.close_transport_after_fatal_write();
             return false;
         }
@@ -3082,13 +3074,10 @@ impl H2FrameParser {
             );
             let _ = self.flush();
             self.pending_header_compression_error.set(false);
-            // Terminal: release the registration's flag+ref so the retained
+            // Terminal: release the registration's ref so the retained
             // parser ref does not persist. Returning false lets run() drop the
             // map entry it owns.
-            if self.auto_flusher.get().registered.get() {
-                self.auto_flusher.get().registered.set(false);
-                self.deref();
-            }
+            self.auto_flush_ref.set(None);
             return false;
         }
         let _ = self.flush();
@@ -3359,14 +3348,6 @@ impl NativeSocketWrite for &TCPSocket {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// R-2: `HasAutoFlusher` (which requires `fn auto_flusher(&mut self)`) is no
-// longer implemented here — the deferred-task registration is inlined in
-// `register_auto_flush` / `unregister_auto_flush` so the whole path is `&self`.
-// The `DeferredRepeatingTask` trampoline that the trait would have generated.
-// Body discharges its own preconditions; a safe `extern "C" fn` coerces to the
-// `DeferredRepeatingTask` pointer at `post_task` (matches NodeHTTPResponse.rs).
-// ──────────────────────────────────────────────────────────────────────────
 extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
     // SAFETY: `ctx` is the `*const H2FrameParser` registered by
     // `register_auto_flush`; `DeferredTaskQueue::run` feeds it back unchanged
@@ -7400,7 +7381,7 @@ impl H2FrameParser {
             engine_frames_received: Cell::new(0),
             engine_frames_sent: Cell::new(0),
             tx_tracker: Cell::new(TxFrameTracker::default()),
-            auto_flusher: JsCell::new(AutoFlusher::default()),
+            auto_flush_ref: JsCell::new(None),
             padding_strategy: Cell::new(PaddingStrategy::None),
             engine: core::cell::RefCell::new(None),
             rewrite_tail: JsCell::new(Vec::new()),

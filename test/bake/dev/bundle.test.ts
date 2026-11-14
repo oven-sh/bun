@@ -1262,7 +1262,7 @@ for (const [where, specifier, barrel] of [
   ["a package", "barrel-lib", "node_modules/barrel-lib"],
   ["a folder of the project", "./lib", "lib"],
 ] as const) {
-  devTest(`barrel with a deferred re-export in ${where} is not re-sent when an importer changes`, {
+  devTest(`barrel with a deferred re-export in ${where} does not run again when an importer changes`, {
     files: {
       "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
       "index.ts": `
@@ -1296,9 +1296,9 @@ for (const [where, specifier, barrel] of [
       for (const n of [2, 3]) {
         await dev.patch("page.ts", { find: `page ${n - 1}`, replace: `page ${n}` });
         const chunk = await c.getMostRecentHmrChunk();
-        expect([...chunk.matchAll(/^  ("(?:[^"\\]|\\.)*")(?:: \[|\()/gm)].map(m => JSON.parse(m[1]))).toEqual([
-          "page.ts",
-        ]);
+        const again: string[] = JSON.parse(chunk.match(/^\}, (\[.*\]), "[0-9a-f]{16}"\)$/m)![1]);
+        const keys: string[] = [...chunk.matchAll(/^  ("(?:[^"\\]|\\.)*")(?:: \[|\()/gm)].map(m => JSON.parse(m[1]));
+        expect(keys.filter(key => !again.includes(key))).toEqual(["page.ts"]);
         expect(await c.js<string>`read()`).toBe(`page ${n} ALPHA, index ALPHA`);
       }
     },
@@ -1479,7 +1479,7 @@ const barrelApp = (version: string) => `
   import.meta.hot.accept();
   console.log("app ${version} " + Alpha + " " + other());
 `;
-// The barrel is bundled again with app.ts and its output is the same, so it stays out of the update. The
+// The barrel is bundled again with app.ts and its output is the same, so the page leaves it as it is. The
 // other importers of the barrel do not run again, and helper.ts keeps its count.
 devTest("barrel optimization: a save of one importer of a barrel does not evaluate its other importers again", {
   files: {
@@ -1503,8 +1503,8 @@ devTest("barrel optimization: a save of one importer of a barrel does not evalua
     await using c = await dev.client("/", { storeHotChunks: true });
     await c.expectMessage("helper ran", "other ran", "app v1 ALPHA other(BETA) helper(BETA) call 1");
     await dev.write("app.ts", barrelApp("v2"));
-    // The barrel is an import of app.ts, not a module of the update.
-    expect(await c.getMostRecentHmrChunk()).not.toMatch(/"node_modules\/barrel-lib\/index\.js":\s*\[/);
+    // The barrel is in the update only because app.ts is, and the page has it.
+    expect(await c.getMostRecentHmrChunk()).toMatch(/^\}, \[.*"node_modules\/barrel-lib\/index\.js".*\], "/m);
     await c.expectMessage("app v2 ALPHA other(BETA) helper(BETA) call 2");
     await dev.write("app.ts", barrelApp("v3"));
     await c.expectMessage("app v3 ALPHA other(BETA) helper(BETA) call 3");

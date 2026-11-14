@@ -81,7 +81,8 @@ async function loader(side: Side, config: { main?: string; route?: { page: strin
     /** What the runtime does for the page's entry point, a route, and the framework entry. */
     load: (id: string) => hmr.loadExports(id),
     /** A hot update. A rejection is logged, as the client and the server both do with it. */
-    async save(definitions: Record<string, unknown>) {
+    async save(definitions: Record<string, unknown>, bundledAgain: string[] = []) {
+      hmr.dropHeldModules(definitions, bundledAgain);
       const sourceMap = { id: "map" + updates++, url: "blob:map", refs: 1, size: 0 };
       try {
         await hmr.replaceModules(definitions, side === "client" ? sourceMap : undefined);
@@ -935,6 +936,81 @@ for (const side of ["client", "server"] as const) {
     expect(take()).toEqual(["body 1 ran d1", "body 1 disposed", "body 2 ran d2"]);
   });
 }
+
+describe("a module that an update holds only because it was bundled again with its importer", () => {
+  const shared = (log: (line: string) => void, value: string) =>
+    esm([], hmr => {
+      log("shared ran");
+      hmr.exports = { shared: value };
+    });
+  // The same source text, so the same code, as in two updates of the dev server.
+  const entry = (log: (line: string) => void, name: string) =>
+    esm(["shared"], (hmr, [shared]) => {
+      hmr.accept();
+      log(name + " ran " + shared.shared);
+    });
+
+  const copyOf = (module: any) => [...module.slice(0, 3), module[3], module[4]];
+
+  test("is left as it is by a page that has the same code", async () => {
+    const { log, take, define, load, save } = await loader("client");
+    const held = shared(log, "s1");
+    define({ main: esm(["a", "b"], () => {}), a: entry(log, "a"), b: entry(log, "b"), shared: held });
+    await load("main");
+    take();
+    await save({ a: entry(log, "a2"), shared: copyOf(held) }, ["shared"]);
+    expect(take()).toEqual(["a2 ran s1"]);
+  });
+
+  test("runs in a page that does not have it, and in one that has other code of it", async () => {
+    const { log, take, define, load, save } = await loader("client");
+    define({ main: esm(["a"], () => {}), a: esm([], hmr => (hmr.accept(), log("a ran"))) });
+    await load("main");
+    take();
+    // Not from `esm()`, whose modules all have the same function text.
+    const first = [[], [], [], (hmr: Hmr) => void (hmr.exports = { shared: "s1" }), false];
+    const second = [[], [], [], (hmr: Hmr) => void (hmr.exports = { shared: "s2" }), false];
+    await save({ a: entry(log, "a2"), shared: first }, ["shared"]);
+    await save({ a: entry(log, "a3"), shared: second }, ["shared"]);
+    expect(take()).toEqual(["a2 ran s1", "a3 ran s2"]);
+  });
+
+  test("runs again when it was saved, also with the same code", async () => {
+    const { log, take, define, load, save } = await loader("client");
+    const held = shared(log, "s1");
+    define({ main: esm(["a"], () => {}), a: entry(log, "a"), shared: held });
+    await load("main");
+    take();
+    await save({ shared: copyOf(held) });
+    expect(take()).toEqual(["shared ran", "a ran s1"]);
+  });
+
+  test("runs again when it imports a module that changed", async () => {
+    const { log, take, define, load, save } = await loader("client");
+    const barrel = esm(["leaf"], (hmr, [leaf]) => {
+      log("barrel ran");
+      hmr.exports = { shared: leaf.leaf };
+    });
+    define({ main: esm(["a"], () => {}), a: entry(log, "a"), shared: barrel, leaf: leaf(log, "v1") });
+    await load("main");
+    take();
+    await save({ leaf: leaf(log, "v2"), shared: copyOf(barrel) }, ["shared"]);
+    expect(take()).toEqual(["leaf ran", "barrel ran", "a ran v2"]);
+  });
+
+  test("CommonJS: is left as it is by a page that has the same code", async () => {
+    const { log, take, define, load, save } = await loader("client");
+    const held = cjs((hmr, module) => {
+      log("shared ran");
+      module.exports = { shared: "s1" };
+    });
+    define({ main: esm(["a"], () => {}), a: esm(["shared"], hmr => (hmr.accept(), log("a ran"))), shared: held });
+    await load("main");
+    take();
+    await save({ a: esm(["shared"], hmr => (hmr.accept(), log("a2 ran"))), shared: held }, ["shared"]);
+    expect(take()).toEqual(["a2 ran"]);
+  });
+});
 
 describe("an import made by require() or import()", () => {
   const x = (log: (line: string) => void, version: string) =>

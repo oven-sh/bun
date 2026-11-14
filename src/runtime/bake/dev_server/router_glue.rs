@@ -79,29 +79,6 @@ impl DevServer {
         }
     }
 
-    /// What the browser bundles of the framework's routes start from: the client entry points, and
-    /// the pages and layouts of a `clientPages` router.
-    pub(super) fn client_files_of_framework_pages(
-        &self,
-    ) -> Vec<incremental_graph::ClientFileIndex> {
-        let mut files = Vec::new();
-        for bundle in &self.route_bundles {
-            let route_bundle::Data::Framework(framework) = &bundle.data else {
-                continue;
-            };
-            let route = self.router.route_ptr(framework.route_index);
-            let client_entry = self.router.type_ptr_const(route.r#type).client_file;
-            files.extend(client_entry.map(from_opaque_file_id::<{ bake::Side::Client }>));
-            let pages = self.client_page_files(framework.route_index);
-            files.extend(
-                pages
-                    .iter()
-                    .filter_map(|path| self.client_graph.get_file_index(path)),
-            );
-        }
-        files
-    }
-
     pub(super) fn client_page_files(&self, route_index: router::RouteIndex) -> ClientPageFiles {
         let mut route = self.router.route_ptr(route_index);
         if !self.router.type_ptr_const(route.r#type).client_pages {

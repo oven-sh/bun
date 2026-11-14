@@ -825,6 +825,24 @@ type HMREvent =
   | "bun:ws:disconnect"
   | "bun:ws:connect";
 
+/**
+ * Takes out of an update the modules that this page already has the same code of. `bundledAgain` are those that were not
+ * saved: the server bundled them again with a module that imports them, and it does not know what a page holds.
+ */
+export function dropHeldModules(modules: Record<Id, UnloadedModule>, bundledAgain: readonly Id[]) {
+  for (const id of bundledAgain) {
+    const held = unloadedModuleRegistry[id];
+    if (held && modules[id] && codeOf(held) === codeOf(modules[id])) delete modules[id];
+  }
+}
+
+function codeOf(module: UnloadedModule) {
+  if (typeof module === "function") return module.toString();
+  if (!Array.isArray(module)) return null;
+  const { [ESMProps.load]: load, ...rest } = module;
+  return JSON.stringify(rest) + load.toString();
+}
+
 /** Called when modules are replaced. */
 export async function replaceModules(modules: Record<Id, UnloadedModule>, sourceMapId?: SourceMapURL) {
   Object.assign(unloadedModuleRegistry, modules);

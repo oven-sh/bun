@@ -306,13 +306,9 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     /// Client side: file indices contributing to the current chunk (emit order).
     /// Server side: unused (server stores code slices in `current_chunk_code`).
     pub(crate) current_chunk_parts: Vec<FileIndex<SIDE>>,
-    /// Client side: the files of the chunk that were bundled again with the same output, in the chunk's order.
-    /// After `settle_unchanged_files`, only those that left the chunk.
-    pub(crate) unchanged_files: Vec<FileIndex<SIDE>>,
-    /// Client side: the files of the chunk that are new to the graph, and the html files.
-    pub(crate) first_bundled_files: Vec<FileIndex<SIDE>>,
-    /// Client side: the edges that are new in this bundle. Empty if no file left the chunk.
-    pub(crate) new_edges: Vec<EdgeIndex>,
+    /// Client side: the files of the chunk that were bundled again only because an importer was. A tab
+    /// that holds the same code of one leaves it as it is.
+    pub(crate) bundled_again: Vec<FileIndex<SIDE>>,
     /// Server side: owned code slices contributing to the current chunk.
     /// Client side: unused.
     pub(crate) current_chunk_code: Vec<Box<[u8]>>,
@@ -322,36 +318,14 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     pub(crate) current_css_files: Vec<u64>,
 }
 
-/// The chunk and its source map are byte-identical to `existing`.
-fn js_content_is_unchanged(
-    existing: &File,
-    ctx: &HotUpdateContext<'_>,
-    index: bun_ast::Index,
-    content: &ReceiveChunkContent,
-) -> bool {
-    let ReceiveChunkContent::Js { code, source_map } = content else {
-        return false;
-    };
-    let old_code = match &existing.content {
-        Content::Js(c) if ctx.loaders[index.get() as usize].is_javascript_like() => c,
-        Content::Asset(c) if !ctx.loaders[index.get() as usize].is_javascript_like() => c,
-        _ => return false,
-    };
-    if old_code.len() != code.len() || **old_code != **code {
-        return false;
+/// The string literal that a module of a chunk is printed with as its key.
+fn printed_module_id(code: &[u8]) -> Option<&[u8]> {
+    let start = strings::index_of_char_usize(code, b'"')?;
+    let mut end = start + 1;
+    while *code.get(end)? != b'"' {
+        end += 1 + usize::from(code[end] == b'\\');
     }
-    match (&existing.source_map, source_map) {
-        (packed_map::Shared::Some(old), Some(new)) => {
-            old.vlq() == new.chunk.buffer.list.as_slice()
-                && new
-                    .escaped_source
-                    .as_deref()
-                    .is_some_and(|s| s == old.quoted_contents())
-        }
-        (packed_map::Shared::LineCount(_), Some(new)) => new.chunk.buffer.len() == 0,
-        (packed_map::Shared::LineCount(_), None) => true,
-        _ => false,
-    }
+    Some(&code[start..=end])
 }
 
 /// Byte-count breakdown of an incremental graph's memory usage (graph
@@ -446,6 +420,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         match SIDE {
             Side::Client => {
                 graph += self.current_chunk_parts.capacity() * size_of::<FileIndex<SIDE>>();
+                graph += self.bundled_again.capacity() * size_of::<FileIndex<SIDE>>();
                 graph += self.current_css_files.capacity() * size_of::<u64>();
                 for f in self.bundled_files.values() {
                     if let Some(c) = f.content.js_code() {
@@ -485,213 +460,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             }
         }
         self.current_chunk_parts.clear();
-        self.unchanged_files.clear();
-        self.first_bundled_files.clear();
-        self.new_edges.clear();
-    }
-
-    /// Once every chunk is in, an unchanged module that imports no changed module of the chunk, at any depth, leaves it.
-    pub(crate) fn settle_unchanged_files(
-        &mut self,
-        ctx: &mut HotUpdateContext<'_>,
-    ) -> Result<(), bun_alloc::AllocError> {
-        debug_assert!(matches!(SIDE, Side::Client));
-        if self.unchanged_files.is_empty() {
-            return Ok(());
-        }
-        // The walk goes through any file: a plain file between the two can run again or forward a new value.
-        let mut reached = DynamicBitSetUnmanaged::init_empty(self.bundled_files.count())?;
-        let mut unchanged = self.unchanged_files.iter().peekable();
-        let mut queue: Vec<FileIndex<SIDE>> = Vec::new();
-        for &part in &self.current_chunk_parts {
-            if unchanged.next_if(|file| file.get() == part.get()).is_none() {
-                queue.push(part);
-            }
-        }
-        while let Some(imported) = queue.pop() {
-            let mut it = self.edge_lists[imported.get() as usize].first_dep;
-            while let Some(edge_index) = it {
-                let edge = self.edges[edge_index.get() as usize];
-                it = edge.next_dependency;
-                if !reached.is_set(edge.dependency.get() as usize) {
-                    reached.set(edge.dependency.get() as usize);
-                    queue.push(edge.dependency);
-                }
-            }
-        }
-        let files = self.bundled_files.values();
-        let mut unchanged = self.unchanged_files.iter().peekable();
-        let mut removed_len = 0;
-        let mut left_out: Vec<FileIndex<SIDE>> = Vec::new();
-        self.current_chunk_parts.retain(|part| {
-            let i = part.get() as usize;
-            if unchanged.next_if(|file| file.get() == part.get()).is_none() || reached.is_set(i) {
-                return true;
-            }
-            removed_len += files[i].content.js_code().map_or(0, |code| code.len());
-            if i < ctx.client_files_updated.bit_length() {
-                ctx.client_files_updated.unset(i);
-            }
-            left_out.push(*part);
-            false
-        });
-        self.current_chunk_len -= removed_len;
-        self.unchanged_files = left_out;
-        Ok(())
-    }
-
-    /// Once the edges are up to date. A page whose file has a new import may not have the imported module, nor what
-    /// that module imports. What such a page did not reach before goes back into the chunk. The imports of a file that
-    /// is new to the graph do not count by themselves: an open page has that file only through a new import of another file.
-    ///
-    /// `page_files`: the files that pages start from which other files can import too.
-    pub(crate) fn restore_newly_imported_files(
-        &mut self,
-        ctx: &mut HotUpdateContext<'_>,
-        page_files: &[FileIndex<SIDE>],
-    ) -> Result<(), bun_alloc::AllocError> {
-        debug_assert!(matches!(SIDE, Side::Client));
-        let new_edges = core::mem::take(&mut self.new_edges);
-        let left_out = core::mem::take(&mut self.unchanged_files);
-        let files_len = self.bundled_files.count();
-        let mut first_bundled = DynamicBitSetUnmanaged::init_empty(files_len)?;
-        for file in &self.first_bundled_files {
-            first_bundled.set(file.get() as usize);
-        }
-        let mut is_new_edge = DynamicBitSetUnmanaged::init_empty(self.edges.len())?;
-        let mut newly_imported = Vec::new();
-        for edge_index in &new_edges {
-            is_new_edge.set(edge_index.get() as usize);
-            let edge = self.edges[edge_index.get() as usize];
-            if !first_bundled.is_set(edge.dependency.get() as usize) {
-                newly_imported.push(edge);
-            }
-        }
-        let is_any_left_out = |files: &DynamicBitSetUnmanaged| {
-            left_out
-                .iter()
-                .any(|file| files.is_set(file.get() as usize))
-        };
-        let needed_by_any =
-            self.files_imported_by(newly_imported.iter().map(|edge| edge.imported), None)?;
-        if !is_any_left_out(&needed_by_any) {
-            return Ok(());
-        }
-        let mut is_page_file = DynamicBitSetUnmanaged::init_empty(files_len)?;
-        for file in page_files {
-            is_page_file.set(file.get() as usize);
-        }
-        let mut restored = DynamicBitSetUnmanaged::init_empty(files_len)?;
-        let mut reached_from: ArrayHashMap<FileIndex<SIDE>, DynamicBitSetUnmanaged> =
-            ArrayHashMap::default();
-        newly_imported.sort_unstable_by_key(|edge| edge.dependency.get());
-        for of_one_file in newly_imported.chunk_by(|a, b| a.dependency.get() == b.dependency.get())
-        {
-            let needed =
-                self.files_imported_by(of_one_file.iter().map(|edge| edge.imported), None)?;
-            if !is_any_left_out(&needed) {
-                continue;
-            }
-            let importer = of_one_file[0].dependency;
-            for root in self.roots_that_reached(importer, &is_new_edge, &is_page_file)? {
-                let found = reached_from.get_or_put(root)?;
-                if !found.found_existing {
-                    *found.value_ptr =
-                        self.files_imported_by(core::iter::once(root), Some(&is_new_edge))?;
-                }
-                for file in &left_out {
-                    let i = file.get() as usize;
-                    if needed.is_set(i) && !found.value_ptr.is_set(i) {
-                        restored.set(i);
-                    }
-                }
-            }
-        }
-        for file in left_out {
-            if restored.is_set(file.get() as usize) {
-                self.push_chunk_part(ctx, file);
-            }
-        }
-        Ok(())
-    }
-
-    /// `files` and everything they import, at any depth.
-    fn files_imported_by(
-        &self,
-        files: impl Iterator<Item = FileIndex<SIDE>>,
-        except: Option<&DynamicBitSetUnmanaged>,
-    ) -> Result<DynamicBitSetUnmanaged, bun_alloc::AllocError> {
-        let mut seen = DynamicBitSetUnmanaged::init_empty(self.bundled_files.count())?;
-        let mut queue: Vec<FileIndex<SIDE>> = files.collect();
-        for file in &queue {
-            seen.set(file.get() as usize);
-        }
-        while let Some(importer) = queue.pop() {
-            let mut it = self.edge_lists[importer.get() as usize].first_import;
-            while let Some(edge_index) = it {
-                let edge = self.edges[edge_index.get() as usize];
-                it = edge.next_import;
-                let i = edge.imported.get() as usize;
-                if except.is_some_and(|edges| edges.is_set(edge_index.get() as usize))
-                    || seen.is_set(i)
-                {
-                    continue;
-                }
-                seen.set(i);
-                queue.push(edge.imported);
-            }
-        }
-        Ok(seen)
-    }
-
-    /// The html files, client roots, page files and entry points that import `file`, at any depth.
-    fn roots_that_reached(
-        &self,
-        file: FileIndex<SIDE>,
-        except: &DynamicBitSetUnmanaged,
-        is_page_file: &DynamicBitSetUnmanaged,
-    ) -> Result<Vec<FileIndex<SIDE>>, bun_alloc::AllocError> {
-        let mut seen = DynamicBitSetUnmanaged::init_empty(self.bundled_files.count())?;
-        seen.set(file.get() as usize);
-        let mut queue = vec![file];
-        let mut roots = Vec::new();
-        while let Some(imported) = queue.pop() {
-            let mut has_importer = false;
-            let mut it = self.edge_lists[imported.get() as usize].first_dep;
-            while let Some(edge_index) = it {
-                let edge = self.edges[edge_index.get() as usize];
-                it = edge.next_dependency;
-                if except.is_set(edge_index.get() as usize) {
-                    continue;
-                }
-                has_importer = true;
-                let i = edge.dependency.get() as usize;
-                if !seen.is_set(i) {
-                    seen.set(i);
-                    queue.push(edge.dependency);
-                }
-            }
-            let i = imported.get() as usize;
-            if !has_importer || self.bundled_files.values()[i].is_hmr_root || is_page_file.is_set(i)
-            {
-                roots.push(imported);
-            }
-        }
-        Ok(roots)
-    }
-
-    fn push_chunk_part(&mut self, ctx: &mut HotUpdateContext<'_>, file_index: FileIndex<SIDE>) {
-        let i = file_index.get() as usize;
-        let len = self.bundled_files.values()[i]
-            .content
-            .js_code()
-            .map(|c| c.len())
-            .unwrap_or(0);
-        self.current_chunk_parts.push(file_index);
-        self.current_chunk_len += len;
-        if i < ctx.client_files_updated.bit_length() {
-            ctx.client_files_updated.set(i);
-        }
+        self.bundled_again.clear();
     }
 
     /// Grows `stale_files` to cover all currently-known files, filling new
@@ -877,20 +646,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     let mut existing = core::mem::take(
                         &mut self.bundled_files.values_mut()[file_index.get() as usize],
                     );
-
-                    // Bundled again only because an importer was, with the same output.
-                    // A stale file always goes in.
-                    if !was_stale
-                        && existing.is_hmr_root
-                            == ctx.server_to_client_bitset.is_set(index.get() as usize)
-                        && js_content_is_unchanged(&existing, ctx, index, &content)
-                    {
-                        self.bundled_files.values_mut()[file_index.get() as usize] = existing;
-                        self.unchanged_files.push(file_index);
-                        self.push_chunk_part(ctx, file_index);
-                        return Ok(());
-                    }
-
                     self.free_file_content(key, &mut existing, FreeCssMode::IgnoreCss);
 
                     if existing.failed {
@@ -907,10 +662,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
                     html_route_bundle_index = existing.html_route_bundle_index;
                     is_special_framework_file = existing.is_special_framework_file;
-                }
-                // The graph has the html file of a route before its first bundle. A change of one reloads its page.
-                if !found_existing || html_route_bundle_index.is_some() {
-                    self.first_bundled_files.push(file_index);
                 }
 
                 let (new_content, new_source_map, code_len) = match content {
@@ -964,8 +715,12 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     content: new_content,
                 };
 
-                if code_len.is_some() {
-                    self.push_chunk_part(ctx, file_index);
+                if let Some(len) = code_len {
+                    self.current_chunk_parts.push(file_index);
+                    self.current_chunk_len += len;
+                    if found_existing && !was_stale {
+                        self.bundled_again.push(file_index);
+                    }
                 }
             }
             Side::Server => {
@@ -1148,10 +903,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         self.edge_lists[file_index.get() as usize].first_import = None;
 
         // '.seen = false' means an import was removed and should be freed.
-        let mut imports_changed = quick_lookup.count() != quick_lookup_values_to_care_len;
         for val in &quick_lookup.values()[0..quick_lookup_values_to_care_len] {
             if !val.seen {
-                imports_changed = true;
                 self.dev_incremental_result().had_adjusted_edges = true;
                 self.disconnect_edge_from_dependency_list(val.edge_index);
                 self.free_edge(val.edge_index);
@@ -1159,17 +912,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
 
         self.edge_lists[file_index.get() as usize].first_import = new_imports;
-
-        // A module that the hot update left out, with the imports it had, changes no route.
-        if matches!(SIDE, Side::Client)
-            && mode == ProcessMode::Normal
-            && !imports_changed
-            && !ctx
-                .client_files_updated
-                .is_set_allow_out_of_bound(file_index.get() as usize, true)
-        {
-            return Ok(());
-        }
 
         // Follow this file to the route / HMR root to mark it stale.
         self.trace_dependencies(
@@ -1347,9 +1089,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             }
             *new_imports = Some(edge);
             self.edge_lists[imported_file_index.get() as usize].first_dep = Some(edge);
-            if !self.unchanged_files.is_empty() {
-                self.new_edges.push(edge);
-            }
 
             self.dev_incremental_result().had_adjusted_edges = true;
 
@@ -2182,7 +1921,17 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 end_list.extend_from_slice(b"\n})");
             }
             ChunkKind::HmrChunk => {
-                end_list.extend_from_slice(b"}, \"");
+                end_list.extend_from_slice(b"}, [");
+                let mut separator: &[u8] = b"";
+                for file in &self.bundled_again {
+                    let content = &self.bundled_files.values()[file.get() as usize].content;
+                    if let Some(id) = content.js_code().and_then(printed_module_id) {
+                        end_list.extend_from_slice(separator);
+                        end_list.extend_from_slice(id);
+                        separator = b", ";
+                    }
+                }
+                end_list.extend_from_slice(b"], \"");
                 let _ = write!(
                     end_list,
                     "{}",

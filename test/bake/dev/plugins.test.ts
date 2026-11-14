@@ -342,7 +342,7 @@ devTest("onResolve + onLoad virtual file", {
 
 // A module that the incremental graph already holds is bundled again when an
 // importer changes (the bundler cannot tell that a plugin-loaded module is
-// fresh). When its output is the same, it is left out of the hot update,
+// fresh). When its output is the same, a page that has it leaves it as it is,
 // whether the resolver or a plugin resolved it.
 // https://github.com/oven-sh/bun/issues/47398
 const sharedModuleFiles = {
@@ -367,18 +367,24 @@ const sharedModuleFiles = {
 function withShared(specifier: string) {
   return Object.fromEntries(Object.entries(sharedModuleFiles).map(([k, v]) => [k, v.replaceAll("SHARED", specifier)]));
 }
+/** The modules that a hot update holds. */
+const hmrChunkKeys = (chunk: string) =>
+  [...chunk.matchAll(/^  ("(?:[^"\\]|\\.)*")(?:: \[|\()/gm)].map(m => JSON.parse(m[1]) as string);
+/** Those that were not saved: a page that has the same code of one leaves it as it is. */
+const bundledAgain = (chunk: string): string[] => JSON.parse(chunk.match(/^\}, (\[.*\]), "[0-9a-f]{16}"\)$/m)![1]);
+const savedKeys = (chunk: string) => {
+  const again = bundledAgain(chunk);
+  return hmrChunkKeys(chunk).filter(key => !again.includes(key));
+};
 async function expectOnlyFooInHotUpdate(dev: Dev, sharedKey: string) {
   await using c = await dev.client("/", { storeHotChunks: true });
   await c.expectMessage("shared evaluated", "foo loaded 1", "index loaded");
   await dev.patch("foo.ts", { find: "foo loaded 1", replace: "foo loaded 2" });
   await c.expectMessage("foo loaded 2", "accept foo.ts");
-  // The update holds one module, `foo.ts`. The shared module appears only in
-  // the dependency list of `foo.ts`, never as a module of its own.
   const chunk = await c.getMostRecentHmrChunk();
-  expect(chunk).toContain('"foo.ts": [');
-  expect(chunk).not.toContain(`${JSON.stringify(sharedKey)}: [`);
+  expect({ saved: savedKeys(chunk), again: bundledAgain(chunk) }).toEqual({ saved: ["foo.ts"], again: [sharedKey] });
 }
-devTest("virtual module shared by two importers is not re-sent when one importer changes", {
+devTest("virtual module shared by two importers does not run again when one importer changes", {
   files: {
     "bunfig.toml": `
       [serve.static]
@@ -520,7 +526,7 @@ devTest("virtual module that a new file imports is in the hot update", {
     await a.expectMessage("a fresh only-b");
   },
 });
-devTest("virtual json module shared by two importers is not re-sent when one importer changes", {
+devTest("virtual json module shared by two importers does not run again when one importer changes", {
   files: {
     "bunfig.toml": `
       [serve.static]
@@ -557,19 +563,20 @@ devTest("virtual json module shared by two importers is not re-sent when one imp
     await c.expectMessage("foo 1 shared", "index shared");
     await dev.patch("foo.ts", { find: "foo 1", replace: "foo 2" });
     await c.expectMessage("foo 2 shared", "accept foo.ts");
-    // A JSON module prints as `"key"(hmr) {`, not as `"key": [`.
     const chunk = await c.getMostRecentHmrChunk();
-    expect(chunk).toContain('"foo.ts": [');
-    expect(chunk).not.toMatch(/"virtual:__foo__"\(hmr/);
+    expect(savedKeys(chunk)).toEqual(["foo.ts"]);
+    expect(bundledAgain(chunk)).toEqual(["virtual:__foo__"]);
   },
 });
-devTest("disk module matched by an onResolve filter that returns nothing is not re-sent when one importer changes", {
-  files: {
-    "bunfig.toml": `
+devTest(
+  "disk module matched by an onResolve filter that returns nothing does not run again when one importer changes",
+  {
+    files: {
+      "bunfig.toml": `
       [serve.static]
       plugins = ["./plugin.ts"]
     `,
-    "plugin.ts": `
+      "plugin.ts": `
       export default {
         name: "noop",
         setup(build) {
@@ -577,16 +584,17 @@ devTest("disk module matched by an onResolve filter that returns nothing is not 
         },
       };
     `,
-    "bar.ts": `
+      "bar.ts": `
       console.log("shared evaluated");
       export function registerComponent() {}
     `,
-    ...withShared("./bar.ts"),
+      ...withShared("./bar.ts"),
+    },
+    async test(dev) {
+      await expectOnlyFooInHotUpdate(dev, "bar.ts");
+    },
   },
-  async test(dev) {
-    await expectOnlyFooInHotUpdate(dev, "bar.ts");
-  },
-});
+);
 
 // A package behind an onResolve filter is bundled again with each importer.
 // When it ran again, the page had two copies of its runtime.
@@ -645,7 +653,7 @@ for (const [kind, packageFiles] of [
       expect(await c.js<string>`read()`).toBe("a1 copies=1 runs=1");
       await dev.patch("a.ts", { find: "a1", replace: "a2" });
       const chunk = await c.getMostRecentHmrChunk();
-      expect([...chunk.matchAll(/^  ("(?:[^"\\]|\\.)*")(?:: \[|\()/gm)].map(m => JSON.parse(m[1]))).toEqual(["a.ts"]);
+      expect(savedKeys(chunk)).toEqual(["a.ts"]);
       expect(await c.js<string>`read()`).toBe("a2 copies=1 runs=1");
     },
   });
@@ -876,7 +884,7 @@ devTest("adding an import of a module the page already holds does not re-run it"
       `import { s } from "virtual:__foo__"; console.log("foo 2 " + s); import.meta.hot.accept();`,
     );
     await c.expectMessage("foo 2 shared");
-    expect(await c.getMostRecentHmrChunk()).not.toContain('"virtual:__foo__": [');
+    expect(bundledAgain(await c.getMostRecentHmrChunk())).toEqual(["virtual:__foo__"]);
   },
 });
 
@@ -1001,15 +1009,14 @@ for (const [kind, specifier, key] of [
       const firstBundle = await a.getMostRecentHmrChunk();
       await a.drainAcks();
       expect(firstBundle).toContain('"b.ts": [');
-      expect(firstBundle).not.toContain(`${JSON.stringify(key)}: [`);
+      expect(bundledAgain(firstBundle)).toContain(key);
       await a.expectMessage();
     },
   });
 }
 
-// A module that the hot update left out changes no route: another route that
-// imports it keeps its page script.
-devTest("route that shares a virtual module keeps its page script when another importer changes", {
+// Another route that imports a module which was only bundled again runs nothing.
+devTest("route that shares a virtual module runs nothing when another importer changes", {
   files: {
     "bunfig.toml": `
       [serve.static]
@@ -1034,24 +1041,21 @@ devTest("route that shares a virtual module keeps its page script when another i
     "b.ts": `import { s } from "virtual:shared"; console.log("b 1 " + s);`,
   },
   async test(dev) {
-    const pageScript = async (route: string) => /src="([^"]+\.js)"/.exec(await dev.fetch(route).text())![1];
     await using a = await dev.client("/a");
     await a.expectMessage("shared evaluated", "a 1 shared");
     await using b = await dev.client("/b");
     await b.expectMessage("shared evaluated", "b 1 shared");
-    const before = await pageScript("/b");
     await dev.patch("a.ts", { find: "a 1", replace: "a 2" });
     await a.expectMessage("a 2 shared");
     // The tab of /b acks the update without running anything.
     await b.drainAcks();
     await b.expectMessage();
-    expect(await pageScript("/b")).toBe(before);
   },
 });
 
 // A plugin that answers `onResolve` with a file path: the bundler bundles that
 // file again with each importer too.
-devTest("file that an onResolve plugin resolves to is not re-sent when one of two importers changes", {
+devTest("file that an onResolve plugin resolves to does not run again when one of two importers changes", {
   files: {
     "bunfig.toml": `
       [serve.static]
@@ -1090,7 +1094,7 @@ const richImporter = (name: string, n: number) => `
   console.log("${name} ${n} " + v + " " + [helper, w, plain, E, NS, Runtime, outer, inner, r, x, import_enums, import_plain, hmr2].length + typeof Foo + typeof f);
   import.meta.hot.accept(() => {});
 `;
-devTest("virtual module with imports, nested names and TypeScript syntax stays out of the hot update", {
+devTest("virtual module with imports, nested names and TypeScript syntax does not run again", {
   files: {
     "bunfig.toml": `
       [serve.static]
@@ -1151,7 +1155,7 @@ devTest("virtual module with imports, nested names and TypeScript syntax stays o
     );
     const expectOnly = async (file: string) => {
       const chunk = await c.getMostRecentHmrChunk();
-      expect([...chunk.matchAll(/^  ("(?:[^"\\]|\\.)*")(?:: \[|\()/gm)].map(m => JSON.parse(m[1]))).toEqual([file]);
+      expect(savedKeys(chunk)).toEqual([file]);
     };
     // Each save bundles the two virtual modules again with another set of modules.
     await dev.patch("foo.ts", { find: "foo 1", replace: "foo 2" });
@@ -1202,9 +1206,6 @@ devTest("virtual module whose source changes only in whitespace is still sent", 
     expect(await c.getMostRecentHmrChunk()).toContain('"virtual:gen": [');
   },
 });
-
-const hmrChunkKeys = (chunk: string) =>
-  [...chunk.matchAll(/^  ("(?:[^"\\]|\\.)*")(?:: \[|\()/gm)].map(m => JSON.parse(m[1]) as string);
 
 // The chunks of a bundle arrive importer first. An unchanged barrel arrives
 // before the changed module it re-exports, and still goes into the update,
@@ -1411,7 +1412,11 @@ for (const [name, reExported, extra, first, second] of [
       for (const v of [2, 3, 4]) {
         await dev.write("saved.ts", saved(v));
         await c.expectMessage("main");
-        expect(hmrChunkKeys(await c.getMostRecentHmrChunk())).toEqual(["saved.ts", "virtual:reexport"]);
+        expect(hmrChunkKeys(await c.getMostRecentHmrChunk()).sort()).toEqual([
+          "saved.ts",
+          "virtual:leaf",
+          "virtual:reexport",
+        ]);
         expect(await c.js<number>`read()`).toBe(v * 2);
       }
     },

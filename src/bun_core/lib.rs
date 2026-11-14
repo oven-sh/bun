@@ -1781,36 +1781,29 @@ pub(crate) mod strings_impl {
     #[inline(always)]
     fn copy_short_ascii(dst: &mut [u8], src: &[u8]) -> bool {
         let n = src.len();
-        assert!(n <= 16 && n <= dst.len());
-        let (from, to) = (src.as_ptr(), dst.as_mut_ptr());
-        // SAFETY: every access below lies in the first `n` bytes of `src` or of `dst`.
-        unsafe {
-            if n >= 8 {
-                let first = from.cast::<u64>().read_unaligned();
-                let last = from.add(n - 8).cast::<u64>().read_unaligned();
-                if (first | last) & 0x8080_8080_8080_8080 != 0 {
-                    return false;
-                }
-                to.cast::<u64>().write_unaligned(first);
-                to.add(n - 8).cast::<u64>().write_unaligned(last);
-            } else if n >= 4 {
-                let first = from.cast::<u32>().read_unaligned();
-                let last = from.add(n - 4).cast::<u32>().read_unaligned();
-                if (first | last) & 0x8080_8080 != 0 {
-                    return false;
-                }
-                to.cast::<u32>().write_unaligned(first);
-                to.add(n - 4).cast::<u32>().write_unaligned(last);
-            } else if n > 0 {
-                // The first, the middle and the last of one, two or three bytes are all of them.
-                let (first, middle, last) = (*from, *from.add(n / 2), *from.add(n - 1));
-                if (first | middle | last) >= 0x80 {
-                    return false;
-                }
-                *to = first;
-                *to.add(n / 2) = middle;
-                *to.add(n - 1) = last;
+        debug_assert!(n <= 16);
+        let dst = &mut dst[..n];
+        if let (Some(&first), Some(&last)) = (src.first_chunk::<8>(), src.last_chunk()) {
+            if (u64::from_ne_bytes(first) | u64::from_ne_bytes(last)) & 0x8080_8080_8080_8080 != 0 {
+                return false;
             }
+            *dst.first_chunk_mut().unwrap() = first;
+            *dst.last_chunk_mut().unwrap() = last;
+        } else if let (Some(&first), Some(&last)) = (src.first_chunk::<4>(), src.last_chunk()) {
+            if (u32::from_ne_bytes(first) | u32::from_ne_bytes(last)) & 0x8080_8080 != 0 {
+                return false;
+            }
+            *dst.first_chunk_mut().unwrap() = first;
+            *dst.last_chunk_mut().unwrap() = last;
+        } else if n > 0 {
+            // The first, the middle and the last of one, two or three bytes are all of them.
+            let (first, middle, last) = (src[0], src[n / 2], src[n - 1]);
+            if (first | middle | last) >= 0x80 {
+                return false;
+            }
+            dst[0] = first;
+            dst[n / 2] = middle;
+            dst[n - 1] = last;
         }
         true
     }
@@ -1826,31 +1819,26 @@ pub(crate) mod strings_impl {
 
         const HIGH_BITS: u64 = 0x8080_8080_8080_8080;
         let n = src.len();
-        assert!(dst.len() >= n);
-        let (from, to) = (src.as_ptr(), dst.as_mut_ptr());
+        let dst = &mut dst[..n];
         let mut copied = 0usize;
-        // SAFETY: every access below lies in the first `n` bytes of `src` or of `dst`.
-        unsafe {
-            while copied + 8 <= n {
-                let word = from.add(copied).cast::<u64>().read_unaligned();
-                if word & HIGH_BITS != 0 {
-                    break;
-                }
-                to.add(copied).cast::<u64>().write_unaligned(word);
-                copied += 8;
+        for (to, from) in dst.as_chunks_mut().0.iter_mut().zip(src.as_chunks().0) {
+            if u64::from_ne_bytes(*from) & HIGH_BITS != 0 {
+                break;
             }
-            // The last word overlaps the one before it.
-            if copied + 8 > n && n >= 8 {
-                let word = from.add(n - 8).cast::<u64>().read_unaligned();
-                if word & HIGH_BITS == 0 {
-                    to.add(n - 8).cast::<u64>().write_unaligned(word);
-                    return n;
-                }
-            }
-            while copied < n && *from.add(copied) < 0x80 {
-                *to.add(copied) = *from.add(copied);
-                copied += 1;
-            }
+            *to = *from;
+            copied += 8;
+        }
+        // The last word overlaps the one before it.
+        if copied + 8 > n
+            && let (Some(to), Some(from)) = (dst.last_chunk_mut(), src.last_chunk())
+            && u64::from_ne_bytes(*from) & HIGH_BITS == 0
+        {
+            *to = *from;
+            return n;
+        }
+        while copied < n && src[copied] < 0x80 {
+            dst[copied] = src[copied];
+            copied += 1;
         }
         copied
     }

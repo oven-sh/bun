@@ -173,7 +173,7 @@ const error = await device.popErrorScope();
 console.log(error?.message); // Buffer usages must not be 0. ...
 ```
 
-An error that no scope captures fires an `uncapturederror` event on the device. Bun prints the error with `console.warn()` unless a listener calls `event.preventDefault()`.
+An error that no scope captures fires an `uncapturederror` event on the device. Bun prints the error to stderr unless a listener calls `event.preventDefault()`.
 
 ```ts
 device.addEventListener("uncapturederror", event => {
@@ -182,13 +182,13 @@ device.addEventListener("uncapturederror", event => {
 });
 ```
 
-When the driver fails, the device is lost: `device.lost` resolves, and Bun prints the message of the driver with `console.warn()`.
+When the driver fails, the device is lost: `device.lost` resolves, and Bun prints the message of the driver to stderr.
 
 ## Lifetime
 
 A pending `mapAsync()`, `onSubmittedWorkDone()` or other promise of WebGPU keeps the process alive. A device does not, even if the GPU still works for it, and neither does `device.lost`.
 
-The GPU of a macOS virtual machine hangs, for all processes, if one ends with work under way. Wait for `onSubmittedWorkDone()` or call `device.destroy()` first.
+The GPU of a macOS virtual machine hangs, for all processes, if one ends with work under way. There Bun waits for it up to 5 seconds before it exits, unless a signal ends the process.
 
 The garbage collector frees buffers, textures and devices that nothing refers to. Call `destroy()` to free one sooner. A device keeps some memory for its next buffers, textures and uploads.
 

@@ -1,9 +1,13 @@
-import { describe, expect, test } from "bun:test";
+// Runs alone: it judges by the memory that is held and by the turns of the event loop.
+import { describe, expect, test, vi } from "bun:test";
 import { isArm64, isASAN, isDebug, isLinux, isMacOS, libcPathForDlopen, withoutAsanQuarantine } from "harness";
-import { hasAdapter, runWithDriverOfChrome } from "./driver";
+import { hasAdapter, isParavirtual, runWithDriverOfChrome } from "./driver";
 import { bunEnv, printed, run, uploads, withMacro, withoutGC, withoutGCTimer, withoutMacroLog } from "./subprocess";
 
 runWithDriverOfChrome(import.meta.path);
+
+// Now and then it fails to compile the pipelines of many processes at once.
+if (isParavirtual) vi.setConfig({ maxConcurrency: 5 });
 
 describe.concurrent("with or without a driver", () => {
   const noAdapter = `navigator.gpu.requestAdapter({ featureLevel: "none" })`;
@@ -269,8 +273,7 @@ describe.skipIf(!hasAdapter).concurrent("the process", () => {
       const device = await requestDevice();
       await keepBusy(device, 1).mapAsync(GPUMapMode.READ);
       // More each time, as the GPU may finish all of it before this thread gets to run.
-      const end = performance.now() + 30_000;
-      for (let workgroups = 60; performance.now() < end; workgroups = Math.min(workgroups * 4, 61440)) {
+      for (let i = 0, workgroups = 60; i < 12; i++, workgroups = Math.min(workgroups * 4, 61440)) {
         const [early, late] = [prepare(device, workgroups / 2), prepare(device, workgroups)];
         const [first] = ${start};
         const last = device.queue.onSubmittedWorkDone();
@@ -417,7 +420,6 @@ describe.skipIf(!hasAdapter).concurrent("the process", () => {
     ...withoutAsanQuarantine(env),
     // Or glibc raises it, and keeps what is below.
     MALLOC_MMAP_THRESHOLD_: "1048576",
-    ...(isMacOS && { BUN_DESTRUCT_VM_ON_EXIT: "1" }),
   });
 
   test.each([
@@ -1033,7 +1035,24 @@ describe.skipIf(!hasAdapter).concurrent("other contexts", () => {
   });
 });
 
-describe.skipIf(!hasAdapter)("the process ends while a pipeline compiles", () => {
+describe.skipIf(!hasAdapter).concurrent("the process ends with work under way", () => {
+  test.skipIf(!isMacOS).each([
+    ["a submit", "keepBusy(device, 5000)"],
+    ["a pipeline that compiles", "compile(device, process.pid), process.exit(0)"],
+  ])("and leaves the GPU to others: %s", async (_, leave) => {
+    const files = {
+      "index.js": `
+        const device = await requestDevice();
+        let left = 8;
+        const spawn = () => left-- > 0 && Bun.spawn([process.execPath, "other.js"], { onExit: spawn });
+        spawn();
+        for (let seed = 0; left >= 0; seed++) await Promise.all([keepBusy(device, 1000).mapAsync(GPUMapMode.READ), compile(device, seed)]);
+        console.log("done");`,
+      "other.js": `const device = await requestDevice(); ${leave};`,
+    };
+    expect(await run(files)).toEqual(printed("done"));
+  });
+
   test("at process.exit()", async () => {
     const script = `
       for (const promise of startEverything(await requestDevice())) promise.finally(() => console.log("settled"));

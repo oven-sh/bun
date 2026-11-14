@@ -107,6 +107,22 @@ test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not eval
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > doesn't leak the modules that imported a mock after it ends
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > also when the file fails to load, or has already removed the mock itself
 test/js/bun/test/mock/mock-module.test.ts: requiring the original of a module in a cycle before its async factory runs throws, and the mock still loads
+# These: a function of another module calls vi.doMock() for a loaded module while the body of a module that imports it runs. `bun test` passes over a module whose body
+# has begun, and the loaded module stays as it is. The engine's copy of the rule, Modules::hasUnevaluatedLinkedImporter(), still counts that module, and a compiled run
+# updates the loaded module in place.
+test/js/bun/test/mock/mock-module.test.ts: vi.doMock() of a loaded module while the body of a module that imports it runs > a helper that mocked mocks again for the next test file that imports it > but not a helper that gets the module from require()
+test/js/bun/test/mock/mock-module.test.ts: vi.doMock() of a loaded module while the body of a module that imports it runs > a helper that mocked mocks again for the next test file that imports it > through a function of a preload
+test/js/bun/test/mock/mock-module.test.ts: vi.doMock() of a loaded module while the body of a module that imports it runs > a helper that mocked mocks again for the next test file that imports it > through a function of another module ["--isolate"]
+test/js/bun/test/mock/mock-module.test.ts: vi.doMock() of a loaded module while the body of a module that imports it runs > a helper that mocked mocks again for the next test file that imports it > through a function of another module ["--isolate=modules"]
+test/js/bun/test/mock/mock-module.test.ts: vi.doMock() of a loaded module while the body of a module that imports it runs > a helper that mocked mocks again for the next test file that imports it > through a function of another module []
+test/js/bun/test/mock/mock-module.test.ts: vi.doMock() of a loaded module while the body of a module that imports it runs > a helper that mocked mocks again for the next test file that imports it > through a function of another module, for a package
+test/js/bun/test/mock/mock-module.test.ts: vi.doMock() of a loaded module while the body of a module that imports it runs > a module that has yet to run beside a helper whose body mocks, from vitest
+test/js/bun/test/mock/mock-module.test.ts: vi.doMock() of a loaded module while the body of a module that imports it runs > the body of a helper keeps what it imported, from bun:test
+test/js/bun/test/mock/mock-module.test.ts: vi.doMock() of a loaded module while the body of a module that imports it runs > the body of a helper keeps what it imported, from vitest
+test/js/bun/test/mock/mock-module.test.ts: vi.doMock() of a loaded module while the body of a module that imports it runs > the body of the test file and of a helper keep what they imported ["--isolate"]
+test/js/bun/test/mock/mock-module.test.ts: vi.doMock() of a loaded module while the body of a module that imports it runs > the body of the test file and of a helper keep what they imported ["--isolate=modules"]
+test/js/bun/test/mock/mock-module.test.ts: vi.doMock() of a loaded module while the body of a module that imports it runs > the body of the test file keeps what it imported, from bun:test
+test/js/bun/test/mock/mock-module.test.ts: vi.doMock() of a loaded module while the body of a module that imports it runs > with { spy: true }, which spies on an instance of its own, from bun:test
 test/js/bun/test/vitest-flavor.test.ts: [test] globals = "vitest" > is part of the transpiler cache key
 test/js/bun/test/import-meta-env.test.ts: import.meta.env > in other realms
 # These ask about the transpiler cache, which a compiled run doesn't use: they say nothing about compiled code.

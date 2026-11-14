@@ -838,7 +838,7 @@ fn fetch_registry_tree(
 
     let mut log = bun_ast::Log::init();
     let manifest = match PackageManifest::parse(
-        scope,
+        scope.manifest_tag(),
         &mut log,
         body.list.as_slice(),
         name,

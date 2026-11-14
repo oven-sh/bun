@@ -170,6 +170,12 @@ const builds: Record<string, { files: Record<string, string>; stdout: string }> 
     },
     stdout: "string\nother\nrang\n",
   },
+  "classes without a constructor below a stream of the web, with its type and without": {
+    files: {
+      "main.ts": `export {};\nclass Lines extends ReadableStream<string> {}\nclass Pipe extends ReadableStream {}\nconsole.log(new Lines().locked, new Pipe({}).locked);\n`,
+    },
+    stdout: "false false\n",
+  },
   "a number of Bun's through a generic function, a generic class, a map, a promise of all and a pattern": {
     files: {
       "main.ts": `export {};\nfunction same<T>(value: T): T {\n  return value;\n}\nclass Box<T> {\n  constructor(public held: T) {}\n}\nconst size = () => Bun.file(import.meta.path).size;\nconst one: string = same(size());\nconst two: string = new Box(size()).held;\nconst three: string = new Map([["a", size()]]).get("a")!;\nconst [four] = await Promise.all([size()]);\nconst five: string = four;\nconst { held } = { ...new Box(size()) };\nconst six: string = held;\nconsole.log(typeof one, typeof two, typeof three, typeof five, typeof six);\n`,
@@ -182,8 +188,8 @@ const builds: Record<string, { files: Record<string, string>; stdout: string }> 
 const stops: Record<string, { text: string; others?: Record<string, string>; errors: string[] }> = {
   // TypeScript's own library for browsers declares these with a type parameter, and tsc says the same of them.
   "classes without a constructor below classes of the web that take a type": {
-    text: `export {};\nclass Told extends CustomEvent {}\nclass Sent extends MessageEvent {}\nclass Pipe extends ReadableStream {}\nconsole.log(new Told("e", { detail: 1 }).detail, new Sent("m", { data: 2 }).data, new Pipe({}).locked);\n`,
-    errors: ["TS2508", "TS2508", "TS2510", "TS2351", "TS2351"],
+    text: `export {};\nclass Told extends CustomEvent {}\nclass Sent extends MessageEvent {}\nconsole.log(new Told("e", { detail: 1 }).detail, new Sent("m", { data: 2 }).data);\n`,
+    errors: ["TS2508", "TS2508", "TS2351", "TS2351"],
   },
   "a number out of a field in another file, held against a text in the result of a function and at the top": {
     text: `import { n } from "./other";\nconst r = inner();\nfunction inner() {\n  return n === "one";\n}\nif (n === "two") console.log(r);\nconsole.log("ran");\n`,

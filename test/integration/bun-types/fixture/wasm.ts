@@ -40,3 +40,27 @@ async () => {
 
   // Additional operations with instance, memory, and table can be performed here
 };
+
+(error: unknown, instance: WebAssembly.Instance, module: WebAssembly.Module) => {
+  const tagType: WebAssembly.TagType = { parameters: ["i32", "f64"] };
+  const tag: WebAssembly.Tag = new WebAssembly.Tag(tagType);
+  const options: WebAssembly.ExceptionOptions = { traceStack: true };
+  const exception: WebAssembly.Exception = new WebAssembly.Exception(tag, [1, 2.5], options);
+  exception.is(tag) satisfies boolean;
+  exception.getArg(tag, 0);
+  exception.stack satisfies string | undefined;
+  WebAssembly.JSTag satisfies WebAssembly.Tag;
+  tag satisfies Bun.WebAssembly.Tag;
+  exception satisfies Bun.WebAssembly.Exception;
+  // A tag that a module exports. With lib.dom the type of an export has no tag, so the program casts.
+  exception.is(instance.exports.thrown as WebAssembly.Tag);
+
+  if (error instanceof WebAssembly.Exception && error.is(WebAssembly.JSTag)) {
+    error.getArg(WebAssembly.JSTag, 0) satisfies number;
+  }
+
+  // @ts-expect-error - a string is not a value that a module imports
+  WebAssembly.instantiate(module, { env: { thrown: "tag" } });
+  // @ts-expect-error - "int" is not a value type
+  new WebAssembly.Tag({ parameters: ["int"] });
+};

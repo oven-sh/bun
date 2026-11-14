@@ -101,3 +101,56 @@ new ReadableStream({
 expectType(new ReadableStream({ type: "bytes" })).is<ReadableStream<Uint8Array<ArrayBuffer>>>();
 expectType(new ReadableStream<Uint8Array>({ type: "bytes" })).is<ReadableStream<Uint8Array>>();
 expectType(new ReadableStream<string>({} as any)).is<ReadableStream<string>>();
+
+class StringStream extends ReadableStream<string> {}
+class ChunkStream<T> extends ReadableStream<T> {}
+expectType(new StringStream()).extends<ReadableStream<string>>();
+expectType(new ChunkStream<number>()).extends<ReadableStream<number>>();
+
+class LineStream extends ReadableStream<string> {
+  constructor(lines: string[]) {
+    super(
+      {
+        start(controller) {
+          expectType(controller).is<ReadableStreamDefaultController<string>>();
+          for (const line of lines) controller.enqueue(line);
+          // @ts-expect-error - the chunks are strings
+          controller.enqueue(1);
+          controller.close();
+        },
+      },
+      { highWaterMark: 1 },
+    );
+  }
+}
+new LineStream(["a"]);
+
+// @ts-expect-error - a byte source does not produce strings
+const byteSourceAsStrings: ReadableStream<string> = new ReadableStream({ type: "bytes" });
+// The chunk type of a byte stream can be a type parameter.
+function byteStreamOf<T extends Uint8Array>() {
+  return new ReadableStream<T>({ type: "bytes" });
+}
+class ByteStream<T extends Uint8Array> extends ReadableStream<T> {
+  constructor() {
+    super({ type: "bytes" });
+  }
+}
+expectType(byteStreamOf<Uint8Array<ArrayBuffer>>()).is<ReadableStream<Uint8Array<ArrayBuffer>>>();
+expectType(new ByteStream<Uint8Array<ArrayBuffer>>()).extends<ReadableStream<Uint8Array<ArrayBuffer>>>();
+expectType(new ReadableStream({ type: "bytes" }, { highWaterMark: 1024 })).is<ReadableStream<Uint8Array<ArrayBuffer>>>();
+expectType(new ReadableStream<Uint8Array>({ type: "bytes" }, { highWaterMark: 1024 })).is<ReadableStream<Uint8Array>>();
+
+// An expected type that also allows other chunks, or other streams, takes a byte stream.
+declare function readTextOrBytes(stream: ReadableStream<string | Uint8Array<ArrayBuffer>>): void;
+readTextOrBytes(new ReadableStream({ type: "bytes" }));
+const textOrBytes: ReadableStream<string | Uint8Array<ArrayBuffer>> = new ReadableStream({ type: "bytes" });
+const textStreamOrByteStream: ReadableStream<string> | ReadableStream<Uint8Array<ArrayBuffer>> = new ReadableStream({
+  type: "bytes",
+});
+function textOrByteStream(text: boolean): ReadableStream<string> | ReadableStream<Uint8Array<ArrayBuffer>> {
+  return text ? new ReadableStream<string>() : new ReadableStream({ type: "bytes" });
+}
+const byteStreams: Array<ReadableStream<Uint8Array<ArrayBuffer>> | ReadableStream<string>> = [
+  new ReadableStream({ type: "bytes" }),
+];

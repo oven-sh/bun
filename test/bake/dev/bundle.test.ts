@@ -913,6 +913,147 @@ devTest("build error in a file imported by a 'use client' component", {
     await dev.fetch("/").equals("object");
   },
 });
+// A client component that a client component imports is bundled for the SSR graph twice: as the SSR copy
+// of its own client reference, and as a plain module that the importer's SSR copy imports. The second
+// chunk does not say that the file lost its directive.
+{
+  const framework = { ...minimalFramework, serverComponents: separateSSRGraph };
+  // Holds the loads of `hold`, from load number `from`, until `until` is loaded `times` times for the server.
+  // The dev server receives the chunks in the order in which the bundler queued the files, so what the held
+  // loads lead to comes last.
+  const holdLoad = (hold: string, until: string, times: number, from = 1) => `
+    export default [
+      {
+        name: "hold-load",
+        setup(build) {
+          const reached = Promise.withResolvers();
+          let loads = 0;
+          let held = 0;
+          build.onLoad({ filter: /${until}$/ }, args => {
+            if (args.side === "server" && ++loads === ${times}) reached.resolve();
+          });
+          build.onLoad({ filter: /${hold}$/ }, () => (++held >= ${from} ? reached.promise : undefined));
+        },
+      },
+    ];
+  `;
+  // The second load of Inner.ts for the server is the first one for the SSR graph. The keys of `serverManifest`
+  // are in the order in which the dev server received the client references, so they show the forced order.
+  for (const [first, held, manifest] of [
+    ["its client reference", "Outer[.]ts", ["Inner.ts#inner", "Outer.ts#Outer"]],
+    ["the import of the SSR graph", "Inner[.]ts", ["Outer.ts#Outer", "Inner.ts#inner"]],
+  ] as const) {
+    devTest(`a client component that another one imports keeps its client reference (${first} is bundled first)`, {
+      framework,
+      pluginFile: holdLoad(held, "Inner[.]ts", 2),
+      files: {
+        "Outer.ts": `"use client"; import { inner } from "./Inner"; export function Outer() { return inner; }`,
+        "Inner.ts": `"use client"; export const inner = 1;`,
+        "routes/index.ts": `
+          import { serverManifest } from "bun:bake/server";
+          import * as Outer from "../Outer";
+          import * as Inner from "../Inner";
+          export default () =>
+            Response.json({
+              outer: typeof Outer.Outer,
+              inner: typeof Inner.inner,
+              manifest: Object.keys(serverManifest),
+            });
+        `,
+      },
+      async test(dev) {
+        const clientReferences = { outer: "object", inner: "object", manifest };
+        expect(await dev.fetch("/").json()).toEqual(clientReferences);
+        await dev.write("Inner.ts", `"use client"; export const inner = 2;`, { errors: null });
+        expect(await dev.fetch("/").json()).toEqual(clientReferences);
+      },
+    });
+  }
+  // The built-in React framework has a separate SSR graph.
+  devTest("react: a page and a client component import one client component", {
+    framework: "react",
+    pluginFile: holdLoad("Form[.]tsx", "Button[.]tsx", 2),
+    files: {
+      "pages/index.tsx": `
+        import { Button } from "../Button";
+        import { Form } from "../Form";
+        export default function Page() {
+          return <main><Button label="page" /><Form /></main>;
+        }
+      `,
+      "Form.tsx": `
+        "use client";
+        import { Button } from "./Button";
+        export function Form() {
+          return <form><Button label="form" /></form>;
+        }
+      `,
+      "Button.tsx": `
+        "use client";
+        export function Button({ label }) {
+          return <button>{label}</button>;
+        }
+      `,
+    },
+    async test(dev) {
+      const html = await dev.fetch("/").text();
+      expect(html.match(/<button>.*?<\/button>/g)).toEqual(["<button>page</button>", "<button>form</button>"]);
+    },
+  });
+  // The browser graph makes Inner.ts a client component here. The second load of Outer.ts is its SSR copy, and
+  // the first load of Inner.ts for the server is the SSR copy of its client reference.
+  devTest("a client component that only a client component imports keeps its client reference", {
+    framework,
+    pluginFile: holdLoad("Outer[.]ts", "Inner[.]ts", 1, 2),
+    files: {
+      "Outer.ts": `"use client"; import { inner } from "./Inner"; export function Outer() { return inner; }`,
+      "Inner.ts": `"use client"; export const inner = 1;`,
+      "routes/index.ts": `
+        import { serverManifest } from "bun:bake/server";
+        import * as Outer from "../Outer";
+        export default () => Response.json({ outer: typeof Outer.Outer, manifest: Object.keys(serverManifest) });
+      `,
+    },
+    async test(dev) {
+      const clientReferences = { outer: "object", manifest: ["Outer.ts#Outer", "Inner.ts#inner"] };
+      expect(await dev.fetch("/").json()).toEqual(clientReferences);
+      await dev.write("Inner.ts", `"use client"; export const inner = 2;`, { errors: null });
+      expect(await dev.fetch("/").json()).toEqual(clientReferences);
+    },
+  });
+  // dep-ssr.ts is in the SSR graph only: the browser graph resolves "#dep" to dep-browser.ts.
+  devTest("a build error in a file that only the SSR copy of a client component imports fails the route", {
+    framework,
+    pluginFile: holdLoad("Outer[.]ts", "Inner[.]ts", 2),
+    files: {
+      "package.json": JSON.stringify({
+        imports: { "#dep": { "browser": "./dep-browser.ts", "default": "./dep-ssr.ts" } },
+      }),
+      "dep-browser.ts": `export const dep = "browser";`,
+      "dep-ssr.ts": `export const dep = "ssr 1";`,
+      "Outer.ts": `"use client"; import { inner } from "./Inner"; export function Outer() { return inner; }`,
+      "Inner.ts": `"use client"; import { dep } from "#dep"; export const inner = () => dep;`,
+      "routes/index.ts": `
+        import { ssrManifest } from "bun:bake/server";
+        import * as Outer from "../Outer";
+        import * as Inner from "../Inner";
+        export default async () => {
+          // Load the SSR copy of Inner.ts as a framework does.
+          const { specifier, name } = ssrManifest["Inner.ts"].inner;
+          const inner = (await import(specifier))[name];
+          return new Response(typeof Outer.Outer + " " + typeof Inner.inner + " " + inner());
+        };
+      `,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals("object object ssr 1");
+      await dev.write("dep-ssr.ts", `export const dep = ;`, { errors: null });
+      expect((await dev.fetch("/")).status).toBe(500);
+      await dev.write("dep-ssr.ts", `export const dep = "ssr 2";`, { errors: null });
+      await dev.fetch("/").equals("object object ssr 2");
+    },
+  });
+}
 devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),

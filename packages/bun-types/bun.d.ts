@@ -2750,9 +2750,19 @@ declare module "bun" {
     /**
      * Does the file exist?
      *
-     * This returns true for regular files and FIFOs. It returns false for
-     * directories. A race condition can occur where the file is deleted or
-     * renamed after this is called but before you open it.
+     * This returns true for every kind of file except a directory: regular
+     * files, FIFOs, sockets, and devices such as `/dev/null`. It returns
+     * false for directories and for a path that does not exist. A true
+     * answer does not mean that a read succeeds or ends: a socket cannot be
+     * opened, and a device may never end. To accept only regular files, use
+     * `(await file.stat()).isFile()`. `stat()` rejects for a missing path.
+     *
+     * The same rule applies to a file descriptor. `Bun.stdin.exists()` is
+     * true on a terminal, on `/dev/null`, and on a pipe or a socket. To find
+     * out whether stdin is a terminal, use `process.stdin.isTTY`.
+     *
+     * A race condition can occur where the file is deleted or renamed after
+     * this is called but before you open it.
      *
      * This does a system call to check if the file exists, which can be
      * slow.

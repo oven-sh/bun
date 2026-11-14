@@ -126,19 +126,20 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 && self.f.is_erased_statement(statement);
         };
         let is_transpiled = self.options.compiles && find_transpiled_mark(self.lx.src).is_none();
-        let raw = match (is_of_file, is_transpiled) {
-            (true, true) => self.f.value_read_as_directive(expr),
-            // As the bundler reads it: the string is the first token, and types may follow it.
-            (false, true) => {
-                let text = self.f.skip_type_assertions(expr);
-                match self.f.exprs.get(text.idx()) {
-                    Some(it) if it.pos == start => self.text_of_directive(text),
-                    _ => None,
-                }
-            }
-            (_, false) => self.text_of_directive(expr),
+        // As the bundler reads it: the string is the first token, and types may follow it.
+        let text = match is_transpiled {
+            true => self.f.skip_type_assertions(expr),
+            false => expr,
         };
-        let Some(raw) = raw else {
+        if self
+            .f
+            .exprs
+            .get(text.idx())
+            .is_none_or(|it| it.pos != start)
+        {
+            return false;
+        }
+        let Some(raw) = self.text_of_directive(text) else {
             return false;
         };
         if let Some(it) = self.f.stmts.get_mut(statement.idx()) {

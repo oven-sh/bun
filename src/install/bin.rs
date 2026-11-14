@@ -1491,19 +1491,14 @@ impl<'a> Linker<'a> {
         if rel_parent.is_empty() {
             return Some(false);
         }
-        let package_dir_fd = match sys::open_dir_absolute(package_dir_bytes) {
-            Ok(fd) => fd,
-            Err(_) => return Some(true),
+        let Ok(dir) = sys::open_dir_absolute(package_dir_bytes).map(sys::Dir::from_fd) else {
+            return Some(true);
         };
         let mut rel_buf = path::path_buffer_pool::get();
         let rel_z = resolve_path::z(rel_parent, &mut *rel_buf);
-        let opened = sys::openat2_beneath(package_dir_fd, rel_z, sys::O::PATH | sys::O::CLOEXEC, 0);
-        let _ = sys::close(package_dir_fd);
-        match opened {
-            Ok(fd) => {
-                let _ = sys::close(fd);
-                Some(false)
-            }
+        let opened = sys::openat2_beneath(dir.fd(), rel_z, sys::O::PATH | sys::O::CLOEXEC, 0);
+        match opened.map(sys::Dir::from_fd) {
+            Ok(_) => Some(false),
             Err(err) => match err.get_errno() {
                 sys::Errno::ENOSYS
                 | sys::Errno::EPERM

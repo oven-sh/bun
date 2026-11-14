@@ -4228,11 +4228,7 @@ fn transpile_file<const DATA_ONLY: bool>(
 
     // Create a fresh parse log.
     // Note: per §Allocators the explicit allocator threads are dropped.
-    let log = bun_ast::Log::init();
-    // Note: a scopeguard so every `return null` path still frees the msg vec.
-    let mut log = scopeguard::guard(log, |mut l| {
-        l.msgs.clear();
-    });
+    let mut log = bun_ast::Log::init();
 
     let _specifier = specifier.to_utf8();
     let referrer_slice = referrer.to_utf8();
@@ -4457,7 +4453,7 @@ fn transpile_file<const DATA_ONLY: bool>(
         specifier: lr.specifier,
         referrer: referrer_slice.slice(),
         input_specifier: specifier,
-        log: &raw mut *log,
+        log: &raw mut log,
         virtual_source: lr.virtual_source,
         global_object: global,
         flags: FetchFlags::Transpile,

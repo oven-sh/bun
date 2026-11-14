@@ -389,7 +389,7 @@ pub enum Above {
 
 /// For `bun lint` and `bun fmt`, which have not found all that is for them in the working directory: has `tool` read the
 /// bunfig.toml of each directory above it, from the nearest, for as long as it wants the next. It is called with the file and
-/// its path from the working directory. Nothing else in these files counts.
+/// its path from the working directory. Nothing else in these files counts, but a `telemetry` that turns crash reports off.
 pub fn load_config_above_for_tool(
     cmd: CommandTag,
     ctx: Context<'_>,

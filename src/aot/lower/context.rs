@@ -543,8 +543,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         NeverRun::new(self.hir, self.bound)
     }
 
-    /// `bun test --coverage` turns dead code elimination off on the main thread, also for a file that its report
-    /// leaves out. It still folds and erases what never runs, and a Worker still removes it.
+    /// Under `bun test --coverage` the main thread removes no never-run code, from a file that the report leaves out either.
     #[inline]
     pub(in crate::lower) fn keeps_never_run_code(&self) -> bool {
         self.inputs.options.counts_executions

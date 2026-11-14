@@ -6,9 +6,9 @@ import { inspect } from "./client/inspect";
 import { hasFatalError, onRuntimeError, onServerErrorPayload } from "./client/overlay";
 import {
   addMapping,
-  derefMapping,
   clearDisconnectedSourceMaps,
   configureSourceMapGCSize,
+  derefMapping,
   getKnownSourceMaps,
   SourceMapURL,
 } from "./client/stack-trace";

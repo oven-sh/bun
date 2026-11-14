@@ -263,7 +263,7 @@ declare module "vitest" {
   export interface VitestUtils extends VitestSharedUtils {
     /**
      * Creates a mock function or class that runs `implementation` when called. Without an implementation, it returns
-     * `undefined`.
+     * `undefined`. If `implementation` is already a mock, `vi.fn()` returns that mock and creates no new one.
      */
     fn<T extends Procedure | Constructable = Procedure>(implementation?: T): Mock<T>;
     /**

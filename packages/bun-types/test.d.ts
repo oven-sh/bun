@@ -411,7 +411,8 @@ declare module "bun:test" {
    */
   export const vi: {
     /**
-     * Create a mock function
+     * Create a mock function. If the argument is already a mock, `vi.fn()` returns that mock and creates no new one,
+     * as in Vitest. `jest.fn()` and `mock()` create a new mock that calls it.
      */
     fn: typeof jest.fn;
     /**

@@ -120,6 +120,8 @@ pub struct Subprocess<'a> {
     /// Weak observer of the stdin `FileSink` — holds no ownership/ref. `onStdinDestroyed`
     /// nulls this before the sink is freed, so it is never dereferenced after the sink dies.
     pub(crate) weak_file_sink_stdin_ptr: Cell<Option<NonNull<FileSink>>>,
+    /// Held for the stdin `FileSink`, which points back here.
+    pub(crate) stdin_sink_ref: JsCell<Option<RefPtr<Subprocess<'a>>>>,
     /// Follows the `signal` option until `clear_abort_signal`; armed only in a
     /// `Bun.ModuleGraph` context, which kills it when disposed (children
     /// of the realm's own script are the process auto-killer's).
@@ -200,13 +202,12 @@ impl<'a> Subprocess<'a> {
         self.flags.set(v);
     }
 
-    /// Intrusive `ref()`.
-    #[inline]
-    pub fn ref_(&self) {
-        // SAFETY: `&self` → live `*const Self`; `RefCount::ref_` only touches
-        // the intrusive counter via `addr_of_mut!`.
-        unsafe { RefCount::<Self>::ref_(self.as_ctx_ptr()) }
+    pub(crate) fn hold_for_stdin_sink(&self) {
+        // SAFETY: `self` is the live heap allocation.
+        let this = unsafe { RefPtr::init_ref(self.as_ctx_ptr()) };
+        self.stdin_sink_ref.set(Some(this));
     }
+
     /// Intrusive `deref()`.
     /// May free `self`; do not use `self` after calling.
     #[inline]
@@ -225,7 +226,6 @@ bitflags::bitflags! {
         const IS_SYNC                      = 1 << 0;
         const HAS_STDIN_DESTRUCTOR_CALLED  = 1 << 2;
         const FINALIZED                    = 1 << 3;
-        const DEREF_ON_STDIN_DESTROYED     = 1 << 4;
         const IS_STDIN_A_READABLE_STREAM   = 1 << 5;
         /// Terminal was created inline by spawn (vs. an existing Terminal passed
         /// by the caller). Owned terminals are closed when the subprocess exits
@@ -658,20 +658,13 @@ impl Subprocess<'_> {
     }
 
     pub(crate) fn on_stdin_destroyed(&self) {
-        let must_deref = self.flags.get().contains(Flags::DEREF_ON_STDIN_DESTROYED);
-        self.update_flags(|f| {
-            f.remove(Flags::DEREF_ON_STDIN_DESTROYED);
-            f.insert(Flags::HAS_STDIN_DESTRUCTOR_CALLED);
-        });
+        let _stdin_sink_ref = self.stdin_sink_ref.replace(None);
+        self.update_flags(|f| f.insert(Flags::HAS_STDIN_DESTRUCTOR_CALLED));
         self.weak_file_sink_stdin_ptr.set(None);
 
         if !self.flags.get().contains(Flags::FINALIZED) {
             // otherwise update the pending activity flag
             self.update_has_pending_activity();
-        }
-
-        if must_deref {
-            self.deref();
         }
     }
 
@@ -967,8 +960,7 @@ impl Subprocess<'_> {
                 // shared `pipe: &FileSink` deref above is sufficient.
                 pipe.source.with_mut(|s| s.clear());
             }
-            let must_deref = self.flags.get().contains(Flags::DEREF_ON_STDIN_DESTROYED);
-            self.update_flags(|f| f.remove(Flags::DEREF_ON_STDIN_DESTROYED));
+            let _stdin_sink_ref = self.stdin_sink_ref.replace(None);
 
             // `pipe_ptr` is live (see `pipe` borrow above) and is the canonical
             // `*mut FileSink` from `FileSink::create*`; pass it straight through —
@@ -977,10 +969,6 @@ impl Subprocess<'_> {
             // SAFETY: `pipe_ptr` is the canonical heap pointer with write+dealloc
             // provenance, held live by the `Writable::Pipe`/cache +1.
             unsafe { FileSink::on_attached_process_exit(pipe_ptr.as_ptr(), status) };
-
-            if must_deref {
-                self.deref();
-            }
         }
 
         let mut did_update_has_pending_activity = false;
@@ -1176,9 +1164,7 @@ impl Subprocess<'_> {
         );
         self.finalize_streams();
 
-        // `Writable::init()` took a +1 (`subprocess.ref_()`, guarded by
-        // `DEREF_ON_STDIN_DESTROYED`) for the stdin pipe back-pointer. The
-        // balancing `deref()` lives in `on_stdin_destroyed()`, reached either
+        // `stdin_sink_ref` is released in `on_stdin_destroyed()`, reached either
         // via the FileSink's signal (which `Writable::finalize` — called from
         // `close_io` above when the `.stdin` getter never ran — clears *before*
         // releasing the pipe) or via the JSFileSink's `m_onDestroy` callback
@@ -1189,11 +1175,8 @@ impl Subprocess<'_> {
         // the JSFileSink may be swept after us in the same
         // `lastChanceToFinalize` pass and would otherwise call
         // `on_stdin_destroyed()` against a freed Box.
-        if self.flags.get().contains(Flags::DEREF_ON_STDIN_DESTROYED)
-            && !self.has_called_getter(ObservableGetter::Stdin)
-        {
-            self.update_flags(|f| f.remove(Flags::DEREF_ON_STDIN_DESTROYED));
-            self.deref();
+        if !self.has_called_getter(ObservableGetter::Stdin) {
+            self.stdin_sink_ref.set(None);
         }
 
         let exit_handler_pending = self.process().exit_handler.is_some();

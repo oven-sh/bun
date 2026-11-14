@@ -83,6 +83,12 @@ pub(crate) struct Terminal {
     /// Reader for receiving data from the terminal
     reader: JsCell<IOReader>,
 
+    /// Held until the writer closes.
+    writer_ref: JsCell<Option<bun_ptr::RefPtr<Terminal>>>,
+
+    /// Held until the reader is done.
+    reader_ref: JsCell<Option<bun_ptr::RefPtr<Terminal>>>,
+
     /// The JS wrapper, which roots the callbacks in its cached slots. Strong
     /// until no callback can fire, then weak (`maybe_downgrade_after_eof`).
     this_value: JsCell<JsRef>,
@@ -116,8 +122,6 @@ bitflags::bitflags! {
         const FINALIZED      = 1 << 1;
         const RAW_MODE       = 1 << 2;
         const READER_STARTED = 1 << 3;
-        const READER_DONE    = 1 << 4;
-        const WRITER_DONE    = 1 << 5;
         /// Set once an inline-created terminal is attached to a spawn; blocks
         /// reuse. Windows: the ConDrv `\Reference` handle is released at spawn.
         /// POSIX: slave_fd is held until first exit (`drain_and_close_slave_fd`).
@@ -326,12 +330,12 @@ impl Terminal {
 
     // ─────────────────────────────────────────────────────────────────────────
 
-    fn ref_(&self) {
-        // SAFETY: `self` derived from a heap-allocated allocation; intrusive
-        // refcount mixin only reads/writes the `ref_count` field via shared
-        // access (Cell), so the &T→*mut cast is sound for `ref_` (no &mut
-        // materialized).
-        unsafe { bun_ptr::RefCount::<Terminal>::ref_(self.as_ctx_ptr()) };
+    fn is_reader_done(&self) -> bool {
+        self.reader_ref.get().is_none()
+    }
+
+    fn is_writer_done(&self) -> bool {
+        self.writer_ref.get().is_none()
     }
 
     /// Hold a ref on `self` for the guard's lifetime (across re-entrant JS).
@@ -339,14 +343,6 @@ impl Terminal {
     fn ref_guard(&self) -> bun_ptr::RefPtr<Self> {
         // SAFETY: `self` is the live heap allocation.
         unsafe { bun_ptr::RefPtr::init_ref(self.as_ctx_ptr()) }
-    }
-
-    fn deref_(&self) {
-        // SAFETY: `self` derived from a heap-allocated allocation; the RefCount
-        // mixin's `deref` reads/writes `ref_count` via Cell and drops the Box
-        // iff the count hits zero. Callers must treat `self` as
-        // potentially-freed on return (always tail-position in this file).
-        unsafe { bun_ptr::RefCount::<Terminal>::deref(self.as_ctx_ptr()) };
     }
 
     /// Opens the PTY and starts reading. The caller gives the returned ref to the JS wrapper, then calls [`attach`](Self::attach).
@@ -378,6 +374,8 @@ impl Terminal {
             global_this: bun_ptr::BackRef::new(global_object),
             writer: JsCell::new(IOWriter::default()),
             reader: JsCell::new(IOReader::init::<Terminal>()),
+            writer_ref: JsCell::new(None),
+            reader_ref: JsCell::new(None),
             this_value: JsCell::new(JsRef::empty()),
             flags: Cell::new(Flags::empty()),
             writer_has_buffered: Cell::new(false),
@@ -401,10 +399,9 @@ impl Terminal {
             .with_mut(|w| w.start(pty_result.write.fd(), true))
             .map(|()| pty_result.write.into_raw())
         {
-            sys::Result::Ok(_) => terminal.ref_(),
+            sys::Result::Ok(_) => terminal.writer_ref.set(Some(terminal.clone())),
             sys::Result::Err(_) => {
                 // The writer took neither its ref nor the fd, and the reader never started.
-                terminal.update_flags(|f| f.insert(Flags::WRITER_DONE));
                 drop(pty_result.read);
                 terminal.close_internal();
                 return Err(InitError::WriterStartFailed);
@@ -414,7 +411,7 @@ impl Terminal {
         // Start reader with the read fd. The reader's ref is taken first: when
         // the poll registration fails, POSIX `start()` calls `on_reader_error`,
         // which releases that ref, and still returns Ok.
-        terminal.ref_();
+        terminal.reader_ref.set(Some(terminal.clone()));
         match terminal
             .reader
             .with_mut(|r| r.start(pty_result.read.fd(), true))
@@ -422,10 +419,10 @@ impl Terminal {
         {
             sys::Result::Err(_) => {
                 // No callback ran: the reader took neither the fd nor its ref.
-                terminal.deref_();
+                terminal.reader_ref.set(None);
                 return Err(terminal.fail_reader_start());
             }
-            sys::Result::Ok(_) if terminal.flags.get().contains(Flags::READER_DONE) => {
+            sys::Result::Ok(_) if terminal.is_reader_done() => {
                 return Err(terminal.fail_reader_start());
             }
             sys::Result::Ok(_) => {
@@ -449,7 +446,7 @@ impl Terminal {
         // is the raw re-entrancy-safe entry (its dispatch runs user JS).
         unsafe { IOReader::read(terminal.reader.as_ptr()) };
         // The first read can end the reader too: EOF, a read error, or a failed re-arm.
-        if terminal.flags.get().contains(Flags::READER_DONE) {
+        if terminal.is_reader_done() {
             return Err(terminal.fail_reader_start());
         }
 
@@ -622,7 +619,7 @@ impl Terminal {
         // Both reader callbacks below re-enter user JS and may deref; hold a
         // +1 so `self` stays live for the trailing field accesses.
         let guard = self.ref_guard();
-        if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
+        if flags.contains(Flags::READER_STARTED) && !self.is_reader_done() {
             // SAFETY: single JS thread; re-entrant user JS (data callback may
             // call `terminal.close()`) is handled by `read`'s raw dispatch.
             unsafe { IOReader::read(self.reader.as_ptr()) };
@@ -635,7 +632,7 @@ impl Terminal {
         // Linux) instead of on the next tick when nothing may wake the loop.
         // A grandchild holding the slave keeps this at EAGAIN and re-arms.
         let flags = self.flags.get();
-        if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
+        if flags.contains(Flags::READER_STARTED) && !self.is_reader_done() {
             // SAFETY: same as the `read()` call above.
             unsafe { IOReader::read(self.reader.as_ptr()) };
         }
@@ -716,7 +713,7 @@ impl Terminal {
                 // is async (uv_close) and the pipe HANDLE is still open. Conhost sees
                 // broken-pipe once libuv's deferred close runs.
                 let flags = self.flags.get();
-                if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
+                if flags.contains(Flags::READER_STARTED) && !self.is_reader_done() {
                     self.reader.with_mut(|r| r.close());
                 }
             }
@@ -1385,7 +1382,7 @@ impl Terminal {
 
         // The write side is gone, so queuing these bytes would only re-root the
         // wrapper below for a drain that cannot come.
-        if self.flags.get().contains(Flags::WRITER_DONE) {
+        if self.is_writer_done() {
             return Ok(input_len);
         }
 
@@ -1398,7 +1395,7 @@ impl Terminal {
             (r, w.has_pending_data())
         });
         // The writer can close inside `write()` and keep the bytes; no drain follows them.
-        let writer_done = self.flags.get().contains(Flags::WRITER_DONE);
+        let writer_done = self.is_writer_done();
         let has_pending = has_pending && !writer_done;
         self.writer_has_buffered.set(has_pending);
         if has_pending {
@@ -1626,7 +1623,7 @@ impl Terminal {
             }
             // Leave the reader open; onReaderDone closes it on EOF.
             let flags = self.flags.get();
-            if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
+            if flags.contains(Flags::READER_STARTED) && !self.is_reader_done() {
                 return;
             }
         }
@@ -1654,12 +1651,8 @@ impl Terminal {
     // IOWriter callbacks
     fn on_writer_close(&self) {
         bun_output::scoped_log!(Terminal, "onWriterClose");
-        if !self.flags.get().contains(Flags::WRITER_DONE) {
-            self.update_flags(|f| f.insert(Flags::WRITER_DONE));
-            // Must run before the deref below, which may free `self`.
+        if let Some(_writer_ref) = self.writer_ref.replace(None) {
             self.maybe_downgrade_after_eof();
-            // Release writer's ref
-            self.deref_();
         }
     }
 
@@ -1727,14 +1720,13 @@ impl Terminal {
         self.on_reader_finished(1);
     }
 
-    /// Shared tail of `on_reader_done`/`on_reader_error`: claim `READER_DONE`
+    /// Shared tail of `on_reader_done`/`on_reader_error`: take `reader_ref`
     /// before the exit callback so re-entry (`terminal.close()` from the
-    /// callback) sees the flag and no-ops, then release the reader's +1.
+    /// callback) finds it gone and no-ops.
     fn on_reader_finished(&self, exit_code: i32) {
-        if self.flags.get().contains(Flags::READER_DONE) {
+        let Some(_reader_ref) = self.reader_ref.replace(None) else {
             return;
-        }
-        self.update_flags(|f| f.insert(Flags::READER_DONE));
+        };
         #[cfg(unix)]
         self.finish_io_after_eof();
         // Skip JS interactions if already finalized (happens when close() is called during finalize)
@@ -1745,7 +1737,6 @@ impl Terminal {
         // it from here on.
         self.update_flags(|f| f.insert(Flags::EXIT_DISPATCHED));
         self.maybe_downgrade_after_eof();
-        self.deref_();
     }
 
     /// Finish both ends of the PTY once the reader is done, so `exit` is the
@@ -1759,8 +1750,8 @@ impl Terminal {
         if !self.reader.get().is_done() {
             self.reader.with_mut(|r| r.close());
         }
-        // `end()` dispatches `on_writer_close`, which sets `WRITER_DONE`.
-        if !self.flags.get().contains(Flags::WRITER_DONE) {
+        // `end()` dispatches `on_writer_close`.
+        if !self.is_writer_done() {
             self.writer.with_mut(|w| w.end());
         }
     }
@@ -1777,7 +1768,7 @@ impl Terminal {
         if !flags.contains(Flags::EXIT_DISPATCHED) || flags.contains(Flags::FINALIZED) {
             return;
         }
-        if !flags.contains(Flags::WRITER_DONE) && self.writer_has_buffered.get() {
+        if !self.is_writer_done() && self.writer_has_buffered.get() {
             return;
         }
         self.this_value.with_mut(|v| v.downgrade());
@@ -1889,8 +1880,6 @@ impl Terminal {
 impl Drop for Terminal {
     fn drop(&mut self) {
         bun_output::scoped_log!(Terminal, "deinit");
-        // Set reader/writer done flags to prevent extra deref calls in closeInternal
-        self.update_flags(|f| f.insert(Flags::READER_DONE | Flags::WRITER_DONE));
         // Close all FDs if not already closed (handles constructor error paths)
         // closeInternal() checks flags.closed and returns early on subsequent calls,
         // so this is safe even if finalize() already called it

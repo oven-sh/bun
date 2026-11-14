@@ -1264,7 +1264,7 @@ fn spawn_maybe_sync(
         pid_rusage: Cell::new(None),
         // stdin/stdout/stderr are assigned immediately after this literal.
         // `Writable.init()` writes to `subprocess.weak_file_sink_stdin_ptr`,
-        // `subprocess.flags`, and calls `subprocess.ref()` for `.pipe` /
+        // `subprocess.flags` and `subprocess.stdin_sink_ref` for `.pipe` /
         // `.readable_stream` stdin; if called from inside this aggregate
         // initializer those writes are clobbered by the `ref_count`, `flags`,
         // and default `weak_file_sink_stdin_ptr` initializers below.
@@ -1273,6 +1273,7 @@ fn spawn_maybe_sync(
         // tear down unstarted `PipeReader`s (whose `deinit()` asserts
         // `isDone()`).
         stdin: JsCell::new(Writable::Ignore),
+        stdin_sink_ref: JsCell::new(None),
         stdout: JsCell::new(Readable::Ignore),
         stderr: JsCell::new(Readable::Ignore),
         // 1=JS (released in Subprocess::finalize), 2=Process exit handler

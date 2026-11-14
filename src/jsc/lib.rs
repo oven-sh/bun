@@ -510,7 +510,7 @@ pub fn initialize(options: InitializeOptions) {
     // it is handed. JSCInitialize is called exactly once at startup.
     unsafe {
         JSCInitialize(
-            env.as_ptr(),
+            env.as_ptr().cast(),
             env.len(),
             on_jsc_invalid_env_var,
             options.eval_mode,
@@ -528,7 +528,7 @@ pub fn initialize(options: InitializeOptions) {
 pub fn expect_vm_per_thread() {
     let env = bun_sys::environ();
     // SAFETY: `env` borrows the libc `environ` global for the duration of the call.
-    unsafe { JSC__useOptionsForVMPerThread(env.as_ptr(), env.len()) };
+    unsafe { JSC__useOptionsForVMPerThread(env.as_ptr().cast(), env.len()) };
 }
 
 /// Whether this process was launched as `bun -e <code>` / `bun --eval <code>` /

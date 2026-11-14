@@ -106,7 +106,9 @@ const {
   // The Worker constructor secretly takes an extra parameter to provide the node:worker_threads
   // instance. This is so that it can emit the `worker` event on the process with the
   // node:worker_threads instance instead of the Web Worker instance.
-  new (...args: [...ConstructorParameters<typeof globalThis.Worker>, nodeWorker: Worker, evalSource?: string]) => WebWorker,
+  new (
+    ...args: [...ConstructorParameters<typeof globalThis.Worker>, nodeWorker: Worker, evalSource?: string]
+  ) => WebWorker,
 ];
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;

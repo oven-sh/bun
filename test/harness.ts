@@ -86,8 +86,7 @@ export const bunEnv: NodeJS.Dict<string> = {
   // Strip ad-hoc JSC debug options that may be set on CI agents — they leak
   // a "WARNING: failed to parse" line to stderr that breaks snapshot tests.
   JSC_useJIT: undefined,
-  // Bun reads NODE_OPTIONS; an ambient value on the host would leak flags
-  // (or warnings about them) into every spawned test process.
+  // Prevent ambient startup flags from leaking into spawned test processes.
   NODE_OPTIONS: undefined,
   GITHUB_ACTIONS: "false",
   BUN_DEBUG_QUIET_LOGS: "1",
@@ -522,6 +521,7 @@ export class Heap {
   }
 }
 
+
 // ASAN's quarantine pins freed blocks and keeps RSS at peak.
 export function withoutAsanQuarantine(env: NodeJS.Dict<string>): NodeJS.Dict<string> {
   return {
@@ -793,11 +793,7 @@ export function tempDirWithBunTypes(
 ): string & DisposableString & AsyncDisposable {
   const dir = tempDir(basename, filesOrAbsolutePathToCopyFolderFrom);
   fs.mkdirSync(join(String(dir), "node_modules", "@types"), { recursive: true });
-  fs.symlinkSync(
-    join(import.meta.dir, "..", "packages", "bun-types"),
-    join(String(dir), "node_modules", "@types", "bun"),
-    "junction",
-  );
+  fs.symlinkSync(join(import.meta.dir, "..", "packages", "bun-types"), join(String(dir), "node_modules", "@types", "bun"), "junction");
   return dir;
 }
 
@@ -2577,14 +2573,18 @@ export const rss: () => number = process.memoryUsage.rss;
  */
 export function testThatMeasuresOwnMemory(file: string): typeof test {
   if (!isASAN || process.env.ASAN_OPTIONS?.includes("quarantine_size_mb=0")) return test;
-  test("in a child without ASAN's quarantine", async () => {
-    await using child = Bun.spawn({
-      cmd: [bunExe(), "test", "--timeout=270000", file],
-      env: withoutAsanQuarantine(bunEnv),
-      stdio: ["ignore", "inherit", "inherit"],
-    });
-    expect(await child.exited).toBe(0);
-  }, 270_000);
+  test(
+    "in a child without ASAN's quarantine",
+    async () => {
+      await using child = Bun.spawn({
+        cmd: [bunExe(), "test", "--timeout=270000", file],
+        env: withoutAsanQuarantine(bunEnv),
+        stdio: ["ignore", "inherit", "inherit"],
+      });
+      expect(await child.exited).toBe(0);
+    },
+    270_000,
+  );
   return test.skip as typeof test;
 }
 

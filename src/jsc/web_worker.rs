@@ -1193,11 +1193,14 @@ impl WebWorker {
         vm.preload
             .with_mut(|preload| preload.clone_from(&self.preloads));
         vm.worker_preloads.set(self.worker_preloads.clone());
-        vm.worker_eval_preloads.set(self.worker_eval_preloads.clone());
+        vm.worker_eval_preloads
+            .set(self.worker_eval_preloads.clone());
         vm.preload_require_start.set(self.preload_require_start);
         vm.preload_require_count.set(self.preload_require_count);
-        vm.worker_preload_require_start.set(self.worker_preload_require_start);
-        vm.worker_preload_require_count.set(self.worker_preload_require_count);
+        vm.worker_preload_require_start
+            .set(self.worker_preload_require_start);
+        vm.worker_preload_require_count
+            .set(self.worker_preload_require_count);
         vm.worker_eval_mode.set(self.worker_eval_mode);
 
         // Resolve the entry point on the worker thread (the parent only stored

@@ -712,7 +712,7 @@ impl<'a> PackageInstaller<'a> {
             AbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
         let mut is_behind_link = (!lockfile.is_importer_tree_id(tree_id)).then_some(false);
 
-        let pkgs = lockfile.packages.slice();
+        let pkgs = &lockfile.packages;
         let pkg_name_hashes = pkgs.items_name_hash();
         let pkg_metas = pkgs.items_meta();
         let pkg_resolutions_lists = pkgs.items_resolutions();
@@ -1551,7 +1551,7 @@ impl<'a> PackageInstaller<'a> {
         // pointee outlives `'a`; the packages column buffers are not freed for
         // the lifetime of this `PackageInstaller` (only grow, which is why
         // this fn exists — to re-snapshot after growth).
-        let packages = self.lockfile_mut().packages.slice();
+        let packages = &self.lockfile_mut().packages;
         self.metas = bun_ptr::RawSlice::new(packages.items_meta());
         self.names = bun_ptr::RawSlice::new(packages.items_name());
         self.pkg_name_hashes = bun_ptr::RawSlice::new(packages.items_name_hash());

@@ -142,6 +142,60 @@ declare module "bun" {
     }
 
     type LibEmptyOrBunEventTarget = LibDomIsLoaded extends true ? {} : BunEventTarget;
+
+    /** `{}` when lib.dom.d.ts is loaded, so that the declaration of lib.dom is the only one. `Fallback` when it is not. */
+    type LibOrFallback<Fallback> = LibDomIsLoaded extends true ? {} : Fallback;
+
+    /**
+     * `true` when the iteration members of lib.dom are loaded. Before TypeScript 6.0 they are in
+     * lib.dom.iterable.d.ts (`"DOM.Iterable"`), and a project can load lib.dom.d.ts without it.
+     *
+     * `MediaKeyStatusMap` is an interface of lib.dom that gets `entries()` from that file. A
+     * library of polyfills that gives `NodeList` its iteration members does not declare it.
+     */
+    type LibDomIterableIsLoaded = typeof globalThis extends { MediaKeyStatusMap: { prototype: { entries: any } } }
+      ? true
+      : false;
+
+    /**
+     * `{}` when lib.dom.d.ts and its iteration members are loaded. `Fallback` when lib.dom.d.ts is
+     * not loaded, and when it is loaded without its iteration members.
+     */
+    type LibIterableOrFallback<Fallback> = LibDomIsLoaded extends true
+      ? LibDomIterableIsLoaded extends true
+        ? {}
+        : Fallback
+      : Fallback;
+
+    interface FallbackFormData {
+      /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/append) */
+      append(name: string, value: string | Blob): void;
+      append(name: string, value: string): void;
+      append(name: string, blobValue: Blob, filename?: string): void;
+      /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/delete) */
+      delete(name: string): void;
+      /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/get) */
+      get(name: string): Bun.FormDataEntryValue | null;
+      /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/getAll) */
+      getAll(name: string): Bun.FormDataEntryValue[];
+      /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/has) */
+      has(name: string): boolean;
+      /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/set) */
+      set(name: string, value: string | Blob): void;
+      set(name: string, value: string): void;
+      set(name: string, blobValue: Blob, filename?: string): void;
+      forEach(callbackfn: (value: Bun.FormDataEntryValue, key: string, parent: FormData) => void, thisArg?: any): void;
+    }
+
+    interface FallbackFormDataIterable {
+      /** Returns a list of keys in the list. */
+      keys(): IterableIterator<string>;
+      /** Returns a list of values in the list. */
+      values(): IterableIterator<Bun.FormDataEntryValue>;
+      /** Returns an array of key, value pairs for every entry in the list. */
+      entries(): IterableIterator<[string, Bun.FormDataEntryValue]>;
+      [Symbol.iterator](): IterableIterator<[string, Bun.FormDataEntryValue]>;
+    }
   }
 }
 
@@ -1817,28 +1871,10 @@ declare var AbortSignal: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
-interface FormData {
-  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/append) */
-  append(name: string, value: string | Blob): void;
-  append(name: string, value: string): void;
-  append(name: string, blobValue: Blob, filename?: string): void;
-  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/delete) */
-  delete(name: string): void;
-  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/get) */
-  get(name: string): Bun.FormDataEntryValue | null;
-  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/getAll) */
-  getAll(name: string): Bun.FormDataEntryValue[];
-  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/has) */
-  has(name: string): boolean;
-  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/set) */
-  set(name: string, value: string | Blob): void;
-  set(name: string, value: string): void;
-  set(name: string, blobValue: Blob, filename?: string): void;
-  forEach(callbackfn: (value: Bun.FormDataEntryValue, key: string, parent: FormData) => void, thisArg?: any): void;
-  keys(): IterableIterator<string>;
-  values(): IterableIterator<string>;
-  entries(): IterableIterator<[string, string]>;
-}
+interface FormData
+  extends
+    Bun.__internal.LibOrFallback<Bun.__internal.FallbackFormData>,
+    Bun.__internal.LibIterableOrFallback<Bun.__internal.FallbackFormDataIterable> {}
 declare var FormData: Bun.__internal.UseLibDomIfAvailable<"FormData", { prototype: FormData; new (): FormData }>;
 
 interface EventSource extends Bun.__internal.LibEmptyOrEventSource {}

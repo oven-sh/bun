@@ -902,37 +902,61 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  /**
+   * Type-checks one source file against the packed bun-types with the given `lib`, under the
+   * tsconfig that `bun init` writes.
+   *   `typescript`: the directory of the compiler. Without it, the one of the fixture.
+   *   `libCheck`: the declaration files are checked too (`skipLibCheck` is off).
+   */
+  async function typeCheckSource(
+    name: string,
+    lib: string[],
+    source: string,
+    {
+      typescript = join(BASE_FIXTURE_DIR, "node_modules", "typescript"),
+      libCheck = false,
+    }: { typescript?: string; libCheck?: boolean } = {},
+  ) {
+    const checkDir = join(TEMP_DIR, name);
+    const tsconfig = structuredClone(sourceTsconfig);
+    tsconfig.include = ["check.ts"];
+    tsconfig.compilerOptions.lib = lib;
+    tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
+    if (libCheck) {
+      tsconfig.compilerOptions.skipLibCheck = false;
+      tsconfig.compilerOptions.skipDefaultLibCheck = false;
+    }
+    await mkdir(checkDir, { recursive: true });
+    await makeTree(checkDir, {
+      "tsconfig.json": JSON.stringify(tsconfig, null, 2),
+      "check.ts": source,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(typescript, "bin", "tsc"), "-p", "."],
+      env: bunEnv,
+      cwd: checkDir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode };
+  }
+
+  /** Expects `typeCheckSource` to report no diagnostic. */
+  async function checkSource(...args: Parameters<typeof typeCheckSource>) {
+    const { stdout, stderr, exitCode } = await typeCheckSource(...args);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(0);
+  }
+
   // Runs on debug builds too, same as the Bun.mmap block above.
   describe("Event and EventTarget", () => {
-    async function checkEventFixture(name: string, lib: string[], source: string) {
-      const checkDir = join(TEMP_DIR, name);
-      const tsconfig = structuredClone(sourceTsconfig);
-      tsconfig.include = ["event-check.ts"];
-      tsconfig.compilerOptions.lib = lib;
-      tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
-      await mkdir(checkDir, { recursive: true });
-      await makeTree(checkDir, {
-        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
-        "event-check.ts": source,
-      });
-
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
-        env: bunEnv,
-        cwd: checkDir,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-      expect(stderr.trim()).toBe("");
-      expect(stdout.trim()).toBe("");
-      expect(exitCode).toBe(0);
-    }
-
     test("lib.dom's composedPath() declaration wins when lib.dom is loaded", async () => {
-      await checkEventFixture(
+      await checkSource(
         "event-lib-dom-check",
         ["ESNext", "DOM"],
         `// lib.dom declares composedPath(): EventTarget[]. The Node-style tuple
@@ -943,11 +967,154 @@ describe("@types/bun integration test", () => {
     });
 
     test("the Node-style composedPath() tuple applies without lib.dom", async () => {
-      await checkEventFixture(
+      await checkSource(
         "event-no-lib-dom-check",
         ["ESNext"],
         `declare const e: Event;
          export const composed: [EventTarget?] = e.composedPath();`,
+      );
+    });
+  });
+
+  // With lib.dom loaded, bun-types used to merge its own `values()` and `entries()` into the
+  // `FormData` of lib.dom, and a call got the signature of bun-types (#27194).
+  // Runs on debug builds too, same as the Bun.mmap block above, but for the cases of TypeScript 5.9.
+  // Each case has a folder of its own, so the cases run at the same time.
+  describe("FormData", () => {
+    test.concurrent("has the types of lib.dom when lib.dom is loaded", async () => {
+      await checkSource(
+        "formdata-lib-dom-check",
+        ["ESNext", "DOM"],
+        `declare const form: FormData;
+         for (const [name, value] of form.entries()) {
+           const entry: [string, FormDataEntryValue] = [name, value];
+           if (value instanceof File) value.lastModified;
+         }
+         for (const value of form.values()) if (value instanceof File) value.lastModified;
+         for (const [name, value] of form) if (value instanceof File) name + value.name;
+         // An iterator of lib.dom has the iterator helpers. A signature of bun-types beside the
+         // one of lib.dom is tried first, and its iterator does not have them.
+         export const values = form.values().map(value => value);`,
+      );
+    });
+
+    test.concurrent("has the types of Bun without lib.dom", async () => {
+      await checkSource(
+        "formdata-no-lib-dom-check",
+        ["ESNext"],
+        `declare const form: FormData;
+         for (const [name, value] of form.entries()) {
+           const entry: [string, Bun.FormDataEntryValue] = [name, value];
+           if (value instanceof File) value.lastModified;
+         }
+         for (const value of form.values()) if (typeof value !== "string") value.lastModified;
+         for (const [name, value] of form) if (value instanceof File) name + value.name;
+         export {};`,
+      );
+    });
+
+    // The iteration members have a gate of their own. It is open only when lib.dom is loaded
+    // too: a global that a project declares without lib.dom does not take them away.
+    test.concurrent("is iterable without lib.dom when a project declares a global of lib.dom.iterable", async () => {
+      await checkSource(
+        "formdata-stray-global-check",
+        ["ESNext"],
+        `declare global {
+           var NodeList: any;
+           var MediaKeyStatusMap: any;
+         }
+         declare const form: FormData;
+         for (const [name, value] of form) if (value instanceof File) name + value.name;
+         for (const key of form.keys()) key.toUpperCase();
+         declare const headers: Headers;
+         for (const [name, value] of headers) name + value;
+         for (const [name, value] of headers.entries()) name + value;
+         for (const key of headers.keys()) key.toUpperCase();
+         export {};`,
+      );
+    });
+
+    // Before TypeScript 6.0 the iteration members of lib.dom are in lib.dom.iterable.d.ts. A
+    // project that loads "DOM" without "DOM.Iterable" gets them from bun-types. This is the one
+    // state in which lib.dom declares the interface and a base of bun-types is not empty, so
+    // the declaration files are checked too. Release builds only: the compiler is JavaScript.
+    describe.skipIf(isDebug)("with the lib.dom of TypeScript 5.9 and no DOM.Iterable", () => {
+      let typescript: Promise<string> | undefined;
+      const typescript59 = () =>
+        (typescript ??= (async () => {
+          const directory = join(TEMP_DIR, "typescript-5.9");
+          await mkdir(directory, { recursive: true });
+          await makeTree(directory, { "package.json": JSON.stringify({ name: "typescript-5.9", private: true }) });
+          await $`cd ${directory} && ${bunExe()} add typescript@5.9.3`.env(bunEnv).quiet();
+          return join(directory, "node_modules", "typescript");
+        })());
+
+      const loops = `declare const form: FormData;
+         for (const [name, value] of form) if (value instanceof File) name + value.name;
+         for (const value of form.values()) if (value instanceof File) value.lastModified;
+         for (const key of form.keys()) key.toUpperCase();
+         declare const headers: Headers;
+         for (const [name, value] of headers.entries()) name + value;
+         for (const [name, value] of headers) name + value;
+         export {};`;
+
+      test.concurrent("a FormData and a Headers are iterable", async () => {
+        await checkSource("formdata-dom-without-iterable-check", ["ESNext", "DOM"], loops, {
+          typescript: await typescript59(),
+          libCheck: true,
+        });
+      });
+
+      // A library of polyfills gives NodeList its iteration members. That does not say that
+      // lib.dom.iterable.d.ts is loaded.
+      test.concurrent("they stay iterable when a project gives NodeList its iteration members", async () => {
+        await checkSource(
+          "formdata-dom-with-node-list-entries-check",
+          ["ESNext", "DOM"],
+          `declare global {
+             interface NodeList {
+               entries(): IterableIterator<[number, Node]>;
+             }
+           }
+           ${loops}`,
+          { typescript: await typescript59(), libCheck: true },
+        );
+      });
+    });
+
+    // What the gate costs. An own member of an interface hides the member of a base. So
+    // without lib.dom, a member that a project declares again in `declare global` is the only
+    // signature of that member. With lib.dom loaded it is one overload more.
+    test.concurrent("an overload that a project adds is one more with lib.dom", async () => {
+      await checkSource(
+        "formdata-augmented-lib-dom-check",
+        ["ESNext", "DOM"],
+        `declare global {
+           interface FormData {
+             get(name: string, index: number): string;
+           }
+         }
+         declare const form: FormData;
+         export const value: FormDataEntryValue | null = form.get("name");`,
+      );
+    });
+
+    test.concurrent("a member that a project declares again replaces the gated member without lib.dom", async () => {
+      await checkSource(
+        "formdata-augmented-check",
+        ["ESNext"],
+        `declare global {
+           // Some versions of TypeScript report that this member is not assignable to the gated one.
+           // @ts-ignore
+           interface FormData {
+             get(name: string, index: number): string;
+             entries(): IterableIterator<[string, string]>;
+           }
+         }
+         declare const form: FormData;
+         // @ts-expect-error The signature of bun-types is gone: a call with one argument is an error.
+         form.get("name");
+         export const pairs: IterableIterator<[string, string]> = form.entries();`,
       );
     });
   });
@@ -1451,7 +1618,7 @@ describe("@types/bun integration test", () => {
         },
         {
           code: 2353,
-          line: "globals.ts:307:5",
+          line: "globals.ts:322:5",
           message: "Object literal may only specify known properties, and 'headers' does not exist in type 'string[]'.",
         },
         {

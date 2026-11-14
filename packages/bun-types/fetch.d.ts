@@ -41,6 +41,9 @@ declare module "bun" {
       set(name: string, value: string): void;
       getSetCookie(): string[];
       forEach(callbackfn: (value: string, key: string, iterable: UndiciHeaders) => void, thisArg?: unknown): void;
+    }
+
+    interface FallbackHeadersIterable {
       keys(): ReturnType<UndiciHeaders["keys"]>;
       values(): ReturnType<UndiciHeaders["values"]>;
       entries(): ReturnType<UndiciHeaders["entries"]>;
@@ -67,7 +70,7 @@ declare module "bun" {
           headers?: Bun.HeadersInit | undefined;
         };
 
-    interface BunHeadersOverride extends LibOrFallbackHeaders {
+    interface BunHeadersOverride extends LibOrFallbackHeaders, LibIterableOrFallback<FallbackHeadersIterable> {
       /**
        * Converts {@link Headers} to a plain JavaScript object.
        *

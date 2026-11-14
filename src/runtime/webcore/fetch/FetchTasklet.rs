@@ -22,7 +22,6 @@ use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional};
 use bun_ptr::{AliasableBox, RefPtr};
-use bun_sys::FdExt;
 use bun_threading::{Mutex, MutexGuard};
 use bun_url::URL as ZigURL;
 
@@ -218,7 +217,11 @@ pub struct FetchTasklet {
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum HTTPRequestBody {
     AnyBlob(AnyBlob),
-    Sendfile(http::SendFile),
+    Sendfile {
+        window: http::SendFile,
+        /// Owns `window.fd`.
+        _file: bun_sys::File,
+    },
     ReadableStream(ReadableStreamStrong),
 }
 
@@ -242,22 +245,6 @@ impl HTTPRequestBody {
         match self {
             HTTPRequestBody::AnyBlob(blob) => blob.slice(),
             _ => b"",
-        }
-    }
-
-    pub(crate) fn detach(&mut self) {
-        match self {
-            HTTPRequestBody::AnyBlob(blob) => blob.detach(),
-            HTTPRequestBody::ReadableStream(stream) => {
-                stream.deinit();
-            }
-            HTTPRequestBody::Sendfile(sendfile) => {
-                if sendfile.offset.max(sendfile.remain) > 0 {
-                    sendfile.fd.close();
-                }
-                sendfile.offset = 0;
-                sendfile.remain = 0;
-            }
         }
     }
 
@@ -329,7 +316,7 @@ impl HTTPRequestBody {
         match self {
             HTTPRequestBody::AnyBlob(blob) => blob.size() > 0,
             HTTPRequestBody::ReadableStream(stream) => stream.has(),
-            HTTPRequestBody::Sendfile(_) => true,
+            HTTPRequestBody::Sendfile { .. } => true,
         }
     }
 }
@@ -353,7 +340,14 @@ impl Drop for FetchTasklet {
     fn drop(&mut self) {
         bun_output::scoped_log!(FetchTasklet, "deinit");
         self.ref_count.assert_no_refs();
-        self.clear_data();
+        // It borrows `_url_proxy_buffer`, `unix_socket_path`, `request_headers` and `request_body`.
+        self.http = None;
+        self.response.clear();
+        self.native_response.set(None);
+        self.clear_stream_handlers();
+        self.fetch_session = None;
+        self.clear_abort_signal();
+        self.clear_sink();
     }
 }
 
@@ -455,27 +449,6 @@ impl FetchTasklet {
             // synchronises with it through the buffer's mutex.
             buffer.clear_drain_callback();
         }
-    }
-
-    fn clear_data(&mut self) {
-        bun_output::scoped_log!(FetchTasklet, "clearData ");
-        // `http.client` borrows `_url_proxy_buffer` / `unix_socket_path` / `request_headers`.
-        self.http = None;
-        self.response.clear();
-        self.native_response.set(None);
-
-        self.clear_stream_handlers();
-
-        // Always detach request_body regardless of type.
-        // When request_body is a ReadableStream, startRequestStream() hands
-        // the stream off to `assign_to_stream`, so FetchTasklet's reference
-        // becomes redundant and must be released to avoid leaks.
-        self.request_body.detach();
-
-        self.fetch_session = None;
-        self.clear_abort_signal();
-        // Clear the sink only after the requested ended otherwise we would potentialy lose the last chunk
-        self.clear_sink();
     }
 
     /// `HTTPClientResultCallback::release_at_shutdown` for `FetchTasklet`.
@@ -1931,7 +1904,7 @@ impl FetchTasklet {
         // dereferenced. `'static`: `http` is an `AsyncHTTP<'static>` that borrows (headers_buf,
         // request_body, unix_socket_path) FetchTasklet-owned storage. NOT process-lifetime:
         // `request_headers.buf`, `request_body` and `unix_socket_path` are not reallocated for the
-        // lifetime of the request, and `clear_data` drops the `AsyncHTTP` before it drops them.
+        // lifetime of the request, and `drop` drops the `AsyncHTTP` first.
         let fetch_tasklet: &'static mut FetchTasklet = unsafe { &mut *fetch_tasklet_ptr };
 
         // This task gets queued on the HTTP thread.
@@ -2027,11 +2000,11 @@ impl FetchTasklet {
             .header_progress
             .store(true, Ordering::Relaxed);
 
-        if let HTTPRequestBody::Sendfile(sendfile) = &fetch_tasklet.request_body {
+        if let HTTPRequestBody::Sendfile { window, .. } = fetch_tasklet.request_body {
             debug_assert!(url_is_http);
             debug_assert!(!matches!(fetch_options.proxy, ProxyPolicy::Explicit { .. }));
             fetch_tasklet.http.as_mut().unwrap().request_body =
-                http::HTTPRequestBody::Sendfile(*sendfile);
+                http::HTTPRequestBody::Sendfile(window);
         }
 
         if let Some(signal) = fetch_options.signal {

@@ -37,6 +37,7 @@ const api = path =>
   fetchBuildkite(`https://api.buildkite.com/v2/organizations/${opts.org}/pipelines/${opts.pipeline}/${path}`, {
     token,
     retries: 8,
+    timeoutMs: 60_000,
   });
 
 const isNodeStyle = p =>

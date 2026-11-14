@@ -408,6 +408,17 @@ describe("scripts/buildkite-fetch.mjs fetchBuildkite", () => {
     expect({ waits, hits: server.hits.count }).toEqual({ waits: [1000, 2000, 4000, 8000, 16_000], hits: 6 });
   });
 
+  test("does not ask again after a timeout", async () => {
+    // The server takes the request and never answers.
+    using server = await tcpServer(() => {});
+
+    const { waits, options } = recordWaits();
+    const message: string = await fetchBuildkite(server.url, { ...options, timeoutMs: 1 }).catch(e => e.message);
+    expect(message).toStartWith("TimeoutError");
+    expect(message).toEndWith(` ${server.url}`);
+    expect(waits).toEqual([]);
+  });
+
   test("does not retry a status that a retry cannot fix", async () => {
     using api = logServer(() => Response.json({ message: "Not Found" }, { status: 404 }));
 
@@ -418,7 +429,7 @@ describe("scripts/buildkite-fetch.mjs fetchBuildkite", () => {
   });
 });
 
-describe("scripts/ci-slowest-tests.ts fetchLog", () => {
+describe.concurrent("scripts/ci-slowest-tests.ts fetchLog", () => {
   test("stores a downloaded log in the cache and reads it from there the next time", async () => {
     using cacheDir = tempDir("ci-slowest-cache", {});
     using api = logServer((id, hit) => (hit === 1 ? rateLimited(7) : new Response("the log")));
@@ -484,6 +495,8 @@ describe.skipIf(isWindows)("bun scripts/ci-slowest-tests.ts --json", () => {
   test.concurrent("retries a 429, reports a log that stays missing, and a re-run fetches only that log", async () => {
     let bIsGone = true;
     using api = logServer((id, hit) => {
+      // The script sleeps for real after this 429: 1 s, the shortest wait it has.
+      // This is the one test where the whole script meets a 429, as in the bug report.
       if (id === "a") return hit === 1 ? rateLimited(0) : new Response(oneFileLog("test/a.test.ts", 1000));
       if (id === "b") return bIsGone ? refuse(404) : new Response(oneFileLog("test/b.test.ts", 9000));
       return new Response(oneFileLog("test/c.test.ts", 3000));

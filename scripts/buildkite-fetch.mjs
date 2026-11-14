@@ -16,6 +16,9 @@
  * @property {string} token
  * @property {number} [retries] how many times to ask again
  * @property {number} [maxWaitMs] upper bound for one wait, before the extra second
+ * @property {number} [timeoutMs] upper bound for one request, body included.
+ *   Without it a download takes as long as it needs. Then only the idle timeout
+ *   of the runtime (5 minutes) ends a connection that went silent.
  * @property {(ms: number, reason: string) => Promise<unknown>} [sleep] tests pass a stub
  */
 
@@ -49,21 +52,27 @@ function parseJson(text) {
  * the middle of the body.
  * @param {string} url
  * @param {string} token
+ * @param {number} [timeoutMs]
  * @returns {Promise<Reply>}
  */
-async function request(url, token) {
+async function request(url, token, timeoutMs) {
   let response, text;
   try {
     response = await fetch(url, {
       headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(60_000),
+      signal: timeoutMs === undefined ? undefined : AbortSignal.timeout(timeoutMs),
     });
     text = await response.text();
   } catch (error) {
-    // No complete response: the connection failed or the request timed out.
-    // Node puts the code (`ECONNRESET`) on `cause`.
+    // No complete response. Node puts the code (`ECONNRESET`) on `cause`.
     const code = error?.cause?.code ?? error?.code;
-    return { problem: typeof code === "string" ? code : String(error), retryable: true, waitSeconds: NaN };
+    return {
+      problem: typeof code === "string" ? code : String(error),
+      // A connection that failed or dropped is worth another request. A timeout
+      // is not: the next request has the same time limit.
+      retryable: error?.name !== "TimeoutError",
+      waitSeconds: NaN,
+    };
   }
   if (response.ok) return { text };
   return {
@@ -78,9 +87,12 @@ async function request(url, token) {
  * @param {BuildkiteFetchOptions} options
  * @returns {Promise<string>} the body of a response with an ok status
  */
-export async function fetchBuildkite(url, { token, retries = 5, maxWaitMs = 60_000, sleep = announceAndSleep }) {
+export async function fetchBuildkite(
+  url,
+  { token, retries = 5, maxWaitMs = 60_000, timeoutMs, sleep = announceAndSleep },
+) {
   for (let attempt = 1; ; attempt++) {
-    const reply = await request(url, token);
+    const reply = await request(url, token, timeoutMs);
     if ("text" in reply) return reply.text;
     if (!reply.retryable || attempt > retries) {
       throw new Error(`${reply.problem} ${url}` + (attempt > 1 ? ` (${attempt} attempts)` : ""));

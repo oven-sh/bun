@@ -51,6 +51,7 @@ const lanes = {
 const api = path =>
   fetchBuildkite(`https://api.buildkite.com/v2/organizations/${opts.org}/pipelines/${opts.pipeline}/${path}`, {
     token,
+    timeoutMs: 60_000,
   });
 
 // Per-file cost is the gap between the APC timestamps Buildkite injects into

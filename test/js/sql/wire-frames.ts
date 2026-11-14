@@ -517,7 +517,8 @@ const hmacSha256 = (key: Buffer, data: string) => createHmac("sha256", key).upda
 /**
  * Postgres mock that runs the server side of SCRAM-SHA-256 and SCRAM-SHA-256-PLUS (RFC 5802, RFC 7677, the
  * tls-server-end-point binding of RFC 5929), then answers AuthenticationOk + ReadyForQuery, or 28P01.
- * `exchanges` gets one entry per StartupMessage. A simple query gets an empty result.
+ * `exchanges` gets one entry per StartupMessage. A simple query, and a prepared one without a Describe, gets an
+ * empty result.
  */
 export async function pgScramServer(options: {
   /** What the role's verifier was made from: the password after the server's SASLprep. */
@@ -635,6 +636,11 @@ export async function pgScramServer(options: {
       buffered = pgReadFrontendMessages(buffered, (type, body) => {
         if (type === 0x70 /* 'p' */) onPasswordMessage(current, body);
         if (type === 0x51 /* 'Q' */) stream.write(Buffer.concat([pgCommandComplete("SELECT 0"), pgReadyForQuery()]));
+        // BEGIN and COMMIT: Parse, Bind, Execute, Sync.
+        if (type === 0x50 /* 'P' */) stream.write(pgParseComplete());
+        if (type === 0x42 /* 'B' */) stream.write(pgBindComplete());
+        if (type === 0x45 /* 'E' */) stream.write(pgCommandComplete("SELECT 0"));
+        if (type === 0x53 /* 'S' */) stream.write(pgReadyForQuery());
       });
     };
     raw.on("data", onData);

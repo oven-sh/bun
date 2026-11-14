@@ -1199,9 +1199,12 @@ impl MySQLConnection {
         err: &ErrorPacket,
     ) -> Result<(), AnyMySQLError> {
         self.in_reply = false;
-        self.js_connection_ref().on_error_packet(Some(request), err);
+        let error = self.js_connection_ref().on_error_packet(Some(request), err);
         if err.ends_session() {
             return Err(AnyMySQLError::ConnectionClosed);
+        }
+        if request.is_transaction_start() {
+            self.queue.reject_unwritten_behind_refused_start(error);
         }
         let _ = self.flush_queue();
         Ok(())

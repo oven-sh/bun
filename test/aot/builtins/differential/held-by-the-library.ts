@@ -76,7 +76,7 @@ function openQuery(adapter: "postgres" | "mysql"): Open {
   return realm => {
     void new Bun.SQL(`${adapter}://user@127.0.0.1:1/database`);
     const { createQuery } = bindingOf(realm, `native:Bindgen:${adapter}.bind.ts:binding`);
-    return { value: createQuery("select 1", [], [], false, false), close: noop };
+    return { value: createQuery("select 1", [], [], false, false, false, false), close: noop };
   };
 }
 

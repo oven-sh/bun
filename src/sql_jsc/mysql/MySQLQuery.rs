@@ -49,6 +49,10 @@ impl Flags {
     /// ends the text and says nothing, after it promised a further result: the reply to a command
     /// written behind it would be taken for that result.
     const SEVERAL_STATEMENTS: u8 = 1 << 5;
+    /// START TRANSACTION, COMMIT, SAVEPOINT: sent by begin() and savepoint() themselves.
+    const INTERNAL: u8 = 1 << 6;
+    /// START TRANSACTION or SAVEPOINT: what is not written yet when it is refused is refused too.
+    const TRANSACTION_START: u8 = 1 << 7;
 
     #[inline]
     fn bigint(self) -> bool {
@@ -57,6 +61,14 @@ impl Flags {
     #[inline]
     fn simple(self) -> bool {
         self.0 & Self::SIMPLE != 0
+    }
+    #[inline]
+    fn internal(self) -> bool {
+        self.0 & Self::INTERNAL != 0
+    }
+    #[inline]
+    fn transaction_start(self) -> bool {
+        self.0 & Self::TRANSACTION_START != 0
     }
     #[inline]
     fn discard_response(self) -> bool {
@@ -83,13 +95,19 @@ impl Flags {
         self.0 = (self.0 & !Self::RESULT_MODE_MASK) | ((m as u8) << Self::RESULT_MODE_SHIFT);
     }
     #[inline]
-    fn new(bigint: bool, simple: bool) -> Self {
+    fn new(bigint: bool, simple: bool, internal: bool, transaction_start: bool) -> Self {
         let mut f = 0u8;
         if bigint {
             f |= Self::BIGINT;
         }
         if simple {
             f |= Self::SIMPLE;
+        }
+        if internal {
+            f |= Self::INTERNAL;
+        }
+        if transaction_start {
+            f |= Self::TRANSACTION_START;
         }
         // result_mode default = .objects (assumed discriminant 0)
         Self(f)
@@ -210,13 +228,19 @@ impl MySQLQuery {
         Ok(true)
     }
 
-    pub(crate) fn init(query: BunString, bigint: bool, simple: bool) -> Self {
+    pub(crate) fn init(
+        query: BunString,
+        bigint: bool,
+        simple: bool,
+        internal: bool,
+        transaction_start: bool,
+    ) -> Self {
         Self {
             statement: None,
             staged_execute: Vec::new(),
             query,
             status: Status::Pending,
-            flags: Flags::new(bigint, simple),
+            flags: Flags::new(bigint, simple, internal, transaction_start),
         }
     }
 
@@ -331,6 +355,14 @@ impl MySQLQuery {
     #[inline]
     pub(crate) fn is_simple(&self) -> bool {
         self.flags.simple()
+    }
+    #[inline]
+    pub(crate) fn is_internal(&self) -> bool {
+        self.flags.internal()
+    }
+    #[inline]
+    pub(crate) fn is_transaction_start(&self) -> bool {
+        self.flags.transaction_start()
     }
 
     #[inline]

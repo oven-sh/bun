@@ -29,6 +29,7 @@ export const prestartMap = {
   "js/sql/local-sql": ["postgres_tls"],
   "js/sql/sql.test": ["postgres_plain"],
   "js/sql/sql-begin-commit-rolled-back": ["postgres_plain"],
+  "js/sql/sql-begin-pipeline": ["postgres_plain", "mysql_plain"],
   "js/sql/sql-postgres-datetime": ["postgres_plain"],
   "js/sql/sql-prepare-false": ["postgres_plain"],
   "js/sql/sql-reserve-abort": ["postgres_plain"],

@@ -392,7 +392,7 @@ class ListenQuery {
   }
 
   static run(conn: ListenHandle, sql: string): Promise<void> {
-    const handle = createPostgresQuery(sql, [], new SQLResultArray(), false, true);
+    const handle = createPostgresQuery(sql, [], new SQLResultArray(), false, true, false, false);
     const query = new ListenQuery(handle);
     const { promise, resolve, reject } = Promise.withResolvers<void>();
     query.resolve = resolve;

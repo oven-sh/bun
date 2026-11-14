@@ -1178,6 +1178,10 @@ await sql.begin(async tx => {
 });
 ```
 
+Bun does not wait for the database to answer `BEGIN` before it calls the callback. The queries the callback starts at once, and that the connection has already prepared, go out in the same write as `BEGIN`, so the array form then costs two round trips: one for `BEGIN` and the queries, one for `COMMIT`. The first run of a query on a connection, a query with `prepare: false`, `.simple()` and `sql.unsafe()` without parameters still wait for the answer to `BEGIN`. `COMMIT` goes out once every result is read, so a result the client cannot decode still rolls the transaction back.
+
+A `BEGIN` with options, such as `sql.begin("read only", ...)`, and the `XA START` of a distributed transaction on MySQL wait for the answer to `BEGIN`: the database can refuse it. A plain `BEGIN` is refused only when something cancels it from outside, such as `pg_cancel_backend()` or `KILL QUERY`. The queries that went out in the same write then run outside a transaction, each committed on its own. The queries that still waited for its answer are refused, and `sql.begin` rejects with that error.
+
 The adapters differ in two ways:
 
 - **MySQL**: DDL (`CREATE`, `ALTER`, `DROP`) commits the open transaction, so `sql.begin` cannot roll back past it. PostgreSQL and SQLite roll DDL back.
@@ -1188,7 +1192,7 @@ The adapters differ in two ways:
 The `tx` client belongs to its transaction. Once Bun has sent `COMMIT` or `ROLLBACK`, a query on `tx` never reaches the database. It rejects with `ERR_POSTGRES_INVALID_TRANSACTION_STATE`, or the same code with `MYSQL` or `SQLITE`.
 
 Queries are lazy, so this includes a query that you create inside the callback and first await later. Await every query inside the callback, or return the queries in an array.
-`sql.begin` resolves once the database has answered `COMMIT`. If the connection is lost while `COMMIT` is unanswered, `sql.begin` rejects and nobody can know whether the transaction was committed, so check before you run it again.
+`sql.begin` resolves once the database has answered `COMMIT`. If the connection is lost before `COMMIT` goes out, `sql.begin` rejects with the error of the loss and the database committed nothing: the queries of the callback reject with that error too, as the ones sent before `BEGIN` was answered. A refused `BEGIN` is the case above: `sql.begin` rejects with the refusal, and the queries sent with it may have run. If the connection is lost while `COMMIT` is unanswered, `sql.begin` rejects and nobody can know whether the transaction was committed, so check before you run it again.
 
 ```ts
 let late;

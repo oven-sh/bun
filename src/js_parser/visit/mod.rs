@@ -1525,6 +1525,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         #[cfg(debug_assertions)]
         let initial_scope: js_ast::StoreRef<js_ast::Scope> = p.current_scope;
 
+        // What came before is from an expression that this list is in: it belongs to the list around.
+        let outlined_around = p.react_compiler_outlined_from_nested.len();
+
         {
             // Save the current control-flow liveness. This represents if we are
             // currently inside an "if (false) { ... }" block.
@@ -1616,8 +1619,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
                 p.visit_and_append_stmt(list, stmt)?;
                 // Outlined functions can use variables from this scope, so they can't go at the end of the module.
-                if !p.react_compiler_outlined_from_nested.is_empty() {
-                    visited.extend(p.react_compiler_outlined_from_nested.drain(..));
+                if p.react_compiler_outlined_from_nested.len() > outlined_around {
+                    visited.extend(
+                        p.react_compiler_outlined_from_nested
+                            .drain(outlined_around..),
+                    );
                 }
             }
 

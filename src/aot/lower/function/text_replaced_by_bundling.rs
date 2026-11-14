@@ -330,8 +330,13 @@ impl Finder<'_, '_> {
                 continue;
             };
             if let Some(b'"' | b'\'') = self.find_first_byte(head) {
+                let in_front = hir.directives(statements).last();
                 let start = start_of(hir, head);
-                self.replace(start, start, Box::new(*b";"));
+                // The first `;` only ends a directive that has none.
+                match in_front.is_none_or(|it| self.is_ended(it.0)) {
+                    true => self.replace(start, start, Box::new(*b";")),
+                    false => self.replace(start, start, Box::new(*b";;")),
+                }
             }
         }
     }

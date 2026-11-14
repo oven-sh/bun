@@ -673,6 +673,29 @@ describe("bundler", () => {
     });
   }
 
+  // A function that is outlined from an expression goes into the statement list around that expression, not into the
+  // body of another function of the same expression, and not into a directive prologue.
+  for (const [name, host, args] of [
+    ["ADirective", `function host(x) { return [COMPILED, function plain() { "use strict"; }][0]; }`, ""],
+    ["AStatement", `function host(x) { return [COMPILED, function plain() { return x; }][0]; }`, ""],
+    ["ADefault", `function host(render = COMPILED) { "first"; "second"; return render; }`, ""],
+  ]) {
+    itBundled(`react-compiler/OutlinedFunctionBeside${name}`, {
+      files: {
+        "/entry.js": /* js */ `
+          const memo = f => f;
+          ${host.replace("COMPILED", `memo((props) => { "use memo"; return props.items.map(i => i + 1); })`)}
+          console.log(host()({ items: [1, 2] }).join());
+        `,
+        "/node_modules/react/compiler-runtime.js": `exports.c = n => Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      },
+      reactCompiler: true,
+      target: "bun",
+      backend: "cli",
+      run: { stdout: "2,3" },
+    });
+  }
+
   // A later declarator that reads an earlier declarator in the same
   // `const a = x, b = f(a)` statement is a plain left-to-right read, not a
   // forward reference. Upstream's BlockStatement hoisting only emits a

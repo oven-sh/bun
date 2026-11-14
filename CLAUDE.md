@@ -36,6 +36,12 @@ bun test test/integration/bun-types/bun-types.test.ts
 
 This is an explicit exception to the "never use `bun test` directly" rule. There are no native changes for a debug build to pick up, so don't wait on one.
 
+Edits to the **docs** (`docs/**/*.mdx`) don't need a build either. A test type checks their TypeScript code blocks against `packages/bun-types`, and it skips itself on a debug build, so run it with the system Bun too. "Code samples" in `docs/project/contributing.mdx` has the rules:
+
+```sh
+USE_SYSTEM_BUN=1 bun test test/integration/bun-types/docs-samples.test.ts
+```
+
 ## Testing
 
 ### Running Tests

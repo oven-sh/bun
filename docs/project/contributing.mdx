@@ -388,3 +388,49 @@ A docs page describes what Bun does and what you can do with it. Write it so tha
 - Use gender-neutral language: "developers", "users", "they".
 - Make link text name its destination: "see [`bun install`](/pm/cli/install)", rather than "see here".
 - Run every code example before you publish it, and check option names and defaults against the implementation on `main`.
+
+### Code samples
+
+A test type checks every `ts`, `tsx`, and `typescript` code block in `docs/` against the type declarations in `packages/bun-types`. It uses the compiler options that `bun init` writes to `tsconfig.json`, which include `strict` and `noUncheckedIndexedAccess`. It does not read the pages under `docs/lint/rules`.
+
+The test checks each code block as one file of a new project. A code block can leave out the rest of its program:
+
+- It can use a name that it does not declare, such as the `server` of an earlier code block. The test does not check what the code does with that name.
+- It can import a file or a package that the page does not show, such as `./db.ts` or `hono`.
+- It can take parameters without types, declare the same name twice to show two alternatives, and list declarations without their bodies.
+
+Everything else that TypeScript reports fails the test. Import or declare what the code uses when you can, because the test then checks those calls too.
+
+Two comments change what the test expects from the code block below them. Put the comment on its own line, and leave an empty line after it.
+
+Use `{/* fragment */}` for a code block that is not valid syntax on its own, such as a list of object properties. The test does not check it. The test fails if the code block is valid syntax, because such a code block needs no comment.
+
+````md
+{/* fragment */}
+
+```ts
+routes: { "/": () => new Response("ok") },
+```
+````
+
+Use `{/* type-error */}` with the error codes for a code block that shows a type error on purpose. The code block can still leave out the rest of its program. The test fails if TypeScript reports another error, or does not report one of the codes.
+
+````md
+{/* type-error TS2322 */}
+
+```ts
+const port: number = "3000";
+```
+````
+
+Run the test with a release build of Bun:
+
+```bash
+bun test test/integration/bun-types/docs-samples.test.ts
+```
+
+`test/integration/bun-types/docs-samples.inventory.json` lists the code blocks that failed when the test was added, each with the error codes it reports. When you change one of them, fix what TypeScript reports. The test also fails while the file lists a code block that no longer fails. This command removes such entries:
+
+```bash
+UPDATE_DOCS_SAMPLES_INVENTORY=1 bun test test/integration/bun-types/docs-samples.test.ts
+```

@@ -588,6 +588,63 @@ server.listen(0, '127.0.0.1', () => {
   );
 
   test.concurrent(
+    "channel close: callbacks fire null up to the first unsent handle; sends queued behind it never fire",
+    async () => {
+      // node v26.3.0 prints the same object: it submits `before` and `handle` to the channel, and parks the rest.
+      using dir = tempDir("ipc-handle-close-mixed-queue", {
+        "parent.js": `
+const { fork } = require('node:child_process');
+const net = require('node:net');
+const child = fork('child.js');
+const server = net.createServer();
+server.listen(0, '127.0.0.1', () => {
+  net.connect(server.address().port, '127.0.0.1', function () {
+    const out = { before: 'never called', handle: 'never called', behind: 'never called', behindLarge: 'never called' };
+    const order = [];
+    const record = name => err => { out[name] = err; order.push(name); };
+    // Larger than the IPC socket buffer, so it is still being written when the handle is queued.
+    const pad = Buffer.alloc(1 << 21, 'd').toString();
+    child.send({ pad }, record('before'));
+    child.send('handle', this, record('handle'));
+    child.send('behind', record('behind'));
+    child.send({ pad }, record('behindLarge'));
+    child.kill('SIGKILL');
+    child.on('close', () => {
+      order.push('close');
+      setImmediate(() => {
+        console.log(JSON.stringify({ ...out, order }));
+        server.close();
+        process.exit(0);
+      });
+    });
+  }).on('error', () => {});
+});
+`,
+        "child.js": `const end = Date.now() + 30_000; while (Date.now() < end) {}`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "parent.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+        out: {
+          before: null,
+          handle: null,
+          behind: "never called",
+          behindLarge: "never called",
+          order: ["before", "handle", "close"],
+        },
+        stderr: expect.any(String),
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.concurrent(
     "sending a tls.TLSSocket throws ERR_INVALID_HANDLE_TYPE instead of silently dropping the handle",
     async () => {
       using dir = tempDir("ipc-handle-tls-socket", {

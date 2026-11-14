@@ -34,6 +34,14 @@ const redis = Bun.redis;
 const buf = Buffer.from("key");
 
 // Bitmap
+expectType(redis.bitcount("key")).is<Promise<number>>();
+expectType(redis.bitcount("key", 0, -1)).is<Promise<number>>();
+expectType(redis.bitcount("key", 5, 30, "BIT")).is<Promise<number>>();
+expectType(redis.bitcount(buf, 1, 1, "BYTE")).is<Promise<number>>();
+// @ts-expect-error - BITCOUNT takes start and end together
+redis.bitcount("key", 0);
+// @ts-expect-error - the unit is BYTE or BIT
+redis.bitcount("key", 0, -1, "NIBBLE");
 expectType(redis.bitop("NOT", "dest", "k1")).is<Promise<number>>();
 expectType(redis.bitop("not", "dest", buf)).is<Promise<number>>();
 expectType(redis.bitop("AND", "dest", "k1")).is<Promise<number>>();

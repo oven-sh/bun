@@ -720,3 +720,72 @@ export function awaitableCounter(timeoutMs: number = 1000) {
       }),
   };
 }
+
+/**
+ * Runs `body` with a client connected to an in-process server and returns the
+ * argv of every command the client wrote. The server answers HELLO and replies
+ * `:0` to everything else, so no Redis server is needed.
+ */
+export async function recordCommands(body: (client: RedisClient) => Promise<unknown>): Promise<string[][]> {
+  const CRLF = "\r\n";
+  const bulk = (s: string) => `$${Buffer.byteLength(s)}${CRLF}${s}${CRLF}`;
+  const helloReply = `%2${CRLF}` + bulk("server") + bulk("redis") + bulk("proto") + `:3${CRLF}`;
+
+  const received: string[][] = [];
+  using server = Bun.listen<{ buf: Buffer }>({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open(socket) {
+        socket.data = { buf: Buffer.alloc(0) };
+      },
+      error() {},
+      close() {},
+      data(socket, chunk) {
+        let buf = (socket.data.buf = Buffer.concat([socket.data.buf, chunk]));
+        // A command is a RESP array of bulk strings: `*<argc>\r\n`, then argc
+        // times `$<len>\r\n<bytes>\r\n`. Wait for all of it before replying.
+        for (;;) {
+          const headerEnd = buf.indexOf(CRLF);
+          if (headerEnd < 0 || buf[0] !== 0x2a /* '*' */) break;
+          const argc = parseInt(buf.subarray(1, headerEnd).toString("latin1"), 10);
+          const argv: string[] = [];
+          let pos = headerEnd + 2;
+          let complete = true;
+          for (let i = 0; i < argc; i++) {
+            const lenEnd = buf.indexOf(CRLF, pos);
+            if (lenEnd < 0 || buf[pos] !== 0x24 /* '$' */) {
+              complete = false;
+              break;
+            }
+            const len = parseInt(buf.subarray(pos + 1, lenEnd).toString("latin1"), 10);
+            const next = lenEnd + 2 + len + 2;
+            if (next > buf.length) {
+              complete = false;
+              break;
+            }
+            argv.push(buf.subarray(lenEnd + 2, lenEnd + 2 + len).toString("latin1"));
+            pos = next;
+          }
+          if (!complete) break;
+          buf = socket.data.buf = buf.subarray(pos);
+          if (argv[0] === "HELLO") {
+            socket.write(helloReply);
+          } else {
+            received.push(argv);
+            socket.write(`:0${CRLF}`);
+          }
+        }
+      },
+    },
+  });
+
+  const client = new RedisClient(`redis://127.0.0.1:${server.port}`, { autoReconnect: false });
+  try {
+    await client.connect();
+    await body(client);
+  } finally {
+    client.close();
+  }
+  return received;
+}

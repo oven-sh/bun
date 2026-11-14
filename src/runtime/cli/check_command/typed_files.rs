@@ -1,5 +1,6 @@
 use bstr::BStr;
 use bun_ast::LoaderHashTable;
+use bun_bundler::output_file::{SourceName, TypedFileSources};
 use bun_paths::platform::Auto;
 use bun_paths::resolve_path::join_abs_string;
 use bun_sema::check::Checker;
@@ -14,14 +15,16 @@ use bun_sema::session::Session;
 use bun_sema::util::SharedSort;
 use bun_sema_driver::host::{Disk, Provided, from_native};
 use bun_sema_driver::typed_files::{
-    ModuleTypes, Output, annotate_implicit_any, build_typed_files, emitted_declarations_of,
-    module_types, tsconfig_of_sources, typed_path_beside,
+    MappedSource, ModuleTypes, Output, annotate_implicit_any, build_typed_files,
+    emitted_declarations_of, module_types, tsconfig_of_sources, typed_path_beside,
 };
 use bun_sema_driver::{Diagnostic, PlanOptions, Report, Request};
 use bun_threading::Guarded;
 
 use super::declarations::{LIBS_WITHOUT_CONFIGURATION, bundler_path};
-use super::{Entries, Paths, already_read, request, script_kinds_by_extension, with_pages};
+use super::{
+    Entries, Paths, already_read, checker_path, request, script_kinds_by_extension, with_pages,
+};
 
 const SKIPPED_TYPED_FILES: &str =
     "the .aot.ts files that --aot compiles a package from are left out";
@@ -30,7 +33,7 @@ pub(crate) struct WrittenJavaScript<'a> {
     pub(crate) path: &'a [u8],
     pub(crate) text: &'a [u8],
     pub(crate) source_map: &'a [u8],
-    pub(crate) entry_point: Option<&'a [u8]>,
+    pub(crate) sources: &'a TypedFileSources,
 }
 
 pub(crate) struct TypedFilesRequest<'a> {
@@ -228,16 +231,34 @@ pub(crate) fn typed_files_for_build(
         modules,
     } = asked;
     let (bundler_outdir, outdir) = (outdir, &from_native(outdir)[..]);
-    let paths: Vec<(Vec<u8>, Option<Vec<u8>>)> = written
+    // A file has the name under which the type checker was given it, which is `ModuleTypes::path` of a module it found there.
+    let name_of = |source: &SourceName| match source {
+        SourceName::File(path) => MappedSource::File(checker_path(cwd, path)),
+        SourceName::NotFile(name) => MappedSource::NotFile(name.to_vec()),
+    };
+    struct Named {
+        path: Vec<u8>,
+        entry_point: Option<Vec<u8>>,
+        sources: Vec<MappedSource>,
+    }
+    let named: Vec<Named> = written
         .iter()
-        .map(|file| (from_native(file.path), file.entry_point.map(from_native)))
+        .map(|file| Named {
+            path: from_native(file.path),
+            entry_point: match &file.sources.entry_point {
+                Some(SourceName::File(path)) => Some(checker_path(cwd, path)),
+                Some(SourceName::NotFile(_)) | None => None,
+            },
+            sources: file.sources.mapped.iter().map(name_of).collect(),
+        })
         .collect();
-    let outputs: Vec<Output<'_>> = (written.iter().zip(&paths))
-        .map(|(file, (path, entry_point))| Output {
-            path,
+    let outputs: Vec<Output<'_>> = (written.iter().zip(&named))
+        .map(|(file, named)| Output {
+            path: &named.path,
             javascript: file.text,
             source_map: file.source_map,
-            entry_point: entry_point.as_deref(),
+            sources: &named.sources,
+            entry_point: named.entry_point.as_deref(),
         })
         .collect();
     let by_extension = script_kinds_by_extension(loaders);
@@ -257,8 +278,8 @@ pub(crate) fn typed_files_for_build(
     // The typed files are judged as a project that installs the package judges them: without the sources, under what the
     // package.json says of them. What the application's own tsconfig.json asks for does not count.
     let outdir_without_slash = outdir.strip_suffix(b"/").unwrap_or(outdir);
-    let typed_names = paths.iter().filter_map(|(path, _)| {
-        let typed = typed_path_beside(path)?;
+    let typed_names = named.iter().filter_map(|file| {
+        let typed = typed_path_beside(&file.path)?;
         let inside = typed.strip_prefix(outdir_without_slash)?;
         Some(Json::String([b".", inside].concat()))
     });

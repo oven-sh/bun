@@ -2327,6 +2327,25 @@ describe("Bun.JSONL", () => {
         expect(result.values.length).toBeLessThanOrEqual(1);
       });
 
+      test("read counts the bytes of invalid UTF-8, not 3 per U+FFFD", () => {
+        // Each ill-formed sequence decodes to a single U+FFFD, but is 1-3 bytes in the input.
+        const cases: [number[], number][] = [
+          [[0x22, 0xff, 0x22, 0x0a, 0x31], 5],
+          [[0x22, 0xe2, 0x82, 0x22, 0x0a, 0x31], 6],
+          [[0x22, 0xff, 0xfe, 0xc3, 0xa9, 0x22, 0x0a, 0x31], 8],
+          [[0x22, 0xf0, 0x9f, 0x98, 0x80, 0xff, 0x22, 0x0a, 0x31], 9],
+        ];
+        for (const [bytes, read] of cases) {
+          const result = Bun.JSONL.parseChunk(new Uint8Array(bytes));
+          expect(result.values.length).toBe(2);
+          expect(result.read).toBe(read);
+        }
+        // A start offset is added to the count.
+        const result = Bun.JSONL.parseChunk(new Uint8Array([0x31, 0x0a, 0x22, 0xff, 0x22, 0x0a, 0x32]), 2);
+        expect(result.values).toStrictEqual(["\ufffd", 2]);
+        expect(result.read).toBe(7);
+      });
+
       test("megabytes of whitespace between values", () => {
         // DoS attempt: force parser to scan through tons of whitespace
         const ws = " ".repeat(1024 * 1024);

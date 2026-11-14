@@ -514,6 +514,16 @@ void us_internal_loop_post(struct us_loop_t *loop) {
 #define us_ioctl ioctl
 #endif
 
+/* The peer's FIN is the end of a socket whose TLS spill still goes out: from here on it only writes, and its writable event closes it. */
+static int us_internal_defer_end(struct us_socket_t *s, struct us_loop_t *loop) {
+    if (!s || us_socket_is_closed(s) || !s->ssl || !us_internal_ssl_defer_end(s)) {
+        return 0;
+    }
+    s->read_eof = 1;
+    us_poll_change(&s->p, loop, LIBUS_SOCKET_WRITABLE);
+    return 1;
+}
+
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events) {
     switch (us_internal_poll_type(p)) {
     case POLL_TYPE_CALLBACK: {
@@ -662,8 +672,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     return;
                 }
 
-                /* If we have no failed write or if we shut down, then stop polling for more writable */
-                if (!s->flags.last_write_failed || us_socket_is_shut_down(s)) {
+                /* If we have no failed write or if we shut down, then stop polling for more writable. A spilled close_notify still needs the poll. */
+                if (!s->flags.last_write_failed || (us_socket_is_shut_down(s) && !(s->ssl && s->ssl_spilled))) {
                     us_poll_change(&s->p, loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
                 } else {
                     #ifdef LIBUS_USE_KQUEUE
@@ -973,6 +983,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     // Do not call on_end after the socket has been closed
                     return;
                 }
+                const int can_defer_end = !hangup && !error;
+                if (can_defer_end && us_internal_defer_end(s, loop)) {
+                    return;
+                }
                 if (us_socket_is_shut_down(s)) {
                     /* We got FIN back after sending it */
                     if (s->ssl && s->ssl_send_rejected && unsent_is_lost) {
@@ -1006,6 +1020,9 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                      * emit end unless a FIN already did, then close so EPOLLHUP stops re-firing. */
                     if (!s->read_eof) {
                         s = s->ssl ? us_internal_ssl_on_end(s) : us_dispatch_end(s);
+                    }
+                    if (can_defer_end && us_internal_defer_end(s, loop)) {
+                        return;
                     }
                     s = us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
                     return;

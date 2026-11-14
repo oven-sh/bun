@@ -1,4 +1,3 @@
-use crate::js_lexer;
 use crate::p::P;
 use crate::parser::FindSymbolResult;
 use bun_ast as js_ast;
@@ -43,7 +42,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 // Forbid referencing "arguments" inside class bodies
                 if scope.forbid_arguments && !did_forbid_arguments && name == b"arguments" {
-                    let r = js_lexer::range_of_identifier(self.source, loc);
+                    let r = self.source.range_of_identifier(loc);
                     self.log().add_range_error_fmt(
                         Some(self.source),
                         r,

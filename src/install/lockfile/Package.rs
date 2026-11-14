@@ -3468,24 +3468,12 @@ pub mod serializer {
         let _ = Aligner::write::<*mut u8, _>(&mut *stream, pos)?;
 
         let really_begin_at = stream.get_pos()?;
-        let mut sliced = list.slice();
 
         for field in PackageField::ALL {
-            // SAFETY: no other borrow of the column is live; it is only read, as raw bytes.
-            let bytes: &[u8] = unsafe { &*sliced.column_bytes_mut(field as usize) };
-            bun_output::scoped_log!(
-                Lockfile,
-                "save(\"{}\") = {} bytes",
-                bstr::BStr::new(field.name()),
-                bytes.len(),
-            );
-            // No uninitialized padding: `Package`'s field types are all
-            // `#[repr(C)]` with explicit padding zeroed by their
-            // `Default`/`init` paths.
             if matches!(field, PackageField::Resolution) {
                 // copy each resolution to make sure the union is zero initialized
                 let resolutions: &[Resolution<SemverIntType>] =
-                    sliced.items::<"resolution", Resolution<SemverIntType>>();
+                    list.items::<"resolution", Resolution<SemverIntType>>();
                 for val in resolutions {
                     // `ResolutionType::copy` builds a fresh zero-initialised
                     // `Resolution` and writes only the active union member.
@@ -3502,6 +3490,14 @@ pub mod serializer {
                     })?;
                 }
             } else {
+                // SAFETY: these fields have explicit padding, and `bin::Value::init_*` sets every byte.
+                let bytes = unsafe { list.column_bytes(field as usize) };
+                bun_output::scoped_log!(
+                    Lockfile,
+                    "save(\"{}\") = {} bytes",
+                    bstr::BStr::new(field.name()),
+                    bytes.len(),
+                );
                 stream.write_all(bytes)?;
             }
         }
@@ -3646,12 +3642,9 @@ pub mod serializer {
         needs_update: &mut bool,
         bin_map_end: &mut usize,
     ) -> crate::Result<()> {
-        let mut sliced = list.slice();
-
         for field in PackageField::ALL {
-            // SAFETY: no other borrow of the column is live; the byte view is used solely
-            // for memcpy from the serialised lockfile stream.
-            let bytes: &mut [u8] = unsafe { sliced.column_bytes_mut(field as usize) };
+            // SAFETY: only written, after the tags and `bool`s of the source are checked below.
+            let bytes: &mut [u8] = unsafe { list.column_bytes_mut(field as usize) };
             let end_pos = stream.pos + bytes.len();
             if end_pos as u64 <= end_at {
                 let src = &stream.buffer[stream.pos..stream.pos + bytes.len()];
@@ -3726,7 +3719,7 @@ pub mod serializer {
                     // need to check if any values were created from an older version of bun
                     // (currently just `has_install_script`). If any are found, the values need
                     // to be updated before saving the lockfile.
-                    let metas: &[Meta] = sliced.items_mut::<"meta", Meta>();
+                    let metas: &[Meta] = list.items::<"meta", Meta>();
                     *needs_update |= metas.iter().any(Meta::needs_update);
                 }
             } else if matches!(field, PackageField::Scripts) {

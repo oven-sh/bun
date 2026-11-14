@@ -53,8 +53,7 @@ pub(crate) fn generate_compile_result_for_js_chunk(
         .expect("Worker.stmt_list set in create()");
     stmt_list.reset();
 
-    let runtime_scope: &Scope = &c.graph.ast.items_module_scope()
-        [c.graph.files.items_input_file()[Index::RUNTIME.get() as usize].get() as usize];
+    let runtime_scope: &Scope = &c.graph.ast.items_module_scope()[Index::RUNTIME.get() as usize];
     let runtime_members = &runtime_scope.members;
     let to_common_js_ref = c.graph.symbols.follow(
         runtime_members

@@ -751,6 +751,21 @@ impl FileReader {
         ret && !self.done.get() && !self.reader().is_done()
     }
 
+    /// The child that writes this pipe has exited. A pull that waits for the poll callback gets what the pipe holds before the exit is reported, as libuv reports a child's exit after the I/O of the same poll (https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/linux.c#L1539-L1547).
+    pub(crate) fn read_before_exit(&self) {
+        #[cfg(unix)]
+        if self.pending.get().state == streams::PendingState::Pending
+            && self.reader().is_poll_driven()
+            && !self.reader().is_done()
+        {
+            // The read runs user JS, which can cancel the stream and drop the across-read ref.
+            // SAFETY: see `parent()`.
+            let _pin = unsafe { RefPtr::init_ref(self.parent()) };
+            // SAFETY: the reader cell is live for `self`'s lifetime; `read` is the raw re-entrancy-safe entry.
+            unsafe { IOReader::read(self.reader.get()) };
+        }
+    }
+
     pub(crate) fn drain(&self) -> Vec<u8> {
         if !self.buffered.get().is_empty() {
             let out = Vec::<u8>::move_from_list(self.buffered.replace(Vec::new()));
@@ -1077,6 +1092,15 @@ impl Source {
         let flag = flag.to_js();
         debug_assert!(flag.is_boolean());
         self.context.set_flowing(flag == JSValue::TRUE);
+    }
+
+    /// A Node stream reads this source (`constructNativeReadable`): see `PosixFlags::POLL_ONLY`.
+    pub fn set_poll_only(&self) {
+        #[cfg(unix)]
+        self.context
+            .reader()
+            .flags
+            .insert(bun_io::pipe_reader::PosixFlags::POLL_ONLY);
     }
 }
 

@@ -898,6 +898,21 @@ impl Subprocess<'_> {
             }
         }
 
+        // A pull of a stream that JS took can wait for the poll callback of its pipe. It gets what the pipe holds before the exit is reported, as the pipes that JS has not taken do below.
+        if !this_jsvalue.is_empty() {
+            for cached in [
+                js::stdout_get_cached(this_jsvalue),
+                js::stderr_get_cached(this_jsvalue),
+            ] {
+                if let Some(stream) = cached.and_then(webcore::ReadableStream::from_js_direct)
+                    && let webcore::readable_stream::Source::File(reader) = stream.ptr
+                {
+                    // SAFETY: the cached stream on this frame keeps its source alive.
+                    unsafe { (*reader).read_before_exit() };
+                }
+            }
+        }
+
         let mut stdin: Option<NonNull<FileSink>> = if matches!(self.stdin.get(), Writable::Pipe(_))
             && self.flags.get().contains(Flags::IS_STDIN_A_READABLE_STREAM)
         {

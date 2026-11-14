@@ -12,6 +12,7 @@ const transferToNativeReadable: (stream: ReadableStream) => void = $newCppFuncti
   1,
 );
 const { errorOrDestroy } = require("internal/streams/destroy");
+const { reportUncaughtException } = require("internal/shared");
 
 const kRefCount = Symbol("refCount");
 const kCloseState = Symbol("closeState");
@@ -20,6 +21,7 @@ const kHighWaterMark = Symbol("highWaterMark");
 const kPendingRead = Symbol("pendingRead");
 const kHasResized = Symbol("hasResized");
 const kRemainingChunk = Symbol("remainingChunk");
+const kLibuvHandle = Symbol("libuvHandle");
 
 const MIN_BUFFER_SIZE = 512;
 let dynamicallyAdjustChunkSize = (_?) => (
@@ -39,6 +41,7 @@ interface NativeReadable extends $Node.Readable {
   [kHighWaterMark]: number;
   [kHasResized]: boolean;
   [kRemainingChunk]: Buffer | undefined;
+  [kLibuvHandle]: boolean;
   debugId: number;
 }
 
@@ -51,11 +54,17 @@ interface NativePtr {
   updateRef: (ref: boolean) => void;
   cancel: (error: any) => void;
   setFlowing?: (flowing: boolean) => void;
+  setPollOnly?: () => void;
 }
 
 let debugId = 0;
 
-function constructNativeReadable(readableStream: ReadableStream, options: $Node.ReadableOptions): NativeReadable {
+// "libuv-handle": child.stdout and child.stderr, net.Sockets in Node: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L335-L337
+function constructNativeReadable(
+  readableStream: ReadableStream,
+  options: $Node.ReadableOptions,
+  nodeSource: "libuv-handle" | "webstream",
+): NativeReadable {
   $assert(typeof readableStream === "object" && readableStream instanceof ReadableStream, "Invalid readable stream");
   const bunNativePtr = readableStream.$bunNativePtr;
   // A closed stream with nothing left to read has no native handle, so read() ends it immediately.
@@ -77,6 +86,9 @@ function constructNativeReadable(readableStream: ReadableStream, options: $Node.
   stream[kPendingRead] = false;
   stream[kHasResized] = !dynamicallyAdjustChunkSize();
   stream[kCloseState] = [false];
+  stream[kLibuvHandle] = nodeSource === "libuv-handle";
+  // Readable emits a chunk pushed inside `_read()` ahead of the nextTicks and promise jobs of the chunk before.
+  bunNativePtr?.setPollOnly?.();
 
   const highWaterMark = options.highWaterMark;
   stream[kHighWaterMark] = typeof highWaterMark === "number" ? highWaterMark : 256 * 1024;
@@ -213,10 +225,24 @@ function pushEof(stream: NativeReadable) {
 // the consumer paused); stop the native reader so kernel backpressure reaches
 // the writer (readStop, like net.Socket). The next `_read()` re-enables it.
 function pushAndCheck(stream: NativeReadable, chunk: Buffer | ArrayBufferView) {
-  if (!stream.push(chunk)) {
+  let wantMore: boolean;
+  try {
+    wantMore = stream.push(chunk);
+  } catch (e) {
+    // A handle calls the listeners from its read callback, where a throw is an uncaughtException. For a "webstream" it goes on to the caller of `_read()` or to the pull promise.
+    if (!stream[kLibuvHandle]) throw e;
+    wantMore = true;
+    // The throw unwound addChunk before maybeReadMore. With no handler the process exits with status 1: read no more.
+    if (reportUncaughtException(e)) process.nextTick(readAfterListenerThrow, stream);
+  }
+  if (!wantMore) {
     const ptr = stream.$bunNativePtr;
     if (ptr) ptr.setFlowing?.(false);
   }
+}
+
+function readAfterListenerThrow(stream: NativeReadable) {
+  stream.read(0);
 }
 
 function handleNumberResult(stream: NativeReadable, result: number, chunk: Buffer | undefined, isClosed: boolean) {

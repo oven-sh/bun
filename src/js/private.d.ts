@@ -1068,6 +1068,8 @@ declare namespace $Bindgen {
   interface FileInternalReadableStreamSource {
     updateRef(ref: boolean): void;
     setFlowing(flowing: boolean): void;
+    /** A Node stream reads the source: no pull reads a pollable fd on the caller's stack. */
+    setPollOnly(): void;
     /** `undefined`, or the system error. */
     setRawMode(enabled: boolean): Error | undefined;
   }

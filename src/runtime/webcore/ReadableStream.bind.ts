@@ -65,6 +65,8 @@ export const FileInternalReadableStreamSource = b.class({
     isClosed: members.isClosed,
     pull: members.pull,
     setFlowing: { args: { flag: b.any }, capability: "js" },
+    /** A Node stream reads the source: see `PosixFlags::POLL_ONLY`. */
+    setPollOnly: {},
     setRawMode: { args: { flag: b.any }, returns: b.any.returning("object", "undefined"), capability: "js" },
     start: members.start,
     updateRef: members.updateRef,

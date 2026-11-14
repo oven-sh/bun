@@ -51,6 +51,10 @@ impl Rule for NoUnassignedVars {
         let Some(symbol) = decl.pat().symbol() else {
             return;
         };
+        // The template can assign it.
+        if symbol.is_template_reachable() {
+            return;
+        }
         let is_oxlint = cx.language().is_oxlint;
         // In oxc, a declaration's initializer isn't a write: `var a; var a = 1;`.
         let has_writes = symbol.has_writes()

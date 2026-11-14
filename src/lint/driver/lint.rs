@@ -120,6 +120,17 @@ enum Which<'h> {
     WithHelp(&'h RuleFilter<'h>),
 }
 
+/// A script inside a `.vue`, `.svelte` or `.astro` file.
+#[derive(Copy, Clone)]
+pub(crate) struct EmbeddedScript {
+    /// Its language.
+    pub(crate) kind: ScriptKind,
+    /// [`File::is_later_script`]
+    pub(crate) is_later_script: bool,
+    /// [`File::is_template_reachable`]
+    pub(crate) is_template_reachable: bool,
+}
+
 /// Overrides for linting a text differently from a plain file.
 #[derive(Copy, Clone, Default)]
 struct How<'h> {
@@ -132,6 +143,8 @@ struct How<'h> {
     script: Option<(ScriptKind, &'h RuleFilter<'h>)>,
     /// [`File::is_later_script`]
     is_later_script: bool,
+    /// [`File::is_template_reachable`]
+    is_template_reachable: bool,
     /// Set if the file isn't JavaScript: the arguments of [`File::in_language`].
     in_language: Option<(&'h [u8], &'h Parsed, LineBreaks)>,
     rules: Which<'h>,
@@ -475,12 +488,13 @@ impl Context<'_, '_> {
         path: &[u8],
         text: &[u8],
         config: &ResolvedConfig,
-        (kind, is_later_script): (ScriptKind, bool),
+        script: EmbeddedScript,
         filter: &RuleFilter,
     ) -> LintResult {
         let how = How {
-            script: Some((kind, filter)),
-            is_later_script,
+            script: Some((script.kind, filter)),
+            is_later_script: script.is_later_script,
+            is_template_reachable: script.is_template_reachable,
             ..How::default()
         };
         self.verify_as(path, text, config, &how)
@@ -606,6 +620,7 @@ impl Context<'_, '_> {
                     file.set_inferred_globals(inferred);
                 }
                 file.set_later_script(as_what.is_later_script);
+                file.set_template_reachable(as_what.is_template_reachable);
                 then(Some(&file));
             },
         );

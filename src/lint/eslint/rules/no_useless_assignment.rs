@@ -1444,6 +1444,7 @@ impl NoUselessAssignment {
     fn check_variable<'a>(&self, variable: Symbol<'a>, cx: &mut Cx<'a, Self>) {
         if !variable.has_writes()
             || !variable.has_reads()
+            || variable.is_template_reachable()
             || oxlint_skips(variable)
             || oxlint_treats_as_exported(variable, &mut cx.state.exported)
         {
@@ -1722,6 +1723,7 @@ impl NoUselessAssignment {
             Entry::Vacant(entry) => {
                 let scope = variable.scope();
                 let is_ignored = !cfg!(debug_assertions) && !state.unknown.contains(&variable)
+                    || variable.symbol.is_template_reachable()
                     || oxlint_skips(variable.symbol)
                     || oxlint_treats_as_exported(variable.symbol, &mut state.exported)
                     || get_code_path_start_scope(scope, &state.code_path_start_scopes)

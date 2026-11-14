@@ -1134,6 +1134,7 @@ fn collect<'a>(
     mark_identifiers_in_parameters(file, &mut marks);
     let marked_by_loops = variables_of_loops_that_only_return(file);
     let declares_globals = file.scope().symbols().len() != 0;
+    let has_template = file.is_template_reachable();
     let mut walks = Walks::default();
     let properties = parameter_properties(file);
     for symbol in file.symbols() {
@@ -1150,6 +1151,10 @@ fn collect<'a>(
                 marks.mark(symbol);
                 continue;
             }
+        }
+        // The template can use it. It's neither used nor unused.
+        if has_template && symbol.is_template_reachable() {
+            continue;
         }
         let variable = Variable::new(symbol);
         let facts = Facts::of(variable);

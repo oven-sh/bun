@@ -46,7 +46,6 @@ pub mod type_config;
 pub mod visitors;
 
 use std::rc::Rc;
-use std::sync::Arc;
 
 use crate::collections::IndexMap;
 use crate::collections::IndexSet;
@@ -1506,8 +1505,8 @@ pub enum Type {
     },
     Poly,
     Phi {
-        /// Shared: a phi is an operand of many, and type inference puts each in the place of its type variable.
-        operands: Arc<[Type]>,
+        /// Not in upstream: no phi holds another. An operand that is a phi or a function is its type variable.
+        operands: Box<[PhiOperand]>,
     },
     Property {
         object_type: Box<Type>,
@@ -1516,6 +1515,37 @@ pub enum Type {
     },
     ObjectMethod,
 }
+
+/// Not in upstream: an operand of [`Type::Phi`], which is a type that holds no other or a type variable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PhiOperand {
+    Primitive,
+    Object {
+        shape_id: Option<&'static str>,
+    },
+    ObjectMethod,
+    TypeVar {
+        id: TypeId,
+    },
+    /// A type variable whose binding is no longer changed through this phi. Outside InferTypes it reads as `TypeVar`.
+    Held {
+        id: TypeId,
+    },
+}
+
+impl From<PhiOperand> for Type {
+    fn from(operand: PhiOperand) -> Type {
+        match operand {
+            PhiOperand::Primitive => Type::Primitive,
+            PhiOperand::Object { shape_id } => Type::Object { shape_id },
+            PhiOperand::ObjectMethod => Type::ObjectMethod,
+            PhiOperand::TypeVar { id } | PhiOperand::Held { id } => Type::TypeVar { id },
+        }
+    }
+}
+
+const _: () = assert!(size_of::<Type>() == 40);
+const _: () = assert!(size_of::<PhiOperand>() == 24);
 
 #[derive(Debug, Clone)]
 pub enum PropertyNameKind {

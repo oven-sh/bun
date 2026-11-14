@@ -777,7 +777,10 @@ impl<const SSL: bool> NewSocket<SSL> {
                 // uSockets closes its descriptor unconditionally; node never closes stdio, so it gets a duplicate.
                 #[cfg(unix)]
                 let (f, owns_dup) = if f.stdio_tag().is_some() {
-                    (sys::dup(f).map_err(sys::SystemErrno::from)?, true)
+                    (
+                        sys::dup_at_least(f, 3).map_err(sys::SystemErrno::from)?,
+                        true,
+                    )
                 } else {
                     (f, false)
                 };

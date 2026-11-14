@@ -3170,6 +3170,100 @@ describe("Socket fd adoption", () => {
     },
   );
 
+  // Stdio is only written through a socket, whatever `readable` says: node wraps a piped stdout this way too.
+  it("a socket over stdout with readable: true and writable: true writes", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("node:net");
+          const socket = new net.Socket({ fd: 1, readable: true, writable: true });
+          socket.on("error", err => console.error(err.code));
+          socket.write("ok", () => process.exit(0));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
+  });
+
+  // The fd is classified before the signal is listened to: a socket the constructor threw away
+  // must not be destroyed (and error, with no listener) when the signal fires.
+  it.skipIf(isWindows)("a signal does not reach a socket whose fd the constructor rejected", async () => {
+    using dir = tempDir("fd-adoption-signal", { "file.txt": "x" });
+    const script = /* js */ `
+      const fs = require("node:fs");
+      const net = require("node:net");
+      const fd = fs.openSync(${JSON.stringify(join(String(dir), "file.txt"))}, "r");
+      const controller = new AbortController();
+      let code = "none";
+      try {
+        new net.Socket({ fd, signal: controller.signal });
+      } catch (e) {
+        code = e.code;
+      }
+      controller.abort();
+      setImmediate(() => console.log(JSON.stringify({ code })));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
+      stdout: JSON.stringify({ code: "ERR_INVALID_FD_TYPE" }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The descriptor the write wait polls is taken above stdio: a closed stdio number would be
+  // skipped by the close, and the FIFO would stay open after the socket.
+  it.concurrent.skipIf(!isLinux)("the write wait's duplicate does not land on a closed stdio number", async () => {
+    using dir = tempDir("fd-adoption-dup-above-stdio", {});
+    execFileSync("mkfifo", [join(String(dir), "dup.fifo")]);
+    const script = /* js */ `
+      const fs = require("node:fs");
+      const net = require("node:net");
+      const fstatCode = fd => {
+        try {
+          fs.fstatSync(fd);
+          return "open";
+        } catch (e) {
+          return e.code;
+        }
+      };
+      const fd = fs.openSync(${JSON.stringify(join(String(dir), "dup.fifo"))}, "r+");
+      // Closed after the open: the socket's descriptor must stay above stdio.
+      fs.closeSync(0);
+      const socket = net.connect({ fd });
+      socket.on("error", err => console.log(JSON.stringify({ error: err.code })));
+      // More than the pipe holds: the write waits, on a duplicate of the descriptor.
+      socket.write(Buffer.alloc(256 * 1024, "w"));
+      let drained = 0;
+      socket.on("data", chunk => {
+        drained += chunk.length;
+        if (drained < 128 * 1024) return;
+        socket.once("close", () => console.log(JSON.stringify({ fd: fstatCode(fd), stdin: fstatCode(0) })));
+        socket.destroy();
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
+      stdout: JSON.stringify({ fd: "EBADF", stdin: "EBADF" }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   // An anonymous pipe(2), which is what a shell pipeline hands a process: sh
   // creates it, `cat` feeds it what this test writes, and the child reads it
   // through the given fd (fd 3 is a dup of fd 0, both the pipe's read end).

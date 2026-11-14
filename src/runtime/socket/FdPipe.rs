@@ -178,14 +178,14 @@ impl FdPipe {
         SocketTCP::from_transport(&raw const self.handle)
     }
 
-    /// Returns true if `on_poll` will report that the descriptor takes bytes again.
+    /// `Ok`: `on_poll` will report that the descriptor takes bytes again. `Err`: the errno the write fails with.
     #[cfg(unix)]
-    fn wait_until_writable(&self) -> bool {
+    fn wait_until_writable(&self) -> Result<(), sys::SystemErrno> {
         use bun_io::posix_event_loop::{FilePoll, Flags, Owner, PollTag};
         // kqueue doesn't reliably report a FIFO's readiness on macOS, and the write could wait forever.
         // A descriptor with a reader is non-blocking, so there the wait is the only way the write completes.
         if !cfg!(target_os = "linux") && self.reader.is_none() {
-            return false;
+            return Err(sys::SystemErrno::EAGAIN);
         }
         let ctx = bun_io::js_vm_ctx();
         let poll = match self.poll.get() {
@@ -195,9 +195,8 @@ impl FdPipe {
                     Owner::new(PollTag::FdPipe, core::ptr::from_ref(self).cast_mut().cast());
                 let mut fd = self.fd;
                 if self.reader.is_some() {
-                    let Ok(dup) = sys::dup(self.fd) else {
-                        return false;
-                    };
+                    // Above stdio: a closed stdio number would be skipped by `close`.
+                    let dup = sys::dup_at_least(self.fd, 3).map_err(sys::SystemErrno::from)?;
                     self.poll_fd.set(dup);
                     fd = dup;
                 }
@@ -206,19 +205,18 @@ impl FdPipe {
         };
         self.poll.set(Some(poll));
         // SAFETY: `poll` is this pipe's live hive slot, and no other borrow of it is live.
-        if unsafe { (*poll).register(ctx.loop_(), Flags::Writable, true) }.is_err() {
-            return false;
-        }
+        unsafe { (*poll).register(ctx.loop_(), Flags::Writable, true) }
+            .map_err(|err| sys::SystemErrno::from_raw(err.errno))?;
         // The socket's queued bytes are a pending write: like libuv's `uv_write_t`, they hold the
         // loop open however the socket is ref'd.
         // SAFETY: as above.
         unsafe { (*poll).enable_keeping_process_alive(ctx) };
-        true
+        Ok(())
     }
 
     #[cfg(windows)]
-    fn wait_until_writable(&self) -> bool {
-        false
+    fn wait_until_writable(&self) -> Result<(), sys::SystemErrno> {
+        Err(sys::SystemErrno::EAGAIN)
     }
 
     #[cfg(unix)]
@@ -372,10 +370,17 @@ impl Transport for FdPipe {
         while written < data.len() {
             match sys::write(self.fd, &data[written..]) {
                 Ok(n) => written += n,
-                Err(err) if err.is_retry() && self.wait_until_writable() => break,
                 Err(err) => {
-                    send_error =
-                        -super::socket_body::uv_status(sys::SystemErrno::from_raw(err.errno));
+                    let errno = sys::SystemErrno::from_raw(err.errno);
+                    let errno = if err.is_retry() {
+                        match self.wait_until_writable() {
+                            Ok(()) => break,
+                            Err(errno) => errno,
+                        }
+                    } else {
+                        errno
+                    };
+                    send_error = -super::socket_body::uv_status(errno);
                     break;
                 }
             }

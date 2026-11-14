@@ -579,6 +579,10 @@ function closeOwedRaw(self, upgraded) {
   if (!upgraded.destroyed) self[kCloseRawConnection]();
 }
 let addAbortListener;
+// uv_guess_handle: a character device is a terminal or, like /dev/null, a file. node:tty itself is not needed.
+function characterDeviceFdType(fd) {
+  return $cpp("ProcessBindingTTYWrap.cpp", "createBunTTYFunctions").isatty(fd) ? "TTY" : "FILE";
+}
 function destroyWhenAborted(err) {
   if (!this.destroyed) {
     // node's stream layer (addAbortSignal) destroys the socket with an AbortError (code
@@ -1685,7 +1689,7 @@ function Socket(options?): void {
       }
       // A terminal is read through tty.ReadStream, as in Node. Write-only wrapping of one (stderr on a terminal) stays.
       if (opts.readable === true && stats.isCharacterDevice()) {
-        throw $ERR_INVALID_FD_TYPE(require("node:tty").isatty(fd) ? "TTY" : "FILE");
+        throw $ERR_INVALID_FD_TYPE(characterDeviceFdType(fd));
       }
     }
   }
@@ -1700,9 +1704,10 @@ function Socket(options?): void {
   if (stats !== undefined) {
     // isSocket() covers stdio handed to a child as a socketpair, which is how spawn implements pipes on unix.
     const optionsReadable = opts.readable;
+    // Stdio is only ever written through a socket, as node wraps it; an fd above 2 with `readable: true` is adopted for reading below.
     if (
       opts.writable === true &&
-      optionsReadable !== true &&
+      (optionsReadable !== true || fd <= 2) &&
       (stats.isFIFO() || stats.isCharacterDevice() || stats.isSocket())
     ) {
       fdIsWriteOnly = true;
@@ -1809,17 +1814,6 @@ function Socket(options?): void {
     };
     this[khandlers] = OnreadHandlers;
   }
-  if (signal) {
-    if (signal.aborted) {
-      process.nextTick(destroyNT, this, $makeAbortError(undefined, { cause: signal.reason }));
-    } else {
-      // addAbortListener registers a once listener; the close hook detaches it when the socket
-      // goes away first (mirrors node's addAbortSignal + eos cleanup).
-      addAbortListener ??= require("internal/abort_listener").addAbortListener;
-      const disposable = addAbortListener(signal, destroyWhenAborted.bind(this));
-      this.once("close", disposable[Symbol.dispose]);
-    }
-  }
   const optsBlockList = opts.blockList;
   if (optsBlockList) {
     if (!lazyBlockList().isBlockList(optsBlockList)) {
@@ -1850,8 +1844,20 @@ function Socket(options?): void {
       if (stats.isSocket() || stats.isFIFO()) {
         Socket.prototype.connect.$call(this, { fd, pauseOnConnect: opts.pauseOnCreate === true });
       } else if (stats.isFile() || stats.isCharacterDevice()) {
-        throw $ERR_INVALID_FD_TYPE(stats.isCharacterDevice() && require("node:tty").isatty(fd) ? "TTY" : "FILE");
+        throw $ERR_INVALID_FD_TYPE(stats.isCharacterDevice() ? characterDeviceFdType(fd) : "FILE");
       }
+    }
+  }
+  // After every throw above: the listener would destroy a socket nobody holds, and that 'error' has no listener.
+  if (signal) {
+    if (signal.aborted) {
+      process.nextTick(destroyNT, this, $makeAbortError(undefined, { cause: signal.reason }));
+    } else {
+      // addAbortListener registers a once listener; the close hook detaches it when the socket
+      // goes away first (mirrors node's addAbortSignal + eos cleanup).
+      addAbortListener ??= require("internal/abort_listener").addAbortListener;
+      const disposable = addAbortListener(signal, destroyWhenAborted.bind(this));
+      this.once("close", disposable[Symbol.dispose]);
     }
   }
 }

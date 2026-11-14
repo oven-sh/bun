@@ -249,6 +249,255 @@ export const padZero = (num) => String(num).padStart(2, '0');`,
     },
   });
 
+  // A `<script src>` that bun classifies as CommonJS (a `.cjs` file, a file
+  // that calls `require()`, top-level `this` in a UMD header, `module.exports`
+  // behind a `typeof module` guard) is wrapped in `__commonJS`. The page must
+  // still run it, in document order.
+  itBundled("html/script-src-commonjs", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <body>
+    <script src="./umd.js"></script>
+    <script src="./guarded.js"></script>
+    <script src="./ext.cjs"></script>
+    <script src="./requires.js"></script>
+    <script src="./plain.js"></script>
+  </body>
+</html>`,
+      "/umd.js": `
+(function (root, factory) {
+  root.LIB = factory();
+})(this, function () {
+  return { v: 1 };
+});
+console.log("umd");`,
+      "/guarded.js": `
+console.log("guarded");
+if (typeof module === "object") module.exports = { guarded: true };`,
+      "/ext.cjs": `console.log("cjs extension");`,
+      "/requires.js": `
+const dep = require("./dep.js");
+console.log("requires " + dep);`,
+      "/dep.js": `module.exports = 7;`,
+      "/plain.js": `console.log("plain");`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const js = api.readFile("out/index.html").match(/src="\.\/([^"]+\.js)"/)![1];
+      api.writeFile("out/run.mjs", `import "./${js}";`);
+    },
+    run: { file: "out/run.mjs", stdout: "umd\nguarded\ncjs extension\nrequires 7\nplain" },
+  });
+
+  // Every `.js` file of a `"type": "commonjs"` package (the `npm init` default)
+  // is classified as CommonJS, so even a plain `console.log` script is wrapped.
+  itBundled("html/script-src-type-commonjs-package", {
+    outdir: "out/",
+    files: {
+      "/package.json": `{ "name": "app", "version": "1.0.0", "type": "commonjs" }`,
+      "/index.html": `<!DOCTYPE html><html><body><script src="./first.js"></script><script src="./second.js"></script></body></html>`,
+      "/first.js": `console.log("first");`,
+      "/second.js": `console.log("second");`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const js = api.readFile("out/index.html").match(/src="\.\/([^"]+\.js)"/)![1];
+      api.writeFile("out/run.mjs", `import "./${js}";`);
+    },
+    run: { file: "out/run.mjs", stdout: "first\nsecond" },
+  });
+
+  // The chunk prints wrapped files ahead of the flat ones, so the call for a
+  // CommonJS script that sits between two plain scripts must print between
+  // them to keep document order, not next to the wrapper. The call for the
+  // last script of the page prints after every other script.
+  itBundled("html/script-src-commonjs-between-plain-scripts", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <body>
+    <script src="./first.js"></script>
+    <script src="./umd-badge.js"></script>
+    <script src="./last.js"></script>
+    <script src="./tail.cjs"></script>
+  </body>
+</html>`,
+      "/first.js": `console.log("first");`,
+      "/umd-badge.js": `
+(function (root, factory) {
+  if (typeof module === "object" && module.exports) module.exports = factory();
+  else root.Badge = factory();
+})(globalThis, function () {
+  console.log("umd badge");
+  return {};
+});`,
+      "/last.js": `console.log("last");`,
+      "/tail.cjs": `console.log("tail");`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const js = api.readFile("out/index.html").match(/src="\.\/([^"]+\.js)"/)![1];
+      api.expectFile("out/" + js).not.toContain("__toESM");
+      api.writeFile("out/run.mjs", `import "./${js}";`);
+    },
+    run: { file: "out/run.mjs", stdout: "first\numd badge\nlast\ntail" },
+  });
+
+  // A `<link as="worker">` only refers to its file: the page calls the wrapper
+  // of a CommonJS `<script src>`, and not the wrapper of a CommonJS worker.
+  itBundled("html/script-src-commonjs-with-worker-link", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="modulepreload" as="worker" href="./worker.js">
+  </head>
+  <body>
+    <script src="./lib.cjs"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>`,
+      "/worker.js": `
+console.log("worker");
+module.exports = {};`,
+      "/lib.cjs": `console.log("lib");`,
+      "/app.js": `console.log("app");`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const js = api.readFile("out/index.html").match(/src="\.\/([^"]+\.js)"/)![1];
+      api.writeFile("out/run.mjs", `import "./${js}";`);
+    },
+    run: { file: "out/run.mjs", stdout: "lib\napp" },
+  });
+
+  // Same, when the script resolved to a lazily-initialized ES module (here
+  // because another script also `import()`s it): the page calls `init_foo()`,
+  // with `await` when the module uses top-level await. A module with no side
+  // effects (pure.js) has no `init_foo` to call.
+  itBundled("html/script-src-lazy-esm", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <body>
+    <script src="./pure.js"></script>
+    <script src="./sync.js"></script>
+    <script src="./tla.js"></script>
+    <script src="./main.js"></script>
+  </body>
+</html>`,
+      "/pure.js": `export const pure = "pure";`,
+      "/sync.js": `
+export const sync = "sync";
+console.log(sync);`,
+      "/tla.js": `
+export const tla = await Promise.resolve("tla");
+console.log(tla);`,
+      "/main.js": `
+console.log("main");
+const { pure } = await import("./pure.js");
+const { sync } = await import("./sync.js");
+const { tla } = await import("./tla.js");
+console.log("lazy " + pure + " " + sync + " " + tla);`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const js = api.readFile("out/index.html").match(/src="\.\/([^"]+\.js)"/)![1];
+      api.expectFile("out/" + js).toMatch(/init_sync\(\);\s*await init_tla\(\);/);
+      api.writeFile("out/run.mjs", `import "./${js}";`);
+    },
+    run: { file: "out/run.mjs", stdout: "sync\ntla\nmain\nlazy pure sync tla" },
+  });
+
+  // The call is a statement of the page, so each output format, the minifier
+  // and the source map path keep it between the scripts around its tag.
+  for (const [name, options] of [
+    ["iife", { format: "iife" }],
+    ["cjs", { format: "cjs" }],
+    ["minify", { minifyIdentifiers: true, minifySyntax: true, minifyWhitespace: true }],
+    ["sourcemap", { sourceMap: "external" }],
+  ] as const) {
+    itBundled(`html/script-src-commonjs-${name}`, {
+      outdir: "out/",
+      ...options,
+      files: {
+        "/index.html": `<!DOCTYPE html><html><body><script src="./first.js"></script><script src="./lib.cjs"></script><script src="./last.js"></script></body></html>`,
+        "/first.js": `console.log("first");`,
+        "/lib.cjs": `console.log("lib");`,
+        "/last.js": `console.log("last");`,
+      },
+      entryPoints: ["/index.html"],
+      onAfterBundle(api) {
+        const js = api.readFile("out/index.html").match(/src="\.\/([^"]+\.js)"/)![1];
+        if (name === "sourcemap") {
+          const sources: string[] = JSON.parse(api.readFile(`out/${js}.map`)).sources;
+          expect(sources.map(source => source.split("/").pop())).toEqual(["lib.cjs", "first.js", "last.js"]);
+        }
+        api.writeFile("out/run.mjs", `import "./${js}";`);
+      },
+      run: { file: "out/run.mjs", stdout: "first\nlib\nlast" },
+    });
+  }
+
+  // A page that a script loads with `import()` is a lazily-initialized module
+  // itself: its scripts run, in document order, when that module does.
+  itBundled("html/script-src-commonjs-in-imported-page", {
+    outdir: "out/",
+    target: "browser",
+    files: {
+      "/entry.js": `
+console.log("entry");
+await import("./page.html");
+console.log("loaded");`,
+      "/page.html": `<!DOCTYPE html><html><body><script src="./lib.cjs"></script><script src="./plain.js"></script></body></html>`,
+      "/lib.cjs": `console.log("lib");`,
+      "/plain.js": `console.log("plain");`,
+    },
+    entryPoints: ["/entry.js"],
+    run: { file: "out/entry.js", stdout: "entry\nlib\nplain\nloaded" },
+  });
+
+  // With code splitting the CommonJS script shared by two pages moves to its
+  // own chunk. Each page imports `require_lib` from it and still calls it. The
+  // page itself never reads the namespace, so it does not import `__toESM`
+  // (two.js does, for its own `import * as`).
+  itBundled("html/script-src-commonjs-splitting", {
+    outdir: "out/",
+    splitting: true,
+    files: {
+      "/one.html": `<!DOCTYPE html><html><body><script src="./lib.js"></script><script src="./one.js"></script></body></html>`,
+      "/two.html": `<!DOCTYPE html><html><body><script src="./lib.js"></script><script src="./two.js"></script></body></html>`,
+      "/lib.js": `
+console.log("lib");
+module.exports = { lib: true };`,
+      "/one.js": `console.log("one");`,
+      "/two.js": `
+import * as ns from "./lib.js";
+console.log("two", ns.default.lib);`,
+    },
+    entryPoints: ["/one.html", "/two.html"],
+    onAfterBundle(api) {
+      for (const page of ["one", "two"]) {
+        const js = api.readFile(`out/${page}.html`).match(/src="\.\/([^"]+\.js)"/)![1];
+        if (page === "one") api.expectFile("out/" + js).not.toContain("__toESM");
+        api.writeFile(`out/run-${page}.mjs`, `import "./${js}";`);
+      }
+    },
+    run: [
+      { file: "out/run-one.mjs", stdout: "lib\none" },
+      { file: "out/run-two.mjs", stdout: "lib\ntwo true" },
+    ],
+  });
+
   // Test CSS imports
   itBundled("html/css-imports", {
     outdir: "out/",

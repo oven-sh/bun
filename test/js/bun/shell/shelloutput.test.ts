@@ -26,6 +26,21 @@ describe("ShellOutput + ShellError", () => {
     expect(output.blob()).toEqual(new Blob([new TextEncoder().encode("hello")]));
   });
 
+  // JSON.stringify() gives the text of these Buffers: each has a toJSON of its own.
+  test("a print of the stdout of an error lists no toJSON", async () => {
+    const bytes = "process.stdout.write(Buffer.from([255, 254])); process.exit(3);";
+    const error = await withErr($`${bunExe()} -e ${bytes}`.env(bunEnv).quiet());
+    expect(Object.keys(error.stdout)).toEqual(["0", "1"]);
+    expect(Bun.inspect(error.stdout)).toBe("<Buffer ff fe>");
+    expect(Bun.inspect(error.stderr)).toBe("<Buffer >");
+    // An error prints a Buffer that is not UTF-8 with no inspect function called.
+    expect(Bun.inspect(error)).toContain(" stdout: Buffer(2) [ 255, 254 ],\n");
+
+    const text = await withErr($`echo hi; exit 3`.quiet());
+    expect(JSON.stringify([text.stdout, text.stderr])).toBe('["hi\\n",""]');
+    expect(Bun.inspect(text)).toContain(' stdout: "hi\\n",\n');
+  });
+
   test("blob() does not read Blob from globalThis", async () => {
     const { Blob } = globalThis;
     globalThis.Blob = class {} as typeof Blob;

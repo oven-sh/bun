@@ -86,6 +86,10 @@ export const setSQLiteColumnNameTransform = (
   transform: ((name: string) => string) | null | undefined,
 ) => statement.native.$setColumnNameTransform(transform);
 
+/** The adapter of a `Bun.SQL` query: the pool, with its connections and options. */
+export const sqlQueryAdapter = (query: import("./internal/sql/query").Query<any, any>) =>
+  require("internal/sql/query").adapterOf(query);
+
 export const patchInternals = {
   parse: $bindgen("patch_testing.bind.ts", "parse"),
   apply: $bindgen("patch_testing.bind.ts", "apply"),

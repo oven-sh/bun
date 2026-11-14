@@ -17,8 +17,11 @@ pub struct OutputFile {
     pub size_without_sourcemap: usize,
     pub hash: bun_core::fmt::ContentHash,
     pub is_executable: bool,
+    /// Position of this file's source map in the list that holds this file, or `u32::MAX`. Code that removes or moves files in that list keeps it valid.
     pub source_map_index: u32,
+    /// As `source_map_index`, for the bytecode file.
     pub bytecode_index: u32,
+    /// As `source_map_index`, for the module info file.
     pub module_info_index: u32,
     pub output_kind: OutputKind,
     /// Relative

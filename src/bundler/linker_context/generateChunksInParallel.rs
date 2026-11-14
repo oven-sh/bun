@@ -1498,6 +1498,14 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
             // else: item at `i` will be dropped by truncate below (impl Drop handles deinit)
         }
         result.truncate(write_idx);
+        debug_assert!(
+            result.iter().all(|file| {
+                file.source_map_index == u32::MAX
+                    && file.bytecode_index == u32::MAX
+                    && file.module_info_index == u32::MAX
+            }),
+            "a kept file names another file by its position before the filter",
+        );
         debug_assert_no_placeholder_left(c, &result);
         return Ok(result);
     }

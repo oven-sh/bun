@@ -154,7 +154,7 @@ static bool tryFastEnumeration(VM& vm, JSObject* object, const Invocable<void(Un
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
 extern "C" void Bun__VM__setEntryPointEvalResultCJS(void*, EncodedJSValue);
-extern "C" void Bun__VM__noteCommonJSEvaluation(void*, EncodedJSValue);
+extern "C" void Bun__VM__noteCommonJSEntryPoint(void*);
 extern "C" EncodedJSValue Bun__VM__overriddenMain(void*);
 extern "C" EncodedJSValue SYSV_ABI BunObject_getter_main(JSGlobalObject*);
 extern "C" bool Bun__isMainThreadVM();
@@ -263,26 +263,28 @@ void clearMainModule(VM& vm, JSMap* requireMap)
         requireMap->putDirect(vm, mainModuleName(vm), jsUndefined());
 }
 
-void becomeMainModuleIfEntryPoint(Zig::GlobalObject* globalObject, JSCommonJSModule* module)
+bool becomeMainModuleIfEntryPoint(Zig::GlobalObject* globalObject, JSCommonJSModule* module)
 {
     auto& vm = globalObject->vm();
     JSModuleGraph* graph = module->moduleGraph();
     if (loadsTestFiles(globalObject, graph))
-        return;
+        return false;
     JSMap* requireMap = requireMapOf(globalObject, graph);
     JSValue main = requireMap->getDirect(vm, mainModuleName(vm));
     if (main && main.isObject()) [[likely]]
-        return;
+        return false;
     JSValue key = namedKeyOfEntryPoint(graph, main);
     JSValue filename = module->filename();
     if (!key.isString() || !filename.isString() || asString(filename)->length() != asString(key)->length())
-        return;
+        return false;
     auto scope = DECLARE_THROW_SCOPE(vm);
     // A program can compile a module of the same name that the cache does not hold: `new Module(filename)`.
     JSValue held = requireMap->get(globalObject, key);
-    RETURN_IF_EXCEPTION(scope, );
-    if (held == module)
-        requireMap->putDirect(vm, mainModuleName(vm), module);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (held != module)
+        return false;
+    requireMap->putDirect(vm, mainModuleName(vm), module);
+    return true;
 }
 
 // The source a graph's module is compiled from: the same text, in a code-cache entry of its
@@ -327,7 +329,13 @@ static bool hasLoadedCompiledCommonJSModule([[maybe_unused]] Zig::GlobalObject* 
 #endif
 }
 
-static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename)
+// The ES module loader runs the modules that it loads, an entry point among them. A require() and `module._compile` run a module for the program.
+enum class CommonJSEvaluator : bool {
+    Program,
+    ModuleLoader,
+};
+
+static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename, CommonJSEvaluator evaluator = CommonJSEvaluator::Program)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     SourceCode code = WTF::move(moduleObject->sourceCode);
@@ -358,16 +366,6 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         return false;
     }
 
-    // Node reports a CJS entry's top-level throw as origin "uncaughtException", not
-    // "unhandledRejection"; record the entry mode for the run command. Only the root
-    // module (m_id == ".") can be the entry, so the FFI compare runs at most once.
-    if (auto* id = moduleObject->m_id.get(); id && id->length() == 1) [[unlikely]] {
-        auto view = id->view(globalObject);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (view == "."_s)
-            Bun__VM__noteCommonJSEvaluation(globalObject->bunVM(), JSValue::encode(filename));
-    }
-
     JSFunction* resolveFunction = nullptr;
     JSFunction* requireFunction = nullptr;
     const auto initializeModuleObject = [&]() {
@@ -394,6 +392,9 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     };
 
     if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(filename))) [[unlikely]] {
+        // No main module is stored for the text of `-e`, `-p` and stdin.
+        if (evaluator == CommonJSEvaluator::ModuleLoader)
+            Bun__VM__noteCommonJSEntryPoint(globalObject->bunVM());
         initializeModuleObject();
         scope.assertNoExceptionExceptTermination();
 
@@ -424,8 +425,11 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         RELEASE_AND_RETURN(scope, true);
     }
 
-    becomeMainModuleIfEntryPoint(globalObject, moduleObject);
+    bool isEntryPoint = becomeMainModuleIfEntryPoint(globalObject, moduleObject);
     RETURN_IF_EXCEPTION(scope, false);
+    // Node runs a CommonJS entry point synchronously: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/run_main.js#L151-L154
+    if (isEntryPoint && evaluator == CommonJSEvaluator::ModuleLoader && !moduleObject->moduleGraph()) [[unlikely]]
+        Bun__VM__noteCommonJSEntryPoint(globalObject->bunVM());
 
 #if ENABLE(AOT)
     // The original of a mocked file.
@@ -1997,7 +2001,8 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                                 globalObject,
                                 moduleObject,
                                 moduleObject->m_dirname.get(),
-                                moduleObject->m_filename.get());
+                                moduleObject->m_filename.get(),
+                                CommonJSEvaluator::ModuleLoader);
                             if (auto exception = scope.exception()) {
                                 if (vm.hasPendingTerminationException()) [[unlikely]]
                                     return;

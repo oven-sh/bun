@@ -210,8 +210,8 @@ JSC::JSValue mainModuleOf(Zig::GlobalObject*, JSModuleGraph* graph);
 JSC::JSValue mainModuleOfProcess(Zig::GlobalObject*, JSModuleGraph* graph);
 // `graph`'s loader (null: the global object's) is about to load its entry point, the module under `key`.
 void nameMainModule(Zig::GlobalObject*, JSModuleGraph* graph, JSC::JSString* key);
-// Call before code runs the text of `module`. If the cache holds it under the entry point's key, it is the main module from now on.
-void becomeMainModuleIfEntryPoint(Zig::GlobalObject*, JSCommonJSModule* module);
+// Call before code runs the text of `module`. If the cache holds it under the entry point's key, it is the main module from now on, and this returns true.
+bool becomeMainModuleIfEntryPoint(Zig::GlobalObject*, JSCommonJSModule* module);
 void clearMainModule(JSC::VM&, JSC::JSMap* requireMap);
 
 // `graph`: the Bun.ModuleGraph whose loader is importing the file (the module goes in

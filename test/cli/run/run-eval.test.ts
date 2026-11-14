@@ -348,3 +348,35 @@ test("uncaught error from a CommonJS-sniffed stdin entry reports and exits 1", a
   expect(stdout).toBe("");
   expect(exitCode).toBe(1);
 });
+
+// Node runs the text of a CommonJS eval entry point synchronously: what it throws at the top level has the origin
+// "uncaughtException". After `--import`, and for a text that is an ES module, the error comes from a promise.
+describe.concurrent("the origin of what an eval entry point throws at the top level", () => {
+  const listener = `process.on("uncaughtException", (error, origin) => console.log(origin));`;
+  const commonJS = `${listener} module.exports = {}; throw new Error("thrown at the top level");`;
+  // The module that it compiles has the name of the text and is not the entry point.
+  const esModule = `import Module from "node:module"; import { join } from "node:path"; ${listener} new Module()._compile("", join(process.cwd(), "[eval]")); throw new Error("thrown at the top level");`;
+  test.each([
+    ["-e", "uncaughtException", ["-e", commonJS], undefined],
+    ["-p", "uncaughtException", ["-p", commonJS], undefined],
+    ["stdin", "uncaughtException", ["-"], Buffer.from(commonJS)],
+    ["-e after a CommonJS preload", "uncaughtException", ["-r", "./preload.cjs", "-e", commonJS], undefined],
+    ["-p after a CommonJS preload", "uncaughtException", ["-r", "./preload.cjs", "-p", commonJS], undefined],
+    ["stdin after a CommonJS preload", "uncaughtException", ["-r", "./preload.cjs", "-"], Buffer.from(commonJS)],
+    ["-e after --import", "unhandledRejection", ["--import", "./preload.cjs", "-e", commonJS], undefined],
+    ["-e of an ES module that compiles a module", "unhandledRejection", ["-e", esModule], undefined],
+  ])("%s: %s", async (_, origin, args, stdin) => {
+    using dir = tempDir("eval-throw-origin", { "preload.cjs": "module.exports = {};" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdin,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // `-p` also prints the value of the text.
+    expect({ origin: stdout.split("\n")[0], stderr, exitCode }).toEqual({ origin, stderr: "", exitCode: 0 });
+  });
+});

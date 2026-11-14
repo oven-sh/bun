@@ -43,6 +43,8 @@ pub struct ContextData {
     pub no_exit_on_error: bool,
 
     pub preloads: Vec<Box<[u8]>>,
+    /// `--import` gave one of the preloads.
+    pub has_import_flag: bool,
     pub has_loaded_global_config: bool,
     /// Where the process started, if a relative `--cwd` changed its directory. Parsing the same arguments again gives the same result only from here.
     pub original_cwd: Option<Box<[u8]>>,
@@ -85,6 +87,7 @@ impl Default for ContextData {
             sequential: false,
             no_exit_on_error: false,
             preloads: Vec::new(),
+            has_import_flag: false,
             has_loaded_global_config: false,
             original_cwd: None,
         }

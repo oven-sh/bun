@@ -1040,6 +1040,132 @@ describe.concurrent(() => {
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true true false\n", stderr: "", exitCode: 0 });
   });
 
+  // Node gives the origin "uncaughtException" to what its synchronous loader throws: a CommonJS entry point, also after
+  // `-r` preloads. What rejects a promise of its ES module loader has the origin "unhandledRejection".
+  describe("the origin of what an entry point throws at the top level", () => {
+    const listener = `process.on("uncaughtException", (error, origin) => console.log(origin));\n`;
+    const thrower = `throw new Error("thrown at the top level");\n`;
+    // `module.exports` makes a file CommonJS, whatever its name is. An import statement makes a `.js` file an ES module.
+    const files = {
+      "entry.cjs": `${listener}module.exports = {};\n${thrower}`,
+      "throws.cjs": `module.exports = {};\n${thrower}`,
+      "ok.cjs": `module.exports = {};\n`,
+      "entry-esm.js": `import "node:fs";\n${listener}${thrower}`,
+      "imports-throws.js": `import "node:fs";\n${listener}await import("./throws.cjs");\n`,
+      "compiles.js": `import Module from "node:module";\n${listener}new Module()._compile("", process.argv[1]);\n${thrower}`,
+      "caches.js": `
+        import Module from "node:module";
+        ${listener}
+        const module = new Module(process.argv[1]);
+        module.filename = process.argv[1];
+        Module._cache[process.argv[1]] = module;
+        module._compile("", process.argv[1]);
+        ${thrower}
+      `,
+      "graph.js": `import "node:fs";\n${listener}await new Bun.ModuleGraph().import(import.meta.dir + "/ok.cjs");\n${thrower}`,
+      "preload.cjs": `module.exports = {};\n`,
+      "second.cjs": `module.exports = {};\n`,
+      "preload.mjs": `export {};\n`,
+      "requires-cjs.mjs": `import { createRequire } from "node:module";\ncreateRequire(import.meta.url)("./second.cjs");\n`,
+      "listens.cjs": `${listener}module.exports = {};\n`,
+      "monitors.cjs": `process.on("uncaughtExceptionMonitor", (error, origin) => console.log("monitor " + origin));\nprocess.on("uncaughtException", () => {});\nmodule.exports = {};\n`,
+      "throws.mjs": `${listener}${thrower}`,
+      "listens-and-throws.cjs": `${listener}module.exports = {};\n${thrower}`,
+      "runs-entry-and-throws.cjs": `${listener}require("node:module").runMain(require("node:path").resolve(process.argv[1]));\n${thrower}`,
+    };
+    async function runIn(dir, args, env = {}) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        env: { ...bunEnv, ...env },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+    async function run(args, { env, bunfig } = {}) {
+      using dir = tempDir("entry-throw-origin", bunfig ? { ...files, "bunfig.toml": bunfig } : files);
+      return await runIn(dir, args, env);
+    }
+
+    it.each([
+      ["no preload", ["entry.cjs"]],
+      ["-r with a CommonJS file", ["-r", "./preload.cjs", "entry.cjs"]],
+      ["--require with a CommonJS file", ["--require", "./preload.cjs", "entry.cjs"]],
+      ["--preload with a CommonJS file", ["--preload", "./preload.cjs", "entry.cjs"]],
+      ["two CommonJS preloads", ["-r", "./preload.cjs", "-r", "./second.cjs", "entry.cjs"]],
+      ["an ES module preload", ["--preload", "./preload.mjs", "entry.cjs"]],
+      ["an ES module preload that requires a CommonJS file", ["--preload", "./requires-cjs.mjs", "entry.cjs"]],
+      ["a CommonJS preload in bunfig.toml", ["entry.cjs"], { bunfig: `preload = ["./preload.cjs"]\n` }],
+      ["a CommonJS preload in BUN_OPTIONS", ["entry.cjs"], { env: { BUN_OPTIONS: "--preload ./preload.cjs" } }],
+      ["a CommonJS preload that has the listener", ["-r", "./listens.cjs", "throws.cjs"]],
+      // The loader is the root of the entry point here, and no `bun:main` module imports it.
+      ["no transpiler", ["entry.cjs"], { env: { BUN_DISABLE_TRANSPILER: "1" } }],
+    ])("a CommonJS entry point, %s: uncaughtException", async (_, args, options = {}) => {
+      expect(await run(args, options)).toEqual({ stdout: "uncaughtException\n", stderr: "", exitCode: 0 });
+    });
+
+    // After `--import` Node loads the entry point through its ES module loader:
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/run_main.js#L62-L63
+    it.each([
+      ["a CommonJS file", ["--import", "./preload.cjs", "entry.cjs"]],
+      ["an ES module", ["--import", "./preload.mjs", "entry.cjs"]],
+      ["an ES module, and -r of a CommonJS file", ["-r", "./preload.cjs", "--import", "./preload.mjs", "entry.cjs"]],
+    ])("a CommonJS entry point after --import of %s: unhandledRejection", async (_, args) => {
+      expect(await run(args)).toEqual({ stdout: "unhandledRejection\n", stderr: "", exitCode: 0 });
+    });
+
+    it("a CommonJS entry point after a CommonJS preload: uncaughtExceptionMonitor gets the same origin", async () => {
+      expect(await run(["-r", "./monitors.cjs", "throws.cjs"])).toEqual({
+        stdout: "monitor uncaughtException\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it.each([
+      ["no preload", ["entry-esm.js"]],
+      ["a CommonJS preload", ["-r", "./preload.cjs", "entry-esm.js"]],
+      ["an import of a CommonJS file that throws", ["imports-throws.js"]],
+      ["a CommonJS preload and an import of a CommonJS file that throws", ["-r", "./preload.cjs", "imports-throws.js"]],
+      // These modules have the name of the entry point and are not the entry point.
+      ["a module that it compiles under its own name", ["compiles.js"]],
+      ["a module that it caches under its own name and compiles", ["caches.js"]],
+      ["a CommonJS module that it runs in a Bun.ModuleGraph", ["graph.js"]],
+    ])("an ES module entry point, %s: unhandledRejection", async (_, args) => {
+      expect(await run(args)).toEqual({ stdout: "unhandledRejection\n", stderr: "", exitCode: 0 });
+    });
+
+    // The promise that rejects is the preload's.
+    it.each([
+      ["an ES module preload that throws", ["--preload", "./throws.mjs", "ok.cjs"]],
+      ["a CommonJS preload that runs the entry point and then throws", ["-r", "./runs-entry-and-throws.cjs", "ok.cjs"]],
+    ])("%s: unhandledRejection", async (_, args) => {
+      expect(await run(args)).toEqual({ stdout: "unhandledRejection\n", stderr: "", exitCode: 0 });
+    });
+
+    // Node requires a `-r` preload synchronously, so the origin is "uncaughtException". Bun reports the promise of the
+    // preload with "unhandledRejection". The origin needs the flag that gave each preload.
+    it.failing.each([
+      ["throws", ["-r", "./listens-and-throws.cjs", "ok.cjs"]],
+      ["is also the entry point and throws", ["-r", "./entry.cjs", "entry.cjs"]],
+    ])("a CommonJS preload that %s: uncaughtException", async (_, args) => {
+      expect((await run(args)).stdout).toBe("uncaughtException\n");
+    });
+
+    it("with no listener, a CommonJS preload changes neither the printed error nor the exit code", async () => {
+      using dir = tempDir("entry-throw-origin", files);
+      const [alone, afterPreload] = await Promise.all([
+        runIn(dir, ["throws.cjs"]),
+        runIn(dir, ["-r", "./preload.cjs", "throws.cjs"]),
+      ]);
+      expect(alone.stderr).toContain("error: thrown at the top level");
+      expect(afterPreload).toEqual({ stdout: "", stderr: alone.stderr, exitCode: 1 });
+      expect(alone.exitCode).toBe(1);
+    });
+  });
+
   describe("process.onBeforeExit", () => {
     it("emitted", async () => {
       await using proc = Bun.spawn({

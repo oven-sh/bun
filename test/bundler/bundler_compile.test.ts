@@ -1379,6 +1379,24 @@ describe("bundler", () => {
       run: { stdout: `${mainModule} ${mainModule}`, setCwd: true },
     });
   }
+  // Node runs a CommonJS entry point synchronously: what it throws at the top level is an uncaught exception.
+  itBundled("compile/OriginOfTopLevelThrowOfCommonJSEntryPoint", {
+    compile: true,
+    format: "cjs",
+    files: {
+      "/entry.js": /* js */ `
+        process.on("uncaughtException", (error, origin) => console.log(origin));
+        throw new Error("thrown at the top level");
+      `,
+    },
+    runtimeFiles: {
+      "/preload.cjs": `module.exports = {};`,
+    },
+    run: [
+      { stdout: "uncaughtException" },
+      { stdout: "uncaughtException", env: { BUN_OPTIONS: "--preload ./preload.cjs" }, setCwd: true },
+    ],
+  });
   itBundled("compile/SourceMap", {
     target: "bun",
     compile: true,

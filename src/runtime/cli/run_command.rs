@@ -1076,6 +1076,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `vm.preload`/`vm.argv` are `Vec<Box<[u8]>>` on both sides;
         // hand the CLI's vectors over wholesale (process-lifetime, never freed).
         vm.preload = std::mem::take(&mut ctx.preloads);
+        vm.has_import_flag = ctx.has_import_flag;
         vm.argv = std::mem::take(&mut ctx.passthrough);
         // `vm.dns_result_order` is a `u8` until the b2-cycle widens
         // it to `bun_dns::Order`; the enum is `#[repr(u8)]` so `as u8` is exact.
@@ -1289,6 +1290,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
 
         vm.preload = std::mem::take(&mut ctx.preloads);
+        vm.has_import_flag = ctx.has_import_flag;
         vm.argv = std::mem::take(&mut ctx.passthrough);
 
         // `vm.main` is a BACKREF (`*const [u8]`) into `entry_path`'s heap
@@ -1602,7 +1604,7 @@ impl Run<'_> {
                     // A CJS entry runs synchronously in Node, so its top-level
                     // throw is an uncaughtException; only an ESM entry
                     // rejection reports origin "unhandledRejection".
-                    let is_rejection = !vm.entry_point_is_commonjs();
+                    let is_rejection = vm.entry_point_error_is_rejection();
                     let handled = vm.uncaught_exception(global, result, is_rejection);
                     promise.set_handled();
                     vm.pending_internal_promise_reported_at = vm.hot_reload_counter;

@@ -114,6 +114,37 @@ describe("web worker", () => {
         /THIS IS AN ERROR AND THIS PARTICULAR STRING DOESNT APPEAR IN THE SOURCE CODE SO WE KNOW FOR SURE IT SENT THE ACTUAL MESSAGE AND NOT JUST A DUMP OF THE SOURCE CODE AS IT ORIGINALLY WAS/,
       );
     });
+
+    // A CommonJS entry point runs synchronously in Node: what it throws at the top level is an uncaught exception.
+    test.concurrent.each([
+      ["no preload", false],
+      ["a CommonJS preload", true],
+    ])("what a CommonJS entry throws at the top level has the origin uncaughtException: %s", async (_, preload) => {
+      using dir = tempDir("worker-throw-origin", {
+        "entry.cjs": `
+          process.on("uncaughtException", (error, origin) => console.log(origin));
+          module.exports = {};
+          throw new Error("thrown at the top level");
+        `,
+        "preload.cjs": `module.exports = {};`,
+        "main.mjs": `
+          const worker = new Worker(new URL("./entry.cjs", import.meta.url).href, {
+            preload: process.argv[2] === "preload" ? [new URL("./preload.cjs", import.meta.url).href] : [],
+          });
+          worker.addEventListener("error", event => console.log("error: " + event.message));
+          worker.addEventListener("close", event => console.log("close " + event.code));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.mjs", preload ? "preload" : "none"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "uncaughtException\nclose 0\n", stderr: "", exitCode: 0 });
+    });
   });
 
   test("worker", done => {

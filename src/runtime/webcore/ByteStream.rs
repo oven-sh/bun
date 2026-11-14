@@ -335,15 +335,11 @@ impl readable_stream::SourceContext for ByteStream {
 
     fn deinit_fn(&self) {
         bun_jsc::mark_binding!();
-        self.buffered.clear();
-
-        self.pending_value.with_mut(|pv| pv.deinit());
         if !self.done.get() {
             self.done.set(true);
 
             self.pending_buffer.set(Self::empty_pending_buffer());
             let is_promise = self.pending.with_mut(|p| {
-                p.result.release();
                 p.result = streams::Result::Done;
                 p.state == streams::PendingState::Pending
                     && matches!(p.future, streams::PendingFuture::Promise { .. })
@@ -356,11 +352,6 @@ impl readable_stream::SourceContext for ByteStream {
                 // nothing to settle, so nothing can be left pending.
                 self.pending.with_mut(|p| p.run());
             }
-        }
-        if let Some(action) = self.buffer_action.replace(None) {
-            // JSPromiseStrong implements Drop, so dropping the enum releases
-            // each variant's JSPromiseStrong payload.
-            drop(action);
         }
     }
 
@@ -641,10 +632,7 @@ impl ByteStream {
                 action.reject(global, err);
 
                 self.buffered.clear();
-                self.pending.with_mut(|p| {
-                    p.result.release();
-                    p.result = streams::Result::Done;
-                });
+                self.pending.with_mut(|p| p.result = streams::Result::Done);
                 self.buffer_action.set(None);
 
                 return;
@@ -884,10 +872,7 @@ impl ByteStream {
 
         if !view.is_empty() {
             self.pending_buffer.set(Self::empty_pending_buffer());
-            self.pending.with_mut(|p| {
-                p.result.release();
-                p.result = streams::Result::Done;
-            });
+            self.pending.with_mut(|p| p.result = streams::Result::Done);
             self.pending.with_mut(|p| p.run());
         }
 
@@ -947,10 +932,7 @@ impl ByteStream {
         if self.has_received_last_chunk.get() && !self.has_pending_error() {
             let buffer = self.buffered.take();
             self.done.set(true);
-            self.pending.with_mut(|p| {
-                p.result.release();
-                p.result = streams::Result::Done;
-            });
+            self.pending.with_mut(|p| p.result = streams::Result::Done);
             self.parent_const().is_closed.set(true);
             return Some(blob::Any::InternalBlob(blob::Internal {
                 bytes: buffer,

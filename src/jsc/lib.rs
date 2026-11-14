@@ -131,8 +131,6 @@ pub mod console_object;
 pub mod counters;
 #[path = "DecodedJSValue.rs"]
 pub mod decoded_js_value;
-#[path = "DeprecatedStrong.rs"]
-pub mod deprecated_strong;
 #[path = "DOMURL.rs"]
 pub mod dom_url;
 #[path = "EncodedSlice.rs"]
@@ -343,7 +341,6 @@ impl<'a> ConsoleFormatter for self::console_object::Formatter<'a> {
 
 pub use self::counters::Counters;
 pub use self::decoded_js_value::DecodedJSValue;
-pub use self::deprecated_strong::DeprecatedStrong;
 pub use self::js_array::JSArray;
 pub use self::js_ref::{JsCellRefExt, JsRef};
 pub use self::string_builder::StringBuilder;
@@ -699,7 +696,7 @@ pub use self::dom_form_data::DOMFormData;
 pub use self::url::{URL, URLJsc};
 pub use self::zig_stack_frame::ZigStackFrame;
 pub use self::zig_stack_trace::ZigStackTrace;
-pub use abort_signal::{AbortSignal, AbortSignalRef};
+pub use abort_signal::{AbortSignal, AbortSignalRef, PendingAbortSignal};
 pub use script_execution_context::{
     AbortCause, AbortHandle, AbortHandleOwner, ContextId, ContextTimer, ScriptExecutionContext,
     StopReason,
@@ -1023,7 +1020,7 @@ pub struct ValidateObjectOpts {
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "JSObject.rs"]
 pub mod js_object;
-pub use self::js_object::{ExternColumnIdentifier, ExternColumnIdentifierValue, JSObject};
+pub use self::js_object::{ExternColumnIdentifier, JSObject};
 
 // ──────────────────────────────────────────────────────────────────────────
 // CallFrame / ArgumentsSlice (real module in CallFrame.rs).
@@ -1196,7 +1193,7 @@ pub use self::event_loop::{
     DeferredTaskQueue, EventLoopHandle, EventLoopTask, GarbageCollectionController, MiniEventLoop,
     PosixSignalTask, Stopped, Task, WorkPool, WorkPoolTask,
 };
-pub use self::job::{Completion, Job, JobContext, JsPtr, JsThread, Protected};
+pub use self::job::{Completion, Job, JobContext, JsPtr, JsThread};
 #[cfg(unix)]
 pub type PlatformEventLoop = bun_uws::Loop;
 #[cfg(not(unix))]

@@ -7,8 +7,7 @@ pub(crate) type InlineStorage = BoundedArray<u8, 15>;
 #[derive(Default)]
 pub enum Data {
     Owned(Vec<u8>),
-    // `Temporary` borrows external bytes (see `substring`, which returns a
-    // `Data` aliasing `self`). Stored as a `RawSlice` (encapsulated fat
+    // `Temporary` borrows external bytes. Stored as a `RawSlice` (encapsulated fat
     // pointer; safe `.slice()` projection). Invariant: the borrowed backing
     // bytes must outlive the holder — `Data` carries no lifetime, so this is
     // enforced by callers, not the compiler.
@@ -73,21 +72,6 @@ impl Data {
             Data::Temporary(temporary) => temporary.slice(),
             Data::Empty => b"",
             Data::InlineStorage(inline_storage) => inline_storage.as_slice(),
-        }
-    }
-
-    pub fn substring(&self, start_index: usize, end_index: usize) -> Data {
-        match self {
-            Data::Owned(owned) => {
-                Data::Temporary(RawSlice::new(&owned.slice()[start_index..end_index]))
-            }
-            Data::Temporary(temporary) => {
-                Data::Temporary(RawSlice::new(&temporary.slice()[start_index..end_index]))
-            }
-            Data::Empty => Data::Empty,
-            Data::InlineStorage(inline_storage) => Data::Temporary(RawSlice::new(
-                &inline_storage.as_slice()[start_index..end_index],
-            )),
         }
     }
 }

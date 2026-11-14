@@ -11,7 +11,6 @@ use crate::webcore::streams;
 
 pub struct ByteBlobLoader {
     pub offset: Cell<blob::SizeType>,
-    // LIFETIMES.tsv: SHARED — ref() on setup, deref() in clearData
     pub(crate) store: JsCell<Option<RefPtr<Store>>>,
     pub(crate) chunk_size: blob::SizeType,
     pub(crate) remain: Cell<blob::SizeType>,
@@ -81,10 +80,6 @@ impl readable_stream::SourceContext for ByteBlobLoader {
     }
 
     fn on_cancel(&self) {
-        self.clear_data();
-    }
-
-    fn deinit_fn(&self) {
         self.clear_data();
     }
 

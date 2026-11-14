@@ -645,7 +645,7 @@ impl JSMySQLConnection {
             binary: !request.is_simple(),
             raw: result_mode == ResultMode::Raw,
             bigint: request.is_bigint_supported(),
-            values: Box::default(),
+            values: Vec::new(),
         };
         if let Err(e) = row.decode(reader) {
             return self.on_undecodable_row(request, e);
@@ -662,8 +662,6 @@ impl JSMySQLConnection {
         ) else {
             return self.on_undecodable_row(request, AnyMySQLErrorT::JSError);
         };
-        // `Row<'_>` has a Drop impl, so its `&statement.columns` borrow lives to
-        // end-of-scope; drop it now so `statement.result_count += 1` may take `&mut`.
         drop(row);
         statement.result_count += 1;
 

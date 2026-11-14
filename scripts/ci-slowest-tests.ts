@@ -94,12 +94,11 @@ export type Job = { id: string; name: string; raw_log_url: string; retried?: boo
 //
 // One build has about 160 test-bun jobs and Buildkite allows 200 requests per
 // minute, shared by every user of the token. So a 429 is routine, and
-// fetchBuildkite waits it out.
+// fetchBuildkite waits it out. It also asks again when a connection drops.
 export async function fetchLog(job: Job, cacheDir: string, options: BuildkiteFetchOptions): Promise<string> {
   const path = join(cacheDir, `${job.id}.log`);
   if (existsSync(path)) return readFileSync(path, "utf8");
-  const response = await fetchBuildkite(job.raw_log_url, options);
-  const log = await response.text();
+  const log = await fetchBuildkite(job.raw_log_url, options);
   writeFileSync(path, log);
   return log;
 }

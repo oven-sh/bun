@@ -22,7 +22,7 @@ The script (`scripts/ci-slowest-tests.ts`) does the heavy lifting:
 - Lists `test-bun` jobs from `bk build view <N>`, skipping `retried: true`.
 - Fetches each job's `raw_log_url` directly with `Authorization: Bearer $BUILDKITE_TOKEN`. **Do not use `bk job log` — it hangs indefinitely on some Windows/alpine jobs.**
 - Caches logs to `$TMPDIR/bun-ci-logs-<build>/` so re-runs are instant.
-- Retries a 429 or a 5xx. Buildkite limits REST requests per minute and one build is about 160 requests, so a run can pause for up to a minute (`waiting Ns for Buildkite` on stderr).
+- Retries a 429, a 5xx, and a dropped connection. Buildkite limits REST requests per minute and one build is about 160 requests, so a run can pause for up to a minute (`waiting Ns for Buildkite (429)` on stderr).
 - Parses `_bk;t=<ms> ... --- [N/TOTAL] <file>` group headers, normalising backslashes to `/` and stripping `[attempt #N]` retries.
 - Aggregates each file's duration as the **max across all platforms** (a file appears once per platform; shards within a platform are disjoint).
 - Drops `package.json` / non-JS entries — those are setup steps, not tests.

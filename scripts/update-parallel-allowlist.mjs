@@ -60,7 +60,7 @@ function listBunTestFiles() {
 async function findBuilds(want) {
   const picked = [];
   for (let page = 1; picked.length < want && page <= 25; page++) {
-    const batch = await (await api(`builds?state[]=passed&state[]=failed&per_page=100&page=${page}`)).json();
+    const batch = JSON.parse(await api(`builds?state[]=passed&state[]=failed&per_page=100&page=${page}`));
     if (!batch.length) break;
     for (const b of batch) {
       if (!b.pull_request) continue;
@@ -84,7 +84,7 @@ async function collectFlakes(builds) {
       if (!build) return;
       const annotations = [];
       for (let page = 1; ; page++) {
-        const batch = await (await api(`builds/${build}/annotations?per_page=100&page=${page}`)).json();
+        const batch = JSON.parse(await api(`builds/${build}/annotations?per_page=100&page=${page}`));
         annotations.push(...batch);
         if (batch.length < 100) break;
       }

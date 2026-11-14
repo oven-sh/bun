@@ -138,7 +138,7 @@ function median(arr) {
 // skip the test-bun steps entirely; PR builds run the full sharded suite, and
 // the median across N of them is robust to one branch's local timing changes.
 async function findSourceBuilds(want) {
-  const candidates = await (await api(`builds?state[]=passed&state[]=failed&per_page=100`)).json();
+  const candidates = JSON.parse(await api(`builds?state[]=passed&state[]=failed&per_page=100`));
   const picked = [];
   for (const b of candidates) {
     const jobs = b.jobs || [];
@@ -153,7 +153,7 @@ async function findSourceBuilds(want) {
 }
 
 async function collect(build, stepKey, into) {
-  const jobs = (await (await api(`builds/${build}`)).json()).jobs.filter(
+  const jobs = JSON.parse(await api(`builds/${build}`)).jobs.filter(
     j => j.step_key === stepKey && j.started_at && j.finished_at && j.state !== "canceled",
   );
   let idx = 0;
@@ -163,7 +163,7 @@ async function collect(build, stepKey, into) {
       if (!j) return;
       let log;
       try {
-        log = await (await api(`builds/${build}/jobs/${j.id}/log.txt`)).text();
+        log = await api(`builds/${build}/jobs/${j.id}/log.txt`);
       } catch (e) {
         // A transient 429/5xx on one shard's log should not discard every
         // sample already collected; the median over the remaining builds

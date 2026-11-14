@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { chmodSync, existsSync, readFileSync } from "node:fs";
+import { createServer, type AddressInfo, type Socket } from "node:net";
 import { delimiter, dirname, join } from "node:path";
 import { fetchBuildkite } from "../../scripts/buildkite-fetch.mjs";
 import { isPhaseGroupHeader } from "../../scripts/ci-log-phase.mjs";
@@ -297,10 +298,31 @@ const rateLimited = (reset: number) =>
     },
   );
 
-// `sleep` records the wait and returns at once, so no test waits for real.
+// `sleep` records the wait and its reason and returns at once, so no test waits for real.
 function recordWaits() {
   const waits: number[] = [];
-  return { waits, options: { token: "secret", sleep: async (ms: number) => void waits.push(ms) } };
+  const reasons: string[] = [];
+  const sleep = async (ms: number, reason: string) => void (waits.push(ms), reasons.push(reason));
+  return { waits, reasons, options: { token: "secret", sleep } };
+}
+
+const http200 = (body: string) =>
+  `HTTP/1.1 200 OK\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n${body}`;
+
+// Bun.serve does not drop a connection on request, so this is a raw TCP
+// server. `respond` gets the socket and the count of requests so far.
+async function tcpServer(respond: (socket: Socket, hit: number) => void) {
+  const hits = { count: 0 };
+  const server = createServer(socket => {
+    socket.on("error", () => {});
+    socket.once("data", () => respond(socket, ++hits.count));
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  return {
+    hits,
+    url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/jobs/a/log.txt`,
+    [Symbol.dispose]: () => void server.close(),
+  };
 }
 
 describe("scripts/buildkite-fetch.mjs fetchBuildkite", () => {
@@ -311,12 +333,12 @@ describe("scripts/buildkite-fetch.mjs fetchBuildkite", () => {
       return hit === 1 ? rateLimited(7) : new Response("the log");
     });
 
-    const { waits, options } = recordWaits();
-    const response = await fetchBuildkite(api.job("a").raw_log_url, options);
-    expect(await response.text()).toBe("the log");
+    const { waits, reasons, options } = recordWaits();
+    expect(await fetchBuildkite(api.job("a").raw_log_url, options)).toBe("the log");
     // `reset` counts whole seconds, so the wait is one second more.
-    expect({ waits, hits: api.hits, authorizations }).toEqual({
+    expect({ waits, reasons, hits: api.hits, authorizations }).toEqual({
       waits: [8000],
+      reasons: ["429"],
       hits: { a: 2 },
       authorizations: ["Bearer secret", "Bearer secret"],
     });
@@ -342,8 +364,7 @@ describe("scripts/buildkite-fetch.mjs fetchBuildkite", () => {
     using api = logServer((id, hit) => (hit <= 2 ? refusal() : new Response("the log")));
 
     const { waits, options } = recordWaits();
-    const response = await fetchBuildkite(api.job("a").raw_log_url, options);
-    expect(await response.text()).toBe("the log");
+    expect(await fetchBuildkite(api.job("a").raw_log_url, options)).toBe("the log");
     expect({ waits, hits: api.hits }).toEqual({ waits: expected, hits: { a: 3 } });
   });
 
@@ -352,9 +373,20 @@ describe("scripts/buildkite-fetch.mjs fetchBuildkite", () => {
     using api = logServer((id, hit) => (hit <= 8 ? refuse(500) : new Response("the log")));
 
     const { waits, options } = recordWaits();
-    const response = await fetchBuildkite(api.job("a").raw_log_url, { ...options, retries: 8 });
-    expect(await response.text()).toBe("the log");
+    expect(await fetchBuildkite(api.job("a").raw_log_url, { ...options, retries: 8 })).toBe("the log");
     expect(waits).toEqual([1000, 2000, 4000, 8000, 16_000, 32_000, 60_000, 60_000]);
+  });
+
+  // Seen on build #141337: 3 of 165 log downloads failed with ECONNRESET.
+  test.each<[string, (socket: Socket) => void]>([
+    ["before the response", socket => socket.destroy()],
+    ["in the middle of the body", socket => socket.write(http200("the log").slice(0, -4), () => socket.destroy())],
+  ])("asks again when the connection drops %s", async (_, drop) => {
+    using server = await tcpServer((socket, hit) => (hit <= 2 ? drop(socket) : socket.end(http200("the log"))));
+
+    const { waits, options } = recordWaits();
+    expect(await fetchBuildkite(server.url, options)).toBe("the log");
+    expect({ waits, hits: server.hits.count }).toEqual({ waits: [1000, 2000], hits: 3 });
   });
 
   test("gives up after 5 retries", async () => {
@@ -364,6 +396,16 @@ describe("scripts/buildkite-fetch.mjs fetchBuildkite", () => {
     const url = api.job("a").raw_log_url;
     expect(await fetchBuildkite(url, options).catch(e => e.message)).toBe(`429 ${url} (6 attempts)`);
     expect({ waits, hits: api.hits }).toEqual({ waits: [2000, 2000, 2000, 2000, 2000], hits: { a: 6 } });
+  });
+
+  test("gives up after 5 retries of a connection that drops", async () => {
+    using server = await tcpServer(socket => socket.destroy());
+
+    const { waits, reasons, options } = recordWaits();
+    const message: string = await fetchBuildkite(server.url, options).catch(e => e.message);
+    // The name of the error is the platform's, for example ECONNRESET.
+    expect(message).toBe(`${reasons[0]} ${server.url} (6 attempts)`);
+    expect({ waits, hits: server.hits.count }).toEqual({ waits: [1000, 2000, 4000, 8000, 16_000], hits: 6 });
   });
 
   test("does not retry a status that a retry cannot fix", async () => {
@@ -452,7 +494,7 @@ describe.skipIf(isWindows)("bun scripts/ci-slowest-tests.ts --json", () => {
     const c = { file: "test/c.test.ts", maxMs: 3000, maxPlat: "debian 13 x64" };
 
     const partial = await run(String(dir));
-    expect(partial.stderr).toContain("  waiting 1s for Buildkite (rate limit or server error)\n");
+    expect(partial.stderr).toContain("  waiting 1s for Buildkite (429)\n");
     expect(partial.stderr).toContain("  2/3 logs, 1 failed\n");
     expect(partial.stderr).toEndWith(
       "warning: 1 of 3 logs are missing, so the result is computed from partial data\n" +

@@ -2262,6 +2262,113 @@ test.concurrent("a module runs once when a factory imports it while another impo
   await expectFixturesToPass(files, 1);
 });
 
+// The callback of onLoad() answers by itself, after a read. The two loads share a built-in module.
+describe.concurrent("a module behind an async onLoad() runs once for a factory and another load", () => {
+  const files = {
+    "data.js": `globalThis.evaluations = (globalThis.evaluations ?? 0) + 1; export const id = globalThis.evaluations;`,
+    "mid.js": `import { id } from "./data.js"; export const mid = { id };`,
+    "uses-mid.js": `import "node:path"; import { mid } from "./mid.js"; export const seen = mid;`,
+    "k.js": `export const x = "real";`,
+    "user.js": `import "node:path"; import { x } from "./k.js"; export const seen = x;`,
+    "preload.js": `
+      globalThis.calls = 0;
+      Bun.plugin({
+        name: "reads the file",
+        setup(build) {
+          build.onLoad({ filter: /data\\.js$/ }, async ({ path }) => {
+            if (++globalThis.calls > 1) throw new Error("the callback was called twice for " + path);
+            return { contents: await Bun.file(path).text(), loader: "js" };
+          });
+        },
+      });
+    `,
+  };
+  const imports = `import { expect, mock, test } from "bun:test";`;
+  const expectOne = `expect([a.seen === b.seen, globalThis.calls, globalThis.evaluations]).toEqual([true, 1, 1]);`;
+
+  test.each([
+    [
+      "two import() calls in one tick",
+      `const [a, b] = await Promise.all([import("./uses-mid.js"), import("./user.js")]);`,
+    ],
+    [
+      "an import() call that nothing awaits yet",
+      `const first = import("./uses-mid.js"), b = await import("./user.js"), a = await first;`,
+    ],
+  ])("%s", async (_, load) => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "once.test.js": `${imports}
+          test("the factory gets the module of the other load", async () => {
+            mock.module("./k.js", async () => ({ x: (await import("./mid.js")).mid }));
+            ${load}
+            ${expectOne}
+          });
+        `,
+      },
+      1,
+      ["--preload", "./preload.js", "./once.test.js"],
+    );
+  });
+
+  test("a factory of a preload, called once the callback was asked", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "preload.js": `${files["preload.js"]}
+          import { mock } from "bun:test";
+          globalThis.asked = Promise.withResolvers();
+          Bun.plugin({
+            name: "tells",
+            setup(build) {
+              build.onLoad({ filter: /mid\\.js$/ }, () => void globalThis.asked.resolve());
+            },
+          });
+          mock.module("./k.js", async () => ({ x: (await import("./mid.js")).mid }));
+        `,
+        "once.test.js": `${imports}
+          test("the factory gets the module of the other load", async () => {
+            const first = import("./uses-mid.js");
+            await globalThis.asked.promise;
+            const b = await import("./user.js"), a = await first;
+            ${expectOne}
+          });
+        `,
+      },
+      1,
+      ["--preload", "./preload.js", "./once.test.js"],
+    );
+  });
+});
+
+test.concurrent.each([
+  ["jest.mock", `import { service } from "./service.js";`],
+  ["vi.mock", `import { service } from "./service.js";`],
+  ["mock.module", `const { service } = await import("./service.js");`],
+])("a factory of %s can require() another mocked module", async (mockModule, load) => {
+  await expectFixturesToPass(
+    {
+      "logger.js": `export const log = () => "real log";`,
+      "db.js": `import { log } from "./logger.js"; export const query = () => "real query, " + log();`,
+      "service.js": `import { query } from "./db.js"; import { log } from "./logger.js"; export const service = () => [query(), log()];`,
+      "requires.test.js": `
+        import { expect, jest, mock, test, vi } from "bun:test";
+        ${mockModule}("./logger.js", () => ({ log: () => "mock log" }));
+        ${mockModule}("./db.js", () => {
+          const { log } = require("./logger.js");
+          return { query: () => "mock query, " + log() };
+        });
+        ${load}
+        test("the service gets both mocks", () => {
+          expect(service()).toEqual(["mock query, mock log", "mock log"]);
+        });
+      `,
+    },
+    1,
+  );
+});
+
 test.concurrent("import() of a mock doesn't wait for another load's running factory", async () => {
   await expectFixturesToPass(
     {
@@ -4843,16 +4950,22 @@ describe.concurrent("a module that is evicted while it is still loading", () => 
       {
         "k.js": `export const x = "real";`,
         "slow.js": `export const s = "slow";`,
+        "plain.js": `export const plain = true;`,
         "user.js": `import { x } from "./k.js"; import { s } from "./slow.js"; export const seen = x + "/" + s;`,
         "requires.cjs": `exports.x = require("./k.js").x;`,
         "both.js": `import { x } from "./k.js"; import required from "./requires.cjs"; export const seen = x + "/" + required.x;`,
         "removed.test.js": `
           import { expect, test, vi } from "bun:test";
-          test.each([
-            ["vi.doUnmock()", () => vi.doUnmock("./k.js"), "real"],
-            ["another mock", () => vi.doMock("./k.js", () => ({ x: "second" })), "second"],
-            ["Bun.plugin.clearAll()", () => Bun.plugin.clearAll(), "real"],
-          ])("by %s, while another module is being fetched", async (_, remove, x) => {
+          test.each(
+            [
+              ["vi.doUnmock()", () => vi.doUnmock("./k.js"), "real"],
+              ["another mock", () => vi.doMock("./k.js", () => ({ x: "second" })), "second"],
+              ["Bun.plugin.clearAll()", () => Bun.plugin.clearAll(), "real"],
+            ].flatMap(([name, remove, x]) => [
+              [name, "", remove, x],
+              [name, ", after another import()", remove, x],
+            ]),
+          )("by %s, while another module is being fetched%s", async (_, importsFirst, remove, x) => {
             vi.resetModules();
             const asked = Promise.withResolvers(), gate = Promise.withResolvers();
             Bun.plugin({
@@ -4868,6 +4981,7 @@ describe.concurrent("a module that is evicted while it is still loading", () => 
             vi.doMock("./k.js", () => (calls++, { x: "first" }));
             const user = import("./user.js");
             await asked.promise;
+            if (importsFirst) await import("./plain.js");
             remove();
             gate.resolve();
             expect((await user).seen).toBe(x + "/slow");
@@ -4884,7 +4998,7 @@ describe.concurrent("a module that is evicted while it is still loading", () => 
           });
         `,
       },
-      4,
+      7,
     );
   });
 
@@ -6273,6 +6387,79 @@ describe.concurrent("a factory doesn't wait for an onLoad() callback in an unrel
         `,
       },
       2,
+    );
+  });
+
+  test.each(isolationFlags)("it is called beside a module whose async onLoad() callback declines %j", async args => {
+    const test = (uses: string, from: string) => `
+      import { expect, test, vi } from "bun:test";
+      vi.mock("./k.js", () => ({ x: "mock" }));
+      import { seen } from "./${uses}.js";
+      test("the file is read after the callback", () => expect(seen).toEqual(["mock", "${from}"]));
+    `;
+    await expectFixturesToPass(
+      {
+        ...files,
+        "dep.js": `export default { from: "a module" };`,
+        "dep.json": `{ "from": "a data file" }`,
+        "uses-module.js": `import { x } from "./k.js"; import dep from "./dep.js"; export const seen = [x, dep.from];`,
+        "uses-data.js": `import dep from "./dep.json"; import { x } from "./k.js"; export const seen = [x, dep.from];`,
+        "preload.js": `
+          Bun.plugin({
+            name: "declines",
+            setup(build) {
+              build.onLoad({ filter: /dep\\.js(on)?$/ }, async () => {
+                await 0;
+              });
+            },
+          });
+        `,
+        "module.test.js": test("uses-module", "a module"),
+        // With --isolate the runtime has the source of dep.js by now, and reads no file.
+        "module-again.test.js": test("uses-module", "a module"),
+        "data.test.js": test("uses-data", "a data file"),
+      },
+      3,
+      [...args, "--preload", "./preload.js"],
+    );
+  });
+
+  test("a mock that waits for the callback of its own load is called after Bun.plugin.clearAll()", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "own.js": `import { x } from "./k.js"; import { s } from "./slow.js"; export const both = [x, s];`,
+        "preload.js": `
+          import { mock } from "bun:test";
+          globalThis.asked = Promise.withResolvers();
+          globalThis.gate = Promise.withResolvers();
+          Bun.plugin({
+            name: "answers when the gate opens",
+            setup(build) {
+              build.onLoad({ filter: /slow\\.js$/ }, async () => {
+                globalThis.asked.resolve();
+                await globalThis.gate.promise;
+                return { contents: "export const s = 2;", loader: "js" };
+              });
+            },
+          });
+          mock.module("./k.js", () => ({ x: "mock" }));
+        `,
+        "cleared.test.js": `
+          import { afterEach, expect, test } from "bun:test";
+          afterEach(() => Bun.plugin.clearAll());
+          test("a test leaves a load that waits for the callback", async () => {
+            globalThis.own = import("./own.js");
+            await globalThis.asked.promise;
+          });
+          test("the callback answers in the next test", async () => {
+            globalThis.gate.resolve();
+            expect((await globalThis.own).both).toEqual(["real", 2]);
+          });
+        `,
+      },
+      2,
+      ["--preload", "./preload.js", "./cleared.test.js"],
     );
   });
 

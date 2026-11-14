@@ -119,8 +119,6 @@ public:
     inline auto rbegin() const noexcept { return errors_.rbegin(); }
     inline auto rend() const noexcept { return errors_.rend(); }
 
-    std::optional<WTF::String> pop_back();
-
 private:
     std::list<WTF::String> errors_;
 };
@@ -551,7 +549,6 @@ public:
     inline operator bool() const { return bn_ != nullptr; }
     inline BIGNUM* get() const noexcept { return bn_.get(); }
     void reset(BIGNUM* bn = nullptr);
-    void reset(const unsigned char* data, size_t len);
     BIGNUM* release();
 
     bool setWord(unsigned long w); // NOLINT(runtime/int)
@@ -637,7 +634,6 @@ public:
 
     bool isGcmMode() const;
     bool isCcmMode() const;
-    bool isWrapMode() const;
     bool isChaCha20Poly1305() const;
 
     bool update(const Buffer<const unsigned char>& in,

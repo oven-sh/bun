@@ -796,7 +796,7 @@ interface ReadableStreamGenericReader {
 
 interface ReadableStreamDefaultReadDoneResult {
   done: true;
-  value?: undefined;
+  value: undefined;
 }
 
 interface ReadableStreamDefaultReadValueResult<T> {

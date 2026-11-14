@@ -1479,11 +1479,9 @@ const barrelApp = (version: string) => `
   import.meta.hot.accept();
   console.log("app ${version} " + Alpha + " " + other());
 `;
-// Pins a known cost. The dev server sends the barrel again with app.ts, so the update reaches every
-// module that imports the barrel. other.ts and helper.ts are between the barrel and app.ts, which
-// accepts, so they run again although their files did not change, and helper.ts counts from 1 again.
-// Tracked separately: the dev server has to stop sending a barrel that did not change.
-devTest("barrel optimization: a save of one importer of a barrel evaluates its other importers again", {
+// The barrel is bundled again with app.ts and its output is the same, so it stays out of the update. The
+// other importers of the barrel do not run again, and helper.ts keeps its count.
+devTest("barrel optimization: a save of one importer of a barrel does not evaluate its other importers again", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["app.ts"] }),
     "app.ts": barrelApp("v1"),
@@ -1505,11 +1503,11 @@ devTest("barrel optimization: a save of one importer of a barrel evaluates its o
     await using c = await dev.client("/", { storeHotChunks: true });
     await c.expectMessage("helper ran", "other ran", "app v1 ALPHA other(BETA) helper(BETA) call 1");
     await dev.write("app.ts", barrelApp("v2"));
-    // The barrel is a module of the update, not only an import of app.ts.
-    expect(await c.getMostRecentHmrChunk()).toMatch(/"node_modules\/barrel-lib\/index\.js":\s*\[/);
-    await c.expectMessage("helper ran", "other ran", "app v2 ALPHA other(BETA) helper(BETA) call 1");
+    // The barrel is an import of app.ts, not a module of the update.
+    expect(await c.getMostRecentHmrChunk()).not.toMatch(/"node_modules\/barrel-lib\/index\.js":\s*\[/);
+    await c.expectMessage("app v2 ALPHA other(BETA) helper(BETA) call 2");
     await dev.write("app.ts", barrelApp("v3"));
-    await c.expectMessage("helper ran", "other ran", "app v3 ALPHA other(BETA) helper(BETA) call 1");
+    await c.expectMessage("app v3 ALPHA other(BETA) helper(BETA) call 3");
   },
 });
 // Pins a known cost. The first request for /other makes a build in which the barrel has one more

@@ -69,6 +69,6 @@ test.skipIf(isDebug || isASAN)("a Worker whose entry point is a data file of the
   const cwd = String(dir);
   await build(cwd, "./main.mjs", ["--compile-inspector", "--loader=.json:text"]);
   await using proc = Bun.spawn({ cmd: ["./compiled"], cwd, env, stdout: "pipe", stderr: "pipe" });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect({ stdout, exitCode }).toEqual({ stdout: "closed: 0 data\n", exitCode: 0 });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "closed: 0 data\n", stderr: "", exitCode: 0 });
 });

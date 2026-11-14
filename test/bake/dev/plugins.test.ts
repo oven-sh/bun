@@ -763,12 +763,15 @@ devTest("virtual module that a client component without imports starts to import
   async test(dev) {
     await dev.fetch("/a").equals("v");
     await dev.fetch("/b").equals("v");
-    const { promise: update, resolve } = Promise.withResolvers<string>();
+    const { promise: update, resolve, reject } = Promise.withResolvers<string>();
     dev.on("hmr", (data: Uint8Array) => {
-      if (data[0] === "u".charCodeAt(0)) resolve(Buffer.from(data).toString("latin1"));
+      const message = Buffer.from(data).toString("latin1");
+      if (message[0] === "u") resolve(message);
+      if (message[0] === "e") reject(new Error("the edit does not bundle: " + message));
     });
-    // Subscribes the socket of the harness to hot updates too ("h").
-    dev.socket!.send("shr");
+    dev.socket!.addEventListener("close", () => reject(new Error("the dev server closed the socket")));
+    // Subscribes the socket of the harness to hot updates ("h") and errors ("e") too.
+    dev.socket!.send("sher");
     await dev.write("A.ts", `"use client"; import { one } from "virtual:one"; export const v = one;`);
     const modules = [...(await update).matchAll(/^  "([^"\n]+)": \[/gm)].map(match => match[1]);
     expect(modules.sort()).toEqual(["A.ts", "virtual:one"]);

@@ -910,24 +910,23 @@ it.each([
   await line("first load");
   // What is left on the stack can keep it alive, and differs with where a collection starts from.
   const second = `
-      // writeFileSync() writes and then resizes, which is two watcher events: one save can load this twice.
-      if (!globalThis.kept) {
-        globalThis.kept = [];
-        require("fs").readFile(__filename, () => {
+      globalThis.kept = [];
+      require("fs").readFile(__filename, () => {
+        Bun.gc(true);
+        setImmediate(() => {
           Bun.gc(true);
-          setImmediate(() => {
+          require("crypto").randomBytes(8, () => {
             Bun.gc(true);
-            require("crypto").randomBytes(8, () => {
-              Bun.gc(true);
-              // catch() makes a promise of its own, and that of a rejected one is fulfilled. These
-              // are all made before the first of those, so that the cell goes to one of these.
-              for (let i = 0; i < 20000; i++) kept.push(${promise});
-              for (const promise of kept) promise.catch(() => {});
-              console.log("collected");
-            });
+            // catch() makes a promise of its own, and that of a rejected one is fulfilled. These
+            // are all made before the first of those, so that the cell goes to one of these.
+            for (let i = 0; i < 20000; i++) kept.push(${promise});
+            for (const promise of kept) promise.catch(() => {});
+            // writeFileSync() writes and then resizes, which is two watcher events: one save can load this twice.
+            if (!globalThis.collected) console.log("collected");
+            globalThis.collected = true;
           });
         });
-      }
+      });
     `;
   writeFileSync(join(String(dir), "main.js"), second);
   await line("collected");

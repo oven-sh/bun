@@ -144,9 +144,9 @@ pub fn is_builtin_global_of_oxlint(name: &[u8]) -> bool {
 // ───────────────────────────── tokens ─────────────────────────────
 
 pub use super::eslint_utils::{
-    is_arrow_token, is_closing_brace_token, is_closing_paren_token, is_colon_token, is_comma_token,
-    is_not_closing_paren_token, is_not_semicolon_token, is_opening_brace_token,
-    is_opening_bracket_token, is_opening_paren_token, is_semicolon_token,
+    is_arrow_token, is_closing_brace_token, is_closing_paren_token, is_comma_token,
+    is_not_closing_paren_token, is_opening_brace_token, is_opening_bracket_token,
+    is_opening_paren_token, is_semicolon_token,
 };
 
 /// ESLint's `isTokenOnSameLine`: `left` ends on the line where `right` starts. Each is a token, a comment or a node.

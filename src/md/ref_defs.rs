@@ -1,12 +1,10 @@
-use core::mem::{align_of, size_of};
-
 use bun_alloc::AllocError;
 
 use crate::compat;
 use crate::helpers;
 use crate::links::{ParsedDest, scan_link_destination};
-use crate::parser::{BlockHeader, Parser};
-use crate::types::{self, VerbatimLine};
+use crate::parser::Parser;
+use crate::types;
 use crate::unicode;
 
 /// Maximum raw length of a link label (CommonMark: "a link label can have at
@@ -297,36 +295,13 @@ impl Parser<'_> {
     }
 
     pub(crate) fn build_ref_def_hashtable(&mut self) -> Result<(), AllocError> {
-        let mut off: usize = 0;
-        // Take a raw pointer to block_bytes so we can call &mut self methods
-        // (normalize_label, parse_ref_def via self.buffer) while iterating the
-        // byte buffer. Headers are mutated in-place via raw pointer arithmetic.
-        let bytes_ptr = self.block_bytes.as_mut_ptr();
-        let bytes_len = self.block_bytes.len();
+        let mut blocks = core::mem::take(&mut self.blocks);
+        let mut block_lines = core::mem::take(&mut self.block_lines);
+        let mut rest = block_lines.as_mut_slice();
 
-        while off < bytes_len {
-            // Align to BlockHeader
-            let align_mask: usize = align_of::<BlockHeader>() - 1;
-            off = (off + align_mask) & !align_mask;
-            if off + size_of::<BlockHeader>() > bytes_len {
-                break;
-            }
-
-            // SAFETY: off + size_of::<BlockHeader>() <= bytes_len (checked above) and the
-            // block parser wrote a valid BlockHeader at this offset.
-            let mut hdr: BlockHeader =
-                unsafe { bytes_ptr.add(off).cast::<BlockHeader>().read_unaligned() };
-            let hdr_off = off;
-            off += size_of::<BlockHeader>();
-
-            let n_lines = hdr.n_lines as usize;
-            let lines_size = n_lines * size_of::<VerbatimLine>();
-            if off + lines_size > bytes_len {
-                break;
-            }
-
-            let lines_off = off;
-            off += lines_size;
+        for hdr in &mut blocks {
+            let lines;
+            (lines, rest) = rest.split_at_mut(hdr.n_lines as usize);
 
             // Only process paragraph blocks (not container openers/closers)
             if hdr.block_type != types::BlockType::P
@@ -336,27 +311,14 @@ impl Parser<'_> {
                 continue;
             }
 
-            if n_lines == 0 {
+            // A reference definition starts with `[`
+            if lines.first().is_none_or(|first| self.ch(first.beg) != b'[') {
                 continue;
             }
 
             // Merge lines into buffer to parse ref defs
             self.buffer.clear();
-            self.def_lines.clear();
-            for li in 0..n_lines {
-                // SAFETY: li < n_lines so lines_off + li*size_of::<VerbatimLine>() is within
-                // the [lines_off, lines_off + lines_size) range bounds-checked above;
-                // end_current_block wrote n_lines contiguous VerbatimLine entries there.
-                let vline: VerbatimLine = unsafe {
-                    bytes_ptr
-                        .add(lines_off + li * size_of::<VerbatimLine>())
-                        .cast::<VerbatimLine>()
-                        .read_unaligned()
-                };
-                // A reference definition starts with `[`
-                if li == 0 && self.ch(vline.beg) != b'[' {
-                    break;
-                }
+            for vline in &*lines {
                 if vline.beg > vline.end || vline.end > self.size {
                     continue;
                 }
@@ -365,9 +327,6 @@ impl Parser<'_> {
                 }
                 self.buffer
                     .extend_from_slice(&self.text[vline.beg as usize..vline.end as usize]);
-                if self.track {
-                    self.def_lines.push(vline);
-                }
             }
 
             // Move the merged buffer out of self so parse_ref_def/normalize_label
@@ -413,10 +372,8 @@ impl Parser<'_> {
                     newlines += 1;
                 }
                 if self.track {
-                    let first = self.def_lines.get(lines_consumed as usize);
-                    let last = self
-                        .def_lines
-                        .get((lines_consumed + newlines).saturating_sub(1) as usize);
+                    let first = lines.get(lines_consumed as usize);
+                    let last = lines.get((lines_consumed + newlines).saturating_sub(1) as usize);
                     if let (Some(first), Some(last)) = (first, last) {
                         self.renderer.ptr.definition(&types::Definition {
                             beg: first.beg,
@@ -424,7 +381,7 @@ impl Parser<'_> {
                             label: result.label,
                             dest: result.dest,
                             title: result.title,
-                            lines: &self.def_lines
+                            lines: &lines
                                 [lines_consumed as usize..(lines_consumed + newlines) as usize],
                         });
                     }
@@ -437,43 +394,20 @@ impl Parser<'_> {
             self.buffer = merged;
 
             // Update the block: mark consumed lines
-            if lines_consumed > 0 {
-                if lines_consumed as usize >= n_lines {
-                    // Entire paragraph is ref defs — flag to skip during rendering
-                    hdr.flags |= types::BLOCK_REF_DEF_ONLY;
-                    // SAFETY: hdr_off + size_of::<BlockHeader>() <= bytes_len (checked above);
-                    // writes back the header read at the top of this iteration.
-                    unsafe {
-                        bytes_ptr
-                            .add(hdr_off)
-                            .cast::<BlockHeader>()
-                            .write_unaligned(hdr);
-                    }
-                } else {
-                    // Mark consumed lines as invalid (beg > end triggers skip in processLeafBlock)
-                    let mut i: u32 = 0;
-                    while i < lines_consumed {
-                        let line_off = lines_off + (i as usize) * size_of::<VerbatimLine>();
-                        // SAFETY: i < lines_consumed < n_lines so line_off is in-bounds of the
-                        // VerbatimLine array written by end_current_block after this header.
-                        unsafe {
-                            let mut vl = bytes_ptr
-                                .add(line_off)
-                                .cast::<VerbatimLine>()
-                                .read_unaligned();
-                            vl.beg = 1;
-                            vl.end = 0;
-                            bytes_ptr
-                                .add(line_off)
-                                .cast::<VerbatimLine>()
-                                .write_unaligned(vl);
-                        }
-                        i += 1;
-                    }
+            if lines_consumed as usize >= lines.len() {
+                // Entire paragraph is ref defs — flag to skip during rendering
+                hdr.flags |= types::BLOCK_REF_DEF_ONLY;
+            } else {
+                // Mark consumed lines as invalid (beg > end triggers skip in processLeafBlock)
+                for vl in &mut lines[..lines_consumed as usize] {
+                    vl.beg = 1;
+                    vl.end = 0;
                 }
             }
         }
 
+        self.blocks = blocks;
+        self.block_lines = block_lines;
         Ok(())
     }
 }

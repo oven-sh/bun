@@ -3350,7 +3350,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         let crate::webcore::blob::store::Data::Bytes(bytes) = &store.data else {
             return true;
         };
-        let total = bytes.len as BlobSizeType;
+        let total = bytes.len();
         if !bun_standalone_graph::Graph::get_ref().is_some_and(|graph| {
             graph.compiled_program.is_some() && graph.contains_file(&bytes.stored_name)
         }) || blob.offset.get() != 0

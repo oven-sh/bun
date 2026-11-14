@@ -19,6 +19,17 @@ use std::sync::OnceLock;
 pub(in crate::check) struct StoreIndex<'s> {
     this_stores: &'s [ThisStore],
     binding_stores: &'s [BindingStore],
+    defined_names: &'s [DefinedName],
+}
+
+/// `Object.defineProperty(Class.prototype, "name", { get() { .. }, set(value) { .. } })`,
+/// `__decorate([observable], Class.prototype, "name", void 0)`
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(super) struct DefinedName {
+    pub(super) owner: ThisOwner,
+    pub(super) name: Atom,
+    pub(super) is_accessor: bool,
+    pub(super) setter: Option<FnId>,
 }
 
 struct FirstExits {
@@ -128,6 +139,13 @@ impl<'c> StoreIndex<'c> {
         &stores[start..start + len]
     }
 
+    pub(super) fn names_defined_on_prototype_of(&self, owner: ThisOwner) -> &'c [DefinedName] {
+        let names = self.defined_names;
+        let start = names.partition_point(|it| it.owner < owner);
+        let len = names[start..].partition_point(|it| it.owner == owner);
+        &names[start..start + len]
+    }
+
     pub(super) fn binding_stores_of(&self, symbol: SymbolId) -> &'c [BindingStore] {
         find_stores_of_binding(self.binding_stores, symbol)
     }
@@ -149,6 +167,10 @@ impl<'s> WrittenStores<'s> {
 
     pub(super) fn binding_stores_of(&self, symbol: SymbolId) -> &'s [BindingStore] {
         find_stores_of_binding(self.binding_stores, symbol)
+    }
+
+    pub(super) fn all_binding_stores(&self) -> &'s [BindingStore] {
+        self.binding_stores
     }
 
     fn find_only_constructor_of(&self, function: FnId) -> Option<SymbolId> {
@@ -321,13 +343,24 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let _ = indexes.store_index.set(StoreIndex {
             this_stores: list_in(self.c.arena, index.this_stores),
             binding_stores,
+            defined_names: list_in(self.c.arena, index.defined_names),
         });
     }
 
     fn compute_store_index(&mut self, file: FileId) -> StoreIndex<'c> {
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
         let assigns = self.c.exprs_by_kind(file);
+        // Whatever holds `this` got it from such an expression.
+        if assigns.of(ExprTag::This).is_empty() {
+            let binding_stores = self.c.written_stores(file).binding_stores;
+            return *self.c.p.aot_store_index(file).get_or_init(|| StoreIndex {
+                this_stores: &[],
+                binding_stores,
+                defined_names: &[],
+            });
+        }
         let mut this_stores = Vec::new();
+        let mut defined_names = Vec::new();
         let mentions_of_super = assigns.of(ExprTag::Super).iter();
         let mut mentions_of_super: Vec<u32> = mentions_of_super.map(|&it| hir[it].pos).collect();
         mentions_of_super.sort_unstable();
@@ -423,7 +456,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             &mut first_exits,
             &mut first_returns,
             &mut this_stores,
+            &mut defined_names,
         );
+        defined_names.shared_sort_unstable_by_key(|it| (it.owner, it.name.0));
         this_stores.shared_sort_unstable_by_key(|store| {
             (store.owner, hir[store.assign].pos, store.assign)
         });
@@ -432,6 +467,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             let index = StoreIndex {
                 this_stores: list_in(self.arena, &this_stores),
                 binding_stores,
+                defined_names: list_in(self.arena, &defined_names),
             };
             self.kept.store_indexes.insert(file, index);
             return index;
@@ -439,6 +475,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         *self.c.p.aot_store_index(file).get_or_init(|| StoreIndex {
             this_stores: list_in(self.c.arena, &this_stores),
             binding_stores,
+            defined_names: list_in(self.c.arena, &defined_names),
         })
     }
 
@@ -572,6 +609,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         first_exits: &mut FirstExits,
         first_returns: &mut FxHashMap<FnId, u32>,
         this_stores: &mut Vec<ThisStore>,
+        defined_names: &mut Vec<DefinedName>,
     ) {
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
         let expressions = self.c.exprs_by_kind(file);
@@ -579,6 +617,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             let ExprKind::Call(call) = hir[site].kind else {
                 continue;
             };
+            if let Some(name) = find_name_defined_on_prototype(hir, bound, call)
+                && !self.is_never_evaluated(file, site)
+            {
+                defined_names.push(name);
+            }
             let is_given_this = hir.ids(hir[call].args).any(|operand| {
                 let operand = hir.skip_type_assertions(operand);
                 find_this_that_may_be_held_by(hir, bound, operand).is_some()
@@ -602,6 +645,13 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             {
                 let operands = [object, key, value].map(|at| find_operand_at(hir, call, at));
                 this_stores.extend(self.find_field_defined_by(file, site, operands, first_exits));
+                continue;
+            }
+            if let Some(NamedValue::PrototypeOperation(PrototypeOperation::CopyProperties {
+                target,
+            })) = callee
+            {
+                self.add_fields_assigned_by(file, site, call, target, first_exits, this_stores);
                 continue;
             }
             let Some((object, definitions)) = find_written_definitions(hir, bound, call, callee)
@@ -648,6 +698,62 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                     birth,
                 }));
             }
+        }
+    }
+
+    /// `Object.assign(this, { a, b: 1 })`, which the lowering stores name by name.
+    fn add_fields_assigned_by(
+        &self,
+        file: FileId,
+        site: ExprId,
+        call: CallId,
+        target: u32,
+        first_exits: &mut FirstExits,
+        this_stores: &mut Vec<ThisStore>,
+    ) {
+        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
+        let Some(object) = find_operand_at(hir, call, target) else {
+            return;
+        };
+        let owner = find_this_held_by(hir, bound, object)
+            .and_then(|this| self.this_owner(file, this))
+            .filter(|owner| !matches!(owner, ThisOwner::Static(_)));
+        let Some(owner) = owner.filter(|_| !self.is_never_evaluated(file, site)) else {
+            return;
+        };
+        let is_in_every_construction =
+            self.is_in_every_construction(file, owner, site, first_exits);
+        for source in hir.ids(hir[call].args).skip(target as usize + 1) {
+            let ExprKind::Object(properties) = hir[hir.skip_type_assertions(source)].kind else {
+                continue;
+            };
+            let names = properties.iter().map(|id| {
+                let property = hir[id];
+                let is_plain = matches!(property.kind, PropKind::Init | PropKind::Shorthand);
+                match hir.runtime_property_key(id) {
+                    PropKey::Name(name) if is_plain && name != known::__proto__ => {
+                        Some((name, property.value))
+                    }
+                    _ => None,
+                }
+            });
+            let Some(names) = names.collect::<Option<SmallVec<[(Atom, ExprId); 8]>>>() else {
+                continue;
+            };
+            this_stores.extend(names.into_iter().map(|(name, value)| ThisStore {
+                owner,
+                name,
+                assign: value,
+                value,
+                form: StoreForm::Plain,
+                is_in_every_construction,
+                defined: MemberForm::default(),
+                is_stored_by_callee: false,
+                birth: match is_in_every_construction {
+                    true => hir[site].pos,
+                    false => u32::MAX,
+                },
+            }));
         }
     }
 
@@ -708,6 +814,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 let class = self.c.bound(file).function_class(function)?;
                 Some(ThisOwner::Static(class))
             }
+            FnKind::Method
+                if is_setter_of_descriptor(self.c.hir(file), self.c.bound(file), function) =>
+            {
+                Some(ThisOwner::Function(function))
+            }
             FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor => {
                 let (class, is_static) = self.class_and_side_of_member_fn(file, function)?;
                 Some(match is_static {
@@ -717,6 +828,34 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             }
             _ => None,
         }
+    }
+
+    pub(super) fn is_evaluated_in_every_construction(
+        &self,
+        constructor: FunctionRef,
+        call: ExprId,
+    ) -> bool {
+        let mut first_exits = FirstExits {
+            mentions_of_super: Vec::new(),
+            of_functions: FxHashMap::default(),
+        };
+        let owner = ThisOwner::Function(constructor.function);
+        self.is_in_every_construction(constructor.file, owner, call, &mut first_exits)
+    }
+
+    /// The caller may drop what the function returns.
+    pub(super) fn is_evaluated_before_returns(
+        &self,
+        function: FunctionRef,
+        expression: ExprId,
+    ) -> bool {
+        let mut first_returns = FxHashMap::default();
+        self.is_always_evaluated_in(
+            function.file,
+            function.function,
+            expression,
+            &mut first_returns,
+        )
     }
 
     fn is_in_every_construction(
@@ -882,7 +1021,12 @@ fn find_statement_always_evaluating(
                 ..
             }
         );
-        if !is_stored_value && !is_in_sequence {
+        // `Base.call(this) || this`
+        let is_left_operand = matches!(
+            hir[parent].kind,
+            ExprKind::Binary { left, .. } if left == expression
+        );
+        if !is_stored_value && !is_in_sequence && !is_left_operand {
             return None;
         }
         expression = parent;
@@ -941,7 +1085,7 @@ pub(super) fn find_stored_function(
         ExprKind::Binary { .. } => return find_function_of_copied_factory(hir, bound, value),
         ExprKind::Ident(_) => {
             let symbol = bound_symbol(hir, bound, value)?;
-            if !bound.is_stable_binding(symbol) {
+            if !bound.is_stable_beside_evals(symbol) {
                 return None;
             }
             match bound.binding_initializer(hir, symbol) {
@@ -1324,16 +1468,15 @@ fn find_this_held_by(hir: &hir::File<'_>, bound: &Bound<'_>, object: ExprId) -> 
     };
     let first = find_operand_at(hir, call, 0)?;
     let is_this = matches!(hir[first].kind, ExprKind::This);
-    let answers_it = answers_first_operand(hir, bound, hir[call].callee, 3)
-        || (is_this && calls_function_returning_receiver(hir, bound, hir[call].callee));
-    if !answers_it {
-        return None;
-    }
-    match hir[object].kind {
+    let passed = match hir[object].kind {
         _ if is_this => Some(first),
         ExprKind::Call(_) => find_this_held_by(hir, bound, first),
         _ => None,
-    }
+    };
+    passed.filter(|_| {
+        answers_first_operand(hir, bound, hir[call].callee, 3)
+            || (is_this && calls_function_returning_receiver(hir, bound, hir[call].callee))
+    })
 }
 
 /// `function f(object, other) { return other || object; }`: the calls answer what they are handed first, or another object.
@@ -1408,7 +1551,7 @@ fn calls_function_returning_receiver(
 
 fn find_function_held_by(hir: &hir::File<'_>, bound: &Bound<'_>, callee: ExprId) -> Option<FnId> {
     let symbol = bound_symbol(hir, bound, hir.skip_type_assertions(callee))?;
-    if !bound.is_stable_binding(symbol) {
+    if !bound.is_stable_beside_evals(symbol) {
         return None;
     }
     let function = match bound.binding_initializer(hir, symbol) {
@@ -1533,6 +1676,78 @@ pub(super) fn find_prototype_object_held_by(
 
 pub(super) fn is_prototype_property(hir: &hir::File<'_>, e: ExprId) -> bool {
     matches!(hir.member_key(e), Some((_, MemberKey::Name(name))) if name == known::prototype)
+}
+
+/// The method of `{ set(value) { .. } }`
+fn is_setter_of_descriptor(hir: &hir::File<'_>, bound: &Bound<'_>, function: FnId) -> bool {
+    let FnOwner::Expr(expression) = bound.fns[function.idx()].owner else {
+        return false;
+    };
+    let Parent::Prop(property) = bound.parent_of_expr(expression) else {
+        return false;
+    };
+    matches!(hir.runtime_property_key(property), PropKey::Name(name) if name == known::set)
+}
+
+fn find_name_defined_on_prototype(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    call: CallId,
+) -> Option<DefinedName> {
+    let mut operands = hir.ids(hir[call].args);
+    let mut before = operands.next()?;
+    let (symbol, name) = loop {
+        let operand = operands.next()?;
+        if let ExprKind::String(name) = hir[operand].kind
+            && let Some(symbol) = prototype_object_symbol(hir, bound, before)
+        {
+            break (symbol, name);
+        }
+        before = operand;
+    };
+    let owner = find_owner_held_by(hir, bound, symbol)?;
+    let descriptor = operands.next()?;
+    let ExprKind::Object(properties) = hir[descriptor].kind else {
+        return Some(DefinedName {
+            owner,
+            name,
+            is_accessor: false,
+            setter: None,
+        });
+    };
+    if !is_written_accessor_descriptor(hir, descriptor) {
+        return None;
+    }
+    let is_setter = |&property: &_| matches!(hir.runtime_property_key(property), PropKey::Name(name) if name == known::set);
+    let setter = properties.iter().find(is_setter).and_then(|property| {
+        match hir[hir.skip_type_assertions(hir[property].value)].kind {
+            ExprKind::Fn(function) => Some(function),
+            _ => None,
+        }
+    });
+    Some(DefinedName {
+        owner,
+        name,
+        is_accessor: true,
+        setter,
+    })
+}
+
+fn find_owner_held_by(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    symbol: SymbolId,
+) -> Option<ThisOwner> {
+    match bound.binding_initializer(hir, symbol) {
+        BindingInitializer::Class(class) => Some(ThisOwner::Instance(class)),
+        BindingInitializer::Function(function) => Some(ThisOwner::Function(function)),
+        BindingInitializer::Expression(value) => match hir[hir.skip_type_assertions(value)].kind {
+            ExprKind::Class(class) => Some(ThisOwner::Instance(class)),
+            ExprKind::Fn(function) => Some(ThisOwner::Function(function)),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 pub(super) fn bound_symbol(hir: &hir::File<'_>, bound: &Bound<'_>, e: ExprId) -> Option<SymbolId> {

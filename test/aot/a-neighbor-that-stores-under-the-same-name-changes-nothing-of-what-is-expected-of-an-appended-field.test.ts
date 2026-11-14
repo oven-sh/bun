@@ -60,13 +60,13 @@ test.skipIf(!!without("testaot"))(
       expect((await run([executable], cwd, bunEnv)).stdout.trim()).toBe("3");
       const held = (await runTestaot("link", wire, "held", "fields", "exclude=CodeOutsideImage")).lines;
       said[name] = held
-        .find(line => line.includes(' "request" appended'))!
+        .find(line => line.includes(' "request" '))!
         .split(" ")
-        .slice(2, 5)
+        .slice(2, 4)
         .join(" ")
         .replace(/L\d+/g, "L");
     }
-    expect(said).toEqual({ alone: '"request" appended proven=L', company: '"request" appended proven=L' });
+    expect(said).toEqual({ alone: '"request" proven=L', company: '"request" proven=L' });
   },
   240_000,
 );

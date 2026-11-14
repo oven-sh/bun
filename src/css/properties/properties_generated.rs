@@ -621,7 +621,7 @@ impl PropertyIdTag {
 //
 // `PartialEq` is hand-written below: `CustomPropertyName` has no `PartialEq`.
 #[derive(Debug, Clone, Copy)]
-pub enum PropertyId {
+pub enum PropertyId<'bump> {
     BackgroundColor,
     BackgroundImage,
     BackgroundPositionX,
@@ -875,10 +875,10 @@ pub enum PropertyId {
     ViewTransitionGroup,
     All,
     Unparsed,
-    Custom(CustomPropertyName),
+    Custom(CustomPropertyName<'bump>),
 }
 
-impl PartialEq for PropertyId {
+impl PartialEq for PropertyId<'_> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -888,9 +888,9 @@ impl PartialEq for PropertyId {
     }
 }
 
-impl Eq for PropertyId {}
+impl Eq for PropertyId<'_> {}
 
-impl core::hash::Hash for PropertyId {
+impl core::hash::Hash for PropertyId<'_> {
     #[inline]
     fn hash<H: core::hash::Hasher>(&self, h: &mut H) {
         (self.tag() as u16).hash(h);
@@ -900,7 +900,7 @@ impl core::hash::Hash for PropertyId {
     }
 }
 
-impl PropertyId {
+impl<'bump> PropertyId<'bump> {
     pub(crate) const fn tag(&self) -> PropertyIdTag {
         match self {
             PropertyId::BackgroundColor => PropertyIdTag::BackgroundColor,
@@ -1254,7 +1254,7 @@ impl PropertyId {
 
     /// Returns this id with its prefix replaced by `pre` (no-op for
     /// unprefixed variants).
-    pub(crate) fn with_prefix(&self, pre: VendorPrefix) -> PropertyId {
+    pub(crate) fn with_prefix(&self, pre: VendorPrefix) -> PropertyId<'bump> {
         let mut id = *self;
         if let Some(p) = id.prefix_slot_mut() {
             *p = pre;
@@ -1282,9 +1282,12 @@ impl PropertyId {
     /// Maps a (case-insensitive) bare property name + parsed prefix to a
     /// `PropertyId`. Returns `None` if the name is unknown *or* the prefix
     /// isn't allowed for that property.
-    pub(crate) fn from_name_and_prefix(name: &[u8], pre: VendorPrefix) -> Option<PropertyId> {
+    pub(crate) fn from_name_and_prefix(
+        name: &[u8],
+        pre: VendorPrefix,
+    ) -> Option<PropertyId<'bump>> {
         bun_core::comptime_string_map! {
-            static KNOWN: (VendorPrefix, fn(VendorPrefix) -> PropertyId) = {
+            static KNOWN: (VendorPrefix, fn(VendorPrefix) -> PropertyId<'static>) = {
                 b"background-color" => (VendorPrefix::NONE, |_| PropertyId::BackgroundColor),
                 b"background-image" => (VendorPrefix::NONE, |_| PropertyId::BackgroundImage),
                 b"background-position-x" => (VendorPrefix::NONE, |_| PropertyId::BackgroundPositionX),
@@ -1547,7 +1550,7 @@ impl PropertyId {
     }
 
     #[inline]
-    pub(crate) fn deep_clone(&self, _arena: &bun_alloc::Arena) -> PropertyId {
+    pub(crate) fn deep_clone(&self, _arena: &bun_alloc::Arena) -> PropertyId<'bump> {
         *self
     }
 
@@ -1555,12 +1558,12 @@ impl PropertyId {
         properties_impl::property_id_mixin::to_css(self, dest)
     }
 
-    pub fn parse(input: &mut css::Parser) -> css::Result<PropertyId> {
+    pub fn parse(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, PropertyId<'bump>> {
         properties_impl::property_id_mixin::parse(input)
     }
 
     #[inline]
-    pub(crate) fn from_string(name: &[u8]) -> PropertyId {
+    pub(crate) fn from_string(name: &'bump [u8]) -> PropertyId<'bump> {
         properties_impl::property_id_mixin::from_string(name)
     }
 }
@@ -1570,9 +1573,9 @@ impl PropertyId {
 // No `#[derive(Clone)]` — several `css_values::*` payloads
 // (Image, Size2D, Rect, SmallList) intentionally lack `Clone` and use
 // `deep_clone(&Arena)` instead. `Property::deep_clone` is the public API.
-pub enum Property {
+pub enum Property<'bump> {
     BackgroundColor(css::css_values::color::CssColor),
-    BackgroundImage(SmallList<css::css_values::image::Image, 1>),
+    BackgroundImage(SmallList<css::css_values::image::Image<'bump>, 1>),
     BackgroundPositionX(SmallList<css::css_values::position::HorizontalPosition, 1>),
     BackgroundPositionY(SmallList<css::css_values::position::VerticalPosition, 1>),
     BackgroundPosition(SmallList<background::BackgroundPosition, 1>),
@@ -1581,7 +1584,7 @@ pub enum Property {
     BackgroundAttachment(SmallList<background::BackgroundAttachment, 1>),
     BackgroundClip((SmallList<background::BackgroundClip, 1>, VendorPrefix)),
     BackgroundOrigin(SmallList<background::BackgroundOrigin, 1>),
-    Background(SmallList<background::Background, 1>),
+    Background(SmallList<background::Background<'bump>, 1>),
     BoxShadow((SmallList<box_shadow::BoxShadow, 1>, VendorPrefix)),
     Opacity(css::css_values::alpha::AlphaValue),
     Color(css::css_values::color::CssColor),
@@ -1673,12 +1676,12 @@ pub enum Property {
     BorderEndStartRadius(css::css_values::size::Size2D<css::css_values::length::LengthPercentage>),
     BorderEndEndRadius(css::css_values::size::Size2D<css::css_values::length::LengthPercentage>),
     BorderRadius((border_radius::BorderRadius, VendorPrefix)),
-    BorderImageSource(css::css_values::image::Image),
+    BorderImageSource(css::css_values::image::Image<'bump>),
     BorderImageOutset(css::css_values::rect::Rect<css::css_values::length::LengthOrNumber>),
     BorderImageRepeat(border_image::BorderImageRepeat),
     BorderImageWidth(css::css_values::rect::Rect<border_image::BorderImageSideWidth>),
     BorderImageSlice(border_image::BorderImageSlice),
-    BorderImage((border_image::BorderImage, VendorPrefix)),
+    BorderImage((border_image::BorderImage<'bump>, VendorPrefix)),
     BorderColor(border::BorderColor),
     BorderStyle(border::BorderStyle),
     BorderWidth(border::BorderWidth),
@@ -1796,12 +1799,12 @@ pub enum Property {
     FontWeight(font::FontWeight),
     FontSize(font::FontSize),
     FontStretch(font::FontStretch),
-    FontFamily(Vec<font::FontFamily>),
+    FontFamily(Vec<font::FontFamily<'bump>>),
     FontStyle(font::FontStyle),
     FontVariantCaps(font::FontVariantCaps),
     LineHeight(font::LineHeight),
-    Font(font::Font),
-    TransitionProperty((SmallList<PropertyId, 1>, VendorPrefix)),
+    Font(font::Font<'bump>),
+    TransitionProperty((SmallList<PropertyId<'bump>, 1>, VendorPrefix)),
     TransitionDuration((SmallList<css::css_values::time::Time, 1>, VendorPrefix)),
     TransitionDelay((SmallList<css::css_values::time::Time, 1>, VendorPrefix)),
     TransitionTimingFunction(
@@ -1810,9 +1813,9 @@ pub enum Property {
             VendorPrefix,
         ),
     ),
-    Transition((SmallList<transition::Transition, 1>, VendorPrefix)),
-    Animation((SmallList<animation::Animation, 1>, VendorPrefix)),
-    AnimationName((SmallList<animation::AnimationName, 1>, VendorPrefix)),
+    Transition((SmallList<transition::Transition<'bump>, 1>, VendorPrefix)),
+    Animation((SmallList<animation::Animation<'bump>, 1>, VendorPrefix)),
+    AnimationName((SmallList<animation::AnimationName<'bump>, 1>, VendorPrefix)),
     Transform((transform::TransformList, VendorPrefix)),
     TransformOrigin((position::Position, VendorPrefix)),
     TransformStyle((transform::TransformStyle, VendorPrefix)),
@@ -1827,8 +1830,13 @@ pub enum Property {
     TextEmphasisColor((css::css_values::color::CssColor, VendorPrefix)),
     TextShadow(SmallList<text::TextShadow, 1>),
     Direction(text::Direction),
-    Composes(css_modules::Composes),
-    MaskImage((SmallList<css::css_values::image::Image, 1>, VendorPrefix)),
+    Composes(css_modules::Composes<'bump>),
+    MaskImage(
+        (
+            SmallList<css::css_values::image::Image<'bump>, 1>,
+            VendorPrefix,
+        ),
+    ),
     MaskMode(SmallList<masking::MaskMode, 1>),
     MaskRepeat((SmallList<background::BackgroundRepeat, 1>, VendorPrefix)),
     MaskPositionX(SmallList<css::css_values::position::HorizontalPosition, 1>),
@@ -1839,18 +1847,18 @@ pub enum Property {
     MaskSize((SmallList<background::BackgroundSize, 1>, VendorPrefix)),
     MaskComposite(SmallList<masking::MaskComposite, 1>),
     MaskType(masking::MaskType),
-    Mask((SmallList<masking::Mask, 1>, VendorPrefix)),
-    MaskBorderSource(css::css_values::image::Image),
+    Mask((SmallList<masking::Mask<'bump>, 1>, VendorPrefix)),
+    MaskBorderSource(css::css_values::image::Image<'bump>),
     MaskBorderMode(masking::MaskBorderMode),
     MaskBorderSlice(border_image::BorderImageSlice),
     MaskBorderWidth(css::css_values::rect::Rect<border_image::BorderImageSideWidth>),
     MaskBorderOutset(css::css_values::rect::Rect<css::css_values::length::LengthOrNumber>),
     MaskBorderRepeat(border_image::BorderImageRepeat),
-    MaskBorder(masking::MaskBorder),
+    MaskBorder(masking::MaskBorder<'bump>),
     WebKitMaskComposite(SmallList<masking::WebKitMaskComposite, 1>),
     MaskSourceType((SmallList<masking::WebKitMaskSourceType, 1>, VendorPrefix)),
-    MaskBoxImage((border_image::BorderImage, VendorPrefix)),
-    MaskBoxImageSource((css::css_values::image::Image, VendorPrefix)),
+    MaskBoxImage((border_image::BorderImage<'bump>, VendorPrefix)),
+    MaskBoxImageSource((css::css_values::image::Image<'bump>, VendorPrefix)),
     MaskBoxImageSlice((border_image::BorderImageSlice, VendorPrefix)),
     MaskBoxImageWidth(
         (
@@ -1866,18 +1874,18 @@ pub enum Property {
     ),
     MaskBoxImageRepeat((border_image::BorderImageRepeat, VendorPrefix)),
     ColorScheme(ui::ColorScheme),
-    ViewTransitionName(transition::ViewTransitionName),
-    ViewTransitionClass(css::css_values::ident::NoneOrCustomIdentList),
-    ViewTransitionGroup(transition::ViewTransitionGroup),
+    ViewTransitionName(transition::ViewTransitionName<'bump>),
+    ViewTransitionClass(css::css_values::ident::NoneOrCustomIdentList<'bump>),
+    ViewTransitionGroup(transition::ViewTransitionGroup<'bump>),
     All(CSSWideKeyword),
-    Unparsed(UnparsedProperty),
-    Custom(CustomProperty),
+    Unparsed(UnparsedProperty<'bump>),
+    Custom(CustomProperty<'bump>),
 }
 
 /// A fully-consumed `T`, or `None` (falling back to `Property::Unparsed`).
 /// One instantiation per value type rather than one inlined copy per property.
-fn parse_value<T: css::generic::ParseWithOptions>(
-    input: &mut css::Parser,
+fn parse_value<'bump, T: css::generic::ParseWithOptions<'bump>>(
+    input: &mut css::Parser<'_, 'bump>,
     options: &css::ParserOptions,
 ) -> Option<T> {
     let value = T::parse_with_options(input, options).ok()?;
@@ -1885,8 +1893,8 @@ fn parse_value<T: css::generic::ParseWithOptions>(
 }
 
 /// `parse_value` for a property whose lengths and percentages have the range `[0,∞]`.
-fn parse_non_negative<T: css::generic::ParseWithOptions>(
-    input: &mut css::Parser,
+fn parse_non_negative<'bump, T: css::generic::ParseWithOptions<'bump>>(
+    input: &mut css::Parser<'_, 'bump>,
     options: &css::ParserOptions,
 ) -> Option<T> {
     let value = input
@@ -1895,9 +1903,9 @@ fn parse_non_negative<T: css::generic::ParseWithOptions>(
     input.expect_exhausted().is_ok().then_some(value)
 }
 
-impl Property {
+impl<'bump> Property<'bump> {
     /// Returns the [`PropertyId`] for this declaration.
-    pub(crate) fn property_id(&self) -> PropertyId {
+    pub(crate) fn property_id(&self) -> PropertyId<'bump> {
         match self {
             Property::BackgroundColor(..) => PropertyId::BackgroundColor,
             Property::BackgroundImage(..) => PropertyId::BackgroundImage,
@@ -2423,19 +2431,17 @@ impl Property {
             Property::ViewTransitionClass(v) => css::generic::to_css(v, dest),
             Property::ViewTransitionGroup(v) => css::generic::to_css(v, dest),
             Property::All(v) => css::generic::to_css(v, dest),
-            Property::Unparsed(u) => u.value.to_css(dest, false),
-            Property::Custom(c) => c
-                .value
-                .to_css(dest, matches!(c.name, CustomPropertyName::Custom(..))),
+            Property::Unparsed(u) => u.value.to_css(dest),
+            Property::Custom(c) => c.value.to_css(dest),
         }
     }
 
     /// Parses a CSS property by name.
     pub fn parse(
-        property_id: PropertyId,
-        input: &mut css::Parser,
+        property_id: PropertyId<'bump>,
+        input: &mut css::Parser<'_, 'bump>,
         options: &css::ParserOptions,
-    ) -> css::Result<Property> {
+    ) -> css::Result<'bump, Property<'bump>> {
         let state = input.state();
 
         match property_id {
@@ -3861,7 +3867,7 @@ impl Property {
         properties_impl::property_mixin::to_css(self, dest, important)
     }
 
-    pub(crate) fn deep_clone(&self, arena: &bun_alloc::Arena) -> Property {
+    pub(crate) fn deep_clone(&self, arena: &'bump bun_alloc::Arena) -> Property<'bump> {
         match self {
             Property::BackgroundColor(v) => {
                 Property::BackgroundColor(css::generic::deep_clone(v, arena))
@@ -4452,7 +4458,7 @@ impl Property {
         }
     }
 
-    pub fn eql(&self, other: &Property) -> bool {
+    pub fn eql(&self, other: &Property<'bump>) -> bool {
         match (self, other) {
             (Property::BackgroundColor(a), Property::BackgroundColor(b)) => css::generic::eql(a, b),
             (Property::BackgroundImage(a), Property::BackgroundImage(b)) => css::generic::eql(a, b),

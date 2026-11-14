@@ -1,4 +1,4 @@
-# the body of a module runs once: two ways for one construction do not pay there, as no guess does. The function leaves, so the new cell would have to be looked at
+# the body of a module runs once: two ways for one construction do not pay there, as no guess does. The function leaves, so guards would have to stand in front of the allocation
 # f0 = the module, f1 = Node, f2 = make
 # -- source: construction-in-code-that-runs-once-lists-nothing-that-needs-a-look.ts
 # declare function sink(...values: unknown[]): void;
@@ -11,5 +11,6 @@
 # the same construction in a function that may run often
 # RUN: walk f2 mechanisms=all
 # CHECK-LABEL: code f2:Body
+# CHECK: = AreMembersUnchanged
 # CHECK: = NewObject {{*}}fields=[0, 1]
-# CHECK: = HasLayoutPrototype
+# CHECK-NOT: = HasLayoutPrototype

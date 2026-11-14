@@ -4,7 +4,6 @@
 //! from stdin, runs each file under isolation, and streams results to fd 3).
 
 use core::ffi::c_char;
-use core::ptr::NonNull;
 use std::io::Write as _;
 
 use bun_core::{Global, Output};
@@ -59,7 +58,7 @@ pub(crate) fn run_as_coordinator(
     coverage_opts: &mut CodeCoverageOptions,
 ) -> crate::Result<bool> {
     // SAFETY: env loader is initialized before the test runner runs.
-    let env = unsafe { &mut *vm.transpiler.env };
+    let env = unsafe { &mut *vm.transpiler.get().env };
     let n: u32 = u32::try_from(files.len()).unwrap();
     let k: u32 = ctx.test_options.parallel.min(n);
     if k <= 1 {
@@ -173,7 +172,7 @@ pub(crate) fn run_as_coordinator(
     });
     let mut coord = Coordinator {
         vm,
-        event_loop_handle: bun_jsc::EventLoopHandle::init(vm.event_loop().cast::<()>()),
+        event_loop_handle: bun_jsc::EventLoopHandle::init(vm.event_loop_ptr()),
         reporter,
         files: sorted,
         costs,
@@ -242,8 +241,7 @@ pub(crate) fn run_as_coordinator(
         }
     }
 
-    // SAFETY: event_loop pointer is valid while vm lives.
-    unsafe { (*vm.event_loop()).ensure_waker() };
+    vm.event_loop().ensure_waker();
     crate::cli::run_compiled::log_step_of_test_run(format_args!("the coordinator is set up"));
     vm.run_with_api_lock(|| coord.drive());
     coord.end_group();
@@ -681,7 +679,7 @@ struct WorkerLoop<'a> {
 }
 
 impl<'a> WorkerLoop<'a> {
-    fn begin(&mut self, vm: &mut VirtualMachine) {
+    fn begin(&mut self, vm: &VirtualMachine) {
         if !Channel::adopt(&raw mut self.cmds.channel, vm, Fd::from_uv(3)) {
             bun_core::pretty_errorln!("<red>error<r>: test worker failed to adopt IPC fd");
             Global::exit(1);
@@ -697,7 +695,7 @@ impl<'a> WorkerLoop<'a> {
         // so a stray env var can't disable --parallel in a release build.
         if cfg!(any(debug_assertions, bun_asan)) {
             // SAFETY: env loader is initialized before the test runner runs.
-            let env = unsafe { &*vm.transpiler.env };
+            let env = unsafe { &*vm.transpiler.get().env };
             if let Some(mode) = env.get(b"BUN_TEST_WORKER_EXIT_BEFORE_READY") {
                 bun_core::pretty_errorln!(
                     "test worker exiting before ready (BUN_TEST_WORKER_EXIT_BEFORE_READY)"
@@ -714,14 +712,14 @@ impl<'a> WorkerLoop<'a> {
 
         loop {
             // The channel holds no reference on the loop, and a loop that nothing holds polls without sleeping.
-            let mut waits_for_command = bun_io::KeepAlive::init();
+            let waits_for_command = bun_io::KeepAlive::init();
             waits_for_command.ref_(bun_io::js_vm_ctx());
             while self.cmds.pending_idx.is_none() && !self.cmds.done {
-                vm.event_loop_ref().tick();
+                vm.event_loop().tick();
                 if self.cmds.pending_idx.is_some() || self.cmds.done {
                     break;
                 }
-                vm.event_loop_ref().auto_tick();
+                vm.event_loop().auto_tick();
             }
             waits_for_command.unref(bun_io::js_vm_ctx());
             let Some(idx) = self.cmds.pending_idx.take() else {
@@ -757,7 +755,7 @@ impl<'a> WorkerLoop<'a> {
             ) {
                 test_command::handle_top_level_test_error_before_javascript_start(&err);
             }
-            if vm.test_isolation_enabled {
+            if vm.test_isolation_enabled.get() {
                 crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
                 vm.swap_global_for_test_isolation();
                 self.reporter
@@ -848,11 +846,9 @@ fn start_measuring_growth(vm: &VirtualMachine, is_written: bool) -> Option<Resid
         let [peak, all, of_files, of_shared_memory] =
             read_kilobytes([b"VmHWM:", b"VmRSS:", b"RssFile:", b"RssShmem:"])?;
         let flags = bun_sys::O::WRONLY | bun_sys::O::CLOEXEC;
-        let marks =
-            bun_sys::File::openat(bun_sys::Fd::cwd(), b"/proc/self/clear_refs", flags, 0).ok()?;
-        let written = marks.write_all(b"5");
-        let _ = marks.close();
-        written.ok()?;
+        bun_sys::File::openat(bun_sys::Fd::cwd(), b"/proc/self/clear_refs", flags, 0)
+            .and_then(|marks| marks.write_all(b"5"))
+            .ok()?;
         crate::cli::run_compiled::record_peak_rss_kb(peak);
         bun_spawn::LARGEST_REAPED_CHILD.store(0, core::sync::atomic::Ordering::Relaxed);
         return Some(ResidentAtStart {
@@ -892,21 +888,16 @@ fn growth_since(at_start: ResidentAtStart) -> Growth {
 #[optimize(size)]
 pub(crate) fn run_as_worker(
     reporter: &mut CommandLineReporter,
-    vm: &mut VirtualMachine,
+    vm: &VirtualMachine,
     ctx: Command::Context,
 ) -> ! {
-    vm.test_isolation_enabled = ctx.test_options.isolate;
-    vm.test_isolation_state.shares_global = crate::cli::run_compiled::test_files_share_global(ctx);
-    vm.auto_killer.enabled = ctx.test_options.isolate;
+    vm.test_isolation_enabled.set(ctx.test_options.isolate);
+    vm.test_isolation_state
+        .shares_global
+        .set(crate::cli::run_compiled::test_files_share_global(ctx));
+    vm.auto_killer.enabled.set(ctx.test_options.isolate);
 
-    // `vm.arena` is currently a write-only backref: the `MimallocArena.gc()`
-    // reader was dropped from the GC path (see web_worker.rs, which wires its
-    // own arena the same way and notes the dropped read).
-    let mut arena = bun_alloc::MimallocArena::new();
-    // SAFETY: event_loop pointer is valid while vm lives.
-    unsafe { (*vm.event_loop()).ensure_waker() };
-    vm.arena = Some(NonNull::from(&mut arena));
-    // vm.allocator = arena.arena(); — allocator params dropped in Rust
+    vm.event_loop().ensure_waker();
 
     let mut wloop = WorkerLoop {
         reporter,
@@ -922,7 +913,7 @@ pub(crate) fn run_as_worker(
         },
         files_run: 0,
     };
-    vm.run_with_api_lock_mut(|vm| wloop.begin(vm));
+    vm.run_with_api_lock(|| wloop.begin(vm));
     crate::cli::run_compiled::log_account_of_process(format_args!(
         "worker | files {}",
         wloop.files_run
@@ -946,10 +937,14 @@ pub(crate) fn run_as_worker(
     );
     // Mirror TestCommand::exec's exit path so BUN_DESTRUCT_VM_ON_EXIT teardown
     // (lastChanceToFinalize) runs; bypassing it leaks JSC-owned native state.
-    vm.exit_handler.exit_code = 0;
-    vm.exit_handler.skip_exit_listeners = test_command::skip_exit_listeners(wloop.reporter);
-    vm.exit_handler.requested = test_command::exit_is_requested();
-    vm.run_with_api_lock_mut(|vm| {
+    vm.exit_handler.exit_code.set(0);
+    vm.exit_handler
+        .skip_exit_listeners
+        .set(test_command::skip_exit_listeners(wloop.reporter));
+    vm.exit_handler
+        .requested
+        .set(test_command::exit_is_requested());
+    vm.run_with_api_lock(|| {
         vm.on_exit();
         vm.global_exit()
     });
@@ -961,7 +956,7 @@ pub(crate) fn run_as_worker(
 #[optimize(size)]
 fn worker_flush_aggregates(
     reporter: &mut CommandLineReporter,
-    vm: &mut VirtualMachine,
+    vm: &VirtualMachine,
     coverage: &CodeCoverageOptions,
     cmds: &mut WorkerCommands,
 ) {
@@ -991,13 +986,11 @@ fn worker_flush_aggregates(
     // sees repeat_bufs / coverage_file.
     vm.run_with_api_lock(|| {
         while cmds.channel.has_pending_writes() && !cmds.channel.done.get() {
-            // SAFETY: event_loop pointer is valid while vm lives.
-            unsafe { (*vm.event_loop()).tick() };
+            vm.event_loop().tick();
             if !cmds.channel.has_pending_writes() || cmds.channel.done.get() {
                 break;
             }
-            // SAFETY: event_loop pointer is valid while vm lives.
-            unsafe { (*vm.event_loop()).auto_tick() };
+            vm.event_loop().auto_tick();
         }
     });
 }

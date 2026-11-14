@@ -89,7 +89,10 @@ pub(crate) use bundle::EntryPointList;
 use bundle::{RouteIndexAndRecurseFlag, TestingBatch};
 use deferred_request::{DeferredRequest, DeferredScriptRequest, Handler, ResponseAndMethod};
 pub(crate) use directory_watch_store::DirectoryWatchStore;
-use ensure_route::{HTMLRouter, ReqOrSaved, RequestEnsureRouteBundledCtx, ensure_route_is_bundled};
+use ensure_route::{
+    HTMLRouter, ReqOrSaved, RequestEnsureRouteBundledCtx, ensure_route_is_bundled,
+    trace_route_failures,
+};
 use failures::mark_all_route_children;
 pub(crate) use finalize::{CachedFileIndex, HotUpdateContext};
 use hmr_socket::hmr_socket_behavior;
@@ -319,19 +322,6 @@ impl DevServer {
     #[inline]
     fn global(&self) -> &'static JSGlobalObject {
         self.vm().global()
-    }
-
-    /// Recover `&mut VirtualMachine` via the global singleton — `self.vm` is
-    /// `*const`. The VM is process-unique on the JS thread, so
-    /// `VirtualMachine::get()` returns the same instance with write provenance.
-    /// SAFETY: single JS thread; caller must not hold an aliasing `&mut`.
-    #[inline]
-    pub(crate) fn vm_mut(&self) -> &mut VirtualMachine {
-        debug_assert!(::core::ptr::eq(
-            self.vm.as_const_ptr(),
-            VirtualMachine::get()
-        ));
-        VirtualMachine::get_mut()
     }
 
     #[inline]

@@ -890,9 +890,14 @@ impl<'p> Checker<'p, '_> {
             _ => return,
         };
         let error_node = |c: &Self| (file, at_name, c.end_of_name_at(file, at_name));
+        let binding_element = match bound.pat_parent[element.idx()] {
+            PatParent::Prop(_, p) => hir.node(p),
+            PatParent::Elem(_, e) => hir.node(e),
+            _ => hir.parent(hir.node(element)),
+        };
         self.check_property_accessibility_at_location(
             file,
-            hir.parent(hir.node(element)),
+            binding_element,
             at,
             PropertyAccess {
                 is_super,

@@ -7,6 +7,7 @@ use core::mem::{replace, take};
 use std::sync::Arc;
 
 use bun_sema::atom::Atom;
+use bun_sema::check::aot::TypeIdentity;
 use bun_sema::erasure::PackedTypeRanges;
 use bun_sema::program::FileId;
 use rustc_hash::FxHashMap;
@@ -38,6 +39,14 @@ pub struct ModuleFragment {
     pub throws_at_load: bool,
 }
 
+/// A name that the code of a class uses off its instances, which the class it extends may have.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct NameOfHeir {
+    pub heir: LayoutId,
+    pub parent_is_parameter: bool,
+    pub name: PropertyKeyId,
+}
+
 pub struct Fragment {
     pub file: FileId,
     pub is_checked: bool,
@@ -47,8 +56,10 @@ pub struct Fragment {
     pub layouts: Vec<(LayoutId, Layout)>,
     pub object_types: Vec<(u32, ObjectTypeKey)>,
     pub said_types: Vec<CheckerTypeId>,
+    pub said_keys: Vec<(TypeIdentity, ObjectTypeKey)>,
     pub layouts_named_by_code: Vec<LayoutId>,
     pub allocated_layouts: Vec<LayoutId>,
+    pub names_of_heirs: Vec<NameOfHeir>,
     pub written_keys: Vec<PropertyKeyId>,
     pub read_keys: Vec<PropertyKeyId>,
     pub keys_laid_by_descriptors: Vec<PropertyKeyId>,
@@ -258,8 +269,10 @@ pub(crate) struct FragmentBuilder {
     layouts: Vec<(LayoutId, Layout)>,
     object_types: Vec<(u32, ObjectTypeKey)>,
     said_types: Vec<CheckerTypeId>,
+    said_keys: Vec<(TypeIdentity, ObjectTypeKey)>,
     marks: FileMarks,
     allocated_layouts: Vec<LayoutId>,
+    names_of_heirs: Vec<NameOfHeir>,
     written_keys: Vec<PropertyKeyId>,
     read_keys: Vec<PropertyKeyId>,
     keys_laid_by_descriptors: Vec<PropertyKeyId>,
@@ -316,8 +329,10 @@ impl FragmentBuilder {
             layouts: Vec::new(),
             object_types: Vec::new(),
             said_types: Vec::new(),
+            said_keys: Vec::new(),
             marks: take(&mut state.marks),
             allocated_layouts: Vec::new(),
+            names_of_heirs: Vec::new(),
             written_keys: Vec::new(),
             read_keys: Vec::new(),
             keys_laid_by_descriptors: Vec::new(),
@@ -495,6 +510,10 @@ impl FragmentBuilder {
         self.said_types.push(ty);
     }
 
+    pub(crate) fn note_said_key(&mut self, names: TypeIdentity, key: ObjectTypeKey) {
+        self.said_keys.push((names, key));
+    }
+
     pub(crate) fn define_object_type_anew(&mut self, index: u32, layout: Layout) {
         self.layouts[index as usize].1 = layout;
     }
@@ -508,6 +527,10 @@ impl FragmentBuilder {
         if set_mark(&mut self.marks.layout_allocated_in, layout, self.visit) {
             self.allocated_layouts.push(layout);
         }
+    }
+
+    pub(crate) fn note_name_of_heir(&mut self, name: NameOfHeir) {
+        self.names_of_heirs.push(name);
     }
 
     pub(crate) fn allocated_layouts(&self) -> &[LayoutId] {
@@ -629,6 +652,11 @@ impl FragmentBuilder {
         })
     }
 
+    pub(in crate::lower) fn is_function_named(&self, key: FunctionKey) -> bool {
+        let id = self.function_keys.ids.get(&key);
+        id.is_some_and(|&id| self.function_keys.named_in[id as usize] == self.visit)
+    }
+
     pub(in crate::lower) fn is_function_defined(&self, key: FunctionKey) -> bool {
         let id = self.function_keys.ids.get(&key);
         id.is_some_and(|&id| self.function_keys.defined_in[id as usize] == self.visit)
@@ -727,6 +755,13 @@ impl FragmentBuilder {
         for layout in part.allocated_layouts {
             self.note_allocation(layout_of(layout));
         }
+        for name in part.names_of_heirs {
+            self.note_name_of_heir(NameOfHeir {
+                heir: layout_of(name.heir),
+                name: key_of(name.name),
+                ..name
+            });
+        }
         for key in part.written_keys {
             self.note_write(key_of(key));
         }
@@ -781,6 +816,7 @@ impl FragmentBuilder {
                 .push(layout_of(layout));
         }
         self.said_types.extend(part.said_types);
+        self.said_keys.extend(part.said_keys);
     }
 
     pub(crate) fn finish(mut self, module: ModuleFragment, state: &mut TaskState) -> Fragment {
@@ -819,6 +855,8 @@ impl FragmentBuilder {
         }
         self.layouts_named_in_file.sort_unstable();
         self.allocated_layouts.sort_unstable();
+        self.names_of_heirs.sort_unstable();
+        self.names_of_heirs.dedup();
         self.written_keys.sort_unstable();
         for key in &self.read_keys {
             self.marks.keys_read[key.index() / 64] = 0;
@@ -860,8 +898,10 @@ impl FragmentBuilder {
             layouts: self.layouts,
             object_types: self.object_types,
             said_types: self.said_types,
+            said_keys: self.said_keys,
             layouts_named_by_code: self.layouts_named_in_file,
             allocated_layouts: self.allocated_layouts,
+            names_of_heirs: self.names_of_heirs,
             written_keys: self.written_keys,
             read_keys: self.read_keys,
             keys_laid_by_descriptors: self.keys_laid_by_descriptors,

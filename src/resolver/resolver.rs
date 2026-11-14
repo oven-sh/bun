@@ -4454,16 +4454,12 @@ impl<'a> Resolver<'a> {
     ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
         // Since tsconfig.json is cached permanently, in our DirEntries cache
         // we must use the global allocator
-        let mut entry = self
+        let entry = self
             .caches
             .fs
             .read_file_with_allocator(file, dirname_fd, false, None, None)?;
-        // NOTE: reshaped for borrowck — `mem::take` the contents (leaving
-        // `Contents::Empty` behind) so `entry` stays whole for the close-guard.
-        let entry_contents = core::mem::take(&mut entry.contents);
-        let _close_guard = scopeguard::guard(entry, |mut e| {
-            let _ = e.close_fd();
-        });
+        let _file = entry.fd.unwrap_valid().map(::bun_sys::File::from_fd);
+        let entry_contents = entry.contents;
 
         // The file name needs to be persistent because it can have errors
         // and if those errors need to print the filename

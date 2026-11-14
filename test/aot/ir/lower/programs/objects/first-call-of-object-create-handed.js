@@ -77,23 +77,23 @@ console.log(log.join("\n"));
 // CHECK-LABEL: function {{*}}name="created"
 // CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
-// CHECK-NEXT: v0 = Builtin builtin=Object
-// CHECK-NEXT: v1 = Builtin builtin=ObjectCreate
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="literal"
-// CHECK-NEXT: v4 = Call v1, v0, v3 calleeName="Object.create"
-// CHECK-NEXT: ReturnCall v4
+// CHECK-NEXT: v0 = Builtin builtin=ObjectCreate
+// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_2]]
+// CHECK-NEXT: v2 = CheckInitialized v1 name="literal"
+// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_3]]
+// CHECK-NEXT: v4 = Construct v3
+// CHECK-NEXT: Return v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="frozen"
 // CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: v0 = Builtin builtin=Object
 // CHECK-NEXT: v1 = Builtin builtin=ObjectFreeze
-// CHECK-NEXT: v2 = NewClosure function=[[f_3]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|[[f_4]] flags=[IsExpected]}
+// CHECK-NEXT: v2 = NewClosure function=[[f_4]]
+// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|[[f_5]] flags=[IsExpected]}
 // CHECK-NEXT: v4 = String string="frozen name"
 // CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|"frozen name" flags=[IsExpected]}
-// CHECK-NEXT: v6 = NewObject layout=[[L_5]]
+// CHECK-NEXT: v6 = NewObject layout=[[L_6]]
 // CHECK-NEXT: PropDefine v6, v3 key="area"
 // CHECK-NEXT: PropDefine v6, v5 key="name"
 // CHECK-NEXT: v9 = FinishObject v6
@@ -101,13 +101,13 @@ console.log(log.join("\n"));
 // CHECK-NEXT: ReturnCall v10
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|[[L_6]] flags=[IsExpected]}, {type=undefined|null|string|symbol flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_6]], v1: undefined|null|string|symbol, v2: anything):
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|[[L_7]] flags=[IsExpected]}, {type=undefined|null|string|symbol flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: undefined|null|[[L_7]], v1: undefined|null|string|symbol, v2: anything):
 // CHECK-NEXT: v3 = String string="area"
 // CHECK-NEXT: v4 = StrictEq v1, v3
 // CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v5 = NewClosure function=[[f_7]]
+// CHECK-NEXT: v5 = NewClosure function=[[f_8]]
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: b2():
 // CHECK-NEXT: v6 = Builtin builtin=Reflect
@@ -116,9 +116,9 @@ console.log(log.join("\n"));
 // CHECK-NEXT: ReturnCall v8
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="set"
-// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|[[L_6]] flags=[IsExpected]}, {type=undefined|null|string|symbol flags=[IsExpected]}, {type=anything}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_6]], v1: undefined|null|string|symbol, v2: anything, v3: anything):
-// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_8]]
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|[[L_7]] flags=[IsExpected]}, {type=undefined|null|string|symbol flags=[IsExpected]}, {type=anything}, {type=anything}] results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: undefined|null|[[L_7]], v1: undefined|null|string|symbol, v2: anything, v3: anything):
+// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_9]]
 // CHECK-NEXT: v5 = CheckInitialized v4 name="log"
 // CHECK-NEXT: v6 = PropGet v5 key="push"
 // CHECK-NEXT: v7 = String string="set trap "

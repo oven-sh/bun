@@ -1,7 +1,7 @@
 use bun_ast::Loader;
 use bun_options_types::aot_options::AotOptions;
 use bun_removable_features::Feature;
-use bun_sema::program::{CodeAnswer, Files, HostModuleId};
+use bun_sema::program::{CodeAnswer, FileId, Files, HostModuleId};
 use bun_sema::resolve::ExternalKind;
 use bun_sema::util::{FxHashSet, SharedSort};
 
@@ -10,6 +10,8 @@ use crate::builtins::table::{ModuleFlags, module_by_specifier, module_data, runt
 use crate::builtins::{
     AsksOfText, BuiltinId, Platforms, RuntimeFunction, RuntimeModule, RuntimeUses,
 };
+use crate::ir::InParallel;
+use crate::ir::parallel::map_each;
 use crate::load::contents::ProgramContents;
 use crate::load::contents::load_names::find_library_modules_that_unknown_names_may_stand_for;
 use crate::load::loaders::{HostLoaderKind, host_loader_kind};
@@ -89,12 +91,52 @@ pub(crate) struct FurtherLibraryCode<'a> {
     pub has_file_that_asks_for_it: bool,
 }
 
+#[derive(Default)]
+struct RootsOfFiles {
+    host_loaded: FxHashSet<RuntimeModule>,
+    functions: FxHashSet<RuntimeFunction>,
+    named: Vec<RuntimeModule>,
+    asks_of_texts: AsksOfText,
+    imports_uncompiled_code: bool,
+    asks_module_of_host: bool,
+    lets_in_what_nobody_names: bool,
+    lets_it_in_beside_uses_of_files: bool,
+}
+
+impl RootsOfFiles {
+    fn add_file(&mut self, application: &Files<'_>, file: FileId) {
+        self.lets_it_in_beside_uses_of_files |=
+            loader_by_name(application.module(file).file_name()) == Loader::Napi;
+        if let Some(compiled) = application.compiled(file) {
+            self.lets_it_in_beside_uses_of_files |=
+                host_loader_kind(compiled.loader) == Some(HostLoaderKind::Loader(Loader::Napi));
+            let implied = compiled.implied_answers.iter().filter_map(implied_module);
+            self.host_loaded.extend(implied);
+            self.imports_uncompiled_code |= compiled.code_answers.iter().any(is_uncompiled_code);
+            let mut imported = compiled.code_answers.iter().filter_map(implied_module);
+            self.asks_module_of_host |= imported.any(has_source);
+        }
+        if let Some(source) = parsed_source(application, file) {
+            self.functions.extend(source.builtins.called_functions());
+            self.host_loaded.extend(source.builtins.loaded_modules());
+            let named = source.named_modules().iter().map(|it| it.module);
+            self.named.extend(named);
+            let uses = source.builtins.uses();
+            self.lets_in_what_nobody_names |= uses.lets_in_what_nobody_names;
+            self.lets_it_in_beside_uses_of_files |= source.contents.names.may_go_to_loader_of_host;
+            self.asks_module_of_host |= uses.has_module_of_host();
+            self.asks_of_texts.add(&uses.asks);
+        }
+    }
+}
+
 pub(crate) fn collect_runtime_roots(
     application: &Files<'_>,
     contents: &ProgramContents,
     runtime_modules: &RuntimeModules,
     platform: Platforms,
     further: FurtherLibraryCode<'_>,
+    in_parallel: InParallel<'_>,
 ) -> RuntimeRoots {
     let used_at_start = uses_of_what_start_reads(further.used_at_start, platform);
     let mut host_loaded: FxHashSet<RuntimeModule> = used_at_start.modules.iter().copied().collect();
@@ -106,30 +148,32 @@ pub(crate) fn collect_runtime_roots(
     let mut lets_in_what_nobody_names = further.has_file_that_asks_for_it;
     let mut lets_it_in_beside_uses_of_files = used_at_start.lets_in_what_nobody_names;
     let mut asks_of_texts = used_at_start.asks;
-    for &file in application.compiled_files() {
-        lets_it_in_beside_uses_of_files |=
-            loader_by_name(application.module(file).file_name()) == Loader::Napi;
-        if let Some(compiled) = application.compiled(file) {
-            lets_it_in_beside_uses_of_files |=
-                host_loader_kind(compiled.loader) == Some(HostLoaderKind::Loader(Loader::Napi));
-            host_loaded.extend(compiled.implied_answers.iter().filter_map(implied_module));
-            imports_uncompiled_code |= compiled.code_answers.iter().any(is_uncompiled_code);
-            let mut imported = compiled.code_answers.iter().filter_map(implied_module);
-            asks_module_of_host |= imported.any(has_source);
+    const FILES_IN_CHUNK: usize = 256;
+    let chunks: Vec<&[FileId]> = application
+        .compiled_files()
+        .chunks(FILES_IN_CHUNK)
+        .collect();
+    let roots_of_chunks = map_each(chunks, in_parallel, &|chunk: &[FileId]| {
+        let mut roots = RootsOfFiles::default();
+        for &file in chunk {
+            roots.add_file(application, file);
         }
-        if let Some(source) = parsed_source(application, file) {
-            functions.extend(source.builtins.called_functions());
-            host_loaded.extend(source.builtins.loaded_modules());
-            named.extend(source.named_modules().iter().map(|it| it.module));
-            lets_in_what_nobody_names |= source.builtins.uses().lets_in_what_nobody_names;
-            lets_it_in_beside_uses_of_files |= source.contents.names.may_go_to_loader_of_host;
-            asks_module_of_host |= source.builtins.uses().has_module_of_host();
-            asks_of_texts.add(&source.builtins.uses().asks);
-        }
+        roots
+    });
+    for mut roots in roots_of_chunks {
+        host_loaded.extend(roots.host_loaded);
+        functions.extend(roots.functions);
+        named.append(&mut roots.named);
+        asks_of_texts.add(&roots.asks_of_texts);
+        imports_uncompiled_code |= roots.imports_uncompiled_code;
+        asks_module_of_host |= roots.asks_module_of_host;
+        lets_in_what_nobody_names |= roots.lets_in_what_nobody_names;
+        lets_it_in_beside_uses_of_files |= roots.lets_it_in_beside_uses_of_files;
     }
     lets_in_what_nobody_names |= lets_it_in_beside_uses_of_files;
     named.extend(find_library_modules_that_unknown_names_may_stand_for(
         application,
+        in_parallel,
     ));
     named.shared_sort_unstable_by_key(|module| module.registry_id());
     named.dedup();
@@ -343,6 +387,7 @@ mod tests {
         runtime_functions,
     };
     use crate::compile::testing::{default_settings, with_loaded_build, with_loaded_test_run};
+    use crate::ir::run_serially;
     use crate::load::runtime_modules::RuntimeFileKind;
     use crate::load::{ProjectId, host_platform};
 
@@ -376,6 +421,7 @@ mod tests {
                 runtime_modules,
                 host_platform(),
                 further,
+                &run_serially,
             )
         })
     }
@@ -388,6 +434,7 @@ mod tests {
                 runtime_modules,
                 host_platform(),
                 NOTHING_FURTHER,
+                &run_serially,
             );
             roots.paths.len()
         })
@@ -420,6 +467,7 @@ mod tests {
                     &runtime,
                     host_platform(),
                     NOTHING_FURTHER,
+                    &run_serially,
                 );
                 roots.paths.len()
             })

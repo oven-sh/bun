@@ -9,7 +9,6 @@ use bun_io::KeepAlive;
 use bun_jsc::ConcurrentTask::{ConcurrentTask, Task};
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
-use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, ErrorCode, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional, WorkPoolTask,
 };
@@ -22,7 +21,7 @@ bun_output::declare_scope!(zlib, hidden);
 #[derive(Default)]
 pub(crate) struct CountedKeepAlive {
     pub(crate) keep_alive: KeepAlive,
-    pub(crate) ref_count: u32,
+    pub(crate) ref_count: Cell<u32>,
 }
 
 impl Drop for CountedKeepAlive {
@@ -72,16 +71,16 @@ fn jsv_to_u32(v: JSValue) -> u32 {
 }
 
 impl CountedKeepAlive {
-    fn ref_(&mut self, _vm: &VirtualMachine) {
-        if self.ref_count == 0 {
+    fn ref_(&self) {
+        if self.ref_count.get() == 0 {
             self.keep_alive.ref_(bun_io::js_vm_ctx());
         }
-        self.ref_count += 1;
+        self.ref_count.update(|n| n + 1);
     }
 
-    fn unref(&mut self, _vm: &VirtualMachine) {
-        self.ref_count -= 1;
-        if self.ref_count == 0 {
+    fn unref(&self) {
+        self.ref_count.update(|n| n - 1);
+        if self.ref_count.get() == 0 {
             self.keep_alive.unref(bun_io::js_vm_ctx());
         }
     }
@@ -160,7 +159,7 @@ pub(crate) trait CompressionStreamImpl:
         );
     }
 
-    fn poll_ref(&self) -> &JsCell<CountedKeepAlive>;
+    fn poll_ref(&self) -> &CountedKeepAlive;
     fn this_value(&self) -> &JsCell<StrongOptional>;
     fn task(&self) -> &JsCell<WorkPoolTask>;
     fn write_in_progress(&self) -> &Cell<bool>;
@@ -408,7 +407,7 @@ pub(crate) trait CompressionStreamImpl:
             node: Default::default(),
             callback: async_job_run_task::<Self>,
         });
-        self.poll_ref().with_mut(|p| p.ref_(vm));
+        self.poll_ref().ref_();
         self.ticket().set(Some(vm.ticket()));
         WorkPool::schedule(self.task().as_ptr());
 
@@ -672,7 +671,7 @@ pub(crate) trait CompressionStreamImpl:
         // The pending close handling below still runs either way.
         if let Some(callback) = Self::error_callback_get_cached(this_value) {
             let vm = global_this.bun_vm();
-            vm.event_loop_ref().run_callback(
+            vm.event_loop().run_callback(
                 bun_event_loop::ContextId::NONE,
                 callback,
                 global_this,
@@ -722,13 +721,11 @@ fn async_job_run<T: CompressionStreamImpl>(this: *mut T) {
 /// VM teardown, JS thread, heap alive: a completion that was queued but
 /// will not run. The cleanup half of `run_from_js_thread`, no callbacks.
 pub(crate) fn release_unrun<T: CompressionStreamImpl>(this: RefPtr<T>) {
-    let global: &JSGlobalObject = this.global_this();
-    let vm = global.bun_vm();
     this.write_in_progress().set(false);
     if let Some(this_value) = this.this_value().with_mut(|v| v.try_swap()) {
         this.unpin_pending_buffers(this_value);
     }
-    this.poll_ref().with_mut(|p| p.unref(vm));
+    this.poll_ref().unref();
     drop(this);
 }
 
@@ -737,14 +734,14 @@ pub(crate) fn release_unrun<T: CompressionStreamImpl>(this: RefPtr<T>) {
 pub(crate) fn run_from_js_thread<T: CompressionStreamImpl>(this: RefPtr<T>) {
     let global: &JSGlobalObject = this.global_this();
     let vm = global.bun_vm();
-    // `this.poll_ref.unref(vm)` must run on every return path, before `this` is dropped.
+    // `this.poll_ref.unref()` must run on every return path, before `this` is dropped.
 
     this.write_in_progress().set(false);
 
     // Clear the strong handle before we call any callbacks.
     let Some(this_value) = this.this_value().with_mut(|v| v.try_swap()) else {
         bun_output::scoped_log!(zlib, "this_value is null in runFromJSThread");
-        this.poll_ref().with_mut(|p| p.unref(vm));
+        this.poll_ref().unref();
         drop(this);
         return;
     };
@@ -756,7 +753,7 @@ pub(crate) fn run_from_js_thread<T: CompressionStreamImpl>(this: RefPtr<T>) {
     T::pending_output_set_cached(this_value, global, JSValue::ZERO);
 
     if !this.check_error(global, this_value) {
-        this.poll_ref().with_mut(|p| p.unref(vm));
+        this.poll_ref().unref();
         drop(this);
         return;
     }
@@ -773,7 +770,7 @@ pub(crate) fn run_from_js_thread<T: CompressionStreamImpl>(this: RefPtr<T>) {
     // `init()` caches the JS write callback; a handle whose `init()` was
     // never called has none, so there is nothing to notify.
     if let Some(write_callback) = T::write_callback_get_cached(this_value) {
-        vm.event_loop_ref().run_callback(
+        vm.event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             write_callback,
             global,
@@ -786,7 +783,7 @@ pub(crate) fn run_from_js_thread<T: CompressionStreamImpl>(this: RefPtr<T>) {
         this.close();
     }
 
-    this.poll_ref().with_mut(|p| p.unref(vm));
+    this.poll_ref().unref();
     drop(this);
 }
 
@@ -873,9 +870,7 @@ macro_rules! __impl_compression_stream {
                 &self.stream
             }
             #[inline]
-            fn poll_ref(
-                &self,
-            ) -> &::bun_jsc::JsCell<$crate::node::node_zlib_binding::CountedKeepAlive> {
+            fn poll_ref(&self) -> &$crate::node::node_zlib_binding::CountedKeepAlive {
                 &self.poll_ref
             }
             #[inline]

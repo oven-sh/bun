@@ -26,7 +26,7 @@ use super::runtime_uses::RuntimeUses;
 use super::table::{
     self, BuiltinId, Intrinsic, Mutability, Platforms, RuntimeFunction, RuntimeModule,
 };
-use bun_sema::atom::{Atom, Interner};
+use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::{Binding, Bound, CommonJsVariable, SymbolId};
 use bun_sema::fold::{Constant, Decisions};
 use bun_sema::hir::{self, Chain, ExprId, ExprKind, Keyword, MemberKey, NodeData, TypeNodeKind};
@@ -562,8 +562,10 @@ impl ResolvedBuiltins {
         self.source_evaluator_escapes || self.mentions_any_of(table::BuiltinFlags::RUNS_UNSEEN_CODE)
     }
 
-    pub fn may_call_unnamed_evaluator(&self) -> bool {
+    pub fn may_call_unnamed_evaluator(&self, hir: &hir::File<'_>) -> bool {
         self.may_call_unnamed_evaluator
+            || (hir.exprs.iter())
+                .any(|expr| matches!(expr.kind, ExprKind::String(known::constructor)))
     }
 
     fn mentions_any_of(&self, evaluators: table::BuiltinFlags) -> bool {

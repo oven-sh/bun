@@ -39,11 +39,9 @@ impl PathScratch<'_> {
             return Self::Spill(vec![0; len].into_boxed_slice());
         }
         // SAFETY: the global object is only asked for its VM.
-        let pool: &mut RarePathBuf = &mut unsafe { heap.global() }
-            .bun_vm()
-            .as_mut()
-            .rare_data()
-            .path_buf;
+        let vm = unsafe { heap.global() }.bun_vm();
+        // SAFETY: a path function makes one scratch and runs no script while it has it.
+        let pool: &mut RarePathBuf = unsafe { vm.rare_data().path_buf.get_mut() };
         Self::Pooled(&mut pool.get(len)[..len])
     }
 

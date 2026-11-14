@@ -244,7 +244,10 @@ impl FileLowering<'_, '_, '_, '_> {
         let mut position = self.stored_position(binding);
         if let BindingRef::Symbol(id) = binding {
             let file = self.file;
-            if position.ty == TypeTable::ANYTHING && self.inputs.modules.holder(file, id).is_none()
+            if self.holds_prototype_of_maker(id) {
+                position = DeclaredType::untyped();
+            } else if position.ty == TypeTable::ANYTHING
+                && self.inputs.modules.holder(file, id).is_none()
             {
                 position = self.compute_inferred_position(Sym { file, id });
             }

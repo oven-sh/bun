@@ -9,13 +9,19 @@ pub(super) struct ObjectId(pub(super) usize);
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub(super) struct EnvironmentId(pub(super) usize);
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub(super) enum Global {
     Object,
     ObjectPrototype,
     HasOwnProperty,
     Array,
+    ArrayPrototype,
+    Date,
+    DatePrototype,
+    Number,
+    NumberPrototype,
     String,
+    StringPrototype,
     RegExp,
     Url,
     UrlModule,
@@ -48,13 +54,35 @@ impl Global {
                 | Global::FileSystem
                 | Global::Path
                 | Global::UrlModule
+        ) && !self.is_prototype_of_class()
+    }
+
+    pub(super) fn is_prototype_of_class(self) -> bool {
+        matches!(
+            self,
+            Global::ArrayPrototype
+                | Global::DatePrototype
+                | Global::NumberPrototype
+                | Global::StringPrototype
         )
+    }
+
+    pub(super) fn takes_properties(self) -> bool {
+        let is_class = matches!(
+            self,
+            Global::Array | Global::Date | Global::Number | Global::String
+        );
+        is_class || self.is_prototype_of_class()
     }
 
     pub(super) fn property(self, key: &[u8]) -> Option<Global> {
         match (self, key) {
             (Global::Object, b"prototype") => Some(Global::ObjectPrototype),
             (Global::ObjectPrototype, b"hasOwnProperty") => Some(Global::HasOwnProperty),
+            (Global::Array, b"prototype") => Some(Global::ArrayPrototype),
+            (Global::Date, b"prototype") => Some(Global::DatePrototype),
+            (Global::Number, b"prototype") => Some(Global::NumberPrototype),
+            (Global::String, b"prototype") => Some(Global::StringPrototype),
             (Global::Require, b"resolve") => Some(Global::RequireResolve),
             (Global::FileSystem, b"default") => Some(Global::FileSystem),
             (Global::FileSystem, b"readFileSync") => Some(Global::ReadFileSync),
@@ -80,6 +108,14 @@ pub(super) enum Matcher {
     Start(Rc<[u8]>),
     End(Rc<[u8]>),
     Blanks,
+    Characters(CharacterPattern),
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(super) struct CharacterPattern {
+    pub(super) characters: Rc<[u8]>,
+    pub(super) is_captured: bool,
+    pub(super) is_global: bool,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -303,12 +339,18 @@ impl Object {
             let keys = 0..self.elements.len();
             return Some(keys.map(|it| it.to_string().into_bytes().into()).collect());
         }
-        let has_index = |it: &(Rc<[u8]>, Value)| Object::index_of_key(&it.0).is_some();
-        if self.properties.iter().any(has_index) {
+        if self.properties.iter().any(|it| is_array_index(&it.0)) {
             return None;
         }
         Some(self.properties.iter().map(|it| Rc::clone(&it.0)).collect())
     }
+}
+
+fn is_array_index(key: &[u8]) -> bool {
+    let is_canonical = key == b"0" || key.first().is_some_and(|&first| first != b'0');
+    is_canonical
+        && key.iter().all(u8::is_ascii_digit)
+        && (key.len() < 10 || key.len() == 10 && key <= &b"4294967294"[..])
 }
 
 fn is_object_prototype_name(key: &[u8]) -> bool {

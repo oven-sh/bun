@@ -3,6 +3,20 @@ feature InternalForTesting "bun:internal-for-testing and internal/test/binding"
 
 feature Test "bun:test and node:test"
   minimum 100000
+  cxx-function JSModuleMock (^|\s)Zig::JSModuleMock::
+  cxx-function JSMockFunction (^|\s)Bun::JSMockFunction::
+  cxx-function JSMockModule ::callFunc<Bun::JSMockModule::create\(
+  cxx-function runModuleMock (^|\s)Bun::runModuleMock\(
+  cxx-function keyOfImportWhileModuleMocksRun (^|\s)Bun::keyOfImportWhileModuleMocksRun\(
+  cxx-function requireOriginalModule (^|\s)Zig::requireOriginalModule\(
+  cxx-function importOriginalModule (^|\s)Zig::importOriginalModule\(
+  cxx-function jsFunctionEvaluateModuleMock (^|\s)Zig::jsFunctionEvaluateModuleMock\w*\(
+  cxx-function rankWaitingModuleMocks (^|\s)Zig::rankWaitingModuleMocks\(
+  cxx-function waitsForMockOf (^|\s)Zig::waitsForMockOf\(
+  cxx-function isWaitingForModule (^|\s)Zig::isWaitingForModule\(
+  cxx-function fetchedCompiledMockTurn (^|\s)Zig::fetchedCompiledMockTurn\(
+  cxx-function removeLingeringMock (^|\s)JSC::AOT::Modules::removeLingeringMock\(
+  cxx-function runFileBesideMock (^|\s)JSC::AOT::Modules::runFileBesideMock\(
 
 feature WebView "Bun.WebView"
 

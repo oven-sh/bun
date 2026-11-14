@@ -317,9 +317,7 @@ impl NodeModulesFolder {
         file_path: &ZStr,
     ) -> crate::Result<bun_sys::file::ReadToEndResult> {
         let file = self.open_file(root_node_modules_dir, file_path)?;
-        let res = file.read_to_end_small();
-        let _ = file.close(); // close error is non-actionable
-        Ok(match res {
+        Ok(match file.read_to_end_small() {
             Ok(bytes) => bun_sys::file::ReadToEndResult { bytes, err: None },
             Err(e) => bun_sys::file::ReadToEndResult {
                 bytes: Vec::new(),

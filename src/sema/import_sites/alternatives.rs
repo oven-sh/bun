@@ -1028,23 +1028,23 @@ pub(super) fn find_known_alternatives(
     (found, follower.open_parameters)
 }
 
-/// What each of `operands` is wherever it is evaluated, for those of which the statements of the file tell. Each comes with whether a path of it is known.
+/// What each of `operands` is wherever it is evaluated, for those of which the statements of the file tell, and whether it is nothing else. Each comes with whether a path of it is known.
 pub(super) fn find_executed_alternatives(
     inputs: &ScanInputs<'_, '_>,
     written_names: &WrittenNames,
     data_file_queries: &AskedOfDataFiles,
     operands: FxHashMap<ExprId, bool>,
-) -> FxHashMap<ExprId, Vec<Found>> {
+) -> FxHashMap<ExprId, (Vec<Found>, bool)> {
     let folder = Folder::OfFile;
     let mut follower = Follower::new(inputs, written_names, data_file_queries, false, folder);
     follower.keeps_known_alternatives = true;
     follower.follows_fields = true;
     let executed = execution::find_executed_values(&follower, operands).into_iter();
-    let found = executed.map(|(operand, values)| {
-        let apart = values.into_iter();
+    let found = executed.map(|(operand, executed)| {
+        let apart = executed.values.into_iter();
         let found =
             apart.filter_map(|value| find_alternatives_among(&follower, operand, vec![value]));
-        (operand, found.collect())
+        (operand, (found.collect(), executed.are_all))
     });
     found.collect()
 }

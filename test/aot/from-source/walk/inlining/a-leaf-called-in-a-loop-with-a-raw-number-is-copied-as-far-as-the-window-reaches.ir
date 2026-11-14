@@ -17,11 +17,14 @@
 # RUN(ELEMENT): walk f3 mechanisms=all
 # ELEMENT: frame 1 callee=f1
 # ELEMENT-NOT: CallDirect {{*}} function=f1
-# A leaf that is handed an object alone stays a call.
-# RUN(OBJECT): walk f4 mechanisms=all
-# OBJECT-NOT: frame 1 callee=f2
-# OBJECT: CallDirect {{*}} function=f2
-# So does one that is handed numbers that the turn has reckoned.
+# So is a leaf that is handed a view which no iteration changes: its vector and its length are read before the loop.
+# RUN(VIEW): walk f4 mechanisms=all
+# VIEW: frame 1 callee=f2
+# VIEW: [[vector]]: opaque(ViewVector) @RawWord = GetTypedArrayVector
+# VIEW: isInLoop=true isLoopHead=true
+# VIEW: = GetTypedArrayElement {{*}}, [[vector]] typedArrayType=7 level=Proven
+# VIEW: = PutTypedArrayElement {{*}}, [[vector]]
+# A leaf that is handed numbers that the turn has reckoned stays a call.
 # RUN(RECKONED): walk f5 mechanisms=all
 # RECKONED-NOT: frame 1 callee=f1
 # RECKONED: CallDirect {{*}} function=f1

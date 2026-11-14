@@ -1,5 +1,7 @@
 use super::inline_star::{InlineStar, InlineStarInput, find_inline_stars};
-use super::{CommonJsInput, find_literal_exported_under_name};
+use super::{
+    CommonJsInput, find_arguments_of_assign, find_literal_exported_under_name, find_parts_of_object,
+};
 use crate::builtins::ResolvedBuiltins;
 use crate::builtins::id::BuiltinId;
 use crate::builtins::resolve::{
@@ -250,6 +252,8 @@ pub(super) fn summarize_inner_modules<'a>(
         if !hir.with_bodies.is_empty() {
             walk.let_everything_escape();
         }
+        walk.summary.object_escapes |= inner.exposes_first_exports();
+        walk.summary.module_object_escapes |= inner.module_variable.is_some();
         walks.push(walk);
     }
     parameters.shared_sort_unstable();
@@ -1059,6 +1063,11 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
 
     fn ask_about_call(&mut self, statement: StmtId, call: ExprId) -> bool {
         let (count, marker) = (self.summary.names.len(), self.summary.marker);
+        if self.add_names_of_assignment(statement, call) {
+            self.note_origin_of_new_names(call, OriginKind::Literal);
+            return true;
+        }
+        self.summary.names.truncate(count);
         let is_understood = self.look_at_call(statement, call);
         let marker_of_call = core::mem::replace(&mut self.summary.marker, marker);
         if !is_understood {
@@ -1083,13 +1092,67 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         true
     }
 
+    fn site_of_require(&self, operand: ExprId) -> Option<u32> {
+        let mut call = self.hir.skip_type_assertions(operand);
+        if matches!(self.hir[call].kind, ExprKind::Ident(_))
+            && let Binding::Symbol(holder) = self.bound.binding(call)
+            && self.bound.is_stable_binding(holder)
+            && let BindingInitializer::Expression(loaded) =
+                self.bound.binding_initializer(self.hir, holder)
+        {
+            call = self.hir.skip_type_assertions(loaded);
+        }
+        let site = self.analysis.import_site_of_call(call)?;
+        let kind = self.analysis.import_sites[site].kind;
+        matches!(kind, ImportSiteKind::Require(_)).then_some(site as u32)
+    }
+
+    /// `Object.assign(exports, require("./a"), { own })`
+    fn add_names_of_assignment(&mut self, statement: StmtId, call: ExprId) -> bool {
+        let arguments = find_arguments_of_assign(self.hir, self.builtins, call);
+        let is_exports = |&target: &ExprId| {
+            matches!(
+                self.find_mention(target),
+                Some(Mention::ExportsName | Mention::ModuleExports)
+            )
+        };
+        arguments.len() > 1
+            && !self.is_half
+            && self.inner.is_none()
+            && arguments.first().is_some_and(is_exports)
+            && self.add_names_of_parts(statement, &arguments[1..])
+    }
+
     fn add_names_of_literal(&mut self, replacement: Replacement, literal: ExprId) -> bool {
+        let parts = find_parts_of_object(self.hir, self.builtins, literal);
+        let is_added = self.add_names_of_parts(replacement.statement, &parts);
+        if is_added {
+            self.note_origin_of_new_names(replacement.node, OriginKind::Literal);
+        }
+        is_added
+    }
+
+    fn add_names_of_parts(&mut self, statement: StmtId, parts: &[ExprId]) -> bool {
         let hir = self.hir;
-        let ExprKind::Object(properties) = hir[literal].kind else {
+        let properties = || {
+            let literals = parts.iter().filter_map(|&part| match hir[part].kind {
+                ExprKind::Object(properties) => Some(properties),
+                _ => None,
+            });
+            literals.flat_map(|properties| properties.iter())
+        };
+        let calls = parts
+            .iter()
+            .filter(|&&part| !matches!(hir[part].kind, ExprKind::Object(_)));
+        let calls: Option<Vec<u32>> = calls.map(|&part| self.site_of_require(part)).collect();
+        let Some(calls) = calls else {
             return false;
         };
-        let is_plain = properties.iter().all(|id| {
+        let is_plain = properties().all(|id| {
             let property = hir[id];
+            if property.kind == PropKind::Spread {
+                return self.site_of_require(property.value).is_some();
+            }
             let needs_literal = matches!(hir[property.value].kind, ExprKind::Fn(method)
                 if self.may_name_super(method));
             matches!(hir.runtime_property_key(id), PropKey::Name(name) if self.can_be_variable(name))
@@ -1102,17 +1165,23 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         if !is_plain {
             return false;
         }
-        self.summary.names.reserve_exact(properties.len());
-        for id in properties.iter() {
+        let all_of = calls
+            .into_iter()
+            .map(|site| StoredName::AllOf { statement, site });
+        self.summary.names.extend(all_of);
+        for id in properties() {
             if let PropKey::Name(name) = hir.runtime_property_key(id) {
                 self.summary.names.push(StoredName::Value {
                     name,
-                    statement: replacement.statement,
+                    statement,
                     value: hir[id].value,
                 });
+            } else if let Some(site) = self.site_of_require(hir[id].value) {
+                self.summary
+                    .names
+                    .push(StoredName::AllOf { statement, site });
             }
         }
-        self.note_origin_of_new_names(replacement.node, OriginKind::Literal);
         true
     }
 
@@ -1136,6 +1205,11 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         let is_spelled_out = uses_only_the_new_object
             && match self.hir[value].kind {
                 ExprKind::Object(_) => {
+                    !self.is_half && self.add_names_of_literal(replacement, value)
+                }
+                ExprKind::Call(_)
+                    if !find_parts_of_object(self.hir, self.builtins, value).is_empty() =>
+                {
                     !self.is_half && self.add_names_of_literal(replacement, value)
                 }
                 ExprKind::Call(_) => self.ask_about_call(replacement.statement, value),

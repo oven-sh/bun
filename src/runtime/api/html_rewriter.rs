@@ -540,20 +540,18 @@ struct ActiveSinkGuard {
 
 impl ActiveSinkGuard {
     fn enter(pipe: &RewriterPipe) -> Self {
-        let vm: &mut VirtualMachine = pipe.global.bun_vm().as_mut();
+        let sink = Some(NonNull::from(pipe).cast());
         Self {
-            prev: core::mem::replace(
-                &mut vm.html_rewriter_active_sink,
-                NonNull::new(core::ptr::from_ref(pipe).cast_mut().cast()),
-            ),
+            prev: pipe.global.bun_vm().html_rewriter_active_sink.replace(sink),
         }
     }
 }
 
 impl Drop for ActiveSinkGuard {
     fn drop(&mut self) {
-        // SAFETY: the JS thread's VM outlives this synchronous frame.
-        VirtualMachine::get().as_mut().html_rewriter_active_sink = self.prev;
+        VirtualMachine::get()
+            .html_rewriter_active_sink
+            .set(self.prev);
     }
 }
 
@@ -563,6 +561,7 @@ fn active_sink(global: &JSGlobalObject) -> Option<BackRef<RewriterPipe>> {
     global
         .bun_vm_ref()
         .html_rewriter_active_sink
+        .get()
         .map(|p| BackRef::from(p.cast::<RewriterPipe>()))
 }
 

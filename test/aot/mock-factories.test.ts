@@ -136,7 +136,10 @@ ${asks === "package" ? `  const settled = await Promise.race([second.then(() => 
 }
 
 async function said(dir: string, ...flagsAndFiles: string[]) {
-  const { stdout, stderr } = await run([bunExe(), "test", ...flagsAndFiles], dir, { ...bunEnv, NO_COLOR: "1" });
+  // A thread that reads the texts may come behind what a case waits for: plain Bun then has two answers.
+  const oneThread = flagsAndFiles.includes("--aot") ? "0" : "1";
+  const env = { ...bunEnv, NO_COLOR: "1", BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: oneThread };
+  const { stdout, stderr } = await run([bunExe(), "test", ...flagsAndFiles], dir, env);
   const lines = new Map<string, string>();
   for (const line of (stdout + "\n" + stderr).split("\n")) {
     const found = line.match(/^\| (\S+): (.*)$/);

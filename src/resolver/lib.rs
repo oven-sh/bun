@@ -1114,14 +1114,8 @@ pub mod fs {
                 },
             };
 
-            // Close the handle on every exit path. Use
-            // scopeguard so close happens even if `readdir`/`put` early-return with `?`.
             let should_close_handle = !had_handle && (!store_fd || self.need_to_close_files());
-            let _close_guard = scopeguard::guard(handle, move |h| {
-                if should_close_handle {
-                    let _ = bun_sys::close(h);
-                }
-            });
+            let _close = should_close_handle.then(|| bun_sys::CloseOnDrop::new(handle));
 
             // if we get this far, it's a real directory, so we can just store the dir name.
             // An in-place refresh always keeps the slot's existing interned name: callers
@@ -2216,11 +2210,10 @@ pub mod cache {
             let will_close =
                 fs_mod::FileSystem::get().fs.need_to_close_files() && _file_handle.is_none();
 
-            // A single let-expression avoids `mem::zeroed()` on a
-            // type that may have niche (NonZero) fields.
-            let file_handle: bun_sys::File = if let Some(f) = _file_handle {
+            let mut owned: Option<bun_sys::File> = None;
+            let fd: Fd = if let Some(f) = _file_handle {
                 bun_sys::lseek(f, 0, libc::SEEK_SET).map_err(crate::Error::from)?;
-                bun_sys::File::from_fd(f)
+                f
             } else if feature_flags::STORE_FILE_DESCRIPTORS && dirname_fd.is_valid() {
                 match bun_sys::openat_a(
                     dirname_fd,
@@ -2228,7 +2221,7 @@ pub mod cache {
                     bun_sys::O::RDONLY,
                     0,
                 ) {
-                    Ok(fd) => bun_sys::File::from_fd(fd),
+                    Ok(fd) => owned.insert(bun_sys::File::from_fd(fd)).fd(),
                     Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
                         let handle = bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)
                             .map_err(crate::Error::from)?;
@@ -2237,22 +2230,14 @@ pub mod cache {
                             bstr::BStr::new(path),
                             dirname_fd,
                         );
-                        handle
+                        owned.insert(handle).fd()
                     }
                     Err(err) => return Err(err.into()),
                 }
             } else {
-                bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)
-                    .map_err(crate::Error::from)?
-            };
-
-            let mut owned: Option<bun_sys::File> = None;
-            let fd: Fd = if _file_handle.is_some() {
-                file_handle.into_raw()
-            } else {
-                let raw = file_handle.handle();
-                owned = Some(file_handle);
-                raw
+                let handle = bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)
+                    .map_err(crate::Error::from)?;
+                owned.insert(handle).fd()
             };
             let file_handle = bun_sys::File::borrow(&fd);
 

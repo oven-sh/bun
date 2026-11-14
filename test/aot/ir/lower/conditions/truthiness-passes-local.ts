@@ -25,15 +25,13 @@
 // OTHER-LABEL: function {{*}}name="loop"
 // OTHER: = ToBoolean [[node]]
 // OTHER: Branch {{*}}notTaken [[exit]](| 0)
-// OTHER: [[exit]]([[exitTruth]]):
-// OTHER-NEXT: [[last]] = NarrowByTest [[node]], [[exitTruth]] @
-// OTHER-NEXT: Return [[last]]
+// OTHER: [[exit]]({{*}}):
+// OTHER-NEXT: Return [[node]]
 // OTHER-LABEL: function {{*}}name="statement"
 // OTHER: = ToBoolean [[x]]
 // OTHER: Branch {{*}}notTaken [[other]](| 0)
-// OTHER: [[other]]([[otherTruth]]):
-// OTHER-NEXT: [[falsy]] = NarrowByTest [[x]], [[otherTruth]] @
-// OTHER-NEXT: Return [[falsy]]
+// OTHER: [[other]]({{*}}):
+// OTHER-NEXT: Return [[x]]
 
 export function conditional(x: any): any {
   return x ? x.a : 0;

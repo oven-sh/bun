@@ -1,5 +1,4 @@
 // Names that no class lists, read together in a loop off instances that keys gave them.
-// STATISTIC: SiteCachedReadGroupsEmitted >= 1
 class Entry { constructor(o) { Object.keys(o).forEach((k) => { this[k] = o[k]; }); } }
 var entries = []; for (var i = 0; i < 16; i++) entries.push(new Entry({ first: i, second: 1, third: -2 }));
 function total(k) { var s = 0; for (var i = 0; i < k; i++) { var o = entries[i & 15]; s += o.first; s += o.second; s += o.third; } return s; }

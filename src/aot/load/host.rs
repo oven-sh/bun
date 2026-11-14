@@ -15,6 +15,7 @@ use bun_paths::resolve_path::dirname;
 use bun_resolve_builtins::Alias;
 use bun_sema::atom::Interner;
 use bun_sema::bind::Bound;
+use bun_sema::fold::Decisions;
 use bun_sema::hir::{self, CallId, ExprId, File, NodeData};
 use bun_sema::hir_from_data::{DataValue, FOLDER_OF_DATABASE, HostValue};
 use bun_sema::module_format::ModuleFormat;
@@ -703,6 +704,9 @@ impl<'a> LoadHost<'a> {
     }
 
     fn is_among(&self, sorted_paths: &[Vec<u8>], path: &[u8]) -> bool {
+        if sorted_paths.is_empty() || self.disk.is_case_sensitive() {
+            return contains(sorted_paths, path);
+        }
         let mut buffer = path_buffer_pool::get();
         let path = to_path_in(path, self.disk.is_case_sensitive(), &mut buffer[..]);
         contains(sorted_paths, &path)
@@ -741,14 +745,12 @@ impl<'a> LoadHost<'a> {
     }
 
     fn plugin_loader(&self, path: &[u8]) -> Option<Loader> {
-        if self
-            .modules_with_queries
-            .text_in_place_of_file(path)
-            .is_some()
-        {
+        let with_query = self.modules_with_queries.find(path);
+        if with_query.is_some_and(|module| module.wrapper.is_some()) {
             return None;
         }
-        let module = (self.plugins).loaded(self.modules_with_queries.file_behind(path))?;
+        let file = with_query.map_or(path, |module| &module.file);
+        let module = self.plugins.loaded(file)?;
         module.is_from_plugin.then_some(module.loader)
     }
 
@@ -1441,11 +1443,13 @@ impl CodeHost for LoadHost<'_> {
 
     fn is_given_in_memory(&self, path: &[u8]) -> bool {
         let load = &self.input.options.load;
+        if load.in_memory_file_keys.is_empty() {
+            return false;
+        }
         let native = to_native(path);
-        !load.in_memory_file_keys.is_empty()
-            && (load.in_memory_files)
-                .binary_search_by(|(file, _)| file[..].cmp(native))
-                .is_ok()
+        (load.in_memory_files)
+            .binary_search_by(|(file, _)| file[..].cmp(native))
+            .is_ok()
     }
 
     fn directory_of_dynamic_imports<'p>(&self, path: &'p [u8]) -> Cow<'p, [u8]> {
@@ -1930,7 +1934,6 @@ impl CodeHost for LoadHost<'_> {
         bound: &Bound<'s>,
         atoms: &Interner<'s>,
     ) -> Vec<CallId> {
-        // A test may replace the methods of strings.
         match self.input.options.load.runs_tests {
             true => Vec::new(),
             false => known_evaluations::find_settled_evals(hir, bound, atoms),
@@ -1943,12 +1946,13 @@ impl CodeHost for LoadHost<'_> {
         atoms: &Interner<'s>,
         hir: &mut File<'s>,
         bound: &Bound<'s>,
+        decisions: &Decisions<'s>,
         payload: &mut Option<HostPayload>,
     ) -> TreeChange {
         let source = parsed_source_mut(payload);
         // A coverage report counts the lines of a factory.
         match source.kind == SourceKind::Program && !self.input.options.aot.counts_executions {
-            true => match copied_factories::copy_factories(arena, atoms, hir, bound) {
+            true => match copied_factories::copy_factories(arena, atoms, hir, bound, decisions) {
                 // A test may replace the functions of `Object`.
                 TreeChange::Unchanged if !self.input.options.load.runs_tests => {
                     construct_objects_created_below(arena, atoms, hir, bound)

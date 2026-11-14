@@ -1,10 +1,12 @@
 mod declarations;
 mod loops;
+mod loose_loops;
 mod suspending_loops;
 
 use bun_sema::bind::{Decl, ScopeId};
 use bun_sema::hir::{ExprId, ExprKind, IdList, PatKind, StmtId, StmtKind, UnOp};
 
+pub(in crate::lower) use self::loose_loops::LooseLoop;
 pub(in crate::lower) use self::suspending_loops::{SuspendingArm, SuspendingPart};
 use super::control::BreakTargetKind;
 use super::{FunctionLowering, commonjs, dispose, module, scope};
@@ -38,7 +40,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 break;
             }
             self.file.queries.note_idle_between_statements();
+            self.begin_appended_piece(statements, index);
             self.lower_statement_in_list(statement, statements_behind(statements, index));
+            self.end_appended_piece(statement);
             self.note_typeof_variables(statement);
         }
         self.typeof_variables.truncate(typeof_variables_around);

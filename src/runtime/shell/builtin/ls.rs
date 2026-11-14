@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use std::io::Write as _;
 
 use bun_core::ZBox;
-use bun_sys::{E, FdExt, O, S, dir_iterator};
+use bun_sys::{E, O, S, dir_iterator};
 
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, IoKind, Kind};
@@ -449,22 +449,14 @@ impl ShellLsTask {
             this.now_secs = bun_core::time::timestamp().max(0) as u64;
         }
 
-        let fd = match shell_openat(this.cwd, this.path.as_zstr(), O::RDONLY | O::DIRECTORY, 0) {
+        let dir = match shell_openat(this.cwd, this.path.as_zstr(), O::RDONLY | O::DIRECTORY, 0) {
             Err(open_err) => {
                 this.list_non_directory_operand(&open_err);
                 return;
             }
-            Ok(fd) => fd,
+            Ok(fd) => bun_sys::File::from_fd(fd),
         };
-
-        // `defer fd.close()` — emulate with a scope guard.
-        struct CloseOnDrop(bun_sys::Fd);
-        impl Drop for CloseOnDrop {
-            fn drop(&mut self) {
-                self.0.close();
-            }
-        }
-        let _guard = CloseOnDrop(fd);
+        let fd = dir.fd();
 
         if !this.opts.list_directories {
             if this.print_directory {

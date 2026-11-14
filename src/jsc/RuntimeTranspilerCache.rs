@@ -293,7 +293,6 @@ impl Entry {
 
         // First we open the tmpfile, to avoid any other work in the event of failure.
         let mut tmpfile = sys::Tmpfile::create(destination_dir, tmpfilename)?;
-        let _close_guard = sys::CloseOnDrop::new(tmpfile.fd);
         {
             let errdefer = scopeguard::guard((), |()| {
                 let _ = sys::unlinkat(destination_dir, tmpfilename);
@@ -841,31 +840,23 @@ impl RuntimeTranspilerCache {
             return Ok(());
         }
 
-        let cache_dir_fd: Fd = 'brk: {
-            let dirname = path_handler::dirname::<platform::Auto>(cache_file_path.as_bytes());
-            if !dirname.is_empty() {
-                let dir =
-                    sys::Dir::cwd().make_open_path(dirname, sys::OpenDirOptions::default())?;
-                let dfd = dir.into_raw();
-                break 'brk match dfd.make_lib_uv_owned() {
-                    Ok(f) => f,
-                    Err(e) => {
-                        dfd.close();
-                        return Err(e.into());
-                    }
-                };
+        let dirname = path_handler::dirname::<platform::Auto>(cache_file_path.as_bytes());
+        let cache_dir = if dirname.is_empty() {
+            None
+        } else {
+            let dir = sys::Dir::cwd().make_open_path(dirname, sys::OpenDirOptions::default())?;
+            let dfd = dir.into_raw();
+            match dfd.make_lib_uv_owned() {
+                Ok(f) => Some(sys::File::from_fd(f)),
+                Err(e) => {
+                    dfd.close();
+                    return Err(e.into());
+                }
             }
-
-            break 'brk Fd::cwd();
         };
-        let _dir_guard = scopeguard::guard(cache_dir_fd, |fd| {
-            if fd != Fd::cwd() {
-                fd.close();
-            }
-        });
 
         Entry::save(
-            cache_dir_fd,
+            cache_dir.as_ref().map_or_else(Fd::cwd, sys::File::fd),
             cache_file_path,
             input_byte_length,
             input_hash,

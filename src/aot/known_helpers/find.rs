@@ -74,6 +74,7 @@ pub struct BindingValues {
     pub functions: SmallVec<[HeldFunction; 2]>,
     pub certainty: Certainty,
     pub holds_from_the_start: bool,
+    pub defined_by: Option<StmtId>,
 }
 
 #[derive(Default)]
@@ -246,6 +247,7 @@ impl<'a, 's> Finder<'a, 's> {
             file: self.file,
             max_bytes: table.max_bytes,
             is_outer_name: &|_| false,
+            known: Some(&table.functions),
         };
         for function in (0..self.file.hir.fns.len() as u32).map(FnId) {
             if matches!(self.file.hir[function].body, FnBody::None)
@@ -453,17 +455,22 @@ impl<'a, 's> Finder<'a, 's> {
         let Some(definition) = self.find_definition(symbol) else {
             return false;
         };
-        let created = match self.file.bound.fns[function.idx()].owner {
-            FnOwner::Expr(created) => self.file.bound.statement_of_expr(created),
-            FnOwner::None | FnOwner::Stmt(_) | FnOwner::Member(_) | FnOwner::Type(_) => None,
-        };
-        let (Some(defined), Some(created)) = (definition.statement, created) else {
+        let (hir, bound) = (self.file.hir, self.file.bound);
+        let FnOwner::Expr(written) = bound.fns[function.idx()].owner else {
             return false;
         };
-        let parent = self.file.bound.parent_of_stmt(defined);
+        let (Some(defined), Some(created)) =
+            (definition.statement, bound.statement_of_expr(written))
+        else {
+            return false;
+        };
+        let parent = bound.parent_of_stmt(defined);
         matches!(parent, Parent::File | Parent::FnBody(_))
-            && parent == self.file.bound.parent_of_stmt(created)
-            && self.file.hir[defined].start < self.file.hir[created].start
+            && parent == bound.parent_of_stmt(created)
+            && (hir[defined].start < hir[created].start
+                || (defined == created
+                    && matches!(hir[defined].kind, StmtKind::Var(_))
+                    && hir[definition.value].end <= hir[written].pos))
     }
 
     fn find_definition(&self, symbol: SymbolId) -> Option<Definition> {
@@ -754,6 +761,7 @@ impl<'a, 's> Finder<'a, 's> {
                     false => Certainty::MayHoldOtherValues,
                 },
                 holds_from_the_start: is_stable && is_declaration,
+                defined_by: None,
             };
         }
         let Some(definition) = self.find_definition(symbol) else {
@@ -782,6 +790,7 @@ impl<'a, 's> Finder<'a, 's> {
         };
         values.holds_from_the_start =
             !has_other && !self.may_start_early() && self.is_in_head(definition);
+        values.defined_by = definition.statement;
         values
     }
 

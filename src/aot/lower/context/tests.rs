@@ -281,7 +281,7 @@ fn find_call_block<'a>(function: &'a Function, call_operands: &[ValueId]) -> Blo
 fn find_store_mode(fragment: &Fragment, function: &Function, property: &str) -> ECMAMode {
     let values = function.body.blocks().flat_map(|block| block.values());
     let modes = values.filter_map(|value| {
-        let (Opcode::PropSet, &[_, _, key, mode, _]) = (value.opcode, value.fields) else {
+        let (Opcode::PropSet, &[_, _, key, mode, _, _]) = (value.opcode, value.fields) else {
             return None;
         };
         let key = PropertyKeyId::from_word(key);
@@ -430,7 +430,11 @@ fn library_module_with_unverified_types_has_expected_parameters_alone() {
     assert!(!function.flags.contains(FunctionFlags::IS_CHECKED));
     let number = Mapped::expected(TypeTable::NUMBER);
     let expected = DeclaredType::new(number, None, PositionFlags::default());
-    assert_eq!(function.parameters, [DeclaredType::untyped(), expected]);
+    let [holder, state] = function.parameters[..] else {
+        panic!("{} parameters", function.parameters.len());
+    };
+    assert!(holder.is_expected());
+    assert_eq!(state, expected);
     assert_eq!(function.results, [DeclaredType::untyped()]);
     assert_eq!(
         find_variable(&fragment, "kState").declared,

@@ -72,7 +72,7 @@ impl DeferredBatchTask {
         }
         let this: *mut Self = self;
         let bv2 = self.get_bundle_v2();
-        match bv2.any_loop_mut() {
+        match bv2.any_loop() {
             // bake: the plugins run on the loop that runs the bundle; already there.
             bun_event_loop::AnyEventLoop::Js { .. } => bv2.decrement_scan_counter(),
             bun_event_loop::AnyEventLoop::Mini(mini) => {

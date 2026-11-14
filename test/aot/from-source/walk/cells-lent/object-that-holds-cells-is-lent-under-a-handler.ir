@@ -11,7 +11,8 @@
 #   try { s += look({ first, second }); } catch { s++; }
 #   return s;
 # }
-# print(maker("a", "bc"));
+# const kept: any = { first: "x", second: "yy" };
+# print(maker("a", "bc") + look(kept));
 # -- end of source
 # f1 = look, f2 = maker
 # An object whose fields may hold cells is lent to a callee that only looks, under a handler of its maker's own frame. It lies in the frame.
@@ -19,4 +20,4 @@
 # CHECK-LABEL: code f2:Body
 # CHECK: = NewObject {{*}}storage=Frame
 # RUN(ANSWER): run-in-shell mechanisms=all
-# ANSWER: 6
+# ANSWER: 12

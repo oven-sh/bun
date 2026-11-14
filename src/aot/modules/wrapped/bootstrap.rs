@@ -1,13 +1,18 @@
-use super::{Candidate, Finder, InnerModule, InnerModuleKind, find_functions_around};
+use super::{
+    Candidate, Finder, InnerModule, InnerModuleKind, ModuleObject, ThisOfBody,
+    find_functions_around,
+};
 use crate::builtins::id::BuiltinId;
 use crate::builtins::table;
 use crate::known_helpers::{Helper, KnownFunction, KnownReference};
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Binding, BindingInitializer, CodeUnit, Decl, FnOwner, Parent, SymbolId};
-use bun_sema::fold::{Constant, FoldedValue};
+use bun_sema::bind::{
+    Binding, BindingInitializer, BindingKind, CodeUnit, Decl, FnOwner, Parent, SymbolId,
+};
+use bun_sema::fold::{Constant, Decision, FoldedValue};
 use bun_sema::hir::{
     self, BinOp, Chain, ExprId, ExprKind, FnBody, FnId, FnKind, MemberKey, PatKind, PropId,
-    PropKey, PropKind, Span, StmtId, StmtKind, UnOp, VarDeclId,
+    PropKey, PropKind, Span, StmtId, StmtKind, UnOp, VarDeclId, VarKind,
 };
 use bun_sema::util::FxHashMap;
 use smallvec::SmallVec;
@@ -18,6 +23,7 @@ pub(super) struct Bootstrap {
     pub(super) modules: SymbolId,
     pub(super) cache: SymbolId,
     pub(super) literal: ExprId,
+    pub(super) module_object: Option<ModuleObject>,
     pub(super) call: ExprId,
     pub(super) enclosing: Option<FnId>,
     pub(super) first_candidate: u32,
@@ -52,6 +58,14 @@ struct Parts {
     require: SymbolId,
     modules: SymbolId,
     cache: SymbolId,
+    this: ThisOfBody,
+    module_object: Option<ModuleObject>,
+}
+
+struct Evaluation {
+    modules: SymbolId,
+    require: SymbolId,
+    this: ThisOfBody,
 }
 
 impl Bootstrap {
@@ -114,11 +128,23 @@ impl Finder<'_, '_> {
 
     pub(super) fn read_variable(&self, declaration: VarDeclId) -> Option<(SymbolId, ExprId)> {
         let record = self.hir[declaration];
-        if !matches!(self.hir[record.pat].kind, PatKind::Ident(_)) {
+        let is_disposed = matches!(record.kind, VarKind::Using | VarKind::AwaitUsing);
+        if is_disposed || !matches!(self.hir[record.pat].kind, PatKind::Ident(_)) {
             return None;
         }
         let symbol = self.bound.declared_symbol(Decl::Var(record.pat)).some()?;
         Some((symbol, record.init.some()?))
+    }
+
+    pub(super) fn has_no_dead_zone(&self, symbol: SymbolId) -> bool {
+        matches!(
+            self.bound.binding_kind(symbol),
+            BindingKind::Var
+                | BindingKind::Function
+                | BindingKind::FunctionName
+                | BindingKind::Parameter
+                | BindingKind::SimpleCatchParameter
+        )
     }
 
     fn is_undefined(&self, expression: ExprId) -> bool {
@@ -170,7 +196,9 @@ impl Finder<'_, '_> {
                 }
                 PropKind::Init => {
                     !hir::is_proto_setter(&property)
-                        && (self.symbol_of(value).is_some()
+                        && (self
+                            .symbol_of(value)
+                            .is_some_and(|it| self.has_no_dead_zone(it))
                             || matches!(
                                 self.decisions.constant(self.hir, value),
                                 FoldedValue::Constant(_)
@@ -181,12 +209,7 @@ impl Finder<'_, '_> {
         }) && has_exports
     }
 
-    fn read_evaluation(
-        &self,
-        call: ExprId,
-        key: SymbolId,
-        module: SymbolId,
-    ) -> Option<(SymbolId, SymbolId)> {
+    fn read_evaluation(&self, call: ExprId, key: SymbolId, module: SymbolId) -> Option<Evaluation> {
         let hir = self.hir;
         let ExprKind::Call(call) = hir[call].kind else {
             return None;
@@ -196,7 +219,7 @@ impl Finder<'_, '_> {
             return None;
         }
         let mut arguments: SmallVec<[ExprId; 4]> = hir.ids(call.args).collect();
-        let callee = match hir.member_key(call.callee) {
+        let (callee, this) = match hir.member_key(call.callee) {
             Some((callee, MemberKey::Name(name)))
                 if self.files.atoms.bytes(name) == b"call"
                     && self.keeps(BuiltinId::FunctionPrototypeCall)
@@ -205,36 +228,122 @@ impl Finder<'_, '_> {
                 if !self.is_exports_of_symbol(arguments.remove(0), module) {
                     return None;
                 }
-                callee
+                (callee, ThisOfBody::Exports)
             }
-            _ => call.callee,
+            _ => (call.callee, ThisOfBody::Unknown),
         };
         let (modules, index) = self.read_element(callee)?;
         let &[module_argument, exports, require] = &arguments[..] else {
             return None;
         };
-        (index == key
+        let is_evaluation = index == key
             && self.names(module_argument, module)
-            && self.is_exports_of_symbol(exports, module))
-        .then_some((modules, self.symbol_of(require)?))
+            && self.is_exports_of_symbol(exports, module);
+        let require = self.symbol_of(require)?;
+        is_evaluation.then_some(Evaluation {
+            modules,
+            require,
+            this,
+        })
     }
 
-    fn marks_as_loaded(&self, expression: ExprId, module: SymbolId) -> bool {
+    fn read_mark(&self, expression: ExprId, module: SymbolId) -> Option<Atom> {
         let ExprKind::Assign {
             op: None,
             target,
             value,
         } = self.hir[expression].kind
         else {
+            return None;
+        };
+        let Some((object, MemberKey::Name(name))) = self.hir.member_key(target) else {
+            return None;
+        };
+        let is_mark = name != known::exports
+            && self.names(object, module)
+            && matches!(
+                self.decisions.constant(self.hir, value),
+                FoldedValue::Constant(Constant::Boolean(true))
+            );
+        is_mark.then_some(name)
+    }
+
+    fn read_module_object(
+        &self,
+        function: FnId,
+        literal: ExprId,
+        key: SymbolId,
+        marks: &[Atom],
+    ) -> Option<ModuleObject> {
+        let ExprKind::Object(properties) = self.hir[literal].kind else {
+            return None;
+        };
+        let mut names: SmallVec<[Atom; 4]> = SmallVec::new();
+        for property in properties.iter() {
+            let property = self.hir[property];
+            let PropKey::Name(name) = property.key else {
+                return None;
+            };
+            let is_index = self.files.atoms.bytes(name).iter().all(u8::is_ascii_digit);
+            let names_other_variable = self
+                .symbol_of(property.value)
+                .is_some_and(|symbol| symbol != key);
+            if is_index || names_other_variable || names.contains(&name) {
+                return None;
+            }
+            names.push(name);
+        }
+        (marks.len() <= 1 && self.bound.is_stable_binding(key)).then_some(ModuleObject {
+            literal,
+            id: key,
+            mark: marks.first().copied(),
+            is_mark_strict: self
+                .bound
+                .is_strict_scope(self.bound.fns[function.idx()].scope),
+        })
+    }
+
+    pub(super) fn can_expose_module_object(&self, candidate: usize) -> bool {
+        let callback = self.candidates[candidate].module.callback;
+        let Some(module_object) = self.bootstrap.as_ref().and_then(|it| it.module_object) else {
             return false;
         };
-        matches!(
-            self.hir.member_key(target),
-            Some((object, MemberKey::Name(name))) if name != known::exports && self.names(object, module)
-        ) && matches!(
-            self.decisions.constant(self.hir, value),
-            FoldedValue::Constant(Constant::Boolean(true))
-        )
+        let mut returns = self.bound.ids(self.bound.fns[callback.idx()].returns);
+        module_object.mark.is_none()
+            || returns.all(|statement: StmtId| self.decisions.is_dead_stmt(statement))
+    }
+
+    pub(super) fn find_ids_of_modules(&mut self) {
+        for index in 0..self.candidates.len() {
+            let candidate = &self.candidates[index];
+            if !candidate.exposes_module_object {
+                continue;
+            }
+            let calls = candidate.calls.iter().map(|&call| (call, 0));
+            let requests = candidate.requests.iter().map(|&call| (call, 1));
+            let mut ids = calls
+                .chain(requests)
+                .map(|(call, at)| self.read_argument(call, at));
+            let first = ids.next().flatten();
+            let has_one = ids.all(|id| id == first);
+            let candidate = &mut self.candidates[index];
+            candidate.module.id = first;
+            candidate.is_refused |= !has_one;
+        }
+    }
+
+    fn read_argument(&self, call: ExprId, at: usize) -> Option<Constant> {
+        let ExprKind::Call(site) = self.hir[call].kind else {
+            return None;
+        };
+        let argument: ExprId = self.hir.ids(self.hir[site].args).nth(at)?;
+        match self
+            .decisions
+            .constant(self.hir, self.hir.skip_type_assertions(argument))
+        {
+            FoldedValue::Constant(constant) => Some(constant),
+            _ => None,
+        }
     }
 
     fn push_operands(&self, expression: ExprId, operands: &mut SmallVec<[ExprId; 4]>) {
@@ -257,10 +366,14 @@ impl Finder<'_, '_> {
         let FnBody::Block(body) = record.body else {
             return None;
         };
+        let runs_at_its_call = !record
+            .flags
+            .intersects(hir::Flags::ASYNC | hir::Flags::GENERATOR);
         if record.kind != FnKind::Decl
             || record.params.len() != 1
             || body.len() < 4
             || body.len() > 6
+            || !runs_at_its_call
         {
             return None;
         }
@@ -309,12 +422,17 @@ impl Finder<'_, '_> {
         }
         let (&answer, effects) = operands.split_last()?;
         let (&evaluation, marks) = effects.split_first()?;
-        let (modules, require) = self.read_evaluation(evaluation, key, module)?;
-        if !self.is_exports_of_symbol(answer, module)
-            || !marks.iter().all(|&mark| self.marks_as_loaded(mark, module))
-        {
+        let Evaluation {
+            modules,
+            require,
+            this,
+        } = self.read_evaluation(evaluation, key, module)?;
+        if !self.is_exports_of_symbol(answer, module) {
             return None;
         }
+        let marks = marks.iter().map(|&mark| self.read_mark(mark, module));
+        let marks: SmallVec<[Atom; 2]> = marks.collect::<Option<_>>()?;
+        let module_object = self.read_module_object(function, value, key, &marks);
         let is_own_name = bound.declared_symbol(Decl::Fn(function)).some() == Some(require);
         let is_stable = [require, modules, cache]
             .iter()
@@ -323,45 +441,157 @@ impl Finder<'_, '_> {
             require,
             modules,
             cache,
+            this,
+            module_object,
         })
     }
 
-    fn is_evaluated_once_at_top(&self, function: FnId) -> bool {
+    pub(super) fn is_evaluated_once_at_top(&self, function: FnId) -> bool {
+        let mut function = function;
+        loop {
+            function = match self.find_body_that_evaluates(function) {
+                Some(Parent::File) => return true,
+                Some(Parent::FnBody(around)) => around,
+                _ => return false,
+            };
+        }
+    }
+
+    fn find_only_call(&self, function: FnId, written: ExprId) -> Option<ExprId> {
+        let (hir, bound) = (self.hir, self.bound);
+        if !matches!(hir[function].kind, FnKind::Expr | FnKind::Arrow)
+            || bound.finds_itself(hir, function)
+        {
+            return None;
+        }
+        let user_of = |expression: ExprId| {
+            let outermost = super::find_outermost_type_assertion(hir, bound, expression);
+            match bound.parent_of_expr(outermost) {
+                Parent::Expr(user) if user.is_some() => Some((outermost, user)),
+                _ => None,
+            }
+        };
+        let (mut callee, mut user) = user_of(written)?;
+        if let Some((object, MemberKey::Name(name))) = hir.member_key(user) {
+            let is_call = object == callee
+                && self.files.atoms.bytes(name) == b"call"
+                && self.keeps(BuiltinId::FunctionPrototypeCall);
+            if !is_call {
+                return None;
+            }
+            (callee, user) = user_of(user)?;
+        }
+        let ExprKind::Call(call) = hir[user].kind else {
+            return None;
+        };
+        (hir[call].callee == callee && hir[call].chain == Chain::No).then_some(user)
+    }
+
+    fn find_body_that_evaluates(&self, function: FnId) -> Option<Parent> {
         let (hir, bound) = (self.hir, self.bound);
         let FnOwner::Expr(written) = bound.fns[function.idx()].owner else {
-            return false;
+            return None;
         };
-        if bound.fns[function.idx()].enclosing.some().is_some()
-            || hir[function]
-                .flags
-                .intersects(hir::Flags::ASYNC | hir::Flags::GENERATOR)
-            || !bound.is_called_only_where_written(hir, function)
+        if hir[function]
+            .flags
+            .intersects(hir::Flags::ASYNC | hir::Flags::GENERATOR)
         {
-            return false;
+            return None;
         }
-        let mut expression = written;
-        loop {
+        match self.find_only_call(function, written) {
+            Some(call) => self.find_body_around(call),
+            None => self.find_body_that_passes(function, written),
+        }
+    }
+
+    pub(super) fn find_body_around(&self, expression: ExprId) -> Option<Parent> {
+        let (hir, bound) = (self.hir, self.bound);
+        let mut expression = expression;
+        let mut statement = loop {
             match bound.parent_of_expr(expression) {
-                Parent::Expr(outer) if outer.is_some() => {
-                    let is_passed_through = match hir[outer].kind {
-                        ExprKind::Call(call) => {
-                            hir[call].callee == expression && hir[call].chain == Chain::No
-                        }
-                        ExprKind::Unary { op, .. } => matches!(op, UnOp::Not | UnOp::Void),
-                        ExprKind::Binary { op, .. } => op == BinOp::Comma,
-                        _ => hir.type_assertion_operand(outer) == Some(expression),
-                    };
-                    if !is_passed_through {
-                        return false;
-                    }
-                    expression = outer;
-                }
-                Parent::Stmt(statement) => {
-                    return matches!(hir[statement].kind, StmtKind::Expr(_))
-                        && bound.parent_of_stmt(statement) == Parent::File;
-                }
-                _ => return false,
+                Parent::Expr(outer) if outer.is_some() => expression = outer,
+                Parent::VarInit(declaration) => break bound.var_stmt[declaration.idx()],
+                Parent::Stmt(statement) => break statement,
+                Parent::FnBody(function) => return Some(Parent::FnBody(function)),
+                _ => return None,
             }
+        };
+        let runs_once = matches!(
+            hir[statement].kind,
+            StmtKind::Expr(_) | StmtKind::Return(_) | StmtKind::Var(_) | StmtKind::If { .. }
+        );
+        if !runs_once {
+            return None;
+        }
+        loop {
+            statement = match bound.parent_of_stmt(statement) {
+                around @ (Parent::File | Parent::FnBody(_)) => return Some(around),
+                Parent::Stmt(outer)
+                    if matches!(hir[outer].kind, StmtKind::Block(_) | StmtKind::If { .. }) =>
+                {
+                    outer
+                }
+                _ => return None,
+            };
+        }
+    }
+
+    fn find_body_that_passes(&self, function: FnId, written: ExprId) -> Option<Parent> {
+        let (hir, bound) = (self.hir, self.bound);
+        let argument = super::find_outermost_type_assertion(hir, bound, written);
+        let Parent::Expr(call) = bound.parent_of_expr(argument) else {
+            return None;
+        };
+        let ExprKind::Call(site) = hir[call.some()?].kind else {
+            return None;
+        };
+        let arguments: SmallVec<[ExprId; 4]> = hir.ids(hir[site].args).collect();
+        let is_spread = |it: &ExprId| matches!(hir[*it].kind, ExprKind::Spread(_));
+        let mut place = arguments.iter().position(|&it| it == argument)?;
+        if !matches!(hir[function].kind, FnKind::Expr | FnKind::Arrow)
+            || bound.finds_itself(hir, function)
+            || arguments.iter().any(is_spread)
+        {
+            return None;
+        }
+        let mut callee = hir.skip_type_assertions(hir[site].callee);
+        if let Some((object, _)) = hir.member_key(callee) {
+            callee = hir.skip_type_assertions(object);
+            place = place.checked_sub(1)?;
+        }
+        let ExprKind::Fn(taker) = hir[callee].kind else {
+            return None;
+        };
+        if self.find_only_call(taker, callee) != Some(call) {
+            return None;
+        }
+        let parameter = self.find_plain_parameter(taker, place)?;
+        if bound.is_visible_to_eval(parameter) {
+            return None;
+        }
+        let mut entry = None;
+        for name in (0..hir.exprs.len() as u32).map(ExprId) {
+            if !bound.is_evaluated_ident(name)
+                || bound.binding(name) != Binding::Symbol(parameter)
+                || self.decisions.is_dead_expr(name)
+            {
+                continue;
+            }
+            let named = super::find_outermost_type_assertion(hir, bound, name);
+            let Parent::Expr(user) = bound.parent_of_expr(named) else {
+                return None;
+            };
+            let ExprKind::Call(site) = hir[user.some()?].kind else {
+                return None;
+            };
+            let is_call = hir[site].callee == named && hir[site].chain == Chain::No;
+            if !is_call || entry.replace(user).is_some() {
+                return None;
+            }
+        }
+        match self.find_body_around(entry?)? {
+            Parent::FnBody(around) if around == taker => self.find_body_that_evaluates(taker),
+            _ => None,
         }
     }
 
@@ -399,7 +629,7 @@ impl Finder<'_, '_> {
         false
     }
 
-    fn read_body(&self, property: PropId) -> Option<(Atom, FnId)> {
+    fn read_body(&self, property: PropId, this: ThisOfBody) -> Option<(Atom, FnId)> {
         let hir = self.hir;
         let property = hir[property];
         let PropKey::Name(name) = property.key else {
@@ -410,7 +640,7 @@ impl Finder<'_, '_> {
         let ExprKind::Fn(callback) = hir[hir.skip_type_assertions(property.value)].kind else {
             return None;
         };
-        (is_plain && self.can_be_body(callback, InnerModuleKind::CommonJs))
+        (is_plain && self.can_be_body(callback, InnerModuleKind::CommonJs, this))
             .then_some((name, callback))
     }
 
@@ -428,6 +658,8 @@ impl Finder<'_, '_> {
         if count > 3 {
             return None;
         }
+        let exports_variable = self.find_reassigned_parameter(callback, exports);
+        let module_variable = self.find_reassigned_parameter(callback, module);
         Some(Candidate {
             module: InnerModule {
                 callback,
@@ -435,15 +667,26 @@ impl Finder<'_, '_> {
                 holder: SymbolId::NONE,
                 statement: StmtId::NONE,
                 caches_evaluation_error: false,
-                module_parameter: parameter(module)?,
-                exports_parameter: parameter(exports)?,
+                module_parameter: match module_variable {
+                    Some(_) => module_variable,
+                    None => parameter(module)?,
+                },
+                exports_parameter: match exports_variable {
+                    Some(_) => None,
+                    None => parameter(exports)?,
+                },
                 require_parameter: parameter(require)?,
+                reads_this: self.reads_this_of_call(callback),
+                exports_variable,
+                module_variable: None,
+                id: None,
             },
             defined_at: 0,
             sites: Vec::new(),
             calls: Vec::new(),
             requests: Vec::new(),
             is_refused: false,
+            exposes_module_object: module_variable.is_some(),
         })
     }
 
@@ -451,6 +694,7 @@ impl Finder<'_, '_> {
         &self,
         literal: ExprId,
         first: u32,
+        this: ThisOfBody,
     ) -> Option<(Vec<Candidate>, FxHashMap<Vec<u8>, u32>)> {
         let ExprKind::Object(properties) = self.hir[literal].kind else {
             return None;
@@ -459,7 +703,7 @@ impl Finder<'_, '_> {
         let mut candidates = Vec::with_capacity(properties.len());
         let mut by_name = FxHashMap::default();
         for (property, index) in properties.iter().zip(first..) {
-            let (name, callback) = self.read_body(property)?;
+            let (name, callback) = self.read_body(property, this)?;
             let bytes = self.files.atoms.bytes(name).to_vec();
             let is_in_empty_cache = (self.every_object_has)(name);
             if is_in_empty_cache || by_name.insert(bytes, index).is_some() {
@@ -468,6 +712,20 @@ impl Finder<'_, '_> {
             candidates.push(self.read_candidate(callback, [0, 1, 2])?);
         }
         Some((candidates, by_name))
+    }
+
+    pub(super) fn list_positions_of(&self, candidates: &[Candidate]) -> Vec<(u32, u32)> {
+        let (hir, bound) = (self.hir, self.bound);
+        let position = |candidate: &Candidate| {
+            let callback = candidate.module.callback;
+            match bound.fns[callback.idx()].owner {
+                FnOwner::Expr(written) => (hir[written].pos, hir[written].end),
+                _ => (0, u32::MAX),
+            }
+        };
+        let mut bodies: Vec<(u32, u32)> = candidates.iter().map(position).collect();
+        bodies.sort_unstable();
+        bodies
     }
 
     pub(super) fn find_bootstrap(&mut self) {
@@ -502,20 +760,17 @@ impl Finder<'_, '_> {
                 continue;
             }
             let first = self.candidates.len() as u32;
-            let Some((candidates, by_name)) = self.read_bodies(literal, first) else {
+            let Some((candidates, by_name)) = self.read_bodies(literal, first, parts.this) else {
                 continue;
             };
-            let mut bodies: Vec<(u32, u32)> = candidates
-                .iter()
-                .map(|candidate| {
-                    let callback = candidate.module.callback;
-                    match bound.fns[callback.idx()].owner {
-                        FnOwner::Expr(written) => (hir[written].pos, hir[written].end),
-                        _ => (0, u32::MAX),
-                    }
-                })
-                .collect();
-            bodies.sort_unstable();
+            let exposes_unknown_object = parts.module_object.is_none()
+                && candidates
+                    .iter()
+                    .any(|candidate| candidate.exposes_module_object);
+            if exposes_unknown_object {
+                continue;
+            }
+            let bodies = self.list_positions_of(&candidates);
             self.candidates.extend(candidates);
             self.bootstrap = Some(Bootstrap {
                 function,
@@ -523,6 +778,7 @@ impl Finder<'_, '_> {
                 modules: parts.modules,
                 cache: parts.cache,
                 literal,
+                module_object: parts.module_object,
                 call: ExprId::NONE,
                 enclosing,
                 first_candidate: first,
@@ -944,16 +1200,23 @@ impl Finder<'_, '_> {
         let Some(enclosing) = bootstrap.enclosing else {
             return;
         };
+        let mut scopes_around = SmallVec::<[CodeUnit; 4]>::new();
+        let mut next = Some(enclosing);
+        while let Some(function) = next {
+            scopes_around.push(CodeUnit::Function(function));
+            next = bound.fns[function.idx()].enclosing.some();
+        }
         let names_scope_around = (0..hir.exprs.len() as u32).map(ExprId).any(|name| {
             if !matches!(hir[name].kind, ExprKind::Ident(_))
                 || !bound.is_evaluated_ident(name)
                 || !bootstrap.is_in_body(hir[name].pos)
+                || matches!(self.decisions.decision(name), Decision::Constant(_))
             {
                 return false;
             }
             match bound.binding(name) {
                 Binding::Symbol(symbol) => {
-                    bound.code_unit(bound.symbol_scope(symbol)) == CodeUnit::Function(enclosing)
+                    scopes_around.contains(&bound.code_unit(bound.symbol_scope(symbol)))
                 }
                 Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => false,
             }

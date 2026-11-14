@@ -11,7 +11,7 @@ pub struct Overflow {
 }
 
 impl Overflow {
-    pub(crate) fn parse(input: &mut Parser) -> css::Result<Overflow> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> css::Result<'bump, Overflow> {
         let x = OverflowKeyword::parse(input)?;
         let y = input.try_parse(OverflowKeyword::parse).unwrap_or(x);
         Ok(Overflow { x, y })

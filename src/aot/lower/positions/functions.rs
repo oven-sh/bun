@@ -101,9 +101,12 @@ impl FileLowering<'_, '_, '_, '_> {
                 positions.push(DeclaredType::untyped());
                 continue;
             };
-            let position = self.create_position(entry.types);
+            let mut position = self.create_position(entry.types);
             if !self.is_checked() {
                 self.note_declared_records(function, index as u32, entry.types);
+                if position.is_expected() && self.queries.is_handed_instance(parameters.at(index)) {
+                    position = position.inferred();
+                }
             }
             positions.push(match entry.is_optional {
                 true => self.add_undefined(position),

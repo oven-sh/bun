@@ -10,13 +10,12 @@ pub(crate) fn parse_lockfile(cx: &mut JsScope<'_>, cwd: &[u8]) -> bun_jsc::JsRes
     };
     use bun_install::lockfile::{LoadResult, Lockfile};
     use bun_paths::resolve_path;
-    use bun_sys::FdExt as _;
 
     let global = cx.global();
     let mut log = bun_ast::Log::init();
 
     let dir = match bun_sys::open_dir_absolute_not_for_deleting_or_renaming(cwd) {
-        Ok(d) => d,
+        Ok(d) => bun_sys::File::from_fd(d),
         Err(err) => {
             return Err(global.throw(format_args!(
                 "failed to open: {}, '{}'",
@@ -25,8 +24,6 @@ pub(crate) fn parse_lockfile(cx: &mut JsScope<'_>, cwd: &[u8]) -> bun_jsc::JsRes
             )));
         }
     };
-    // `defer dir.close()` — closed at fn return.
-    let dir = scopeguard::guard(dir, |d| d.close());
 
     let lockfile_path = resolve_path::join_abs_string_z::<resolve_path::platform::Auto>(
         cwd,
@@ -35,20 +32,19 @@ pub(crate) fn parse_lockfile(cx: &mut JsScope<'_>, cwd: &[u8]) -> bun_jsc::JsRes
 
     let mut lockfile_ = Lockfile::default();
 
-    // `bun_vm()` returns a raw `*mut VirtualMachine`; deref locally so the
-    // env-loader fixup and the package-manager borrow are scoped
-    // independently.
-    // SAFETY: `bun_vm()` returns the live VM that owns `global`; this host fn
-    // runs on the JS thread so no concurrent `&mut VirtualMachine` exists.
-    let vm = global.bun_vm().as_mut();
-    if vm.transpiler.resolver.env_loader.is_none() {
-        vm.transpiler.resolver.env_loader = NonNull::new(vm.transpiler.env);
-    }
+    let vm = global.bun_vm();
+    vm.transpiler.with_mut(|t| {
+        if t.resolver.env_loader.is_none() {
+            t.resolver.env_loader = NonNull::new(t.env);
+        }
+    });
 
     // as long as we aren't migration from `package-lock.json`, leaving this undefined is okay
-    let manager = vm.package_manager();
+    // SAFETY: loading a lockfile runs no script, so nothing else reaches the manager meanwhile.
+    let manager = unsafe { &mut *vm.package_manager() };
 
-    let load_result: LoadResult = lockfile_.load_from_dir::<true>(*dir, Some(manager), &mut log);
+    let load_result: LoadResult =
+        lockfile_.load_from_dir::<true>(dir.fd(), Some(manager), &mut log);
 
     match load_result {
         LoadResult::Err(err) => {

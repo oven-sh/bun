@@ -312,12 +312,15 @@ pub(crate) fn fix_places_on_the_way(builtins: &ResolvedBuiltins, fixed: &FixedBu
 }
 
 pub(crate) fn runs_unseen_code(source: &ParsedSource) -> bool {
-    let names = &source.contents.names;
+    runs_unseen_code_without_require(source)
+        || source.contents.names.loads_by_unknown_path
+        || source.builtins.hands_on_loader_of_paths()
+}
+
+pub(crate) fn runs_unseen_code_without_require(source: &ParsedSource) -> bool {
     source.of_run.runs_unseen_code
         || source.of_run.loads.names_file_with_query.is_some()
-        || names.loads_by_unknown_path
-        || source.builtins.hands_on_loader_of_paths()
-        || !names.files_missing_at_build_at.is_empty()
+        || !source.contents.names.files_missing_at_build_at.is_empty()
         || source.contents.starts_worker_out_of_sight
 }
 

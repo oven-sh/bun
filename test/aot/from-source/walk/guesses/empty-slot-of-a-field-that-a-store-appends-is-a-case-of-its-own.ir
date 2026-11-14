@@ -35,7 +35,7 @@
 # CHECK: [[filled]]: boolean @Boolean = IsSlotFilled {{*}}key="part"
 # CHECK-NEXT: Branch [[filled]] -> taken {{*}}, notTaken [[empty]]()
 # CHECK: [[empty]]():
-# CHECK-NEXT: = HasLayoutPrototype {{*}}hasNoFieldOutsideSlot
+# CHECK-NEXT: = HasNoFieldOutsideSlot
 # CHECK: = AreMembersUnchanged {{*}}key="part"
 # RUN(BIRTH): walk f2 mechanisms=all
 # BIRTH-LABEL: code f2:Body

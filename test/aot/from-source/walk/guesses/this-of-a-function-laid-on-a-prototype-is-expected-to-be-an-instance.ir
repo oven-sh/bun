@@ -21,7 +21,7 @@
 # CHECK: = GetSlot {{*}}key="total" receivers=[L1, L2]
 # CHECK: = GetSlot {{*}}key="step" receivers=[L1, L2]
 # RUN(STORE): walk f5 mechanisms=all
-# STORE: = PutSlotOrAdd {{*}}key="total" receivers=[L1, L2]
+# STORE: = PutSlot {{*}}key="total" receivers=[L1, L2]
 # RUN(CLASS): walk f6 mechanisms=all
 # CLASS-LABEL: code f6:Body
 # CLASS: = GetSlot {{*}}key="total" receivers=[L0]

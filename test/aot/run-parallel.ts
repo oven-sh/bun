@@ -77,6 +77,7 @@
 //                                      Every other build is made and run: `ways` says "built and run, not compared" of it, not "pass"
 //   // Prints what goes by the copy that runs: <what>   the same, for what the language leaves open and a typed copy of its code answers otherwise than the closed one: the bytes of a NaN
 //   // STATISTIC: <name> (= | >= | <=) <n>   what the build must have counted
+//   // STATISTIC on x64: <name> (= | >= | <=) <n>   the same where process.arch is that word, and nothing anywhere else. The word is x64 or arm64
 //   // COUNT: <name> (= | >= | <=) <n>       what the executable of the first build must have counted when it ends: no clock, and the same on every machine.
 //                                      A name as BUN_JSC_aotCountsPath writes it (operation:operationAOTGetById, counter:CompiledStructuresCreated), or
 //                                      `operations`: all calls into the run time. The run has no collection. What the program starts counts too
@@ -821,14 +822,14 @@ function fail(
 
 /** Only a COUNT names what is counted with its kind in front. */
 function readBound(line: string): (Bound & { kind: string }) | undefined {
-  const [, kind, name, relation, bound, platform, arch, todo] =
-    /^\/\/ (STATISTIC|COUNT|COUNTER|COUNTER in every build): ([\w:]+) (=|>=|<=) (\d+)(?: Todo(?: on (\w+)(?: (\w+))?)?: (.+))?$/.exec(
+  const [, kind, processor = process.arch, name, relation, bound, platform, arch, todo] =
+    /^\/\/ (STATISTIC(?: on (x64|arm64))?|COUNT|COUNTER|COUNTER in every build): ([\w:]+) (=|>=|<=) (\d+)(?: Todo(?: on (\w+)(?: (\w+))?)?: (.+))?$/.exec(
       line,
     ) ?? [];
   if (kind === undefined || (kind !== "COUNT" && name.includes(":"))) return undefined;
   const isTodoHere =
     (platform === undefined || platform === process.platform) && (arch === undefined || arch === process.arch);
-  return { kind, name, relation, bound: Number(bound), todo: isTodoHere ? todo : undefined };
+  return { kind: processor === process.arch ? kind.replace(/ on .*/, "") : kind, name, relation, bound: Number(bound), todo: isTodoHere ? todo : undefined };
 }
 
 function read(file: string): Program {
@@ -854,7 +855,7 @@ function read(file: string): Program {
     : [];
   const texts = [text, ...others.map(other => readFileSync(other, "utf8"))];
   const boundLines = texts.flatMap(text =>
-    Array.from(text.matchAll(/^\/\/ (?:STATISTIC|COUNT|COUNTER|COUNTER in every build):.*$/gm), ([line]) => line),
+    Array.from(text.matchAll(/^\/\/ (?:STATISTIC(?: on \w+)?|COUNT|COUNTER|COUNTER in every build):.*$/gm), ([line]) => line),
   );
   const bounds = boundLines.map(readBound).filter(bound => bound !== undefined);
   const namesModules = someFileOf(path, text => namesMuchOfTheLibrary.test(text));
@@ -1189,6 +1190,24 @@ async function measureGrowthOfBuild(
   };
 }
 
+/**
+ * A run below a process that holds little and prints how the run ended and what it held at most. Linux counts for a child what the process that
+ * starts it holds, until the child runs its program: a driver that held 334 MB was told so of /bin/true.
+ */
+const startBelowSmallProcess: typeof start = (cmd, cwd, env) => {
+  const script = `const child = Bun.spawn({ cmd: ${JSON.stringify(cmd)}, stdio: ["ignore", "ignore", "ignore"] });
+    await child.exited;
+    console.log(child.exitCode + " " + child.resourceUsage().maxRSS);`;
+  return start([process.execPath, "-e", script], cwd, env);
+};
+
+/** What the small process told, where it ended by itself and its run ended as `run` did. */
+function mostResidentTold(told: Output, run: Output) {
+  const [, exitCode, bytes] = /^(\d+) (\d+)\n$/.exec(told.stdout) ?? [];
+  const isTold = told.exitCode === 0 && !told.overLimit && exitCode === `${run.exitCode}`;
+  return isTold ? Math.round(Number(bytes) / 2 ** 20) : undefined;
+}
+
 /** Every way to build a file is held to one run of the reference. */
 const references = new Map<string, ReturnType<typeof start>>();
 
@@ -1197,7 +1216,7 @@ async function run(program: Program): Promise<void> {
     return fail(
       program,
       "read",
-      `not of the form \`// STATISTIC | COUNT | COUNTER | COUNTER in every build: <name> (= | >= | <=) <n>\`: ${program.boundsNotRead.join("; ")}`,
+      `not of the form \`// STATISTIC | STATISTIC on x64 | COUNT | COUNTER | COUNTER in every build: <name> (= | >= | <=) <n>\`: ${program.boundsNotRead.join("; ")}`,
     );
   if (program.growthNotRead) return fail(program, "read", program.growthNotRead);
   if (program.marksNotRead.length)
@@ -1287,8 +1306,8 @@ async function run(program: Program): Promise<void> {
     const { BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: _, ...envOfRuns } = env;
     const stored = program.output;
     const withSlotOfRun = program.runsByItself ? withEverySlot : withSlot;
-    const runReference = async (entry = program.path) => {
-      if (!program.comparesWithCompiled) return withSlotOfRun(() => start([process.execPath, entry], cwd, envOfRuns));
+    const runReference = async (entry = program.path, run = start) => {
+      if (!program.comparesWithCompiled) return withSlotOfRun(() => run([process.execPath, entry], cwd, envOfRuns));
       const other = nextExecutable("reference");
       let remove = () => {};
       try {
@@ -1311,7 +1330,7 @@ async function run(program: Program): Promise<void> {
         );
         remove = noteExecutable(other);
         if (built.output.exitCode !== 0) return built;
-        return await withSlotOfRun(() => start([other], cwd, envOfRuns));
+        return await withSlotOfRun(() => run([other], cwd, envOfRuns));
       } finally {
         remove();
       }
@@ -1351,23 +1370,33 @@ async function run(program: Program): Promise<void> {
     compiled.output.stderr = withoutLinesOfImage(compiled.output.stderr);
     // What compiled code lays in store ahead of a deed shows in nothing that a program prints. Of 8,046 programs the worst held 1.48 times what plain Bun held.
     // Not where a program grows its data on purpose, where collections are off for a count, or under a sanitizer.
-    const [mostOfCompiled, mostOfPlain] = [compiled.mostResidentMB, plain?.mostResidentMB ?? 0];
+    // Both sides are told with the driver's memory in them, and the watcher may look at neither at its most: what looks too much is run again.
+    // Then the largest process of each side is compared. What all processes of a run hold together is known by the watcher's looks alone.
+    const isTooMuch = (most: number, mostOfPlain: number) => most > 2 * mostOfPlain + 64;
     if (
       !isASAN &&
       !moreFlags.length &&
       runsAreAsUsersRunThem &&
       !program.growth &&
       !asksFirstBuild &&
-      mostOfPlain &&
-      mostOfCompiled > 2 * mostOfPlain + 64
-    )
-      return fail(
-        program,
-        "memory",
-        `it held ${mostOfCompiled} MB at most, and plain Bun ${mostOfPlain} MB`,
-        compiled.output,
-        plain?.output,
+      plain &&
+      (isTooMuch(compiled.mostResidentMB, plain.mostResidentMB) || isTooMuch(compiled.peakMB, plain.peakMB))
+    ) {
+      const again = await withSlotOfRun(() =>
+        startBelowSmallProcess([executable], cwd, { ...envOfRuns, ...program.envOfExecutable }),
       );
+      const plainAgain = await runReference(program.path, startBelowSmallProcess);
+      const most = mostResidentTold(again.output, compiled.output);
+      const mostOfPlain = mostResidentTold(plainAgain.output, plain.output);
+      if (most === undefined || mostOfPlain === undefined || isTooMuch(most, mostOfPlain))
+        return fail(
+          program,
+          "memory",
+          `it held ${most ?? "untold"} MB at most, and plain Bun ${mostOfPlain ?? "untold"} MB`,
+          again.output,
+          plainAgain.output,
+        );
+    }
     const askedOfRun = [...(asksFirstBuild ? program.counts : []), ...program.countsInEveryBuild];
     const unmetByRun = unmetBounds(program.file, counted, askedOfRun, "executable");
     if (unmetByRun.length) return fail(program, "count", unmetByRun.join("; "), compiled.output, plain?.output);

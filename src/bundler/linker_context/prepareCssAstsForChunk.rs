@@ -69,7 +69,11 @@ pub(crate) unsafe fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) 
     prepare_css_asts_for_chunk_impl(unsafe { &*linker }, unsafe { &mut *chunk }, worker.arena());
 }
 
-fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &Bump) {
+fn prepare_css_asts_for_chunk_impl<'a>(
+    c: &LinkerContext<'a>,
+    chunk: &mut Chunk<'a>,
+    bump: &'a Bump,
+) {
     let parse_graph = c.parse_graph();
     let asts = c.graph.ast.items_css();
 
@@ -108,12 +112,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                             inner.slice().iter().map(|shadow| LayerName {
                                 v: SmallList::from_arena_iter(
                                     bump,
-                                    shadow.v.slice().iter().map(|seg| {
-                                        // `seg` borrows arena-owned bytes that outlive this
-                                        // stylesheet; route through `StoreStr` for the lifetime
-                                        // erasure (see the corresponding note in layer.rs).
-                                        bun_ast::StoreStr::new(seg).slice()
-                                    }),
+                                    shadow.v.slice().iter().copied(),
                                 ),
                             }),
                         );
@@ -188,9 +187,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                                 source_map_urls: Default::default(),
                                 rules: {
                                     let import_rule = ImportRule {
-                                        // SAFETY: `bun_css` types its strings `'static`. This
-                                        // stylesheet is printed and dropped with the chunk.
-                                        url: unsafe { bun_ptr::detach_lifetime(p.pretty) },
+                                        url: p.pretty,
                                         // SAFETY: shallow struct
                                         // copy. The duplicate is never dropped (`ManuallyDrop`
                                         // above), so the aliased heap stays singly-owned by
@@ -249,14 +246,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                                 b"text/css",
                                 strings::trim(print_result.code.as_slice(), b" \n\r\t"),
                             );
-                            // `encode_string_as_shortest_data_url` returns a heap `Vec<u8>`;
-                            // copy it into the worker bump (freed
-                            // at bundle teardown via arena reset). SAFETY: arena outlives
-                            // the chunk, so the `'bump → 'static` launder is sound — same
-                            // contract as every other CSS slice in this file.
-                            let encoded: &'static [u8] =
-                                bun_ast::StoreStr::new(bump.alloc_slice_copy(&encoded)).slice();
-                            *p = Path::init(encoded);
+                            *p = Path::init(bump.alloc_slice_copy(&encoded));
                         }
                     }
 
@@ -283,8 +273,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                     css_chunk.asts[i] = BundlerStyleSheet {
                         rules: {
                             let mut import_rule = ImportRule::from_url_and_import_record_idx(
-                                // SAFETY: as for the `ImportRule` above.
-                                unsafe { bun_ptr::detach_lifetime(p.pretty) },
+                                p.pretty,
                                 entry.condition_import_records.len() as u32,
                             );
                             // SAFETY: shallow struct copy. The duplicate lives in an
@@ -439,7 +428,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
 /// because the resulting `Vec` is never dropped (`CssChunk::Drop` `forget`s
 /// the `asts` slab) and never grown after this point; the arena reclaims the
 /// storage on `reset`.
-fn arena_rule_list(rules: ArenaVec<'_, BundlerCssRule>) -> BundlerCssRuleList {
+fn arena_rule_list<'a>(rules: ArenaVec<'a, BundlerCssRule<'a>>) -> BundlerCssRuleList<'a> {
     let len = rules.len();
     if len == 0 {
         return BundlerCssRuleList::default();
@@ -453,7 +442,7 @@ fn arena_rule_list(rules: ArenaVec<'_, BundlerCssRule>) -> BundlerCssRuleList {
 }
 
 /// Single-element shorthand for [`arena_rule_list`].
-fn arena_rule_list_one(bump: &Bump, rule: BundlerCssRule) -> BundlerCssRuleList {
+fn arena_rule_list_one<'a>(bump: &'a Bump, rule: BundlerCssRule<'a>) -> BundlerCssRuleList<'a> {
     let mut v: ArenaVec<BundlerCssRule> = ArenaVec::with_capacity_in(1, bump);
     v.push(rule);
     arena_rule_list(v)
@@ -468,11 +457,11 @@ pub(crate) struct SharedAnonymousConditions {
 
 /// The entries of one anonymous layer must print in one block, so they open and
 /// close the conditions they share only once.
-pub(crate) fn shared_anonymous_conditions(
-    order: &[CssImportOrder],
+pub(crate) fn shared_anonymous_conditions<'a>(
+    order: &[CssImportOrder<'a>],
     i: usize,
 ) -> SharedAnonymousConditions {
-    let shared = |a: &CssImportOrder, b: &CssImportOrder| {
+    let shared = |a: &CssImportOrder<'a>, b: &CssImportOrder<'a>| {
         if matches!(a.kind, CssImportOrderKind::ExternalPath(_))
             || matches!(b.kind, CssImportOrderKind::ExternalPath(_))
         {
@@ -494,10 +483,10 @@ pub(crate) fn shared_anonymous_conditions(
 
 /// The blocks of `conditions` around no rules. `ManuallyDrop`, because the rules
 /// alias `conditions`.
-pub(crate) fn empty_blocks(
-    bump: &Bump,
-    conditions: &[ImportConditions],
-) -> core::mem::ManuallyDrop<BundlerStyleSheet> {
+pub(crate) fn empty_blocks<'a>(
+    bump: &'a Bump,
+    conditions: &[ImportConditions<'a>],
+) -> core::mem::ManuallyDrop<BundlerStyleSheet<'a>> {
     let mut ast = core::mem::ManuallyDrop::new(BundlerStyleSheet {
         rules: arena_rule_list_one(bump, BundlerCssRule::Ignored),
         sources: Default::default(),
@@ -510,20 +499,15 @@ pub(crate) fn empty_blocks(
     ast
 }
 
-fn wrap_rules_with_conditions(
-    ast: &mut BundlerStyleSheet,
-    temp_bump: &Bump,
-    conditions: &[ImportConditions],
+fn wrap_rules_with_conditions<'a>(
+    ast: &mut BundlerStyleSheet<'a>,
+    temp_bump: &'a Bump,
+    conditions: &[ImportConditions<'a>],
 ) {
     for item in conditions.iter().rev() {
         // Generate "@layer" wrappers. Note that empty "@layer" rules still have
         // a side effect (they set the layer order) so they cannot be removed.
         if let Some(l) = &item.layer {
-            // SAFETY: by-value `?LayerName` copy. The
-            // `SmallList<&'static [u8],1>` payload is arena-backed and never
-            // freed via this view, so the bitwise duplicate is sound (same as
-            // every other `ptr::read` shallow-copy in this file).
-            let layer = unsafe { core::ptr::read(&raw const l.v) };
             let mut do_block_rule = true;
             if ast.rules.v.is_empty() {
                 if l.v.is_none() {
@@ -540,6 +524,9 @@ fn wrap_rules_with_conditions(
                 }
             }
 
+            // SAFETY: the copy goes into an `arena_rule_list_one` slab that never
+            // runs `Drop`; the source stylesheet owns the heap.
+            let layer = unsafe { core::ptr::read(&raw const l.v) };
             ast.rules = arena_rule_list_one(
                 temp_bump,
                 if do_block_rule {

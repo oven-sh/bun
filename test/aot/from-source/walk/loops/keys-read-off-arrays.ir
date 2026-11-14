@@ -12,11 +12,15 @@
 # RUN: walk f1 mechanisms=all
 # CHECK: = TypeTest {{*}} testedType=i32
 # CHECK: PutContiguousIndex
-# A key that is made before the loop is tested there.
+# A key that is made before the loop comes out of a list of int32s as an int32: nothing is asked of it behind that, and its element is read once for the six turns.
 # RUN(INVARIANT): walk f2 mechanisms=all
-# INVARIANT: = TypeTest {{*}} testedType=i32
-# INVARIANT: isLoopHead=true
-# INVARIANT: = GetArrayElement {{*}} arrayStorage=
+# INVARIANT: = HasArrayStorage {{*}} arrayStorage=Int32
+# INVARIANT: = HasArrayStorage {{*}} arrayStorage=Double
+# INVARIANT: isInLoop=true isLoopHead=true
+# INVARIANT: [[key]]: i32 @Int32 = GetArrayElement {{*}} arrayStorage=Int32
+# INVARIANT: [[element]]: undefined|int|whole @OptionalDouble = GetArrayElement {{*}}, [[key]], {{*}} arrayStorage=Double
+# INVARIANT-NOT: GetArrayElement
+# INVARIANT: = Increment
 # An array that is filled with Infinity holds doubles.
 # RUN(FILLED): walk f3 mechanisms=all
 # FILLED: PutDoubleIndex

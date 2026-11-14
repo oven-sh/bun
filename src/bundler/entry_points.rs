@@ -7,7 +7,6 @@ use bun_core::strings;
 use bun_paths::MAX_PATH_BYTES;
 use bun_wyhash::{self, Wyhash11};
 
-use crate::Transpiler;
 use bun_js_parser as js_ast;
 
 // `Path`/`PathName` come from the lower-tier `bun_paths::fs` shim
@@ -193,7 +192,6 @@ impl MacroEntryPoint {
 
     pub fn generate(
         entry: &mut MacroEntryPoint,
-        _: &mut Transpiler,
         import_path: &Fs::PathName,
         function_name: &[u8],
         macro_id: i32,

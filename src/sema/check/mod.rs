@@ -892,6 +892,7 @@ impl<'s> Program<'s> {
             this_types: Default::default(),
             this_types_in_progress: Vec::new(),
             thisless_members: Default::default(),
+            recent_symbol_types: Default::default(),
             flow_type_skips: Default::default(),
             instantiated_symbol_links: Default::default(),
             late_binding: Vec::new(),
@@ -1096,6 +1097,7 @@ impl<'s> Program<'s> {
             functions_typed_with_literals: Default::default(),
             times_cut_short: std::cell::Cell::new(0),
             exprs_by_kind: [None, None],
+            alias_declarations: Default::default(),
             shared_indexes: None,
             provisional_shapes: Default::default(),
             provisional: Default::default(),
@@ -1764,6 +1766,75 @@ impl ThislessMembers {
     }
 }
 
+const RECENT_SYMBOL_TYPES: usize = 512;
+
+#[derive(Copy, Clone)]
+struct RecentSymbolType {
+    symbol: Sym,
+    /// `View::snapshot_of` the symbol's file when it was looked up.
+    snapshot: u32,
+    /// `RecentSymbolTypes::visit` at that time.
+    visit: u32,
+    ty: TypeId,
+}
+
+/// FOR SPEED. What `Program::symbol_types` has returned for symbols of files that the task isn't visiting. It returns the
+/// same again during the visit, as long as the task sees the same commits in the symbol's file.
+struct RecentSymbolTypes {
+    entries: Box<[RecentSymbolType; RECENT_SYMBOL_TYPES]>,
+    /// Counts the visits, from 1 on.
+    visit: u32,
+}
+
+impl Default for RecentSymbolTypes {
+    fn default() -> Self {
+        let free = RecentSymbolType {
+            symbol: NO_MEMBER,
+            snapshot: 0,
+            visit: 0,
+            ty: TypeId::NEVER,
+        };
+        RecentSymbolTypes {
+            entries: Box::new([free; RECENT_SYMBOL_TYPES]),
+            visit: 1,
+        }
+    }
+}
+
+impl RecentSymbolTypes {
+    fn begin_visit(&mut self) {
+        self.visit += 1;
+    }
+
+    #[inline]
+    fn index_of(symbol: Sym) -> usize {
+        let mixed = symbol.id.0 ^ symbol.file.0.wrapping_mul(0x9E37_79B1);
+        mixed as usize % RECENT_SYMBOL_TYPES
+    }
+
+    #[inline]
+    fn get(&self, symbol: Sym, snapshot: u32) -> Option<TypeId> {
+        let entry = &self.entries[Self::index_of(symbol)];
+        let is_known =
+            entry.symbol == symbol && entry.snapshot == snapshot && entry.visit == self.visit;
+        is_known.then_some(entry.ty)
+    }
+
+    #[inline]
+    fn put(&mut self, symbol: Sym, snapshot: u32, ty: TypeId) {
+        self.entries[Self::index_of(symbol)] = RecentSymbolType {
+            symbol,
+            snapshot,
+            visit: self.visit,
+            ty,
+        };
+    }
+
+    fn forget(&mut self, symbol: Sym) {
+        self.entries[Self::index_of(symbol)].visit = 0;
+    }
+}
+
 // The fields are laid out as declared: small ones that most accesses touch first, where x86-64 reaches them with a
 // one-byte offset.
 #[repr(C)]
@@ -1826,6 +1897,7 @@ pub struct Checker<'p, 's> {
     this_types: FxHashMap<Sym, bool>,
     /// See `is_thisless_for_this_mapper`.
     thisless_members: ThislessMembers,
+    recent_symbol_types: RecentSymbolTypes,
     /// See `skip_ancestors_without_flow_constraint`.
     flow_type_skips: FxHashMap<(FileId, Node), FlowTypeSkip>,
     /// `links.resolvedType` of instantiated symbols, by target and mapper. Only contains the ones that differ from what
@@ -2013,6 +2085,9 @@ pub struct Checker<'p, 's> {
     /// A file, and which of its expressions `prepare_ancestors` has processed.
     prepared_exprs: (FileId, Vec<bool>),
     exprs_by_kind: [Option<(FileId, std::sync::Arc<hir::ExprsByKind>)>; 2],
+    /// `symbols_of_alias_declarations` of the last file that was asked about.
+    alias_declarations:
+        std::cell::RefCell<Option<(FileId, std::sync::Arc<errors_aliases::AliasDeclarations>)>>,
     /// Of the large file whose parts several checkers ask about.
     shared_indexes: Option<(FileId, std::sync::Arc<shared_indexes::SharedIndexes<'s>>)>,
     /// See `provisional_shape`, which returns a reference to one and pushes the next.
@@ -2646,11 +2721,13 @@ impl<'p, 's> Checker<'p, 's> {
 
     #[inline(never)]
     fn look_up_module(&self, file: FileId) -> &'s crate::program::Module<'s> {
-        let module: &'s crate::program::Module<'s> = &self.modules[file.idx()];
-        if self.task.file == Some(file) {
-            self.visited_module.set((file, Some(module)));
-        }
-        module
+        &self.modules[file.idx()]
+    }
+
+    /// Call where `task` begins to visit `file`.
+    fn note_visited_module(&self, file: FileId) {
+        self.visited_module
+            .set((file, Some(self.look_up_module(file))));
     }
 
     #[inline]

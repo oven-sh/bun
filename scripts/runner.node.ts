@@ -2453,6 +2453,8 @@ async function spawnBun(
 ): Promise<SpawnBunResult> {
   const path = getCombinedPath(execPath);
   const tmpdirPath = ownTemporaryFolder(mkdtempSync(join(tmpdir(), "buntmp-")));
+  // See test/aot/harness/without-installing-packages.ts.
+  mkdirSync(join(tmpdirPath, "node_modules"));
   const { username, homedir } = userInfo();
   const shellPath = getShell();
   const bunEnv: SpawnEnv = {
@@ -3594,11 +3596,14 @@ async function getExecPathFromBuildkite(target: string, buildId?: string): Promi
       );
     }
 
-    zipPath = readdirSync(archives, { recursive: true, encoding: "utf-8" })
-      .filter(filename => /^bun.*\.zip$/i.test(filename))
-      .map(filename => join(archives, filename))
-      .sort((a, b) => Number(b.includes("profile")) - Number(a.includes("profile")))
-      .at(0);
+    // A download that failed can have left some of the archives.
+    if (!error) {
+      zipPath = readdirSync(archives, { recursive: true, encoding: "utf-8" })
+        .filter(filename => /^bun.*\.zip$/i.test(filename))
+        .map(filename => join(archives, filename))
+        .sort((a, b) => Number(b.includes("profile")) - Number(a.includes("profile")))
+        .at(0);
+    }
 
     if (zipPath) {
       break downloadLoop;
@@ -3617,14 +3622,22 @@ async function getExecPathFromBuildkite(target: string, buildId?: string): Promi
     .filter(filename => /^bun.*\.zip$/i.test(filename))
     .map(filename => join(archives, filename))
     .find(path => path !== archive);
+  const toolsArchive = readdirSync(archives, { encoding: "utf-8" })
+    .filter(filename => /^test-tools-.*\.zip$/.test(filename))
+    .map(filename => join(archives, filename))
+    .at(0);
+  // Two of the archives unpack into this folder, and unzip fails where another makes it first.
+  mkdirSync(join(releasePath, basename(archive, ".zip")), { recursive: true });
   // Side by side: each keeps one processor busy for seconds.
-  const [, strippedFolder] = await Promise.all([
-    unzip(archive, releasePath, { without: [...toolsOfTheEngine, ...linkerMaps] }),
+  const [strippedFolder] = await Promise.all([
     strippedArchive && unpackStripped(strippedArchive),
+    unzip(archive, releasePath, { without: linkerMaps }),
+    toolsArchive && unzip(toolsArchive, releasePath, { without: toolsOfTheEngine }),
   ]);
-  // An archive without them: the tests that start them say so.
+  // A build without them: the tests that start them say so.
   unpackToolsOfTheEngine = async isNeeded => {
-    if (isNeeded) await unzip(archive, releasePath, { only: toolsOfTheEngine }).catch(console.warn);
+    if (isNeeded && toolsArchive)
+      await unzip(toolsArchive, releasePath, { only: toolsOfTheEngine }).catch(console.warn);
     if (archives !== releasePath) rmSync(archives, { recursive: true, force: true });
   };
 

@@ -243,8 +243,10 @@ impl Checker<'_, '_> {
         if self.task.file != Some(file) {
             self.flow_memo.let_kept_walks_go();
         }
+        self.recent_symbol_types.begin_visit();
         self.task
             .begin_file(file, !self.files().module(file).is_leaf);
+        self.note_visited_module(file);
         self.provisional.clear();
         self.rejected_expressions.clear();
         self.side_effect_free.get_mut().clear();

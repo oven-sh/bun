@@ -75,7 +75,7 @@ More comment lines at the top say how it is built and run. These are the common 
 | `// Env: NAME=value` | the environment of both runs |
 | `// Exit code: <n>` | what both runs end with. Without it, a reference run that does not exit with 0 fails the program |
 | `// Under: <flags>: <why>` | one more build with those flags |
-| `// STATISTIC: <name> >= <n>` | holds a counter of the build to a number, to show that an optimization ran. Also `=` and `<=` |
+| `// STATISTIC: <name> >= <n>` | holds a counter of the build to a number, to show that an optimization ran. Also `=` and `<=`. `// STATISTIC on x64:` asks it on that processor alone |
 | `// Todo: it grows: <why>`, `// Todo: "<word>" \| "<word in its place>": <why>`, `// Todo: only frames (..): <why>` | a known difference of one of these three kinds. The program still runs, and fails once it passes. No other difference can be marked |
 
 A program that differs from plain Bun on purpose ends with what it must print:

@@ -11,7 +11,7 @@
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: [[next]]: {{*}} = PropGet {{*}}key="next"
-# CHECK: = TypeTest {{*}}testedType=builtin(ArrayIteratorPrototypeNext)|builtin(CompilerHelpersNextOfStepsOverText)|builtin(GeneratorPrototypeNext)|builtin(MapIteratorPrototypeNext)|builtin(SetIteratorPrototypeNext)
+# CHECK: = TypeTest {{*}}testedType=builtin(ArrayIteratorPrototypeNext)|builtin(CompilerHelpersNextOfStepsOverText)|builtin(GeneratorPrototypeNext)|builtin(MapIteratorPrototypeNext)|builtin(RegExpStringIteratorPrototypeNext)|builtin(SetIteratorPrototypeNext)
 # CHECK: [[handedOut]]: {{*}} = CallDirect {{*}}function=f3
 # CHECK: = IsCollectionIteratorClosedMark [[handedOut]]
 # RUN(WRITTEN): walk f1 mechanisms=all
@@ -26,7 +26,7 @@
 # the state in memory
 # RUN(MEMORY): walk f8 mechanisms=all
 # MEMORY: [[state]]: {{*}} = NewHeapWords numberOfWords=4
-# MEMORY: [[verdict]]: {{*}} = TypeTest {{*}}testedType=builtin(ArrayIteratorPrototypeNext)|builtin(CompilerHelpersNextOfStepsOverText)|builtin(GeneratorPrototypeNext)|builtin(MapIteratorPrototypeNext)|builtin(SetIteratorPrototypeNext)
+# MEMORY: [[verdict]]: {{*}} = TypeTest {{*}}testedType=builtin(ArrayIteratorPrototypeNext)|builtin(CompilerHelpersNextOfStepsOverText)|builtin(GeneratorPrototypeNext)|builtin(MapIteratorPrototypeNext)|builtin(RegExpStringIteratorPrototypeNext)|builtin(SetIteratorPrototypeNext)
 # MEMORY: = PutHeapFrameWord [[state]], {{*}}index=3
 # MEMORY: = GetHeapFrameWord [[state]] index=3
 # MEMORY: = CallDirect {{*}}function=f3

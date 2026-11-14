@@ -259,7 +259,7 @@ impl<'a> Coordinator<'a> {
                 self.abort_all(signal);
                 return;
             }
-            self.vm.event_loop_ref().tick();
+            self.vm.event_loop().tick();
             self.run_pending_reaps();
             self.assign_work_to_waiting_workers();
             if let Some(children) = &mut self.children_of_workers {
@@ -284,13 +284,10 @@ impl<'a> Coordinator<'a> {
                     sec: wait_ms / MS_PER_S,
                     nsec: (wait_ms % MS_PER_S) * bun_core::time::NS_PER_MS as i64,
                 };
-                // SAFETY: event_loop()/usockets_loop() return live pointers for the VM lifetime.
-                unsafe {
-                    (*(*self.vm.event_loop()).usockets_loop())
-                        .tick_with_timeout(Some(&ts), bun_uws::NOW_NS_UNKNOWN);
-                }
+                let loop_ = self.vm.event_loop().usockets_loop();
+                loop_.tick_with_timeout(Some(&ts), bun_uws::NOW_NS_UNKNOWN);
             } else {
-                self.vm.event_loop_ref().auto_tick();
+                self.vm.event_loop().auto_tick();
             }
             self.run_pending_reaps();
         }

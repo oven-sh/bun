@@ -8,7 +8,7 @@
 # -- end of source
 # Each literal begins with a copy of an object of its own layout, which has every field: by its own text, or by such a copy.
 # RUN: link fields mechanisms=all
-# CHECK: field L0.0 "count" proven=number {{*}}filled
+# CHECK: field L0.0 "count" proven=int[0, 9007199254740992] {{*}}filled
 # CHECK: field L0.1 "name" proven=string {{*}}filled
 
 module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)

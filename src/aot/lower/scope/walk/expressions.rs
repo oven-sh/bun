@@ -77,8 +77,7 @@ impl Walker<'_, '_> {
             }
             _ => return,
         }
-        let wrapped = self.input.modules.wrapped();
-        if wrapped.is_literal_of_bodies(self.input.file, expression) {
+        if expression == self.literal_of_bodies {
             return;
         }
         match self.hir[expression].kind {

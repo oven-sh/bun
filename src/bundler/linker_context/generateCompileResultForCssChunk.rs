@@ -62,6 +62,8 @@ fn generate_compile_result_for_css_chunk_impl(
     let _trace = bun_core::perf::trace("Bundler.generateCodeForFileInChunkCss");
     // `defer trace.end()` — RAII; Drop ends the trace.
 
+    // Rules built from the chunk's import conditions have the chunk's lifetime.
+    let rules_arena = worker.arena();
     // `worker.arena` (= `BackRef` to `worker.heap`) is a disjoint field from
     // `worker.temporary_arena` borrowed `&mut` below, so a direct shared
     // borrow via `BackRef::get` is fine. The heap is pinned for the worker's
@@ -92,7 +94,8 @@ fn generate_compile_result_for_css_chunk_impl(
         .input_files
         .items_unique_key_for_additional_file();
 
-    let Ok(blocks) = shared_block_edges(c, css_content, imports_in_chunk_index as usize, arena)
+    let Ok(blocks) =
+        shared_block_edges(c, css_content, imports_in_chunk_index as usize, rules_arena)
     else {
         return CompileResult::Css {
             result: Err(crate::Error::PrintError),
@@ -217,7 +220,7 @@ impl SharedBlockEdges {
 /// and every rule printer writes a block the same way.
 fn shared_block_edges<'a>(
     c: &LinkerContext,
-    css_content: &'a CssChunk,
+    css_content: &CssChunk<'a>,
     i: usize,
     arena: &'a bun_alloc::Arena,
 ) -> Result<SharedBlockEdges, ()> {

@@ -221,6 +221,7 @@
 "freed_while_borrowed:src/spawn/lib.rs" = 1
 "freed_while_borrowed:src/spawn/process.rs" = 2
 "freed_while_borrowed:src/spawn/static_pipe_writer.rs" = 3
+"unsafe_send_covers_more_than_pointers:src/spawn/process.rs" = 1
 
 [bun_sql_jsc]
 "generic_body_not_generic:src/sql_jsc/mysql/MySQLConnection.rs" = 1

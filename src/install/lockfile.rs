@@ -2194,7 +2194,7 @@ pub(crate) fn replace_in_cwd(filename: &ZStr, bytes: &[u8], mode: sys::Mode) -> 
     });
 
     if let Err(e) = file.write_all(bytes) {
-        let _ = file.close(); // close error is non-actionable
+        drop(file);
         let _ = sys::unlink(tmpname);
         Output::err(e, "failed to write lockfile", format_args!(""));
         Global::crash();

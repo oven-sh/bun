@@ -1,5 +1,5 @@
-# the tests stand in front of the outermost loop that does not change the values. Each copy holds the loop inside once: the closed copy opens no guess, and in the copy behind the tests everything is proven,
-# so the read stands in front of both loops
+# the tests stand in front of the outermost loop that does not change the values. The closed copy holds the loop inside once and opens no guess. In the copy behind the tests everything is proven,
+# so the read stands in front of both loops. There the loop inside stands a second time, for a field that holds an integer
 # class Box { x: number; constructor(x: number) { this.x = x; } }
 # function sum(o: Box, n: number) { let s = 0; for (let i = 0; i < n; i++) { for (let j = 0; j < n; j++) s = (s + o.x) | 0; } return s; }
 # (globalThis as any).kept = sum;
@@ -12,6 +12,7 @@
 # CHECK: frequency=Rare isLoopHead=true
 # CHECK: = PropGet {{*}}key="x"
 # CHECK: = GetSlot {{*}}key="x"
+# CHECK: isInLoop=true isLoopHead=true
 # CHECK: isInLoop=true isLoopHead=true
 # CHECK: isInLoop=true isLoopHead=true
 # CHECK-NOT: isLoopHead=true

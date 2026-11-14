@@ -18,10 +18,9 @@
 # `above` and `last` take what `heights[i]` gives round the loop. In the plain walk that may be undefined; in the typed copy the turn that finds no element begins again in the other copy, so its head
 # starts without undefined, the store takes a number, and the turns come round as numbers.
 # f1 = spread
-# RUN(COUNT): compile ModuleConstantReadsHoisted AbsentArrayElementWideningsAvoided StoredValuesNarrowedToInt32 WalkLoopsVersioned mechanisms=all
+# RUN(COUNT): compile ModuleConstantReadsHoisted AbsentArrayElementWideningsAvoided WalkLoopsVersioned mechanisms=all
 # COUNT: statistic ModuleConstantReadsHoisted 2
 # COUNT: statistic AbsentArrayElementWideningsAvoided 2
-# COUNT: statistic StoredValuesNarrowedToInt32 0
 # RUN(FORM): walk f1 mechanisms=all
 # FORM-LABEL: code f1:Body
 # FORM: = GetModuleVariable

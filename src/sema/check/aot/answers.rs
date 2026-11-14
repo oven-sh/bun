@@ -203,7 +203,7 @@ pub enum MemberName {
 
 impl MemberName {
     #[inline]
-    pub(super) fn atom(self) -> Atom {
+    pub fn atom(self) -> Atom {
         let (MemberName::String(name) | MemberName::Symbol(name) | MemberName::Private(name)) =
             self;
         name
@@ -341,6 +341,14 @@ pub enum ClassParent {
     Library(ClassDeclaration),
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum UnknownParent {
+    /// Callers out of sight pass it.
+    Parameter,
+    /// A path of names that nobody follows.
+    Value,
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ClassMemberSource {
     Member(MemberId),
@@ -359,6 +367,8 @@ pub struct ClassMember {
     pub is_static: bool,
     pub is_optional: bool,
     pub is_made_at_birth: bool,
+    /// The text defines something under the name on the prototype: it may be an accessor.
+    pub may_be_defined_above: bool,
     pub form: MemberForm,
 }
 

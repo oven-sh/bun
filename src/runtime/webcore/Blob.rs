@@ -432,16 +432,7 @@ impl BlobExt for Blob {
             let promise_value = handler.promise.value();
             promise_value.ensure_still_alive();
 
-            read_file::ReadFileUV::start::<Handler<F>>(
-                // `bun_vm()` returns the live VM for this global; the event
-                // loop outlives any in-flight async fs request.
-                cx.vm().event_loop(),
-                cx.context(),
-                self.store().expect("infallible: store present").clone(),
-                self.offset.get(),
-                self.size.get(),
-                handler,
-            );
+            read_file::ReadFileUV::start(self, read_file::ReadFileCompletionFns::of(handler), cx);
             return promise_value;
         }
 
@@ -538,7 +529,7 @@ impl BlobExt for Blob {
                     }
                 }
             }
-            let mut t = Box::new(Task::<H> {
+            let t = Box::new(Task::<H> {
                 ctx,
                 blob: self.dupe(),
                 poll: bun_io::KeepAlive::default(),
@@ -604,15 +595,7 @@ impl BlobExt for Blob {
     ) {
         #[cfg(windows)]
         {
-            return read_file::ReadFileUV::start_with_ctx(
-                // SAFETY: `bun_vm()` returns the live VM for this global.
-                cx.vm().event_loop(),
-                cx.context(),
-                self.store().expect("infallible: store present").clone(),
-                self.offset.get(),
-                self.size.get(),
-                read_file::ReadFileCompletionFns::of(ctx),
-            );
+            read_file::ReadFileUV::start(self, read_file::ReadFileCompletionFns::of(ctx), cx);
         }
         #[cfg(not(windows))]
         {
@@ -725,8 +708,7 @@ impl BlobExt for Blob {
         const BOUNDARY_PREFIX: &[u8; 22] = b"----WebKitFormBoundary";
         let mut boundary_buf = [0u8; BOUNDARY_PREFIX.len() + 32];
         let boundary: &[u8] = {
-            // SAFETY: bun_vm() never returns null for a Bun-owned global.
-            let random = global_this.bun_vm().as_mut().rare_data().next_uuid().bytes;
+            let random = global_this.bun_vm().rare_data().next_uuid().bytes;
             boundary_buf[..BOUNDARY_PREFIX.len()].copy_from_slice(BOUNDARY_PREFIX);
             bun_core::fmt::bytes_to_hex_lower(&random, &mut boundary_buf[BOUNDARY_PREFIX.len()..]);
             &boundary_buf
@@ -1327,15 +1309,15 @@ impl BlobExt for Blob {
                         break 'brk false;
                     }
 
-                    if let Some(rare) = cx.vm().rare_data.as_ref() {
+                    if let Some(rare) = cx.vm().rare_data.get() {
                         // `RareData::std{out,err}_store` is `Option<NonNull<c_void>>`
                         // (type-erased `*Blob.Store`); compare on raw pointer
                         // identity exactly like the POSIX arm below.
                         let store_ptr = store.as_ptr().cast::<c_void>();
-                        if rare.stdout_store.map(|p| p.as_ptr()) == Some(store_ptr) {
+                        if rare.stdout_store.get().map(|p| p.as_ptr()) == Some(store_ptr) {
                             break 'brk true;
                         }
-                        if rare.stderr_store.map(|p| p.as_ptr()) == Some(store_ptr) {
+                        if rare.stderr_store.get().map(|p| p.as_ptr()) == Some(store_ptr) {
                             break 'brk true;
                         }
                     }
@@ -1352,8 +1334,7 @@ impl BlobExt for Blob {
                         self.global_this()
                             .expect("Blob.global_this set at construction")
                             .bun_vm()
-                            .as_mut()
-                            .event_loop() as *mut (),
+                            .event_loop_ptr(),
                     ),
                 );
                 sink.writer
@@ -1384,9 +1365,7 @@ impl BlobExt for Blob {
                         self.global_this()
                             .expect("Blob.global_this set at construction")
                             .bun_vm()
-                            .as_mut()
-                            .event_loop()
-                            .cast::<()>(),
+                            .event_loop_ptr(),
                     ),
                 );
 
@@ -1512,8 +1491,7 @@ impl BlobExt for Blob {
             use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 
             let pathlike = &store.data.as_file().pathlike;
-            // SAFETY: bun_vm() never returns null for a Bun-owned global.
-            let vm = global_this.bun_vm().as_mut();
+            let vm = global_this.bun_vm();
             let fd: Fd = match pathlike {
                 PathOrFileDescriptor::Fd(fd) => *fd,
                 PathOrFileDescriptor::Path(p) => {
@@ -1539,12 +1517,12 @@ impl BlobExt for Blob {
                 if !matches!(pathlike, PathOrFileDescriptor::Fd(_)) {
                     break 'brk false;
                 }
-                if let Some(rare) = vm.rare_data.as_ref() {
+                if let Some(rare) = vm.rare_data.get() {
                     let store_ptr = store.as_ptr().cast::<c_void>();
-                    if rare.stdout_store.map(|p| p.as_ptr()) == Some(store_ptr) {
+                    if rare.stdout_store.get().map(|p| p.as_ptr()) == Some(store_ptr) {
                         break 'brk true;
                     }
-                    if rare.stderr_store.map(|p| p.as_ptr()) == Some(store_ptr) {
+                    if rare.stderr_store.get().map(|p| p.as_ptr()) == Some(store_ptr) {
                         break 'brk true;
                     }
                 }
@@ -1560,8 +1538,7 @@ impl BlobExt for Blob {
                     self.global_this()
                         .expect("Blob.global_this set at construction")
                         .bun_vm()
-                        .as_mut()
-                        .event_loop() as *mut (),
+                        .event_loop_ptr(),
                 ),
             );
             // `to_js` gives init's ref to the wrapper; an early return drops it.
@@ -1593,9 +1570,7 @@ impl BlobExt for Blob {
                     self.global_this()
                         .expect("Blob.global_this set at construction")
                         .bun_vm()
-                        .as_mut()
-                        .event_loop()
-                        .cast::<()>(),
+                        .event_loop_ptr(),
                 ),
             );
             // `to_js` gives init's ref to the wrapper; an early return drops it.
@@ -1789,7 +1764,7 @@ impl BlobExt for Blob {
             let current_path = bun_resolver::fs::Path::init(&filename);
             return Some(
                 current_path
-                    .loader(&jsc_vm.transpiler.options.loaders)
+                    .loader(&jsc_vm.transpiler.get().options.loaders)
                     .unwrap_or(bun_ast::Loader::Tsx),
             );
         } else if let Some(mime_type) = self.get_mime_type_or_content_type() {
@@ -1876,8 +1851,7 @@ impl BlobExt for Blob {
                     .as_file();
                 match &file.pathlike {
                     PathOrFileDescriptor::Path(path_like) => {
-                        // SAFETY: bun_vm() returns the live VM for this global.
-                        let vm = global_this.bun_vm().as_mut();
+                        let vm = global_this.bun_vm();
                         Ok(crate::node::fs::async_::Stat::schedule(
                             &cx,
                             crate::node::fs::args::Stat::owned_copy_of(path_like),
@@ -1886,8 +1860,7 @@ impl BlobExt for Blob {
                         ))
                     }
                     PathOrFileDescriptor::Fd(fd) => {
-                        // SAFETY: bun_vm() returns the live VM for this global.
-                        let vm = global_this.bun_vm().as_mut();
+                        let vm = global_this.bun_vm();
                         Ok(crate::node::fs::async_::Fstat::schedule(
                             &cx,
                             crate::node::fs::args::Fstat::for_fd(*fd),
@@ -1910,8 +1883,7 @@ impl BlobExt for Blob {
                 }) {
                     return Ok(JSValue::UNDEFINED);
                 }
-                // SAFETY: bun_vm() returns the live VM for this global.
-                let vm = global_this.bun_vm().as_mut();
+                let vm = global_this.bun_vm();
                 Ok(crate::node::fs::async_::Stat::schedule(
                     &cx,
                     crate::node::fs::args::Stat::owned(name.to_vec()),
@@ -3152,13 +3124,12 @@ impl BlobExt for Blob {
         if check_s3 {
             if let PathOrFileDescriptor::Path(p) = &*path_or_fd {
                 if p.slice().starts_with(b"s3://") {
-                    // SAFETY: bun_vm() is live for the duration of a host call.
-                    let vm = global_this.bun_vm().as_mut();
+                    let vm = global_this.bun_vm();
                     // `bun_dotenv::Loader` (T2) returns its local POD mirror by
                     // reference; lift it into the refcounted
                     // `bun_s3_signing::S3Credentials` here at the T6 call site
                     // (dotenv cannot name the s3_signing type — upward dep).
-                    let env_creds = vm.transpiler.env_mut().get_s3_credentials();
+                    let env_creds = vm.transpiler.get().env_mut().get_s3_credentials();
                     let credentials = crate::webcore::fetch::s3_credentials_from_env(env_creds);
                     let copy = core::mem::replace(
                         path_or_fd,
@@ -3212,8 +3183,7 @@ impl BlobExt for Blob {
             }
             PathOrFileDescriptor::Fd(fd) => {
                 if let Some(tag) = fd.stdio_tag() {
-                    // SAFETY: bun_vm() is live for the duration of a host call.
-                    let vm = global_this.bun_vm().as_mut();
+                    let vm = global_this.bun_vm();
                     // `RareData::{stdin,stdout,stderr}()` return the cached
                     // `webcore::blob::Store` erased to `*mut c_void` (the
                     // low-tier crate cannot name the high-tier type — see
@@ -3960,8 +3930,7 @@ fn write_file_with_empty_source_to_destination(
                                         *err = e;
                                         break 'err;
                                     }
-                                    bun_sys::Result::Ok(f) => {
-                                        let _ = f.close(); // close error is non-actionable
+                                    bun_sys::Result::Ok(_) => {
                                         return Ok(JSPromise::resolved_promise_value(
                                             cx.global(),
                                             JSValue::js_number(0.0),
@@ -4090,7 +4059,7 @@ pub(crate) fn write_file_with_source_destination(
             let mut promise = jsc::JSPromiseStrong::default();
             promise.set(cx.global(), promise_value);
             match write_file::WriteFileWindows::create(
-                cx.vm().event_loop(),
+                cx.global().bun_vm().event_loop(),
                 cx.context(),
                 destination_blob.borrowed_view(),
                 source_blob.borrowed_view(),
@@ -4128,7 +4097,7 @@ pub(crate) fn write_file_with_source_destination(
             return Ok(copy_file::CopyFileWindows::init(
                 destination_store,
                 source_store,
-                cx.vm().event_loop_shared(),
+                cx.global().bun_vm().event_loop(),
                 cx.context(),
                 options.mkdirp_if_not_exists.unwrap_or(true),
                 destination_blob.size.get(),
@@ -4800,7 +4769,7 @@ fn set_content_type_from_js(
     if is_valid_blob_type(slice) {
         blob.content_type_was_set.set(true);
         blob.content_type
-            .set(match global_this.bun_vm().as_mut().mime_type(slice) {
+            .set(match global_this.bun_vm().mime_type(slice) {
                 Some(mime) => BlobContentType::from(mime),
                 None => BlobContentType::from_lowercased(slice),
             });
@@ -5172,11 +5141,10 @@ pub(crate) fn file(
                 let slice = str.slice();
                 if is_valid_blob_type(slice) {
                     blob.content_type_was_set.set(true);
-                    blob.content_type
-                        .set(match global_object.bun_vm().as_mut().mime_type(slice) {
-                            Some(mime) => BlobContentType::from(mime),
-                            None => BlobContentType::from_lowercased(slice),
-                        });
+                    blob.content_type.set(match vm.mime_type(slice) {
+                        Some(mime) => BlobContentType::from(mime),
+                        None => BlobContentType::from_lowercased(slice),
+                    });
                 }
             }
             if let Some(n) = options.last_modified {
@@ -5327,7 +5295,7 @@ impl S3BlobDownloadTask {
         // The callback may read this.blob.content_type, which is heap-owned by the
         // source JS Blob and freed on finalize(). Take an owning dupe so the task
         // outliving the source can't dangle.
-        let mut this = Box::new(S3BlobDownloadTask {
+        let this = Box::new(S3BlobDownloadTask {
             global_this: bun_ptr::BackRef::new(cx.global()),
             blob: Blob::dupe(blob),
             promise: jsc::JSPromiseStrong::init(cx.global()),

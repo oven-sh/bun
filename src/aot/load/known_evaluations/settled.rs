@@ -1,5 +1,6 @@
 use std::rc::Rc;
 
+use bun_core::strings::contains;
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::bind::{Binding, BindingKind, Bound, CodeUnit, Decl, FunctionFlags, SymbolId};
 use bun_sema::hir::{
@@ -10,7 +11,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
 use super::values::{EnvironmentId, Global, Object, ObjectId, Value};
-use super::{end_of_body, strings};
+use super::{end_of_body, start_of_code, strings};
+use crate::builtins::id::BuiltinId;
+use crate::builtins::table;
 
 const MAX_STEPS: u32 = 1 << 20;
 const MAX_STEPS_OF_STATEMENT: u32 = 1 << 12;
@@ -37,6 +40,28 @@ struct Evals {
     positions: Vec<u32>,
 }
 
+impl Evals {
+    fn may_store(&self, hir: &File<'_>, atoms: &Interner<'_>, name: Atom) -> bool {
+        let name = atoms.bytes(name);
+        self.calls.iter().any(|&call| {
+            let first = hir.ids(hir.written_args(call)).next();
+            let first = first.map(|it| hir[hir.skip_type_assertions(it)].kind);
+            let Some(ExprKind::String(text)) = first else {
+                return true;
+            };
+            let text = atoms.bytes(text);
+            contains(text, name) || contains(text, b"eval") || contains(text, b"\\")
+        })
+    }
+}
+
+struct SettledFunction {
+    function: FnId,
+    evals: Evals,
+    called: FxHashSet<FnId>,
+    named: FxHashSet<Atom>,
+}
+
 struct Activation {
     function: FnId,
     environment: EnvironmentId,
@@ -50,6 +75,7 @@ struct Identifiers {
     captured: FxHashSet<SymbolId>,
     stored_elsewhere: FxHashSet<SymbolId>,
     callbacks: Vec<(u32, FnId, FnId)>,
+    decorated_classes: FxHashMap<u32, u32>,
 }
 
 struct Settler<'a, 's> {
@@ -62,6 +88,8 @@ struct Settler<'a, 's> {
     activations: Vec<Activation>,
     objects: Vec<Object>,
     found: Vec<(CallId, Rc<[u8]>)>,
+    called: FxHashSet<FnId>,
+    named: FxHashSet<Atom>,
     environments: usize,
     has_lost_callback: bool,
     steps: u32,
@@ -79,7 +107,7 @@ fn collect_identifiers(hir: &File<'_>, bound: &Bound<'_>, atoms: &Interner<'_>) 
     let functions = (0..hir.fns.len() as u32).map(FnId);
     let functions = functions.filter_map(|it| {
         let end = end_of_body(hir, it)?;
-        Some((hir[it].start, end, Owner::Function(it)))
+        Some((start_of_code(hir, it), end, Owner::Function(it)))
     });
     let values = hir.members.iter().filter(|it| it.init.is_some());
     let values = values.map(|it| (hir[it.init].pos, hir[it.init].end, Owner::FieldValue));
@@ -155,6 +183,11 @@ fn collect_identifiers(hir: &File<'_>, bound: &Bound<'_>, atoms: &Interner<'_>) 
     }
     let mut callbacks: Vec<(u32, FnId, FnId)> = callbacks.into_iter().collect();
     callbacks.sort_unstable();
+    let classes = hir.exprs.iter().filter_map(|it| match it.kind {
+        ExprKind::Class(class) if hir[class].start < it.pos => Some((it.pos, hir[class].start)),
+        _ => None,
+    });
+    let decorated_classes = classes.collect();
     Identifiers {
         identifiers,
         names,
@@ -162,6 +195,7 @@ fn collect_identifiers(hir: &File<'_>, bound: &Bound<'_>, atoms: &Interner<'_>) 
         captured,
         stored_elsewhere,
         callbacks,
+        decorated_classes,
     }
 }
 
@@ -197,26 +231,28 @@ pub(crate) fn find_settled_evals<'s>(
     }
     let identifiers = collect_identifiers(hir, bound, atoms);
     let mut by_function: FxHashMap<Owner, Evals> = FxHashMap::default();
-    for &(expression, _) in bound.runtime.eval_scopes() {
+    for &(expression, eval_scope) in bound.runtime.eval_scopes() {
         let ExprKind::Call(call) = hir[expression].kind else {
             return Vec::new();
         };
-        let pos = hir[hir[call].callee].pos;
-        let callee = range_of(&identifiers.identifiers, pos, pos + 1);
-        let owner = callee.last().map_or(Owner::File, |it| it.2);
+        let owner = match bound.code_unit(eval_scope.scope) {
+            CodeUnit::File => Owner::File,
+            CodeUnit::Function(function) => Owner::Function(function),
+            CodeUnit::FieldInitializer(_) => Owner::FieldValue,
+        };
         let evals = by_function.entry(owner).or_default();
         evals.calls.insert(call);
-        evals.positions.push(pos);
+        evals.positions.push(hir[hir[call].callee].pos);
     }
     let mut steps = MAX_STEPS;
-    let mut settled: Vec<(FnId, Evals)> = Vec::new();
-    let mut unsettled: Vec<Owner> = Vec::new();
+    let mut settled: Vec<SettledFunction> = Vec::new();
+    let mut unsettled: Vec<(Owner, Evals)> = Vec::new();
     let mut by_function: Vec<(Owner, Evals)> = by_function.into_iter().collect();
     by_function.sort_by_key(|it| it.1.positions.iter().copied().min());
     for (owner, mut evals) in by_function {
         evals.positions.sort_unstable();
         let Owner::Function(function) = owner else {
-            unsettled.push(owner);
+            unsettled.push((owner, evals));
             continue;
         };
         let mut settler = Settler {
@@ -229,6 +265,8 @@ pub(crate) fn find_settled_evals<'s>(
             activations: Vec::new(),
             objects: Vec::new(),
             found: Vec::new(),
+            called: FxHashSet::default(),
+            named: FxHashSet::default(),
             environments: 0,
             has_lost_callback: false,
             steps,
@@ -237,32 +275,46 @@ pub(crate) fn find_settled_evals<'s>(
         };
         let is_settled = settler.settles();
         steps = settler.steps;
+        let (called, named) = (settler.called, settler.named);
         match is_settled {
-            true => settled.push((function, evals)),
-            false => unsettled.push(owner),
+            true => settled.push(SettledFunction {
+                function,
+                evals,
+                called,
+                named,
+            }),
+            false => unsettled.push((owner, evals)),
         }
     }
-    let range = |function: FnId| (hir[function].start, end_of_body(hir, function).unwrap_or(0));
-    let is_around = |outer: FnId, inner: FnId| {
-        let (outer, inner) = (range(outer), range(inner));
-        outer.0 <= inner.0 && inner.1 <= outer.1
+    let is_within = |mut inner: FnId, outer: FnId| {
+        while inner.is_some() && inner != outer {
+            inner = bound.fns[inner.idx()].enclosing;
+        }
+        inner == outer
+    };
+    let may_change = |(owner, evals): &(Owner, Evals), settled: &SettledFunction| {
+        let Owner::Function(other) = *owner else {
+            return true;
+        };
+        is_within(other, settled.function)
+            || is_within(settled.function, other)
+            || (settled.called.iter()).any(|&called| is_within(other, called))
+            || (settled.named.iter()).any(|&name| evals.may_store(hir, atoms, name))
     };
     loop {
-        let (kept, others): (Vec<_>, Vec<_>) = settled.into_iter().partition(|(function, _)| {
-            unsettled.iter().all(|it| match *it {
-                Owner::Function(other) => {
-                    !is_around(*function, other) && !is_around(other, *function)
-                }
-                Owner::File | Owner::FieldValue => false,
-            })
-        });
+        let (kept, others): (Vec<_>, Vec<_>) = settled
+            .into_iter()
+            .partition(|it| !unsettled.iter().any(|other| may_change(other, it)));
         settled = kept;
         if others.is_empty() {
             break;
         }
-        unsettled = others.iter().map(|it| Owner::Function(it.0)).collect();
+        let others = others.into_iter();
+        unsettled = others
+            .map(|it| (Owner::Function(it.function), it.evals))
+            .collect();
     }
-    let mut calls: Vec<CallId> = settled.into_iter().flat_map(|it| it.1.calls).collect();
+    let mut calls: Vec<CallId> = settled.into_iter().flat_map(|it| it.evals.calls).collect();
     calls.sort_unstable();
     calls
 }
@@ -276,7 +328,13 @@ impl Settler<'_, '_> {
         self.found.iter().all(|(call, text)| {
             let mut known = hir.known_evaluations_of(*call).iter();
             let text = atoms.intern(text);
-            known.any(|it| !it.is_in_global_scope && hir.ids(it.arguments).next() == Some(text))
+            let is_function = |root: ExprId| matches!(hir[root].kind, ExprKind::Fn(_));
+            known.any(|it| {
+                !it.is_in_global_scope
+                    && !it.is_called()
+                    && is_function(hir.skip_type_assertions(it.function))
+                    && hir.ids(it.arguments).next() == Some(text)
+            })
         })
     }
 
@@ -335,9 +393,12 @@ impl Settler<'_, '_> {
         else {
             return None;
         };
+        let is_function = |decl: &Decl| matches!(decl, Decl::Fn(_));
         if self.identifiers.stored_elsewhere.contains(&symbol)
             || self.bound.runtime.is_stored_by_function_of_block(symbol)
             || (declaring == self.function && self.is_parameter(symbol))
+            || self.bound.symbol(symbol).decls.iter().any(is_function)
+            || self.bound.binding_kind(symbol) == BindingKind::FunctionName
         {
             return None;
         }
@@ -385,13 +446,18 @@ impl Settler<'_, '_> {
         }
     }
 
-    fn read(&self, identifier: ExprId, name: Atom) -> Value {
+    fn read(&mut self, identifier: ExprId, name: Atom) -> Value {
         match self.bound.binding(identifier) {
             Binding::Symbol(_) if self.atoms.bytes(name) == b"arguments" => Value::Unknown,
             Binding::Symbol(symbol) => {
                 if let Some(function) = self.function_declared_as(symbol) {
-                    let environment = self.environment_around(symbol);
-                    return environment.map_or(Value::Unknown, |it| Value::Function(function, it));
+                    let Some(environment) = self.environment_around(symbol) else {
+                        return Value::Unknown;
+                    };
+                    if environment == EnvironmentId(0) {
+                        self.named.insert(name);
+                    }
+                    return Value::Function(function, environment);
                 }
                 let Some(activation) = self.activation_of(symbol) else {
                     return Value::Unknown;
@@ -469,6 +535,25 @@ impl Settler<'_, '_> {
         self.has_lost_callback |= loses_some;
     }
 
+    fn convert(&mut self, value: &Value) {
+        let Value::Object(id) = value else {
+            return;
+        };
+        let object = &self.objects[id.0];
+        let is_method = |key: &[u8]| matches!(key, b"toString" | b"valueOf");
+        let is_object = |element: &Value| matches!(element, Value::Object(_));
+        if object.properties.iter().any(|it| is_method(&it.0))
+            || object.elements.iter().any(is_object)
+        {
+            self.lose(value);
+        }
+    }
+
+    fn to_key(&mut self, value: &Value) -> Option<Rc<[u8]>> {
+        self.convert(value);
+        value.to_text()
+    }
+
     fn create(&mut self, object: Object) -> Option<Value> {
         self.pay(object.size() + 1)?;
         self.objects.push(object);
@@ -520,6 +605,8 @@ impl Settler<'_, '_> {
     }
 
     fn skip(&mut self, start: u32, end: u32) -> Option<()> {
+        let decorated = &self.identifiers.decorated_classes;
+        let start = decorated.get(&start).copied().unwrap_or(start);
         if self.holds_eval(start, end) {
             return None;
         }
@@ -544,8 +631,8 @@ impl Settler<'_, '_> {
     }
 
     fn skip_statement(&mut self, statement: StmtId) -> Option<Flow> {
-        let (start, end) = (self.hir[statement].loc.pos, self.hir[statement].loc.end);
-        self.skip(start, end)?;
+        let (start, end) = (self.hir[statement].start, self.hir[statement].loc.end);
+        self.skip(start.min(self.hir[statement].loc.pos), end)?;
         Some(Flow::Next)
     }
 
@@ -707,6 +794,9 @@ impl Settler<'_, '_> {
                 let Value::Object(id) = self.expression(expr)? else {
                     return None;
                 };
+                if self.objects[id.0].is_array {
+                    return None;
+                }
                 let keys = self.objects[id.0].keys()?;
                 let mut flow = Flow::Next;
                 for key in &keys {
@@ -829,7 +919,7 @@ impl Settler<'_, '_> {
                 joined.extend(texts.next().map_or(&[][..], |it| self.atoms.bytes(it)));
                 for substitution in hir.ids(exprs) {
                     let value = self.expression(substitution)?;
-                    match value.to_text() {
+                    match self.to_key(&value) {
                         Some(text) => joined.extend_from_slice(&text),
                         None => is_known = false,
                     }
@@ -861,24 +951,35 @@ impl Settler<'_, '_> {
             } => {
                 let object = self.expression(obj)?;
                 let index = self.expression(index)?;
-                match index.to_text() {
+                match self.to_key(&index) {
                     Some(key) => self.property(&object, &key),
                     None => Value::Unknown,
                 }
             }
-            ExprKind::Call(call) => self.call(expression, call, hir[call])?,
+            ExprKind::Call(call) => {
+                let value = self.call(expression, call, hir[call])?;
+                self.forget_effects_of_removable_call(expression, call);
+                value
+            }
             ExprKind::New(call) => {
                 let callee = self.expression(hir[call].callee)?;
                 let args = self.arguments(hir.written_args(call))?;
-                match (callee, args) {
-                    (Value::Global(Global::RegExp), Some(args)) => create_pattern(&args),
+                let value = match (callee, args) {
+                    (Value::Global(Global::RegExp), Some(args)) => {
+                        for arg in &args {
+                            self.lose(arg);
+                        }
+                        create_pattern(&args)
+                    }
                     (_, args) => {
                         for arg in args.iter().flatten() {
                             self.lose(arg);
                         }
                         Value::Unknown
                     }
-                }
+                };
+                self.forget_effects_of_removable_call(expression, call);
+                value
             }
             ExprKind::Unary {
                 op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
@@ -950,7 +1051,10 @@ impl Settler<'_, '_> {
             let prop = hir[prop];
             let key: Option<Rc<[u8]>> = match prop.key {
                 PropKey::Name(name) => Some(self.atoms.bytes(name).into()),
-                PropKey::Computed(key) => self.expression(key)?.to_text(),
+                PropKey::Computed(key) => {
+                    let key = self.expression(key)?;
+                    self.to_key(&key)
+                }
                 PropKey::None | PropKey::Private(_) => None,
             };
             let value = without_pattern(self.expression(prop.value)?);
@@ -990,6 +1094,7 @@ impl Settler<'_, '_> {
     fn unary(&mut self, op: UnOp, operand: ExprId) -> Option<Value> {
         if let UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec = op {
             let before = self.expression(operand)?;
+            self.convert(&before);
             let step = match op {
                 UnOp::PreInc | UnOp::PostInc => 1.0,
                 _ => -1.0,
@@ -1007,6 +1112,9 @@ impl Settler<'_, '_> {
             return self.skip_expression(operand);
         }
         let value = self.expression(operand)?;
+        if !matches!(op, UnOp::Not | UnOp::Void | UnOp::Typeof) {
+            self.convert(&value);
+        }
         Some(match op {
             UnOp::Not => (value.to_boolean()).map_or(Value::Unknown, |it| Value::Boolean(!it)),
             UnOp::Minus => (value.as_number()).map_or(Value::Unknown, |it| Value::Number(-it)),
@@ -1077,6 +1185,18 @@ impl Settler<'_, '_> {
                 _ => Value::Unknown,
             });
         }
+        match op {
+            BinOp::EqEqEq | BinOp::NotEqEq => {}
+            BinOp::EqEq | BinOp::NotEq
+                if matches!((left, right), (Value::Object(_), Value::Object(_))) => {}
+            BinOp::In => self.convert(left),
+            BinOp::Instanceof if matches!(right, Value::Global(_)) => {}
+            BinOp::Instanceof => self.lose(left),
+            _ => {
+                self.convert(left);
+                self.convert(right);
+            }
+        }
         let is_created = |value: &Value| matches!(value, Value::Function(..) | Value::Pattern(_));
         let identity = |is_equal: bool| {
             if is_created(left) && is_created(right) {
@@ -1128,8 +1248,9 @@ impl Settler<'_, '_> {
                     chain: Chain::No,
                 } => {
                     let object = self.expression(obj)?;
-                    let key = self.expression(index)?.to_text();
+                    let key = self.expression(index)?;
                     let value = self.expression(value)?;
+                    let key = self.to_key(&key);
                     self.store_property(&object, key.as_deref(), &value);
                     return Some(value);
                 }
@@ -1186,6 +1307,54 @@ impl Settler<'_, '_> {
                 self.lose(object);
                 self.lose(value);
             }
+        }
+    }
+
+    fn forget_effects_of_removable_call(&mut self, expression: ExprId, call: CallId) {
+        let hir = self.hir;
+        let mut args = hir.ids(hir.written_args(call));
+        let is_removable = hir[call].is_pure
+            || (self.names_global(hir[call].callee) && !args.all(|it| self.has_no_effects(it)));
+        if is_removable && !self.evals.calls.contains(&call) {
+            let (start, end) = (hir[expression].pos, hir[expression].end);
+            self.lose_callbacks(start, end);
+            self.lose_names(start, end);
+        }
+    }
+
+    fn names_global(&self, callee: ExprId) -> bool {
+        let hir = self.hir;
+        let mut root = hir.skip_type_assertions(callee);
+        while let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } = hir[root].kind {
+            root = hir.skip_type_assertions(obj);
+        }
+        match hir[root].kind {
+            ExprKind::Ident(_) => self.bound.binding(root) == Binding::Free,
+            ExprKind::ImportMeta => true,
+            _ => false,
+        }
+    }
+
+    fn has_no_effects(&self, expression: ExprId) -> bool {
+        let hir = self.hir;
+        match hir[hir.skip_type_assertions(expression)].kind {
+            ExprKind::Ident(_)
+            | ExprKind::Null
+            | ExprKind::True
+            | ExprKind::False
+            | ExprKind::Number(_)
+            | ExprKind::String(_)
+            | ExprKind::Regex { .. }
+            | ExprKind::Fn(_) => true,
+            ExprKind::Template { exprs } => hir.ids(exprs).all(|it| self.has_no_effects(it)),
+            ExprKind::Dot { obj, .. } => self.has_no_effects(obj),
+            ExprKind::Index { obj, index, .. } => {
+                self.has_no_effects(obj) && self.has_no_effects(index)
+            }
+            ExprKind::Binary { left, right, .. } => {
+                self.has_no_effects(left) && self.has_no_effects(right)
+            }
+            _ => false,
         }
     }
 
@@ -1260,7 +1429,8 @@ impl Settler<'_, '_> {
                 chain: Chain::No,
             } => {
                 let object = self.expression(obj)?;
-                (Some(object), self.expression(index)?.to_text())
+                let index = self.expression(index)?;
+                (Some(object), self.to_key(&index))
             }
             _ => (None, None),
         };
@@ -1290,7 +1460,12 @@ impl Settler<'_, '_> {
                     return Some(Value::String(text));
                 }
             }
-            (Value::Global(Global::RegExp), Some(args)) => return Some(create_pattern(args)),
+            (Value::Global(Global::RegExp), Some(args)) => {
+                for arg in args {
+                    self.lose(arg);
+                }
+                return Some(create_pattern(args));
+            }
             _ => {}
         }
         for arg in args.iter().flatten() {
@@ -1324,6 +1499,7 @@ impl Settler<'_, '_> {
         if !is_followed {
             return Some(None);
         }
+        self.called.insert(function);
         self.pay(4)?;
         self.depth += 4;
         if self.depth >= MAX_DEPTH {
@@ -1356,6 +1532,14 @@ impl Settler<'_, '_> {
         name: &[u8],
         args: &[Value],
     ) -> Option<Option<Value>> {
+        let holder = match receiver {
+            Value::String(_) => BuiltinId::StringPrototype,
+            _ => BuiltinId::ArrayPrototype,
+        };
+        let method = table::find_name(name).and_then(|name| table::own_member(holder, name));
+        if !method.is_some_and(table::is_locked) {
+            return Some(None);
+        }
         match receiver {
             Value::String(text) => {
                 let value = match name {

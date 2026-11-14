@@ -243,7 +243,6 @@ dependencies = [
  "bun_sys",
  "bun_tar",
  "bun_wyhash",
- "scopeguard",
  "thiserror",
 ]
 
@@ -558,7 +557,6 @@ dependencies = [
  "bun_css_derive",
  "bun_io",
  "bun_paths",
- "bun_ptr",
  "bun_wyhash",
  "strum",
  "thiserror",
@@ -583,7 +581,6 @@ dependencies = [
  "bun_core",
  "bun_css",
  "bun_jsc",
- "bun_ptr",
 ]
 
 [[package]]
@@ -645,7 +642,6 @@ dependencies = [
  "bun_dispatch",
  "bun_dotenv",
  "bun_io",
- "bun_paths",
  "bun_ptr",
  "bun_sys",
  "bun_threading",
@@ -906,7 +902,6 @@ dependencies = [
  "bun_options_types",
  "bun_paths",
  "bun_sys",
- "scopeguard",
 ]
 
 [[package]]
@@ -1910,6 +1905,7 @@ dependencies = [
  "bun_jsc",
  "bun_options_types",
  "bun_paths",
+ "bun_removable_features",
  "bun_sourcemap",
  "bun_wyhash",
 ]
@@ -1985,7 +1981,6 @@ dependencies = [
  "bun_event_loop",
  "bun_io",
  "bun_jsc",
- "bun_opaque",
  "bun_ptr",
  "bun_sha_hmac",
  "bun_sql",

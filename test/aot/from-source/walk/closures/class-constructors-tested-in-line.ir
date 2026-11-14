@@ -1,7 +1,8 @@
 # -- source: main.mjs
 # const Named = B => class extends B { name() { return "n" + this.id; } };
 # class Base { constructor(id) { this.id = id; } }
-# class P extends Named(Base) {}
+# const given = JSON.parse("0") ? class { constructor(id) { this.id = -id; } } : Base;
+# class P extends Named(given) {}
 # function run(turns) { let n = 0; for (let i = 0; i < turns; i++) n += new P(i).id; return n; }
 # print(run(4), run(0));
 # -- end of source

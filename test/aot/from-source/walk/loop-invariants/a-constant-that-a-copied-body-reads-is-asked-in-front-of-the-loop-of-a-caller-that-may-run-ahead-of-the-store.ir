@@ -4,8 +4,8 @@
 # RUN: walk f1 mechanisms=all
 # CHECK: absent|{{*}} = GetModuleVariable {{*}}returnsRawSlot
 # CHECK-NEXT: = TypeTest {{*}}testedType=absent
-# CHECK: = Narrowed
-# CHECK-NEXT: = Unbox
+# CHECK: [[held]]: L0 @JSValue = Narrowed
+# CHECK: = Unbox [[held]]
 # CHECK-NEXT: = GetSlot {{*}}key="width"
 # -- source: a-constant-that-a-copied-body-reads-is-asked-in-front-of-the-loop-of-a-caller-that-may-run-ahead-of-the-store.cjs
 # "use strict";

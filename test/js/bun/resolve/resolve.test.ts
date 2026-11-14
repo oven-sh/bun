@@ -1,7 +1,19 @@
 import { pathToFileURL } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, isLinux, isMacOS, isRoot, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
+import {
+  autoInstallTempDir,
+  bunEnv,
+  bunExe,
+  bunRun,
+  isLinux,
+  isMacOS,
+  isRoot,
+  isWindows,
+  joinP,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
 import { join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
@@ -1396,7 +1408,7 @@ describe("dangling symlinks in node_modules", () => {
   // script must live in a readable directory so the resolver reaches the
   // auto-install path at all.
   it.skipIf(!canTriggerEACCES)("auto-install init failure from an unreadable cwd is a catchable error", async () => {
-    using dir = tempDir("autoinstall-unreadable-cwd", {
+    using dir = autoInstallTempDir("autoinstall-unreadable-cwd", {
       // Dynamic specifier so the transpiler can't resolve it at build time;
       // the resolve must happen at runtime, through the auto-install path.
       "app/main.js": `

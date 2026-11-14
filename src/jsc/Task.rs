@@ -22,8 +22,7 @@ use crate::{JSGlobalObject, JsError};
 pub use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
 
 // ─── run_tasks dispatch ─────────────────────────────────────────────────────
-// The per-tick dispatch entry point is `bun_jsc::event_loop::tick_queue_with_
-// count` (declares `__bun_tick_queue_with_count`, defined in
+// The per-tick dispatch entry point is `__bun_tick_queue_with_count` (defined in
 // `bun_runtime::dispatch`). The former duplicate `__bun_run_tasks` extern +
 // `pub fn run_tasks` wrapper here had no callers and aliased the same body —
 // deleted r6 (one symbol per dispatch entry, per PORTING.md §extern-Rust-ban).
@@ -41,11 +40,11 @@ pub fn report_error_or_terminate(global: &JSGlobalObject, proof: JsError) -> Res
         return Err(Stopped);
     }
     let vm = global.bun_vm();
-    let _ = vm.as_mut().uncaught_exception(global, ex, false);
+    let _ = vm.uncaught_exception(global, ex, false);
     if vm.is_shutting_down() {
         return Ok(());
     }
-    vm.event_loop_mut().maybe_drain_microtasks()
+    vm.event_loop().maybe_drain_microtasks()
 }
 
 // The full ~96-arm `match` (previously in this file) has been hoisted to

@@ -1750,11 +1750,11 @@ mod __css_validation {
     // `*mut` (`BundledAst.css`), so we never launder a `&T` into `&mut T`.
     use crate::bundled_ast::CssCol;
 
-    pub(super) fn validate_css_import_composes(
+    pub(super) fn validate_css_import_composes<'bump>(
         this: &mut LinkerContext,
         id: usize,
-        css_asts: *mut [CssCol],
-        import_records_list: *mut [ImportRecordList<'_>],
+        css_asts: *mut [CssCol<'bump>],
+        import_records_list: *mut [ImportRecordList<'bump>],
         input_files: *mut [Source],
     ) {
         // `css_asts[id]` checked Some by caller. We only *read* the AST here;
@@ -1782,7 +1782,7 @@ mod __css_validation {
                     continue;
                 };
                 for name in compose.names.slice() {
-                    let name_v = name.v();
+                    let name_v = name.v;
                     if !other_css_ast.local_scope.contains(name_v) {
                         // Split-borrow — see `LinkerContext::log_disjoint`.
                         let _ = this.log_disjoint().add_error_fmt(
@@ -1831,12 +1831,12 @@ mod __css_validation {
     /// 2. Composing from the global scope is pretty rare
     ///
     /// We should find a way to do this without incurring performance penalties to the common cases.
-    fn validate_composes_from_properties(
+    fn validate_composes_from_properties<'bump>(
         this: &mut LinkerContext,
         index: IndexInt,
         root_css_ast: &BundlerStyleSheet,
-        import_records_list: *mut [ImportRecordList<'_>],
-        all_css_asts: *mut [CssCol],
+        import_records_list: *mut [ImportRecordList<'bump>],
+        all_css_asts: *mut [CssCol<'bump>],
     ) {
         #[derive(Default)]
         struct PropertyInFile {
@@ -1856,13 +1856,13 @@ mod __css_validation {
             properties: StringArrayHashMap<PropertyInFile>,
             stack: Vec<Frame>,
             all_import_records: *mut [ImportRecordList<'bump>],
-            all_css_asts: *mut [CssCol],
+            all_css_asts: *mut [CssCol<'bump>],
             all_symbols: &'a symbol::Map,
             all_sources: *mut [Source<'a>],
             log: &'a mut Log,
         }
 
-        impl<'a, 'bump> Visitor<'a, 'bump> {
+        impl<'a, 'bump: 'a> Visitor<'a, 'bump> {
             fn add_property_or_warn(
                 &mut self,
                 local: bun_ast::Ref,
@@ -1949,7 +1949,7 @@ mod __css_validation {
             }
 
             /// Frames only reference classes found in a CSS AST, so `idx` always has one.
-            fn css_ast(&self, idx: IndexInt) -> &'a BundlerStyleSheet {
+            fn css_ast(&self, idx: IndexInt) -> &'a BundlerStyleSheet<'bump> {
                 col_ref!(self.all_css_asts)[idx as usize]
                     .as_deref()
                     .expect("composes walk only reaches files with a CSS AST")
@@ -1998,7 +1998,7 @@ mod __css_validation {
                                         continue;
                                     };
                                     for name in compose.names.slice() {
-                                        let name_v = name.v();
+                                        let name_v = name.v;
                                         let Some(other_name) = other_ast.local_scope.get(name_v)
                                         else {
                                             continue;
@@ -2017,7 +2017,7 @@ mod __css_validation {
                             } else {
                                 // inside this file
                                 for name in compose.names.slice() {
-                                    let name_v = name.v();
+                                    let name_v = name.v;
                                     let Some(name_entry) = ast.local_scope.get(name_v) else {
                                         continue;
                                     };

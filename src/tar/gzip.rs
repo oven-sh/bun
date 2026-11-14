@@ -30,7 +30,7 @@ fn fixed_header_flags(fixed: &[u8; FIXED_HEADER_SIZE]) -> Option<u8> {
 }
 
 /// Whether `data` starts like a gzip header. The optional fields are not looked at.
-pub(crate) fn starts_like_header(data: &[u8]) -> bool {
+pub fn starts_like_header(data: &[u8]) -> bool {
     data.first_chunk::<FIXED_HEADER_SIZE>()
         .is_some_and(|fixed| fixed_header_flags(fixed).is_some())
 }

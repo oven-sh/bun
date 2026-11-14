@@ -22,7 +22,7 @@ use crate::hir::*;
 
 pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &RuntimeScopes) {
     let (hir, idents, options, atoms) = (input.hir, input.idents, input.options, input.atoms);
-    let arguments_variables = find_arguments_variables(hir, input.bound, scopes);
+    let arguments_variables = find_arguments_variables(hir, input.bound, scopes, atoms);
     for &(_, binding) in &arguments_variables {
         if let Binding::Arguments(CodeUnit::Function(function)) = binding {
             input.bound.runtime.function_flags[function.idx()] |=
@@ -40,7 +40,9 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
             hir,
             bound,
             scopes,
+            atoms,
             dynamic,
+            global_code: hir.global_code(),
         },
         idents,
         options,
@@ -64,6 +66,7 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
     pass.resolve_idents();
     pass.collect_eval_scopes();
     pass.resolve_hoisted_vars();
+    pass.resolve_vars_of_scripts();
     let initialized_bindings = &mut pass.references.initialized_bindings;
     initialized_bindings.extend(arguments_variables);
     pass.find_redeclared_commonjs_variables();
@@ -151,6 +154,7 @@ fn find_arguments_variables(
     hir: &File<'_>,
     bound: &BoundBuilder,
     scopes: &RuntimeScopes,
+    atoms: &dyn Intern,
 ) -> Vec<(PatId, Binding)> {
     let name = known::arguments;
     let mut variables = Vec::new();
@@ -161,7 +165,9 @@ fn find_arguments_variables(
         hir,
         bound,
         scopes,
+        atoms,
         dynamic: DynamicScopes::default(),
+        global_code: hir.global_code(),
     };
     for scope in bound.scopes.iter() {
         let Some(local) = bound.find_in_table(scope.locals, name) else {
@@ -292,7 +298,10 @@ impl ReferencePass<'_, '_> {
             if dynamic_scope.is_some() && self.lookup.find_container(found.binding).is_some() {
                 dynamic_scope = self.lookup.find_with_inside(scope, found.scope);
             }
-            if self.lookup.is_behind_eval_variables(&found, hir[ident].pos) {
+            if self
+                .lookup
+                .is_behind_eval_variables(&found, name, hir[ident].pos)
+            {
                 insert_bit(
                     &mut self.references.idents_behind_eval_variables,
                     ident.idx(),
@@ -342,6 +351,31 @@ impl ReferencePass<'_, '_> {
             if binding != Binding::Symbol(self.declared_var_symbol(pat)) {
                 self.references.initialized_bindings.push((pat, binding));
             }
+        }
+    }
+
+    /// The variables of a script are properties of the global object.
+    fn resolve_vars_of_scripts(&mut self) {
+        let (hir, bound) = (self.lookup.hir, self.lookup.bound);
+        let mut codes = self.lookup.global_code.iter();
+        if codes.all(|it| it.1 != GlobalCode::Script) {
+            return;
+        }
+        for (index, decl) in hir.var_decls.iter().enumerate() {
+            let stmt = bound.var_stmt[index];
+            if decl.kind != VarKind::Var
+                || stmt.is_none()
+                || !hir.is_in_known_evaluation(decl.loc.pos)
+            {
+                continue;
+            }
+            let scope = bound.stmt_scope[stmt.idx()];
+            for_each_name(hir, decl.pat, |pat, name| {
+                if self.lookup.find_binding(scope, name) == Binding::Free {
+                    let bindings = &mut self.references.initialized_bindings;
+                    bindings.push((pat, Binding::Free));
+                }
+            });
         }
     }
 

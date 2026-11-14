@@ -1,4 +1,4 @@
-# what arrives is a generator or an object with a next of its own: nothing is proven of it, and a generator is what is written. The step is tried all the same, and asks for the class too: the whole question, IsUnmodifiedGenerator, which is the one that is not printed
+# what arrives is a generator or an object with a next of its own: nothing is proven of it, and a generator is what is written. Its class, and whether it is an unmodified generator, are asked in front of the step
 # -- source: next-written-by-hand-on-what-is-only-expected-to-be-a-generator-asks-for-the-class.ts
 # declare function sink(...values: unknown[]): void;
 # function* count(n: number): Generator<number, string, number | undefined> { let sum = 0; for (let i = 0; i < n; i++) sum += (yield i) ?? 0; return "sum " + sum; }
@@ -10,8 +10,9 @@
 # RUN: walk f2 mechanisms=all
 # CHECK-LABEL: code f2:Body
 # CHECK: b0([[walk]]: L{{*}}|Generator 
-# CHECK: = StepGenerator [[walk]], 
-# RUN(WHOLE): walk f2 mechanisms=all
-# WHOLE-NOT: check=IsUnmodified 
+# CHECK: [[is]]: {{*}} = TypeTest [[walk]] testedType=Generator
+# CHECK: [[generator]]: {{*}} = Narrowed [[walk]], [[is]]
+# CHECK: = IsUnmodifiedGenerator [[generator]]
+# CHECK: = StepGenerator [[generator]], {{*}}check=IsUnmodified
 # RUN(NONE): walk f2 mechanisms=all
 # NONE-NOT: = NewObject

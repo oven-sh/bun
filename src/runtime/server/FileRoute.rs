@@ -92,7 +92,7 @@ impl FileRoute {
         if self.has_last_modified_header {
             if let Some(last_modified) = self.headers.get(b"last-modified") {
                 let string = StringView::borrow_utf8(last_modified);
-                let global = VirtualMachine::get().as_mut().global();
+                let global = VirtualMachine::get().global();
                 let date_f64 = bun_string_jsc::parse_date(&string, global)?;
                 if !date_f64.is_nan() && date_f64.is_finite() {
                     return Ok(Some(date_f64 as u64));

@@ -3046,13 +3046,7 @@ impl<'a> Transpiler<'a> {
             opts.css_modules = Some(bun_css::CssModuleConfig::default());
         }
 
-        // SAFETY: `self.arena` is the per-transpile arena;
-        // the CSS AST it backs is dropped before this fn returns
-        // (only `result.code: Vec<u8>` escapes, which is
-        // global-heap). `'static` matches the crate-wide erasure
-        // on `StyleSheet` (see the css_parser.rs
-        // `'bump`-threading note).
-        let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref::<Arena>(self.arena) };
+        let alloc = self.arena;
 
         let (mut sheet, extra) = match bun_css::StyleSheet::<bun_css::DefaultAtRule>::parse(
             alloc,

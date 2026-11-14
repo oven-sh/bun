@@ -111,7 +111,7 @@ impl File {
     pub(crate) fn handle(self) -> Fd {
         self.0
     }
-    /// `bun_sys::File::stderr()` via the sink (T0-safe).
+    /// The process's stderr, via the sink (T0-safe).
     #[inline]
     pub fn stderr() -> Self {
         output_sink().stderr()

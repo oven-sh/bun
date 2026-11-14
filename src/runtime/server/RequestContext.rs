@@ -367,11 +367,11 @@ fn as_response(value: JSValue) -> Option<*mut Response> {
 
 /// Reports an error that no `error()` handled. The server keeps running, so a
 /// Worker prints it like the main thread does. Its own handler ends the Worker.
-fn report_unhandled_error(vm: &mut jsc::VirtualMachine, global: &JSGlobalObject, value: JSValue) {
-    if vm.worker.is_some() {
+fn report_unhandled_error(vm: &jsc::VirtualMachine, global: &JSGlobalObject, value: JSValue) {
+    if vm.worker.get().is_some() {
         jsc::VirtualMachine::default_on_unhandled_rejection(vm, global, value);
     } else {
-        (vm.on_unhandled_rejection)(vm, global, value);
+        (vm.on_unhandled_rejection.get())(vm, global, value);
     }
 }
 
@@ -617,7 +617,7 @@ where
         if self.is_async() {
             return Ok(());
         }
-        server.vm().as_mut().event_loop_mut().drain_microtasks()
+        server.vm().event_loop().drain_microtasks()
     }
 
     /// Runs `on_abort` itself (may free `self`) if a nested event loop run already closed the socket.
@@ -1053,7 +1053,7 @@ where
             };
             unhandled = err;
         }
-        let vm = global.bun_vm().as_mut();
+        let vm = global.bun_vm();
         report_unhandled_error(vm, global, unhandled);
     }
 
@@ -1103,7 +1103,7 @@ where
             if !value.is_empty_or_undefined_or_null()
                 && let Some(server) = self.server.get()
             {
-                server.vm().as_mut().run_error_handler(value, None);
+                server.vm().run_error_handler(value, None);
             }
             self.close_incomplete_stream();
             return;
@@ -2319,7 +2319,7 @@ where
                             && let Some(server) = this.server.get()
                             && !err.is_empty_or_undefined_or_null()
                         {
-                            server.vm().as_mut().run_error_handler(err, None);
+                            server.vm().run_error_handler(err, None);
                         }
                         let mut readable_ref = this
                             .response_body_readable_stream_ref
@@ -2439,7 +2439,7 @@ where
 
         if self.end_request_streaming().unwrap_or(true) {
             // TODO: properly propagate exception upwards
-            self.server().vm().as_mut().drain_microtasks();
+            self.server().vm().drain_microtasks();
         }
     }
 
@@ -3020,14 +3020,13 @@ where
         }
         let server = self.server();
         if !DEBUG_MODE || !resp_writable || server.dev_server().is_none() {
-            server.vm().as_mut().run_error_handler(err, None);
+            server.vm().run_error_handler(err, None);
             return false;
         }
 
         let mut exception_list: jsc::ExceptionList = Vec::new();
         server
             .vm()
-            .as_mut()
             .run_error_handler(err, Some(&mut exception_list));
 
         let bb = DevErrorPage {
@@ -3633,15 +3632,15 @@ where
         };
         let server = &*server;
         let global_this = server.global_this();
-        // `ServerLike::vm()` is the process-static VM `BackRef`; `as_mut()` is
-        // the single audited `&mut VirtualMachine` accessor.
-        let vm = server.vm().as_mut();
+        let vm = server.vm();
         if DEBUG_MODE {
             let mut exception_list: jsc::ExceptionList = Vec::new();
-            let prev_exception_list = vm.on_unhandled_rejection_exception_list;
-            vm.on_unhandled_rejection_exception_list = Some(NonNull::from(&mut exception_list));
+            let prev_exception_list = vm.on_unhandled_rejection_exception_list.get();
+            vm.on_unhandled_rejection_exception_list
+                .set(Some(NonNull::from(&mut exception_list)));
             report_unhandled_error(vm, global_this, value);
-            vm.on_unhandled_rejection_exception_list = prev_exception_list;
+            vm.on_unhandled_rejection_exception_list
+                .set(prev_exception_list);
 
             let log = vm.log_mut().unwrap();
             bun_core::pretty_errorln!(
@@ -3856,7 +3855,6 @@ where
             {
                 server
                     .vm()
-                    .as_mut()
                     .run_error_handler(global_this.take_exception(err), None);
             }
             // `cookies` drops here, releasing the ref taken in `set_cookies`.

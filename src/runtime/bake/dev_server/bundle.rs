@@ -375,9 +375,8 @@ impl DevServer {
         // the move of `heap` into `bv2.graph.heap` and lives exactly as long
         // as `bv2`.
         let event_loop: bun_bundler::linker_context_mod::EventLoop =
-            // SAFETY: `self.vm().event_loop()` is the live per-thread `jsc::EventLoop`.
             Some(::core::ptr::NonNull::from(heap.alloc(
-                bun_event_loop::AnyEventLoop::js(self.vm().event_loop().cast()),
+                bun_event_loop::AnyEventLoop::js(self.vm().event_loop_ptr()),
             )));
 
         let heap_ptr: *const bun_alloc::Arena = &raw const *heap;

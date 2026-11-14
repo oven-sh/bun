@@ -4,7 +4,7 @@ use crate::webcore::ReadableStream;
 use bun_io::BufferedReader;
 #[cfg(unix)]
 use bun_io::FilePollFlag;
-use bun_io::Loop as AsyncLoop;
+use bun_io::LoopRef;
 use bun_io::max_buf::MaxBuf;
 #[cfg(unix)]
 use bun_io::pipe_reader::PosixFlags;
@@ -101,7 +101,7 @@ impl PipeReader {
     }
 
     pub(crate) fn create(
-        event_loop: NonNull<EventLoop>,
+        event_loop: &EventLoop,
         process: NonNull<Subprocess<'static>>,
         result: StdioResult,
         limit: Option<NonNull<MaxBuf>>,
@@ -110,8 +110,10 @@ impl PipeReader {
             ref_count: RefCount::init(),
             process: Some(ParentRef::from(process)),
             reader: IOReader::init::<PipeReader>(),
-            event_loop: event_loop.into(),
-            event_loop_handle: bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>()),
+            event_loop: bun_ptr::BackRef::new(event_loop),
+            event_loop_handle: bun_jsc::EventLoopHandle::init(
+                core::ptr::from_ref(event_loop).cast_mut().cast(),
+            ),
             stdio_result: result,
             state: State::Pending,
         });
@@ -145,13 +147,14 @@ impl PipeReader {
     pub(crate) fn start(
         &mut self,
         process: NonNull<Subprocess<'static>>,
-        event_loop: NonNull<EventLoop>,
+        event_loop: &EventLoop,
         lazy: bool,
     ) {
         self.r#ref();
         self.process = Some(ParentRef::from(process));
-        self.event_loop = event_loop.into();
-        self.event_loop_handle = bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>());
+        self.event_loop = bun_ptr::BackRef::new(event_loop);
+        self.event_loop_handle =
+            bun_jsc::EventLoopHandle::init(core::ptr::from_ref(event_loop).cast_mut().cast());
         #[cfg(windows)]
         {
             if lazy {
@@ -363,23 +366,13 @@ impl PipeReader {
     }
 
     #[cfg(unix)]
-    fn loop_(&self) -> *mut AsyncLoop {
+    fn loop_(&self) -> LoopRef {
         self.event_loop.native_loop()
     }
 
     #[cfg(windows)]
-    fn loop_(&self) -> *mut AsyncLoop {
-        // `event_loop.virtual_machine` is set by the time a PipeReader is
-        // created. The VM is the per-thread singleton owning `event_loop`, so
-        // the `BackRef` invariant (pointee outlives holder) trivially holds.
-        let vm = self
-            .event_loop
-            .virtual_machine
-            .map(bun_ptr::BackRef::from)
-            .expect("event_loop.virtual_machine");
-        let uws = vm.uws_loop();
-        // SAFETY: uws loop pointer is live for the VM lifetime.
-        unsafe { (*uws).uv_loop() }
+    fn loop_(&self) -> LoopRef {
+        self.event_loop.vm_ref().uws_loop().uv_loop()
     }
 }
 
@@ -400,6 +393,6 @@ bun_io::impl_buffered_reader_parent! {
     has_on_read_chunk = false;
     on_reader_done  = |this| (*this).on_reader_done();
     on_reader_error = |this, err| (*this).on_reader_error(err);
-    loop_           = |this| (*this).loop_().cast();
+    loop_           = |this| (*this).loop_();
     event_loop      = |this| (*this).event_loop_handle.as_event_loop_ctx();
 }

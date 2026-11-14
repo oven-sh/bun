@@ -2073,7 +2073,7 @@ test.concurrent("a script that imports a missing package reports two workspaces 
     write(join(packageDir, "packages", "two", "package.json"), JSON.stringify({ name: "same" })),
   ]);
   await using proc = spawn({
-    cmd: [bunExe(), "index.ts"],
+    cmd: [bunExe(), "--install=fallback", "index.ts"],
     cwd: join(packageDir, "packages", "app"),
     stdout: "pipe",
     stderr: "pipe",

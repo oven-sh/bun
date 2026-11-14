@@ -183,8 +183,9 @@ fn find_without_plugins(
     unsafe extern "C" {
         safe fn Bun__AOT__setPluginsSilent(are_silent: bool);
     }
-    // SAFETY: the VM of this thread is live, and nothing else holds its resolver's options here.
-    let options = unsafe { &mut (*global.bun_vm_ptr()).transpiler.resolver.opts };
+    let transpiler = global.bun_vm().transpiler.as_ptr();
+    // SAFETY: nothing else holds the resolver's options here.
+    let options = unsafe { &mut (*transpiler).resolver.opts };
     let installs = core::mem::replace(
         &mut options.global_cache,
         bun_resolver::GlobalCache::disable,
@@ -199,7 +200,7 @@ fn find_without_plugins(
     );
     Bun__AOT__setPluginsSilent(false);
     // SAFETY: as above.
-    unsafe { (*global.bun_vm_ptr()).transpiler.resolver.opts.global_cache = installs };
+    unsafe { (*transpiler).resolver.opts.global_cache = installs };
     match found {
         Ok(Ok(found)) => Some(found),
         _ => None,
@@ -1038,7 +1039,7 @@ pub extern "C" fn Bun__AOT__isLoadedSynchronously(
 ) -> bool {
     let vm = global.bun_vm();
     vm.is_test_entry_point(path)
-        || !vm.transpiler_store.enabled
+        || !vm.transpiler_store.enabled.get()
         || crate::node_compile_cache::is_enabled()
 }
 
@@ -1048,8 +1049,8 @@ pub extern "C" fn Bun__AOT__setResolvesForCodeFromDisk(
     global: &JSGlobalObject,
     value: bool,
 ) -> bool {
-    let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
-    core::mem::replace(&mut resolver.resolves_for_code_from_disk, value)
+    (global.bun_vm().transpiler)
+        .with_mut(|t| core::mem::replace(&mut t.resolver.resolves_for_code_from_disk, value))
 }
 
 /// BunCompiledModules.cpp

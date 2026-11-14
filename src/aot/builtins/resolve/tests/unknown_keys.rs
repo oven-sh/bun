@@ -323,6 +323,21 @@ fn a_key_that_is_a_number_asks_nothing() {
     }
 }
 
+#[test]
+fn a_variable_that_holds_the_global_object_brings_the_members_of_namespaces() {
+    for (source, is_held) in [
+        ("const g = globalThis; f(() => g.parseInt);", true),
+        ("const g = self;", true),
+        ("f(() => globalThis.parseInt);", false),
+        ("const { Reflect: r } = globalThis;", false),
+    ] {
+        with_case(PROGRAM, source, |case| {
+            let is_found = holds_code_of(case.resolved.uses(), BuiltinId::ReflectGet);
+            assert_eq!(is_found, is_held, "{source}");
+        });
+    }
+}
+
 const ONLY_CALL_BUILT_INS_WITH_WRITTEN_PRIMITIVES: &[&str] = &[
     "",
     "console.log(1);",
@@ -569,7 +584,7 @@ fn tested_evaluator_evaluates_nothing() {
 fn function_constructor_may_evaluate_source() {
     let may_evaluate = |source: &str| {
         with_case(PROGRAM, source, |case| {
-            case.resolved.may_call_unnamed_evaluator()
+            case.resolved.may_call_unnamed_evaluator(case.hir)
         })
     };
     for source in [

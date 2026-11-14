@@ -4,7 +4,7 @@ use super::direct_evals::DynamicScopes;
 use super::namespace_exports::is_block_binding;
 use super::queries::{find_symbol, is_among_parameters};
 use super::{Binding, CodeUnit, CommonJsVariable, RuntimeScopes};
-use crate::atom::{Atom, known};
+use crate::atom::{Atom, Intern, known};
 use crate::bind::{
     BoundBuilder, Scope, ScopeId, ScopeKind, SymFlags, SymbolId, bit_of_nested_name,
 };
@@ -23,7 +23,9 @@ pub(super) struct Lookup<'a, 's> {
     pub hir: &'a File<'s>,
     pub bound: &'a BoundBuilder,
     pub scopes: &'a RuntimeScopes,
+    pub atoms: &'a dyn Intern,
     pub dynamic: DynamicScopes,
+    pub global_code: Vec<(FnId, GlobalCode)>,
 }
 
 #[derive(Copy, Clone)]
@@ -86,6 +88,7 @@ impl Lookup<'_, '_> {
             !dynamic.scopes.is_empty() || !dynamic.parameter_eval_scopes.is_empty();
         let may_be_appended = may_hold_name(&self.scopes.appended_names, name);
         if !has_eval_scopes
+            && self.global_code.is_empty()
             && !may_be_appended
             && name != known::arguments
             && !may_hold_name(&self.bound.nested_names, name)
@@ -122,6 +125,7 @@ impl Lookup<'_, '_> {
             if has_eval_scopes
                 && dynamic_scope.is_none()
                 && self.has_visible_eval_variables(at, from, pos)
+                && self.dynamic.may_declare(self.atoms, at, name)
             {
                 dynamic_scope = match from {
                     ScopeKind::Param(_) => inner,
@@ -129,6 +133,9 @@ impl Lookup<'_, '_> {
                 };
             }
             from = scope.kind;
+            if self.global_code_of(scope.kind).is_some() {
+                break;
+            }
             inner = at;
             at = match scope.kind {
                 ScopeKind::ClassDecorators(_) => self.bound.runtime_parent_scope(self.hir, at),
@@ -141,6 +148,17 @@ impl Lookup<'_, '_> {
             entered_from: from,
             dynamic_scope,
         }
+    }
+
+    #[inline]
+    pub(super) fn global_code_of(&self, scope: ScopeKind) -> Option<GlobalCode> {
+        let ScopeKind::Fn(function) = scope else {
+            return None;
+        };
+        let found = self
+            .global_code
+            .binary_search_by_key(&function.0, |it| it.0.0);
+        found.ok().map(|index| self.global_code[index].1)
     }
 
     pub(super) fn find_container(&self, binding: Binding) -> Option<SymbolId> {
@@ -167,12 +185,15 @@ impl Lookup<'_, '_> {
             return true;
         }
         has_bit(&self.dynamic.scopes, at.idx())
+            && !self.dynamic.is_in_only_eval(self.hir, at, pos)
             && !matches!(self.bound.scopes[at.idx()].kind, ScopeKind::Fn(function)
                 if is_among_parameters(self.hir, function, from, pos))
     }
 
-    pub(super) fn is_behind_eval_variables(&self, found: &Found, pos: u32) -> bool {
-        if !has_bit(&self.dynamic.scopes, found.scope.idx()) {
+    pub(super) fn is_behind_eval_variables(&self, found: &Found, name: Atom, pos: u32) -> bool {
+        if !has_bit(&self.dynamic.scopes, found.scope.idx())
+            || !self.dynamic.may_declare(self.atoms, found.scope, name)
+        {
             return false;
         }
         let ScopeKind::Fn(function) = self.bound.scopes[found.scope.idx()].kind else {
@@ -195,7 +216,11 @@ impl Lookup<'_, '_> {
         if let Some(local) = bound.find_in_table(scope.locals, name)
             && let Some(binding) = self.local_binding(scope.kind, from, name, local)
         {
-            return Some(binding);
+            let is_of_script = self.global_code_of(scope.kind) == Some(GlobalCode::Script);
+            return match is_of_script && is_global_of_script(self.hir, self.bound, local) {
+                true => Some(Binding::Free),
+                false => Some(binding),
+            };
         }
         if may_be_appended
             && is_appended_visible(from)
@@ -303,6 +328,9 @@ impl Lookup<'_, '_> {
 
     fn find_arguments_object(&self, kind: ScopeKind) -> Option<Binding> {
         match kind {
+            ScopeKind::Fn(_) if self.global_code_of(kind).is_some_and(GlobalCode::is_script) => {
+                Some(Binding::Free)
+            }
             ScopeKind::Fn(f) if self.bound.has_arguments(self.hir, f) => {
                 Some(Binding::Arguments(CodeUnit::Function(f)))
             }
@@ -312,6 +340,17 @@ impl Lookup<'_, '_> {
             _ => None,
         }
     }
+}
+
+/// `local` is declared at the top of a script.
+pub(super) fn is_global_of_script(hir: &File<'_>, bound: &BoundBuilder, local: SymbolId) -> bool {
+    let mut decls = bound.symbols[local.idx()].decls.iter();
+    decls.any(|&decl| {
+        matches!(
+            declaration_kind(hir, bound, decl),
+            DeclarationKind::Var | DeclarationKind::TopLevelFunction
+        )
+    })
 }
 
 pub(super) fn is_appended_visible(from: ScopeKind) -> bool {

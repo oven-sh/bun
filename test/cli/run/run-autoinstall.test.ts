@@ -9,7 +9,7 @@ import {
   isLinux,
   isWindows,
   runCommandMaxRSS,
-  tempDir,
+  autoInstallTempDir as tempDir,
   tls,
   unprivilegedSpawnOptions,
 } from "harness";

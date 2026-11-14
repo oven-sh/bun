@@ -1,5 +1,4 @@
 // A field that a turn steps more than once is the integer that its slot took: the next step, and the position, go on from it.
-// STATISTIC: StepsFromIntegersOfSlots >= 2
 class Stack {
   items = new Int32Array(64);
   list: number[] = new Array(64).fill(0);

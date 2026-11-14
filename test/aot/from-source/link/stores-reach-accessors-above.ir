@@ -1,0 +1,24 @@
+# -- source: stores-reach-accessors-above.js
+# const proto = { inspect() { return 1; } };
+# function access(target, inner, name) { target.__defineGetter__(name, function () { return this[inner][name]; }); target.__defineSetter__(name, function (value) { this[inner][name] = value; }); }
+# access(proto, "data", "count"); access(proto, "data", "total");
+# function create() { const made = Object.create(proto); made.data = { count: 1, total: 2 }; return made; }
+# const made = create();
+# const shared = { configurable: true, get: undefined, set: undefined };
+# function proxy(target, key) { shared.get = function () { return this.held[key]; }; shared.set = function (value) { this.held[key] = value; }; Object.defineProperty(target, key, shared); }
+# class Model { constructor(held) { this.held = held; for (const key of Object.keys(held)) proxy(this, key); } }
+# const model = new Model({ width: 1, height: 2 });
+# class Plain { constructor() { this.first = 1; } }
+# const plain = new Plain();
+# plain.late = 2;
+# let sum = 0;
+# for (let k = 0; k < 20; k++) { made.count = k & 7; model.width = k & 3; sum += made.count + made.total + model.width + model.height + plain.late; }
+# print(sum, made.data.count, model.held.width);
+# -- end of source
+# A store behind the construction may reach an accessor that __defineSetter__ or a shared descriptor defines, on the object or above it: the layout appends no field for the name.
+# RUN(LINK): link fields mechanisms=all
+# LINK-NOT: "count" appended
+# LINK-NOT: "width" appended
+# LINK: "late" appended
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 212 3 3

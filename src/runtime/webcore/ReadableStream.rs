@@ -555,7 +555,7 @@ impl ReadableStream {
                     global_this: Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
                     context: FileReader {
                         event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
-                            cx.vm().as_mut().event_loop().cast(),
+                            cx.vm().event_loop_ptr(),
                         )),
                         start_offset: Some(blob.offset.get() as usize),
                         max_size: if blob.size.get() != webcore::blob::MAX_SIZE {
@@ -598,7 +598,7 @@ impl ReadableStream {
             global_this: Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
             context: FileReader {
                 event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
-                    cx.vm().as_mut().event_loop().cast(),
+                    cx.vm().event_loop_ptr(),
                 )),
                 ..Default::default()
             },
@@ -633,7 +633,7 @@ impl ReadableStream {
             global_this: Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
             context: FileReader {
                 event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
-                    cx.vm().as_mut().event_loop().cast(),
+                    cx.vm().event_loop_ptr(),
                 )),
                 buffered: bun_jsc::JsCell::new(bytes),
                 read_error: bun_jsc::JsCell::new(Some(err)),

@@ -1,4 +1,4 @@
-// `delete` in a context over a Proxy leaves the property. Over an object, an instance, an array or a function it takes the property away.
+// `delete` in a context over a Proxy, an object, an instance, an array or a function takes the property away.
 const vm = require("node:vm");
 class Sandbox {
   counter = 1;

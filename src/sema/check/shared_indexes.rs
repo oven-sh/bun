@@ -61,6 +61,11 @@ impl<'s> Checker<'_, 's> {
     }
 
     pub(super) fn shared_exprs_by_kind(&self, file: FileId) -> Arc<ExprsByKind> {
+        for (of, index) in self.exprs_by_kind.iter().flatten() {
+            if *of == file {
+                return Arc::clone(index);
+            }
+        }
         let create = || Arc::new(ExprsByKind::new(self.hir(file)));
         match self.indexes_of_parts(file) {
             Some(indexes) => Arc::clone(indexes.exprs_by_kind.get_or_init(create)),

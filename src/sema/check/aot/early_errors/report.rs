@@ -48,7 +48,7 @@ impl Checker<'_, '_> {
         if !hir.known_evaluations.is_empty() {
             let end = hir.written_text_end();
             let (written, evaluated): (Vec<_>, Vec<_>) =
-                found.into_iter().partition(|d| d.start < end);
+                found.into_iter().partition(|d| d.start <= end);
             found = written;
             hir.set_early_errors_in_evaluations(evaluated.iter().map(|d| d.start).collect());
         }

@@ -1,7 +1,8 @@
 use bun_sema::hir::EnumId;
 
-use super::{KnownMemberValues, KnownObjects};
-use crate::modules::testing::{file_named, member_named, with_test_run_graph};
+use super::{KnownMemberValues, KnownObjects, Validity};
+use crate::modules::testing::{file_named, member_named, with_graph, with_test_run_graph};
+use crate::modules::{BindInput, ModuleGraph};
 
 const STATES: &str = "export enum State { Ready = 3, Done = 4 }";
 const READS: &str = "import { State } from './states.ts'; console.log(State.Ready, State.Done);";
@@ -31,4 +32,28 @@ fn member_under_a_name_that_a_test_run_lays_on_object_prototype_is_read_off_the_
     let setter = "Object.defineProperty(Object.prototype, 'Ready', { set(value) {} });";
     assert_eq!(ask(setter), (false, true, true));
     assert_eq!(ask("Object.prototype.Ready = 1;"), (false, true, true));
+}
+
+fn validity_of_read(graph: &ModuleGraph, input: &BindInput<'_, '_>, name: &str) -> Validity {
+    let values = KnownMemberValues::default();
+    let members = KnownObjects::new(input.files, graph, &values);
+    let reader = file_named(input, "a.test.ts");
+    let read = members.find_read(reader, member_named(input, reader, name));
+    read.expect("the member is known").validity
+}
+
+#[test]
+fn foreign_members_in_test_runs() {
+    let own = "enum Own { Here = 1 } console.log(Own.Here);";
+    let reader = format!("{READS} {own}");
+    let files = [("a.test.ts", reader.as_str()), ("states.ts", STATES)];
+    with_test_run_graph(&files, |graph, input| {
+        let of_other_file = validity_of_read(graph, input, "Ready");
+        assert_eq!(of_other_file, Validity::WhileObjectIsNotHandedOn);
+        assert_eq!(validity_of_read(graph, input, "Here"), Validity::Always);
+    });
+    with_graph(&files, |graph, input| {
+        assert_eq!(validity_of_read(graph, input, "Ready"), Validity::Always);
+        assert_eq!(validity_of_read(graph, input, "Here"), Validity::Always);
+    });
 }

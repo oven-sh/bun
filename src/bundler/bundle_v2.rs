@@ -170,18 +170,12 @@ impl<'a> BundleV2<'a> {
         &*self.transpiler
     }
 
-    #[inline]
-    pub fn r#loop(&mut self) -> &mut EventLoop {
-        &mut self.linker.r#loop
-    }
-
     /// `switch (this.loop().*)` — `linker.loop` is a non-owning backref to the
     /// `AnyEventLoop` that owns this bundle pass and outlives it.
     #[inline]
-    pub(crate) fn any_loop_mut(&mut self) -> &mut bun_event_loop::AnyEventLoop {
-        // BACKREF deref centralised in `LinkerContext::any_loop_mut`.
+    pub fn any_loop(&self) -> &bun_event_loop::AnyEventLoop {
         self.linker
-            .any_loop_mut()
+            .any_loop()
             .expect("BundleV2.linker.loop must be set before plugins run")
     }
 
@@ -1221,7 +1215,7 @@ pub mod bv2_impl {
                 pub fn answer_cancelled(&mut self) {
                     self.value = ResolveValue::Err(cancelled_msg(&self.import_record.source_file));
                     // SAFETY: `bv2` outlives every request of its pass (it cannot finish before this answer).
-                    unsafe { &mut *self.bv2 }.on_resolve_async(self);
+                    unsafe { &*self.bv2 }.on_resolve_async(self);
                 }
                 pub fn run_on_js_thread(&mut self) {
                     let kind = self.import_record.kind;
@@ -1365,7 +1359,7 @@ pub mod bv2_impl {
                 pub fn answer_cancelled(&mut self) {
                     self.value = LoadValue::Err(cancelled_msg(&self.path));
                     // SAFETY: as `Resolve::answer_cancelled`.
-                    unsafe { &mut *self.bv2 }.on_load_async(self);
+                    unsafe { &*self.bv2 }.on_load_async(self);
                 }
                 pub fn run_on_js_thread(&mut self) {
                     let is_server_side = self.bake_graph() != crate::bake_types::Graph::Client;
@@ -1938,7 +1932,6 @@ pub mod bv2_impl {
             }
             // From bake where the loop running the bundle is also the loop running
             // the plugins.
-            // `any_loop_mut` centralises the BACKREF deref of `linker.r#loop`.
             let poster = self
                 .js_poster
                 .as_ref()
@@ -2067,10 +2060,10 @@ pub mod bv2_impl {
         }
     }
 
-    pub(crate) struct ReachableFileVisitor<'a> {
+    pub(crate) struct ReachableFileVisitor<'a, 'bump> {
         pub(crate) reachable: Vec<Index>,
         pub(crate) visited: DynamicBitSet,
-        pub(crate) all_import_records: &'a mut [import_record::List<'a>],
+        pub(crate) all_import_records: &'a mut [import_record::List<'bump>],
         pub(crate) all_loaders: &'a [Loader],
         pub(crate) all_urls_for_css: &'a [&'a [u8]],
         pub(crate) redirects: &'a [u32],
@@ -2102,7 +2095,7 @@ pub mod bv2_impl {
         },
     }
 
-    impl<'a> ReachableFileVisitor<'a> {
+    impl ReachableFileVisitor<'_, '_> {
         const MAX_REDIRECTS: usize = 64;
 
         // Find all files reachable from all entry points. This order should be
@@ -2463,23 +2456,12 @@ pub mod bv2_impl {
         }
 
         pub(crate) fn wait_for_parse(&mut self) {
-            // `tick_raw` (not `tick`) — `is_done` reborrows `*ctx` as
-            // `&mut BundleV2`, and `BundleV2` (via `linker.r#loop`) owns the
-            // `AnyEventLoop` slot, so holding `&mut AnyEventLoop` across the
-            // callback would be a Stacked-Borrows violation.
-            let self_ptr: *mut Self = self;
-            let any_loop = self
-                .r#loop()
-                .expect("event loop not initialized for waitForParse")
-                .as_ptr();
-            // SAFETY: `any_loop` points into `self.linker.r#loop`, valid for the
-            // duration of this call; `self_ptr` is the live `&mut self`. The
-            // callback's `'static` lifetime erasure is storage-only —
-            // `is_done` only touches by-value fields.
-            unsafe {
-                bun_event_loop::AnyEventLoop::tick_raw(any_loop, self_ptr.cast(), |ctx| {
-                    (*ctx.cast::<BundleV2<'static>>()).is_done()
-                });
+            let any_loop =
+                (self.linker.r#loop).expect("event loop not initialized for waitForParse");
+            // SAFETY: the loop outlives the bundle pass, and it is not part of `*self`.
+            let any_loop = unsafe { any_loop.as_ref() };
+            while !self.is_done() {
+                any_loop.tick(core::ptr::from_mut(self).cast());
             }
             bun_core::scoped_log!(
                 Bundle,
@@ -4771,7 +4753,7 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        pub fn on_load_async(&mut self, load: &mut jsc_api::JSBundler::Load) {
+        pub fn on_load_async(&self, load: &mut jsc_api::JSBundler::Load) {
             if let jsc_api::JSBundler::RequestOwner::Waiter(waiter) = load.owner {
                 let value = load.value.consume();
                 // SAFETY: `aot::plugins` frees no waiter before the build shuts down, and that waits
@@ -4783,7 +4765,7 @@ pub mod bv2_impl {
             // For `Bun.build` this is a Mini loop running on the bundler thread, so
             // `on_load` must land there — not on the JS plugin loop — or it will
             // mutate `graph` / allocate from `graph.heap` off-thread.
-            match self.any_loop_mut() {
+            match self.any_loop() {
                 bun_event_loop::AnyEventLoop::Js { .. } => {
                     let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(
                         std::ptr::from_mut(load).cast::<jsc_api::JSBundler::LoadAnswered>(),
@@ -4814,7 +4796,7 @@ pub mod bv2_impl {
             }
         }
 
-        pub fn on_resolve_async(&mut self, resolve: &mut jsc_api::JSBundler::Resolve) {
+        pub fn on_resolve_async(&self, resolve: &mut jsc_api::JSBundler::Resolve) {
             if let jsc_api::JSBundler::RequestOwner::Waiter(waiter) = resolve.owner {
                 let value = resolve.value.consume();
                 // SAFETY: as in `on_load_async`.
@@ -4822,7 +4804,7 @@ pub mod bv2_impl {
                 return;
             }
             // See `on_load_async` — must dispatch on the bundler's own loop.
-            match self.any_loop_mut() {
+            match self.any_loop() {
                 bun_event_loop::AnyEventLoop::Js { .. } => {
                     let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(
                         std::ptr::from_mut(resolve).cast::<jsc_api::JSBundler::ResolveAnswered>(),

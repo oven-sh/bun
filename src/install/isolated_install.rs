@@ -1574,22 +1574,17 @@ fn is_a_linkers(name: &[u8]) -> bool {
 
 /// Returns true if `move_entries_aside` would move anything out of `node_modules`.
 fn holds_a_tree(node_modules: &[u8], old_modules_name: &[u8]) -> bool {
-    use bun_sys::FdExt as _;
-
-    let Ok(dir) = sys::open_dir_for_iteration(Fd::cwd(), node_modules) else {
+    let Ok(dir) = sys::Dir::open(node_modules) else {
         return false;
     };
-    let mut iter = sys::iterate_dir(dir);
-    let mut found = false;
+    let mut iter = sys::iterate_dir(dir.fd());
     while let Ok(Some(entry)) = iter.next() {
         let name = entry.name.slice_u8();
         if is_a_linkers(name) && name != old_modules_name {
-            found = true;
-            break;
+            return true;
         }
     }
-    dir.close();
-    found
+    false
 }
 
 /// Creates `to` and moves every entry that a linker created from `from` into it. `to` may be a
@@ -1600,13 +1595,11 @@ fn move_entries_aside(
     keep_links: bool,
     log_level: LogLevel,
 ) {
-    use bun_sys::FdExt as _;
-
-    let Ok(dir) = sys::open_dir_for_iteration(Fd::cwd(), from.slice()) else {
+    let Ok(dir) = sys::Dir::open(from.slice()) else {
         return;
     };
     let _ = sys::mkdirat(Fd::cwd(), to.slice_z(), 0o755);
-    let mut iter = sys::iterate_dir(dir);
+    let mut iter = sys::iterate_dir(dir.fd());
     while let Ok(Some(entry)) = iter.next() {
         let name = entry.name.slice_u8();
         if !is_a_linkers(name) || name == to.basename() {
@@ -1642,7 +1635,6 @@ fn move_entries_aside(
         from.set_length(from_len);
         to.set_length(to_len);
     }
-    dir.close();
 }
 
 /// Moves `from` to `to`, or deletes it if it cannot be moved, because anything left of the other
@@ -2662,15 +2654,15 @@ pub(crate) fn install_isolated_packages(
         }
 
         if installer.manager().pending_task_count() > 0 {
-            let mgr: *mut PackageManager = manager_ptr;
             let mut wait = Wait {
                 installer: &mut installer,
                 err: None,
             };
-            // SAFETY: `mgr` is the same raw `manager_ptr` stored in
-            // `installer.manager`; `sleep_until` + `tick_raw` hold no
-            // `&mut PackageManager` across `Wait::is_done`.
-            unsafe { PackageManager::sleep_until(mgr, &mut wait, Wait::is_done) };
+            Output::flush();
+            while !wait.is_done() {
+                let manager = wait.installer.manager();
+                manager.event_loop.tick(core::ptr::null_mut());
+            }
 
             if let Some(err) = wait.err {
                 Output::err(err, "failed to install packages", format_args!(""));

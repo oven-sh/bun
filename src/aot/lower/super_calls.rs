@@ -14,7 +14,7 @@ use super::known_call::resolve_input;
 use super::member::PropertyName;
 use super::{FileLowering, FunctionLowering};
 use crate::builtins::id::BuiltinId;
-use crate::ir::{FunctionKey, TypeTable, ValueId, WellKnownSymbol};
+use crate::ir::{BlockId, FunctionKey, TypeTable, ValueId, WellKnownSymbol};
 use crate::known_helpers::{Helper, KnownCallee, Shape, resolve_callee};
 
 enum Holder {
@@ -299,7 +299,35 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         };
         self.set_position(hir[call].pos);
         self.file.known_helpers_lowered.calls += 1;
-        Some(self.emit_construction_by_parent(this, own, &arguments, parent, check))
+        let unexpected = self.create_block();
+        let made =
+            self.emit_construction_by_parent(this, own, &arguments, parent, check, unexpected);
+        let join = self.create_block();
+        let result = self.builder.add_parameter(join, None);
+        self.jump_with(join, &[made]);
+
+        self.continue_in(unexpected);
+        let called = match site.args.len() {
+            2 => self.emit_call_of_helper(call, site, &[this, own]),
+            _ => {
+                let list = self.emit_list_for_parent(&arguments);
+                self.emit_call_of_helper(call, site, &[this, own, list])
+            }
+        };
+        let expected = self.file.function_positions(written.constructor).this.ty;
+        let called = self.expect_type(called, expected);
+        self.jump_with(join, &[called]);
+        self.continue_in(join);
+        Some(result)
+    }
+
+    fn emit_list_for_parent(&mut self, arguments: &ArgumentsOfParent) -> ValueId {
+        match arguments {
+            ArgumentsOfParent::Values(values) => {
+                self.builder.new_array(TypeTable::ANYTHING, &[], values)
+            }
+            ArgumentsOfParent::List(list) => *list,
+        }
     }
 
     pub(super) fn lower_call_of_created_super(
@@ -355,7 +383,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         };
         let name = self.file.bound.symbol(written.name).name;
         let own = self.get_binding(Binding::Symbol(written.name), name);
-        let result = self.emit_construction_by_parent(this, own, &arguments, parent, check);
+        let unexpected = lowered.slow_path;
+        let result =
+            self.emit_construction_by_parent(this, own, &arguments, parent, check, unexpected);
         Some(self.finish_with_slow_path(lowered, result))
     }
 
@@ -401,15 +431,17 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let undefined = self.builder.undefined();
         self.builder.write_variable(answer, undefined);
         let done = self.create_block();
-        let above = self.emit_builtin_call(BuiltinId::ObjectGetPrototypeOf, &[own]);
+        let get_prototype = self.emit_builtin_itself(BuiltinId::ObjectGetPrototypeOf);
+        let above = emit_call(self, get_prototype, None, &[own]);
         self.guard_closure(above, parent.file, parent.function, done);
-        let base = self.emit_builtin_call(BuiltinId::ObjectGetPrototypeOf, &[above]);
+        let base = emit_call(self, get_prototype, None, &[above]);
         self.guard_builtin(base, BuiltinId::FunctionPrototype, done);
         let has_instance =
             PropertyName::Constant(self.file.symbol_key(WellKnownSymbol::HasInstance));
         let has_instance = self.emit_name_value(has_instance);
+        let has_own = self.emit_locked_builtin(BuiltinId::ObjectPrototypeHasOwnProperty);
         for class in [own, above] {
-            let is_own = self.emit_own_property_test(class, has_instance);
+            let is_own = emit_call(self, has_own, Some(class), &[has_instance]);
             self.go_on_if(is_own, false, done);
         }
         self.builder.write_variable(answer, above);
@@ -426,28 +458,30 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         arguments: &ArgumentsOfParent,
         parent: FunctionRef,
         check: Option<ValueId>,
+        unexpected: BlockId,
     ) -> ValueId {
-        let above = self.emit_builtin_call(BuiltinId::ObjectGetPrototypeOf, &[own]);
-        let prototype = self.emit_builtin_call(BuiltinId::ObjectGetPrototypeOf, &[this]);
-        let name = PropertyName::Constant(self.file.name_key(known::constructor));
-        let constructor = self.emit_get(prototype, name);
-
-        let otherwise = self.create_block();
-        let join = self.create_block();
-        let result = self.builder.add_parameter(join, None);
+        let get_prototype = self.emit_builtin_itself(BuiltinId::ObjectGetPrototypeOf);
+        let above = emit_call(self, get_prototype, None, &[own]);
         let new_target = self.get_new_target();
         let on_undefined = self.split_on_type(new_target, TypeTable::UNDEFINED);
         self.builder.switch_to(on_undefined.taken);
-        self.jump(otherwise);
+        self.jump(unexpected);
         self.continue_in(on_undefined.not_taken);
         let new_target = on_undefined.not_taken_value;
-        let is_constructed = self.builder.strict_eq(constructor, new_target);
-        self.emit_guard(is_constructed, otherwise);
         if let Some(checked) = check {
             let is_checked = self.builder.strict_eq(above, checked);
-            self.emit_guard(is_checked, otherwise);
+            self.emit_guard(is_checked, unexpected);
         }
-        self.guard_closure(above, parent.file, parent.function, otherwise);
+        self.guard_closure(above, parent.file, parent.function, unexpected);
+
+        let prototype = emit_call(self, get_prototype, None, &[this]);
+        let name = PropertyName::Constant(self.file.name_key(known::constructor));
+        let constructor = self.emit_get(prototype, name);
+        let otherwise = self.create_block();
+        let join = self.create_block();
+        let result = self.builder.add_parameter(join, None);
+        let is_constructed = self.builder.strict_eq(constructor, new_target);
+        self.emit_guard(is_constructed, otherwise);
         let name = PropertyName::Constant(self.file.name_key(known::prototype));
         let prototype_of_made = self.emit_get(new_target, name);
         let is_same = self.builder.strict_eq(prototype_of_made, prototype);
@@ -466,12 +500,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.jump_with(join, &[this]);
 
         self.continue_in(otherwise);
-        let list = match arguments {
-            ArgumentsOfParent::Values(values) => {
-                self.builder.new_array(TypeTable::ANYTHING, &[], values)
-            }
-            ArgumentsOfParent::List(list) => *list,
-        };
+        let list = self.emit_list_for_parent(arguments);
         let made = self.emit_builtin_call(BuiltinId::ReflectConstruct, &[above, list, constructor]);
         self.jump_with(join, &[made]);
         self.continue_in(join);

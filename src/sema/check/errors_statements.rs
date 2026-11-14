@@ -546,7 +546,10 @@ impl Checker<'_, '_> {
         // `checkGrammarForDisallowedTrailingComma`: in a file without syntax errors no other comma can follow the last
         // declaration.
         let end = self.end_of_var_decl_list(file, decls);
-        let comma = skip_trivia(&hir.text, end as usize) as u32;
+        let comma = match hir.text.get(end as usize) {
+            Some(b';') => end,
+            _ => skip_trivia(&hir.text, end as usize) as u32,
+        };
         if hir.text.get(comma as usize) == Some(&b',') {
             return self.early_grammar_error_at((file, comma, comma + 1), 1009, &[]);
         }
@@ -701,11 +704,32 @@ impl Checker<'_, '_> {
 
     /// `checkAwaitExpression`, before the operand.
     pub(super) fn check_grammar_await_expression(&mut self, file: FileId, e: ExprId) {
+        if self.is_in_body_of_async_function(file, e) {
+            return;
+        }
         let hir = self.hir(file);
         let start = hir[e].pos;
         if is_word_at(&hir.text, start as usize, b"await") {
             let end = |c: &Self| c.end_inside_parentheses(file, e);
             self.check_grammar_await_or_await_using(file, hir.node(e), start, end, true);
+        }
+    }
+
+    /// True if only expressions and statements are between `e` and the body of an `async` function: `await` is always
+    /// allowed there.
+    fn is_in_body_of_async_function(&self, file: FileId, e: ExprId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut at = bound.parent_of_expr(e);
+        loop {
+            at = match at {
+                Parent::Expr(above) => bound.parent_of_expr(above),
+                Parent::Stmt(above) if above.is_some() => bound.parent_of_stmt(above),
+                Parent::VarInit(declaration) => Parent::Stmt(bound.var_stmt[declaration.idx()]),
+                Parent::Prop(property) => Parent::Expr(bound.prop_owner[property.idx()]),
+                Parent::Case(case) => Parent::Stmt(bound.case_stmt[case.idx()]),
+                Parent::FnBody(function) => return hir[function].flags.contains(Flags::ASYNC),
+                _ => return false,
+            };
         }
     }
 

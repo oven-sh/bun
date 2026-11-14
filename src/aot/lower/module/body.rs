@@ -314,7 +314,7 @@ impl FileLowering<'_, '_, '_, '_> {
     fn add_positions_in_known_evaluations(&self, positions: &mut SourcePositions) {
         let hir = self.hir;
         for (index, evaluation) in hir.known_evaluations.iter().enumerate() {
-            let text = &hir.text[evaluation.start as usize..evaluation.end as usize];
+            let text = &hir.text[evaluation.text_start as usize..evaluation.end as usize];
             let first_line =
                 FIRST_LINE_OF_EVALUATED_STRINGS + ((index as u32) << LINE_IN_EVALUATED_STRING_BITS);
             let own = crate::emit::source_positions(text, compute_ecma_line_starts(text));
@@ -328,10 +328,17 @@ impl FileLowering<'_, '_, '_, '_> {
             adjustments.extend(own.column_adjustments);
             adjustments.sort_by_key(|it| it.offset);
             let moved = adjustments.into_iter().map(|it| ColumnAdjustment {
-                offset: it.offset + evaluation.start,
+                offset: it.offset + evaluation.text_start,
                 line: it.line + first_line,
                 column: it.column,
             });
+            if evaluation.is_called() {
+                positions.column_adjustments.push(ColumnAdjustment {
+                    offset: evaluation.start,
+                    line: first_line,
+                    column: 0,
+                });
+            }
             positions.column_adjustments.extend(moved);
         }
     }

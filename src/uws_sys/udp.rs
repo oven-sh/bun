@@ -15,7 +15,7 @@ bun_opaque::opaque_ffi! {
 
 impl Socket {
     pub fn create(
-        loop_: *mut Loop,
+        loop_: &'static Loop,
         data_cb: extern "C" fn(*mut Socket, *mut PacketBuffer, c_int),
         drain_cb: extern "C" fn(*mut Socket),
         close_cb: extern "C" fn(*mut Socket),
@@ -50,7 +50,7 @@ impl Socket {
     /// Adopts an already created (and usually bound) UDP socket descriptor
     /// instead of creating a new one. See `us_create_udp_socket_from_fd`.
     pub fn create_from_fd(
-        loop_: *mut Loop,
+        loop_: &'static Loop,
         data_cb: extern "C" fn(*mut Socket, *mut PacketBuffer, c_int),
         drain_cb: extern "C" fn(*mut Socket),
         close_cb: extern "C" fn(*mut Socket),
@@ -197,7 +197,7 @@ impl Socket {
 
 unsafe extern "C" {
     fn us_create_udp_socket(
-        loop_: *mut Loop,
+        loop_: &Loop,
         data_cb: extern "C" fn(*mut Socket, *mut PacketBuffer, c_int),
         drain_cb: extern "C" fn(*mut Socket),
         close_cb: extern "C" fn(*mut Socket),
@@ -231,7 +231,7 @@ unsafe extern "C" {
     ) -> c_int;
     safe fn us_udp_socket_fd(socket: &mut Socket) -> LIBUS_SOCKET_DESCRIPTOR;
     fn us_create_udp_socket_from_fd(
-        loop_: *mut Loop,
+        loop_: &Loop,
         data_cb: extern "C" fn(*mut Socket, *mut PacketBuffer, c_int),
         drain_cb: extern "C" fn(*mut Socket),
         close_cb: extern "C" fn(*mut Socket),

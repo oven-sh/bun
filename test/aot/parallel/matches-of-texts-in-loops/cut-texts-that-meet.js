@@ -1,3 +1,4 @@
+// STATISTIC: SubstringsCarriedByPosition >= 6
 function scan(text, pattern) {
   return text.match(pattern);
 }

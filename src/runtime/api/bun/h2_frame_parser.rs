@@ -669,7 +669,7 @@ impl Handlers {
         if self.should_skip_dispatch(data) {
             return false;
         }
-        self.vm.event_loop_ref().run_callback(
+        self.vm.event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             callback,
             &self.global(),
@@ -686,7 +686,7 @@ impl Handlers {
         if self.should_skip_dispatch(data) {
             return false;
         }
-        self.vm.event_loop_ref().run_callback(
+        self.vm.event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             callback,
             &self.global(),
@@ -708,7 +708,7 @@ impl Handlers {
         if self.should_skip_dispatch(data) {
             return JSValue::ZERO;
         }
-        self.vm.event_loop_ref().run_callback_with_result(
+        self.vm.event_loop().run_callback_with_result(
             bun_event_loop::ContextId::NONE,
             callback,
             &self.global(),
@@ -2948,7 +2948,7 @@ impl H2FrameParser {
         let found_existing = self
             .global_this
             .bun_vm()
-            .event_loop_mut()
+            .event_loop()
             .deferred_tasks
             .post_task(ctx, on_auto_flush_trampoline);
         debug_assert!(!found_existing);
@@ -2958,9 +2958,10 @@ impl H2FrameParser {
         if !self.auto_flusher.get().registered.get() {
             return;
         }
-        // A write that drains the buffer must not cancel the deferred tick a pending session
-        // error is waiting on; on_auto_flush releases the registration once it has reported it.
-        if self.pending_header_compression_error.get() {
+        // A write that drains the buffer must not cancel the deferred tick that a pending session
+        // error or the close of a rejected transport is waiting on; on_auto_flush releases the
+        // registration.
+        if self.pending_header_compression_error.get() || self.transport_write_fatal.get() {
             return;
         }
         debug_assert!(self.auto_flusher.get().registered.get());
@@ -2968,7 +2969,7 @@ impl H2FrameParser {
         let removed = self
             .global_this
             .bun_vm()
-            .event_loop_mut()
+            .event_loop()
             .deferred_tasks
             .unregister_task(ctx);
         debug_assert!(removed);
@@ -3050,6 +3051,13 @@ impl H2FrameParser {
 
     pub(crate) fn on_auto_flush(&self) -> bool {
         let _keepalive = self.keepalive();
+        // An empty write buffer here means a later write in the same flush()
+        // cycle already drained the bytes the failing send left behind (racy
+        // one-off errnos, e.g. macOS EPROTOTYPE) - the transport recovered, and
+        // the tick goes on to what else waits for it.
+        if self.transport_write_fatal.get() && !self.has_backpressure() {
+            self.transport_write_fatal.set(false);
+        }
         if self.transport_write_fatal.get() {
             // Returning `false` makes DeferredTaskQueue::run remove the entry
             // itself, so only the registration's flag and ref are released here
@@ -3059,20 +3067,13 @@ impl H2FrameParser {
             // early-return instead of removing a map entry run() still owns.
             self.auto_flusher.get().registered.set(false);
             self.deref();
-            // An empty write buffer here means a later write in the same flush()
-            // cycle already drained the bytes the failing send left behind (racy
-            // one-off errnos, e.g. macOS EPROTOTYPE) - the transport recovered.
-            if self.has_backpressure() {
-                self.close_transport_after_fatal_write();
-            } else {
-                self.transport_write_fatal.set(false);
-            }
+            self.close_transport_after_fatal_write();
             return false;
         }
         if self.pending_header_compression_error.get() {
             // Keep the pending latch set across dispatch+flush: re-entrant detach() ->
             // uncork()/unregister_auto_flush() must early-return at the guard instead of
-            // mutating the task map run() iterates (aliasing UB). Cleared once back here.
+            // mutating the task map run() iterates. Cleared once back here.
             self.dispatch_with_2_extra(
                 js::on_error_get_cached,
                 JSValue::js_number(ErrorCode::COMPRESSION_ERROR.0 as f64),
@@ -3092,6 +3093,9 @@ impl H2FrameParser {
         }
         let _ = self.flush();
         // we will unregister ourselves when the buffer is empty
+        if Self::corked() != Some(self.as_ctx_ptr()) {
+            self.unregister_auto_flush();
+        }
         true
     }
 
@@ -4308,18 +4312,13 @@ impl DirectWriterStruct {
         let payload_size = 1 + data.len() + padding as usize;
         // Taken by value so a re-entrant call gets its own; see take_h2_padded_frame_buffer.
         let global = self.writer.global();
-        let mut buffer = global
-            .bun_vm()
-            .as_mut()
-            .rare_data()
-            .take_h2_padded_frame_buffer();
+        let mut buffer = global.bun_vm().rare_data().take_h2_padded_frame_buffer();
         buffer[0] = padding;
         buffer[1..=data.len()].copy_from_slice(data);
         buffer[1 + data.len()..payload_size].fill(0);
         let result = self.write_all(&buffer[..payload_size]);
         global
             .bun_vm()
-            .as_mut()
             .rare_data()
             .put_back_h2_padded_frame_buffer(buffer);
         result
@@ -6317,7 +6316,7 @@ impl H2FrameParser {
             let Some(value) = (unsafe { (*stream).js_context.get() }) else {
                 continue;
             };
-            self.handlers.get().vm.event_loop_mut().run_callback(
+            self.handlers.get().vm.event_loop().run_callback(
                 bun_event_loop::ContextId::NONE,
                 callback,
                 global_object,
@@ -7637,6 +7636,7 @@ impl H2FrameParser {
     /// this function can be called multiple times, it will erase stream info
     pub(crate) fn detach(&self) {
         self.uncork();
+        self.transport_write_fatal.set(false);
         self.unregister_auto_flush();
         self.detach_native_socket();
 
@@ -7671,6 +7671,8 @@ impl H2FrameParser {
             Self::set_corked(None);
         }
         // Removes the deferred task (its ctx is `self`) and releases the ref it holds.
+        self.transport_write_fatal.set(false);
+        self.pending_header_compression_error.set(false);
         self.unregister_auto_flush();
         let stranded = self.native_keepalives.replace(0);
         for _ in 0..stranded {

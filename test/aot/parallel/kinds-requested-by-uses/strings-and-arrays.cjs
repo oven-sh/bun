@@ -1,4 +1,4 @@
-// STATISTIC: OtherProvenKindsTested >= 1
+// STATISTIC: ArrayAccessesSplitByKind >= 1
 // Elements are proven to be strings or arrays. Both have a typed length, so the loop tests for the second kind as well.
 function total(values) { let sum = 0; for (let i = 0; i < values.length; i++) sum += values[i].length; return sum; }
 const values = []; for (let i = 0; i < 24; i++) values.push("row" + i);

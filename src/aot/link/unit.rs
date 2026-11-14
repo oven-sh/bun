@@ -10,9 +10,10 @@ use crate::ir::{
 };
 use crate::load::ProgramFile;
 use crate::lower::{
-    CheckerTypeId, FamilyFacts, Fragment, ModuleFragment, ObjectTypeKey, SaidTypes, SharedTables,
-    TableLengths,
+    CheckerTypeId, FamilyFacts, Fragment, ModuleFragment, NameOfHeir, ObjectTypeKey, SaidTypes,
+    SharedTables, TableLengths,
 };
+use bun_sema::check::aot::TypeIdentity;
 use bun_sema::erasure::PackedTypeRanges;
 use std::sync::Arc;
 
@@ -39,8 +40,10 @@ pub struct LinkUnit {
     pub(super) layout_definitions: Vec<(LayoutId, PackedLayout)>,
     pub(super) object_types: Vec<(u32, ObjectTypeKey)>,
     said_types: Vec<CheckerTypeId>,
+    said_keys: Vec<(TypeIdentity, ObjectTypeKey)>,
     pub(super) layouts_named_by_code: Vec<LayoutId>,
     pub(super) allocated_layouts: Vec<LayoutId>,
+    pub(super) names_of_heirs: Vec<NameOfHeir>,
     pub(super) written_keys: Vec<PropertyKeyId>,
     pub(super) read_keys: Vec<PropertyKeyId>,
     pub(super) keys_laid_by_descriptors: Vec<PropertyKeyId>,
@@ -107,7 +110,8 @@ impl LinkUnit {
 
     pub fn note_commit(&self, said_types: &SaidTypes) {
         self.shared.note_commit(self.lengths);
-        said_types.note_commit(self.file.file, self.is_checked, &self.said_types);
+        let (file, is_checked) = (self.file.file, self.is_checked);
+        said_types.note_commit(file, is_checked, &self.said_types, &self.said_keys);
     }
 
     pub fn new(
@@ -142,8 +146,10 @@ impl LinkUnit {
             layout_definitions,
             object_types: trimmed(fragment.object_types),
             said_types: trimmed(fragment.said_types),
+            said_keys: trimmed(fragment.said_keys),
             layouts_named_by_code: trimmed(fragment.layouts_named_by_code),
             allocated_layouts: trimmed(fragment.allocated_layouts),
+            names_of_heirs: trimmed(fragment.names_of_heirs),
             written_keys: trimmed(fragment.written_keys),
             read_keys: trimmed(fragment.read_keys),
             keys_laid_by_descriptors: trimmed(fragment.keys_laid_by_descriptors),

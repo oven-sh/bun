@@ -290,6 +290,7 @@ struct us_socket_t *us_internal_ssl_on_timeout(us_socket_r s);
 struct us_socket_t *us_internal_ssl_on_close(us_socket_r s, int code, void *reason);
 struct us_socket_t *us_internal_ssl_on_end(us_socket_r s);
 struct us_socket_t *us_internal_ssl_on_end_after_rejected_send(us_socket_r s);
+int us_internal_ssl_defer_end(us_socket_r s);
 int us_internal_ssl_is_low_prio(us_socket_r s);
 
 int us_internal_ssl_is_handshake_finished(us_socket_r s);

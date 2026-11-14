@@ -85,6 +85,7 @@ impl<'a> ReportFixture<'a> {
                 locales: UsedLocales::Listed(Vec::new()),
                 starts_workers_from_unseen_code: false,
                 names_bun_build: false,
+                can_reach_test_runner: false,
             },
         }
     }

@@ -589,14 +589,14 @@ impl CreateCommand {
                 )?;
 
                 if !create_options.skip_package_json {
-                    let plucker = &archive_context.pluckers[0];
+                    let plucker = &mut archive_context.pluckers[0];
 
-                    if plucker.found && plucker.fd.is_valid() {
+                    if let Some(file) = plucker.file.take() {
                         progress.root.name = b"Updating package.json";
                         progress.refresh();
 
                         package_json_contents = plucker.contents.clone()?;
-                        package_json_file = Some(bun_sys::File::from_fd(plucker.fd));
+                        package_json_file = Some(file);
                     }
                 }
             }
@@ -1111,7 +1111,7 @@ impl CreateCommand {
                 #[cfg(windows)]
                 windows: spawn_sync::WindowsOptions {
                     loop_: bun_event_loop::EventLoopHandle::init_mini(
-                        bun_event_loop::MiniEventLoop::init_global(None, None),
+                        bun_event_loop::MiniEventLoop::init_global(None),
                     ),
                     ..Default::default()
                 },
@@ -1226,7 +1226,7 @@ impl CreateCommand {
                     #[cfg(windows)]
                     windows: spawn_sync::WindowsOptions {
                         loop_: bun_event_loop::EventLoopHandle::init_mini(
-                            bun_event_loop::MiniEventLoop::init_global(None, None),
+                            bun_event_loop::MiniEventLoop::init_global(None),
                         ),
                         ..Default::default()
                     },
@@ -2078,7 +2078,7 @@ impl GitHandler {
         let bun_path_buf = unsafe { &mut *BUN_PATH_BUF.get() };
         #[cfg(windows)]
         let win_loop = bun_event_loop::EventLoopHandle::init_mini(
-            bun_event_loop::MiniEventLoop::init_global(None, None),
+            bun_event_loop::MiniEventLoop::init_global(None),
         );
         if let Some(git) = which(bun_path_buf, path, destination, b"git") {
             let git: &[u8] = git.as_bytes();

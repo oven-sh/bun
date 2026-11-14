@@ -4,7 +4,7 @@ use bun_core::strings;
 use bun_paths::resolve_path::{buf_or_spill, relative_platform_buf};
 use bun_paths::{MAX_PATH_BYTES, is_absolute, path_buffer_pool, platform};
 use bun_sema::program::{FileId, FileRole, Files, HostLoader};
-use bun_sema::resolve::CodeImportKind;
+use bun_sema::resolve::{CodeImportKind, is_plainly_normalized};
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use bun_sema_driver::host::to_native;
 
@@ -319,12 +319,23 @@ pub(super) fn compute_relative_path(directory: &[u8], native_path: &[u8]) -> Opt
     if !fits_path_buffer(directory) || !fits_path_buffer(native_path) {
         return None;
     }
+    if let Some(below) = find_path_below(directory, native_path) {
+        return Some(below.to_vec());
+    }
     let max_length = 3 * (directory.len() + MAX_NORMALIZATION_GROWTH)
         + 1
         + (native_path.len() + MAX_NORMALIZATION_GROWTH);
     let (mut buffer, mut spill) = (path_buffer_pool::get(), Vec::new());
     let output = buf_or_spill(buffer.as_mut_slice(), &mut spill, max_length);
     Some(relative_platform_buf::<platform::Loose, false>(output, directory, native_path).to_vec())
+}
+
+/// The path from `directory` to a file below it, if both paths can be compared as they are written.
+fn find_path_below<'p>(directory: &[u8], path: &'p [u8]) -> Option<&'p [u8]> {
+    let below = path.strip_prefix(directory)?.strip_prefix(b"/")?;
+    let is_plain =
+        |path: &[u8]| is_plainly_normalized(path) && !strings::contains_char(path, b'\\');
+    (!cfg!(windows) && is_plain(directory) && is_plain(path)).then_some(below)
 }
 
 const MAX_NORMALIZATION_GROWTH: usize = 2;

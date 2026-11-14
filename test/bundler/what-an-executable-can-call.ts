@@ -62,7 +62,8 @@ function readMachO(file: Uint8Array): Image {
       if (type === 8) pointers.push({ address: u64(section + 32), size: u64(section + 40), first: u32(section + 68), each: u32(section + 72), isStub: true });
     }
     if (code.length > 0) image.segments.push(...code);
-    else if (u64(at + 48) > 0) image.segments.push({ offset: u64(at + 40), end: u64(at + 40) + u64(at + 48), address: u64(at + 24), isExecutable });
+    // --trim leaves the constants behind a cut in a segment of their own, mapped for execution as __TEXT is. A segment without a section of instructions is data.
+    else if (u64(at + 48) > 0) image.segments.push({ offset: u64(at + 40), end: u64(at + 40) + u64(at + 48), address: u64(at + 24), isExecutable: false });
   }
   for (const { address, size, first, each, isStub } of pointers) {
     for (let index = 0; index * each < size; index++) {

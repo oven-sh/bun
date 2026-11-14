@@ -14,7 +14,8 @@
 # RUN(HEADS): print
 # HEADS: name="onlyTested"{{*}}parameters=[{type=undefined|null|L0|L1 flags=[IsExpected]}]
 # HEADS: name="onlyRead"{{*}}parameters=[{type=anything flags=[IsExpected]}]
-# HEADS: name="onlyPassed"{{*}}parameters=[{type=undefined|null|L0 flags=[IsExpected]}]
+# The one instance that the file passes to onlyPassed() is seen at the call.
+# HEADS: name="onlyPassed"{{*}}parameters=[{type=undefined|null|L0 flags=[IsFromCompiler, IsExpected]}]
 # HEADS: name="readBehindTest"{{*}}parameters=[{type=undefined|null|L0 flags=[IsExpected]}]
 # HEADS: name="testedAgainstTwo"{{*}}parameters=[{type=undefined|null|L0|L1 flags=[IsExpected]}]
 # RUN(ANSWERS): run-in-shell

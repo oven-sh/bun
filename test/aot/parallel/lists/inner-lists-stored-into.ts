@@ -1,5 +1,4 @@
 // Inner loops of a few turns that store into lists which the loop around reads: rows, fields of objects, flat lists; lists of every kind, rows that are missing, short, frozen or one list for all.
-// STATISTIC: StoringLoopsNotUnrolled >= 40
 class Item { constructor(public list: number[]) {} }
 class Holder {
   next: number[][];

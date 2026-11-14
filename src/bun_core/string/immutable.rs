@@ -2414,17 +2414,6 @@ pub use crate::strings_impl::convert_utf16_to_utf8_in_buffer;
 // to widen output paths for `File::write_file_os_path`).
 pub use unicode_draft::convert_utf8_to_utf16_in_buffer_z;
 
-/// `strings.startsWithWindowsDriveLetterT` — true for `[A-Za-z]:` prefix
-/// followed by at least one more byte (`s.len() > 2`).
-#[inline]
-pub fn starts_with_windows_drive_letter_t<T: Copy + Into<u32>>(s: &[T]) -> bool {
-    s.len() > 2 && s[1].into() == u32::from(b':') && {
-        let c = s[0].into();
-        (c >= u32::from(b'a') && c <= u32::from(b'z'))
-            || (c >= u32::from(b'A') && c <= u32::from(b'Z'))
-    }
-}
-
 /// `strings.convertUTF8toUTF16InBuffer` — UTF-8 → UTF-16LE into a caller-supplied
 /// buffer (capacity ≥ `input.len()` u16). SIMD fast path via simdutf; on invalid
 /// UTF-8 falls back to a scalar WTF-8 decoder that emits U+FFFD for malformed

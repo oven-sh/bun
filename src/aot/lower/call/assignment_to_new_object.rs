@@ -36,7 +36,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         call: ExprId,
         site: Call,
     ) -> Option<ValueId> {
-        if !self.names_assign_helper(site.callee) {
+        let hir = self.file.hir;
+        let target = hir.ids(site.args).next()?;
+        let is_empty_literal =
+            matches!(hir[target].kind, ExprKind::Object(properties) if properties.is_empty());
+        if !is_empty_literal || !self.names_assign_helper(site.callee) {
             return None;
         }
         self.find_empty_literal_sources(site)?;

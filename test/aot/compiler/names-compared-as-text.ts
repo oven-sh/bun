@@ -442,6 +442,52 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
     reason:
       "`f.arguments` and `f.caller`: the checker is asked next whether the object is a function, and all that follows is a warning",
   },
+  {
+    paths: /^src\/aot\/lower\/call\/(?:class|prototype)_makers\.rs$/,
+    lines: /b"(?:create|setPrototypeOf)"/,
+    reason:
+      "a member of the global `Object`: the callee is asked next whether it is that locked built-in. Where it is not, the answer only says which variables are looked at",
+  },
+  {
+    paths: /^src\/aot\/lower\/call\/prototype_makers\.rs$/,
+    lines: /\.starts_with\(b"(?:__define|defineProp)"\)/,
+    reason:
+      "members that define accessors: the variables on which they are called are looked at closer. A function of the program with such a name changes no answer",
+  },
+  {
+    paths: /^src\/aot\/lower\/call\/written_operands\.rs$/,
+    lines: /^if name != known::apply$|NAMES\.contains\(/,
+    reason:
+      "`Reflect.construct.apply`, whose object is asked next for the locked built-in, and the members that `Object.defineProperty`, which was asked for in front, reads off a descriptor",
+  },
+  {
+    paths: /^src\/aot\/lower\/statement\/loose_loops\.rs$/,
+    lines: /atoms\.bytes\((?:name\) == b"return"|method\) == b"isArray")/,
+    reason:
+      "the member that iteration reads off its iterator, whose binding is asked in front; the member of Array, which is asked next to be free",
+  },
+  {
+    paths: /^src\/aot\/modules\/evicted\.rs$/,
+    lines: /atoms\.bytes\(name\) == b"call"/,
+    reason: "a member of a function in hand",
+  },
+  {
+    paths: /^src\/sema\/import_sites\/made_requires\.rs$/,
+    lines: /MemberKey::Name\(known::createRequire\)/,
+    reason: "an export of `node:module`: the module that the name is read off is asked next",
+  },
+  {
+    paths: /^src\/aot\/known_helpers\/private_state\.rs$/,
+    lines: /atoms\.bytes\(name\) == b"_"/,
+    reason:
+      "the accessor of the object that Babel's helper returns for a private name that is updated: the call is asked in front whether it calls that helper",
+  },
+  {
+    paths: /^src\/sema\/check\/aot\/inferred_from_use\.rs$/,
+    lines: /atom_bytes\(name\)\.starts_with\(NAME\)|atom_bytes\(holder\) == b"Symbol" && self\.atom_bytes\(name\) == b"iterator"/,
+    reason:
+      "a guess at what a parameter holds, of the function that Babel writes for a for-of: what arrives is tested. A function of the program with such a name changes no answer",
+  },
 ];
 
 /** Why the whole file is allowed, or, given a line of it, why that line is. */

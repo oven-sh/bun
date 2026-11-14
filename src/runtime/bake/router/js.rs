@@ -80,7 +80,6 @@ impl JSFrameworkRouter {
             stored_parse_errors: Vec::new(),
         };
 
-        let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
         // The handler only touches `files`/`stored_parse_errors`, so split-borrow
         // those two fields into a dedicated context (see `JSFrameworkRouterScanCtx`).
         {
@@ -93,7 +92,8 @@ impl JSFrameworkRouter {
                 files,
                 stored_parse_errors,
             };
-            router.scan(TypeIndex::init(0), resolver, &mut ctx)?;
+            (global.bun_vm().transpiler)
+                .with_mut(|t| router.scan(TypeIndex::init(0), &mut t.resolver, &mut ctx))?;
         }
 
         if !jsfr.stored_parse_errors.is_empty() {

@@ -54,7 +54,7 @@ const names: string[] = [
   "title",
   "length",
   "prototype",
-  "toString",
+  "valueOf",
   "call",
   "caller",
   "then",

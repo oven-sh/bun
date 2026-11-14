@@ -99,6 +99,18 @@ impl FileLowering<'_, '_, '_, '_> {
                     ..self.create_untyped_variable(known::default)
                 }
             }
+            VariableKey::PrototypeMaker(variable) => {
+                let maker = self.declare_prototype_maker(variable.id);
+                let ty = self.fragment.types.intern(Type::function(maker));
+                Variable {
+                    name: None,
+                    declared: DeclaredType::from_compiler(ty),
+                    initialization: VariableInitialization::Function,
+                    function: Some(maker),
+                    flags: VariableFlags::IS_IMMUTABLE,
+                    ..self.create_untyped_variable(known::default)
+                }
+            }
             VariableKey::HasSeveralInstances(_) => Variable {
                 name: None,
                 flags: VariableFlags::IS_REPLACEABLE | VariableFlags::HAS_SEVERAL_INSTANCES,
@@ -162,6 +174,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 None => by_number(symbol.id.idx(), 0),
             },
             VariableKey::RequiredAnswer(holder) => by_number(holder.id.idx(), 1),
+            VariableKey::PrototypeMaker(variable) => by_number(variable.id.idx(), 2),
             VariableKey::AddedStatic(property) => by_number(property.id.idx(), 0),
             VariableKey::PrivateState { state, part } => by_number(state.id.idx(), 2 + part as u32),
             VariableKey::ClassSlot { class, slot } => match slot {

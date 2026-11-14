@@ -43,7 +43,9 @@ pub use bindings::{
 };
 pub use bun_core::strings::order_utf16 as compare_code_units;
 pub use commonjs_exports::CommonJsExports;
-pub(crate) use commonjs_exports::find_literal_exported_under_name;
+pub(crate) use commonjs_exports::{
+    find_arguments_of_assign, find_literal_exported_under_name, find_parts_of_object,
+};
 pub use deferred_exports::DeferredExports;
 pub use failures::{FailureEffect, ModuleFailure, ModuleFailureId, ModuleFailureKind};
 pub use graph::ModuleGraph;

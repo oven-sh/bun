@@ -53,19 +53,21 @@ test("the ticks of a burst are let go as they run: when half have run, about hal
 });
 
 // What lets the nodes go is a tick of the ring's own. It may not ride along with a chain, one tick asking for the next, and walk over the free nodes each time it runs: that was 67 times slower.
+// By the processor's time: on a busy machine a process waits for a processor for longer than a chain takes.
 test("a chain of ticks behind a burst takes about as long as a chain alone", async () => {
   using folder = tempDir("the-ticks-of-a-burst", {
     "chain.cjs": `
       const chain = turns => new Promise(resolve => {
         let ran = 0;
-        const start = performance.now();
-        process.nextTick(function step() { if (++ran < turns) process.nextTick(step); else resolve(performance.now() - start); });
+        const start = process.cpuUsage();
+        const milliseconds = () => { const { user, system } = process.cpuUsage(start); return (user + system) / 1000; };
+        process.nextTick(function step() { if (++ran < turns) process.nextTick(step); else resolve(milliseconds()); });
       });
       (async () => {
-        await chain(100_000);
-        const alone = await chain(100_000);
+        await chain(1_000_000);
+        const alone = await chain(1_000_000);
         for (let i = 0; i < 6_000; i++) process.nextTick(() => {});
-        const behind = await chain(100_000);
+        const behind = await chain(1_000_000);
         console.log(JSON.stringify({ alone, behind }));
       })();
     `,

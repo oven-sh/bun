@@ -74,6 +74,16 @@ async function build(without: string[]) {
 }
 
 const namesOf = (places: { name: string }[]) => [...new Set(places.map(place => place.name))].sort();
+
+// What every executable calls, whatever --trim removed. A scan that finds neither has not read the code of the file.
+const alwaysCalled = ["mmap", "write"];
+
+function placesLeftThatCall(trimmed: Uint8Array, names: readonly string[]) {
+  const places = placesThatCall(trimmed, [...names, ...alwaysCalled]);
+  expect(namesOf(places.filter(place => alwaysCalled.includes(place.name)))).toEqual(alwaysCalled);
+  return places.filter(place => !alwaysCalled.includes(place.name));
+}
+
 const numbersOf = (places: { number: number }[]) =>
   [...new Set(places.map(place => place.number))].sort((a, b) => a - b);
 
@@ -93,7 +103,7 @@ if (isASAN)
       if (isLinux) expect(numbersOf(placesThatMakeSystemCalls(whole.file, startsAProgram.systemCalls))).toContain(435);
 
       const cut = await build(startsAProgram.features);
-      expect(placesThatCall(cut.file, startsAProgram.functions)).toEqual([]);
+      expect(placesLeftThatCall(cut.file, startsAProgram.functions)).toEqual([]);
       expect(placesThatMakeSystemCalls(cut.file, startsAProgram.systemCalls)).toEqual([]);
       expect(await run([cut.executable], folder)).toEqual(saysHello);
     });
@@ -107,7 +117,7 @@ if (isASAN)
         });
         const file = readFileSync(join(folder, "named"));
         expect(
-          namesOf(placesThatCall(file, startsAProgram.functions)).filter(name => !sendsACrashReport.includes(name)),
+          namesOf(placesLeftThatCall(file, startsAProgram.functions)).filter(name => !sendsACrashReport.includes(name)),
         ).toEqual([]);
         expect(placesThatMakeSystemCalls(file, startsAProgram.systemCalls)).toEqual([]);
         expect(await run([join(folder, "named")], folder)).toEqual(saysHello);
@@ -144,7 +154,7 @@ if (isASAN)
 
       const cut = await build(loadsNativeCode.features);
       expect(
-        placesThatCall(cut.file, loadsNativeCode.functions).map(place => ({
+        placesLeftThatCall(cut.file, loadsNativeCode.functions).map(place => ({
           ...place,
           keptBy: featuresThatKeep(place.address, loadsNativeCode.features),
         })),
@@ -154,52 +164,71 @@ if (isASAN)
   },
 );
 
-// A Mach-O file for arm64 of 1.5 KB: a stub for posix_spawn, a section of code that calls it, and a section of constants
-// with the same four bytes. All three lie in __TEXT, the segment that is mapped for execution.
-function machOWithOneStub() {
-  const file = Buffer.alloc(0x600);
+// A Mach-O file for arm64 of 1.1 KB: a stub and a slot for posix_spawn, a section of code that calls the stub, and a
+// section of constants with the same four bytes and with a run of 0x10 bytes. Four of those read as `adr x16, .+0x20200`,
+// and the slot lies that far behind the first. The constants are in __TEXT or, as --trim leaves them behind a cut, in a
+// segment of their own. Both are mapped for execution.
+function machOWithOneStub(isTrimmed: boolean) {
+  type Section = [offset: number, size: number, flags: number, address?: number, indirect?: number, stubSize?: number];
+  const file = Buffer.alloc(0x480);
   const base = 0x1_0000_0000;
-  const [text, stubs, constants, symbols, strings, indirect] = [0x200, 0x300, 0x400, 0x500, 0x520, 0x540];
-  const segment = 32;
-  const section = (index: number, offset: number, size: number, flags: number, stubSize = 0) => {
-    const at = segment + 72 + index * 80;
-    file.writeBigUInt64LE(BigInt(base + offset), at + 32);
-    file.writeBigUInt64LE(BigInt(size), at + 40);
-    file.writeUInt32LE(offset, at + 48);
-    file.writeUInt32LE(flags, at + 64);
-    file.writeUInt32LE(stubSize, at + 72);
+  const [text, stubs, constants, slot, symbols, strings, indirect] = [0x300, 0x340, 0x380, 0x3c0, 0x400, 0x420, 0x440];
+  const slotAddress = base + constants + 8 + 0x20200;
+  let at = 32;
+  // LC_SEGMENT_64: the bytes of the file from `start` to `end`, mapped at `address`. Protection 5 is read and execute.
+  const segment = (protection: number, address: number, start: number, end: number, sections: Section[]) => {
+    file.writeUInt32LE(0x19, at);
+    file.writeUInt32LE(72 + sections.length * 80, at + 4);
+    file.writeBigUInt64LE(BigInt(address), at + 24);
+    file.writeBigUInt64LE(BigInt(start), at + 40);
+    file.writeBigUInt64LE(BigInt(end - start), at + 48);
+    file.writeUInt32LE(protection, at + 60);
+    file.writeUInt32LE(sections.length, at + 64);
+    at += 72;
+    for (const [offset, size, flags, sectionAddress = base + offset, indirectIndex = 0, stubSize = 0] of sections) {
+      file.writeBigUInt64LE(BigInt(sectionAddress), at + 32);
+      file.writeBigUInt64LE(BigInt(size), at + 40);
+      file.writeUInt32LE(offset, at + 48);
+      file.writeUInt32LE(flags, at + 64);
+      file.writeUInt32LE(indirectIndex, at + 68);
+      file.writeUInt32LE(stubSize, at + 72);
+      at += 80;
+    }
   };
+  const code: Section[] = [
+    [text, 16, 0x80000400], // __text: S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS
+    [stubs, 12, 0x80000408, base + stubs, 0, 12], // __stubs: the same, and S_SYMBOL_STUBS
+  ];
+  const data: Section[] = [[constants, 24, 0]]; // __const
   file.writeUInt32LE(0xfeedfacf, 0);
   file.writeUInt32LE(0x0100000c, 4);
-  file.writeUInt32LE(3, 16);
-  // LC_SEGMENT_64: __TEXT, read and execute.
-  file.writeUInt32LE(0x19, segment);
-  file.writeUInt32LE(72 + 3 * 80, segment + 4);
-  file.writeBigUInt64LE(BigInt(base), segment + 24);
-  file.writeBigUInt64LE(BigInt(file.length), segment + 48);
-  file.writeUInt32LE(5, segment + 60);
-  file.writeUInt32LE(3, segment + 64);
-  section(0, text, 16, 0x80000400); // __text: S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS
-  section(1, stubs, 12, 0x80000408, 12); // __stubs: the same, and S_SYMBOL_STUBS
-  section(2, constants, 16, 0); // __const
-  // LC_SYMTAB, LC_DYSYMTAB: the one stub is for symbol 0, whose name is at 1 in the strings.
-  const symtab = segment + 72 + 3 * 80;
-  file.writeUInt32LE(2, symtab);
-  file.writeUInt32LE(24, symtab + 4);
-  file.writeUInt32LE(symbols, symtab + 8);
-  file.writeUInt32LE(strings, symtab + 16);
-  file.writeUInt32LE(11, symtab + 24);
-  file.writeUInt32LE(80, symtab + 28);
-  file.writeUInt32LE(indirect, symtab + 24 + 56);
+  file.writeUInt32LE(isTrimmed ? 5 : 4, 16);
+  if (isTrimmed) {
+    segment(5, base, 0, constants, code);
+    segment(5, base + constants, constants, slot, data);
+  } else segment(5, base, 0, slot, [...code, ...data]);
+  segment(3, slotAddress, slot, slot + 8, [[slot, 8, 6, slotAddress, 1]]); // __got: S_NON_LAZY_SYMBOL_POINTERS
+  // LC_SYMTAB, LC_DYSYMTAB: the stub and the slot are for symbol 0, whose name is at 1 in the strings.
+  file.writeUInt32LE(2, at);
+  file.writeUInt32LE(24, at + 4);
+  file.writeUInt32LE(symbols, at + 8);
+  file.writeUInt32LE(strings, at + 16);
+  file.writeUInt32LE(11, at + 24);
+  file.writeUInt32LE(80, at + 28);
+  file.writeUInt32LE(indirect, at + 24 + 56);
   file.writeUInt32LE(1, symbols);
   file.write("_posix_spawn", strings + 1, "latin1");
   const callOfStub = (from: number) => (0x94000000 | (((stubs - from) / 4) & 0x03ffffff)) >>> 0; // bl
   file.writeUInt32LE(callOfStub(text + 4), text + 4);
   file.writeUInt32LE(callOfStub(constants + 4), constants + 4);
+  file.fill(0x10, constants + 8, constants + 24);
   return { file, call: base + text + 4 };
 }
 
-test("in a Mach-O file a word of the constants that reads as a call of a stub is no place", () => {
-  const { file, call } = machOWithOneStub();
+test.each([
+  ["of __TEXT", false],
+  ["that --trim left in a segment of their own", true],
+])("in a Mach-O file no word of the constants %s is a place", (_, isTrimmed) => {
+  const { file, call } = machOWithOneStub(isTrimmed);
   expect(placesThatCall(file, ["posix_spawn"]).map(place => place.address)).toEqual([call]);
 });

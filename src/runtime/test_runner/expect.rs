@@ -921,8 +921,7 @@ impl Expect {
         global_this: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<(Option<JSValue>, JSValue)> {
-        // SAFETY: bun_vm() returns the live thread-local VirtualMachine; valid for this call.
-        let vm = global_this.bun_vm().as_mut();
+        let vm = global_this.bun_vm();
 
         if !value.js_type().is_function() {
             if self.flags.get().promise() != Promise::None {
@@ -937,8 +936,8 @@ impl Expect {
             let _earlier = EarlierRejections::hold(vm.global());
 
             reported.outer = vm.unhandled_rejection_scope();
-            vm.on_unhandled_rejection_ctx = Some((&raw mut reported).cast());
-            vm.on_unhandled_rejection = FirstReport::take;
+            vm.on_unhandled_rejection_ctx.set(Some((&raw mut reported).cast()));
+            vm.on_unhandled_rejection.set(FirstReport::take);
             let returned = match value.call(global_this, JSValue::UNDEFINED, &[]) {
                 Ok(v) => v,
                 Err(err) => global_this.take_exception(err),
@@ -1583,8 +1582,7 @@ impl Expect {
             }
         }
 
-        // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
-        global_this.bun_vm().as_mut().auto_garbage_collect();
+        global_this.bun_vm().auto_garbage_collect();
 
         Ok(())
     }
@@ -1681,8 +1679,7 @@ impl Expect {
                 js_promise::Status::Pending => unreachable!(),
                 js_promise::Status::Fulfilled => {}
                 js_promise::Status::Rejected => {
-                    // SAFETY: per-use reborrow of the thread-local VM (see VirtualMachine::get docs).
-                    bun_test::print_error(VirtualMachine::get().as_mut(), global_this, result, None);
+                    bun_test::print_error(VirtualMachine::get(), global_this, result, None);
                     return Err(global_this.throw(format_args!(
                         "Matcher `{}` returned a promise that rejected",
                         matcher_name,
@@ -1746,8 +1743,7 @@ impl Expect {
         callee: JsLocal<'_>,
         args: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
-        // SAFETY: bun_vm() returns the live VM pointer for this global.
-        let _gc = cx.global().bun_vm().as_mut().auto_gc_on_drop();
+        let _gc = cx.global().bun_vm().auto_gc_on_drop();
         let call = MatcherCall { this: this_value.to_js(), callee: callee.to_js(), arguments: JsLocal::to_js_slice(args) };
 
         // try to retrieve the Expect instance
@@ -1826,8 +1822,7 @@ impl Expect {
 
     #[optimize(size)]
     pub(crate) fn has_assertions_in(global_this: &JSGlobalObject, state: Option<bun_test::RefDataValue>) -> JsResult<()> {
-        // SAFETY: bun_vm() returns the live VM pointer for this global.
-        let _gc = global_this.bun_vm().as_mut().auto_gc_on_drop();
+        let _gc = global_this.bun_vm().auto_gc_on_drop();
 
         let Some(buntest_strong) = bun_test::clone_active_strong() else {
             return Err(global_this.throw(format_args!("expect.assertions() must be called within a test")));
@@ -1854,8 +1849,7 @@ impl Expect {
         expected: JSValue,
         state: Option<bun_test::RefDataValue>,
     ) -> JsResult<()> {
-        // SAFETY: bun_vm() returns the live VM pointer for this global.
-        let _gc = global_this.bun_vm().as_mut().auto_gc_on_drop();
+        let _gc = global_this.bun_vm().auto_gc_on_drop();
 
         if !expected.is_number() {
             let mut fmt = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
@@ -2798,8 +2792,8 @@ struct FirstReport {
 }
 
 impl FirstReport {
-    fn take(vm: &mut VirtualMachine, global: &JSGlobalObject, value: JSValue) {
-        let Some(this) = vm.on_unhandled_rejection_ctx else { return };
+    fn take(vm: &VirtualMachine, global: &JSGlobalObject, value: JSValue) {
+        let Some(this) = vm.on_unhandled_rejection_ctx.get() else { return };
         // SAFETY: `get_value_as_to_throw` points the ctx at its local only while this is the handler.
         let this = unsafe { &mut *this.cast::<FirstReport>() };
         if !this.is_calling {
@@ -2811,7 +2805,7 @@ impl FirstReport {
         }
         let inner = vm.unhandled_rejection_scope();
         this.outer.apply(vm);
-        (vm.on_unhandled_rejection)(vm, global, value);
+        (vm.on_unhandled_rejection.get())(vm, global, value);
         inner.apply(vm);
     }
 }

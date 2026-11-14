@@ -315,62 +315,25 @@ pub fn populate_manifest_cache(
     let _ = run_tasks::schedule_tasks(manager);
 
     if manager.pending_task_count() > 0 {
-        struct RunClosure {
-            // `sleep_until` also receives this raw pointer, so storing
-            // `&mut PackageManager` here would alias under Stacked Borrows.
-            manager: *mut PackageManager,
-            err: Option<crate::Error>,
-        }
-        impl RunClosure {
-            fn is_done(closure: &mut Self) -> bool {
-                // SAFETY: `closure.manager` is the raw provenance root set
-                // below; `sleep_until`/`tick_raw` hold no `&mut` across this
-                // callback, so this is the unique live borrow.
-                let manager = unsafe { &mut *closure.manager };
-                let log_level = manager.options.log_level;
-                // void RunTasksCallbacks — `extract_ctx` is unit. Do NOT pass
-                // `manager` as both receiver and ctx (aliased &mut); the generic
-                // context collapses to `&mut ()`.
-                if let Err(err) = run_tasks::run_tasks::<ManifestsOnlyCallbacks>(
-                    manager,
-                    &mut (),
-                    true,
-                    log_level,
-                ) {
-                    closure.err = Some(err);
-                    return true;
-                }
-
-                manager.pending_task_count() == 0
-            }
-        }
-
         // `run_tasks` names the bar when a manifest download completes, and `start_manifest_task` starts none when every name is cached or already requested by a queued row.
         if log_level.show_progress() {
             manager.start_progress_bar_if_none();
         }
 
-        // Derive the raw provenance root first so both `sleep_until` and the
-        // closure body's `&mut *run_closure.manager` share the same SRW tag.
-        let mgr: *mut PackageManager = manager;
-        let mut run_closure = RunClosure {
-            manager: mgr,
-            err: None,
-        };
-        // SAFETY: `mgr` is derived from the live exclusive `manager` borrow;
-        // `sleep_until` is an associated fn taking `*mut PackageManager` and
-        // `tick_raw` holds no `&mut event_loop` across `is_done`, so the
-        // callback's `&mut *run_closure.manager` is the unique live borrow.
-        unsafe { PackageManager::sleep_until(mgr, &mut run_closure, RunClosure::is_done) };
+        let mut result = Ok(());
+        manager.sleep_until(|manager| {
+            let log_level = manager.options.log_level;
+            result =
+                run_tasks::run_tasks::<ManifestsOnlyCallbacks>(manager, &mut (), true, log_level);
+            result.is_err() || manager.pending_task_count() == 0
+        });
 
         if log_level.show_progress() {
             manager.end_progress_bar();
             Output::flush();
         }
 
-        if let Some(err) = run_closure.err {
-            return Err(err);
-        }
+        result?;
     }
 
     Ok(())

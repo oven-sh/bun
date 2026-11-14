@@ -779,6 +779,10 @@ pub fn bin_target_escapes_package_dir(target: &[u8]) -> bool {
     {
         return true;
     }
+    // Normalizing can make any component the first.
+    if cfg!(windows) && strings::contains_char(target, b':') {
+        return true;
+    }
     path_climbs_out(target)
 }
 

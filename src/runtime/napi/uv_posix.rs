@@ -37,7 +37,7 @@ use bun_jsc::{
     LoopKind, Posted, VmHandle,
 };
 
-use crate::jsc_hooks::{RuntimeState, timer_all_mut};
+use crate::jsc_hooks::{RuntimeState, timer_all};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 bun_output::declare_scope!(uv, hidden);
@@ -136,7 +136,7 @@ impl RefState {
         self.sync();
     }
 
-    fn sync(&mut self) {
+    fn sync(&self) {
         if self.active && self.referenced {
             self.keep_alive.ref_(bun_io::js_vm_ctx());
         } else {
@@ -325,7 +325,7 @@ impl UvLoop {
     /// addon stops its threads in its cleanup hooks, which run before the second write.
     pub(crate) unsafe fn of_vm(vm: *const VirtualMachine) -> *mut UvLoop {
         // SAFETY: fn contract.
-        let state = unsafe { (*vm).runtime_state }.cast::<RuntimeState>();
+        let state = unsafe { (*vm).runtime_state.get() }.cast::<RuntimeState>();
         if state.is_null() {
             return core::ptr::null_mut();
         }
@@ -823,7 +823,10 @@ impl UvTimerNode {
         // SAFETY: fn contract. `FIRED` tells `update`/`remove` that the node isn't
         // in the heap.
         let timer = unsafe {
-            (*this).event_loop_timer.state = EventLoopTimerState::FIRED;
+            (*this)
+                .event_loop_timer
+                .state
+                .set(EventLoopTimerState::FIRED);
             (*this).timer
         };
         // SAFETY: a started timer is initialized and not closed, and this is the loop thread.
@@ -863,7 +866,7 @@ impl UvTimer {
         );
         // SAFETY: fn contract. A timer owns its node until it's closed.
         unsafe {
-            timer_all_mut().update(&raw mut (*(*handle).node).event_loop_timer, &due);
+            timer_all().update(&raw mut (*(*handle).node).event_loop_timer, &due);
             (*handle).ref_state.set_active(true);
         }
     }
@@ -880,9 +883,9 @@ impl UvTimer {
             if !(*handle).ref_state.active {
                 return;
             }
-            let event_loop_timer = &raw mut (*(*handle).node).event_loop_timer;
-            if (*event_loop_timer).state == EventLoopTimerState::ACTIVE {
-                timer_all_mut().remove(event_loop_timer);
+            let event_loop_timer = &(*(*handle).node).event_loop_timer;
+            if event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
+                timer_all().remove(event_loop_timer);
             }
             (*handle).ref_state.set_active(false);
         }
@@ -1050,7 +1053,7 @@ pub(crate) unsafe extern "C" fn uv_timer_get_due_in(handle: *mut UvTimer) -> u64
         if !(*handle).ref_state.active {
             return 0;
         }
-        (*(*handle).node).event_loop_timer.next
+        (*(*handle).node).event_loop_timer.next.get()
     };
     let now = Timespec::now(TimespecMockMode::ForceRealTime);
     u64::try_from(due.ms().wrapping_sub(now.ms())).unwrap_or(0)

@@ -8,7 +8,7 @@
 # function label(one: Leaf, text: string) { one.text = text; }
 # function show(one: Leaf | Wide): string { return "first" in one ? one.first : one.name; }
 # function lay(one: any, name: string) { one[name] = 2; }
-# const leaf = new Leaf("leaf"), wide = make("wide"); fill(wide); label(leaf, "a"); label(wide as unknown as Leaf, "b"); lay(wide, "other");
+# const leaf = new Leaf("leaf"), wide = make("wide"); fill(wide); label(leaf, "a"); label(wide as unknown as Leaf, "b"); lay(wide, JSON.parse('"other"'));
 # sink(show, show(leaf), show(wide), Leaf, leaf.first, leaf.text, wide.name, wide.m63, (wide as any).other);
 # -- end of source
 # RUN: plan layouts mechanisms=all

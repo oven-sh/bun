@@ -11,6 +11,12 @@ pub struct Tmpfile<'a> {
     pub fd: Fd,
 }
 
+impl Drop for Tmpfile<'_> {
+    fn drop(&mut self) {
+        let _ = crate::close(self.fd);
+    }
+}
+
 impl<'a> Tmpfile<'a> {
     pub fn create(destination_dir: Fd, tmpfilename: &'a ZStr) -> crate::Result<Tmpfile<'a>> {
         Self::create_with_mode(destination_dir, tmpfilename, 0o644)

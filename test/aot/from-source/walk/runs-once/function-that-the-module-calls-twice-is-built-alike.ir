@@ -19,7 +19,7 @@
 # CHECK: = Add {{*}}form=StringAndPrimitive
 # RUN(BYTES): bytes f1 mechanisms=all
 # BYTES: Call Stub Concatenate count 2
-# BYTES: Call Stub IntegerToString
+# BYTES: Call Stub DoubleToString
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: one:1
 # ANSWERS-NEXT: two:2

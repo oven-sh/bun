@@ -1,13 +1,15 @@
 use bun_sema::atom::Atom;
 use bun_sema::bind::{CodeUnit, PrivateNameId};
-use bun_sema::check::aot::{ClassMemberSource, ClassRef};
+use bun_sema::check::aot::ClassMemberSource;
 use bun_sema::hir::{ClassId, Flags, MemberId, ParamId, PatKind, PropKey};
+use bun_sema::program::FileId;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use super::{ClassElement, FieldValue, is_auto_accessor, is_derived_class};
 use crate::ir::generated::{Field, FieldFlags, FunctionFlags, FunctionKind, OperandKind};
 use crate::ir::{ClassSlot, DeclaredType, FunctionId, FunctionKey, LayoutId, TypeTable, ValueId};
+use crate::known_helpers::StateOwner;
 use crate::lower::member::{GivenName, PropertyName};
 use crate::lower::scope::{BindingRef, ScopeSlot};
 use crate::lower::{FileLowering, FunctionLowering, function, layouts};
@@ -94,18 +96,19 @@ impl FileLowering<'_, '_, '_, '_> {
     pub(in crate::lower) fn private_state_fields(
         &mut self,
         layout: LayoutId,
-        class: ClassRef,
+        home: FileId,
+        owner: StateOwner,
     ) -> SmallVec<[Field; 4]> {
         let inputs = self.inputs;
         let files = self.queries.files();
         let states = inputs
             .known_helpers
-            .private_states(files, inputs.modules, class.file);
+            .private_states(files, inputs.modules, home);
         let Some(states) = states else {
             return SmallVec::new();
         };
-        let bound = files.bound(class.file);
-        let states = states.states_of_class(class.class).iter();
+        let bound = files.bound(home);
+        let states = states.states_of_owner(owner).iter();
         let names: SmallVec<[Atom; 4]> = states
             .map(|state| bound.symbol(state.symbol).name)
             .collect();

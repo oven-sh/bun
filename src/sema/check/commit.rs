@@ -463,6 +463,15 @@ impl View<'_> {
         }
     }
 
+    /// `snapshot_of`, or `None` if the task may ignore some of the commits that it sees in `file` (`hides`).
+    #[inline]
+    pub(super) fn snapshot_without_hidden_commits(&self, file: FileId) -> Option<u32> {
+        match self.may_hide_commits(file) {
+            true => None,
+            false => Some(self.snapshot_of(file)),
+        }
+    }
+
     #[cold]
     #[inline(never)]
     fn touch(&self, file: FileId) -> u32 {
@@ -524,9 +533,13 @@ impl View<'_> {
     /// without errors lose nothing.
     #[inline]
     pub(crate) fn hides(&self, file: FileId, commit: u32) -> bool {
+        self.may_hide_commits(file) && self.hides_a_later_commit(file, commit)
+    }
+
+    #[inline]
+    fn may_hide_commits(&self, file: FileId) -> bool {
         let word = self.with_errors.get(file.idx() / 32);
         word.is_some_and(|it| it.load(Ordering::Relaxed) >> (file.0 % 32) & 1 != 0)
-            && self.hides_a_later_commit(file, commit)
     }
 
     #[cold]

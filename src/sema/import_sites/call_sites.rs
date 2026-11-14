@@ -50,6 +50,29 @@ pub fn may_spell_word_that_mock_looks_for(text: &[u8]) -> bool {
         || bun_core::strings::contains(text, b"&#")
 }
 
+/// What the text of a file has that its comments may spell a word of `WORDS_THAT_MOCK_LOOKS_FOR_IN_FACTORY` with.
+#[derive(Copy, Clone)]
+pub struct MockWordsInText {
+    names_word: bool,
+    has_character_reference: bool,
+}
+
+impl MockWordsInText {
+    pub fn of(text: &[u8]) -> MockWordsInText {
+        MockWordsInText {
+            names_word: names_word_that_mock_looks_for(text),
+            has_character_reference: bun_core::strings::contains(text, b"&#"),
+        }
+    }
+
+    /// True if `part` of that text may spell such a word.
+    pub fn may_be_spelled_in(self, part: &[u8]) -> bool {
+        bun_core::strings::contains_char(part, b'\\')
+            || self.names_word && names_word_that_mock_looks_for(part)
+            || self.has_character_reference && bun_core::strings::contains(part, b"&#")
+    }
+}
+
 pub(crate) fn call_site_kind(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -880,6 +903,8 @@ pub(super) struct ScannedCalls {
     pub(super) paths_of_changed_files: Vec<ChangedPath>,
     pub(super) module_relative_reads: Vec<(ExprId, Atom)>,
     pub(super) module_relative_patterns: Vec<(ExprId, Atom, Atom)>,
+    pub(super) reads_ruled_out: Vec<(ExprId, Atom)>,
+    pub(super) patterns_ruled_out: Vec<(ExprId, Atom, Atom)>,
     pub(super) caller_relative_reads: Vec<CallerRelativeRead>,
     pub(super) unknown_path_reads: Vec<ExprId>,
     pub(super) path_listings: Vec<ExprId>,
@@ -923,6 +948,8 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     let mut paths_of_changed_files = Vec::new();
     let mut module_relative_reads = Vec::new();
     let mut module_relative_patterns = Vec::new();
+    let mut reads_ruled_out = Vec::new();
+    let mut patterns_ruled_out = Vec::new();
     let mut caller_relative_reads: Vec<CallerRelativeRead> = Vec::new();
     let mut unknown_path_reads = Vec::new();
     let mut path_listings = Vec::new();
@@ -933,6 +960,7 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     let mut reads: Vec<(ExprId, bool)> = Vec::new();
     let mut file_object_paths = Vec::new();
     let mut changed_operands = Vec::new();
+    let mut operands_that_may_change = Vec::new();
     let mut walked_lists = Vec::new();
     let mut known_load_names = Vec::new();
     let mut followed_loads = Vec::new();
@@ -1007,7 +1035,9 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         }
         if let (false, CallForm::Call { callee, args }) = (is_dead, form) {
             let named = find_file_path_operands(inputs, callee, args);
-            reads.extend(named.read.map(|operand| (operand, named.is_query)));
+            if let Some(named) = &named {
+                reads.extend(named.read.map(|operand| (operand, named.is_query)));
+            }
             if let Some((list, is_query)) = find_list_iterated_by_read(inputs, callee, args) {
                 let names = &alternatives.written_names;
                 let is_spread = |it: ExprId| matches!(hir[it].kind, ExprKind::Spread(_));
@@ -1017,52 +1047,60 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
                     None => walked_lists.push((list, is_query)),
                 }
             }
-            known_operands.extend(named.made);
-            let is_discarded = matches!(bound.parent_of_expr(call), Parent::Stmt(statement)
-                if matches!(hir[statement].kind, StmtKind::Expr(_)));
-            let made = named.made.filter(|_| !is_discarded);
-            file_object_paths.extend(made.map(|path| (path, call)));
-            changed_operands.extend(named.changed.iter().map(|it| it.0.operand));
-            created_operands.extend(named.created);
-            known_operands.extend(named.created);
-            if let Some(operand) = named.listed {
-                reads.push((operand, false));
-                path_listings.push(operand);
-            }
-            entered_operands.extend(named.entered);
             if bound.may_name_own_path() {
                 own_url_arguments.extend(find_own_url_arguments(hir, bound, callee, args));
             }
-            for (mut changed, around) in named.changed {
-                let names = alternatives.names_from_data_files.len();
-                changed.path = path_specifier(inputs, changed.operand, &mut alternatives);
-                alternatives.names_from_data_files.truncate(names);
-                if !matches!(
-                    changed.path,
-                    ImportSpecifier::Constant(_) | ImportSpecifier::OneOf(_)
-                ) && let Some(path) =
-                    find_path_below_working_directory(inputs, changed.operand, &mut alternatives)
-                {
-                    changed.path = path;
+            if let Some(named) = named {
+                known_operands.extend(named.made);
+                let is_discarded = matches!(bound.parent_of_expr(call), Parent::Stmt(statement)
+                    if matches!(hir[statement].kind, StmtKind::Expr(_)));
+                let made = named.made.filter(|_| !is_discarded);
+                file_object_paths.extend(made.map(|path| (path, call)));
+                let changed = named.changed.iter().map(|it| it.0.operand);
+                match named.may_call_another_function {
+                    true => operands_that_may_change.extend(changed),
+                    false => changed_operands.extend(changed),
                 }
-                if let Some(around) = around {
-                    changed.path = write_around(inputs, &changed, around, &mut alternatives);
+                created_operands.extend(named.created);
+                known_operands.extend(named.created);
+                if let Some(operand) = named.listed {
+                    reads.push((operand, false));
+                    path_listings.push(operand);
                 }
-                if changed.path != ImportSpecifier::Unknown {
-                    paths_of_changed_files.push(changed);
+                entered_operands.extend(named.entered);
+                for (mut changed, around) in named.changed {
+                    let names = alternatives.names_from_data_files.len();
+                    changed.path = path_specifier(inputs, changed.operand, &mut alternatives);
+                    alternatives.names_from_data_files.truncate(names);
+                    if !matches!(
+                        changed.path,
+                        ImportSpecifier::Constant(_) | ImportSpecifier::OneOf(_)
+                    ) && let Some(path) = find_path_below_working_directory(
+                        inputs,
+                        changed.operand,
+                        &mut alternatives,
+                    ) {
+                        changed.path = path;
+                    }
+                    if let Some(around) = around {
+                        changed.path = write_around(inputs, &changed, around, &mut alternatives);
+                    }
+                    if changed.path != ImportSpecifier::Unknown {
+                        paths_of_changed_files.push(changed);
+                    }
+                    if matches!(
+                        changed.path,
+                        ImportSpecifier::Constant(_) | ImportSpecifier::OneOf(_)
+                    ) {
+                        continue;
+                    }
+                    let written_names = &alternatives.written_names;
+                    exported_file_changers.extend(find_exports_that_take(
+                        inputs,
+                        written_names,
+                        &changed,
+                    ));
                 }
-                if matches!(
-                    changed.path,
-                    ImportSpecifier::Constant(_) | ImportSpecifier::OneOf(_)
-                ) {
-                    continue;
-                }
-                let written_names = &alternatives.written_names;
-                exported_file_changers.extend(find_exports_that_take(
-                    inputs,
-                    written_names,
-                    &changed,
-                ));
             }
         }
         let text = Text::of(hir, bound, Some(decisions));
@@ -1161,7 +1199,8 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     };
     file_object_paths.retain(|it| !is_used(&it.0) && !is_written_alone(it.1));
     reads.extend(file_object_paths.into_iter().map(|it| (it.0, false)));
-    for &operand in changed_operands.iter().chain(&created_operands) {
+    let written = changed_operands.iter().chain(&operands_that_may_change);
+    for &operand in written.chain(&created_operands) {
         let texts = texts_of_file.get_or_insert_with(create_texts);
         find_paths_created(inputs, texts, operand, &mut paths_created);
     }
@@ -1190,11 +1229,21 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     };
     for (operand, is_query, mut found) in found_reads {
         let texts = texts_of_file.get_or_insert_with(create_texts);
-        if let Some(paths) = executed.get(&operand) {
+        if let Some((paths, false)) = executed.get(&operand) {
             let text = |atom: Atom| inputs.atoms.bytes(atom);
             found.paths.extend(paths.iter().copied());
             (found.paths).shared_sort_unstable_by_key(|it| text(*it));
             found.paths.dedup();
+        }
+        if let Some((paths, true)) = executed.get(&operand) {
+            if entered_operands.contains(&operand) {
+                folders_entered.extend(found.paths.iter().map(|&path| (operand, path)));
+            }
+            found.paths.retain(|it| !paths.contains(it));
+            let ruled_out = std::mem::replace(&mut found.paths, paths.clone()).into_iter();
+            reads_ruled_out.extend(ruled_out.map(|path| (operand, path)));
+            let ruled_out = std::mem::take(&mut found.patterns).into_iter();
+            patterns_ruled_out.extend(ruled_out.map(|(prefix, suffix)| (operand, prefix, suffix)));
         }
         if entered_operands.contains(&operand) {
             folders_entered.extend(found.paths.iter().map(|&path| (operand, path)));
@@ -1274,6 +1323,8 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         paths_of_changed_files,
         module_relative_reads,
         module_relative_patterns,
+        reads_ruled_out,
+        patterns_ruled_out,
         caller_relative_reads,
         unknown_path_reads,
         path_queries,

@@ -186,6 +186,21 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.jump(on_not_taken);
     }
 
+    fn finish_split_of_truthy_local(
+        &mut self,
+        split: Split,
+        local: SymbolId,
+        value: ValueId,
+        on_truthy: BlockId,
+        on_falsy: BlockId,
+    ) {
+        self.builder.switch_to(split.taken);
+        self.narrow_local(local, value, split.taken_value);
+        self.jump(on_truthy);
+        self.builder.switch_to(split.not_taken);
+        self.jump(on_falsy);
+    }
+
     fn narrow_local(&mut self, local: SymbolId, value: ValueId, left: ValueId) {
         let origin = self.builder.value_behind_tests(value);
         let narrowed = self.builder.narrow_by_test(origin, left);
@@ -323,7 +338,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let split = self.split_on_truthiness(value);
         let Some(field) = field else {
             return match local {
-                Some(local) => self.finish_split_of_local(split, local, value, if_true, if_false),
+                Some(local) => {
+                    self.finish_split_of_truthy_local(split, local, value, if_true, if_false)
+                }
                 None => self.finish_split(split, if_true, if_false),
             };
         };

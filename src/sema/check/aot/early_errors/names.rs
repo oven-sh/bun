@@ -10,7 +10,11 @@ impl Checker<'_, '_> {
                 continue;
             }
             let code = match hir.text(node) {
-                known::r#await if is_runtime_module => 1262,
+                known::r#await
+                    if is_runtime_module && !hir.is_in_known_evaluation(hir.start(node)) =>
+                {
+                    1262
+                }
                 known::r#await if is_parameter_of_async_arrow_function(hir, node) => 1359,
                 known::r#await if is_in_arrow_parameters_in(hir, node, is_await_context) => 1359,
                 known::r#yield if hir.yield_context(node) => {
@@ -61,6 +65,9 @@ fn is_in_arrow_parameters_in<'s>(
 ) -> bool {
     let (mut below, mut above) = (node, hir.parent(node));
     while above.is_some() && !hir.kind(above).is_function_like() {
+        if hir.is_evaluated_text(below) {
+            return false;
+        }
         (below, above) = (above, hir.parent(above));
     }
     hir.kind(above) == Kind::ArrowFunction

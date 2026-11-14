@@ -4,18 +4,7 @@ use core::ptr::NonNull;
 
 use bun_sys::{self as sys, Fd};
 
-use crate::{EventLoopHandle, FilePollKind, FilePollRef, Owner, PollTag};
-// `bun.Async.Loop` — on POSIX the uws `us_loop_t`, on Windows the embedded
-// `uv_loop_t` (`bun_io::Loop` is the cfg-aliased nominal that picks the
-// right one). `BufferedReaderParent::loop_` returns this so callers in T3+
-// can hand it to libuv/uws without a cross-crate cast.
-//
-// Public so trait implementors in `bun_runtime` can name the same type in
-// their `loop_` signature without duplicating the cfg-split.
-#[cfg(not(windows))]
-pub type Loop = bun_uws_sys::Loop;
-#[cfg(windows)]
-pub type Loop = bun_sys::windows::libuv::Loop;
+use crate::{EventLoopHandle, FilePollKind, FilePollRef, LoopRef, Owner, PollTag};
 
 /// `bun_io::poll_tag::BUFFERED_READER` — every `FilePoll` allocated by this
 /// module stores a `*mut BufferedReader` (erased) as its owner; the per-tag
@@ -81,7 +70,7 @@ pub trait BufferedReaderParent {
     }
     unsafe fn on_reader_done(this: *mut Self);
     unsafe fn on_reader_error(this: *mut Self, err: sys::Error);
-    unsafe fn loop_(this: *mut Self) -> *mut Loop;
+    unsafe fn loop_(this: *mut Self) -> LoopRef;
     unsafe fn event_loop(this: *mut Self) -> EventLoopHandle;
     unsafe fn ref_(this: *mut Self) {
         let _ = this;
@@ -110,8 +99,8 @@ impl BufferedReaderVTable {
         self.link().event_loop()
     }
 
-    fn loop_(&self) -> *mut Loop {
-        self.link().loop_ptr()
+    fn loop_(&self) -> LoopRef {
+        self.link().loop_()
     }
 
     fn is_streaming_enabled(&self) -> bool {
@@ -360,7 +349,7 @@ impl PosixBufferedReader {
         // Unregister the FilePoll if it's registered
         if let PollOrFd::Poll(poll) = &mut self.handle {
             if poll.is_registered() {
-                let _ = poll.unregister(self.vtable.loop_().cast(), false);
+                let _ = poll.unregister(self.vtable.loop_(), false);
             }
         }
     }
@@ -544,7 +533,7 @@ impl PosixBufferedReader {
             poll.enable_keeping_process_alive(ev);
         }
 
-        match poll.register_with_fd(lp.cast(), FilePollKind::Readable, poll.fd()) {
+        match poll.register_with_fd(lp, FilePollKind::Readable, poll.fd()) {
             sys::Result::Err(err) => Err(err),
             sys::Result::Ok(()) => Ok(()),
         }
@@ -1336,7 +1325,7 @@ impl WindowsBufferedReader {
         // Use the event loop from the parent, not the global one
         // This is critical for spawnSync to use its isolated loop
         let loop_ = self.vtable.loop_();
-        let source = match Source::open(loop_.cast(), fd) {
+        let source = match Source::open(loop_, fd) {
             sys::Result::Err(err) => return sys::Result::Err(err),
             sys::Result::Ok(source) => source,
         };
@@ -1590,7 +1579,7 @@ impl WindowsBufferedReader {
                             // stores the cb and fires it on the event loop.
                             if let Some(err) = unsafe {
                                 uv::uv_fs_read(
-                                    this.vtable.loop_().cast(),
+                                    this.vtable.loop_(),
                                     &mut (*file_raw).fs,
                                     (*file_raw).file,
                                     &(*file_raw).iov,
@@ -1669,7 +1658,7 @@ impl WindowsBufferedReader {
                 // fires it on the event loop.
                 if let Some(err) = unsafe {
                     uv::uv_fs_read(
-                        self.vtable.loop_().cast(),
+                        self.vtable.loop_(),
                         &mut (*file_raw).fs,
                         (*file_raw).file,
                         &(*file_raw).iov,

@@ -455,9 +455,7 @@ impl Snapshots {
             self.open_to_append(files)?;
             if let Some(file) = self._current_file.as_mut() {
                 file.dirty = true;
-                if let Some(opened) = file.file.take() {
-                    let _ = opened.close();
-                }
+                file.file = None;
             }
         }
         if written_by_earlier_attempt.is_none() {
@@ -468,11 +466,9 @@ impl Snapshots {
     }
 
     fn parse_file(&mut self, snapshot_file_path: &[u8]) -> Result<(), Error> {
-        // SAFETY: VM is thread-local singleton installed before any test runs; lives for the
-        // duration of the runner. Per `VirtualMachine::get` doc, callers form a short-lived borrow.
-        let vm = VirtualMachine::get().as_mut();
+        let vm = VirtualMachine::get();
         let opts =
-            js_parser::ParserOptions::init(vm.transpiler.options.jsx.clone(), bun_ast::Loader::Js);
+            js_parser::ParserOptions::init(vm.transpiler.get().options.jsx.clone(), bun_ast::Loader::Js);
         // Thread a per-call arena — js_parser is bump-allocated.
         let arena = bun_alloc::Arena::new();
         let mut temp_log = bun_ast::Log::init();
@@ -483,7 +479,7 @@ impl Snapshots {
             opts,
             &mut temp_log,
             &source,
-            &vm.transpiler.options.define,
+            &vm.transpiler.get().options.define,
             &arena,
         )?;
 
@@ -689,7 +685,6 @@ impl Snapshots {
                 file.write_all(&self.file_buf)
                     .and_then(|()| bun_sys::ftruncate(file.handle, self.file_buf.len() as i64))
                     .map_err(|_| crate::Error::FailedToWriteSnapshotFile)?;
-                let _ = file.close();
             }
             self.file_buf.clear();
             self.file_buf.shrink_to_fit();
@@ -753,8 +748,7 @@ impl Snapshots {
     #[optimize(size)]
     pub(crate) fn write_inline_snapshots(&mut self, files: &FileList) -> Result<bool, Error> {
         let success = core::cell::Cell::new(true);
-        // SAFETY: see `parse_file` — thread-local VM singleton, short-lived reborrow.
-        let vm = VirtualMachine::get().as_mut();
+        let vm = VirtualMachine::get();
 
         // The arena is reset() inside the loop, bulk-freeing per-iteration scratch.
         let mut arena = bun_alloc::Arena::new();
@@ -914,7 +908,7 @@ impl Snapshots {
                     lexer.next()?;
                     // `ParserOptions` isn't `Clone`; rebuild per-iteration.
                     let opts = js_parser::ParserOptions::init(
-                        vm.transpiler.options.jsx.clone(),
+                        vm.transpiler.get().options.jsx.clone(),
                         bun_ast::Loader::Js,
                     );
                     // `P::init` takes an out-param
@@ -929,7 +923,7 @@ impl Snapshots {
                         &arena,
                         core::ptr::NonNull::new(log_ptr).expect("log_ptr derived from &mut *log"),
                         &source,
-                        &vm.transpiler.options.define,
+                        &vm.transpiler.get().options.define,
                         lexer,
                         opts,
                     );

@@ -173,6 +173,11 @@ impl CommonJsNames {
         entries.is_some_and(|entries| entries.exports_ordinary_object)
     }
 
+    pub(in crate::modules) fn exports_function(&self, module: ModuleRef) -> bool {
+        let entries = self.entries_of(module);
+        entries.is_some_and(|entries| entries.exports_function)
+    }
+
     pub(in crate::modules) fn is_half(&self, module: ModuleRef) -> bool {
         let entries = self.entries_of(module);
         entries.is_some_and(|entries| entries.is_half)
@@ -505,6 +510,7 @@ mod tests {
             is_half: false,
             is_replaced_late: false,
             exports_ordinary_object: true,
+            exports_function: false,
             marker: Some(false),
             names,
         }

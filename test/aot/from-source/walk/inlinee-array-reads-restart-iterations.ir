@@ -35,8 +35,8 @@
 # RUN: walk f1:Body mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: IsPristine
-# CHECK: undoesIterationStore
 # CHECK: PutContiguousIndex
+# CHECK: undoesIterationStore
 # RUN(ANSWERS): run-in-shell mechanisms=all
 # ANSWERS: 80
 # ANSWERS: 80

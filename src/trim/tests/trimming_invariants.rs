@@ -677,7 +677,8 @@ fn check_plan(
             || used.has_cause(UnseenCodeCause::ReportMissing)
             || used.has_cause(UnseenCodeCause::FlowResultDisabled)
             || (request.allow.iter()).any(|name| name.features().contains(Feature::Bundler));
-        if seed.contains(Feature::Bundler) && may_enter_all_of_bundler {
+        let builds_executables = seed.contains(Feature::Bundler) && may_enter_all_of_bundler;
+        if builds_executables {
             seed.union_with(&FeatureSet::from_features(&[
                 Feature::Check,
                 Feature::AotCompiler,
@@ -687,8 +688,15 @@ fn check_plan(
         }
         let mut entered_by_programs = FeatureSet::all();
         entered_by_programs.subtract(&Feature::all_outside_compiled_programs());
+        let can_enter_test_runner = builds_executables
+            || used.can_reach_test_runner
+            || used.uses(Feature::ShadowRealm)
+            || used.can_start_worker_from_unseen_code();
         if !request.is_template {
             entered_by_programs.subtract(&Feature::all_entered_from(EnteredFrom::CompiledCode));
+            if !can_enter_test_runner {
+                entered_by_programs.subtract(&FeatureSet::from_features(&[Feature::Test]));
+            }
         }
         seed.union_with(&entered_by_programs);
     }

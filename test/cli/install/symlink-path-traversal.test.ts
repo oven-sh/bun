@@ -2157,6 +2157,41 @@ describe.concurrent.skipIf(isWindows)("the target of a link at node_modules", ()
     expect(exitCode).toBe(0);
   });
 
+  // The tree for the link to the project is the project's own `node_modules`.
+  it("stays when the project is a dependency of itself", async () => {
+    using root = tempDir("nm-outside-self", {});
+    const outside = await plant(String(root));
+    const repo = join(String(root), "repo");
+    await mkdir(join(repo, "held"), { recursive: true });
+    await writeFile(join(repo, "held", "package.json"), JSON.stringify({ name: "held", version: "1.0.0" }));
+    await writeFile(
+      join(repo, "package.json"),
+      JSON.stringify({ name: "root", version: "1.0.0", dependencies: { self: "file:.", dep: "file:./held" } }),
+    );
+    const link = join(repo, "node_modules");
+    await symlink("../outside", link);
+
+    const steps: [args: string[], prepare: () => Promise<void>, exitCode: number][] = [
+      [["install"], async () => {}, 0],
+      [["install", "--force"], async () => {}, 0],
+      // The install fails without dep's folder.
+      [["install"], () => rename(join(repo, "held"), join(repo, "held.away")), 1],
+      [["install"], () => rename(join(repo, "held.away"), join(repo, "held")), 0],
+    ];
+    for (const [step, [args, prepare, exitCode]] of steps.entries()) {
+      await prepare();
+      const result = await runBun(repo, [...args, "--linker", "hoisted"], join(String(root), "cache"));
+
+      expect({
+        step,
+        mine: await read(outside),
+        isLink: (await lstat(link)).isSymbolicLink(),
+        selfIsLink: (await lstat(join(outside, "self"))).isSymbolicLink(),
+        exitCode: result.exitCode,
+      }).toEqual({ step, mine: MINE, isLink: true, selfIsLink: true, exitCode });
+    }
+  });
+
   it.each(["thesis", "notes.txt"])("is in the way of the isolated linker's link: %s", async name => {
     using root = tempDir("nm-outside-taken", {});
     const outside = await plant(String(root));

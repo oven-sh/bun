@@ -1278,3 +1278,54 @@ it("zstdCompress compresses the bytes the caller passed when a WebAssembly.Memor
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
+
+// Node's test-zlib-invalid-input-memory.js (nodejs/node#22705): a zlib stream that failed with
+// an error can still be collected. That test expects its one stream to be gone after one gc().
+// JavaScriptCore also marks what a word on the native stack points at, and on Alpine x64 and
+// Windows x64 a slot that a live frame never writes holds the handle of the last stream that
+// failed. So this counts over 16 streams and accepts a few that stay, with the bound that
+// GC_STRAGGLERS has in test/js/node/http2/h2-conformance.test.ts.
+it("streams that failed with an error are collected", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      /* js */ `
+      const zlib = require("node:zlib");
+      const total = 16;
+      const refs = [];
+      const codes = [];
+      // The writes start from a timer, so that every error is reported from the event loop and
+      // none while the entry point still loads. That is the order in which the word stays. The
+      // collection runs from a setImmediate callback after the last error, as in Node's test.
+      setTimeout(() => {
+        for (let i = 0; i < total; i++) {
+          const stream = zlib.createInflate();
+          refs.push(new WeakRef(stream));
+          stream.once("error", error => {
+            codes.push(error.code);
+            if (codes.length === total) setImmediate(collect, total + 1);
+          });
+          stream.end(Buffer.from("foobar"));
+        }
+      }, 0);
+      // Collects once per turn for as long as the count goes down.
+      function collect(before) {
+        Bun.gc(true);
+        const alive = refs.filter(ref => ref.deref() !== undefined).length;
+        if (alive > 0 && alive < before) return setImmediate(collect, alive);
+        console.log(JSON.stringify({ codes, alive }));
+      }
+    `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { codes, alive } = JSON.parse(stdout.trim() || "{}");
+  expect({ codes, stderr, exitCode }).toEqual({ codes: Array(16).fill("Z_DATA_ERROR"), stderr: "", exitCode: 0 });
+  // A handle that stays referenced after the error keeps all 16.
+  expect(alive).toBeLessThanOrEqual(3);
+});

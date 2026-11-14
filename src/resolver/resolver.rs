@@ -7,6 +7,7 @@
 
 use crate::{is_package_path, is_package_path_not_absolute};
 
+use core::cell::{OnceCell, UnsafeCell};
 use core::ptr::NonNull;
 use std::io::Write as _;
 use std::sync::Arc;
@@ -372,47 +373,19 @@ pub struct Bufs {
     #[cfg(windows)]
     pub(crate) win32_normalized_dir_info_cache: [u8; MAX_PATH_BYTES * 2],
 }
-// `Bufs` is modeled as a `thread_local! { static BUFS_PTR: BufsSlot }` caching a
-// leaked `Box<Bufs>` pointer. `BufsSlot`'s `Drop` reclaims that box when a
-// worker/transpiler-pool thread exits; the main thread's lives process-lifetime.
 // The `bufs!()` macro hands out `&mut` to a
 // single field. This relies on the caller never holding two `bufs!()` borrows
 // simultaneously across the same field.
-struct BufsSlot(core::cell::Cell<*mut Bufs>);
-impl Drop for BufsSlot {
-    fn drop(&mut self) {
-        // Reclaim the per-thread `Box<Bufs>` when a worker/transpiler-pool
-        // thread exits. Main-thread Bufs lives as long as the process, but
-        // every worker that touches the resolver allocates a fresh ~116 KiB
-        // box that was previously stranded.
-        let p = self.0.get();
-        if !p.is_null() {
-            // SAFETY: produced by `Box::leak` in `bufs_storage_init`; this
-            // thread is exiting so no resolver call frame holds a `bufs!()`
-            // borrow into it.
-            drop(unsafe { Box::from_raw(p) });
-        }
-    }
-}
 thread_local! {
-    static BUFS_PTR: BufsSlot = const { BufsSlot(core::cell::Cell::new(core::ptr::null_mut())) };
+    static BUFS: OnceCell<Box<UnsafeCell<Bufs>>> = const { OnceCell::new() };
 }
 
 #[inline(always)]
 fn bufs_storage_get() -> *mut Bufs {
-    // Fast path: TLS access + null check. `BUFS_PTR` is a `BufsSlot` (it has a
-    // `Drop`), so `with()` goes through `thread_local!`'s destructor-state check
-    // before the `Cell::get` load — still only a few instructions, no
-    // RefCell/Option/closure machinery on the hot path (benches: misc/require-fs).
-    let p = BUFS_PTR.with(|s| s.0.get());
-    if !p.is_null() {
-        return p;
-    }
-    bufs_storage_init()
+    BUFS.with(|bufs| bufs.get_or_init(bufs_storage_init).get())
 }
 
-#[cold]
-fn bufs_storage_init() -> *mut Bufs {
+fn bufs_storage_init() -> Box<UnsafeCell<Bufs>> {
     // SAFETY: every field of `Bufs` is a byte/integer array (`PathBuffer` =
     // `[u8; N]`, `[u8; 512]`, `[FD; 256]` where `Fd` is a `#[repr(transparent)]`
     // integer newtype with no niche) or `[MaybeUninit<_>; 256]`, so the
@@ -420,9 +393,7 @@ fn bufs_storage_init() -> *mut Bufs {
     // because integers must be initialized: a never-written `[u8; N]` is UB
     // even though every bit pattern is a valid `u8`. Runs once per thread;
     // `alloc_zeroed` of ~100 KiB is usually fresh OS-zeroed pages.
-    let p: *mut Bufs = Box::leak(unsafe { Box::<Bufs>::new_zeroed().assume_init() });
-    BUFS_PTR.with(|s| s.0.set(p));
-    p
+    unsafe { Box::new_zeroed().assume_init() }
 }
 
 /// `bufs(.field)` → `bufs!(field)` returns `&mut <field type>`.

@@ -9,7 +9,7 @@ use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsClass as _, JsResult, Strong};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::js_promise::Status as PromiseStatus;
-use bun_ptr::RefPtr;
+use bun_ptr::{AliasableBox, RefPtr};
 use super::jest::{Jest, FileId, FileColumns as _};
 use crate::jsc_hooks::timer_all;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
@@ -365,21 +365,21 @@ pub(crate) mod js_fns {
                         }
                     };
 
-                    let new_item = ExecutionEntry::create(
+                    let new_item = AliasableBox::from(ExecutionEntry::create(
                         None,
                         args.callback,
                         cfg,
                         None,
                         BaseScopeCfg::default(),
                         AddedInPhase::Execution,
-                    );
-                    let new_item_ptr = bun_core::heap::into_raw(new_item);
+                    ));
+                    let new_item_ptr = new_item.as_ptr();
                     // SAFETY: append_point is a valid linked-list node; new_item_ptr just allocated
                     unsafe {
                         (*new_item_ptr).next = (*append_point).next;
                         (*append_point).next = Some(new_item_ptr);
                     }
-                    bun_test.extra_execution_entries.push(new_item_ptr);
+                    bun_test.extra_execution_entries.push(new_item);
 
                     Ok(())
                 }
@@ -752,7 +752,7 @@ pub(crate) struct BunTest {
     /// Whether tests in this file should default to concurrent execution
     pub(crate) default_concurrent: bool,
     pub(crate) first_last: FirstLast,
-    pub(crate) extra_execution_entries: Vec<*mut ExecutionEntry>,
+    pub(crate) extra_execution_entries: Vec<AliasableBox<ExecutionEntry>>,
     /// Heap-boxed bitwise clones of hook entries from `Order::generate_order_test`.
     /// Only the Box header may be freed in `Drop` — fields alias `DescribeScope` originals.
     pub(crate) cloned_hook_entries: Vec<*mut ExecutionEntry>,
@@ -844,7 +844,7 @@ impl BunTest {
     }
 
     pub(crate) fn create_vitest_entry(&mut self, callback: JSValue, timeout: u32, context: bool) -> NonNull<ExecutionEntry> {
-        let entry = bun_core::heap::into_raw_nn(ExecutionEntry::create(
+        let entry = AliasableBox::from(ExecutionEntry::create(
             None,
             Some(callback),
             ExecutionEntryCfg { timeout, calling: Calling::Vitest { context }, ..Default::default() },
@@ -852,8 +852,9 @@ impl BunTest {
             BaseScopeCfg::default(),
             AddedInPhase::Execution,
         ));
-        self.extra_execution_entries.push(entry.as_ptr());
-        entry
+        let ptr = entry.as_non_null();
+        self.extra_execution_entries.push(entry);
+        ptr
     }
 
     pub(crate) fn get_current_state_data(&self) -> RefDataValue {
@@ -1716,10 +1717,6 @@ impl Drop for BunTest {
             timer_all().remove(&self.timer);
         }
 
-        for entry in self.extra_execution_entries.drain(..) {
-            // SAFETY: entries were heap-allocated in generic_hook; we own them
-            unsafe { drop(bun_core::heap::take(entry)); }
-        }
         for entry in self.cloned_hook_entries.drain(..) {
             // Reclaim only the Box header — fields alias the `DescribeScope` originals.
             // SAFETY: heap-boxed by `Order::generate_order_test`; same layout as `ManuallyDrop`.

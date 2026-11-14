@@ -314,6 +314,311 @@ describe.concurrent("test context", () => {
     });
   });
 
+  test("task.result.state is the result of the test once the test has ended", async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, describe, beforeEach, afterEach, afterAll, expect, onTestFinished } from "vitest";
+        const never = new Promise(() => {});
+        const tasks = new Set();
+        beforeEach(({ task }) => { tasks.add(task); });
+        afterAll(() => { for (const { name, result } of tasks) console.log(name + ":", result.state); });
+        let result;
+        test("passes", ({ task }) => { result = task.result; });
+        test("a later test reads its result object", () => { console.log("in a later test:", result.state); });
+        test("throws", () => { throw new Error("boom"); });
+        test("times out", { timeout: 20 }, () => never);
+        test.fails("fails, throws", () => { throw new Error("expected"); });
+        test.fails("fails, returns", () => {});
+        test.fails("fails, returns and then throws", { retry: 1 }, ({ task }) => { if (task.result.retryCount === 1) throw new Error("expected"); });
+        test("passes the second time", { retry: 1 }, ({ task }) => { if (task.result.retryCount === 0) throw new Error("again"); });
+        test("throws each time", { retry: 1 }, () => { throw new Error("always"); });
+        test("repeated", { repeats: 2 }, () => {});
+        test("skips itself", ({ skip }) => { skip(); });
+        test("expect.assertions(1), no expect()", () => { expect.assertions(1); });
+        test("expect.hasAssertions(), no expect()", () => { expect.hasAssertions(); });
+        test("onTestFinished throws", () => { onTestFinished(() => { throw new Error("in onTestFinished"); }); });
+        describe("hooks", () => {
+          describe("a", () => {
+            afterEach(() => { throw new Error("in afterEach"); });
+            test("afterEach throws", () => {});
+          });
+          describe("b", () => {
+            afterEach(() => never, 20);
+            test("afterEach times out", () => {});
+          });
+          describe("c", () => {
+            beforeEach(() => never, 20);
+            test("beforeEach times out", () => {});
+          });
+        });
+        describe("concurrent", () => {
+          let first;
+          test.concurrent("first", async ({ task }) => { first = task; await 1; });
+          test.concurrent("second", async () => {
+            for (let i = 0; i < 100 && first.result.state === "run"; i++) await new Promise(resolve => setImmediate(resolve));
+            console.log("in a concurrent test:", first.result.state);
+          });
+        });
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: [
+        "in a later test: pass",
+        "in a concurrent test: pass",
+        "passes: pass",
+        "a later test reads its result object: pass",
+        "throws: fail",
+        "times out: fail",
+        "fails, throws: pass",
+        "fails, returns: fail",
+        "fails, returns and then throws: pass",
+        "passes the second time: pass",
+        "throws each time: fail",
+        "repeated: pass",
+        "skips itself: skip",
+        "expect.assertions(1), no expect(): fail",
+        "expect.hasAssertions(), no expect(): fail",
+        "onTestFinished throws: fail",
+        "afterEach throws: fail",
+        "afterEach times out: fail",
+        "beforeEach times out: fail",
+        "first: pass",
+        "second: pass",
+      ],
+      results: [
+        "(pass) passes",
+        "(pass) a later test reads its result object",
+        "(fail) throws",
+        "(fail) times out",
+        "(pass) fails, throws",
+        "(fail) fails, returns",
+        "(pass) fails, returns and then throws (attempt 2)",
+        "(pass) passes the second time (attempt 2)",
+        "(fail) throws each time (attempt 2)",
+        "(pass) repeated (run 3)",
+        "(skip) skips itself",
+        "(fail) expect.assertions(1), no expect()",
+        "(fail) expect.hasAssertions(), no expect()",
+        "(fail) onTestFinished throws",
+        "(fail) hooks > a > afterEach throws",
+        "(fail) hooks > b > afterEach times out",
+        "(fail) hooks > c > beforeEach times out",
+        "(pass) concurrent > first",
+        "(pass) concurrent > second",
+      ],
+      exitCode: 1,
+    });
+  });
+
+  // Vitest has no test.failing and calls no bun:test test, so these states are the results that bun reports.
+  test("task.result.state of an ended test.failing test or bun:test test is its reported result", async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test as base, afterAll, aroundEach, describe, expect } from "bun:test";
+        import { TestRunner, onTestFinished } from "vitest";
+        const test = base.extend({});
+        const tasks = [];
+        afterAll(() => { for (const { name, result } of tasks) console.log(name + ":", result.state); });
+        test("test.extend(), passes", ({ task }) => { tasks.push(task); });
+        test("test.extend(), throws", ({ task }) => { tasks.push(task); throw new Error("boom"); });
+        test.failing("test.extend(), test.failing, throws", ({ task }) => { tasks.push(task); throw new Error("expected"); });
+        test.failing("test.extend(), test.failing, returns", ({ task }) => { tasks.push(task); });
+        base.for([1])("test.for(), row %i", (row, { task }) => { tasks.push(task); });
+        base("getCurrentTest(), passes", () => { tasks.push(TestRunner.getCurrentTest()); });
+        base("getCurrentTest(), expect.assertions(1), no expect()", () => { tasks.push(TestRunner.getCurrentTest()); expect.assertions(1); });
+        base.failing("getCurrentTest(), test.failing, returns", () => { tasks.push(TestRunner.getCurrentTest()); });
+        base("onTestFinished()", () => { onTestFinished(({ task }) => { tasks.push(task); }); });
+        describe("aroundEach", () => {
+          aroundEach(async (runTest, { task }) => { tasks.push(task); await runTest(); });
+          base("passes", () => {});
+          base("throws", () => { throw new Error("boom"); });
+        });
+      `,
+      "b.test.js": `
+        import { test, afterAll } from "vitest";
+        const tasks = [];
+        const contexts = [];
+        afterAll(() => {
+          for (const { name, result } of tasks) console.log(name + ":", result.state);
+          for (const { task } of contexts) console.log(task.name + ":", task.result.state);
+        });
+        test.failing("vitest, test.failing, throws", ({ task }) => { tasks.push(task); throw new Error("expected"); });
+        test.failing("vitest, test.failing, returns", ({ task }) => { tasks.push(task); });
+        test.failing("vitest, test.failing, throws, task first read after the test", (context) => { contexts.push(context); throw new Error("expected"); });
+        test.failing("vitest, test.failing, returns, task first read after the test", (context) => { contexts.push(context); });
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: [
+        "test.extend(), passes: pass",
+        "test.extend(), throws: fail",
+        "test.extend(), test.failing, throws: pass",
+        "test.extend(), test.failing, returns: fail",
+        "test.for(), row 1: pass",
+        "getCurrentTest(), passes: pass",
+        "getCurrentTest(), expect.assertions(1), no expect(): fail",
+        "getCurrentTest(), test.failing, returns: fail",
+        "onTestFinished(): pass",
+        "passes: pass",
+        "throws: fail",
+        "vitest, test.failing, throws: pass",
+        "vitest, test.failing, returns: fail",
+        "vitest, test.failing, throws, task first read after the test: pass",
+        "vitest, test.failing, returns, task first read after the test: fail",
+      ],
+      results: [
+        "(pass) test.extend(), passes",
+        "(fail) test.extend(), throws",
+        "(pass) test.extend(), test.failing, throws",
+        "(fail) test.extend(), test.failing, returns",
+        "(pass) test.for(), row 1",
+        "(pass) getCurrentTest(), passes",
+        "(fail) getCurrentTest(), expect.assertions(1), no expect()",
+        "(fail) getCurrentTest(), test.failing, returns",
+        "(pass) onTestFinished()",
+        "(pass) aroundEach > passes",
+        "(fail) aroundEach > throws",
+        "(pass) vitest, test.failing, throws",
+        "(fail) vitest, test.failing, returns",
+        "(pass) vitest, test.failing, throws, task first read after the test",
+        "(fail) vitest, test.failing, returns, task first read after the test",
+      ],
+      exitCode: 1,
+    });
+  });
+
+  test("task.result.state of an ended bun:test test that a preload's vitest hook saw is its reported result", async () => {
+    const { log, results, exitCode } = await runTests(
+      {
+        "preload.js": `
+          import { beforeEach, afterAll } from "vitest";
+          const tasks = [];
+          beforeEach(({ task }) => { tasks.push(task); });
+          afterAll(() => { for (const { name, result } of tasks) console.log(name + ":", result.state); });
+        `,
+        "a.test.js": `
+          import { test, expect } from "bun:test";
+          test("passes", () => {});
+          test("expect.assertions(1), no expect()", () => { expect.assertions(1); });
+          test.failing("test.failing, returns", () => {});
+        `,
+      },
+      ["--preload", "./preload.js"],
+    );
+    expect({ log, results, exitCode }).toEqual({
+      log: ["passes: pass", "expect.assertions(1), no expect(): fail", "test.failing, returns: fail"],
+      results: ["(pass) passes", "(fail) expect.assertions(1), no expect()", "(fail) test.failing, returns"],
+      exitCode: 1,
+    });
+  });
+
+  // Vitest never runs a todo test. Its reporters count one as skipped.
+  test("task.result.state of an ended test.todo test under --todo is skip, or fail when the test passes", async () => {
+    const { log, results, exitCode } = await runTests(
+      {
+        "a.test.js": `
+          import { test, afterAll } from "vitest";
+          const tasks = [];
+          const contexts = [];
+          afterAll(() => {
+            for (const { name, mode, result } of tasks) console.log(name + ":", mode, result.state);
+            for (const { task } of contexts) console.log(task.name + ":", task.mode, task.result.state);
+          });
+          test.todo("throws", ({ task }) => { tasks.push(task); throw new Error("not yet"); });
+          test.todo("returns", ({ task }) => { tasks.push(task); });
+          test.todo("throws, task first read after the test", (context) => { contexts.push(context); throw new Error("not yet"); });
+          test.todo("returns, task first read after the test", (context) => { contexts.push(context); });
+        `,
+      },
+      ["--todo"],
+    );
+    expect({ log, results, exitCode }).toEqual({
+      log: [
+        "throws: todo skip",
+        "returns: todo fail",
+        "throws, task first read after the test: todo skip",
+        "returns, task first read after the test: todo fail",
+      ],
+      results: [
+        "(todo) throws",
+        "(fail) returns",
+        "(todo) throws, task first read after the test",
+        "(fail) returns, task first read after the test",
+      ],
+      exitCode: 1,
+    });
+  });
+
+  test("task.result is reset for a retry or a repeat before the mocks are restored", async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, vi, onTestFinished } from "vitest";
+        vi.setConfig({ restoreMocks: true });
+        let task, ended = false, runs = 0;
+        const object = new Proxy({ method() {} }, {
+          defineProperty(target, key, descriptor) {
+            if (ended) {
+              ended = false;
+              console.log("mocks are restored:", task.result.state, task.result.retryCount, task.result.repeatCount);
+            }
+            return Reflect.defineProperty(target, key, descriptor);
+          },
+        });
+        const spy = (context) => {
+          task = context.task;
+          vi.spyOn(object, "method");
+          onTestFinished(() => { ended = true; });
+        };
+        test("retried", { retry: 1 }, (context) => { spy(context); if (task.result.retryCount === 0) throw new Error("again"); });
+        test("repeated", { repeats: 1 }, spy);
+        test("retried, then repeated", { retry: 1, repeats: 1 }, (context) => { spy(context); if (runs++ === 0) throw new Error("again"); });
+        test("the next test", () => {});
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: [
+        "mocks are restored: run 1 0",
+        "mocks are restored: pass 1 0",
+        // Vitest 5.1.0 prints "run 0 0" before a repeat: it sets repeatCount after it restores the mocks.
+        "mocks are restored: run 0 1",
+        "mocks are restored: pass 0 1",
+        "mocks are restored: run 1 0",
+        // Vitest's retryCount counts the retries of every repeat, so it prints "run 1 0" and then "pass 1 1".
+        "mocks are restored: run 0 1",
+        "mocks are restored: pass 0 1",
+      ],
+      results: [
+        "(pass) retried (attempt 2)",
+        "(pass) repeated (run 2)",
+        "(pass) retried, then repeated (run 2)",
+        "(pass) the next test",
+      ],
+      exitCode: 0,
+    });
+  });
+
+  test("task.result.state is the result of the test when --bail ends the run", async () => {
+    const { log, results, exitCode } = await runTests(
+      {
+        "a.test.js": `
+          import { test } from "vitest";
+          let kept;
+          process.on("exit", () => console.log("exit:", kept.name + ":", kept.result.state));
+          test("times out", { timeout: 20 }, ({ task }) => { kept = task; return new Promise(() => {}); });
+          test("does not run", () => {});
+        `,
+      },
+      ["--bail=1"],
+      // bun test runs the exit listeners of a test file only with this.
+      { BUN_TEST_DRAIN_EVENT_LOOP: "1" },
+    );
+    expect({ log, results, exitCode }).toEqual({
+      log: ["exit: times out: fail"],
+      results: ["(fail) times out"],
+      exitCode: 1,
+    });
+  });
+
   test("skip()", async () => {
     const { log, results, errors, exitCode } = await runTests({
       "a.test.js": `

@@ -13,15 +13,26 @@ use bun_threading::{UnboundedQueue, WaitGroup, thread_pool};
 
 use bun_sys::{FdDirExt as _, FdExt as _};
 
+#[cfg(target_os = "macos")]
+use super::file_cloner::FileCloner;
+use super::file_copier::FileCopier;
+use super::hardlinker::Hardlinker;
+use super::store::{self, Store};
+use super::store::{EntryColumns as _, NodeColumns as _};
+use super::symlinker::{self, Symlinker};
 use crate::bin_real;
+use crate::bun_fs;
 use crate::bun_progress::NodeId;
 use crate::cache_publish::{RenameError, RenameRetry};
 use crate::lockfile::package;
+use crate::lockfile_real::package::PackageColumns as _;
 use crate::package_install::{
     BUN_TAG, Method as InstallMethod, Staging, StagingLock, StagingPath, Summary as InstallSummary,
     rename_staging_into_place,
 };
 use crate::package_manager_real::Command;
+use crate::package_manager_real::directories;
+use crate::package_manager_real::package_manager_options::{Do, Enable};
 use crate::postinstall_optimizer;
 use crate::postinstall_optimizer::PostinstallOptimizer;
 use crate::prune::LinkedNodeModules;
@@ -30,19 +41,6 @@ use crate::{
     self as install, Lockfile, PackageID, PackageManager, Resolution, TaskCallbackContext,
     TruncatedPackageNameHash, bin, invalid_dependency_id,
 };
-// Bring `items_<field>()` column accessors into scope for
-// `MultiArrayList<Package>` / `Slice<Package>`.
-#[cfg(target_os = "macos")]
-use super::file_cloner::FileCloner;
-use super::file_copier::FileCopier;
-use super::hardlinker::Hardlinker;
-use super::store::{self, Store};
-use super::store::{EntryColumns as _, NodeColumns as _};
-use super::symlinker::{self, Symlinker};
-use crate::bun_fs;
-use crate::lockfile_real::package::PackageColumns as _;
-use crate::package_manager_real::directories;
-use crate::package_manager_real::package_manager_options::{Do, Enable};
 
 /// The enum lives at module level in `crate::resolution`.
 type ResolutionTag = resolution::Tag;
@@ -271,7 +269,7 @@ impl<'a> Installer<'a> {
         }
         let lockfile = self.lockfile();
         let dep = &lockfile.buffers.dependencies[dep_id as usize];
-        let pkgs = lockfile.packages.slice();
+        let pkgs = &lockfile.packages;
         let (name, name_hash) = pkgs.items_resolution()[pkg_id as usize].trusted_name(
             (dep.name, dep.name_hash),
             (
@@ -315,7 +313,7 @@ impl<'a> Installer<'a> {
     /// Called on the main thread before the package's tasks start, because they use the integrity
     /// to name a tarball's cache entry.
     fn record_extracted_integrity(&mut self, pkg_id: PackageID, integrity: &install::Integrity) {
-        let pkgs = self.lockfile().packages.slice();
+        let pkgs = &self.lockfile().packages;
         assert!((pkg_id as usize) < pkgs.len());
         // SAFETY: in bounds; raw column pointer, so no `&mut Lockfile` is formed. Only this
         // package's tasks read its `integrity` and none has started; other tasks' `&[Meta]`
@@ -1137,7 +1135,7 @@ impl Task {
         let entry_id = self.entry_id;
         let pkg_id = installer.store.ids(entry_id).pkg_id;
         let pkg_res = installer.resolution(entry_id);
-        let pkgs = installer.lockfile().packages.slice();
+        let pkgs = &installer.lockfile().packages;
         let entries = &installer.store.entries;
         let entry_step = &entries.items_step()[entry_id.get() as usize];
 
@@ -1280,7 +1278,7 @@ impl Task {
             return Ok(false);
         }
 
-        let pkgs = lockfile.packages.slice();
+        let pkgs = &lockfile.packages;
         let pkg_metas = pkgs.items_meta();
         let mut pkg_scripts: package::scripts::Scripts = pkgs.items_scripts()[pkg_id as usize];
         let dep_name = lockfile.str(&lockfile.buffers.dependencies[dep_id as usize].name);
@@ -1352,7 +1350,7 @@ impl Task {
     ) -> u8 {
         let (manager, lockfile) = (installer.manager(), installer.lockfile());
         let store::Ids { dep_id, pkg_id } = installer.store.ids(entry_id);
-        let pkgs = lockfile.packages.slice();
+        let pkgs = &lockfile.packages;
         if !pkgs.items_meta()[pkg_id as usize].has_install_script() {
             return 0;
         }
@@ -1477,7 +1475,7 @@ impl<'a> Installer<'a> {
         }
 
         let string_buf = lockfile.buffers.string_bytes.as_slice();
-        let pkgs = lockfile.packages.slice();
+        let pkgs = &lockfile.packages;
         let pkg_name = pkgs.items_name()[pkg_id as usize].slice(string_buf);
         let pkg_name_hash = pkgs.items_name_hash()[pkg_id as usize];
         let pkg_res = &pkgs.items_resolution()[pkg_id as usize];
@@ -1981,7 +1979,7 @@ impl<'a> Installer<'a> {
         if !manager.postinstall_optimizer.is_native_binlink_enabled() {
             return None;
         }
-        let pkgs = lockfile.packages.slice();
+        let pkgs = &lockfile.packages;
         let pkg_info = postinstall_optimizer::PkgInfo {
             name_hash: pkgs.items_name_hash()[pkg_id as usize],
             ..postinstall_optimizer::PkgInfo::default()
@@ -2285,7 +2283,7 @@ impl<'a> Installer<'a> {
         let string_buf = lockfile.buffers.string_bytes.as_slice();
         let dependencies = lockfile.buffers.dependencies.as_slice();
         let entry_deps = store.entries.items_dependencies();
-        let pkgs = lockfile.packages.slice();
+        let pkgs = &lockfile.packages;
         let pkg_bins = pkgs.items_bin();
 
         let mut links = self
